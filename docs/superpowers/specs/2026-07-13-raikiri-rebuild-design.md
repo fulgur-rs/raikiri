@@ -80,9 +80,19 @@ WPT-first 検証方針を継承しつつ、ゼロから作り直す** ための�
   - 両層を Consumer が実装しないと server-side safety は成立しないことを明示
 - **NetworkProvider signature を blitz-traits::NetProvider に shape 一致**:
   Request/AbortSignal/Body/Method を共有 (raikiri は sync return で違い)
-- **WPT 準拠を第一級目標**: blitz baseline oracle として活用、blitz が pass
-  する全 test を pass しつつ、blitz の spec drop 箇所を native fix
-- **byte-identical layout output** (決定論)
+- **組版品質と実用性を primary goal** (Finding #9 対応):
+  - fulgur が render する代表的 reference documents (契約書、レポート、招待状、
+    証明書、目次付き技術書、混合サイズ PDF 等) が期待通りに visual に一致する
+    ことが ship 判定基準
+  - WPT 準拠は "compliance 基準" ではなく "進捗計測ツール" として扱う
+  - カバレッジが低くても実用的なら ship する pragmatic な立場
+- **Regression detection の flat rule**: scope 内外を問わず、既 pass →
+  新 fail は必ず block。新機能追加が既存の pass を壊すのを防ぐ
+- **byte-identical layout output** (決定論): CI reproducibility + regression
+  detection のため、reference documents + WPT reftest 範囲で保証
+- **WPT progress tracking**: pass rate を nightly で記録、trend として観察。
+  絶対値の目標は設定しない。blitz baseline は "少なくとも blitz と同等以上"
+  という定性的 signal
 
 ### Non-Goals
 
@@ -109,6 +119,8 @@ WPT-first 検証方針を継承しつつ、ゼロから作り直す** ための�
   `render_*` を chain して自分の iteration bound で管理
 - **無制限メモリ消費**: 各 entry point のメモリ上限を明示、`max_document_pages`
   超過時は fail-fast
+- **`std::io::Result<()>` の単純 error 型** (Finding #10 対応): render_* は
+  構造化 `RenderError` enum を返し、Consumer が variant で分岐可能に
 
 ## 3. 依存 crate の選定
 
@@ -452,6 +464,46 @@ pub enum ViolationType {
     Other,
 }
 
+// ── RenderError (Finding #10 対応、構造化 error taxonomy) ────────
+pub enum RenderError {
+    /// HTML parse エラー (fatal、pages 未 emit)
+    Parse(ParseError),
+    /// CSS parse / cascade エラー (fatal、pages 未 emit)
+    Cascade(CascadeError),
+    /// Layout エラー (fatal、Streaming なら直前まで emit 済み)
+    Layout(LayoutError),
+    /// Consumer の resolver エラー
+    /// (Consumer の resolver 内で fallback を返せば raikiri は Ok として扱う)
+    Resolver(ResolverError),
+    /// Consumer の network エラー (Resolver と同じく fallback で吸収可能)
+    Network(NetworkError),
+    /// Resource policy 違反
+    Policy(PolicyViolation),
+    /// max_document_pages 超過 (fail-fast、直前まで emit 済み)
+    PageLimitExceeded { limit: u32, actual: u32 },
+    /// Consumer の sink エラー (propagate)
+    Sink(std::io::Error),
+    /// AbortSignal による中断
+    Aborted,
+    /// config 不整合 (BatchConfig.initial_registry が不正 等)
+    Configuration(String),
+    /// std::io::Error 系
+    Io(std::io::Error),
+}
+
+impl std::error::Error for RenderError { /* ... */ }
+impl std::fmt::Display for RenderError { /* ... */ }
+
+/// error の "回復可能性" 分類 (Consumer 判断の助け)
+impl RenderError {
+    /// Consumer 側で回復可能 (Consumer の resolver / network が fallback を返せる)
+    pub fn is_recoverable(&self) -> bool {
+        matches!(self, Self::Resolver(_) | Self::Network(_) | Self::Policy(_))
+    }
+    /// fail-fast、直ちに Consumer に伝える必要あり
+    pub fn is_fatal(&self) -> bool { !self.is_recoverable() }
+}
+
 // ── Strategy traits (Streaming と Batch で変わる差分だけ) ───────
 /// LayoutBuffer の lookahead 幅を制御
 pub trait LookaheadPolicy {
@@ -659,7 +711,7 @@ pub fn render_with<L, T, E, R>(
     target: T,
     emission: E,
     reflow: R,
-) -> std::io::Result<()>
+) -> Result<(), RenderError>
 where
     L: LookaheadPolicy,
     T: TargetResolver,
@@ -825,7 +877,7 @@ pub fn plan_document(
     defaults: PageDefaults,
     resolver: &dyn ReplacedResolver,
     lookahead: LookaheadConfig,
-) -> std::io::Result<DocumentPlan>;
+) -> Result<DocumentPlan, RenderError>;
 
 /// Streaming 向け: BoundedLookahead + PlaceholderTargetResolver + ImmediateEmission
 /// StreamingConfig.initial_registry で plan_document の結果を hint として渡す
@@ -836,7 +888,7 @@ pub fn render_streaming(
     resolver: &dyn ReplacedResolver,
     config: StreamingConfig,
     sink: &mut dyn RenderSink,
-) -> std::io::Result<()>;
+) -> Result<(), RenderError>;
 
 /// Batch 向け: UnboundedLookahead で Fragmentation L3 準拠の 1 pass
 /// BatchConfig.initial_registry で plan_document の結果を hint として渡す
@@ -847,7 +899,7 @@ pub fn render_batch(
     resolver: &dyn ReplacedResolver,
     config: BatchConfig,
     sink: &mut dyn RenderSink,
-) -> std::io::Result<()>;
+) -> Result<(), RenderError>;
 
 // dogfooding helper (VRT や examples 用途)
 pub fn html_to_png(html: &str) -> Result<Vec<u8>, RenderError>;
@@ -1128,6 +1180,119 @@ raikiri::render_with(
 - **決定論**: `IndexedParallelIterator` で順序保持、byte-identical output goal
   を守る
 
+### 5.5 Error / Partial output semantics (Finding #10 対応)
+
+`render_*` は `Result<(), RenderError>` を返す。`RenderError` の taxonomy と
+partial output の扱いを明示化。
+
+#### `RenderError` の分類
+
+| Variant | 種別 | Streaming での partial | Batch での partial |
+|---|---|---|---|
+| `Parse` / `Cascade` / `Configuration` | fatal | pages 未 emit | pages 未 emit |
+| `Layout` | fatal | 直前まで emit 済み | pages 未 emit |
+| `Resolver` / `Network` / `Policy` | recoverable | Consumer の resolver / network 内で fallback を返せば raikiri は Ok として扱う | 同左 |
+| `PageLimitExceeded` | fatal | 直前まで emit 済み | pages 未 emit |
+| `Sink` | fatal (propagate) | 直前まで emit 済み、その page で fail | 部分 emit 状態 |
+| `Aborted` | graceful stop | 直前まで emit 済み | pages 未 emit |
+| `Io` | fatal | 状況依存 | 状況依存 |
+
+#### Partial output の contract
+
+**Streaming preset**:
+- Error 発生前に `accept_page` が呼ばれた分は Consumer sink に "committed" 状態
+- Error 発生時、**`finish_render(summary)` は呼ばれない**
+- Consumer sink は自分の内部 state で partial かどうかを判別する責任
+  (例: `finalized: bool` フィールド)
+- Consumer 側で cleanup (PDF trailer を書かない、tmp file を削除する等)
+
+**Batch preset**:
+- Error 発生時、**`accept_page` / `finish_render` は一切呼ばれない**
+- Consumer sink は完全に "初期状態" のまま (all-or-nothing)
+
+**Plan mode (`plan_document`)**:
+- Error 発生時、`DocumentPlan` は返らない
+- 副作用なし (dry-run、sink を持たない)
+
+#### Recoverable error の Consumer 側 handling
+
+Consumer の resolver / network 実装が `fallback` を返せる場合、raikiri は成功
+として扱う:
+
+```rust
+impl ReplacedResolver for FulgurResolver {
+    fn resolve(&self, req: ResolverRequest<'_>) -> Result<IntrinsicBox, ResolverError> {
+        match self.actual_resolve(req) {
+            Ok(intrinsic) => Ok(intrinsic),
+            Err(_) if self.allow_fallback => Ok(IntrinsicBox::fallback_missing_image()),
+            Err(e) => Err(e),  // Consumer が fallback を拒否した場合、raikiri は fatal 扱い
+        }
+    }
+}
+```
+
+Consumer が Err を返せば raikiri は `RenderError::Resolver(_)` として上位に伝播。
+Consumer が Ok(fallback) を返せば layout は続行、warning log 等は Consumer 側で。
+
+#### fulgur example (partial handling)
+
+```rust
+struct FulgurPdfSink {
+    krilla_doc: krilla::Document,
+    pages_committed: Vec<u32>,
+    finalized: bool,
+}
+
+impl RenderSink for FulgurPdfSink {
+    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
+        self.pages_committed.push(page.page_index);
+        // draw ...
+        Ok(())
+    }
+    fn finish_render(&mut self, summary: RenderSummary) -> std::io::Result<()> {
+        self.finalized = true;
+        // patch pending target slots ...
+        Ok(())
+    }
+}
+
+impl FulgurPdfSink {
+    fn finalize_pdf(self) -> Result<Vec<u8>, FulgurError> {
+        if !self.finalized {
+            // raikiri が render エラーで中断した partial state
+            return Err(FulgurError::PartialRender {
+                committed_pages: self.pages_committed,
+            });
+        }
+        Ok(self.krilla_doc.into_bytes()?)
+    }
+}
+
+// Consumer 主導フロー
+let mut sink = FulgurPdfSink::new(krilla_doc);
+match raikiri::render_streaming(input, ..., &mut sink) {
+    Ok(()) => {
+        let pdf_bytes = sink.finalize_pdf()?;  // 正常、完全な PDF
+        return Ok(pdf_bytes);
+    }
+    Err(e) if e.is_recoverable() => {
+        // fallback 済みで OK なので通常 finalize
+        let pdf_bytes = sink.finalize_pdf()?;
+        return Ok(pdf_bytes);
+    }
+    Err(RenderError::PageLimitExceeded { .. }) => {
+        // partial output を破棄
+        drop(sink);
+        return Err(FulgurError::TooManyPages);
+    }
+    Err(e) => {
+        // fatal、partial output を破棄 (Consumer 判断)
+        drop(sink);
+        return Err(FulgurError::RenderFailed(e));
+    }
+}
+```
+
 ## 6. CSS Handling (raikiri-style)
 
 ### 6.1 統一 RuleTree
@@ -1264,15 +1429,56 @@ pub struct TargetRegistry {
 }
 ```
 
-### 7.3 Running element templates
+### 7.3 Running element templates (Finding #8 対応)
 
-`position: running(name)` された subtree は body flow から除去、`RunningTemplate`
-として保持。@page margin box の `content: element(name)` で参照。
+`position: running(name)` された subtree は body flow から除去、
+`RunningTemplateStore` として保持。@page margin box の `content: element(name)` で
+参照。
 
-- 静的 content のみのテンプレート: 1 回 layout してキャッシュ、per-page で座標
-  変換のみ
-- 動的 content (counter / string) を含む: pre-cascade で `is_content_dynamic`
-  flag、per-page で subtree を再 layout
+**2 tier キャッシュ設計** (Finding #8 対応):
+
+```rust
+// raikiri-dom 内、crate-private
+struct RunningTemplateStore {
+    parsed_templates: HashMap<RunningTemplateId, ParsedRunningTemplate>,
+    // layout 結果はキャッシュしない
+}
+
+struct ParsedRunningTemplate {
+    subtree_root: NodeId,             // Dom 内のポインタ
+    computed_styles: Arc<CascadeSubset>,  // 事前 cascade 済み
+    directives: Vec<GcpmDirective>,       // GCPM 動的部分
+    dynamic_flags: DynamicFlags,          // 何が dynamic か
+}
+
+struct DynamicFlags {
+    has_counter: bool,      // counter() / counters() 参照あり
+    has_string: bool,       // string() 参照あり
+    has_target: bool,       // target-* 参照あり
+    has_content_variant: bool,  // content(before/after) 参照あり
+}
+```
+
+**方針**:
+- **cascade 済み parsed template のみ cache** (Dom 内 subtree ポインタ + 事前
+  cascade 結果 + directive)
+- **layout 結果は cache しない**、常に per-page で layout
+- **理由 (前版からの訂正)**: mixed-size ページで margin box の width/height が
+  変わると、静的 content でも実効寸法が違い、座標変換のみでは正しくない。
+  Cache key に (page_name, effective_margin_box_geometry, cascade_context) 等を
+  含めるのは複雑度が跳ねる。per-page re-layout は 1 page 分の text shape 程度で
+  低コスト (§5.4 の rayon 並列で吸収可能)、correctness 優先
+
+**layout 時の flow**:
+1. margin box の実効 geometry `(page_name, effective_width, effective_height, page_context)`
+   を PageStream が確定 (§9.1 の page name 遷移で決まる)
+2. `parsed_templates` から `ParsedRunningTemplate` を取得
+3. `layout_running_template(parsed, page_ctx, margin_box_geom)` で常に per-page layout
+4. 結果を `MarginBoxFragment` として emit
+
+**`DynamicFlags` の使い所**: 完全に static な template (`dynamic_flags = all false`)
+は同一 margin box geometry 内で複数ページ跨いで cache 化可能。これは post-M8 の
+最適化として保留 (M1〜M8 は常に re-layout)。
 
 ### 7.4 target-* 解決の 2 戦略 + Consumer iteration (Finding #5 対応)
 
@@ -1424,7 +1630,7 @@ pub fn plan_document(
     defaults: PageDefaults,
     resolver: &dyn ReplacedResolver,
     lookahead: LookaheadConfig,
-) -> std::io::Result<DocumentPlan>;
+) -> Result<DocumentPlan, RenderError>;
 
 pub fn render_streaming(
     input: impl std::io::Read,
@@ -1433,7 +1639,7 @@ pub fn render_streaming(
     resolver: &dyn ReplacedResolver,
     config: StreamingConfig,   // Finding #5: hint 経由の initial_registry
     sink: &mut dyn RenderSink,
-) -> std::io::Result<()>;
+) -> Result<(), RenderError>;
 
 pub fn render_batch(
     input: impl std::io::Read,
@@ -1442,7 +1648,7 @@ pub fn render_batch(
     resolver: &dyn ReplacedResolver,
     config: BatchConfig,       // Finding #5: initial_registry あり、TargetConvergence なし
     sink: &mut dyn RenderSink,
-) -> std::io::Result<()>;
+) -> Result<(), RenderError>;
 
 // advanced: 任意の strategy 組み合わせ
 pub fn render_with<L, T, E, R>(
@@ -1451,7 +1657,7 @@ pub fn render_with<L, T, E, R>(
     resolver: &dyn ReplacedResolver,
     sink: &mut dyn RenderSink,
     lookahead: L, target: T, emission: E, reflow: R,
-) -> std::io::Result<()>
+) -> Result<(), RenderError>
 where
     L: LookaheadPolicy,
     T: TargetResolver,
@@ -1784,17 +1990,111 @@ raster / PDF は必然的に異なる。この場合は「placeholder を fallba
 これにより strategy 実装間の drift (LookaheadPolicy の変更が意図せず layout を
 変えた、EmissionPolicy の順序が壊れた、等) が早期検出できる。
 
-### 12.6 CI 頻度
+### 12.6 CI 頻度と blocking policy
 
-| テスト | 頻度 | 時間 | 遮断性 |
-|---|---|---|---|
-| Unit + Integration | PR ごと | 数秒〜数分 | 必須 |
-| VRT reftest | PR ごと | 15〜30 分 | 必須 |
-| Byte-identical | PR ごと | 数十秒 | 必須 |
-| Preset-independence | PR ごと | 数分 | 必須 |
-| WPT full sweep | nightly | 1〜2 時間 | 記録のみ |
-| Blitz baseline oracle | nightly + weekly | 数時間 | regression detection |
-| PDF reftest (via fulgur) | nightly (M6 以降) | 1〜2 時間 | 記録のみ |
+| テスト | Tier | 頻度 | 時間 | 遮断性 |
+|---|---|---|---|---|
+| Unit + Integration | T2 | PR ごと | 数秒〜数分 | **必須** |
+| **Reference documents VRT** | **T1 (ship 判定)** | PR ごと | 5〜10 分 | **必須** |
+| WPT reftest (tracked subset) | T2/T3 | PR ごと | 15〜30 分 | **必須** (regression のみ) |
+| Byte-identical (10 回実行) | T2 | PR ごと | 数十秒 | **必須** |
+| Preset-independence | T2 | PR ごと | 数分 | **必須** |
+| WPT full sweep | T3 | nightly | 1〜2 時間 | 記録 (pass rate trend) |
+| Blitz baseline oracle diff | T3 | nightly + weekly | 数時間 | 記録 (blitz との delta) |
+| PDF reftest (via fulgur adapter) | T1/T2 | nightly (M6 以降) | 1〜2 時間 | **必須** (M6 以降) |
+| Cross-platform tier 2 raster | T3 | nightly | 数十分 | 記録 |
+
+**Tier の意味 (Finding #9 対応)**:
+- **T1 (ship 判定基準)**: fulgur が render する代表 reference documents。visual
+  一致が ship の必要条件
+- **T2 (品質維持)**: 既 pass テストの regression 防止。scope 内外 flat rule
+- **T3 (進捗追跡)**: WPT pass rate、blitz oracle delta、cross-platform raster
+  等を記録し trend を観察。絶対値の目標なし
+
+### 12.7 Reference documents (Finding #9 対応、T1 の詳細)
+
+`tests/reference/` 配下に fulgur ユースケース由来の代表ドキュメントを配置:
+
+```
+tests/reference/
+├── invoice-en/         # 英字圏インボイス、target-* あり、複数ページ
+├── report-jp/          # 日本語レポート、running header、TOC
+├── contract-mixed/     # 契約書、named page、mixed size、bleed
+├── certificate/        # 証明書 (1 ページ、日付+署名エリア)
+├── technical-book/     # 技術書 (章立て、counter、footnote、index)
+├── invitation-a5/      # A5 招待状
+├── manual-multicol/    # マニュアル (2 column)
+└── ...
+```
+
+各ディレクトリの構成:
+- `input.html`
+- `expected.png` (VRT reference、tier 1 platform で生成)
+- `expected.pdf` (fulgur adapter 経由、M6+ で)
+- `README.md` (このドキュメントが検証している要件)
+
+**追加時のルール**: 新 milestone で「この milestone で対応する新機能」に対応する
+reference document を最低 1 つ追加。既存 reference は regression させない。
+
+### 12.8 Byte-identical scope の spec
+
+**比較対象** (優先度順):
+1. `PageFragment` stream の serialize (JSON schema 固定、field 順 sorted)
+2. `PaintCommand` stream (via `anyrender_serialize`)
+3. Rasterized PNG (via `raikiri-vrt` = `anyrender_vello_cpu`、DPI 固定)
+
+**Platform matrix**:
+- **Tier 1** (byte-identical 保証): Linux x86_64
+- **Tier 2** (structural + tolerance rasterize): Linux aarch64, macOS x86_64/aarch64
+- **Tier 3** (best effort): Windows x86_64
+
+**固定 dep version** (Cargo.lock を Git commit で管理):
+- `anyrender_vello_cpu`, `parley`, `taffy`, `tiny-skia`, `selectors`, `cssparser`
+  を`=X.Y.Z` prefix で pin
+- workspace の Cargo.toml で明示
+
+**Font 選定 (訂正版、Finding #9 対応)**:
+- **WPT reftest**: WPT submodule の bundled fonts のみ (`wpt/fonts/*` — Ahem、
+  DejaVu、Noto の必要分。WPT が定めるバージョン)
+- **Reference documents (T1)**: Ahem を優先 (glyph metrics 予測可能で
+  byte-identical に強い)。日本語ドキュメントは WPT の
+  `css/css-writing-modes/support/` にある test font を使用、必要なら小 fixture 追加
+- **submodule commit hash で font 版を pin**: WPT submodule の commit hash を
+  fixed、raikiri が独自 bump しない
+
+**Float 正規化**: IEEE 754 double、比較は 6 decimal places 精度
+(float→float の hash 時は `format!("{:.6}", x)` で string 化)
+
+**Map 順序**: `BTreeMap` or `IndexMap` を使用、`HashMap` は byte-identical
+出力に使わない (iteration 順が非決定的)
+
+### 12.9 WPT scope の位置付け (訂正版、Finding #9 対応)
+
+WPT scope は「**pass すべき集合**」ではなく「**注視している領域**」として管理:
+
+`expectations/tracked-wpt.txt`:
+- 追跡している WPT カテゴリ / test id
+- 各の pass 状況を記録するが、`pass rate = X% 必須` の threshold は設けない
+
+`expectations/known-issues.txt`:
+- 「pass できないが実用に影響なし」と判断した test をログ
+- 例: `css/css-transitions/*` は non-goal で全 skip、というエントリを明示
+
+**追跡対象カテゴリ** (representative、Non-exhaustive):
+
+| WPT カテゴリ | 追跡優先度 | 補足 |
+|---|---|---|
+| `css/css-page/` | 高 | paged media 中核 |
+| `css/css-fragmentation/` | 高 | break policy 中核 |
+| `css/selectors/` | 高 | cascade 検証 |
+| `css/css-text/` | 中 | text layout |
+| `css/css-values/` | 中 | value spec |
+| `css/css-writing-modes/` | 中 | MVP は horizontal のみだが parse 準拠 |
+| `html/rendering/` | 中 | HTML rendering spec |
+| `css/css-transforms/` | 低 | 3D transform は non-goal |
+| `css/css-animations/` | 非追跡 | Non-goal (interactive) |
+| `css/css-transitions/` | 非追跡 | Non-goal (interactive) |
+| `html/interaction/` | 非追跡 | interactive rendering は Non-goal |
 
 ## 13. Milestone Plan
 
@@ -2142,6 +2442,18 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
   出発点 preset
 - **ResourceKind**: fetch context (StylesheetImport / ExternalStylesheet /
   Image / Font / Svg / MathML / Other) — policy method に context を渡す
+- **RenderError** (Finding #10 対応): 構造化 error enum。Parse / Cascade /
+  Layout / Resolver / Network / Policy / PageLimitExceeded / Sink / Aborted /
+  Configuration / Io の variant。`is_recoverable()` / `is_fatal()` で分類
+- **Reference documents** (Finding #9 対応、T1): `tests/reference/` 配下の
+  fulgur ユースケース由来の代表ドキュメント (invoice、report、contract、
+  certificate 等)。ship 判定基準
+- **T1 / T2 / T3 tier** (Finding #9 対応):
+  - T1: reference documents (ship 判定)
+  - T2: regression detection (品質維持、scope 内外 flat rule)
+  - T3: WPT / blitz oracle の trend 追跡 (非 blocking)
+- **DynamicFlags** (Finding #8 対応): running template の "何が dynamic か"
+  記録するフラグ (has_counter / has_string / has_target / has_content_variant)
 - **PageStream**: crate-private state machine、per-page `PageFragment` を emit
 - **PageFragment**: 1 ページの layout 完了済み representation (座標 + style +
   content + GCPM metadata)
