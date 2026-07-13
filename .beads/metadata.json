@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "raikiri_spike",
+  "project_id": "4f19f902-1aa4-47d0-b2e3-8e128e5182bb"
+}
