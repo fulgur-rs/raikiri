@@ -202,11 +202,13 @@ raikiri-spike/
 │   │                            parse 結果を raikiri-dom Document へ流し込む
 │   ├── raikiri-paint/        # PageFragment → anyrender::PaintScene walker
 │   │                            (VRT や debug output 用途、blitz-paint 相当)
-│   ├── raikiri-net/          # NoOpProvider (default) / SandboxedProvider (future)
-│   │                            (blitz-net 相当)
+│   ├── raikiri-net/          # NoOpNetworkProvider / SandboxedNetProvider<P> +
+│   │                            SandboxedResolver<R> + DenyAllPolicy /
+│   │                            DefaultSandboxPolicy (blitz-net 相当 + wrapper)
 │   ├── raikiri/              # umbrella crate: primary Consumer API
-│   │                            全 sub-crate re-export + render_streaming/
-│   │                            render_batch orchestrator + html_to_png helper
+│   │                            全 sub-crate re-export + parse_html / plan /
+│   │                            render_streaming / render_batch orchestrator +
+│   │                            html_to_png helper
 │   ├── raikiri-blitz-compat/ # blitz 互換 layer (M6 で追加)
 │   │                            fulgur migration 支援、型 shape 互換
 │   ├── raikiri-wpt/          # dev-only: WPT runner + blitz oracle
@@ -296,7 +298,7 @@ reviewer 提案の明示表：
 | `render_with()` (低レベル driver) | raikiri-dom | raikiri (umbrella 経由), Consumer (advanced) |
 | `paint_to_scene()` | raikiri-paint | raikiri-vrt, Consumer |
 | `NoOpNetworkProvider`, (future) `SandboxedNetProvider` | raikiri-net | Consumer |
-| `parse_html()`, `render_streaming()`, `render_batch()`, `html_to_png()` | raikiri (umbrella) | Consumer |
+| `parse_html()`, `plan()`, `render_streaming()`, `render_batch()`, `html_to_png()` | raikiri (umbrella) | Consumer |
 
 **Consumer 目線**: `use raikiri::*` だけで足りる。sub-crate 直接依存も可能
 (advanced case)。
@@ -362,7 +364,26 @@ pub trait ReplacedResolver {
     /// req に含まれる URL の scheme/host/size 等の検証は Consumer 責任。
     /// 集中的に policy を効かせたい場合は raikiri-net の SandboxedResolver を wrap
     /// (Finding #6 対応、§10 参照)
-    fn resolve(&self, req: ResolverRequest<'_>) -> Result<IntrinsicBox, ResolverError>;
+    ///
+    /// round 4 review #3 対応: Err は常に terminal (RenderError::Resolver)。
+    /// Consumer 側 fallback は `Ok(ResolvedIntrinsic { intrinsic, disposition:
+    /// Fallback { .. } })` として返し、raikiri は disposition を見て
+    /// RenderSummary.warnings に自動記録
+    fn resolve(&self, req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError>;
+}
+
+pub struct ResolvedIntrinsic {
+    pub intrinsic: IntrinsicBox,
+    pub disposition: ResolveDisposition,
+}
+
+#[non_exhaustive]
+pub enum ResolveDisposition {
+    /// 通常の resolve 成功
+    Ok,
+    /// Consumer が意図的に fallback を選択 (image not found → placeholder 等)
+    /// raikiri は WarningKind::ResolverFallback として RenderSummary.warnings に記録
+    Fallback { reason: String },
 }
 
 /// blitz-traits::NetProvider の shape に揃える (Finding #6 対応)。
@@ -485,8 +506,9 @@ pub enum RenderError {
     Network(NetworkError),
     /// Resource policy 違反
     Policy(PolicyViolation),
-    /// max_document_pages 超過
-    PageLimitExceeded { limit: u32, actual: u32 },
+    /// RenderLimits の各種 limit 超過 (fail-fast、round 4 review #1 対応、
+    /// 旧 PageLimitExceeded を kind: Pages で吸収)
+    LimitExceeded { kind: LimitKind, limit: u64, actual: u64 },
     /// Consumer の sink method (accept_page / finish_render) が Err を返した
     Sink(std::io::Error),
     /// config 不整合 (BatchConfig.initial_registry が不正 等)
@@ -497,6 +519,15 @@ pub enum RenderError {
 
 impl std::error::Error for RenderError { /* ... */ }
 impl std::fmt::Display for RenderError { /* ... */ }
+
+#[non_exhaustive]
+pub enum LimitKind {
+    Pages,
+    DomNodes,
+    TargetSlots,
+    LayoutBufferEntries,
+    AggregateBytes,
+}
 
 /// AbortSignal による graceful shutdown (partial output あり) を error と別カテゴリで
 /// 表現する。render_* は `Result<RenderStatus, RenderError>` を返す
@@ -669,20 +700,42 @@ pub struct LookaheadConfig {
 
 // ── Entry point config (Finding #5 対応: raikiri 内 iteration 廃止) ────
 
+/// 全 entry point (plan / render_streaming / render_batch) が受け取る
+/// resource / cost 上限。 round 4 review #1 対応で `BatchConfig` から
+/// `RenderLimits` に昇格、`plan` と Streaming にも同じ bound を強制。
+#[non_exhaustive]
+pub struct RenderLimits {
+    pub max_document_pages: Option<u32>,          // 超過 → LimitExceeded { kind: Pages }
+    pub max_dom_nodes: Option<u64>,               // parse 完了後 check
+    pub max_target_slots: Option<u32>,            // per-doc target 参照数上限
+    pub max_layout_buffer_entries: Option<u32>,   // LayoutBuffer に貯める上限
+    pub max_aggregate_bytes: Option<u64>,         // approximate memory footprint
+}
+impl Default for RenderLimits { /* 妥当な defaults (fulgur 想定): pages=10000, nodes=1M, slots=100k, buffer=10k, bytes=1GB */ }
+impl RenderLimits {
+    pub fn new() -> Self { Self::default() }
+    pub fn builder() -> RenderLimitsBuilder { RenderLimitsBuilder::default() }
+}
+pub struct RenderLimitsBuilder { /* fluent chain */ }
+
+#[non_exhaustive]
+pub struct PlanConfig {
+    pub lookahead: LookaheadConfig,
+    pub limits: RenderLimits,             // round 4 review #1 対応
+    pub initial_registry: Option<TargetRegistry>,  // round 4 review #2 対応: 反復 chain 用
+}
+
+#[non_exhaustive]
 pub struct StreamingConfig {
     pub lookahead: LookaheadConfig,
-    /// plan() の結果を hint として渡す (Option)
-    /// - Some: hint 値を layout の space reservation に使う
-    /// - None: pass-1 相当、target-* は placeholder emit
-    /// **render は hint に依らず必ず自分で target-* を再計算する**
-    /// hint と実測に差があれば RenderSummary.target_discrepancies に記録
+    pub limits: RenderLimits,             // round 4 review #1 対応
     pub initial_registry: Option<TargetRegistry>,
 }
 
+#[non_exhaustive]
 pub struct BatchConfig {
-    pub max_document_pages: Option<u32>,
-    pub initial_registry: Option<TargetRegistry>,  // hint、StreamingConfig と同じ意味論
-    // TargetConvergence は廃止 (raikiri 内 iteration しない)
+    pub limits: RenderLimits,             // max_document_pages を吸収、round 4 review #1 対応
+    pub initial_registry: Option<TargetRegistry>,
 }
 
 // ── Plan mode (dry-run、box tree 構築なし) ────────────────────
@@ -949,10 +1002,14 @@ pub use raikiri_traits::{
 pub use raikiri_paint;  // sub-module として
 
 /// parse → cascade → Document 組立て (orchestrator)
+/// round 4 review #4 対応: 返り値を RenderError に統一 (Parse / Cascade / Configuration /
+/// Io 等をそのまま伝播できる)
 pub fn parse_html<R: std::io::Read>(input: R, options: &ParseOptions) 
-    -> Result<Document, ParseError> {
-    let uncascaded = raikiri_html::parse(input, options)?;
-    let cascade = raikiri_style::cascade(&uncascaded, options.extra_stylesheets)?;
+    -> Result<Document, RenderError> {
+    let uncascaded = raikiri_html::parse(input, options)
+        .map_err(RenderError::Parse)?;
+    let cascade = raikiri_style::cascade(&uncascaded, options.extra_stylesheets)
+        .map_err(RenderError::Cascade)?;
     Ok(raikiri_dom::Document::assemble(uncascaded, cascade))
 }
 
@@ -961,11 +1018,12 @@ pub fn parse_html<R: std::io::Read>(input: R, options: &ParseOptions)
 /// dry-run: parse + cascade + layout planning のみ (paint scene / PaintedBox 構築なし)
 /// 用途: fulgur の pass-1 前哨、cost 見積り、target 収束判定用の hint 生成
 /// **入力は事前 parse 済みの &Document** (input の再利用問題を回避、new review #5 対応)
+/// round 4 review #1, #2 対応: PlanConfig で limits と initial_registry を受け取る
 pub fn plan(
     doc: &Document,
     defaults: PageDefaults,
     resolver: &dyn ReplacedResolver,
-    lookahead: LookaheadConfig,
+    config: PlanConfig,
 ) -> Result<DocumentPlan, RenderError>;
 
 /// Streaming 向け: BoundedLookahead + PlaceholderTargetResolver + ImmediateEmission
@@ -1213,26 +1271,22 @@ if plan.total_pages > fulgur_config.max_pages_per_request {
 }
 
 // ── Streaming (fulgur デフォルト、大規模ドキュメント向け) ─
+// round 4 review #5 対応: #[non_exhaustive] struct は Default 経由の mutation で構築
+let mut streaming_cfg = StreamingConfig::default();
+streaming_cfg.initial_registry = Some(plan.target_registry.clone());
 raikiri::render_streaming(
-    &doc,   // ★ 同じ Document を使い回し
-    PageDefaults::a4(),
-    &resolver,
-    StreamingConfig {
-        lookahead: LookaheadConfig::default(),
-        initial_registry: Some(plan.target_registry),  // hint (省略可)
-    },
+    &doc, PageDefaults::a4(), &resolver,
+    streaming_cfg,
     &mut fulgur_pdf_sink,
 )?;
 
 // ── Batch (Fragmentation L3 準拠、multi-page flex/grid 対応) ─
+let mut batch_cfg = BatchConfig::default();
+batch_cfg.limits = RenderLimits::builder().max_document_pages(100).build();
+batch_cfg.initial_registry = Some(plan.target_registry);
 raikiri::render_batch(
-    &doc,
-    PageDefaults::a4(),
-    &resolver,
-    BatchConfig {
-        max_document_pages: Some(100),
-        initial_registry: Some(plan.target_registry),  // hint
-    },
+    &doc, PageDefaults::a4(), &resolver,
+    batch_cfg,
     &mut fulgur_pdf_sink,
 )?;
 ```
@@ -1572,29 +1626,32 @@ impl FulgurPdfSink {
     }
 }
 
-// Consumer 主導フロー
+// Consumer 主導フロー (round 4 review #5 対応: RenderStatus は #[non_exhaustive]
+// なので wildcard arm 追加)
 let mut sink = FulgurPdfSink::new(krilla_doc);
 match raikiri::render_streaming(&doc, defaults, resolver.as_ref(), config, &mut sink) {
     Ok(RenderStatus::Completed(summary)) => {
-        // finish_render 済み、warnings 確認
         for warning in &summary.warnings {
             log::warn!("{:?}", warning);
         }
-        let pdf_bytes = sink.finalize_pdf()?;  // finalized=true なので成功
+        let pdf_bytes = sink.finalize_pdf()?;
         return Ok(pdf_bytes);
     }
     Ok(RenderStatus::Aborted { partial_pages }) => {
-        // AbortSignal による graceful shutdown、partial state
         log::info!("Aborted after {} pages", partial_pages);
-        drop(sink);   // partial output を破棄
+        drop(sink);
         return Err(FulgurError::Aborted);
     }
-    Err(RenderError::PageLimitExceeded { limit, actual }) => {
+    Ok(_) => {
+        // 将来 variant 追加時の forward-compat (round 4 #5)
         drop(sink);
-        return Err(FulgurError::TooManyPages { limit, actual });
+        return Err(FulgurError::UnknownRenderStatus);
+    }
+    Err(RenderError::LimitExceeded { kind, limit, actual }) => {
+        drop(sink);
+        return Err(FulgurError::LimitExceeded { kind, limit, actual });
     }
     Err(e) => {
-        // すべての error は terminal、partial output を破棄 (Consumer 判断)
         drop(sink);
         return Err(FulgurError::RenderFailed(e));
     }
@@ -1889,13 +1946,48 @@ TargetResolver trait の実装として 2 種類のみ提供。**raikiri 内部�
   chain して自分で iteration
 - ~~`TargetConvergence` enum~~ - Consumer が iteration bound を管理
 
-### 7.4.1 Consumer iteration の推奨実装
+### 7.4.1 Consumer 収束アルゴリズム (round 4 review #2 対応、明確化)
 
-untrusted input (public API 経由) に対しては、Consumer は iteration を bound
-してから raikiri を呼び出す:
+**アルゴリズム** (untrusted input 用):
+
+```
+1. doc = parse_html(input, options)                       — 1 回のみ
+2. prev = None
+3. loop iter in 0..fulgur_config.max_target_iterations:
+     next_plan = plan(&doc, defaults, resolver, PlanConfig {
+         lookahead, limits,
+         initial_registry: prev,   ← 前 iter の結果を hint に (round 4 #2 対応)
+     })
+     if next_plan.target_registry == prev.unwrap_or(default):
+         break                                            — 収束
+     prev = Some(next_plan.target_registry)
+4. 最終 render — production sink に emit
+   render_streaming(&doc, defaults, resolver, StreamingConfig {
+       lookahead, limits,
+       initial_registry: prev,
+   }, &mut production_sink)?;
+```
+
+**重要 (round 4 #2 対応)**: 各 iteration では **`plan()` のみを呼ぶ**。plan は
+render を行わないので production sink に partial pages が emit される問題は
+発生しない (§3 で明示済み: plan は "PaintScene / PaintedBox 構築なし")。最終
+`render_streaming` のみが本 sink を触る。
+
+**なぜ収束するか**:
+- `plan()` が `initial_registry` を hint として受け取り、layout はその hint 値の
+  幅を使って spacing (round 4 #2 対応で `PlanConfig` に追加)
+- Iteration `N` は iteration `N-1` の target 値を仮定して layout
+- 収束: 次 iter で hint と actual が一致 → registry は変わらない
+- 発散するケース (幅が桁上がりで振動する場合等) は max_iterations で打ち切り、
+  最後の registry を production render に使用
+
+**intermediate render を実 sink に出さない protocol**:
+- 各 iteration は `plan()` のみで render_* を呼ばない (実 sink 未使用)
+- 最終 iteration のみ `render_streaming` を呼び production sink に出す
+
+**fulgur config example**:
 
 ```rust
-// fulgur config
 struct FulgurRenderConfig {
     /// public request (untrusted): 0 or 1、trusted batch: 3-5
     max_target_iterations: u32,
@@ -1907,8 +1999,11 @@ struct FulgurRenderConfig {
 // Consumer iteration (fulgur 側)
 let mut prev_registry: Option<TargetRegistry> = None;
 let doc = raikiri::parse_html(input, &options)?;  // parse は 1 度で済む
-for iter in 0..fulgur_config.max_target_iterations {
-    let plan = raikiri::plan(&doc, defaults, &resolver, lookahead)?;
+for _iter in 0..fulgur_config.max_target_iterations {
+    let plan = raikiri::plan(&doc, defaults, &resolver, PlanConfig {
+        lookahead, limits: RenderLimits::default(),
+        initial_registry: prev_registry.clone(),
+    })?;
     if Some(&plan.target_registry) == prev_registry.as_ref() {
         // 収束: このplanで確定した registry を使って本 render
         break;
@@ -2004,11 +2099,12 @@ target-* 収束が必要な用途は Consumer が `plan` + `render_*` を chain
 
 ```rust
 // pre-composed entry (通常 Consumer 向け、new review #5 対応で &Document 前提)
+// round 4 review #1, #2 対応: PlanConfig で limits と initial_registry 受け取り
 pub fn plan(
     doc: &Document,
     defaults: PageDefaults,
     resolver: &dyn ReplacedResolver,
-    lookahead: LookaheadConfig,
+    config: PlanConfig,
 ) -> Result<DocumentPlan, RenderError>;
 
 pub fn render_streaming(
@@ -2778,9 +2874,12 @@ epic の完了を追加で待つ。single `bd close raikiri-spike-m0` では M1 
 - CI green
 - 全 `#[non_exhaustive]` pub struct が external consumer crate から
   constructable (round 3 review #2 対応)
+- **round 4 review Task #1 訂正**: BiDi、mixed Latin/CJK は M3 のみ。M1 は
+  ASCII (Latin) 単一 script + 単一 font に限定
 
 **Non-goals**: pagination、@page、GCPM、Batch、ReplacedResolver 実使用、
-break policy、per-page PageBox、L4 selector、target-*
+break policy、per-page PageBox、L4 selector、target-*、**BiDi、mixed script**
+(round 4 review Task #1 対応、M3 に完全に移す)
 
 ### M2: Streaming pagination + LayoutBuffer + Streaming error semantics
 
@@ -2843,7 +2942,17 @@ reference と一致
 - per-page-pagebox-resolver, pageboxcache-implementation
 - margin-box-slot-layout, sixteen-slot-rayon
 - pagecontext-seed-builder
-- policy-violation-propagation (Layer 2 security)
+- **Layer 2 security wrapper 実装** (round 4 review Task #4 対応、以前 unowned):
+  - sandboxed-net-provider-impl (`SandboxedNetProvider<P>` wrapper)
+  - sandboxed-resolver-impl (`SandboxedResolver<R>` wrapper)
+  - denyall-policy-impl (`DenyAllPolicy`)
+  - default-sandbox-policy-impl (`DefaultSandboxPolicy`)
+  - policy-violation-propagation (raikiri-dom 内で violation を RenderError::Policy に伝播)
+- **Layer 2 security tests** (round 4 review Task #4 対応):
+  - ssrf-defense-tests (scheme allowlist、host restriction、private IP block)
+  - resolver-parity-tests (SandboxedResolver が wrap する Consumer resolver と
+    parity 動作、violation 時のみ diverge)
+  - size-mime-timeout-enforcement-tests
 
 **Reference fixtures**:
 - `tests/reference/mixed-size-A4-A3/`
@@ -2913,18 +3022,28 @@ finish_render-summary-integration
 **Acceptance**: target-counter 参照が finish_render summary で完全 resolve、
 Consumer patch できる
 
-#### M6b: Batch preset 完成
+#### M6b: Batch preset 完成 (round 4 review Task #3 訂正)
 
 **Goals**: `UnboundedLookahead` full 実装、`RegistryTargetResolver`、
-`initial_registry` hint 対応
+`initial_registry` hint 対応、DeferredEmission
+**訂正**: Fragmentation L3 の実装は M7 に完全に移す。M6b は preset の
+plumbing のみ担当
 
 **Tasks**: unbounded-lookahead-impl, registry-target-resolver,
-initial-registry-plumbing, batch-vs-streaming-preset-independence-test
+initial-registry-plumbing, deferred-emission-impl,
+batch-vs-streaming-preset-independence-test
 
 **Reference fixtures**: `tests/reference/batch-preset-basic/`
+(target-* を含む単一ページ + Deferred emission の smoke、multi-page flex/grid は
+M7 に譲る)
 
-**Acceptance**: `render_batch` が Fragmentation L3 準拠 (M8 で 100% ではないが
-主要ケース) で VRT reference 一致
+**Acceptance** (round 4 review Task #3 訂正):
+- `render_batch` が deferred emission で全 pages を最後にまとめて emit
+- `initial_registry` hint が cache lookup で target-* を resolve
+- Preset-independence test で `render_streaming` と `render_batch` が
+  target-* 未使用ドキュメントで byte-identical
+- **Fragmentation L3 acceptance は M7 (widow/orphan、break-inside、
+  container probe が完成した後)**
 
 #### M6c: Batch error semantics + Abort handling
 
@@ -3054,19 +3173,19 @@ M1 skeleton + reference harness + error taxonomy + hello world
      │      │       ▼
      │      │   M5 GCPM directive full + running (per-page geometry) + Batch skeleton
      │      │       │
-     │      │       ├────────────────┬──────────────────┐
-     │      │       ▼                ▼                  ▼
-     │      │   M6a target-*     M6b Batch preset   M6c Batch error +
-     │      │   SinglePass                          Abort handling
-     │      │       │                │                  │
-     │      │       └────────────────┼──────────────────┘
-     │      │                        ▼
-     │      │                    M6d fulgur adapter
-     │      │                        │
-     │      │                        ▼
-     │      │                    M6e raikiri-blitz-compat 初版
-     │      │                        │
-     │      └───────────────────────▶ M7 break policy + probe layout + Abort integration
+     │      │       ├───────────────┐   ┌── M6e blitz-compat (M5 依存のみ、並列可能)
+     │      │       ▼               ▼   │
+     │      │   M6a target-*    M6b Batch preset  (parallel、共有 interface が M5 に確定済)
+     │      │   SinglePass           │
+     │      │       │                │
+     │      │       └────────┬───────┘
+     │      │                ▼
+     │      │            M6c Batch error + Abort handling (M6a, M6b の両方に依存)
+     │      │                │
+     │      │                ▼
+     │      │            M6d fulgur adapter (M6a-c に依存、M6e にも依存)
+     │      │                │
+     │      └───────────────▶ M7 break policy + probe layout + Fragmentation L3 acceptance
      │                                  │
      │                                  ▼
      │                              M8 決定論 stress + WPT full sweep +
@@ -3203,9 +3322,12 @@ raikiri-spike-m8 (epic): 決定論 + WPT + Error injection + Cross-platform
 └─ golden-update-workflow-doc
 ```
 
-各 milestone epic は完了時に `bd close`。sub-milestone 間の依存 (M6a → M6b →
-M6c → M6d → M6e) は `bd dep add` で明示。fixture 追加 task は milestone 各 epic
-内に含める (Task #M4 対応)。
+各 milestone epic は完了時に `bd close`。sub-milestone 間の依存 (round 4 review
+Task #2 訂正: `M6a || M6b || M6e` parallel → `M6c` (depends on M6a + M6b) →
+`M6d` (depends on M6a-c and M6e); prose was `M6a→M6b→M6c→M6d→M6e` linear、DAG は
+parallel。DAG を採用、prose を訂正) は `bd dep add` で明示。
+
+fixture 追加 task は milestone 各 epic 内に含める (Task #M4 対応)。
 
 ## 14. Consumer Contract (fulgur 視点)
 
@@ -3295,25 +3417,17 @@ let mut sink = FulgurPdfSink::new(krilla_doc);
 let status = match plan.total_pages {
     n if n < 100 && has_multi_page_flex_grid(&plan) => {
         // Batch: Fragmentation L3 準拠が必要な小〜中規模文書
-        raikiri::render_batch(
-            &doc, defaults, resolver.as_ref(),
-            BatchConfig {
-                max_document_pages: Some(n),
-                initial_registry: Some(plan.target_registry),  // hint
-            },
-            &mut sink,
-        )?
+        // round 4 review #5: #[non_exhaustive] struct は Default + mutation で構築
+        let mut batch_cfg = BatchConfig::default();
+        batch_cfg.limits = RenderLimits::builder().max_document_pages(n).build();
+        batch_cfg.initial_registry = Some(plan.target_registry);
+        raikiri::render_batch(&doc, defaults, resolver.as_ref(), batch_cfg, &mut sink)?
     }
     _ => {
         // Streaming: 大規模、DoS 耐性最大
-        raikiri::render_streaming(
-            &doc, defaults, resolver.as_ref(),
-            StreamingConfig {
-                lookahead: LookaheadConfig::default(),
-                initial_registry: Some(plan.target_registry),  // hint
-            },
-            &mut sink,
-        )?
+        let mut streaming_cfg = StreamingConfig::default();
+        streaming_cfg.initial_registry = Some(plan.target_registry);
+        raikiri::render_streaming(&doc, defaults, resolver.as_ref(), streaming_cfg, &mut sink)?
     }
 };
 
@@ -3325,6 +3439,9 @@ match status {
     }
     RenderStatus::Aborted { partial_pages } => {
         log::info!("Aborted after {} pages", partial_pages);
+    }
+    _ => {  // round 4 review #5: #[non_exhaustive] enum の forward-compat
+        log::warn!("Unknown RenderStatus variant");
     }
 }
 
@@ -3402,8 +3519,14 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
 ## 15. Open Questions / Future Work
 
 - 縦書き / ルビ / JIS X 4051 相当の日本語組版拡張タイミング
-- (parley `FontContext` の `Sync` 適合性 / taffy の並列 layout 対応可否は M0
-  feasibility spike で verify されるため、Open Questions から削除)
+- **M0-gated decisions** (round 4 review #6 対応、M0 outcome 確定まで retention):
+  - parley `FontContext` の `Sync` 適合性 (rayon 並列 shape の前提)
+  - taffy の並列 layout 対応可否 (multi-column の各 column 並列)
+  - selectors + cssparser の version 整合
+  - anyrender::PaintScene の adapter surface 確定
+  - anyrender_vello_cpu の byte-identical 保証
+  M0 feasibility report で確定次第、Open Questions から Design 決定に昇格する
+  (`OK` なら仕様維持、`NEEDS_DESIGN_CHANGE` なら architecture 変更 + doc revise)
 - `SandboxedNetProvider` の spec 詳細 (URL allowlist、size cap、MIME
   whitelist の具体的な interface)
 - Consumer iteration の推奨実装 example の充実 (fulgur の tier 別 policy に応じた
