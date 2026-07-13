@@ -1616,35 +1616,39 @@ struct DynamicFlags {
 は同一 margin box geometry 内で複数ページ跨いで cache 化可能。これは post-M8 の
 最適化として保留 (M1〜M8 は常に re-layout)。
 
-### 7.3.1 Running template の複雑度予算 (Missing consideration 対応)
+### 7.3.1 Running template の DoS 耐性は Consumer 責務 (round 3 review 対応)
 
-Per-page re-layout の性質上、running template の実装コストは
-**`O(pages × template subtree size)`** で amplify される。大 subtree × 大 page
-数の組み合わせで pathological worst case が発生する可能性。
+Per-page re-layout により、running template の実装コストは asymptotic に
+**`O(pages × template subtree size)`** で amplify されるが、この worst case を
+raikiri 側の guard で防ぐのは **責務の重複** となるため行わない。理由:
 
-**Guard mechanism**:
-- `LookaheadConfig::max_running_template_nodes`: running template subtree の
-  最大 node 数 (default: `Some(2048)`)
-- `LookaheadConfig::max_running_template_bytes`: subtree の serialized 概算
-  memory 上限 (default: `Some(256 * 1024)` = 256 KB)
-- 超過時: cascade 時に **fail-fast** (`RenderError::Configuration` として reject)
-- Consumer は tier 別に guard を調整 (public API では tight、trusted job では
-  緩め)
+1. **Layer 1 sanitize が既に防いでいる**: Consumer が TreeSink wrap で
+   untrusted HTML の DOM 巨大化を防ぐ (§5.2)。running template の subtree size
+   もこの層で bound される
+2. **`max_document_pages` が既に aggregate work を bound**: `BatchConfig` /
+   Consumer iteration で page 数 upper bound を設定できる。`pages ×
+   template_size` の積は、この page 上限と Consumer sanitize の template
+   size 上限の 2 つの制約で自然に bound
+3. **加えて Consumer 側で timeout / cancellation**: `AbortSignal` を使って
+   Consumer が deadline を強制 (§10)
 
-```rust
-pub struct LookaheadConfig {
-    // ... 既存 field
-    /// running template の complexity guard (Missing consideration 対応)
-    pub max_running_template_nodes: Option<usize>,   // default: Some(2048)
-    pub max_running_template_bytes: Option<usize>,   // default: Some(256*1024)
-}
-```
+**raikiri の役割**:
+- **fail-fast は自ら enforce しない** (Consumer 責務)
+- observability として、running template の per-page layout cost を
+  `RenderSummary` の debug field に記録する余地は将来残す (post-M8)
+- Consumer が自分の Layer 1/2 sanitize + max_document_pages を組み合わせて
+  asymptotic bound を設計するのが正しい形
 
-**Per-page CPU 予算の見積り**:
+**Guard mechanism (削除)**: 前版で `max_running_template_nodes` /
+`max_running_template_bytes` を LookaheadConfig に足す提案をしたが、Consumer
+責務との重複により削除。同種の "content shape に対する raikiri 側 guard" は
+今後も原則入れない (fail-fast 対象は raikiri 内部の異常のみ)。
+
+**Per-page CPU 目安 (参考)**:
 - 通常 header/footer template: 数十 node、per-page layout ~1ms 程度
 - 1000 ページ document: 累計 ~1s 追加 (許容範囲)
-- 大 template (subtree 1000+ node) × 大 page (10000+): ~1〜10 分の追加 CPU
-  → guard で防ぐ
+- untrusted 大 template を防ぎたい Consumer は、TreeSink wrap で subtree size
+  を validate (`position: running(...)` された subtree の node 数を数える等)
 
 **Post-M8 optimization** (§7.3 参照): `dynamic_flags = all false` な template
 の layout 結果 cache 導入で、上記 worst case を大幅緩和できる予定。
