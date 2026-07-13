@@ -58,8 +58,13 @@ WPT-first 検証方針を継承しつつ、ゼロから作り直す** ための�
 - **streaming first-class**: 出力 API は原則 `PageStream` (per-page emit)
 - **2 pass batch mode を first-class に共存させる**: 小〜中規模ドキュメントの
   フル spec compliance (target-* 正確化、`counters()` nested scope、backward
-  selector、unlimited widow/orphan lookahead)
+  selector、unlimited widow/orphan lookahead、Fragmentation L3 準拠の
+  flex/grid multi-page 対応)
 - **per-page で PageBox が変わる混合サイズ PDF を native 対応**
+- **2 cursor モデル + probe layout**: DOM cursor と Emission cursor を分離し、
+  LayoutBuffer 内で probe layout を保持する構造 (Finding #2 対応)
+- **ReflowPolicy trait による dirty tracking の拡張余地確保**: M1〜M8 は
+  AggressiveCommit のみ実装、DirtyDeferred / FullReflow は Future Work
 - **同期 ReplacedResolver**: raikiri コアに async runtime を持ち込まない
 - **WPT 準拠を第一級目標**: blitz baseline oracle として活用、blitz が pass
   する全 test を pass しつつ、blitz の spec drop 箇所を native fix
@@ -78,6 +83,12 @@ WPT-first 検証方針を継承しつつ、ゼロから作り直す** ための�
   writing-mode / ruby 拡張可能に閉じ込める)
 - Templating (fulgur が MiniJinja を持つ、Consumer 責任)
 - PDF 出力 (fulgur が krilla で直接処理、raikiri は `PageFragment` を渡すのみ)
+- **Dirty tracking の実装** (M1〜M8): ReflowPolicy trait は raikiri-traits に
+  定義するが、`DirtyDeferred` / `FullReflow` 実装は post-M8 Future Work。
+  M1〜M8 では `AggressiveCommit` のみ (probe 限界到達で即 fallback commit)
+- **External re-render 用 invalidation infra**: internal LayoutBuffer の
+  dirty tracking (Future Work) とは別次元、raikiri は Consumer からの
+  mutation → re-render の flow を持たない
 
 ## 3. 依存 crate の選定
 
@@ -113,18 +124,24 @@ blitz workspace 構成を参考に、責務を明確に分離した 12 crate 構
 raikiri-spike/
 ├── Cargo.toml (workspace)
 ├── crates/
-│   ├── raikiri-traits/       # 共有 trait 定義
+│   ├── raikiri-traits/       # 共有 trait 定義 + 中立モデル型
 │   │                            RenderSink, NetworkProvider, ReplacedResolver,
-│   │                            Dom/Element/Node, RenderMode, LookaheadConfig
+│   │                            LookaheadPolicy, TargetResolver, EmissionPolicy,
+│   │                            Dom/Element/Node,
+│   │                            PageFragment, PageBox, PageContext,
+│   │                            LayoutBuffer, TargetRegistry, GcpmDirective,
+│   │                            LookaheadConfig, TargetConvergence, BatchConfig
 │   ├── raikiri-html/         # html5ever wrapper + RaikiriTreeSink
 │   │                            Consumer が wrap して sanitize/inject/rewrite
 │   ├── raikiri-css/          # cssparser + selectors + 統一 RuleTree
 │   │                            + cascade + ComputedValues (stylo リプレース領域)
 │   ├── raikiri-dom/          # DOM データモデル (Node/Element/Attribute)
-│   ├── raikiri-gcpm/         # @page/counter/string-set/running/target-* IR
-│   │                            + PageContext + TargetRegistry
-│   ├── raikiri-layout/       # taffy + parley + LayoutBuffer + PageStream (private)
-│   │                            + render() free function
+│   ├── raikiri-gcpm/         # @page/counter/string-set/running/target-*
+│   │                            directive 実装 (中立型は raikiri-traits)
+│   ├── raikiri-layout/       # taffy + parley + PageStream (private)
+│   │                            + strategy 実装群 (Bounded/Unbounded, Placeholder/Registry,
+│   │                              Immediate/Deferred)
+│   │                            + render_with() 低レベル driver
 │   ├── raikiri-paint/        # PageFragment → anyrender::PaintScene walker
 │   │                            (VRT や debug output 用途)
 │   ├── raikiri-net/          # NoOpProvider (default) / SandboxedProvider (future)
@@ -166,10 +183,11 @@ raikiri-traits (foundation)
 
 #### `raikiri-traits`
 
-foundation crate。他 crate が共有する trait/型定義を集約。実装は持たず、他 crate
-への依存も最小。
+foundation crate。他 crate が共有する trait / 中立モデル型を集約。実装は持たず、
+他 crate への依存も最小。
 
 ```rust
+// ── Sink / Provider / Resolver ────────────────────────────────
 pub trait RenderSink: Send {
     fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()>;
     fn finalize(self: Box<Self>) -> std::io::Result<()>;
@@ -183,16 +201,75 @@ pub trait NetworkProvider {
     fn fetch(&self, url: &Url) -> Result<Bytes, NetworkError>;
 }
 
-pub enum RenderMode {
-    Streaming { lookahead: LookaheadConfig },
-    Batch { max_document_pages: Option<u32>, target_convergence: TargetConvergence },
+// ── Strategy traits (Streaming と Batch で変わる差分だけ) ───────
+/// LayoutBuffer の lookahead 幅を制御
+pub trait LookaheadPolicy {
+    fn max_widow_orphan_lines(&self) -> Option<usize>;              // None = unbounded
+    fn max_break_avoid_subtree_blocks(&self) -> Option<usize>;
+    /// flex/grid container の probe layout 上限 (Finding #2 対応)
+    /// None = unbounded (Batch: container 全体を Fragmentation L3 準拠に layout)
+    /// Some(N) = N ページ相当まで、超えたら ReflowPolicy に委譲
+    fn max_container_probe_pages(&self) -> Option<usize>;
+    fn allow_cross_size_lookahead(&self) -> bool;
 }
 
+/// target-* の解決方式 (placeholder emit / 事前 registry lookup)
+pub trait TargetResolver {
+    fn resolve(&mut self, req: TargetRequest<'_>, ctx: &PageContext) -> ResolvedTarget;
+}
+
+/// PageFragment の emit タイミング (immediate / deferred)
+pub trait EmissionPolicy {
+    fn emit(&mut self, page: PageFragment, sink: &mut dyn RenderSink)
+        -> std::io::Result<()>;
+    fn finish(&mut self, sink: &mut dyn RenderSink) -> std::io::Result<()>;
+}
+
+/// probe 限界到達時の挙動、および dirty tracking の余地
+/// M1〜M8 は AggressiveCommit のみ実装、DirtyDeferred/FullReflow は Future Work
+pub trait ReflowPolicy {
+    /// probe 限界到達時に "即 fallback commit" するか "dirty flag で defer" するか
+    fn on_probe_limit(&self, ctx: &ProbeContext) -> ReflowAction;
+    /// dirty tracking を使う場合の memory 上限
+    fn max_dirty_entries(&self) -> Option<usize>;
+}
+
+pub enum ReflowAction {
+    /// 即 fallback で commit、取り消し不可 (Streaming preset default)
+    CommitWithFallback(ContainerOverflowFallback),
+    /// dirty flag で defer、後続情報で reflow (post-M8 Future Work)
+    DeferAsDirty { deadline: DirtyDeadline },
+}
+
+pub enum ContainerOverflowFallback {
+    ForceBreakBefore,      // 次ページに強制配置 (推奨)
+    SimpleFragmentation,   // align-content 等を無視した単純分割
+    OverflowClipping,      // 現ページに詰めて overflow
+    Error,                 // fail-loud
+}
+
+pub enum DirtyDeadline {
+    NextPageBoundary,      // 次のページ確定まで defer
+    NextContainerStart,    // 次の container 出現まで defer
+    DocumentEnd,           // document 末尾まで defer (Batch preset で活用)
+}
+
+// ── DOM 抽象 ───────────────────────────────────────────────────
+pub trait Dom { /* ... */ }
+pub trait Element<'a> { /* ... */ }
+pub trait Node<'a> { /* ... */ }
+
+// ── 中立モデル型 (crate 境界を跨いで参照される) ────────────────
+pub struct PageFragment { /* ... §11.2 参照 */ }
+pub struct PageBox      { /* ... §9    参照 */ }
+pub struct PageContext  { /* ... §7.2  参照 */ }
+pub struct LayoutBuffer { /* ... §5    参照 */ }
+pub struct TargetRegistry { /* ... §7.2 参照 */ }
+pub enum   GcpmDirective { /* ... §7.1  参照 */ }
 pub struct LookaheadConfig {
     pub widow_line_buffer: usize,
     pub orphan_line_buffer: usize,
     pub break_avoid_max_subtree_blocks: usize,
-    pub target_mode: TargetMode,
     pub allow_cross_size_lookahead: bool,
 }
 
@@ -200,14 +277,16 @@ pub enum TargetConvergence {
     TwoPass,
     NPassConverge { max_iterations: u32 },
 }
-
-pub trait Dom { /* ... */ }
-pub trait Element<'a> { /* ... */ }
-pub trait Node<'a> { /* ... */ }
 ```
 
 **`DocumentPass` / `DomTransform` は含めない** — Consumer は
 `RaikiriTreeSink` を wrap する pattern を使用 (5.2 節参照)。
+
+**中立モデル型の帰属**: `PageFragment` / `PageBox` / `PageContext` /
+`LayoutBuffer` / `TargetRegistry` / `GcpmDirective` は複数 crate の境界を跨いで
+参照される（strategy trait の入出力、sink の入力、cascade の出力など）ため、
+foundation crate として raikiri-traits に置く。実装ロジックは各機能 crate 側
+(raikiri-gcpm / raikiri-layout など) に残し、型定義だけを foundational 化する。
 
 #### `raikiri-html`
 
@@ -248,8 +327,9 @@ Selectors 対応範囲:
 - L3 base、interactive 系 (`:hover`, `:focus`, `:link`, `:visited`, `:target`,
   `:enabled`, `:checked`) は parse は通すが常に false (fail-open)
 - L4 streaming-safe (`:is()`, `:where()`, `:not()`) は採用、優先度低
-- L4 backward-reference (`:has()`, `:nth-last-child()`, `:blank`) は Batch mode
-  のみ有効化
+- L4 backward-reference (`:has()`, `:nth-last-child()`, `:blank`) は Phase A
+  batch cascade で常時対応可能。**実装優先度** の問題として扱い、実装したら常時
+  有効 (mode 依存にはしない)
 
 #### `raikiri-dom`
 
@@ -270,21 +350,50 @@ GCPM (Generated Content for Paged Media) の IR 明示ノード化と PageContex
 
 taffy + parley 統合。**Phase B の主体**。
 
-- `LayoutBuffer`: widow/orphan/break-inside lookahead の独立ユニット
-- `PageStream`: crate-private state machine (per-page emit)
-- `render()` free function: Consumer からの driver
+- `LayoutBuffer`: widow/orphan/break-inside/container probe lookahead の独立
+  ユニット (中立型は raikiri-traits、実装ロジックはここ)
+- `PageStream`: crate-private state machine (per-page emit)、DOM cursor と
+  Emission cursor を保持
+- **Strategy 実装群**: `BoundedLookahead` / `UnboundedLookahead`,
+  `PlaceholderTargetResolver` / `RegistryTargetResolver`,
+  `ImmediateEmission` / `DeferredEmission`,
+  `AggressiveCommit` (M1〜M8 で唯一実装される ReflowPolicy)
+- `PageBoxCache`: 同じ (page_name, parity) の @page 解決結果を再利用
+- `render_with(...)` 低レベル driver (任意 strategy を受け取る、advanced 向け)
 - Per-page 内部の rayon 並列化 (16 margin box slots、paragraph text shape、
   multi-column)
 
 ```rust
-pub fn render(
-    doc: &Document,
+// 各 strategy の実装 (raikiri-traits の trait を impl)
+pub struct BoundedLookahead(pub LookaheadConfig);
+pub struct UnboundedLookahead;
+pub struct PlaceholderTargetResolver { /* pending_slots */ }
+pub struct RegistryTargetResolver    { /* pre-built registry */ }
+pub struct ImmediateEmission;
+pub struct DeferredEmission          { /* Vec<PageFragment> */ }
+pub struct AggressiveCommit          { /* M1〜M8 唯一の ReflowPolicy 実装 */ }
+
+// Advanced driver: strategy を直接指定
+pub fn render_with<L, T, E, R>(
+    input: impl std::io::Read,
+    options: &ParseOptions,
     defaults: PageDefaults,
     resolver: &dyn ReplacedResolver,
-    mode: RenderMode,
     sink: &mut dyn RenderSink,
-) -> std::io::Result<()>;
+    lookahead: L,
+    target: T,
+    emission: E,
+    reflow: R,
+) -> std::io::Result<()>
+where
+    L: LookaheadPolicy,
+    T: TargetResolver,
+    E: EmissionPolicy,
+    R: ReflowPolicy;
 ```
+
+上位の `render_streaming` / `render_batch` は umbrella crate `raikiri` が提供
+(§5.3)。
 
 #### `raikiri-paint`
 
@@ -322,12 +431,44 @@ pub struct PaintOptions {
 
 ```rust
 pub use raikiri_html::{Document, parse_html, ParseOptions, iter_replaced_elements};
-pub use raikiri_layout::{render, PageDefaults};
+pub use raikiri_layout::{
+    PageDefaults, render_with,
+    // strategy 実装 (advanced 向け)
+    BoundedLookahead, UnboundedLookahead,
+    PlaceholderTargetResolver, RegistryTargetResolver,
+    ImmediateEmission, DeferredEmission,
+    AggressiveCommit,
+};
 pub use raikiri_traits::{
     RenderSink, ReplacedResolver, NetworkProvider,
-    RenderMode, LookaheadConfig, TargetConvergence,
+    LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy,   // strategy trait
+    PageFragment, PageBox, PageContext,                              // 中立モデル型
+    LookaheadConfig, TargetConvergence, BatchConfig,
+    ContainerOverflowFallback, ReflowAction, DirtyDeadline,
 };
 pub use raikiri_paint;  // sub-module として
+
+// ── 通常 Consumer 向け: pre-composed entry ─────────────────
+/// Streaming 向け: BoundedLookahead + PlaceholderTargetResolver + ImmediateEmission
+pub fn render_streaming(
+    input: impl std::io::Read,
+    options: &ParseOptions,
+    defaults: PageDefaults,
+    resolver: &dyn ReplacedResolver,
+    lookahead: LookaheadConfig,
+    sink: &mut dyn RenderSink,
+) -> std::io::Result<()>;
+
+/// Batch 向け: 内部で 2-pass 実行、UnboundedLookahead + RegistryTargetResolver
+/// + DeferredEmission を組み合わせ
+pub fn render_batch(
+    input: impl std::io::Read,
+    options: &ParseOptions,
+    defaults: PageDefaults,
+    resolver: &dyn ReplacedResolver,
+    config: BatchConfig,
+    sink: &mut dyn RenderSink,
+) -> std::io::Result<()>;
 
 // dogfooding helper (VRT や examples 用途)
 pub fn html_to_png(html: &str) -> Result<Vec<u8>, RenderError>;
@@ -393,30 +534,70 @@ Phase A: Document build (batch, 純関数的)
                      seed_page_context }
              ↑ Phase A の produce、Phase B の read-only 入力
 
-Phase B: Page emission (streaming)
+Phase B: Page emission (Strategy 群で切替)
 ─────────────────────────────────────────────
-  render(doc, defaults, resolver, mode, sink):
-    for page in PageStream::new(doc, defaults, mode) {
-        sink.accept_page(page?)?;
-    }
+  render_streaming(...)      → BoundedLookahead + PlaceholderTargetResolver
+                                + ImmediateEmission + AggressiveCommit
+  render_batch(...)          → UnboundedLookahead + RegistryTargetResolver
+                                + DeferredEmission + AggressiveCommit
+                                (内部で 2-pass、pass 1 で registry 構築、pass 2 で実 render)
+  render_with(...)           → 任意の LookaheadPolicy / TargetResolver
+                                / EmissionPolicy / ReflowPolicy
 
-  PageStream 内部:
-    LayoutBuffer       (widows/orphans/break-avoid lookahead 明示型)
-    PageContext        (counter tree + string 4-snapshot + running + target)
-    ResolverPool       (sync resolver 呼び出し、Consumer 責任で並列化)
-    DocumentCursor     (body flow の walk 位置)
-    
-    per page loop:
-      1. cursor から次 block を buffer に取り込む
-      2. taffy で block layout / parley で inline layout
-      3. break policy 適用 (LayoutBuffer.decide_break())
-      4. PageContext に directive 反映 (counter increment, string set, etc.)
-      5. @page rule を per-page で resolve (:first / :left / :right / :nth / named)
-      6. PageBox を per-page で決定 (defaults + @page override)
-      7. 16 margin box slots layout (rayon 並列可能)
-      8. PageFragment 組み立てて yield
-      9. 確定領域の layout state を drop
+  ─── 2 cursor モデル (Finding #2 対応) ────────────────────────────
+  DOM cursor    : Phase A で全構築済み Dom を自由に peek ahead
+  Emission cursor: PageFragment が emit された時のみ進む
+  → 両者のギャップ = look-ahead 幅 (LayoutBuffer + PageContext 差分で保持)
+
+  ─── 内部構造 ────────────────────────────────────────────────────
+    LayoutBuffer         (tentative layout state、dirty flag 対応可)
+       ↑ policy: LookaheadPolicy (widow/orphan/break-avoid/container probe 上限)
+       ↑ reflow: ReflowPolicy (AggressiveCommit / DirtyDeferred / FullReflow)
+    TargetResolver       (target-* の解決)
+    EmissionPolicy       (emit タイミング + finish)
+    PageContext          (counter tree + string 4-snapshot + running + target)
+    ResolverPool         (sync resolver、Consumer 責任で並列化)
+    PageBoxCache         (同じ (page_name, parity) の @page 解決結果を再利用)
+
+  ─── per page loop (PageBox 先確定 → layout → emit) ──────────────
+  ┌ ページ context 決定フェーズ ──────────────────────
+  │  1. DOM cursor で次に配置する最初の block を peek (cursor は進めない)
+  │  2. block の `page:` property と直前の page_name から新 page_name を決定:
+  │        - block.page が current_page_name と異なる → forced break + 新 name
+  │        - block.break-before: page → forced break、name は継承
+  │        - overflow による自動 break → name は継承
+  │        - 最初のページ → block.page (指定なければ default)
+  │  3. (page_index, page_name) から @page rule を resolve
+  │        (:first / :left / :right / :nth-page(n) / :blank / named)
+  │        PageBoxCache で hot path 最適化
+  │  4. PageBox を defaults + 実効 @page rule から決定 (available width/height 確定)
+  │
+  ├ Layout フェーズ (PageBox 確定後、DOM cursor を進めて buffer に取込) ─
+  │  5. DOM cursor を進めて次 block を LayoutBuffer に取り込む
+  │  6. taffy で block layout / parley で inline layout (available width 使う)
+  │       - 通常 block: 収まらなければ break policy 適用
+  │       - flex/grid container: max_container_probe_pages 内で probe layout
+  │         · probe 限界内で fit → 通常配置
+  │         · probe 限界内で spanning → Fragmentation L3 handling
+  │         · probe 限界を超え、ReflowPolicy = AggressiveCommit
+  │           → ContainerOverflowFallback で決定 (BreakBefore/Simple/Clip)
+  │         · probe 限界を超え、ReflowPolicy = DirtyDeferred (post-M8)
+  │           → dirty flag で defer、後続の情報で reflow
+  │  7. LayoutBuffer.decide_break() で widow/orphan/break-inside 判定
+  │  8. PageContext に directive 反映 (counter/string/running/target 更新)
+  │  9. LayoutBuffer を PageBox.content.height に収まる分だけ確定
+  │
+  ├ Margin / emit フェーズ ──────────────────────────
+  │ 10. 16 margin box slots layout (rayon 並列可能、PageBox.margins 使う)
+  │ 11. PageFragment 組み立てて EmissionPolicy.emit() 呼び出し
+  │ 12. Emission cursor を進める、確定領域の layout state を drop
+  └ page_index++
 ```
+
+Fragmentation L3 の scope はページを跨ぐ flex/grid container まで含む。probe
+layout で container 全体の subtree を peek し、Fragmentation L3 に沿って各
+fragment のサイズを計算。probe 上限を超えた場合の挙動は
+`ContainerOverflowFallback` で決定 (§8.2 参照)。
 
 ### 5.2 Consumer 介入ポイント (TreeSink wrap)
 
@@ -460,8 +641,9 @@ raikiri では以下に集約:
 ```rust
 // fulgur (Consumer) の想定 use
 use raikiri::{
-    Document, RenderSink, ReplacedResolver, NetworkProvider,
-    parse_html, render, PageDefaults, RenderMode, LookaheadConfig,
+    RenderSink, ReplacedResolver, NetworkProvider,
+    ParseOptions, PageDefaults, LookaheadConfig, BatchConfig,
+    render_streaming, render_batch,
 };
 
 let options = ParseOptions {
@@ -469,13 +651,46 @@ let options = ParseOptions {
     network: Some(&NoOpNetworkProvider),
     base_url: Some(base),
 };
-let doc = raikiri::parse_html(html_input, &options)?;
-raikiri::render(
-    &doc,
+
+// Streaming (fulgur デフォルト、大規模ドキュメント向け)
+raikiri::render_streaming(
+    html_input,
+    &options,
     PageDefaults::a4(),
     &FulgurResolver::new(font_data, images),
-    RenderMode::Streaming { lookahead: Default::default() },
+    LookaheadConfig::default(),
     &mut fulgur_pdf_sink,
+)?;
+
+// Batch (小〜中規模、target-* 正確化)
+raikiri::render_batch(
+    html_input,
+    &options,
+    PageDefaults::a4(),
+    &FulgurResolver::new(font_data, images),
+    BatchConfig {
+        max_document_pages: Some(100),
+        target_convergence: TargetConvergence::TwoPass,
+    },
+    &mut fulgur_pdf_sink,
+)?;
+```
+
+**Document 型を明示的に使いたい advanced case** (複数モードで試したい、途中で
+dump したいなど) には `parse_html()` + `render_with(...)` を提供:
+
+```rust
+let doc = raikiri::parse_html(html_input, &options)?;
+raikiri::dump_document(&doc)?;  // debug 用
+
+// Renderer を組み替えて試す
+raikiri::render_with(
+    &doc, PageDefaults::a4(), &resolver, &mut sink_a,
+    BoundedLookahead(config), PlaceholderTargetResolver::new(), ImmediateEmission,
+)?;
+raikiri::render_with(
+    &doc, PageDefaults::a4(), &resolver, &mut sink_b,
+    UnboundedLookahead, RegistryTargetResolver::from(precomputed), DeferredEmission::new(),
 )?;
 ```
 
@@ -528,14 +743,23 @@ pub struct CascadeResult {
 ```
 
 Selectors 対応:
-- L3 base、interactive 系 (parse は通すが常に false、fail-open)
-- L4 streaming-safe (`:is()`, `:where()`, `:not()`) 採用、優先度低
-- L4 backward (`:has()`, `:nth-last-child()`, `:blank`) は Batch mode 専用
+- L3 base、interactive 系 (`:hover`, `:focus`, `:link`, `:visited`, `:target`,
+  `:enabled`, `:checked`) は selector として parse は通すが、常に non-matching
+  として扱う (fail-closed: 実装しない = match しない)
+- L4 (`:is()`, `:where()`, `:not()`) 採用、優先度低
+- L4 backward-reference (`:has()`, `:nth-last-child()`, `:blank`) は Phase A で
+  full DOM を持つ以上、**mode 非依存で常時対応可能**。実装優先度は低いが、
+  実装したら常時有効
 
 inline `<style>`:
-- **MVP**: `<head>` 内のみ (body 内 `<style>` は無視)
-- **後の拡張**: "出現位置以降のみ有効" (streaming と自然に合う)
-- **Batch mode**: 全 `<style>` が document 全体で有効 (フル spec compliance)
+- **MVP**: `<head>` 内の `<style>` を head 内出現順で登録
+- **後の拡張**: body 内 `<style>` を "出現位置以降のみ有効" として採用可能
+- **Batch mode でも Streaming mode でも挙動は同一** — mode に依存しない
+  (Phase A で全 stylesheet が既に集約されているため)
+
+**重要**: mode (Streaming/Batch) は **layout の pagination policy と target-*
+の解決方式にのみ影響し、cascade / selector matching / stylesheet 解釈には
+一切影響しない**。
 
 ## 7. GCPM IR 明示ノード化 (raikiri-gcpm)
 
@@ -608,60 +832,109 @@ pub struct TargetRegistry {
 - 動的 content (counter / string) を含む: pre-cascade で `is_content_dynamic`
   flag、per-page で subtree を再 layout
 
-### 7.4 target-* の 2 モード
+### 7.4 target-* 解決の 3 戦略
 
-**SinglePass モード (Streaming デフォルト、streaming 保持)**
+TargetResolver trait の実装として 3 種類を提供:
+
+**`PlaceholderTargetResolver` (Streaming preset)**
 
 - 未解決の target-* に到達したら `TargetSlot` を pending_slots に登録
 - `ResolvedContent::TargetSlot(slot_id)` として PageFragment に emit
 - Consumer (fulgur → krilla) が全ページ emit 後に patch (Form XObject slot 方式)
+- streaming 保持
 
-**TwoPass モード (Batch mode で使用、streaming 犠牲)**
+**`RegistryTargetResolver` (Batch preset、TwoPass)**
 
 - Pass 1: 全ページ layout、TargetRegistry 構築
 - Pass 2: registry を PageContext に埋め込んで通常の render
+- streaming 犠牲
 
-**NPassConverge モード (opt-in、target 値が layout に影響する場合)**
+**`ConvergingTargetResolver` (Batch preset、NPassConverge、opt-in)**
 
 - 収束するまで反復。実装は後回し、`max_iterations: 5` 程度で妥協
 
-## 8. Streaming vs Batch (RenderMode)
+## 8. Streaming vs Batch (Strategy Pattern)
 
-### 8.1 モード比較
+### 8.1 設計方針
 
-| 仕様 | Streaming mode | Batch (TwoPass) mode |
+**RenderMode enum は廃止**。Streaming と Batch は「同じ Document を消費する
+別々の pipeline」ではなく、「同じ pipeline のうち **3 つの strategy を差し替えた
+プリセット**」として実装する。
+
+- Phase A (parse + cascade) は完全に共通。CSS 挙動 (`:has()` を含む selector、
+  inline `<style>`、cascade layer など) はどちらの entry でも同一
+- Phase B の pagination policy / target-* 解決 / emission タイミングだけを
+  strategy trait で分離
+- 上位 entry (`render_streaming` / `render_batch`) は「意味のあるプリセットの
+  組み合わせ」を提供、`render_with` は任意の組み合わせを許容する低レベル API
+
+### 8.2 差分の一覧 (strategy 化される部分のみ)
+
+| 項目 | Streaming プリセット | Batch プリセット |
 |---|---|---|
-| `target-counter/text/page` | placeholder slot、Consumer patch | ✓ 正確 |
-| `counters(name, sep)` の nested scope | 現在 scope のみ | ✓ document 全体 |
-| `:has()`, `:nth-last-child()` | 非対応 (fail-open) | ✓ 完全対応 |
-| Sibling `~`, `+` の後方参照 | forward-only | ✓ 完全対応 |
-| Body 内 inline `<style>` | 位置依存 or 非対応 | ✓ document 全体で有効 |
-| Widow/orphan lookahead | N 行 buffer 制限 | ✓ 制限なし |
-| Break-inside: avoid の大 subtree | pre-scan 制限 | ✓ 完全 lookahead |
-| target-* が layout に影響する場合 | 収束保証なし | ✓ N-pass converge で保証 |
-| Memory | O(DOM + window + 1 page) | O(DOM + all pages) |
+| **LookaheadPolicy** | `BoundedLookahead(cfg)`: widow/orphan/break-inside/container probe の N line/block/page 上限 | `UnboundedLookahead`: 全 document を buffer |
+| **TargetResolver** | `PlaceholderTargetResolver`: placeholder slot 発行、Consumer patch | `RegistryTargetResolver`: 事前構築 registry から lookup |
+| **EmissionPolicy** | `ImmediateEmission`: 確定ページを即 sink に渡す | `DeferredEmission`: 全 layout 完了 (+ target 収束) 後にまとめて emit |
+| **ReflowPolicy** | `AggressiveCommit`: probe 限界で即 fallback (M1〜M8 default) | `AggressiveCommit` (M1〜M8) / `FullReflow` (post-M8) |
+| **target-* 収束** | 収束せず、Consumer が patch | `TwoPass` / `NPassConverge` を config で選択 |
+| **container probe** | 上限 N ページ、超えたら `ContainerOverflowFallback` | 上限なし、Fragmentation L3 準拠 |
+| **Memory** | `O(DOM + window + 1 page)` | `O(DOM + all pages)` |
+| **CSS 挙動** | **Batch と同一** (Phase A で完結) | **Streaming と同一** (Phase A で完結) |
 
-### 8.2 mode 選択 API
+**重要な訂正 (Finding #1 / #7 対応)**: 前版で挙げていた「Streaming では `:has()`
+不可、Batch のみ対応」等の差は**存在しない**。それらは Phase A の cascade で
+mode 非依存に解決されるため、mode 選択は cascade の挙動に影響しない。
+
+### 8.3 mode 選択 API
 
 ```rust
-pub enum RenderMode {
-    Streaming { lookahead: LookaheadConfig },
-    Batch {
-        max_document_pages: Option<u32>,
-        target_convergence: TargetConvergence,
-    },
-}
+// pre-composed entry (通常 Consumer 向け)
+pub fn render_streaming(
+    input: impl std::io::Read,
+    options: &ParseOptions,
+    defaults: PageDefaults,
+    resolver: &dyn ReplacedResolver,
+    lookahead: LookaheadConfig,
+    sink: &mut dyn RenderSink,
+) -> std::io::Result<()>;
+
+pub fn render_batch(
+    input: impl std::io::Read,
+    options: &ParseOptions,
+    defaults: PageDefaults,
+    resolver: &dyn ReplacedResolver,
+    config: BatchConfig,
+    sink: &mut dyn RenderSink,
+) -> std::io::Result<()>;
+
+// advanced: 任意の strategy 組み合わせ
+pub fn render_with<L, T, E, R>(
+    doc: &Document,
+    defaults: PageDefaults,
+    resolver: &dyn ReplacedResolver,
+    sink: &mut dyn RenderSink,
+    lookahead: L, target: T, emission: E, reflow: R,
+) -> std::io::Result<()>
+where
+    L: LookaheadPolicy,
+    T: TargetResolver,
+    E: EmissionPolicy,
+    R: ReflowPolicy;
 ```
 
-Consumer (fulgur) は用途で切り替え可能。**RenderSink API は mode 非依存**、
-`accept_page` の逐次呼び出しは Streaming/Batch 両方で同じ shape。
+Consumer (fulgur) は用途で `render_streaming` / `render_batch` を選ぶ。
+**RenderSink API は strategy 非依存**、`accept_page` の逐次呼び出しは両者で
+同じ shape (ImmediateEmission は即時、DeferredEmission は最後にまとめて呼ぶ)。
 
-### 8.3 fulgur の移行選択肢
+### 8.4 fulgur の移行選択肢
 
-- **既存の 2-pass + PDF Form XObject を維持**: raikiri は Streaming mode を使う、
-  target-* placeholder を fulgur が PDF-level で patch
-- **raikiri の Batch mode に移行**: fulgur の 2-pass ロジックを raikiri Batch に
-  置換、`:has()` などフル spec compliance も自動
+- **既存の 2-pass + PDF Form XObject を維持**: raikiri は `render_streaming`
+  を使い、`PlaceholderTargetResolver` の `pending_slots` を Consumer が PDF-level
+  で patch (fulgur 現行フロー)
+- **raikiri の `render_batch` に移行**: fulgur の 2-pass ロジックを削除、
+  `RegistryTargetResolver` に委譲
+- **カスタム strategy**: `render_with` で fulgur 独自の `FulgurFormXObjectResolver`
+  を差し込み、pending_slots を保持しつつ他の strategy はプリセットを流用
 
 ## 9. Per-page PageBox
 
@@ -669,9 +942,12 @@ PDF spec は per-page で `/MediaBox` を独立に持てる。CSS Paged Media �
 `@page :first`, `@page :left`, `@page landscape-wide` などで per-page 変化を
 サポート。
 
-- `render()` は `PageDefaults` を受け取る (単一 PageBox ではない)
+- `render_streaming` / `render_batch` / `render_with` は `PageDefaults` を
+  受け取る (単一 PageBox ではない)
 - `PageStream` 内部で per-page に @page rule 解決 + `page:` property + defaults
   を cascade
+- **`PageBox` は layout の前に確定される** (§5.1 の per page loop の "ページ
+  context 決定フェーズ" 参照、Finding #2 対応)
 - `PageFragment.page_box` が実効ページ寸法を保持
 - Consumer は `page_box.media` を `/MediaBox` に、`page_box.bleed` を
   `/BleedBox` に
@@ -688,6 +964,40 @@ pub struct PageBox {
     pub page_index: u32,
 }
 ```
+
+### 9.1 page name 遷移ルール (spec 準拠、iterative でない)
+
+**Finding #2 対応**: forced break と named page の相互作用を明示化。
+
+| 状況 | 遷移 |
+|---|---|
+| 最初のページ | 最初の block の `page:` property を採用 (指定なければ default) |
+| ページ N が overflow で自動 break | N+1 は N と同じ page name (継承) |
+| 次 block に `page: X` (現在の name と異なる) | forced break-before、N+1 は X |
+| 次 block に `page: X` (現在の name と同じ) | 通常継続、break しない |
+| 次 block に `break-before: page` | forced break、name は N から継承 |
+| 次 block に `break-before: recto/verso` | 空 blank page を 1 枚挿入 (`@page :blank`) して奇偶合わせ、name は継承 |
+| 次 block に `break-before: page(X)` | forced break、N+1 は X (CSS Fragmentation L3) |
+
+**iterative でない理由**: 各 block は "自身の page requirement" を明示的に宣言
+しており、DOM cursor での先読みで一意に決定できる。iteration が必要になるのは
+target-* が page number を変えるケースで、これは `ConvergingTargetResolver`
+(Batch preset の option) が扱う別 loop。
+
+### 9.2 PageBoxCache
+
+同じ `(page_name, page_index parity, is_first, is_blank)` の @page rule 解決結果は
+再利用可能。`PageBoxCache` は crate-private in raikiri-layout:
+
+```rust
+struct PageBoxCache {
+    cache: HashMap<PageContextKey, PageBox>,
+}
+```
+
+`:nth-page(n)` を使う @page rule はページごとに変わるので cache mishit するが、
+`:left`/`:right`/named page はキャッシュ効いて layout hot path のオーバーヘッド
+最小。
 
 ## 10. Resolver Design (sync)
 
@@ -805,7 +1115,7 @@ Layer 3: WPT reftest via VRT (E2E, M1 から primary)
 
 Layer 2: Integration test (crate 境界)
   ├─ raikiri (umbrella) の end-to-end fixture (raster)
-  └─ Streaming / Batch mode-independence test
+  └─ Streaming / Batch preset-independence test
 
 Layer 1: Unit test + optional structural dump
   ├─ 各 crate の unit test
@@ -828,11 +1138,19 @@ raikiri では debug aid に降格。
 dev-dep として blitz を使い、"blitz pass = raikiri 必須 pass" を verify。
 blitz が pass する WPT を raikiri が fail したら regression。
 
-### 12.5 Mode-independence test
+### 12.5 Preset-independence test
 
-target-* / :has() / counters() 未使用のドキュメントでは Streaming と Batch の
-出力が byte-identical であるべき。fast path (Streaming) と correct path (Batch)
-の drift 早期検出。
+**target-* を含まないドキュメント**では `render_streaming` と `render_batch`
+の出力 (`PageFragment` 列 + raster) が byte-identical であるべき。cascade / CSS
+挙動は preset 非依存なので、target-* が絡まない限り差は生まれないはずで、
+これを CI で常時 verify する。
+
+target-* が絡む場合は Streaming が placeholder、Batch が resolved 値を返すので
+raster / PDF は必然的に異なる。この場合は「placeholder を fallback 表示に
+置換した Streaming 出力」と「Batch 出力」で一致するかを確認する。
+
+これにより strategy 実装間の drift (LookaheadPolicy の変更が意図せず layout を
+変えた、EmissionPolicy の順序が壊れた、等) が早期検出できる。
 
 ### 12.6 CI 頻度
 
@@ -841,7 +1159,7 @@ target-* / :has() / counters() 未使用のドキュメントでは Streaming �
 | Unit + Integration | PR ごと | 数秒〜数分 | 必須 |
 | VRT reftest | PR ごと | 15〜30 分 | 必須 |
 | Byte-identical | PR ごと | 数十秒 | 必須 |
-| Mode-independence | PR ごと | 数分 | 必須 |
+| Preset-independence | PR ごと | 数分 | 必須 |
 | WPT full sweep | nightly | 1〜2 時間 | 記録のみ |
 | Blitz baseline oracle | nightly + weekly | 数時間 | regression detection |
 | PDF reftest (via fulgur) | nightly (M6 以降) | 1〜2 時間 | 記録のみ |
@@ -969,42 +1287,56 @@ raikiri-traits = "0.1"
 
 ```rust
 use raikiri::{
-    parse_html, render, PageDefaults, RenderMode, LookaheadConfig,
+    PageDefaults, LookaheadConfig, BatchConfig, TargetConvergence,
     RenderSink, ReplacedResolver, NetworkProvider,
-    ParseOptions, Document,
+    ParseOptions,
+    render_streaming, render_batch,
 };
 
-// 1. HTML parse (template engine で展開後の HTML)
-let doc = parse_html(html_input, &ParseOptions {
+// 1. options を組む (template 展開後の HTML を含む)
+let options = ParseOptions {
     extra_stylesheets: &fulgur_stylesheets,
     network: Some(&NoOpNetworkProvider),
     base_url: Some(base),
-})?;
+};
 
-// 2. render で PageFragment を per-page で受け取る
-render(
-    &doc,
-    PageDefaults::from_cli(cli_size, cli_orientation),
-    &FulgurResolver::new(font_data, images),
-    match doc_size {
-        n if n < 100 => RenderMode::Batch { max_document_pages: Some(n), 
-                        target_convergence: TwoPass },
-        _ => RenderMode::Streaming { lookahead: Default::default() },
-    },
-    &mut FulgurPdfSink::new(krilla_doc),
-)?;
+let defaults = PageDefaults::from_cli(cli_size, cli_orientation);
+let resolver = FulgurResolver::new(font_data, images);
+let mut sink = FulgurPdfSink::new(krilla_doc);
+
+// 2. サイズで render_streaming / render_batch を選ぶ
+match estimated_page_count {
+    n if n < 100 => {
+        raikiri::render_batch(
+            html_input, &options, defaults, &resolver,
+            BatchConfig {
+                max_document_pages: Some(n),
+                target_convergence: TargetConvergence::TwoPass,
+            },
+            &mut sink,
+        )?;
+    }
+    _ => {
+        raikiri::render_streaming(
+            html_input, &options, defaults, &resolver,
+            LookaheadConfig::default(),
+            &mut sink,
+        )?;
+    }
+}
 
 // 3. FulgurPdfSink が PageFragment を walk して krilla に落とす
 struct FulgurPdfSink { krilla_doc: krilla::Document, /* ... */ }
 impl RenderSink for FulgurPdfSink {
     fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
         // krilla API を direct に叩く
-        // page.target_slots を Form XObject slot として書く
+        // page.target_slots を Form XObject slot として書く (Streaming の場合)
+        // page.target_slots は Batch では既に resolved
         // page.heading_structure を outline tree に反映
         // ...
     }
     fn finalize(self: Box<Self>) -> std::io::Result<()> {
-        // font subset、trailer、target-* patch
+        // font subset、trailer、target-* patch (Streaming の場合のみ)
     }
 }
 ```
@@ -1033,6 +1365,24 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
 
 - **Consumer**: raikiri を使う側 (fulgur、将来の EPUB reader、他)
 - **RenderSink**: Consumer が実装する trait、`PageFragment` を受け取る
+- **LookaheadPolicy** (strategy trait): LayoutBuffer の lookahead 幅を制御。
+  Streaming preset は `BoundedLookahead`、Batch preset は `UnboundedLookahead`
+- **TargetResolver** (strategy trait): target-* の解決方式。Streaming preset は
+  `PlaceholderTargetResolver`、Batch preset は `RegistryTargetResolver`
+- **EmissionPolicy** (strategy trait): PageFragment の emit タイミング。
+  Streaming preset は `ImmediateEmission`、Batch preset は `DeferredEmission`
+- **ReflowPolicy** (strategy trait): probe 限界到達時の挙動。M1〜M8 は
+  `AggressiveCommit` のみ実装、`DirtyDeferred` / `FullReflow` は Future Work
+- **ContainerOverflowFallback**: probe 限界超過時の fallback 挙動
+  (ForceBreakBefore / SimpleFragmentation / OverflowClipping / Error)
+- **Streaming preset**: `render_streaming` entry で選ばれる strategy 組み合わせ
+- **Batch preset**: `render_batch` entry で選ばれる strategy 組み合わせ
+  (内部で 2-pass 実行)
+- **DOM cursor / Emission cursor** (Finding #2 対応): 2 cursor モデル。DOM
+  cursor は自由に peek ahead、Emission cursor は PageFragment emit 時のみ進む。
+  ギャップ = look-ahead 幅
+- **PageBoxCache**: 同じ (page_name, parity, is_first, is_blank) の @page 解決
+  結果をキャッシュ、layout hot path の最適化
 - **PageStream**: crate-private state machine、per-page `PageFragment` を emit
 - **PageFragment**: 1 ページの layout 完了済み representation (座標 + style +
   content + GCPM metadata)
@@ -1045,5 +1395,5 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
 - **RaikiriTreeSink**: html5ever `TreeSink` 実装、Consumer が wrap 可能
 - **LayoutBuffer**: widow/orphan/break-avoid lookahead の独立ユニット
 - **TargetRegistry**: target-* の fragment_id → 実効ページ情報の map
-- **TargetSlot**: target-* placeholder、SinglePass モードで PageFragment に emit
+- **TargetSlot**: target-* placeholder、Streaming preset で PageFragment に emit
 - **RunningTemplate**: `position: running(name)` された subtree の template 保持
