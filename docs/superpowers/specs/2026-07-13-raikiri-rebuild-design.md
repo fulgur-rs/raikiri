@@ -592,12 +592,26 @@ pub trait Dom { /* ... */ }
 pub trait Element<'a> { /* ... */ }
 pub trait Node<'a> { /* ... */ }
 
+// ── Public enum convention (Missing consideration 対応) ────────
+// 将来 variant 追加の余地がある全ての pub enum は #[non_exhaustive] を付与し、
+// Consumer 側 exhaustive match の accidental breakage を防ぐ。
+// 具体対象: RenderError, RenderStatus, WarningKind, ResourceKind,
+//          ViolationType, PolicyAction, ReflowAction, ContainerOverflowFallback,
+//          DirtyDeadline, UnresolvedReason, WarningKind, GcpmDirective,
+//          ContentValueItem, TargetKind, ResolvedTargetValue, Body, Method,
+//          NetworkError, TargetConvergence (廃止済み) 等
+// **例外**: enum のセマンティクスが "完全な集合" (Method の HTTP method のような
+//   spec-defined 全網羅) の場合のみ非適用。docs で理由を明示。
+// LookaheadConfig / BatchConfig / StreamingConfig 等の struct も
+// #[non_exhaustive] + `..default()` パターンを推奨。
+
 // ── 中立モデル型 (crate 境界を跨いで参照される) ────────────────
 pub struct PageFragment { /* ... §11.2 参照 */ }
 pub struct PageBox      { /* ... §9    参照 */ }
 pub struct PageContext  { /* ... §7.2  参照 */ }
 pub struct LayoutBuffer { /* ... §5    参照 */ }
 pub struct TargetRegistry { /* ... §7.2 参照 */ }
+#[non_exhaustive]
 pub enum   GcpmDirective { /* ... §7.1  参照 */ }
 pub struct LookaheadConfig {
     pub widow_line_buffer: usize,
@@ -1218,6 +1232,63 @@ raikiri::render_with(
 - **決定論**: `IndexedParallelIterator` で順序保持、byte-identical output goal
   を守る
 
+### 5.4.1 Snapshot semantics for parallel margin-box layout (Missing consideration 対応)
+
+Parallel margin box layout は GCPM state (counter tree、named string、target
+registry、running bindings) を読むが、書き込みはしない。以下の contract で
+concurrency 安全性を保証:
+
+**PageContext snapshot 手順**:
+1. per-page loop の "Layout フェーズ" (§5.1) 完了直後 = margin box layout の
+   直前に、`PageContext` の **immutable snapshot** を取る
+2. Snapshot は `Arc<GcpmSnapshot>` として全 margin box 並列 worker に共有
+3. Snapshot の中身: counter tree の deep copy、strings の 4-snapshot、running
+   bindings、target registry の read-only view
+4. 並列 worker は snapshot のみ read、`PageContext` 本体は書き込まない
+
+```rust
+struct GcpmSnapshot {
+    counters: HashMap<Symbol, CounterStack>,       // per-page 確定値
+    strings: HashMap<Symbol, NamedStringSnapshot>, // 4 slot 確定
+    running: HashMap<Symbol, RunningTemplateId>,
+    targets_view: TargetRegistryView,   // read-only wrapper
+    page_index: u32,
+    page_name: Option<Symbol>,
+}
+
+// per page loop, layout フェーズ後:
+let snapshot = Arc::new(GcpmSnapshot::from(&page_context));
+
+let margin_fragments: [Option<MarginBoxFragment>; 16] = (0..16)
+    .into_par_iter()
+    .map(|slot_idx| {
+        let snap = Arc::clone(&snapshot);
+        // 各 worker は snap を read-only で使用、PageContext 本体は触れない
+        layout_margin_box(slot_idx, &snap, &running_store, &font_context)
+    })
+    .collect_into_slice(...);
+
+// 並列完了後、page_context は変更されないまま
+```
+
+**共有される他のリソース**:
+- **`ParsedRunningTemplate`**: `Arc` で共有、read-only
+- **`FontContext` (parley)**: M0 で `Sync` 確認済み前提。`Arc` で共有
+- **`ComputedValues`**: `Arc<ComputedValues>` で共有、read-only
+
+**書き込み禁止 (compile-time enforcement)**:
+- Rayon closure は `&GcpmSnapshot` を受ける、`&mut` 系は渡さない
+- `PageContext` は per page loop の main thread のみが `&mut` を持つ
+- clippy lint で並列 closure 内の interior mutability を禁止
+
+**Consumer resolver / network の並列呼び出しについて**:
+- `ReplacedResolver: !Sync` の場合、並列 margin box 内では resolver を呼ばない
+  (resolver は sequential body layout phase でのみ呼ばれる、§10 参照)
+- `NetworkProvider: Send + Sync` (blitz-traits 準拠、trait bound 済み)
+
+これで **PageContext の parallel margin box layout 中の状態変化は起こらず、
+byte-identical goal と concurrency safety が両立** する。
+
 ### 5.5 Error / Partial output semantics (Finding #10 対応、new review 対応済)
 
 `render_*` は `Result<RenderStatus, RenderError>` を返す。すべての `RenderError`
@@ -1544,6 +1615,39 @@ struct DynamicFlags {
 **`DynamicFlags` の使い所**: 完全に static な template (`dynamic_flags = all false`)
 は同一 margin box geometry 内で複数ページ跨いで cache 化可能。これは post-M8 の
 最適化として保留 (M1〜M8 は常に re-layout)。
+
+### 7.3.1 Running template の複雑度予算 (Missing consideration 対応)
+
+Per-page re-layout の性質上、running template の実装コストは
+**`O(pages × template subtree size)`** で amplify される。大 subtree × 大 page
+数の組み合わせで pathological worst case が発生する可能性。
+
+**Guard mechanism**:
+- `LookaheadConfig::max_running_template_nodes`: running template subtree の
+  最大 node 数 (default: `Some(2048)`)
+- `LookaheadConfig::max_running_template_bytes`: subtree の serialized 概算
+  memory 上限 (default: `Some(256 * 1024)` = 256 KB)
+- 超過時: cascade 時に **fail-fast** (`RenderError::Configuration` として reject)
+- Consumer は tier 別に guard を調整 (public API では tight、trusted job では
+  緩め)
+
+```rust
+pub struct LookaheadConfig {
+    // ... 既存 field
+    /// running template の complexity guard (Missing consideration 対応)
+    pub max_running_template_nodes: Option<usize>,   // default: Some(2048)
+    pub max_running_template_bytes: Option<usize>,   // default: Some(256*1024)
+}
+```
+
+**Per-page CPU 予算の見積り**:
+- 通常 header/footer template: 数十 node、per-page layout ~1ms 程度
+- 1000 ページ document: 累計 ~1s 追加 (許容範囲)
+- 大 template (subtree 1000+ node) × 大 page (10000+): ~1〜10 分の追加 CPU
+  → guard で防ぐ
+
+**Post-M8 optimization** (§7.3 参照): `dynamic_flags = all false` な template
+の layout 結果 cache 導入で、上記 worst case を大幅緩和できる予定。
 
 ### 7.4 target-* 解決の 2 戦略 + Consumer iteration (Finding #5 対応)
 
@@ -2203,11 +2307,99 @@ WPT scope は「**pass すべき集合**」ではなく「**注視している�
 | `css/css-transitions/` | 非追跡 | Non-goal (interactive) |
 | `html/interaction/` | 非追跡 | interactive rendering は Non-goal |
 
+### 12.10 Flaky-test quarantine + baseline migration + exception 承認 (Missing consideration 対応)
+
+**「every previous pass blocks」rule は厳しすぎる場面がある** (flaky test、
+spec 変更、意図的な feature drop 等)。以下の process で例外を管理:
+
+#### Quarantine list (`expectations/quarantine.txt`)
+
+Flaky test の一時退避:
+
+```
+# expectations/quarantine.txt
+# format: test_id | reason | issue_link | added_date
+css/css-page/page-margin-boxes-001 | Intermittent 1-pixel diff on macOS aarch64 | github.com/.../issues/123 | 2026-08-01
+```
+
+**Quarantine 手順**:
+1. Test が 3 回以上 intermittent fail → 開発者が quarantine PR を出す
+2. `quarantine.txt` にエントリ追加、issue を作成
+3. CI は quarantined test を **T3 informational** として扱う (blocking 除外)
+4. **週次 review**: 全 quarantined test を list、fix 完了なら quarantine 削除
+5. 90 日以上 quarantine されたら strategic review (実装廃止 or fix priority up)
+
+#### Baseline migration (`expectations/raikiri-baseline.txt` の更新)
+
+**追加** (raikiri が新たに pass するようになった test を baseline に組み込む):
+1. 開発者が PR で baseline に test id を追加
+2. CI で該当 test が local pass することを verify
+3. Reviewer が承認 → merge、以降 T2 gate 対象に
+
+**削除** (raikiri baseline から test id を除去):
+1. Test が invalidated (spec 変更、feature drop 等) 明示的理由が必要
+2. 開発者が PR で baseline から削除 + `expectations/deprecated.txt` に理由記録
+3. Reviewer 承認 → merge
+
+#### Exception 承認 process (「以前 pass が新 fail」の例外)
+
+- Case: 意図的な spec-compliance 改善で一部 test が変化
+- 開発者が PR で:
+  1. 変更理由 (何が spec 準拠向けに正されたか)
+  2. 影響 test list (何が pass → fail に変わったか)
+  3. 各 test を deprecated / expected / baseline から remove の判断
+- Reviewer 承認 (少なくとも 2 名)
+- 承認後 baseline を更新、次回 CI で通過
+
+**Automatic 更新は禁止**: すべての baseline / quarantine / deprecated 変更は PR
+経由、reviewer 承認必須。
+
 ## 13. Milestone Plan
 
 各 milestone は **Goals** (何を達成する) + **Tasks** (task 分解) +
 **Acceptance criteria** (完了条件) + **Reference fixtures** (T1 gate) の 4 要素
 で構成 (Task list findings #H2, #H3, #M4 対応)。
+
+### M0: Dep feasibility spike (Missing consideration 対応、必須の前提検証)
+
+**Goals**: M1 以降の設計前提が実際に成立するか、Cargo manifest / lockfile を
+起こす前に scaffold と smoke test で検証。**M1 以降を start する前に必ず完了**。
+
+**検証項目**:
+- **parley**: `FontContext` の `Send + Sync` 適合性 (rayon 並列 shape の前提)
+- **taffy**: block/flex/grid の layout API、column-count の並列可能性
+- **anyrender_vello_cpu**: 同一 platform で byte-identical raster を出すか
+- **selectors**: `stylo` を dep せず standalone で動くか、`Element` trait
+  実装の実 workload
+- **cssparser**: `@page` / `@counter-style` / `@font-face` の custom
+  at-rule extension mechanism
+- **`selectors` + `cssparser` の版整合**: workspace で同 semver に pin 可能か
+- **anyrender**: `PaintScene` trait の実装表面 (blitz-paint と shape 一致か)
+
+**Tasks**:
+- workspace-scaffold: `Cargo.toml` (workspace root) 作成
+- rust-toolchain-msrv: `rust-toolchain.toml` + MSRV 明示 (M0 で `1.85`
+  出発点として設定、実装中に必要が生じたら bump 議論)
+- crate-manifests: 全 crate の `Cargo.toml` 作成、pin dep version 記入
+- feasibility-parley: `crates/raikiri-feasibility/` 内で parley の Send +
+  Sync 検証、rayon parallel shape smoke test
+- feasibility-taffy: block/flex/grid の smoke、column-count 並列
+- feasibility-anyrender: `anyrender_vello_cpu` で hello world raster、
+  10 runs で byte-identical
+- feasibility-selectors: SelectorImpl + Element の minimal 実装
+- feasibility-cssparser: @page rule の custom parse smoke
+- feasibility-report: 全結果を `docs/feasibility-report.md` に記録
+
+**Acceptance criteria**:
+- 全 7 検証項目で "OK" (assumption holds) or "NEEDS_DESIGN_CHANGE" (spec を
+  amend する必要あり) の判定
+- 全 dep version が Cargo.lock に pin 済み
+- `docs/feasibility-report.md` が commit されている
+- **NEEDS_DESIGN_CHANGE 判定があれば、M1 に入る前に design doc を revise
+  して roborev 再レビュー**
+
+**Non-goals**: 実際の HTML/CSS 処理 (M1 以降)、performance benchmarking
+(M8 まで)、edge case exhaustive coverage (smoke test 相当)
 
 ### M1: Skeleton + reference harness + error taxonomy + hello world VRT
 
@@ -2450,9 +2642,12 @@ test)
 - Tier 2 raster tolerance 内、Tier 3 best effort
 - 全 `RenderError` variant を fault injection でトリガー可能
 
-### milestone 依存 DAG (訂正版、per-page PageBox 前倒し + M6 分割)
+### milestone 依存 DAG (訂正版、M0 追加 + per-page PageBox 前倒し + M6 分割)
 
 ```
+M0 dep feasibility spike ← Cargo manifest 起こす前の必須検証
+     │
+     ▼
 M1 skeleton + reference harness + error taxonomy + hello world
      │
      ├─▶ M2 pagination + Streaming error semantics
@@ -2486,10 +2681,11 @@ M1 skeleton + reference harness + error taxonomy + hello world
      └───────── T1 reference fixtures ──┘ (各 milestone で追加)
 ```
 
-### サイズ感 (LoC 目安、M6 分割済み)
+### サイズ感 (LoC 目安、M0 追加 + M6 分割済み)
 
 | Milestone | 実装量目安 | 難易度 |
 |---|---|---|
+| M0 dep feasibility spike | ~500 行 (throwaway smoke) | 中 |
 | M1 skeleton + reference harness + error types | ~2500 行 | 中 |
 | M2 pagination + Streaming error semantics | ~2000 行 | 中 |
 | M3 inline (parley) | ~3000 行 | 高 |
@@ -2513,6 +2709,12 @@ M1 skeleton + reference harness + error taxonomy + hello world
 `bd dep add` で milestone 間依存を明示。
 
 ```
+raikiri-spike-m0 (epic): Dep feasibility spike (必須の前提検証)
+├─ workspace-scaffold, rust-toolchain-msrv, crate-manifests
+├─ feasibility-parley, feasibility-taffy, feasibility-anyrender
+├─ feasibility-selectors, feasibility-cssparser
+└─ feasibility-report
+
 raikiri-spike-m1 (epic): Skeleton + reference harness + error taxonomy
 ├─ workspace-setup, traits-definition, error-taxonomy-types
 ├─ html-parse-basic, css-cascade-basic, dom-model
