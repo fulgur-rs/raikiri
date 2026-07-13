@@ -73,6 +73,13 @@ WPT-first 検証方針を継承しつつ、ゼロから作り直す** ための�
 - **DoS 耐性の第一級保証**: raikiri は 1 pass 固定、内部 iteration なし。
   Consumer 側で iteration bound を管理
 - **同期 ReplacedResolver**: raikiri コアに async runtime を持ち込まない
+- **Security 2 層 model** (Finding #6 対応):
+  - Layer 1 (DOM sanitize): TreeSink wrap による untrusted HTML 防御
+  - Layer 2 (Resource policy): SandboxedNetProvider / SandboxedResolver + 
+    ResourcePolicy による fetch 防御
+  - 両層を Consumer が実装しないと server-side safety は成立しないことを明示
+- **NetworkProvider signature を blitz-traits::NetProvider に shape 一致**:
+  Request/AbortSignal/Body/Method を共有 (raikiri は sync return で違い)
 - **WPT 準拠を第一級目標**: blitz baseline oracle として活用、blitz が pass
   する全 test を pass しつつ、blitz の spec drop 箇所を native fix
 - **byte-identical layout output** (決定論)
@@ -147,7 +154,9 @@ raikiri-spike/
 │   │                            PageFragment, PageBox, PageContext,
 │   │                            LayoutBuffer, TargetRegistry, GcpmDirective,
 │   │                            LookaheadConfig, StreamingConfig, BatchConfig,
-│   │                            DocumentPlan, PageSummary, TargetDiscrepancy
+│   │                            DocumentPlan, PageSummary, TargetDiscrepancy,
+│   │                            Request, FetchedResource, Body, Method, AbortSignal,
+│   │                            ResourcePolicy, ResourceKind, PolicyViolation
 │   ├── raikiri-style/        # ★ stylo 相当: CSS engine
 │   │                            - cssparser + selectors integration
 │   │                            - 統一 RuleTree (通常 rule + @page/counter/
@@ -336,11 +345,111 @@ pub struct TargetSlotId {
 }
 
 pub trait ReplacedResolver {
+    /// req に含まれる URL の scheme/host/size 等の検証は Consumer 責任。
+    /// 集中的に policy を効かせたい場合は raikiri-net の SandboxedResolver を wrap
+    /// (Finding #6 対応、§10 参照)
     fn resolve(&self, req: ResolverRequest<'_>) -> Result<IntrinsicBox, ResolverError>;
 }
 
-pub trait NetworkProvider {
-    fn fetch(&self, url: &Url) -> Result<Bytes, NetworkError>;
+/// blitz-traits::NetProvider の shape に揃える (Finding #6 対応)。
+/// raikiri は sync core のため callback ではなく sync return。
+/// policy 適用は raikiri-net::SandboxedNetProvider による wrap で行う。
+pub trait NetworkProvider: Send + Sync {
+    fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError>;
+}
+
+pub struct Request {
+    pub url: Url,
+    pub method: Method,
+    pub content_type: Option<String>,
+    pub headers: HeaderMap,
+    pub body: Body,
+    pub signal: Option<AbortSignal>,
+    /// raikiri 追加: fetch の目的 (blitz は doc_id だが、raikiri は context 表現)
+    pub kind: ResourceKind,
+}
+
+pub struct FetchedResource {
+    pub bytes: Bytes,
+    pub content_type: Option<String>,
+    pub final_url: Url,     // redirect 後
+    pub encoding: Option<String>,
+}
+
+pub enum Body { Bytes(Bytes), Form(FormData), Empty }
+pub enum Method { Get, Post, /* ... */ }
+
+/// blitz と同じ AbortSignal (AtomicBool ラッパ)
+pub struct AbortSignal(Arc<AtomicBool>);
+
+impl AbortSignal {
+    pub fn is_aborted(&self) -> bool { self.0.load(Ordering::Acquire) }
+}
+
+pub struct AbortController { pub signal: AbortSignal }
+impl AbortController {
+    pub fn new() -> Self { /* ... */ }
+    pub fn with_timeout(dur: Duration) -> Self { /* thread 立ててtimeoutでabort */ }
+    pub fn abort(&self) { /* ... */ }
+}
+
+pub enum NetworkError {
+    Aborted,
+    PolicyViolation(PolicyViolation),
+    Io(std::io::Error),
+    Http(u16),
+    Other(String),
+}
+
+// ── ResourcePolicy trait (Finding #6 対応、opt-in) ────────────
+pub trait ResourcePolicy: Send + Sync {
+    // URL / host 制御
+    fn is_scheme_allowed(&self, scheme: &str, kind: ResourceKind) -> bool;
+    fn is_host_allowed(&self, host: &str, kind: ResourceKind) -> bool;
+    // Redirect 制御
+    fn allow_redirect(&self, from: &Url, to: &Url, hop: u32) -> bool;
+    fn max_redirect_hops(&self, kind: ResourceKind) -> u32;
+    // Size 制限 (byte-level DoS 対策)
+    fn max_fetch_bytes(&self, kind: ResourceKind) -> Option<u64>;
+    fn max_decoded_bytes(&self, kind: ResourceKind) -> Option<u64>;
+    // Timeout (thread hang 対策)
+    fn fetch_timeout(&self, kind: ResourceKind) -> Duration;
+    fn decode_timeout(&self, kind: ResourceKind) -> Duration;
+    // MIME validation
+    fn allowed_mime_types(&self, kind: ResourceKind) -> Vec<String>;
+    // Recursion (chained @import 対策)
+    fn max_import_depth(&self) -> u32;
+    fn max_svg_recursion_depth(&self) -> u32;
+}
+
+#[non_exhaustive]
+pub enum ResourceKind {
+    StylesheetImport,    // @import in CSS
+    ExternalStylesheet,  // <link rel="stylesheet">
+    Image,               // <img src>, background-image
+    Font,                // @font-face src
+    Svg,                 // external SVG
+    MathML,              // external MathML
+    Other,
+}
+
+pub struct PolicyViolation {
+    pub kind: ResourceKind,
+    pub url: Url,
+    pub violation_type: ViolationType,
+    pub details: String,
+}
+
+pub enum ViolationType {
+    SchemeNotAllowed,
+    HostNotAllowed,
+    RedirectDenied,
+    FetchTooLarge { limit: u64, actual: u64 },
+    DecodedTooLarge { limit: u64, actual: u64 },
+    Timeout,
+    MimeNotAllowed { mime: String },
+    RecursionExceeded { depth: u32 },
+    Other,
 }
 
 // ── Strategy traits (Streaming と Batch で変わる差分だけ) ───────
@@ -618,11 +727,58 @@ pub struct PaintOptions {
 
 #### `raikiri-net`
 
-`NetworkProvider` 実装群。
+`NetworkProvider` / `ReplacedResolver` 実装群 + policy wrapper (Finding #6 対応)。
 
+**Base provider 実装**:
 - `NoOpNetworkProvider`: fulgur デフォルト、全 fetch を reject
-- `SandboxedNetworkProvider` (future): URL allowlist、size/time limit、MIME
-  whitelist
+
+**Policy wrappers** (decorator pattern):
+- `SandboxedNetProvider<P: NetworkProvider>`: 任意の provider を wrap し、
+  ResourcePolicy を pre-fetch / post-fetch で検証
+- `SandboxedResolver<R: ReplacedResolver>`: 同じく resolver を wrap
+
+**Policy preset 実装**:
+- `DenyAllPolicy`: 全 fetch を reject する最も restrictive な policy
+- `DefaultSandboxPolicy`: 実用的な出発点
+  - `allowed_schemes: ["https", "data"]`
+  - `max_fetch_bytes: 10 MB`
+  - `max_decoded_bytes: 100 MB`
+  - `fetch_timeout: 5s`
+  - `max_import_depth: 4`
+
+```rust
+// raikiri-net の主要 API
+pub struct SandboxedNetProvider<P: NetworkProvider> { /* ... */ }
+impl<P: NetworkProvider> SandboxedNetProvider<P> {
+    pub fn new(inner: P, policy: Arc<dyn ResourcePolicy>) -> Self;
+    pub fn with_default_sandbox(inner: P) -> Self;
+    pub fn inner(&self) -> &P;
+}
+impl<P: NetworkProvider> NetworkProvider for SandboxedNetProvider<P> {
+    fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+        // Pre-fetch: scheme, host, redirect の検証
+        // Fetch: AbortSignal を policy.fetch_timeout で強化
+        // Post-fetch: size, MIME の検証
+        // Consumer の inner に委譲
+    }
+}
+
+pub struct SandboxedResolver<R: ReplacedResolver> { /* ... */ }
+// 同じ shape
+
+pub struct DenyAllPolicy;
+pub struct DefaultSandboxPolicy { /* ... */ }
+```
+
+**wrapper composition** で複数の cross-cutting concerns を合成可能:
+```rust
+let np = LoggingProvider::new(
+    SandboxedNetProvider::new(
+        FulgurNetProvider::new(assets_dir),
+        Arc::new(DefaultSandboxPolicy::default()),
+    ),
+);
+```
 
 #### `raikiri` (umbrella)
 
@@ -832,7 +988,11 @@ layout で container 全体の subtree を peek し、Fragmentation L3 に沿っ
 fragment のサイズを計算。probe 上限を超えた場合の挙動は
 `ContainerOverflowFallback` で決定 (§8.2 参照)。
 
-### 5.2 Consumer 介入ポイント (TreeSink wrap)
+### 5.2 Consumer 介入ポイント (TreeSink wrap = Layer 1 DOM sanitize)
+
+**Security 2 層 model の Layer 1** (Finding #6 対応、詳細は §10.x)。
+Layer 2 (resource-level policy) は §10 の SandboxedNetProvider / SandboxedResolver
+で扱う。両方の Layer が揃わないと server-side safety は成立しない。
 
 `DocumentPass` / `DomTransform` のような独立 trait は raikiri-traits に**入れない**。
 Consumer が Dom に介入したい場合は、`RaikiriTreeSink` を wrap する:
@@ -1409,8 +1569,72 @@ impl ReplacedResolver for FulgurResolver {
 }
 ```
 
-**副次効果**: attribute-level sanitize bypass 問題が自然消滅 (resolver は呼ばれた
-瞬間に現在の attrs を参照するので、pre-sanitize の URL を hold しない)。
+**副次効果 (訂正、Finding #6 対応)**: sync resolver は "resolver 起動時点の attrs
+を参照する契約" を保証。これは **pre-sanitize な captured URL が resolver 側に残る
+問題** を防ぐ。ただし、**scheme 検証 (`javascript:` 拒否)、size 制限、MIME 検証、
+timeout、redirect 制御、decompression bomb 対策 等の resource-level security は
+sync resolver だけでは実現できない** — これらは §10.x で扱う `ResourcePolicy` +
+`SandboxedResolver` / `SandboxedNetProvider` (raikiri-net) の責務。
+
+### 10.x Security の 2 層 model (Finding #6 対応)
+
+raikiri は **Consumer が 2 層 security を実装する必要があること** を明示化:
+
+```
+Layer 1: DOM level sanitize (§5.2)
+  - TreeSink wrap で <script>, <iframe>, on* attr 削除
+  - `javascript:` scheme を href/src から除去
+  - untrusted HTML の "パースする内容" の防御
+
+Layer 2: Resource level policy (§10, raikiri-net)
+  - SandboxedNetProvider + SandboxedResolver で fetch 時に policy 適用
+  - ResourcePolicy: scheme allowlist、host restriction、size limit、
+    MIME validation、timeout、redirect 制御、recursion limit
+  - untrusted resource の "fetch する対象" の防御
+```
+
+**両方の Layer を Consumer が実装しないと server-side safety は成立しない**。
+1 層だけでは以下のような攻撃を防げない:
+- Layer 1 のみ: 巨大画像 URL による memory 枯渇、遅い server への fetch による
+  thread hang、redirect chain による資源浪費
+- Layer 2 のみ: `<script>` の残存、`javascript:` scheme の残存、event handler
+  の残存
+
+### 10.y ResourcePolicy trait と wrapper pattern
+
+**trait 定義** (raikiri-traits、§4 参照)、**preset 実装** (raikiri-net):
+- `DenyAllPolicy` — 全 fetch を reject する最も restrictive な起点
+- `DefaultSandboxPolicy` — https + data のみ許可、10 MB 上限、5s timeout 等の実用的デフォルト
+
+**wrapper pattern**:
+
+```rust
+// Consumer's own base provider (raw、policy なし)
+struct FulgurNetProvider { /* ... */ }
+impl NetworkProvider for FulgurNetProvider { /* ... */ }
+
+// Fulgur が 2 種類の provider を用意:
+// (A) trusted internal batch job 用: 生 provider
+let np_trusted = FulgurNetProvider::new(assets_dir);
+
+// (B) public API / untrusted input 用: Sandboxed でwrap
+let policy = Arc::new(DefaultSandboxPolicy::default());
+let np_untrusted = SandboxedNetProvider::new(
+    FulgurNetProvider::new(assets_dir),
+    policy.clone(),
+);
+let resolver_untrusted = SandboxedResolver::new(
+    FulgurResolver::new(font_data, images),
+    policy,
+);
+```
+
+**利点**:
+- Signature が blitz と shape 一致 — Consumer が blitz と両対応する場合の adapter
+  が薄くて済む
+- Consumer の既存 impl は breaking change なし
+- `LoggingProvider::new(SandboxedNetProvider::new(FulgurNetProvider::new()))` の
+  ような chain 合成が natural
 
 ## 11. Paint Architecture (anyrender 採用)
 
@@ -1705,18 +1929,43 @@ use raikiri::{
 };
 
 // 1. options を組む (template 展開後の HTML を含む)
+//    Layer 2 security (Finding #6 対応): request tier で provider / resolver を選択
+let (net_provider, resolver): (Box<dyn NetworkProvider>, Box<dyn ReplacedResolver>) = 
+    match fulgur_config.trust_tier {
+        TrustTier::PublicApi => {
+            // untrusted input: Sandboxed で wrap
+            let policy = Arc::new(fulgur::FulgurStandardPolicy::default());
+            (
+                Box::new(SandboxedNetProvider::new(
+                    FulgurNetProvider::new(&assets_dir),
+                    policy.clone(),
+                )),
+                Box::new(SandboxedResolver::new(
+                    FulgurResolver::new(&font_data, &images),
+                    policy,
+                )),
+            )
+        }
+        TrustTier::InternalBatch => {
+            // trusted: 生 provider (性能重視)
+            (
+                Box::new(FulgurNetProvider::new(&assets_dir)),
+                Box::new(FulgurResolver::new(&font_data, &images)),
+            )
+        }
+    };
+
 let options = ParseOptions {
     extra_stylesheets: &fulgur_stylesheets,
-    network: Some(&NoOpNetworkProvider),
+    network: Some(net_provider.as_ref()),
     base_url: Some(base),
 };
 
 let defaults = PageDefaults::from_cli(cli_size, cli_orientation);
-let resolver = FulgurResolver::new(font_data, images);
 
 // 2. pass-0: plan で document 全体像を掴む (DoS 防御ゲート)
 let plan = raikiri::plan_document(
-    html_input, &options, defaults, &resolver,
+    html_input, &options, defaults, resolver.as_ref(),
     LookaheadConfig::default(),
 )?;
 
@@ -1733,7 +1982,7 @@ match plan.total_pages {
     n if n < 100 && has_multi_page_flex_grid(&plan) => {
         // Batch: Fragmentation L3 準拠が必要な小〜中規模文書
         raikiri::render_batch(
-            html_input, &options, defaults, &resolver,
+            html_input, &options, defaults, resolver.as_ref(),
             BatchConfig {
                 max_document_pages: Some(n),
                 initial_registry: Some(plan.target_registry),  // hint
@@ -1744,7 +1993,7 @@ match plan.total_pages {
     _ => {
         // Streaming: 大規模、DoS 耐性最大
         raikiri::render_streaming(
-            html_input, &options, defaults, &resolver,
+            html_input, &options, defaults, resolver.as_ref(),
             StreamingConfig {
                 lookahead: LookaheadConfig::default(),
                 initial_registry: Some(plan.target_registry),  // hint
@@ -1881,6 +2130,18 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
   ギャップ = look-ahead 幅
 - **PageBoxCache**: 同じ (page_name, parity, is_first, is_blank) の @page 解決
   結果をキャッシュ、layout hot path の最適化
+- **Security 2 層 model** (Finding #6 対応): Layer 1 (DOM sanitize via TreeSink
+  wrap) + Layer 2 (Resource policy via SandboxedNetProvider / SandboxedResolver)
+- **ResourcePolicy** (trait): scheme / host / size / MIME / timeout / redirect /
+  recursion 制御を集約
+- **SandboxedNetProvider / SandboxedResolver** (raikiri-net): NetworkProvider /
+  ReplacedResolver を wrap して policy を適用する decorator
+- **DefaultSandboxPolicy** (raikiri-net): allowed_schemes=[https,data]、10 MB
+  上限、5s timeout 等の実用的 default preset
+- **DenyAllPolicy** (raikiri-net): 全 fetch を reject する最も restrictive な
+  出発点 preset
+- **ResourceKind**: fetch context (StylesheetImport / ExternalStylesheet /
+  Image / Font / Svg / MathML / Other) — policy method に context を渡す
 - **PageStream**: crate-private state machine、per-page `PageFragment` を emit
 - **PageFragment**: 1 ページの layout 完了済み representation (座標 + style +
   content + GCPM metadata)
