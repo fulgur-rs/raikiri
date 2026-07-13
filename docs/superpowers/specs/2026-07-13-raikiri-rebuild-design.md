@@ -71,7 +71,7 @@ WPT-first 検証方針を継承しつつ、ゼロから作り直す** ための�
 - **ReflowPolicy trait による dirty tracking の拡張余地確保**: M1〜M8 は
   AggressiveCommit のみ実装、DirtyDeferred / FullReflow は Future Work
 - **3 entry point (plan / render_streaming / render_batch)** (Finding #5 対応):
-  - `plan_document` は dry-run、PaintScene/PaintedBox 構築なしの minimal mode
+  - `plan` は dry-run、PaintScene/PaintedBox 構築なしの minimal mode
   - Consumer が render 前に document size を検査し、DoS 攻撃的な巨大 document を
     事前拒否可能
   - initial_registry は hint のみ、render は自分で target-* を再計算
@@ -120,7 +120,7 @@ WPT-first 検証方針を継承しつつ、ゼロから作り直す** ための�
   mutation → re-render の flow を持たない
 - **raikiri 内部での target-* 反復収束** (Finding #5 対応): 攻撃者による
   oscillation 誘発を防ぐため、`NPassConverge` / `ConvergingTargetResolver` は
-  raikiri 側では非対応。収束が必要な用途は Consumer が `plan_document` +
+  raikiri 側では非対応。収束が必要な用途は Consumer が `plan` +
   `render_*` を chain して自分の iteration bound で管理
 - **無制限メモリ消費**: 各 entry point のメモリ上限を明示、`max_document_pages`
   超過時は fail-fast
@@ -155,9 +155,11 @@ WPT-first 検証方針を継承しつつ、ゼロから作り直す** ための�
 
 ## 4. Workspace Layout
 
-blitz workspace 構成に対応させ、`stylo` 相当の位置に `raikiri-style` を置く 10
-crate 構成 (dev/compat 含めて 13)。GCPM は cascade 側 (raikiri-style) と layout
-側 (raikiri-dom) に自然分割し、独立 crate は持たない。
+blitz workspace 構成に対応させ、`stylo` 相当の位置に `raikiri-style` を置く。
+**Core 7 crate** (traits, style, dom, html, paint, net, raikiri umbrella)
+**+ compat 1 crate** (raikiri-blitz-compat、M6 で追加) **+ dev-only 2 crate**
+(raikiri-wpt, raikiri-vrt) = **10 crate 総計**。GCPM は cascade 側 (raikiri-style)
+と layout 側 (raikiri-dom) に自然分割し、独立 crate は持たない。
 
 ```
 raikiri-spike/
@@ -293,7 +295,7 @@ reviewer 提案の明示表：
 | `PageBoxCache` (crate-private) | raikiri-dom | raikiri-dom 内部のみ |
 | `render_with()` (低レベル driver) | raikiri-dom | raikiri (umbrella 経由), Consumer (advanced) |
 | `paint_to_scene()` | raikiri-paint | raikiri-vrt, Consumer |
-| `NoOpNetworkProvider`, (future) `SandboxedNetworkProvider` | raikiri-net | Consumer |
+| `NoOpNetworkProvider`, (future) `SandboxedNetProvider` | raikiri-net | Consumer |
 | `parse_html()`, `render_streaming()`, `render_batch()`, `html_to_png()` | raikiri (umbrella) | Consumer |
 
 **Consumer 目線**: `use raikiri::*` だけで足りる。sub-crate 直接依存も可能
@@ -669,7 +671,7 @@ pub struct LookaheadConfig {
 
 pub struct StreamingConfig {
     pub lookahead: LookaheadConfig,
-    /// plan_document の結果を hint として渡す (Option)
+    /// plan() の結果を hint として渡す (Option)
     /// - Some: hint 値を layout の space reservation に使う
     /// - None: pass-1 相当、target-* は placeholder emit
     /// **render は hint に依らず必ず自分で target-* を再計算する**
@@ -1008,7 +1010,7 @@ pub fn html_to_png(html: &str) -> Result<Vec<u8>, RenderError>;
 **3 entry point の重要な性質** (Finding #5 対応、DoS 耐性):
 - 各 entry point は raikiri 内部で **1 pass 固定**
 - `initial_registry` は **hint** のみ、render は必ず自分で target-* を再計算
-- 収束が必要な用途は Consumer が `plan_document` + `render_*` を chain して自分の
+- 収束が必要な用途は Consumer が `plan` + `render_*` を chain して自分の
   iteration bound で管理 (untrusted 入力なら iter=0、trusted なら iter=N)
 - `TargetConvergence` enum、`NPassConverge` は raikiri 側では未実装 (Non-goal)
 
@@ -1142,7 +1144,7 @@ fragment のサイズを計算。probe 上限を超えた場合の挙動は
 
 ### 5.2 Consumer 介入ポイント (TreeSink wrap = Layer 1 DOM sanitize)
 
-**Security 2 層 model の Layer 1** (Finding #6 対応、詳細は §10.x)。
+**Security 2 層 model の Layer 1** (Finding #6 対応、詳細は §10.1)。
 Layer 2 (resource-level policy) は §10 の SandboxedNetProvider / SandboxedResolver
 で扱う。両方の Layer が揃わないと server-side safety は成立しない。
 
@@ -1188,7 +1190,7 @@ raikiri では以下に集約:
 use raikiri::{
     RenderSink, ReplacedResolver, NetworkProvider,
     ParseOptions, PageDefaults, LookaheadConfig, StreamingConfig, BatchConfig,
-    plan_document, render_streaming, render_batch,
+    parse_html, plan, render_streaming, render_batch, RenderStatus, RenderError,
 };
 
 let options = ParseOptions {
@@ -1239,7 +1241,7 @@ raikiri::render_batch(
 
 | Consumer が欲しいもの | 使う API |
 |---|---|
-| target 収束のための hint (最低限、DoS 防御) | `plan_document` |
+| target 収束のための hint (最低限、DoS 防御) | `plan` |
 | fulgur pass-1 (Drawables アクセス、layout 情報) | `render_streaming` + inspection sink |
 | 実際の PDF/画像生成 | `render_streaming` / `render_batch` + Consumer sink |
 | Fragmentation L3 準拠 (multi-page flex/grid) | `render_batch` (unbounded lookahead) |
@@ -1399,7 +1401,7 @@ impl MarginBoxCounterScratch {
 3. margin box layout 時、running template 内の replaced element は cached
    `IntrinsicBox` を lookup するのみ (resolver は呼ばれない → 並列安全)
 4. Consumer 責任: 大量の running template 内 image の resolve は Consumer の
-   Layer 2 policy で bound (§10.x の SandboxedResolver でサイズ・件数制限)
+   Layer 2 policy で bound (§10.1 の SandboxedResolver でサイズ・件数制限)
 
 **Fallback / error 挙動**:
 - Consumer resolver が Err を返した replaced element: `IntrinsicBox::fallback()`
@@ -1505,7 +1507,7 @@ raikiri は fallback 発生を `RenderSummary.warnings` に記録。Consumer が
   commit する (raikiri は transactional sink API を提供しない、Consumer の
   自由度を残す)
 
-#### Plan mode (`plan_document`)
+#### Plan mode (`plan`)
 
 - Error 発生時、`DocumentPlan` は返らない
 - **sink emit なし** (dry-run、sink を持たない)
@@ -1861,7 +1863,7 @@ opt-in field を足す際の contract として先取りしておく。
 
 TargetResolver trait の実装として 2 種類のみ提供。**raikiri 内部での iteration
 収束は行わない** (DoS 耐性のため)。収束が必要な用途は Consumer が
-`plan_document` + `render_*` を chain して自分の iteration bound で管理する。
+`plan` + `render_*` を chain して自分の iteration bound で管理する。
 
 **`PlaceholderTargetResolver` (Streaming preset default)**
 
@@ -1883,7 +1885,7 @@ TargetResolver trait の実装として 2 種類のみ提供。**raikiri 内部�
 
 **削除された概念** (Finding #5 対応):
 - ~~`ConvergingTargetResolver` / `NPassConverge`~~ - 攻撃者による oscillation 誘発
-  リスクのため raikiri 側では未実装。Consumer が `plan_document` + `render_*` を
+  リスクのため raikiri 側では未実装。Consumer が `plan` + `render_*` を
   chain して自分で iteration
 - ~~`TargetConvergence` enum~~ - Consumer が iteration bound を管理
 
@@ -1976,7 +1978,7 @@ finish_render(summary):
 
 ### 8.2 差分の一覧 (strategy 化される部分のみ、+ plan mode)
 
-| 項目 | plan_document | Streaming プリセット | Batch プリセット |
+| 項目 | `plan` (dry-run) | Streaming プリセット | Batch プリセット |
 |---|---|---|---|
 | **LookaheadPolicy** | 通常 `UnboundedLookahead` (精度重視) | `BoundedLookahead(cfg)` | `UnboundedLookahead` |
 | **TargetResolver** | 内部で target 収集 | `PlaceholderTargetResolver` | `RegistryTargetResolver` (initial_registry の hint 使用) |
@@ -1995,7 +1997,7 @@ mode 非依存に解決されるため、mode 選択は cascade の挙動に影�
 
 **重要な訂正 (Finding #5 対応)**: 前版で挙げていた「Batch = full spec compliance
 + NPassConverge 収束保証」は**廃止**。DoS 耐性のため raikiri は 1 pass 固定、
-target-* 収束が必要な用途は Consumer が `plan_document` + `render_*` を chain
+target-* 収束が必要な用途は Consumer が `plan` + `render_*` を chain
 して自分の iteration bound で管理する。
 
 ### 8.3 mode 選択 API
@@ -2099,7 +2101,7 @@ pub struct PageBox {
 
 **iterative でない理由**: 各 block は "自身の page requirement" を明示的に宣言
 しており、DOM cursor での先読みで一意に決定できる。iteration が必要になるのは
-target-* が page number を変えるケースで、それは Consumer が `plan_document` +
+target-* が page number を変えるケースで、それは Consumer が `plan` +
 `render_*` を chain して自分で管理する (§7.4 参照、raikiri 内 iteration は
 Finding #5 対応で廃止)。
 
@@ -2154,10 +2156,10 @@ impl ReplacedResolver for FulgurResolver {
 を参照する契約" を保証。これは **pre-sanitize な captured URL が resolver 側に残る
 問題** を防ぐ。ただし、**scheme 検証 (`javascript:` 拒否)、size 制限、MIME 検証、
 timeout、redirect 制御、decompression bomb 対策 等の resource-level security は
-sync resolver だけでは実現できない** — これらは §10.x で扱う `ResourcePolicy` +
+sync resolver だけでは実現できない** — これらは §10.1 で扱う `ResourcePolicy` +
 `SandboxedResolver` / `SandboxedNetProvider` (raikiri-net) の責務。
 
-### 10.x Security の 2 層 model (Finding #6 対応)
+### 10.1 Security の 2 層 model (Finding #6 対応)
 
 raikiri は **Consumer が 2 層 security を実装する必要があること** を明示化:
 
@@ -2181,7 +2183,7 @@ Layer 2: Resource level policy (§10, raikiri-net)
 - Layer 2 のみ: `<script>` の残存、`javascript:` scheme の残存、event handler
   の残存
 
-### 10.y ResourcePolicy trait と wrapper pattern
+### 10.2 ResourcePolicy trait と wrapper pattern
 
 **trait 定義** (raikiri-traits、§4 参照)、**preset 実装** (raikiri-net):
 - `DenyAllPolicy` — 全 fetch を reject する最も restrictive な起点
@@ -2417,8 +2419,10 @@ tests/reference/
 
 各ディレクトリの構成:
 - `input.html`
-- `expected.png` (VRT reference、tier 1 platform で生成)
+- `expected/page-{N:04}.png` (VRT reference、per-page、tier 1 platform で生成、
+  詳細は下記「Multi-page ドキュメントの golden 表現」)
 - `expected.pdf` (fulgur adapter 経由、M6+ で)
+- `expected-summary.json` (RenderSummary の canonical serialize)
 - `README.md` (このドキュメントが検証している要件)
 
 **追加時のルール**: 新 milestone で「この milestone で対応する新機能」に対応する
@@ -3225,16 +3229,18 @@ raikiri-traits = "0.1"
 
 ### 14.2 fulgur 側の実装フロー
 
-**Finding #5 対応後の推奨フロー**: `plan_document` で dry-run → DoS 判定 →
+**Finding #5 対応後の推奨フロー**: `plan` で dry-run → DoS 判定 →
 `render_*` で本描画。fulgur の既存 pass-1 / pass-2 アーキテクチャに直接対応。
 
 ```rust
 use raikiri::{
     PageDefaults, LookaheadConfig, StreamingConfig, BatchConfig,
     RenderSink, ReplacedResolver, NetworkProvider,
-    ParseOptions,
-    plan_document, render_streaming, render_batch,
+    ParseOptions, RenderStatus, RenderError,
+    parse_html, plan, render_streaming, render_batch,
 };
+use raikiri_net::{SandboxedNetProvider, SandboxedResolver};
+use std::sync::Arc;
 
 // 1. options を組む (template 展開後の HTML を含む)
 //    Layer 2 security (Finding #6 対応): request tier で provider / resolver を選択
@@ -3326,7 +3332,7 @@ match status {
 //    target_discrepancies が空でなければ、Consumer 判断で再度 plan+render
 //    fulgur は untrusted input なら iter=0、trusted なら iter=N 等を config で強制
 
-// 3. FulgurPdfSink が PageFragment を walk して krilla に落とす
+// 5. FulgurPdfSink が PageFragment を walk して krilla に落とす
 struct FulgurPdfSink {
     krilla_doc: krilla::Document,
     // pending_patches: unresolved TargetSlot を PDF Form XObject ref に mapping
@@ -3395,14 +3401,14 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
 
 ## 15. Open Questions / Future Work
 
-- `parley` の `FontContext` の `Sync` 適合性 (rayon 並列 shape の前提)
-- `taffy` の並列 layout 対応可否 (multi-column の各 column 並列)
 - 縦書き / ルビ / JIS X 4051 相当の日本語組版拡張タイミング
-- `SandboxedNetworkProvider` の spec 詳細 (URL allowlist、size cap、MIME
+- (parley `FontContext` の `Sync` 適合性 / taffy の並列 layout 対応可否は M0
+  feasibility spike で verify されるため、Open Questions から削除)
+- `SandboxedNetProvider` の spec 詳細 (URL allowlist、size cap、MIME
   whitelist の具体的な interface)
 - Consumer iteration の推奨実装 example の充実 (fulgur の tier 別 policy に応じた
   `max_target_iterations` 設定ガイド)
-- `plan_document` に raster 見積り情報 (`estimated_raster_bytes`, pixel dim per
+- `plan` に raster 見積り情報 (`estimated_raster_bytes`, pixel dim per
   DPI 等) を追加する検討 — Consumer の memory 予測に有用 (優先度低)
 - `raikiri-blitz-compat` の sunset タイミング (fulgur 完全 migration 後)
 - 将来的な `raikiri-paint-pdf` (anyrender::PaintScene 実装、krilla base) の
@@ -3416,14 +3422,14 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
   受取り、`finish_render(summary)` で最終 TargetRegistry を受取り (Finding #4)
 - **RenderSummary**: `finish_render` の引数、target_registry / unresolved_targets
   / emitted_target_slots / **target_discrepancies** (Finding #5 対応) を含む
-- **DocumentPlan** (Finding #5 対応): `plan_document` の返り値、
+- **DocumentPlan** (Finding #5 対応): `plan` の返り値、
   total_pages / target_registry (hint) / target_definitions /
   unresolved_targets / page_summary を含む。PaintedBox tree は含まない
 - **PageSummary**: DocumentPlan 内、per-page の page_box / break_reason /
   target_slot_count / target_definition_count / content_height
 - **TargetDiscrepancy**: RenderSummary 内、hint 値と実測値の乖離
   (fragment_id / hinted_page / actual_page / hinted_text / actual_text)
-- **plan_document**: dry-run entry point。PaintScene / PaintedBox 構築なし、
+- **`plan`**: dry-run entry point (`plan(&Document, ...)`)。PaintScene / PaintedBox 構築なし、
   cost 見積り + target hint 生成 + DoS 防御ゲート用
 - **StreamingConfig / BatchConfig**: render_* の config。lookahead と
   initial_registry (hint) を含む
@@ -3461,9 +3467,21 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
   出発点 preset
 - **ResourceKind**: fetch context (StylesheetImport / ExternalStylesheet /
   Image / Font / Svg / MathML / Other) — policy method に context を渡す
-- **RenderError** (Finding #10 対応): 構造化 error enum。Parse / Cascade /
-  Layout / Resolver / Network / Policy / PageLimitExceeded / Sink / Aborted /
-  Configuration / Io の variant。`is_recoverable()` / `is_fatal()` で分類
+- **RenderError** (Finding #10 対応、round 3 訂正): 構造化 error enum、全 variant が
+  terminal。Parse / Cascade / Layout / Resolver / Network / Policy /
+  PageLimitExceeded / Sink / Configuration / Io。`#[non_exhaustive]`。
+  以前 `is_recoverable()` / `is_fatal()` 分類は round 3 で撤回、fallback は
+  Consumer 側 impl 内で `Ok(fallback)` 返却で表現
+- **RenderStatus** (round 3 review #1 対応): render_* の Ok 側戻り値。
+  `Completed(RenderSummary)` = 全ページ emit + finish_render 成功、
+  `Aborted { partial_pages }` = AbortSignal による graceful shutdown
+- **GcpmSnapshot** (Missing consideration 対応): 並列 margin box layout 用の
+  owned immutable snapshot。counter tree / string 4-snapshot / running
+  bindings / target snapshot の deep copy
+- **MarginBoxCounterScratch** (round 3 Missing #5 対応): 各 margin box worker
+  が独自に持つ counter mutation buffer、layout 完了時に discard
+- **AbortSignal / AbortController**: blitz-traits 準拠、Consumer が abort を
+  発火し raikiri は cooperative check points で検知
 - **Reference documents** (Finding #9 対応、T1): `tests/reference/` 配下の
   fulgur ユースケース由来の代表ドキュメント (invoice、report、contract、
   certificate 等)。ship 判定基準
