@@ -628,12 +628,26 @@ pub trait Node<'a> { /* ... */ }
 //   を模擬した test を CI で実行、全 pub struct が external から constructable
 //   かを検証。
 
+// [対象 struct] (round 3 Missing #6 対応、全 non-exhaustive pub struct に適用)
+// すべての pub config struct に以下 3 点を提供:
+//   1. impl Default        - 全 field の妥当な default
+//   2. impl Config { fn new() }  - Default 相当の shortcut
+//   3. Optional: ConfigBuilder  - field 数が多い / 相互依存がある場合
+//
+// 適用対象:
+//   LookaheadConfig, StreamingConfig, BatchConfig, ParseOptions,
+//   PageDefaults, PaintOptions, LookaheadConfig 経由の間接 config
+
 pub struct LookaheadConfigBuilder { /* fluent field-setter chain、build() で LookaheadConfig を返す */ }
 impl LookaheadConfig {
     pub fn builder() -> LookaheadConfigBuilder { /* ... */ }
     pub fn new() -> Self { Self::default() }
 }
 impl Default for LookaheadConfig { /* 全 field の default 値 */ }
+
+// Same pattern for other configs (省略):
+// StreamingConfigBuilder, BatchConfigBuilder, ParseOptionsBuilder,
+// PageDefaultsBuilder, PaintOptionsBuilder
 
 // ── 中立モデル型 (crate 境界を跨いで参照される) ────────────────
 pub struct PageFragment { /* ... §11.2 参照 */ }
@@ -1322,6 +1336,34 @@ let margin_fragments: [Option<MarginBoxFragment>; 16] = (0..16)
 - **`FontContext` (parley)**: M0 で `Sync` 確認済み前提。`Arc` で共有
 - **`ComputedValues`**: `Arc<ComputedValues>` で共有、read-only
 
+**Per-worker owned mutable state** (round 3 Missing #5 対応):
+
+Margin box 内でも CSS spec 上 `counter-increment` / `counter-set` の記述は
+許容される (spec: 各 margin box が独立の counter scratch を持ち、他の margin
+box や body content に影響しない)。そのため:
+
+```rust
+struct MarginBoxCounterScratch {
+    /// 各 margin box worker が独自に持つ counter mutation buffer。
+    /// GcpmSnapshot の counters を初期値として clone し、margin box 内での
+    /// increment/set 操作を吸収。layout 完了時に discard される。
+    local_counters: HashMap<Symbol, CounterStack>,
+    /// string-set は margin box 内では使えない (spec) ため管理しない
+}
+
+impl MarginBoxCounterScratch {
+    fn new_from_snapshot(snap: &GcpmSnapshot) -> Self {
+        Self { local_counters: snap.counters.clone() }
+    }
+}
+```
+
+- 各 parallel worker は自分の `MarginBoxCounterScratch` を new_from_snapshot で
+  作成、margin box 内の counter 操作は scratch に対して行う
+- 他 margin box worker の scratch とは independent (書き込み共有なし)
+- Margin box layout 完了時に scratch は drop、他 margin box や次ページに影響
+  しない (spec 準拠)
+
 **書き込み禁止の enforcement (round 3 review #4 訂正)**:
 - `GcpmSnapshot` の全 field は owned + immutable primitive/collection のみ
   (`Cell` / `RefCell` / `Mutex` / `Arc<Mutex<...>>` を含まない)
@@ -1372,6 +1414,47 @@ let margin_fragments: [Option<MarginBoxFragment>; 16] = (0..16)
 `NetworkProvider: Send + Sync` は blitz-traits 準拠 (trait bound 済み)、
 pre-resolution stage で並列 fetch も許容 (ただし Consumer 実装内での並列は
 Consumer が管理)。
+
+### 5.4.2 Overflow-safe budget と deadline (round 3 Missing #2 対応)
+
+Untrusted document を Consumer が処理する際の安全パターンを doc レベルで
+規定 (raikiri 側 API は最小限):
+
+**Overflow-safe budget calculations (Consumer 責務)**:
+- Page 数 × per-page cost の累算は `u64` 前提、`saturating_add` を使う
+- `checked_mul` で overflow を明示的に検知
+- Consumer が予算 tracker を実装するときの推奨: `Saturating<u64>` newtype
+
+**Render deadlines (`AbortSignal` 経由、raikiri API)**:
+- Consumer が `AbortController::with_timeout(Duration)` で timer を作成
+- `AbortSignal` を `Request` / `ResolverRequest` / render 各所で参照
+- raikiri は各 loop iteration の先頭で `signal.is_aborted()` を check
+- `is_aborted() = true` なら:
+  - Streaming: 直前まで committed pages を残して `RenderStatus::Aborted` で
+    return
+  - Batch: pre-emission phase なら sink 未使用、post-emission phase なら
+    そこまで emit + `Aborted` return
+
+**Cancellation の semantics (round 3 Missing #2 対応)**:
+- `AbortSignal` は cooperative (Consumer が signal.abort() を呼ぶ or timer
+  期限で auto abort)
+- raikiri は AtomicBool を acquire で読む (blitz と同じ semantics)
+- 中断ポイント (中断可能な場所):
+  - per-page loop の先頭
+  - LayoutBuffer の decision point
+  - Rayon parallel margin box の spawn 前
+  - Resolver 呼び出し前後
+- 中断できない場所 (原子的にやり切る):
+  - 単一 `accept_page` 内の描画 (Consumer 責任)
+  - Sink の finish_render 呼び出し (呼ばれた時点で完了する)
+
+**Untrusted 文書での error 挙動 (Layer 1/2 の話とも重複)**:
+- untrusted HTML: Layer 1 sanitize で削除、raikiri に到達する時点で構造安全
+- untrusted CSS: Layer 1 sanitize + `ResourcePolicy` で fetch 制限
+- untrusted resource: `SandboxedResolver` / `SandboxedNetProvider` で fetch 制限
+- Consumer が `AbortController::with_timeout` で walltime bound
+- `max_document_pages` で page 数 bound
+- 上記を組み合わせれば worst-case は bounded、raikiri 単独 guard は追加しない
 
 これで **PageContext の parallel margin box layout 中の状態変化は起こらず、
 byte-identical goal と concurrency safety が両立** する。
@@ -1739,6 +1822,40 @@ raikiri 側の guard で防ぐのは **責務の重複** となるため行わ�
 
 **Post-M8 optimization** (§7.3 参照): `dynamic_flags = all false` な template
 の layout 結果 cache 導入で、上記 worst case を大幅緩和できる予定。
+
+### 7.3.2 Node counting / byte sizing の stable definitions (round 3 Missing #1 対応)
+
+raikiri 側で running-template guards を持たない (§7.3.1) ため、"stable node
+count / byte size" の定義は現状 raikiri の API 面に露出しない。ただし将来
+observability として `RenderSummary` に debug field を追加する余地を残しつつ、
+定義を先取りしておく:
+
+**Node count 定義 (将来 exposed の場合の準備)**:
+- Element node、Text node、Comment node、Attribute はカウント対象
+- **Shared subtree の扱い**: `position: running(name)` された subtree は
+  running template pool と body flow の両方から見えるが、**pool 側で 1 回だけ
+  count**、body flow 側では 0
+- **`content` プロパティで生成される content**: cascade 時に決まる ContentValueItem
+  列は 1 node として count (実際の text 長は無視)
+- Resource payload (image bytes、SVG source 等) は node count 対象外
+
+**Byte size 定義 (将来 exposed の場合の準備)**:
+- Serialized approximate bytes = `mem::size_of::<Node>() * node_count +
+  Σ text_content.len() + Σ attr_value.len()`
+- Rust の型サイズを "approximate" とし、正確な heap allocation は数えない
+- **Shared subtree の扱い**: 上と同じ、pool 側で 1 回のみ
+- Resource payload は「payload byte 数 (fetch 前は 0)」として別 field で
+  記録する余地
+
+**Consumer 側での測定 (推奨)**:
+- Consumer が Layer 1 sanitize で DOM walk するタイミングで自前の counter を
+  実装可能 (raikiri は生の Dom へアクセス可能な API を提供、TreeSink wrap 内で
+  count 可能)
+- raikiri が debug field を提供するのは post-M8 の話。M1〜M8 では Consumer が
+  自前で数える
+
+これらの定義は現状 spec に露出しないが、将来 `RenderSummary.debug_stats` 等の
+opt-in field を足す際の contract として先取りしておく。
 
 ### 7.4 target-* 解決の 2 戦略 + Consumer iteration (Finding #5 対応)
 
@@ -2370,6 +2487,44 @@ reference document を最低 1 つ追加。既存 reference は regression さ�
 **Map 順序**: `BTreeMap` or `IndexMap` を使用、`HashMap` は byte-identical
 出力に使わない (iteration 順が非決定的)
 
+#### Determinism testing matrix (round 3 Missing #3 対応)
+
+byte-identical goal を複数次元で verify:
+
+| 次元 | 対象 | Tier | 保証レベル |
+|---|---|---|---|
+| **Rayon thread count** | 1, 2, 4, 8, 16 | T1/T2 | pixel-exact byte-identical (全 tier) |
+| **Process** (同一 platform で複数プロセス) | 10 processes | T1 | byte-identical |
+| **Architecture** | x86_64, aarch64 | T1 x86_64 は pixel-exact / T2 aarch64 は tolerance | 表 §12.8 参照 |
+| **OS** | Linux, macOS, Windows | Linux T1, macOS T2, Windows T3 | 同上 |
+| **Font environments** | system fonts / bundled fonts / WPT fonts | 全 tier で bundled/WPT のみ使用 | pixel-exact |
+| **Dep upgrade** | Cargo.lock 更新後の差分 | patch bump = 保証、minor bump = re-verify | version bump 時に手動 verify |
+
+**T1 Determinism baseline (Linux x86_64)**:
+- Rayon thread count を 1〜16 で回して 100% pixel-exact
+- 同一 platform で 100 processes を回して 100% pixel-exact
+- Font は WPT bundled + Ahem のみ
+- Dep は Cargo.lock pin
+
+**T2 (Linux aarch64、macOS x86_64/aarch64)**:
+- pixel tolerance = 1 per channel、diff pixel ratio ≤ 0.1%
+- 差分 root cause: SIMD の丸め方向差、font rasterizer implementation 差
+- Thread count / process 変化は T1 と同じ保証
+
+**T3 (Windows x86_64)**:
+- pixel tolerance = 2 per channel、diff pixel ratio ≤ 0.5%
+- best effort、regression 追跡のみ
+
+**Dep upgrade 時の determinism 保証**:
+- patch bump (X.Y.Z → X.Y.Z+1) は SemVer 上 API 互換だが implementation
+  change あり得るため、CI で verify
+- minor bump (X.Y.Z → X.Y+1.0) は re-verify 必須、baseline 更新の PR
+- major bump は full re-verify + PR review
+
+**M8 の `cross-thread-cross-arch-cross-os-determinism-tests` task がこの matrix
+全体を CI で verify**。個別 dimension の fail は matrix cell 単位で記録され、
+regression detection の粒度が上がる。
+
 ### 12.9 WPT scope の位置付け (訂正版、Finding #9 対応)
 
 WPT scope は「**pass すべき集合**」ではなく「**注視している領域**」として管理:
@@ -2472,6 +2627,36 @@ PR 経由。
 **Conflict handling**: 同一 test id が複数 file に登場 → CI が fail-fast で
 「conflict detected in expectations」を報告、開発者が resolve する PR を出す。
 Automated validation task (`validate-expectations-files`) を Section 12 で追加。
+
+#### Expectations validation の詳細 (round 3 Missing #4 対応)
+
+`validate-expectations-files` task が CI で以下を検出、fail-fast:
+
+**Malformed**:
+- 列数が仕様と異なる (quarantine は 8 列、baseline は 1 列 = test_id のみ)
+- 予期しない characters (空白 delimit の混在、trailing whitespace)
+- Encoding が UTF-8 でない
+- 各 `platform` / `arch` / `renderer` / `tolerance` が定義された enum に無い値
+
+**Duplicate**:
+- 同 file 内で同一 test_id + 同一 filter combination が複数 entries
+  (ただし quarantine は複数 platform combinations で意図的に同 test_id が
+  出現するので、重複判定は (test_id, platform, arch, renderer, tolerance) の
+  tuple 単位)
+
+**Expired**:
+- Quarantine entry の `added_date` が 90 日超過、かつ referenced issue
+  (`issue_link`) が closed → strategic review が必要 warning
+- 削除は開発者判断だが warning で通知
+
+**Conflicting** (§12.10 の precedence 表と組み合わせ):
+- 同一 test_id が deprecated と baseline に同時 → conflict、優先度 rule に
+  照らして解消 PR を要求 (deprecated が優先、baseline から削除する PR)
+- 同一 test_id が quarantine と baseline に同時 → conflict、quarantine 側の
+  filter が baseline の実行環境と重ならなければ OK、重なると conflict
+
+Validation は `raikiri-wpt` crate の binary として実装 (`cargo run --bin
+validate-expectations`)、CI で PR ごとに実行。
 
 ## 13. Milestone Plan
 
