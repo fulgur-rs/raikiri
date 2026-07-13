@@ -273,8 +273,51 @@ foundation crate。他 crate が共有する trait / 中立モデル型を集約
 ```rust
 // ── Sink / Provider / Resolver ────────────────────────────────
 pub trait RenderSink: Send {
+    /// 1 ページ確定次第呼ばれる (Streaming: 逐次、Batch: 全 layout 完了後まとめて)
     fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()>;
-    fn finalize(self: Box<Self>) -> std::io::Result<()>;
+
+    /// 全 accept_page 完了後、render() が呼ぶ最終通知。
+    /// summary で TargetRegistry 最終状態を Consumer に届け、Consumer は
+    /// 未解決 slot を patch する機会を得る (§4.x completion protocol)。
+    /// Consumer 側の resource 解放 (PDF trailer 書出等) は本 method の責務外で、
+    /// Consumer が自分で管理する (`sink.finalize_pdf()` 等を別途呼ぶ)。
+    fn finish_render(&mut self, summary: RenderSummary) -> std::io::Result<()>;
+}
+
+// ── Completion protocol 型 (Finding #4 対応) ────────────────────
+pub struct RenderSummary {
+    pub total_pages: u32,
+    pub target_registry: TargetRegistry,        // 完全な resolved 状態
+    pub unresolved_targets: Vec<UnresolvedTarget>,
+    pub emitted_target_slots: Vec<EmittedSlotInfo>,  // 全ページで発行した slot 一覧
+}
+
+pub struct UnresolvedTarget {
+    pub slot_id: TargetSlotId,
+    pub fragment_id: Symbol,
+    pub reason: UnresolvedReason,
+}
+
+pub enum UnresolvedReason {
+    /// fragment id がどこにも定義されていない
+    NotFound,
+    /// NPassConverge が max_iterations で収束せず
+    ConvergenceFailed,
+    /// Consumer 側 policy でエラー扱い
+    ConsumerRejected,
+}
+
+pub struct EmittedSlotInfo {
+    pub slot_id: TargetSlotId,
+    pub fragment_id: Symbol,
+    pub kind: TargetKind,
+}
+
+/// slot の一意識別子 (Consumer が patch table の key に使う)
+/// (page_index, sequence) は decode 順で unique、byte-identical 保証あり
+pub struct TargetSlotId {
+    pub page_index: u32,
+    pub sequence: u32,   // ページ内での通し番号 (0-indexed、target-* 出現順)
 }
 
 pub trait ReplacedResolver {
@@ -968,20 +1011,55 @@ TargetResolver trait の実装として 3 種類を提供:
 
 **`PlaceholderTargetResolver` (Streaming preset)**
 
-- 未解決の target-* に到達したら `TargetSlot` を pending_slots に登録
-- `ResolvedContent::TargetSlot(slot_id)` として PageFragment に emit
-- Consumer (fulgur → krilla) が全ページ emit 後に patch (Form XObject slot 方式)
+- 未解決の target-* に到達したら `TargetSlot { id: TargetSlotId, ... }` を発行
+- **`TargetSlotId = (page_index, sequence)`** で stable な識別（Finding #4 対応）
+- `ResolvedContent::TargetSlot(slot_id)` として PageFragment.target_slots に emit
+- **PageFragment.target_definitions に "このページで定義された fragment id" を並行 emit**
+- `RenderSink::finish_render(summary)` で Consumer が最終 `TargetRegistry` を受取り
+- Consumer (fulgur → krilla) が Form XObject slot として PDF patch
 - streaming 保持
 
 **`RegistryTargetResolver` (Batch preset、TwoPass)**
 
-- Pass 1: 全ページ layout、TargetRegistry 構築
-- Pass 2: registry を PageContext に埋め込んで通常の render
+- Pass 1: 全ページ layout、TargetRegistry 構築、target_definitions 収集
+- Pass 2: registry を PageContext に埋め込んで通常の render (TargetSlot は resolved 済み)
 - streaming 犠牲
 
 **`ConvergingTargetResolver` (Batch preset、NPassConverge、opt-in)**
 
 - 収束するまで反復。実装は後回し、`max_iterations: 5` 程度で妥協
+- 収束せず終了時は `RenderSummary.unresolved_targets` に `ConvergenceFailed` として記録
+
+### 7.5 Consumer patch flow (Finding #4 対応)
+
+Streaming preset での典型的な Consumer flow:
+
+```
+per accept_page(page):
+  1. page.target_definitions を Consumer 側 definition table に登録
+     (fragment_id → (page_index, anchor_position, counter_snapshot, extracted_text))
+  2. page.target_slots のうち resolved = None を Consumer 側 pending_patches に登録
+     (TargetSlotId → PDF-level slot reference)
+  3. page 本体を描画、resolved な TargetSlot は通常描画
+
+finish_render(summary):
+  1. summary.emitted_target_slots を iterate
+  2. 各 slot について summary.target_registry.resolved から値を取得
+     - 取得できたら pending_patches[slot_id] を patch
+     - 取得できなければ summary.unresolved_targets を確認、fallback 表示
+  3. Consumer 独自の resource close (別 method で呼ぶ、raikiri は関知しない)
+```
+
+### 7.6 Slot ID の安定性保証
+
+`TargetSlotId = (page_index, sequence)` の同一性ルール:
+
+- **decode 順で決定**：cascade + layout の walk 順序が deterministic である限り、同じ入力から同じ ID
+- **page_index は 0-indexed**、`emit された順` に増加
+- **sequence は page 内 0-indexed**、`target-* が evaluate された順`
+- byte-identical goal と整合、rayon 並列化されても collect 時に順序を保つ (`IndexedParallelIterator`)
+
+これで Consumer は複数実行で同じ slot ID を key として patch table を保持可能。CI 上での reproducibility も確保。
 
 ## 8. Streaming vs Batch (Strategy Pattern)
 
@@ -1198,11 +1276,41 @@ pub struct PageFragment {
     pub margin_boxes: [Option<MarginBoxFragment>; 16],
     
     // walker が使う metadata
-    pub target_slots: Vec<TargetSlot>,
+    pub target_slots: Vec<TargetSlot>,          // このページで発生した target-* 参照
+    pub target_definitions: Vec<TargetDefinition>, // このページで定義された target id (Finding #4)
     pub bookmark_hints: Vec<BookmarkHint>,
     pub link_annotations: Vec<LinkAnnotation>,
     pub heading_structure: Vec<HeadingHint>,
     pub structural_hints: Vec<StructuralHint>,
+}
+
+pub struct TargetSlot {
+    pub id: TargetSlotId,                    // (page_index, sequence) で安定 (Finding #4)
+    pub fragment_id: Symbol,                 // 参照先 URL fragment (例: "chapter-3")
+    pub kind: TargetKind,
+    pub rect: Rect,                          // 予約領域
+    pub resolved: Option<ResolvedTargetValue>, // Streaming: None, Batch: Some
+    pub fallback_text: String,               // 未解決時に描画する fallback
+}
+
+pub struct TargetDefinition {
+    pub fragment_id: Symbol,                 // element の id 属性値
+    pub page_index: u32,                     // = このページの index
+    pub counter_snapshot: HashMap<Symbol, i32>, // 定義時点の counter 値
+    pub extracted_text: Option<String>,      // target-text 用の抽出文字列
+    pub anchor_position: Point,              // PDF リンク先座標
+}
+
+pub enum TargetKind {
+    Counter { name: Symbol, style: CounterStyle },
+    Counters { name: Symbol, sep: String, style: CounterStyle },
+    Text { part: ContentPart },
+    Page,
+}
+
+pub enum ResolvedTargetValue {
+    Text(String),                            // 描画すべき文字列
+    Page(u32),                               // target-page: ページ番号
 }
 
 pub struct BodyFragment { pub boxes: Vec<PaintedBox> }
@@ -1456,17 +1564,61 @@ match estimated_page_count {
 }
 
 // 3. FulgurPdfSink が PageFragment を walk して krilla に落とす
-struct FulgurPdfSink { krilla_doc: krilla::Document, /* ... */ }
+struct FulgurPdfSink {
+    krilla_doc: krilla::Document,
+    // pending_patches: unresolved TargetSlot を PDF Form XObject ref に mapping
+    pending_patches: HashMap<TargetSlotId, PdfFormXObjectRef>,
+    definitions: HashMap<Symbol, (u32, Point)>,
+}
+
 impl RenderSink for FulgurPdfSink {
     fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
-        // krilla API を direct に叩く
-        // page.target_slots を Form XObject slot として書く (Streaming の場合)
-        // page.target_slots は Batch では既に resolved
-        // page.heading_structure を outline tree に反映
-        // ...
+        let mut kr_page = self.krilla_doc.start_page(page.page_box.into())?;
+        
+        // 通常描画 (略)
+        for painted_box in &page.body.boxes { /* draw */ }
+        
+        // このページで定義された target を Named Destination に登録
+        for def in &page.target_definitions {
+            self.definitions.insert(def.fragment_id.clone(), (def.page_index, def.anchor_position));
+            kr_page.add_named_destination(def.fragment_id.clone(), def.anchor_position)?;
+        }
+        
+        // 未解決 target slot は Form XObject を予約 (fallback を pre-draw)
+        for slot in &page.target_slots {
+            if slot.resolved.is_none() {
+                let form_ref = kr_page.allocate_form_xobject_slot(slot.rect, &slot.fallback_text)?;
+                self.pending_patches.insert(slot.id.clone(), form_ref);
+            }
+            // resolved なら通常描画
+        }
+        
+        kr_page.finish()?;
+        Ok(())
     }
-    fn finalize(self: Box<Self>) -> std::io::Result<()> {
-        // font subset、trailer、target-* patch (Streaming の場合のみ)
+
+    fn finish_render(&mut self, summary: RenderSummary) -> std::io::Result<()> {
+        // Finding #4 対応: summary で完全な TargetRegistry を受取り、pending を patch
+        for slot_info in &summary.emitted_target_slots {
+            if let Some(form_ref) = self.pending_patches.get(&slot_info.slot_id) {
+                if let Some(target_info) = summary.target_registry.resolved.get(&slot_info.fragment_id) {
+                    let text = format_target_value(target_info, &slot_info.kind);
+                    self.krilla_doc.patch_form_xobject(*form_ref, &text)?;
+                }
+                // 未解決 (summary.unresolved_targets に含まれる) の場合は
+                // fallback text は既に pre-draw 済みなのでそのまま
+            }
+        }
+        Ok(())
+    }
+}
+
+// Consumer 独自の resource close は raikiri の関知外
+// (RenderSink::finalize は廃止された)
+impl FulgurPdfSink {
+    fn finalize_pdf(self) -> std::io::Result<Vec<u8>> {
+        // font subset、outline tree 組立て、trailer 書き出し
+        self.krilla_doc.into_bytes()
     }
 }
 ```
@@ -1494,7 +1646,14 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
 ## 16. 用語集
 
 - **Consumer**: raikiri を使う側 (fulgur、将来の EPUB reader、他)
-- **RenderSink**: Consumer が実装する trait、`PageFragment` を受け取る
+- **RenderSink**: Consumer が実装する trait、`accept_page(page)` で per-page
+  受取り、`finish_render(summary)` で最終 TargetRegistry を受取り (Finding #4)
+- **RenderSummary**: `finish_render` の引数、target_registry / unresolved_targets
+  / emitted_target_slots を含む
+- **TargetSlotId** `(page_index, sequence)`: slot の安定識別子。byte-identical
+  保証あり
+- **TargetDefinition**: PageFragment 内、このページで定義された target id 情報
+  (fragment_id, page_index, counter_snapshot, extracted_text, anchor_position)
 - **LookaheadPolicy** (strategy trait): LayoutBuffer の lookahead 幅を制御。
   Streaming preset は `BoundedLookahead`、Batch preset は `UnboundedLookahead`
 - **TargetResolver** (strategy trait): target-* の解決方式。Streaming preset は
