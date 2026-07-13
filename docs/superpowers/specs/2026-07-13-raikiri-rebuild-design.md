@@ -515,6 +515,9 @@ pub enum RenderError {
     Sink(std::io::Error),
     /// config 不整合 (BatchConfig.initial_registry が不正 等)
     Configuration(String),
+    /// target-* が max_target_iterations 内に収束しなかった (round 6 review #5
+    /// 対応、Consumer が ExhaustionPolicy::Error を選択した場合のみ発生)
+    TargetDidNotConverge { iterations: u32 },
     /// std::io::Error 系
     Io(std::io::Error),
 }
@@ -567,6 +570,26 @@ pub enum WarningKind {
     PolicyWarning { violation: PolicyViolation },
     /// target-* 参照先が見つからず fallback_text で描画された
     UnresolvedTarget { fragment_id: Symbol },
+    /// target-* が max_target_iterations 内に収束しなかったが、Consumer が
+    /// ExhaustionPolicy::BestEffort を選択したため best-effort render された
+    /// (round 6 review #5 対応)
+    TargetConvergenceExhausted { iterations: u32 },
+}
+
+/// Consumer の convergence loop が max_target_iterations を尽くしたときの挙動
+/// (round 6 review #5 対応、silent 続行を禁じる)。Consumer 側 iteration に
+/// 関する契約なので、raikiri の `plan()` / `render_*` API 内では消費されない
+/// (Consumer が自身の loop で参照する)
+#[non_exhaustive]
+pub enum ExhaustionPolicy {
+    /// 未収束を error として上流に返す (保守的 default)
+    Error,
+    /// 最後の registry で render、`WarningKind::TargetConvergenceExhausted`
+    /// を必ず summary.warnings に記録
+    BestEffort,
+}
+impl Default for ExhaustionPolicy {
+    fn default() -> Self { Self::Error }
 }
 
 // ── Strategy traits (Streaming と Batch で変わる差分だけ) ───────
@@ -1496,26 +1519,60 @@ Untrusted document を Consumer が処理する際の安全パターンを doc �
   - Batch: pre-emission phase なら sink 未使用、post-emission phase なら
     そこまで emit + `Aborted` return
 
-**tokio との組み合わせ例 (Consumer 実装):**
+**tokio との組み合わせ例 (Consumer 実装、round 6 review #2 対応):**
+
+canonical pattern は以下 4 ステップに分ける:
+
+1. **outer で `AbortController` を作り、clone を timer に持たせる**
+2. **`config.abort_signal` に `controller.signal.clone()` を wire する** (これを
+   忘れると render は abort を観測できない)
+3. **`spawn_blocking` で sync render を回す**。`spawn_blocking` の外で timer を
+   起動する (spawn_blocking の中で `tokio::spawn` を呼ぶには runtime handle が
+   必要で fragile)
+4. **通常完了時は timer を `abort()` して leak を防ぐ**
+
 ```rust
-// raikiri は sync だが、Consumer が tokio に埋める場合の pattern
-tokio::task::spawn_blocking(move || {
-    // 別 thread で AbortController を driving
-    let controller = Arc::new(AbortController::new());
-    let controller_bg = controller.clone();
-    let timer = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        controller_bg.abort();
-    });
-    let result = raikiri::render_streaming(&doc, ..., &mut sink);
-    timer.abort();  // 通常完了時に timer を先に kill
-    result
-})
+// raikiri は sync、Consumer が tokio に埋める場合の canonical pattern
+let controller = Arc::new(AbortController::new());
+let controller_for_timer = controller.clone();
+
+// (1) timer task: 期限で signal を発火
+let timer = tokio::spawn(async move {
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    controller_for_timer.abort();
+});
+
+// (2) config に signal を必ず wire する
+let mut config = StreamingConfig::default();
+config.abort_signal = Some(controller.signal.clone());
+
+// (3) spawn_blocking で sync render を回す
+let result = tokio::task::spawn_blocking(move || {
+    raikiri::render_streaming(&doc, defaults, &resolver, config, &mut sink)
+}).await??;
+
+// (4) 通常完了時は timer を kill (leak 防止)
+timer.abort();
+```
+
+⚠️ **`tokio::time::timeout(fut)` は await 側を bound するだけで、`spawn_blocking`
+の中で走っている sync CPU work を preempt しない**。従って `timeout(spawn_blocking(...))`
+は "join を諦める" だけで render は走り続ける。cooperative cancellation を有効に
+するには **必ず `abort_signal` を config に wire** する。
 
 **Cancellation の semantics (round 3 Missing #2 対応)**:
 - `AbortSignal` は cooperative (Consumer が signal.abort() を呼ぶ or timer
   期限で auto abort)
 - raikiri は AtomicBool を acquire で読む (blitz と同じ semantics)
+- **wall-time bound の限界 (round 6 Missing 対応)**: 中断は各 checkpoint での
+  polling で行われるため、以下の間は abort が観測されない:
+  - 単一 `accept_page` 内の描画 (Consumer sink 側の内部処理)
+  - CPU-bound decode / layout の atomic 部分 (font shaping、SVG parse、image
+    decode の内部 loop)
+  - Blocking な Consumer provider 呼び出し
+  - これらの検知遅延は "実測 checkpoint 間隔 × 最悪 1 回分" 程度。厳密な
+    wall-time bound を強制したい Consumer は追加で OS-level timeout (プロセス
+    分離 / cgroup) を検討する
 
 **Timer lifecycle (round 5 review #2 対応、簡素化)**:
 - **raikiri は timeout thread を一切 spawn しない**。`AbortController::with_timeout`
@@ -1553,24 +1610,45 @@ tokio::task::spawn_blocking(move || {
 **raikiri の方針**:
 - **raikiri は resource cache を持たない**。同じ URL の resource でも Consumer
   provider が呼ばれる。cache するかどうかは Consumer が判断
-- **Consumer 側 cache の contract (round 5 review #5 対応)**:
-  - **cache key は URL だけでは不足**。以下を含む: URL、HTTP method、body
-    hash、response-varying headers (Accept, Accept-Language など)、Vary header
-    が指定した field、resource kind、認証 context (auth token identity)、
-    tenant identity
+- **Consumer 側 cache の contract (round 6 review #6 対応、2-stage lookup)**:
+  - **Vary は request 時には未知**。primary key (request 時に確定) と variant
+    key (response の Vary field で learn) の **2 段 lookup** で解決する
+  - **Stage 1 (primary key)** — resource entry を locate。request 時に確定する
+    fields のみ:
+    - URL (canonicalized)、HTTP method、body hash
+    - resource kind (StylesheetImport / Image / Font / ...)
+    - 認証 context (auth token identity)、tenant identity
+    - Consumer 側 security policy identity (policy 変更 で cache を無効化するため)
+  - **Stage 2 (variant key)** — primary hit 後、stored entry が持つ Vary
+    field list に従って request headers から variant key を計算し、matching
+    variant を選択。miss なら新規 fetch → 新 variant として保存
   - **Cross-request TTL cache は tenant / policy boundary を越えない**。
     per-request scope が推奨、cross-request するなら Consumer が明示的に
-    tenant partition を key に含める
+    tenant partition を primary key に含める
 - 参考実装 (fulgur、round 5 の user 意向で local-only): fulgur は network
   fetch しないので cache は不要。CLI で `-f` / `-i` で bundle した local file
   path を direct resolve
 
-**Failure semantics (round 5 Missing #3 対応)**:
-- **Failed fetch は cache しない** (negative cache は Consumer opt-in、
-  誤って permanent block を作らないため)
-- **Cache stampede** (同 URL への並列 request): Consumer 実装で future-based
-  coalescing (`Arc<OnceCell<...>>` 等) を検討
+**Failure semantics (round 6 review #6 対応)**:
+- **Failed fetch は cache しない** — failure 時は該当 primary entry を即 evict
+  (`OnceCell::set` の Err 側は entry を delete して次 request が再試行できる状態
+  に戻す)
+- **Negative cache は Consumer opt-in** — 有効にする場合、必ず **TTL 必須** (推奨:
+  1 分以内、error に応じて差別化: 4xx=長め、5xx=短め、connection error=最短)
+- **Cancellation coalescing** (round 6 Missing 対応): 同一 primary key の
+  in-flight request を複数 caller で共有する場合、
+  - **first-cancel-does-not-cancel-others**: 個別 caller の abort で shared
+    fetch を止めない (他 caller が待っている)
+  - 全 caller が abort した時のみ shared fetch を cancel、entry を evict
+  - refcount で管理、drop 時に decrement
+- **Cache stampede** (同 URL への並列 request): `Arc<OnceCell<Bytes>>` +
+  上記 refcount で future-based coalescing
 - **Bounded memory**: LRU + memory ceiling を Consumer が実装
+
+**`data:` URL の pre-decode limit (round 6 Missing 対応)**:
+- base64 decode 前に **encoded length から decoded size を計算** (base64 は
+  1.33x)、policy limit を超えるなら decode せずに reject
+- percent-encoded の場合も同様に encoded 長で precheck
 
 **AbortSignal と cache の相互作用**:
 - Consumer が abort → in-flight fetch も cancel、cache に partial write しない
@@ -1610,7 +1688,7 @@ raikiri は fallback 発生を `RenderSummary.warnings` に記録。Consumer が
 |---|---|---|
 | Parse / Cascade / Configuration (pre-emission) | sink 未使用 | sink 未使用 |
 | Layout / Policy / Resolver / Network (pre-emission phase 内) | sink 未使用 | sink 未使用 |
-| PageLimitExceeded (per-page loop 中) | 直前まで `accept_page` 済み | Batch buffer 蓄積中、`accept_page` 未呼び出し |
+| LimitExceeded { kind: Pages, .. } (per-page loop 中) | 直前まで `accept_page` 済み | Batch buffer 蓄積中、`accept_page` 未呼び出し |
 | `accept_page` 内で Sink エラー | 該当 page で fail、以前は committed | Batch 内で emit 途中、以前 page は committed |
 | `finish_render` 内で Sink エラー | 全 page committed、finish 未完了 | 全 page committed、finish 未完了 |
 
@@ -2086,6 +2164,7 @@ impl RenderSink for DiscardSink {
 }
 
 let mut prev_registry: Option<TargetRegistry> = None;
+let mut converged = false;  // ★ round 6 review #5 対応: 収束判定を明示化
 for _iter in 0..config.max_target_iterations {
     let mut streaming_cfg = StreamingConfig::default();
     streaming_cfg.initial_registry = prev_registry.clone();  // ★ hint に feed
@@ -2093,16 +2172,47 @@ for _iter in 0..config.max_target_iterations {
     raikiri::render_streaming(&doc, defaults, &resolver, streaming_cfg,
         &mut discard)?;
     // discard.registry を prev_registry と比較して収束判定
-    if discard.registry == prev_registry { break; }
+    if discard.registry == prev_registry {
+        converged = true;
+        break;
+    }
     prev_registry = discard.registry;  // ★ 次 iter へ feed forward
 }
 
-// 最終 render は production sink、収束済み registry を使用
+// round 6 review #5 対応: exhaustion 時の分岐を Consumer が明示的に選ぶ
+if !converged {
+    match config.on_convergence_exhausted {
+        ExhaustionPolicy::Error => {
+            // 保守的: 未収束を error として上流に伝える
+            return Err(RenderError::TargetDidNotConverge {
+                iterations: config.max_target_iterations,
+            });
+        }
+        ExhaustionPolicy::BestEffort => {
+            // 明示 opt-in: 最後の registry で render するが warning を必ず記録
+            tracing::warn!(
+                iterations = config.max_target_iterations,
+                "target-* did not converge; rendering best-effort"
+            );
+            // production_sink 側で summary.warnings に
+            // WarningKind::TargetConvergenceExhausted を必ず入れる
+        }
+    }
+}
+
+// 最終 render は production sink、収束済み or best-effort registry を使用
 let mut final_cfg = StreamingConfig::default();
 final_cfg.initial_registry = prev_registry;
 raikiri::render_streaming(&doc, defaults, &resolver, final_cfg,
     &mut production_sink)?;
 ```
+
+**exhaustion policy contract** (Consumer が選択):
+- `ExhaustionPolicy::Error` (default): `RenderError::TargetDidNotConverge` を返す
+- `ExhaustionPolicy::BestEffort`: 最後の registry で render、`RenderSummary.warnings`
+  に `WarningKind::TargetConvergenceExhausted { iterations }` を必ず記録
+- **silent に "converged" として続行することは禁止**。iteration limit で出力が
+  変わり得るため、Consumer は明示的に選択する必要がある
 
 - **discard の保証**: `DiscardSink::drop` で内部 state が消える。raikiri は
   Consumer sink の内部 state に関知しない (`accept_page` の返り値のみ)
@@ -2391,8 +2501,10 @@ Layer 1: DOM level sanitize (§5.2)
 
 Layer 2: Resource level policy (§10, raikiri-net)
   - SandboxedNetProvider + SandboxedResolver で fetch 時に policy 適用
-  - ResourcePolicy: scheme allowlist、host restriction、size limit、
-    MIME validation、timeout、redirect 制御、recursion limit
+  - ResourcePolicy (wrapper が enforce する範囲): scheme allowlist、host
+    restriction、Content-Length 上限 (§10.3 参照)、MIME allowlist
+  - **wrapper 外 (Consumer の HTTP provider 責任)**: timeout、DNS pinning、
+    redirect hop 検証、decompression bomb、recursion limit
   - untrusted resource の "fetch する対象" の防御
 ```
 
@@ -2407,8 +2519,11 @@ Layer 2: Resource level policy (§10, raikiri-net)
 
 **trait 定義** (raikiri-traits、§4 参照)、**preset 実装** (raikiri-net):
 - `DenyAllPolicy` — 全 fetch を reject する最も restrictive な起点
-- `DefaultSandboxPolicy` — https + data のみ許可、10 MB 上限、5s timeout 等の実用的デフォルト
-  + full SSRF defenses (下記 §10.3 参照)
+- `DefaultSandboxPolicy` — https + data のみ許可、10 MB Content-Length 上限、
+  MIME allowlist を持つ **最小限の出発点 preset**。DNS pinning / redirect hop
+  検証 / timeout は Consumer の HTTP provider が担う (§10.3)。
+  ⚠️ この preset 単独では **untrusted internet 向けに safe と見做してはならない**。
+  production では Consumer が拡張して使う
 
 ### 10.3 SSRF defense の scope (round 5 review #1 対応、簡素化)
 
@@ -2418,10 +2533,21 @@ Layer 2: Resource level policy (§10, raikiri-net)
 raikiri-net の scope は **Blitz 互換 + α** に降格する:
 
 **raikiri-net の scope (Blitz 互換 + α)**:
-- URL scheme allowlist (data / https / file ; policy で選択)
-- Host allowlist (Consumer が pass する list との文字列 match)
-- Byte-size upper bound (response size を Consumer が measure)
-- MIME allowlist (response header の Content-Type との文字列 match)
+- URL scheme allowlist (data / https / file ; policy で選択、fetch 前 wrapper enforce)
+- Host allowlist (Consumer が pass する list との文字列 match、fetch 前 wrapper enforce)
+- Byte-size upper bound の **2 段 enforcement**:
+  1. **wrapper 側 pre-check**: response header の `Content-Length` を読み、
+     limit 超なら fetch を abort し `RenderError::Policy` を返す
+  2. **inner provider 側 stream enforcement**: chunk 受信ごとに累積 bytes を
+     count し、limit 超で connection を drop。wrapper は inner に "この limit を
+     守れ" を渡し、violation の enum で結果を受け取る (spec の trait shape 参照)
+  - Consumer の HTTP provider が streaming interface を持たない場合、wrapper が
+     enforce できるのは `Content-Length` の precheck だけ。**Content-Length
+     absent / chunked / mismatch の場合、Consumer 責任で streaming count が必要**
+- MIME allowlist (response header の Content-Type との文字列 match、
+  parse 前 wrapper enforce)。**MIME 正規化ルール**: type/subtype を lowercase 化、
+  parameters (`; charset=...`) は無視、`Content-Type` が missing の場合は
+  `application/octet-stream` として reject (content sniffing は行わない)
 - 上記だけを wrapper で enforce、DNS pinning / redirect hop inspection /
   decompression bomb / decoder bomb は本 spec の scope 外
 
@@ -3792,21 +3918,29 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
   結果をキャッシュ、layout hot path の最適化
 - **Security 2 層 model** (Finding #6 対応): Layer 1 (DOM sanitize via TreeSink
   wrap) + Layer 2 (Resource policy via SandboxedNetProvider / SandboxedResolver)
-- **ResourcePolicy** (trait): scheme / host / size / MIME / timeout / redirect /
-  recursion 制御を集約
+- **ResourcePolicy** (trait): scheme / host / size / MIME 制御を wrapper で
+  enforce (§10.3 参照)。timeout / DNS pinning / redirect hop / decompression /
+  recursion 制御は Consumer の concrete HTTP provider 責任
 - **SandboxedNetProvider / SandboxedResolver** (raikiri-net): NetworkProvider /
   ReplacedResolver を wrap して policy を適用する decorator
 - **DefaultSandboxPolicy** (raikiri-net): allowed_schemes=[https,data]、10 MB
-  上限、5s timeout 等の実用的 default preset
+  Content-Length 上限、MIME allowlist を提供する **Blitz 互換 + α レベルの最小
+  preset**。timeout / DNS pinning / redirect hop 検証は Consumer の HTTP
+  provider 責任 (§10.3)。**untrusted internet 向けには不十分**、production では
+  Consumer が拡張する
 - **DenyAllPolicy** (raikiri-net): 全 fetch を reject する最も restrictive な
   出発点 preset
 - **ResourceKind**: fetch context (StylesheetImport / ExternalStylesheet /
   Image / Font / Svg / MathML / Other) — policy method に context を渡す
 - **RenderError** (Finding #10 対応、round 3 訂正): 構造化 error enum、全 variant が
   terminal。Parse / Cascade / Layout / Resolver / Network / Policy /
-  PageLimitExceeded / Sink / Configuration / Io。`#[non_exhaustive]`。
-  以前 `is_recoverable()` / `is_fatal()` 分類は round 3 で撤回、fallback は
-  Consumer 側 impl 内で `Ok(fallback)` 返却で表現
+  LimitExceeded / Sink / Configuration / TargetDidNotConverge (round 6 #5) /
+  Io。`#[non_exhaustive]`。以前 `is_recoverable()` / `is_fatal()` 分類は
+  round 3 で撤回、fallback は Consumer 側 impl 内で `Ok(fallback)` 返却で表現
+- **ExhaustionPolicy** (round 6 review #5 対応): Consumer 側 convergence loop
+  で `max_target_iterations` を尽くしたときの挙動。`Error` (default) は
+  `RenderError::TargetDidNotConverge`、`BestEffort` は最後の registry で
+  render し `WarningKind::TargetConvergenceExhausted` を必ず warnings に記録
 - **RenderStatus** (round 3 review #1 対応): render_* の Ok 側戻り値。
   `Completed(RenderSummary)` = 全ページ emit + finish_render 成功、
   `Aborted { partial_pages }` = AbortSignal による graceful shutdown
