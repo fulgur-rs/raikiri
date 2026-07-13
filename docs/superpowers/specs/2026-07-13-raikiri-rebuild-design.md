@@ -3089,6 +3089,47 @@ validate-expectations`)、CI で PR ごとに実行。
 **Acceptance criteria** (完了条件) + **Reference fixtures** (T1 gate) の 4 要素
 で構成 (Task list findings #H2, #H3, #M4 対応)。
 
+### 13.0 Spec drift protocol (全 milestone 共通、round 7 対応で明示化)
+
+本 spec は 5+ round のレビューを経ているが、**3800 行超の narrative と型定義
+すべてを 100% consistency で維持するのは非現実的**。従って以下の運用ルールを
+実装フェーズに持ち込む:
+
+**Authoritative source (single source of truth)**:
+- §4 の型定義 (`RenderError` / `RenderStatus` / `RenderLimits` / `NetworkProvider` /
+  `ReplacedResolver` / `ResourcePolicy` / config 各種) が **authoritative**
+- §16 の用語集は §4 の要約
+- **§5-§12 内の narrative や example / pseudocode は "understanding 用の
+  補助資料"**、authoritative ではない (Round 6-7 で narrative と型 surface の
+  乖離が繰り返し発生したことへの正式な対応)
+
+**Drift 発見時の処置**:
+1. 実装中 (PR 作成前) に example / narrative と型定義の乖離を発見した:
+   - **PR review に出す前に spec を修正**する (narrative を型に合わせる、
+     または型を narrative に合わせる。方針判断が必要な場合は Design ADR)
+   - Fix commit は spec-only (docs: 接頭辞)、コード commit と分離
+   - `bd remember` で drift の理由を記録 (M0 中の frequent drift は spec
+     compression の signal)
+2. PR review 中に reviewer が drift を発見した:
+   - Reviewer は "spec fix commit を要求" — 実装 fix より優先
+   - Spec fix が merge されるまで実装 PR は block
+3. Round 7 で未対応の finding (以下) は M0/M1 の対応する task 内で処理する:
+   - `StreamingConfig / BatchConfig / PlanConfig` の `abort_signal` field 追加
+     (M1 の abort-signal-integration task 内)
+   - `NetworkProvider::fetch` の byte enforcement 戦略確定 (M0 の
+     feasibility-paintscene-adapter-compile-spike と同 phase で trait shape
+     final 化、または M4 の sandboxed-net-provider-impl 前)
+   - `ResourcePolicy` trait 定義から redirect / timeout / recursion 削除 (M4)
+   - Convergence example 統一 + Consumer 側 `ExhaustionPolicy` 配置 (M6 の
+     Consumer integration task)
+   - Sink wrapper で warning injection mechanism (M6)
+   - Cache coalescing の Vary / cancellation semantics (Consumer 側実装、
+     raikiri は non-normative guidance のみ)
+
+**Compression trigger**: M0-M2 で drift fix commit が 5 つを超える場合、spec を
+"§4 型定義 + §13 milestone + §16 用語集" に圧縮し、narrative は
+`docs/superpowers/rationale.md` に分離する (compression PR は独立 review)
+
 ### M0: Dep feasibility + production workspace (round 3 review 対応)
 
 **訂正 (round 3 review #3 対応)**: 以前「throwaway smoke」と書いたが実態と
