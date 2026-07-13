@@ -1495,6 +1495,21 @@ Untrusted document を Consumer が処理する際の安全パターンを doc �
 - `AbortSignal` は cooperative (Consumer が signal.abort() を呼ぶ or timer
   期限で auto abort)
 - raikiri は AtomicBool を acquire で読む (blitz と同じ semantics)
+
+**Timer lifecycle と thread leak (round 4 Missing #2 対応)**:
+- **raikiri は timeout thread を自分で spawn しない**。`AbortController::with_timeout`
+  は Consumer 側の便利 constructor で、Consumer がその lifetime を管理する
+  責任を負う
+- `AbortController` は `Drop` 実装で内部の timer thread に "cancel" signal を
+  送る。thread は毎回 wake up で cancellation check する ("sleep 100ms → check
+  → sleep 100ms → check" のパターン、または `park_timeout` + shared cancel flag)
+- **Consumer が AbortController を drop すれば timer thread は最大 1 tick で
+  終了、leak なし**
+- Long-running server では、per-request AbortController を Consumer が生成→
+  request 終了時に drop するパターンを推奨。thread pool の accumulation を防ぐ
+- **代替**: `tokio::time::timeout` を使う Consumer は raikiri の
+  AbortController に頼らず、自分の async runtime で timeout 管理可 (この場合
+  raikiri の signal を tokio 側から driving する adapter を書く)
 - 中断ポイント (中断可能な場所):
   - per-page loop の先頭
   - LayoutBuffer の decision point
@@ -1511,6 +1526,31 @@ Untrusted document を Consumer が処理する際の安全パターンを doc �
 - Consumer が `AbortController::with_timeout` で walltime bound
 - `max_document_pages` で page 数 bound
 - 上記を組み合わせれば worst-case は bounded、raikiri 単独 guard は追加しない
+
+### 5.4.3 Planning / rendering の resource fetch cache (round 4 Missing #1 対応)
+
+`plan()` と `render_*` は共に `ReplacedResolver` と `NetworkProvider` を呼ぶ。
+同じ document を plan → render で処理すると、同じ resource が **2 度 fetch** される
+可能性がある (Consumer 収束 iteration ではさらに増える)。
+
+**raikiri の方針**:
+- **raikiri は resource cache を持たない**。同じ URL の resource でも Consumer
+  provider が呼ばれ、Consumer が cache するか判断する
+- **Consumer 側の cache 責任 (推奨)**: `FulgurResolver` / `FulgurNetProvider`
+  内部で `parking_lot::Mutex<HashMap<Url, Arc<CachedResource>>>` 等を保持し、
+  同一 URL の 2 度目以降を memoize
+- `SandboxedResolver` / `SandboxedNetProvider` は wrapper なので、Consumer 実装
+  内の cache は wrap 後もそのまま効く
+
+**Cache invalidation**:
+- raikiri は cache invalidation を関知しない (Consumer 側 policy)
+- Consumer は request lifetime scope で cache lifetime を管理 (per-request cache
+  など)
+- Long-running server では TTL based invalidation を Consumer が実装
+
+**AbortSignal と cache の相互作用**:
+- Consumer が abort → in-flight fetch も cancel、cache に完全 write しない
+- Consumer 側 cache 実装が abort-safe である必要 (partial cache entry を残さない)
 
 これで **PageContext の parallel margin box layout 中の状態変化は起こらず、
 byte-identical goal と concurrency safety が両立** する。
@@ -1981,9 +2021,50 @@ render を行わないので production sink に partial pages が emit され�
 - 発散するケース (幅が桁上がりで振動する場合等) は max_iterations で打ち切り、
   最後の registry を production render に使用
 
-**intermediate render を実 sink に出さない protocol**:
+**intermediate render を実 sink に出さない protocol** (round 4 Missing #6 対応、
+明示化):
 - 各 iteration は `plan()` のみで render_* を呼ばない (実 sink 未使用)
 - 最終 iteration のみ `render_streaming` を呼び production sink に出す
+- **もし Consumer が iteration 中で "実際に render してみる" 必要がある場合**
+  (例: layout output を inspect したいが production sink を汚さない)、
+  Consumer は独自の `DiscardSink` を実装可能:
+
+```rust
+// Consumer 実装例 (raikiri は提供しない、Consumer 自作):
+struct DiscardSink {
+    pages: Vec<PageFragment>,  // 保持だけして最後に drop
+    summary: Option<RenderSummary>,
+}
+impl RenderSink for DiscardSink {
+    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
+        self.pages.push(page);  // 描画しない、保持のみ
+        Ok(())
+    }
+    fn finish_render(&mut self, summary: RenderSummary) -> std::io::Result<()> {
+        self.summary = Some(summary);
+        Ok(())
+    }
+}
+
+// Consumer は iteration で DiscardSink を使い、最終だけ production sink
+for _iter in 0..config.max_target_iterations {
+    let mut discard = DiscardSink { pages: vec![], summary: None };
+    raikiri::render_streaming(&doc, defaults, &resolver, streaming_cfg.clone(),
+        &mut discard)?;
+    // discard.summary.target_registry を Consumer 側 registry と比較
+    // 収束したら break
+    drop(discard);  // Consumer sink drop で partial output 完全消滅
+}
+
+// 最終 render は production sink
+raikiri::render_streaming(&doc, defaults, &resolver, final_cfg,
+    &mut production_sink)?;
+```
+
+- **discard の保証**: `DiscardSink::drop` で内部 state が消える。raikiri は
+  Consumer sink の内部 state に関知しない (`accept_page` の返り値のみ)
+- **fetch cost**: iteration ごとに fetch されるので Consumer 側で cache 必須
+  (§5.4.3 参照)
 
 **fulgur config example**:
 
@@ -2284,6 +2365,49 @@ Layer 2: Resource level policy (§10, raikiri-net)
 **trait 定義** (raikiri-traits、§4 参照)、**preset 実装** (raikiri-net):
 - `DenyAllPolicy` — 全 fetch を reject する最も restrictive な起点
 - `DefaultSandboxPolicy` — https + data のみ許可、10 MB 上限、5s timeout 等の実用的デフォルト
+  + full SSRF defenses (下記 §10.3 参照)
+
+### 10.3 SSRF defense の実装詳細 (round 4 Missing #4 対応)
+
+`DefaultSandboxPolicy` および Consumer 実装の SSRF defense は以下を含む:
+
+**Private / link-local IP block**:
+- IPv4: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `169.254.0.0/16` (link-local), `0.0.0.0/8` (any-source)
+- IPv6: `::1` (loopback), `fc00::/7` (ULA), `fe80::/10` (link-local),
+  `fec0::/10` (site-local deprecated)
+- Multicast: `224.0.0.0/4`, `ff00::/8`
+- Consumer が明示的に許可した allowlist は例外
+
+**DNS rebinding attack 防御**:
+- URL の hostname を DNS resolve、返された IP を private/link-local check
+- **fetch 時に再度 resolve、初回 resolve と同じ IP か verify** (DNS rebinding
+  は 2 度目の resolve で private IP を返す攻撃)
+- 一致しない場合は `PolicyViolation` で reject
+
+**Redirect revalidation**:
+- 各 3xx redirect の Location header の URL を **改めて policy check**
+- redirect chain の各 hop で scheme / host / private IP check
+- max_redirect_hops (default: 3) 超過で reject
+- HTTP → HTTPS の "upgrade" は許可 (逆は reject)
+
+**Decompression bomb 対策**:
+- Content-Encoding が `gzip` / `deflate` / `br` の場合、decoded size を
+  streaming で count
+- `max_decoded_bytes` を超えた時点で fetch を abort (compression ratio が
+  1000:1 のような bomb を防ぐ)
+- Archive (`.zip`, `.tar.gz` 内 file 等) は default で全 reject (Consumer が
+  明示的に allow が必要)
+
+**Font / image decode bomb 対策**:
+- Font: HarfBuzz / freetype の decode に size + timeout 制限
+  (`max_decoded_bytes` + `decode_timeout` 併用)
+- Image: `image` crate の decode に同上、pixel dimension も check
+  (`max_pixel_dimensions: Option<(u32, u32)>` を DefaultSandboxPolicy に追加)
+- SVG: `usvg` の decode に同上、gzsvg (compressed SVG) も考慮
+
+**M4 tasks の SSRF-defense-tests がこれらを verify** (round 4 review Task #4
+対応)。DefaultSandboxPolicy の default 値も上記全てを網羅する。
 
 **wrapper pattern**:
 
@@ -2586,6 +2710,46 @@ reference document を最低 1 つ追加。既存 reference は regression さ�
 
 **Map 順序**: `BTreeMap` or `IndexMap` を使用、`HashMap` は byte-identical
 出力に使わない (iteration 順が非決定的)
+
+#### `expected-summary.json` schema versioning (round 4 Missing #3 対応)
+
+`RenderSummary` の canonical JSON serialize は format 変更に耐える必要がある
+(field 追加、field 型変更、feature deprecation)。
+
+```json
+{
+  "schema_version": "1.0.0",
+  "raikiri_version": "0.1.0",
+  "canonical_float_precision": 6,
+  "summary": {
+    "total_pages": 3,
+    "target_registry": { ... },
+    "unresolved_targets": [ ... ],
+    "emitted_target_slots": [ ... ],
+    "target_discrepancies": [ ... ],
+    "warnings": [ ... ]
+  }
+}
+```
+
+**Version 管理**:
+- `schema_version` は SemVer で管理:
+  - **PATCH bump** (1.0.0 → 1.0.1): 意味変化なし、fixture 再生成 不要
+  - **MINOR bump** (1.0.0 → 1.1.0): 後方互換 field 追加、既存 fixture は
+    そのまま pass (unknown field を許容)
+  - **MAJOR bump** (1.0.0 → 2.0.0): breaking change、全 fixture 再生成 + PR
+    review、`expectations/deprecated.txt` に旧 schema エントリ移動
+- `raikiri_version` は spec の実装バージョン、diff 追跡用
+
+**Consumer 側 forward-compat**:
+- Consumer が unknown field を許容 (`serde(deny_unknown_fields)` は使わない)
+- `schema_version` を parse して、MAJOR mismatch なら Consumer が明示的に
+  reject
+
+**Golden 更新 with schema bump** (§12.7 との統合):
+- MINOR bump: 開発者が新 field を追加 → 既存 fixture の期待値も更新
+- MAJOR bump: 明示的な PR で全 fixture 再生成 + review + `expectations/`
+  migration
 
 #### Determinism testing matrix (round 3 Missing #3 対応)
 
@@ -3534,6 +3698,11 @@ Step 4: 完全 raikiri 化 (blitz_adapter.rs 削除)
 - `plan` に raster 見積り情報 (`estimated_raster_bytes`, pixel dim per
   DPI 等) を追加する検討 — Consumer の memory 予測に有用 (優先度低)
 - `raikiri-blitz-compat` の sunset タイミング (fulgur 完全 migration 後)
+- **`plan_document` の名前について** (round 4 Missing #5 対応、実装後の一貫性
+  確認): この spec は raikiri を新規に立ち上げるため、以前の API 名からの
+  migration は不要。ただし spec 執筆過程で `plan_document` → `plan` の rename
+  を行ったので、外部から本 spec を引用する document があれば適宜更新。実装が
+  crates.io に上がる前の pre-1.0 期間に naming を最終確定する
 - 将来的な `raikiri-paint-pdf` (anyrender::PaintScene 実装、krilla base) の
   raikiri 側追加 vs. fulgur 側維持
 - WASM 対応 (`raikiri-vrt` は wasm でも動くべきか)
