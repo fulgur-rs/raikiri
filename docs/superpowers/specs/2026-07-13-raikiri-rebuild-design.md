@@ -118,35 +118,53 @@ WPT-first 検証方針を継承しつつ、ゼロから作り直す** ための�
 
 ## 4. Workspace Layout
 
-blitz workspace 構成を参考に、責務を明確に分離した 12 crate 構成。
+blitz workspace 構成に対応させ、`stylo` 相当の位置に `raikiri-style` を置く 10
+crate 構成 (dev/compat 含めて 13)。GCPM は cascade 側 (raikiri-style) と layout
+側 (raikiri-dom) に自然分割し、独立 crate は持たない。
 
 ```
 raikiri-spike/
 ├── Cargo.toml (workspace)
 ├── crates/
-│   ├── raikiri-traits/       # 共有 trait 定義 + 中立モデル型
+│   ├── raikiri-traits/       # 共有 trait 定義 + 中立モデル型 (blitz-traits 相当)
 │   │                            RenderSink, NetworkProvider, ReplacedResolver,
 │   │                            LookaheadPolicy, TargetResolver, EmissionPolicy,
+│   │                            ReflowPolicy,
 │   │                            Dom/Element/Node,
 │   │                            PageFragment, PageBox, PageContext,
 │   │                            LayoutBuffer, TargetRegistry, GcpmDirective,
 │   │                            LookaheadConfig, TargetConvergence, BatchConfig
-│   ├── raikiri-html/         # html5ever wrapper + RaikiriTreeSink
+│   ├── raikiri-style/        # ★ stylo 相当: CSS engine
+│   │                            - cssparser + selectors integration
+│   │                            - 統一 RuleTree (通常 rule + @page/counter/
+│   │                              string-set/running/target-* at-rule)
+│   │                            - cascade → ComputedValues
+│   │                            - GCPM directive extraction (cascade 副産物)
+│   │                            - @page rule 解決
+│   ├── raikiri-dom/          # ★ blitz-dom 相当: DOM data + layout engine
+│   │                            - DOM data model (Node/Element/Attribute)
+│   │                            - taffy 統合 (block/flex/grid layout)
+│   │                            - parley 統合 (text shaping)
+│   │                            - PageStream + LayoutBuffer + Strategy 実装
+│   │                              (BoundedLookahead/UnboundedLookahead,
+│   │                               PlaceholderTargetResolver/RegistryTargetResolver,
+│   │                               ImmediateEmission/DeferredEmission,
+│   │                               AggressiveCommit)
+│   │                            - GCPM runtime (PageContext state 管理、
+│   │                              TargetRegistry, directive 適用)
+│   │                            - PageBoxCache
+│   │                            - render_with() 低レベル driver
+│   ├── raikiri-html/         # 薄い parser (blitz-html 相当)
+│   │                            html5ever wrapper + RaikiriTreeSink
 │   │                            Consumer が wrap して sanitize/inject/rewrite
-│   ├── raikiri-css/          # cssparser + selectors + 統一 RuleTree
-│   │                            + cascade + ComputedValues (stylo リプレース領域)
-│   ├── raikiri-dom/          # DOM データモデル (Node/Element/Attribute)
-│   ├── raikiri-gcpm/         # @page/counter/string-set/running/target-*
-│   │                            directive 実装 (中立型は raikiri-traits)
-│   ├── raikiri-layout/       # taffy + parley + PageStream (private)
-│   │                            + strategy 実装群 (Bounded/Unbounded, Placeholder/Registry,
-│   │                              Immediate/Deferred)
-│   │                            + render_with() 低レベル driver
+│   │                            parse 結果を raikiri-dom Document へ流し込む
 │   ├── raikiri-paint/        # PageFragment → anyrender::PaintScene walker
-│   │                            (VRT や debug output 用途)
+│   │                            (VRT や debug output 用途、blitz-paint 相当)
 │   ├── raikiri-net/          # NoOpProvider (default) / SandboxedProvider (future)
+│   │                            (blitz-net 相当)
 │   ├── raikiri/              # umbrella crate: primary Consumer API
-│   │                            全 sub-crate re-export + html_to_png helper
+│   │                            全 sub-crate re-export + render_streaming/
+│   │                            render_batch orchestrator + html_to_png helper
 │   ├── raikiri-blitz-compat/ # blitz 互換 layer (M6 で追加)
 │   │                            fulgur migration 支援、型 shape 互換
 │   ├── raikiri-wpt/          # dev-only: WPT runner + blitz oracle
@@ -157,27 +175,93 @@ raikiri-spike/
 └── examples/
 ```
 
+### 4.0 GCPM の 2 side 分割
+
+blitz には GCPM がないため、raikiri は仕様レベルの natural な境界で 2 side に
+分割する:
+
+| GCPM 側面 | 帰属 | 内容 |
+|---|---|---|
+| **static side** (cascade 副産物) | **raikiri-style** | @page rule 解析、`counter-increment`/`counter-reset` を GcpmDirective::CounterIncrement/Reset として emit、`string-set` を GcpmDirective::StringSet として emit、`position: running(name)` を RunningTemplate 登録として emit、`content: string()/counter()/target-*()` を ContentValueItem として parse |
+| **runtime side** (layout 時 state) | **raikiri-dom** | PageContext (counter tree、named string 4-snapshot、running bindings) の管理、TargetRegistry (target-* placeholder emit と resolve)、directive の application (walk 中に counter increment 等を実行)、@page rule の per-page resolution (page_index + page_name → 実効 PageBox) |
+| **shared types** | **raikiri-traits** | GcpmDirective, ContentValueItem, PageContext, TargetRegistry, PageBox, PageFragment |
+
+この分割で、GCPM を独立 crate にしなくても Blitz backport 時に「blitz-style
+に static side を追加、blitz-dom に runtime side を追加、blitz-traits に
+GCPM 型を追加」で提案可能。
+
 ### 依存 DAG
+
+blitz と同じ形の DAG:
 
 ```
 raikiri-traits (foundation)
    ▲
    │
-   ├── raikiri-html ─┐
-   ├── raikiri-css ──┼──▶ raikiri-dom ──▶ raikiri-gcpm ──▶ raikiri-layout ──▶ raikiri-paint
-   ├── raikiri-net ──┘                                            │              │
-   └─────────────────────────────────────────────────────────────┼──────────────┘
-                                                                  │
-                                                          raikiri (umbrella)
-                                                                  ▲
-                                                                  │
-                                                     raikiri-blitz-compat
-                                                                  │
-                                                     raikiri-vrt (dev)
-                                                     raikiri-wpt (dev)
+   ├── raikiri-net
+   │
+   ├── raikiri-style (stylo 相当、GCPM static side)
+   │       ▲
+   │       │
+   │       └── raikiri-dom (blitz-dom 相当、layout + GCPM runtime side)
+   │               ▲
+   │               │
+   │               ├── raikiri-html (thin parser、dom を通じて Document 構築)
+   │               │
+   │               └── raikiri-paint (dom の computed style と layout 結果を読む)
+   │                        ▲
+   │                        │
+   │                        └── raikiri (umbrella)
+   │                                ▲
+   │                                │
+   │                                ├── raikiri-blitz-compat (M6)
+   │                                ├── raikiri-vrt (dev)
+   │                                └── raikiri-wpt (dev)
 ```
 
-相互依存なし。DAG。
+**blitz との対応**:
+- raikiri-traits ↔ blitz-traits
+- raikiri-style ↔ stylo (Servo 由来の外部 dep 相当、raikiri では workspace 内)
+- raikiri-dom ↔ blitz-dom (stylo を使う、layout を含む)
+- raikiri-html ↔ blitz-html (薄い parser)
+- raikiri-paint ↔ blitz-paint
+- raikiri-net ↔ blitz-net
+- raikiri ↔ blitz (umbrella)
+
+相互依存なし。DAG。cycle なし。逆方向依存なし。
+
+### 依存 / 型帰属テーブル (Finding #3 対応)
+
+reviewer 提案の明示表：
+
+| 型 / 関数 | 定義 crate | 主要な使用 crate |
+|---|---|---|
+| Sink / Provider / Resolver trait (`RenderSink`, `NetworkProvider`, `ReplacedResolver`) | raikiri-traits | Consumer (impl), raikiri-dom (呼出) |
+| Strategy trait (`LookaheadPolicy`, `TargetResolver`, `EmissionPolicy`, `ReflowPolicy`) | raikiri-traits | raikiri-dom (impl + 呼出), Consumer (advanced impl) |
+| `Dom` / `Element` / `Node` (trait) | raikiri-traits | 全 crate |
+| `PageFragment`, `PageBox`, `PageContext`, `TargetRegistry`, `LayoutBuffer`, `GcpmDirective`, `ContentValueItem` (中立モデル型) | raikiri-traits | raikiri-style (emit), raikiri-dom (use), raikiri-paint (read), Consumer |
+| `LookaheadConfig`, `TargetConvergence`, `BatchConfig`, `ContainerOverflowFallback`, `ReflowAction`, `DirtyDeadline` | raikiri-traits | Consumer |
+| `RaikiriTreeSink`, `UncascadedDocument` | raikiri-html | raikiri (umbrella, orchestrator), Consumer (wrap) |
+| `parse()`, `iter_replaced_elements()` | raikiri-html | raikiri (umbrella) |
+| `RuleTree`, `ComputedValues` | raikiri-style | raikiri-dom (使用), raikiri (advanced re-export) |
+| `cascade()` | raikiri-style | raikiri (umbrella) |
+| GCPM static extraction (directive emit) | raikiri-style | raikiri (umbrella 経由で raikiri-dom へ) |
+| `Document` (fully cascaded、layout 前) | raikiri-dom | raikiri (umbrella), Consumer (advanced) |
+| Layout runtime (taffy 統合, parley 統合, PageStream, LayoutBuffer 実装) | raikiri-dom | raikiri (umbrella の render_with) |
+| Strategy 実装 (BoundedLookahead, UnboundedLookahead, PlaceholderTargetResolver, RegistryTargetResolver, ImmediateEmission, DeferredEmission, AggressiveCommit) | raikiri-dom | raikiri (umbrella 経由), Consumer (advanced) |
+| GCPM runtime (PageContext state 管理, TargetRegistry 実装) | raikiri-dom | raikiri (umbrella) |
+| `PageBoxCache` (crate-private) | raikiri-dom | raikiri-dom 内部のみ |
+| `render_with()` (低レベル driver) | raikiri-dom | raikiri (umbrella 経由), Consumer (advanced) |
+| `paint_to_scene()` | raikiri-paint | raikiri-vrt, Consumer |
+| `NoOpNetworkProvider`, (future) `SandboxedNetworkProvider` | raikiri-net | Consumer |
+| `parse_html()`, `render_streaming()`, `render_batch()`, `html_to_png()` | raikiri (umbrella) | Consumer |
+
+**Consumer 目線**: `use raikiri::*` だけで足りる。sub-crate 直接依存も可能
+(advanced case)。
+
+**circular なし**: raikiri-html は raikiri-dom に依存するが cascade を呼ばず、
+umbrella crate が orchestrator として raikiri-style::cascade() を呼び出す形。
+raikiri-dom は raikiri-style を使うだけで、cascade を呼び返さない。
 
 ### crate 責務詳細
 
@@ -286,81 +370,59 @@ pub enum TargetConvergence {
 `LayoutBuffer` / `TargetRegistry` / `GcpmDirective` は複数 crate の境界を跨いで
 参照される（strategy trait の入出力、sink の入力、cascade の出力など）ため、
 foundation crate として raikiri-traits に置く。実装ロジックは各機能 crate 側
-(raikiri-gcpm / raikiri-layout など) に残し、型定義だけを foundational 化する。
+(raikiri-style の cascade、raikiri-dom の layout runtime) に残し、型定義だけを
+foundational 化する。
 
-#### `raikiri-html`
+#### `raikiri-style` (stylo 相当)
 
-html5ever wrapper。`RaikiriTreeSink` が Dom を構築。Consumer は
-`html5ever::tree_builder::TreeSink` として wrap 可能 (sanitize / inject / rewrite)。
-
-エントリポイントの `Document` は薄い wrapper。
-
-```rust
-pub fn parse_html<R: std::io::Read>(input: R, options: &ParseOptions) 
-    -> Result<Document, ParseError>;
-
-pub fn parse_html_with_sink<R, S>(input: R, sink: S, options: &ParseOptions) 
-    -> Result<Document, ParseError>
-where R: std::io::Read, S: html5ever::tree_builder::TreeSink;
-
-pub fn iter_replaced_elements(doc: &Document) 
-    -> impl Iterator<Item = ReplacedElementRef<'_>>;
-
-pub struct ParseOptions<'a> {
-    pub extra_stylesheets: &'a [&'a str],
-    pub network: Option<&'a dyn NetworkProvider>,
-    pub base_url: Option<Url>,
-}
-```
-
-#### `raikiri-css`
-
-**stylo リプレース領域**。cssparser + selectors を base に、cascade /
-specificity / ComputedValues 型体系を自前実装。
+**stylo リプレース crate**。cssparser + selectors を base に、cascade /
+specificity / ComputedValues / RuleTree / GCPM static side を自前実装。
 
 - `cssparser` の 1 pass で **通常 rule と @page 系 at-rule を統一 RuleTree に集約**
 - selector matching は `selectors` crate に委ねる
 - ComputedValues は paged media / GCPM 対応を含む自前型体系
 - `content` プロパティは `Vec<ContentValueItem>` として resolved value (実行時解決)
+- **GCPM static side** (cascade 副産物として emit):
+  - `counter-increment` / `counter-reset` / `counter-set` を GcpmDirective 化
+  - `string-set` を GcpmDirective 化
+  - `position: running(name)` を RunningTemplate 登録として emit
+  - `content: string()/counter()/target-*/element()` を ContentValueItem として parse
+  - @page rule の cascade order 解決 (per-page 適用は raikiri-dom 側)
 
 Selectors 対応範囲:
 - L3 base、interactive 系 (`:hover`, `:focus`, `:link`, `:visited`, `:target`,
-  `:enabled`, `:checked`) は parse は通すが常に false (fail-open)
-- L4 streaming-safe (`:is()`, `:where()`, `:not()`) は採用、優先度低
-- L4 backward-reference (`:has()`, `:nth-last-child()`, `:blank`) は Phase A
-  batch cascade で常時対応可能。**実装優先度** の問題として扱い、実装したら常時
-  有効 (mode 依存にはしない)
+  `:enabled`, `:checked`) は parse は通すが常に non-matching (fail-closed:
+  実装しない = match しない)
+- L4 (`:is()`, `:where()`, `:not()`) は採用、優先度低
+- L4 backward-reference (`:has()`, `:nth-last-child()`, `:blank`) は Phase A で
+  full DOM を持つ以上、**mode 非依存で常時対応可能**。実装優先度は低いが、実装
+  したら常時有効
 
-#### `raikiri-dom`
+#### `raikiri-dom` (blitz-dom 相当)
 
-DOM データモデル。Node / Element / Attribute の型と tree walk API。
-`raikiri-traits::Dom` を実装。
+**DOM + layout engine + GCPM runtime**。blitz-dom の shape で、raikiri-style
+を cascade に使い、taffy + parley を layout に使う。
 
-#### `raikiri-gcpm`
-
-GCPM (Generated Content for Paged Media) の IR 明示ノード化と PageContext 管理。
-
-- `GcpmDirective` enum で counter-increment/reset/set、string-set、
-  register-running、register-target を明示化
-- `PageContext` は Phase B が所有する明示 mutable state
-- `TargetRegistry` で target-* placeholder emit と resolve を管理
-- @page rule cascade は raikiri-css と協調 (statelessness を維持)
-
-#### `raikiri-layout`
-
-taffy + parley 統合。**Phase B の主体**。
-
-- `LayoutBuffer`: widow/orphan/break-inside/container probe lookahead の独立
-  ユニット (中立型は raikiri-traits、実装ロジックはここ)
-- `PageStream`: crate-private state machine (per-page emit)、DOM cursor と
+- **DOM data model**: Node / Element / Attribute、`raikiri-traits::Dom` を実装
+- **taffy 統合**: block / flex / grid の layout
+- **parley 統合**: text shaping、BiDi、font selection
+- **PageStream**: crate-private state machine (per-page emit)、DOM cursor と
   Emission cursor を保持
+- **LayoutBuffer**: widow/orphan/break-inside/container probe lookahead の
+  独立ユニット (中立型は raikiri-traits)
 - **Strategy 実装群**: `BoundedLookahead` / `UnboundedLookahead`,
   `PlaceholderTargetResolver` / `RegistryTargetResolver`,
   `ImmediateEmission` / `DeferredEmission`,
   `AggressiveCommit` (M1〜M8 で唯一実装される ReflowPolicy)
-- `PageBoxCache`: 同じ (page_name, parity) の @page 解決結果を再利用
-- `render_with(...)` 低レベル driver (任意 strategy を受け取る、advanced 向け)
-- Per-page 内部の rayon 並列化 (16 margin box slots、paragraph text shape、
+- **GCPM runtime side**:
+  - PageContext (counter tree、named string 4-snapshot、running bindings) の管理
+  - TargetRegistry (target-* placeholder emit と resolve)
+  - Directive の application (walk 中に counter increment / string set を実行)
+  - @page rule の per-page resolution (page_index + page_name → 実効 PageBox)
+- **PageBoxCache**: 同じ (page_name, parity, is_first, is_blank) の @page 解決
+  結果を再利用
+- **render_with(...)** 低レベル driver (任意 strategy を受け取る、advanced 向け)
+- **Per-page 内部の rayon 並列化** (16 margin box slots、paragraph text shape、
   multi-column)
 
 ```rust
@@ -395,6 +457,39 @@ where
 上位の `render_streaming` / `render_batch` は umbrella crate `raikiri` が提供
 (§5.3)。
 
+#### `raikiri-html` (blitz-html 相当)
+
+薄い HTML parser wrapper。**責務は parse だけ**、cascade / layout は含まない。
+raikiri-dom を通じて Document を構築する。
+
+- html5ever wrapper + `RaikiriTreeSink`
+- Consumer が `html5ever::tree_builder::TreeSink` として wrap 可能
+  (sanitize / inject / rewrite)
+- parse 結果を raikiri-dom の Document に流し込む
+- `iter_replaced_elements` で Consumer が replaced element を先読み可能
+
+```rust
+pub fn parse<R: std::io::Read>(input: R, options: &ParseOptions) 
+    -> Result<UncascadedDocument, ParseError>;
+
+pub fn parse_with_sink<R, S>(input: R, sink: S, options: &ParseOptions) 
+    -> Result<UncascadedDocument, ParseError>
+where R: std::io::Read, S: html5ever::tree_builder::TreeSink;
+
+pub fn iter_replaced_elements(doc: &UncascadedDocument) 
+    -> impl Iterator<Item = ReplacedElementRef<'_>>;
+
+pub struct ParseOptions<'a> {
+    pub extra_stylesheets: &'a [&'a str],
+    pub network: Option<&'a dyn NetworkProvider>,
+    pub base_url: Option<Url>,
+}
+```
+
+**注意**: `parse` は cascade 前の `UncascadedDocument` を返す。cascade は
+raikiri-style で実行、fully cascaded `Document` の組立ては umbrella `raikiri`
+が orchestrator として行う (§5.3 参照)。
+
 #### `raikiri-paint`
 
 `PageFragment` → `anyrender::PaintScene` の walker。VRT や debug output 用途。
@@ -427,12 +522,15 @@ pub struct PaintOptions {
 
 #### `raikiri` (umbrella)
 
-**primary Consumer API**。fulgur は `use raikiri::*` のみで足りる。
+**primary Consumer API**。fulgur は `use raikiri::*` のみで足りる。**orchestrator
+としても機能** — parse → cascade → Document 組立てを担う。
 
 ```rust
-pub use raikiri_html::{Document, parse_html, ParseOptions, iter_replaced_elements};
-pub use raikiri_layout::{
-    PageDefaults, render_with,
+pub use raikiri_html::{parse as raw_parse, ParseOptions, iter_replaced_elements,
+                        UncascadedDocument};
+pub use raikiri_style::{RuleTree, ComputedValues};  // advanced 用
+pub use raikiri_dom::{
+    Document, PageDefaults, render_with,
     // strategy 実装 (advanced 向け)
     BoundedLookahead, UnboundedLookahead,
     PlaceholderTargetResolver, RegistryTargetResolver,
@@ -447,6 +545,14 @@ pub use raikiri_traits::{
     ContainerOverflowFallback, ReflowAction, DirtyDeadline,
 };
 pub use raikiri_paint;  // sub-module として
+
+/// parse → cascade → Document 組立て (orchestrator)
+pub fn parse_html<R: std::io::Read>(input: R, options: &ParseOptions) 
+    -> Result<Document, ParseError> {
+    let uncascaded = raikiri_html::parse(input, options)?;
+    let cascade = raikiri_style::cascade(&uncascaded, options.extra_stylesheets)?;
+    Ok(raikiri_dom::Document::assemble(uncascaded, cascade))
+}
 
 // ── 通常 Consumer 向け: pre-composed entry ─────────────────
 /// Streaming 向け: BoundedLookahead + PlaceholderTargetResolver + ImmediateEmission
@@ -520,18 +626,21 @@ Phase A: Document build (batch, 純関数的)
   html_input (impl Read)
     │
     ▼
-  html5ever chunk streaming → RaikiriTreeSink (Consumer wrap 可)
+  【raikiri-html】html5ever chunk streaming → RaikiriTreeSink (Consumer wrap 可)
     │
     ▼
-  Dom
+  UncascadedDocument = { dom, stylesheet_sources }  ← raikiri-html の出力
     │
-    ├─▶ RuleTree: cssparser 1-pass で 通常 rule + GCPM at-rule を統一 tree に集約
+    ▼
+  【raikiri-style】cssparser 1-pass:
+    - RuleTree (通常 rule + @page 系 at-rule を統一 tree に集約)
+    - cascade: selectors::matching + 自前 cascade
+    - 出力: Vec<ComputedValues>, Vec<GcpmDirective>, Vec<RunningTemplate>
     │
-    ├─▶ cascade: selectors::matching + 自前 cascade
-    │             出力は Vec<ComputedValues> と Vec<GcpmDirective>
-    │
-    └─▶ Document = { dom, computed, rule_tree, gcpm_directives, running_templates,
-                     seed_page_context }
+    ▼
+  【raikiri (umbrella) orchestrator】組立て:
+    Document = { dom, computed, rule_tree, gcpm_directives, running_templates,
+                 seed_page_context }
              ↑ Phase A の produce、Phase B の read-only 入力
 
 Phase B: Page emission (Strategy 群で切替)
@@ -628,10 +737,10 @@ fulgur 現行の 6 個の `DomPass` (`CaptionRestructurePass`, `RunningElementPa
 `StringSetPass`, `CounterPass`, `InjectCssPass`, `BookmarkPass`) は、new
 raikiri では以下に集約:
 
-- **`CaptionRestructurePass`** → raikiri-layout に統合 (native caption-side)
-- **`RunningElementPass`** → raikiri-gcpm 内部
-- **`StringSetPass`** → raikiri-gcpm 内部
-- **`CounterPass`** → raikiri-css cascade + raikiri-gcpm 内部
+- **`CaptionRestructurePass`** → raikiri-dom layout に統合 (native caption-side)
+- **`RunningElementPass`** → raikiri-style (extraction) + raikiri-dom (runtime)
+- **`StringSetPass`** → raikiri-style (extraction) + raikiri-dom (runtime)
+- **`CounterPass`** → raikiri-style cascade + raikiri-dom runtime
 - **`InjectCssPass`** → `ParseOptions::extra_stylesheets` に降格 (trait 不要)
 - **`BookmarkPass`** → Consumer 側 post-cascade utility (raikiri は heading hint
   のみ提供)
@@ -707,7 +816,7 @@ raikiri::render_with(
 - **決定論**: `IndexedParallelIterator` で順序保持、byte-identical output goal
   を守る
 
-## 6. CSS Handling (raikiri-css)
+## 6. CSS Handling (raikiri-style)
 
 ### 6.1 統一 RuleTree
 
@@ -761,11 +870,32 @@ inline `<style>`:
 の解決方式にのみ影響し、cascade / selector matching / stylesheet 解釈には
 一切影響しない**。
 
-## 7. GCPM IR 明示ノード化 (raikiri-gcpm)
+## 7. GCPM IR 明示ノード化 (raikiri-style + raikiri-dom)
+
+### 7.0 GCPM の帰属再確認
+
+blitz には GCPM がないため、raikiri で自前で仕様レベルの natural な境界に
+沿って 2 side に分割:
+
+- **static side** (cascade 副産物として生成) → **raikiri-style**
+  - `counter-increment` / `counter-reset` / `counter-set` を GcpmDirective 化
+  - `string-set` を GcpmDirective 化
+  - `position: running(name)` を RunningTemplate 登録として emit
+  - `content: string()/counter()/target-*()` を ContentValueItem として parse
+  - @page rule の cascade order 解決
+- **runtime side** (layout 時 state 管理) → **raikiri-dom**
+  - PageContext (counter tree、named string 4-snapshot、running bindings)
+  - TargetRegistry (target-* placeholder emit と resolve)
+  - Directive の application (walk 中に counter increment 等を実行)
+  - @page rule の per-page resolution (page_index + page_name → 実効 PageBox)
+- **shared types** → **raikiri-traits**
+  - `GcpmDirective`, `ContentValueItem`, `PageContext`, `TargetRegistry`,
+    `PageBox`, `PageFragment`, etc.
 
 ### 7.1 GcpmDirective
 
-**Producing directive** (cascade で生成、Phase B の walk で PageContext を更新):
+**Producing directive** (raikiri-style の cascade で生成、raikiri-dom の Phase B
+walk で PageContext を更新):
 
 ```rust
 pub enum GcpmDirective {
@@ -987,7 +1117,7 @@ target-* が page number を変えるケースで、これは `ConvergingTargetR
 ### 9.2 PageBoxCache
 
 同じ `(page_name, page_index parity, is_first, is_blank)` の @page rule 解決結果は
-再利用可能。`PageBoxCache` は crate-private in raikiri-layout:
+再利用可能。`PageBoxCache` は crate-private in raikiri-dom:
 
 ```rust
 struct PageBoxCache {
@@ -1093,7 +1223,7 @@ pub struct PaintedBox {
 | 責務 | 担当 |
 |---|---|
 | HTML parse、cascade、layout | raikiri |
-| 座標つき PageFragment 生成 | raikiri-layout |
+| 座標つき PageFragment 生成 | raikiri-dom |
 | raster / VRT 出力 | raikiri-paint + raikiri-vrt (anyrender) |
 | PDF 出力 | **fulgur が独自 walker + krilla** |
 | target-* placeholder 認識 | raikiri emit、Consumer 解決 |
