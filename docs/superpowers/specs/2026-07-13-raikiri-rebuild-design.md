@@ -2205,102 +2205,389 @@ WPT scope は「**pass すべき集合**」ではなく「**注視している�
 
 ## 13. Milestone Plan
 
-### M1: skeleton + hello world + VRT primary
+各 milestone は **Goals** (何を達成する) + **Tasks** (task 分解) +
+**Acceptance criteria** (完了条件) + **Reference fixtures** (T1 gate) の 4 要素
+で構成 (Task list findings #H2, #H3, #M4 対応)。
 
-全 crate を skeleton として存在させ、end-to-end pipeline が最短経路で動くこと。
+### M1: Skeleton + reference harness + error taxonomy + hello world VRT
 
-- 対象: `<html><body><p style="color:red">Hi</p></body></html>` → A4 単一
-  ページ PNG → reference と VRT で一致
-- 全 crate の Cargo.toml、trait 定義、最小型
-- `raikiri::html_to_png()` の dogfooding helper 動作
-- CI で unit test + VRT 実行
-- **Non-goals**: pagination、@page、GCPM、Batch mode、ReplacedResolver 実使用、
-  break policy、per-page PageBox、L4 selector
+**Goals**:
+- 全 crate skeleton (Cargo.toml, trait 定義, 最小型)
+- end-to-end pipeline (parse → cascade minimal → layout single-page → paint → PNG)
+- `RenderError` / `RenderStatus` type 定義と基本 error 伝播 (Parse/Cascade)
+  (Task #H1 対応)
+- Reference harness 初期セットアップ (`tests/reference/` の infrastructure)
+  (Task #M4 対応)
 
-### M2: Streaming pagination + LayoutBuffer skeleton
+**Tasks**:
+- workspace-setup, traits-definition, error-taxonomy-types
+- html-parse-basic (Parse error), css-cascade-basic (Cascade error)
+- dom-model, layout-single-page, paint-basic
+- vrt-tiny-skia, wpt-harness-skeleton, reference-harness-scaffold
+- umbrella-facade (parse_html, plan, render_streaming stubs)
+- ci-setup, determinism-test, hello-world-vrt
 
-複数ページ縦流し、break-before/break-after 基本。
+**Reference fixtures**:
+- `tests/reference/hello-world/`: `<p style="color:red">Hi</p>` → PNG
 
-### M3: Inline layout 本実装
+**Acceptance criteria**:
+- `cargo build` all crates green
+- Unit test per crate (最低 1 個)
+- `raikiri::html_to_png(HELLO)` returns Vec<u8>、hello-world VRT pass
+- 10 回連続実行で byte-identical
+- CI green
 
-parley 統合、BiDi、font selection、多国籍テキストの raster。
+**Non-goals**: pagination、@page、GCPM、Batch、ReplacedResolver 実使用、
+break policy、per-page PageBox、L4 selector、target-*
 
-### M4: @page rule cascade + margin box + GCPM state 導入
+### M2: Streaming pagination + LayoutBuffer + Streaming error semantics
 
-@page 規則 cascade、margin box slot layout、PageContext 実装。
+**Goals**:
+- 複数ページ縦流し、break-before/break-after 基本
+- `LayoutBuffer` の skeleton
+- **Streaming error semantics 実装** (partial output tracking、accept_page から
+  Err) (Task #H1 対応)
+- Streaming reference fixtures 追加
 
-### M5: GCPM directive full + running element + Batch mode skeleton
+**Tasks**:
+- pagestream-state-machine, layoutbuffer-skeleton
+- break-before-after-forced (@page break-before)
+- streaming-partial-output-tracking, sink-state-transition-tests
+- accept_page-error-propagation, RenderStatus-integration
+- reference-fixtures-multi-page
 
-counter-increment/reset/set、string-set 4-snapshot、running element template。
+**Reference fixtures**:
+- `tests/reference/simple-multi-page/`
+- `tests/reference/break-before-basic/`
 
-### M6: target-* SinglePass + Batch mode 完成 + fulgur integration + raikiri-blitz-compat
+**Acceptance criteria**:
+- 3-5 ページの縦流しが VRT で reference と一致
+- `accept_page` が Err を返した時、上位が `RenderError::Sink` を受け取り、
+  直前まで committed pages を確認可能
+- Non-goal からの regression 無し (M1 hello world も pass)
 
-- target-counter/text/page の placeholder emit と Batch mode resolve
-- fulgur adapter (raikiri を fulgur から使う adapter)
-- **raikiri-blitz-compat crate 初版** (方針 B: 型 shape 互換、振る舞い raikiri)
+### M3: Inline layout 本実装 (parley 統合)
 
-### M7: Break policy 完成
+**Goals**:
+- parley 統合による text shape、BiDi、font selection
+- 多国籍テキストの raster
 
-widow/orphan、break-inside: avoid、break-before/after: page(name)。
+**Tasks**:
+- parley-integration, bidi-support, font-fallback
+- inline-formatting-context, glyph-run-emit
+- text-multilingual-fixtures
 
-### M8: 決定論保証 + per-page PageBox + WPT full sweep + PDF reftest 定常化
+**Reference fixtures**:
+- `tests/reference/text-multilingual/`
+- `tests/reference/mixed-fonts/`
 
-byte-identical CI 常時 verify、混合サイズ PDF、WPT 広範囲実行、fulgur PDF reftest
-nightly。
+**Acceptance criteria**: BiDi text、混合 script (Latin + CJK) の raster が
+reference と一致
 
-### milestone 依存 DAG
+### M4: @page rule cascade + per-page PageBox + margin box + GCPM state seed
+
+**訂正 (Task list #M3 対応)**: per-page PageBox を M8 から **M4 に前倒し**。
+理由: M5 の running template が per-page geometry を前提とするため。
+
+**Goals**:
+- @page 規則 cascade (`:first`, `:left`, `:right`, `:nth-page`, named)
+- **per-page PageBox 決定 (mixed-size PDF 対応)** ← M8 から前倒し
+- 16 margin box slot layout
+- `PageContext` の seed 実装
+- Layer 2 security (SandboxedNetProvider) の PolicyViolation 伝播 (Task #H1)
+
+**Tasks**:
+- page-rule-cascade, page-name-transition-table
+- per-page-pagebox-resolver, pageboxcache-implementation
+- margin-box-slot-layout, sixteen-slot-rayon
+- pagecontext-seed-builder
+- policy-violation-propagation (Layer 2 security)
+
+**Reference fixtures**:
+- `tests/reference/mixed-size-A4-A3/`
+- `tests/reference/running-header-basic/` (static content only、mixed-size で検証)
+
+**Acceptance criteria**:
+- Mixed-size PDF (portrait A4 + landscape A3) が VRT で reference と一致
+- Per-page PageBox 実装が §9.1 の遷移表通りに動作
+
+### M5: GCPM directive full + running element (geometry-parameterized)
+
+**訂正 (Task list #M3 対応)**: running template の geometry-parameterized test を
+M5 に含める。M4 で導入された per-page PageBox に依存するので、順序は M4 → M5 で
+安全。
+
+**Goals**:
+- counter-increment/reset/set、string-set 4-snapshot
+- Running element template (M4 の per-page PageBox 上で動作)
+- Batch preset skeleton (`UnboundedLookahead` の scaffold のみ、full 実装は M6b)
+
+**Tasks**:
+- gcpm-directive-emit, counter-tree-management
+- string-set-4-snapshot
+- running-template-store, per-page-relayout
+- **running-template-geometry-tests**: mixed-size で running 内容が正しく
+  reflow されることを VRT + structural で検証
+- batch-preset-skeleton
+
+**Reference fixtures**:
+- `tests/reference/chapter-counter/`
+- `tests/reference/running-header-dynamic/` (counter/string 参照 + mixed-size)
+
+**Acceptance criteria**:
+- 章立てレポート (counter-reset で chapter、counter-increment で section)
+  が VRT で一致
+- Running header が A4 と A3 の両ページで正しく reflow (geometry-parameterized
+  test)
+
+### M6: 5 sub-milestone に分割 (Task list #H2 対応)
+
+**訂正**: 従来の 1 巨大 M6 (5000 行、極高) を独立 reviewable な 5 sub-milestone
+に分割:
+
+#### M6a: target-* SinglePass
+
+**Goals**: `PlaceholderTargetResolver` 実装、`TargetSlotId` 安定化、
+`target_definitions` per-page emit
+
+**Tasks**: target-slot-emit, targetslotid-stability, target-definitions-per-page,
+finish_render-summary-integration
+
+**Reference fixtures**: `tests/reference/target-counter-basic/`
+
+**Acceptance**: target-counter 参照が finish_render summary で完全 resolve、
+Consumer patch できる
+
+#### M6b: Batch preset 完成
+
+**Goals**: `UnboundedLookahead` full 実装、`RegistryTargetResolver`、
+`initial_registry` hint 対応
+
+**Tasks**: unbounded-lookahead-impl, registry-target-resolver,
+initial-registry-plumbing, batch-vs-streaming-preset-independence-test
+
+**Reference fixtures**: `tests/reference/batch-preset-basic/`
+
+**Acceptance**: `render_batch` が Fragmentation L3 準拠 (M8 で 100% ではないが
+主要ケース) で VRT reference 一致
+
+#### M6c: Batch error semantics + Abort handling
+
+**Goals** (Task #H1 対応): Batch の pre-emission vs post-emission-start 分岐、
+`RenderStatus::Aborted` 実装、`AbortSignal` 統合
+
+**Tasks**: batch-preemission-atomicity, batch-postemission-partial,
+abort-signal-integration, renderstatus-aborted-impl, error-injection-tests-batch
+
+**Reference fixtures**: `tests/reference/abort-mid-batch/` (structural test)
+
+**Acceptance**: `AbortSignal.abort()` が graceful stop を発火、partial_pages を
+正しく通知。error injection で全 variant が正しく伝播
+
+#### M6d: fulgur adapter
+
+**Goals**: fulgur の既存 blitz_adapter.rs 相当を raikiri 経由に置換する adapter
+
+**Tasks**: fulgur-adapter-scaffold, fulgur-resolver-integration,
+fulgur-sink-integration, fulgur-pdf-reftest-integration
+
+**Reference fixtures**: `tests/reference/fulgur-integration-A/` (fulgur adapter
+経由の end-to-end PDF)
+
+**Acceptance**: fulgur の代表 fixture が raikiri adapter 経由で PDF 生成、
+既存 blitz 版と visual 一致
+
+#### M6e: raikiri-blitz-compat 初版
+
+**Goals**: 方針 B (型 shape 互換、振る舞い raikiri) の初版
+
+**Tasks**: blitz-compat-type-shape, blitz-html-htmldocument-compat,
+blitz-dom-node-compat, behavior-diff-md
+
+**Reference fixtures**: なし (compat 検証は compile-level test で、`tests/compat/`
+に fulgur のスニペットを compile 通す test)
+
+**Acceptance**: fulgur が `use raikiri_blitz_compat::blitz_html::HtmlDocument;` に
+差し替えるだけで既存コードが compile 通る
+
+### M7: Break policy + widow/orphan + probe layout + Abort integration
+
+**Goals**:
+- widow/orphan、break-inside: avoid の実装
+- Container probe layout (§5.1 の probing フェーズ)
+- `AbortSignal` を全 loop に統合 (M6c で骨格実装、M7 で徹底)
+
+**Tasks**: widow-orphan-lookahead, break-inside-avoid-subtree-scan,
+container-probe-layout, aggressivecommit-fallback,
+abort-integration-comprehensive
+
+**Reference fixtures**:
+- `tests/reference/widow-orphan-A/`
+- `tests/reference/break-inside-avoid/`
+
+**Acceptance**: widow/orphan 制約が正しく効く、multi-page flex/grid で probe
+layout が動作
+
+### M8: 決定論 stress + WPT full sweep + Error injection completeness + Cross-platform
+
+**Goals**:
+- byte-identical CI stress (100 runs)
+- Cross-platform tier 2/3 raster nightly
+- WPT full sweep nightly + Blitz oracle diff
+- **全 `RenderError` variant の failure-injection test 完備** (Task #H1)
+- Golden update process demo と documentation
+
+**Tasks**: determinism-stress-test, cross-platform-raster-ci,
+wpt-full-sweep-scheduler, blitz-oracle-diff-recorder,
+error-injection-suite-completeness, golden-update-workflow-doc
+
+**Reference fixtures**: 全既存 fixture を multi-platform で回す、
+`tests/reference/error-injection-suite/` (每 RenderError variant 用の structural
+test)
+
+**Acceptance**:
+- byte-identical 100 runs stress で 100/100 一致 (Tier 1)
+- Tier 2 raster tolerance 内、Tier 3 best effort
+- 全 `RenderError` variant を fault injection でトリガー可能
+
+### milestone 依存 DAG (訂正版、per-page PageBox 前倒し + M6 分割)
 
 ```
-M1 skeleton + VRT
+M1 skeleton + reference harness + error taxonomy + hello world
      │
-     ├─▶ M2 pagination ─▶ M3 inline ─▶ M4 @page + GCPM state
-     │                                       │
-     │                                       ▼
-     │                                  M5 GCPM directive full
-     │                                       │
-     │                                       ▼
-     │                                  M6 target-* + Batch + fulgur + blitz-compat
-     │                                       │
-     └───────────────────────────────────────▶ M7 break policy
-                                             │
-                                             ▼
-                                        M8 決定論 + mixed-size + PDF
+     ├─▶ M2 pagination + Streaming error semantics
+     │      │
+     │      ├─▶ M3 inline (parley 統合)
+     │      │       │
+     │      │       ▼
+     │      │   M4 @page cascade + per-page PageBox + margin box + Policy propagation
+     │      │       │
+     │      │       ▼
+     │      │   M5 GCPM directive full + running (per-page geometry) + Batch skeleton
+     │      │       │
+     │      │       ├────────────────┬──────────────────┐
+     │      │       ▼                ▼                  ▼
+     │      │   M6a target-*     M6b Batch preset   M6c Batch error +
+     │      │   SinglePass                          Abort handling
+     │      │       │                │                  │
+     │      │       └────────────────┼──────────────────┘
+     │      │                        ▼
+     │      │                    M6d fulgur adapter
+     │      │                        │
+     │      │                        ▼
+     │      │                    M6e raikiri-blitz-compat 初版
+     │      │                        │
+     │      └───────────────────────▶ M7 break policy + probe layout + Abort integration
+     │                                  │
+     │                                  ▼
+     │                              M8 決定論 stress + WPT full sweep +
+     │                              Error injection completeness + Cross-platform
+     │                                  │
+     └───────── T1 reference fixtures ──┘ (各 milestone で追加)
 ```
 
-### サイズ感 (LoC 目安)
+### サイズ感 (LoC 目安、M6 分割済み)
 
 | Milestone | 実装量目安 | 難易度 |
 |---|---|---|
-| M1 skeleton | ~2000 行 | 中 |
-| M2 pagination | ~1500 行 | 中 |
-| M3 inline | ~3000 行 | 高 |
-| M4 @page + GCPM 骨格 | ~2500 行 | 高 |
-| M5 GCPM 完成 | ~3000 行 | 高 |
-| M6 target-* + Batch + fulgur + compat | ~5000 行 (compat ~1000 含) | 極高 |
-| M7 break policy | ~2500 行 | 高 |
-| M8 決定論 + WPT | ~1500 行 + fixture | 中 |
-| **合計** | ~21,000 行 (既存 raikiri 16k + 5k 増) | — |
+| M1 skeleton + reference harness + error types | ~2500 行 | 中 |
+| M2 pagination + Streaming error semantics | ~2000 行 | 中 |
+| M3 inline (parley) | ~3000 行 | 高 |
+| M4 @page + per-page PageBox + margin box + Policy | ~3000 行 | 高 |
+| M5 GCPM full + running (geometry) + Batch skeleton | ~3500 行 | 高 |
+| M6a target-* SinglePass | ~1200 行 | 高 |
+| M6b Batch preset | ~1500 行 | 高 |
+| M6c Batch error + Abort | ~1000 行 | 高 |
+| M6d fulgur adapter | ~1500 行 | 高 |
+| M6e raikiri-blitz-compat 初版 | ~1000 行 | 中 |
+| M7 break policy + probe + Abort integration | ~2500 行 | 高 |
+| M8 決定論 + WPT + Error injection + cross-platform | ~2000 行 + fixture | 中 |
+| **合計** | ~24,700 行 (既存 raikiri 16k + 8.7k 増) | — |
 
-### beads 構成
+各 M6 sub-milestone は独立 reviewable (~1000-1500 行) で、PR review の負荷が
+大幅に下がる (Task #H2 対応)。
+
+### beads 構成 (訂正版、全 milestone task 分解済み)
+
+各 milestone は epic として立て、上記 Tasks を task として `bd create` し、
+`bd dep add` で milestone 間依存を明示。
 
 ```
-raikiri-spike-m1 (epic)
-├─ workspace-setup (task)
-├─ traits-definition (task)
-├─ html-parse-basic (task)
-├─ css-cascade-basic (task)
-├─ dom-model (task)
-├─ layout-single-page (task)
-├─ paint-basic (task)
-├─ vrt-tiny-skia (task)
-├─ wpt-harness-skeleton (task)
-├─ umbrella-facade (task)
-├─ ci-setup (task)
-├─ determinism-test (task)
-└─ hello-world-vrt (task, 上記全てに依存)
+raikiri-spike-m1 (epic): Skeleton + reference harness + error taxonomy
+├─ workspace-setup, traits-definition, error-taxonomy-types
+├─ html-parse-basic, css-cascade-basic, dom-model
+├─ layout-single-page, paint-basic
+├─ vrt-tiny-skia, wpt-harness-skeleton, reference-harness-scaffold
+├─ umbrella-facade, ci-setup, determinism-test
+└─ hello-world-vrt (上記全てに依存)
+
+raikiri-spike-m2 (epic): Streaming pagination + error semantics
+├─ pagestream-state-machine, layoutbuffer-skeleton
+├─ break-before-after-forced
+├─ streaming-partial-output-tracking, sink-state-transition-tests
+├─ accept_page-error-propagation, RenderStatus-integration
+└─ reference-fixtures-multi-page
+
+raikiri-spike-m3 (epic): Inline layout
+├─ parley-integration, bidi-support, font-fallback
+├─ inline-formatting-context, glyph-run-emit
+└─ text-multilingual-fixtures
+
+raikiri-spike-m4 (epic): @page + per-page PageBox + margin box + Policy
+├─ page-rule-cascade, page-name-transition-table
+├─ per-page-pagebox-resolver, pageboxcache-implementation
+├─ margin-box-slot-layout, sixteen-slot-rayon
+├─ pagecontext-seed-builder
+└─ policy-violation-propagation
+
+raikiri-spike-m5 (epic): GCPM directive + running (per-page geometry)
+├─ gcpm-directive-emit, counter-tree-management
+├─ string-set-4-snapshot
+├─ running-template-store, per-page-relayout
+├─ running-template-geometry-tests  ★ mixed-size で running 検証
+└─ batch-preset-skeleton
+
+raikiri-spike-m6a (epic): target-* SinglePass
+├─ target-slot-emit, targetslotid-stability
+├─ target-definitions-per-page
+└─ finish_render-summary-integration
+
+raikiri-spike-m6b (epic): Batch preset
+├─ unbounded-lookahead-impl, registry-target-resolver
+├─ initial-registry-plumbing
+└─ batch-vs-streaming-preset-independence-test
+
+raikiri-spike-m6c (epic): Batch error semantics + Abort
+├─ batch-preemission-atomicity, batch-postemission-partial
+├─ abort-signal-integration, renderstatus-aborted-impl
+└─ error-injection-tests-batch
+
+raikiri-spike-m6d (epic): fulgur adapter
+├─ fulgur-adapter-scaffold, fulgur-resolver-integration
+├─ fulgur-sink-integration
+└─ fulgur-pdf-reftest-integration
+
+raikiri-spike-m6e (epic): raikiri-blitz-compat 初版
+├─ blitz-compat-type-shape, blitz-html-htmldocument-compat
+├─ blitz-dom-node-compat
+└─ behavior-diff-md
+
+raikiri-spike-m7 (epic): Break policy + probe layout
+├─ widow-orphan-lookahead, break-inside-avoid-subtree-scan
+├─ container-probe-layout, aggressivecommit-fallback
+└─ abort-integration-comprehensive
+
+raikiri-spike-m8 (epic): 決定論 + WPT + Error injection + Cross-platform
+├─ determinism-stress-test (100 runs)
+├─ cross-platform-raster-ci (tier 2/3)
+├─ wpt-full-sweep-scheduler, blitz-oracle-diff-recorder
+├─ error-injection-suite-completeness (全 RenderError variant)
+└─ golden-update-workflow-doc
 ```
 
-M2〜M8 も同様に epic + task 分解、`bd dep add` で依存 DAG 明示。
+各 milestone epic は完了時に `bd close`。sub-milestone 間の依存 (M6a → M6b →
+M6c → M6d → M6e) は `bd dep add` で明示。fixture 追加 task は milestone 各 epic
+内に含める (Task #M4 対応)。
 
 ## 14. Consumer Contract (fulgur 視点)
 
