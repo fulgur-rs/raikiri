@@ -592,18 +592,48 @@ pub trait Dom { /* ... */ }
 pub trait Element<'a> { /* ... */ }
 pub trait Node<'a> { /* ... */ }
 
-// ── Public enum convention (Missing consideration 対応) ────────
-// 将来 variant 追加の余地がある全ての pub enum は #[non_exhaustive] を付与し、
-// Consumer 側 exhaustive match の accidental breakage を防ぐ。
-// 具体対象: RenderError, RenderStatus, WarningKind, ResourceKind,
-//          ViolationType, PolicyAction, ReflowAction, ContainerOverflowFallback,
-//          DirtyDeadline, UnresolvedReason, WarningKind, GcpmDirective,
-//          ContentValueItem, TargetKind, ResolvedTargetValue, Body, Method,
-//          NetworkError, TargetConvergence (廃止済み) 等
-// **例外**: enum のセマンティクスが "完全な集合" (Method の HTTP method のような
-//   spec-defined 全網羅) の場合のみ非適用。docs で理由を明示。
-// LookaheadConfig / BatchConfig / StreamingConfig 等の struct も
-// #[non_exhaustive] + `..default()` パターンを推奨。
+// ── Public API forward-compatibility convention (round 3 review 対応) ─
+// 
+// [rule]
+//   将来 variant / field 追加の余地がある全 pub enum / struct に
+//   #[non_exhaustive] を付与し、Consumer 側 exhaustive match / literal
+//   construction の accidental breakage を防ぐ。
+// 
+// [applies to] (raikiri-traits の全 pub enum は原則対象、round 3 review #3
+//   訂正で hand-maintained list は廃止)
+//   ルール: 「spec / semantics で "完全な集合" であると証明できない enum は
+//           全て #[non_exhaustive]」
+//
+// [exceptions] (justification 必須、doc の enum 定義箇所で理由を明示)
+//   現時点で確認できる exception は無し。
+//   - Method: HTTP method は仕様上拡張可能 (round 3 review #3 訂正、
+//     以前 exception に誤分類していた) → #[non_exhaustive] 対象
+//   - WarningKind の list 重複、TargetConvergence の list 残存は削除 (前 doc
+//     の bug、round 3 review #3 で指摘)
+//
+// [struct construction pattern] — round 3 review #2 対応
+//   #[non_exhaustive] な struct は外部 crate から literal construction が
+//   できないため、必ず以下を提供する:
+//     1. `impl Default for Config` (全 field の妥当な default)
+//     2. `impl Config { pub fn new() -> Self { Self::default() } }`
+//     3. mutation pattern を doc に明示: `let mut c = Config::default();
+//        c.widow_line_buffer = 5;`
+//     4. field 数が多い場合は追加で builder pattern を提供
+//        `Config::builder().widow_line_buffer(5).build()`
+//   外部 crate から `Config { .. Default::default() }` は不可能なので
+//   推奨しない (compile error)。
+//
+// [enforcement]
+//   Section 12 で "public-api-compile-tests" として external consumer crate
+//   を模擬した test を CI で実行、全 pub struct が external から constructable
+//   かを検証。
+
+pub struct LookaheadConfigBuilder { /* fluent field-setter chain、build() で LookaheadConfig を返す */ }
+impl LookaheadConfig {
+    pub fn builder() -> LookaheadConfigBuilder { /* ... */ }
+    pub fn new() -> Self { Self::default() }
+}
+impl Default for LookaheadConfig { /* 全 field の default 値 */ }
 
 // ── 中立モデル型 (crate 境界を跨いで参照される) ────────────────
 pub struct PageFragment { /* ... §11.2 参照 */ }
@@ -1247,13 +1277,29 @@ concurrency 安全性を保証:
 4. 並列 worker は snapshot のみ read、`PageContext` 本体は書き込まない
 
 ```rust
+/// **All fields are OWNED immutable clones. No interior mutability, no
+/// references to shared mutable storage. Constructing this type is the
+/// well-defined "epoch" boundary; once created, mutation of the source
+/// PageContext / TargetRegistry cannot affect this snapshot.**
+/// (round 3 review #4 対応)
 struct GcpmSnapshot {
-    counters: HashMap<Symbol, CounterStack>,       // per-page 確定値
-    strings: HashMap<Symbol, NamedStringSnapshot>, // 4 slot 確定
-    running: HashMap<Symbol, RunningTemplateId>,
-    targets_view: TargetRegistryView,   // read-only wrapper
+    counters: HashMap<Symbol, CounterStack>,          // owned deep copy
+    strings: HashMap<Symbol, NamedStringSnapshot>,    // owned deep copy
+    running: HashMap<Symbol, RunningTemplateId>,      // owned deep copy
+    // ★ 訂正: 以前 "TargetRegistryView (read-only wrapper)" と書いたが、
+    // 内部が shared mutable への reference だと snapshot にならない。
+    // owned immutable snapshot に修正:
+    targets: OwnedTargetRegistrySnapshot,             // owned deep copy
     page_index: u32,
     page_name: Option<Symbol>,
+}
+
+/// TargetRegistry の time-point snapshot。owned な HashMap 群のみを持ち、
+/// 元の TargetRegistry がその後 mutate しても影響を受けない。
+struct OwnedTargetRegistrySnapshot {
+    resolved: HashMap<Symbol, TargetInfo>,   // owned clone
+    // pending_slots は snapshot 時点で fix、以降 mutate されない
+    pending_slots_at_snapshot: Vec<TargetSlot>,
 }
 
 // per page loop, layout フェーズ後:
@@ -1276,15 +1322,56 @@ let margin_fragments: [Option<MarginBoxFragment>; 16] = (0..16)
 - **`FontContext` (parley)**: M0 で `Sync` 確認済み前提。`Arc` で共有
 - **`ComputedValues`**: `Arc<ComputedValues>` で共有、read-only
 
-**書き込み禁止 (compile-time enforcement)**:
-- Rayon closure は `&GcpmSnapshot` を受ける、`&mut` 系は渡さない
-- `PageContext` は per page loop の main thread のみが `&mut` を持つ
-- clippy lint で並列 closure 内の interior mutability を禁止
+**書き込み禁止の enforcement (round 3 review #4 訂正)**:
+- `GcpmSnapshot` の全 field は owned + immutable primitive/collection のみ
+  (`Cell` / `RefCell` / `Mutex` / `Arc<Mutex<...>>` を含まない)
+- `#[derive(Clone)]` して `Arc::new(snapshot)` で共有、`Arc<GcpmSnapshot>` 内は
+  当然 immutable
+- Rayon closure は `Arc<GcpmSnapshot>` を clone して受け取る
+- `PageContext` は per page loop の main thread のみが `&mut` を持ち、snapshot
+  作成後は margin box layout 完了まで touch しない (API contract で保証)
+- **具体的な lint 名 (round 3 review #4 指摘)**: 
+  - `clippy::mut_from_ref` (interior mutability の誤用検知)
+  - Custom lint: `raikiri-lints::no_interior_mut_in_snapshot` (`Cell` / `RefCell`
+    等の pattern を snapshot 型内で禁止、raikiri-wpt の CI で enforce)
+- **compile-time enforcement は "型設計 + API contract"** であって、Rust の型
+  system 単体では interior mutability を完全禁止できないため、追加で lint と
+  concurrency test で validation する (§12 参照)
 
-**Consumer resolver / network の並列呼び出しについて**:
-- `ReplacedResolver: !Sync` の場合、並列 margin box 内では resolver を呼ばない
-  (resolver は sequential body layout phase でのみ呼ばれる、§10 参照)
-- `NetworkProvider: Send + Sync` (blitz-traits 準拠、trait bound 済み)
+**Consumer resolver / network の並列呼び出しについて** (round 3 review #5 対応):
+- `ReplacedResolver` は sequential body layout phase 内でのみ呼ばれる仕様。
+  並列 margin box worker からは呼び出さない
+- しかし running template 内の `<img>` / `<svg>` / `<math>` などの replaced
+  content は margin box layout 時にサイズが必要 → **pre-resolution stage** を
+  導入して解決:
+
+**Running template replaced content の pre-resolution 仕様**:
+
+1. Cascade 完了時 (`§5.1 Phase A` 終了時)、raikiri-style は各
+   `RunningTemplate` の subtree を scan して replaced element を列挙し、
+   `pending_running_resources: Vec<ReplacedElementRef>` として Document に格納
+2. Phase B の per-page loop 開始前 (最初の page の layout 開始前) に、
+   raikiri-dom が sequential に全 pending_running_resources を resolver で
+   pre-resolve、結果を `resolved_running_resources: HashMap<NodeId, IntrinsicBox>`
+   としてキャッシュ
+3. margin box layout 時、running template 内の replaced element は cached
+   `IntrinsicBox` を lookup するのみ (resolver は呼ばれない → 並列安全)
+4. Consumer 責任: 大量の running template 内 image の resolve は Consumer の
+   Layer 2 policy で bound (§10.x の SandboxedResolver でサイズ・件数制限)
+
+**Fallback / error 挙動**:
+- Consumer resolver が Err を返した replaced element: `IntrinsicBox::fallback()`
+  で解決、`RenderSummary.warnings` に `WarningKind::ResolverFallback` として記録
+  (§5.5 の recoverable pattern と同じ)
+- pre-resolution 段階で resolver が全て失敗しても layout は継続 (Consumer 判断)
+
+**代替設計 (Non-goal で扱わない)**:
+- Running template 内の replaced content を明示的に非対応にする案は却下。
+  実務で "header にロゴ画像" は極めて典型的、これを無視すると使えない
+
+`NetworkProvider: Send + Sync` は blitz-traits 準拠 (trait bound 済み)、
+pre-resolution stage で並列 fetch も許容 (ただし Consumer 実装内での並列は
+Consumer が管理)。
 
 これで **PageContext の parallel margin box layout 中の状態変化は起こらず、
 byte-identical goal と concurrency safety が両立** する。
@@ -2318,13 +2405,27 @@ spec 変更、意図的な feature drop 等)。以下の process で例外を管
 
 #### Quarantine list (`expectations/quarantine.txt`)
 
-Flaky test の一時退避:
+Flaky test の一時退避 (**platform-aware format**、round 3 review #7 対応):
 
 ```
 # expectations/quarantine.txt
-# format: test_id | reason | issue_link | added_date
-css/css-page/page-margin-boxes-001 | Intermittent 1-pixel diff on macOS aarch64 | github.com/.../issues/123 | 2026-08-01
+# format: test_id | platform | arch | renderer | tolerance | reason | issue_link | added_date
+# 
+# platform: linux / macos / windows / * (全 platform)
+# arch: x86_64 / aarch64 / * (全 architecture)
+# renderer: vello_cpu / skia / tiny_skia / * (全 renderer)
+# tolerance: pixel-exact / low / medium / high / * (どの tolerance でも)
+#   → 「quarantine を発火する tolerance 閾値」ではなく「どの tolerance CI で
+#     flaky か」を記録するメタデータ
+#
+# 同じ test id を複数 platform 組み合わせで別 entries として書ける
+css/css-page/page-margin-boxes-001 | macos | aarch64 | vello_cpu | pixel-exact | Intermittent 1-pixel diff | github.com/.../issues/123 | 2026-08-01
+css/css-page/page-margin-boxes-001 | windows | x86_64 | * | * | 別 issue、renderer 非依存 | github.com/.../issues/124 | 2026-08-05
 ```
+
+**マッチング**: CI 実行時の (platform, arch, renderer, tolerance) が entry の
+filter 全て一致すれば quarantined、Linux x86_64 vello_cpu では上記例では
+quarantine されず通常評価。
 
 **Quarantine 手順**:
 1. Test が 3 回以上 intermittent fail → 開発者が quarantine PR を出す
@@ -2333,30 +2434,44 @@ css/css-page/page-margin-boxes-001 | Intermittent 1-pixel diff on macOS aarch64 
 4. **週次 review**: 全 quarantined test を list、fix 完了なら quarantine 削除
 5. 90 日以上 quarantine されたら strategic review (実装廃止 or fix priority up)
 
-#### Baseline migration (`expectations/raikiri-baseline.txt` の更新)
+#### Baseline migration + Exception 承認 (統合、round 3 review #6 対応)
 
-**追加** (raikiri が新たに pass するようになった test を baseline に組み込む):
-1. 開発者が PR で baseline に test id を追加
-2. CI で該当 test が local pass することを verify
-3. Reviewer が承認 → merge、以降 T2 gate 対象に
+以前 baseline 追加 = 1 reviewer、exception = 2 reviewer と分けていたが、同じ
+regression が両方に分類できる曖昧さを排除するため **統合し、全ての意図的な
+pass 状態変化を 2 reviewer 必須** とする。
 
-**削除** (raikiri baseline から test id を除去):
-1. Test が invalidated (spec 変更、feature drop 等) 明示的理由が必要
-2. 開発者が PR で baseline から削除 + `expectations/deprecated.txt` に理由記録
-3. Reviewer 承認 → merge
+**Baseline migration (統一 process)**:
 
-#### Exception 承認 process (「以前 pass が新 fail」の例外)
+Test id を `raikiri-baseline.txt` に **追加 / 削除**する PR、および前 pass 状態
+を意図的に fail 状態に変える PR は全て以下:
 
-- Case: 意図的な spec-compliance 改善で一部 test が変化
-- 開発者が PR で:
-  1. 変更理由 (何が spec 準拠向けに正されたか)
-  2. 影響 test list (何が pass → fail に変わったか)
-  3. 各 test を deprecated / expected / baseline から remove の判断
-- Reviewer 承認 (少なくとも 2 名)
-- 承認後 baseline を更新、次回 CI で通過
+1. 開発者が PR で:
+   - 該当 test id list
+   - 変更方向 (add / remove / pass→fail)
+   - 変更理由 (spec 準拠改善 / feature drop / test invalidated 等)
+   - test を `expectations/` の他 file (deprecated / quarantine) に移動する
+     場合はその明示
+2. CI で該当 test の local 状態を verify
+3. **2 名の reviewer 承認** (必須)
+4. Merge 後、baseline が更新
 
-**Automatic 更新は禁止**: すべての baseline / quarantine / deprecated 変更は PR
-経由、reviewer 承認必須。
+**Automatic 更新は禁止**: すべての baseline / quarantine / deprecated 変更は
+PR 経由。
+
+#### Expectations files の precedence (round 3 review #6 対応)
+
+同じ test id が複数 file に entries を持つ場合の precedence を明示:
+
+| Precedence 順 | File | 意味 | CI 挙動 |
+|---|---|---|---|
+| 1 (最優先) | `expectations/deprecated.txt` | この test は評価対象外 | fully excluded (実行もしない) |
+| 2 | `expectations/quarantine.txt` | flaky、informational | 実行するが結果は非 blocking |
+| 3 | `expectations/raikiri-baseline.txt` | T2 gate、pass 必須 | 実行、fail なら PR block |
+| 4 (デフォルト) | どこにもなし | tracking 対象外 | 実行するが結果は informational (T3) |
+
+**Conflict handling**: 同一 test id が複数 file に登場 → CI が fail-fast で
+「conflict detected in expectations」を報告、開発者が resolve する PR を出す。
+Automated validation task (`validate-expectations-files`) を Section 12 で追加。
 
 ## 13. Milestone Plan
 
@@ -2364,43 +2479,81 @@ css/css-page/page-margin-boxes-001 | Intermittent 1-pixel diff on macOS aarch64 
 **Acceptance criteria** (完了条件) + **Reference fixtures** (T1 gate) の 4 要素
 で構成 (Task list findings #H2, #H3, #M4 対応)。
 
-### M0: Dep feasibility spike (Missing consideration 対応、必須の前提検証)
+### M0: Dep feasibility + production workspace (round 3 review 対応)
 
-**Goals**: M1 以降の設計前提が実際に成立するか、Cargo manifest / lockfile を
-起こす前に scaffold と smoke test で検証。**M1 以降を start する前に必ず完了**。
+**訂正 (round 3 review #3 対応)**: 以前「throwaway smoke」と書いたが実態と
+矛盾。M0 は **production workspace の確立 + feasibility 検証** を両方担う:
+- Cargo workspace scaffold、rust-toolchain、全 crate manifests は **production
+  artifacts** (M1 以降も生き続ける)
+- `crates/raikiri-feasibility/` の spike code のみ **disposable** (M0 完了時に
+  削除するか、`examples/` に移動)
 
-**検証項目**:
-- **parley**: `FontContext` の `Send + Sync` 適合性 (rayon 並列 shape の前提)
-- **taffy**: block/flex/grid の layout API、column-count の並列可能性
-- **anyrender_vello_cpu**: 同一 platform で byte-identical raster を出すか
-- **selectors**: `stylo` を dep せず standalone で動くか、`Element` trait
-  実装の実 workload
-- **cssparser**: `@page` / `@counter-style` / `@font-face` の custom
-  at-rule extension mechanism
-- **`selectors` + `cssparser` の版整合**: workspace で同 semver に pin 可能か
-- **anyrender**: `PaintScene` trait の実装表面 (blitz-paint と shape 一致か)
+**M0 内部 DAG** (round 3 review #5 対応):
+```
+1. rust-toolchain-msrv          ← 独立
+2. workspace-scaffold           ← 独立
+   crate-manifests              ← 独立
+3. dependency-resolution        ← 1,2 に依存 (Cargo.lock 生成)
+4. 個別 spikes (parallel 可能)   ← 3 に依存
+   - feasibility-parley
+   - feasibility-taffy
+   - feasibility-anyrender-vello-cpu (byte-identical raster verify)
+   - feasibility-selectors
+   - feasibility-cssparser
+   - feasibility-selectors-cssparser-version-compat (round 3 #4)
+   - feasibility-paintscene-adapter-compile-spike (round 3 #4)
+5. feasibility-report           ← 全 spike に依存
+6. m0-readiness-gate            ← report に依存、outcome 判定
+```
 
-**Tasks**:
-- workspace-scaffold: `Cargo.toml` (workspace root) 作成
-- rust-toolchain-msrv: `rust-toolchain.toml` + MSRV 明示 (M0 で `1.85`
-  出発点として設定、実装中に必要が生じたら bump 議論)
-- crate-manifests: 全 crate の `Cargo.toml` 作成、pin dep version 記入
-- feasibility-parley: `crates/raikiri-feasibility/` 内で parley の Send +
-  Sync 検証、rayon parallel shape smoke test
-- feasibility-taffy: block/flex/grid の smoke、column-count 並列
-- feasibility-anyrender: `anyrender_vello_cpu` で hello world raster、
-  10 runs で byte-identical
-- feasibility-selectors: SelectorImpl + Element の minimal 実装
-- feasibility-cssparser: @page rule の custom parse smoke
-- feasibility-report: 全結果を `docs/feasibility-report.md` に記録
+**検証項目 (round 3 review #4 対応で完全化、全 7 項目)**:
+- **parley**: `FontContext` の `Send + Sync` 適合性
+- **taffy**: block/flex/grid、column-count 並列可能性
+- **anyrender_vello_cpu**: 同一 platform で byte-identical raster
+- **selectors**: standalone (`stylo` 非依存) 使用可能性
+- **cssparser**: `@page` / `@counter-style` / `@font-face` の custom at-rule
+  extension mechanism
+- **selectors + cssparser 版整合** (round 3 #4 で明示 task 化): 両 crate を
+  workspace で同 semver に pin 可能か
+- **anyrender PaintScene 適合面** (round 3 #4 で明示 task 化): blitz-paint と
+  shape 一致するか、adapter compile-spike で verify
 
-**Acceptance criteria**:
-- 全 7 検証項目で "OK" (assumption holds) or "NEEDS_DESIGN_CHANGE" (spec を
-  amend する必要あり) の判定
-- 全 dep version が Cargo.lock に pin 済み
-- `docs/feasibility-report.md` が commit されている
-- **NEEDS_DESIGN_CHANGE 判定があれば、M1 に入る前に design doc を revise
-  して roborev 再レビュー**
+**Tasks** (依存順、round 3 #5 対応):
+- rust-toolchain-msrv (`rust-toolchain.toml` + MSRV = 1.85)
+- workspace-scaffold (`Cargo.toml` workspace root、production)
+- crate-manifests (全 crate `Cargo.toml`、pin dep version、production)
+- dependency-resolution (`Cargo.lock` 生成、version compat verify)
+- feasibility-parley, feasibility-taffy, feasibility-anyrender-vello-cpu,
+  feasibility-selectors, feasibility-cssparser,
+  feasibility-selectors-cssparser-version-compat,
+  feasibility-paintscene-adapter-compile-spike
+- feasibility-report (`docs/feasibility-report.md` に全結果、API surface 記録)
+- **m0-readiness-gate**: M0 outcome 判定 (下記)
+
+**M0 outcome の 2 分岐** (round 3 review #2 対応):
+1. 全 7 検証項目で "OK" → M0 epic close、**M1 unblock**
+2. 1 つでも "NEEDS_DESIGN_CHANGE" → 別 epic `raikiri-spike-m0-revision` を
+   起動、design doc revise + roborev 再レビュー完了 → その後 M1 unblock
+
+**M1 依存の precise 定義**: M1 は `m0-readiness-gate` task が「All checks OK」
+判定を出した場合のみ start 可能。`NEEDS_DESIGN_CHANGE` の場合は m0-revision
+epic の完了を追加で待つ。single `bd close raikiri-spike-m0` では M1 は自動 open
+しない (readiness-gate の判定結果を beads の別 field で明示的に record)。
+
+**Production 生存 artifacts** (M1 以降も残る):
+- `Cargo.toml` (workspace root)
+- `rust-toolchain.toml`
+- 全 crate の `Cargo.toml`
+- `Cargo.lock`
+- `docs/feasibility-report.md`
+
+**Disposable artifacts** (M1 開始前 or 開始時に削除):
+- `crates/raikiri-feasibility/` の spike code
+- `docs/feasibility-report.md` は残すが、spike crate は `examples/` に移動 or
+  削除
+
+**M1 の重複削除**: 以前 M1 tasks に `workspace-setup` があったが、M0 で完了
+するので M1 から削除 (round 3 review #3 対応)。
 
 **Non-goals**: 実際の HTML/CSS 処理 (M1 以降)、performance benchmarking
 (M8 まで)、edge case exhaustive coverage (smoke test 相当)
@@ -2415,13 +2568,15 @@ css/css-page/page-margin-boxes-001 | Intermittent 1-pixel diff on macOS aarch64 
 - Reference harness 初期セットアップ (`tests/reference/` の infrastructure)
   (Task #M4 対応)
 
-**Tasks**:
-- workspace-setup, traits-definition, error-taxonomy-types
+**Tasks** (workspace-setup は M0 で完了、round 3 review #3 訂正):
+- traits-definition, error-taxonomy-types
 - html-parse-basic (Parse error), css-cascade-basic (Cascade error)
 - dom-model, layout-single-page, paint-basic
 - vrt-tiny-skia, wpt-harness-skeleton, reference-harness-scaffold
 - umbrella-facade (parse_html, plan, render_streaming stubs)
 - ci-setup, determinism-test, hello-world-vrt
+- **public-api-compile-tests-lookaheadconfig** (round 3 review #2 対応、
+  external consumer crate を模擬した compile test)
 
 **Reference fixtures**:
 - `tests/reference/hello-world/`: `<p style="color:red">Hi</p>` → PNG
@@ -2432,6 +2587,8 @@ css/css-page/page-margin-boxes-001 | Intermittent 1-pixel diff on macOS aarch64 
 - `raikiri::html_to_png(HELLO)` returns Vec<u8>、hello-world VRT pass
 - 10 回連続実行で byte-identical
 - CI green
+- 全 `#[non_exhaustive]` pub struct が external consumer crate から
+  constructable (round 3 review #2 対応)
 
 **Non-goals**: pagination、@page、GCPM、Batch、ReplacedResolver 実使用、
 break policy、per-page PageBox、L4 selector、target-*
@@ -2522,19 +2679,32 @@ M5 に含める。M4 で導入された per-page PageBox に依存するので�
 - gcpm-directive-emit, counter-tree-management
 - string-set-4-snapshot
 - running-template-store, per-page-relayout
+- **running-template-replaced-content-preresolve** (round 3 review #5 対応):
+  running template 内の replaced element を sequential phase で pre-resolve、
+  結果を cache に格納する path
 - **running-template-geometry-tests**: mixed-size で running 内容が正しく
   reflow されることを VRT + structural で検証
+- **gcpm-snapshot-construction** (round 3 review #4 対応): `GcpmSnapshot` の
+  owned deep copy semantics、interior mutability 禁止の実装 + lint 追加
+- **thread-count-concurrency-tests** (round 3 review Task #1 対応): rayon の
+  thread count (1, 2, 4, 8, 16) を変えて 16 margin box slot layout が全て
+  byte-identical であることを verify
 - batch-preset-skeleton
 
 **Reference fixtures**:
 - `tests/reference/chapter-counter/`
 - `tests/reference/running-header-dynamic/` (counter/string 参照 + mixed-size)
+- `tests/reference/running-header-with-logo/` (round 3 review #5 対応、
+  running template 内 `<img>` の pre-resolve verify)
 
 **Acceptance criteria**:
 - 章立てレポート (counter-reset で chapter、counter-increment で section)
   が VRT で一致
 - Running header が A4 と A3 の両ページで正しく reflow (geometry-parameterized
   test)
+- Running template 内 `<img>` が pre-resolve され、margin box parallel layout
+  で resolver 呼び出しがないことを verify (mock resolver で assertion)
+- Rayon thread count 1〜16 で全 fixture が byte-identical
 
 ### M6: 5 sub-milestone に分割 (Task list #H2 対応)
 
@@ -2633,9 +2803,23 @@ layout が動作
 - **全 `RenderError` variant の failure-injection test 完備** (Task #H1)
 - Golden update process demo と documentation
 
-**Tasks**: determinism-stress-test, cross-platform-raster-ci,
-wpt-full-sweep-scheduler, blitz-oracle-diff-recorder,
-error-injection-suite-completeness, golden-update-workflow-doc
+**Tasks** (round 3 review Task #1 対応で expanded):
+- determinism-stress-test, cross-platform-raster-ci
+- wpt-full-sweep-scheduler, blitz-oracle-diff-recorder
+- error-injection-suite-completeness, golden-update-workflow-doc
+- **quarantine-baseline-ci-processing** (round 3 review Task #1、#6 対応):
+  `expectations/` の 4 file (baseline / quarantine / deprecated / expected)
+  を CI が読み込み、precedence を適用、conflict detection、platform filter を
+  適用する processing
+- **validate-expectations-files** (round 3 review #6 対応、conflict handling):
+  duplicate / expired / conflicting entry の automated validation。CI で
+  fail-fast
+- **cross-thread-cross-arch-cross-os-determinism-tests** (round 3 review Task
+  #1、Missing 対応): rayon thread count / architecture / OS を組み合わせた
+  determinism matrix
+- **aggregate-budget-tests** (round 3 review Task #1 対応): 大 template ×
+  多 page の性能 characterization test (Consumer 責任の再確認、raikiri は
+  fail-fast しない)
 
 **Reference fixtures**: 全既存 fixture を multi-platform で回す、
 `tests/reference/error-injection-suite/` (每 RenderError variant 用の structural
@@ -2645,13 +2829,30 @@ test)
 - byte-identical 100 runs stress で 100/100 一致 (Tier 1)
 - Tier 2 raster tolerance 内、Tier 3 best effort
 - 全 `RenderError` variant を fault injection でトリガー可能
+- Rayon thread count 1/2/4/8/16 で全 fixture が byte-identical (round 3 review
+  Missing 対応)
+- Expectations file の conflict / duplicate / expired を CI が検知して fail
 
-### milestone 依存 DAG (訂正版、M0 追加 + per-page PageBox 前倒し + M6 分割)
+### milestone 依存 DAG (訂正版、M0 gate 明示 + per-page PageBox 前倒し + M6 分割)
 
 ```
-M0 dep feasibility spike ← Cargo manifest 起こす前の必須検証
+M0 dep feasibility + production workspace
      │
      ▼
+m0-readiness-gate: outcome 判定
+     │
+     ├─ outcome = OK ──────────────────────────────┐
+     │                                              │
+     └─ outcome = NEEDS_DESIGN_CHANGE               │
+           │                                        │
+           ▼                                        │
+        M0-revision: design revise + roborev        │
+           │                                        │
+           ▼                                        │
+        m0-revision-close-gate                      │
+           │                                        │
+           └────────────────────────────────────────┤
+                                                    ▼
 M1 skeleton + reference harness + error taxonomy + hello world
      │
      ├─▶ M2 pagination + Streaming error semantics
@@ -2713,18 +2914,33 @@ M1 skeleton + reference harness + error taxonomy + hello world
 `bd dep add` で milestone 間依存を明示。
 
 ```
-raikiri-spike-m0 (epic): Dep feasibility spike (必須の前提検証)
-├─ workspace-scaffold, rust-toolchain-msrv, crate-manifests
-├─ feasibility-parley, feasibility-taffy, feasibility-anyrender
-├─ feasibility-selectors, feasibility-cssparser
-└─ feasibility-report
+raikiri-spike-m0 (epic): Dep feasibility + production workspace
+├─ rust-toolchain-msrv         (leaf、no deps)
+├─ workspace-scaffold          (leaf、no deps)
+├─ crate-manifests             (leaf、no deps)
+├─ dependency-resolution       (needs: workspace + manifests + toolchain)
+├─ feasibility-parley                             (needs: dep-resolution)
+├─ feasibility-taffy                              (needs: dep-resolution)
+├─ feasibility-anyrender-vello-cpu                (needs: dep-resolution)
+├─ feasibility-selectors                          (needs: dep-resolution)
+├─ feasibility-cssparser                          (needs: dep-resolution)
+├─ feasibility-selectors-cssparser-version-compat (needs: dep-resolution)
+├─ feasibility-paintscene-adapter-compile-spike   (needs: dep-resolution)
+├─ feasibility-report          (needs: 全 feasibility-* 完了)
+└─ m0-readiness-gate           (needs: report、outcome = OK / NEEDS_DESIGN_CHANGE)
+
+raikiri-spike-m0-revision (epic、M0 outcome = NEEDS_DESIGN_CHANGE の場合のみ起動):
+├─ design-doc-revision
+├─ roborev-re-review
+└─ m0-revision-close-gate (承認 → M1 unblock)
 
 raikiri-spike-m1 (epic): Skeleton + reference harness + error taxonomy
-├─ workspace-setup, traits-definition, error-taxonomy-types
+├─ traits-definition, error-taxonomy-types  (workspace-setup は M0 で完了)
 ├─ html-parse-basic, css-cascade-basic, dom-model
 ├─ layout-single-page, paint-basic
 ├─ vrt-tiny-skia, wpt-harness-skeleton, reference-harness-scaffold
 ├─ umbrella-facade, ci-setup, determinism-test
+├─ public-api-compile-tests-lookaheadconfig  ★ round 3 review #2 対応
 └─ hello-world-vrt (上記全てに依存)
 
 raikiri-spike-m2 (epic): Streaming pagination + error semantics
@@ -2750,7 +2966,10 @@ raikiri-spike-m5 (epic): GCPM directive + running (per-page geometry)
 ├─ gcpm-directive-emit, counter-tree-management
 ├─ string-set-4-snapshot
 ├─ running-template-store, per-page-relayout
-├─ running-template-geometry-tests  ★ mixed-size で running 検証
+├─ running-template-replaced-content-preresolve   ★ round 3 review #5
+├─ running-template-geometry-tests   ★ mixed-size で running 検証
+├─ gcpm-snapshot-construction   ★ round 3 review #4 (owned deep copy semantics)
+├─ thread-count-concurrency-tests   ★ round 3 review Task #1
 └─ batch-preset-skeleton
 
 raikiri-spike-m6a (epic): target-* SinglePass
@@ -2788,6 +3007,10 @@ raikiri-spike-m8 (epic): 決定論 + WPT + Error injection + Cross-platform
 ├─ cross-platform-raster-ci (tier 2/3)
 ├─ wpt-full-sweep-scheduler, blitz-oracle-diff-recorder
 ├─ error-injection-suite-completeness (全 RenderError variant)
+├─ quarantine-baseline-ci-processing   ★ round 3 review #6, Task #1
+├─ validate-expectations-files   ★ round 3 review #6 (conflict detection)
+├─ cross-thread-cross-arch-cross-os-determinism-tests   ★ round 3 Missing
+├─ aggregate-budget-tests   ★ round 3 review Task #1
 └─ golden-update-workflow-doc
 ```
 
