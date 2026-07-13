@@ -424,8 +424,10 @@ impl AbortSignal {
 pub struct AbortController { pub signal: AbortSignal }
 impl AbortController {
     pub fn new() -> Self { /* ... */ }
-    pub fn with_timeout(dur: Duration) -> Self { /* thread 立ててtimeoutでabort */ }
     pub fn abort(&self) { /* ... */ }
+    // ★ round 5 review #2 対応: with_timeout(Duration) は削除。
+    // raikiri は timer thread を一切 spawn しない。timeout は Consumer が
+    // 自分の async runtime (tokio::time::timeout) や独自 thread pool で管理する
 }
 
 pub enum NetworkError {
@@ -1481,35 +1483,50 @@ Untrusted document を Consumer が処理する際の安全パターンを doc �
 - `checked_mul` で overflow を明示的に検知
 - Consumer が予算 tracker を実装するときの推奨: `Saturating<u64>` newtype
 
-**Render deadlines (`AbortSignal` 経由、raikiri API)**:
-- Consumer が `AbortController::with_timeout(Duration)` で timer を作成
-- `AbortSignal` を `Request` / `ResolverRequest` / render 各所で参照
-- raikiri は各 loop iteration の先頭で `signal.is_aborted()` を check
+**Render deadlines (`AbortSignal` 経由、Consumer 責任、round 5 review #2 対応)**:
+- **raikiri は timeout thread を提供しない**。Consumer が自分の async runtime
+  (`tokio::time::timeout`) や独自 thread pool で timeout を管理する
+- Consumer は timeout 発火時に `AbortController::abort()` を呼び、raikiri は
+  cooperative check point で検知
+- `AbortSignal` は `AtomicBool` の shared read、raikiri は各 loop iteration の
+  先頭で `signal.is_aborted()` を check
 - `is_aborted() = true` なら:
   - Streaming: 直前まで committed pages を残して `RenderStatus::Aborted` で
     return
   - Batch: pre-emission phase なら sink 未使用、post-emission phase なら
     そこまで emit + `Aborted` return
 
+**tokio との組み合わせ例 (Consumer 実装):**
+```rust
+// raikiri は sync だが、Consumer が tokio に埋める場合の pattern
+tokio::task::spawn_blocking(move || {
+    // 別 thread で AbortController を driving
+    let controller = Arc::new(AbortController::new());
+    let controller_bg = controller.clone();
+    let timer = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        controller_bg.abort();
+    });
+    let result = raikiri::render_streaming(&doc, ..., &mut sink);
+    timer.abort();  // 通常完了時に timer を先に kill
+    result
+})
+
 **Cancellation の semantics (round 3 Missing #2 対応)**:
 - `AbortSignal` は cooperative (Consumer が signal.abort() を呼ぶ or timer
   期限で auto abort)
 - raikiri は AtomicBool を acquire で読む (blitz と同じ semantics)
 
-**Timer lifecycle と thread leak (round 4 Missing #2 対応)**:
-- **raikiri は timeout thread を自分で spawn しない**。`AbortController::with_timeout`
-  は Consumer 側の便利 constructor で、Consumer がその lifetime を管理する
-  責任を負う
-- `AbortController` は `Drop` 実装で内部の timer thread に "cancel" signal を
-  送る。thread は毎回 wake up で cancellation check する ("sleep 100ms → check
-  → sleep 100ms → check" のパターン、または `park_timeout` + shared cancel flag)
-- **Consumer が AbortController を drop すれば timer thread は最大 1 tick で
-  終了、leak なし**
-- Long-running server では、per-request AbortController を Consumer が生成→
-  request 終了時に drop するパターンを推奨。thread pool の accumulation を防ぐ
-- **代替**: `tokio::time::timeout` を使う Consumer は raikiri の
-  AbortController に頼らず、自分の async runtime で timeout 管理可 (この場合
-  raikiri の signal を tokio 側から driving する adapter を書く)
+**Timer lifecycle (round 5 review #2 対応、簡素化)**:
+- **raikiri は timeout thread を一切 spawn しない**。`AbortController::with_timeout`
+  は削除
+- Consumer が自分の runtime で timer を管理:
+  - **async runtime あり**: `tokio::time::timeout` や `tokio::spawn` で timer
+    task を回し、期限で `abort()` を呼ぶ
+  - **同期のみ**: Consumer が独自 thread pool を管理、request end で
+    controller を drop
+- **thread leak リスクは Consumer 責任**。raikiri は関知しない
+- 上記 tokio 例参照
 - 中断ポイント (中断可能な場所):
   - per-page loop の先頭
   - LayoutBuffer の decision point
@@ -1523,7 +1540,7 @@ Untrusted document を Consumer が処理する際の安全パターンを doc �
 - untrusted HTML: Layer 1 sanitize で削除、raikiri に到達する時点で構造安全
 - untrusted CSS: Layer 1 sanitize + `ResourcePolicy` で fetch 制限
 - untrusted resource: `SandboxedResolver` / `SandboxedNetProvider` で fetch 制限
-- Consumer が `AbortController::with_timeout` で walltime bound
+- Consumer が自分の runtime (`tokio::time::timeout` 等) で walltime bound
 - `max_document_pages` で page 数 bound
 - 上記を組み合わせれば worst-case は bounded、raikiri 単独 guard は追加しない
 
@@ -1535,22 +1552,29 @@ Untrusted document を Consumer が処理する際の安全パターンを doc �
 
 **raikiri の方針**:
 - **raikiri は resource cache を持たない**。同じ URL の resource でも Consumer
-  provider が呼ばれ、Consumer が cache するか判断する
-- **Consumer 側の cache 責任 (推奨)**: `FulgurResolver` / `FulgurNetProvider`
-  内部で `parking_lot::Mutex<HashMap<Url, Arc<CachedResource>>>` 等を保持し、
-  同一 URL の 2 度目以降を memoize
-- `SandboxedResolver` / `SandboxedNetProvider` は wrapper なので、Consumer 実装
-  内の cache は wrap 後もそのまま効く
+  provider が呼ばれる。cache するかどうかは Consumer が判断
+- **Consumer 側 cache の contract (round 5 review #5 対応)**:
+  - **cache key は URL だけでは不足**。以下を含む: URL、HTTP method、body
+    hash、response-varying headers (Accept, Accept-Language など)、Vary header
+    が指定した field、resource kind、認証 context (auth token identity)、
+    tenant identity
+  - **Cross-request TTL cache は tenant / policy boundary を越えない**。
+    per-request scope が推奨、cross-request するなら Consumer が明示的に
+    tenant partition を key に含める
+- 参考実装 (fulgur、round 5 の user 意向で local-only): fulgur は network
+  fetch しないので cache は不要。CLI で `-f` / `-i` で bundle した local file
+  path を direct resolve
 
-**Cache invalidation**:
-- raikiri は cache invalidation を関知しない (Consumer 側 policy)
-- Consumer は request lifetime scope で cache lifetime を管理 (per-request cache
-  など)
-- Long-running server では TTL based invalidation を Consumer が実装
+**Failure semantics (round 5 Missing #3 対応)**:
+- **Failed fetch は cache しない** (negative cache は Consumer opt-in、
+  誤って permanent block を作らないため)
+- **Cache stampede** (同 URL への並列 request): Consumer 実装で future-based
+  coalescing (`Arc<OnceCell<...>>` 等) を検討
+- **Bounded memory**: LRU + memory ceiling を Consumer が実装
 
 **AbortSignal と cache の相互作用**:
-- Consumer が abort → in-flight fetch も cancel、cache に完全 write しない
-- Consumer 側 cache 実装が abort-safe である必要 (partial cache entry を残さない)
+- Consumer が abort → in-flight fetch も cancel、cache に partial write しない
+- Consumer 側 cache 実装が abort-safe である必要 (partial entry を残さない)
 
 これで **PageContext の parallel margin box layout 中の状態変化は起こらず、
 byte-identical goal と concurrency safety が両立** する。
@@ -2047,16 +2071,35 @@ impl RenderSink for DiscardSink {
 }
 
 // Consumer は iteration で DiscardSink を使い、最終だけ production sink
-for _iter in 0..config.max_target_iterations {
-    let mut discard = DiscardSink { pages: vec![], summary: None };
-    raikiri::render_streaming(&doc, defaults, &resolver, streaming_cfg.clone(),
-        &mut discard)?;
-    // discard.summary.target_registry を Consumer 側 registry と比較
-    // 収束したら break
-    drop(discard);  // Consumer sink drop で partial output 完全消滅
+// round 5 review #3 対応: 各 iter で target_registry を feed forward、
+// accept_page で page を即 drop してメモリを節約
+struct DiscardSink { registry: Option<TargetRegistry> }
+impl RenderSink for DiscardSink {
+    fn accept_page(&mut self, _page: PageFragment) -> std::io::Result<()> {
+        // ★ 即 drop、Vec に貯めない
+        Ok(())
+    }
+    fn finish_render(&mut self, summary: RenderSummary) -> std::io::Result<()> {
+        self.registry = Some(summary.target_registry);
+        Ok(())
+    }
 }
 
-// 最終 render は production sink
+let mut prev_registry: Option<TargetRegistry> = None;
+for _iter in 0..config.max_target_iterations {
+    let mut streaming_cfg = StreamingConfig::default();
+    streaming_cfg.initial_registry = prev_registry.clone();  // ★ hint に feed
+    let mut discard = DiscardSink { registry: None };
+    raikiri::render_streaming(&doc, defaults, &resolver, streaming_cfg,
+        &mut discard)?;
+    // discard.registry を prev_registry と比較して収束判定
+    if discard.registry == prev_registry { break; }
+    prev_registry = discard.registry;  // ★ 次 iter へ feed forward
+}
+
+// 最終 render は production sink、収束済み registry を使用
+let mut final_cfg = StreamingConfig::default();
+final_cfg.initial_registry = prev_registry;
 raikiri::render_streaming(&doc, defaults, &resolver, final_cfg,
     &mut production_sink)?;
 ```
@@ -2367,47 +2410,52 @@ Layer 2: Resource level policy (§10, raikiri-net)
 - `DefaultSandboxPolicy` — https + data のみ許可、10 MB 上限、5s timeout 等の実用的デフォルト
   + full SSRF defenses (下記 §10.3 参照)
 
-### 10.3 SSRF defense の実装詳細 (round 4 Missing #4 対応)
+### 10.3 SSRF defense の scope (round 5 review #1 対応、簡素化)
 
-`DefaultSandboxPolicy` および Consumer 実装の SSRF defense は以下を含む:
+**方針転換**: SSRF の full enforcement は `SandboxedNetProvider<P>` の wrapper
+抽象で保証できない (DNS resolve、socket connect、redirect が inner provider
+内で完結するため、wrapper は IP pin / hop inspection ができない)。したがって
+raikiri-net の scope は **Blitz 互換 + α** に降格する:
 
-**Private / link-local IP block**:
-- IPv4: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
-  `169.254.0.0/16` (link-local), `0.0.0.0/8` (any-source)
-- IPv6: `::1` (loopback), `fc00::/7` (ULA), `fe80::/10` (link-local),
-  `fec0::/10` (site-local deprecated)
-- Multicast: `224.0.0.0/4`, `ff00::/8`
-- Consumer が明示的に許可した allowlist は例外
+**raikiri-net の scope (Blitz 互換 + α)**:
+- URL scheme allowlist (data / https / file ; policy で選択)
+- Host allowlist (Consumer が pass する list との文字列 match)
+- Byte-size upper bound (response size を Consumer が measure)
+- MIME allowlist (response header の Content-Type との文字列 match)
+- 上記だけを wrapper で enforce、DNS pinning / redirect hop inspection /
+  decompression bomb / decoder bomb は本 spec の scope 外
 
-**DNS rebinding attack 防御**:
-- URL の hostname を DNS resolve、返された IP を private/link-local check
-- **fetch 時に再度 resolve、初回 resolve と同じ IP か verify** (DNS rebinding
-  は 2 度目の resolve で private IP を返す攻撃)
-- 一致しない場合は `PolicyViolation` で reject
+**Enterprise-grade SSRF は Consumer の concrete HTTP provider が担う**:
+- Redirect の各 hop で policy 再適用、DNS resolve → connect の IP pinning、
+  decoder timeout などは Consumer の HTTP stack (reqwest / hyper など) 内で
+  実装
+- raikiri は Consumer の HTTP provider に信頼を委譲する
 
-**Redirect revalidation**:
-- 各 3xx redirect の Location header の URL を **改めて policy check**
-- redirect chain の各 hop で scheme / host / private IP check
-- max_redirect_hops (default: 3) 超過で reject
-- HTTP → HTTPS の "upgrade" は許可 (逆は reject)
+**Consumer 別の実運用例**:
 
-**Decompression bomb 対策**:
-- Content-Encoding が `gzip` / `deflate` / `br` の場合、decoded size を
-  streaming で count
-- `max_decoded_bytes` を超えた時点で fetch を abort (compression ratio が
-  1000:1 のような bomb を防ぐ)
-- Archive (`.zip`, `.tar.gz` 内 file 等) は default で全 reject (Consumer が
-  明示的に allow が必要)
+- **fulgur** (round 5 review 対応、user 意向): サーバサイド PDF 生成、
+  **network fetch は使わない (local-only)**。fulgur 側は
+  `LocalOnlyNetworkProvider` を提供し、全 network 呼び出しを reject。
+  `<link>`, `<img>`, `@import` 内 URL は fulgur CLI で `-f` / `-i` で
+  bundle 済みの local path に rewrite される。この設計だと SSRF surface は
+  そもそも無い
+- **EPUB reader / browser 用 Consumer** (future、raikiri 直接利用): ネット
+  fetch を扱うため、Consumer 側で enterprise-grade SSRF defense を実装。
+  raikiri-net の DefaultSandboxPolicy は "出発点として使える最小構成" だが、
+  production では必ず Consumer が拡張する
 
-**Font / image decode bomb 対策**:
-- Font: HarfBuzz / freetype の decode に size + timeout 制限
-  (`max_decoded_bytes` + `decode_timeout` 併用)
-- Image: `image` crate の decode に同上、pixel dimension も check
-  (`max_pixel_dimensions: Option<(u32, u32)>` を DefaultSandboxPolicy に追加)
-- SVG: `usvg` の decode に同上、gzsvg (compressed SVG) も考慮
+**M4 tasks の縮小** (round 5 review Task #2, #4 対応):
+- `sandboxed-net-provider-impl` / `sandboxed-resolver-impl` / `denyall-policy-impl` /
+  `default-sandbox-policy-impl` は scheme/host/size/MIME レベルのみ
+- `ssrf-defense-tests` は scheme allowlist、host allowlist、byte-size、MIME
+  validation の 4 項目のみ
+- Full SSRF (DNS pinning、redirect revalidation、decompression bomb) の
+  test は Consumer 責任として明示、raikiri-wpt では扱わない
 
-**M4 tasks の SSRF-defense-tests がこれらを verify** (round 4 review Task #4
-対応)。DefaultSandboxPolicy の default 値も上記全てを網羅する。
+**Consumer 実装コスト の可視化**:
+- fulgur: local-only なので追加コストほぼゼロ
+- Full SSRF が必要な Consumer: 独自 HTTP provider (reqwest wrapper 等) で
+  実装、raikiri-net は "policy layer template" として API を再利用
 
 **wrapper pattern**:
 
@@ -2711,45 +2759,32 @@ reference document を最低 1 つ追加。既存 reference は regression さ�
 **Map 順序**: `BTreeMap` or `IndexMap` を使用、`HashMap` は byte-identical
 出力に使わない (iteration 順が非決定的)
 
-#### `expected-summary.json` schema versioning (round 4 Missing #3 対応)
+#### `expected-summary.json` の scope (round 5 review #4 対応、簡素化)
 
-`RenderSummary` の canonical JSON serialize は format 変更に耐える必要がある
-(field 追加、field 型変更、feature deprecation)。
+**方針転換**: Missing #3 で提案した `schema_version` / `raikiri_version` の
+JSON 埋め込みは byte-identical goal と根本矛盾するので **廃止**。単純化:
 
 ```json
 {
-  "schema_version": "1.0.0",
-  "raikiri_version": "0.1.0",
-  "canonical_float_precision": 6,
-  "summary": {
-    "total_pages": 3,
-    "target_registry": { ... },
-    "unresolved_targets": [ ... ],
-    "emitted_target_slots": [ ... ],
-    "target_discrepancies": [ ... ],
-    "warnings": [ ... ]
-  }
+  "total_pages": 3,
+  "target_registry": { ... },
+  "unresolved_targets": [ ... ],
+  "emitted_target_slots": [ ... ],
+  "target_discrepancies": [ ... ],
+  "warnings": [ ... ]
 }
 ```
 
-**Version 管理**:
-- `schema_version` は SemVer で管理:
-  - **PATCH bump** (1.0.0 → 1.0.1): 意味変化なし、fixture 再生成 不要
-  - **MINOR bump** (1.0.0 → 1.1.0): 後方互換 field 追加、既存 fixture は
-    そのまま pass (unknown field を許容)
-  - **MAJOR bump** (1.0.0 → 2.0.0): breaking change、全 fixture 再生成 + PR
-    review、`expectations/deprecated.txt` に旧 schema エントリ移動
-- `raikiri_version` は spec の実装バージョン、diff 追跡用
-
-**Consumer 側 forward-compat**:
-- Consumer が unknown field を許容 (`serde(deny_unknown_fields)` は使わない)
-- `schema_version` を parse して、MAJOR mismatch なら Consumer が明示的に
-  reject
-
-**Golden 更新 with schema bump** (§12.7 との統合):
-- MINOR bump: 開発者が新 field を追加 → 既存 fixture の期待値も更新
-- MAJOR bump: 明示的な PR で全 fixture 再生成 + review + `expectations/`
-  migration
+**運用**:
+- `RenderSummary` の JSON 表現 = そのまま serialize (schema metadata 埋め込み
+  なし)
+- byte-identical comparison で fixture と一致するかを check
+- `RenderSummary` の field 追加 / 型変更が起きた PR では:
+  - Doc に schema 変更を記述
+  - **全 fixture の `expected-summary.json` を PR 内で再生成**
+  - Reviewer 承認で merge
+- Version metadata が必要なら Cargo.lock / git commit hash で追跡 (JSON には
+  含めない)
 
 #### Determinism testing matrix (round 3 Missing #3 対応)
 
@@ -3106,17 +3141,25 @@ reference と一致
 - per-page-pagebox-resolver, pageboxcache-implementation
 - margin-box-slot-layout, sixteen-slot-rayon
 - pagecontext-seed-builder
-- **Layer 2 security wrapper 実装** (round 4 review Task #4 対応、以前 unowned):
-  - sandboxed-net-provider-impl (`SandboxedNetProvider<P>` wrapper)
-  - sandboxed-resolver-impl (`SandboxedResolver<R>` wrapper)
+- **Layer 2 security wrapper 実装** (round 5 review 対応で scope 縮小、
+  Blitz 互換 + α レベル):
+  - sandboxed-net-provider-impl (`SandboxedNetProvider<P>` wrapper、
+    scheme / host / size / MIME のみ)
+  - sandboxed-resolver-impl (`SandboxedResolver<R>` wrapper、同上)
   - denyall-policy-impl (`DenyAllPolicy`)
-  - default-sandbox-policy-impl (`DefaultSandboxPolicy`)
+  - default-sandbox-policy-impl (`DefaultSandboxPolicy`、scheme=https+data、
+    size=10MB、MIME allowlist)
   - policy-violation-propagation (raikiri-dom 内で violation を RenderError::Policy に伝播)
-- **Layer 2 security tests** (round 4 review Task #4 対応):
-  - ssrf-defense-tests (scheme allowlist、host restriction、private IP block)
-  - resolver-parity-tests (SandboxedResolver が wrap する Consumer resolver と
-    parity 動作、violation 時のみ diverge)
-  - size-mime-timeout-enforcement-tests
+- **Layer 2 security tests** (round 5 review Task #2 対応で scope 縮小):
+  - ssrf-defense-tests: scheme allowlist、host allowlist、byte-size、
+    MIME validation の 4 項目のみ
+  - resolver-parity-tests: SandboxedResolver が Consumer resolver と parity、
+    violation 時のみ diverge
+
+**round 5 review Task #4 対応**: **Full SSRF (DNS pinning、redirect
+revalidation、decompression bomb、decoder bomb) は M4 の scope から除外**。
+Enterprise-grade SSRF が必要な Consumer は独自 HTTP provider で実装 (§10.3)。
+これで M4 が incrementally reviewable な粒度に収まる
 
 **Reference fixtures**:
 - `tests/reference/mixed-size-A4-A3/`
