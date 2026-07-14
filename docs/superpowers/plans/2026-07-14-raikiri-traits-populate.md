@@ -681,6 +681,11 @@ pub enum Body {
 
 /// HTTP method (拡張余地あり、round 3 review #3 訂正: HTTP method は仕様上
 /// 拡張可能なため `#[non_exhaustive]`)。
+///
+/// M1.1 では GET / POST のみ (fulgur の primary use case)。PUT / DELETE / PATCH /
+/// HEAD / OPTIONS は M4 sandboxed-net-provider-impl / Consumer 実 use case 発生時
+/// に追加。`#[non_exhaustive]` により Consumer 側 exhaustive match の accidental
+/// break を防ぐ。
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Method {
@@ -688,8 +693,6 @@ pub enum Method {
     Get,
     /// POST。
     Post,
-    /// その他 (PUT / DELETE / PATCH / OPTIONS / HEAD ...)。
-    Other(String),
 }
 
 /// blitz と同じ AbortSignal shape (AtomicBool ラッパ)。
@@ -818,8 +821,6 @@ git commit -m "feat(raikiri-traits): add net module — NetworkProvider + Reques
 
 use std::marker::PhantomData;
 
-use url::Url;
-
 /// Replaced element の intrinsic size を resolve する Consumer 側 trait。
 ///
 /// - req に含まれる URL の scheme / host / size 等の検証は Consumer 責任。
@@ -918,11 +919,6 @@ impl<'a> Default for ResolverRequest<'a> {
 pub enum ResolverError {
     // M4 で populate。
 }
-
-// URL は将来使用予定 (ResolverRequest.url field を M4 で追加時)。
-// M1.1 では unused warning を避けるため referenced 表示。
-#[allow(dead_code)]
-fn _url_phantom(_u: &Url) {}
 ```
 
 - [ ] **Step 2: Update `crates/raikiri-traits/src/lib.rs`**
@@ -1445,7 +1441,6 @@ git commit -m "feat(raikiri-traits): add sink module — RenderSink trait (m1.1)
 
 use std::marker::PhantomData;
 
-use crate::error::TargetKind;
 use crate::page::{PageContext, PageFragment};
 use crate::sink::RenderSink;
 
@@ -1588,11 +1583,6 @@ pub enum ResolvedTarget {
     //   Deferred { fragment_id: Symbol },
     //   Unresolved { fragment_id: Symbol, reason: UnresolvedReason },
 }
-
-// TargetKind は placeholder 段階では公開 API に露出しないが、将来 populate 用に
-// import。
-#[allow(dead_code)]
-fn _target_kind_phantom(_k: &TargetKind) {}
 ```
 
 - [ ] **Step 2: Update `crates/raikiri-traits/src/lib.rs`**
@@ -1765,6 +1755,10 @@ impl RenderLimitsBuilder {
 /// LayoutBuffer の lookahead 幅 config。
 ///
 /// M1.1 seed value (blitz 慣習ベース、M2/M3 で refine 予定)。
+///
+/// spec §4 "[対象 struct]" list に含まれるため `#[non_exhaustive]` を付与
+/// (round 3 Missing #6 対応)。
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct LookaheadConfig {
     /// widow 判定のため何行先を bufferするか。
