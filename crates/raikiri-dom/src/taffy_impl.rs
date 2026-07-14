@@ -18,9 +18,9 @@ use taffy::{
 use crate::document::Document;
 
 /// Child iterator for taffy traits.
-pub struct ChildIter<'a>(core::slice::Iter<'a, usize>);
+pub struct TaffyChildIter<'a>(core::slice::Iter<'a, usize>);
 
-impl Iterator for ChildIter<'_> {
+impl Iterator for TaffyChildIter<'_> {
     type Item = NodeId;
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next().copied().map(NodeId::from)
@@ -28,10 +28,10 @@ impl Iterator for ChildIter<'_> {
 }
 
 impl TraversePartialTree for Document {
-    type ChildIter<'a> = ChildIter<'a>;
+    type ChildIter<'a> = TaffyChildIter<'a>;
 
     fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
-        ChildIter(self.nodes[usize::from(node_id)].children.iter())
+        TaffyChildIter(self.nodes[usize::from(node_id)].children.iter())
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
