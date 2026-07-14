@@ -11,6 +11,7 @@ pub mod net;
 pub mod page;
 pub mod policy;
 pub mod resolver;
+pub mod sink;
 
 pub use dom::{Dom, Element, NodeId, Node, Symbol};
 pub use error::{
@@ -31,6 +32,7 @@ pub use resolver::{
     IntrinsicBox, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
     ResolverRequest,
 };
+pub use sink::RenderSink;
 
 #[cfg(test)]
 mod tests {
@@ -108,5 +110,11 @@ mod tests {
         let id = TargetSlotId { page_index: 3, sequence: 7 };
         assert_eq!(id.page_index, 3);
         assert_eq!(id.sequence, 7);
+    }
+
+    #[test]
+    fn render_sink_is_object_safe() {
+        fn _assert<T: ?Sized>() {}
+        _assert::<dyn RenderSink>();
     }
 }
