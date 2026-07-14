@@ -11,6 +11,7 @@ raikiri-traits = { workspace = true }
 raikiri-style  = { workspace = true }
 taffy          = { workspace = true }
 parley         = { workspace = true }
+smol_str       = { workspace = true }
 
 [lints]
 workspace = true
