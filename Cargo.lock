@@ -1520,6 +1520,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "raikiri-feasibility"
+version = "0.1.0"
+dependencies = [
+ "anyrender",
+ "anyrender_vello_cpu",
+ "blitz-dom",
+ "blitz-paint",
+ "blitz-traits",
+ "cssparser",
+ "insta",
+ "kurbo",
+ "parley",
+ "peniko",
+ "rustc-hash",
+ "selectors",
+ "smol_str",
+ "taffy",
+ "tiny-skia",
+]
+
+[[package]]
 name = "raikiri-html"
 version = "0.1.0"
 dependencies = [

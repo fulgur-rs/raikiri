@@ -11,6 +11,7 @@ members = [
     "crates/raikiri-blitz-compat",
     "crates/raikiri-wpt",
     "crates/raikiri-vrt",
+    "crates/raikiri-feasibility",
 ]
 
 [workspace.package]
