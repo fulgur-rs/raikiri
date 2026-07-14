@@ -40,6 +40,36 @@ pub fn rasterize<R: ImageRenderer>(
     buf
 }
 
+/// Encode a premultiplied RGBA8 buffer to PNG bytes via `tiny_skia::Pixmap`.
+///
+/// The buffer must be exactly `width * height * 4` bytes. Buffer format is
+/// premultiplied RGBA8 — the `anyrender_vello_cpu` output convention.
+/// `tiny_skia` stores pixmaps in the same format, so encoding is a direct
+/// wrap-then-serialize.
+///
+/// # Panics
+///
+/// - `rgba.len() != width * height * 4`
+/// - `width == 0 || height == 0` (invalid `tiny_skia::IntSize`)
+/// - PNG serialization failure (tiny-skia never returns an error for a
+///   well-formed pixmap in practice; treated as an invariant violation)
+pub fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let expected = (width as usize) * (height as usize) * 4;
+    assert_eq!(
+        rgba.len(),
+        expected,
+        "encode_png: expected {expected} bytes for {width}x{height}, got {}",
+        rgba.len(),
+    );
+    let size = tiny_skia::IntSize::from_wh(width, height)
+        .expect("encode_png: width/height must be > 0");
+    let pixmap = tiny_skia::Pixmap::from_vec(rgba.to_vec(), size)
+        .expect("encode_png: rgba slice must match width * height * 4");
+    pixmap
+        .encode_png()
+        .expect("encode_png: tiny_skia::Pixmap::encode_png should not fail for a valid pixmap")
+}
+
 #[cfg(test)]
 mod tests {
     use anyrender::{ImageRenderer, PaintScene};
@@ -47,7 +77,7 @@ mod tests {
     use kurbo::{Affine, Rect};
     use peniko::{Color, Fill, color::palette::css};
 
-    use super::rasterize;
+    use super::{encode_png, rasterize};
 
     const W: u32 = 100;
     const H: u32 = 100;
@@ -86,6 +116,19 @@ mod tests {
             "independent renderers diverged: {} of {} bytes differ",
             a.iter().zip(&b).filter(|(x, y)| x != y).count(),
             a.len(),
+        );
+    }
+
+    #[test]
+    fn encode_png_produces_png_signature() {
+        let mut renderer = VelloCpuImageRenderer::new(W, H);
+        let rgba = rasterize(&mut renderer, |scene| draw_red_rect(scene));
+        let png = encode_png(&rgba, W, H);
+        // PNG magic bytes: \x89 P N G \r \n \x1A \n
+        assert_eq!(
+            &png[..8],
+            &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'],
+            "PNG magic bytes mismatch — encoder produced non-PNG output",
         );
     }
 }
