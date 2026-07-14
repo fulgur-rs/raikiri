@@ -9,6 +9,7 @@ pub mod dom;
 pub mod net;
 pub mod page;
 pub mod policy;
+pub mod resolver;
 
 pub use dom::{Dom, Element, NodeId, Node, Symbol};
 pub use net::{
@@ -20,6 +21,10 @@ pub use page::{
     PageFragment, RunningTemplate, TargetRegistry,
 };
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
+pub use resolver::{
+    IntrinsicBox, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
+    ResolverRequest,
+};
 
 #[cfg(test)]
 mod tests {
@@ -67,5 +72,17 @@ mod tests {
         assert!(!c.signal.is_aborted());
         c.abort();
         assert!(c.signal.is_aborted());
+    }
+
+    #[test]
+    fn replaced_resolver_is_object_safe() {
+        fn _assert<T: ?Sized>() {}
+        _assert::<dyn ReplacedResolver>();
+    }
+
+    #[test]
+    fn resolver_placeholder_types_default_construct() {
+        let _ = IntrinsicBox::default();
+        let _ = ResolverRequest::default();
     }
 }
