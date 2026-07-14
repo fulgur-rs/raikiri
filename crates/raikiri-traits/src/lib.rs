@@ -301,6 +301,7 @@ mod tests {
 
     #[test]
     fn question_mark_propagates_io_through_parse_to_render() {
+        // RenderError is ≥144B (Network / Policy variants); see net.rs:33 rationale.
         #[allow(clippy::result_large_err)]
         fn producer() -> Result<(), RenderError> {
             let io_err = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof");
