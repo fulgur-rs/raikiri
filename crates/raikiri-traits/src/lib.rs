@@ -6,12 +6,18 @@
 //! §4 を参照。
 
 pub mod dom;
+pub mod error;
 pub mod net;
 pub mod page;
 pub mod policy;
 pub mod resolver;
 
 pub use dom::{Dom, Element, NodeId, Node, Symbol};
+pub use error::{
+    CascadeError, EmittedSlotInfo, ExhaustionPolicy, LayoutError, LimitKind, ParseError,
+    RenderError, RenderStatus, RenderSummary, RenderWarning, TargetDiscrepancy, TargetKind,
+    TargetSlotId, UnresolvedReason, UnresolvedTarget, WarningKind,
+};
 pub use net::{
     AbortController, AbortSignal, Body, FetchedResource, HeaderMap, Method,
     NetworkError, NetworkProvider, Request,
@@ -84,5 +90,23 @@ mod tests {
     fn resolver_placeholder_types_default_construct() {
         let _ = IntrinsicBox::default();
         let _ = ResolverRequest::default();
+    }
+
+    #[test]
+    fn render_error_is_error_trait() {
+        fn _assert<T: std::error::Error>() {}
+        _assert::<RenderError>();
+    }
+
+    #[test]
+    fn exhaustion_policy_default_is_error() {
+        assert_eq!(ExhaustionPolicy::default(), ExhaustionPolicy::Error);
+    }
+
+    #[test]
+    fn target_slot_id_construct() {
+        let id = TargetSlotId { page_index: 3, sequence: 7 };
+        assert_eq!(id.page_index, 3);
+        assert_eq!(id.sequence, 7);
     }
 }
