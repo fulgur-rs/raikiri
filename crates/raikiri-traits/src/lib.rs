@@ -314,4 +314,19 @@ mod tests {
             other => panic!("expected RenderError::Parse(ParseError::Io(_)), got {other:?}"),
         }
     }
+
+    // ── RenderStatus::Aborted contract (M1.2、実 semantic は M6c) ─
+
+    /// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`
+    /// field が Consumer から観測可能で、round-trip することを固定する。
+    /// 実 render pipeline 経由での partial_pages 追跡は M6c
+    /// (`abort-signal-integration` / `renderstatus-aborted-impl`) で verify。
+    #[test]
+    fn render_status_aborted_carries_partial_pages() {
+        let s = RenderStatus::Aborted { partial_pages: 7 };
+        match s {
+            RenderStatus::Aborted { partial_pages } => assert_eq!(partial_pages, 7),
+            RenderStatus::Completed(_) => panic!("expected Aborted"),
+        }
+    }
 }
