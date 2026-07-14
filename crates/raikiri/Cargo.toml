@@ -1,0 +1,18 @@
+[package]
+name = "raikiri"
+version = "0.1.0"
+description = "Umbrella crate for raikiri: primary consumer API (parse_html / plan / render_streaming / render_batch / html_to_png) and re-exports of all sub-crates"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+raikiri-traits = { workspace = true }
+raikiri-style  = { workspace = true }
+raikiri-net    = { workspace = true }
+raikiri-dom    = { workspace = true }
+raikiri-html   = { workspace = true }
+raikiri-paint  = { workspace = true }
+
+[lints]
+workspace = true

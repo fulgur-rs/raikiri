@@ -1,0 +1,13 @@
+[package]
+name = "raikiri-blitz-compat"
+version = "0.1.0"
+description = "blitz-compatible type shape layer for raikiri consumers (M6 で blitz_html::HtmlDocument / blitz_dom::Node compat を実装)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+raikiri = { workspace = true }
+
+[lints]
+workspace = true
