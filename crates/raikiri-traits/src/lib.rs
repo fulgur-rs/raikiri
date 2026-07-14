@@ -289,4 +289,13 @@ mod tests {
         _assert_error::<LayoutError>();
         _assert_display::<LayoutError>();
     }
+
+    #[test]
+    fn render_error_parse_source_chain() {
+        use std::error::Error as _;
+        let io_err = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof");
+        let re: RenderError = RenderError::Parse(ParseError::Io(io_err));
+        let src = re.source();
+        assert!(src.is_some(), "RenderError::Parse should expose inner ParseError via source()");
+    }
 }

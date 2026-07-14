@@ -87,8 +87,16 @@ impl std::fmt::Display for RenderError {
 impl std::error::Error for RenderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Parse(e) => Some(e),
+            Self::Cascade(e) => Some(e),
+            Self::Layout(e) => Some(e),
             Self::Sink(e) | Self::Io(e) => Some(e),
-            _ => None,
+            Self::Resolver(_)
+            | Self::Network(_)
+            | Self::Policy(_)
+            | Self::LimitExceeded { .. }
+            | Self::Configuration(_)
+            | Self::TargetDidNotConverge { .. } => None,
         }
     }
 }
