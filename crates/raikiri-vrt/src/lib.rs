@@ -61,8 +61,8 @@ pub fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
         "encode_png: expected {expected} bytes for {width}x{height}, got {}",
         rgba.len(),
     );
-    let size = tiny_skia::IntSize::from_wh(width, height)
-        .expect("encode_png: width/height must be > 0");
+    let size =
+        tiny_skia::IntSize::from_wh(width, height).expect("encode_png: width/height must be > 0");
     let pixmap = tiny_skia::Pixmap::from_vec(rgba.to_vec(), size)
         .expect("encode_png: rgba slice must match width * height * 4");
     pixmap
@@ -93,6 +93,7 @@ mod tests {
     #[test]
     fn rasterize_produces_expected_buffer_shape() {
         let mut renderer = VelloCpuImageRenderer::new(W, H);
+        #[allow(clippy::redundant_closure)]
         let buf = rasterize(&mut renderer, |scene| draw_red_rect(scene));
         assert_eq!(buf.len(), (W as usize) * (H as usize) * 4);
         // Pixel (50, 50) is inside the red rect; must not still be transparent-black.
@@ -108,7 +109,9 @@ mod tests {
     fn rasterize_is_byte_identical() {
         let mut r1 = VelloCpuImageRenderer::new(W, H);
         let mut r2 = VelloCpuImageRenderer::new(W, H);
+        #[allow(clippy::redundant_closure)]
         let a = rasterize(&mut r1, |scene| draw_red_rect(scene));
+        #[allow(clippy::redundant_closure)]
         let b = rasterize(&mut r2, |scene| draw_red_rect(scene));
         assert_eq!(a.len(), b.len());
         assert!(
@@ -122,6 +125,7 @@ mod tests {
     #[test]
     fn encode_png_produces_png_signature() {
         let mut renderer = VelloCpuImageRenderer::new(W, H);
+        #[allow(clippy::redundant_closure)]
         let rgba = rasterize(&mut renderer, |scene| draw_red_rect(scene));
         let png = encode_png(&rgba, W, H);
         // PNG magic bytes: \x89 P N G \r \n \x1A \n
