@@ -8,3 +8,6 @@
 # Rust build artifacts
 target/
 **/*.rs.bk
+
+# Claude Code worktrees
+.claude/worktrees/
