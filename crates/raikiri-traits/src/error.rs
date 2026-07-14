@@ -278,17 +278,54 @@ pub struct TargetDiscrepancy {
     pub actual_text: String,
 }
 
-/// HTML parse 段階の error。M1.2 error propagation task で variant populate。
+/// HTML parse 段階の terminal error (raikiri-html crate 内で発生)。
 ///
-/// M1.1 では uninhabited。html5ever error / doctype mismatch / io error 等を
-/// M1.2 で追加。
+/// **Stylo/blitz と同じ責務境界**: html5ever tokenizer 由来の non-fatal
+/// parse error (recoverable な malformed HTML) は raikiri-html 内で
+/// [`RenderWarning`] として summary に集約し、この enum には含めない。
+/// この enum の variant は rendering を halt させる真の terminal error のみ。
+///
+/// M1.2 で `Io` / `Encoding` の 2 variant を populate。html5ever 固有の
+/// error variant は raikiri-html 側で crate-private に扱い、必要になった
+/// 時点で `#[non_exhaustive]` の恩恵で追加する。
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ParseError {
-    // M1.2 で populate:
-    //   Io(std::io::Error),
-    //   Html5ever(String),
-    //   ...
+    /// Input source (`std::io::Read`) からの read 失敗。
+    Io(std::io::Error),
+    /// Byte stream → text の変換に失敗 (encoding label 検出 or 変換 error)。
+    Encoding {
+        /// 検出または指定された encoding label (例: "utf-8", "shift_jis")。
+        label: String,
+        /// 失敗理由の人間可読な description。
+        reason: String,
+    },
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(_) => write!(f, "HTML source read error"),
+            Self::Encoding { label, reason } => {
+                write!(f, "HTML source encoding error ({label}): {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Encoding { .. } => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ParseError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 /// CSS parse / cascade 段階の error。M1.4 css-cascade-basic task で variant populate。

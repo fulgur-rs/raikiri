@@ -254,4 +254,23 @@ mod tests {
     fn plan_placeholder_default_construct() {
         let _ = TargetDefinition::default();
     }
+
+    // ── Sub-error trait bounds (M1.2) ───────────────────────────
+
+    #[test]
+    fn parse_error_is_error_and_display() {
+        fn _assert_error<T: std::error::Error>() {}
+        fn _assert_display<T: std::fmt::Display>() {}
+        _assert_error::<ParseError>();
+        _assert_display::<ParseError>();
+    }
+
+    #[test]
+    fn parse_error_io_source_chain() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof");
+        let pe: ParseError = io_err.into();
+        use std::error::Error as _;
+        let src = pe.source();
+        assert!(src.is_some(), "ParseError::Io should expose inner io::Error via source()");
+    }
 }
