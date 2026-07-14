@@ -12,6 +12,7 @@ pub mod page;
 pub mod policy;
 pub mod resolver;
 pub mod sink;
+pub mod strategy;
 
 pub use dom::{Dom, Element, NodeId, Node, Symbol};
 pub use error::{
@@ -33,6 +34,10 @@ pub use resolver::{
     ResolverRequest,
 };
 pub use sink::RenderSink;
+pub use strategy::{
+    ContainerOverflowFallback, DirtyDeadline, EmissionPolicy, LookaheadPolicy, ProbeContext,
+    ReflowAction, ReflowPolicy, ResolvedTarget, TargetRequest, TargetResolver,
+};
 
 #[cfg(test)]
 mod tests {
@@ -116,5 +121,11 @@ mod tests {
     fn render_sink_is_object_safe() {
         fn _assert<T: ?Sized>() {}
         _assert::<dyn RenderSink>();
+    }
+
+    #[test]
+    fn strategy_placeholders_default_construct() {
+        let _ = ProbeContext::default();
+        let _ = TargetRequest::default();
     }
 }
