@@ -28,6 +28,13 @@ pub type HeaderMap = Vec<(String, String)>;
 /// M4 sandboxed-net-provider-impl 前)。
 pub trait NetworkProvider: Send + Sync {
     /// 1 fetch を同期実行し、結果か error を返す。
+    ///
+    /// `NetworkError` は spec §4 で `PolicyViolation(PolicyViolation)` variant を
+    /// 直接持つため約 144 bytes となり、clippy::result_large_err の閾値 (128 bytes)
+    /// を超える。API shape は §4 authoritative のため M1.1 では lint を suppress し、
+    /// Box wrapper 化 (`PolicyViolation(Box<PolicyViolation>)`) の適用可否は M4
+    /// sandboxed-net-provider-impl 段階で NetworkError 実利用と併せて再判断する。
+    #[allow(clippy::result_large_err)]
     fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError>;
 }
 
