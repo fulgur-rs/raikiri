@@ -1,19 +1,20 @@
 [package]
 name = "raikiri-vrt"
 version = "0.1.0"
-description = "VRT (visual regression testing) harness for raikiri: anyrender_vello_cpu rasterizer wrapper + PNG diff"
+description = "VRT (visual regression testing) harness for raikiri: anyrender rasterizer + tiny-skia PNG encoder"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
-raikiri             = { workspace = true }
-anyrender_vello_cpu = { workspace = true }
-tiny-skia           = { workspace = true }
+anyrender = { workspace = true }
+tiny-skia = { workspace = true }
 
 [dev-dependencies]
-insta = { workspace = true }
+anyrender_vello_cpu = { workspace = true }
+peniko              = { workspace = true }
+kurbo               = { workspace = true }
 
 [lints]
 workspace = true
