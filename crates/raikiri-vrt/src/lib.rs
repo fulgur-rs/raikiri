@@ -28,9 +28,9 @@ use anyrender::ImageRenderer;
 ///
 /// # Panics
 ///
-/// Panics if the supplied renderer panics — e.g. zero dimensions passed
-/// to `VelloCpuImageRenderer::new`. The wrapper adds no additional
-/// validation; VRT usage prefers fail-fast over `Result`.
+/// Panics if the supplied renderer panics (e.g. any backend that rejects
+/// zero-dimension buffers at construction time). The wrapper adds no
+/// additional validation; VRT usage prefers fail-fast over `Result`.
 pub fn rasterize<R: ImageRenderer>(
     renderer: &mut R,
     paint: impl for<'a> FnOnce(&mut R::ScenePainter<'a>),
@@ -64,7 +64,7 @@ pub fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
     let size =
         tiny_skia::IntSize::from_wh(width, height).expect("encode_png: width/height must be > 0");
     let pixmap = tiny_skia::Pixmap::from_vec(rgba.to_vec(), size)
-        .expect("encode_png: rgba slice must match width * height * 4");
+        .expect("encode_png: Pixmap::from_vec rejected pre-validated buffer (tiny-skia invariant violation)");
     pixmap
         .encode_png()
         .expect("encode_png: tiny_skia::Pixmap::encode_png should not fail for a valid pixmap")
@@ -84,6 +84,12 @@ mod tests {
 
     /// Deliberately trivial scene: a solid axis-aligned red rectangle.
     /// If this is not deterministic then nothing else in the pipeline will be.
+    ///
+    /// Call sites wrap this in a closure (`|scene| draw_red_rect(scene)`) — necessary
+    /// because Rust cannot infer `S` from a bare fn-item argument against
+    /// `rasterize`'s `for<'a> FnOnce(&mut R::ScenePainter<'a>)` HRTB. The closure
+    /// unifies its parameter type directly per call, so the accompanying
+    /// `#[allow(clippy::redundant_closure)]` attributes are load-bearing.
     fn draw_red_rect<S: PaintScene>(scene: &mut S) {
         let color: Color = css::RED;
         let rect = Rect::new(10.0, 10.0, 90.0, 90.0);
