@@ -7,8 +7,8 @@
 //! 全 struct は `#[non_exhaustive]` + `impl Default` + `pub fn new()` を持ち、
 //! external consumer crate から `X::default()` で construct 可能。
 
-// PageFragment — 1 ページの painted output (glyph run / decoration / target slot 含む)
-// M1.7 paint-basic + M2 pagestream で populate。
+/// PageFragment — 1 ページの painted output (glyph run / decoration / target slot 含む)。
+/// M1.7 paint-basic + M2 pagestream で populate。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
@@ -28,8 +28,8 @@ impl PageFragment {
     }
 }
 
-// PageBox — @page rule 解決結果 (size, margins, margin box slots)
-// M1.6 layout-single-page で populate。
+/// PageBox — @page rule 解決結果 (size, margins, margin box slots)。
+/// M1.6 layout-single-page で populate。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
@@ -49,9 +49,8 @@ impl PageBox {
     }
 }
 
-// PageContext — GCPM runtime state (counter tree, named string 4-snapshot,
-// running bindings)
-// M4 GCPM で populate。
+/// PageContext — GCPM runtime state (counter tree, named string 4-snapshot,
+/// running bindings)。M4 GCPM で populate。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
@@ -66,9 +65,9 @@ impl PageContext {
     }
 }
 
-// LayoutBuffer — widow / orphan / break-inside / container probe lookahead
-// buffer の中立モデル。実装は raikiri-dom 側 (§5 参照)。
-// M2 layoutbuffer-skeleton で populate。
+/// LayoutBuffer — widow / orphan / break-inside / container probe lookahead
+/// buffer の中立モデル。実装は raikiri-dom 側 (§5 参照)。
+/// M2 layoutbuffer-skeleton で populate。
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 #[non_exhaustive]
@@ -83,8 +82,8 @@ impl LayoutBuffer {
     }
 }
 
-// TargetRegistry — target-* placeholder emit + resolve の runtime registry。
-// M4 target-* で populate (§7.2 参照)。
+/// TargetRegistry — target-* placeholder emit + resolve の runtime registry。
+/// M4 target-* で populate (§7.2 参照)。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
@@ -99,8 +98,8 @@ impl TargetRegistry {
     }
 }
 
-// RunningTemplate — `position: running(name)` の template 登録
-// M4 で populate。
+/// RunningTemplate — `position: running(name)` の template 登録。
+/// M4 で populate。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
@@ -115,8 +114,8 @@ impl RunningTemplate {
     }
 }
 
-// FormData — application/x-www-form-urlencoded body の中立モデル
-// Consumer 側 network 実装で参照 (Body::Form(FormData))。
+/// FormData — application/x-www-form-urlencoded body の中立モデル。
+/// Consumer 側 network 実装で参照 (Body::Form(FormData))。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]

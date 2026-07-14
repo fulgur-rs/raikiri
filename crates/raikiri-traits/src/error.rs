@@ -111,6 +111,7 @@ pub enum LimitKind {
 
 /// AbortSignal による graceful shutdown を error と別カテゴリで表現。
 /// `render_*` は `Result<RenderStatus, RenderError>` を返す。
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum RenderStatus {
     /// 全ページ emit 完了、`finish_render` も成功。
