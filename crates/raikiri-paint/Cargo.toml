@@ -1,0 +1,16 @@
+[package]
+name = "raikiri-paint"
+version = "0.1.0"
+description = "PageFragment → anyrender::PaintScene walker for raikiri (VRT and debug output)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+raikiri-traits = { workspace = true }
+anyrender      = { workspace = true }
+peniko         = { workspace = true }
+kurbo          = { workspace = true }
+
+[lints]
+workspace = true

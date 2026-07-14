@@ -1,0 +1,16 @@
+[package]
+name = "raikiri-html"
+version = "0.1.0"
+description = "Thin html5ever wrapper (RaikiriTreeSink) that produces UncascadedDocument for raikiri"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+raikiri-traits = { workspace = true }
+raikiri-dom    = { workspace = true }
+html5ever      = { workspace = true }
+markup5ever    = { workspace = true }
+
+[lints]
+workspace = true
