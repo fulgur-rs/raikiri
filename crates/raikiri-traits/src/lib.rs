@@ -273,4 +273,12 @@ mod tests {
         let src = pe.source();
         assert!(src.is_some(), "ParseError::Io should expose inner io::Error via source()");
     }
+
+    #[test]
+    fn cascade_error_is_error_and_display() {
+        fn _assert_error<T: std::error::Error>() {}
+        fn _assert_display<T: std::fmt::Display>() {}
+        _assert_error::<CascadeError>();
+        _assert_display::<CascadeError>();
+    }
 }
