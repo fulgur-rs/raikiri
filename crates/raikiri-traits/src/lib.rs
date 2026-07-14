@@ -281,4 +281,12 @@ mod tests {
         _assert_error::<CascadeError>();
         _assert_display::<CascadeError>();
     }
+
+    #[test]
+    fn layout_error_is_error_and_display() {
+        fn _assert_error<T: std::error::Error>() {}
+        fn _assert_display<T: std::fmt::Display>() {}
+        _assert_error::<LayoutError>();
+        _assert_display::<LayoutError>();
+    }
 }

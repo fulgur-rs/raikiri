@@ -360,13 +360,30 @@ impl std::fmt::Display for CascadeError {
 
 impl std::error::Error for CascadeError {}
 
-/// Layout 段階の error。M1.6 layout-single-page task で variant populate。
+/// Layout 段階の terminal error (raikiri-dom + taffy が発生源)。
 ///
-/// M1.1 では uninhabited。
+/// **同じ責務境界**: taffy 固有 error 型は raikiri-dom 内部に閉じ込め、
+/// この enum は raikiri-dom が明示的に fail-hard を選択した場合の signal のみ。
+///
+/// M1.2 で `Internal` variant のみ populate。taffy 実装詳細を trait layer
+/// に漏らさない。必要になった時点で `#[non_exhaustive]` の恩恵で追加する。
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum LayoutError {
-    // M1.6 で populate:
-    //   TaffyError(String),
-    //   ...
+    /// raikiri-dom 内で回復不能な内部 error が発生した (taffy internal
+    /// error 等)。詳細メッセージは raikiri-dom 内部で log + message として構成。
+    Internal {
+        /// 人間可読な失敗詳細 (raikiri-dom 内部で構成)。
+        message: String,
+    },
 }
+
+impl std::fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Internal { message } => write!(f, "Layout internal error: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for LayoutError {}
