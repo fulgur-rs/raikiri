@@ -1596,9 +1596,10 @@ dependencies = [
 name = "raikiri-vrt"
 version = "0.1.0"
 dependencies = [
+ "anyrender",
  "anyrender_vello_cpu",
- "insta",
- "raikiri",
+ "kurbo",
+ "peniko",
  "tiny-skia",
 ]
 
