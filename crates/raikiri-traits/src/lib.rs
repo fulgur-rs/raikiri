@@ -14,19 +14,19 @@ pub mod resolver;
 pub mod sink;
 pub mod strategy;
 
-pub use dom::{Dom, Element, NodeId, Node, Symbol};
+pub use dom::{Dom, Element, Node, NodeId, Symbol};
 pub use error::{
     CascadeError, EmittedSlotInfo, ExhaustionPolicy, LayoutError, LimitKind, ParseError,
     RenderError, RenderStatus, RenderSummary, RenderWarning, TargetDiscrepancy, TargetKind,
     TargetSlotId, UnresolvedReason, UnresolvedTarget, WarningKind,
 };
 pub use net::{
-    AbortController, AbortSignal, Body, FetchedResource, HeaderMap, Method,
-    NetworkError, NetworkProvider, Request,
+    AbortController, AbortSignal, Body, FetchedResource, HeaderMap, Method, NetworkError,
+    NetworkProvider, Request,
 };
 pub use page::{
-    ContentValueItem, FormData, GcpmDirective, LayoutBuffer, PageBox, PageContext,
-    PageFragment, RunningTemplate, TargetRegistry,
+    ContentValueItem, FormData, GcpmDirective, LayoutBuffer, PageBox, PageContext, PageFragment,
+    RunningTemplate, TargetRegistry,
 };
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
 pub use resolver::{
@@ -112,7 +112,10 @@ mod tests {
 
     #[test]
     fn target_slot_id_construct() {
-        let id = TargetSlotId { page_index: 3, sequence: 7 };
+        let id = TargetSlotId {
+            page_index: 3,
+            sequence: 7,
+        };
         assert_eq!(id.page_index, 3);
         assert_eq!(id.sequence, 7);
     }

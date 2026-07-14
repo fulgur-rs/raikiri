@@ -23,7 +23,9 @@ pub struct PageFragment {
 
 impl PageFragment {
     /// Construct an empty PageFragment. M1.1 placeholder.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 // PageBox — @page rule 解決結果 (size, margins, margin box slots)
@@ -42,7 +44,9 @@ pub struct PageBox {
 
 impl PageBox {
     /// Construct an empty PageBox. M1.1 placeholder.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 // PageContext — GCPM runtime state (counter tree, named string 4-snapshot,
@@ -57,7 +61,9 @@ pub struct PageContext {
 
 impl PageContext {
     /// Construct an empty PageContext. M1.1 placeholder.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 // LayoutBuffer — widow / orphan / break-inside / container probe lookahead
@@ -72,7 +78,9 @@ pub struct LayoutBuffer {
 
 impl LayoutBuffer {
     /// Construct an empty LayoutBuffer. M1.1 placeholder.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 // TargetRegistry — target-* placeholder emit + resolve の runtime registry。
@@ -86,7 +94,9 @@ pub struct TargetRegistry {
 
 impl TargetRegistry {
     /// Construct an empty TargetRegistry. M1.1 placeholder.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 // RunningTemplate — `position: running(name)` の template 登録
@@ -100,7 +110,9 @@ pub struct RunningTemplate {
 
 impl RunningTemplate {
     /// Construct an empty RunningTemplate. M1.1 placeholder.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 // FormData — application/x-www-form-urlencoded body の中立モデル
@@ -115,7 +127,9 @@ pub struct FormData {
 
 impl FormData {
     /// Construct an empty FormData. M1.1 placeholder.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 /// GCPM directive emitted by raikiri-style cascade (`counter-increment` /
