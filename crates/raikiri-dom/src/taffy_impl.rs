@@ -9,10 +9,10 @@
 //!   style getter marker impls
 
 use taffy::{
-    compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
-    compute_leaf_layout, CacheTree, Display, Layout, LayoutBlockContainer,
-    LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree,
-    NodeId, Size, Style, TraversePartialTree, TraverseTree,
+    CacheTree, Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
+    LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, Size, Style, TraversePartialTree,
+    TraverseTree, compute_block_layout, compute_cached_layout, compute_flexbox_layout,
+    compute_grid_layout, compute_leaf_layout,
 };
 
 use crate::document::Document;
