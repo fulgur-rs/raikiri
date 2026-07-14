@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = []
+# nzv.3 crate-manifests で埋める予定の crate 一覧 (spec §4 Workspace Layout):
+# - crates/raikiri              (umbrella crate)
+# - crates/raikiri-traits       (純粋 API + trait 定義)
+# - crates/raikiri-style        (CSS parse + cascade + GCPM at-rule)
+# - crates/raikiri-dom          (HTML5 DOM)
+# - crates/raikiri-html         (html5ever + TreeSink wrap)
+# - crates/raikiri-paint        (anyrender::PaintScene 実装)
+# - crates/raikiri-net          (NoOp / SandboxedNetProvider)
+# - crates/raikiri-blitz-compat (blitz shape compat)
+# - crates/raikiri-wpt          (WPT harness)
+# - crates/raikiri-vrt          (VRT harness)
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# M1 以降で必要に応じて拡張。M0 では空のまま resolver="3" 挙動の確認に集中
