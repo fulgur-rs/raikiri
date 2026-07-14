@@ -298,4 +298,20 @@ mod tests {
         let src = re.source();
         assert!(src.is_some(), "RenderError::Parse should expose inner ParseError via source()");
     }
+
+    #[test]
+    fn question_mark_propagates_io_through_parse_to_render() {
+        #[allow(clippy::result_large_err)]
+        fn producer() -> Result<(), RenderError> {
+            let io_err = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof");
+            let pe: ParseError = io_err.into();
+            Err(pe)?;
+            Ok(())
+        }
+        let e = producer().expect_err("expected RenderError");
+        match e {
+            RenderError::Parse(ParseError::Io(_)) => (),
+            other => panic!("expected RenderError::Parse(ParseError::Io(_)), got {other:?}"),
+        }
+    }
 }

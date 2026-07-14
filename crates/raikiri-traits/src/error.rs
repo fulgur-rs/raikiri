@@ -101,6 +101,24 @@ impl std::error::Error for RenderError {
     }
 }
 
+impl From<ParseError> for RenderError {
+    fn from(e: ParseError) -> Self {
+        Self::Parse(e)
+    }
+}
+
+impl From<CascadeError> for RenderError {
+    fn from(e: CascadeError) -> Self {
+        Self::Cascade(e)
+    }
+}
+
+impl From<LayoutError> for RenderError {
+    fn from(e: LayoutError) -> Self {
+        Self::Layout(e)
+    }
+}
+
 /// Limit exceeded の分類 (round 4 review #1 対応)。
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
