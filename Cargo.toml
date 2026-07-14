@@ -15,21 +15,21 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.88.0"
+rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 # ── In-repo (populated per crate as they land in Tasks 2–6) ────────────
-raikiri-traits = { version = "0.1.0", path = "./crates/raikiri-traits" }
-raikiri-style = { version = "0.1.0", path = "./crates/raikiri-style" }
-raikiri-net   = { version = "0.1.0", path = "./crates/raikiri-net" }
-raikiri-dom   = { version = "0.1.0", path = "./crates/raikiri-dom" }
-raikiri-html  = { version = "0.1.0", path = "./crates/raikiri-html" }
-raikiri-paint = { version = "0.1.0", path = "./crates/raikiri-paint" }
+raikiri-traits       = { version = "0.1.0", path = "./crates/raikiri-traits" }
+raikiri-style        = { version = "0.1.0", path = "./crates/raikiri-style" }
+raikiri-net          = { version = "0.1.0", path = "./crates/raikiri-net" }
+raikiri-dom          = { version = "0.1.0", path = "./crates/raikiri-dom" }
+raikiri-html         = { version = "0.1.0", path = "./crates/raikiri-html" }
+raikiri-paint        = { version = "0.1.0", path = "./crates/raikiri-paint" }
 raikiri              = { version = "0.1.0", path = "./crates/raikiri" }
 raikiri-blitz-compat = { version = "0.1.0", path = "./crates/raikiri-blitz-compat" }
-raikiri-wpt = { version = "0.1.0", path = "./crates/raikiri-wpt" }
-raikiri-vrt = { version = "0.1.0", path = "./crates/raikiri-vrt" }
+raikiri-wpt          = { version = "0.1.0", path = "./crates/raikiri-wpt" }
+raikiri-vrt          = { version = "0.1.0", path = "./crates/raikiri-vrt" }
 
 # ── Servo (cssparser + selectors) ──────────────────────────────────────
 cssparser = "0.37"
