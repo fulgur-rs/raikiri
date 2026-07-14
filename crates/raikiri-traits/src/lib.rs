@@ -6,8 +6,13 @@
 //! §4 を参照。
 
 pub mod dom;
+pub mod page;
 
 pub use dom::{Dom, Element, NodeId, Node, Symbol};
+pub use page::{
+    ContentValueItem, FormData, GcpmDirective, LayoutBuffer, PageBox, PageContext,
+    PageFragment, RunningTemplate, TargetRegistry,
+};
 
 #[cfg(test)]
 mod tests {
@@ -23,5 +28,17 @@ mod tests {
     fn nodeid_construct() {
         let n = NodeId::new(42);
         assert_eq!(n.0, 42);
+    }
+
+    #[test]
+    fn page_placeholders_default_construct() {
+        let _ = PageFragment::default();
+        let _ = PageFragment::new();
+        let _ = PageBox::default();
+        let _ = PageContext::default();
+        let _ = LayoutBuffer::default();
+        let _ = TargetRegistry::default();
+        let _ = RunningTemplate::default();
+        let _ = FormData::default();
     }
 }
