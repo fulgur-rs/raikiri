@@ -1533,6 +1533,7 @@ dependencies = [
  "kurbo",
  "parley",
  "peniko",
+ "raikiri-style",
  "rustc-hash",
  "selectors",
  "smol_str",
@@ -1573,8 +1574,11 @@ name = "raikiri-style"
 version = "0.1.0"
 dependencies = [
  "cssparser",
+ "precomputed-hash",
  "raikiri-traits",
+ "rustc-hash",
  "selectors",
+ "smol_str",
 ]
 
 [[package]]

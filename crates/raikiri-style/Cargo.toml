@@ -10,6 +10,16 @@ license.workspace = true
 raikiri-traits = { workspace = true }
 cssparser      = { workspace = true }
 selectors      = { workspace = true }
+smol_str       = { workspace = true }
+rustc-hash     = { workspace = true }
+
+# `precomputed-hash` is a stylo-side implementation detail (`SelectorImpl`
+# bounds Identifier/LocalName/NamespaceUrl on `PrecomputedHash`). It is
+# intentionally NOT declared in `[workspace.dependencies]` — raikiri-style is
+# the stylo-equivalent crate, so this dep is encapsulated here and hidden from
+# the rest of the workspace. If a second crate ever legitimately needs it,
+# promote to `[workspace.dependencies]` then.
+precomputed-hash = "0.1"
 
 [lints]
 workspace = true
