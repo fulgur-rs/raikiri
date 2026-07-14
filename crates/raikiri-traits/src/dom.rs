@@ -45,29 +45,79 @@ impl NodeId {
     }
 }
 
-/// DOM tree abstraction consumed by raikiri-dom / raikiri-style / raikiri-paint.
+/// DOM node の種別 (Element / Text / Document root)。
 ///
-/// M1.1 では shell (method 未定義)。M1.5 `dom-model` で associated type と
-/// query method を確定する予定。設計仕様書 §4 参照。
+/// M1.5 で raikiri-dom node arena の kind field と対応する。将来 (M4)
+/// Comment / CDATA / ProcessingInstruction 等が加わる可能性があるため
+/// `#[non_exhaustive]`。
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NodeKind {
+    /// HTML / XML element (tag_name あり)。
+    Element,
+    /// Character data node。
+    Text,
+    /// Document root (arena index 0 に配置される仮想 node)。
+    Document,
+}
+
+/// DOM tree abstraction。raikiri-dom / raikiri-style / raikiri-paint / raikiri
+/// (umbrella) が消費する generic navigation interface。
+///
+/// **Object-safety**: GAT (`type NodeRef<'a>`) を含むため non-object-safe。
+/// M1 では generic dispatch (`fn walk<D: Dom>(dom: &D)`) を前提。dyn 化が
+/// 必要な場合 (M6 blitz-compat 経由の runtime abstraction 等) は erased
+/// wrapper trait を別途用意する。
 pub trait Dom {
-    // M1.5 で populate:
-    //   type ElementRef<'a>: Element<'a>;
-    //   fn document_element(&self) -> Self::ElementRef<'_>;
-    //   fn node(&self, id: NodeId) -> Option<Self::NodeRef<'_>>;
-    //   ...
+    /// Node reference (borrowed) type。
+    type NodeRef<'a>: Node<'a>
+    where
+        Self: 'a;
+    /// Element reference (borrowed) type。
+    type ElementRef<'a>: Element<'a>
+    where
+        Self: 'a;
+    /// Child ID iterator type。
+    type ChildIter<'a>: Iterator<Item = NodeId>
+    where
+        Self: 'a;
+
+    /// Document root node の identifier。実装は通常 arena index 0 の Document
+    /// kind node を指す。
+    fn root_id(&self) -> NodeId;
+
+    /// `id` に対応する Node reference。範囲外なら `None`。
+    fn node(&self, id: NodeId) -> Option<Self::NodeRef<'_>>;
+
+    /// `id` の direct children を走査する iterator。
+    fn child_ids(&self, id: NodeId) -> Self::ChildIter<'_>;
 }
 
-/// Element reference abstraction (M1.5 で拡充)。
-pub trait Element<'a> {
-    // M1.5 で populate:
-    //   fn tag_name(&self) -> &str;
-    //   fn attribute(&self, name: &str) -> Option<&str>;
-    //   ...
-}
-
-/// Node reference abstraction (M1.5 で拡充)。
+/// Node reference (borrowed lifetime `'a`)。kind ごとの dispatch と共通 API を
+/// 提供。
 pub trait Node<'a> {
-    // M1.5 で populate:
-    //   fn node_type(&self) -> NodeKind;
-    //   ...
+    /// Element downcast 用の Element reference type。
+    type Element<'b>: Element<'b>
+    where
+        Self: 'b;
+
+    /// この node の種別。
+    fn kind(&self) -> NodeKind;
+
+    /// kind が Element の場合 Element reference を返す。それ以外 (Text /
+    /// Document) は `None`。
+    fn as_element(&self) -> Option<Self::Element<'_>>;
+
+    /// kind が Text の場合 character data。それ以外 (Element / Document) は
+    /// `None`。
+    fn text_content(&self) -> Option<&str>;
+}
+
+/// Element reference (borrowed lifetime `'a`)。
+///
+/// M1.6 以降で attribute / classes / id lookup 等を追加する予定。M1.5 は
+/// tag_name のみ確定。
+pub trait Element<'a> {
+    /// HTML / XML tag name (例: `"p"`, `"div"`)。
+    fn tag_name(&self) -> &str;
 }
