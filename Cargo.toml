@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = []
+members = ["crates/raikiri-traits"]
 
 [workspace.package]
 edition = "2024"
@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 # ── In-repo (populated per crate as they land in Tasks 2–6) ────────────
+raikiri-traits = { version = "0.1.0", path = "./crates/raikiri-traits" }
 
 # ── Servo (cssparser + selectors) ──────────────────────────────────────
 cssparser = "0.37"

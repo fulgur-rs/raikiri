@@ -1,0 +1,16 @@
+[package]
+name = "raikiri-traits"
+version = "0.1.0"
+description = "Foundation traits and neutral model types for raikiri (RenderSink, ReplacedResolver, NetworkProvider, strategy traits, PageFragment/PageBox/PageContext, etc.)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+smol_str   = { workspace = true }
+bytes      = { workspace = true }
+url        = { workspace = true }
+rustc-hash = { workspace = true }
+
+[lints]
+workspace = true
