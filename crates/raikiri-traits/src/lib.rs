@@ -10,6 +10,7 @@ pub mod dom;
 pub mod error;
 pub mod net;
 pub mod page;
+pub mod plan;
 pub mod policy;
 pub mod resolver;
 pub mod sink;
@@ -33,6 +34,7 @@ pub use page::{
     ContentValueItem, FormData, GcpmDirective, LayoutBuffer, PageBox, PageContext, PageFragment,
     RunningTemplate, TargetRegistry,
 };
+pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
 pub use resolver::{
     IntrinsicBox, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
@@ -135,6 +137,11 @@ mod tests {
     fn strategy_placeholders_default_construct() {
         let _ = ProbeContext::default();
         let _ = TargetRequest::default();
+    }
+
+    #[test]
+    fn plan_placeholder_default_construct() {
+        let _ = TargetDefinition::default();
     }
 
     #[test]
