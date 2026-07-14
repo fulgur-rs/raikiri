@@ -9,6 +9,8 @@ members = [
     "crates/raikiri-paint",
     "crates/raikiri",
     "crates/raikiri-blitz-compat",
+    "crates/raikiri-wpt",
+    "crates/raikiri-vrt",
 ]
 
 [workspace.package]
@@ -26,6 +28,8 @@ raikiri-html  = { version = "0.1.0", path = "./crates/raikiri-html" }
 raikiri-paint = { version = "0.1.0", path = "./crates/raikiri-paint" }
 raikiri              = { version = "0.1.0", path = "./crates/raikiri" }
 raikiri-blitz-compat = { version = "0.1.0", path = "./crates/raikiri-blitz-compat" }
+raikiri-wpt = { version = "0.1.0", path = "./crates/raikiri-wpt" }
+raikiri-vrt = { version = "0.1.0", path = "./crates/raikiri-vrt" }
 
 # ── Servo (cssparser + selectors) ──────────────────────────────────────
 cssparser = "0.37"
