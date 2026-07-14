@@ -1,22 +1,55 @@
 [workspace]
 resolver = "3"
 members = []
-# nzv.3 crate-manifests で埋める予定の crate 一覧 (spec §4 Workspace Layout):
-# - crates/raikiri              (umbrella crate)
-# - crates/raikiri-traits       (純粋 API + trait 定義)
-# - crates/raikiri-style        (CSS parse + cascade + GCPM at-rule)
-# - crates/raikiri-dom          (HTML5 DOM)
-# - crates/raikiri-html         (html5ever + TreeSink wrap)
-# - crates/raikiri-paint        (anyrender::PaintScene 実装)
-# - crates/raikiri-net          (NoOp / SandboxedNetProvider)
-# - crates/raikiri-blitz-compat (blitz shape compat)
-# - crates/raikiri-wpt          (WPT harness)
-# - crates/raikiri-vrt          (VRT harness)
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# ── In-repo (populated per crate as they land in Tasks 2–6) ────────────
+
+# ── Servo (cssparser + selectors) ──────────────────────────────────────
+cssparser = "0.37"
+selectors = "0.39"
+
+# ── HTML5ever ──────────────────────────────────────────────────────────
+html5ever   = "0.39"
+markup5ever = "0.39"
+
+# ── Layout (taffy) ─────────────────────────────────────────────────────
+taffy = { version = "0.12", default-features = false, features = [
+    "std",
+    "flexbox",
+    "grid",
+    "block_layout",
+    "content_size",
+    "calc",
+] }
+
+# ── Text (parley) ──────────────────────────────────────────────────────
+parley = { version = "0.10", default-features = false, features = ["std"] }
+
+# ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
+anyrender = "0.11"
+peniko    = "0.6"
+kurbo     = "0.13"
+
+# ── Utility crates ─────────────────────────────────────────────────────
+smol_str   = "0.3"
+rustc-hash = "2.1"
+bytes      = "1"
+url        = "2.5"
+
+# ── Dev-only: VRT rasterizer / snapshot / oracle ───────────────────────
+anyrender_vello_cpu = { version = "0.14", features = ["multithreading"] }
+tiny-skia           = "0.11"
+insta               = "1"
+blitz-traits        = "=0.3.0-beta.1"
+blitz-html          = "=0.3.0-beta.1"
+blitz-dom           = "=0.3.0-beta.1"
+blitz-paint         = "=0.3.0-beta.1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
