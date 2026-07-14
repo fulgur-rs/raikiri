@@ -7,12 +7,14 @@
 
 pub mod dom;
 pub mod page;
+pub mod policy;
 
 pub use dom::{Dom, Element, NodeId, Node, Symbol};
 pub use page::{
     ContentValueItem, FormData, GcpmDirective, LayoutBuffer, PageBox, PageContext,
     PageFragment, RunningTemplate, TargetRegistry,
 };
+pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
 
 #[cfg(test)]
 mod tests {
@@ -40,5 +42,11 @@ mod tests {
         let _ = TargetRegistry::default();
         let _ = RunningTemplate::default();
         let _ = FormData::default();
+    }
+
+    #[test]
+    fn resource_policy_is_object_safe() {
+        fn _assert<T: ?Sized>() {}
+        _assert::<dyn ResourcePolicy>();
     }
 }
