@@ -3,7 +3,7 @@
 //! `NodeRef<'a>` と `ElementRef<'a>` は Document の内部 arena を borrow する
 //! 軽量 wrapper。GAT 経由で trait method の返り値型を安定させる。
 
-use raikiri_traits::{Dom as _, Element as _, Node as _, NodeId, NodeKind};
+use raikiri_traits::{NodeId, NodeKind};
 
 use crate::document::Document;
 use crate::node::Node;
