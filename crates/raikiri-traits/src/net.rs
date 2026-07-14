@@ -4,8 +4,8 @@
 //! sync core のため callback ではなく sync return。policy 適用は
 //! `raikiri-net::SandboxedNetProvider` による wrap で行う。
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
 use url::Url;
@@ -64,6 +64,7 @@ pub struct FetchedResource {
 }
 
 /// Request body 表現。
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum Body {
     /// 生 bytes body。
@@ -116,7 +117,9 @@ pub struct AbortController {
 impl AbortController {
     /// 新規 controller を生成。
     pub fn new() -> Self {
-        Self { signal: AbortSignal(Arc::new(AtomicBool::new(false))) }
+        Self {
+            signal: AbortSignal(Arc::new(AtomicBool::new(false))),
+        }
     }
 
     /// signal を abort 状態に遷移させる。
@@ -132,6 +135,7 @@ impl Default for AbortSignal {
 }
 
 /// Network 層 error。§4 の 5 variant を再現。
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum NetworkError {
     /// AbortSignal によって中断された。

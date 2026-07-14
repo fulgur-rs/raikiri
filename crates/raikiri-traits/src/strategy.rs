@@ -56,6 +56,7 @@ pub trait ReflowPolicy {
 }
 
 /// ReflowPolicy が返す action。
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ReflowAction {
     /// 即 fallback で commit、取り消し不可 (Streaming preset default)。
@@ -68,6 +69,7 @@ pub enum ReflowAction {
 }
 
 /// probe 限界時の commit fallback 挙動。
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerOverflowFallback {
     /// 次ページに強制配置 (推奨)。
@@ -81,6 +83,7 @@ pub enum ContainerOverflowFallback {
 }
 
 /// DeferAsDirty の deadline。
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirtyDeadline {
     /// 次のページ確定まで defer。
@@ -107,7 +110,9 @@ pub struct ProbeContext {
 
 impl ProbeContext {
     /// M1.1 placeholder constructor.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 /// TargetResolver が受け取る request (M4 で populate)。
@@ -127,7 +132,9 @@ pub struct TargetRequest<'a> {
 impl<'a> TargetRequest<'a> {
     /// M1.1 placeholder constructor.
     pub fn new() -> Self {
-        Self { _marker: PhantomData }
+        Self {
+            _marker: PhantomData,
+        }
     }
 }
 

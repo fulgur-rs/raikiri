@@ -64,8 +64,15 @@ impl std::fmt::Display for RenderError {
             Self::Resolver(_) => write!(f, "Replaced-element resolver error"),
             Self::Network(_) => write!(f, "Network provider error"),
             Self::Policy(v) => write!(f, "Resource policy violation: {:?}", v.violation_type),
-            Self::LimitExceeded { kind, limit, actual } => {
-                write!(f, "Render limit exceeded: {kind:?} (limit={limit}, actual={actual})")
+            Self::LimitExceeded {
+                kind,
+                limit,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "Render limit exceeded: {kind:?} (limit={limit}, actual={actual})"
+                )
             }
             Self::Sink(_) => write!(f, "Sink returned I/O error"),
             Self::Configuration(msg) => write!(f, "Configuration error: {msg}"),
@@ -144,6 +151,7 @@ pub struct RenderWarning {
 }
 
 /// 警告 kind。§4 の 5 variant を再現。
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum WarningKind {
     /// Consumer の resolver が fallback を返した (`Ok(fallback_intrinsic)`)。
@@ -208,6 +216,7 @@ pub struct UnresolvedTarget {
 }
 
 /// UnresolvedTarget の理由 (Finding #4)。
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnresolvedReason {
     /// fragment id がどこにも定義されていない。

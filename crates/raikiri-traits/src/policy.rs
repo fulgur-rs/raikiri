@@ -89,6 +89,7 @@ pub struct PolicyViolation {
 ///
 /// §4 の 8 variant を再現。round 7 未対応 finding: redirect / timeout /
 /// recursion 系は M4 で `ResourcePolicy` から削除される可能性あり。
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ViolationType {
     /// URL scheme が `is_scheme_allowed` で reject。
