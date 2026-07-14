@@ -6,10 +6,15 @@
 //! §4 を参照。
 
 pub mod dom;
+pub mod net;
 pub mod page;
 pub mod policy;
 
 pub use dom::{Dom, Element, NodeId, Node, Symbol};
+pub use net::{
+    AbortController, AbortSignal, Body, FetchedResource, HeaderMap, Method,
+    NetworkError, NetworkProvider, Request,
+};
 pub use page::{
     ContentValueItem, FormData, GcpmDirective, LayoutBuffer, PageBox, PageContext,
     PageFragment, RunningTemplate, TargetRegistry,
@@ -48,5 +53,19 @@ mod tests {
     fn resource_policy_is_object_safe() {
         fn _assert<T: ?Sized>() {}
         _assert::<dyn ResourcePolicy>();
+    }
+
+    #[test]
+    fn network_provider_is_object_safe() {
+        fn _assert<T: ?Sized>() {}
+        _assert::<dyn NetworkProvider>();
+    }
+
+    #[test]
+    fn abort_controller_default_and_abort() {
+        let c = AbortController::new();
+        assert!(!c.signal.is_aborted());
+        c.abort();
+        assert!(c.signal.is_aborted());
     }
 }
