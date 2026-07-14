@@ -5,6 +5,7 @@
 //! 参照する共通型層。詳細は `docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md`
 //! §4 を参照。
 
+pub mod config;
 pub mod dom;
 pub mod error;
 pub mod net;
@@ -14,6 +15,10 @@ pub mod resolver;
 pub mod sink;
 pub mod strategy;
 
+pub use config::{
+    BatchConfig, BatchConfigBuilder, LookaheadConfig, LookaheadConfigBuilder, PlanConfig,
+    PlanConfigBuilder, RenderLimits, RenderLimitsBuilder, StreamingConfig, StreamingConfigBuilder,
+};
 pub use dom::{Dom, Element, Node, NodeId, Symbol};
 pub use error::{
     CascadeError, EmittedSlotInfo, ExhaustionPolicy, LayoutError, LimitKind, ParseError,
@@ -130,5 +135,73 @@ mod tests {
     fn strategy_placeholders_default_construct() {
         let _ = ProbeContext::default();
         let _ = TargetRequest::default();
+    }
+
+    #[test]
+    fn all_configs_default_construct() {
+        let _ = LookaheadConfig::new();
+        let _ = LookaheadConfig::default();
+        let _ = RenderLimits::default();
+        let _ = RenderLimits::new();
+        let _ = StreamingConfig::default();
+        let _ = BatchConfig::default();
+        let _ = PlanConfig::default();
+    }
+
+    #[test]
+    fn lookahead_config_defaults() {
+        let d = LookaheadConfig::default();
+        assert_eq!(d.widow_line_buffer, 2);
+        assert_eq!(d.orphan_line_buffer, 2);
+        assert_eq!(d.break_avoid_max_subtree_blocks, 20);
+        assert_eq!(d.max_container_probe_pages, Some(4));
+        assert!(!d.allow_cross_size_lookahead);
+    }
+
+    #[test]
+    fn render_limits_defaults() {
+        let d = RenderLimits::default();
+        assert_eq!(d.max_document_pages, Some(10_000));
+        assert_eq!(d.max_dom_nodes, Some(1_000_000));
+        assert_eq!(d.max_target_slots, Some(100_000));
+        assert_eq!(d.max_layout_buffer_entries, Some(10_000));
+        assert_eq!(d.max_aggregate_bytes, Some(1_073_741_824));
+    }
+
+    #[test]
+    fn lookahead_config_builder_roundtrip() {
+        let cfg = LookaheadConfig::builder()
+            .widow_line_buffer(5)
+            .max_container_probe_pages(None)
+            .build();
+        assert_eq!(cfg.widow_line_buffer, 5);
+        assert_eq!(cfg.max_container_probe_pages, None);
+        // 未設定 field は default 値
+        assert_eq!(
+            cfg.orphan_line_buffer,
+            LookaheadConfig::default().orphan_line_buffer
+        );
+    }
+
+    #[test]
+    fn render_limits_builder_roundtrip() {
+        let cfg = RenderLimits::builder()
+            .max_document_pages(Some(100))
+            .max_dom_nodes(None)
+            .build();
+        assert_eq!(cfg.max_document_pages, Some(100));
+        assert_eq!(cfg.max_dom_nodes, None);
+        // 未設定 field は default 値
+        assert_eq!(
+            cfg.max_target_slots,
+            RenderLimits::default().max_target_slots
+        );
+    }
+
+    #[test]
+    fn streaming_config_builder_roundtrip() {
+        let limits = RenderLimits::builder().max_document_pages(Some(50)).build();
+        let cfg = StreamingConfig::builder().limits(limits).build();
+        assert_eq!(cfg.limits.max_document_pages, Some(50));
     }
 }

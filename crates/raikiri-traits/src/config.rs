@@ -1,0 +1,391 @@
+//! Render entry point config (Finding #5 対応: raikiri 内 iteration 廃止)。
+//!
+//! `plan()` / `render_streaming()` / `render_batch()` の 3 entry point が
+//! それぞれ config を受け取り、resource / cost limit を強制。round 4 review #1
+//! 対応で `RenderLimits` に昇格 (旧 BatchConfig 限定 から plan / Streaming にも
+//! 統一)。
+
+use crate::page::TargetRegistry;
+
+/// 全 entry point (plan / render_streaming / render_batch) が受け取る
+/// resource / cost 上限 (Finding #5 + round 4 review #1)。
+///
+/// 妥当な defaults は fulgur 想定: pages=10_000, nodes=1M, slots=100k,
+/// buffer=10k, bytes=1GB (§4 §M0 section 参照)。
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct RenderLimits {
+    /// 超過 → `LimitExceeded { kind: Pages }`。
+    pub max_document_pages: Option<u32>,
+    /// parse 完了後 check。
+    pub max_dom_nodes: Option<u64>,
+    /// per-doc target 参照数上限。
+    pub max_target_slots: Option<u32>,
+    /// LayoutBuffer に貯める上限。
+    pub max_layout_buffer_entries: Option<u32>,
+    /// approximate memory footprint 上限。
+    pub max_aggregate_bytes: Option<u64>,
+}
+
+impl Default for RenderLimits {
+    fn default() -> Self {
+        Self {
+            max_document_pages: Some(10_000),
+            max_dom_nodes: Some(1_000_000),
+            max_target_slots: Some(100_000),
+            max_layout_buffer_entries: Some(10_000),
+            max_aggregate_bytes: Some(1_073_741_824), // 1 GB
+        }
+    }
+}
+
+impl RenderLimits {
+    /// Default 相当の shortcut。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Fluent builder を返す。
+    pub fn builder() -> RenderLimitsBuilder {
+        RenderLimitsBuilder::default()
+    }
+}
+
+/// `RenderLimits` の fluent builder。未設定 field は Default 値。
+#[derive(Debug, Default, Clone)]
+pub struct RenderLimitsBuilder {
+    max_document_pages: Option<Option<u32>>,
+    max_dom_nodes: Option<Option<u64>>,
+    max_target_slots: Option<Option<u32>>,
+    max_layout_buffer_entries: Option<Option<u32>>,
+    max_aggregate_bytes: Option<Option<u64>>,
+}
+
+impl RenderLimitsBuilder {
+    /// `max_document_pages` を設定 (`None` = unbounded)。
+    pub fn max_document_pages(mut self, v: Option<u32>) -> Self {
+        self.max_document_pages = Some(v);
+        self
+    }
+
+    /// `max_dom_nodes` を設定。
+    pub fn max_dom_nodes(mut self, v: Option<u64>) -> Self {
+        self.max_dom_nodes = Some(v);
+        self
+    }
+
+    /// `max_target_slots` を設定。
+    pub fn max_target_slots(mut self, v: Option<u32>) -> Self {
+        self.max_target_slots = Some(v);
+        self
+    }
+
+    /// `max_layout_buffer_entries` を設定。
+    pub fn max_layout_buffer_entries(mut self, v: Option<u32>) -> Self {
+        self.max_layout_buffer_entries = Some(v);
+        self
+    }
+
+    /// `max_aggregate_bytes` を設定。
+    pub fn max_aggregate_bytes(mut self, v: Option<u64>) -> Self {
+        self.max_aggregate_bytes = Some(v);
+        self
+    }
+
+    /// Build。未設定 field は Default 値。
+    pub fn build(self) -> RenderLimits {
+        let d = RenderLimits::default();
+        RenderLimits {
+            max_document_pages: self.max_document_pages.unwrap_or(d.max_document_pages),
+            max_dom_nodes: self.max_dom_nodes.unwrap_or(d.max_dom_nodes),
+            max_target_slots: self.max_target_slots.unwrap_or(d.max_target_slots),
+            max_layout_buffer_entries: self
+                .max_layout_buffer_entries
+                .unwrap_or(d.max_layout_buffer_entries),
+            max_aggregate_bytes: self.max_aggregate_bytes.unwrap_or(d.max_aggregate_bytes),
+        }
+    }
+}
+
+/// LayoutBuffer の lookahead 幅 config。
+///
+/// M1.1 seed value (blitz 慣習ベース、M2/M3 で refine 予定)。
+///
+/// spec §4 "[対象 struct]" list に含まれるため `#[non_exhaustive]` を付与
+/// (round 3 Missing #6 対応)。
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct LookaheadConfig {
+    /// widow 判定のため何行先を bufferするか。
+    pub widow_line_buffer: usize,
+    /// orphan 判定のため何行前を bufferするか。
+    pub orphan_line_buffer: usize,
+    /// `break-inside: avoid` subtree の最大 block 数。
+    pub break_avoid_max_subtree_blocks: usize,
+    /// flex / grid container の probe layout 上限 (`None` = unbounded)。
+    pub max_container_probe_pages: Option<usize>,
+    /// cross-size 方向の lookahead を許可するか。
+    pub allow_cross_size_lookahead: bool,
+}
+
+impl Default for LookaheadConfig {
+    fn default() -> Self {
+        // M1.1 seed value, refined in M2/M3.
+        Self {
+            widow_line_buffer: 2,
+            orphan_line_buffer: 2,
+            break_avoid_max_subtree_blocks: 20,
+            max_container_probe_pages: Some(4),
+            allow_cross_size_lookahead: false,
+        }
+    }
+}
+
+impl LookaheadConfig {
+    /// Default 相当の shortcut。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Fluent builder を返す。
+    pub fn builder() -> LookaheadConfigBuilder {
+        LookaheadConfigBuilder::default()
+    }
+}
+
+/// `LookaheadConfig` の fluent builder。
+#[derive(Debug, Default, Clone)]
+pub struct LookaheadConfigBuilder {
+    widow_line_buffer: Option<usize>,
+    orphan_line_buffer: Option<usize>,
+    break_avoid_max_subtree_blocks: Option<usize>,
+    max_container_probe_pages: Option<Option<usize>>,
+    allow_cross_size_lookahead: Option<bool>,
+}
+
+impl LookaheadConfigBuilder {
+    /// `widow_line_buffer` を設定。
+    pub fn widow_line_buffer(mut self, v: usize) -> Self {
+        self.widow_line_buffer = Some(v);
+        self
+    }
+
+    /// `orphan_line_buffer` を設定。
+    pub fn orphan_line_buffer(mut self, v: usize) -> Self {
+        self.orphan_line_buffer = Some(v);
+        self
+    }
+
+    /// `break_avoid_max_subtree_blocks` を設定。
+    pub fn break_avoid_max_subtree_blocks(mut self, v: usize) -> Self {
+        self.break_avoid_max_subtree_blocks = Some(v);
+        self
+    }
+
+    /// `max_container_probe_pages` を設定 (`None` = unbounded)。
+    pub fn max_container_probe_pages(mut self, v: Option<usize>) -> Self {
+        self.max_container_probe_pages = Some(v);
+        self
+    }
+
+    /// `allow_cross_size_lookahead` を設定。
+    pub fn allow_cross_size_lookahead(mut self, v: bool) -> Self {
+        self.allow_cross_size_lookahead = Some(v);
+        self
+    }
+
+    /// Build。未設定 field は Default 値。
+    pub fn build(self) -> LookaheadConfig {
+        let d = LookaheadConfig::default();
+        LookaheadConfig {
+            widow_line_buffer: self.widow_line_buffer.unwrap_or(d.widow_line_buffer),
+            orphan_line_buffer: self.orphan_line_buffer.unwrap_or(d.orphan_line_buffer),
+            break_avoid_max_subtree_blocks: self
+                .break_avoid_max_subtree_blocks
+                .unwrap_or(d.break_avoid_max_subtree_blocks),
+            max_container_probe_pages: self
+                .max_container_probe_pages
+                .unwrap_or(d.max_container_probe_pages),
+            allow_cross_size_lookahead: self
+                .allow_cross_size_lookahead
+                .unwrap_or(d.allow_cross_size_lookahead),
+        }
+    }
+}
+
+/// `plan()` 用 config (round 4 review #1, #2 対応)。
+#[non_exhaustive]
+#[derive(Debug, Default, Clone)]
+pub struct PlanConfig {
+    /// lookahead 設定。
+    pub lookahead: LookaheadConfig,
+    /// resource / cost 上限 (round 4 review #1)。
+    pub limits: RenderLimits,
+    /// 反復 chain 用の hint registry (round 4 review #2)。
+    pub initial_registry: Option<TargetRegistry>,
+}
+
+impl PlanConfig {
+    /// Default 相当の shortcut。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Fluent builder を返す。
+    pub fn builder() -> PlanConfigBuilder {
+        PlanConfigBuilder::default()
+    }
+}
+
+/// `PlanConfig` の fluent builder。
+#[derive(Debug, Default, Clone)]
+pub struct PlanConfigBuilder {
+    lookahead: Option<LookaheadConfig>,
+    limits: Option<RenderLimits>,
+    initial_registry: Option<Option<TargetRegistry>>,
+}
+
+impl PlanConfigBuilder {
+    /// `lookahead` を設定。
+    pub fn lookahead(mut self, v: LookaheadConfig) -> Self {
+        self.lookahead = Some(v);
+        self
+    }
+
+    /// `limits` を設定。
+    pub fn limits(mut self, v: RenderLimits) -> Self {
+        self.limits = Some(v);
+        self
+    }
+
+    /// `initial_registry` を設定。
+    pub fn initial_registry(mut self, v: Option<TargetRegistry>) -> Self {
+        self.initial_registry = Some(v);
+        self
+    }
+
+    /// Build。未設定 field は Default 値。
+    pub fn build(self) -> PlanConfig {
+        let d = PlanConfig::default();
+        PlanConfig {
+            lookahead: self.lookahead.unwrap_or(d.lookahead),
+            limits: self.limits.unwrap_or(d.limits),
+            initial_registry: self.initial_registry.unwrap_or(d.initial_registry),
+        }
+    }
+}
+
+/// `render_streaming()` 用 config (round 4 review #1 対応)。
+#[non_exhaustive]
+#[derive(Debug, Default, Clone)]
+pub struct StreamingConfig {
+    /// lookahead 設定。
+    pub lookahead: LookaheadConfig,
+    /// resource / cost 上限。
+    pub limits: RenderLimits,
+    /// `plan` の結果を hint として渡す (round 4 review #2)。
+    pub initial_registry: Option<TargetRegistry>,
+}
+
+impl StreamingConfig {
+    /// Default 相当の shortcut。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Fluent builder を返す。
+    pub fn builder() -> StreamingConfigBuilder {
+        StreamingConfigBuilder::default()
+    }
+}
+
+/// `StreamingConfig` の fluent builder。
+#[derive(Debug, Default, Clone)]
+pub struct StreamingConfigBuilder {
+    lookahead: Option<LookaheadConfig>,
+    limits: Option<RenderLimits>,
+    initial_registry: Option<Option<TargetRegistry>>,
+}
+
+impl StreamingConfigBuilder {
+    /// `lookahead` を設定。
+    pub fn lookahead(mut self, v: LookaheadConfig) -> Self {
+        self.lookahead = Some(v);
+        self
+    }
+
+    /// `limits` を設定。
+    pub fn limits(mut self, v: RenderLimits) -> Self {
+        self.limits = Some(v);
+        self
+    }
+
+    /// `initial_registry` を設定。
+    pub fn initial_registry(mut self, v: Option<TargetRegistry>) -> Self {
+        self.initial_registry = Some(v);
+        self
+    }
+
+    /// Build。未設定 field は Default 値。
+    pub fn build(self) -> StreamingConfig {
+        let d = StreamingConfig::default();
+        StreamingConfig {
+            lookahead: self.lookahead.unwrap_or(d.lookahead),
+            limits: self.limits.unwrap_or(d.limits),
+            initial_registry: self.initial_registry.unwrap_or(d.initial_registry),
+        }
+    }
+}
+
+/// `render_batch()` 用 config (round 4 review #1 対応で `max_document_pages` を
+/// `limits` に吸収)。
+#[non_exhaustive]
+#[derive(Debug, Default, Clone)]
+pub struct BatchConfig {
+    /// resource / cost 上限。
+    pub limits: RenderLimits,
+    /// `plan` の結果を hint として渡す。
+    pub initial_registry: Option<TargetRegistry>,
+}
+
+impl BatchConfig {
+    /// Default 相当の shortcut。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Fluent builder を返す。
+    pub fn builder() -> BatchConfigBuilder {
+        BatchConfigBuilder::default()
+    }
+}
+
+/// `BatchConfig` の fluent builder。
+#[derive(Debug, Default, Clone)]
+pub struct BatchConfigBuilder {
+    limits: Option<RenderLimits>,
+    initial_registry: Option<Option<TargetRegistry>>,
+}
+
+impl BatchConfigBuilder {
+    /// `limits` を設定。
+    pub fn limits(mut self, v: RenderLimits) -> Self {
+        self.limits = Some(v);
+        self
+    }
+
+    /// `initial_registry` を設定。
+    pub fn initial_registry(mut self, v: Option<TargetRegistry>) -> Self {
+        self.initial_registry = Some(v);
+        self
+    }
+
+    /// Build。未設定 field は Default 値。
+    pub fn build(self) -> BatchConfig {
+        let d = BatchConfig::default();
+        BatchConfig {
+            limits: self.limits.unwrap_or(d.limits),
+            initial_registry: self.initial_registry.unwrap_or(d.initial_registry),
+        }
+    }
+}
