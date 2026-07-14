@@ -2,8 +2,26 @@
 //!
 //! 設計仕様書 §4 に定義された全 trait / 中立モデル型を集約する。実装は持たず、
 //! raikiri-html / raikiri-style / raikiri-dom / raikiri-paint / raikiri-net が
-//! 参照する共通型層。詳細は `docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md`
-//! §4 を参照。
+//! 参照する共通型層。
+//!
+//! ## Module tour
+//!
+//! - [`dom`]      — DOM abstraction trait + identifier newtypes (Symbol, NodeId)
+//! - [`page`]     — Page-related opaque model types (PageFragment, PageBox, ...)
+//! - [`policy`]   — ResourcePolicy trait + violation types
+//! - [`net`]      — NetworkProvider trait + Request / FetchedResource types
+//! - [`resolver`] — ReplacedResolver trait + intrinsic size types
+//! - [`error`]    — RenderError taxonomy + status / summary types
+//! - [`sink`]     — RenderSink trait
+//! - [`strategy`] — Strategy traits (LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy)
+//! - [`config`]   — Entry point configs (RenderLimits, LookaheadConfig, ...)
+//! - [`plan`]     — `plan()` output types (DocumentPlan, PageSummary)
+//!
+//! ## Spec authority
+//!
+//! 型定義の authoritative source は
+//! `docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md` §4 (§13.0 spec
+//! drift protocol 準拠)。narrative §5-§12 は補助資料。
 
 pub mod config;
 pub mod dom;
@@ -16,6 +34,7 @@ pub mod resolver;
 pub mod sink;
 pub mod strategy;
 
+// 主要型 crate-root re-export (Consumer が `use raikiri_traits::*` で足りる shape)
 pub use config::{
     BatchConfig, BatchConfigBuilder, LookaheadConfig, LookaheadConfigBuilder, PlanConfig,
     PlanConfigBuilder, RenderLimits, RenderLimitsBuilder, StreamingConfig, StreamingConfigBuilder,
@@ -50,6 +69,8 @@ pub use strategy::{
 mod tests {
     use super::*;
 
+    // ── DOM foundations ─────────────────────────────────────────
+
     #[test]
     fn symbol_construct_from_str() {
         let s = Symbol::from("target-1");
@@ -61,6 +82,8 @@ mod tests {
         let n = NodeId::new(42);
         assert_eq!(n.0, 42);
     }
+
+    // ── Page placeholders ───────────────────────────────────────
 
     #[test]
     fn page_placeholders_default_construct() {
@@ -74,17 +97,25 @@ mod tests {
         let _ = FormData::default();
     }
 
-    #[test]
-    fn resource_policy_is_object_safe() {
-        fn _assert<T: ?Sized>() {}
-        _assert::<dyn ResourcePolicy>();
-    }
+    // ── Trait object safety ─────────────────────────────────────
 
     #[test]
-    fn network_provider_is_object_safe() {
+    fn dyn_traits_are_object_safe() {
         fn _assert<T: ?Sized>() {}
+        _assert::<dyn RenderSink>();
+        _assert::<dyn ReplacedResolver>();
         _assert::<dyn NetworkProvider>();
+        _assert::<dyn ResourcePolicy>();
+        // Strategy traits (LookaheadPolicy / TargetResolver / EmissionPolicy /
+        // ReflowPolicy) は generic param 経由で受ける (§4 `render_with<L,T,E,R>`
+        // 設計) ため object-safety は要件外。M1.5+ で dyn 化が必要なら判断。
+        //
+        // Dom / Element / Node は M1.5 dom-model で associated type / GAT を
+        // 追加する予定で、その段階で non-object-safe になる可能性が高いため
+        // M1.1 では assert しない。
     }
+
+    // ── AbortController semantic ────────────────────────────────
 
     #[test]
     fn abort_controller_default_and_abort() {
@@ -94,17 +125,15 @@ mod tests {
         assert!(c.signal.is_aborted());
     }
 
-    #[test]
-    fn replaced_resolver_is_object_safe() {
-        fn _assert<T: ?Sized>() {}
-        _assert::<dyn ReplacedResolver>();
-    }
+    // ── Resolver placeholders ───────────────────────────────────
 
     #[test]
     fn resolver_placeholder_types_default_construct() {
         let _ = IntrinsicBox::default();
         let _ = ResolverRequest::default();
     }
+
+    // ── Error taxonomy ──────────────────────────────────────────
 
     #[test]
     fn render_error_is_error_trait() {
@@ -127,11 +156,7 @@ mod tests {
         assert_eq!(id.sequence, 7);
     }
 
-    #[test]
-    fn render_sink_is_object_safe() {
-        fn _assert<T: ?Sized>() {}
-        _assert::<dyn RenderSink>();
-    }
+    // ── Strategy placeholders ───────────────────────────────────
 
     #[test]
     fn strategy_placeholders_default_construct() {
@@ -139,10 +164,7 @@ mod tests {
         let _ = TargetRequest::default();
     }
 
-    #[test]
-    fn plan_placeholder_default_construct() {
-        let _ = TargetDefinition::default();
-    }
+    // ── Config defaults ─────────────────────────────────────────
 
     #[test]
     fn all_configs_default_construct() {
@@ -175,6 +197,8 @@ mod tests {
         assert_eq!(d.max_aggregate_bytes, Some(1_073_741_824));
     }
 
+    // ── Config builders ─────────────────────────────────────────
+
     #[test]
     fn lookahead_config_builder_roundtrip() {
         let cfg = LookaheadConfig::builder()
@@ -183,7 +207,6 @@ mod tests {
             .build();
         assert_eq!(cfg.widow_line_buffer, 5);
         assert_eq!(cfg.max_container_probe_pages, None);
-        // 未設定 field は default 値
         assert_eq!(
             cfg.orphan_line_buffer,
             LookaheadConfig::default().orphan_line_buffer
@@ -198,7 +221,6 @@ mod tests {
             .build();
         assert_eq!(cfg.max_document_pages, Some(100));
         assert_eq!(cfg.max_dom_nodes, None);
-        // 未設定 field は default 値
         assert_eq!(
             cfg.max_target_slots,
             RenderLimits::default().max_target_slots
@@ -210,5 +232,26 @@ mod tests {
         let limits = RenderLimits::builder().max_document_pages(Some(50)).build();
         let cfg = StreamingConfig::builder().limits(limits).build();
         assert_eq!(cfg.limits.max_document_pages, Some(50));
+    }
+
+    #[test]
+    fn batch_config_builder_roundtrip() {
+        let limits = RenderLimits::builder().max_document_pages(Some(30)).build();
+        let cfg = BatchConfig::builder().limits(limits).build();
+        assert_eq!(cfg.limits.max_document_pages, Some(30));
+    }
+
+    #[test]
+    fn plan_config_builder_roundtrip() {
+        let lookahead = LookaheadConfig::builder().widow_line_buffer(3).build();
+        let cfg = PlanConfig::builder().lookahead(lookahead).build();
+        assert_eq!(cfg.lookahead.widow_line_buffer, 3);
+    }
+
+    // ── Plan placeholders ───────────────────────────────────────
+
+    #[test]
+    fn plan_placeholder_default_construct() {
+        let _ = TargetDefinition::default();
     }
 }
