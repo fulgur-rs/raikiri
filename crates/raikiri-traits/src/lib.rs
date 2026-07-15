@@ -365,6 +365,63 @@ mod tests {
     }
 
     #[test]
+    fn network_error_io_display_includes_inner_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let ne = NetworkError::Io(io_err);
+        let s = ne.to_string();
+        assert!(
+            s.contains("Network I/O error"),
+            "Display should preserve prefix, got: {s}"
+        );
+        assert!(
+            s.contains("refused"),
+            "Display should include inner io::Error message, got: {s}"
+        );
+    }
+
+    #[test]
+    fn network_error_policy_display_delegates_to_policy_violation() {
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::Image,
+            url: Url::parse("https://example.com/x.png").unwrap(),
+            violation_type: ViolationType::HostNotAllowed,
+            details: String::from("host not in allowlist"),
+        };
+        let ne = NetworkError::PolicyViolation(v);
+        let s = ne.to_string();
+        assert!(
+            s.contains("Network fetch violated policy"),
+            "Display should keep Network prefix, got: {s}"
+        );
+        assert!(
+            s.contains("https://example.com/x.png"),
+            "Display should include PolicyViolation URL via delegation, got: {s}"
+        );
+        assert!(
+            s.contains("host not in allowlist"),
+            "Display should include PolicyViolation details via delegation, got: {s}"
+        );
+    }
+
+    #[test]
+    fn network_error_display_and_source_none_variants() {
+        use std::error::Error as _;
+
+        let aborted = NetworkError::Aborted;
+        assert_eq!(aborted.to_string(), "Network fetch aborted");
+        assert!(aborted.source().is_none(), "Aborted has no inner error");
+
+        let http = NetworkError::Http(503);
+        assert_eq!(http.to_string(), "Network HTTP status error: 503");
+        assert!(http.source().is_none(), "Http has no inner error");
+
+        let other = NetworkError::Other(String::from("dns lookup failed"));
+        assert_eq!(other.to_string(), "Network error: dns lookup failed");
+        assert!(other.source().is_none(), "Other has no inner error");
+    }
+
+    #[test]
     fn resolver_error_is_error_and_display() {
         fn _assert_error<T: std::error::Error>() {}
         fn _assert_display<T: std::fmt::Display>() {}
