@@ -97,7 +97,13 @@ impl Dom for TestDoc {
 
     fn child_ids(&self, id: NodeId) -> Self::ChildIter<'_> {
         let idx = id.0 as usize;
-        TestChildIter(self.nodes[idx].children.iter())
+        // Contract-align with `node()`: invalid NodeId → empty iter (raikiri-spike-ajy).
+        let slice = self
+            .nodes
+            .get(idx)
+            .map(|n| n.children.as_slice())
+            .unwrap_or(&[]);
+        TestChildIter(slice.iter())
     }
 }
 

@@ -49,7 +49,15 @@ impl raikiri_traits::Dom for Document {
 
     fn child_ids(&self, id: NodeId) -> Self::ChildIter<'_> {
         let idx = id.0 as usize;
-        ChildIter(self.nodes[idx].children.iter())
+        // Contract-align with `node()`: out-of-range NodeId → empty iter, not panic.
+        // Guards Consumer patterns that stash NodeId across document rebuilds
+        // (raikiri-spike-ajy, M6 blitz-compat integration).
+        let slice = self
+            .nodes
+            .get(idx)
+            .map(|n| n.children.as_slice())
+            .unwrap_or(&[]);
+        ChildIter(slice.iter())
     }
 }
 
