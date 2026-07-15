@@ -1,0 +1,7 @@
+# expectations/deprecated.txt — WPT tests fully excluded from evaluation
+# (spec §12.10 precedence 1; highest priority).
+#
+# Format: one test_id per line. Lines starting with '#' are comments.
+# Empty lines are ignored.
+#
+# Populated in M3.

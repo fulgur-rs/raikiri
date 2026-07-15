@@ -1,0 +1,6 @@
+# expectations/tracked-wpt.txt — WPT categories under tracking (spec §12.9).
+#
+# Format: one test_id per line. Lines starting with '#' are comments.
+# Empty lines are ignored.
+#
+# Populated in M3.

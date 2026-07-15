@@ -19,5 +19,9 @@ blitz-html          = { workspace = true }
 blitz-dom           = { workspace = true }
 blitz-paint         = { workspace = true }
 
+[[bin]]
+name = "validate-expectations"
+path = "src/bin/validate-expectations.rs"
+
 [lints]
 workspace = true

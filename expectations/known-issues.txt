@@ -1,0 +1,7 @@
+# expectations/known-issues.txt — WPT tests judged as "cannot pass, no practical impact"
+# (spec §12.9).
+#
+# Format: <test_id_or_pattern> | <reason>
+# Lines starting with '#' are comments. Empty lines are ignored.
+#
+# Populated in M3.
