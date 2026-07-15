@@ -1,10 +1,14 @@
 //! raikiri-style — CSS engine (cssparser + selectors + cascade + GCPM static side).
 //!
-//! M0 status: seed. Provides a minimal `RaikiriSelectorImpl` that satisfies
-//! every associated-type / trait bound of `selectors::SelectorImpl` without
-//! depending on `stylo`. This is enough for `raikiri-feasibility` to prove
-//! nzv.8 (`selectors` standalone, no stylo) and forms the starting point for
-//! M1's real cascade / matching implementation.
+//! # M1.4 status
+//!
+//! - `Atom` / `RaikiriSelectorImpl` / `parse_selector_list` — M0 seed
+//! - [`property`] / [`rule`] / [`ruletree`] / [`computed`] / [`mod@cascade`] — M1.4
+//!   cascade minimum (type + universal selector、color / font-family / font-size /
+//!   font-weight、specificity + !important + source order + inheritance)
+//!
+//! GCPM static side、@page / @media / @supports、L4 selectors、class/id/attribute
+//! selector、combinator は M4+ で追加予定。
 //!
 //! `precomputed-hash` is encapsulated as a direct dep of this crate only. It
 //! is intentionally NOT promoted to `[workspace.dependencies]` — see the

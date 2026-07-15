@@ -35,6 +35,20 @@ pub struct CascadeResult {
 /// M1.4 では常に `Ok` を返す (invalid CSS は既に build_rule_tree 段で silently
 /// drop されており、cascade は construct され得ない)。`Result` signature は
 /// 将来 fail-hard mode 用に維持。
+///
+/// # Example
+///
+/// ```ignore
+/// // ignore: raikiri-dom crate は raikiri-style の doc-test から使えないため
+/// // (crate cycle 回避)、実 code は integration test で確認。ここは shape のみ。
+/// use raikiri_style::{build_rule_tree, cascade, ComputedValues};
+///
+/// # fn demo<D: raikiri_traits::Dom>(dom: &D) {
+/// let rule_tree = build_rule_tree(dom);
+/// let result = cascade(dom, &rule_tree).expect("m1.4 では常に Ok");
+/// let root_style: &ComputedValues = &result.computed[0];
+/// # }
+/// ```
 pub fn cascade<D: Dom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResult, CascadeError> {
     let mut computed: Vec<ComputedValues> = Vec::new();
     let mut cascaded: HashMap<NodeId, Vec<(PropertyValue, bool, Specificity, u32)>> =
