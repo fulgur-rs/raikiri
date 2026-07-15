@@ -14,6 +14,7 @@ use raikiri_traits::NodeKind;
 ///
 /// M1.5 では `style` を Consumer が taffy::Style 直接構築する形。M1.6
 /// layout-single-page で ComputedValues → taffy::Style 変換 layer が入る予定。
+#[derive(Debug)]
 pub(crate) struct Node {
     /// Taffy layout style。
     pub(crate) style: Style,

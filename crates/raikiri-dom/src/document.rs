@@ -11,6 +11,7 @@ use crate::node::Node;
 /// `nodes` は arena indices を key とする flat storage。index 0 は Document
 /// kind の virtual root。HTML の `<html>` element は M1.3 html-parse-basic が
 /// index 1 以降に append する想定 (root = 0 の子として)。
+#[derive(Debug)]
 pub struct Document {
     pub(crate) nodes: Vec<Node>,
     /// arena index of the Document root (always 0 の予定、明示的に保持して

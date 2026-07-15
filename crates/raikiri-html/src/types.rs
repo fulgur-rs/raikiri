@@ -11,6 +11,7 @@ use url::Url;
 /// (external `<link rel="stylesheet">` は M2 network integration で扱う)。
 /// `warnings` は html5ever tokenizer 由来の非致命 parse error を
 /// [`raikiri_traits::WarningKind::HtmlParseError`] variant で保持する。
+#[derive(Debug)]
 pub struct UncascadedDocument {
     /// DOM tree (raikiri-dom arena)。
     pub dom: Document,

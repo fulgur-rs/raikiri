@@ -118,4 +118,43 @@ mod tests {
             uncascaded.warnings.iter().map(|w| &w.kind).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn parse_returns_encoding_error_on_invalid_utf8() {
+        use raikiri_traits::ParseError;
+
+        let bad: &[u8] = &[0xFF, 0xFE, 0xFF, b'<', b'p', b'>'];
+        let opts = empty_options();
+        let err = parse(bad, &opts).expect_err("invalid utf-8 should fail");
+        match err {
+            ParseError::Encoding { label, reason } => {
+                assert_eq!(label, "utf-8");
+                assert!(!reason.is_empty(), "reason should be populated");
+            }
+            other => panic!("expected Encoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_returns_io_error_on_read_failure() {
+        use raikiri_traits::ParseError;
+        use std::io::{Error, ErrorKind, Read};
+
+        struct FailingReader;
+        impl Read for FailingReader {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(Error::other("boom"))
+            }
+        }
+
+        let opts = empty_options();
+        let err = parse(FailingReader, &opts).expect_err("read failure should fail");
+        match err {
+            ParseError::Io(inner) => {
+                assert_eq!(inner.kind(), ErrorKind::Other);
+                assert_eq!(inner.to_string(), "boom");
+            }
+            other => panic!("expected Io, got {other:?}"),
+        }
+    }
 }
