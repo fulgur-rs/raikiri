@@ -372,6 +372,38 @@ mod tests {
         _assert_display::<ResolverError>();
     }
 
+    #[test]
+    fn render_error_network_source_chain() {
+        use std::error::Error as _;
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let re = RenderError::Network(NetworkError::Io(io_err));
+        let src = re.source();
+        assert!(
+            src.is_some(),
+            "RenderError::Network should expose inner NetworkError via source()"
+        );
+    }
+
+    #[test]
+    fn render_error_policy_source_chain() {
+        use std::error::Error as _;
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::ExternalStylesheet,
+            url: Url::parse("https://cdn.example.com/main.css").unwrap(),
+            violation_type: ViolationType::MimeNotAllowed {
+                mime: String::from("text/plain"),
+            },
+            details: String::from("expected text/css"),
+        };
+        let re = RenderError::Policy(v);
+        let src = re.source();
+        assert!(
+            src.is_some(),
+            "RenderError::Policy should expose inner PolicyViolation via source()"
+        );
+    }
+
     // ── RenderStatus::Aborted contract (M1.2、実 semantic は M6c) ─
 
     /// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`
