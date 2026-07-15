@@ -169,7 +169,10 @@ mod tests {
 
         let far = NodeId::new(doc.nodes.len() as u64 + 100);
         let kids: Vec<_> = Dom::child_ids(&doc, far).collect();
-        assert!(kids.is_empty(), "out-of-range NodeId should yield empty iter");
+        assert!(
+            kids.is_empty(),
+            "out-of-range NodeId should yield empty iter"
+        );
         // node() と contract 一致確認 (対称性のリファレンス)
         assert!(doc.node(far).is_none());
     }
