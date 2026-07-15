@@ -76,6 +76,12 @@ impl Document {
         if let Some(pos) = kids.iter().position(|&c| c == before) {
             kids.insert(pos, child);
         } else {
+            // html5ever TreeSink contract 上ここには来ない。dev/test では contract
+            // 違反として panic、release では plan 指定の tail-append fallback。
+            debug_assert!(
+                false,
+                "insert_child_before: `before` ({before}) not a child of parent ({parent})"
+            );
             kids.push(child);
         }
     }
