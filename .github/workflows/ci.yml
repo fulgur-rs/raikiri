@@ -43,6 +43,14 @@ jobs:
         # 無害)。
         run: rustup show active-toolchain || rustup toolchain install
 
+      - name: Install system dependencies
+        # yeslogic-fontconfig-sys (fontique/parley 依存) が libfontconfig / pkg-config
+        # を必要とする。ubuntu-latest には fontconfig ランタイムはあるが `-dev`
+        # ヘッダーが無いため build script が pkg-config で失敗する (initial CI run
+        # で観測)。macOS/Windows job を追加する時は fontconfig の platform 別 install
+        # をここに拡張する。
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
 
