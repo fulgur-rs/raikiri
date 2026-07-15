@@ -43,6 +43,7 @@ impl Document {
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
         }
+        self.invalidate_layout_cache();
         id
     }
 
@@ -54,6 +55,7 @@ impl Document {
         let id = self.nodes.len();
         self.nodes.push(Node::new_text(text.into()));
         self.nodes[parent].children.push(id);
+        self.invalidate_layout_cache();
         id
     }
 
@@ -65,6 +67,7 @@ impl Document {
     /// (tree の重複配置を防ぐため raikiri-dom は自動 detach しない)。
     pub fn attach_child(&mut self, parent: usize, child: usize) {
         self.nodes[parent].children.push(child);
+        self.invalidate_layout_cache();
     }
 
     /// `parent` の children 配列内、`before` の直前 index に `child` を挿入する。
@@ -85,6 +88,7 @@ impl Document {
             );
             kids.push(child);
         }
+        self.invalidate_layout_cache();
     }
 
     /// `child` を保持する parent の arena index を返す。root (index 0) や
@@ -107,6 +111,7 @@ impl Document {
         if let Some(pos) = kids.iter().position(|&c| c == child) {
             kids.remove(pos);
         }
+        self.invalidate_layout_cache();
         Some(parent)
     }
 
@@ -115,6 +120,18 @@ impl Document {
     pub fn reparent_children(&mut self, from: usize, to: usize) {
         let moved: Vec<usize> = self.nodes[from].children.drain(..).collect();
         self.nodes[to].children.extend(moved);
+        self.invalidate_layout_cache();
+    }
+
+    /// 全 node の taffy layout cache を conservative に clear する。
+    ///
+    /// TreeSink 経由の任意 mutation 後、次の `compute_root_layout` で stale
+    /// cached layout が使われないようにする。M1.6+ layout task で ancestor
+    /// 限定 invalidation に最適化できるが、m1.3 spike では全 clear が正しい。
+    fn invalidate_layout_cache(&mut self) {
+        for node in &mut self.nodes {
+            node.cache.clear();
+        }
     }
 }
 

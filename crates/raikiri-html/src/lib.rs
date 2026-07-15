@@ -291,4 +291,45 @@ mod tests {
         let opts = empty_options();
         let _ = parse(&html[..], &opts).expect("parse should not panic");
     }
+
+    #[test]
+    fn parse_survives_deeply_nested_html() {
+        // Build ~5000 nested <div> — recursive walker would stack overflow.
+        // Iterative walker completes fine.
+        let mut html = String::new();
+        let depth = 5000;
+        for _ in 0..depth {
+            html.push_str("<div>");
+        }
+        html.push_str("hello");
+        for _ in 0..depth {
+            html.push_str("</div>");
+        }
+        let opts = empty_options();
+        let _ = parse(html.as_bytes(), &opts).expect("parse ok — walkers must handle deep nesting");
+    }
+
+    #[test]
+    fn parse_maps_reader_invaliddata_to_io_not_encoding() {
+        use raikiri_traits::ParseError;
+        use std::io::{Error, ErrorKind, Read};
+
+        /// Reader that returns InvalidData with an I/O-shaped message
+        /// (not a UTF-8 error). Under the old read_to_string mapping this
+        /// would be misclassified as ParseError::Encoding; the new
+        /// read_to_end + from_utf8 path correctly reports ParseError::Io.
+        struct BadKindReader;
+        impl Read for BadKindReader {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(Error::new(ErrorKind::InvalidData, "disk sector unreadable"))
+            }
+        }
+
+        let opts = empty_options();
+        let err = parse(BadKindReader, &opts).expect_err("reader failure should error");
+        assert!(
+            matches!(err, ParseError::Io(_)),
+            "InvalidData from reader must map to ParseError::Io, not Encoding (got {err:?})"
+        );
+    }
 }

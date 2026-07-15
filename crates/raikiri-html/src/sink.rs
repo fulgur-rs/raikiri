@@ -10,7 +10,7 @@ use html5ever::interface::{
 use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::QuirksMode;
 use raikiri_dom::Document;
-use raikiri_traits::{Dom, Element, Node, RenderWarning, WarningKind};
+use raikiri_traits::{Dom, RenderWarning, WarningKind};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use taffy::Style;
@@ -257,19 +257,20 @@ impl TreeSink for RaikiriTreeSink {
     }
 }
 
-/// `<style>` element の text content を DFS で集約する。
+/// `<style>` element の text content を DFS (iterative) で集約する。
 /// Text node の text_content を concat して 1 stylesheet 相当として push。
+/// 明示的 stack を使うことで attacker-controlled な深い DOM でも stack
+/// overflow を起こさない。
 fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
-    fn walk(
-        doc: &Document,
-        id: raikiri_traits::NodeId,
-        out: &mut Vec<String>,
-    ) {
+    use raikiri_traits::{Dom, Element, Node};
+
+    let mut out = Vec::new();
+    let mut stack: Vec<raikiri_traits::NodeId> = vec![doc.root_id()];
+    while let Some(id) = stack.pop() {
         if let Some(node) = doc.node(id)
             && let Some(el) = node.as_element()
             && el.tag_name() == "style"
         {
-            // 直下の Text children を concat
             let mut buf = String::new();
             for c in doc.child_ids(id) {
                 if let Some(child) = doc.node(c)
@@ -281,15 +282,15 @@ fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
             if !buf.is_empty() {
                 out.push(buf);
             }
-            // <style> の内容は CSS のみ想定、再帰入る必要なし
-            return;
+            // <style> の内容は CSS のみ想定、子は stack に push しない (再帰しない)
+            continue;
         }
+        // それ以外の node は子を stack に積んで DFS 継続
+        // (child_ids 順を維持したいなら逆順 push が本来だが、順序不問なのでそのまま)
         for c in doc.child_ids(id) {
-            walk(doc, c, out);
+            stack.push(c);
         }
     }
-    let mut out = Vec::new();
-    walk(doc, doc.root_id(), &mut out);
     out
 }
 
@@ -302,21 +303,20 @@ fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
 fn strip_non_element_stubs(doc: &mut Document) {
     use raikiri_traits::{Dom, Element, Node};
 
-    // まず対象 node を全て収集 (mutation との borrow 衝突を避けるため 2-pass)。
+    // Iterative collection (2-pass) — 深い tree でも stack overflow しない。
     let mut to_detach = Vec::new();
-    fn collect(doc: &Document, id: raikiri_traits::NodeId, out: &mut Vec<usize>) {
+    let mut stack: Vec<raikiri_traits::NodeId> = vec![doc.root_id()];
+    while let Some(id) = stack.pop() {
         if let Some(node) = doc.node(id)
             && let Some(el) = node.as_element()
             && matches!(el.tag_name(), "#comment" | "#pi")
         {
-            out.push(id.0 as usize);
+            to_detach.push(id.0 as usize);
         }
         for c in doc.child_ids(id) {
-            collect(doc, c, out);
+            stack.push(c);
         }
     }
-    collect(doc, doc.root_id(), &mut to_detach);
-
     for idx in to_detach {
         doc.detach_from_parent(idx);
     }

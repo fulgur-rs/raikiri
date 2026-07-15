@@ -50,17 +50,14 @@ where
     R: Read,
     S: TreeSink<Handle = usize, Output = UncascadedDocument>,
 {
-    let mut buf = String::new();
-    input.read_to_string(&mut buf).map_err(|e| {
-        // read_to_string は invalid UTF-8 で InvalidData を返す。
-        if e.kind() == std::io::ErrorKind::InvalidData {
-            ParseError::Encoding {
-                label: String::from("utf-8"),
-                reason: e.to_string(),
-            }
-        } else {
-            ParseError::Io(e)
-        }
+    // 2-step: reader failures → Io、UTF-8 conversion failures → Encoding。
+    // read_to_string の InvalidData 一括分類 (reader が非-encoding 由来で
+    // InvalidData を返すケース) を防ぐ。
+    let mut bytes = Vec::new();
+    input.read_to_end(&mut bytes).map_err(ParseError::Io)?;
+    let buf = String::from_utf8(bytes).map_err(|e| ParseError::Encoding {
+        label: String::from("utf-8"),
+        reason: e.to_string(),
     })?;
 
     let parser = parse_document(sink, ParseOpts::default());

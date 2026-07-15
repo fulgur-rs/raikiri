@@ -285,4 +285,65 @@ mod tests {
         assert!(src_kids.is_empty());
         assert_eq!(dst_kids, vec![c1, c2]);
     }
+
+    #[test]
+    fn layout_cache_invalidated_after_mutation() {
+        // Build a Document, run layout, mutate, run layout again — verify
+        // the new layout reflects the mutation (not the stale cache).
+        let leaf_style = Style {
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::length(50.0),
+            },
+            ..Default::default()
+        };
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "root",
+            Style {
+                display: Display::Block,
+                size: Size {
+                    width: Dimension::length(400.0),
+                    height: Dimension::auto(),
+                },
+                ..Default::default()
+            },
+        );
+        doc.append_element(Some(root), "a", leaf_style.clone());
+
+        // First layout
+        compute_root_layout(
+            &mut doc,
+            taffy::NodeId::from(root),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        );
+        let first_height = doc.nodes[root].unrounded_layout.size.height;
+
+        // Add a second child — root height should change (2 leaves = ~100)
+        doc.append_element(Some(root), "b", leaf_style);
+
+        compute_root_layout(
+            &mut doc,
+            taffy::NodeId::from(root),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        );
+        let second_height = doc.nodes[root].unrounded_layout.size.height;
+
+        // If cache wasn't invalidated, second_height would equal first_height (stale)
+        assert_ne!(
+            first_height, second_height,
+            "root height should change after adding a second child; cache invalidation missing"
+        );
+        assert!(
+            second_height > first_height,
+            "root should be taller after adding a child (got {first_height} -> {second_height})"
+        );
+    }
 }
