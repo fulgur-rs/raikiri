@@ -268,6 +268,50 @@ fn detect_duplicates(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
     issues
 }
 
+fn detect_conflicting(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
+    use std::collections::BTreeSet;
+
+    let baseline: BTreeSet<&str> = loaded
+        .baseline
+        .as_ref()
+        .map(|b| b.entries.iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    let deprecated: BTreeSet<&str> = loaded
+        .deprecated
+        .as_ref()
+        .map(|d| d.entries.iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    let quarantine: BTreeSet<&str> = loaded
+        .quarantine
+        .as_ref()
+        .map(|q| q.entries.iter().map(|e| e.test_id.as_str()).collect())
+        .unwrap_or_default();
+
+    let baseline_path = dir.join("raikiri-baseline.txt").display().to_string();
+    let deprecated_path = dir.join("deprecated.txt").display().to_string();
+    let _quarantine_path = dir.join("quarantine.txt").display().to_string();
+
+    let mut issues = Vec::new();
+    let mk = |file: &str, other: &str, test_id: &str| LintIssue {
+        category: Category::Conflicting,
+        file: file.to_owned(),
+        line_no: None,
+        message: format!(
+            "test_id {test_id:?} also appears in {other} (spec §12.10 precedence: resolve via PR)"
+        ),
+    };
+    for id in deprecated.intersection(&baseline) {
+        issues.push(mk(&deprecated_path, "raikiri-baseline.txt", id));
+    }
+    for id in deprecated.intersection(&quarantine) {
+        issues.push(mk(&deprecated_path, "quarantine.txt", id));
+    }
+    for id in baseline.intersection(&quarantine) {
+        issues.push(mk(&baseline_path, "quarantine.txt", id));
+    }
+    issues
+}
+
 /// Scan an `expectations/` directory and return a [`LintReport`].
 ///
 /// `now` is injected (rather than sourced from the system clock) so
@@ -276,6 +320,7 @@ pub fn run(dir: &Path, _now: Date) -> LintReport {
     let loaded = load_all(dir);
     let mut issues = loaded.issues.clone();
     issues.extend(detect_duplicates(&loaded, dir));
+    issues.extend(detect_conflicting(&loaded, dir));
     LintReport { issues }
 }
 
@@ -433,5 +478,59 @@ mod tests {
             "unexpected: {:?}",
             report.issues
         );
+    }
+
+    #[test]
+    fn conflict_deprecated_and_baseline_becomes_lint_issue() {
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/x/y-001\n");
+        write(dir.path(), "deprecated.txt", "css/x/y-001\n");
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        let conflicts: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Conflicting).collect();
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].message.contains("css/x/y-001"));
+        assert!(conflicts[0].message.contains("deprecated.txt") || conflicts[0].file.ends_with("deprecated.txt"));
+        assert!(conflicts[0].message.contains("raikiri-baseline.txt") || conflicts[0].file.ends_with("raikiri-baseline.txt"));
+    }
+
+    #[test]
+    fn conflict_deprecated_and_quarantine_becomes_lint_issue() {
+        let dir = header_only_dir();
+        write(dir.path(), "deprecated.txt", "css/x/y-001\n");
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/x/y-001 | linux | x86_64 | vello_cpu | low | r | i | 2026-08-01\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        let conflicts: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Conflicting).collect();
+        assert_eq!(conflicts.len(), 1);
+    }
+
+    #[test]
+    fn conflict_baseline_and_quarantine_becomes_lint_issue() {
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/x/y-001\n");
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/x/y-001 | linux | x86_64 | vello_cpu | low | r | i | 2026-08-01\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        let conflicts: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Conflicting).collect();
+        assert_eq!(conflicts.len(), 1);
+    }
+
+    #[test]
+    fn no_conflict_when_test_id_appears_in_only_one_file() {
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/x/y-001\n");
+        write(dir.path(), "deprecated.txt", "css/other\n");
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        assert!(!report.issues.iter().any(|i| i.category == Category::Conflicting));
     }
 }
