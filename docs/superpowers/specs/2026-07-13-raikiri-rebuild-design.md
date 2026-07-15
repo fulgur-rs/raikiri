@@ -313,10 +313,20 @@ reviewer 提案の明示表：
   (stylo_taffy / blitz-dom と一致)
 - **OFF**: `taffy_tree` — raikiri-dom は自前 arena で `LayoutPartialTree` /
   `TraversePartialTree` を trait 直下 impl するため
-- **Style: !Send under calc feature caveat**: `Dimension`
-  (via `CompactLength`) が `calc()` 有効時に `*const ()` を保持するため
-  `Style: !Send`。LayoutBuffer が `Style` を保持する場合の invariant 決定は
-  M1 (`raikiri-spike-m1.17`) で対応
+- **Style: !Send under calc feature invariant** (m1.17 決定、2026-07-16、
+  approach A): `Dimension` (via `CompactLength`) が `calc()` 有効時に
+  `*const ()` を保持するため `Style: !Send`。raikiri-dom 内で `Style` を
+  保持する型 (Document、M2 以降 LayoutBuffer 等) が own する calc arena 内
+  pointer のみを許可、`unsafe impl Send` を documented self-contained arena
+  invariant で正当化 (`crates/raikiri-dom/src/taffy_impl.rs` の SAFETY
+  block 参照)。Sync は追加しない (raikiri は stylo 非依存で parallel style
+  traversal path が無い、§5.4.1 の並列経路も owned snapshot 又は read-only
+  borrow のみ)。M4 sandboxed resolver で CSS calc() 実装時に calc arena を
+  raikiri-dom 側に配置、M2〜M3 で `raikiri-lints::no_calc_construction`
+  guard を追加して M4 前の混入を防ぐ。Blitz precedent:
+  `blitz-dom-0.3.0-beta.1/src/node/node.rs:136` の `unsafe impl Send + Sync
+  for Node` (blitz は stylo `Arc<ComputedValues>` chain が calc data を
+  own する外部 arena モデル、invariant の依存対象が raikiri と異なる)。
 
 **Consumer 目線**: `use raikiri::*` だけで足りる。sub-crate 直接依存も可能
 (advanced case)。

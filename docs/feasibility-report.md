@@ -623,6 +623,17 @@ M0 blocker では無いが M1 kickoff 直後〜M2 前半で対応が必要な項
     thread 内でのみ layout。arena 分割前提のため実装的に不自然になる恐れあり。
 - **Owner**: M1 raikiri-dom task 実装者
 - **Deadline**: M2 column-count shard-per-column の parallel pass 実装前
+- **Resolution (2026-07-16, m1.17 close)**: **approach A** を採用。
+  raikiri-dom 内で `Style` を保持する型 (Document、M2 以降 LayoutBuffer) が
+  own する calc arena 内 pointer のみを許可、`unsafe impl Send` を self-
+  contained arena invariant で正当化。Sync は追加しない (raikiri は stylo
+  非依存で parallel style traversal 不在、並列 layout 経路も owned snapshot
+  又は read-only borrow のみ)。実装記録は
+  `crates/raikiri-dom/src/taffy_impl.rs` の SAFETY block、設計 doc §4
+  `raikiri-dom crate` に反映。M4 sandboxed CSS calc() 実装時に calc arena
+  を raikiri-dom 側に配置、M2〜M3 で `raikiri-lints::no_calc_construction`
+  guard を追加予定。Blitz precedent (異なる owner モデル):
+  `blitz-dom-0.3.0-beta.1/src/node/node.rs:136`。
 
 ### 5.2 anyrender_vello_cpu rayon 1v4 targeted test
 

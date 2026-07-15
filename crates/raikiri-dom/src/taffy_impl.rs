@@ -181,20 +181,32 @@ impl LayoutGridContainer for Document {
 // pointer) を保持する。Raw pointer は !Send のため `Style: !Send`、そこから
 // `Document: !Send` が導出される。
 //
-// M1.5 は feasibility spike (nzv.6) と同じ approach 1 を採用: Document 内に
-// 格納される全 calc pointer は「同じ Document 内 (self-contained arena)」を
-// 指す invariant を維持する限り、Document 全体を別 thread へ move しても
-// pointer validity は破れない。
+// **Invariant (m1.17 決定、approach A: self-contained arena)**:
+// raikiri-dom 内で `Style` を保持する任意の型 (Document、M2 以降 LayoutBuffer
+// 等) に格納される全 `CompactLength::calc(ptr)` の `ptr` は、同じ Document
+// が own する calc arena (M4 で raikiri-dom 内に追加予定) を指す。この
+// invariant が守られる限り、Document 全体を別 thread へ move しても pointer
+// target が follow するため validity は保たれる。
 //
-// M1.5 現段階では calc pointer を populate する経路が存在しない (Node.style
-// は Consumer が taffy::Style を直接構築、M1.6 で ComputedValues 変換時も
-// `length(px)` / `percent` / `auto` のみ使用予定)。calc pointer が入る余地が
-// 生まれるのは M4 sandboxed resolver の CSS calc() 完全 support 段階。
+// **Sync は付けない**: raikiri の parallel layout 経路 (M4 の 16 margin box
+// slot + column-count) は `Arc<GcpmSnapshot>` (owned deep copy、design doc
+// §5.4.1) 又は `&Style` の read-only borrow 経由で動作。`&Document` を
+// 複数 thread から同時 read する path は無いため Sync は不要。blitz-dom は
+// stylo parallel style traversal のため `unsafe impl Sync for Node` を追加
+// しているが、raikiri は stylo 非依存で該当 path なし。
 //
-// 最終 invariant の確定は m1.17 taffy-layoutbuffer-send-decision に委ねる:
-//   - approach 1 (self-contained arena、この unsafe impl のまま)
-//   - approach 2 (SendableStyle newtype で pointer を隠蔽)
-//   - approach 3 ("no calc across thread boundary" construction guard)
-// のいずれかに再整理される。
+// **Precedent**: blitz-dom `Node` にも同種の `unsafe impl Send` があり
+// (`blitz-dom-0.3.0-beta.1/src/node/node.rs:136`、無注釈)、taffy + calc
+// feature 上で確立された pattern。ただし blitz は stylo `Arc<ComputedValues>`
+// chain が calc data を own する外部 arena モデル、raikiri は self-contained
+// arena モデルで invariant の依存対象が異なる。
+//
+// **State (M1.5)**: calc pointer を populate する path は不在 (Node.style は
+// `length(px)` / `percent` / `auto` のみ)。M4 sandboxed resolver で CSS calc()
+// を実装する際、calc arena を raikiri-dom 側に配置し、`CompactLength::calc(...)`
+// の唯一の callsite が arena allocation と同一 site に閉じるよう API を絞る
+// (structural enforcement)。M4 前に混入を防ぐ custom lint
+// (`raikiri-lints::no_calc_construction`、design §5.4.1) を M2〜M3 で raikiri-dom
+// crate に導入する。
 #[allow(unsafe_code)]
 unsafe impl Send for Document {}
