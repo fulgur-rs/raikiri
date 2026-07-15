@@ -8,10 +8,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
-anyrender = { workspace = true }
 tiny-skia = { workspace = true }
 
 [dev-dependencies]
+anyrender           = { workspace = true }
 anyrender_vello_cpu = { workspace = true }
 peniko              = { workspace = true }
 kurbo               = { workspace = true }
