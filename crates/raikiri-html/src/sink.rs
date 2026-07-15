@@ -214,11 +214,6 @@ impl TreeSink for RaikiriTreeSink {
                     .insert_child_before(parent, *sibling, c);
             }
             NodeOrText::AppendText(text) => {
-                let parent = self
-                    .document
-                    .borrow()
-                    .parent_of(*sibling)
-                    .expect("append_before_sibling: sibling has no parent");
                 // 新規 Text node を arena に作成 (detached にできない — append_text
                 // が parent 必須のため、まず parent 末尾に append → 直後 detach
                 // → insert_before の 3 step)。
