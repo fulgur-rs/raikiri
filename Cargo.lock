@@ -1550,6 +1550,10 @@ dependencies = [
  "markup5ever",
  "raikiri-dom",
  "raikiri-traits",
+ "rustc-hash",
+ "smol_str",
+ "taffy",
+ "url",
 ]
 
 [[package]]
