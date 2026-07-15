@@ -303,10 +303,7 @@ mod tests {
         use smol_str::SmolStr;
         let mut doc = Document::new();
         // arena index 0 = Document root
-        doc.set_element_attributes(
-            0,
-            vec![(SmolStr::new("id"), SmolStr::new("bad"))],
-        );
+        doc.set_element_attributes(0, vec![(SmolStr::new("id"), SmolStr::new("bad"))]);
     }
 
     // ── TreeSink support APIs (M1.3) ────────────────────────────
@@ -400,8 +397,7 @@ mod tests {
             display: Display::None,
             ..Default::default()
         };
-        let hidden_parent =
-            doc2.append_element(Some(0), "hp", hidden_parent_style, None::<&str>);
+        let hidden_parent = doc2.append_element(Some(0), "hp", hidden_parent_style, None::<&str>);
         doc2.append_element(Some(hidden_parent), "child", Style::default(), None::<&str>);
         compute_root_layout(
             &mut doc2,

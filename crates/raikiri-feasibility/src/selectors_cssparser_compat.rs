@@ -43,8 +43,8 @@ use cssparser::{
     ParserInput, ParserState, QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser,
 };
 use selectors::{
-    parser::{ParseRelative, Parser as SelectorParser},
     SelectorImpl, SelectorList,
+    parser::{ParseRelative, Parser as SelectorParser},
 };
 
 // ---------------------------------------------------------------------------
@@ -219,8 +219,8 @@ mod tests {
     /// input.
     #[test]
     fn parses_multi_decl_rule_with_combinator() {
-        let rule = parse_style_rule(".a > b:not(.c) { color: red; font-size: 12px; }")
-            .expect("parse");
+        let rule =
+            parse_style_rule(".a > b:not(.c) { color: red; font-size: 12px; }").expect("parse");
         assert_eq!(rule.selector_text, ".a > b:not(.c)");
         assert_eq!(rule.declarations.len(), 2);
         assert_eq!(rule.declarations[0].name, "color");

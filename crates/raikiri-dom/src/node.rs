@@ -79,11 +79,7 @@ impl Node {
     /// `namespace` / `attributes` は初期空で、raikiri-html sink が finish 時に
     /// [`crate::Document::set_element_namespace`] / [`crate::Document::set_element_attributes`]
     /// で populate する。
-    pub(crate) fn new_element(
-        tag: SmolStr,
-        style: Style,
-        inline_style: Option<SmolStr>,
-    ) -> Self {
+    pub(crate) fn new_element(tag: SmolStr, style: Style, inline_style: Option<SmolStr>) -> Self {
         Self {
             style,
             children: Vec::new(),

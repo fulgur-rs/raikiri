@@ -8,8 +8,8 @@ use cssparser::{
 };
 use selectors::parser::SelectorList;
 
-use crate::property::{parse_value, PropertyValue};
 use crate::RaikiriSelectorImpl;
+use crate::property::{PropertyValue, parse_value};
 
 /// 1 property declaration = value + `!important` flag。
 #[derive(Clone, Debug, PartialEq)]
@@ -53,17 +53,14 @@ impl<'i> DeclarationParser<'i> for DeclParser {
         input: &mut Parser<'i, 't>,
         _declaration_start: &ParserState,
     ) -> Result<Declaration, ParseError<'i, Self::Error>> {
-        let value =
-            parse_value(name.as_ref(), input).ok_or_else(|| input.new_custom_error(()))?;
+        let value = parse_value(name.as_ref(), input).ok_or_else(|| input.new_custom_error(()))?;
         let important = input.try_parse(cssparser::parse_important).is_ok();
         // Exhaustive consumption: trailing garbage after the value (and optional
         // `!important`) must reject the whole declaration rather than silently
         // accepting a prefix (e.g. `color: red garbage` / `font-size: 16px 20px`).
-        input
-            .expect_exhausted()
-            .map_err(|e: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> {
-                e.into()
-            })?;
+        input.expect_exhausted().map_err(
+            |e: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> { e.into() },
+        )?;
         Ok(Declaration { value, important })
     }
 }
@@ -109,7 +106,12 @@ mod tests {
         assert_eq!(decls.len(), 1);
         assert_eq!(
             decls[0].value,
-            PropertyValue::Color(CssColor { r: 255, g: 0, b: 0, a: 255 })
+            PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            })
         );
         assert!(!decls[0].important);
     }
@@ -130,7 +132,12 @@ mod tests {
         assert_eq!(decls.len(), 1);
         assert_eq!(
             decls[0].value,
-            PropertyValue::Color(CssColor { r: 255, g: 0, b: 0, a: 255 })
+            PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            })
         );
     }
 

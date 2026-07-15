@@ -138,6 +138,9 @@ mod tests {
         }
         let a = render_ts();
         let b = render_ts();
-        assert_eq!(a, b, "tiny-skia baseline is not deterministic — harness bug");
+        assert_eq!(
+            a, b,
+            "tiny-skia baseline is not deterministic — harness bug"
+        );
     }
 }

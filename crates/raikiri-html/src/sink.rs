@@ -4,9 +4,7 @@
 use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell};
 
-use html5ever::interface::{
-    Attribute, ElementFlags, NodeOrText, QualName, TreeSink,
-};
+use html5ever::interface::{Attribute, ElementFlags, NodeOrText, QualName, TreeSink};
 use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::QuirksMode;
 use markup5ever::ns;
@@ -62,10 +60,10 @@ impl RaikiriTreeSink {
     /// side-table への full-fidelity 保存のみ行う。
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
         let tag: SmolStr = name.local.as_ref().into();
-        let idx = self
-            .document
-            .borrow_mut()
-            .append_element(None, tag, Style::default(), None::<&str>);
+        let idx =
+            self.document
+                .borrow_mut()
+                .append_element(None, tag, Style::default(), None::<&str>);
         self.qual_names.borrow_mut().insert(idx, name);
         self.attributes.borrow_mut().insert(idx, attrs);
         idx
@@ -132,36 +130,34 @@ impl TreeSink for RaikiriTreeSink {
 
     fn elem_name<'a>(&'a self, target: &'a usize) -> Ref<'a, QualName> {
         Ref::map(self.qual_names.borrow(), |m| {
-            m.get(target).expect("elem_name called on non-element handle")
+            m.get(target)
+                .expect("elem_name called on non-element handle")
         })
     }
 
-    fn create_element(
-        &self,
-        name: QualName,
-        attrs: Vec<Attribute>,
-        _flags: ElementFlags,
-    ) -> usize {
+    fn create_element(&self, name: QualName, attrs: Vec<Attribute>, _flags: ElementFlags) -> usize {
         self.make_element(name, attrs)
     }
 
     fn create_comment(&self, text: StrTendril) -> usize {
         // M1 workaround: comment node を "#comment" tag の element として保持。
         // Task 9 で NodeKind::Comment を検討 (m1.5 の dom-model 昇格候補)。
-        let idx = self
-            .document
-            .borrow_mut()
-            .append_element(None, "#comment", Style::default(), None::<&str>);
+        let idx = self.document.borrow_mut().append_element(
+            None,
+            "#comment",
+            Style::default(),
+            None::<&str>,
+        );
         // side-table には登録しない (elem_name 呼ばれるべきではない)
         let _ = text;
         idx
     }
 
     fn create_pi(&self, target: StrTendril, data: StrTendril) -> usize {
-        let idx = self
-            .document
-            .borrow_mut()
-            .append_element(None, "#pi", Style::default(), None::<&str>);
+        let idx =
+            self.document
+                .borrow_mut()
+                .append_element(None, "#pi", Style::default(), None::<&str>);
         let _ = (target, data);
         idx
     }
@@ -265,7 +261,9 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn reparent_children(&self, node: &usize, new_parent: &usize) {
-        self.document.borrow_mut().reparent_children(*node, *new_parent);
+        self.document
+            .borrow_mut()
+            .reparent_children(*node, *new_parent);
     }
 
     fn is_mathml_annotation_xml_integration_point(&self, _handle: &usize) -> bool {

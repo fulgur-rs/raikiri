@@ -116,8 +116,9 @@ impl<'a> Node<'a> for TestNodeRef<'a> {
         self.doc.nodes[self.id].kind
     }
     fn as_element(&self) -> Option<Self::Element<'_>> {
-        matches!(self.kind(), NodeKind::Element)
-            .then(|| TestElementRef { node: &self.doc.nodes[self.id] })
+        matches!(self.kind(), NodeKind::Element).then(|| TestElementRef {
+            node: &self.doc.nodes[self.id],
+        })
     }
     fn text_content(&self) -> Option<&str> {
         self.doc.nodes[self.id].text.as_deref()

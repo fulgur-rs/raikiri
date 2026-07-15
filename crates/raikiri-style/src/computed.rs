@@ -3,8 +3,8 @@
 //! Cascade + inheritance walk が populate。M1.6 で ComputedValues → taffy::Style
 //! + paint 用色情報の抽出 layer が入る予定。
 
-use crate::property::{CssColor, Length};
 use crate::Atom;
+use crate::property::{CssColor, Length};
 
 /// Per-node computed style。M1.4 では 4 property のみ (全て inherited)。
 ///

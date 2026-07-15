@@ -82,7 +82,10 @@ mod tests {
         let html = b"<html><head><style>p{color:red}</style></head><body><p>x</p></body></html>";
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
-        assert_eq!(uncascaded.stylesheet_sources, vec![String::from("p{color:red}")]);
+        assert_eq!(
+            uncascaded.stylesheet_sources,
+            vec![String::from("p{color:red}")]
+        );
     }
 
     #[test]
@@ -90,7 +93,8 @@ mod tests {
         // M1: external <link rel="stylesheet"> は fetch せず stylesheet_sources
         // にも含めない。M2 network integration で `StylesheetSource::External`
         // に昇格予定。
-        let html = br#"<html><head><link rel="stylesheet" href="foo.css"></head><body>x</body></html>"#;
+        let html =
+            br#"<html><head><link rel="stylesheet" href="foo.css"></head><body>x</body></html>"#;
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert!(
@@ -115,7 +119,11 @@ mod tests {
                 .iter()
                 .any(|w| matches!(&w.kind, WarningKind::HtmlParseError { .. })),
             "expected at least one HtmlParseError warning, got: {:?}",
-            uncascaded.warnings.iter().map(|w| &w.kind).collect::<Vec<_>>()
+            uncascaded
+                .warnings
+                .iter()
+                .map(|w| &w.kind)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -160,13 +168,11 @@ mod tests {
 
     #[test]
     fn parse_with_sink_via_transparent_wrapper() {
-        use std::borrow::Cow;
-        use std::cell::Ref;
-        use html5ever::interface::{
-            Attribute, ElementFlags, NodeOrText, QualName, TreeSink,
-        };
+        use html5ever::interface::{Attribute, ElementFlags, NodeOrText, QualName, TreeSink};
         use html5ever::tendril::StrTendril;
         use html5ever::tree_builder::QuirksMode;
+        use std::borrow::Cow;
+        use std::cell::Ref;
 
         /// Consumer wrapper example: RaikiriTreeSink を丸ごと delegate するだけの
         /// 透過 sink。sanitize / rewrite の hook point としては何もしない。
@@ -180,38 +186,68 @@ mod tests {
             type Output = UncascadedDocument;
             type ElemName<'a> = Ref<'a, QualName>;
 
-            fn finish(self) -> UncascadedDocument { self.inner.finish() }
-            fn parse_error(&self, msg: Cow<'static, str>) { self.inner.parse_error(msg) }
-            fn get_document(&self) -> usize { self.inner.get_document() }
+            fn finish(self) -> UncascadedDocument {
+                self.inner.finish()
+            }
+            fn parse_error(&self, msg: Cow<'static, str>) {
+                self.inner.parse_error(msg)
+            }
+            fn get_document(&self) -> usize {
+                self.inner.get_document()
+            }
             fn elem_name<'a>(&'a self, t: &'a usize) -> Ref<'a, QualName> {
                 self.inner.elem_name(t)
             }
-            fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> usize {
+            fn create_element(
+                &self,
+                name: QualName,
+                attrs: Vec<Attribute>,
+                flags: ElementFlags,
+            ) -> usize {
                 self.observed_elements.set(self.observed_elements.get() + 1);
                 self.inner.create_element(name, attrs, flags)
             }
-            fn create_comment(&self, text: StrTendril) -> usize { self.inner.create_comment(text) }
+            fn create_comment(&self, text: StrTendril) -> usize {
+                self.inner.create_comment(text)
+            }
             fn create_pi(&self, target: StrTendril, data: StrTendril) -> usize {
                 self.inner.create_pi(target, data)
             }
-            fn append(&self, parent: &usize, child: NodeOrText<usize>) { self.inner.append(parent, child) }
+            fn append(&self, parent: &usize, child: NodeOrText<usize>) {
+                self.inner.append(parent, child)
+            }
             fn append_based_on_parent_node(&self, e: &usize, p: &usize, c: NodeOrText<usize>) {
                 self.inner.append_based_on_parent_node(e, p, c)
             }
-            fn append_doctype_to_document(&self, name: StrTendril, pid: StrTendril, sid: StrTendril) {
+            fn append_doctype_to_document(
+                &self,
+                name: StrTendril,
+                pid: StrTendril,
+                sid: StrTendril,
+            ) {
                 self.inner.append_doctype_to_document(name, pid, sid)
             }
-            fn get_template_contents(&self, t: &usize) -> usize { self.inner.get_template_contents(t) }
-            fn same_node(&self, x: &usize, y: &usize) -> bool { self.inner.same_node(x, y) }
-            fn set_quirks_mode(&self, mode: QuirksMode) { self.inner.set_quirks_mode(mode) }
+            fn get_template_contents(&self, t: &usize) -> usize {
+                self.inner.get_template_contents(t)
+            }
+            fn same_node(&self, x: &usize, y: &usize) -> bool {
+                self.inner.same_node(x, y)
+            }
+            fn set_quirks_mode(&self, mode: QuirksMode) {
+                self.inner.set_quirks_mode(mode)
+            }
             fn append_before_sibling(&self, s: &usize, n: NodeOrText<usize>) {
                 self.inner.append_before_sibling(s, n)
             }
             fn add_attrs_if_missing(&self, t: &usize, a: Vec<Attribute>) {
                 self.inner.add_attrs_if_missing(t, a)
             }
-            fn remove_from_parent(&self, t: &usize) { self.inner.remove_from_parent(t) }
-            fn reparent_children(&self, n: &usize, p: &usize) { self.inner.reparent_children(n, p) }
+            fn remove_from_parent(&self, t: &usize) {
+                self.inner.remove_from_parent(t)
+            }
+            fn reparent_children(&self, n: &usize, p: &usize) {
+                self.inner.reparent_children(n, p)
+            }
         }
 
         let html = b"<html><body><p>Hi</p></body></html>";
@@ -228,7 +264,10 @@ mod tests {
         let text = uncascaded.dom.node(p_id).unwrap();
         let kids: Vec<_> = uncascaded.dom.child_ids(p_id).collect();
         assert_eq!(kids.len(), 1);
-        assert_eq!(uncascaded.dom.node(kids[0]).unwrap().text_content(), Some("Hi"));
+        assert_eq!(
+            uncascaded.dom.node(kids[0]).unwrap().text_content(),
+            Some("Hi")
+        );
         let _ = text;
     }
 
@@ -406,7 +445,8 @@ mod tests {
 
     #[test]
     fn parse_wires_id_class_and_data_attributes() {
-        let html = br#"<html><body><div id="main" class="foo bar baz" data-x="42"></div></body></html>"#;
+        let html =
+            br#"<html><body><div id="main" class="foo bar baz" data-x="42"></div></body></html>"#;
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         let div_id = find_first_by_tag(&uncascaded.dom, "div").expect("div exists");
@@ -498,7 +538,10 @@ mod tests {
         let idx = sink.create_element(name, attrs, ElementFlags::default());
         // Document の Handle は root。attach しないと finish 前に見つからないため
         // append 経由で root child にする。
-        sink.append(&sink.get_document(), html5ever::interface::NodeOrText::AppendNode(idx));
+        sink.append(
+            &sink.get_document(),
+            html5ever::interface::NodeOrText::AppendNode(idx),
+        );
         let uncascaded = sink.finish();
 
         let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
