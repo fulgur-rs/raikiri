@@ -24,6 +24,9 @@ pub use ruletree::{build_rule_tree, RuleTree};
 pub mod computed;
 pub use computed::ComputedValues;
 
+pub mod cascade;
+pub use cascade::{cascade, CascadeResult};
+
 #[cfg(test)]
 pub(crate) mod test_dom;
 

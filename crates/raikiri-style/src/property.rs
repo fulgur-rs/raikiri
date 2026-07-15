@@ -53,10 +53,7 @@ pub enum PropertyValue {
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
 ///
-/// M1.4 の後続 task (cascade winner selection, Task 7) が使う。それまでの間
-/// caller が無いため dead code — Task 7 で cascade.rs から使われるようになれば
-/// この `#[allow]` は不要になる。
-#[allow(dead_code)]
+/// cascade.rs の winner selection (Task 7) が使う。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PropertyKey {
     Color,
@@ -66,8 +63,7 @@ pub(crate) enum PropertyKey {
 }
 
 impl PropertyValue {
-    /// Task 7 (cascade winner selection) が使う。それまでの間 caller が無い。
-    #[allow(dead_code)]
+    /// cascade.rs の winner selection (Task 7) が使う。
     pub(crate) fn key(&self) -> PropertyKey {
         match self {
             PropertyValue::Color(_) => PropertyKey::Color,
