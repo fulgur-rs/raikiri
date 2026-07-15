@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use time::Date;
+use time::{macros::format_description, Date, Duration};
 
 use crate::expectations::{Baseline, Deprecated, ExpectError, KnownIssues, Quarantine, TrackedWpt};
 
@@ -312,15 +312,66 @@ fn detect_conflicting(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
     issues
 }
 
+/// Scan the `quarantine.txt` entries for parse failures (→
+/// [`Category::Malformed`]) and entries older than 90 days relative to
+/// `now` (→ [`Category::Expired`], warning-only).
+///
+/// The current parser stores `added_date` as a plain `String` (see
+/// [`crate::expectations::QuarantineEntry`]); this function performs the
+/// `time::Date` parse itself. Follow-up bd `raikiri-spike-md0` will migrate
+/// the parser to store `time::Date` directly, at which point this parse
+/// step can be removed but the 90-day threshold check stays.
+fn detect_expired(loaded: &Loaded, dir: &Path, now: Date) -> Vec<LintIssue> {
+    let Some(q) = loaded.quarantine.as_ref() else { return Vec::new() };
+    let path = dir.join("quarantine.txt").display().to_string();
+    let fmt = format_description!("[year]-[month]-[day]");
+    let mut issues = Vec::new();
+    for (idx, entry) in q.entries.iter().enumerate() {
+        // Line number: entries appear in file order, but comments/blank
+        // lines shift the parser's index. Recompute by re-scanning the
+        // raw content for the idx-th data line.
+        let line_no = loaded
+            .quarantine_raw
+            .as_deref()
+            .and_then(|raw| data_lines(raw).nth(idx).map(|(n, _)| n));
+        match Date::parse(&entry.added_date, &fmt) {
+            Err(e) => issues.push(LintIssue {
+                category: Category::Malformed,
+                file: path.clone(),
+                line_no,
+                message: format!(
+                    "added_date {:?} is not YYYY-MM-DD ({e})",
+                    entry.added_date
+                ),
+            }),
+            Ok(added) => {
+                if now - added > Duration::days(90) {
+                    issues.push(LintIssue {
+                        category: Category::Expired,
+                        file: path.clone(),
+                        line_no,
+                        message: format!(
+                            "quarantine entry added on {} is older than 90 days (test_id={:?})",
+                            entry.added_date, entry.test_id
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    issues
+}
+
 /// Scan an `expectations/` directory and return a [`LintReport`].
 ///
 /// `now` is injected (rather than sourced from the system clock) so
 /// [`Category::Expired`] detection is deterministic in tests.
-pub fn run(dir: &Path, _now: Date) -> LintReport {
+pub fn run(dir: &Path, now: Date) -> LintReport {
     let loaded = load_all(dir);
     let mut issues = loaded.issues.clone();
     issues.extend(detect_duplicates(&loaded, dir));
     issues.extend(detect_conflicting(&loaded, dir));
+    issues.extend(detect_expired(&loaded, dir, now));
     LintReport { issues }
 }
 
@@ -532,5 +583,71 @@ mod tests {
         let now = time::macros::date!(2026 - 07 - 16);
         let report = run(dir.path(), now);
         assert!(!report.issues.iter().any(|i| i.category == Category::Conflicting));
+    }
+
+    #[test]
+    fn expired_quarantine_older_than_90_days_becomes_warning() {
+        let dir = header_only_dir();
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2026-01-01\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16); // 196 days later
+        let report = run(dir.path(), now);
+        let expired: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Expired).collect();
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].line_no, Some(1));
+        assert!(expired[0].message.contains("2026-01-01"));
+        assert!(expired[0].message.contains("90 days"));
+        // Expired-only reports do NOT block CI.
+        assert!(!report.has_failures(), "unexpected failure with only Expired: {:?}", report.issues);
+    }
+
+    #[test]
+    fn quarantine_within_90_days_is_not_expired() {
+        let dir = header_only_dir();
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2026-06-01\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16); // 45 days later
+        let report = run(dir.path(), now);
+        assert!(!report.issues.iter().any(|i| i.category == Category::Expired));
+    }
+
+    #[test]
+    fn expired_boundary_exactly_90_days_is_not_expired() {
+        let dir = header_only_dir();
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2026-04-17\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16); // exactly 90 days
+        let report = run(dir.path(), now);
+        assert!(!report.issues.iter().any(|i| i.category == Category::Expired));
+    }
+
+    #[test]
+    fn malformed_added_date_becomes_malformed_lint_issue() {
+        let dir = header_only_dir();
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | linux | x86_64 | vello_cpu | low | r | i | not-a-date\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        let malformed: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Malformed)
+            .collect();
+        assert_eq!(malformed.len(), 1);
+        assert_eq!(malformed[0].line_no, Some(1));
+        assert!(malformed[0].message.contains("added_date"));
+        assert!(malformed[0].message.contains("not-a-date"));
     }
 }
