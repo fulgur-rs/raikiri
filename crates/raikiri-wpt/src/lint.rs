@@ -10,6 +10,7 @@
 //! Consumed by the `validate-expectations` bin. Malformed / Duplicate /
 //! Conflicting cause CI to fail; Expired is warning-only.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use time::Date;
@@ -164,13 +165,118 @@ fn load_all(dir: &Path) -> Loaded {
     out
 }
 
+/// Split `content` into 1-based `(line_no, line)` pairs, skipping blank
+/// lines and `#`-comment lines. Shared by [`detect_dup_by_key`] and (per
+/// Task 5) other line-level re-scans.
+fn data_lines(content: &str) -> impl Iterator<Item = (usize, &str)> {
+    content
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i + 1, l.trim()))
+        .filter(|(_, l)| !l.is_empty() && !l.starts_with('#'))
+}
+
+/// Generic line-level duplicate scan: extracts a key per data line via
+/// `key_of`, and reports a [`Category::Duplicate`] issue for every line
+/// whose key was already seen, referencing the first line it appeared on.
+fn detect_dup_by_key<F, K>(
+    raw: &str,
+    file_display: &str,
+    key_of: F,
+    message_of: impl Fn(&K, usize) -> String,
+) -> Vec<LintIssue>
+where
+    F: Fn(&str) -> Option<K>,
+    K: std::hash::Hash + Eq,
+{
+    let mut seen: HashMap<K, usize> = HashMap::new();
+    let mut issues = Vec::new();
+    for (line_no, line) in data_lines(raw) {
+        let Some(key) = key_of(line) else { continue };
+        if let Some(&first) = seen.get(&key) {
+            issues.push(LintIssue {
+                category: Category::Duplicate,
+                file: file_display.to_owned(),
+                line_no: Some(line_no),
+                message: message_of(&key, first),
+            });
+        } else {
+            seen.insert(key, line_no);
+        }
+    }
+    issues
+}
+
+/// Line-level re-scan of the raw baseline / deprecated / quarantine text for
+/// duplicate rows within a single file. Needed because [`Baseline`] and
+/// [`Deprecated`] parse into a `HashSet`, which silently dedupes — this
+/// re-scan operates on the raw text instead so duplicates surface as lint
+/// issues rather than disappearing.
+fn detect_duplicates(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
+    let mut issues = Vec::new();
+
+    if let Some(raw) = loaded.baseline_raw.as_deref() {
+        let path = dir.join("raikiri-baseline.txt").display().to_string();
+        issues.extend(detect_dup_by_key(
+            raw,
+            &path,
+            |l| Some(l.to_owned()),
+            |k, first| format!("test_id {k:?} already appeared on line {first}"),
+        ));
+    }
+
+    if let Some(raw) = loaded.deprecated_raw.as_deref() {
+        let path = dir.join("deprecated.txt").display().to_string();
+        issues.extend(detect_dup_by_key(
+            raw,
+            &path,
+            |l| Some(l.to_owned()),
+            |k, first| format!("test_id {k:?} already appeared on line {first}"),
+        ));
+    }
+
+    if let Some(raw) = loaded.quarantine_raw.as_deref() {
+        let path = dir.join("quarantine.txt").display().to_string();
+        // Key = first 5 columns (test_id, platform, arch, renderer, tolerance).
+        // Silently ignore lines that don't split into >= 5 columns; malformed
+        // lines are reported by the parser via detect_malformed.
+        issues.extend(detect_dup_by_key(
+            raw,
+            &path,
+            |l| {
+                let cols: Vec<&str> = l.split('|').map(str::trim).collect();
+                if cols.len() < 5 {
+                    return None;
+                }
+                Some((
+                    cols[0].to_owned(),
+                    cols[1].to_owned(),
+                    cols[2].to_owned(),
+                    cols[3].to_owned(),
+                    cols[4].to_owned(),
+                ))
+            },
+            |k, first| {
+                format!(
+                    "(test_id={:?}, platform={:?}, arch={:?}, renderer={:?}, tolerance={:?}) already appeared on line {}",
+                    k.0, k.1, k.2, k.3, k.4, first
+                )
+            },
+        ));
+    }
+
+    issues
+}
+
 /// Scan an `expectations/` directory and return a [`LintReport`].
 ///
 /// `now` is injected (rather than sourced from the system clock) so
 /// [`Category::Expired`] detection is deterministic in tests.
 pub fn run(dir: &Path, _now: Date) -> LintReport {
     let loaded = load_all(dir);
-    LintReport { issues: loaded.issues }
+    let mut issues = loaded.issues.clone();
+    issues.extend(detect_duplicates(&loaded, dir));
+    LintReport { issues }
 }
 
 #[cfg(test)]
@@ -260,6 +366,72 @@ mod tests {
                 .filter(|i| i.category == Category::Malformed)
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn duplicate_baseline_test_id_becomes_lint_issue() {
+        let dir = header_only_dir();
+        write(
+            dir.path(),
+            "raikiri-baseline.txt",
+            "css/foo/bar-001\ncss/foo/bar-001\ncss/foo/baz-002\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        assert!(report.has_failures());
+        let dup: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Duplicate).collect();
+        assert_eq!(dup.len(), 1);
+        assert!(dup[0].file.ends_with("raikiri-baseline.txt"));
+        assert_eq!(dup[0].line_no, Some(2));
+        assert!(dup[0].message.contains("css/foo/bar-001"), "got: {}", dup[0].message);
+        assert!(dup[0].message.contains("line 1"), "got: {}", dup[0].message);
+    }
+
+    #[test]
+    fn duplicate_deprecated_test_id_becomes_lint_issue() {
+        let dir = header_only_dir();
+        write(dir.path(), "deprecated.txt", "css/x\ncss/y\ncss/x\n");
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        let dup: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Duplicate).collect();
+        assert_eq!(dup.len(), 1);
+        assert_eq!(dup[0].line_no, Some(3));
+    }
+
+    #[test]
+    fn duplicate_quarantine_tuple_becomes_lint_issue() {
+        let dir = header_only_dir();
+        // Same (test_id, platform, arch, renderer, tolerance) tuple twice.
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | linux | x86_64 | vello_cpu | low | r1 | i1 | 2026-08-01\n\
+             css/foo | linux | x86_64 | vello_cpu | low | r2 | i2 | 2026-08-02\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        let dup: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Duplicate).collect();
+        assert_eq!(dup.len(), 1);
+        assert_eq!(dup[0].line_no, Some(2));
+        assert!(dup[0].message.contains("line 1"));
+    }
+
+    #[test]
+    fn duplicate_quarantine_different_platform_is_not_duplicate() {
+        let dir = header_only_dir();
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | linux | x86_64 | vello_cpu | low | r1 | i1 | 2026-08-01\n\
+             css/foo | macos | x86_64 | vello_cpu | low | r2 | i2 | 2026-08-02\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        assert!(
+            !report.issues.iter().any(|i| i.category == Category::Duplicate),
+            "unexpected: {:?}",
+            report.issues
         );
     }
 }
