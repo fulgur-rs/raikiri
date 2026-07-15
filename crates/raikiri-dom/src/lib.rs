@@ -212,6 +212,65 @@ mod tests {
     }
 
     #[test]
+    fn empty_display_none_leaf_produces_hidden_layout() {
+        // Case 1: empty (leaf) element with display:none — this is the case
+        // Finding #1 caught (is_leaf was checked before display, so an empty
+        // display:none leaf took the leaf-layout path instead of
+        // LayoutOutput::HIDDEN).
+        // A fixed size is set deliberately: if the buggy `is_leaf`-before-`display`
+        // check regresses, the leaf-layout path would honor this explicit size
+        // and produce a non-zero layout instead of LayoutOutput::HIDDEN's zero size.
+        let mut doc = Document::new();
+        let hidden_style = Style {
+            display: Display::None,
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::length(50.0),
+            },
+            ..Default::default()
+        };
+        let hidden = doc.append_element(Some(0), "hidden", hidden_style);
+        compute_root_layout(
+            &mut doc,
+            taffy::NodeId::from(hidden),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        );
+        let layout = doc.nodes[hidden].unrounded_layout;
+        assert_eq!(
+            layout.size.width, 0.0,
+            "display:none leaf should produce zero-size layout"
+        );
+        assert_eq!(layout.size.height, 0.0);
+
+        // Case 2: non-empty (container) element with display:none — should
+        // also produce HIDDEN, confirming the container path is unaffected.
+        let mut doc2 = Document::new();
+        let hidden_parent_style = Style {
+            display: Display::None,
+            ..Default::default()
+        };
+        let hidden_parent = doc2.append_element(Some(0), "hp", hidden_parent_style);
+        doc2.append_element(Some(hidden_parent), "child", Style::default());
+        compute_root_layout(
+            &mut doc2,
+            taffy::NodeId::from(hidden_parent),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        );
+        let layout2 = doc2.nodes[hidden_parent].unrounded_layout;
+        assert_eq!(
+            layout2.size.width, 0.0,
+            "display:none container should produce zero-size layout"
+        );
+        assert_eq!(layout2.size.height, 0.0);
+    }
+
+    #[test]
     fn reparent_children_moves_all_children_to_new_parent() {
         let mut doc = Document::new();
         let src = doc.append_element(Some(0), "src", Style::default());

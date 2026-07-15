@@ -233,6 +233,56 @@ mod tests {
     }
 
     #[test]
+    fn parse_strips_comment_nodes_from_dom_tree() {
+        use raikiri_traits::{Dom, Element, Node};
+
+        let html = b"<html><body><!-- a comment --><p>hi</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+
+        // walk the tree and verify no #comment tags remain
+        fn scan(doc: &raikiri_dom::Document, id: raikiri_traits::NodeId) -> bool {
+            if let Some(node) = doc.node(id)
+                && let Some(el) = node.as_element()
+                && matches!(el.tag_name(), "#comment" | "#pi")
+            {
+                return true;
+            }
+            for c in doc.child_ids(id) {
+                if scan(doc, c) {
+                    return true;
+                }
+            }
+            false
+        }
+        assert!(
+            !scan(&uncascaded.dom, uncascaded.dom.root_id()),
+            "expected no #comment stub elements in the DOM tree after parse"
+        );
+    }
+
+    #[test]
+    fn parse_captures_quirks_mode_for_missing_doctype() {
+        use raikiri_traits::QuirksMode;
+
+        // Missing <!DOCTYPE html> triggers full quirks mode per HTML5 spec.
+        let html = b"<html><body>x</body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        assert_eq!(uncascaded.quirks_mode, QuirksMode::Quirks);
+    }
+
+    #[test]
+    fn parse_captures_no_quirks_for_standards_doctype() {
+        use raikiri_traits::QuirksMode;
+
+        let html = b"<!DOCTYPE html><html><body>x</body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        assert_eq!(uncascaded.quirks_mode, QuirksMode::NoQuirks);
+    }
+
+    #[test]
     fn parse_survives_table_foster_parenting() {
         // <table> 直下 text の foster parenting は html5ever が
         // append_before_sibling(AppendText(...)) を trigger する典型 case。

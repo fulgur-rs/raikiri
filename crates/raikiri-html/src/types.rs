@@ -22,6 +22,10 @@ pub struct UncascadedDocument {
     /// M1.5+ orchestrator が `Document` を経由し
     /// `RenderSummary.warnings` に merge する。
     pub warnings: Vec<RenderWarning>,
+    /// HTML5 quirks mode 判定 (html5ever の QuirksMode をミラーした
+    /// raikiri-native enum)。m1.4 cascade が selector 挙動 / 特別ルール
+    /// で参照する予定。
+    pub quirks_mode: raikiri_traits::QuirksMode,
 }
 
 /// Parse に渡す option 群。

@@ -88,13 +88,15 @@ impl TreeSink for RaikiriTreeSink {
     type ElemName<'a> = Ref<'a, QualName>;
 
     fn finish(self) -> UncascadedDocument {
-        let document = self.document.into_inner();
+        let mut document = self.document.into_inner();
         let warnings = self.warnings.into_inner();
         let stylesheet_sources = extract_inline_stylesheets(&document);
+        strip_non_element_stubs(&mut document);
         UncascadedDocument {
             dom: document,
             stylesheet_sources,
             warnings,
+            quirks_mode: convert_quirks(self.quirks_mode.get()),
         }
     }
 
@@ -289,4 +291,43 @@ fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
     let mut out = Vec::new();
     walk(doc, doc.root_id(), &mut out);
     out
+}
+
+/// html5ever が emit した comment / processing-instruction を parent から detach する。
+/// M1 spike では raikiri-dom::Node は Element / Text / Document のみ表現できるため、
+/// `create_comment` / `create_pi` は `#comment` / `#pi` tag の element として保持され
+/// ている。これらを DOM tree から除去することで cascade / selector matching が誤って
+/// 拾わないようにする。arena からは削除しない (index の再利用が起こらないため無害)。
+/// 恒久対応は raikiri-spike-blg で追跡 (NodeKind に Comment / ProcessingInstruction 追加)。
+fn strip_non_element_stubs(doc: &mut Document) {
+    use raikiri_traits::{Dom, Element, Node};
+
+    // まず対象 node を全て収集 (mutation との borrow 衝突を避けるため 2-pass)。
+    let mut to_detach = Vec::new();
+    fn collect(doc: &Document, id: raikiri_traits::NodeId, out: &mut Vec<usize>) {
+        if let Some(node) = doc.node(id)
+            && let Some(el) = node.as_element()
+            && matches!(el.tag_name(), "#comment" | "#pi")
+        {
+            out.push(id.0 as usize);
+        }
+        for c in doc.child_ids(id) {
+            collect(doc, c, out);
+        }
+    }
+    collect(doc, doc.root_id(), &mut to_detach);
+
+    for idx in to_detach {
+        doc.detach_from_parent(idx);
+    }
+}
+
+/// html5ever `QuirksMode` を raikiri-native `QuirksMode` へ変換する
+/// (cleanroom boundary: html5ever 型を raikiri-traits に持ち込まない)。
+fn convert_quirks(mode: QuirksMode) -> raikiri_traits::QuirksMode {
+    match mode {
+        QuirksMode::Quirks => raikiri_traits::QuirksMode::Quirks,
+        QuirksMode::LimitedQuirks => raikiri_traits::QuirksMode::LimitedQuirks,
+        QuirksMode::NoQuirks => raikiri_traits::QuirksMode::NoQuirks,
+    }
 }

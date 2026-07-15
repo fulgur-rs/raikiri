@@ -85,8 +85,11 @@ impl LayoutPartialTree for Document {
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
         compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             let idx = usize::from(node_id);
-            let is_leaf = tree.nodes[idx].children.is_empty();
             let display = tree.nodes[idx].style.display;
+            if display == Display::None {
+                return LayoutOutput::HIDDEN;
+            }
+            let is_leaf = tree.nodes[idx].children.is_empty();
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
                 compute_leaf_layout(
@@ -100,7 +103,7 @@ impl LayoutPartialTree for Document {
                     Display::Block => compute_block_layout(tree, node_id, inputs, None),
                     Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
                     Display::Grid => compute_grid_layout(tree, node_id, inputs),
-                    Display::None => LayoutOutput::HIDDEN,
+                    Display::None => unreachable!("Display::None handled above"),
                 }
             }
         })
