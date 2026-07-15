@@ -2,7 +2,7 @@
 
 use std::io::Read;
 
-use html5ever::driver::{parse_document, ParseOpts};
+use html5ever::driver::{ParseOpts, parse_document};
 use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeSink;
 use raikiri_traits::ParseError;

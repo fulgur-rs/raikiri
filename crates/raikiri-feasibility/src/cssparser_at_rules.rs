@@ -15,8 +15,8 @@
 //! the goal is only to prove the trait surface supports custom dispatch.
 
 use cssparser::{
-    AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, ParserState,
-    QualifiedRuleParser, StyleSheetParser,
+    AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, ParserState, QualifiedRuleParser,
+    StyleSheetParser,
 };
 
 /// The kind of at-rule the spike parser recognises.

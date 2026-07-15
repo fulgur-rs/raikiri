@@ -37,8 +37,7 @@ const _ASSERT_FONT_CONTEXT_SEND_SYNC: () = assert_send_sync::<parley::FontContex
 /// will use a `peniko::Brush`-shaped value, but for the pure send/sync check
 /// any `Send + Sync` brush suffices. `[u8; 4]` (an RGBA color) is a trivially
 /// thread-safe stand-in.
-const _ASSERT_LAYOUT_CONTEXT_SEND_SYNC: () =
-    assert_send_sync::<parley::LayoutContext<[u8; 4]>>();
+const _ASSERT_LAYOUT_CONTEXT_SEND_SYNC: () = assert_send_sync::<parley::LayoutContext<[u8; 4]>>();
 
 /// Static assertion: `parley::LayoutContext<peniko::Brush>: Send + Sync`.
 ///

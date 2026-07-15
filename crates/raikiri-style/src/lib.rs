@@ -23,13 +23,13 @@ pub mod rule;
 pub use rule::{Declaration, StyleRule};
 
 pub mod ruletree;
-pub use ruletree::{build_rule_tree, RuleTree};
+pub use ruletree::{RuleTree, build_rule_tree};
 
 pub mod computed;
 pub use computed::ComputedValues;
 
 pub mod cascade;
-pub use cascade::{cascade, CascadeResult};
+pub use cascade::{CascadeResult, cascade};
 
 #[cfg(test)]
 pub(crate) mod test_dom;
@@ -196,9 +196,11 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
         } else if name.eq_ignore_ascii_case("active") {
             Ok(PseudoClass::Active)
         } else {
-            Err(location.new_custom_error(
-                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
-            ))
+            Err(
+                location.new_custom_error(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(
+                    name,
+                )),
+            )
         }
     }
 }
@@ -208,9 +210,7 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
 /// M0 seed helper — returns a `SelectorList<RaikiriSelectorImpl>` and stringifies
 /// errors for the feasibility spike. M1 will replace the `Result<_, String>` shape
 /// with a proper `raikiri_traits`-defined error type.
-pub fn parse_selector_list(
-    input: &str,
-) -> Result<SelectorList<RaikiriSelectorImpl>, String> {
+pub fn parse_selector_list(input: &str) -> Result<SelectorList<RaikiriSelectorImpl>, String> {
     let mut parser_input = ParserInput::new(input);
     let mut css_parser = CssParser::new(&mut parser_input);
     SelectorList::parse(&RaikiriSelectorParser, &mut css_parser, ParseRelative::No)

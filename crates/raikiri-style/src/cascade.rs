@@ -12,11 +12,11 @@ use cssparser::{Parser, ParserInput};
 use raikiri_traits::{CascadeError, Dom, Element, Node, NodeId, NodeKind};
 use selectors::parser::{Selector, SelectorList};
 
+use crate::RaikiriSelectorImpl;
 use crate::computed::ComputedValues;
 use crate::property::{PropertyKey, PropertyValue};
 use crate::rule::parse_declaration_block;
 use crate::ruletree::RuleTree;
-use crate::RaikiriSelectorImpl;
 
 /// Cascade 結果。
 ///
@@ -140,10 +140,7 @@ fn collect_cascaded<D: Dom>(
 /// Returns: matching した selector の最大 specificity。1 つも match しなければ None。
 /// - `Component::LocalName(name)` — name eq_ignore_ascii_case で判定
 /// - `Component::ExplicitUniversalType` — 常に match
-fn match_by_tag(
-    list: &SelectorList<RaikiriSelectorImpl>,
-    tag_name: &str,
-) -> Option<Specificity> {
+fn match_by_tag(list: &SelectorList<RaikiriSelectorImpl>, tag_name: &str) -> Option<Specificity> {
     use selectors::parser::Component;
 
     let mut best: Option<Specificity> = None;
@@ -294,8 +291,18 @@ mod tests {
         result.computed[e].clone()
     }
 
-    const RED: CssColor = CssColor { r: 255, g: 0, b: 0, a: 255 };
-    const BLUE: CssColor = CssColor { r: 0, g: 0, b: 255, a: 255 };
+    const RED: CssColor = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    const BLUE: CssColor = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
 
     #[test]
     fn empty_dom_root_has_initial() {
@@ -446,7 +453,9 @@ mod tests {
                 result.computed[deepest].color
             })
             .expect("spawn thread");
-        let color = handle.join().expect("thread must not stack-overflow on deep DOM");
+        let color = handle
+            .join()
+            .expect("thread must not stack-overflow on deep DOM");
         assert_eq!(color, RED);
     }
 }

@@ -7,7 +7,7 @@ use selectors::parser::{ParseRelative, SelectorList};
 
 use raikiri_traits::{Dom, Element, Node, NodeKind};
 
-use crate::rule::{parse_declaration_block, Declaration, StyleRule};
+use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::{RaikiriSelectorImpl, RaikiriSelectorParser};
 
 /// Unified rule tree。cascade + GCPM (M5+) が消費する index。
@@ -25,7 +25,9 @@ pub struct RuleTree {
 impl RuleTree {
     /// 空の RuleTree (0 rule)。
     pub fn empty() -> Self {
-        Self { style_rules: Vec::new() }
+        Self {
+            style_rules: Vec::new(),
+        }
     }
 }
 
@@ -53,7 +55,11 @@ pub fn build_rule_tree<D: Dom>(dom: &D) -> RuleTree {
             if !is_type_or_universal_only(&selectors) {
                 continue; // class/id/attr/combinator selector は m1.4 では drop
             }
-            rules.push(StyleRule { selectors, declarations, source_order });
+            rules.push(StyleRule {
+                selectors,
+                declarations,
+                source_order,
+            });
             source_order = source_order.wrapping_add(1);
         }
     });

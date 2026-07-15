@@ -271,7 +271,10 @@ mod tests {
         let pe: ParseError = io_err.into();
         use std::error::Error as _;
         let src = pe.source();
-        assert!(src.is_some(), "ParseError::Io should expose inner io::Error via source()");
+        assert!(
+            src.is_some(),
+            "ParseError::Io should expose inner io::Error via source()"
+        );
     }
 
     #[test]
@@ -296,7 +299,10 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof");
         let re: RenderError = RenderError::Parse(ParseError::Io(io_err));
         let src = re.source();
-        assert!(src.is_some(), "RenderError::Parse should expose inner ParseError via source()");
+        assert!(
+            src.is_some(),
+            "RenderError::Parse should expose inner ParseError via source()"
+        );
     }
 
     #[test]

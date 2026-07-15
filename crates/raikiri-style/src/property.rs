@@ -22,7 +22,12 @@ pub struct CssColor {
 
 impl CssColor {
     /// Opaque black — `<color>` initial value に相当。
-    pub const BLACK: Self = Self { r: 0, g: 0, b: 0, a: 255 };
+    pub const BLACK: Self = Self {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
 }
 
 /// CSS length。M1.4 では pixel (`<length>` = px リテラル) のみ。
@@ -123,9 +128,7 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
 /// `rgb( <integer> , <integer> , <integer> [, <number>]? )` の中身 (関数呼び出しの
 /// 括弧内) を parse する。`parse_nested_block` の caller 側で `rgb(` / `rgba(` の
 /// function token は既に consume 済み。
-fn parse_rgb_function<'i>(
-    input: &mut Parser<'i, '_>,
-) -> Result<CssColor, ParseError<'i, ()>> {
+fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<CssColor, ParseError<'i, ()>> {
     let r = clamp_channel(input.expect_integer()?);
     input.expect_comma()?;
     let g = clamp_channel(input.expect_integer()?);
@@ -198,8 +201,7 @@ fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<u16> {
     // integer literal (100..=900) のみ、keyword は drop。
     match input.next().ok()? {
         Token::Number {
-            int_value: Some(v),
-            ..
+            int_value: Some(v), ..
         } if *v >= 100 && *v <= 900 => Some(*v as u16),
         _ => None,
     }
@@ -220,7 +222,12 @@ mod tests {
     fn color_parse_hex() {
         assert_eq!(
             parse("#ff0000", "color"),
-            Some(PropertyValue::Color(CssColor { r: 255, g: 0, b: 0, a: 255 }))
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }))
         );
     }
 
@@ -228,7 +235,12 @@ mod tests {
     fn color_parse_named() {
         assert_eq!(
             parse("red", "color"),
-            Some(PropertyValue::Color(CssColor { r: 255, g: 0, b: 0, a: 255 }))
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }))
         );
     }
 
@@ -236,7 +248,12 @@ mod tests {
     fn color_parse_rgb() {
         assert_eq!(
             parse("rgb(255, 0, 0)", "color"),
-            Some(PropertyValue::Color(CssColor { r: 255, g: 0, b: 0, a: 255 }))
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }))
         );
     }
 
@@ -290,7 +307,9 @@ mod tests {
     fn font_family_unquoted_multi_word_single_family() {
         // CSS4: unquoted multi-word family name = ident sequence joined by space。
         let got = parse("Times New Roman", "font-family");
-        let expected = Some(PropertyValue::FontFamily(vec![Atom::from("Times New Roman")]));
+        let expected = Some(PropertyValue::FontFamily(vec![Atom::from(
+            "Times New Roman",
+        )]));
         assert_eq!(got, expected);
     }
 
