@@ -242,7 +242,10 @@ fn beats(
     // - !important の方が normal に勝つ (spec §6.4.4)
     // - 同 importance なら specificity 高いほうが勝つ
     // - 同 spec なら source_order 大 (=後ろ) が勝つ
-    (candidate.0, candidate.1, candidate.2) > (existing.0, existing.1, existing.2)
+    // `>=` を使うのは意図的: 同一 rule (または同一 inline block) 内の重複
+    // property は tuple が完全一致するが、spec §6.4.4 では後方の declaration が
+    // 勝つ。cross-rule の tie は source_order が異なるため `>=` でも安全。
+    (candidate.0, candidate.1, candidate.2) >= (existing.0, existing.1, existing.2)
 }
 
 fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
@@ -312,6 +315,20 @@ mod tests {
     #[test]
     fn source_order_tiebreak_later_wins() {
         let cv = cascade_doc("p { color: red } p { color: blue }", "p", None);
+        assert_eq!(cv.color, BLUE);
+    }
+
+    #[test]
+    fn later_duplicate_in_same_rule_wins() {
+        // 同一 rule 内で同じ property が 2 回 — CSS §6.4.4: 後方の declaration が勝つ。
+        let cv = cascade_doc("p { color: red; color: blue }", "p", None);
+        assert_eq!(cv.color, BLUE);
+    }
+
+    #[test]
+    fn later_duplicate_in_inline_wins() {
+        // inline style 内で同じ property が 2 回 — 同様に後方が勝つ。
+        let cv = cascade_doc("", "p", Some("color: red; color: blue"));
         assert_eq!(cv.color, BLUE);
     }
 

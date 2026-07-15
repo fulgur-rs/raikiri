@@ -143,21 +143,36 @@ fn clamp_channel(value: i32) -> u8 {
     value.clamp(0, 255) as u8
 }
 
+/// `font-family: <family-name>#` を parse する。
+///
+/// comma-separated な family-name の list。各 family-name は quoted string
+/// (`"Times New Roman"`) か、unquoted identifier の連続 (`Times New Roman` =
+/// 3 ident が空白区切りで 1 family、CSS4 で有効) のいずれか。
+///
+/// 末尾で comma が続かなければ loop を止め、残り input (`!important` 等) は
+/// 手を付けずに downstream (caller の `parse_important` / `expect_exhausted`)
+/// に委ねる — `!` を garbage として拒否しないための Finding 3 対応。
 fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
-    // comma-separated identifier or string の list。
     let mut families = Vec::new();
     loop {
-        let name = match input.next().ok()? {
-            Token::Ident(s) => Atom::from(s.as_ref()),
-            Token::QuotedString(s) => Atom::from(s.as_ref()),
-            _ => return None,
+        // Try quoted string first (e.g. "Times New Roman")
+        let family = if let Ok(s) = input.try_parse(|i| i.expect_string().cloned()) {
+            Atom::from(s.as_ref())
+        } else if let Ok(first) = input.try_parse(|i| i.expect_ident().cloned()) {
+            // Unquoted ident sequence: `Times New Roman` = 3 idents joined by space
+            let mut buf = first.as_ref().to_string();
+            while let Ok(next) = input.try_parse(|i| i.expect_ident().cloned()) {
+                buf.push(' ');
+                buf.push_str(next.as_ref());
+            }
+            Atom::from(buf.as_str())
+        } else {
+            return None;
         };
-        families.push(name);
-        // 次が comma なら continue、EOF なら break。他 token は invalid。
-        match input.next() {
-            Ok(Token::Comma) => continue,
-            Err(_) => break, // EOF
-            _ => return None,
+        families.push(family);
+        // Consume comma or stop (leaves remaining input alone)
+        if input.try_parse(|i| i.expect_comma()).is_err() {
+            break;
         }
     }
     if families.is_empty() {
@@ -170,7 +185,9 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
     // <length> = px リテラルのみ (m1.4 scope)。
     match input.next().ok()? {
-        Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("px") => {
+        Token::Dimension { value, unit, .. }
+            if unit.eq_ignore_ascii_case("px") && *value >= 0.0 =>
+        {
             Some(Length::Px(*value))
         }
         _ => None,
@@ -244,6 +261,21 @@ mod tests {
     }
 
     #[test]
+    fn font_size_rejects_negative() {
+        // spec: font-size は non-negative <length> のみ。
+        assert_eq!(parse("-10px", "font-size"), None);
+        assert_eq!(parse("-0.5px", "font-size"), None);
+    }
+
+    #[test]
+    fn font_size_accepts_zero() {
+        assert_eq!(
+            parse("0px", "font-size"),
+            Some(PropertyValue::FontSize(Length::Px(0.0)))
+        );
+    }
+
+    #[test]
     fn font_family_parse_comma_list() {
         let got = parse(r#"Arial, "Times New Roman", serif"#, "font-family");
         let expected = Some(PropertyValue::FontFamily(vec![
@@ -251,6 +283,14 @@ mod tests {
             Atom::from("Times New Roman"),
             Atom::from("serif"),
         ]));
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn font_family_unquoted_multi_word_single_family() {
+        // CSS4: unquoted multi-word family name = ident sequence joined by space。
+        let got = parse("Times New Roman", "font-family");
+        let expected = Some(PropertyValue::FontFamily(vec![Atom::from("Times New Roman")]));
         assert_eq!(got, expected);
     }
 

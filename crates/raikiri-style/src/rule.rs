@@ -56,6 +56,14 @@ impl<'i> DeclarationParser<'i> for DeclParser {
         let value =
             parse_value(name.as_ref(), input).ok_or_else(|| input.new_custom_error(()))?;
         let important = input.try_parse(cssparser::parse_important).is_ok();
+        // Exhaustive consumption: trailing garbage after the value (and optional
+        // `!important`) must reject the whole declaration rather than silently
+        // accepting a prefix (e.g. `color: red garbage` / `font-size: 16px 20px`).
+        input
+            .expect_exhausted()
+            .map_err(|e: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> {
+                e.into()
+            })?;
         Ok(Declaration { value, important })
     }
 }
@@ -139,5 +147,41 @@ mod tests {
     fn empty_block_returns_empty() {
         assert!(parse_block("").is_empty());
         assert!(parse_block("   ").is_empty());
+    }
+
+    #[test]
+    fn rejects_trailing_garbage_after_value() {
+        // "red garbage" — value 後に余計な token があるので declaration ごと drop。
+        let decls = parse_block("color: red garbage;");
+        assert!(decls.is_empty());
+    }
+
+    #[test]
+    fn rejects_extra_length_after_font_size() {
+        // "16px 20px" — 2 つ目の length は exhaust しない garbage 扱いで drop。
+        let decls = parse_block("font-size: 16px 20px;");
+        assert!(decls.is_empty());
+    }
+
+    #[test]
+    fn still_accepts_important_after_value() {
+        // regression guard: !important は exhaustive-consumption check の後でも
+        // 引き続き受理されなければならない。
+        let decls = parse_block("color: red !important;");
+        assert_eq!(decls.len(), 1);
+        assert!(decls[0].important);
+    }
+
+    #[test]
+    fn font_family_leaves_important_alone() {
+        // parse_font_family の loop が `!` (from `!important`) を garbage として
+        // 拒否してしまうと、declaration ごと drop される (Finding 3)。
+        let decls = parse_block("font-family: Arial !important;");
+        assert_eq!(decls.len(), 1);
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::FontFamily(vec![crate::Atom::from("Arial")])
+        );
+        assert!(decls[0].important);
     }
 }
