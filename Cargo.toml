@@ -64,6 +64,9 @@ rustc-hash = "2.1"
 bytes      = "1"
 url        = "2.5"
 
+# ── Date/time (validate-expectations lint, raikiri-spike-yps) ──────────
+time = { version = "0.3", default-features = false, features = ["std", "parsing", "macros"] }
+
 # ── Dev-only: VRT rasterizer / snapshot / oracle ───────────────────────
 anyrender_vello_cpu = { version = "0.14", features = ["multithreading"] }
 tiny-skia           = "0.11"
@@ -72,6 +75,10 @@ blitz-traits        = "=0.3.0-beta.1"
 blitz-html          = "=0.3.0-beta.1"
 blitz-dom           = "=0.3.0-beta.1"
 blitz-paint         = "=0.3.0-beta.1"
+
+# ── Dev-only: lint fixtures + bin tests (raikiri-spike-yps) ────────────
+tempfile   = "3"
+assert_cmd = "2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

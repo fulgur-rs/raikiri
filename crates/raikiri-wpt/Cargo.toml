@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 raikiri   = { workspace = true }
 blitz-dom = { workspace = true }
+time      = { workspace = true }
 
 [dev-dependencies]
 anyrender_vello_cpu = { workspace = true }
@@ -18,6 +19,8 @@ insta               = { workspace = true }
 blitz-traits        = { workspace = true }
 blitz-html          = { workspace = true }
 blitz-paint         = { workspace = true }
+tempfile            = { workspace = true }
+assert_cmd          = { workspace = true }
 
 [[bin]]
 name = "validate-expectations"

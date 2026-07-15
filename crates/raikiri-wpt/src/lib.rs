@@ -5,6 +5,7 @@
 //! (see design spec §12.9 / §12.10).
 
 pub mod expectations;
+pub mod lint;
 pub mod oracle;
 pub mod reftest;
 pub mod runner;
