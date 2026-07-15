@@ -126,7 +126,9 @@ impl Category {
 /// which case a [`Category::Malformed`] issue was recorded in `issues`).
 #[derive(Default)]
 struct Loaded {
+    // Kept for parse-error surfacing and future cross-file checks; not read yet.
     tracked: Option<TrackedWpt>,
+    // Kept for parse-error surfacing and future cross-file checks; not read yet.
     known_issues: Option<KnownIssues>,
     baseline: Option<Baseline>,
     quarantine: Option<Quarantine>,
@@ -706,6 +708,49 @@ mod tests {
                 .issues
                 .iter()
                 .any(|i| i.category == Category::Conflicting)
+        );
+    }
+
+    #[test]
+    fn conflict_test_id_in_all_three_files_emits_three_pairwise_issues() {
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/x/y-001\n");
+        write(dir.path(), "deprecated.txt", "css/x/y-001\n");
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/x/y-001 | linux | x86_64 | vello_cpu | low | r | i | 2026-08-01\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
+        assert_eq!(
+            conflicts.len(),
+            3,
+            "expected 3 pairwise conflicts, got {:?}",
+            conflicts
+        );
+        // Each of the 3 pairs must be present. Check by (file, other-in-message) shape.
+        assert!(
+            conflicts.iter().any(|i| i.file.ends_with("deprecated.txt")
+                && i.message.contains("raikiri-baseline.txt")),
+            "missing deprecated∩baseline pair: {conflicts:?}"
+        );
+        assert!(
+            conflicts.iter().any(|i| i.file.ends_with("deprecated.txt")
+                && i.message.contains("quarantine.txt")),
+            "missing deprecated∩quarantine pair: {conflicts:?}"
+        );
+        assert!(
+            conflicts
+                .iter()
+                .any(|i| i.file.ends_with("raikiri-baseline.txt")
+                    && i.message.contains("quarantine.txt")),
+            "missing baseline∩quarantine pair: {conflicts:?}"
         );
     }
 
