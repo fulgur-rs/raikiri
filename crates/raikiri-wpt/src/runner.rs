@@ -44,7 +44,7 @@ pub enum TestOutcome {
     Fail(String),
     /// The test was skipped, with a reason.
     Skip(String),
-    /// The test is quarantined (known-flaky or known-broken).
+    /// The test is quarantined (known-flaky, treated as informational per spec §12.10).
     Quarantined,
 }
 
