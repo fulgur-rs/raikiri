@@ -107,3 +107,11 @@ impl<'a> Default for ResolverRequest<'a> {
 pub enum ResolverError {
     // M4 で populate。
 }
+
+impl std::fmt::Display for ResolverError {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {}
+    }
+}
+
+impl std::error::Error for ResolverError {}

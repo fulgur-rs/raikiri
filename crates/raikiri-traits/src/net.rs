@@ -156,3 +156,25 @@ pub enum NetworkError {
     /// その他。
     Other(String),
 }
+
+impl std::fmt::Display for NetworkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Aborted => write!(f, "Network fetch aborted"),
+            Self::PolicyViolation(v) => write!(f, "Network fetch violated policy: {v}"),
+            Self::Io(e) => write!(f, "Network I/O error: {e}"),
+            Self::Http(status) => write!(f, "Network HTTP status error: {status}"),
+            Self::Other(msg) => write!(f, "Network error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for NetworkError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::PolicyViolation(v) => Some(v),
+            Self::Io(e) => Some(e),
+            Self::Aborted | Self::Http(_) | Self::Other(_) => None,
+        }
+    }
+}

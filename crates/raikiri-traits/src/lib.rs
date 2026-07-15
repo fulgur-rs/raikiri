@@ -316,6 +316,177 @@ mod tests {
         }
     }
 
+    // ── Sub-error trait bounds (0hh) ────────────────────────────
+
+    #[test]
+    fn policy_violation_is_error_and_display() {
+        fn _assert_error<T: std::error::Error>() {}
+        fn _assert_display<T: std::fmt::Display>() {}
+        _assert_error::<PolicyViolation>();
+        _assert_display::<PolicyViolation>();
+    }
+
+    #[test]
+    fn network_error_is_error_and_display() {
+        fn _assert_error<T: std::error::Error>() {}
+        fn _assert_display<T: std::fmt::Display>() {}
+        _assert_error::<NetworkError>();
+        _assert_display::<NetworkError>();
+    }
+
+    #[test]
+    fn network_error_policy_source_chain() {
+        use std::error::Error as _;
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::Image,
+            url: Url::parse("https://example.com/x.png").unwrap(),
+            violation_type: ViolationType::HostNotAllowed,
+            details: String::from("host not in allowlist"),
+        };
+        let ne = NetworkError::PolicyViolation(v);
+        let src = ne.source();
+        assert!(
+            src.is_some(),
+            "NetworkError::PolicyViolation should expose inner PolicyViolation via source()"
+        );
+    }
+
+    #[test]
+    fn network_error_io_source_chain() {
+        use std::error::Error as _;
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let ne = NetworkError::Io(io_err);
+        let src = ne.source();
+        assert!(
+            src.is_some(),
+            "NetworkError::Io should expose inner io::Error via source()"
+        );
+    }
+
+    #[test]
+    fn network_error_io_display_includes_inner_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let ne = NetworkError::Io(io_err);
+        let s = ne.to_string();
+        assert!(
+            s.contains("Network I/O error"),
+            "Display should preserve prefix, got: {s}"
+        );
+        assert!(
+            s.contains("refused"),
+            "Display should include inner io::Error message, got: {s}"
+        );
+    }
+
+    #[test]
+    fn network_error_policy_display_delegates_to_policy_violation() {
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::Image,
+            url: Url::parse("https://example.com/x.png").unwrap(),
+            violation_type: ViolationType::HostNotAllowed,
+            details: String::from("host not in allowlist"),
+        };
+        let ne = NetworkError::PolicyViolation(v);
+        let s = ne.to_string();
+        assert!(
+            s.contains("Network fetch violated policy"),
+            "Display should keep Network prefix, got: {s}"
+        );
+        assert!(
+            s.contains("https://example.com/x.png"),
+            "Display should include PolicyViolation URL via delegation, got: {s}"
+        );
+        assert!(
+            s.contains("host not in allowlist"),
+            "Display should include PolicyViolation details via delegation, got: {s}"
+        );
+    }
+
+    #[test]
+    fn network_error_display_and_source_none_variants() {
+        use std::error::Error as _;
+
+        let aborted = NetworkError::Aborted;
+        assert_eq!(aborted.to_string(), "Network fetch aborted");
+        assert!(aborted.source().is_none(), "Aborted has no inner error");
+
+        let http = NetworkError::Http(503);
+        assert_eq!(http.to_string(), "Network HTTP status error: 503");
+        assert!(http.source().is_none(), "Http has no inner error");
+
+        let other = NetworkError::Other(String::from("dns lookup failed"));
+        assert_eq!(other.to_string(), "Network error: dns lookup failed");
+        assert!(other.source().is_none(), "Other has no inner error");
+    }
+
+    #[test]
+    fn resolver_error_is_error_and_display() {
+        fn _assert_error<T: std::error::Error>() {}
+        fn _assert_display<T: std::fmt::Display>() {}
+        _assert_error::<ResolverError>();
+        _assert_display::<ResolverError>();
+    }
+
+    #[test]
+    fn render_error_network_source_chain() {
+        use std::error::Error as _;
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let re = RenderError::Network(NetworkError::Io(io_err));
+        let src = re.source();
+        assert!(
+            src.is_some(),
+            "RenderError::Network should expose inner NetworkError via source()"
+        );
+    }
+
+    #[test]
+    fn render_error_policy_source_chain() {
+        use std::error::Error as _;
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::ExternalStylesheet,
+            url: Url::parse("https://cdn.example.com/main.css").unwrap(),
+            violation_type: ViolationType::MimeNotAllowed {
+                mime: String::from("text/plain"),
+            },
+            details: String::from("expected text/css"),
+        };
+        let re = RenderError::Policy(v);
+        let src = re.source();
+        assert!(
+            src.is_some(),
+            "RenderError::Policy should expose inner PolicyViolation via source()"
+        );
+    }
+
+    #[test]
+    fn render_error_network_policy_nested_source_chain() {
+        use std::error::Error as _;
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::Image,
+            url: Url::parse("http://tracker.example.com/1x1.gif").unwrap(),
+            violation_type: ViolationType::SchemeNotAllowed,
+            details: String::from("http not allowed in strict mode"),
+        };
+        let re = RenderError::Network(NetworkError::PolicyViolation(v));
+        // depth 1: RenderError → NetworkError
+        let inner = re
+            .source()
+            .expect("RenderError::Network should delegate to NetworkError");
+        // depth 2: NetworkError::PolicyViolation → PolicyViolation
+        let deep = inner
+            .source()
+            .expect("NetworkError::PolicyViolation should delegate to PolicyViolation");
+        // depth 3: PolicyViolation is a leaf (no inner error)
+        assert!(
+            deep.source().is_none(),
+            "PolicyViolation should be the leaf of the chain"
+        );
+    }
+
     // ── RenderStatus::Aborted contract (M1.2、実 semantic は M6c) ─
 
     /// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`

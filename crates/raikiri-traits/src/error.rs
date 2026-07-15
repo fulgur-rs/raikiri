@@ -90,11 +90,11 @@ impl std::error::Error for RenderError {
             Self::Parse(e) => Some(e),
             Self::Cascade(e) => Some(e),
             Self::Layout(e) => Some(e),
+            Self::Resolver(e) => Some(e),
+            Self::Network(e) => Some(e),
+            Self::Policy(v) => Some(v),
             Self::Sink(e) | Self::Io(e) => Some(e),
-            Self::Resolver(_)
-            | Self::Network(_)
-            | Self::Policy(_)
-            | Self::LimitExceeded { .. }
+            Self::LimitExceeded { .. }
             | Self::Configuration(_)
             | Self::TargetDidNotConverge { .. } => None,
         }
