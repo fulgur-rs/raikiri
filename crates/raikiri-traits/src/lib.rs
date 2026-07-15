@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn element_default_inline_style_source_is_none() {
-        use crate::{Element, Node, NodeKind};
+        use crate::Element;
 
         struct BareElement;
         impl<'a> Element<'a> for BareElement {
