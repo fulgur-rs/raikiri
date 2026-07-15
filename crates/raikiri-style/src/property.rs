@@ -4,12 +4,7 @@
 //! 認識できない property name / invalid value は `parse_value` が `None` を返す
 //! (spec 準拠の silent drop、caller である rule.rs で declaration ごと drop)。
 //!
-//! `parse_value` とその内部 helper (`parse_color` 等) は `pub(crate)` / private
-//! で、実際に呼び出す caller (rule.rs の declaration parser) は後続 task で追加
-//! される。それまでの間、非 test build では dead code になるため module 全体に
-//! `#[allow(dead_code)]` を付与している — 後続 task で rule.rs が
-//! `property::parse_value` を呼ぶようになれば不要になる。
-#![allow(dead_code)]
+//! `parse_value` は rule.rs の `DeclParser::parse_value` から呼ばれる。
 
 use cssparser::color::{clamp_unit_f32, parse_hash_color, parse_named_color};
 use cssparser::{ParseError, Parser, Token};
@@ -58,8 +53,10 @@ pub enum PropertyValue {
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
 ///
-/// M1.4 の後続 task (rule.rs / ruletree.rs / cascade.rs) が cascade の勝敗判定に
-/// 使う。
+/// M1.4 の後続 task (cascade winner selection, Task 7) が使う。それまでの間
+/// caller が無いため dead code — Task 7 で cascade.rs から使われるようになれば
+/// この `#[allow]` は不要になる。
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PropertyKey {
     Color,
@@ -69,6 +66,8 @@ pub(crate) enum PropertyKey {
 }
 
 impl PropertyValue {
+    /// Task 7 (cascade winner selection) が使う。それまでの間 caller が無い。
+    #[allow(dead_code)]
     pub(crate) fn key(&self) -> PropertyKey {
         match self {
             PropertyValue::Color(_) => PropertyKey::Color,

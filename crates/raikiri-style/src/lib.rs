@@ -15,6 +15,9 @@
 pub mod property;
 pub use property::{CssColor, Length, PropertyValue};
 
+pub mod rule;
+pub use rule::{Declaration, StyleRule};
+
 use std::fmt;
 
 use cssparser::{CowRcStr, Parser as CssParser, ParserInput, SourceLocation, ToCss};
