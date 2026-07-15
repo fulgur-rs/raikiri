@@ -21,6 +21,9 @@ pub use rule::{Declaration, StyleRule};
 pub mod ruletree;
 pub use ruletree::{build_rule_tree, RuleTree};
 
+pub mod computed;
+pub use computed::ComputedValues;
+
 #[cfg(test)]
 pub(crate) mod test_dom;
 
