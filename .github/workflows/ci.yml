@@ -1,5 +1,10 @@
 name: CI
 
+# NOTE: paths-ignore を GitHub Branch Protection で "CI" を required check にした
+# 状態と組み合わせると、docs / .beads / *.md-only PR は status が post されず
+# merge が block される (GHA の documented footgun)。branch protection 導入時に
+# paths + fallback success job pattern への切り替えを検討する (別 bd issue 化予定)。
+
 on:
   push:
     branches: [main]
@@ -13,6 +18,9 @@ on:
       - '.beads/**'
       - '*.md'
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -21,15 +29,19 @@ jobs:
   ci:
     name: fmt + test + clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Rust toolchain
         # rustup が rust-toolchain.toml (1.89.0 + rustfmt + clippy) を尊重、
-        # 初回 cargo 呼び出し前に auto-install する。two sources of truth を避け
-        # dtolnay/rust-toolchain の explicit version は使わない。
-        run: rustup show active-toolchain
+        # first cargo 呼び出し前に explicit install する。dtolnay/rust-toolchain
+        # の explicit version は two sources of truth 化を招くため使わない。
+        # rustup ≥ 1.28 で `show` の implicit install が消えたため `|| rustup
+        # toolchain install` を fallback として付ける (idempotent、pre-1.28 でも
+        # 無害)。
+        run: rustup show active-toolchain || rustup toolchain install
 
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
