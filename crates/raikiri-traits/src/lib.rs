@@ -364,6 +364,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resolver_error_is_error_and_display() {
+        fn _assert_error<T: std::error::Error>() {}
+        fn _assert_display<T: std::fmt::Display>() {}
+        _assert_error::<ResolverError>();
+        _assert_display::<ResolverError>();
+    }
+
     // ── RenderStatus::Aborted contract (M1.2、実 semantic は M6c) ─
 
     /// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`
