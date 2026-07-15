@@ -177,7 +177,7 @@ pub struct RenderWarning {
     pub details: String,
 }
 
-/// 警告 kind。§4 の 5 variant を再現。
+/// 警告 kind。§4 の 5 base variant + m1.3 で追加された `HtmlParseError`。
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum WarningKind {

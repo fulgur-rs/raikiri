@@ -26,7 +26,9 @@ pub struct RaikiriTreeSink {
     /// Handle → 完全な QualName (namespace + local)。`elem_name()` の
     /// 返り値 `Ref<'_, QualName>` の裏にある。
     qual_names: RefCell<FxHashMap<usize, QualName>>,
-    /// Handle → attribute 列。M1.3 では merge (add_attrs_if_missing) のみ運用。
+    /// Handle → attribute 列。M1.3 では merge (add_attrs_if_missing) のみ運用し
+    /// `finish()` で drop。raikiri-dom::Node への attribute wiring は
+    /// raikiri-spike-blg で追跡 (raikiri-traits::Element doc 上 M1.6 以降で予定)。
     attributes: RefCell<FxHashMap<usize, Vec<Attribute>>>,
     /// html5ever が報告した非致命 parse error の buffer。finish() で
     /// UncascadedDocument.warnings に移設。
