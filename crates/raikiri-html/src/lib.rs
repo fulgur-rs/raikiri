@@ -73,9 +73,8 @@ mod tests {
         }
         assert_eq!(collected, "Hello");
 
-        // parse-only path: no stylesheet, no warnings
+        // parse-only path: no stylesheet
         assert!(uncascaded.stylesheet_sources.is_empty());
-        assert!(uncascaded.warnings.is_empty());
     }
 
     #[test]
@@ -97,6 +96,26 @@ mod tests {
         assert!(
             uncascaded.stylesheet_sources.is_empty(),
             "external link stylesheets should be ignored in M1 scope"
+        );
+    }
+
+    #[test]
+    fn parse_records_html_parse_warning_on_malformed_input() {
+        use raikiri_traits::WarningKind;
+
+        // 明確に html5ever が非致命 parse error を報告する input:
+        // </p> だけの closing tag は "unexpected end tag" を trigger する。
+        let html = b"</p>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse recovers");
+
+        assert!(
+            uncascaded
+                .warnings
+                .iter()
+                .any(|w| matches!(&w.kind, WarningKind::HtmlParseError { .. })),
+            "expected at least one HtmlParseError warning, got: {:?}",
+            uncascaded.warnings.iter().map(|w| &w.kind).collect::<Vec<_>>()
         );
     }
 }

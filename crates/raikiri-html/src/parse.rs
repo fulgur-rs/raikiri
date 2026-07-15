@@ -21,11 +21,13 @@ use crate::types::{ParseOptions, UncascadedDocument};
 ///
 /// ```
 /// use raikiri_html::{parse, ParseOptions};
+/// use raikiri_traits::Dom;
 ///
 /// let html = b"<html><body>Hi</body></html>";
 /// let opts = ParseOptions { extra_stylesheets: &[], network: None, base_url: None };
 /// let doc = parse(&html[..], &opts).unwrap();
-/// assert!(doc.warnings.is_empty());
+/// // Parse succeeded; dom has root
+/// assert_eq!(doc.dom.root_id().0, 0);
 /// ```
 pub fn parse<R: Read>(
     input: R,

@@ -10,7 +10,7 @@ use html5ever::interface::{
 use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::QuirksMode;
 use raikiri_dom::Document;
-use raikiri_traits::{Dom, Element, Node, RenderWarning};
+use raikiri_traits::{Dom, Element, Node, RenderWarning, WarningKind};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use taffy::Style;
@@ -97,9 +97,13 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn parse_error(&self, msg: Cow<'static, str>) {
-        // Task 6 で hook 内容を有効化。Task 4 段階では noop で hello-world
-        // path を汚さないようにする (Task 6 test 追加時に body を書く)。
-        let _ = msg;
+        self.warnings.borrow_mut().push(RenderWarning {
+            kind: WarningKind::HtmlParseError {
+                message: msg.into_owned(),
+            },
+            node_id: None,
+            details: String::new(),
+        });
     }
 
     fn get_document(&self) -> usize {
