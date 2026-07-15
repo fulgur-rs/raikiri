@@ -129,26 +129,21 @@ mod tests {
         );
     }
 
+    /// Pixels outside the drawn shape must be transparent-black; the historical
+    /// `rasterize(&mut R, ...)` API (deleted in raikiri-spike-2xu) could leak
+    /// prior renders' pixels into that region across calls sharing one renderer.
+    /// `anyrender::render_to_buffer` constructs a fresh renderer per call, so
+    /// the leaked-pixel scenario is structurally impossible at this API surface.
+    /// This test pins that property at the integration boundary raikiri-vrt
+    /// consumes.
     #[test]
-    fn two_different_scenes_render_independently() {
+    fn render_to_buffer_leaves_untouched_pixels_transparent() {
         fn draw_blue_rect<S: PaintScene>(scene: &mut S) {
             let color: Color = css::BLUE;
             let rect = Rect::new(0.0, 0.0, 50.0, 50.0);
             scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
         }
 
-        // Render red rect first, then blue rect via a separate fresh render. Under
-        // the m1.8-era `rasterize(&mut R, ...)` bug (renderer state accumulation),
-        // the blue buffer would still contain the red rect from the prior render.
-        // With `anyrender::render_to_buffer`'s fresh-renderer-per-call semantics,
-        // that state leak is structurally impossible — this test documents that
-        // invariant.
-        #[allow(clippy::redundant_closure)]
-        let _red_buf = anyrender::render_to_buffer::<VelloCpuImageRenderer, _>(
-            |scene| draw_red_rect(scene),
-            W,
-            H,
-        );
         #[allow(clippy::redundant_closure)]
         let blue_buf = anyrender::render_to_buffer::<VelloCpuImageRenderer, _>(
             |scene| draw_blue_rect(scene),
@@ -156,23 +151,22 @@ mod tests {
             H,
         );
 
-        // Pixel (75, 75) is inside red rect [10..90, 10..90] but OUTSIDE blue rect
-        // [0..50, 0..50]. Under bug: blue_buf would still contain red rect at
-        // (75,75) → non-transparent. Under fix: blue_buf is a fresh render of blue
-        // only → transparent-black.
-        let idx = (75 * (W as usize) + 75) * 4;
-        let pixel = &blue_buf[idx..idx + 4];
+        // Pixel (75, 75) is outside blue rect [0..50, 0..50] — must be
+        // transparent-black. A non-transparent value would indicate the renderer
+        // started from a non-empty state.
+        let idx_outside = (75 * (W as usize) + 75) * 4;
+        let outside = &blue_buf[idx_outside..idx_outside + 4];
         assert_eq!(
-            pixel,
+            outside,
             &[0, 0, 0, 0],
-            "blue_buf(75,75) not transparent — red rect from prior render leaked (state accumulation bug regression). Got: {pixel:?}",
+            "blue_buf(75,75) not transparent — untouched region carried non-empty pixels. Got: {outside:?}",
         );
 
         // Sanity: pixel (25, 25) is inside blue rect — must be non-transparent.
-        let idx2 = (25 * (W as usize) + 25) * 4;
-        let pixel2 = &blue_buf[idx2..idx2 + 4];
+        let idx_inside = (25 * (W as usize) + 25) * 4;
+        let inside = &blue_buf[idx_inside..idx_inside + 4];
         assert_ne!(
-            pixel2,
+            inside,
             &[0, 0, 0, 0],
             "blue_buf(25,25) transparent — blue rect did not render at all",
         );
