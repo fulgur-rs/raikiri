@@ -55,6 +55,60 @@ impl Document {
         self.nodes[parent].children.push(id);
         id
     }
+
+    /// 既存の detached node を `parent` の末尾 child として attach する。
+    ///
+    /// html5ever `TreeSink::append(parent, AppendNode(child))` の primitive。
+    /// `child` は既に arena に存在している必要があり、既に別 parent の下にいる
+    /// 場合は事前に [`Document::detach_from_parent`] で detach しておくこと
+    /// (tree の重複配置を防ぐため raikiri-dom は自動 detach しない)。
+    pub fn attach_child(&mut self, parent: usize, child: usize) {
+        self.nodes[parent].children.push(child);
+    }
+
+    /// `parent` の children 配列内、`before` の直前 index に `child` を挿入する。
+    ///
+    /// html5ever `TreeSink::append_before_sibling(sibling, AppendNode(child))`
+    /// および foster parenting の primitive。`before` が `parent` の子でない場合
+    /// は末尾に append する (defensive: TreeSink 規約上発生しない想定)。
+    pub fn insert_child_before(&mut self, parent: usize, before: usize, child: usize) {
+        let kids = &mut self.nodes[parent].children;
+        if let Some(pos) = kids.iter().position(|&c| c == before) {
+            kids.insert(pos, child);
+        } else {
+            kids.push(child);
+        }
+    }
+
+    /// `child` を保持する parent の arena index を返す。root (index 0) や
+    /// 未 attach node は `None`。linear scan (O(N))、TreeSink の呼び出し
+    /// 頻度は多くないため raikiri-dom は parent pointer 非保持。
+    pub fn parent_of(&self, child: usize) -> Option<usize> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .find_map(|(i, n)| n.children.contains(&child).then_some(i))
+    }
+
+    /// `child` を現在の parent から取り除く。除去した親 index を返す。
+    /// 未 attach の場合は `None` (no-op)。
+    ///
+    /// html5ever `TreeSink::remove_from_parent(target)` の primitive。
+    pub fn detach_from_parent(&mut self, child: usize) -> Option<usize> {
+        let parent = self.parent_of(child)?;
+        let kids = &mut self.nodes[parent].children;
+        if let Some(pos) = kids.iter().position(|&c| c == child) {
+            kids.remove(pos);
+        }
+        Some(parent)
+    }
+
+    /// `from` の全 children を `to` の children 末尾に move する。`from`
+    /// の children は空になる。html5ever `TreeSink::reparent_children` の primitive。
+    pub fn reparent_children(&mut self, from: usize, to: usize) {
+        let moved: Vec<usize> = self.nodes[from].children.drain(..).collect();
+        self.nodes[to].children.extend(moved);
+    }
 }
 
 impl Default for Document {

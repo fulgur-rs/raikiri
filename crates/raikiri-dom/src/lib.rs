@@ -24,7 +24,7 @@ pub use dom_impl::{ChildIter, ElementRef, NodeRef};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raikiri_traits::{Dom, Element, Node, NodeKind};
+    use raikiri_traits::{Dom, Element, Node, NodeId, NodeKind};
     use taffy::prelude::*;
     use taffy::{AvailableSpace, Dimension, Display, Size, Style, compute_root_layout};
 
@@ -163,5 +163,67 @@ mod tests {
     fn document_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Document>();
+    }
+
+    #[test]
+    fn attach_child_appends_to_parent_children() {
+        let mut doc = Document::new();
+        let a = doc.append_element(None, "a", Style::default()); // detached
+        doc.attach_child(0, a);
+        let children: Vec<_> = Dom::child_ids(&doc, doc.root_id()).collect();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].0 as usize, a);
+    }
+
+    #[test]
+    fn insert_child_before_places_at_correct_index() {
+        let mut doc = Document::new();
+        let a = doc.append_element(Some(0), "a", Style::default());
+        let c = doc.append_element(Some(0), "c", Style::default());
+        let b = doc.append_element(None, "b", Style::default()); // detached
+        doc.insert_child_before(0, c, b);
+        let kids: Vec<_> = Dom::child_ids(&doc, doc.root_id())
+            .map(|n| n.0 as usize)
+            .collect();
+        assert_eq!(kids, vec![a, b, c]);
+    }
+
+    #[test]
+    fn parent_of_returns_containing_parent() {
+        let mut doc = Document::new();
+        let a = doc.append_element(Some(0), "a", Style::default());
+        let child = doc.append_element(Some(a), "child", Style::default());
+        assert_eq!(doc.parent_of(child), Some(a));
+        assert_eq!(doc.parent_of(0), None); // root has no parent
+    }
+
+    #[test]
+    fn detach_from_parent_removes_child_and_returns_parent() {
+        let mut doc = Document::new();
+        let a = doc.append_element(Some(0), "a", Style::default());
+        let b = doc.append_element(Some(0), "b", Style::default());
+        assert_eq!(doc.detach_from_parent(a), Some(0));
+        let kids: Vec<_> = Dom::child_ids(&doc, doc.root_id())
+            .map(|n| n.0 as usize)
+            .collect();
+        assert_eq!(kids, vec![b]);
+        // second detach is a no-op
+        assert_eq!(doc.detach_from_parent(a), None);
+    }
+
+    #[test]
+    fn reparent_children_moves_all_children_to_new_parent() {
+        let mut doc = Document::new();
+        let src = doc.append_element(Some(0), "src", Style::default());
+        let dst = doc.append_element(Some(0), "dst", Style::default());
+        let c1 = doc.append_element(Some(src), "c1", Style::default());
+        let c2 = doc.append_element(Some(src), "c2", Style::default());
+        doc.reparent_children(src, dst);
+        let src_kids: Vec<_> = Dom::child_ids(&doc, NodeId::new(src as u64)).collect();
+        let dst_kids: Vec<_> = Dom::child_ids(&doc, NodeId::new(dst as u64))
+            .map(|n| n.0 as usize)
+            .collect();
+        assert!(src_kids.is_empty());
+        assert_eq!(dst_kids, vec![c1, c2]);
     }
 }
