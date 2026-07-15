@@ -168,9 +168,10 @@ impl Document {
 
     /// Element node の `inline_style` を後付けで更新する
     /// (raikiri-spike-blg)。sink が `finish()` 時に side-table から
-    /// `style="..."` を抽出して呼び出す。空文字列 `style=""` の場合も
-    /// caller 責任で `None` に正規化して渡すことを推奨する
-    /// ([`Element::inline_style_source`] の contract と一致させるため)。
+    /// `style="..."` を抽出して呼び出す。値は生 string でよく、`style=""`
+    /// の空文字列 → `None` 正規化は Element trait 実装側
+    /// ([`raikiri_traits::Element::inline_style_source`]) が行う。
+    /// 二重正規化を避けるため storage 層はここで判定しない。
     pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
         self.nodes[id].inline_style = inline_style;
     }

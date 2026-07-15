@@ -390,8 +390,14 @@ fn wire_side_tables(
             if local == "style" {
                 // 空文字列 `style=""` は Element trait contract 上 None なので
                 // ここでは boundary 正規化せず raw 値のまま Node に格納
-                // (dom_impl 側で filter される)。
-                inline_style = Some(SmolStr::new(a.value.as_ref()));
+                // (dom_impl 側で filter される)。html5ever は attrs を parse
+                // 段で dedupe する想定だが、契約に依存せず defensive に
+                // first-wins (Node.attributes の find() first-match 挙動と
+                // 整合、HTML spec §13.2.5.32 の "duplicate-attribute → ignore
+                // later occurrences" とも整合)。
+                if inline_style.is_none() {
+                    inline_style = Some(SmolStr::new(a.value.as_ref()));
+                }
                 continue;
             }
             native.push((SmolStr::new(local), SmolStr::new(a.value.as_ref())));

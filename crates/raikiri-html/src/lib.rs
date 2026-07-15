@@ -472,6 +472,43 @@ mod tests {
     }
 
     #[test]
+    fn sink_first_wins_on_duplicate_style_attribute() {
+        // Defensive: html5ever は tokenizer 段で duplicate attr を dedupe する
+        // が (§13.2.5.32)、raikiri-html sink 単体が受け取る Vec<Attribute> が
+        // duplicate を含む可能性を排除しない (external consumer が TreeSink を
+        // wrap して重複 attr を注入する scenario も含む)。この test は sink
+        // 単体を driver に見立てて "style を 2 回渡すと最初 (color:red) が勝つ"
+        // 挙動を pin する。
+        use html5ever::interface::{Attribute, ElementFlags, QualName, TreeSink};
+        use html5ever::tendril::StrTendril;
+        use markup5ever::{LocalName, Namespace};
+
+        let sink = RaikiriTreeSink::new();
+        let name = QualName::new(
+            None,
+            Namespace::from("http://www.w3.org/1999/xhtml"),
+            LocalName::from("p"),
+        );
+        let attr = |v: &str| Attribute {
+            name: QualName::new(None, Namespace::from(""), LocalName::from("style")),
+            value: StrTendril::from(v),
+        };
+        // sink に "style=color:red" と "style=color:blue" を順に渡す。
+        let attrs = vec![attr("color:red"), attr("color:blue")];
+        let idx = sink.create_element(name, attrs, ElementFlags::default());
+        // Document の Handle は root。attach しないと finish 前に見つからないため
+        // append 経由で root child にする。
+        sink.append(&sink.get_document(), html5ever::interface::NodeOrText::AppendNode(idx));
+        let uncascaded = sink.finish();
+
+        let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
+        let p_node = uncascaded.dom.node(p_id).expect("p node exists");
+        let p = p_node.as_element().expect("p is element");
+        // first-wins (regression pin for wire_side_tables)。
+        assert_eq!(p.inline_style_source(), Some("color:red"));
+    }
+
+    #[test]
     fn parse_strips_many_comments_under_one_parent() {
         use raikiri_traits::{Dom, Element, Node};
 
