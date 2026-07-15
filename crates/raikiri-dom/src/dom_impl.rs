@@ -77,4 +77,10 @@ impl<'a> raikiri_traits::Element<'a> for ElementRef<'a> {
     fn tag_name(&self) -> &str {
         self.node.tag_name.as_deref().unwrap_or("")
     }
+
+    fn inline_style_source(&self) -> Option<&str> {
+        // Trait contract: 空文字列 `style=""` は `None` を返す。
+        // 内部 field が `Some(SmolStr::new(""))` の場合も boundary で捨てる。
+        self.node.inline_style.as_deref().filter(|s| !s.is_empty())
+    }
 }

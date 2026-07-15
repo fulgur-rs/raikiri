@@ -115,9 +115,23 @@ pub trait Node<'a> {
 
 /// Element reference (borrowed lifetime `'a`)。
 ///
-/// M1.6 以降で attribute / classes / id lookup 等を追加する予定。M1.5 は
-/// tag_name のみ確定。
+/// `tag_name` は M1.5 で確定、`inline_style_source` は M1.4 で先行追加
+/// (HTML `style="..."` 属性の生 string を返す)。他の attribute lookup
+/// (`id` / `has_class` / `attr` 等) は M1.6+ で追加予定。
 pub trait Element<'a> {
     /// HTML / XML tag name (例: `"p"`, `"div"`)。
     fn tag_name(&self) -> &str;
+
+    /// HTML `style="..."` attribute の生 string を返す。
+    /// 未設定または該当 attribute が空文字列 (`style=""`) の場合 `None`。
+    ///
+    /// raikiri-style::cascade が cssparser の declaration-list parser でこの
+    /// 文字列を消費する (M1.4)。将来 attribute 一般 lookup (M1.6+) が入れば
+    /// この method は `self.attr("style")` の shorthand として残す。
+    ///
+    /// Default impl は `None` — style を持たない Node kind や未対応 impl は
+    /// override 不要。
+    fn inline_style_source(&self) -> Option<&str> {
+        None
+    }
 }

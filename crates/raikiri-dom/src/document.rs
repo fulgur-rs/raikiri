@@ -30,15 +30,23 @@ impl Document {
     /// その node の children に append される。`None` の場合 detached (どこにも
     /// 属さない fragment、後で attach する用途)。
     ///
+    /// `inline_style` は HTML `style="..."` attribute の生 string を渡す
+    /// (`None` = 属性なし)。raikiri-style::cascade (M1.4) が消費する。
+    ///
     /// Returns: 追加された node の arena index。
     pub fn append_element(
         &mut self,
         parent: Option<usize>,
         tag: impl Into<SmolStr>,
         style: Style,
+        inline_style: Option<impl Into<SmolStr>>,
     ) -> usize {
         let id = self.nodes.len();
-        self.nodes.push(Node::new_element(tag.into(), style));
+        self.nodes.push(Node::new_element(
+            tag.into(),
+            style,
+            inline_style.map(Into::into),
+        ));
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
         }

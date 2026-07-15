@@ -330,4 +330,22 @@ mod tests {
             RenderStatus::Completed(_) => panic!("expected Aborted"),
         }
     }
+
+    // ── Element trait extension (M1.4) ──────────────────────────
+
+    #[test]
+    fn element_default_inline_style_source_is_none() {
+        use crate::Element;
+
+        struct BareElement;
+        impl<'a> Element<'a> for BareElement {
+            fn tag_name(&self) -> &str {
+                "p"
+            }
+            // inline_style_source は default impl (None) を利用
+        }
+
+        let e = BareElement;
+        assert_eq!(e.inline_style_source(), None);
+    }
 }
