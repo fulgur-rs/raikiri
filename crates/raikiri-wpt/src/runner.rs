@@ -55,8 +55,14 @@ mod tests {
     #[test]
     fn test_outcome_variants_are_constructible() {
         assert!(matches!(TestOutcome::Pass, TestOutcome::Pass));
-        assert!(matches!(TestOutcome::Fail("boom".to_owned()), TestOutcome::Fail(_)));
-        assert!(matches!(TestOutcome::Skip("non-goal".to_owned()), TestOutcome::Skip(_)));
+        assert!(matches!(
+            TestOutcome::Fail("boom".to_owned()),
+            TestOutcome::Fail(_)
+        ));
+        assert!(matches!(
+            TestOutcome::Skip("non-goal".to_owned()),
+            TestOutcome::Skip(_)
+        ));
         assert!(matches!(TestOutcome::Quarantined, TestOutcome::Quarantined));
     }
 }

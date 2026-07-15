@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use time::{macros::format_description, Date, Duration};
+use time::{Date, Duration, macros::format_description};
 
 use crate::expectations::{Baseline, Deprecated, ExpectError, KnownIssues, Quarantine, TrackedWpt};
 
@@ -44,7 +44,12 @@ impl LintReport {
     pub fn format_human(&self) -> String {
         use std::fmt::Write as _;
         let mut out = String::new();
-        for cat in [Category::Malformed, Category::Duplicate, Category::Conflicting, Category::Expired] {
+        for cat in [
+            Category::Malformed,
+            Category::Duplicate,
+            Category::Conflicting,
+            Category::Expired,
+        ] {
             let group: Vec<&LintIssue> = self.issues.iter().filter(|i| i.category == cat).collect();
             if group.is_empty() {
                 continue;
@@ -60,9 +65,22 @@ impl LintReport {
         if self.is_empty() {
             out.push_str("expectations: clean\n");
         } else {
-            let n_fail = self.issues.iter().filter(|i| i.category.is_failure()).count();
-            let n_warn = self.issues.iter().filter(|i| !i.category.is_failure()).count();
-            writeln!(out, "expectations: {} failure(s), {} warning(s)", n_fail, n_warn).unwrap();
+            let n_fail = self
+                .issues
+                .iter()
+                .filter(|i| i.category.is_failure())
+                .count();
+            let n_warn = self
+                .issues
+                .iter()
+                .filter(|i| !i.category.is_failure())
+                .count();
+            writeln!(
+                out,
+                "expectations: {} failure(s), {} warning(s)",
+                n_fail, n_warn
+            )
+            .unwrap();
         }
         out
     }
@@ -127,13 +145,22 @@ fn expect_error_to_issue(err: ExpectError, path_display: String) -> LintIssue {
             line_no: None,
             message: format!("I/O error: {e}"),
         },
-        ExpectError::MalformedLine { file, line_no, reason } => LintIssue {
+        ExpectError::MalformedLine {
+            file,
+            line_no,
+            reason,
+        } => LintIssue {
             category: Category::Malformed,
             file,
             line_no: Some(line_no),
             message: format!("malformed line ({reason})"),
         },
-        ExpectError::UnknownEnum { file, line_no, field, value } => LintIssue {
+        ExpectError::UnknownEnum {
+            file,
+            line_no,
+            field,
+            value,
+        } => LintIssue {
             category: Category::Malformed,
             file,
             line_no: Some(line_no),
@@ -148,13 +175,17 @@ fn load_all(dir: &Path) -> Loaded {
     let tracked_path = dir.join("tracked-wpt.txt");
     match TrackedWpt::load(&tracked_path) {
         Ok(v) => out.tracked = Some(v),
-        Err(e) => out.issues.push(expect_error_to_issue(e, tracked_path.display().to_string())),
+        Err(e) => out
+            .issues
+            .push(expect_error_to_issue(e, tracked_path.display().to_string())),
     }
 
     let known_path = dir.join("known-issues.txt");
     match KnownIssues::load(&known_path) {
         Ok(v) => out.known_issues = Some(v),
-        Err(e) => out.issues.push(expect_error_to_issue(e, known_path.display().to_string())),
+        Err(e) => out
+            .issues
+            .push(expect_error_to_issue(e, known_path.display().to_string())),
     }
 
     let baseline_path = dir.join("raikiri-baseline.txt");
@@ -162,11 +193,17 @@ fn load_all(dir: &Path) -> Loaded {
         Ok(raw) => {
             match Baseline::parse(&raw, &baseline_path.display().to_string()) {
                 Ok(v) => out.baseline = Some(v),
-                Err(e) => out.issues.push(expect_error_to_issue(e, baseline_path.display().to_string())),
+                Err(e) => out.issues.push(expect_error_to_issue(
+                    e,
+                    baseline_path.display().to_string(),
+                )),
             }
             out.baseline_raw = Some(raw);
         }
-        Err(e) => out.issues.push(expect_error_to_issue(ExpectError::Io(e), baseline_path.display().to_string())),
+        Err(e) => out.issues.push(expect_error_to_issue(
+            ExpectError::Io(e),
+            baseline_path.display().to_string(),
+        )),
     }
 
     let quarantine_path = dir.join("quarantine.txt");
@@ -174,11 +211,17 @@ fn load_all(dir: &Path) -> Loaded {
         Ok(raw) => {
             match Quarantine::parse(&raw, &quarantine_path.display().to_string()) {
                 Ok(v) => out.quarantine = Some(v),
-                Err(e) => out.issues.push(expect_error_to_issue(e, quarantine_path.display().to_string())),
+                Err(e) => out.issues.push(expect_error_to_issue(
+                    e,
+                    quarantine_path.display().to_string(),
+                )),
             }
             out.quarantine_raw = Some(raw);
         }
-        Err(e) => out.issues.push(expect_error_to_issue(ExpectError::Io(e), quarantine_path.display().to_string())),
+        Err(e) => out.issues.push(expect_error_to_issue(
+            ExpectError::Io(e),
+            quarantine_path.display().to_string(),
+        )),
     }
 
     let deprecated_path = dir.join("deprecated.txt");
@@ -186,11 +229,17 @@ fn load_all(dir: &Path) -> Loaded {
         Ok(raw) => {
             match Deprecated::parse(&raw, &deprecated_path.display().to_string()) {
                 Ok(v) => out.deprecated = Some(v),
-                Err(e) => out.issues.push(expect_error_to_issue(e, deprecated_path.display().to_string())),
+                Err(e) => out.issues.push(expect_error_to_issue(
+                    e,
+                    deprecated_path.display().to_string(),
+                )),
             }
             out.deprecated_raw = Some(raw);
         }
-        Err(e) => out.issues.push(expect_error_to_issue(ExpectError::Io(e), deprecated_path.display().to_string())),
+        Err(e) => out.issues.push(expect_error_to_issue(
+            ExpectError::Io(e),
+            deprecated_path.display().to_string(),
+        )),
     }
 
     out
@@ -320,7 +369,6 @@ fn detect_conflicting(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
 
     let baseline_path = dir.join("raikiri-baseline.txt").display().to_string();
     let deprecated_path = dir.join("deprecated.txt").display().to_string();
-    let _quarantine_path = dir.join("quarantine.txt").display().to_string();
 
     let mut issues = Vec::new();
     let mk = |file: &str, other: &str, test_id: &str| LintIssue {
@@ -353,7 +401,9 @@ fn detect_conflicting(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
 /// the parser to store `time::Date` directly, at which point this parse
 /// step can be removed but the 90-day threshold check stays.
 fn detect_expired(loaded: &Loaded, dir: &Path, now: Date) -> Vec<LintIssue> {
-    let Some(q) = loaded.quarantine.as_ref() else { return Vec::new() };
+    let Some(q) = loaded.quarantine.as_ref() else {
+        return Vec::new();
+    };
     let path = dir.join("quarantine.txt").display().to_string();
     let fmt = format_description!("[year]-[month]-[day]");
     let mut issues = Vec::new();
@@ -370,10 +420,7 @@ fn detect_expired(loaded: &Loaded, dir: &Path, now: Date) -> Vec<LintIssue> {
                 category: Category::Malformed,
                 file: path.clone(),
                 line_no,
-                message: format!(
-                    "added_date {:?} is not YYYY-MM-DD ({e})",
-                    entry.added_date
-                ),
+                message: format!("added_date {:?} is not YYYY-MM-DD ({e})", entry.added_date),
             }),
             Ok(added) => {
                 if now - added > Duration::days(90) {
@@ -457,7 +504,11 @@ mod tests {
             .expect("malformed issue expected");
         assert!(issue.file.ends_with("quarantine.txt"));
         assert_eq!(issue.line_no, Some(1));
-        assert!(issue.message.contains("expected 8"), "got: {}", issue.message);
+        assert!(
+            issue.message.contains("expected 8"),
+            "got: {}",
+            issue.message
+        );
     }
 
     #[test]
@@ -507,11 +558,19 @@ mod tests {
         let now = time::macros::date!(2026 - 07 - 16);
         let report = run(dir.path(), now);
         assert!(report.has_failures());
-        let dup: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Duplicate).collect();
+        let dup: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Duplicate)
+            .collect();
         assert_eq!(dup.len(), 1);
         assert!(dup[0].file.ends_with("raikiri-baseline.txt"));
         assert_eq!(dup[0].line_no, Some(2));
-        assert!(dup[0].message.contains("css/foo/bar-001"), "got: {}", dup[0].message);
+        assert!(
+            dup[0].message.contains("css/foo/bar-001"),
+            "got: {}",
+            dup[0].message
+        );
         assert!(dup[0].message.contains("line 1"), "got: {}", dup[0].message);
     }
 
@@ -521,7 +580,11 @@ mod tests {
         write(dir.path(), "deprecated.txt", "css/x\ncss/y\ncss/x\n");
         let now = time::macros::date!(2026 - 07 - 16);
         let report = run(dir.path(), now);
-        let dup: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Duplicate).collect();
+        let dup: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Duplicate)
+            .collect();
         assert_eq!(dup.len(), 1);
         assert_eq!(dup[0].line_no, Some(3));
     }
@@ -538,7 +601,11 @@ mod tests {
         );
         let now = time::macros::date!(2026 - 07 - 16);
         let report = run(dir.path(), now);
-        let dup: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Duplicate).collect();
+        let dup: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Duplicate)
+            .collect();
         assert_eq!(dup.len(), 1);
         assert_eq!(dup[0].line_no, Some(2));
         assert!(dup[0].message.contains("line 1"));
@@ -556,7 +623,10 @@ mod tests {
         let now = time::macros::date!(2026 - 07 - 16);
         let report = run(dir.path(), now);
         assert!(
-            !report.issues.iter().any(|i| i.category == Category::Duplicate),
+            !report
+                .issues
+                .iter()
+                .any(|i| i.category == Category::Duplicate),
             "unexpected: {:?}",
             report.issues
         );
@@ -569,11 +639,21 @@ mod tests {
         write(dir.path(), "deprecated.txt", "css/x/y-001\n");
         let now = time::macros::date!(2026 - 07 - 16);
         let report = run(dir.path(), now);
-        let conflicts: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Conflicting).collect();
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
         assert_eq!(conflicts.len(), 1);
         assert!(conflicts[0].message.contains("css/x/y-001"));
-        assert!(conflicts[0].message.contains("deprecated.txt") || conflicts[0].file.ends_with("deprecated.txt"));
-        assert!(conflicts[0].message.contains("raikiri-baseline.txt") || conflicts[0].file.ends_with("raikiri-baseline.txt"));
+        assert!(
+            conflicts[0].message.contains("deprecated.txt")
+                || conflicts[0].file.ends_with("deprecated.txt")
+        );
+        assert!(
+            conflicts[0].message.contains("raikiri-baseline.txt")
+                || conflicts[0].file.ends_with("raikiri-baseline.txt")
+        );
     }
 
     #[test]
@@ -587,7 +667,11 @@ mod tests {
         );
         let now = time::macros::date!(2026 - 07 - 16);
         let report = run(dir.path(), now);
-        let conflicts: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Conflicting).collect();
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
         assert_eq!(conflicts.len(), 1);
     }
 
@@ -602,7 +686,11 @@ mod tests {
         );
         let now = time::macros::date!(2026 - 07 - 16);
         let report = run(dir.path(), now);
-        let conflicts: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Conflicting).collect();
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
         assert_eq!(conflicts.len(), 1);
     }
 
@@ -613,7 +701,12 @@ mod tests {
         write(dir.path(), "deprecated.txt", "css/other\n");
         let now = time::macros::date!(2026 - 07 - 16);
         let report = run(dir.path(), now);
-        assert!(!report.issues.iter().any(|i| i.category == Category::Conflicting));
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|i| i.category == Category::Conflicting)
+        );
     }
 
     #[test]
@@ -626,13 +719,21 @@ mod tests {
         );
         let now = time::macros::date!(2026 - 07 - 16); // 196 days later
         let report = run(dir.path(), now);
-        let expired: Vec<_> = report.issues.iter().filter(|i| i.category == Category::Expired).collect();
+        let expired: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Expired)
+            .collect();
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].line_no, Some(1));
         assert!(expired[0].message.contains("2026-01-01"));
         assert!(expired[0].message.contains("90 days"));
         // Expired-only reports do NOT block CI.
-        assert!(!report.has_failures(), "unexpected failure with only Expired: {:?}", report.issues);
+        assert!(
+            !report.has_failures(),
+            "unexpected failure with only Expired: {:?}",
+            report.issues
+        );
     }
 
     #[test]
@@ -645,7 +746,12 @@ mod tests {
         );
         let now = time::macros::date!(2026 - 07 - 16); // 45 days later
         let report = run(dir.path(), now);
-        assert!(!report.issues.iter().any(|i| i.category == Category::Expired));
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|i| i.category == Category::Expired)
+        );
     }
 
     #[test]
@@ -658,7 +764,12 @@ mod tests {
         );
         let now = time::macros::date!(2026 - 07 - 16); // exactly 90 days
         let report = run(dir.path(), now);
-        assert!(!report.issues.iter().any(|i| i.category == Category::Expired));
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|i| i.category == Category::Expired)
+        );
     }
 
     #[test]

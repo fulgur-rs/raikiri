@@ -100,7 +100,9 @@ impl TrackedWpt {
     /// parsers.
     pub fn parse(content: &str, _file_name: &str) -> Result<Self, ExpectError> {
         Ok(Self {
-            entries: iter_data_lines(content).map(|(_, l)| l.to_owned()).collect(),
+            entries: iter_data_lines(content)
+                .map(|(_, l)| l.to_owned())
+                .collect(),
         })
     }
 
@@ -177,7 +179,9 @@ impl Baseline {
     /// Parse `raikiri-baseline.txt` content (one test id per line).
     pub fn parse(content: &str, _file_name: &str) -> Result<Self, ExpectError> {
         Ok(Self {
-            entries: iter_data_lines(content).map(|(_, l)| l.to_owned()).collect(),
+            entries: iter_data_lines(content)
+                .map(|(_, l)| l.to_owned())
+                .collect(),
         })
     }
 
@@ -208,7 +212,9 @@ impl Deprecated {
     /// Parse `deprecated.txt` content (one test id per line).
     pub fn parse(content: &str, _file_name: &str) -> Result<Self, ExpectError> {
         Ok(Self {
-            entries: iter_data_lines(content).map(|(_, l)| l.to_owned()).collect(),
+            entries: iter_data_lines(content)
+                .map(|(_, l)| l.to_owned())
+                .collect(),
         })
     }
 
@@ -377,30 +383,33 @@ impl Quarantine {
                     reason: format!("expected 8 pipe-delimited columns, got {}", cols.len()),
                 });
             }
-            let platform = PlatformFilter::parse(cols[1]).ok_or_else(|| ExpectError::UnknownEnum {
-                file: file_name.to_owned(),
-                line_no,
-                field: "platform",
-                value: cols[1].to_owned(),
-            })?;
+            let platform =
+                PlatformFilter::parse(cols[1]).ok_or_else(|| ExpectError::UnknownEnum {
+                    file: file_name.to_owned(),
+                    line_no,
+                    field: "platform",
+                    value: cols[1].to_owned(),
+                })?;
             let arch = ArchFilter::parse(cols[2]).ok_or_else(|| ExpectError::UnknownEnum {
                 file: file_name.to_owned(),
                 line_no,
                 field: "arch",
                 value: cols[2].to_owned(),
             })?;
-            let renderer = RendererFilter::parse(cols[3]).ok_or_else(|| ExpectError::UnknownEnum {
-                file: file_name.to_owned(),
-                line_no,
-                field: "renderer",
-                value: cols[3].to_owned(),
-            })?;
-            let tolerance = ToleranceFilter::parse(cols[4]).ok_or_else(|| ExpectError::UnknownEnum {
-                file: file_name.to_owned(),
-                line_no,
-                field: "tolerance",
-                value: cols[4].to_owned(),
-            })?;
+            let renderer =
+                RendererFilter::parse(cols[3]).ok_or_else(|| ExpectError::UnknownEnum {
+                    file: file_name.to_owned(),
+                    line_no,
+                    field: "renderer",
+                    value: cols[3].to_owned(),
+                })?;
+            let tolerance =
+                ToleranceFilter::parse(cols[4]).ok_or_else(|| ExpectError::UnknownEnum {
+                    file: file_name.to_owned(),
+                    line_no,
+                    field: "tolerance",
+                    value: cols[4].to_owned(),
+                })?;
             entries.push(QuarantineEntry {
                 test_id: cols[0].to_owned(),
                 platform,
@@ -461,10 +470,19 @@ impl fmt::Display for ExpectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => write!(f, "expectations I/O error: {e}"),
-            Self::MalformedLine { file, line_no, reason } => {
+            Self::MalformedLine {
+                file,
+                line_no,
+                reason,
+            } => {
                 write!(f, "{file}:{line_no}: malformed line ({reason})")
             }
-            Self::UnknownEnum { file, line_no, field, value } => {
+            Self::UnknownEnum {
+                file,
+                line_no,
+                field,
+                value,
+            } => {
                 write!(f, "{file}:{line_no}: unknown {field} value {value:?}")
             }
         }
@@ -534,8 +552,14 @@ mod tests {
         assert_eq!(
             ki.entries,
             vec![
-                ("css/css-transitions/*".to_owned(), "non-goal, interactive".to_owned()),
-                ("html/interaction/*".to_owned(), "non-goal, interactive".to_owned()),
+                (
+                    "css/css-transitions/*".to_owned(),
+                    "non-goal, interactive".to_owned()
+                ),
+                (
+                    "html/interaction/*".to_owned(),
+                    "non-goal, interactive".to_owned()
+                ),
             ]
         );
     }
@@ -589,7 +613,9 @@ mod tests {
         let content = "css/foo | linux | x86_64\n"; // 3 cols
         let err = Quarantine::parse(content, "q.txt").unwrap_err();
         match err {
-            ExpectError::MalformedLine { line_no, reason, .. } => {
+            ExpectError::MalformedLine {
+                line_no, reason, ..
+            } => {
                 assert_eq!(line_no, 1);
                 assert!(reason.contains("expected 8"));
             }
@@ -631,7 +657,8 @@ mod tests {
     fn load_from_workspace_root_reads_the_header_only_files() {
         // Integration-style: relies on Task 1 having created the workspace
         // expectations/ directory with header-only files.
-        let set = ExpectationSet::load_from_workspace_root().expect("workspace expectations/ should be present");
+        let set = ExpectationSet::load_from_workspace_root()
+            .expect("workspace expectations/ should be present");
         assert!(set.tracked.is_empty());
         assert!(set.known_issues.is_empty());
         assert!(set.baseline.is_empty());
