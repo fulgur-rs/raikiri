@@ -68,7 +68,7 @@ mod tests {
     fn unknown_pseudo_class_is_reported_as_error() {
         // ":unsupported" is not one of raikiri-style's M0 seed pseudo-classes
         // (only :hover / :active). Confirms error propagation works.
-        let err = parse_via_raikiri_style(":unsupported").err().expect("should error");
+        let err = parse_via_raikiri_style(":unsupported").expect_err("should error");
         assert!(err.contains("parse error"));
     }
 }
