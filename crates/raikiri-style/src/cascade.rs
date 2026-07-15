@@ -91,9 +91,9 @@ fn collect_cascaded<D: Dom>(
         {
             let mut per_node = Vec::new();
             // stylesheet rule matching
-            let tag = elem.tag_name().to_string();
+            let tag = elem.tag_name();
             for rule in &rule_tree.style_rules {
-                if let Some(spec) = match_by_tag(&rule.selectors, &tag) {
+                if let Some(spec) = match_by_tag(&rule.selectors, tag) {
                     for decl in &rule.declarations {
                         per_node.push((
                             decl.value.clone(),

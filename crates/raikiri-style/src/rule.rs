@@ -35,12 +35,6 @@ pub struct StyleRule {
 
 /// declaration-list を消費して `Vec<Declaration>` を produce。
 /// 認識できない property name / invalid value は silently drop。
-///
-/// pub(crate) の caller (ruletree.rs の qualified-rule block parser) は M1.4
-/// 後続 task で追加される。それまでの間、非 test build では (このモジュールが
-/// 呼ぶ property.rs の parser chain ごと) dead code になるため `#[allow]` を
-/// 付与している — ruletree.rs から呼ばれるようになれば不要になる。
-#[allow(dead_code)]
 pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
     let mut parser = DeclParser;
     RuleBodyParser::new(input, &mut parser).flatten().collect()
