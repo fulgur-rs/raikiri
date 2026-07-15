@@ -8,7 +8,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
-raikiri = { workspace = true }
+raikiri   = { workspace = true }
+blitz-dom = { workspace = true }
 
 [dev-dependencies]
 anyrender_vello_cpu = { workspace = true }
@@ -16,8 +17,11 @@ tiny-skia           = { workspace = true }
 insta               = { workspace = true }
 blitz-traits        = { workspace = true }
 blitz-html          = { workspace = true }
-blitz-dom           = { workspace = true }
 blitz-paint         = { workspace = true }
+
+[[bin]]
+name = "validate-expectations"
+path = "src/bin/validate-expectations.rs"
 
 [lints]
 workspace = true

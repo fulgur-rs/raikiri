@@ -1,0 +1,7 @@
+# expectations/raikiri-baseline.txt — T2 gate: WPT tests raikiri currently passes
+# (spec §12.10). Regression on these blocks PR merge.
+#
+# Format: one test_id per line. Lines starting with '#' are comments.
+# Empty lines are ignored.
+#
+# Populated in M3. Additions/removals require 2-reviewer approval (§12.10 baseline migration).

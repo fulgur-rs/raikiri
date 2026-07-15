@@ -1,0 +1,13 @@
+# expectations/quarantine.txt — Flaky test temporary shelf (spec §12.10, platform-aware).
+#
+# Format: test_id | platform | arch | renderer | tolerance | reason | issue_link | added_date
+#
+# platform:  linux / macos / windows / *
+# arch:      x86_64 / aarch64 / *
+# renderer:  vello_cpu / skia / tiny_skia / *
+# tolerance: pixel-exact / low / medium / high / *
+#
+# Multiple entries per test_id (different platform combinations) are allowed.
+# Lines starting with '#' are comments. Empty lines are ignored.
+#
+# Populated in M3.

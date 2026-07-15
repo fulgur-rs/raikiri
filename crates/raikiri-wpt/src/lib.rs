@@ -1,3 +1,10 @@
-//! raikiri-wpt — WPT harness with blitz oracle.
+//! raikiri-wpt — WPT harness with blitz oracle (M1 skeleton).
 //!
-//! M0 stub. Populated in M1 wpt-harness-skeleton and M8 wpt-full-sweep-scheduler / blitz-oracle-diff-recorder tasks.
+//! M1 scaffold: module structure + expectations parsers + type stubs.
+//! Actual reftest execution and oracle diff aggregation land in M3
+//! (see design spec §12.9 / §12.10).
+
+pub mod expectations;
+pub mod oracle;
+pub mod reftest;
+pub mod runner;
