@@ -83,4 +83,28 @@ impl<'a> raikiri_traits::Element<'a> for ElementRef<'a> {
         // 内部 field が `Some(SmolStr::new(""))` の場合も boundary で捨てる。
         self.node.inline_style.as_deref().filter(|s| !s.is_empty())
     }
+
+    fn namespace_uri(&self) -> Option<&str> {
+        // HTML default namespace は Node.namespace = None として格納しているので
+        // そのまま返せばよい (fast path 済)。
+        self.node.namespace.as_deref()
+    }
+
+    // NB: id() / has_class() は raikiri-traits::Element の default impl を
+    // 使用。default が self.attr(...) 経由で lookup するため、この impl は
+    // attr() だけ override すれば id/has_class も追従する (DRY / 契約準拠)。
+
+    fn attr(&self, local: &str) -> Option<&str> {
+        // `style` は Node.inline_style に分離済のため attributes からは
+        // 探しに行かず inline_style を返す (trait default 契約と同じ view)。
+        if local == "style" {
+            return self.inline_style_source();
+        }
+        self.node
+            .attributes
+            .iter()
+            .find(|a| a.local == local)
+            .map(|a| a.value.as_str())
+            .filter(|s| !s.is_empty())
+    }
 }

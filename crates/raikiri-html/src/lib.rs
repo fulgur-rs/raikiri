@@ -387,6 +387,127 @@ mod tests {
         );
     }
 
+    // ── Attribute / namespace wiring (raikiri-spike-blg) ────────
+
+    #[test]
+    fn parse_wires_style_attribute_to_inline_style_source() {
+        // real HTML `<p style="color:red">` → cascade が消費できる
+        // inline_style_source が populate される (end-to-end verify)。
+        let html = b"<html><body><p style=\"color:red\">Hi</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
+        let p_node = uncascaded.dom.node(p_id).expect("p node exists");
+        let p_elem = p_node.as_element().expect("p is element");
+        assert_eq!(p_elem.inline_style_source(), Some("color:red"));
+        // `style` は attributes には積まれない (Node.inline_style 側に分離)。
+        assert_eq!(p_elem.attr("style"), Some("color:red"));
+    }
+
+    #[test]
+    fn parse_wires_id_class_and_data_attributes() {
+        let html = br#"<html><body><div id="main" class="foo bar baz" data-x="42"></div></body></html>"#;
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let div_id = find_first_by_tag(&uncascaded.dom, "div").expect("div exists");
+        let div_node = uncascaded.dom.node(div_id).expect("div node exists");
+        let div = div_node.as_element().expect("div is element");
+        assert_eq!(div.id(), Some("main"));
+        assert!(div.has_class("foo"));
+        assert!(div.has_class("bar"));
+        assert!(div.has_class("baz"));
+        assert!(!div.has_class("qux"));
+        assert_eq!(div.attr("data-x"), Some("42"));
+    }
+
+    #[test]
+    fn parse_treats_html_elements_namespace_uri_as_none() {
+        let html = b"<html><body><p>hi</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
+        let p_node = uncascaded.dom.node(p_id).expect("p node exists");
+        let p = p_node.as_element().expect("p is element");
+        // HTML default namespace は fast path として None を返す。
+        assert_eq!(p.namespace_uri(), None);
+    }
+
+    #[test]
+    fn parse_wires_svg_namespace_uri() {
+        // html5ever は <svg> 内 element を automatically SVG namespace に置く。
+        let html = br#"<html><body><svg><g></g></svg></body></html>"#;
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let svg_id = find_first_by_tag(&uncascaded.dom, "svg").expect("svg exists");
+        let g_id = find_first_by_tag(&uncascaded.dom, "g").expect("g exists");
+        let svg_node = uncascaded.dom.node(svg_id).expect("svg node exists");
+        let svg = svg_node.as_element().expect("svg is element");
+        assert_eq!(svg.namespace_uri(), Some("http://www.w3.org/2000/svg"));
+        let g_node = uncascaded.dom.node(g_id).expect("g node exists");
+        let g = g_node.as_element().expect("g is element");
+        assert_eq!(g.namespace_uri(), Some("http://www.w3.org/2000/svg"));
+    }
+
+    #[test]
+    fn parse_missing_style_attribute_leaves_inline_style_none() {
+        let html = b"<html><body><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
+        let p_node = uncascaded.dom.node(p_id).expect("p node exists");
+        let p = p_node.as_element().expect("p is element");
+        assert_eq!(p.inline_style_source(), None);
+    }
+
+    #[test]
+    fn parse_empty_style_attribute_normalizes_to_none() {
+        // trait contract: `style=""` は inline_style_source が None。
+        let html = br#"<html><body><p style=""></p></body></html>"#;
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
+        let p_node = uncascaded.dom.node(p_id).expect("p node exists");
+        let p = p_node.as_element().expect("p is element");
+        assert_eq!(p.inline_style_source(), None);
+    }
+
+    #[test]
+    fn sink_first_wins_on_duplicate_style_attribute() {
+        // Defensive: html5ever は tokenizer 段で duplicate attr を dedupe する
+        // が (§13.2.5.32)、raikiri-html sink 単体が受け取る Vec<Attribute> が
+        // duplicate を含む可能性を排除しない (external consumer が TreeSink を
+        // wrap して重複 attr を注入する scenario も含む)。この test は sink
+        // 単体を driver に見立てて "style を 2 回渡すと最初 (color:red) が勝つ"
+        // 挙動を pin する。
+        use html5ever::interface::{Attribute, ElementFlags, QualName, TreeSink};
+        use html5ever::tendril::StrTendril;
+        use markup5ever::{LocalName, Namespace};
+
+        let sink = RaikiriTreeSink::new();
+        let name = QualName::new(
+            None,
+            Namespace::from("http://www.w3.org/1999/xhtml"),
+            LocalName::from("p"),
+        );
+        let attr = |v: &str| Attribute {
+            name: QualName::new(None, Namespace::from(""), LocalName::from("style")),
+            value: StrTendril::from(v),
+        };
+        // sink に "style=color:red" と "style=color:blue" を順に渡す。
+        let attrs = vec![attr("color:red"), attr("color:blue")];
+        let idx = sink.create_element(name, attrs, ElementFlags::default());
+        // Document の Handle は root。attach しないと finish 前に見つからないため
+        // append 経由で root child にする。
+        sink.append(&sink.get_document(), html5ever::interface::NodeOrText::AppendNode(idx));
+        let uncascaded = sink.finish();
+
+        let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
+        let p_node = uncascaded.dom.node(p_id).expect("p node exists");
+        let p = p_node.as_element().expect("p is element");
+        // first-wins (regression pin for wire_side_tables)。
+        assert_eq!(p.inline_style_source(), Some("color:red"));
+    }
+
     #[test]
     fn parse_strips_many_comments_under_one_parent() {
         use raikiri_traits::{Dom, Element, Node};

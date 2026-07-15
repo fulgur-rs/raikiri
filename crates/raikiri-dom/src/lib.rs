@@ -182,6 +182,118 @@ mod tests {
         assert_eq!(d_elem.inline_style_source(), None);
     }
 
+    // ── Element trait extension (raikiri-spike-blg) ─────────────
+
+    #[test]
+    fn element_ref_reflects_namespace_uri_when_set() {
+        use raikiri_traits::{Dom, Element as _, Node as _, NodeId};
+        use smol_str::SmolStr;
+
+        let mut doc = Document::new();
+        let html_p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+        let svg_g = doc.append_element(Some(0), "g", Style::default(), None::<&str>);
+        doc.set_element_namespace(svg_g, Some(SmolStr::new("http://www.w3.org/2000/svg")));
+
+        let p_node = doc.node(NodeId::new(html_p as u64)).expect("p exists");
+        let p_elem = p_node.as_element().expect("p is element");
+        // HTML default は None を fast path として返す (setter を呼ばなくてよい契約)。
+        assert_eq!(p_elem.namespace_uri(), None);
+
+        let g_node = doc.node(NodeId::new(svg_g as u64)).expect("g exists");
+        let g_elem = g_node.as_element().expect("g is element");
+        assert_eq!(g_elem.namespace_uri(), Some("http://www.w3.org/2000/svg"));
+    }
+
+    #[test]
+    fn element_ref_reflects_id_and_class_and_attr() {
+        use raikiri_traits::{Dom, Element as _, Node as _, NodeId};
+        use smol_str::SmolStr;
+
+        let mut doc = Document::new();
+        let el = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        doc.set_element_attributes(
+            el,
+            vec![
+                (SmolStr::new("id"), SmolStr::new("main")),
+                (SmolStr::new("class"), SmolStr::new("foo  bar\tbaz")),
+                (SmolStr::new("data-x"), SmolStr::new("42")),
+                (SmolStr::new("empty"), SmolStr::new("")),
+            ],
+        );
+
+        let el_node = doc.node(NodeId::new(el as u64)).expect("div exists");
+        let elem = el_node.as_element().expect("div is element");
+
+        // id lookup
+        assert_eq!(elem.id(), Some("main"));
+
+        // has_class: ASCII whitespace で split — space / tab 混在も token 化
+        assert!(elem.has_class("foo"));
+        assert!(elem.has_class("bar"));
+        assert!(elem.has_class("baz"));
+        assert!(!elem.has_class("qux"));
+        // 空 token を渡すと false (spec: empty class token は match しない)
+        assert!(!elem.has_class(""));
+
+        // attr generic lookup
+        assert_eq!(elem.attr("data-x"), Some("42"));
+        // 空文字列 attribute は None (contract: attribute 有無ではなく空文字列同一視)
+        assert_eq!(elem.attr("empty"), None);
+        // 未設定 attribute は None
+        assert_eq!(elem.attr("missing"), None);
+    }
+
+    #[test]
+    fn element_attr_style_reads_through_inline_style() {
+        // `attr("style")` は Node.inline_style へ redirect され、
+        // inline_style_source と同じ値を返す (trait doc の一致性契約)。
+        use raikiri_traits::{Dom, Element as _, Node as _, NodeId};
+
+        let mut doc = Document::new();
+        let el = doc.append_element(Some(0), "p", Style::default(), Some("color:red"));
+        // attributes には style を含めない (sink 側で分離済想定)。
+
+        let el_node = doc.node(NodeId::new(el as u64)).expect("p exists");
+        let elem = el_node.as_element().expect("p is element");
+        assert_eq!(elem.attr("style"), Some("color:red"));
+        assert_eq!(elem.attr("style"), elem.inline_style_source());
+    }
+
+    #[test]
+    fn element_id_and_attr_treat_empty_value_as_none() {
+        use raikiri_traits::{Dom, Element as _, Node as _, NodeId};
+        use smol_str::SmolStr;
+
+        let mut doc = Document::new();
+        let el = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        doc.set_element_attributes(
+            el,
+            vec![
+                (SmolStr::new("id"), SmolStr::new("")),
+                (SmolStr::new("class"), SmolStr::new("")),
+            ],
+        );
+        let el_node = doc.node(NodeId::new(el as u64)).expect("div exists");
+        let elem = el_node.as_element().expect("div is element");
+        assert_eq!(elem.id(), None);
+        assert!(!elem.has_class("foo"));
+    }
+
+    #[test]
+    #[should_panic(expected = "set_element_attributes called on non-Element")]
+    fn set_element_attributes_panics_on_non_element_in_debug() {
+        // Document root (index 0) は Document kind、Text node は Text kind。
+        // どちらも attribute-family setter の対象外なので debug_assert が
+        // 発火することを regression pin する。
+        use smol_str::SmolStr;
+        let mut doc = Document::new();
+        // arena index 0 = Document root
+        doc.set_element_attributes(
+            0,
+            vec![(SmolStr::new("id"), SmolStr::new("bad"))],
+        );
+    }
+
     // ── TreeSink support APIs (M1.3) ────────────────────────────
     // NB: append_element gains a 4th `inline_style_source: Option<impl Into<SmolStr>>`
     // argument in M1.4. These tests don't exercise inline style, so pass `None::<&str>`.

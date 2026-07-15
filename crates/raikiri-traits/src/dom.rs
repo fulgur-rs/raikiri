@@ -115,9 +115,9 @@ pub trait Node<'a> {
 
 /// Element reference (borrowed lifetime `'a`)。
 ///
-/// `tag_name` は M1.5 で確定、`inline_style_source` は M1.4 で先行追加
-/// (HTML `style="..."` 属性の生 string を返す)。他の attribute lookup
-/// (`id` / `has_class` / `attr` 等) は M1.6+ で追加予定。
+/// `tag_name` は M1.5 で確定。`inline_style_source` / `namespace_uri` /
+/// `id` / `has_class` / `attr` は raikiri-spike-blg で追加。attribute lookup は
+/// null-namespace attr のみ (namespaced attr = xlink:href 等は M2+ に defer)。
 pub trait Element<'a> {
     /// HTML / XML tag name (例: `"p"`, `"div"`)。
     fn tag_name(&self) -> &str;
@@ -126,13 +126,67 @@ pub trait Element<'a> {
     /// 未設定または該当 attribute が空文字列 (`style=""`) の場合 `None`。
     ///
     /// raikiri-style::cascade が cssparser の declaration-list parser でこの
-    /// 文字列を消費する (M1.4)。将来 attribute 一般 lookup (M1.6+) が入れば
-    /// この method は `self.attr("style")` の shorthand として残す。
+    /// 文字列を消費する (M1.4)。`self.attr("style")` の shorthand として
+    /// 別 method を維持。
     ///
     /// Default impl は `None` — style を持たない Node kind や未対応 impl は
     /// override 不要。
     fn inline_style_source(&self) -> Option<&str> {
         None
+    }
+
+    /// Element の namespace URI (例: `"http://www.w3.org/2000/svg"`)。
+    /// HTML default namespace の element は `None` を返す (fast path)。
+    ///
+    /// html5ever の `QualName.ns` (interned URI) から raikiri-html sink が
+    /// SmolStr に写し取り、raikiri-dom::Node に格納する。
+    fn namespace_uri(&self) -> Option<&str> {
+        None
+    }
+
+    /// `id` attribute の値。空文字列 `id=""` は `None` を返す (attr lookup と
+    /// 同じ boundary)。複数 token は spec 上 invalid だが raw value をそのまま
+    /// 返す (tokenize しない)。
+    ///
+    /// Default impl は [`Element::attr`]`("id")` に delegate。impl 側は attr
+    /// だけ override すれば id() も追従する (DRY / consistency 契約)。
+    fn id(&self) -> Option<&str> {
+        self.attr("id")
+    }
+
+    /// `class` attribute (space-separated) に指定 token が含まれているか。
+    /// HTML spec に従い ASCII whitespace (space, tab, LF, CR, FF) で split。
+    /// `class` attribute 自体が無い / 空 / 該当 token 無しは `false`。
+    ///
+    /// Default impl は [`Element::attr`]`("class")` を token 化して判定。
+    /// impl 側は attr だけ override すれば has_class も追従する。
+    fn has_class(&self, class: &str) -> bool {
+        if class.is_empty() {
+            return false;
+        }
+        self.attr("class").is_some_and(|value| {
+            value
+                .split([' ', '\t', '\n', '\r', '\x0C'])
+                .any(|token| token == class)
+        })
+    }
+
+    /// null-namespace attribute の value を local name で lookup。
+    /// 未設定または空文字列は `None` を返す (spec 上 attribute 有無と empty
+    /// value を区別する scenario が cascade / selector には無いため boundary
+    /// で正規化)。
+    ///
+    /// `style` を渡した場合の返り値は [`Element::inline_style_source`] と一致
+    /// する (両者は同じ side を参照する view)。Default impl は "style" のみ
+    /// [`inline_style_source`](Element::inline_style_source) を返し、他は
+    /// `None`。impl 側で `attr` を override する場合も "style" 特別扱いを
+    /// 忘れないよう `self.inline_style_source()` へ redirect すること。
+    fn attr(&self, local: &str) -> Option<&str> {
+        if local == "style" {
+            self.inline_style_source()
+        } else {
+            None
+        }
     }
 }
 
