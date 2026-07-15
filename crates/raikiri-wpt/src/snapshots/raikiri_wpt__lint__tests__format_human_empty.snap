@@ -1,0 +1,6 @@
+---
+source: crates/raikiri-wpt/src/lint.rs
+assertion_line: 716
+expression: out
+---
+expectations: clean

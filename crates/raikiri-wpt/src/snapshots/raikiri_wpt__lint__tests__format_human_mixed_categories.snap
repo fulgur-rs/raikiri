@@ -1,0 +1,12 @@
+---
+source: crates/raikiri-wpt/src/lint.rs
+assertion_line: 710
+expression: out
+---
+== Malformed (1) ==
+  raikiri-baseline.txt:2: bad
+== Duplicate (1) ==
+  raikiri-baseline.txt:3: dup
+== Expired (1) ==
+  quarantine.txt:1: old
+expectations: 2 failure(s), 1 warning(s)

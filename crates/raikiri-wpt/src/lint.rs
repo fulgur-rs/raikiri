@@ -35,6 +35,37 @@ impl LintReport {
     pub fn is_empty(&self) -> bool {
         self.issues.is_empty()
     }
+
+    /// Render as human-readable text grouped by [`Category`].
+    ///
+    /// Categories always emit in the order Malformed → Duplicate →
+    /// Conflicting → Expired for stable CI output. Each issue is one line
+    /// of the form `<file>[:<line>]: <message>`. A summary line closes.
+    pub fn format_human(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        for cat in [Category::Malformed, Category::Duplicate, Category::Conflicting, Category::Expired] {
+            let group: Vec<&LintIssue> = self.issues.iter().filter(|i| i.category == cat).collect();
+            if group.is_empty() {
+                continue;
+            }
+            writeln!(out, "== {:?} ({}) ==", cat, group.len()).unwrap();
+            for i in group {
+                match i.line_no {
+                    Some(n) => writeln!(out, "  {}:{}: {}", i.file, n, i.message).unwrap(),
+                    None => writeln!(out, "  {}: {}", i.file, i.message).unwrap(),
+                }
+            }
+        }
+        if self.is_empty() {
+            out.push_str("expectations: clean\n");
+        } else {
+            let n_fail = self.issues.iter().filter(|i| i.category.is_failure()).count();
+            let n_warn = self.issues.iter().filter(|i| !i.category.is_failure()).count();
+            writeln!(out, "expectations: {} failure(s), {} warning(s)", n_fail, n_warn).unwrap();
+        }
+        out
+    }
 }
 
 /// A single lint finding.
@@ -649,5 +680,39 @@ mod tests {
         assert_eq!(malformed[0].line_no, Some(1));
         assert!(malformed[0].message.contains("added_date"));
         assert!(malformed[0].message.contains("not-a-date"));
+    }
+
+    #[test]
+    fn format_human_groups_by_category_and_records_counts() {
+        let report = LintReport {
+            issues: vec![
+                LintIssue {
+                    category: Category::Malformed,
+                    file: "raikiri-baseline.txt".to_owned(),
+                    line_no: Some(2),
+                    message: "bad".to_owned(),
+                },
+                LintIssue {
+                    category: Category::Duplicate,
+                    file: "raikiri-baseline.txt".to_owned(),
+                    line_no: Some(3),
+                    message: "dup".to_owned(),
+                },
+                LintIssue {
+                    category: Category::Expired,
+                    file: "quarantine.txt".to_owned(),
+                    line_no: Some(1),
+                    message: "old".to_owned(),
+                },
+            ],
+        };
+        let out = report.format_human();
+        insta::assert_snapshot!("format_human_mixed_categories", out);
+    }
+
+    #[test]
+    fn format_human_empty_report_snapshot() {
+        let out = LintReport::default().format_human();
+        insta::assert_snapshot!("format_human_empty", out);
     }
 }
