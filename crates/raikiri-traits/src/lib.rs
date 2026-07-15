@@ -326,6 +326,44 @@ mod tests {
         _assert_display::<PolicyViolation>();
     }
 
+    #[test]
+    fn network_error_is_error_and_display() {
+        fn _assert_error<T: std::error::Error>() {}
+        fn _assert_display<T: std::fmt::Display>() {}
+        _assert_error::<NetworkError>();
+        _assert_display::<NetworkError>();
+    }
+
+    #[test]
+    fn network_error_policy_source_chain() {
+        use std::error::Error as _;
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::Image,
+            url: Url::parse("https://example.com/x.png").unwrap(),
+            violation_type: ViolationType::HostNotAllowed,
+            details: String::from("host not in allowlist"),
+        };
+        let ne = NetworkError::PolicyViolation(v);
+        let src = ne.source();
+        assert!(
+            src.is_some(),
+            "NetworkError::PolicyViolation should expose inner PolicyViolation via source()"
+        );
+    }
+
+    #[test]
+    fn network_error_io_source_chain() {
+        use std::error::Error as _;
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let ne = NetworkError::Io(io_err);
+        let src = ne.source();
+        assert!(
+            src.is_some(),
+            "NetworkError::Io should expose inner io::Error via source()"
+        );
+    }
+
     // ── RenderStatus::Aborted contract (M1.2、実 semantic は M6c) ─
 
     /// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`
