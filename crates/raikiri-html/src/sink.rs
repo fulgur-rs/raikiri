@@ -269,25 +269,38 @@ fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
     while let Some(id) = stack.pop() {
         if let Some(node) = doc.node(id)
             && let Some(el) = node.as_element()
-            && el.tag_name() == "style"
         {
-            let mut buf = String::new();
-            for c in doc.child_ids(id) {
-                if let Some(child) = doc.node(c)
-                    && let Some(t) = child.text_content()
-                {
-                    buf.push_str(t);
+            match el.tag_name() {
+                "style" => {
+                    // 直下の Text children を concat
+                    let mut buf = String::new();
+                    for c in doc.child_ids(id) {
+                        if let Some(child) = doc.node(c)
+                            && let Some(t) = child.text_content()
+                        {
+                            buf.push_str(t);
+                        }
+                    }
+                    if !buf.is_empty() {
+                        out.push(buf);
+                    }
+                    // <style> の内容は CSS のみ想定、子は stack に push しない
+                    continue;
                 }
+                "template" => {
+                    // <template> contents are inert (spec) — 現在 M1.3 では
+                    // get_template_contents が template 自身を alias するため
+                    // subtree の descent をここで stop する。本格的な fragment
+                    // 分離は raikiri-spike-xno で追跡。
+                    continue;
+                }
+                _ => {}
             }
-            if !buf.is_empty() {
-                out.push(buf);
-            }
-            // <style> の内容は CSS のみ想定、子は stack に push しない (再帰しない)
-            continue;
         }
-        // それ以外の node は子を stack に積んで DFS 継続
-        // (child_ids 順を維持したいなら逆順 push が本来だが、順序不問なのでそのまま)
-        for c in doc.child_ids(id) {
+        // Push in reverse so LIFO pop yields document order (source-order for
+        // CSS cascade tie-breaking, deterministic for detach batching).
+        let kids: Vec<_> = doc.child_ids(id).collect();
+        for c in kids.into_iter().rev() {
             stack.push(c);
         }
     }
@@ -313,7 +326,10 @@ fn strip_non_element_stubs(doc: &mut Document) {
         {
             to_detach.push(id.0 as usize);
         }
-        for c in doc.child_ids(id) {
+        // Push in reverse so LIFO pop yields document order (deterministic
+        // for detach batching, consistent with extract_inline_stylesheets).
+        let kids: Vec<_> = doc.child_ids(id).collect();
+        for c in kids.into_iter().rev() {
             stack.push(c);
         }
     }

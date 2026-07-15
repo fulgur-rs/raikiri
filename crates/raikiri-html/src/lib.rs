@@ -332,4 +332,43 @@ mod tests {
             "InvalidData from reader must map to ParseError::Io, not Encoding (got {err:?})"
         );
     }
+
+    #[test]
+    fn parse_extracts_multiple_style_blocks_in_document_order() {
+        // Multiple <style> blocks — verify source-order preserved so cascade
+        // tie-breaking (equal specificity → last-wins) works correctly.
+        let html = b"<html><head>\
+                     <style>p{color:red}</style>\
+                     <style>p{color:blue}</style>\
+                     <style>p{color:green}</style>\
+                     </head><body><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        assert_eq!(
+            uncascaded.stylesheet_sources,
+            vec![
+                String::from("p{color:red}"),
+                String::from("p{color:blue}"),
+                String::from("p{color:green}"),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_skips_style_inside_template_element() {
+        // <template> contents are inert per spec — <style> inside must not
+        // appear in stylesheet_sources. Minimum m1.3 fix (skip template subtree
+        // during extraction). Full template-fragment isolation tracked as bd-xno.
+        let html = b"<html><head>\
+                     <template><style>p{color:red}</style></template>\
+                     <style>p{color:blue}</style>\
+                     </head><body><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        // Only the top-level <style> should appear.
+        assert_eq!(
+            uncascaded.stylesheet_sources,
+            vec![String::from("p{color:blue}")]
+        );
+    }
 }
