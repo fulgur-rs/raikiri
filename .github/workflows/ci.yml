@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '.beads/**'
+      - '*.md'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '.beads/**'
+      - '*.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: fmt + test + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        # rustup が rust-toolchain.toml (1.89.0 + rustfmt + clippy) を尊重、
+        # 初回 cargo 呼び出し前に auto-install する。two sources of truth を避け
+        # dtolnay/rust-toolchain の explicit version は使わない。
+        run: rustup show active-toolchain
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Test (lib only, locked)
+        # raikiri-vrt integration test は m1.10 reference harness 完了後、
+        # 別 issue で --tests に昇格。--locked で Cargo.lock drift を弾く。
+        run: cargo test --workspace --lib --locked
+
+      - name: Clippy (all targets, deny warnings)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
