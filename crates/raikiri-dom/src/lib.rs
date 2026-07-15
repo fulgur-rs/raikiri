@@ -346,4 +346,49 @@ mod tests {
             "root should be taller after adding a child (got {first_height} -> {second_height})"
         );
     }
+
+    #[test]
+    fn many_mutations_still_yield_correct_layout() {
+        // Verify that repeated mutations don't accumulate stale state.
+        // Mutations only set a dirty flag (O(1)); the lazy clear on the
+        // first compute_child_layout ensures correctness without O(N) per-mutation cost.
+        let leaf_style = Style {
+            size: Size {
+                width: Dimension::length(10.0),
+                height: Dimension::length(10.0),
+            },
+            ..Default::default()
+        };
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "root",
+            Style {
+                display: Display::Block,
+                size: Size {
+                    width: Dimension::length(400.0),
+                    height: Dimension::auto(),
+                },
+                ..Default::default()
+            },
+        );
+        // Add 200 children — each mutation flips layout_dirty (O(1)).
+        for _ in 0..200 {
+            doc.append_element(Some(root), "child", leaf_style.clone());
+        }
+        compute_root_layout(
+            &mut doc,
+            taffy::NodeId::from(root),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(9999.0),
+            },
+        );
+        let h = doc.nodes[root].unrounded_layout.size.height;
+        // 200 children * 10px stacked = 2000px (block layout).
+        assert!(
+            (h - 2000.0).abs() < 0.5,
+            "expected root height ~2000, got {h} (stale cache would give a much smaller value)"
+        );
+    }
 }

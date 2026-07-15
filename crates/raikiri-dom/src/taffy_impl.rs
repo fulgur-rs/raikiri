@@ -83,6 +83,15 @@ impl LayoutPartialTree for Document {
     }
 
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        // Lazy layout cache invalidation — mutations only set a flag; we
+        // clear all node caches on the first compute after the flag flips
+        // (amortized O(1) per mutation over N-node batches).
+        if self.layout_dirty {
+            for node in &mut self.nodes {
+                node.cache.clear();
+            }
+            self.layout_dirty = false;
+        }
         compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             let idx = usize::from(node_id);
             let display = tree.nodes[idx].style.display;

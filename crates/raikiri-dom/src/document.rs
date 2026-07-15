@@ -17,6 +17,11 @@ pub struct Document {
     /// arena index of the Document root (always 0 の予定、明示的に保持して
     /// 将来 detach root 等の変則 case に備える)。
     pub(crate) root: usize,
+    /// Layout cache dirty flag。任意の tree mutation で set され、次の
+    /// `compute_child_layout` の頭で lazy に全 node cache clear + reset
+    /// する。O(1) per-mutation cost + O(N) per-layout-batch cost で
+    /// invalidation の amortized O(1) を実現。
+    pub(crate) layout_dirty: bool,
 }
 
 impl Document {
@@ -24,7 +29,11 @@ impl Document {
     pub fn new() -> Self {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
-        Self { nodes, root: 0 }
+        Self {
+            nodes,
+            root: 0,
+            layout_dirty: false,
+        }
     }
 
     /// Element node を arena に追加する。`parent` が `Some(idx)` の場合
@@ -123,15 +132,11 @@ impl Document {
         self.invalidate_layout_cache();
     }
 
-    /// 全 node の taffy layout cache を conservative に clear する。
-    ///
-    /// TreeSink 経由の任意 mutation 後、次の `compute_root_layout` で stale
-    /// cached layout が使われないようにする。M1.6+ layout task で ancestor
-    /// 限定 invalidation に最適化できるが、m1.3 spike では全 clear が正しい。
+    /// tree mutation を layout cache dirty として mark する。実際の cache
+    /// clear は次回 `compute_child_layout` (taffy_impl 経由) で lazy に発火する。
+    /// per-mutation は O(1)、per-layout-batch で amortized O(N)。
     fn invalidate_layout_cache(&mut self) {
-        for node in &mut self.nodes {
-            node.cache.clear();
-        }
+        self.layout_dirty = true;
     }
 }
 
