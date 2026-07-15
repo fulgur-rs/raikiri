@@ -83,4 +83,50 @@ impl<'a> raikiri_traits::Element<'a> for ElementRef<'a> {
         // 内部 field が `Some(SmolStr::new(""))` の場合も boundary で捨てる。
         self.node.inline_style.as_deref().filter(|s| !s.is_empty())
     }
+
+    fn namespace_uri(&self) -> Option<&str> {
+        // HTML default namespace は Node.namespace = None として格納しているので
+        // そのまま返せばよい (fast path 済)。
+        self.node.namespace.as_deref()
+    }
+
+    fn id(&self) -> Option<&str> {
+        // `id` は attr 一般 lookup と同じ空文字列正規化契約。
+        self.node
+            .attributes
+            .iter()
+            .find(|a| a.local == "id")
+            .map(|a| a.value.as_str())
+            .filter(|s| !s.is_empty())
+    }
+
+    fn has_class(&self, class: &str) -> bool {
+        if class.is_empty() {
+            return false;
+        }
+        let Some(class_attr) = self.node.attributes.iter().find(|a| a.local == "class") else {
+            return false;
+        };
+        // HTML spec: ASCII whitespace で split (space, tab, LF, CR, FF)。
+        // class 属性 value を token 単位で比較 (大文字小文字 sensitive: HTML
+        // classList spec は case-sensitive)。
+        class_attr
+            .value
+            .split([' ', '\t', '\n', '\r', '\x0C'])
+            .any(|token| token == class)
+    }
+
+    fn attr(&self, local: &str) -> Option<&str> {
+        // `style` は Node.inline_style に分離済のため attributes からは
+        // 探しに行かず inline_style を返す (trait doc の一致性契約)。
+        if local == "style" {
+            return self.inline_style_source();
+        }
+        self.node
+            .attributes
+            .iter()
+            .find(|a| a.local == local)
+            .map(|a| a.value.as_str())
+            .filter(|s| !s.is_empty())
+    }
 }

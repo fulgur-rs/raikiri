@@ -331,10 +331,10 @@ mod tests {
         }
     }
 
-    // ── Element trait extension (M1.4) ──────────────────────────
+    // ── Element trait extension (M1.4, raikiri-spike-blg) ──────
 
     #[test]
-    fn element_default_inline_style_source_is_none() {
+    fn element_defaults_return_none_or_false() {
         use crate::Element;
 
         struct BareElement;
@@ -342,11 +342,16 @@ mod tests {
             fn tag_name(&self) -> &str {
                 "p"
             }
-            // inline_style_source は default impl (None) を利用
+            // inline_style_source / namespace_uri / id / has_class / attr は
+            // default impl (None / false) を利用
         }
 
         let e = BareElement;
         assert_eq!(e.inline_style_source(), None);
+        assert_eq!(e.namespace_uri(), None);
+        assert_eq!(e.id(), None);
+        assert!(!e.has_class("anything"));
+        assert_eq!(e.attr("data-foo"), None);
     }
 
     // ── WarningKind extension (M1.3) ────────────────────────────

@@ -4,7 +4,7 @@
 use smol_str::SmolStr;
 use taffy::Style;
 
-use crate::node::Node;
+use crate::node::{Attr, Node};
 
 /// DOM Document (root + Vec-backed node arena)。
 ///
@@ -138,6 +138,41 @@ impl Document {
         let moved: Vec<usize> = self.nodes[from].children.drain(..).collect();
         self.nodes[to].children.extend(moved);
         self.invalidate_layout_cache();
+    }
+
+    /// Element node に non-HTML namespace URI を紐付ける
+    /// (raikiri-spike-blg)。`ns` が `None` = HTML default namespace / element
+    /// でない場合の効果無し。HTML default は `None` を fast path とする
+    /// (memory saving + `Element::namespace_uri()` の O(1) 判定)。
+    ///
+    /// raikiri-html sink が `finish()` 時に qual_names side-table から呼び出す。
+    /// tree mutation ではないので `invalidate_layout_cache` は call しない。
+    pub fn set_element_namespace(&mut self, id: usize, ns: Option<SmolStr>) {
+        self.nodes[id].namespace = ns;
+    }
+
+    /// Element node に attribute list を紐付ける (raikiri-spike-blg)。
+    /// `attrs` は null-namespace attribute の `(local, value)` 列。html5ever の
+    /// source order を保持する必要があるので Vec で受ける。`style` attribute は
+    /// [`Document::set_element_inline_style`] で別途 wire するため呼び出し側で
+    /// 除外しておくこと。
+    ///
+    /// raikiri-html sink が `finish()` 時に attributes side-table から呼び出す。
+    /// tree mutation ではないので `invalidate_layout_cache` は call しない。
+    pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
+        self.nodes[id].attributes = attrs
+            .into_iter()
+            .map(|(local, value)| Attr { local, value })
+            .collect();
+    }
+
+    /// Element node の `inline_style` を後付けで更新する
+    /// (raikiri-spike-blg)。sink が `finish()` 時に side-table から
+    /// `style="..."` を抽出して呼び出す。空文字列 `style=""` の場合も
+    /// caller 責任で `None` に正規化して渡すことを推奨する
+    /// ([`Element::inline_style_source`] の contract と一致させるため)。
+    pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
+        self.nodes[id].inline_style = inline_style;
     }
 
     /// 全 node の children Vec に対して predicate を適用し、`false` を返す

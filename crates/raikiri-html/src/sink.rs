@@ -9,6 +9,7 @@ use html5ever::interface::{
 };
 use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::QuirksMode;
+use markup5ever::ns;
 use raikiri_dom::Document;
 use raikiri_traits::{Dom, RenderWarning, WarningKind};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -24,11 +25,13 @@ use crate::types::UncascadedDocument;
 pub struct RaikiriTreeSink {
     document: RefCell<Document>,
     /// Handle → 完全な QualName (namespace + local)。`elem_name()` の
-    /// 返り値 `Ref<'_, QualName>` の裏にある。
+    /// 返り値 `Ref<'_, QualName>` の裏にある。`finish()` 時に non-HTML namespace
+    /// のみ raikiri-dom::Node.namespace に wire (raikiri-spike-blg)。
     qual_names: RefCell<FxHashMap<usize, QualName>>,
-    /// Handle → attribute 列。M1.3 では merge (add_attrs_if_missing) のみ運用し
-    /// `finish()` で drop。raikiri-dom::Node への attribute wiring は
-    /// raikiri-spike-blg で追跡 (raikiri-traits::Element doc 上 M1.6 以降で予定)。
+    /// Handle → attribute 列。parse 中は merge (add_attrs_if_missing) で更新。
+    /// `finish()` 時に null-namespace attr を raikiri-dom::Node.attributes に、
+    /// `style` attribute のみ raikiri-dom::Node.inline_style に分離して wire
+    /// (raikiri-spike-blg)。namespaced attr (xlink:href 等) は M2+ に defer。
     attributes: RefCell<FxHashMap<usize, Vec<Attribute>>>,
     /// html5ever が報告した非致命 parse error の buffer。finish() で
     /// UncascadedDocument.warnings に移設。
@@ -53,9 +56,10 @@ impl RaikiriTreeSink {
     /// Element 用の detached node を construct し、side-table に QualName /
     /// attrs を登録する。
     ///
-    /// NB: HTML `style="..."` 属性 → `Node.inline_style` の plumbing は
-    /// raikiri-spike-blg (M1.6+) で予定。現状 attrs side-table には保持されるが
-    /// `append_element` の `inline_style_source` には `None` を渡す。
+    /// `Node.inline_style` / `Node.namespace` / `Node.attributes` の wiring は
+    /// [`RaikiriTreeSink::finish`] で side-table から一括 populate する
+    /// (raikiri-spike-blg)。ここでは Document への tag + default Style 登録と
+    /// side-table への full-fidelity 保存のみ行う。
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
         let tag: SmolStr = name.local.as_ref().into();
         let idx = self
@@ -94,6 +98,14 @@ impl TreeSink for RaikiriTreeSink {
     fn finish(self) -> UncascadedDocument {
         let mut document = self.document.into_inner();
         let warnings = self.warnings.into_inner();
+        let qual_names = self.qual_names.into_inner();
+        let attributes = self.attributes.into_inner();
+
+        // raikiri-spike-blg: side-table を raikiri-dom::Node に wire。
+        // qual_names → Node.namespace (non-HTML のみ)。
+        // attributes → Node.attributes (null-ns、style を除く) + Node.inline_style。
+        wire_side_tables(&mut document, &qual_names, &attributes);
+
         let stylesheet_sources = extract_inline_stylesheets(&document);
         strip_non_element_stubs(&mut document);
         UncascadedDocument {
@@ -341,12 +353,64 @@ fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
     None
 }
 
+/// side-table (`qual_names` / `attributes`) の内容を raikiri-dom::Node に写す。
+///
+/// - `qual_names`: element の namespace URI が HTML default (`ns!(html)`) 以外
+///   なら `Node.namespace` に格納 (HTML default は `None` fast path のまま)。
+/// - `attributes`: null-namespace attr のみ raikiri-dom に運ぶ (namespaced attr
+///   = `xlink:href` on SVG 等は M2+ に defer)。`style` attr は `Node.inline_style`
+///   に分離、それ以外は `Node.attributes` の順序保持 Vec に格納。
+///
+/// `finish()` 時に一度だけ呼ばれる single-pass 変換。parse 中は side-table
+/// (RefCell) のみ更新し Node は無変更、finish で bulk populate することで
+/// html5ever が add_attrs_if_missing / create_element の順序で attr を差し込む
+/// 呼び出しパターンを気にせず済む。
+fn wire_side_tables(
+    doc: &mut Document,
+    qual_names: &FxHashMap<usize, QualName>,
+    attributes: &FxHashMap<usize, Vec<Attribute>>,
+) {
+    for (idx, name) in qual_names {
+        // HTML default namespace は Node.namespace = None のまま (fast path)。
+        // それ以外の svg / mathml / xml / ... は URI string を SmolStr で格納。
+        if name.ns != ns!(html) {
+            doc.set_element_namespace(*idx, Some(SmolStr::new(name.ns.as_ref())));
+        }
+    }
+    for (idx, attrs) in attributes {
+        let mut inline_style: Option<SmolStr> = None;
+        let mut native: Vec<(SmolStr, SmolStr)> = Vec::with_capacity(attrs.len());
+        for a in attrs {
+            // null namespace 以外の attr (xlink:href 等) は M1 では drop。SVG /
+            // MathML full support は M2+ の別 issue で扱う。
+            if a.name.ns != ns!() {
+                continue;
+            }
+            let local = a.name.local.as_ref();
+            if local == "style" {
+                // 空文字列 `style=""` は Element trait contract 上 None なので
+                // ここでは boundary 正規化せず raw 値のまま Node に格納
+                // (dom_impl 側で filter される)。
+                inline_style = Some(SmolStr::new(a.value.as_ref()));
+                continue;
+            }
+            native.push((SmolStr::new(local), SmolStr::new(a.value.as_ref())));
+        }
+        if let Some(source) = inline_style {
+            doc.set_element_inline_style(*idx, Some(source));
+        }
+        if !native.is_empty() {
+            doc.set_element_attributes(*idx, native);
+        }
+    }
+}
+
 /// html5ever が emit した comment / processing-instruction を parent から detach する。
 /// M1 spike では raikiri-dom::Node は Element / Text / Document のみ表現できるため、
 /// `create_comment` / `create_pi` は `#comment` / `#pi` tag の element として保持され
 /// ている。これらを DOM tree から除去することで cascade / selector matching が誤って
 /// 拾わないようにする。arena からは削除しない (index の再利用が起こらないため無害)。
-/// 恒久対応は raikiri-spike-blg で追跡 (NodeKind に Comment / ProcessingInstruction 追加)。
+/// NodeKind への Comment / ProcessingInstruction 追加 (恒久対応) は別 issue に defer。
 ///
 /// Single-pass O(N + total_children) 実装: 全 node をスキャンし、children 内に
 /// stub tag を含む node について children Vec を一度だけ retain。per-stub の

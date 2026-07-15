@@ -10,12 +10,25 @@ use taffy::{Cache, Layout, Style};
 
 use raikiri_traits::NodeKind;
 
+/// Element attribute (null namespace only for M1)。
+///
+/// namespaced attribute (`xlink:href` on SVG 等) は M2+ に defer。html5ever の
+/// `Attribute.name.ns` が null namespace (`ns!("")`) の attr のみここに格納する。
+/// `raikiri-html::sink::finish` が side-table から wire する。
+#[derive(Debug, Clone)]
+pub(crate) struct Attr {
+    pub(crate) local: SmolStr,
+    pub(crate) value: SmolStr,
+}
+
 /// Arena node。全 field は crate-private。
 ///
 /// M1.5 では `style` を Consumer が taffy::Style 直接構築する形。M1.6
 /// layout-single-page で ComputedValues → taffy::Style 変換 layer が入る予定。
 /// M1.4 で `inline_style` field を追加 (HTML `style="..."` 属性の生 string を保持、
 /// raikiri-style::cascade が declaration-list として parse する)。
+/// raikiri-spike-blg で `namespace` / `attributes` field を追加
+/// (raikiri-html sink が finish 時に side-table から wire)。
 #[derive(Debug)]
 pub(crate) struct Node {
     /// Taffy layout style。
@@ -35,6 +48,14 @@ pub(crate) struct Node {
     /// HTML `style="..."` attribute の生 string (kind == Element 時のみ populate、
     /// 他は `None`)。M1.4 raikiri-style::cascade が消費。
     pub(crate) inline_style: Option<SmolStr>,
+    /// Element namespace URI (kind == Element かつ non-HTML の場合のみ `Some`、
+    /// HTML default namespace は `None` を fast path とする)。
+    /// 例: `Some("http://www.w3.org/2000/svg")`。
+    pub(crate) namespace: Option<SmolStr>,
+    /// null-namespace attribute list (kind == Element 時のみ populate、他は空)。
+    /// 順序保持 (html5ever の source order、cascade tie-breaking で使う想定)。
+    /// `style` attribute は [`Node::inline_style`] に分離済のためここには含めない。
+    pub(crate) attributes: Vec<Attr>,
 }
 
 impl Node {
@@ -49,10 +70,15 @@ impl Node {
             tag_name: None,
             text_content: None,
             inline_style: None,
+            namespace: None,
+            attributes: Vec::new(),
         }
     }
 
     /// Element node を tag name / style / inline_style と共に構築する。
+    /// `namespace` / `attributes` は初期空で、raikiri-html sink が finish 時に
+    /// [`crate::Document::set_element_namespace`] / [`crate::Document::set_element_attributes`]
+    /// で populate する。
     pub(crate) fn new_element(
         tag: SmolStr,
         style: Style,
@@ -67,6 +93,8 @@ impl Node {
             tag_name: Some(tag),
             text_content: None,
             inline_style,
+            namespace: None,
+            attributes: Vec::new(),
         }
     }
 
@@ -81,6 +109,8 @@ impl Node {
             tag_name: None,
             text_content: Some(text),
             inline_style: None,
+            namespace: None,
+            attributes: Vec::new(),
         }
     }
 }
