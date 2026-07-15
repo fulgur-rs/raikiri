@@ -85,6 +85,18 @@ pub struct PolicyViolation {
     pub details: String,
 }
 
+impl std::fmt::Display for PolicyViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Policy violation ({:?}) at {}: {}",
+            self.violation_type, self.url, self.details
+        )
+    }
+}
+
+impl std::error::Error for PolicyViolation {}
+
 /// Policy 違反の分類。
 ///
 /// §4 の 8 variant を再現。round 7 未対応 finding: redirect / timeout /

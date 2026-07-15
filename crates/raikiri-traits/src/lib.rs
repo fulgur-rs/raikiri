@@ -316,6 +316,16 @@ mod tests {
         }
     }
 
+    // ── Sub-error trait bounds (0hh) ────────────────────────────
+
+    #[test]
+    fn policy_violation_is_error_and_display() {
+        fn _assert_error<T: std::error::Error>() {}
+        fn _assert_display<T: std::fmt::Display>() {}
+        _assert_error::<PolicyViolation>();
+        _assert_display::<PolicyViolation>();
+    }
+
     // ── RenderStatus::Aborted contract (M1.2、実 semantic は M6c) ─
 
     /// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`
