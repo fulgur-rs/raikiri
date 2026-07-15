@@ -61,32 +61,41 @@ pub fn build_rule_tree<D: Dom>(dom: &D) -> RuleTree {
     RuleTree { style_rules: rules }
 }
 
+/// DOM walk 本体。深いネストで stack overflow しないよう explicit `Vec` stack
+/// で iterative DFS (roborev job 199 対応)。訪問順は sibling 間で recursion 版
+/// と異なり得るが、`<style>` は独立に text を emit するだけで他 node の状態に
+/// 依存しないため source_order (呼び出し側で採番) は不変。
 fn walk_and_collect<D: Dom, F: FnMut(&str)>(
     dom: &D,
     id: raikiri_traits::NodeId,
     on_style_text: &mut F,
 ) {
-    if let Some(node) = dom.node(id) {
-        if node.kind() == NodeKind::Element
-            && let Some(elem) = node.as_element()
-            && elem.tag_name().eq_ignore_ascii_case("style")
-        {
-            // 子 Text node を concat
-            let mut concat = String::new();
-            for child_id in dom.child_ids(id) {
-                if let Some(child) = dom.node(child_id)
-                    && let Some(t) = child.text_content()
-                {
-                    concat.push_str(t);
+    let mut stack: Vec<raikiri_traits::NodeId> = vec![id];
+    while let Some(id) = stack.pop() {
+        if let Some(node) = dom.node(id) {
+            if node.kind() == NodeKind::Element
+                && let Some(elem) = node.as_element()
+                && elem.tag_name().eq_ignore_ascii_case("style")
+            {
+                // 子 Text node を concat
+                let mut concat = String::new();
+                for child_id in dom.child_ids(id) {
+                    if let Some(child) = dom.node(child_id)
+                        && let Some(t) = child.text_content()
+                    {
+                        concat.push_str(t);
+                    }
+                }
+                if !concat.is_empty() {
+                    on_style_text(&concat);
                 }
             }
-            if !concat.is_empty() {
-                on_style_text(&concat);
+            // 全 kind で children を stack に push。stack は LIFO なので document
+            // order (source_order 割り当てに影響) を保つため reverse push。
+            let children: Vec<_> = dom.child_ids(id).collect();
+            for child_id in children.into_iter().rev() {
+                stack.push(child_id);
             }
-        }
-        // 全 kind で children を再帰
-        for child_id in dom.child_ids(id) {
-            walk_and_collect(dom, child_id, on_style_text);
         }
     }
 }
@@ -220,5 +229,26 @@ mod tests {
         let tree = build_rule_tree(&doc);
         assert_eq!(tree.style_rules.len(), 1);
         assert!(tree.style_rules[0].declarations[0].important);
+    }
+
+    /// roborev job 199 (medium): `walk_and_collect` was recursive DFS —
+    /// a deeply nested DOM (e.g. approaching `max_dom_nodes = 1M`) could
+    /// stack-overflow the process. 5000-level linear chain with `<style>`
+    /// at the deepest level (forcing the walk all the way down before
+    /// finding rule text) must complete without overflow and still find
+    /// the rule.
+    #[test]
+    fn deep_nesting_5000_build_rule_tree_no_overflow() {
+        let mut doc = TestDoc::new();
+        let mut parent = 0usize;
+        for _ in 0..5000 {
+            parent = doc.push_element(parent, "div", None);
+        }
+        let style = doc.push_element(parent, "style", None);
+        doc.push_text(style, "div { color: red }");
+
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].declarations.len(), 1);
     }
 }

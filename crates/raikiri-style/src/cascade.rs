@@ -79,50 +79,58 @@ const INLINE_SPECIFICITY: Specificity = 1 << 30;
 /// inline style の source_order — 全 stylesheet rule より後 (最終出現扱い)。
 const INLINE_SOURCE_ORDER: u32 = u32::MAX;
 
+/// `collect_cascaded` は本来 DFS で node を訪れるが、per-node の処理は他の
+/// node の状態に依存しないため訪問順は無関係。overflow 回避のため explicit
+/// `Vec` stack で iterative に書き換え (roborev job 199)。
 fn collect_cascaded<D: Dom>(
     dom: &D,
     id: NodeId,
     rule_tree: &RuleTree,
     out: &mut HashMap<NodeId, Vec<(PropertyValue, bool, Specificity, u32)>>,
 ) {
-    if let Some(node) = dom.node(id) {
-        if node.kind() == NodeKind::Element
-            && let Some(elem) = node.as_element()
-        {
-            let mut per_node = Vec::new();
-            // stylesheet rule matching
-            let tag = elem.tag_name();
-            for rule in &rule_tree.style_rules {
-                if let Some(spec) = match_by_tag(&rule.selectors, tag) {
-                    for decl in &rule.declarations {
+    let mut stack: Vec<NodeId> = vec![id];
+    while let Some(id) = stack.pop() {
+        if let Some(node) = dom.node(id) {
+            if node.kind() == NodeKind::Element
+                && let Some(elem) = node.as_element()
+            {
+                let mut per_node = Vec::new();
+                // stylesheet rule matching
+                let tag = elem.tag_name();
+                for rule in &rule_tree.style_rules {
+                    if let Some(spec) = match_by_tag(&rule.selectors, tag) {
+                        for decl in &rule.declarations {
+                            per_node.push((
+                                decl.value.clone(),
+                                decl.important,
+                                spec,
+                                rule.source_order,
+                            ));
+                        }
+                    }
+                }
+                // inline style
+                if let Some(source) = elem.inline_style_source() {
+                    let mut input = ParserInput::new(source);
+                    let mut parser = Parser::new(&mut input);
+                    for decl in parse_declaration_block(&mut parser) {
                         per_node.push((
-                            decl.value.clone(),
+                            decl.value,
                             decl.important,
-                            spec,
-                            rule.source_order,
+                            INLINE_SPECIFICITY,
+                            INLINE_SOURCE_ORDER,
                         ));
                     }
                 }
-            }
-            // inline style
-            if let Some(source) = elem.inline_style_source() {
-                let mut input = ParserInput::new(source);
-                let mut parser = Parser::new(&mut input);
-                for decl in parse_declaration_block(&mut parser) {
-                    per_node.push((
-                        decl.value,
-                        decl.important,
-                        INLINE_SPECIFICITY,
-                        INLINE_SOURCE_ORDER,
-                    ));
+                if !per_node.is_empty() {
+                    out.insert(id, per_node);
                 }
             }
-            if !per_node.is_empty() {
-                out.insert(id, per_node);
+            // stack は LIFO なので document order で push するため reverse。
+            let children: Vec<_> = dom.child_ids(id).collect();
+            for child_id in children.into_iter().rev() {
+                stack.push(child_id);
             }
-        }
-        for child_id in dom.child_ids(id) {
-            collect_cascaded(dom, child_id, rule_tree, out);
         }
     }
 }
@@ -180,6 +188,11 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
     selector.specificity()
 }
 
+/// Top-down inheritance walk。子 node は親の computed value を必要とするため
+/// (再帰の call stack で暗黙に運んでいた context)、iterative 化には各 stack
+/// entry に `(NodeId, 親の computed value)` を明示的に持たせる — Approach A
+/// (roborev job 199 対応)。clone は各 entry ごとに発生するが m1.4 scope では
+/// 許容 (hot path 化した場合は将来 `Arc<ComputedValues>` で削減を検討)。
 fn resolve_inheritance<D: Dom>(
     dom: &D,
     id: NodeId,
@@ -187,26 +200,31 @@ fn resolve_inheritance<D: Dom>(
     cascaded: &HashMap<NodeId, Vec<(PropertyValue, bool, Specificity, u32)>>,
     out: &mut Vec<ComputedValues>,
 ) {
-    let mut computed = parent_computed.clone();
+    let mut stack: Vec<(NodeId, ComputedValues)> = vec![(id, parent_computed.clone())];
+    while let Some((id, parent_computed)) = stack.pop() {
+        let mut computed = parent_computed;
 
-    // 自 node の cascaded winners を apply
-    if let Some(candidates) = cascaded.get(&id) {
-        let winners = pick_winners(candidates);
-        for value in winners.into_values() {
-            apply_value(value, &mut computed);
+        // 自 node の cascaded winners を apply
+        if let Some(candidates) = cascaded.get(&id) {
+            let winners = pick_winners(candidates);
+            for value in winners.into_values() {
+                apply_value(value, &mut computed);
+            }
         }
-    }
 
-    // out を id+1 サイズに resize してから index 書き込み
-    let idx = id.0 as usize;
-    if out.len() <= idx {
-        out.resize(idx + 1, ComputedValues::initial());
-    }
-    out[idx] = computed.clone();
+        // out を id+1 サイズに resize してから index 書き込み
+        let idx = id.0 as usize;
+        if out.len() <= idx {
+            out.resize(idx + 1, ComputedValues::initial());
+        }
+        out[idx] = computed.clone();
 
-    // 子を再帰
-    for child_id in dom.child_ids(id) {
-        resolve_inheritance(dom, child_id, &computed, cascaded, out);
+        // 子を stack に push (own computed value を parent_computed として渡す)。
+        // stack は LIFO なので document order で push するため reverse。
+        let children: Vec<_> = dom.child_ids(id).collect();
+        for child_id in children.into_iter().rev() {
+            stack.push((child_id, computed.clone()));
+        }
     }
 }
 
@@ -386,5 +404,49 @@ mod tests {
                 assert_eq!(run.computed[i], baseline.computed[i], "differ at node {i}");
             }
         }
+    }
+
+    fn deep_chain_doc(depth: usize) -> (TestDoc, usize) {
+        let mut doc = TestDoc::new();
+        let mut parent = 0usize;
+        for _ in 0..depth {
+            parent = doc.push_element(parent, "div", None);
+        }
+        let style = doc.push_element(parent, "style", None);
+        doc.push_text(style, "div { color: red }");
+        (doc, parent)
+    }
+
+    /// roborev job 199 (medium): `collect_cascaded` and `resolve_inheritance`
+    /// were recursive DFS — a deeply nested DOM could stack-overflow the
+    /// process. 5000-level linear chain must cascade without overflow and
+    /// produce a correct (non-initial) computed value at the deepest node.
+    #[test]
+    fn deep_nesting_5000_cascade_no_overflow() {
+        let (doc, deepest) = deep_chain_doc(5000);
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(result.computed.len(), doc.nodes.len());
+        assert_eq!(result.computed[deepest].color, RED);
+    }
+
+    /// Same regression, but forces the overflow deterministically: run on a
+    /// thread with a small, fixed stack size so recursion depth needed to
+    /// blow the stack is low and hardware/platform-independent. Before the
+    /// iterative-DFS fix this thread aborts with a stack overflow; after the
+    /// fix it completes cleanly and returns the correct computed color.
+    #[test]
+    fn deep_nesting_small_stack_no_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(|| {
+                let (doc, deepest) = deep_chain_doc(500);
+                let tree = build_rule_tree(&doc);
+                let result = cascade(&doc, &tree).expect("cascade Ok");
+                result.computed[deepest].color
+            })
+            .expect("spawn thread");
+        let color = handle.join().expect("thread must not stack-overflow on deep DOM");
+        assert_eq!(color, RED);
     }
 }
