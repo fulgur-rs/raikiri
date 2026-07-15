@@ -18,6 +18,12 @@ pub use property::{CssColor, Length, PropertyValue};
 pub mod rule;
 pub use rule::{Declaration, StyleRule};
 
+pub mod ruletree;
+pub use ruletree::{build_rule_tree, RuleTree};
+
+#[cfg(test)]
+pub(crate) mod test_dom;
+
 use std::fmt;
 
 use cssparser::{CowRcStr, Parser as CssParser, ParserInput, SourceLocation, ToCss};
