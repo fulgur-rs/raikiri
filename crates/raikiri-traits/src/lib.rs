@@ -404,6 +404,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn render_error_network_policy_nested_source_chain() {
+        use std::error::Error as _;
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::Image,
+            url: Url::parse("http://tracker.example.com/1x1.gif").unwrap(),
+            violation_type: ViolationType::SchemeNotAllowed,
+            details: String::from("http not allowed in strict mode"),
+        };
+        let re = RenderError::Network(NetworkError::PolicyViolation(v));
+        // depth 1: RenderError → NetworkError
+        let inner = re
+            .source()
+            .expect("RenderError::Network should delegate to NetworkError");
+        // depth 2: NetworkError::PolicyViolation → PolicyViolation
+        let deep = inner
+            .source()
+            .expect("NetworkError::PolicyViolation should delegate to PolicyViolation");
+        // depth 3: PolicyViolation is a leaf (no inner error)
+        assert!(
+            deep.source().is_none(),
+            "PolicyViolation should be the leaf of the chain"
+        );
+    }
+
     // ── RenderStatus::Aborted contract (M1.2、実 semantic は M6c) ─
 
     /// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`
