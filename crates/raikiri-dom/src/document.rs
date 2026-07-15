@@ -132,6 +132,25 @@ impl Document {
         self.invalidate_layout_cache();
     }
 
+    /// 全 node の children Vec に対して predicate を適用し、`false` を返す
+    /// entry を除去する。html5ever の comment / PI stub を single-pass で
+    /// 除去する目的で raikiri-html が使用する。個別に `detach_from_parent`
+    /// を呼ぶ O(K*N) 実装を回避 (attacker-controlled な多量 stub で quadratic
+    /// を防ぐ)。tree mutation なので `invalidate_layout_cache` も call する。
+    pub fn retain_children(&mut self, mut predicate: impl FnMut(usize) -> bool) {
+        let mut any_removed = false;
+        for node in &mut self.nodes {
+            let before = node.children.len();
+            node.children.retain(|&c| predicate(c));
+            if node.children.len() != before {
+                any_removed = true;
+            }
+        }
+        if any_removed {
+            self.invalidate_layout_cache();
+        }
+    }
+
     /// tree mutation を layout cache dirty として mark する。実際の cache
     /// clear は次回 `compute_child_layout` (taffy_impl 経由) で lazy に発火する。
     /// per-mutation は O(1)、per-layout-batch で amortized O(N)。

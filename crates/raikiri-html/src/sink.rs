@@ -11,7 +11,7 @@ use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::QuirksMode;
 use raikiri_dom::Document;
 use raikiri_traits::{Dom, RenderWarning, WarningKind};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smol_str::SmolStr;
 use taffy::Style;
 
@@ -257,15 +257,26 @@ impl TreeSink for RaikiriTreeSink {
     }
 }
 
-/// `<style>` element の text content を DFS (iterative) で集約する。
-/// Text node の text_content を concat して 1 stylesheet 相当として push。
+/// `<head>` 内の `<style>` element の text content を DFS (iterative) で
+/// document order 集約する。
+///
+/// 設計仕様書 §6 MVP: `<head>` 内の `<style>` のみ head 内出現順で登録。
+/// `<body>` 内の `<style>` は "出現位置以降のみ有効" という position-aware
+/// semantics が必要なため後の拡張として defer。
+///
+/// `<template>` subtree は spec 上 inert なので skip (raikiri-spike-xno 参照)。
 /// 明示的 stack を使うことで attacker-controlled な深い DOM でも stack
 /// overflow を起こさない。
 fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
     use raikiri_traits::{Dom, Element, Node};
 
+    // まず <head> element を探す。存在しなければ MVP scope 上 stylesheet なし。
+    let Some(head_id) = find_head_element(doc) else {
+        return Vec::new();
+    };
+
     let mut out = Vec::new();
-    let mut stack: Vec<raikiri_traits::NodeId> = vec![doc.root_id()];
+    let mut stack: Vec<raikiri_traits::NodeId> = vec![head_id];
     while let Some(id) = stack.pop() {
         if let Some(node) = doc.node(id)
             && let Some(el) = node.as_element()
@@ -288,10 +299,7 @@ fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
                     continue;
                 }
                 "template" => {
-                    // <template> contents are inert (spec) — 現在 M1.3 では
-                    // get_template_contents が template 自身を alias するため
-                    // subtree の descent をここで stop する。本格的な fragment
-                    // 分離は raikiri-spike-xno で追跡。
+                    // spec 上 inert (bd-xno)
                     continue;
                 }
                 _ => {}
@@ -307,35 +315,65 @@ fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
     out
 }
 
+/// Document tree の `<head>` element を DFS (iterative) で探す。
+/// 通常 `<html>` の直下 first-child だが html5ever tree building で位置が
+/// 変わる場合もあるので linear scan。見つからない場合 None。
+fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
+    use raikiri_traits::{Dom, Element, Node};
+
+    let mut stack: Vec<raikiri_traits::NodeId> = vec![doc.root_id()];
+    while let Some(id) = stack.pop() {
+        if let Some(node) = doc.node(id)
+            && let Some(el) = node.as_element()
+            && el.tag_name() == "head"
+        {
+            return Some(id);
+        }
+        let kids: Vec<_> = doc.child_ids(id).collect();
+        for c in kids.into_iter().rev() {
+            stack.push(c);
+        }
+    }
+    None
+}
+
 /// html5ever が emit した comment / processing-instruction を parent から detach する。
 /// M1 spike では raikiri-dom::Node は Element / Text / Document のみ表現できるため、
 /// `create_comment` / `create_pi` は `#comment` / `#pi` tag の element として保持され
 /// ている。これらを DOM tree から除去することで cascade / selector matching が誤って
 /// 拾わないようにする。arena からは削除しない (index の再利用が起こらないため無害)。
 /// 恒久対応は raikiri-spike-blg で追跡 (NodeKind に Comment / ProcessingInstruction 追加)。
+///
+/// Single-pass O(N + total_children) 実装: 全 node をスキャンし、children 内に
+/// stub tag を含む node について children Vec を一度だけ retain。per-stub の
+/// parent_of + children.remove(pos) を回避 (attacker-controlled な多量 comment で
+/// quadratic を防ぐ)。
 fn strip_non_element_stubs(doc: &mut Document) {
     use raikiri_traits::{Dom, Element, Node};
 
-    // Iterative collection (2-pass) — 深い tree でも stack overflow しない。
-    let mut to_detach = Vec::new();
-    let mut stack: Vec<raikiri_traits::NodeId> = vec![doc.root_id()];
+    // Pass 1: 全 node をスキャンし、tag が "#comment" / "#pi" の arena index を集める。
+    let mut stub_indices = FxHashSet::default();
+    let root = doc.root_id();
+    let mut stack: Vec<raikiri_traits::NodeId> = vec![root];
     while let Some(id) = stack.pop() {
         if let Some(node) = doc.node(id)
             && let Some(el) = node.as_element()
             && matches!(el.tag_name(), "#comment" | "#pi")
         {
-            to_detach.push(id.0 as usize);
+            stub_indices.insert(id.0 as usize);
         }
-        // Push in reverse so LIFO pop yields document order (deterministic
-        // for detach batching, consistent with extract_inline_stylesheets).
         let kids: Vec<_> = doc.child_ids(id).collect();
         for c in kids.into_iter().rev() {
             stack.push(c);
         }
     }
-    for idx in to_detach {
-        doc.detach_from_parent(idx);
+
+    if stub_indices.is_empty() {
+        return;
     }
+
+    // Pass 2: 各 parent の children を single retain で filter。
+    doc.retain_children(|c| !stub_indices.contains(&c));
 }
 
 /// html5ever `QuirksMode` を raikiri-native `QuirksMode` へ変換する

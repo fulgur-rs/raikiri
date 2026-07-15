@@ -371,4 +371,53 @@ mod tests {
             vec![String::from("p{color:blue}")]
         );
     }
+
+    #[test]
+    fn parse_ignores_body_style_in_m1_scope() {
+        // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
+        // position-aware semantics を要するため defer。
+        let html = b"<html><head><style>p{color:red}</style></head>\
+                     <body><style>p{color:blue}</style><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        // Only <head> style should be extracted.
+        assert_eq!(
+            uncascaded.stylesheet_sources,
+            vec![String::from("p{color:red}")]
+        );
+    }
+
+    #[test]
+    fn parse_strips_many_comments_under_one_parent() {
+        use raikiri_traits::{Dom, Element, Node};
+
+        // 100 comments under body — verifies retain_children handles bulk correctly.
+        let mut html = String::from("<html><head></head><body>");
+        for i in 0..100 {
+            html.push_str(&format!("<!-- comment {i} -->"));
+        }
+        html.push_str("<p>x</p></body></html>");
+        let opts = empty_options();
+        let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
+
+        // No #comment / #pi should remain in the tree.
+        fn scan(doc: &raikiri_dom::Document, id: raikiri_traits::NodeId) -> bool {
+            if let Some(node) = doc.node(id)
+                && let Some(el) = node.as_element()
+                && matches!(el.tag_name(), "#comment" | "#pi")
+            {
+                return true;
+            }
+            for c in doc.child_ids(id) {
+                if scan(doc, c) {
+                    return true;
+                }
+            }
+            false
+        }
+        assert!(
+            !scan(&uncascaded.dom, uncascaded.dom.root_id()),
+            "100 comment stubs must all be stripped"
+        );
+    }
 }
