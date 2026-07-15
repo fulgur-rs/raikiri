@@ -208,6 +208,14 @@ pub enum WarningKind {
         /// 尽くした iteration 数。
         iterations: u32,
     },
+    /// html5ever tokenizer が非致命 parse error を報告した (malformed HTML を
+    /// recover した場合等)。Stylo/blitz と同じ責務境界: raikiri-html 内で
+    /// warning に降格し、rendering は継続する。M1.5+ orchestrator が Document
+    /// → `RenderSummary.warnings` に merge する。
+    HtmlParseError {
+        /// html5ever が返した診断メッセージ (Cow<'static, str> を String 化)。
+        message: String,
+    },
 }
 
 /// Consumer の convergence loop が `max_target_iterations` を尽くしたときの挙動

@@ -330,4 +330,19 @@ mod tests {
             RenderStatus::Completed(_) => panic!("expected Aborted"),
         }
     }
+
+    #[test]
+    fn warning_kind_html_parse_error_is_constructable() {
+        // #[non_exhaustive] 契約下で raikiri-html crate 相当の external consumer が
+        // 該 variant を build できることを regression 防止する。
+        let w = crate::WarningKind::HtmlParseError {
+            message: String::from("unexpected end tag"),
+        };
+        match w {
+            crate::WarningKind::HtmlParseError { message } => {
+                assert_eq!(message, "unexpected end tag");
+            }
+            _ => panic!("expected HtmlParseError"),
+        }
+    }
 }
