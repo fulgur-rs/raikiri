@@ -214,18 +214,22 @@ impl TreeSink for RaikiriTreeSink {
                     .insert_child_before(parent, *sibling, c);
             }
             NodeOrText::AppendText(text) => {
-                // adjacent text concat 契約は Task 9 で扱う。M1 では新規 Text
-                // node を sibling の直前に挿入 (detach → insert_before)。
-                let idx = self
+                let parent = self
+                    .document
+                    .borrow()
+                    .parent_of(*sibling)
+                    .expect("append_before_sibling: sibling has no parent");
+                // 新規 Text node を arena に作成 (detached にできない — append_text
+                // が parent 必須のため、まず parent 末尾に append → 直後 detach
+                // → insert_before の 3 step)。
+                let text_id = self
                     .document
                     .borrow_mut()
-                    .append_element(None, "#text-holder", Style::default());
-                // "#text-holder" は間違い: text は element でなく Text kind
-                // で保持する必要がある。M1 hello-world path では発火しない
-                // ため deferred。Task 9 で正式実装。
-                let _ = idx;
-                let _ = text;
-                unimplemented!("append_before_sibling AppendText: Task 9 で実装");
+                    .append_text(parent, text.to_string());
+                self.document.borrow_mut().detach_from_parent(text_id);
+                self.document
+                    .borrow_mut()
+                    .insert_child_before(parent, *sibling, text_id);
             }
         }
     }

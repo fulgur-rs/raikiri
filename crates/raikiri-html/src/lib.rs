@@ -231,4 +231,14 @@ mod tests {
         assert_eq!(uncascaded.dom.node(kids[0]).unwrap().text_content(), Some("Hi"));
         let _ = text;
     }
+
+    #[test]
+    fn parse_survives_table_foster_parenting() {
+        // <table> 直下 text の foster parenting は html5ever が
+        // append_before_sibling(AppendText(...)) を trigger する典型 case。
+        // panic せず parse が完走することのみ verify。
+        let html = b"<table>stray text<tr><td>x</td></tr></table>";
+        let opts = empty_options();
+        let _ = parse(&html[..], &opts).expect("parse should not panic");
+    }
 }
