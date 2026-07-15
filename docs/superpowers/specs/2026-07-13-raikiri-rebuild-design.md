@@ -300,6 +300,24 @@ reviewer 提案の明示表：
 | `NoOpNetworkProvider`, (future) `SandboxedNetProvider` | raikiri-net | Consumer |
 | `parse_html()`, `plan()`, `render_streaming()`, `render_batch()`, `html_to_png()` | raikiri (umbrella) | Consumer |
 
+**Crate-local deps (not workspace-wide)** (feasibility §4.3 対応):
+
+- `precomputed-hash = "0.1"` は raikiri-style crate の **direct dep のみ**、
+  workspace scope に上げない。理由: encapsulation policy — stylo-side
+  implementation detail (`SelectorImpl` 内部要求) は raikiri-style の外に
+  漏らさない (feasibility §2.4 経緯、commit `4a5d2c6`)
+
+**taffy features 明示** (feasibility §4.3 対応):
+
+- 有効 features: `[block_layout, flexbox, grid, content_size, calc, std]`
+  (stylo_taffy / blitz-dom と一致)
+- **OFF**: `taffy_tree` — raikiri-dom は自前 arena で `LayoutPartialTree` /
+  `TraversePartialTree` を trait 直下 impl するため
+- **Style: !Send under calc feature caveat**: `Dimension`
+  (via `CompactLength`) が `calc()` 有効時に `*const ()` を保持するため
+  `Style: !Send`。LayoutBuffer が `Style` を保持する場合の invariant 決定は
+  M1 (`raikiri-spike-m1.17`) で対応
+
 **Consumer 目線**: `use raikiri::*` だけで足りる。sub-crate 直接依存も可能
 (advanced case)。
 
@@ -3130,6 +3148,19 @@ validate-expectations`)、CI で PR ごとに実行。
 "§4 型定義 + §13 milestone + §16 用語集" に圧縮し、narrative は
 `docs/superpowers/rationale.md` に分離する (compression PR は独立 review)
 
+**Actual drifts recorded (M0 期間中)**:
+
+- **MSRV drift**: `1.85 → 1.88 → 1.89`
+  - 1.85 → 1.88: nzv.3 Task 4、parley 0.10 要件 (commit `edce05d`)
+  - 1.88 → 1.89: blitz oracle dev-deps 揃え (commit `23b5343`)
+  - §M0 Tasks の "MSRV = 1.85" 記述は歴史的初期値、実 toolchain は 1.89
+- **nzv.8 verdict 遷移**: `NEEDS_DESIGN_CHANGE → OK`。fix は `precomputed-hash` を
+  raikiri-style crate-local に encapsulate (§4 Crate-local deps note 参照)
+- **raikiri-style の M0 seed 化**: 元は "M0 stub、M1 で populate" だったが、
+  nzv.8 fix で SelectorImpl seed を M0 内に追加 (commit `4a5d2c6`)
+- **nzv.11 refute**: 「PaintScene と blitz-paint 別 shape → bridge trait 必要」
+  仮説は refute。§M0 検証項目リストの該当行 inline annotate 済
+
 ### M0: Dep feasibility + production workspace (round 3 review 対応)
 
 **訂正 (round 3 review #3 対応)**: 以前「throwaway smoke」と書いたが実態と
@@ -3152,7 +3183,7 @@ validate-expectations`)、CI で PR ごとに実行。
    - feasibility-selectors
    - feasibility-cssparser
    - feasibility-selectors-cssparser-version-compat (round 3 #4)
-   - feasibility-paintscene-adapter-compile-spike (round 3 #4)
+   - feasibility-paintscene-adapter-compile-spike (round 3 #4、nzv.11 で verify 済)
 5. feasibility-report           ← 全 spike に依存
 6. m0-readiness-gate            ← report に依存、outcome 判定
 ```
@@ -3168,16 +3199,17 @@ validate-expectations`)、CI で PR ごとに実行。
   workspace で同 semver に pin 可能か
 - **anyrender PaintScene 適合面** (round 3 #4 で明示 task 化): blitz-paint と
   shape 一致するか、adapter compile-spike で verify
+  → **(nzv.11 で verify 済、bridge trait 不要と確定。§13.0 drift log 参照)**
 
 **Tasks** (依存順、round 3 #5 対応):
-- rust-toolchain-msrv (`rust-toolchain.toml` + MSRV = 1.85)
+- rust-toolchain-msrv (`rust-toolchain.toml` + MSRV = 1.85 → **実 MSRV は 1.89 に drift、§13.0 参照**)
 - workspace-scaffold (`Cargo.toml` workspace root、production)
 - crate-manifests (全 crate `Cargo.toml`、pin dep version、production)
 - dependency-resolution (`Cargo.lock` 生成、version compat verify)
 - feasibility-parley, feasibility-taffy, feasibility-anyrender-vello-cpu,
   feasibility-selectors, feasibility-cssparser,
   feasibility-selectors-cssparser-version-compat,
-  feasibility-paintscene-adapter-compile-spike
+  feasibility-paintscene-adapter-compile-spike (nzv.11 で verify 済、§13.0 参照)
 - feasibility-report (`docs/feasibility-report.md` に全結果、API surface 記録)
 - **m0-readiness-gate**: M0 outcome 判定 (下記)
 
