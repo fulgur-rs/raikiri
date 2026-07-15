@@ -6,8 +6,8 @@
 
 pub mod anyrender_byte_identical; // nzv.7
 pub mod cssparser_at_rules; // nzv.9
-pub mod paintscene_adapter;
+pub mod paintscene_adapter; // nzv.11
 pub mod parley_send_sync; // nzv.5
 pub mod selectors_cssparser_compat; // nzv.10
 pub mod selectors_standalone; // nzv.8
-pub mod taffy_layout_modes; // nzv.6 // nzv.11
+pub mod taffy_layout_modes; // nzv.6
