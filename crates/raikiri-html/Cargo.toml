@@ -11,6 +11,9 @@ raikiri-traits = { workspace = true }
 raikiri-dom    = { workspace = true }
 html5ever      = { workspace = true }
 markup5ever    = { workspace = true }
+rustc-hash     = { workspace = true }
+smol_str       = { workspace = true }
+url            = { workspace = true }
 
 [lints]
 workspace = true
