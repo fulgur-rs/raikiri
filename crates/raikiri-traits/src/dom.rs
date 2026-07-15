@@ -135,3 +135,18 @@ pub trait Element<'a> {
         None
     }
 }
+
+/// HTML5 quirks mode. m1.3 で raikiri-html が set し、UncascadedDocument
+/// を経由して cascade (m1.4) が参照する。html5ever `QuirksMode` の raikiri
+/// 面ミラー (cleanroom: html5ever を trait layer に持ち込まない)。
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum QuirksMode {
+    /// Standards mode (`<!DOCTYPE html>` 明示、または QuirksMode 判定に該当せず)。
+    #[default]
+    NoQuirks,
+    /// Limited quirks mode。
+    LimitedQuirks,
+    /// Full quirks mode (missing / obsolete DOCTYPE)。
+    Quirks,
+}

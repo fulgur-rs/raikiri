@@ -83,10 +83,22 @@ impl LayoutPartialTree for Document {
     }
 
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        // Lazy layout cache invalidation — mutations only set a flag; we
+        // clear all node caches on the first compute after the flag flips
+        // (amortized O(1) per mutation over N-node batches).
+        if self.layout_dirty {
+            for node in &mut self.nodes {
+                node.cache.clear();
+            }
+            self.layout_dirty = false;
+        }
         compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             let idx = usize::from(node_id);
-            let is_leaf = tree.nodes[idx].children.is_empty();
             let display = tree.nodes[idx].style.display;
+            if display == Display::None {
+                return LayoutOutput::HIDDEN;
+            }
+            let is_leaf = tree.nodes[idx].children.is_empty();
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
                 compute_leaf_layout(
@@ -100,7 +112,7 @@ impl LayoutPartialTree for Document {
                     Display::Block => compute_block_layout(tree, node_id, inputs, None),
                     Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
                     Display::Grid => compute_grid_layout(tree, node_id, inputs),
-                    Display::None => LayoutOutput::HIDDEN,
+                    Display::None => unreachable!("Display::None handled above"),
                 }
             }
         })

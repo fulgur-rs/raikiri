@@ -16,6 +16,7 @@ use raikiri_traits::NodeKind;
 /// layout-single-page で ComputedValues → taffy::Style 変換 layer が入る予定。
 /// M1.4 で `inline_style` field を追加 (HTML `style="..."` 属性の生 string を保持、
 /// raikiri-style::cascade が declaration-list として parse する)。
+#[derive(Debug)]
 pub(crate) struct Node {
     /// Taffy layout style。
     pub(crate) style: Style,

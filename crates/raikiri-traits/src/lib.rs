@@ -39,7 +39,7 @@ pub use config::{
     BatchConfig, BatchConfigBuilder, LookaheadConfig, LookaheadConfigBuilder, PlanConfig,
     PlanConfigBuilder, RenderLimits, RenderLimitsBuilder, StreamingConfig, StreamingConfigBuilder,
 };
-pub use dom::{Dom, Element, Node, NodeId, NodeKind, Symbol};
+pub use dom::{Dom, Element, Node, NodeId, NodeKind, QuirksMode, Symbol};
 pub use error::{
     CascadeError, EmittedSlotInfo, ExhaustionPolicy, LayoutError, LimitKind, ParseError,
     RenderError, RenderStatus, RenderSummary, RenderWarning, TargetDiscrepancy, TargetKind,
@@ -347,5 +347,22 @@ mod tests {
 
         let e = BareElement;
         assert_eq!(e.inline_style_source(), None);
+    }
+
+    // ── WarningKind extension (M1.3) ────────────────────────────
+
+    #[test]
+    fn warning_kind_html_parse_error_is_constructable() {
+        // #[non_exhaustive] 契約下で raikiri-html crate 相当の external consumer が
+        // 該 variant を build できることを regression 防止する。
+        let w = crate::WarningKind::HtmlParseError {
+            message: String::from("unexpected end tag"),
+        };
+        match w {
+            crate::WarningKind::HtmlParseError { message } => {
+                assert_eq!(message, "unexpected end tag");
+            }
+            _ => panic!("expected HtmlParseError"),
+        }
     }
 }

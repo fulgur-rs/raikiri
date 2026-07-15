@@ -24,7 +24,7 @@ pub use dom_impl::{ChildIter, ElementRef, NodeRef};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raikiri_traits::{Dom, Element, Node, NodeKind};
+    use raikiri_traits::{Dom, Element, Node, NodeId, NodeKind};
     use taffy::prelude::*;
     use taffy::{AvailableSpace, Dimension, Display, Size, Style, compute_root_layout};
 
@@ -180,5 +180,239 @@ mod tests {
         let d_node = doc.node(NodeId::new(noattr as u64)).expect("div exists");
         let d_elem = d_node.as_element().expect("div is element");
         assert_eq!(d_elem.inline_style_source(), None);
+    }
+
+    // ── TreeSink support APIs (M1.3) ────────────────────────────
+    // NB: append_element gains a 4th `inline_style_source: Option<impl Into<SmolStr>>`
+    // argument in M1.4. These tests don't exercise inline style, so pass `None::<&str>`.
+
+    #[test]
+    fn attach_child_appends_to_parent_children() {
+        let mut doc = Document::new();
+        let a = doc.append_element(None, "a", Style::default(), None::<&str>); // detached
+        doc.attach_child(0, a);
+        let children: Vec<_> = Dom::child_ids(&doc, doc.root_id()).collect();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].0 as usize, a);
+    }
+
+    #[test]
+    fn insert_child_before_places_at_correct_index() {
+        let mut doc = Document::new();
+        let a = doc.append_element(Some(0), "a", Style::default(), None::<&str>);
+        let c = doc.append_element(Some(0), "c", Style::default(), None::<&str>);
+        let b = doc.append_element(None, "b", Style::default(), None::<&str>); // detached
+        doc.insert_child_before(0, c, b);
+        let kids: Vec<_> = Dom::child_ids(&doc, doc.root_id())
+            .map(|n| n.0 as usize)
+            .collect();
+        assert_eq!(kids, vec![a, b, c]);
+    }
+
+    #[test]
+    fn parent_of_returns_containing_parent() {
+        let mut doc = Document::new();
+        let a = doc.append_element(Some(0), "a", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(a), "child", Style::default(), None::<&str>);
+        assert_eq!(doc.parent_of(child), Some(a));
+        assert_eq!(doc.parent_of(0), None); // root has no parent
+    }
+
+    #[test]
+    fn detach_from_parent_removes_child_and_returns_parent() {
+        let mut doc = Document::new();
+        let a = doc.append_element(Some(0), "a", Style::default(), None::<&str>);
+        let b = doc.append_element(Some(0), "b", Style::default(), None::<&str>);
+        assert_eq!(doc.detach_from_parent(a), Some(0));
+        let kids: Vec<_> = Dom::child_ids(&doc, doc.root_id())
+            .map(|n| n.0 as usize)
+            .collect();
+        assert_eq!(kids, vec![b]);
+        // second detach is a no-op
+        assert_eq!(doc.detach_from_parent(a), None);
+    }
+
+    #[test]
+    fn empty_display_none_leaf_produces_hidden_layout() {
+        // Case 1: empty (leaf) element with display:none — this is the case
+        // Finding #1 caught (is_leaf was checked before display, so an empty
+        // display:none leaf took the leaf-layout path instead of
+        // LayoutOutput::HIDDEN).
+        // A fixed size is set deliberately: if the buggy `is_leaf`-before-`display`
+        // check regresses, the leaf-layout path would honor this explicit size
+        // and produce a non-zero layout instead of LayoutOutput::HIDDEN's zero size.
+        let mut doc = Document::new();
+        let hidden_style = Style {
+            display: Display::None,
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::length(50.0),
+            },
+            ..Default::default()
+        };
+        let hidden = doc.append_element(Some(0), "hidden", hidden_style, None::<&str>);
+        compute_root_layout(
+            &mut doc,
+            taffy::NodeId::from(hidden),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        );
+        let layout = doc.nodes[hidden].unrounded_layout;
+        assert_eq!(
+            layout.size.width, 0.0,
+            "display:none leaf should produce zero-size layout"
+        );
+        assert_eq!(layout.size.height, 0.0);
+
+        // Case 2: non-empty (container) element with display:none — should
+        // also produce HIDDEN, confirming the container path is unaffected.
+        let mut doc2 = Document::new();
+        let hidden_parent_style = Style {
+            display: Display::None,
+            ..Default::default()
+        };
+        let hidden_parent =
+            doc2.append_element(Some(0), "hp", hidden_parent_style, None::<&str>);
+        doc2.append_element(Some(hidden_parent), "child", Style::default(), None::<&str>);
+        compute_root_layout(
+            &mut doc2,
+            taffy::NodeId::from(hidden_parent),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        );
+        let layout2 = doc2.nodes[hidden_parent].unrounded_layout;
+        assert_eq!(
+            layout2.size.width, 0.0,
+            "display:none container should produce zero-size layout"
+        );
+        assert_eq!(layout2.size.height, 0.0);
+    }
+
+    #[test]
+    fn reparent_children_moves_all_children_to_new_parent() {
+        let mut doc = Document::new();
+        let src = doc.append_element(Some(0), "src", Style::default(), None::<&str>);
+        let dst = doc.append_element(Some(0), "dst", Style::default(), None::<&str>);
+        let c1 = doc.append_element(Some(src), "c1", Style::default(), None::<&str>);
+        let c2 = doc.append_element(Some(src), "c2", Style::default(), None::<&str>);
+        doc.reparent_children(src, dst);
+        let src_kids: Vec<_> = Dom::child_ids(&doc, NodeId::new(src as u64)).collect();
+        let dst_kids: Vec<_> = Dom::child_ids(&doc, NodeId::new(dst as u64))
+            .map(|n| n.0 as usize)
+            .collect();
+        assert!(src_kids.is_empty());
+        assert_eq!(dst_kids, vec![c1, c2]);
+    }
+
+    #[test]
+    fn layout_cache_invalidated_after_mutation() {
+        // Build a Document, run layout, mutate, run layout again — verify
+        // the new layout reflects the mutation (not the stale cache).
+        let leaf_style = Style {
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::length(50.0),
+            },
+            ..Default::default()
+        };
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "root",
+            Style {
+                display: Display::Block,
+                size: Size {
+                    width: Dimension::length(400.0),
+                    height: Dimension::auto(),
+                },
+                ..Default::default()
+            },
+            None::<&str>,
+        );
+        doc.append_element(Some(root), "a", leaf_style.clone(), None::<&str>);
+
+        // First layout
+        compute_root_layout(
+            &mut doc,
+            taffy::NodeId::from(root),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        );
+        let first_height = doc.nodes[root].unrounded_layout.size.height;
+
+        // Add a second child — root height should change (2 leaves = ~100)
+        doc.append_element(Some(root), "b", leaf_style, None::<&str>);
+
+        compute_root_layout(
+            &mut doc,
+            taffy::NodeId::from(root),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        );
+        let second_height = doc.nodes[root].unrounded_layout.size.height;
+
+        // If cache wasn't invalidated, second_height would equal first_height (stale)
+        assert_ne!(
+            first_height, second_height,
+            "root height should change after adding a second child; cache invalidation missing"
+        );
+        assert!(
+            second_height > first_height,
+            "root should be taller after adding a child (got {first_height} -> {second_height})"
+        );
+    }
+
+    #[test]
+    fn many_mutations_still_yield_correct_layout() {
+        // Verify that repeated mutations don't accumulate stale state.
+        // Mutations only set a dirty flag (O(1)); the lazy clear on the
+        // first compute_child_layout ensures correctness without O(N) per-mutation cost.
+        let leaf_style = Style {
+            size: Size {
+                width: Dimension::length(10.0),
+                height: Dimension::length(10.0),
+            },
+            ..Default::default()
+        };
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "root",
+            Style {
+                display: Display::Block,
+                size: Size {
+                    width: Dimension::length(400.0),
+                    height: Dimension::auto(),
+                },
+                ..Default::default()
+            },
+            None::<&str>,
+        );
+        // Add 200 children — each mutation flips layout_dirty (O(1)).
+        for _ in 0..200 {
+            doc.append_element(Some(root), "child", leaf_style.clone(), None::<&str>);
+        }
+        compute_root_layout(
+            &mut doc,
+            taffy::NodeId::from(root),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(9999.0),
+            },
+        );
+        let h = doc.nodes[root].unrounded_layout.size.height;
+        // 200 children * 10px stacked = 2000px (block layout).
+        assert!(
+            (h - 2000.0).abs() < 0.5,
+            "expected root height ~2000, got {h} (stale cache would give a much smaller value)"
+        );
     }
 }

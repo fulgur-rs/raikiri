@@ -177,7 +177,7 @@ pub struct RenderWarning {
     pub details: String,
 }
 
-/// 警告 kind。§4 の 5 variant を再現。
+/// 警告 kind。§4 の 5 base variant + m1.3 で追加された `HtmlParseError`。
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum WarningKind {
@@ -207,6 +207,14 @@ pub enum WarningKind {
     TargetConvergenceExhausted {
         /// 尽くした iteration 数。
         iterations: u32,
+    },
+    /// html5ever tokenizer が非致命 parse error を報告した (malformed HTML を
+    /// recover した場合等)。Stylo/blitz と同じ責務境界: raikiri-html 内で
+    /// warning に降格し、rendering は継続する。M1.5+ orchestrator が Document
+    /// → `RenderSummary.warnings` に merge する。
+    HtmlParseError {
+        /// html5ever が返した診断メッセージ (Cow<'static, str> を String 化)。
+        message: String,
     },
 }
 
