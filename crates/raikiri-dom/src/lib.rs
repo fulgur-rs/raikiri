@@ -279,6 +279,21 @@ mod tests {
         assert!(!elem.has_class("foo"));
     }
 
+    #[test]
+    #[should_panic(expected = "set_element_attributes called on non-Element")]
+    fn set_element_attributes_panics_on_non_element_in_debug() {
+        // Document root (index 0) は Document kind、Text node は Text kind。
+        // どちらも attribute-family setter の対象外なので debug_assert が
+        // 発火することを regression pin する。
+        use smol_str::SmolStr;
+        let mut doc = Document::new();
+        // arena index 0 = Document root
+        doc.set_element_attributes(
+            0,
+            vec![(SmolStr::new("id"), SmolStr::new("bad"))],
+        );
+    }
+
     // ── TreeSink support APIs (M1.3) ────────────────────────────
     // NB: append_element gains a 4th `inline_style_source: Option<impl Into<SmolStr>>`
     // argument in M1.4. These tests don't exercise inline style, so pass `None::<&str>`.

@@ -90,29 +90,13 @@ impl<'a> raikiri_traits::Element<'a> for ElementRef<'a> {
         self.node.namespace.as_deref()
     }
 
-    fn id(&self) -> Option<&str> {
-        // `id` は attr 一般 lookup と同じ空文字列正規化契約なので attr() に委譲。
-        self.attr("id")
-    }
-
-    fn has_class(&self, class: &str) -> bool {
-        if class.is_empty() {
-            return false;
-        }
-        // HTML spec: ASCII whitespace で split (space, tab, LF, CR, FF)。
-        // class 属性 value を token 単位で比較 (大文字小文字 sensitive: HTML
-        // classList spec は case-sensitive)。attr("class") の空文字列 → None
-        // 正規化により class="" は自動で false 側に落ちる。
-        self.attr("class").is_some_and(|value| {
-            value
-                .split([' ', '\t', '\n', '\r', '\x0C'])
-                .any(|token| token == class)
-        })
-    }
+    // NB: id() / has_class() は raikiri-traits::Element の default impl を
+    // 使用。default が self.attr(...) 経由で lookup するため、この impl は
+    // attr() だけ override すれば id/has_class も追従する (DRY / 契約準拠)。
 
     fn attr(&self, local: &str) -> Option<&str> {
         // `style` は Node.inline_style に分離済のため attributes からは
-        // 探しに行かず inline_style を返す (trait doc の一致性契約)。
+        // 探しに行かず inline_style を返す (trait default 契約と同じ view)。
         if local == "style" {
             return self.inline_style_source();
         }

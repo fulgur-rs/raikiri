@@ -343,7 +343,8 @@ mod tests {
                 "p"
             }
             // inline_style_source / namespace_uri / id / has_class / attr は
-            // default impl (None / false) を利用
+            // default impl を利用。default attr は "style" のみ
+            // inline_style_source() に delegate、他は None。
         }
 
         let e = BareElement;
@@ -352,6 +353,47 @@ mod tests {
         assert_eq!(e.id(), None);
         assert!(!e.has_class("anything"));
         assert_eq!(e.attr("data-foo"), None);
+        // attr("style") default は inline_style_source (これも default None) に
+        // delegate、結果 None。
+        assert_eq!(e.attr("style"), None);
+    }
+
+    #[test]
+    fn element_default_id_and_has_class_delegate_to_attr() {
+        // impl 側が attr() のみ override すれば id() / has_class() /
+        // attr("style") が default 経由で追従することを regression pin する。
+        use crate::Element;
+
+        struct AttrOnlyElement;
+        impl<'a> Element<'a> for AttrOnlyElement {
+            fn tag_name(&self) -> &str {
+                "div"
+            }
+            fn inline_style_source(&self) -> Option<&str> {
+                Some("color:red")
+            }
+            fn attr(&self, local: &str) -> Option<&str> {
+                if local == "style" {
+                    return self.inline_style_source();
+                }
+                match local {
+                    "id" => Some("main"),
+                    "class" => Some("foo  bar\tbaz"),
+                    _ => None,
+                }
+            }
+        }
+
+        let e = AttrOnlyElement;
+        // id() default → self.attr("id")
+        assert_eq!(e.id(), Some("main"));
+        // has_class() default → attr("class") を ASCII whitespace で split
+        assert!(e.has_class("foo"));
+        assert!(e.has_class("bar"));
+        assert!(e.has_class("baz"));
+        assert!(!e.has_class("qux"));
+        // attr("style") → inline_style_source() へ redirect
+        assert_eq!(e.attr("style"), Some("color:red"));
     }
 
     // ── WarningKind extension (M1.3) ────────────────────────────

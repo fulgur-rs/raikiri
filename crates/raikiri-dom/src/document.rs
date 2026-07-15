@@ -4,6 +4,8 @@
 use smol_str::SmolStr;
 use taffy::Style;
 
+use raikiri_traits::NodeKind;
+
 use crate::node::{Attr, Node};
 
 /// DOM Document (root + Vec-backed node arena)。
@@ -147,7 +149,16 @@ impl Document {
     ///
     /// raikiri-html sink が `finish()` 時に qual_names side-table から呼び出す。
     /// tree mutation ではないので `invalidate_layout_cache` は call しない。
+    ///
+    /// Panics (debug builds only): `id` が Element kind でない場合。Text /
+    /// Document node に attribute-family setter を呼ぶのは caller bug なので
+    /// early fail させる。
     pub fn set_element_namespace(&mut self, id: usize, ns: Option<SmolStr>) {
+        debug_assert_eq!(
+            self.nodes[id].kind,
+            NodeKind::Element,
+            "set_element_namespace called on non-Element (id={id})"
+        );
         self.nodes[id].namespace = ns;
     }
 
@@ -159,7 +170,14 @@ impl Document {
     ///
     /// raikiri-html sink が `finish()` 時に attributes side-table から呼び出す。
     /// tree mutation ではないので `invalidate_layout_cache` は call しない。
+    ///
+    /// Panics (debug builds only): `id` が Element kind でない場合。
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
+        debug_assert_eq!(
+            self.nodes[id].kind,
+            NodeKind::Element,
+            "set_element_attributes called on non-Element (id={id})"
+        );
         self.nodes[id].attributes = attrs
             .into_iter()
             .map(|(local, value)| Attr { local, value })
@@ -172,7 +190,14 @@ impl Document {
     /// の空文字列 → `None` 正規化は Element trait 実装側
     /// ([`raikiri_traits::Element::inline_style_source`]) が行う。
     /// 二重正規化を避けるため storage 層はここで判定しない。
+    ///
+    /// Panics (debug builds only): `id` が Element kind でない場合。
     pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
+        debug_assert_eq!(
+            self.nodes[id].kind,
+            NodeKind::Element,
+            "set_element_inline_style called on non-Element (id={id})"
+        );
         self.nodes[id].inline_style = inline_style;
     }
 
