@@ -12,6 +12,9 @@
 
 #![allow(missing_docs)] // M0 seed; docs come with M1
 
+pub mod property;
+pub use property::{CssColor, Length, PropertyValue};
+
 use std::fmt;
 
 use cssparser::{CowRcStr, Parser as CssParser, ParserInput, SourceLocation, ToCss};
