@@ -1,7 +1,7 @@
 [package]
 name = "raikiri-vrt"
 version = "0.1.0"
-description = "VRT (visual regression testing) harness for raikiri: anyrender rasterizer + tiny-skia PNG encoder"
+description = "VRT (visual regression testing) harness for raikiri: tiny-skia PNG encoder for anyrender pipelines"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

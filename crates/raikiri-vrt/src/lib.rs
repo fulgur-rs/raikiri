@@ -1,45 +1,18 @@
-//! raikiri-vrt — VRT harness (backend-agnostic anyrender rasterizer + tiny-skia PNG encoder).
+//! raikiri-vrt — VRT harness (tiny-skia PNG encoder for anyrender pipelines).
 //!
 //! Thin wrapper providing the last-mile of the M1 render pipeline:
-//!   `anyrender::PaintScene` write → RGBA8 buffer → PNG bytes.
+//!   RGBA8 buffer → PNG bytes.
 //!
-//! Backend: caller supplies any `anyrender::ImageRenderer` (M1 default =
-//! `anyrender_vello_cpu`). Signature is generic over `R: ImageRenderer` so
-//! future GPU backends can be swapped without API break.
+//! Scene rasterization is handled by `anyrender::render_to_buffer` (fresh
+//! renderer per call, matches blitz-paint's caller-owns-reset convention).
+//! Backend selection: caller passes the concrete `ImageRenderer` type via
+//! turbofish. M1 default = `anyrender_vello_cpu::VelloCpuImageRenderer`.
 //!
 //! Downstream consumers:
 //! - `raikiri` umbrella `html_to_png` (M1 end-to-end pipeline)
 //! - hello-world VRT (m1.14)
 //! - determinism test (m1.13)
 //! - rayon thread-count test (m1.18)
-
-use anyrender::ImageRenderer;
-
-/// Rasterize an `anyrender` scene into an RGBA8 pixel buffer via the supplied
-/// backend.
-///
-/// The `paint` closure receives `&mut R::ScenePainter` and issues draw
-/// commands via the `anyrender::PaintScene` trait.
-///
-/// # Buffer layout
-///
-/// `width * height * 4` bytes, tightly packed rows, premultiplied RGBA8
-/// (the `anyrender_vello_cpu` convention that `encode_png` accepts).
-///
-/// # Panics
-///
-/// Panics if the supplied renderer panics (e.g. any backend that rejects
-/// zero-dimension buffers at construction time). The wrapper adds no
-/// additional validation; VRT usage prefers fail-fast over `Result`.
-pub fn rasterize<R: ImageRenderer>(
-    renderer: &mut R,
-    paint: impl for<'a> FnOnce(&mut R::ScenePainter<'a>),
-) -> Vec<u8> {
-    let mut buf = Vec::new();
-    renderer.render_to_vec(paint, &mut buf);
-    buf
-}
-
 /// Encode a premultiplied RGBA8 buffer to PNG bytes via `tiny_skia::Pixmap`.
 ///
 /// The buffer must be exactly `width * height * 4` bytes. Buffer format is
