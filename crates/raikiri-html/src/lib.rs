@@ -77,4 +77,26 @@ mod tests {
         assert!(uncascaded.stylesheet_sources.is_empty());
         assert!(uncascaded.warnings.is_empty());
     }
+
+    #[test]
+    fn parse_extracts_style_element_content() {
+        let html = b"<html><head><style>p{color:red}</style></head><body><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        assert_eq!(uncascaded.stylesheet_sources, vec![String::from("p{color:red}")]);
+    }
+
+    #[test]
+    fn parse_ignores_link_stylesheet_in_m1_scope() {
+        // M1: external <link rel="stylesheet"> は fetch せず stylesheet_sources
+        // にも含めない。M2 network integration で `StylesheetSource::External`
+        // に昇格予定。
+        let html = br#"<html><head><link rel="stylesheet" href="foo.css"></head><body>x</body></html>"#;
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        assert!(
+            uncascaded.stylesheet_sources.is_empty(),
+            "external link stylesheets should be ignored in M1 scope"
+        );
+    }
 }

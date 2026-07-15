@@ -10,7 +10,7 @@ use html5ever::interface::{
 use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::QuirksMode;
 use raikiri_dom::Document;
-use raikiri_traits::{Dom, RenderWarning};
+use raikiri_traits::{Dom, Element, Node, RenderWarning};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use taffy::Style;
@@ -86,12 +86,13 @@ impl TreeSink for RaikiriTreeSink {
     type ElemName<'a> = Ref<'a, QualName>;
 
     fn finish(self) -> UncascadedDocument {
-        // Task 5 で <style> 抽出 walker を追加する。M1 hello-world path 用に
-        // まずは Document + warnings のみ populate、stylesheet_sources は empty。
+        let document = self.document.into_inner();
+        let warnings = self.warnings.into_inner();
+        let stylesheet_sources = extract_inline_stylesheets(&document);
         UncascadedDocument {
-            dom: self.document.into_inner(),
-            stylesheet_sources: Vec::new(),
-            warnings: self.warnings.into_inner(),
+            dom: document,
+            stylesheet_sources,
+            warnings,
         }
     }
 
@@ -247,4 +248,40 @@ impl TreeSink for RaikiriTreeSink {
     fn is_mathml_annotation_xml_integration_point(&self, _handle: &usize) -> bool {
         false
     }
+}
+
+/// `<style>` element の text content を DFS で集約する。
+/// Text node の text_content を concat して 1 stylesheet 相当として push。
+fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
+    fn walk(
+        doc: &Document,
+        id: raikiri_traits::NodeId,
+        out: &mut Vec<String>,
+    ) {
+        if let Some(node) = doc.node(id)
+            && let Some(el) = node.as_element()
+            && el.tag_name() == "style"
+        {
+            // 直下の Text children を concat
+            let mut buf = String::new();
+            for c in doc.child_ids(id) {
+                if let Some(child) = doc.node(c)
+                    && let Some(t) = child.text_content()
+                {
+                    buf.push_str(t);
+                }
+            }
+            if !buf.is_empty() {
+                out.push(buf);
+            }
+            // <style> の内容は CSS のみ想定、再帰入る必要なし
+            return;
+        }
+        for c in doc.child_ids(id) {
+            walk(doc, c, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(doc, doc.root_id(), &mut out);
+    out
 }
