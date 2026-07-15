@@ -77,4 +77,8 @@ impl<'a> raikiri_traits::Element<'a> for ElementRef<'a> {
     fn tag_name(&self) -> &str {
         self.node.tag_name.as_deref().unwrap_or("")
     }
+
+    fn inline_style_source(&self) -> Option<&str> {
+        self.node.inline_style.as_deref()
+    }
 }

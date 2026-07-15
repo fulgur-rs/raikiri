@@ -14,6 +14,8 @@ use raikiri_traits::NodeKind;
 ///
 /// M1.5 では `style` を Consumer が taffy::Style 直接構築する形。M1.6
 /// layout-single-page で ComputedValues → taffy::Style 変換 layer が入る予定。
+/// M1.4 で `inline_style` field を追加 (HTML `style="..."` 属性の生 string を保持、
+/// raikiri-style::cascade が declaration-list として parse する)。
 pub(crate) struct Node {
     /// Taffy layout style。
     pub(crate) style: Style,
@@ -29,6 +31,9 @@ pub(crate) struct Node {
     pub(crate) tag_name: Option<SmolStr>,
     /// Text character data (kind == Text 時のみ populate、他は `None`)。
     pub(crate) text_content: Option<SmolStr>,
+    /// HTML `style="..."` attribute の生 string (kind == Element 時のみ populate、
+    /// 他は `None`)。M1.4 raikiri-style::cascade が消費。
+    pub(crate) inline_style: Option<SmolStr>,
 }
 
 impl Node {
@@ -42,11 +47,16 @@ impl Node {
             kind: NodeKind::Document,
             tag_name: None,
             text_content: None,
+            inline_style: None,
         }
     }
 
-    /// Element node を tag name と style と共に構築する。
-    pub(crate) fn new_element(tag: SmolStr, style: Style) -> Self {
+    /// Element node を tag name / style / inline_style と共に構築する。
+    pub(crate) fn new_element(
+        tag: SmolStr,
+        style: Style,
+        inline_style: Option<SmolStr>,
+    ) -> Self {
         Self {
             style,
             children: Vec::new(),
@@ -55,6 +65,7 @@ impl Node {
             kind: NodeKind::Element,
             tag_name: Some(tag),
             text_content: None,
+            inline_style,
         }
     }
 
@@ -68,6 +79,7 @@ impl Node {
             kind: NodeKind::Text,
             tag_name: None,
             text_content: Some(text),
+            inline_style: None,
         }
     }
 }

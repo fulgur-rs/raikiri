@@ -50,9 +50,9 @@ mod tests {
             root_style.grid_template_rows = vec![length(50.0)];
         }
         // Document node (idx=0) の子として layout root (idx=1) を作る
-        let layout_root = doc.append_element(Some(0), "root", root_style);
-        doc.append_element(Some(layout_root), "a", leaf_style.clone());
-        doc.append_element(Some(layout_root), "b", leaf_style);
+        let layout_root = doc.append_element(Some(0), "root", root_style, None::<&str>);
+        doc.append_element(Some(layout_root), "a", leaf_style.clone(), None::<&str>);
+        doc.append_element(Some(layout_root), "b", leaf_style, None::<&str>);
         (doc, layout_root)
     }
 
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn dom_trait_navigation() {
         let mut doc = Document::new();
-        let p = doc.append_element(Some(0), "p", Style::default());
+        let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
         let _t = doc.append_text(p, "hello");
 
         // root_id は Document kind の virtual root
@@ -163,5 +163,22 @@ mod tests {
     fn document_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Document>();
+    }
+
+    #[test]
+    fn element_ref_reflects_inline_style_source() {
+        use raikiri_traits::{Dom, Element as _, Node as _, NodeId};
+
+        let mut doc = Document::new();
+        let p = doc.append_element(Some(0), "p", Style::default(), Some("color:red"));
+        let noattr = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+
+        let p_node = doc.node(NodeId::new(p as u64)).expect("p exists");
+        let p_elem = p_node.as_element().expect("p is element");
+        assert_eq!(p_elem.inline_style_source(), Some("color:red"));
+
+        let d_node = doc.node(NodeId::new(noattr as u64)).expect("div exists");
+        let d_elem = d_node.as_element().expect("div is element");
+        assert_eq!(d_elem.inline_style_source(), None);
     }
 }
