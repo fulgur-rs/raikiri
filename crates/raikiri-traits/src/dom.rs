@@ -89,7 +89,8 @@ pub trait Dom {
     /// `id` に対応する Node reference。範囲外なら `None`。
     fn node(&self, id: NodeId) -> Option<Self::NodeRef<'_>>;
 
-    /// `id` の direct children を走査する iterator。
+    /// `id` の direct children を走査する iterator。範囲外 (invalid NodeId)
+    /// なら empty iterator を返す ([`node`](Self::node) の `None` と対称)。
     fn child_ids(&self, id: NodeId) -> Self::ChildIter<'_>;
 }
 

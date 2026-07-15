@@ -160,6 +160,21 @@ mod tests {
     }
 
     #[test]
+    fn child_ids_returns_empty_on_invalid_nodeid() {
+        // raikiri-spike-ajy: child_ids は node() と対称に、範囲外 NodeId で
+        // panic せず empty iter を返す。M6 blitz-compat で Consumer が
+        // document rebuild を挟んで NodeId を stash する pattern に備える。
+        let mut doc = Document::new();
+        doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+
+        let far = NodeId::new(doc.nodes.len() as u64 + 100);
+        let kids: Vec<_> = Dom::child_ids(&doc, far).collect();
+        assert!(kids.is_empty(), "out-of-range NodeId should yield empty iter");
+        // node() と contract 一致確認 (対称性のリファレンス)
+        assert!(doc.node(far).is_none());
+    }
+
+    #[test]
     fn document_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Document>();
