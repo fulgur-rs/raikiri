@@ -232,12 +232,8 @@ fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<u16> {
 fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
     let ident = input.next().ok()?;
     match ident {
-        Token::Ident(name) if name.eq_ignore_ascii_case("block") => {
-            Some(DisplayValue::Block)
-        }
-        Token::Ident(name) if name.eq_ignore_ascii_case("inline") => {
-            Some(DisplayValue::Inline)
-        }
+        Token::Ident(name) if name.eq_ignore_ascii_case("block") => Some(DisplayValue::Block),
+        Token::Ident(name) if name.eq_ignore_ascii_case("inline") => Some(DisplayValue::Inline),
         _ => None,
     }
 }

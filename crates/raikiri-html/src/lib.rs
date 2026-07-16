@@ -592,7 +592,9 @@ mod tests {
     #[test]
     fn minimal_ua_css_covers_required_display_block_selectors() {
         // spec §M1.4a Scope: html, body, div, p, h1-h6 が display: block を持つ
-        for tag in ["html", "body", "div", "p", "h1", "h2", "h3", "h4", "h5", "h6"] {
+        for tag in [
+            "html", "body", "div", "p", "h1", "h2", "h3", "h4", "h5", "h6",
+        ] {
             assert!(
                 MINIMAL_UA_CSS.contains(tag),
                 "MINIMAL_UA_CSS is missing selector `{tag}`",
@@ -618,7 +620,9 @@ mod tests {
         let opts = empty_options();
         let doc = parse(&html[..], &opts).expect("parse ok");
 
-        let ua_entries: Vec<&str> = doc.dom.stylesheets()
+        let ua_entries: Vec<&str> = doc
+            .dom
+            .stylesheets()
             .filter(|(_, k)| *k == StylesheetKind::UserAgent)
             .map(|(s, _)| s)
             .collect();
@@ -640,7 +644,9 @@ mod tests {
         };
         let doc = parse(&html[..], &opts).expect("parse ok");
 
-        let author_entries: Vec<&str> = doc.dom.stylesheets()
+        let author_entries: Vec<&str> = doc
+            .dom
+            .stylesheets()
             .filter(|(_, k)| *k == StylesheetKind::Author)
             .map(|(s, _)| s)
             .collect();

@@ -609,7 +609,11 @@ mod tests {
     fn page_box_external_constructable_via_struct_update_from_a4() {
         // #[non_exhaustive] pub struct の external constructable pattern (M1 acceptance)。
         // `..PageBox::A4` を base に width だけ変える。
-        let landscape_a4 = PageBox { width: 842.0, height: 595.0, ..PageBox::A4 };
+        let landscape_a4 = PageBox {
+            width: 842.0,
+            height: 595.0,
+            ..PageBox::A4
+        };
         assert_eq!(landscape_a4.width, 842.0);
         assert_eq!(landscape_a4.height, 595.0);
     }

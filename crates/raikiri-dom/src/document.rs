@@ -1,8 +1,8 @@
 //! Document arena — Vec-backed node arena that implements taffy layout traits
 //! (in `taffy_impl.rs`) and raikiri-traits::Dom (in `dom_impl.rs`).
 
-use std::borrow::Cow;
 use smol_str::SmolStr;
+use std::borrow::Cow;
 use taffy::Style;
 
 use raikiri_traits::{NodeKind, StylesheetKind};
@@ -243,11 +243,7 @@ impl Document {
     /// - `Cow<'static, str>` により、bundled UA CSS 等 static &str は
     ///   borrow のまま保持され allocation なし。Consumer 提供の
     ///   `String` は Cow::Owned で消費される。
-    pub fn add_stylesheet(
-        &mut self,
-        source: impl Into<Cow<'static, str>>,
-        kind: StylesheetKind,
-    ) {
+    pub fn add_stylesheet(&mut self, source: impl Into<Cow<'static, str>>, kind: StylesheetKind) {
         self.stylesheets.push((source.into(), kind));
     }
 
@@ -257,7 +253,9 @@ impl Document {
     /// cascade orchestrator (raikiri umbrella) が RuleTree 構築時に
     /// consume する想定。
     pub fn stylesheets(&self) -> impl Iterator<Item = (&str, StylesheetKind)> + '_ {
-        self.stylesheets.iter().map(|(cow, kind)| (cow.as_ref(), *kind))
+        self.stylesheets
+            .iter()
+            .map(|(cow, kind)| (cow.as_ref(), *kind))
     }
 }
 
@@ -277,11 +275,17 @@ mod stylesheets_tests {
     fn document_add_stylesheet_appends_in_call_order() {
         let mut doc = Document::new();
         doc.add_stylesheet(Cow::Borrowed("a { color: red }"), StylesheetKind::UserAgent);
-        doc.add_stylesheet(Cow::Owned("b { color: blue }".to_string()), StylesheetKind::Author);
+        doc.add_stylesheet(
+            Cow::Owned("b { color: blue }".to_string()),
+            StylesheetKind::Author,
+        );
 
         let collected: Vec<(&str, StylesheetKind)> = doc.stylesheets().collect();
         assert_eq!(collected.len(), 2);
-        assert_eq!(collected[0], ("a { color: red }", StylesheetKind::UserAgent));
+        assert_eq!(
+            collected[0],
+            ("a { color: red }", StylesheetKind::UserAgent)
+        );
         assert_eq!(collected[1], ("b { color: blue }", StylesheetKind::Author));
     }
 
@@ -293,7 +297,10 @@ mod stylesheets_tests {
         let ua: &'static str = "html { display: block }";
         doc.add_stylesheet(Cow::Borrowed(ua), StylesheetKind::UserAgent);
         let (source, _kind) = doc.stylesheets().next().expect("has one");
-        assert!(std::ptr::eq(source, ua), "borrowed source should keep &'static identity");
+        assert!(
+            std::ptr::eq(source, ua),
+            "borrowed source should keep &'static identity"
+        );
     }
 
     #[test]
@@ -304,10 +311,13 @@ mod stylesheets_tests {
         doc.add_stylesheet(Cow::Borrowed("ua2"), StylesheetKind::UserAgent);
 
         let kinds: Vec<StylesheetKind> = doc.stylesheets().map(|(_, k)| k).collect();
-        assert_eq!(kinds, vec![
-            StylesheetKind::UserAgent,
-            StylesheetKind::Author,
-            StylesheetKind::UserAgent,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                StylesheetKind::UserAgent,
+                StylesheetKind::Author,
+                StylesheetKind::UserAgent,
+            ]
+        );
     }
 }

@@ -73,10 +73,8 @@ where
     // Consumer 提供の extra_stylesheets を Author として追加 (spec §M1
     // ParseOptions::extra_stylesheets の実 consume 経路)
     for extra in options.extra_stylesheets {
-        doc.dom.add_stylesheet(
-            Cow::Owned((*extra).to_string()),
-            StylesheetKind::Author,
-        );
+        doc.dom
+            .add_stylesheet(Cow::Owned((*extra).to_string()), StylesheetKind::Author);
     }
 
     Ok(doc)
