@@ -34,36 +34,54 @@ pub use stubs::{plan, render_streaming};
 // を Consumer 側で implement する際に必須 (fetch signature の param / return type)。
 // これらを揃えて re-export することで sub-crate 直接 dep 不要にする (roborev-refine
 // job 230)。
+#[rustfmt::skip]
 pub use raikiri_traits::{
-    AbortController,
-    AbortSignal,
-    Body,
-    CascadeError,
-    // Task 6 (stub) 用の最小追加:
-    DocumentPlan,
-    Dom,
-    Element,
-    FetchedResource,
-    HeaderMap,
-    Method,
-    NetworkError,
-    NetworkProvider,
-    Node,
-    NodeId,
-    NodeKind,
-    PageDefaults,
-    ParseError,
-    PlanConfig,
-    QuirksMode,
-    RenderError,
-    RenderSink,
-    RenderStatus,
-    RenderWarning,
-    ReplacedResolver,
-    Request,
-    ResourceKind,
-    StreamingConfig,
-    StylesheetKind,
+    // ── 既存 (m1.23) ──
+    AbortController, AbortSignal, Body, CascadeError, Dom, Element,
+    FetchedResource, HeaderMap, Method, NetworkError, NetworkProvider,
+    Node, NodeId, NodeKind, ParseError, QuirksMode, RenderError, RenderWarning,
+    Request, ResourceKind, StylesheetKind,
+
+    // ── error / status 系 ──
+    RenderStatus, RenderSummary, LimitKind, UnresolvedTarget, UnresolvedReason,
+    EmittedSlotInfo, TargetSlotId, TargetKind, TargetDiscrepancy, ExhaustionPolicy,
+
+    // ── plan mode ──
+    DocumentPlan, PageSummary, BreakReason, TargetDefinition,
+
+    // ── config ──
+    RenderLimits, RenderLimitsBuilder,
+    LookaheadConfig, LookaheadConfigBuilder,
+    PlanConfig, PlanConfigBuilder,
+    StreamingConfig, StreamingConfigBuilder,
+    BatchConfig, BatchConfigBuilder,
+
+    // ── paged model ──
+    PageBox, PageContext, PageFragment,
+    PageDefaults, PageDefaultsBuilder,
+    LayoutBuffer, TargetRegistry, RunningTemplate, FormData,
+    GcpmDirective, ContentValueItem,
+
+    // ── traits (Consumer が implement) ──
+    RenderSink, ReplacedResolver, ResourcePolicy,
+
+    // ── strategy traits ──
+    LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy,
+    ReflowAction, ContainerOverflowFallback, DirtyDeadline,
+    ProbeContext, TargetRequest, ResolvedTarget,
+
+    // ── resolver 補助 ──
+    IntrinsicBox, ResolvedIntrinsic, ResolveDisposition,
+    ResolverRequest, ResolverError,
+
+    // ── policy 補助 ──
+    PolicyViolation, ViolationType,
+
+    // ── layout 補助 ──
+    LayoutError,
+
+    // ── symbol ──
+    Symbol,
 };
 
 // ── raikiri-html: parse pipeline entry ─────────────────────────────────
