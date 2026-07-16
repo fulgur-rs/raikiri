@@ -726,7 +726,9 @@ css/b | macos | aarch64 | skia | high | r | i | 2026-08-02
             q.entries
         );
         assert_eq!(q.entries[0].test_id, "css/a");
+        assert_eq!(q.entries[0].line_no, 1);
         assert_eq!(q.entries[1].test_id, "css/b");
+        assert_eq!(q.entries[1].line_no, 3);
         assert_eq!(errors.len(), 1);
         match &errors[0] {
             ExpectError::MalformedLine {
