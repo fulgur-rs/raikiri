@@ -1653,8 +1653,12 @@ version = "0.1.0"
 dependencies = [
  "anyrender",
  "kurbo",
+ "parley",
  "peniko",
+ "raikiri-dom",
+ "raikiri-style",
  "raikiri-traits",
+ "taffy",
 ]
 
 [[package]]
