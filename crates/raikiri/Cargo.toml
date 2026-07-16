@@ -13,6 +13,10 @@ raikiri-net    = { workspace = true }
 raikiri-dom    = { workspace = true }
 raikiri-html   = { workspace = true }
 raikiri-paint  = { workspace = true }
+# Re-export `Url` so Consumers can name `raikiri::Url` when constructing
+# `raikiri::ParseOptions { base_url: Some(Url::parse(...)), ... }` without
+# adding `url` as a direct dep (roborev-refine job 228, AC #6 完結).
+url            = { workspace = true }
 
 [lints]
 workspace = true

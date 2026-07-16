@@ -156,6 +156,45 @@ fn author_important_beats_normal_ua_via_umbrella() {
 }
 
 #[test]
+fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
+    // AC #6 の "Consumer が use raikiri::…; で完結" 契約を name-resolution level で証明。
+    // raikiri crate から直接名指し可能な全型を actual use する: value 型 (CssColor / Length /
+    // Atom)、Document (UncascadedDocument.dom の型)、NetworkProvider (ParseOptions.network の
+    // 型)、Url (ParseOptions.base_url の型)。sub-crate を direct dep せずに ParseOptions を
+    // 完全構築、ComputedValues field を型付き binding できることを compile-time で verify。
+    // (roborev-refine job 228 medium finding regression)
+    use raikiri::{
+        Atom, CssColor, Document, Length, NetworkProvider, ParseOptions, Url,
+        build_cascaded, parse,
+    };
+
+    // NetworkProvider trait を dyn 経由で名指し可能なことを compile-time で確認。
+    let _network: Option<&dyn NetworkProvider> = None;
+    // Url を parse できることを確認 (base_url に渡す想定)。
+    let base = Url::parse("https://example.com/").expect("url parse");
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: _network,
+        base_url: Some(base),
+    };
+
+    let doc = parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
+    // UncascadedDocument.dom: Document を明示 type annotation で受ける (Document re-export 確認)。
+    let _dom: &Document = &doc.dom;
+
+    let result = build_cascaded(&doc);
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+    let computed = &result.computed[p_id.0 as usize];
+
+    // ComputedValues field を型付き binding で受け、value 型が名指しできることを verify。
+    let _color: CssColor = computed.color;
+    let _font_size: Length = computed.font_size;
+    let font_family: &Vec<Atom> = &computed.font_family;
+    // 実 assertion — initial font-family は Atom("serif") (raikiri-style::ComputedValues::initial)。
+    assert!(!font_family.is_empty(), "font_family should have at least initial serif atom");
+}
+
+#[test]
 fn body_style_element_is_not_applied_per_m1_head_only_contract() {
     // spec §M1: raikiri-html は現状 head 配下の <style> のみ stylesheet_sources
     // に集約する (<body> 内 <style> の position-aware semantics は M2+)。

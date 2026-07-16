@@ -21,17 +21,28 @@ use raikiri_style::cascade;
 
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 pub use raikiri_traits::{
-    CascadeError, Dom, Element, Node, NodeId, NodeKind, ParseError, QuirksMode, RenderError,
-    RenderWarning, StylesheetKind,
+    CascadeError, Dom, Element, NetworkProvider, Node, NodeId, NodeKind, ParseError, QuirksMode,
+    RenderError, RenderWarning, StylesheetKind,
 };
 
 // ── raikiri-html: parse pipeline entry ─────────────────────────────────
 pub use raikiri_html::{MINIMAL_UA_CSS, ParseOptions, UncascadedDocument, parse};
 
-// ── raikiri-style: cascade pipeline output types ───────────────────────
+// ── raikiri-dom: Document (raikiri-html::UncascadedDocument.dom の実体型) ──
+// Consumer が `&raikiri::Document` を名指しで受けたい場合に必要
+// (roborev-refine job 228 medium 対応、AC #6 spirit)。
+pub use raikiri_dom::Document;
+
+// ── raikiri-style: cascade pipeline output + value 型 ──────────────────
+// ComputedValues field の型 (Atom / CssColor / Length) は Consumer が読み書きに
+// 直接名指しするため、value 系も re-export (roborev-refine job 228)。
 pub use raikiri_style::{
-    CascadeResult, ComputedValues, DisplayValue, Origin, PropertyValue, RuleTree,
+    Atom, CascadeResult, ComputedValues, CssColor, DisplayValue, Length, Origin, PropertyValue,
+    RuleTree,
 };
+
+// ── url: `ParseOptions.base_url: Option<Url>` の実体型 ─────────────────
+pub use url::Url;
 
 /// UA + Consumer 提供 stylesheet を Document から取り出し、Origin を割り当てて
 /// RuleTree を組み、raikiri-html が parse 時に集約した head 配下の `<style>`
