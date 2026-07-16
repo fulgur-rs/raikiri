@@ -166,6 +166,60 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_paints_zero_size_display_block_subtree() {
+        // roborev job 227 finding 対応: display:none test 単独では、旧
+        // "size == 0 で skip" の実装でも pass するため、修正 (is_display_none 判定
+        // への切替) の regression protection にならない。この test は逆側 —
+        // display:block だが size=0 の container の中に text 子供を置き、
+        // GlyphRun が **emit される** ことを assert する。旧 size-based skip では
+        // container が skipped → 子 text の GlyphRun が失われて test failure。
+        // 現行 is_display_none 判定では container は Display::Block なので walk
+        // 継続 → 子 text の GlyphRun が emit される。
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let zero_block_style = Style {
+            display: Display::Block,
+            size: Size {
+                width: Dimension::length(0.0),
+                height: Dimension::length(0.0),
+            },
+            ..Default::default()
+        };
+        let container = doc.append_element(Some(body), "container", zero_block_style, None::<&str>);
+        let _text = doc.append_text(container, "visible");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+
+        // sanity: container の size は 0 (explicit width/height=0 を尊重)
+        let container_layout = doc.get_node(container).unwrap().unrounded_layout;
+        assert_eq!(
+            container_layout.size.width, 0.0,
+            "zero-size Display::Block container should keep size.width = 0"
+        );
+        assert_eq!(
+            container_layout.size.height, 0.0,
+            "zero-size Display::Block container should keep size.height = 0"
+        );
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let glyph_commands: Vec<_> = scene
+            .commands
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .collect();
+        assert_eq!(
+            glyph_commands.len(),
+            1,
+            "text inside zero-size Display::Block container must still be painted (overflow: visible \
+             default), got {}",
+            glyph_commands.len()
+        );
+    }
+
+    #[test]
     fn paint_single_page_hello_world_emits_one_glyph_run() {
         // hello-world "Hi" → 1 GlyphRun が emit されることを pin。
         let (doc, cr) = hello_world_paint_setup();
