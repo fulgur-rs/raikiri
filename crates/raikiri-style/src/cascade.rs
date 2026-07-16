@@ -269,6 +269,9 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
         PropertyValue::FontWeight(w) => target.font_weight = w,
+        PropertyValue::Display(_) => {
+            // TODO: Task 7 will add display support to ComputedValues
+        }
     }
 }
 

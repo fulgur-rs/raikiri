@@ -17,7 +17,7 @@
 #![allow(missing_docs)] // M0 seed; docs come with M1
 
 pub mod property;
-pub use property::{CssColor, Length, PropertyValue};
+pub use property::{CssColor, DisplayValue, Length, PropertyValue};
 
 pub mod rule;
 pub use rule::{Declaration, StyleRule};
