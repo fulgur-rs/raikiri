@@ -389,10 +389,14 @@ fn test_run_and_compare_page_count_mismatch() {
         .to_str()
         .unwrap()
         .to_string();
-    let diff_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("reference-diffs")
-        .join(&fixture_name);
+    // Mirror src/reference.rs::diff_dir_root() precedence: CARGO_TARGET_TMPDIR →
+    // CARGO_TARGET_DIR → <manifest>/target. Reading env with EnvGuard::read()
+    // held is safe (guard serialises env access with env-setter tests).
+    let target_dir = std::env::var("CARGO_TARGET_TMPDIR")
+        .or_else(|_| std::env::var("CARGO_TARGET_DIR"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("target"));
+    let diff_dir = target_dir.join("reference-diffs").join(&fixture_name);
     let _ = fs::remove_dir_all(&diff_dir);
 
     let png_a_clone = png_a.clone();
