@@ -274,8 +274,8 @@ mod tests {
         apply_page_box_to_body(&mut doc, body, PageBox::A4);
 
         let size: Size<Dimension> = doc.nodes[body].style.size;
-        assert_eq!(size.width, Dimension::length(595.0));
-        assert_eq!(size.height, Dimension::length(842.0));
+        assert_eq!(size.width, Dimension::length(793.7008));
+        assert_eq!(size.height, Dimension::length(1122.5197));
     }
 
     #[test]
@@ -387,12 +387,12 @@ mod tests {
         use raikiri_traits::PageBox;
         let (mut doc, cr) = hello_world_doc();
         layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
-        // body の layout size.width が A4 幅 (595) と一致
+        // body の layout size.width が A4 幅 (793.7008) と一致
         let body_id = find_body(&doc).expect("body exists");
         let body_size = doc.nodes[body_id].unrounded_layout.size;
         assert!(
-            (body_size.width - 595.0).abs() < 0.5,
-            "body width should be A4.width (595), got {}",
+            (body_size.width - 793.7008).abs() < 0.5,
+            "body width should be A4.width (793.7008), got {}",
             body_size.width
         );
         assert!(
