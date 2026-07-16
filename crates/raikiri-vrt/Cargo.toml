@@ -16,7 +16,7 @@ anyrender           = { workspace = true }
 anyrender_vello_cpu = { workspace = true }
 peniko              = { workspace = true }
 kurbo               = { workspace = true }
-tempfile            = "3"             # Synthetic fixture directories for reference-harness self-tests.
+tempfile            = { workspace = true }  # Synthetic fixture dirs for reference-harness self-tests; workspace-centralized (root Cargo.toml declares tempfile = "3").
 
 [lints]
 workspace = true
