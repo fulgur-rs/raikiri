@@ -9,8 +9,9 @@
 //! - `render_streaming`: M2 pagestream-state-machine で本実装、`RenderSink` に
 //!   PageFragment を stream 出力する
 //!
-//! M1 では両者とも Consumer に「html_to_png (m1.14) を使え」と migration hint
-//! を返す。
+//! M1 では両者とも Consumer に migration hint を返す (m1.14 hello-world-vrt で
+//! 単一ページ用の `html_to_png` が実装される予定、multi-page streaming は M2
+//! pagestream-state-machine 完了後)。
 
 use raikiri_traits::{
     DocumentPlan, PageDefaults, PlanConfig, RenderError, RenderSink, RenderStatus,
@@ -55,6 +56,6 @@ pub fn render_streaming(
 ) -> Result<RenderStatus, RenderError> {
     Err(RenderError::Unimplemented {
         feature: "render_streaming",
-        migration_hint: "M1 では html_to_png (m1.14) 経路のみ動作、render_streaming は M2 pagestream で実装",
+        migration_hint: "M1 では render_streaming は non-goal。単一ページ raster は m1.14 で `html_to_png` として実装予定、multi-page streaming は M2 pagestream-state-machine で実装",
     })
 }

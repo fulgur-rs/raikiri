@@ -98,6 +98,7 @@ impl PageDefaults {
 }
 
 /// `PageDefaults` の fluent builder。
+#[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct PageDefaultsBuilder {
     page_box: Option<PageBox>,
