@@ -406,19 +406,12 @@ fn detect_expired(loaded: &Loaded, dir: &Path, now: Date) -> Vec<LintIssue> {
     };
     let path = dir.join("quarantine.txt").display().to_string();
     let mut issues = Vec::new();
-    for (idx, entry) in q.entries.iter().enumerate() {
-        // Line number: entries appear in file order, but comments/blank
-        // lines shift the parser's index. Recompute by re-scanning the
-        // raw content for the idx-th data line.
-        let line_no = loaded
-            .quarantine_raw
-            .as_deref()
-            .and_then(|raw| data_lines(raw).nth(idx).map(|(n, _)| n));
+    for entry in q.entries.iter() {
         if now - entry.added_date > Duration::days(90) {
             issues.push(LintIssue {
                 category: Category::Expired,
                 file: path.clone(),
-                line_no,
+                line_no: Some(entry.line_no),
                 message: format!(
                     "quarantine entry added on {} is older than 90 days (test_id={:?})",
                     entry.added_date, entry.test_id
@@ -827,8 +820,8 @@ mod tests {
 
     #[test]
     fn mixed_malformed_and_valid_expired_surfaces_both() {
-        // A valid but > 90 days old row plus a malformed row (wrong column
-        // count) must produce both an Expired and a Malformed lint issue —
+        // A malformed row (wrong column count) plus a valid but > 90 days
+        // old row must produce both a Malformed and an Expired lint issue —
         // the malformed row must not swallow the expired check for the
         // surviving valid entry.
         let dir = header_only_dir();
@@ -836,8 +829,8 @@ mod tests {
             dir.path(),
             "quarantine.txt",
             "\
-css/old | linux | x86_64 | vello_cpu | low | r | i | 2026-01-01
 css/bad | linux | x86_64
+css/old | linux | x86_64 | vello_cpu | low | r | i | 2026-01-01
 ",
         );
         let now = time::macros::date!(2026 - 07 - 16);
@@ -849,7 +842,7 @@ css/bad | linux | x86_64
             .filter(|i| i.category == Category::Malformed)
             .collect();
         assert_eq!(malformed.len(), 1, "got: {malformed:?}");
-        assert_eq!(malformed[0].line_no, Some(2));
+        assert_eq!(malformed[0].line_no, Some(1));
         assert!(
             malformed[0].message.contains("expected 8"),
             "got: {}",
@@ -867,7 +860,7 @@ css/bad | linux | x86_64
             "got: {}",
             expired[0].message
         );
-        assert_eq!(expired[0].line_no, Some(1));
+        assert_eq!(expired[0].line_no, Some(2));
     }
 
     #[test]

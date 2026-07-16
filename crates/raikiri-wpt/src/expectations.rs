@@ -276,6 +276,8 @@ pub struct QuarantineEntry {
     /// `Vec<ExpectError>` returned alongside the parsed [`Quarantine`] as
     /// [`ExpectError::MalformedLine`], and the offending row is skipped.
     pub added_date: Date,
+    /// 1-based line number in `quarantine.txt` where this entry was parsed from.
+    pub line_no: usize,
 }
 
 /// OS platform column of a [`QuarantineEntry`].
@@ -461,6 +463,7 @@ impl Quarantine {
                 reason: cols[5].to_owned(),
                 issue_link: cols[6].to_owned(),
                 added_date,
+                line_no,
             });
         }
         (Self { entries }, errors)
