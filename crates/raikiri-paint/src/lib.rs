@@ -164,4 +164,115 @@ mod tests {
             glyph_commands.len()
         );
     }
+
+    #[test]
+    fn paint_single_page_hello_world_emits_one_glyph_run() {
+        // hello-world "Hi" → 1 GlyphRun が emit されることを pin。
+        let (doc, cr) = hello_world_paint_setup();
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let glyph_commands: Vec<_> = scene
+            .commands
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .collect();
+        assert_eq!(
+            glyph_commands.len(),
+            1,
+            "hello world 'Hi' should emit exactly 1 GlyphRun, got {}",
+            glyph_commands.len()
+        );
+    }
+
+    #[test]
+    fn paint_single_page_uses_inherited_color_as_brush() {
+        // <p style="color:red"> → cascade で red が inherit → text の brush が
+        // (255, 0, 0, 255) になることを pin。cascade → shape 系譜の regression 保護。
+        use anyrender::types::Paint;
+        use peniko::Color;
+
+        let (doc, cr) = hello_world_paint_setup();
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let RenderCommand::GlyphRun(glyph_cmd) = scene
+            .commands
+            .iter()
+            .find(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .expect("must have 1 GlyphRun")
+        else {
+            unreachable!()
+        };
+        match &glyph_cmd.brush {
+            Paint::Solid(color) => {
+                assert_eq!(
+                    *color,
+                    Color::from_rgba8(255, 0, 0, 255),
+                    "inline color:red must produce Color::from_rgba8(255,0,0,255) brush"
+                );
+            }
+            other => panic!("expected Paint::Solid, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[test]
+    fn paint_single_page_positions_glyphs_via_absolute_offset() {
+        // body / p / text の accumulate location が draw_glyphs の transform に反映
+        // される regression pin。text node の origin は body.location + p.location +
+        // text.location (block layout の flow 累積)、正の y を持つはず。
+        let (doc, cr) = hello_world_paint_setup();
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let RenderCommand::GlyphRun(glyph_cmd) = scene
+            .commands
+            .iter()
+            .find(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .expect("must have 1 GlyphRun")
+        else {
+            unreachable!()
+        };
+        // Affine の translation 成分は as_coeffs() の [4, 5] (2 次元 identity + translation)。
+        // kurbo::Affine には translation() getter が無いため as_coeffs() で decode する。
+        let coeffs = glyph_cmd.transform.as_coeffs();
+        let (translation_x, translation_y) = (coeffs[4], coeffs[5]);
+        assert!(
+            translation_x >= 0.0,
+            "text abs_x should be non-negative (body flow from left edge), got {}",
+            translation_x
+        );
+        assert!(
+            translation_y >= 0.0,
+            "text abs_y should be non-negative (body flow from top edge), got {}",
+            translation_y
+        );
+        // Note: body / p の location は M1.4 では通常 (0, 0)、text node の
+        // location は line box top なので 0 に近いはず。厳密な値 pin は m1.13
+        // determinism test で。ここでは "正 offset を持つ" の regression pin のみ。
+    }
+
+    #[test]
+    fn paint_single_page_skips_empty_text() {
+        // text_layout が None (empty text) の Text node は draw_glyphs を呼ばず
+        // silent skip する contract。preshape_text が empty text で text_layout = None
+        // を残す仕様と対称。
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let _t = doc.append_text(p, ""); // ← empty text
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let glyph_commands: Vec<_> = scene
+            .commands
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .collect();
+        assert!(
+            glyph_commands.is_empty(),
+            "empty text should not emit any GlyphRun, got {}",
+            glyph_commands.len()
+        );
+    }
 }
