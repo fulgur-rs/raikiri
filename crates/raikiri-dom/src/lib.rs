@@ -22,6 +22,7 @@ pub mod taffy_impl;
 pub use document::Document;
 pub use dom_impl::{ChildIter, ElementRef, NodeRef};
 pub use layout::layout_single_page;
+pub use node::Node;
 
 #[cfg(test)]
 mod tests {
@@ -600,5 +601,55 @@ mod tests {
             "root block should stack single text child at parley height {expected_h} (got {})",
             root_size.height
         );
+    }
+
+    // ── raikiri-spike-m1.7 pub 化 smoke test ─────────────
+
+    #[test]
+    fn document_get_node_returns_some_for_valid_id_and_none_for_out_of_range() {
+        let mut doc = Document::new();
+        let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+        // valid: root + p の 2 個存在
+        assert!(doc.get_node(0).is_some());
+        assert!(doc.get_node(p).is_some());
+        // out of range: node_count 以上
+        assert!(doc.get_node(doc.node_count()).is_none());
+        assert!(doc.get_node(doc.node_count() + 100).is_none());
+    }
+
+    #[test]
+    fn document_node_count_grows_with_appends() {
+        let mut doc = Document::new();
+        let n0 = doc.node_count(); // root only = 1
+        assert_eq!(n0, 1);
+        let _e = doc.append_element(Some(0), "e", Style::default(), None::<&str>);
+        let _t = doc.append_text(0, "hi");
+        assert_eq!(doc.node_count(), n0 + 2);
+    }
+
+    #[test]
+    fn document_root_index_is_zero_and_matches_get_node_kind() {
+        let doc = Document::new();
+        assert_eq!(doc.root_index(), 0);
+        let root = doc.get_node(doc.root_index()).expect("root exists");
+        assert_eq!(root.kind, NodeKind::Document);
+    }
+
+    #[test]
+    fn node_pub_fields_are_readable_from_external_call_site() {
+        // pub 化した 5 field (children / unrounded_layout / kind / tag_name / text_layout)
+        // が super::* から見えることを regression pin。
+        let mut doc = Document::new();
+        let e = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let t = doc.append_text(e, "hi");
+        let node = doc.get_node(e).unwrap();
+        let _ = &node.children;
+        let _ = &node.unrounded_layout;
+        let _ = &node.kind;
+        let _ = &node.tag_name;
+        let _ = &node.text_layout;
+        // text node kind
+        let tn = doc.get_node(t).unwrap();
+        assert_eq!(tn.kind, NodeKind::Text);
     }
 }

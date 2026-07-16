@@ -21,7 +21,8 @@ pub(crate) struct Attr {
     pub(crate) value: SmolStr,
 }
 
-/// Arena node。全 field は crate-private。
+/// Arena node。paint に必要な 5 field は pub、他は crate-private (gradual
+/// exposure)。M4 で cascade property 追加時に必要分を pub 化する。
 ///
 /// M1.5 では `style` を Consumer が taffy::Style 直接構築する形。M1.6
 /// layout-single-page で ComputedValues → taffy::Style 変換 layer が入る予定。
@@ -29,20 +30,22 @@ pub(crate) struct Attr {
 /// raikiri-style::cascade が declaration-list として parse する)。
 /// raikiri-spike-blg で `namespace` / `attributes` field を追加
 /// (raikiri-html sink が finish 時に side-table から wire)。
+/// raikiri-spike-m1.7 で `Node` を pub struct に昇格、paint に必要な field 5 個
+/// (children / unrounded_layout / kind / tag_name / text_layout) を pub 化。
 #[derive(Debug)]
-pub(crate) struct Node {
+pub struct Node {
     /// Taffy layout style。
     pub(crate) style: Style,
     /// Child arena indices (`Document::nodes` の usize)。
-    pub(crate) children: Vec<usize>,
+    pub children: Vec<usize>,
     /// Taffy layout cache (per-node)。
     pub(crate) cache: Cache,
     /// Taffy layout 結果 (compute_root_layout が populate)。
-    pub(crate) unrounded_layout: Layout,
+    pub unrounded_layout: Layout,
     /// Node kind (Element / Text / Document)。
-    pub(crate) kind: NodeKind,
+    pub kind: NodeKind,
     /// Element tag name (kind == Element 時のみ populate、他は `None`)。
-    pub(crate) tag_name: Option<SmolStr>,
+    pub tag_name: Option<SmolStr>,
     /// Text character data (kind == Text 時のみ populate、他は `None`)。
     pub(crate) text_content: Option<SmolStr>,
     /// HTML `style="..."` attribute の生 string (kind == Element 時のみ populate、
@@ -66,7 +69,7 @@ pub(crate) struct Node {
     ///   等に昇格予定
     /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア +
     ///   再走。granular invalidation は M2+
-    pub(crate) text_layout: Option<parley::Layout<()>>,
+    pub text_layout: Option<parley::Layout<()>>,
 }
 
 impl Node {

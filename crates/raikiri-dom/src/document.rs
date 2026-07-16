@@ -226,6 +226,31 @@ impl Document {
         }
     }
 
+    /// arena index `id` の node への借用参照。範囲外 index は `None`。
+    ///
+    /// blitz-dom の `BaseDocument::get_node` 相当。raikiri-paint が walk 中に
+    /// per-node で呼ぶ hot path なので O(1) の `Vec::get` を wrap。
+    pub fn get_node(&self, id: usize) -> Option<&Node> {
+        self.nodes.get(id)
+    }
+
+    /// arena 内の総 node 数 (Document root を含む)。
+    ///
+    /// raikiri-paint / caller が `cascade.computed.len() == doc.node_count()`
+    /// の contract violation を early に検出する目的 + doctest / smoke test で消費。
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Document root の arena index (常に 0)。
+    ///
+    /// `Dom::root_id()` trait method の inherent 版。trait import せず
+    /// `&Document` から直接呼べる。
+    /// 命名: `root_index` (type は `usize` で trait method の `NodeId` newtype と区別)
+    pub fn root_index(&self) -> usize {
+        self.root
+    }
+
     /// tree mutation を layout cache dirty として mark する。実際の cache
     /// clear は次回 `compute_child_layout` (taffy_impl 経由) で lazy に発火する。
     /// per-mutation は O(1)、per-layout-batch で amortized O(N)。
