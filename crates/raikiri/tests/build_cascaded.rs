@@ -154,3 +154,25 @@ fn author_important_beats_normal_ua_via_umbrella() {
         "Author !important should beat Normal UA via umbrella cascade wiring",
     );
 }
+
+#[test]
+fn body_style_element_is_not_applied_per_m1_head_only_contract() {
+    // spec §M1: raikiri-html は現状 head 配下の <style> のみ stylesheet_sources
+    // に集約する (<body> 内 <style> の position-aware semantics は M2+)。
+    // umbrella build_cascaded は stylesheet_sources を Author として消費するため、
+    // <body> 内 <style> は cascade に流れず、<p> は UA CSS の display: block を得る。
+    // (roborev-refine job 226 medium finding regression、
+    //  raikiri-html/src/sink.rs::extract_inline_stylesheets の invariant と一致)
+    let html = "<html><head></head>\
+                <body><style>p { display: inline }</style><p>Hi</p></body></html>";
+    let doc = parse_html(html);
+    let result = build_cascaded(&doc);
+
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+    let display = result.computed[p_id.0 as usize].display;
+    assert_eq!(
+        display,
+        DisplayValue::Block,
+        "<body> 内の <style> は M1 では未対応、<p> は UA CSS 経由で display: block を得る",
+    );
+}

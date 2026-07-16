@@ -17,7 +17,7 @@
 //! assert!(!result.computed.is_empty(), "cascade populates per-node ComputedValues");
 //! ```
 
-use raikiri_style::{cascade, walk_style_elements};
+use raikiri_style::cascade;
 
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 pub use raikiri_traits::{
@@ -34,9 +34,9 @@ pub use raikiri_style::{
 };
 
 /// UA + Consumer 提供 stylesheet を Document から取り出し、Origin を割り当てて
-/// RuleTree を組み、DOM 内 `<style>` element の text を Author として追加した
-/// 上で cascade を実行する umbrella orchestration entry point
-/// (spec §M1.4a、raikiri-spike-m1.23)。
+/// RuleTree を組み、raikiri-html が parse 時に集約した head 配下の `<style>`
+/// element の text を Author として追加した上で cascade を実行する umbrella
+/// orchestration entry point (spec §M1.4a、raikiri-spike-m1.23)。
 ///
 /// M1 では `raikiri_style::cascade` は常に `Ok` を返すため、内部で `expect` する
 /// (M2+ で Result 反映を検討)。
@@ -44,13 +44,23 @@ pub use raikiri_style::{
 /// Consumer は `raikiri_html::parse` → `raikiri::build_cascaded` の 2 step だけで
 /// per-node ComputedValues を得られる。
 ///
+/// # DOM `<style>` の集約 scope (M1 contract)
+///
+/// `UncascadedDocument::stylesheet_sources` を Author として消費する。
+/// この Vec は parse 時に [`raikiri_html::parse`] 内の `extract_inline_stylesheets`
+/// が **head 配下** の `<style>` element の text を document order で集約し、
+/// `<template>` subtree は spec §14.1 の inertness に従って skip 済み。
+/// `<body>` 内の `<style>` は position-aware semantics が必要なため M1 では
+/// 未対応 (M2+ で拡張予定、`raikiri-html/src/sink.rs::extract_inline_stylesheets`
+/// の invariant に一致、roborev-refine job 226 参照)。
+///
 /// # source_order tie-break (Author vs Author)
 ///
 /// `Document.stylesheets()` (parse 時に注入された UA + `extra_stylesheets`) が
-/// 先に RuleTree に流し込まれ、次に DOM 内 `<style>` element が Author として
-/// 追加される。同 Author 内の tie-break (同 specificity・同 `!important`) では
-/// 後から来た方が source_order 大で勝つため、**DOM `<style>` は
-/// `extra_stylesheets` を上書きする**。この precedence は仕様書 §M1.4a には
+/// 先に RuleTree に流し込まれ、次に `stylesheet_sources` (head 配下 `<style>`)
+/// が Author として追加される。同 Author 内の tie-break (同 specificity・同
+/// `!important`) では後から来た方が source_order 大で勝つため、**DOM `<style>`
+/// は `extra_stylesheets` を上書きする**。この precedence は仕様書 §M1.4a には
 /// 明記されていない M1 実装判断 (raikiri-spike-m1.23)。
 ///
 /// # Dep 方向
@@ -68,11 +78,12 @@ pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
         tree.add_stylesheet(source, origin);
     }
 
-    // DOM 内 `<style>` element の text を Author として追加。UA / extra_stylesheets
-    // は上のループで既に取り込まれているため、ここでは重複しない。
-    walk_style_elements(&doc.dom, |css| {
-        tree.add_stylesheet(css, Origin::Author);
-    });
+    // raikiri-html が parse 時に head 配下 / template-inert filter 越しに集約した
+    // `<style>` element の text を Author として追加。<body> style は M1 未対応
+    // (roborev-refine job 226 medium 対応)。
+    for source in &doc.stylesheet_sources {
+        tree.add_stylesheet(source, Origin::Author);
+    }
 
     cascade(&doc.dom, &tree).expect("m1 では cascade は常に Ok")
 }
