@@ -47,11 +47,20 @@ pub struct Tolerance {
 
 impl Tolerance {
     /// Pixel-exact tolerance (Tier 1: Linux x86_64).
-    pub const EXACT: Self = Self { max_delta: 0, max_diff_fraction: 0.0 };
+    pub const EXACT: Self = Self {
+        max_delta: 0,
+        max_diff_fraction: 0.0,
+    };
     /// Tier 2 tolerance (Linux aarch64, macOS): max_delta=1, max_diff=0.1%.
-    pub const TIER2: Self = Self { max_delta: 1, max_diff_fraction: 0.001 };
+    pub const TIER2: Self = Self {
+        max_delta: 1,
+        max_diff_fraction: 0.001,
+    };
     /// Tier 3 tolerance (Windows): max_delta=2, max_diff=0.5%.
-    pub const TIER3: Self = Self { max_delta: 2, max_diff_fraction: 0.005 };
+    pub const TIER3: Self = Self {
+        max_delta: 2,
+        max_diff_fraction: 0.005,
+    };
 }
 
 /// Structured diagnosis of a failing `compare_png` call.
@@ -172,7 +181,11 @@ impl fmt::Display for FixtureError {
             Self::PngDecodeError { path, source } => {
                 write!(f, "PNG decode failed for {}: {source}", path.display())
             }
-            Self::DimensionMismatch { page_index, expected_wh, actual_wh } => {
+            Self::DimensionMismatch {
+                page_index,
+                expected_wh,
+                actual_wh,
+            } => {
                 write!(
                     f,
                     "page {page_index} dimension mismatch: expected {}x{}, actual {}x{}",
@@ -307,7 +320,8 @@ mod type_tests {
             height: 50,
             mismatched_pixel_count: 42,
             first_mismatch: Some(PixelMismatch {
-                x: 10, y: 20,
+                x: 10,
+                y: 20,
                 expected: [255, 0, 0, 255],
                 actual: [0, 255, 0, 255],
             }),
