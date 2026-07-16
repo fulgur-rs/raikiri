@@ -826,6 +826,51 @@ mod tests {
     }
 
     #[test]
+    fn mixed_malformed_and_valid_expired_surfaces_both() {
+        // A valid but > 90 days old row plus a malformed row (wrong column
+        // count) must produce both an Expired and a Malformed lint issue —
+        // the malformed row must not swallow the expired check for the
+        // surviving valid entry.
+        let dir = header_only_dir();
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "\
+css/old | linux | x86_64 | vello_cpu | low | r | i | 2026-01-01
+css/bad | linux | x86_64
+",
+        );
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now);
+
+        let malformed: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Malformed)
+            .collect();
+        assert_eq!(malformed.len(), 1, "got: {malformed:?}");
+        assert_eq!(malformed[0].line_no, Some(2));
+        assert!(
+            malformed[0].message.contains("expected 8"),
+            "got: {}",
+            malformed[0].message
+        );
+
+        let expired: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Expired)
+            .collect();
+        assert_eq!(expired.len(), 1, "got: {expired:?}");
+        assert!(
+            expired[0].message.contains("css/old"),
+            "got: {}",
+            expired[0].message
+        );
+        assert_eq!(expired[0].line_no, Some(1));
+    }
+
+    #[test]
     fn format_human_groups_by_category_and_records_counts() {
         let report = LintReport {
             issues: vec![

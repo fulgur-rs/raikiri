@@ -737,6 +737,33 @@ css/b | macos | aarch64 | skia | high | r | i | 2026-08-02
     }
 
     #[test]
+    fn quarantine_continues_after_enum_error() {
+        // Bad platform followed by a valid row. Ensure the valid row is
+        // still surfaced in entries and the enum error is captured.
+        let content = "\
+css/bad | plan9 | x86_64 | vello_cpu | low | r | i | 2026-08-01
+css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
+";
+        let (q, errors) = Quarantine::parse(content, "q.txt");
+        assert_eq!(q.entries.len(), 1);
+        assert_eq!(q.entries[0].test_id, "css/ok");
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            ExpectError::UnknownEnum {
+                field,
+                value,
+                line_no,
+                ..
+            } => {
+                assert_eq!(*field, "platform");
+                assert_eq!(value, "plan9");
+                assert_eq!(*line_no, 1);
+            }
+            other => panic!("expected UnknownEnum, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn expect_error_display_and_source_chain() {
         // Io variant delegates source to the wrapped io::Error.
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
