@@ -122,9 +122,15 @@ fn style_inside_template_element_does_not_affect_cascade() {
 }
 
 #[test]
-fn ua_important_beats_author_important_via_umbrella() {
-    // CSS Cascading L4 §6.4.4 (!important 反転): !important UA > !important Author。
-    // umbrella の StylesheetKind → Origin map が正しく機能していることを end-to-end で確認。
+fn author_important_beats_normal_ua_via_umbrella() {
+    // CSS Cascading L4 §6.4.4 の cascade rank ordering:
+    //   Normal UA (rank 0) < Normal Author (1) < Important Author (2) < Important UA (3)。
+    // bundled UA CSS (spec §M1.4a minimal.css) は !important を含まないため、
+    // Important UA > Important Author の反転検証は本 test では直接行えない。
+    // ここで verify するのは "Important Author が Normal UA を破る" leg で、これは
+    // umbrella の StylesheetKind → Origin map が正しく機能していることを end-to-end で
+    // 確認する最小 case。full !important 反転 (Important UA vs Important Author) は
+    // Consumer が UA `!important` rule を提供する構造が spec で許容された時点で追加検討。
     // Author 側は extra_stylesheets で渡す (parse 時 Author kind として Document に注入される)。
     let extra: &[&str] = &["p { display: inline !important }"];
     let opts = raikiri::ParseOptions {
