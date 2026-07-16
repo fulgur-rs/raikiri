@@ -11,7 +11,7 @@
 //! recreates `expected/` from the pipeline output instead of comparing.
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Loaded state of one `tests/reference/<name>/` directory.
 #[non_exhaustive]
@@ -294,6 +294,85 @@ pub fn compare_png(
         first_mismatch: first,
         actual_png_path: None,
         diff_png_path: None,
+    })
+}
+
+/// Load a `tests/reference/<name>/` fixture directory.
+///
+/// Reads `input.html` (required) and any `expected/page-{N:04}.png` files.
+/// Pages must be numbered contiguously from 0; gaps produce
+/// `FixtureError::NonContiguousPages`. Missing `expected/` (or an empty one)
+/// is permitted — this is the update-goldens starting state.
+///
+/// PNG bytes are stored raw; decoding is deferred until `compare_png` runs.
+pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
+    let input_path = fixture_dir.join("input.html");
+    let input_html = match std::fs::read(&input_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(FixtureError::MissingInputHtml {
+                fixture_dir: fixture_dir.to_path_buf(),
+            });
+        }
+        Err(source) => {
+            return Err(FixtureError::IoError {
+                path: input_path,
+                source,
+            });
+        }
+    };
+
+    let expected_dir = fixture_dir.join("expected");
+    let mut numbered: Vec<(u32, Vec<u8>)> = Vec::new();
+    if expected_dir.is_dir() {
+        let entries = std::fs::read_dir(&expected_dir).map_err(|source| FixtureError::IoError {
+            path: expected_dir.clone(),
+            source,
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| FixtureError::IoError {
+                path: expected_dir.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            let name = match path.file_name().and_then(|s| s.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            // Match "page-XXXX.png" exactly; ignore README.md and other files.
+            let Some(stem) = name.strip_suffix(".png") else {
+                continue;
+            };
+            let Some(num_str) = stem.strip_prefix("page-") else {
+                continue;
+            };
+            let Ok(n) = num_str.parse::<u32>() else {
+                continue;
+            };
+            let bytes = std::fs::read(&path).map_err(|source| FixtureError::IoError {
+                path: path.clone(),
+                source,
+            })?;
+            numbered.push((n, bytes));
+        }
+    }
+
+    numbered.sort_by_key(|(n, _)| *n);
+    let found: Vec<u32> = numbered.iter().map(|(n, _)| *n).collect();
+    for (i, n) in found.iter().enumerate() {
+        if *n as usize != i {
+            return Err(FixtureError::NonContiguousPages {
+                fixture_dir: fixture_dir.to_path_buf(),
+                found,
+            });
+        }
+    }
+    let expected_pages = numbered.into_iter().map(|(_, bytes)| bytes).collect();
+
+    Ok(Fixture {
+        root: fixture_dir.to_path_buf(),
+        input_html,
+        expected_pages,
     })
 }
 
