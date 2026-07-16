@@ -55,12 +55,20 @@ impl ExpectationSet {
     /// via `parse(&str, &str)` on individual files and for future
     /// integration tests that stage fixture directories.
     pub fn load_from(dir: &Path) -> Result<Self, ExpectError> {
+        let tracked = TrackedWpt::load(&dir.join("tracked-wpt.txt"))?;
+        let known_issues = KnownIssues::load(&dir.join("known-issues.txt"))?;
+        let baseline = Baseline::load(&dir.join("raikiri-baseline.txt"))?;
+        let (quarantine, quarantine_errors) = Quarantine::load(&dir.join("quarantine.txt"))?;
+        if let Some(e) = quarantine_errors.into_iter().next() {
+            return Err(e);
+        }
+        let deprecated = Deprecated::load(&dir.join("deprecated.txt"))?;
         Ok(Self {
-            tracked: TrackedWpt::load(&dir.join("tracked-wpt.txt"))?,
-            known_issues: KnownIssues::load(&dir.join("known-issues.txt"))?,
-            baseline: Baseline::load(&dir.join("raikiri-baseline.txt"))?,
-            quarantine: Quarantine::load(&dir.join("quarantine.txt"))?,
-            deprecated: Deprecated::load(&dir.join("deprecated.txt"))?,
+            tracked,
+            known_issues,
+            baseline,
+            quarantine,
+            deprecated,
         })
     }
 }
@@ -264,8 +272,9 @@ pub struct QuarantineEntry {
     pub issue_link: String,
     /// Date the entry was added, in YYYY-MM-DD (ISO 8601) form. Parsed and
     /// validated at [`Quarantine::parse`] time via
-    /// [`time::Date::parse`]; a malformed date surfaces as
-    /// [`ExpectError::MalformedLine`].
+    /// [`time::Date::parse`]; a malformed date is recorded in the
+    /// `Vec<ExpectError>` returned alongside the parsed [`Quarantine`] as
+    /// [`ExpectError::MalformedLine`], and the offending row is skipped.
     pub added_date: Date,
 }
 
@@ -375,51 +384,74 @@ impl ToleranceFilter {
 
 impl Quarantine {
     /// Parse `quarantine.txt` content (8 pipe-delimited columns per line).
-    pub fn parse(content: &str, file_name: &str) -> Result<Self, ExpectError> {
+    ///
+    /// Row-level validation errors (bad column count, unknown enum values,
+    /// malformed `added_date`) are accumulated in the returned
+    /// `Vec<ExpectError>` and the offending rows are skipped; other valid
+    /// rows are still surfaced in the returned [`Quarantine`]. This lets
+    /// the lint pass surface every issue in a file at once instead of
+    /// aborting on the first malformed row.
+    pub fn parse(content: &str, file_name: &str) -> (Self, Vec<ExpectError>) {
         let mut entries = Vec::new();
+        let mut errors: Vec<ExpectError> = Vec::new();
+        let added_date_fmt = format_description!("[year]-[month]-[day]");
         for (line_no, line) in iter_data_lines(content) {
             let cols: Vec<&str> = line.split('|').map(str::trim).collect();
             if cols.len() != 8 {
-                return Err(ExpectError::MalformedLine {
+                errors.push(ExpectError::MalformedLine {
                     file: file_name.to_owned(),
                     line_no,
                     reason: format!("expected 8 pipe-delimited columns, got {}", cols.len()),
                 });
+                continue;
             }
-            let platform =
-                PlatformFilter::parse(cols[1]).ok_or_else(|| ExpectError::UnknownEnum {
+            let Some(platform) = PlatformFilter::parse(cols[1]) else {
+                errors.push(ExpectError::UnknownEnum {
                     file: file_name.to_owned(),
                     line_no,
                     field: "platform",
                     value: cols[1].to_owned(),
-                })?;
-            let arch = ArchFilter::parse(cols[2]).ok_or_else(|| ExpectError::UnknownEnum {
-                file: file_name.to_owned(),
-                line_no,
-                field: "arch",
-                value: cols[2].to_owned(),
-            })?;
-            let renderer =
-                RendererFilter::parse(cols[3]).ok_or_else(|| ExpectError::UnknownEnum {
+                });
+                continue;
+            };
+            let Some(arch) = ArchFilter::parse(cols[2]) else {
+                errors.push(ExpectError::UnknownEnum {
+                    file: file_name.to_owned(),
+                    line_no,
+                    field: "arch",
+                    value: cols[2].to_owned(),
+                });
+                continue;
+            };
+            let Some(renderer) = RendererFilter::parse(cols[3]) else {
+                errors.push(ExpectError::UnknownEnum {
                     file: file_name.to_owned(),
                     line_no,
                     field: "renderer",
                     value: cols[3].to_owned(),
-                })?;
-            let tolerance =
-                ToleranceFilter::parse(cols[4]).ok_or_else(|| ExpectError::UnknownEnum {
+                });
+                continue;
+            };
+            let Some(tolerance) = ToleranceFilter::parse(cols[4]) else {
+                errors.push(ExpectError::UnknownEnum {
                     file: file_name.to_owned(),
                     line_no,
                     field: "tolerance",
                     value: cols[4].to_owned(),
-                })?;
-            let added_date_fmt = format_description!("[year]-[month]-[day]");
-            let added_date =
-                Date::parse(cols[7], &added_date_fmt).map_err(|e| ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: format!("added_date {:?} is not YYYY-MM-DD ({e})", cols[7]),
-                })?;
+                });
+                continue;
+            };
+            let added_date = match Date::parse(cols[7], &added_date_fmt) {
+                Ok(d) => d,
+                Err(e) => {
+                    errors.push(ExpectError::MalformedLine {
+                        file: file_name.to_owned(),
+                        line_no,
+                        reason: format!("added_date {:?} is not YYYY-MM-DD ({e})", cols[7]),
+                    });
+                    continue;
+                }
+            };
             entries.push(QuarantineEntry {
                 test_id: cols[0].to_owned(),
                 platform,
@@ -431,13 +463,15 @@ impl Quarantine {
                 added_date,
             });
         }
-        Ok(Self { entries })
+        (Self { entries }, errors)
     }
 
-    /// Read and parse `quarantine.txt` from `path`.
-    pub fn load(path: &Path) -> Result<Self, ExpectError> {
+    /// Read and parse `quarantine.txt` from `path`. The outer [`Result`]
+    /// surfaces filesystem I/O errors only; per-row parse errors are
+    /// returned in the inner tuple's `Vec<ExpectError>`.
+    pub fn load(path: &Path) -> Result<(Self, Vec<ExpectError>), ExpectError> {
         let content = read_file(path)?;
-        Self::parse(&content, &path.display().to_string())
+        Ok(Self::parse(&content, &path.display().to_string()))
     }
 
     /// True if no entries were parsed.
@@ -534,7 +568,8 @@ mod tests {
         let dep = Deprecated::parse("", "deprecated.txt").unwrap();
         assert!(dep.is_empty());
 
-        let q = Quarantine::parse("# 8-col format follows\n", "quarantine.txt").unwrap();
+        let (q, q_errs) = Quarantine::parse("# 8-col format follows\n", "quarantine.txt");
+        assert!(q_errs.is_empty());
         assert!(q.is_empty());
     }
 
@@ -594,7 +629,8 @@ mod tests {
     #[test]
     fn quarantine_parses_8_cols_and_enum_values() {
         let content = "css/css-page/page-margin-boxes-001 | macos | aarch64 | vello_cpu | pixel-exact | Intermittent 1-pixel diff | https://example/issues/123 | 2026-08-01\n";
-        let q = Quarantine::parse(content, "q.txt").unwrap();
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(errs.is_empty(), "expected no errors, got {errs:?}");
         assert_eq!(q.entries.len(), 1);
         let e = &q.entries[0];
         assert_eq!(e.test_id, "css/css-page/page-margin-boxes-001");
@@ -610,7 +646,8 @@ mod tests {
     #[test]
     fn quarantine_accepts_wildcards() {
         let content = "css/foo | * | * | * | * | reason | issue | 2026-08-05\n";
-        let q = Quarantine::parse(content, "q.txt").unwrap();
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(errs.is_empty(), "expected no errors, got {errs:?}");
         let e = &q.entries[0];
         assert_eq!(e.platform, PlatformFilter::Any);
         assert_eq!(e.arch, ArchFilter::Any);
@@ -621,12 +658,14 @@ mod tests {
     #[test]
     fn quarantine_rejects_wrong_col_count() {
         let content = "css/foo | linux | x86_64\n"; // 3 cols
-        let err = Quarantine::parse(content, "q.txt").unwrap_err();
-        match err {
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(q.entries.is_empty());
+        assert_eq!(errs.len(), 1);
+        match &errs[0] {
             ExpectError::MalformedLine {
                 line_no, reason, ..
             } => {
-                assert_eq!(line_no, 1);
+                assert_eq!(*line_no, 1);
                 assert!(reason.contains("expected 8"));
             }
             other => panic!("expected MalformedLine, got {other:?}"),
@@ -636,10 +675,12 @@ mod tests {
     #[test]
     fn quarantine_rejects_unknown_platform() {
         let content = "css/foo | plan9 | x86_64 | vello_cpu | low | r | i | 2026-08-01\n";
-        let err = Quarantine::parse(content, "q.txt").unwrap_err();
-        match err {
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(q.entries.is_empty());
+        assert_eq!(errs.len(), 1);
+        match &errs[0] {
             ExpectError::UnknownEnum { field, value, .. } => {
-                assert_eq!(field, "platform");
+                assert_eq!(*field, "platform");
                 assert_eq!(value, "plan9");
             }
             other => panic!("expected UnknownEnum, got {other:?}"),
@@ -649,14 +690,47 @@ mod tests {
     #[test]
     fn quarantine_rejects_malformed_added_date() {
         let content = "css/foo | linux | x86_64 | vello_cpu | low | r | i | not-a-date\n";
-        let err = Quarantine::parse(content, "q.txt").unwrap_err();
-        match err {
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(q.entries.is_empty());
+        assert_eq!(errs.len(), 1);
+        match &errs[0] {
             ExpectError::MalformedLine {
                 line_no, reason, ..
             } => {
-                assert_eq!(line_no, 1);
+                assert_eq!(*line_no, 1);
                 assert!(reason.contains("added_date"), "got: {reason}");
                 assert!(reason.contains("not-a-date"), "got: {reason}");
+            }
+            other => panic!("expected MalformedLine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quarantine_accumulates_multiple_row_errors() {
+        // 3 rows: valid, malformed (wrong column count), valid.
+        // Expect the malformed row to accumulate as an error while both
+        // valid rows survive as entries.
+        let content = "\
+css/a | linux | x86_64 | vello_cpu | low | r | i | 2026-08-01
+css/bad | linux | x86_64
+css/b | macos | aarch64 | skia | high | r | i | 2026-08-02
+";
+        let (q, errors) = Quarantine::parse(content, "q.txt");
+        assert_eq!(
+            q.entries.len(),
+            2,
+            "expected 2 valid entries, got {:?}",
+            q.entries
+        );
+        assert_eq!(q.entries[0].test_id, "css/a");
+        assert_eq!(q.entries[1].test_id, "css/b");
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            ExpectError::MalformedLine {
+                line_no, reason, ..
+            } => {
+                assert_eq!(*line_no, 2);
+                assert!(reason.contains("expected 8"), "got reason: {reason}");
             }
             other => panic!("expected MalformedLine, got {other:?}"),
         }

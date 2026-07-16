@@ -211,13 +211,14 @@ fn load_all(dir: &Path) -> Loaded {
     let quarantine_path = dir.join("quarantine.txt");
     match std::fs::read_to_string(&quarantine_path) {
         Ok(raw) => {
-            match Quarantine::parse(&raw, &quarantine_path.display().to_string()) {
-                Ok(v) => out.quarantine = Some(v),
-                Err(e) => out.issues.push(expect_error_to_issue(
+            let (v, errors) = Quarantine::parse(&raw, &quarantine_path.display().to_string());
+            for e in errors {
+                out.issues.push(expect_error_to_issue(
                     e,
                     quarantine_path.display().to_string(),
-                )),
+                ));
             }
+            out.quarantine = Some(v);
             out.quarantine_raw = Some(raw);
         }
         Err(e) => out.issues.push(expect_error_to_issue(
