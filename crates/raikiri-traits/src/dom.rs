@@ -205,3 +205,29 @@ pub enum QuirksMode {
     /// Full quirks mode (missing / obsolete DOCTYPE)。
     Quirks,
 }
+
+// ─────────────────────────────────────────────────────────────
+// StylesheetKind — Document に associate される stylesheet の kind。
+// (M1.4a、raikiri-spike-m1.22)
+// ─────────────────────────────────────────────────────────────
+
+/// Document に associate される stylesheet の kind。
+///
+/// CSS Cascading L4 §6.2 の origin concept を dom-level に反映するための
+/// nominal tag。cascade phase (raikiri umbrella crate) で
+/// `raikiri_style::Origin` にマップされる。
+///
+/// M1 では `UserAgent` + `Author` の 2 段のみ。User origin は Consumer が
+/// `extra_stylesheets` (Author 扱い) で提供する想定 (spec §M1.4a Non-goals)。
+/// 将来必要になったら variant を追加 (`#[non_exhaustive]` で non-breaking)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StylesheetKind {
+    /// User Agent origin (bundled minimal UA CSS 等)。cascade 内で最弱、
+    /// ただし `!important` の場合は最強 (CSS Cascading L4 §6.4.4 反転扱い)。
+    UserAgent,
+    /// Author origin (HTML `<style>` element、`<link rel=stylesheet>`、
+    /// Consumer 提供の `extra_stylesheets` 等)。M1 では User origin を
+    /// Author に混ぜて扱う。
+    Author,
+}
