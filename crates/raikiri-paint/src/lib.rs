@@ -275,4 +275,34 @@ mod tests {
             glyph_commands.len()
         );
     }
+
+    #[test]
+    fn paint_single_page_can_be_called_multiple_times() {
+        // 同じ Document を 2 回 paint、2 回とも同じ command sequence を produce
+        // (state mutation なし、re-entrance safety pin)。将来 paint 側で cache
+        // 導入した時の silent regression 検出用 pin。
+        let (doc, cr) = hello_world_paint_setup();
+
+        let mut scene1 = Scene::new();
+        paint_single_page(&mut scene1, &doc, &cr, PageBox::A4);
+        let count1 = scene1.commands.len();
+        let glyph_count1 = scene1
+            .commands
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .count();
+
+        let mut scene2 = Scene::new();
+        paint_single_page(&mut scene2, &doc, &cr, PageBox::A4);
+        let count2 = scene2.commands.len();
+        let glyph_count2 = scene2
+            .commands
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .count();
+
+        assert_eq!(count1, count2, "total command count must be identical across calls");
+        assert_eq!(glyph_count1, glyph_count2, "GlyphRun count must be identical across calls");
+        assert_eq!(glyph_count1, 1, "hello world must emit exactly 1 GlyphRun");
+    }
 }
