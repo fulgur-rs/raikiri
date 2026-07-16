@@ -454,9 +454,15 @@ mod unimplemented_variant_tests {
             migration_hint: "M2+ で pagination 実装後に populate",
         };
         let s = format!("{err}");
-        assert!(s.contains("plan"), "display must include feature: got {s:?}");
+        assert!(
+            s.contains("plan"),
+            "display must include feature: got {s:?}"
+        );
         assert!(s.contains("M2+"), "display must include hint: got {s:?}");
-        assert!(s.contains("not implemented"), "display must include 'not implemented': got {s:?}");
+        assert!(
+            s.contains("not implemented"),
+            "display must include 'not implemented': got {s:?}"
+        );
     }
 
     #[test]
