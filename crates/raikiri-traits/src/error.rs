@@ -167,7 +167,7 @@ pub struct RenderSummary {
 }
 
 /// Render 警告 (fallback usage / policy warning / unresolved target 等)。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RenderWarning {
     /// 警告 kind。
     pub kind: WarningKind,
@@ -179,7 +179,7 @@ pub struct RenderWarning {
 
 /// 警告 kind。§4 の 5 base variant + m1.3 で追加された `HtmlParseError`。
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum WarningKind {
     /// Consumer の resolver が fallback を返した (`Ok(fallback_intrinsic)`)。
     ResolverFallback {
