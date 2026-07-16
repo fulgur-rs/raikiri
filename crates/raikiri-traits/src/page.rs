@@ -73,6 +73,59 @@ impl Default for PageBox {
     }
 }
 
+/// Consumer が render 開始時に渡す page-level default 値。M1 は paper size
+/// のみを持つ最小 shape。M2+ で margin / orientation / named pages 等を追加予定。
+///
+/// 全 field は CSS px 単位 (`PageBox` 参照)。pt/mm/in 換算は Consumer 責務。
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct PageDefaults {
+    /// Default paper サイズ (`@page size` で override しない場合の initial value)。
+    /// 既定 = A4。
+    pub page_box: PageBox,
+}
+
+impl PageDefaults {
+    /// Default 相当の shortcut。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Fluent builder を返す。
+    pub fn builder() -> PageDefaultsBuilder {
+        PageDefaultsBuilder::default()
+    }
+}
+
+impl Default for PageDefaults {
+    fn default() -> Self {
+        Self {
+            page_box: PageBox::default(),
+        }
+    }
+}
+
+/// `PageDefaults` の fluent builder。
+#[derive(Debug, Default, Clone)]
+pub struct PageDefaultsBuilder {
+    page_box: Option<PageBox>,
+}
+
+impl PageDefaultsBuilder {
+    /// `page_box` を設定。
+    pub fn page_box(mut self, v: PageBox) -> Self {
+        self.page_box = Some(v);
+        self
+    }
+
+    /// Build。未設定 field は Default 値。
+    pub fn build(self) -> PageDefaults {
+        PageDefaults {
+            page_box: self.page_box.unwrap_or_default(),
+        }
+    }
+}
+
 /// PageContext — GCPM runtime state (counter tree, named string 4-snapshot,
 /// running bindings)。M4 GCPM で populate。
 #[allow(missing_docs)]
@@ -215,5 +268,37 @@ mod pagebox_px_baseline_tests {
     #[test]
     fn pagebox_default_is_a4() {
         assert_eq!(PageBox::default(), PageBox::A4);
+    }
+}
+
+#[cfg(test)]
+mod pagedefaults_tests {
+    use super::*;
+
+    #[test]
+    fn pagedefaults_default_uses_a4() {
+        let d = PageDefaults::default();
+        assert_eq!(d.page_box, PageBox::A4);
+    }
+
+    #[test]
+    fn pagedefaults_new_is_default() {
+        assert_eq!(
+            PageDefaults::new().page_box,
+            PageDefaults::default().page_box
+        );
+    }
+
+    #[test]
+    fn pagedefaults_builder_sets_page_box() {
+        let d = PageDefaults::builder().page_box(PageBox::US_LETTER).build();
+        assert_eq!(d.page_box, PageBox::US_LETTER);
+    }
+
+    #[test]
+    fn pagedefaults_builder_default_matches_pagedefaults_default() {
+        let via_builder = PageDefaults::builder().build();
+        let via_default = PageDefaults::default();
+        assert_eq!(via_builder.page_box, via_default.page_box);
     }
 }
