@@ -89,6 +89,19 @@ pub fn build_rule_tree<D: Dom>(dom: &D) -> RuleTree {
     tree
 }
 
+/// DOM を root から DFS walk して全 `<style>` element の text を callback に渡す。
+///
+/// UA CSS は含まれない — `raikiri-html::parse` が `Document::add_stylesheet` 経由で
+/// UA を注入しており、`Document::stylesheets()` 経路で raikiri umbrella が別途消費
+/// する契約 (spec §M1.4a、raikiri-spike-m1.23)。本 walker は DOM `<style>` element
+/// の text 収集のみを担当する。
+///
+/// 呼び出し順は `walk_and_collect` の iterative DFS に従い document order。
+/// stack overflow 保護は `walk_and_collect` と共有 (roborev job 199)。
+pub fn walk_style_elements<D: Dom, F: FnMut(&str)>(dom: &D, mut on_style_text: F) {
+    walk_and_collect(dom, dom.root_id(), &mut on_style_text);
+}
+
 /// DOM walk 本体。深いネストで stack overflow しないよう explicit `Vec` stack
 /// で iterative DFS (roborev job 199 対応)。訪問順は sibling 間で recursion 版
 /// と異なり得るが、`<style>` は独立に text を emit するだけで他 node の状態に
@@ -327,5 +340,22 @@ mod tests {
         let tree = build_rule_tree(&doc);
         assert_eq!(tree.style_rules.len(), 1);
         assert_eq!(tree.style_rules[0].origin, Origin::Author);
+    }
+
+    #[test]
+    fn walk_style_elements_pub_visits_all_style_texts_in_document_order() {
+        // 兄弟の <style> 2 個 → 呼び出し順で collected される。
+        let mut doc = TestDoc::new();
+        let s1 = doc.push_element(0, "style", None);
+        doc.push_text(s1, "p { color: red }");
+        let s2 = doc.push_element(0, "style", None);
+        doc.push_text(s2, "div { color: blue }");
+
+        let mut collected: Vec<String> = Vec::new();
+        super::walk_style_elements(&doc, |css| collected.push(css.to_string()));
+
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected[0], "p { color: red }");
+        assert_eq!(collected[1], "div { color: blue }");
     }
 }
