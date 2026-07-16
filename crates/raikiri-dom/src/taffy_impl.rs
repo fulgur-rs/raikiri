@@ -115,7 +115,10 @@ impl LayoutPartialTree for Document {
                         // それを優先 (explicit size)、None なら parley intrinsic を使う、
                         // 両方無ければ 0。
                         Size {
-                            width: known.width.or(text_intrinsic.map(|s| s.width)).unwrap_or(0.0),
+                            width: known
+                                .width
+                                .or(text_intrinsic.map(|s| s.width))
+                                .unwrap_or(0.0),
                             height: known
                                 .height
                                 .or(text_intrinsic.map(|s| s.height))

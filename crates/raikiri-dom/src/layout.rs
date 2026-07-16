@@ -14,8 +14,8 @@ use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontWeight, Layout, LayoutContext,
     StyleProperty,
 };
-use raikiri_style::property::Length;
 use raikiri_style::CascadeResult;
+use raikiri_style::property::Length;
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{AvailableSpace, Dimension, NodeId as TaffyNodeId, Size, compute_root_layout};
 
@@ -28,9 +28,7 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
         let node = &doc.nodes[node_idx];
-        if node.kind == NodeKind::Element
-            && node.tag_name.as_deref() == Some("body")
-        {
+        if node.kind == NodeKind::Element && node.tag_name.as_deref() == Some("body") {
             return Some(node_idx);
         }
         // children を reverse push すると document order で pop される
@@ -46,11 +44,7 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
 /// CSS Paged Media の initial containing block = @page size。M1 は @page 非対応
 /// のため body.style.size に直接注入する妥協。M4 で @page cascade + per-page
 /// PageBox を導入時に `<html>` root style に site を昇格予定。
-pub(crate) fn apply_page_box_to_body(
-    doc: &mut Document,
-    body_id: usize,
-    page_box: PageBox,
-) {
+pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_box: PageBox) {
     doc.nodes[body_id].style.size = Size {
         width: Dimension::length(page_box.width),
         height: Dimension::length(page_box.height),
@@ -64,10 +58,7 @@ pub(crate) fn apply_page_box_to_body(
 /// 本体 no-op。M4 で display / margin / padding / width / height 等の
 /// layout property が加わった時、ここに merge ロジックを追加する。
 /// (この関数の存在自体が M1.6 の site 確立の遺産。)
-pub(crate) fn apply_computed_to_style(
-    _doc: &mut Document,
-    _cascade: &CascadeResult,
-) {
+pub(crate) fn apply_computed_to_style(_doc: &mut Document, _cascade: &CascadeResult) {
     // M1.4 では no-op。M4 で ComputedValues に display / size / margin / padding
     // 等が加わった時、下記のような per-element loop を追加:
     //
@@ -136,7 +127,7 @@ pub(crate) fn preshape_text(
                     message: format!(
                         "preshape_text: unsupported Length variant for font-size at node {idx}"
                     ),
-                })
+                });
             }
         };
 
@@ -194,7 +185,13 @@ pub fn layout_single_page(
     // Step 2: pre-shape all text with parley
     let mut fonts = FontContext::new();
     let mut layout_cx = LayoutContext::<()>::new();
-    preshape_text(document, cascade, &mut fonts, &mut layout_cx, page_box.width)?;
+    preshape_text(
+        document,
+        cascade,
+        &mut fonts,
+        &mut layout_cx,
+        page_box.width,
+    )?;
 
     // Step 3: <body> lookup
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
@@ -302,13 +299,25 @@ mod tests {
         );
         let layout = doc.nodes[text].text_layout.as_ref().unwrap();
         assert!(layout.width() > 0.0, "text 'Hi' must have non-zero width");
-        assert!(layout.height() > 0.0, "text 'Hi' must have non-zero line height");
+        assert!(
+            layout.height() > 0.0,
+            "text 'Hi' must have non-zero line height"
+        );
 
         // Element / Document は None のまま
-        assert!(doc.nodes[html].text_layout.is_none(), "html element is not text");
-        assert!(doc.nodes[body].text_layout.is_none(), "body element is not text");
+        assert!(
+            doc.nodes[html].text_layout.is_none(),
+            "html element is not text"
+        );
+        assert!(
+            doc.nodes[body].text_layout.is_none(),
+            "body element is not text"
+        );
         assert!(doc.nodes[p].text_layout.is_none(), "p element is not text");
-        assert!(doc.nodes[0].text_layout.is_none(), "document root is not text");
+        assert!(
+            doc.nodes[0].text_layout.is_none(),
+            "document root is not text"
+        );
     }
 
     #[test]
@@ -505,6 +514,10 @@ mod tests {
         let elapsed = start.elapsed();
         // 10 回 total で 5 秒未満なら M1.6 の per-call new() は許容
         // (10 連ラン determinism test が timeout しないため)
-        assert!(elapsed.as_secs() < 5, "FontContext::new() too slow: 10x = {:?}", elapsed);
+        assert!(
+            elapsed.as_secs() < 5,
+            "FontContext::new() too slow: 10x = {:?}",
+            elapsed
+        );
     }
 }

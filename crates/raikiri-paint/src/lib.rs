@@ -78,7 +78,10 @@ mod tests {
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
         // fragment (no body) なので paint_document は早期 return、canvas は no-op site
-        assert!(scene.commands.is_empty(), "empty Document should emit no commands");
+        assert!(
+            scene.commands.is_empty(),
+            "empty Document should emit no commands"
+        );
     }
 
     #[test]
@@ -119,7 +122,10 @@ mod tests {
         // return するかを test。
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
-        assert!(scene.commands.is_empty(), "fragment (no body) should emit no commands");
+        assert!(
+            scene.commands.is_empty(),
+            "fragment (no body) should emit no commands"
+        );
     }
 
     #[test]
@@ -264,7 +270,10 @@ mod tests {
                     "inline color:red must produce Color::from_rgba8(255,0,0,255) brush"
                 );
             }
-            other => panic!("expected Paint::Solid, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected Paint::Solid, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -312,13 +321,13 @@ mod tests {
         );
 
         // 期待累積 = body.location + p.location + text.location
-        let (expected_x, expected_y) = [body, p, text].iter().fold(
-            (0.0f32, 0.0f32),
-            |(ax, ay), &id| {
-                let loc = doc.get_node(id).unwrap().unrounded_layout.location;
-                (ax + loc.x, ay + loc.y)
-            },
-        );
+        let (expected_x, expected_y) =
+            [body, p, text]
+                .iter()
+                .fold((0.0f32, 0.0f32), |(ax, ay), &id| {
+                    let loc = doc.get_node(id).unwrap().unrounded_layout.location;
+                    (ax + loc.x, ay + loc.y)
+                });
 
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
@@ -407,8 +416,14 @@ mod tests {
             .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
             .count();
 
-        assert_eq!(count1, count2, "total command count must be identical across calls");
-        assert_eq!(glyph_count1, glyph_count2, "GlyphRun count must be identical across calls");
+        assert_eq!(
+            count1, count2,
+            "total command count must be identical across calls"
+        );
+        assert_eq!(
+            glyph_count1, glyph_count2,
+            "GlyphRun count must be identical across calls"
+        );
         assert_eq!(glyph_count1, 1, "hello world must emit exactly 1 GlyphRun");
     }
 }
