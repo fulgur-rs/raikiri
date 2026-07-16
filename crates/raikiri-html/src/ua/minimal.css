@@ -1,11 +1,12 @@
 /*
  * raikiri-html — Minimal UA stylesheet for HTML documents
  *
- * Cleanroom implementation derived from HTML Living Standard §14 "Rendering"
- * and CSS 2.1 Appendix D "Default style sheet for HTML 4". Browser-specific
- * UA stylesheets (Chromium html.css, Firefox layout/style/res/html.css,
- * WebKit UA CSS, blitz bundled UA CSS) are intentionally NOT referenced
- * (memory raikiri-implementation-independence §UA CSS の扱い).
+ * Cleanroom implementation derived from CSS 2.1 Appendix D "Default style
+ * sheet for HTML 4" and HTML Living Standard "Rendering" section. Browser-
+ * specific UA stylesheets (Chromium html.css, Firefox
+ * layout/style/res/html.css, WebKit UA CSS, blitz bundled UA CSS) are
+ * intentionally NOT referenced (memory raikiri-implementation-independence
+ * §UA CSS の扱い).
  *
  * Scope (spec M1.4a): the minimal rule set required for hello-world VRT
  * (<p style="color:red">Hi</p> → PNG) to succeed. Form controls, margins,
@@ -14,17 +15,17 @@
  * spec: docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md §M1.4a
  */
 
-/* HTML LS §14.3.3 "Flow content" — root and body form the initial containing block */
+/* CSS 2.1 App.D — html and body form the initial containing block */
 html   { display: block; }
 body   { display: block; }
 
-/* HTML LS §14.3.3 "Flow content" — generic grouping content */
+/* CSS 2.1 App.D — generic grouping content (div) is block-level */
 div    { display: block; }
 
-/* HTML LS §14.3.3 "Flow content" — paragraph is block-level */
+/* CSS 2.1 App.D — paragraph (p) is block-level */
 p      { display: block; }
 
-/* HTML LS §14.3.3 "Flow content" — headings are block-level */
+/* CSS 2.1 App.D — heading elements (h1-h6) are block-level */
 h1     { display: block; }
 h2     { display: block; }
 h3     { display: block; }

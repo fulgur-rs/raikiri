@@ -41,7 +41,9 @@ pub fn parse<R: Read>(
 /// `type Output = UncascadedDocument` を宣言し、`finish(self)` で inner
 /// sink の finish 結果を bubble させる契約。
 ///
-/// (Task 8 で impl。Task 4 段階では public export のみ配置。)
+/// M1.4a (m1.22) 以降、parse 完了時に既定 UA CSS + `options.extra_stylesheets`
+/// を [`raikiri_dom::Document::add_stylesheet`] 経由で Document 状態に注入する
+/// (spec §M1.4a、UA=UserAgent/extra=Author kind)。
 pub fn parse_with_sink<R, S>(
     mut input: R,
     sink: S,

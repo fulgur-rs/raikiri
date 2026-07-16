@@ -600,9 +600,9 @@ mod tests {
                 "MINIMAL_UA_CSS is missing selector `{tag}`",
             );
         }
-        // spec 参照コメントが含まれていること (HTML LS §14 由来の cleanroom 印)
+        // spec 参照コメントが含まれていること (CSS 2.1 App.D 由来の cleanroom 印)
         assert!(
-            MINIMAL_UA_CSS.contains("HTML LS §14"),
+            MINIMAL_UA_CSS.contains("CSS 2.1 App.D"),
             "MINIMAL_UA_CSS should contain spec reference comments",
         );
         // display: block declaration が含まれていること (直接文字列で確認)
