@@ -14,6 +14,8 @@
 //! - determinism test (m1.13)
 //! - rayon thread-count test (m1.18)
 
+pub mod reference;
+
 /// Encode a premultiplied RGBA8 buffer to PNG bytes via `tiny_skia::Pixmap`.
 ///
 /// The buffer must be exactly `width * height * 4` bytes. Buffer format is
