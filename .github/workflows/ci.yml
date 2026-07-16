@@ -57,10 +57,14 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Test (lib only, locked)
-        # raikiri-vrt integration test は m1.10 reference harness 完了後、
-        # 別 issue で --tests に昇格。--locked で Cargo.lock drift を弾く。
-        run: cargo test --workspace --lib --locked
+      - name: Test (workspace, locked)
+        # lib + integration + doctest + bin unittests を全カバー。yps landing 済の
+        # validate_expectations_bin.rs (assert_cmd 経由の bin end-to-end) と全 crate
+        # の doctest が含まれる。raikiri-vrt の image-compare integration は m1.10
+        # reference harness 完了後に追加、その時は #[ignore] / feature flag で opt-in
+        # (default CI では skip、ondemand で走らせる) を検討する。--locked で
+        # Cargo.lock drift を弾く。
+        run: cargo test --workspace --locked
 
       - name: Clippy (all targets, deny warnings)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
