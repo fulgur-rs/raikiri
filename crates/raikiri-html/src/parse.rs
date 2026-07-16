@@ -1,11 +1,12 @@
 //! Public parse entrypoints.
 
+use std::borrow::Cow;
 use std::io::Read;
 
 use html5ever::driver::{ParseOpts, parse_document};
 use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeSink;
-use raikiri_traits::ParseError;
+use raikiri_traits::{ParseError, StylesheetKind};
 
 use crate::sink::RaikiriTreeSink;
 use crate::types::{ParseOptions, UncascadedDocument};
@@ -44,7 +45,7 @@ pub fn parse<R: Read>(
 pub fn parse_with_sink<R, S>(
     mut input: R,
     sink: S,
-    _options: &ParseOptions<'_>,
+    options: &ParseOptions<'_>,
 ) -> Result<UncascadedDocument, ParseError>
 where
     R: Read,
@@ -61,5 +62,22 @@ where
     })?;
 
     let parser = parse_document(sink, ParseOpts::default());
-    Ok(parser.one(buf.as_str()))
+    let mut doc = parser.one(buf.as_str());
+
+    // spec §M1.4a: 既定 UA CSS を Document に注入 (raikiri-spike-m1.22)
+    doc.dom.add_stylesheet(
+        Cow::Borrowed(crate::ua::MINIMAL_UA_CSS),
+        StylesheetKind::UserAgent,
+    );
+
+    // Consumer 提供の extra_stylesheets を Author として追加 (spec §M1
+    // ParseOptions::extra_stylesheets の実 consume 経路)
+    for extra in options.extra_stylesheets {
+        doc.dom.add_stylesheet(
+            Cow::Owned((*extra).to_string()),
+            StylesheetKind::Author,
+        );
+    }
+
+    Ok(doc)
 }

@@ -5,10 +5,12 @@
 mod parse;
 mod sink;
 mod types;
+pub mod ua;
 
 pub use parse::{parse, parse_with_sink};
 pub use sink::RaikiriTreeSink;
 pub use types::{ParseOptions, UncascadedDocument};
+pub use ua::MINIMAL_UA_CSS;
 
 #[cfg(test)]
 #[allow(clippy::needless_lifetimes, clippy::collapsible_if)]
@@ -583,5 +585,67 @@ mod tests {
             !scan(&uncascaded.dom, uncascaded.dom.root_id()),
             "100 comment stubs must all be stripped"
         );
+    }
+
+    // ── UA CSS bundle (M1.4a、raikiri-spike-m1.22) ──────────────
+
+    #[test]
+    fn minimal_ua_css_covers_required_display_block_selectors() {
+        // spec §M1.4a Scope: html, body, div, p, h1-h6 が display: block を持つ
+        for tag in ["html", "body", "div", "p", "h1", "h2", "h3", "h4", "h5", "h6"] {
+            assert!(
+                MINIMAL_UA_CSS.contains(tag),
+                "MINIMAL_UA_CSS is missing selector `{tag}`",
+            );
+        }
+        // spec 参照コメントが含まれていること (HTML LS §14 由来の cleanroom 印)
+        assert!(
+            MINIMAL_UA_CSS.contains("HTML LS §14"),
+            "MINIMAL_UA_CSS should contain spec reference comments",
+        );
+        // display: block declaration が含まれていること (直接文字列で確認)
+        assert!(
+            MINIMAL_UA_CSS.contains("display: block"),
+            "MINIMAL_UA_CSS should declare display: block",
+        );
+    }
+
+    #[test]
+    fn parse_injects_default_ua_stylesheet_into_document() {
+        use raikiri_traits::StylesheetKind;
+
+        let html = b"<html><body><p>Hi</p></body></html>";
+        let opts = empty_options();
+        let doc = parse(&html[..], &opts).expect("parse ok");
+
+        let ua_entries: Vec<&str> = doc.dom.stylesheets()
+            .filter(|(_, k)| *k == StylesheetKind::UserAgent)
+            .map(|(s, _)| s)
+            .collect();
+        assert_eq!(ua_entries.len(), 1, "exactly one UA CSS entry expected");
+        assert_eq!(ua_entries[0], MINIMAL_UA_CSS);
+    }
+
+    #[test]
+    fn parse_injects_extra_stylesheets_as_author() {
+        use raikiri_traits::StylesheetKind;
+
+        let html = b"<html><body></body></html>";
+        let extra_a = "a { color: red }";
+        let extra_b = "b { color: blue }";
+        let opts = ParseOptions {
+            extra_stylesheets: &[extra_a, extra_b],
+            network: None,
+            base_url: None,
+        };
+        let doc = parse(&html[..], &opts).expect("parse ok");
+
+        let author_entries: Vec<&str> = doc.dom.stylesheets()
+            .filter(|(_, k)| *k == StylesheetKind::Author)
+            .map(|(s, _)| s)
+            .collect();
+        assert_eq!(author_entries.len(), 2);
+        assert_eq!(author_entries[0], extra_a);
+        assert_eq!(author_entries[1], extra_b);
     }
 }
