@@ -1,11 +1,12 @@
 //! Public parse entrypoints.
 
+use std::borrow::Cow;
 use std::io::Read;
 
 use html5ever::driver::{ParseOpts, parse_document};
 use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeSink;
-use raikiri_traits::ParseError;
+use raikiri_traits::{ParseError, StylesheetKind};
 
 use crate::sink::RaikiriTreeSink;
 use crate::types::{ParseOptions, UncascadedDocument};
@@ -40,11 +41,13 @@ pub fn parse<R: Read>(
 /// `type Output = UncascadedDocument` を宣言し、`finish(self)` で inner
 /// sink の finish 結果を bubble させる契約。
 ///
-/// (Task 8 で impl。Task 4 段階では public export のみ配置。)
+/// M1.4a (m1.22) 以降、parse 完了時に既定 UA CSS + `options.extra_stylesheets`
+/// を [`raikiri_dom::Document::add_stylesheet`] 経由で Document 状態に注入する
+/// (spec §M1.4a、UA=UserAgent/extra=Author kind)。
 pub fn parse_with_sink<R, S>(
     mut input: R,
     sink: S,
-    _options: &ParseOptions<'_>,
+    options: &ParseOptions<'_>,
 ) -> Result<UncascadedDocument, ParseError>
 where
     R: Read,
@@ -61,5 +64,20 @@ where
     })?;
 
     let parser = parse_document(sink, ParseOpts::default());
-    Ok(parser.one(buf.as_str()))
+    let mut doc = parser.one(buf.as_str());
+
+    // spec §M1.4a: 既定 UA CSS を Document に注入 (raikiri-spike-m1.22)
+    doc.dom.add_stylesheet(
+        Cow::Borrowed(crate::ua::MINIMAL_UA_CSS),
+        StylesheetKind::UserAgent,
+    );
+
+    // Consumer 提供の extra_stylesheets を Author として追加 (spec §M1
+    // ParseOptions::extra_stylesheets の実 consume 経路)
+    for extra in options.extra_stylesheets {
+        doc.dom
+            .add_stylesheet(Cow::Owned((*extra).to_string()), StylesheetKind::Author);
+    }
+
+    Ok(doc)
 }

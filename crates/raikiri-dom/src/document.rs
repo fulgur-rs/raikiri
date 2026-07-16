@@ -2,9 +2,10 @@
 //! (in `taffy_impl.rs`) and raikiri-traits::Dom (in `dom_impl.rs`).
 
 use smol_str::SmolStr;
+use std::borrow::Cow;
 use taffy::Style;
 
-use raikiri_traits::NodeKind;
+use raikiri_traits::{NodeKind, StylesheetKind};
 
 use crate::node::{Attr, Node};
 
@@ -24,6 +25,10 @@ pub struct Document {
     /// する。O(1) per-mutation cost + O(N) per-layout-batch cost で
     /// invalidation の amortized O(1) を実現。
     pub(crate) layout_dirty: bool,
+    /// Document に associate されている stylesheet の list (M1.4a、
+    /// raikiri-spike-m1.22)。lazy: parse は cascade phase で行う。
+    /// 呼び出し順で同 kind 内の cascade source_order が決まる。
+    stylesheets: Vec<(Cow<'static, str>, StylesheetKind)>,
 }
 
 impl Document {
@@ -35,6 +40,7 @@ impl Document {
             nodes,
             root: 0,
             layout_dirty: false,
+            stylesheets: Vec::new(),
         }
     }
 
@@ -226,10 +232,92 @@ impl Document {
     fn invalidate_layout_cache(&mut self) {
         self.layout_dirty = true;
     }
+
+    // ─── stylesheets (M1.4a、raikiri-spike-m1.22) ───────────────────
+
+    /// Stylesheet を Document に associate する。
+    ///
+    /// - lazy: parse は行わない。cascade phase で一括処理される。
+    /// - 呼び出し順で同一 `kind` 内の cascade source_order が決まる
+    ///   (spec §M1.4a)。
+    /// - `Cow<'static, str>` により、bundled UA CSS 等 static &str は
+    ///   borrow のまま保持され allocation なし。Consumer 提供の
+    ///   `String` は Cow::Owned で消費される。
+    pub fn add_stylesheet(&mut self, source: impl Into<Cow<'static, str>>, kind: StylesheetKind) {
+        self.stylesheets.push((source.into(), kind));
+    }
+
+    /// 現在 associate されている全 stylesheet を `(source, kind)` の
+    /// tuple として iterate する。順序は `add_stylesheet` の呼び出し順。
+    ///
+    /// cascade orchestrator (raikiri umbrella) が RuleTree 構築時に
+    /// consume する想定。
+    pub fn stylesheets(&self) -> impl Iterator<Item = (&str, StylesheetKind)> + '_ {
+        self.stylesheets
+            .iter()
+            .map(|(cow, kind)| (cow.as_ref(), *kind))
+    }
 }
 
 impl Default for Document {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod stylesheets_tests {
+    use super::*;
+    use raikiri_traits::StylesheetKind;
+    use std::borrow::Cow;
+
+    #[test]
+    fn document_add_stylesheet_appends_in_call_order() {
+        let mut doc = Document::new();
+        doc.add_stylesheet(Cow::Borrowed("a { color: red }"), StylesheetKind::UserAgent);
+        doc.add_stylesheet(
+            Cow::Owned("b { color: blue }".to_string()),
+            StylesheetKind::Author,
+        );
+
+        let collected: Vec<(&str, StylesheetKind)> = doc.stylesheets().collect();
+        assert_eq!(collected.len(), 2);
+        assert_eq!(
+            collected[0],
+            ("a { color: red }", StylesheetKind::UserAgent)
+        );
+        assert_eq!(collected[1], ("b { color: blue }", StylesheetKind::Author));
+    }
+
+    #[test]
+    fn document_add_stylesheet_borrow_variant_zero_alloc() {
+        // Cow::Borrowed を渡した場合、内部 storage も Borrowed のまま保持される
+        // ことを as_ref() 経由で確認する (pointer 比較で same 'static addr)。
+        let mut doc = Document::new();
+        let ua: &'static str = "html { display: block }";
+        doc.add_stylesheet(Cow::Borrowed(ua), StylesheetKind::UserAgent);
+        let (source, _kind) = doc.stylesheets().next().expect("has one");
+        assert!(
+            std::ptr::eq(source, ua),
+            "borrowed source should keep &'static identity"
+        );
+    }
+
+    #[test]
+    fn document_stylesheets_iterates_mixed_kinds() {
+        let mut doc = Document::new();
+        doc.add_stylesheet(Cow::Borrowed("ua1"), StylesheetKind::UserAgent);
+        doc.add_stylesheet(Cow::Borrowed("au1"), StylesheetKind::Author);
+        doc.add_stylesheet(Cow::Borrowed("ua2"), StylesheetKind::UserAgent);
+
+        let kinds: Vec<StylesheetKind> = doc.stylesheets().map(|(_, k)| k).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                StylesheetKind::UserAgent,
+                StylesheetKind::Author,
+                StylesheetKind::UserAgent,
+            ]
+        );
     }
 }

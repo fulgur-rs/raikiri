@@ -24,6 +24,8 @@ pub struct Declaration {
 ///
 /// `source_order` は同一 `RuleTree` 内で 0 から通し番号。cascade tie-break
 /// (同 specificity 時に「後勝ち」) に使う。
+/// `origin` は CSS Cascading L4 §6.2 の origin (M1.4a、m1.22)。cascade tuple
+/// の rank 化 (`!important` 反転扱い) に使用。
 pub struct StyleRule {
     /// Parse 済 selector list。M1.4 では type + universal のみ受理 (他は build 段で drop)。
     pub selectors: SelectorList<RaikiriSelectorImpl>,
@@ -31,6 +33,8 @@ pub struct StyleRule {
     pub declarations: Vec<Declaration>,
     /// RuleTree 全体を通した 0-indexed source order。
     pub source_order: u32,
+    /// この rule が属する cascade origin (raikiri-spike-m1.22)。
+    pub origin: crate::ruletree::Origin,
 }
 
 /// declaration-list を消費して `Vec<Declaration>` を produce。

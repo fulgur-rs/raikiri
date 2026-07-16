@@ -10,6 +10,19 @@ use raikiri_traits::{Dom, Element, Node, NodeKind};
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::{RaikiriSelectorImpl, RaikiriSelectorParser};
 
+/// Cascade origin (CSS Cascading L4 §6.2)。M1 では UserAgent + Author の
+/// 2 段のみ。User origin は Consumer が `extra_stylesheets` 経由で Author
+/// として渡す想定 (spec §M1.4a Non-goals、raikiri-spike-m1.22)。
+///
+/// `raikiri_traits::StylesheetKind` との対応は raikiri umbrella crate が
+/// cascade orchestration の一部として map する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    UserAgent,
+    Author,
+}
+
 /// Unified rule tree。cascade + GCPM (M5+) が消費する index。
 ///
 /// M1.4 では `style_rules` のみ populate。future field
@@ -29,42 +42,51 @@ impl RuleTree {
             style_rules: Vec::new(),
         }
     }
-}
 
-/// DOM を DFS walk して全 `<style>` element の text を parse、単一 RuleTree に集約。
-///
-/// - `<style>` element の子 Text node を concat して stylesheet 文字列を構成
-/// - cssparser の StyleSheetParser で top-level rule list として parse
-/// - 各 qualified rule について:
-///   - prelude を SelectorList として parse — 失敗 or type/universal 外を含む rule は
-///     silently drop (spec 準拠)
-///   - block を declaration-list として parse (Task 4 の parse_declaration_block を使用)
-///   - StyleRule を produce、source_order は通し番号
-/// - at-rule は cssparser 側で skip
-pub fn build_rule_tree<D: Dom>(dom: &D) -> RuleTree {
-    let mut rules: Vec<StyleRule> = Vec::new();
-    let mut source_order: u32 = 0;
-
-    walk_and_collect(dom, dom.root_id(), &mut |source| {
+    /// Stylesheet 文字列を parse して rule を append する。
+    ///
+    /// - `source_order` は既存 rule 数を起点に呼び出し順で自動採番
+    /// - `origin` は各 rule に紐付き、cascade rank 化 (`!important` 反転
+    ///   扱い) で使用される
+    /// - Invalid selector / 未サポート property は既存の silent-drop 挙動を
+    ///   継承 (spec §M1.4a)
+    ///
+    /// spec: raikiri-spike-m1.22 (m1.21 spec addition の実装)
+    pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
+        let start_order = self.style_rules.len() as u32;
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
         let mut rule_parser = StyleRuleParser;
+        let mut order = start_order;
         for (selectors, declarations) in
             StyleSheetParser::new(&mut parser, &mut rule_parser).flatten()
         {
             if !is_type_or_universal_only(&selectors) {
                 continue; // class/id/attr/combinator selector は m1.4 では drop
             }
-            rules.push(StyleRule {
+            self.style_rules.push(StyleRule {
                 selectors,
                 declarations,
-                source_order,
+                source_order: order,
+                origin,
             });
-            source_order = source_order.wrapping_add(1);
+            order = order.wrapping_add(1);
         }
-    });
+    }
+}
 
-    RuleTree { style_rules: rules }
+/// DOM を DFS walk して全 `<style>` element の text を Author stylesheet として
+/// 集約する convenience。UA CSS は含めない (`raikiri-html::parse` が
+/// Document.add_stylesheet 経由で inject 済み、`Document.stylesheets()` を
+/// raikiri umbrella が RuleTree に流し込む責務)。
+///
+/// 詳細は spec §M1.4a (raikiri-spike-m1.22)。
+pub fn build_rule_tree<D: Dom>(dom: &D) -> RuleTree {
+    let mut tree = RuleTree::empty();
+    walk_and_collect(dom, dom.root_id(), &mut |source| {
+        tree.add_stylesheet(source, Origin::Author);
+    });
+    tree
 }
 
 /// DOM walk 本体。深いネストで stack overflow しないよう explicit `Vec` stack
@@ -256,5 +278,54 @@ mod tests {
         let tree = build_rule_tree(&doc);
         assert_eq!(tree.style_rules.len(), 1);
         assert_eq!(tree.style_rules[0].declarations.len(), 1);
+    }
+
+    // ── Origin + add_stylesheet (M1.4a、raikiri-spike-m1.22) ──
+
+    #[test]
+    fn origin_is_copy_eq() {
+        fn assert_copy<T: Copy + PartialEq + Eq>() {}
+        assert_copy::<Origin>();
+        assert_ne!(Origin::UserAgent, Origin::Author);
+    }
+
+    #[test]
+    fn add_stylesheet_ua_and_author_populate_rule_tree() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("p { color: red }", Origin::UserAgent);
+        tree.add_stylesheet("p { color: blue }", Origin::Author);
+
+        assert_eq!(tree.style_rules.len(), 2);
+        assert_eq!(tree.style_rules[0].origin, Origin::UserAgent);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+        assert_eq!(tree.style_rules[1].origin, Origin::Author);
+        assert_eq!(tree.style_rules[1].source_order, 1);
+    }
+
+    #[test]
+    fn add_stylesheet_source_order_monotonic_across_calls() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("p { color: red }", Origin::UserAgent);
+        tree.add_stylesheet("div { color: green }", Origin::UserAgent);
+        tree.add_stylesheet("span { color: blue }", Origin::Author);
+        let orders: Vec<u32> = tree.style_rules.iter().map(|r| r.source_order).collect();
+        assert_eq!(orders, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn add_stylesheet_dropped_selectors_do_not_consume_source_order() {
+        // .foo (class selector) は M1.4 では drop、p は残る
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(".foo { color: red } p { color: blue }", Origin::Author);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+    }
+
+    #[test]
+    fn build_rule_tree_produces_author_origin_for_dom_style_elements() {
+        let doc = dom_with_style("p { color: red }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].origin, Origin::Author);
     }
 }

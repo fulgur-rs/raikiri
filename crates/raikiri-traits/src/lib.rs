@@ -39,7 +39,7 @@ pub use config::{
     BatchConfig, BatchConfigBuilder, LookaheadConfig, LookaheadConfigBuilder, PlanConfig,
     PlanConfigBuilder, RenderLimits, RenderLimitsBuilder, StreamingConfig, StreamingConfigBuilder,
 };
-pub use dom::{Dom, Element, Node, NodeId, NodeKind, QuirksMode, Symbol};
+pub use dom::{Dom, Element, Node, NodeId, NodeKind, QuirksMode, StylesheetKind, Symbol};
 pub use error::{
     CascadeError, EmittedSlotInfo, ExhaustionPolicy, LayoutError, LimitKind, ParseError,
     RenderError, RenderStatus, RenderSummary, RenderWarning, TargetDiscrepancy, TargetKind,
@@ -609,8 +609,29 @@ mod tests {
     fn page_box_external_constructable_via_struct_update_from_a4() {
         // #[non_exhaustive] pub struct の external constructable pattern (M1 acceptance)。
         // `..PageBox::A4` を base に width だけ変える。
-        let landscape_a4 = PageBox { width: 842.0, height: 595.0, ..PageBox::A4 };
+        let landscape_a4 = PageBox {
+            width: 842.0,
+            height: 595.0,
+            ..PageBox::A4
+        };
         assert_eq!(landscape_a4.width, 842.0);
         assert_eq!(landscape_a4.height, 595.0);
+    }
+
+    // ── StylesheetKind trait bounds (M1.4a) ──────────────────
+
+    #[test]
+    fn stylesheet_kind_is_copy_send_eq() {
+        use crate::StylesheetKind;
+
+        fn assert_send<T: Send>() {}
+        fn assert_copy<T: Copy>() {}
+        assert_send::<StylesheetKind>();
+        assert_copy::<StylesheetKind>();
+
+        let ua = StylesheetKind::UserAgent;
+        let ua2 = ua; // Copy
+        assert_eq!(ua, ua2);
+        assert_ne!(StylesheetKind::UserAgent, StylesheetKind::Author);
     }
 }

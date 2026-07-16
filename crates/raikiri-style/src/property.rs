@@ -38,6 +38,17 @@ pub enum Length {
     Px(f32),
 }
 
+/// `display` property の value。M1.4a scope では `block` / `inline` のみ。
+///
+/// spec §M1.4a Non-goals: `table*`, `flex`, `grid`, `none` 等は M6+。
+/// (raikiri-spike-m1.22)
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayValue {
+    Block,
+    Inline,
+}
+
 /// M1.4 でサポートする property の resolved value。
 ///
 /// 認識できない property (`background-color` / `margin` / ...) や invalid value
@@ -54,6 +65,9 @@ pub enum PropertyValue {
     FontSize(Length),
     /// `font-weight: <integer>` — inherited、initial: 400。
     FontWeight(u16),
+    /// `display: <block-or-inline>` — non-inherited、initial: inline
+    /// (spec §M1.4a、raikiri-spike-m1.22)。
+    Display(DisplayValue),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -65,6 +79,7 @@ pub(crate) enum PropertyKey {
     FontFamily,
     FontSize,
     FontWeight,
+    Display,
 }
 
 impl PropertyValue {
@@ -75,6 +90,7 @@ impl PropertyValue {
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
             PropertyValue::FontSize(_) => PropertyKey::FontSize,
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
+            PropertyValue::Display(_) => PropertyKey::Display,
         }
     }
 }
@@ -89,6 +105,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "font-family" => parse_font_family(input).map(PropertyValue::FontFamily),
         "font-size" => parse_font_size(input).map(PropertyValue::FontSize),
         "font-weight" => parse_font_weight(input).map(PropertyValue::FontWeight),
+        "display" => parse_display(input).map(PropertyValue::Display),
         _ => None,
     }
 }
@@ -203,6 +220,20 @@ fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<u16> {
         Token::Number {
             int_value: Some(v), ..
         } if *v >= 100 && *v <= 900 => Some(*v as u16),
+        _ => None,
+    }
+}
+
+/// `display: <ident>` を parse する。
+///
+/// M1.4a scope では `block` / `inline` のみ受理、他 keyword (`flex`,
+/// `grid`, `none`, `table*` 等) は silent drop (`None`)。
+/// ASCII case-insensitive で ident を比較する (CSS spec 準拠)。
+fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
+    let ident = input.next().ok()?;
+    match ident {
+        Token::Ident(name) if name.eq_ignore_ascii_case("block") => Some(DisplayValue::Block),
+        Token::Ident(name) if name.eq_ignore_ascii_case("inline") => Some(DisplayValue::Inline),
         _ => None,
     }
 }
@@ -335,5 +366,52 @@ mod tests {
     fn unknown_property_returns_none() {
         assert_eq!(parse("100px", "margin"), None);
         assert_eq!(parse("red", "background-color"), None);
+    }
+
+    // ── Display (M1.4a、raikiri-spike-m1.22) ─────────────────────
+
+    #[test]
+    fn display_parse_block() {
+        assert_eq!(
+            parse("block", "display"),
+            Some(PropertyValue::Display(DisplayValue::Block))
+        );
+    }
+
+    #[test]
+    fn display_parse_inline() {
+        assert_eq!(
+            parse("inline", "display"),
+            Some(PropertyValue::Display(DisplayValue::Inline))
+        );
+    }
+
+    #[test]
+    fn display_rejects_unknown_ident() {
+        // spec §M1.4a: block と inline 以外の値 (flex, grid, none, table, ...) は
+        // M6+ 対応、現状は silent drop (None を返す)
+        assert_eq!(parse("flex", "display"), None);
+        assert_eq!(parse("grid", "display"), None);
+        assert_eq!(parse("none", "display"), None);
+        assert_eq!(parse("table", "display"), None);
+    }
+
+    #[test]
+    fn display_rejects_non_ident() {
+        assert_eq!(parse("16px", "display"), None);
+        assert_eq!(parse("100", "display"), None);
+    }
+
+    #[test]
+    fn display_is_case_insensitive() {
+        // CSS spec: property value keyword は ASCII case-insensitive
+        assert_eq!(
+            parse("BLOCK", "display"),
+            Some(PropertyValue::Display(DisplayValue::Block))
+        );
+        assert_eq!(
+            parse("Inline", "display"),
+            Some(PropertyValue::Display(DisplayValue::Inline))
+        );
     }
 }
