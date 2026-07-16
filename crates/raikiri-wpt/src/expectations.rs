@@ -17,6 +17,8 @@ use std::collections::HashSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use time::{Date, macros::format_description};
+
 // ── ExpectationSet ─────────────────────────────────────────────────────────
 
 /// All expectations files combined.
@@ -260,10 +262,11 @@ pub struct QuarantineEntry {
     pub reason: String,
     /// Tracking issue URL for the flake.
     pub issue_link: String,
-    /// Kept as `String` in M1; chrono/time integration lands with the M3
-    /// `validate-expectations` expired-check logic (bd follow-up filed at
-    /// m1.9 close).
-    pub added_date: String,
+    /// Date the entry was added, in YYYY-MM-DD (ISO 8601) form. Parsed and
+    /// validated at [`Quarantine::parse`] time via
+    /// [`time::Date::parse`]; a malformed date surfaces as
+    /// [`ExpectError::MalformedLine`].
+    pub added_date: Date,
 }
 
 /// OS platform column of a [`QuarantineEntry`].
@@ -410,6 +413,14 @@ impl Quarantine {
                     field: "tolerance",
                     value: cols[4].to_owned(),
                 })?;
+            let added_date_fmt = format_description!("[year]-[month]-[day]");
+            let added_date = Date::parse(cols[7], &added_date_fmt).map_err(|e| {
+                ExpectError::MalformedLine {
+                    file: file_name.to_owned(),
+                    line_no,
+                    reason: format!("added_date {:?} is not YYYY-MM-DD ({e})", cols[7]),
+                }
+            })?;
             entries.push(QuarantineEntry {
                 test_id: cols[0].to_owned(),
                 platform,
@@ -418,7 +429,7 @@ impl Quarantine {
                 tolerance,
                 reason: cols[5].to_owned(),
                 issue_link: cols[6].to_owned(),
-                added_date: cols[7].to_owned(),
+                added_date,
             });
         }
         Ok(Self { entries })
@@ -594,7 +605,7 @@ mod tests {
         assert_eq!(e.tolerance, ToleranceFilter::PixelExact);
         assert_eq!(e.reason, "Intermittent 1-pixel diff");
         assert_eq!(e.issue_link, "https://example/issues/123");
-        assert_eq!(e.added_date, "2026-08-01");
+        assert_eq!(e.added_date, time::macros::date!(2026 - 08 - 01));
     }
 
     #[test]
@@ -633,6 +644,22 @@ mod tests {
                 assert_eq!(value, "plan9");
             }
             other => panic!("expected UnknownEnum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quarantine_rejects_malformed_added_date() {
+        let content = "css/foo | linux | x86_64 | vello_cpu | low | r | i | not-a-date\n";
+        let err = Quarantine::parse(content, "q.txt").unwrap_err();
+        match err {
+            ExpectError::MalformedLine {
+                line_no, reason, ..
+            } => {
+                assert_eq!(line_no, 1);
+                assert!(reason.contains("added_date"), "got: {reason}");
+                assert!(reason.contains("not-a-date"), "got: {reason}");
+            }
+            other => panic!("expected MalformedLine, got {other:?}"),
         }
     }
 
