@@ -89,6 +89,19 @@ pub fn build_rule_tree<D: Dom>(dom: &D) -> RuleTree {
     tree
 }
 
+/// DOM を root から DFS walk して全 `<style>` element の text を callback に渡す。
+///
+/// UA CSS は含まれない — `raikiri-html::parse` が `Document::add_stylesheet` 経由で
+/// UA を注入しており、`Document::stylesheets()` 経路で raikiri umbrella が別途消費
+/// する契約 (spec §M1.4a、raikiri-spike-m1.23)。本 walker は DOM `<style>` element
+/// の text 収集のみを担当する。
+///
+/// 呼び出し順は `walk_and_collect` の iterative DFS に従い document order。
+/// stack overflow 保護は `walk_and_collect` と共有 (roborev job 199)。
+pub fn walk_style_elements<D: Dom, F: FnMut(&str)>(dom: &D, mut on_style_text: F) {
+    walk_and_collect(dom, dom.root_id(), &mut on_style_text);
+}
+
 /// DOM walk 本体。深いネストで stack overflow しないよう explicit `Vec` stack
 /// で iterative DFS (roborev job 199 対応)。訪問順は sibling 間で recursion 版
 /// と異なり得るが、`<style>` は独立に text を emit するだけで他 node の状態に
@@ -103,19 +116,26 @@ fn walk_and_collect<D: Dom, F: FnMut(&str)>(
         if let Some(node) = dom.node(id) {
             if node.kind() == NodeKind::Element
                 && let Some(elem) = node.as_element()
-                && elem.tag_name().eq_ignore_ascii_case("style")
             {
-                // 子 Text node を concat
-                let mut concat = String::new();
-                for child_id in dom.child_ids(id) {
-                    if let Some(child) = dom.node(child_id)
-                        && let Some(t) = child.text_content()
-                    {
-                        concat.push_str(t);
-                    }
+                let tag = elem.tag_name();
+                // <template> subtree は spec 上 inert (HTML spec、cf. raikiri-html/src/sink.rs:315-318)。
+                // <style> があっても cascade に流さず、子孫の <style> も skip する。
+                if tag.eq_ignore_ascii_case("template") {
+                    continue;
                 }
-                if !concat.is_empty() {
-                    on_style_text(&concat);
+                if tag.eq_ignore_ascii_case("style") {
+                    // 子 Text node を concat
+                    let mut concat = String::new();
+                    for child_id in dom.child_ids(id) {
+                        if let Some(child) = dom.node(child_id)
+                            && let Some(t) = child.text_content()
+                        {
+                            concat.push_str(t);
+                        }
+                    }
+                    if !concat.is_empty() {
+                        on_style_text(&concat);
+                    }
                 }
             }
             // 全 kind で children を stack に push。stack は LIFO なので document
@@ -327,5 +347,41 @@ mod tests {
         let tree = build_rule_tree(&doc);
         assert_eq!(tree.style_rules.len(), 1);
         assert_eq!(tree.style_rules[0].origin, Origin::Author);
+    }
+
+    #[test]
+    fn walk_style_elements_pub_visits_all_style_texts_in_document_order() {
+        // 兄弟の <style> 2 個 → 呼び出し順で collected される。
+        let mut doc = TestDoc::new();
+        let s1 = doc.push_element(0, "style", None);
+        doc.push_text(s1, "p { color: red }");
+        let s2 = doc.push_element(0, "style", None);
+        doc.push_text(s2, "div { color: blue }");
+
+        let mut collected: Vec<String> = Vec::new();
+        super::walk_style_elements(&doc, |css| collected.push(css.to_string()));
+
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected[0], "p { color: red }");
+        assert_eq!(collected[1], "div { color: blue }");
+    }
+
+    #[test]
+    fn style_inside_template_is_skipped_per_html_spec_inertness() {
+        // <template> は spec 上 inert (HTML spec)。内部の <style> は cascade に流れない。
+        // raikiri-html/src/sink.rs:315-318 の invariant と consistent。
+        let mut doc = TestDoc::new();
+        let template = doc.push_element(0, "template", None);
+        let style_in_template = doc.push_element(template, "style", None);
+        doc.push_text(style_in_template, "p { color: red }");
+
+        // <template> 外の <style> は拾う必要がある (baseline)。
+        let style_outer = doc.push_element(0, "style", None);
+        doc.push_text(style_outer, "div { color: blue }");
+
+        let tree = build_rule_tree(&doc);
+        // <style> outer の 1 rule のみ (div{...})、template 内は skip。
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
     }
 }
