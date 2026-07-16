@@ -63,7 +63,7 @@ impl std::fmt::Display for RenderError {
             Self::Layout(_) => write!(f, "Layout error"),
             Self::Resolver(_) => write!(f, "Replaced-element resolver error"),
             Self::Network(_) => write!(f, "Network provider error"),
-            Self::Policy(v) => write!(f, "Resource policy violation: {:?}", v.violation_type),
+            Self::Policy(v) => write!(f, "Resource policy violation: {}", v.violation_type),
             Self::LimitExceeded {
                 kind,
                 limit,
