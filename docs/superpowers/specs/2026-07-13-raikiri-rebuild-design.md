@@ -3171,6 +3171,17 @@ validate-expectations`)、CI で PR ごとに実行。
 - **nzv.11 refute**: 「PaintScene と blitz-paint 別 shape → bridge trait 必要」
   仮説は refute。§M0 検証項目リストの該当行 inline annotate 済
 
+**Actual drifts recorded (M1 期間中)**:
+
+- **m1.10 reference-harness scaffold — golden 更新は env var**: §12.7 は
+  `cargo test -- --update-goldens` の custom harness を想定。M1 実装は
+  `RAIKIRI_UPDATE_GOLDENS=1` env var で trigger。M2+ で golden UI 本格化する
+  際 custom harness (`harness = false`) に昇格可能な shape で温存
+- **m1.10 reference-harness scaffold — Tolerance は struct + const**: enum
+  ではなく `Tolerance::EXACT` / `TIER2` / `TIER3` (struct + const)。数値は
+  §12.7 と一致 (T1: max_delta=0、T2: max_delta=1 / 0.1%、T3: max_delta=2 /
+  0.5%)。理由は将来 tier 追加時の exhaustive-match backward-compat 問題回避
+
 ### M0: Dep feasibility + production workspace (round 3 review 対応)
 
 **訂正 (round 3 review #3 対応)**: 以前「throwaway smoke」と書いたが実態と
