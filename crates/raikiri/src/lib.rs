@@ -18,7 +18,7 @@
 //! # let _ = result;
 //! ```
 
-use raikiri_style::{Origin, RuleTree, cascade, walk_style_elements};
+use raikiri_style::{cascade, walk_style_elements};
 
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 pub use raikiri_traits::{
@@ -34,8 +34,7 @@ pub use raikiri_dom::Document as DomDocument;
 
 // ── raikiri-style: cascade pipeline output types ───────────────────────
 pub use raikiri_style::{
-    CascadeResult, ComputedValues, DisplayValue, Origin as CascadeOrigin, PropertyValue,
-    RuleTree as StyleRuleTree,
+    CascadeResult, ComputedValues, DisplayValue, Origin, PropertyValue, RuleTree,
 };
 
 /// UA + Consumer 提供 stylesheet を Document から取り出し、Origin を割り当てて
@@ -76,15 +75,19 @@ pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
 /// dom-level の [`StylesheetKind`] (raikiri-traits) を cascade-level の
 /// [`Origin`] (raikiri-style) に翻訳。dep 方向を保つため umbrella 内で保持。
 ///
-/// `#[non_exhaustive]` により将来 variant が追加された場合の compile-time 網羅
-/// 保証を維持する。
+/// `StylesheetKind` は他 crate の `#[non_exhaustive]` enum のため exhaustive match
+/// はできないが、将来 variant が追加された場合の silent misroute を防ぐため
+/// `_` arm は `unreachable!` で loud fail させる (M1 では UserAgent / Author の 2
+/// variant で網羅済み)。
 fn stylesheet_kind_to_origin(kind: StylesheetKind) -> Origin {
     match kind {
         StylesheetKind::UserAgent => Origin::UserAgent,
         StylesheetKind::Author => Origin::Author,
-        // `StylesheetKind` は `#[non_exhaustive]`。将来 User 等が追加された時点で
-        // Origin 側も対応が必要になるため、ここは compile-time 網羅性を保持する。
-        _ => Origin::Author,
+        // `StylesheetKind` は `#[non_exhaustive]`。M1 では UserAgent / Author の 2 variant を
+        // 上で網羅済み。将来 User 等が追加された時点で対応が漏れるとここに到達し、
+        // silent misroute を防ぐため panic で loud fail する (dev が cascade origin map の
+        // 更新に気付ける)。
+        _ => unreachable!("StylesheetKind variant not yet mapped to Origin — update stylesheet_kind_to_origin in raikiri crate (m1.23)"),
     }
 }
 
