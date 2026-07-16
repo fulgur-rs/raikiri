@@ -1,10 +1,14 @@
 //! DOM walker — Document arena を DFS で walk し PaintScene に emit する。
 //!
-//! `paint_document` / `paint_element` / `paint_node` の 3 関数分離は
-//! separation of concerns — paint_element = element 描画責任 (背景/border/
-//! children walk、M4 で肉付け)、paint_node = kind dispatch のみ。M3 で inline
-//! formatting context を実装する時に paint_element を変えずに paint_node の
-//! Text 分岐だけ unreachable 化できる。
+//! `paint_document` は iterative Vec<(node_id, parent_abs_x, parent_abs_y)>
+//! stack で walk する (roborev job 223 finding 対応、cascade / m1.6 find_body
+//! の pattern と一貫、深 DOM で stack overflow 回避)。kind 分岐は loop 内で
+//! inline に行い、Element は children を push、Text は draw_text_node を call、
+//! display:none は subtree ごと skip する。
+//!
+//! M3 で inline formatting context を実装する時は、Element 分岐内の children
+//! push を "self の inline layout を walk する" に置き換え、Text 分岐は
+//! unreachable 化する予定 (m1.6 の text_layout 選択が M1 限定妥協のため)。
 //!
 //! find_body は raikiri-dom::layout::find_body と重複するが、5 行の helper
 //! を crate 境界越境で pub 化するよりも paint 側で持つ方が clean。
@@ -29,9 +33,18 @@ pub(crate) fn paint_canvas_background(
     // M1.4: no-op site。M4 で発火。
 }
 
-/// Document arena を body から DFS walk する。fragment (no `<body>`) case は
-/// silent return (m1.6 layout_single_page が Err を返すので paint 呼び出し
-/// 前に検出済のはず、defensive)。
+/// Document arena を body から iterative DFS で walk する。fragment (no `<body>`)
+/// case は silent return (m1.6 layout_single_page が Err を返すので paint
+/// 呼び出し前に検出済のはず、defensive)。
+///
+/// Stack frame = `(node_id, parent_abs_x, parent_abs_y)`。children は
+/// `.rev()` で push し、pop 時に document order で処理する。Element の場合は
+/// `is_display_none` を先に判定し true なら subtree ごと skip (roborev job 223
+/// finding 対応: 従来の size == 0 判定は overflow: visible な legitimate zero-
+/// size 要素も silent drop するため誤り)。
+///
+/// M4 で element background-color / border / box-shadow を Element arm 内で
+/// 描画する予定 (site だけ確保)。
 pub(crate) fn paint_document(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -40,67 +53,41 @@ pub(crate) fn paint_document(
     let Some(body_id) = find_body(document) else {
         return;
     };
-    paint_element(scene, document, cascade, body_id, 0.0, 0.0);
-}
 
-/// Element node の描画。M1.7 では background site を no-op で置く + children
-/// を document order で walk。M4 で element background-color / border /
-/// box-shadow の描画をここに追加。zero-size subtree は skip
-/// (display:none 相当、taffy が LayoutOutput::HIDDEN で size=0 を出す)。
-pub(crate) fn paint_element(
-    scene: &mut impl PaintScene,
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-    parent_abs_x: f32,
-    parent_abs_y: f32,
-) {
-    let Some(node) = document.get_node(node_id) else {
-        return;
-    };
-    let layout = node.unrounded_layout;
-    if layout.size.width <= 0.0 || layout.size.height <= 0.0 {
-        return;
-    }
-    let abs_x = parent_abs_x + layout.location.x;
-    let abs_y = parent_abs_y + layout.location.y;
-    // paint_element_background(scene, node, abs_x, abs_y, cascade) — M4 でここに挿入
-    for &child in &node.children {
-        paint_node(scene, document, cascade, child, abs_x, abs_y);
-    }
-}
-
-/// Kind dispatch。M1.7 は Element / Text の 2 分岐、Document は通常通らない。
-/// M3 で AnonymousBlock (inline wrapper) 等が加わる、M3 以降で inline formatting
-/// context を実装する時は Text 分岐が unreachable 化する予定。
-pub(crate) fn paint_node(
-    scene: &mut impl PaintScene,
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-    parent_abs_x: f32,
-    parent_abs_y: f32,
-) {
-    let Some(node) = document.get_node(node_id) else {
-        return;
-    };
-    match node.kind {
-        NodeKind::Element => {
-            paint_element(scene, document, cascade, node_id, parent_abs_x, parent_abs_y)
-        }
-        NodeKind::Text => {
-            let layout = node.unrounded_layout;
-            let abs_x = parent_abs_x + layout.location.x;
-            let abs_y = parent_abs_y + layout.location.y;
-            text::draw_text_node(scene, node, cascade, node_id, abs_x, abs_y);
-        }
-        NodeKind::Document => {
-            // paint_document が body から start するので通常来ない。
-            // Document node は children を持ちうる (未 attach <html>) が M1.7 では扱わない。
-        }
-        _ => {
-            // NodeKind is #[non_exhaustive] (M4+ で Comment/CDATA 等が追加され得る)。
-            // M1.7 では未知 kind は no-op。
+    let mut stack: Vec<(usize, f32, f32)> = vec![(body_id, 0.0, 0.0)];
+    while let Some((node_id, parent_abs_x, parent_abs_y)) = stack.pop() {
+        let Some(node) = document.get_node(node_id) else {
+            continue;
+        };
+        match node.kind {
+            NodeKind::Element => {
+                if node.is_display_none() {
+                    continue;
+                }
+                let layout = node.unrounded_layout;
+                let abs_x = parent_abs_x + layout.location.x;
+                let abs_y = parent_abs_y + layout.location.y;
+                // paint_element_background(scene, node, abs_x, abs_y, cascade) — M4 でここに挿入
+                // children を reverse push すると pop 時に document order で処理される。
+                for &child in node.children.iter().rev() {
+                    stack.push((child, abs_x, abs_y));
+                }
+            }
+            NodeKind::Text => {
+                let layout = node.unrounded_layout;
+                let abs_x = parent_abs_x + layout.location.x;
+                let abs_y = parent_abs_y + layout.location.y;
+                text::draw_text_node(scene, node, cascade, node_id, abs_x, abs_y);
+            }
+            NodeKind::Document => {
+                // paint_document が body から start するので通常来ない。
+                // Document node は children を持ちうる (未 attach <html>) が
+                // M1.7 では扱わない。defensive: subtree を skip。
+            }
+            _ => {
+                // NodeKind is #[non_exhaustive] (M4+ で Comment/CDATA 等が追加され得る)。
+                // M1.7 では未知 kind は subtree ごと skip。
+            }
         }
     }
 }

@@ -52,7 +52,7 @@ mod tests {
     use raikiri_dom::{Document, layout_single_page};
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
-    use taffy::{Dimension, Display, Size, Style};
+    use taffy::{Dimension, Display, LengthPercentageAuto, Rect, Size, Style};
 
     /// hello-world (`<html><head></head><body><p style="color:red">Hi</p></body></html>`) を
     /// m1.6 layout_single_page まで完了させた Document + CascadeResult を返す。
@@ -216,10 +216,56 @@ mod tests {
 
     #[test]
     fn paint_single_page_positions_glyphs_via_absolute_offset() {
-        // body / p / text の accumulate location が draw_glyphs の transform に反映
-        // される regression pin。text node の origin は body.location + p.location +
-        // text.location (block layout の flow 累積)、正の y を持つはず。
-        let (doc, cr) = hello_world_paint_setup();
+        // body / p / text の accumulate location が draw_glyphs の transform に
+        // 正しく反映されることを exact-match で pin (roborev job 223 finding 対応)。
+        //
+        // 従来 `translation >= 0` の弱い assertion では identity transform (=
+        // accumulation を丸ごと忘れた実装) でも pass してしまう。<p> に非ゼロの
+        // taffy margin を付けて p.location.x/y を non-zero に押し、accumulation
+        // logic を実 exercise する。expected = body.location + p.location +
+        // text.location (block layout の flow 累積)。
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p_style = Style {
+            margin: Rect {
+                left: LengthPercentageAuto::length(20.0),
+                top: LengthPercentageAuto::length(20.0),
+                right: LengthPercentageAuto::length(0.0),
+                bottom: LengthPercentageAuto::length(0.0),
+            },
+            ..Default::default()
+        };
+        let p = doc.append_element(Some(body), "p", p_style, Some("color:red"));
+        let text = doc.append_text(p, "Hi");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+
+        // margin=20 が p.location を non-zero に押していることを確認 (accumulation
+        // logic を exercise する前提が satisfy されていることの sanity check)。
+        let p_loc = doc.get_node(p).unwrap().unrounded_layout.location;
+        assert!(
+            p_loc.x >= 20.0,
+            "p.location.x should reflect margin=20, got {}",
+            p_loc.x
+        );
+        assert!(
+            p_loc.y >= 20.0,
+            "p.location.y should reflect margin=20, got {}",
+            p_loc.y
+        );
+
+        // 期待累積 = body.location + p.location + text.location
+        let (expected_x, expected_y) = [body, p, text].iter().fold(
+            (0.0f32, 0.0f32),
+            |(ax, ay), &id| {
+                let loc = doc.get_node(id).unwrap().unrounded_layout.location;
+                (ax + loc.x, ay + loc.y)
+            },
+        );
+
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
         let RenderCommand::GlyphRun(glyph_cmd) = scene
@@ -230,23 +276,29 @@ mod tests {
         else {
             unreachable!()
         };
-        // Affine の translation 成分は as_coeffs() の [4, 5] (2 次元 identity + translation)。
-        // kurbo::Affine には translation() getter が無いため as_coeffs() で decode する。
+        // Affine の translation 成分は as_coeffs() の [4, 5] (2 次元 identity +
+        // translation)。kurbo::Affine には translation() getter が無いため
+        // as_coeffs() で decode する。
         let coeffs = glyph_cmd.transform.as_coeffs();
-        let (translation_x, translation_y) = (coeffs[4], coeffs[5]);
+        let epsilon = 1e-5f64;
         assert!(
-            translation_x >= 0.0,
-            "text abs_x should be non-negative (body flow from left edge), got {}",
-            translation_x
+            (coeffs[4] - expected_x as f64).abs() < epsilon,
+            "translation.x = {}, expected accumulated = {} (body {} + p {} + text {})",
+            coeffs[4],
+            expected_x,
+            doc.get_node(body).unwrap().unrounded_layout.location.x,
+            doc.get_node(p).unwrap().unrounded_layout.location.x,
+            doc.get_node(text).unwrap().unrounded_layout.location.x,
         );
         assert!(
-            translation_y >= 0.0,
-            "text abs_y should be non-negative (body flow from top edge), got {}",
-            translation_y
+            (coeffs[5] - expected_y as f64).abs() < epsilon,
+            "translation.y = {}, expected accumulated = {} (body {} + p {} + text {})",
+            coeffs[5],
+            expected_y,
+            doc.get_node(body).unwrap().unrounded_layout.location.y,
+            doc.get_node(p).unwrap().unrounded_layout.location.y,
+            doc.get_node(text).unwrap().unrounded_layout.location.y,
         );
-        // Note: body / p の location は M1.4 では通常 (0, 0)、text node の
-        // location は line box top なので 0 に近いはず。厳密な値 pin は m1.13
-        // determinism test で。ここでは "正 offset を持つ" の regression pin のみ。
     }
 
     #[test]

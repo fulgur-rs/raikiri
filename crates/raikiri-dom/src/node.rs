@@ -110,6 +110,17 @@ impl Node {
         }
     }
 
+    /// このノードの `taffy::Style.display == Display::None` を返す。
+    ///
+    /// paint 段で display:none subtree を skip する目的の predicate。size 0
+    /// による代理判定は overflow: visible の legitimate な zero-size 要素を
+    /// silent drop するため誤り (roborev job 223 finding 対応)。style field
+    /// は crate-private のまま維持し、paint に必要な最小の boolean 述語のみ
+    /// pub で公開する (gradual exposure)。
+    pub fn is_display_none(&self) -> bool {
+        self.style.display == taffy::Display::None
+    }
+
     /// Text node を character data と共に構築する。
     pub(crate) fn new_text(text: SmolStr) -> Self {
         Self {
