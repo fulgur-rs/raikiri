@@ -414,13 +414,12 @@ impl Quarantine {
                     value: cols[4].to_owned(),
                 })?;
             let added_date_fmt = format_description!("[year]-[month]-[day]");
-            let added_date = Date::parse(cols[7], &added_date_fmt).map_err(|e| {
-                ExpectError::MalformedLine {
+            let added_date =
+                Date::parse(cols[7], &added_date_fmt).map_err(|e| ExpectError::MalformedLine {
                     file: file_name.to_owned(),
                     line_no,
                     reason: format!("added_date {:?} is not YYYY-MM-DD ({e})", cols[7]),
-                }
-            })?;
+                })?;
             entries.push(QuarantineEntry {
                 test_id: cols[0].to_owned(),
                 platform,
