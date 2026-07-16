@@ -44,20 +44,26 @@ impl ComputedValues {
     ///
     /// - **inherited** property (color / font-family / font-size / font-weight)
     ///   は親からコピー
-    /// - **non-inherited** property (display) は `initial()` の値を保持
+    /// - **non-inherited** property (display) は `initial()` と同じ値を保持
     ///
-    /// 新 property を追加する際は分類に応じてこの method の該当行を追加する
-    /// (inherited なら parent からのコピー、non-inherited なら初期値のまま)。
+    /// 新 property を追加する際は分類に応じてこの struct 直下の該当行を追加する
+    /// (inherited なら parent からのコピー、non-inherited なら初期値を直接指定)。
+    /// initial 値との drift を避けるため、対応する `initial()` の値も同時に更新
+    /// すること。
     /// (spec §M1.4a、raikiri-spike-m1.22)
     pub fn inherit_from(parent: &Self) -> Self {
-        let mut cv = Self::initial();
-        // inherited のみ親からコピー
-        cv.color = parent.color;
-        cv.font_family = parent.font_family.clone();
-        cv.font_size = parent.font_size;
-        cv.font_weight = parent.font_weight;
-        // display は non-inherited のため cv.display = initial のまま
-        cv
+        // 直接 struct literal で初期化する — Self::initial() 経由だと
+        // font_family の Vec を 1 度 allocate → drop してから parent から
+        // clone し直すことになり無駄 (roborev job 217 medium 対応)。
+        Self {
+            // inherited (親からコピー)
+            color: parent.color,
+            font_family: parent.font_family.clone(),
+            font_size: parent.font_size,
+            font_weight: parent.font_weight,
+            // non-inherited (initial 値、CSS §9.2.4 initial value of display)
+            display: DisplayValue::Inline,
+        }
     }
 }
 

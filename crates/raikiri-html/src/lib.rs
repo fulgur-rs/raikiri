@@ -591,13 +591,26 @@ mod tests {
 
     #[test]
     fn minimal_ua_css_covers_required_display_block_selectors() {
-        // spec §M1.4a Scope: html, body, div, p, h1-h6 が display: block を持つ
+        // spec §M1.4a Scope: html, body, div, p, h1-h6 が display: block を持つ。
+        //
+        // 各 tag について、rule 行の存在を検査する — 「行を trim_start した後
+        // `{tag}` で始まり、その直後 whitespace を挟んで `{` が来る」ケースだけ
+        // 選択子と扱う。素の contains() だと `p` が comment 内の `Appendix` /
+        // `paragraph` / `display` の一部に match してしまう (roborev job 217 low
+        // 対応)。
         for tag in [
             "html", "body", "div", "p", "h1", "h2", "h3", "h4", "h5", "h6",
         ] {
+            let has_rule = MINIMAL_UA_CSS.lines().any(|line| {
+                let trimmed = line.trim_start();
+                trimmed
+                    .strip_prefix(tag)
+                    .map(|rest| rest.trim_start().starts_with('{'))
+                    .unwrap_or(false)
+            });
             assert!(
-                MINIMAL_UA_CSS.contains(tag),
-                "MINIMAL_UA_CSS is missing selector `{tag}`",
+                has_rule,
+                "MINIMAL_UA_CSS is missing selector rule `{tag} {{ … }}`",
             );
         }
         // spec 参照コメントが含まれていること (CSS 2.1 App.D 由来の cleanroom 印)
