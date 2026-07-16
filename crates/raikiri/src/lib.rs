@@ -19,6 +19,9 @@
 
 use raikiri_style::cascade;
 
+mod html_document;
+pub use html_document::HtmlDocument;
+
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 // Network API (Request / FetchedResource / NetworkError / Method / Body /
 // HeaderMap / AbortSignal / AbortController / ResourceKind) は `NetworkProvider`
@@ -145,6 +148,66 @@ mod smoke_tests {
         assert_eq!(
             stylesheet_kind_to_origin(StylesheetKind::Author),
             Origin::Author,
+        );
+    }
+}
+
+#[cfg(test)]
+mod html_document_tests {
+    use super::*;
+
+    fn hello_world_doc() -> HtmlDocument {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = raikiri_html::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
+        let cascade = build_cascaded(&uncascaded);
+        // 内部 field 直接 construct (crate-internal test なので pub(crate) field OK)
+        HtmlDocument {
+            uncascaded,
+            cascade,
+        }
+    }
+
+    #[test]
+    fn html_document_accessors_expose_underlying_types() {
+        let doc = hello_world_doc();
+        // accessor が inner field と identity 一致 (別 heap 割当てなし)
+        let dom_ref: &raikiri_dom::Document = doc.dom();
+        let cascade_ref: &CascadeResult = doc.cascade();
+        let sources_ref: &[String] = doc.stylesheet_sources();
+
+        assert!(
+            std::ptr::eq(dom_ref, &doc.uncascaded.dom),
+            "dom() must return &doc.uncascaded.dom"
+        );
+        assert!(
+            std::ptr::eq(cascade_ref, &doc.cascade),
+            "cascade() must return &doc.cascade"
+        );
+        assert!(
+            std::ptr::eq(
+                sources_ref.as_ptr(),
+                doc.uncascaded.stylesheet_sources.as_ptr()
+            ) || (sources_ref.is_empty() && doc.uncascaded.stylesheet_sources.is_empty()),
+            "stylesheet_sources() must alias inner Vec"
+        );
+    }
+
+    #[test]
+    fn html_document_cascade_populated_after_construct() {
+        let doc = hello_world_doc();
+        assert!(
+            !doc.cascade().computed.is_empty(),
+            "cascade must be populated (build_cascaded produces per-node ComputedValues)"
+        );
+        // node_count と cascade.computed.len() 契約
+        assert_eq!(
+            doc.cascade().computed.len(),
+            doc.dom().node_count(),
+            "cascade.computed.len() must equal document.node_count() (m1.23 contract)"
         );
     }
 }
