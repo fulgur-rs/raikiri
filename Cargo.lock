@@ -1687,6 +1687,8 @@ dependencies = [
  "anyrender_vello_cpu",
  "kurbo",
  "peniko",
+ "png 0.17.16",
+ "tempfile",
  "tiny-skia",
 ]
 
