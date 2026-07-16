@@ -8,6 +8,7 @@ use raikiri_vrt::encode_png;
 use raikiri_vrt::reference::{FixtureError, Tolerance, compare_png, load_fixture, run_and_compare};
 use std::fs;
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
 
 /// Solid-color RGBA8 buffer for a given size.
@@ -133,29 +134,69 @@ fn test_load_fixture_success_with_pages() {
 /// crates/raikiri-vrt/src/reference.rs.
 const UPDATE_GOLDENS_ENV: &str = "RAIKIRI_UPDATE_GOLDENS";
 
-/// Guard for RAIKIRI_UPDATE_GOLDENS across a scoped block.
-/// The env var mutation is process-global; cargo runs integration tests
-/// single-threaded per test crate by default when the harness is `libtest`,
-/// but we guard the set/unset symmetrically to keep intent explicit.
+/// Global lock serializing every test that reads or mutates the process
+/// environment. libtest runs integration tests within one binary in parallel
+/// by default (per Rust's rationale for making env::set_var unsafe in edition
+/// 2024). Every test that touches RAIKIRI_UPDATE_GOLDENS — set, unset, OR read
+/// through run_and_compare — must hold this lock for its full duration.
+fn env_lock() -> MutexGuard<'static, ()> {
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        // A poisoned lock here would only mean a previous env-touching test
+        // panicked while holding it — recovering is safe for our purposes,
+        // and this makes independent test failures visible.
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
+/// Guard for RAIKIRI_UPDATE_GOLDENS across a scoped block. Holds env_lock()
+/// for its lifetime so no other env-touching test can observe an
+/// intermediate state.
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,
+    // Guard order matters: the Mutex guard must be dropped LAST (after the
+    // env var is restored). Rust drops struct fields in declaration order,
+    // so _lock is declared LAST to ensure it's dropped last.
+    _lock: MutexGuard<'static, ()>,
 }
 impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
+        let lock = env_lock();
         let prev = std::env::var(key).ok();
-        // SAFETY: single-threaded test execution — cargo test integration
-        // tests default to serial execution within a single binary.
+        // SAFETY: env_lock() serializes all env access in this test binary,
+        // so no other thread can call getenv/setenv concurrently.
         unsafe {
             std::env::set_var(key, value);
         }
-        Self { key, prev }
+        Self {
+            key,
+            prev,
+            _lock: lock,
+        }
+    }
+
+    /// Acquire the env lock without mutating any env var. Use when a test
+    /// calls into code that reads RAIKIRI_UPDATE_GOLDENS but the test itself
+    /// doesn't set it — prevents a concurrent set from another test leaking
+    /// into this test's read.
+    fn read() -> Self {
+        let lock = env_lock();
+        Self {
+            key: "",
+            prev: None,
+            _lock: lock,
+        }
     }
 }
 impl Drop for EnvGuard {
     fn drop(&mut self) {
+        if self.key.is_empty() {
+            return; // read-only guard: no env restoration needed
+        }
         match &self.prev {
-            // SAFETY: same as set().
+            // SAFETY: same as set() — holding env_lock().
             Some(v) => unsafe {
                 std::env::set_var(self.key, v);
             },
@@ -189,6 +230,7 @@ fn test_run_and_compare_update_goldens() {
 
 #[test]
 fn test_run_and_compare_success_removes_no_files() {
+    let _guard = EnvGuard::read(); // exclude concurrent env-setter tests
     // Success path: no target/ artifacts are written.
     let png = encode_png(&solid([200, 100, 50, 255], 4, 4), 4, 4);
     let dir = build_fixture(Some(b"<p>hi</p>"), &[(0, png.clone())]);
@@ -224,5 +266,77 @@ fn test_run_and_compare_success_removes_no_files() {
         !diff_dir.exists(),
         "success path should not create diff dir: {}",
         diff_dir.display()
+    );
+}
+
+#[test]
+fn test_run_and_compare_writes_artifacts_on_diff() {
+    use std::panic;
+    // Compare mismatch → panics with a DiffReport, and both actual/diff
+    // PNGs land under target/reference-diffs/<fixture>/.
+    let _guard = EnvGuard::read(); // exclude concurrent env-setter tests
+    let expected = encode_png(&solid([0, 0, 255, 255], 4, 4), 4, 4); // blue
+    let actual = encode_png(&solid([255, 0, 0, 255], 4, 4), 4, 4); // red
+    let dir = build_fixture(Some(b"<p>hi</p>"), &[(0, expected)]);
+
+    // run_and_compare's diff_dir_root() reads CARGO_TARGET_TMPDIR /
+    // CARGO_TARGET_DIR from the *runtime* process environment, where neither
+    // is set (those are cargo-supplied compile-time vars for the test/bench
+    // target, not propagated to the running binary's env) — so it falls
+    // through to the relative "target/reference-diffs", resolved against
+    // the process's current directory, which `cargo test` sets to the
+    // package's manifest directory. CARGO_MANIFEST_DIR (compile-time) gives
+    // us that same directory to compute the actual on-disk location.
+    let fixture_name = dir
+        .path()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let diff_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("reference-diffs")
+        .join(&fixture_name);
+    let _ = fs::remove_dir_all(&diff_dir);
+
+    // catch_unwind because run_and_compare panics on diff. AssertUnwindSafe
+    // needed because our fixture TempDir and paths are captured by ref.
+    let actual_clone = actual.clone();
+    let dir_path = dir.path().to_path_buf();
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        run_and_compare(&dir_path, Tolerance::EXACT, move |_html| vec![actual_clone]);
+    }));
+    assert!(result.is_err(), "expected run_and_compare to panic on diff");
+
+    // Both artifacts should have been written.
+    let actual_path = diff_dir.join("page-0000-actual.png");
+    let diff_path = diff_dir.join("page-0000-diff.png");
+    assert!(
+        actual_path.exists(),
+        "actual PNG not written to {}",
+        actual_path.display()
+    );
+    assert!(
+        diff_path.exists(),
+        "diff PNG not written to {}",
+        diff_path.display()
+    );
+
+    // Actual PNG bytes exactly equal the pipeline output.
+    let written_actual = fs::read(&actual_path).expect("read actual.png");
+    assert_eq!(written_actual, actual);
+
+    // Diff PNG decodes to same dimensions and its non-transparent pixels
+    // include magenta (255, 0, 255, 255) because every pixel differed.
+    let diff_pixmap = tiny_skia::Pixmap::decode_png(&fs::read(&diff_path).expect("read diff.png"))
+        .expect("decode diff.png");
+    assert_eq!(diff_pixmap.width(), 4);
+    assert_eq!(diff_pixmap.height(), 4);
+    let data = diff_pixmap.data();
+    let all_magenta = data.chunks_exact(4).all(|px| px == [255, 0, 255, 255]);
+    assert!(
+        all_magenta,
+        "expected every pixel in diff.png to be magenta"
     );
 }
