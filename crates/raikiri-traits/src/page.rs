@@ -78,7 +78,7 @@ impl Default for PageBox {
 ///
 /// 全 field は CSS px 単位 (`PageBox` 参照)。pt/mm/in 換算は Consumer 責務。
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PageDefaults {
     /// Default paper サイズ (`@page size` で override しない場合の initial value)。
     /// 既定 = A4。
@@ -94,14 +94,6 @@ impl PageDefaults {
     /// Fluent builder を返す。
     pub fn builder() -> PageDefaultsBuilder {
         PageDefaultsBuilder::default()
-    }
-}
-
-impl Default for PageDefaults {
-    fn default() -> Self {
-        Self {
-            page_box: PageBox::default(),
-        }
     }
 }
 
