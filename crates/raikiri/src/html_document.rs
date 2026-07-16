@@ -19,6 +19,15 @@ pub struct HtmlDocument {
     pub(crate) cascade: CascadeResult,
 }
 
+impl std::fmt::Debug for HtmlDocument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HtmlDocument")
+            .field("uncascaded", &self.uncascaded)
+            .field("cascade", &"<CascadeResult>")
+            .finish()
+    }
+}
+
 impl HtmlDocument {
     /// DOM tree への参照 (Dom / Element trait を使う際の entry point)。
     pub fn dom(&self) -> &raikiri_dom::Document {

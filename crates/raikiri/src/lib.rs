@@ -22,6 +22,9 @@ use raikiri_style::cascade;
 mod html_document;
 pub use html_document::HtmlDocument;
 
+mod parse;
+pub use parse::parse_html;
+
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 // Network API (Request / FetchedResource / NetworkError / Method / Body /
 // HeaderMap / AbortSignal / AbortController / ResourceKind) は `NetworkProvider`
@@ -208,6 +211,87 @@ mod html_document_tests {
             doc.cascade().computed.len(),
             doc.dom().node_count(),
             "cascade.computed.len() must equal document.node_count() (m1.23 contract)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod parse_html_tests {
+    use super::*;
+
+    #[test]
+    fn parse_html_returns_html_document_with_cascade_populated() {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let doc = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse_html should succeed");
+        assert!(
+            !doc.cascade().computed.is_empty(),
+            "parse_html output must have populated cascade"
+        );
+        assert_eq!(
+            doc.cascade().computed.len(),
+            doc.dom().node_count(),
+            "cascade / dom node_count invariant"
+        );
+    }
+
+    #[test]
+    fn parse_html_propagates_parse_error_from_io() {
+        struct FailingReader;
+        impl std::io::Read for FailingReader {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("boom"))
+            }
+        }
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let err = parse_html(FailingReader, &opts).expect_err("must fail on reader error");
+        assert!(
+            matches!(err, RenderError::Parse(ParseError::Io(_))),
+            "expected RenderError::Parse(ParseError::Io), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_html_propagates_utf8_error() {
+        // 0x80 は UTF-8 continuation byte 単独、invalid UTF-8
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let err =
+            parse_html(&[0x80u8, 0x80, 0x80][..], &opts).expect_err("must fail on invalid UTF-8");
+        assert!(
+            matches!(err, RenderError::Parse(ParseError::Encoding { .. })),
+            "expected RenderError::Parse(ParseError::Encoding), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_html_baked_cascade_matches_manual_build_cascaded() {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        // 2 経路の cascade が同じ結果を出すことを pin (parse_html は
+        // build_cascaded を内部で呼んでいる契約)
+        let via_parse_html = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse_html");
+        let via_manual = {
+            let uncascaded = raikiri_html::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
+            build_cascaded(&uncascaded)
+        };
+        assert_eq!(
+            via_parse_html.cascade().computed.len(),
+            via_manual.computed.len(),
+            "parse_html と手動 build_cascaded で cascade node 数が一致"
         );
     }
 }
