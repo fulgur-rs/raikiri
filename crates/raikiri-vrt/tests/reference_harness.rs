@@ -367,3 +367,67 @@ fn test_compare_png_dimension_mismatch() {
     assert!(err.diff_png_path.is_none(), "compare_png does no I/O");
     assert_eq!(err.page_index, 0, "compare_png sets page_index to 0");
 }
+
+#[test]
+fn test_run_and_compare_page_count_mismatch() {
+    use std::panic;
+
+    // run_and_compare:395-402 branch: pipeline output page count が fixture の
+    // expected_pages.len() と一致しないとき、compare_png loop の手前で panic!。
+    // 副作用として diff artifacts は書かれない (loop に入らないため)。
+    let _guard = EnvGuard::read(); // exclude concurrent env-setter tests
+
+    let png_a = encode_png(&solid([255, 0, 0, 255], 4, 4), 4, 4);
+    let png_b = encode_png(&solid([0, 255, 0, 255], 4, 4), 4, 4);
+    // Fixture: 1 expected page. Pipeline は 2 page 返す → mismatch。
+    let dir = build_fixture(Some(b"<p>hi</p>"), &[(0, png_a.clone())]);
+
+    let fixture_name = dir
+        .path()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let diff_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("reference-diffs")
+        .join(&fixture_name);
+    let _ = fs::remove_dir_all(&diff_dir);
+
+    let png_a_clone = png_a.clone();
+    let png_b_clone = png_b.clone();
+    let dir_path = dir.path().to_path_buf();
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        run_and_compare(&dir_path, Tolerance::EXACT, move |_html| {
+            vec![png_a_clone, png_b_clone]
+        });
+    }));
+
+    let payload = result.expect_err("run_and_compare should panic on page count mismatch");
+    // Panic payload は run_and_compare の panic!("...") が生成する String。
+    let msg = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&'static str>().copied())
+        .unwrap_or("");
+    assert!(
+        msg.contains("page count mismatch"),
+        "expected 'page count mismatch' in panic payload, got: {msg}"
+    );
+    assert!(
+        msg.contains("expected 1"),
+        "expected 'expected 1' in panic payload, got: {msg}"
+    );
+    assert!(
+        msg.contains("actual 2"),
+        "expected 'actual 2' in panic payload, got: {msg}"
+    );
+
+    // panic は compare_png loop の手前で走るので diff artifacts は生成されない。
+    assert!(
+        !diff_dir.exists(),
+        "page-count panic path must not create diff dir: {}",
+        diff_dir.display()
+    );
+}
