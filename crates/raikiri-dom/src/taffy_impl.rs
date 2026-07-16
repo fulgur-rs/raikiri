@@ -1,7 +1,7 @@
 //! Taffy layout trait implementations on Document.
 //!
-//! spike (`crates/raikiri-feasibility/src/taffy_layout_modes.rs`) の SpikeTree
-//! pattern を production 化したもの。実装内容は spike と等価:
+//! M0 spike (nzv.6 `taffy-layout-modes`) の SpikeTree pattern を production 化
+//! したもの。実装内容は spike と等価:
 //! - `TraversePartialTree`: children iterator
 //! - `CacheTree`: per-node cache getter / setter
 //! - `LayoutPartialTree`: display に応じて block / flexbox / grid をdispatch
