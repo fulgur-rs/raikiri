@@ -16,6 +16,7 @@ use crate::RaikiriSelectorImpl;
 use crate::computed::ComputedValues;
 use crate::property::{PropertyKey, PropertyValue};
 use crate::rule::parse_declaration_block;
+use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
 
 /// Cascade 結果。
@@ -51,8 +52,7 @@ pub struct CascadeResult {
 /// ```
 pub fn cascade<D: Dom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResult, CascadeError> {
     let mut computed: Vec<ComputedValues> = Vec::new();
-    let mut cascaded: HashMap<NodeId, Vec<(PropertyValue, bool, Specificity, u32)>> =
-        HashMap::new();
+    let mut cascaded: HashMap<NodeId, Vec<CascadedDecl>> = HashMap::new();
 
     // Phase 1: per-node cascaded values を収集
     collect_cascaded(dom, dom.root_id(), rule_tree, &mut cascaded);
@@ -79,6 +79,27 @@ const INLINE_SPECIFICITY: Specificity = 1 << 30;
 /// inline style の source_order — 全 stylesheet rule より後 (最終出現扱い)。
 const INLINE_SOURCE_ORDER: u32 = u32::MAX;
 
+/// 1 candidate declaration = `(value, important, origin, specificity, source_order)`。
+/// `collect_cascaded` が populate、`pick_winners` が rank 化して winner を選ぶ
+/// (raikiri-spike-m1.22 で `Origin` を追加、clippy::type_complexity 回避のため alias 化)。
+type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
+
+/// Cascade origin + `!important` flag に基づく優先度 rank (raikiri-spike-m1.22)。
+///
+/// 高いほど勝つ。CSS Cascading L4 §6.4.4 の origin 反転扱いを表現:
+/// - Normal   : UA < User < Author (Author が最強、UA が最弱)
+/// - Important: UA > User > Author (反転、UA が最強)
+///
+/// M1 では User origin を扱わないので UA + Author の 2 段。
+fn cascade_rank(origin: Origin, important: bool) -> u8 {
+    match (origin, important) {
+        (Origin::UserAgent, false) => 0,
+        (Origin::Author, false) => 1,
+        (Origin::Author, true) => 2,
+        (Origin::UserAgent, true) => 3,
+    }
+}
+
 /// `collect_cascaded` は本来 DFS で node を訪れるが、per-node の処理は他の
 /// node の状態に依存しないため訪問順は無関係。overflow 回避のため explicit
 /// `Vec` stack で iterative に書き換え (roborev job 199)。
@@ -86,7 +107,7 @@ fn collect_cascaded<D: Dom>(
     dom: &D,
     id: NodeId,
     rule_tree: &RuleTree,
-    out: &mut HashMap<NodeId, Vec<(PropertyValue, bool, Specificity, u32)>>,
+    out: &mut HashMap<NodeId, Vec<CascadedDecl>>,
 ) {
     let mut stack: Vec<NodeId> = vec![id];
     while let Some(id) = stack.pop() {
@@ -103,6 +124,7 @@ fn collect_cascaded<D: Dom>(
                             per_node.push((
                                 decl.value.clone(),
                                 decl.important,
+                                rule.origin,
                                 spec,
                                 rule.source_order,
                             ));
@@ -117,6 +139,7 @@ fn collect_cascaded<D: Dom>(
                         per_node.push((
                             decl.value,
                             decl.important,
+                            Origin::Author,
                             INLINE_SPECIFICITY,
                             INLINE_SOURCE_ORDER,
                         ));
@@ -194,12 +217,14 @@ fn resolve_inheritance<D: Dom>(
     dom: &D,
     id: NodeId,
     parent_computed: &ComputedValues,
-    cascaded: &HashMap<NodeId, Vec<(PropertyValue, bool, Specificity, u32)>>,
+    cascaded: &HashMap<NodeId, Vec<CascadedDecl>>,
     out: &mut Vec<ComputedValues>,
 ) {
     let mut stack: Vec<(NodeId, ComputedValues)> = vec![(id, parent_computed.clone())];
     while let Some((id, parent_computed)) = stack.pop() {
-        let mut computed = parent_computed;
+        // 親からの inheritance walk 開始値: inherited のみコピー、非継承は
+        // initial() (spec §M1.4a、raikiri-spike-m1.22)
+        let mut computed = ComputedValues::inherit_from(&parent_computed);
 
         // 自 node の cascaded winners を apply
         if let Some(candidates) = cascaded.get(&id) {
@@ -226,14 +251,14 @@ fn resolve_inheritance<D: Dom>(
 }
 
 /// property key ごとに勝者 declaration を pick (specificity + !important + source order)。
-fn pick_winners(
-    candidates: &[(PropertyValue, bool, Specificity, u32)],
-) -> HashMap<PropertyKey, PropertyValue> {
-    let mut best: HashMap<PropertyKey, (bool, Specificity, u32, PropertyValue)> = HashMap::new();
+fn pick_winners(candidates: &[CascadedDecl]) -> HashMap<PropertyKey, PropertyValue> {
+    // best entry: (rank, spec, source_order, value)
+    let mut best: HashMap<PropertyKey, (u8, Specificity, u32, PropertyValue)> = HashMap::new();
 
-    for (value, important, spec, order) in candidates {
+    for (value, important, origin, spec, order) in candidates {
+        let rank = cascade_rank(*origin, *important);
         let key = value.key();
-        let candidate = (*important, *spec, *order, value.clone());
+        let candidate = (rank, *spec, *order, value.clone());
         match best.get(&key) {
             Some(existing) => {
                 if beats(&candidate, existing) {
@@ -250,16 +275,15 @@ fn pick_winners(
 }
 
 fn beats(
-    candidate: &(bool, Specificity, u32, PropertyValue),
-    existing: &(bool, Specificity, u32, PropertyValue),
+    candidate: &(u8, Specificity, u32, PropertyValue),
+    existing: &(u8, Specificity, u32, PropertyValue),
 ) -> bool {
-    // Tuple comparison order: (important, specificity, source_order)
-    // - !important の方が normal に勝つ (spec §6.4.4)
-    // - 同 importance なら specificity 高いほうが勝つ
-    // - 同 spec なら source_order 大 (=後ろ) が勝つ
-    // `>=` を使うのは意図的: 同一 rule (または同一 inline block) 内の重複
-    // property は tuple が完全一致するが、spec §6.4.4 では後方の declaration が
-    // 勝つ。cross-rule の tie は source_order が異なるため `>=` でも安全。
+    // Tuple compare: (rank, specificity, source_order)
+    // - rank 高い方が勝つ (Important UA > Important Author > Normal Author > Normal UA)
+    // - 同 rank なら specificity 高い方が勝つ
+    // - 同 rank + spec なら source_order 大 (=後ろ) が勝つ
+    // `>=` は同一 rule 内 duplicate property の後方勝ち (spec §6.4.4) のため
+    // 意図的。cross-rule では source_order が異なるので `>=` でも安全。
     (candidate.0, candidate.1, candidate.2) >= (existing.0, existing.1, existing.2)
 }
 
@@ -269,9 +293,7 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
         PropertyValue::FontWeight(w) => target.font_weight = w,
-        PropertyValue::Display(_) => {
-            // TODO: Task 7 will add display support to ComputedValues
-        }
+        PropertyValue::Display(d) => target.display = d,
     }
 }
 
@@ -279,6 +301,7 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
 mod tests {
     use super::*;
     use crate::property::CssColor;
+    use crate::property::DisplayValue;
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
 
@@ -460,5 +483,107 @@ mod tests {
             .join()
             .expect("thread must not stack-overflow on deep DOM");
         assert_eq!(color, RED);
+    }
+
+    // ── UA origin + display cascade (M1.4a、raikiri-spike-m1.22) ──
+
+    fn cascade_with_ua(
+        ua_css: &str,
+        author_css: &str,
+        target_tag: &str,
+        inline: Option<&str>,
+    ) -> ComputedValues {
+        // UA rule + Author rule + inline を一気に組み立てて cascade 実行
+        let mut doc = TestDoc::new();
+        // Author の <style> は DOM 側から build_rule_tree に読ませる
+        if !author_css.is_empty() {
+            let s = doc.push_element(0, "style", None);
+            doc.push_text(s, author_css);
+        }
+        let e = doc.push_element(0, target_tag, inline);
+
+        // build_rule_tree (Author 集約) + UA add_stylesheet (m1.22 経路)
+        let mut tree = build_rule_tree(&doc);
+        // UA CSS を先頭に inject するのではなく、既存の Author rule の後ろに
+        // add してから rank 化で origin 順序を担保する (source_order より rank
+        // が優位)
+        // ただし M1.4a では add_stylesheet の呼び出し順で source_order が振られ
+        // Author が先 (source_order 小)、UA が後 (source_order 大) となる。
+        // rank 化により Origin::UserAgent の Normal は rank=0 (最弱)、
+        // Origin::Author の Normal は rank=1 なので UA rule が Author を上書き
+        // することはない (source_order に関わらず rank が優先)。
+        if !ua_css.is_empty() {
+            tree.add_stylesheet(ua_css, Origin::UserAgent);
+        }
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        result.computed[e].clone()
+    }
+
+    #[test]
+    fn ua_display_block_applied_when_no_author_rule() {
+        // UA CSS のみで <p> の display が Block になる
+        let cv = cascade_with_ua("p { display: block }", "", "p", None);
+        assert_eq!(cv.display, DisplayValue::Block);
+    }
+
+    #[test]
+    fn author_display_inline_overrides_ua_block() {
+        // Normal Author > Normal UA (rank 1 > rank 0)
+        let cv = cascade_with_ua("p { display: block }", "p { display: inline }", "p", None);
+        assert_eq!(cv.display, DisplayValue::Inline);
+    }
+
+    #[test]
+    fn important_ua_beats_important_author_display() {
+        // Important UA > Important Author (rank 3 > rank 2、!important 反転)
+        let cv = cascade_with_ua(
+            "p { display: block !important }",
+            "p { display: inline !important }",
+            "p",
+            None,
+        );
+        assert_eq!(cv.display, DisplayValue::Block);
+    }
+
+    #[test]
+    fn non_inherited_display_child_starts_from_initial_not_parent() {
+        // <div> が UA CSS で display: block、その子 <span> は自身 rule がなく、
+        // display は non-inherited なので initial (Inline) となる
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ""); // author 空
+        let div = doc.push_element(0, "div", None);
+        let span = doc.push_element(div, "span", None);
+
+        let mut tree = build_rule_tree(&doc);
+        tree.add_stylesheet("div { display: block } span { }", Origin::UserAgent);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].display, DisplayValue::Block);
+        assert_eq!(r.computed[span].display, DisplayValue::Inline);
+    }
+
+    #[test]
+    fn cascade_with_ua_deterministic_across_10_runs() {
+        // determinism regression (spec §M1 acceptance criteria)
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p { color: red }");
+        let p = doc.push_element(0, "p", Some("font-size: 20px"));
+        doc.push_element(p, "span", None);
+
+        let mut tree = build_rule_tree(&doc);
+        tree.add_stylesheet(
+            "p { display: block } span { display: inline }",
+            Origin::UserAgent,
+        );
+
+        let baseline = cascade(&doc, &tree).unwrap();
+        for _ in 0..9 {
+            let run = cascade(&doc, &tree).unwrap();
+            assert_eq!(run.computed.len(), baseline.computed.len());
+            for i in 0..run.computed.len() {
+                assert_eq!(run.computed[i], baseline.computed[i], "differ at node {i}");
+            }
+        }
     }
 }
