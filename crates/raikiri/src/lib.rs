@@ -20,9 +20,15 @@
 use raikiri_style::cascade;
 
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
+// Network API (Request / FetchedResource / NetworkError / Method / Body /
+// HeaderMap / AbortSignal / AbortController / ResourceKind) は `NetworkProvider`
+// を Consumer 側で implement する際に必須 (fetch signature の param / return type)。
+// これらを揃えて re-export することで sub-crate 直接 dep 不要にする (roborev-refine
+// job 230)。
 pub use raikiri_traits::{
-    CascadeError, Dom, Element, NetworkProvider, Node, NodeId, NodeKind, ParseError, QuirksMode,
-    RenderError, RenderWarning, StylesheetKind,
+    AbortController, AbortSignal, Body, CascadeError, Dom, Element, FetchedResource, HeaderMap,
+    Method, NetworkError, NetworkProvider, Node, NodeId, NodeKind, ParseError, QuirksMode,
+    RenderError, RenderWarning, Request, ResourceKind, StylesheetKind,
 };
 
 // ── raikiri-html: parse pipeline entry ─────────────────────────────────
@@ -43,6 +49,9 @@ pub use raikiri_style::{
 
 // ── url: `ParseOptions.base_url: Option<Url>` の実体型 ─────────────────
 pub use url::Url;
+
+// ── bytes: `FetchedResource.bytes: Bytes` / `Body::Bytes(Bytes)` 用 ────
+pub use bytes::Bytes;
 
 /// UA + Consumer 提供 stylesheet を Document から取り出し、Origin を割り当てて
 /// RuleTree を組み、raikiri-html が parse 時に集約した head 配下の `<style>`

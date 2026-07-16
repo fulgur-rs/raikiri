@@ -17,6 +17,10 @@ raikiri-paint  = { workspace = true }
 # `raikiri::ParseOptions { base_url: Some(Url::parse(...)), ... }` without
 # adding `url` as a direct dep (roborev-refine job 228, AC #6 完結).
 url            = { workspace = true }
+# Re-export `Bytes` for `NetworkProvider` implementations: `FetchedResource`
+# の `bytes` field と `Body::Bytes(Bytes)` の construction 用 (roborev-refine
+# job 230)。
+bytes          = { workspace = true }
 
 [lints]
 workspace = true

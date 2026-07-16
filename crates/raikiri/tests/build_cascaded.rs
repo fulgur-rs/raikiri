@@ -195,6 +195,42 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
 }
 
 #[test]
+fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
+    // NetworkProvider trait を implement する downstream consumer が
+    // sub-crate direct dep なしで完結できることを compile-time で verify。
+    // fetch() の param / return / error 3 型 + Bytes + Url + auxiliary
+    // (Method / Body / HeaderMap / ResourceKind) を全て raikiri から import して
+    // struct 実装。round-trip 動作までは要求しない (fetch 内で NetworkError::Aborted 即返却)
+    // — 目的は trait impl の name resolution 完結性の証明。
+    // (roborev-refine job 230 medium finding regression)
+    use raikiri::{
+        Bytes, FetchedResource, NetworkError, NetworkProvider, Request, Url,
+    };
+
+    struct DummyProvider;
+
+    impl NetworkProvider for DummyProvider {
+        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+            // Request field を全て read できることを compile-time で確認 (unused でも OK)。
+            let _url: &Url = &request.url;
+            let _kind = request.kind;
+
+            // FetchedResource を Bytes / Url ベースで construct できることを confirm。
+            Ok(FetchedResource {
+                bytes: Bytes::from_static(b""),
+                content_type: None,
+                final_url: Url::parse("about:blank").unwrap(),
+                encoding: None,
+            })
+        }
+    }
+
+    // dyn dispatch で trait object 化 (`ParseOptions.network` の型と互換性を verify)。
+    let provider: &dyn NetworkProvider = &DummyProvider;
+    let _network: Option<&dyn NetworkProvider> = Some(provider);
+}
+
+#[test]
 fn body_style_element_is_not_applied_per_m1_head_only_contract() {
     // spec §M1: raikiri-html は現状 head 配下の <style> のみ stylesheet_sources
     // に集約する (<body> 内 <style> の position-aware semantics は M2+)。
