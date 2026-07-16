@@ -8,9 +8,12 @@ license.workspace = true
 
 [dependencies]
 raikiri-traits = { workspace = true }
+raikiri-dom    = { workspace = true }
+raikiri-style  = { workspace = true }
 anyrender      = { workspace = true }
 peniko         = { workspace = true }
 kurbo          = { workspace = true }
+parley         = { workspace = true }
 
 [lints]
 workspace = true
