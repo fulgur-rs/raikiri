@@ -3264,6 +3264,7 @@ epic の完了を追加で待つ。single `bd close raikiri-spike-m0` では M1 
 **Tasks** (workspace-setup は M0 で完了、round 3 review #3 訂正):
 - traits-definition, error-taxonomy-types
 - html-parse-basic (Parse error), css-cascade-basic (Cascade error)
+- **minimal-ua-stylesheet** (m1.21 対応、下記 §M1.4a 参照)
 - dom-model, layout-single-page, paint-basic
 - vrt-tiny-skia, wpt-harness-skeleton, reference-harness-scaffold
 - umbrella-facade (parse_html, plan, render_streaming stubs)
@@ -3284,10 +3285,57 @@ epic の完了を追加で待つ。single `bd close raikiri-spike-m0` では M1 
   constructable (round 3 review #2 対応)
 - **round 4 review Task #1 訂正**: BiDi、mixed Latin/CJK は M3 のみ。M1 は
   ASCII (Latin) 単一 script + 単一 font に限定
+- **m1.21 対応**: bundled minimal UA CSS が origin=UserAgent として
+  cascade に組み込まれ、`<html>` / `<body>` / `<p>` の `display: block`
+  が author style なしで解決される (下記 §M1.4a 参照)
 
 **Non-goals**: pagination、@page、GCPM、Batch、ReplacedResolver 実使用、
 break policy、per-page PageBox、L4 selector、target-*、**BiDi、mixed script**
-(round 4 review Task #1 対応、M3 に完全に移す)
+(round 4 review Task #1 対応、M3 に完全に移す)。**UA CSS の form 系
+(`<input>` / `<button>` / `<select>`)、margin / padding 系、`<pre>` /
+`<code>` の white-space / monospace、`<table>` 系** は M2 以降へ defer
+(m1.21 対応、下記 §M1.4a 参照)。
+
+#### M1.4a: Minimal UA stylesheet + cascade origin order (m1.21 対応)
+
+**背景**: M1 acceptance の hello-world VRT (`<p style="color:red">Hi</p>`
+→ PNG) は fulgur 非経由の `raikiri::html_to_png(HELLO)` (§L1062-1067) で
+成立させる必要がある。しかし CSS spec default では `<html>` / `<body>` /
+`<p>` は全て `display: inline` なので、UA CSS 抜きでは block formatting
+context が確立されず hello-world VRT は物理的に成立しない。`ParseOptions
+::extra_stylesheets` (Consumer 提供) だけを cascade 入力とする従来定義は
+M1 acceptance と不整合。
+
+**方針**: raikiri-style crate に spec 参照付き bundled minimal UA CSS を
+`include_str!` で埋め込み、Origin::UserAgent < Author の順序を cascade
+path で表現する。
+
+**M1 で bundle する要素 (最小)**:
+- `html, body, div, p, h1, h2, h3, h4, h5, h6 { display: block; }`
+- 各 rule に spec 参照コメント (`/* HTML LS §14.3.3 */` 等) を必須
+
+**Cascade origin order**: CSS Cascading L4 §6.2 に従い UA < User <
+Author (M1 では User origin は不使用、UA + Author の 2 段のみ)。
+`build_rule_tree` を Origin::UserAgent の内部 layer を持つよう拡張し、
+Author 側 (inline style + `extra_stylesheets`) と分離した後、`cascade`
+関数内で origin 順に merge する。
+
+**参照ソースの制約** (memory `raikiri-implementation-independence` §"UA
+CSS の扱い" 準拠):
+- 参照 OK: CSS 2.1 App.D "Default style sheet for HTML 4"、HTML Living
+  Standard §14 "Rendering"、各 CSS モジュールの "Sample style sheet"
+- 参照 NG: Chromium `html.css`、Firefox `layout/style/res/html.css`、
+  WebKit UA CSS、blitz が bundle する UA CSS
+
+**Non-goals (M1.4a)**:
+- form 系 UA CSS (`<input>` / `<button>` / `<select>` / `<textarea>`) は
+  M4+ で必要になった時に追加
+- margin / padding 系は M2 simple-multi-page で必要になったら足す
+- `<pre>` / `<code>` の `white-space: pre` / `font-family: monospace` は
+  M3 text-multilingual で追加
+- `<table>` / `<tr>` / `<td>` 系の `display: table*` は M6+
+- User origin (`~/.config/raikiri/user.css` 等) は Consumer が
+  `extra_stylesheets` に流す方式で吸収 (M1 では専用 origin を作らない)
 
 ### M2: Streaming pagination + LayoutBuffer + Streaming error semantics
 
