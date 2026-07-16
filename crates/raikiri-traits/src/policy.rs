@@ -89,7 +89,7 @@ impl std::fmt::Display for PolicyViolation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Policy violation ({:?}) at {}: {}",
+            "Policy violation ({}) at {}: {}",
             self.violation_type, self.url, self.details
         )
     }
@@ -138,4 +138,29 @@ pub enum ViolationType {
     },
     /// その他。
     Other,
+}
+
+impl std::fmt::Display for ViolationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SchemeNotAllowed => write!(f, "scheme not allowed"),
+            Self::HostNotAllowed => write!(f, "host not allowed"),
+            Self::RedirectDenied => write!(f, "redirect denied"),
+            Self::FetchTooLarge { limit, actual } => {
+                write!(f, "fetch too large (limit={limit}, actual={actual})")
+            }
+            Self::DecodedTooLarge { limit, actual } => {
+                write!(
+                    f,
+                    "decoded content too large (limit={limit}, actual={actual})"
+                )
+            }
+            Self::Timeout => write!(f, "timeout exceeded"),
+            Self::MimeNotAllowed { mime } => write!(f, "MIME type not allowed: {mime}"),
+            Self::RecursionExceeded { depth } => {
+                write!(f, "recursion depth exceeded ({depth})")
+            }
+            Self::Other => write!(f, "unspecified policy violation"),
+        }
+    }
 }

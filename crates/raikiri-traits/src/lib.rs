@@ -332,6 +332,115 @@ mod tests {
         _assert_display::<PolicyViolation>();
     }
 
+    // ── ViolationType::Display (raikiri-spike-bz9) ──────────────
+    // Debug-in-Display の排除。Display 出力は stability 契約の対象なので
+    // 全 variant の string を pin する。Debug format (auto-derived) が
+    // variant field 追加時に silently 変わるのを防ぐため、代表 field 値も
+    // 合わせて assert する。
+
+    #[test]
+    fn violation_type_display_simple_variants() {
+        assert_eq!(
+            ViolationType::SchemeNotAllowed.to_string(),
+            "scheme not allowed"
+        );
+        assert_eq!(
+            ViolationType::HostNotAllowed.to_string(),
+            "host not allowed"
+        );
+        assert_eq!(ViolationType::RedirectDenied.to_string(), "redirect denied");
+        assert_eq!(ViolationType::Timeout.to_string(), "timeout exceeded");
+        assert_eq!(
+            ViolationType::Other.to_string(),
+            "unspecified policy violation"
+        );
+    }
+
+    #[test]
+    fn violation_type_display_size_limit_variants() {
+        let fetch = ViolationType::FetchTooLarge {
+            limit: 1_048_576,
+            actual: 2_097_152,
+        };
+        assert_eq!(
+            fetch.to_string(),
+            "fetch too large (limit=1048576, actual=2097152)"
+        );
+
+        let decoded = ViolationType::DecodedTooLarge {
+            limit: 10_000,
+            actual: 12_345,
+        };
+        assert_eq!(
+            decoded.to_string(),
+            "decoded content too large (limit=10000, actual=12345)"
+        );
+    }
+
+    #[test]
+    fn violation_type_display_string_and_depth_variants() {
+        let mime = ViolationType::MimeNotAllowed {
+            mime: String::from("application/octet-stream"),
+        };
+        assert_eq!(
+            mime.to_string(),
+            "MIME type not allowed: application/octet-stream"
+        );
+
+        let rec = ViolationType::RecursionExceeded { depth: 32 };
+        assert_eq!(rec.to_string(), "recursion depth exceeded (32)");
+    }
+
+    #[test]
+    fn policy_violation_display_uses_violation_type_display_not_debug() {
+        // PolicyViolation::Display が violation_type を `{}` で format
+        // することを regression pin。旧実装は `{:?}` で
+        // "FetchTooLarge { limit: .., actual: .. }" を垂れ流していた。
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::Image,
+            url: Url::parse("https://cdn.example.com/big.png").unwrap(),
+            violation_type: ViolationType::FetchTooLarge {
+                limit: 100,
+                actual: 250,
+            },
+            details: String::from("Content-Length header too big"),
+        };
+        let s = v.to_string();
+        assert!(
+            s.contains("fetch too large (limit=100, actual=250)"),
+            "PolicyViolation Display must delegate to ViolationType::Display, got: {s}"
+        );
+        assert!(
+            !s.contains("FetchTooLarge {"),
+            "PolicyViolation Display must not leak Debug format, got: {s}"
+        );
+    }
+
+    #[test]
+    fn render_error_policy_display_uses_violation_type_display_not_debug() {
+        // RenderError::Policy::Display も同じく Display 経由。
+        use url::Url;
+        let v = PolicyViolation {
+            kind: ResourceKind::Font,
+            url: Url::parse("https://fonts.example.com/x.woff2").unwrap(),
+            violation_type: ViolationType::MimeNotAllowed {
+                mime: String::from("text/html"),
+            },
+            details: String::from("expected font/woff2"),
+        };
+        let re = RenderError::Policy(v);
+        let s = re.to_string();
+        assert!(
+            s.contains("MIME type not allowed: text/html"),
+            "RenderError::Policy Display must use ViolationType::Display, got: {s}"
+        );
+        assert!(
+            !s.contains("MimeNotAllowed {"),
+            "RenderError::Policy Display must not leak Debug format, got: {s}"
+        );
+    }
+
     #[test]
     fn network_error_is_error_and_display() {
         fn _assert_error<T: std::error::Error>() {}
