@@ -23,7 +23,7 @@ pub mod rule;
 pub use rule::{Declaration, StyleRule};
 
 pub mod ruletree;
-pub use ruletree::{RuleTree, build_rule_tree};
+pub use ruletree::{Origin, RuleTree, build_rule_tree};
 
 pub mod computed;
 pub use computed::ComputedValues;
