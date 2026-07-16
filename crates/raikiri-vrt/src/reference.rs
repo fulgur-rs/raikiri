@@ -84,6 +84,11 @@ pub struct DiffReport {
 }
 
 /// A single mismatched pixel discovered during comparison.
+///
+/// RGBA pixel values are in premultiplied-alpha form (the format
+/// `tiny_skia::Pixmap::data()` yields — decode/encode passes through
+/// this convention). Semi-transparent pixel diffs may look surprising
+/// to a viewer expecting straight-alpha color values.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PixelMismatch {
@@ -404,6 +409,8 @@ pub const UPDATE_GOLDENS_ENV: &str = "RAIKIRI_UPDATE_GOLDENS";
 /// - Pipeline output page count differs from expected page count (compare mode only).
 /// - `compare_png` returns a `DiffReport`.
 /// - I/O failure writing goldens (update mode) or diff artifacts (compare mode).
+/// - fixture_dir has no valid UTF-8 file name (used to name the diff-artifact subdirectory).
+/// - I/O failure during golden-update mode (removing or recreating expected/, writing individual page PNGs).
 pub fn run_and_compare<F>(fixture_dir: &Path, tolerance: Tolerance, pipeline: F)
 where
     F: FnOnce(&[u8]) -> Vec<Vec<u8>>,
@@ -503,7 +510,11 @@ fn write_diff_artifacts(
     actual_png: &[u8],
     expected_png: &[u8],
 ) -> (Option<PathBuf>, Option<PathBuf>) {
-    if std::fs::create_dir_all(dir).is_err() {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!(
+            "raikiri-vrt: failed to create diff dir {}: {e} — diff artifacts skipped",
+            dir.display()
+        );
         return (None, None);
     }
     let actual_path = dir.join(format!("page-{page_idx:04}-actual.png"));
