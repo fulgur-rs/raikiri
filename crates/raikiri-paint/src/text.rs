@@ -8,9 +8,6 @@ use anyrender::PaintScene;
 use raikiri_dom::Node;
 use raikiri_style::CascadeResult;
 
-// walk::paint_document (Task 3) が Text node 分岐で呼び出すまで未使用。
-// stub 段階では dead_code warning を抑止する (-D warnings gate 対応)。
-#[allow(dead_code)]
 pub(crate) fn draw_text_node(
     _scene: &mut impl PaintScene,
     _node: &Node,

@@ -1658,6 +1658,7 @@ dependencies = [
  "raikiri-dom",
  "raikiri-style",
  "raikiri-traits",
+ "taffy",
 ]
 
 [[package]]
