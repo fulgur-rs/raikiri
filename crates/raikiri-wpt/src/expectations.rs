@@ -54,6 +54,12 @@ impl ExpectationSet {
     /// Load all 5 files from an arbitrary directory. Used for unit tests
     /// via `parse(&str, &str)` on individual files and for future
     /// integration tests that stage fixture directories.
+    ///
+    /// Multiple row-level quarantine errors are collapsed to the first
+    /// (subsequent row errors are discarded). Callers that need every
+    /// row error surfaced (lint pass) should use
+    /// [`crate::lint::run`] instead, which reads the raw file and calls
+    /// [`Quarantine::parse`] directly to preserve the full error vector.
     pub fn load_from(dir: &Path) -> Result<Self, ExpectError> {
         let tracked = TrackedWpt::load(&dir.join("tracked-wpt.txt"))?;
         let known_issues = KnownIssues::load(&dir.join("known-issues.txt"))?;
@@ -765,6 +771,25 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
                 assert_eq!(*line_no, 1);
             }
             other => panic!("expected UnknownEnum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quarantine_records_only_first_column_error_per_row() {
+        // A row with two invalid columns (bad platform AND bad arch) must
+        // produce exactly one error — the first-failing column (platform) —
+        // per the short-circuit-per-row contract. If a future refactor
+        // switches to intra-row accumulation this test will fail loudly.
+        let content = "css/x | plan9 | notarch | vello_cpu | low | r | i | 2026-08-01\n";
+        let (q, errors) = Quarantine::parse(content, "q.txt");
+        assert!(q.entries.is_empty());
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            ExpectError::UnknownEnum { field, value, .. } => {
+                assert_eq!(*field, "platform");
+                assert_eq!(value, "plan9");
+            }
+            other => panic!("expected UnknownEnum(platform), got {other:?}"),
         }
     }
 
