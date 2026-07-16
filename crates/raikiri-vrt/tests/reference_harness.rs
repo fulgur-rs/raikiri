@@ -156,9 +156,9 @@ fn env_lock() -> MutexGuard<'static, ()> {
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,
-    // Guard order matters: the Mutex guard must be dropped LAST (after the
-    // env var is restored). Rust drops struct fields in declaration order,
-    // so _lock is declared LAST to ensure it's dropped last.
+    // _lock is held through Drop: EnvGuard::drop() restores the env var
+    // while _lock is still alive, then field drop-glue releases _lock.
+    // (Rust guarantees Drop::drop() runs before any field is auto-dropped.)
     _lock: MutexGuard<'static, ()>,
 }
 impl EnvGuard {
@@ -235,13 +235,14 @@ fn test_run_and_compare_success_removes_no_files() {
     let png = encode_png(&solid([200, 100, 50, 255], 4, 4), 4, 4);
     let dir = build_fixture(Some(b"<p>hi</p>"), &[(0, png.clone())]);
 
-    // Determine what target dir the harness would use. CARGO_TARGET_TMPDIR is
-    // only available via the compile-time `env!()` macro for test/bench
-    // targets — it is NOT propagated into the runtime process environment
-    // (verified: std::env::var("CARGO_TARGET_TMPDIR") is always Err at test
-    // runtime, even under `cargo test`). Reading it at compile time here is
-    // valid because this file is itself an integration test target.
-    let target_tmp = env!("CARGO_TARGET_TMPDIR");
+    // run_and_compare's diff_dir_root() reads CARGO_TARGET_TMPDIR /
+    // CARGO_TARGET_DIR from the *runtime* process environment, where neither
+    // is set (those are cargo-supplied compile-time vars for the test/bench
+    // target, not propagated to the running binary's env) — so it falls
+    // through to the relative "target/reference-diffs", resolved against
+    // the process's current directory, which `cargo test` sets to the
+    // package's manifest directory. CARGO_MANIFEST_DIR (compile-time) gives
+    // us that same directory to compute the actual on-disk location.
     let fixture_name = dir
         .path()
         .file_name()
@@ -249,7 +250,8 @@ fn test_run_and_compare_success_removes_no_files() {
         .to_str()
         .unwrap()
         .to_string();
-    let diff_dir = Path::new(target_tmp)
+    let diff_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
         .join("reference-diffs")
         .join(&fixture_name);
 
