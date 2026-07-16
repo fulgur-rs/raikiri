@@ -25,6 +25,9 @@ pub use html_document::HtmlDocument;
 mod parse;
 pub use parse::parse_html;
 
+mod stubs;
+pub use stubs::{plan, render_streaming};
+
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 // Network API (Request / FetchedResource / NetworkError / Method / Body /
 // HeaderMap / AbortSignal / AbortController / ResourceKind) は `NetworkProvider`
@@ -32,9 +35,35 @@ pub use parse::parse_html;
 // これらを揃えて re-export することで sub-crate 直接 dep 不要にする (roborev-refine
 // job 230)。
 pub use raikiri_traits::{
-    AbortController, AbortSignal, Body, CascadeError, Dom, Element, FetchedResource, HeaderMap,
-    Method, NetworkError, NetworkProvider, Node, NodeId, NodeKind, ParseError, QuirksMode,
-    RenderError, RenderWarning, Request, ResourceKind, StylesheetKind,
+    AbortController,
+    AbortSignal,
+    Body,
+    CascadeError,
+    // Task 6 (stub) 用の最小追加:
+    DocumentPlan,
+    Dom,
+    Element,
+    FetchedResource,
+    HeaderMap,
+    Method,
+    NetworkError,
+    NetworkProvider,
+    Node,
+    NodeId,
+    NodeKind,
+    PageDefaults,
+    ParseError,
+    PlanConfig,
+    QuirksMode,
+    RenderError,
+    RenderSink,
+    RenderStatus,
+    RenderWarning,
+    ReplacedResolver,
+    Request,
+    ResourceKind,
+    StreamingConfig,
+    StylesheetKind,
 };
 
 // ── raikiri-html: parse pipeline entry ─────────────────────────────────
@@ -293,5 +322,92 @@ mod parse_html_tests {
             via_manual.computed.len(),
             "parse_html と手動 build_cascaded で cascade node 数が一致"
         );
+    }
+}
+
+#[cfg(test)]
+mod stub_tests {
+    use super::*;
+
+    fn hello_world_doc() -> HtmlDocument {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse")
+    }
+
+    /// M1 では replaced element なし → resolve が呼ばれない前提で unreachable。
+    struct NoopResolver;
+    impl ReplacedResolver for NoopResolver {
+        fn resolve(
+            &self,
+            _req: raikiri_traits::ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            unreachable!("plan/render_streaming stubs must not call resolver")
+        }
+    }
+
+    /// M1 sink stub。accept_page / finish_render は No-op。stub は sink を呼ばない前提。
+    struct NoopSink;
+    impl RenderSink for NoopSink {
+        fn accept_page(
+            &mut self,
+            _fragment: raikiri_traits::PageFragment,
+        ) -> Result<(), std::io::Error> {
+            unreachable!("render_streaming stub must not call sink")
+        }
+        fn finish_render(
+            &mut self,
+            _summary: raikiri_traits::RenderSummary,
+        ) -> Result<(), std::io::Error> {
+            unreachable!("render_streaming stub must not call sink")
+        }
+    }
+
+    #[test]
+    fn plan_returns_unimplemented_with_feature_name() {
+        let doc = hello_world_doc();
+        let err = plan(
+            &doc,
+            PageDefaults::default(),
+            &NoopResolver,
+            PlanConfig::default(),
+        )
+        .expect_err("plan stub must return Err");
+        match err {
+            RenderError::Unimplemented { feature, .. } => {
+                assert_eq!(feature, "plan", "feature must identify plan API");
+            }
+            other => panic!("expected Unimplemented, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn render_streaming_returns_unimplemented_with_feature_name() {
+        let doc = hello_world_doc();
+        let mut sink = NoopSink;
+        let err = render_streaming(
+            &doc,
+            PageDefaults::default(),
+            &NoopResolver,
+            StreamingConfig::default(),
+            &mut sink,
+        )
+        .expect_err("render_streaming stub must return Err");
+        match err {
+            RenderError::Unimplemented {
+                feature,
+                migration_hint,
+            } => {
+                assert_eq!(feature, "render_streaming", "feature must identify API");
+                assert!(
+                    migration_hint.contains("html_to_png"),
+                    "hint must point Consumer to html_to_png, got {migration_hint:?}"
+                );
+            }
+            other => panic!("expected Unimplemented, got {other:?}"),
+        }
     }
 }
