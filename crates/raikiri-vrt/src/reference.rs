@@ -376,6 +376,186 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
     })
 }
 
+/// Environment variable that switches `run_and_compare` from compare-mode
+/// to golden-update mode. Any non-empty value activates update mode; the
+/// exact syntax `RAIKIRI_UPDATE_GOLDENS=1` is the documented convention.
+///
+/// Corresponds to spec §12.7's `cargo test -- --update-goldens` intent;
+/// the env-var mechanism is the M1 implementation (see spec §13 drift).
+pub const UPDATE_GOLDENS_ENV: &str = "RAIKIRI_UPDATE_GOLDENS";
+
+/// Load a fixture, invoke `pipeline` on its input, and compare or update
+/// golden PNGs.
+///
+/// # Behavior
+///
+/// - `RAIKIRI_UPDATE_GOLDENS` set: overwrites `expected/` from pipeline
+///   output. Any existing `expected/` is deleted first (prevents stale
+///   pages when the page count decreases).
+/// - Env unset (default): compares each pipeline page against
+///   `expected/page-{N:04}.png` under `tolerance`. On failure, writes
+///   `<diff_dir_root()>/<fixture_name>/page-{N:04}-{actual,diff}.png`
+///   and panics with a formatted DiffReport. In practice `diff_dir_root()`
+///   resolves to `target/reference-diffs` (see its doc comment for why).
+///
+/// # Panics
+///
+/// - `load_fixture` fails (bad fixture layout).
+/// - Pipeline output page count differs from expected page count (compare mode only).
+/// - `compare_png` returns a `DiffReport`.
+/// - I/O failure writing goldens (update mode) or diff artifacts (compare mode).
+pub fn run_and_compare<F>(fixture_dir: &Path, tolerance: Tolerance, pipeline: F)
+where
+    F: FnOnce(&[u8]) -> Vec<Vec<u8>>,
+{
+    let fixture = load_fixture(fixture_dir).unwrap_or_else(|e| panic!("load_fixture failed: {e}"));
+    let actual_pages = pipeline(&fixture.input_html);
+
+    if std::env::var(UPDATE_GOLDENS_ENV).is_ok_and(|v| !v.is_empty()) {
+        update_goldens(fixture_dir, &actual_pages);
+        return;
+    }
+
+    if actual_pages.len() != fixture.expected_pages.len() {
+        panic!(
+            "page count mismatch for {}: expected {}, actual {}",
+            fixture_dir.display(),
+            fixture.expected_pages.len(),
+            actual_pages.len(),
+        );
+    }
+
+    let fixture_name = fixture_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .expect("fixture_dir must have a valid UTF-8 file name")
+        .to_string();
+
+    for (page_idx, (actual_png, expected_png)) in actual_pages
+        .iter()
+        .zip(fixture.expected_pages.iter())
+        .enumerate()
+    {
+        match compare_png(actual_png, expected_png, tolerance) {
+            Ok(()) => continue,
+            Err(mut report) => {
+                report.page_index = page_idx;
+                let diff_root = diff_dir_root().join(&fixture_name);
+                let (actual_path, diff_path) =
+                    write_diff_artifacts(&diff_root, page_idx, actual_png, expected_png);
+                report.actual_png_path = actual_path;
+                report.diff_png_path = diff_path;
+                panic!("{report}");
+            }
+        }
+    }
+}
+
+fn update_goldens(fixture_dir: &Path, actual_pages: &[Vec<u8>]) {
+    let expected_dir = fixture_dir.join("expected");
+    if expected_dir.exists() {
+        std::fs::remove_dir_all(&expected_dir)
+            .unwrap_or_else(|e| panic!("remove_dir_all({}) failed: {e}", expected_dir.display()));
+    }
+    std::fs::create_dir_all(&expected_dir)
+        .unwrap_or_else(|e| panic!("create_dir_all({}) failed: {e}", expected_dir.display()));
+    for (n, png) in actual_pages.iter().enumerate() {
+        let path = expected_dir.join(format!("page-{n:04}.png"));
+        std::fs::write(&path, png)
+            .unwrap_or_else(|e| panic!("write({}) failed: {e}", path.display()));
+    }
+    eprintln!(
+        "raikiri-vrt: updated {} golden(s) for {}",
+        actual_pages.len(),
+        fixture_dir.display()
+    );
+}
+
+/// Resolve the base directory for diff artifacts.
+/// Prefers `CARGO_TARGET_TMPDIR`, falls back to `CARGO_TARGET_DIR`, then
+/// `target/`.
+///
+/// Note: both `CARGO_TARGET_TMPDIR` and `CARGO_TARGET_DIR` are cargo
+/// variables set at *compile time* for the crate being built (readable via
+/// `env!()` in source that cargo compiles as a test/bench target); they are
+/// not propagated into the *runtime* process environment of the resulting
+/// binary. Since this function runs at runtime inside library code, both
+/// `std::env::var` lookups below will typically miss, and the `target/`
+/// fallback (relative to the process's current directory) is what actually
+/// gets used in practice under `cargo test`.
+fn diff_dir_root() -> PathBuf {
+    if let Ok(p) = std::env::var("CARGO_TARGET_TMPDIR") {
+        return PathBuf::from(p).join("reference-diffs");
+    }
+    if let Ok(p) = std::env::var("CARGO_TARGET_DIR") {
+        return PathBuf::from(p).join("reference-diffs");
+    }
+    PathBuf::from("target").join("reference-diffs")
+}
+
+/// Write `page-{N:04}-actual.png` and `page-{N:04}-diff.png` to `dir` and
+/// return the two paths. Returns `(None, None)` on I/O failure — the caller
+/// still panics with the DiffReport, but path fields stay unset to signal
+/// that the artifacts weren't produced.
+fn write_diff_artifacts(
+    dir: &Path,
+    page_idx: usize,
+    actual_png: &[u8],
+    expected_png: &[u8],
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    if std::fs::create_dir_all(dir).is_err() {
+        return (None, None);
+    }
+    let actual_path = dir.join(format!("page-{page_idx:04}-actual.png"));
+    let diff_path = dir.join(format!("page-{page_idx:04}-diff.png"));
+
+    let actual_written = std::fs::write(&actual_path, actual_png).is_ok();
+
+    let diff_ok = build_and_write_diff(&diff_path, actual_png, expected_png);
+
+    (
+        if actual_written {
+            Some(actual_path)
+        } else {
+            None
+        },
+        if diff_ok { Some(diff_path) } else { None },
+    )
+}
+
+/// Build a magenta-on-dimmed visualization: pixels that differ appear as
+/// solid magenta (255, 0, 255, 255); pixels that match appear as a 40%-dim
+/// greyscale of the actual image (helps orient the diff over image content).
+fn build_and_write_diff(path: &Path, actual_png: &[u8], expected_png: &[u8]) -> bool {
+    let Ok(actual) = tiny_skia::Pixmap::decode_png(actual_png) else {
+        return false;
+    };
+    let Ok(expected) = tiny_skia::Pixmap::decode_png(expected_png) else {
+        return false;
+    };
+    if (actual.width(), actual.height()) != (expected.width(), expected.height()) {
+        // Cannot build a pixel-aligned diff for mismatched dimensions.
+        return false;
+    }
+    let w = actual.width();
+    let h = actual.height();
+    let a = actual.data();
+    let e = expected.data();
+    let mut out = Vec::with_capacity(a.len());
+    for (ax, ex) in a.chunks_exact(4).zip(e.chunks_exact(4)) {
+        if ax == ex {
+            let y = ((u32::from(ax[0]) * 299 + u32::from(ax[1]) * 587 + u32::from(ax[2]) * 114)
+                / 1000) as u8;
+            let dim = y / 5 * 2; // ~40% brightness
+            out.extend_from_slice(&[dim, dim, dim, 255]);
+        } else {
+            out.extend_from_slice(&[255, 0, 255, 255]);
+        }
+    }
+    let png = crate::encode_png(&out, w, h);
+    std::fs::write(path, png).is_ok()
+}
+
 #[cfg(test)]
 mod type_tests {
     use super::*;

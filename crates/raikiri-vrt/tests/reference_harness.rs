@@ -2,10 +2,12 @@
 //!
 //! Uses synthetic PNG fixtures constructed via encode_png and tempfile-backed
 //! directories. Verifies the harness independently of any real pipeline.
+#![allow(unsafe_code)]
 
 use raikiri_vrt::encode_png;
-use raikiri_vrt::reference::{FixtureError, Tolerance, compare_png, load_fixture};
+use raikiri_vrt::reference::{FixtureError, Tolerance, compare_png, load_fixture, run_and_compare};
 use std::fs;
+use std::path::Path;
 use tempfile::TempDir;
 
 /// Solid-color RGBA8 buffer for a given size.
@@ -125,4 +127,102 @@ fn test_load_fixture_success_with_pages() {
     assert_eq!(fixture.expected_pages.len(), 2);
     assert_eq!(fixture.expected_pages[0], png_a);
     assert_eq!(fixture.expected_pages[1], png_b);
+}
+
+/// Env-var name toggling golden update mode. Kept in sync with the value in
+/// crates/raikiri-vrt/src/reference.rs.
+const UPDATE_GOLDENS_ENV: &str = "RAIKIRI_UPDATE_GOLDENS";
+
+/// Guard for RAIKIRI_UPDATE_GOLDENS across a scoped block.
+/// The env var mutation is process-global; cargo runs integration tests
+/// single-threaded per test crate by default when the harness is `libtest`,
+/// but we guard the set/unset symmetrically to keep intent explicit.
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        // SAFETY: single-threaded test execution — cargo test integration
+        // tests default to serial execution within a single binary.
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, prev }
+    }
+}
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.prev {
+            // SAFETY: same as set().
+            Some(v) => unsafe {
+                std::env::set_var(self.key, v);
+            },
+            None => unsafe {
+                std::env::remove_var(self.key);
+            },
+        }
+    }
+}
+
+#[test]
+fn test_run_and_compare_update_goldens() {
+    // Empty expected/ + env set → expected regenerated from pipeline output.
+    let png = encode_png(&solid([0, 128, 0, 255], 4, 4), 4, 4);
+    let dir = build_fixture(Some(b"<p>hi</p>"), &[]);
+    let pipeline_png = png.clone();
+
+    {
+        let _guard = EnvGuard::set(UPDATE_GOLDENS_ENV, "1");
+        // No panic expected — update mode always succeeds if I/O succeeds.
+        run_and_compare(dir.path(), Tolerance::EXACT, move |_html| {
+            vec![pipeline_png]
+        });
+    }
+
+    // After update, expected/page-0000.png exists and equals pipeline output.
+    let written = fs::read(dir.path().join("expected/page-0000.png"))
+        .expect("expected png should exist after update");
+    assert_eq!(written, png);
+}
+
+#[test]
+fn test_run_and_compare_success_removes_no_files() {
+    // Success path: no target/ artifacts are written.
+    let png = encode_png(&solid([200, 100, 50, 255], 4, 4), 4, 4);
+    let dir = build_fixture(Some(b"<p>hi</p>"), &[(0, png.clone())]);
+
+    // Determine what target dir the harness would use. CARGO_TARGET_TMPDIR is
+    // only available via the compile-time `env!()` macro for test/bench
+    // targets — it is NOT propagated into the runtime process environment
+    // (verified: std::env::var("CARGO_TARGET_TMPDIR") is always Err at test
+    // runtime, even under `cargo test`). Reading it at compile time here is
+    // valid because this file is itself an integration test target.
+    let target_tmp = env!("CARGO_TARGET_TMPDIR");
+    let fixture_name = dir
+        .path()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let diff_dir = Path::new(target_tmp)
+        .join("reference-diffs")
+        .join(&fixture_name);
+
+    // Ensure no stale diff dir from a prior run.
+    let _ = fs::remove_dir_all(&diff_dir);
+
+    let pipeline_png = png.clone();
+    run_and_compare(dir.path(), Tolerance::EXACT, move |_html| {
+        vec![pipeline_png]
+    });
+
+    // No artifacts should have been produced.
+    assert!(
+        !diff_dir.exists(),
+        "success path should not create diff dir: {}",
+        diff_dir.display()
+    );
 }
