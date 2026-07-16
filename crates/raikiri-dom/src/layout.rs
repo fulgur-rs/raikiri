@@ -457,4 +457,54 @@ mod tests {
         assert_eq!(before, after, "display unchanged by M1.4 bridge");
         // apply_page_box_to_body により size は変わるので size は assert 対象外
     }
+
+    #[test]
+    fn layout_single_page_deterministic_across_10_runs() {
+        // M1 acceptance: 10 回連続実行で byte-identical。
+        // 同一マシン上の determinism を pin (cross-machine は m1.13 で font
+        // pinning に置き換わる)。
+        use raikiri_traits::PageBox;
+
+        fn one_run() -> Vec<taffy::Layout> {
+            let (mut doc, cr) = hello_world_doc();
+            layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+            doc.nodes.iter().map(|n| n.unrounded_layout).collect()
+        }
+
+        let baseline = one_run();
+        for i in 1..10 {
+            let run = one_run();
+            assert_eq!(
+                baseline.len(),
+                run.len(),
+                "run {i}: layout node count changed"
+            );
+            for (j, (b, r)) in baseline.iter().zip(run.iter()).enumerate() {
+                // taffy::Layout の全 field を byte-identical で比較。
+                // 浮動小数点の subnormal / NaN drift があると here が最も先に
+                // 反応する (design doc §12.8 の NonFiniteFloat 検討の pin 相当)
+                assert_eq!(
+                    b.size.width, r.size.width,
+                    "run {i} node {j}: size.width differs (baseline={} run={})",
+                    b.size.width, r.size.width
+                );
+                assert_eq!(b.size.height, r.size.height);
+                assert_eq!(b.location.x, r.location.x);
+                assert_eq!(b.location.y, r.location.y);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore] // 明示的に cargo test -- --ignored で実行
+    fn font_context_new_cost_is_reasonable() {
+        let start = std::time::Instant::now();
+        for _ in 0..10 {
+            let _ = parley::FontContext::new();
+        }
+        let elapsed = start.elapsed();
+        // 10 回 total で 5 秒未満なら M1.6 の per-call new() は許容
+        // (10 連ラン determinism test が timeout しないため)
+        assert!(elapsed.as_secs() < 5, "FontContext::new() too slow: 10x = {:?}", elapsed);
+    }
 }
