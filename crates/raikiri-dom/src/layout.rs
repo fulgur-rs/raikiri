@@ -10,8 +10,13 @@
 use raikiri_traits::NodeKind;
 
 use crate::document::Document;
+use parley::{
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontWeight, Layout, LayoutContext,
+    StyleProperty,
+};
+use raikiri_style::property::Length;
 use raikiri_style::CascadeResult;
-use raikiri_traits::PageBox;
+use raikiri_traits::{LayoutError, PageBox};
 use taffy::{Dimension, Size};
 
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
@@ -76,6 +81,89 @@ pub(crate) fn apply_computed_to_style(
     // }
 }
 
+/// 全 Text node を parley で pre-shape、結果を `Node.text_layout` に格納する。
+///
+/// 呼び出し側 (`layout_single_page`) は事前に全 `Node.text_layout = None` に
+/// clear 済であることを前提とする (re-entrance safety)。
+///
+/// Font stack / size / weight は `cascade.computed[idx]` (親から inherit 済) を消費。
+/// `max_advance` は行折り返し境界で、通常 `page_box.width`。
+///
+/// # Errors
+/// - `LayoutError::Internal` — parley shape が想定外の状態で失敗した場合
+///   (M1 ASCII 前提では発生想定なし、defensive)
+#[allow(dead_code)]
+pub(crate) fn preshape_text(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    max_advance: f32,
+) -> Result<(), LayoutError> {
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind != NodeKind::Text {
+            continue;
+        }
+        let text: String = match &doc.nodes[idx].text_content {
+            Some(s) if !s.is_empty() => s.as_str().to_string(),
+            _ => continue,
+        };
+        // cascade は Text node 位置にも ComputedValues を populate する
+        // (親から inherit)。M1.4 test `text_node_inherits_from_element_parent`
+        // で確認済。
+        let cv = &cascade.computed[idx];
+
+        // font-family: Vec<Atom> → parley::FontFamily。Atom は SmolStr newtype
+        // なので as_str() で &str に落として parley に食わせる。
+        //
+        // API tuning: brief pseudo-code は `parley::FontStack` を想定していたが
+        // parley 0.10 実 API には FontStack 型が存在せず、代わりに
+        // `parley::style::FontFamily` (re-export元は `parlance` crate) を使う。
+        // `FontFamily::from(&str)` は CSS 形式の family list をそのまま source
+        // string として保持する `FontFamily::Source` variant を返す。
+        let family_str: String = cv
+            .font_family
+            .iter()
+            .map(|a| a.0.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let font_family = FontFamily::from(family_str.as_str());
+
+        // API tuning: `Length` is `#[non_exhaustive]` (raikiri-style may add
+        // non-Px variants in a later milestone), so this match requires a
+        // wildcard arm even though M1.4 scope only produces `Length::Px`.
+        // Defensive: surface as `LayoutError::Internal` rather than panic.
+        let font_size_px = match cv.font_size {
+            Length::Px(v) => v,
+            _ => {
+                return Err(LayoutError::Internal {
+                    message: format!(
+                        "preshape_text: unsupported Length variant for font-size at node {idx}"
+                    ),
+                })
+            }
+        };
+
+        let mut builder = layout_cx.ranged_builder(fonts, &text, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(font_family));
+        builder.push_default(StyleProperty::FontSize(font_size_px));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(
+            cv.font_weight as f32,
+        )));
+        let mut layout: Layout<()> = builder.build(&text);
+        layout.break_all_lines(Some(max_advance));
+        // API tuning: brief pseudo-code は `align(Some(max_advance), Alignment::Start,
+        // AlignmentOptions::default())` (3 引数) を想定していたが、parley 0.10 実 API の
+        // `Layout::align` は 2 引数 (`alignment`, `options`) のみ。max_advance は
+        // 直前の `break_all_lines(Some(max_advance))` で既に確定済のため、align 側では
+        // 再指定不要 (内部的に break 時の width を使う)。
+        layout.align(Alignment::Start, AlignmentOptions::default());
+
+        doc.nodes[idx].text_layout = Some(layout);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,6 +223,67 @@ mod tests {
         let size: Size<Dimension> = doc.nodes[body].style.size;
         assert_eq!(size.width, Dimension::length(595.0));
         assert_eq!(size.height, Dimension::length(842.0));
+    }
+
+    #[test]
+    fn preshape_text_populates_text_layout_for_text_nodes() {
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let text = doc.append_text(p, "Hi");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 595.0).expect("preshape Ok");
+
+        assert!(
+            doc.nodes[text].text_layout.is_some(),
+            "text node's text_layout must be populated"
+        );
+        let layout = doc.nodes[text].text_layout.as_ref().unwrap();
+        assert!(layout.width() > 0.0, "text 'Hi' must have non-zero width");
+        assert!(layout.height() > 0.0, "text 'Hi' must have non-zero line height");
+
+        // Element / Document は None のまま
+        assert!(doc.nodes[html].text_layout.is_none(), "html element is not text");
+        assert!(doc.nodes[body].text_layout.is_none(), "body element is not text");
+        assert!(doc.nodes[p].text_layout.is_none(), "p element is not text");
+        assert!(doc.nodes[0].text_layout.is_none(), "document root is not text");
+    }
+
+    #[test]
+    fn preshape_text_respects_computed_font_size() {
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn shape_text_height_at_font_size(px: &str) -> f32 {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let inline = format!("font-size:{}", px);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline.as_str()));
+            let text = doc.append_text(p, "Hi");
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).unwrap();
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 595.0).unwrap();
+            doc.nodes[text].text_layout.as_ref().unwrap().height()
+        }
+
+        let small = shape_text_height_at_font_size("8px");
+        let large = shape_text_height_at_font_size("32px");
+        assert!(
+            large > small,
+            "font-size:32px must produce taller text than 8px (cascade→shape inheritance regression pin, got small={small}, large={large})"
+        );
     }
 
     #[test]
