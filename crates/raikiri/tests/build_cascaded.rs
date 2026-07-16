@@ -16,24 +16,30 @@ fn parse_html(source: &str) -> raikiri::UncascadedDocument {
     parse(source.as_bytes(), &opts).expect("parse")
 }
 
-/// DOM を root から DFS walk して最初に見つかった tag 一致の Element の NodeId を返す。
+/// DOM を root から iterative DFS walk して最初に見つかった tag 一致の
+/// Element の NodeId を返す。
+///
+/// 深いネストで stack overflow しないよう explicit `Vec` stack で iterative
+/// (raikiri-style::ruletree::walk_and_collect と同 pattern、roborev job 199)。
+/// stack は LIFO なので、pre-order (sibling 間 document order) を保つため
+/// children を reverse push する。
 fn find_by_tag<D: Dom>(dom: &D, tag: &str) -> Option<NodeId> {
-    fn walk<D: Dom>(dom: &D, id: NodeId, tag: &str) -> Option<NodeId> {
-        if let Some(node) = dom.node(id)
-            && node.kind() == NodeKind::Element
-            && let Some(elem) = node.as_element()
-            && elem.tag_name().eq_ignore_ascii_case(tag)
-        {
-            return Some(id);
-        }
-        for child_id in dom.child_ids(id) {
-            if let Some(found) = walk(dom, child_id, tag) {
-                return Some(found);
+    let mut stack: Vec<NodeId> = vec![dom.root_id()];
+    while let Some(id) = stack.pop() {
+        if let Some(node) = dom.node(id) {
+            if node.kind() == NodeKind::Element
+                && let Some(elem) = node.as_element()
+                && elem.tag_name().eq_ignore_ascii_case(tag)
+            {
+                return Some(id);
+            }
+            let children: Vec<_> = dom.child_ids(id).collect();
+            for child_id in children.into_iter().rev() {
+                stack.push(child_id);
             }
         }
-        None
     }
-    walk(dom, dom.root_id(), tag)
+    None
 }
 
 #[test]
