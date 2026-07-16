@@ -69,6 +69,7 @@ time = { version = "0.3", default-features = false, features = ["std", "parsing"
 
 # ── Dev-only: VRT rasterizer / snapshot / oracle ───────────────────────
 anyrender_vello_cpu = { version = "0.14", features = ["multithreading"] }
+vello_cpu           = "0.0.9"                    # m1.18 thread-pin test; RenderContext::new_with(RenderSettings::num_threads)
 tiny-skia           = "0.11"
 insta               = "1"
 blitz-traits        = "=0.3.0-beta.1"

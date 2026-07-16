@@ -14,6 +14,7 @@ png       = "0.17"                    # Direct dep for png::DecodingError in Fix
 [dev-dependencies]
 anyrender           = { workspace = true }
 anyrender_vello_cpu = { workspace = true }
+vello_cpu           = { workspace = true }  # m1.18 rayon thread-pin test only; production path stays anyrender-only.
 peniko              = { workspace = true }
 kurbo               = { workspace = true }
 tempfile            = { workspace = true }  # Synthetic fixture dirs for reference-harness self-tests; workspace-centralized (root Cargo.toml declares tempfile = "3").
