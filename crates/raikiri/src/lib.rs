@@ -14,8 +14,7 @@
 //! let opts = ParseOptions { extra_stylesheets: &[], network: None, base_url: None };
 //! let doc = parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
 //! let result = build_cascaded(&doc);
-//! // result.computed に per-node ComputedValues が populate される。
-//! # let _ = result;
+//! assert!(!result.computed.is_empty(), "cascade populates per-node ComputedValues");
 //! ```
 
 use raikiri_style::{cascade, walk_style_elements};
@@ -28,9 +27,6 @@ pub use raikiri_traits::{
 
 // ── raikiri-html: parse pipeline entry ─────────────────────────────────
 pub use raikiri_html::{MINIMAL_UA_CSS, ParseOptions, UncascadedDocument, parse};
-
-// ── raikiri-dom: Document (owns DOM + stylesheets state) ───────────────
-pub use raikiri_dom::Document as DomDocument;
 
 // ── raikiri-style: cascade pipeline output types ───────────────────────
 pub use raikiri_style::{
@@ -47,6 +43,15 @@ pub use raikiri_style::{
 ///
 /// Consumer は `raikiri_html::parse` → `raikiri::build_cascaded` の 2 step だけで
 /// per-node ComputedValues を得られる。
+///
+/// # source_order tie-break (Author vs Author)
+///
+/// `Document.stylesheets()` (parse 時に注入された UA + `extra_stylesheets`) が
+/// 先に RuleTree に流し込まれ、次に DOM 内 `<style>` element が Author として
+/// 追加される。同 Author 内の tie-break (同 specificity・同 `!important`) では
+/// 後から来た方が source_order 大で勝つため、**DOM `<style>` は
+/// `extra_stylesheets` を上書きする**。この precedence は仕様書 §M1.4a には
+/// 明記されていない M1 実装判断 (raikiri-spike-m1.23)。
 ///
 /// # Dep 方向
 ///
@@ -87,7 +92,9 @@ fn stylesheet_kind_to_origin(kind: StylesheetKind) -> Origin {
         // 上で網羅済み。将来 User 等が追加された時点で対応が漏れるとここに到達し、
         // silent misroute を防ぐため panic で loud fail する (dev が cascade origin map の
         // 更新に気付ける)。
-        _ => unreachable!("StylesheetKind variant not yet mapped to Origin — update stylesheet_kind_to_origin in raikiri crate (m1.23)"),
+        _ => unreachable!(
+            "StylesheetKind variant not yet mapped to Origin — update stylesheet_kind_to_origin in raikiri crate (m1.23)"
+        ),
     }
 }
 

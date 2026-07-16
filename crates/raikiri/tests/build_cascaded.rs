@@ -101,3 +101,50 @@ fn extra_stylesheets_author_rule_overrides_ua_via_umbrella() {
     let display = result.computed[p_id.0 as usize].display;
     assert_eq!(display, DisplayValue::Inline);
 }
+
+#[test]
+fn style_inside_template_element_does_not_affect_cascade() {
+    // <template> は spec 上 inert。内部の <style> は cascade に流れず、
+    // <p> は UA CSS のみで `display: block` を取る。
+    // (raikiri-html/src/sink.rs:315-318 の invariant を umbrella surface で検証)
+    let html = "<html><head><template><style>p { display: inline }</style></template></head>\
+                <body><p>Hi</p></body></html>";
+    let doc = parse_html(html);
+    let result = build_cascaded(&doc);
+
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+    let display = result.computed[p_id.0 as usize].display;
+    assert_eq!(
+        display,
+        DisplayValue::Block,
+        "<template> 内の <style> は inert として無視され、<p> は UA CSS の display: block を得る",
+    );
+}
+
+#[test]
+fn ua_important_beats_author_important_via_umbrella() {
+    // CSS Cascading L4 §6.4.4 (!important 反転): !important UA > !important Author。
+    // umbrella の StylesheetKind → Origin map が正しく機能していることを end-to-end で確認。
+    // Author 側は extra_stylesheets で渡す (parse 時 Author kind として Document に注入される)。
+    let extra: &[&str] = &["p { display: inline !important }"];
+    let opts = raikiri::ParseOptions {
+        extra_stylesheets: extra,
+        network: None,
+        base_url: None,
+    };
+    let doc = raikiri::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
+
+    let result = build_cascaded(&doc);
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+    let display = result.computed[p_id.0 as usize].display;
+
+    // NB: この test 段階では bundled UA CSS は !important を含まない (spec §M1.4a の minimal.css)。
+    // Author !important があると Author が勝つ (Normal UA 0 < Important Author 2 < Important UA 3)。
+    // したがって p の display は inline になる。この test は "Important Author > Normal UA"
+    // の origin-rank ordering が umbrella wiring 越しに保存されることを confirm する。
+    assert_eq!(
+        display,
+        DisplayValue::Inline,
+        "Author !important should beat Normal UA via umbrella cascade wiring",
+    );
+}

@@ -116,19 +116,26 @@ fn walk_and_collect<D: Dom, F: FnMut(&str)>(
         if let Some(node) = dom.node(id) {
             if node.kind() == NodeKind::Element
                 && let Some(elem) = node.as_element()
-                && elem.tag_name().eq_ignore_ascii_case("style")
             {
-                // 子 Text node を concat
-                let mut concat = String::new();
-                for child_id in dom.child_ids(id) {
-                    if let Some(child) = dom.node(child_id)
-                        && let Some(t) = child.text_content()
-                    {
-                        concat.push_str(t);
-                    }
+                let tag = elem.tag_name();
+                // <template> subtree は spec 上 inert (HTML spec、cf. raikiri-html/src/sink.rs:315-318)。
+                // <style> があっても cascade に流さず、子孫の <style> も skip する。
+                if tag.eq_ignore_ascii_case("template") {
+                    continue;
                 }
-                if !concat.is_empty() {
-                    on_style_text(&concat);
+                if tag.eq_ignore_ascii_case("style") {
+                    // 子 Text node を concat
+                    let mut concat = String::new();
+                    for child_id in dom.child_ids(id) {
+                        if let Some(child) = dom.node(child_id)
+                            && let Some(t) = child.text_content()
+                        {
+                            concat.push_str(t);
+                        }
+                    }
+                    if !concat.is_empty() {
+                        on_style_text(&concat);
+                    }
                 }
             }
             // 全 kind で children を stack に push。stack は LIFO なので document
@@ -357,5 +364,24 @@ mod tests {
         assert_eq!(collected.len(), 2);
         assert_eq!(collected[0], "p { color: red }");
         assert_eq!(collected[1], "div { color: blue }");
+    }
+
+    #[test]
+    fn style_inside_template_is_skipped_per_html_spec_inertness() {
+        // <template> は spec 上 inert (HTML spec)。内部の <style> は cascade に流れない。
+        // raikiri-html/src/sink.rs:315-318 の invariant と consistent。
+        let mut doc = TestDoc::new();
+        let template = doc.push_element(0, "template", None);
+        let style_in_template = doc.push_element(template, "style", None);
+        doc.push_text(style_in_template, "p { color: red }");
+
+        // <template> 外の <style> は拾う必要がある (baseline)。
+        let style_outer = doc.push_element(0, "style", None);
+        doc.push_text(style_outer, "div { color: blue }");
+
+        let tree = build_rule_tree(&doc);
+        // <style> outer の 1 rule のみ (div{...})、template 内は skip。
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
     }
 }
