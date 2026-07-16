@@ -21,6 +21,7 @@ pub mod taffy_impl;
 
 pub use document::Document;
 pub use dom_impl::{ChildIter, ElementRef, NodeRef};
+pub use layout::layout_single_page;
 
 #[cfg(test)]
 mod tests {

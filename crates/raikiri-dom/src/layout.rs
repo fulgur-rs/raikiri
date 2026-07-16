@@ -17,14 +17,13 @@ use parley::{
 use raikiri_style::property::Length;
 use raikiri_style::CascadeResult;
 use raikiri_traits::{LayoutError, PageBox};
-use taffy::{Dimension, Size};
+use taffy::{AvailableSpace, Dimension, NodeId as TaffyNodeId, Size, compute_root_layout};
 
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
 ///
 /// iterative `Vec` stack で実装 (cascade §deep_nesting の pattern と一貫、
 /// deep DOM で stack overflow を回避)。fragment parse (no `<body>`) では
 /// `None`、caller が `LayoutError::Internal` に昇格させる。
-#[allow(dead_code)]
 pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
@@ -47,7 +46,6 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
 /// CSS Paged Media の initial containing block = @page size。M1 は @page 非対応
 /// のため body.style.size に直接注入する妥協。M4 で @page cascade + per-page
 /// PageBox を導入時に `<html>` root style に site を昇格予定。
-#[allow(dead_code)]
 pub(crate) fn apply_page_box_to_body(
     doc: &mut Document,
     body_id: usize,
@@ -66,7 +64,6 @@ pub(crate) fn apply_page_box_to_body(
 /// 本体 no-op。M4 で display / margin / padding / width / height 等の
 /// layout property が加わった時、ここに merge ロジックを追加する。
 /// (この関数の存在自体が M1.6 の site 確立の遺産。)
-#[allow(dead_code)]
 pub(crate) fn apply_computed_to_style(
     _doc: &mut Document,
     _cascade: &CascadeResult,
@@ -92,7 +89,6 @@ pub(crate) fn apply_computed_to_style(
 /// # Errors
 /// - `LayoutError::Internal` — parley shape が想定外の状態で失敗した場合
 ///   (M1 ASCII 前提では発生想定なし、defensive)
-#[allow(dead_code)]
 pub(crate) fn preshape_text(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -161,6 +157,63 @@ pub(crate) fn preshape_text(
 
         doc.nodes[idx].text_layout = Some(layout);
     }
+    Ok(())
+}
+
+/// 単一 A4 (or 指定 PageBox) ページに Document を layout する。
+///
+/// # 変更 (in-place)
+/// - Node.text_layout を全 `None` にクリア (re-entrance safety)
+/// - `apply_computed_to_style` で computed → taffy::Style bridge (M1.4 no-op)
+/// - `preshape_text` で全 Text node を parley shape、Node.text_layout に格納
+/// - `apply_page_box_to_body` で body.style.size = length(PageBox)
+/// - `compute_root_layout` で taffy 計算、Node.unrounded_layout に書き込む
+///
+/// # Errors
+/// - `LayoutError::Internal` — `<body>` element が見つからない (fragment
+///   parse は M1 非対応) / parley shape が失敗 / taffy internal
+///
+/// # Non-goals in M1.6
+/// - 同じ Document で複数回呼ぶことは safe (text_layout を毎回 clear) だが、
+///   incremental (差分だけ再走) は M2+ で追加
+/// - Consumer からの PageBox 上書きは M4 per-page PageBox で対応
+/// - Fragment parse (no `<body>`) support は M2+
+pub fn layout_single_page(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+) -> Result<(), LayoutError> {
+    // Step 0: text_layout re-entrance clear
+    for node in document.nodes.iter_mut() {
+        node.text_layout = None;
+    }
+
+    // Step 1: ComputedValues → taffy::Style bridge (M1.4 no-op site)
+    apply_computed_to_style(document, cascade);
+
+    // Step 2: pre-shape all text with parley
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    preshape_text(document, cascade, &mut fonts, &mut layout_cx, page_box.width)?;
+
+    // Step 3: <body> lookup
+    let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
+        message: "no <body> element found (fragment parse not supported in M1)".to_string(),
+    })?;
+
+    // Step 4: body.style.size を PageBox に強制セット
+    apply_page_box_to_body(document, body_id, page_box);
+
+    // Step 5: taffy compute
+    compute_root_layout(
+        document,
+        TaffyNodeId::from(body_id),
+        taffy::Size {
+            width: AvailableSpace::Definite(page_box.width),
+            height: AvailableSpace::Definite(page_box.height),
+        },
+    );
+
     Ok(())
 }
 
@@ -310,5 +363,98 @@ mod tests {
         assert_eq!(before.display, after.display, "display unchanged at M1.4");
         assert_eq!(before.margin, after.margin, "margin unchanged at M1.4");
         assert_eq!(before.padding, after.padding, "padding unchanged at M1.4");
+    }
+
+    // ── layout_single_page driver (Task 7) ──────────────────────
+
+    fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
+        // <html><head></head><body><p style="color:red">Hi</p></body></html>
+        // 相当 (parser の代わりに手動構築、raikiri-html 統合は m1.7+ で umbrella が担当)
+        use raikiri_style::{build_rule_tree, cascade};
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("color:red"));
+        let _text = doc.append_text(p, "Hi");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        (doc, cr)
+    }
+
+    #[test]
+    fn layout_single_page_hello_world_produces_body_at_page_width() {
+        use raikiri_traits::PageBox;
+        let (mut doc, cr) = hello_world_doc();
+        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        // body の layout size.width が A4 幅 (595) と一致
+        let body_id = find_body(&doc).expect("body exists");
+        let body_size = doc.nodes[body_id].unrounded_layout.size;
+        assert!(
+            (body_size.width - 595.0).abs() < 0.5,
+            "body width should be A4.width (595), got {}",
+            body_size.width
+        );
+        assert!(
+            body_size.height > 0.0,
+            "body height should be non-zero from block layout of <p>Hi</p>, got {}",
+            body_size.height
+        );
+    }
+
+    #[test]
+    fn layout_single_page_without_body_returns_error() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::{LayoutError, PageBox};
+
+        // <p> 直接 attach (fragment 相当)
+        let mut doc = Document::new();
+        let _p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+
+        match layout_single_page(&mut doc, &cr, PageBox::A4) {
+            Err(LayoutError::Internal { message }) => {
+                assert!(
+                    message.contains("body"),
+                    "error message should mention <body>, got '{}'",
+                    message
+                );
+            }
+            other => panic!("expected LayoutError::Internal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn layout_single_page_can_be_called_multiple_times() {
+        use raikiri_traits::PageBox;
+        let (mut doc, cr) = hello_world_doc();
+        layout_single_page(&mut doc, &cr, PageBox::A4).expect("first call Ok");
+        let body_id = find_body(&doc).expect("body exists");
+        let first_size = doc.nodes[body_id].unrounded_layout.size;
+
+        // 2 回目呼び出し — text_layout の re-entrance clear と layout の再走が
+        // 同じ結果を返すことを pin (将来 incremental optimization が silent
+        // regression を起こしても検出できる)
+        layout_single_page(&mut doc, &cr, PageBox::A4).expect("second call Ok");
+        let second_size = doc.nodes[body_id].unrounded_layout.size;
+
+        assert!((first_size.width - second_size.width).abs() < 0.001);
+        assert!((first_size.height - second_size.height).abs() < 0.001);
+    }
+
+    #[test]
+    fn layout_single_page_body_bridge_is_noop_at_m1_4() {
+        // bridge site (apply_computed_to_style) が body.style の layout-affecting
+        // field を変えないことを確認 (M4 で display / margin / padding が入る時に
+        // ここが反転する)
+        use raikiri_traits::PageBox;
+        let (mut doc, cr) = hello_world_doc();
+        let body_id = find_body(&doc).expect("body exists");
+        let before = doc.nodes[body_id].style.display;
+        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        let after = doc.nodes[body_id].style.display;
+        assert_eq!(before, after, "display unchanged by M1.4 bridge");
+        // apply_page_box_to_body により size は変わるので size は assert 対象外
     }
 }
