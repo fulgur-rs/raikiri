@@ -56,6 +56,17 @@ pub(crate) struct Node {
     /// 順序保持 (html5ever の source order、cascade tie-breaking で使う想定)。
     /// `style` attribute は [`Node::inline_style`] に分離済のためここには含めない。
     pub(crate) attributes: Vec<Attr>,
+    /// Text node の pre-shaped parley Layout。Element / Document は常に None。
+    ///
+    /// - Populated by [`crate::layout::preshape_text`] (M1.6)
+    /// - Consumed by taffy leaf measure closure (intrinsic size) と m1.7 paint
+    ///   (glyph 位置)
+    /// - Brush type `()` は M1.6 の choice: color / decoration は持たせない
+    ///   (paint 段で ComputedValues.color を別途拾う)。M3 で `peniko::Brush`
+    ///   等に昇格予定
+    /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア +
+    ///   再走。granular invalidation は M2+
+    pub(crate) text_layout: Option<parley::Layout<()>>,
 }
 
 impl Node {
@@ -72,6 +83,7 @@ impl Node {
             inline_style: None,
             namespace: None,
             attributes: Vec::new(),
+            text_layout: None,
         }
     }
 
@@ -91,6 +103,7 @@ impl Node {
             inline_style,
             namespace: None,
             attributes: Vec::new(),
+            text_layout: None,
         }
     }
 
@@ -107,6 +120,7 @@ impl Node {
             inline_style: None,
             namespace: None,
             attributes: Vec::new(),
+            text_layout: None,
         }
     }
 }

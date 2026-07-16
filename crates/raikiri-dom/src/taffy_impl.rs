@@ -101,11 +101,27 @@ impl LayoutPartialTree for Document {
             let is_leaf = tree.nodes[idx].children.is_empty();
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
+                let text_intrinsic: Option<Size<f32>> =
+                    tree.nodes[idx].text_layout.as_ref().map(|l| Size {
+                        width: l.width(),
+                        height: l.height(),
+                    });
                 compute_leaf_layout(
                     inputs,
                     &style,
                     |_val, _basis| 0.0,
-                    |_known, _avail| Size::ZERO,
+                    |known, _avail| {
+                        // taffy が style から算出した known.width / .height が Some なら
+                        // それを優先 (explicit size)、None なら parley intrinsic を使う、
+                        // 両方無ければ 0。
+                        Size {
+                            width: known.width.or(text_intrinsic.map(|s| s.width)).unwrap_or(0.0),
+                            height: known
+                                .height
+                                .or(text_intrinsic.map(|s| s.height))
+                                .unwrap_or(0.0),
+                        }
+                    },
                 )
             } else {
                 match display {

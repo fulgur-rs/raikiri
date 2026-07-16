@@ -29,23 +29,35 @@ impl PageFragment {
 }
 
 /// PageBox — @page rule 解決結果 (size, margins, margin box slots)。
-/// M1.6 layout-single-page で populate。
+/// M1.6 layout-single-page で width / height + `A4` const を populate。
+/// margins / margin_boxes は M4 で populate。
 #[allow(missing_docs)]
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct PageBox {
-    // M1.6 で populate:
-    //   pub width: f32,
-    //   pub height: f32,
+    /// Page 幅 (CSS pt = 1/72 inch)。M1.6 populate。
+    pub width: f32,
+    /// Page 高 (CSS pt = 1/72 inch)。M1.6 populate。
+    pub height: f32,
+    // M4 で populate:
     //   pub margins: Margins,
     //   pub margin_boxes: [Option<MarginBox>; 16],
-    //   ...
 }
 
 impl PageBox {
-    /// Construct an empty PageBox. M1.1 placeholder.
+    /// A4 portrait (595 × 842 pt)。CSS Paged Media default page size。
+    pub const A4: PageBox = PageBox { width: 595.0, height: 842.0 };
+
+    /// Construct a `PageBox` = `A4`。`#[non_exhaustive]` の下でも安定した
+    /// zero-arg constructor を残すため保持。
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+impl Default for PageBox {
+    fn default() -> Self {
+        Self::A4
     }
 }
 

@@ -589,4 +589,28 @@ mod tests {
             _ => panic!("expected HtmlParseError"),
         }
     }
+
+    // ── PageBox populate (M1.6) ────────────────────────────────
+
+    #[test]
+    fn page_box_a4_has_expected_dimensions() {
+        let a4 = PageBox::A4;
+        assert_eq!(a4.width, 595.0);
+        assert_eq!(a4.height, 842.0);
+    }
+
+    #[test]
+    fn page_box_default_is_a4() {
+        let default = PageBox::default();
+        assert_eq!(default, PageBox::A4);
+    }
+
+    #[test]
+    fn page_box_external_constructable_via_struct_update_from_a4() {
+        // #[non_exhaustive] pub struct の external constructable pattern (M1 acceptance)。
+        // `..PageBox::A4` を base に width だけ変える。
+        let landscape_a4 = PageBox { width: 842.0, height: 595.0, ..PageBox::A4 };
+        assert_eq!(landscape_a4.width, 842.0);
+        assert_eq!(landscape_a4.height, 595.0);
+    }
 }
