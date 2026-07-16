@@ -342,3 +342,28 @@ fn test_run_and_compare_writes_artifacts_on_diff() {
         "expected every pixel in diff.png to be magenta"
     );
 }
+
+#[test]
+fn test_compare_png_dimension_mismatch() {
+    // compare_png:207-217 branch: actual と expected の decode dim が異なる場合、
+    // DiffReport::{width, height} は expected 側の dim を、mismatched_pixel_count
+    // は ew * eh を報告する。色を変えているのは EXACT byte-eq shortcut を
+    // 偶然通っていないことが視覚的に読めるようにするため (実際には dim check が
+    // 先に走るので shortcut に到達しない)。
+    let actual_png = encode_png(&solid([255, 0, 0, 255], 10, 10), 10, 10); // 10x10 red
+    let expected_png = encode_png(&solid([0, 0, 255, 255], 5, 5), 5, 5); // 5x5 blue
+
+    let err = compare_png(&actual_png, &expected_png, Tolerance::EXACT)
+        .expect_err("dim mismatch should be detected");
+
+    assert_eq!(err.width, 5, "width should be expected dim");
+    assert_eq!(err.height, 5, "height should be expected dim");
+    assert_eq!(err.mismatched_pixel_count, 25, "should equal ew * eh");
+    assert!(
+        err.first_mismatch.is_none(),
+        "dim mismatch has no pixel-level info"
+    );
+    assert!(err.actual_png_path.is_none(), "compare_png does no I/O");
+    assert!(err.diff_png_path.is_none(), "compare_png does no I/O");
+    assert_eq!(err.page_index, 0, "compare_png sets page_index to 0");
+}
