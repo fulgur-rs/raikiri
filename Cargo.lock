@@ -756,6 +756,7 @@ dependencies = [
  "hashbrown",
  "log",
  "peniko",
+ "png 0.18.1",
  "skrifa",
  "smallvec",
  "vello_common",
@@ -1674,6 +1675,7 @@ dependencies = [
  "png 0.17.16",
  "tempfile",
  "tiny-skia",
+ "vello_cpu",
 ]
 
 [[package]]
@@ -2591,6 +2593,7 @@ dependencies = [
  "glifo",
  "hashbrown",
  "ordered-channel",
+ "png 0.18.1",
  "rayon",
  "thread_local",
  "vello_common",
