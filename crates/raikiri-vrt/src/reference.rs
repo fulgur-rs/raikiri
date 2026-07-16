@@ -193,6 +193,97 @@ impl std::error::Error for FixtureError {
     }
 }
 
+/// Compare two PNG buffers pixel-wise under a tolerance.
+///
+/// Returns `Ok(())` when the images match. Returns `Err(DiffReport)` with
+/// `page_index = 0` and `actual_png_path = diff_png_path = None`
+/// (this primitive does no I/O). Callers that need artifact-writing behavior
+/// should use `run_and_compare` instead.
+///
+/// # Panics
+///
+/// Panics if either PNG buffer fails to decode. Both inputs should be
+/// valid PNG bytes (typically produced by `encode_png` or read from a
+/// well-formed fixture).
+pub fn compare_png(
+    actual_png: &[u8],
+    expected_png: &[u8],
+    tolerance: Tolerance,
+) -> Result<(), DiffReport> {
+    let actual = tiny_skia::Pixmap::decode_png(actual_png)
+        .expect("compare_png: actual PNG failed to decode (invariant violation)");
+    let expected = tiny_skia::Pixmap::decode_png(expected_png)
+        .expect("compare_png: expected PNG failed to decode (invariant violation)");
+    let (aw, ah) = (actual.width(), actual.height());
+    let (ew, eh) = (expected.width(), expected.height());
+
+    if (aw, ah) != (ew, eh) {
+        return Err(DiffReport {
+            page_index: 0,
+            width: ew,
+            height: eh,
+            mismatched_pixel_count: u64::from(ew) * u64::from(eh),
+            first_mismatch: None,
+            actual_png_path: None,
+            diff_png_path: None,
+        });
+    }
+
+    let a = actual.data();
+    let e = expected.data();
+
+    // EXACT fast path: byte equality skips per-pixel iteration.
+    if tolerance == Tolerance::EXACT && a == e {
+        return Ok(());
+    }
+
+    let mut mismatched: u64 = 0;
+    let mut first: Option<PixelMismatch> = None;
+    let total_pixels = u64::from(aw) * u64::from(ah);
+    let max_delta = i16::from(tolerance.max_delta);
+
+    // chunks_exact(4) + zip + enumerate avoids needless_range_loop (clippy::style)
+    // that a manual `for i in 0..(a.len() / 4)` index loop would trigger.
+    for (i, (ax, ex)) in a.chunks_exact(4).zip(e.chunks_exact(4)).enumerate() {
+        let differs = ax
+            .iter()
+            .zip(ex.iter())
+            .any(|(&av, &ev)| (i16::from(av) - i16::from(ev)).abs() > max_delta);
+        if differs {
+            mismatched += 1;
+            if first.is_none() {
+                let i = i as u32;
+                let x = i % aw;
+                let y = i / aw;
+                first = Some(PixelMismatch {
+                    x,
+                    y,
+                    expected: [ex[0], ex[1], ex[2], ex[3]],
+                    actual: [ax[0], ax[1], ax[2], ax[3]],
+                });
+            }
+        }
+    }
+
+    if mismatched == 0 {
+        return Ok(());
+    }
+    let fraction = (mismatched as f32) / (total_pixels as f32);
+    if fraction <= tolerance.max_diff_fraction {
+        return Ok(());
+    }
+
+    Err(DiffReport {
+        page_index: 0,
+        width: aw,
+        height: ah,
+        mismatched_pixel_count: mismatched,
+        first_mismatch: first,
+        actual_png_path: None,
+        diff_png_path: None,
+    })
+}
+
 #[cfg(test)]
 mod type_tests {
     use super::*;
