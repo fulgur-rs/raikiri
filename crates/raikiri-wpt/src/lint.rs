@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use time::{Date, Duration, macros::format_description};
+use time::{Date, Duration};
 
 use crate::expectations::{Baseline, Deprecated, ExpectError, KnownIssues, Quarantine, TrackedWpt};
 
@@ -393,21 +393,17 @@ fn detect_conflicting(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
     issues
 }
 
-/// Scan the `quarantine.txt` entries for parse failures (→
-/// [`Category::Malformed`]) and entries older than 90 days relative to
-/// `now` (→ [`Category::Expired`], warning-only).
+/// Scan the `quarantine.txt` entries for entries older than 90 days
+/// relative to `now` (→ [`Category::Expired`], warning-only).
 ///
-/// The current parser stores `added_date` as a plain `String` (see
-/// [`crate::expectations::QuarantineEntry`]); this function performs the
-/// `time::Date` parse itself. Follow-up bd `raikiri-spike-md0` will migrate
-/// the parser to store `time::Date` directly, at which point this parse
-/// step can be removed but the 90-day threshold check stays.
+/// Parse failures for `added_date` are already surfaced upstream as
+/// [`Category::Malformed`] via [`crate::expectations::Quarantine::parse`],
+/// so this function only handles the 90-day threshold check.
 fn detect_expired(loaded: &Loaded, dir: &Path, now: Date) -> Vec<LintIssue> {
     let Some(q) = loaded.quarantine.as_ref() else {
         return Vec::new();
     };
     let path = dir.join("quarantine.txt").display().to_string();
-    let fmt = format_description!("[year]-[month]-[day]");
     let mut issues = Vec::new();
     for (idx, entry) in q.entries.iter().enumerate() {
         // Line number: entries appear in file order, but comments/blank
@@ -417,26 +413,16 @@ fn detect_expired(loaded: &Loaded, dir: &Path, now: Date) -> Vec<LintIssue> {
             .quarantine_raw
             .as_deref()
             .and_then(|raw| data_lines(raw).nth(idx).map(|(n, _)| n));
-        match Date::parse(&entry.added_date, &fmt) {
-            Err(e) => issues.push(LintIssue {
-                category: Category::Malformed,
+        if now - entry.added_date > Duration::days(90) {
+            issues.push(LintIssue {
+                category: Category::Expired,
                 file: path.clone(),
                 line_no,
-                message: format!("added_date {:?} is not YYYY-MM-DD ({e})", entry.added_date),
-            }),
-            Ok(added) => {
-                if now - added > Duration::days(90) {
-                    issues.push(LintIssue {
-                        category: Category::Expired,
-                        file: path.clone(),
-                        line_no,
-                        message: format!(
-                            "quarantine entry added on {} is older than 90 days (test_id={:?})",
-                            entry.added_date, entry.test_id
-                        ),
-                    });
-                }
-            }
+                message: format!(
+                    "quarantine entry added on {} is older than 90 days (test_id={:?})",
+                    entry.added_date, entry.test_id
+                ),
+            });
         }
     }
     issues
