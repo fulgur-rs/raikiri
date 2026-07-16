@@ -16,6 +16,7 @@ mod node;
 
 pub mod document;
 pub mod dom_impl;
+pub mod layout;
 pub mod taffy_impl;
 
 pub use document::Document;
