@@ -543,4 +543,62 @@ mod tests {
             "expected root height ~2000, got {h} (stale cache would give a much smaller value)"
         );
     }
+
+    #[test]
+    fn taffy_leaf_measure_reads_pre_populated_text_layout() {
+        // Node.text_layout に手動で parley Layout をセットして、taffy leaf closure が
+        // その intrinsic size を返すことを直接検証する (layout_single_page 経由
+        // ではなく leaf closure の pin として)。
+        use parley::{Alignment, AlignmentOptions, FontContext, LayoutContext};
+        use taffy::{AvailableSpace, NodeId as TaffyNodeId, Size};
+
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "root",
+            Style {
+                display: Display::Block,
+                size: Size {
+                    width: Dimension::length(400.0),
+                    height: Dimension::auto(),
+                },
+                ..Default::default()
+            },
+            None::<&str>,
+        );
+        let text = doc.append_text(root, "Hi");
+
+        // 手動 pre-shape
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        let builder = layout_cx.ranged_builder(&mut fonts, "Hi", 1.0, true);
+        let mut layout = builder.build("Hi");
+        layout.break_all_lines(Some(400.0));
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        let expected_h = layout.height();
+        doc.nodes[text].text_layout = Some(layout);
+
+        compute_root_layout(
+            &mut doc,
+            TaffyNodeId::from(root),
+            Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        );
+
+        let text_size = doc.nodes[text].unrounded_layout.size;
+        assert!(
+            text_size.width > 0.0,
+            "text leaf must have non-zero width from parley layout (got {})",
+            text_size.width
+        );
+        // root の block layout 経由で text leaf の高さが flow するはず
+        let root_size = doc.nodes[root].unrounded_layout.size;
+        assert!(
+            (root_size.height - expected_h).abs() < 0.5,
+            "root block should stack single text child at parley height {expected_h} (got {})",
+            root_size.height
+        );
+    }
 }

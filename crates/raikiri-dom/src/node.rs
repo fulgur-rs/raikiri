@@ -66,7 +66,6 @@ pub(crate) struct Node {
     ///   等に昇格予定
     /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア +
     ///   再走。granular invalidation は M2+
-    #[allow(dead_code)]
     pub(crate) text_layout: Option<parley::Layout<()>>,
 }
 
