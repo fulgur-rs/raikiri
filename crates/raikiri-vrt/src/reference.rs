@@ -149,22 +149,6 @@ pub enum FixtureError {
         /// Page numbers actually found.
         found: Vec<u32>,
     },
-    /// A PNG file under `expected/` failed to decode.
-    PngDecodeError {
-        /// Path to the PNG file that failed to decode.
-        path: PathBuf,
-        /// Underlying PNG decoding error.
-        source: png::DecodingError,
-    },
-    /// A rendered page's dimensions did not match the expected golden image.
-    DimensionMismatch {
-        /// Index of the page with mismatched dimensions.
-        page_index: usize,
-        /// Expected (width, height).
-        expected_wh: (u32, u32),
-        /// Actual (width, height).
-        actual_wh: (u32, u32),
-    },
 }
 
 impl fmt::Display for FixtureError {
@@ -183,20 +167,6 @@ impl fmt::Display for FixtureError {
                     fixture_dir.display()
                 )
             }
-            Self::PngDecodeError { path, source } => {
-                write!(f, "PNG decode failed for {}: {source}", path.display())
-            }
-            Self::DimensionMismatch {
-                page_index,
-                expected_wh,
-                actual_wh,
-            } => {
-                write!(
-                    f,
-                    "page {page_index} dimension mismatch: expected {}x{}, actual {}x{}",
-                    expected_wh.0, expected_wh.1, actual_wh.0, actual_wh.1,
-                )
-            }
         }
     }
 }
@@ -205,7 +175,6 @@ impl std::error::Error for FixtureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::IoError { source, .. } => Some(source),
-            Self::PngDecodeError { source, .. } => Some(source),
             _ => None,
         }
     }
