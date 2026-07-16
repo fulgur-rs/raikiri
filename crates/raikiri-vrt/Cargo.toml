@@ -9,7 +9,6 @@ publish = false
 
 [dependencies]
 tiny-skia = { workspace = true }
-png       = "0.17"                    # Direct dep for png::DecodingError in FixtureError; already transitive via tiny-skia so zero compile-time impact.
 
 [dev-dependencies]
 anyrender           = { workspace = true }
