@@ -1,6 +1,36 @@
 # expectations/tracked-wpt.txt — WPT categories under tracking (spec §12.9).
 #
-# Format: one test_id per line. Lines starting with '#' are comments.
-# Empty lines are ignored.
+# Format: one WPT test_id or category path prefix per line.
+# Lines starting with '#' are comments. Empty lines are ignored.
 #
-# Populated in M3.
+# Semantics (consumed by M3 runner):
+# - Entries ending with '/' are directory prefixes; runner will match any
+#   test_id whose path starts with the prefix.
+# - Entries not ending with '/' are treated as exact test_id matches.
+# Tracked tests emit as T3 informational only; regression does NOT block PR.
+#
+# Priority reflects raikiri's *scratch-build dependency order*, not project
+# end-goal. css-page / css-fragmentation are the project goal but come AFTER
+# the foundation stabilises.
+
+# ── P1 — Foundation (must work first; nothing renders without these) ──
+css/css-fonts/
+css/css-color/
+css/css-backgrounds/
+css/css-values/
+css/css-text/
+css/css-writing-modes/
+selectors/
+html/rendering/
+
+# ── P2 — Layout primitives (build on foundation) ──
+css/css-tables/
+css/css-grid/
+css/css-flexbox/
+
+# ── P3 — GCPM / paged media (raikiri's project goal, layered on P1-P2) ──
+css/css-page/
+css/css-fragmentation/
+
+# ── P4 — Low priority ──
+css/css-transforms/
