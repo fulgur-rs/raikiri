@@ -28,6 +28,9 @@ pub use parse::parse_html;
 mod stubs;
 pub use stubs::{plan, render_streaming};
 
+mod html_to_png;
+pub use html_to_png::html_to_png;
+
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 // Network API (Request / FetchedResource / NetworkError / Method / Body /
 // HeaderMap / AbortSignal / AbortController / ResourceKind) は `NetworkProvider`

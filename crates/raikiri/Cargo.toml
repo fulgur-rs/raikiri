@@ -21,6 +21,11 @@ url            = { workspace = true }
 # の `bytes` field と `Body::Bytes(Bytes)` の construction 用 (roborev-refine
 # job 230)。
 bytes          = { workspace = true }
+# m1.14 html_to_png: raster pipeline 用。raikiri-vrt は encode_png、
+# anyrender/anyrender_vello_cpu は render_to_buffer + VelloCpuImageRenderer。
+raikiri-vrt         = { workspace = true }
+anyrender           = { workspace = true }
+anyrender_vello_cpu = { workspace = true }
 
 [lints]
 workspace = true
