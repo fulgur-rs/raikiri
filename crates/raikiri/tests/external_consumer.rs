@@ -96,19 +96,36 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
 }
 
 /// 全 `#[non_exhaustive]` struct が external crate から X::default() / builder
-/// で constructable なことを pin (m1.15 acceptance criteria 前哨、design test #10)。
+/// で constructable なことを pin (m1.15 acceptance criteria、design test #10)。
+///
+/// 対象は umbrella `raikiri` から re-export される全 `#[non_exhaustive]` pub
+/// struct with `impl Default` (下記 new()-pin test と同じ coverage set)。
 #[test]
 fn external_consumer_can_construct_all_non_exhaustive_types() {
-    // struct via Default
-    let _ = PageDefaults::default();
-    let _ = PageBox::default();
-    let _ = PageContext::default();
-    let _ = PageFragment::default();
+    // struct via Default — configs
     let _ = PlanConfig::default();
     let _ = StreamingConfig::default();
     let _ = BatchConfig::default();
     let _ = LookaheadConfig::default();
     let _ = RenderLimits::default();
+
+    // struct via Default — paged model
+    let _ = PageDefaults::default();
+    let _ = PageBox::default();
+    let _ = PageContext::default();
+    let _ = PageFragment::default();
+    let _ = LayoutBuffer::default();
+    let _ = TargetRegistry::default();
+    let _ = RunningTemplate::default();
+    let _ = FormData::default();
+
+    // struct via Default — plan mode / resolver / strategy placeholder shape。
+    // これらは M4+ で populate 予定だが Default 契約は今から crate 外に露出。
+    let _ = TargetDefinition::default();
+    let _ = IntrinsicBox::default();
+    let _ = ResolverRequest::default();
+    let _ = ProbeContext::default();
+    let _ = TargetRequest::default();
 
     // struct via builder
     let _ = PageDefaults::builder().build();
@@ -242,21 +259,24 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     page_defaults.page_box = PageBox::US_LETTER;
 
     // Nested config (§4 "対象 struct" list) — inner struct の swap も pin。
+    // `initial_registry` は明示的に `Option<TargetRegistry>` に対する
+    // `Some(TargetRegistry::new())` で inner type も pin する (単に `None` を
+    // 代入するだけでは Option の T が別 type に silently 変わっても検出できない)。
     let mut plan_cfg = PlanConfig::default();
     plan_cfg.lookahead = lookahead.clone();
     plan_cfg.limits = limits.clone();
-    plan_cfg.initial_registry = None;
+    plan_cfg.initial_registry = Some(TargetRegistry::new());
 
     let mut stream_cfg = StreamingConfig::default();
     stream_cfg.lookahead = lookahead.clone();
     stream_cfg.limits = limits.clone();
-    stream_cfg.initial_registry = None;
+    stream_cfg.initial_registry = Some(TargetRegistry::new());
 
     // `BatchConfig` は preset 上 unbounded lookahead 固定 (design §M2 / M6b) の
     // ため `lookahead` field を持たない。limits + initial_registry のみ pin。
     let mut batch_cfg = BatchConfig::default();
     batch_cfg.limits = limits;
-    batch_cfg.initial_registry = None;
+    batch_cfg.initial_registry = Some(TargetRegistry::new());
 
     // consume so compiler は dead_store でなく actual read として扱う。
     let _ = (
@@ -300,23 +320,25 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert_eq!(limits.max_target_slots, Some(50_000));
 
     // Cross-struct wiring: LookaheadConfig を PlanConfig / StreamingConfig /
-    // BatchConfig に差し込む fluent chain も pin。
+    // BatchConfig に差し込む fluent chain も pin。`initial_registry` は
+    // `Option<TargetRegistry>` の inner type も pin するため `Some(...)` 経路を
+    // 使う (`None` だけでは inner の T が silently 変わっても検出できない)。
     let _plan = PlanConfig::builder()
         .lookahead(lookahead.clone())
         .limits(limits.clone())
-        .initial_registry(None)
+        .initial_registry(Some(TargetRegistry::new()))
         .build();
     // StreamingConfigBuilder は 3 setter (lookahead / limits / initial_registry)
     // 全てを chain 対象に含める。
     let _stream = StreamingConfig::builder()
         .lookahead(lookahead.clone())
         .limits(limits.clone())
-        .initial_registry(None)
+        .initial_registry(Some(TargetRegistry::new()))
         .build();
     // BatchConfig は lookahead を持たないため limits + initial_registry chain のみ。
     let _batch = BatchConfig::builder()
         .limits(limits)
-        .initial_registry(None)
+        .initial_registry(Some(TargetRegistry::new()))
         .build();
     let _ = lookahead;
 
