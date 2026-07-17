@@ -168,12 +168,16 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
 /// compile pin。umbrella `raikiri` から re-export される全 `#[non_exhaustive]`
 /// pub struct のうち zero-arg `new()` を持つもの全てを対象とする (§L703-704)。
 ///
+/// M4+ で populate 予定の placeholder struct (LayoutBuffer / TargetRegistry /
+/// RunningTemplate / FormData / TargetDefinition / IntrinsicBox / ResolverRequest
+/// / ProbeContext / TargetRequest) も現時点の zero-arg constructor を pin する
+/// ため含める — future populate 時に `new()` signature が非破壊拡張のまま維持
+/// されていることを保証する。
+///
 /// 対象外 (意図的):
 /// - `HtmlDocument` は private field で opaque、`parse_html` 経由でのみ construct
-/// - `ResolvedIntrinsic` は `#[non_exhaustive]` でないため対象外
-/// - `IntrinsicBox` / `ResolverRequest` / `ProbeContext` / `TargetRequest` /
-///   `TargetDefinition` / `LayoutBuffer` / `TargetRegistry` / `RunningTemplate`
-///   / `FormData` は M1.1 placeholder shape (M4+ で populate 予定)
+/// - `ResolvedIntrinsic` は `#[non_exhaustive]` でないため construction 契約が
+///   `struct literal` 経由で crate 外から直接可能、この test の対象外
 #[test]
 fn external_consumer_can_use_new_constructor_on_all_types() {
     // paged model (raikiri-traits::page)
