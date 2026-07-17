@@ -7,7 +7,12 @@
 # - Entries ending with '/' are directory prefixes; runner will match any
 #   test_id whose path starts with the prefix.
 # - Entries not ending with '/' are treated as exact test_id matches.
-# Tracked tests emit as T3 informational only; regression does NOT block PR.
+#
+# Blocking policy (spec §12.10 precedence):
+# - Tracked membership alone is informational (T3): no pass-rate threshold,
+#   no PR is blocked purely for being tracked.
+# - Tests that also appear in `raikiri-baseline.txt` become T2 gates —
+#   regression on the baseline set blocks merge per §12.10.
 #
 # Priority reflects raikiri's *scratch-build dependency order*, not project
 # end-goal. css-page / css-fragmentation are the project goal but come AFTER
