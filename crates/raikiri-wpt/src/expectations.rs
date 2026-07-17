@@ -26,7 +26,12 @@ use time::{Date, macros::format_description};
 /// ```no_run
 /// use raikiri_wpt::expectations::ExpectationSet;
 /// let set = ExpectationSet::load_from_workspace_root().unwrap();
-/// assert!(set.baseline.is_empty()); // M1 skeleton: workspace files are header-only
+/// // baseline/quarantine/deprecated are runner-generated at M3 kickoff and
+/// // remain empty until then; tracked/known_issues are populated statically
+/// // from spec §12.9 (see expectations/*.txt).
+/// assert!(set.baseline.is_empty());
+/// assert!(set.quarantine.entries.is_empty());
+/// assert!(set.deprecated.entries.is_empty());
 /// ```
 #[non_exhaustive]
 pub struct ExpectationSet {
