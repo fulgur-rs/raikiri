@@ -165,22 +165,45 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Pattern 1 の残り半分 (default() は既存 test で pin 済み) — `X::new()` 存在の
-/// compile pin。全 `#[non_exhaustive]` public config / page-model struct に対し
-/// zero-arg `new()` が存在することを保証する (§L703-704)。
+/// compile pin。umbrella `raikiri` から re-export される全 `#[non_exhaustive]`
+/// pub struct のうち zero-arg `new()` を持つもの全てを対象とする (§L703-704)。
+///
+/// 対象外 (意図的):
+/// - `HtmlDocument` は private field で opaque、`parse_html` 経由でのみ construct
+/// - `ResolvedIntrinsic` は `#[non_exhaustive]` でないため対象外
+/// - `IntrinsicBox` / `ResolverRequest` / `ProbeContext` / `TargetRequest` /
+///   `TargetDefinition` / `LayoutBuffer` / `TargetRegistry` / `RunningTemplate`
+///   / `FormData` は M1.1 placeholder shape (M4+ で populate 予定)
 #[test]
 fn external_consumer_can_use_new_constructor_on_all_types() {
-    // paged model
+    // paged model (raikiri-traits::page)
     let _ = PageDefaults::new();
     let _ = PageBox::new();
     let _ = PageContext::new();
     let _ = PageFragment::new();
+    let _ = LayoutBuffer::new();
+    let _ = TargetRegistry::new();
+    let _ = RunningTemplate::new();
+    let _ = FormData::new();
 
-    // render entry point configs
+    // render entry point configs (raikiri-traits::config)
     let _ = PlanConfig::new();
     let _ = StreamingConfig::new();
     let _ = BatchConfig::new();
     let _ = LookaheadConfig::new();
     let _ = RenderLimits::new();
+
+    // plan-mode types (raikiri-traits::plan)
+    let _ = TargetDefinition::new();
+
+    // resolver types (raikiri-traits::resolver) — ResolverRequest<'a> の 'a は
+    // return-type inference で local frame lifetime に落ちる。
+    let _ = IntrinsicBox::new();
+    let _ = ResolverRequest::new();
+
+    // strategy types (raikiri-traits::strategy) — TargetRequest も lifetime 同上。
+    let _ = ProbeContext::new();
+    let _ = TargetRequest::new();
 }
 
 /// Pattern 2 — mutation pattern (§L705-706 の canonical example) の compile pin。
@@ -260,11 +283,17 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert_eq!(lookahead.orphan_line_buffer, 2);
     assert!(lookahead.allow_cross_size_lookahead);
 
+    // RenderLimitsBuilder は全 5 setter を chain (全 method が `Self` を返す
+    // regression pin)。
     let limits = RenderLimits::builder()
         .max_document_pages(Some(100))
         .max_dom_nodes(Some(2_000_000))
+        .max_target_slots(Some(50_000))
+        .max_layout_buffer_entries(Some(5_000))
+        .max_aggregate_bytes(Some(512 * 1_024 * 1_024))
         .build();
     assert_eq!(limits.max_document_pages, Some(100));
+    assert_eq!(limits.max_target_slots, Some(50_000));
 
     // Cross-struct wiring: LookaheadConfig を PlanConfig / StreamingConfig /
     // BatchConfig に差し込む fluent chain も pin。
@@ -273,9 +302,12 @@ fn external_consumer_can_chain_builder_fluent_setters() {
         .limits(limits.clone())
         .initial_registry(None)
         .build();
+    // StreamingConfigBuilder は 3 setter (lookahead / limits / initial_registry)
+    // 全てを chain 対象に含める。
     let _stream = StreamingConfig::builder()
         .lookahead(lookahead.clone())
         .limits(limits.clone())
+        .initial_registry(None)
         .build();
     // BatchConfig は lookahead を持たないため limits + initial_registry chain のみ。
     let _batch = BatchConfig::builder()
