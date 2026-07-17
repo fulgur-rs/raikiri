@@ -11,7 +11,11 @@
 ## Global Constraints
 
 - **UTF-8 encoding** for all `expectations/*.txt` (§12.10 validation).
-- **No trailing whitespace** on data lines (`validate-expectations` fails on it, §12.10).
+- **No trailing whitespace** on data lines (spec §12.10 lists this as a
+  Malformed condition; enforcement in the current `validate-expectations`
+  lint is not yet implemented — `raikiri-spike-5ai` tracks adding the
+  check. For this task, treat it as a convention and self-check with
+  `cat -A <file> | grep ' $'` before commit).
 - **Comment lines** start with `#`; empty lines are ignored (parser contract in `expectations.rs`).
 - **tracked-wpt.txt / known-issues.txt semantics** — trailing `/` on an entry means "dir prefix, `starts_with` match at runtime"; no trailing `/` means "exact test_id".
 - **known-issues.txt data format** — `<test_id_or_pattern> | <reason>` (`|`-separated, both sides trimmed and non-empty).
@@ -220,23 +224,33 @@ Replace the entire file contents with the block below.
 #
 # ── Quarantine handling (target policy vs. transitional workflow) ──
 # Target policy (post raikiri-spike-a6s):
-#   quarantine.txt entries are NOT excluded from the baseline. Quarantine
-#   filters are platform-aware (§12.10 8-col format), so a test flaky
-#   only on some (platform, arch, renderer, tolerance) tuples must still
-#   receive baseline regression protection on stable tuples. The runner
-#   suppresses baseline gating at execution time when the current tuple
-#   matches a quarantine rule (T3 informational). Spec §12.10 already
-#   defines this as the intended semantics ("filter が baseline の実行
-#   環境と重ならなければ OK").
+#   baseline and quarantine may co-list the same test_id ONLY when the
+#   quarantine filter tuple (platform, arch, renderer, tolerance) does
+#   NOT intersect the baseline execution environment (spec §12.10:
+#   "filter が baseline の実行環境と重ならなければ OK、重なると conflict").
+#   The platform-aware analysis in a6s permits legal non-overlapping
+#   co-listing and rejects intersecting overlaps as Conflicting — so at
+#   runtime the executing tuple never simultaneously matches a
+#   baseline entry AND a quarantine rule. There is no runtime "gating
+#   suppression"; the design is that the two sets are disjoint per
+#   execution environment.
+#
+#   Consequence: a test flaky on {macos, aarch64} but stable on
+#   {linux, x86_64} stays in the baseline with the quarantine entry
+#   scoped to {macos, aarch64} — the linux CI still gates on it, the
+#   macos CI treats it as T3 informational. A test flaky on all
+#   tuples is quarantine-only (removed from baseline).
 #
 # Transitional workflow (until a6s lands):
 #   The current raikiri-wpt::lint::detect_conflicting is strict — it
-#   rejects EVERY baseline∩quarantine pair. Adopting the target policy
-#   before a6s lands would make validate-expectations block the M3
-#   baseline PR. Until then, the initial baseline PR must EXCLUDE any
-#   test_id that also appears in quarantine.txt. Once a6s implements
-#   platform-aware filter-overlap analysis, a follow-up PR re-includes
-#   those tests. raikiri-spike-a6s tracks this work.
+#   rejects EVERY baseline∩quarantine pair regardless of filter overlap.
+#   Adopting the target policy before a6s lands would make
+#   validate-expectations block the M3 baseline PR. Until then, the
+#   initial baseline PR must EXCLUDE any test_id that also appears in
+#   quarantine.txt. Once a6s implements platform-aware filter-overlap
+#   analysis, a follow-up PR re-adds those test_ids whose quarantine
+#   filters do not intersect the baseline execution environment.
+#   raikiri-spike-a6s tracks this work.
 #
 # See blitz's wpt/runner/src/report.rs `generate_expectations` for a
 # reference implementation of the runner-generated approach.
@@ -360,9 +374,11 @@ to:
 /// ```no_run
 /// use raikiri_wpt::expectations::ExpectationSet;
 /// let set = ExpectationSet::load_from_workspace_root().unwrap();
-/// // baseline/quarantine/deprecated are runner-generated at M3 kickoff and
-/// // remain empty until then; tracked/known_issues are populated statically
-/// // from spec §12.9 (see expectations/*.txt).
+/// // baseline is runner-generated at M3 kickoff (see raikiri-baseline.txt
+/// // header). quarantine/deprecated stay empty until a developer PR
+/// // adds an entry — flakes for quarantine (§12.10 procedure) and
+/// // crashers for deprecated. tracked/known_issues are populated
+/// // statically from spec §12.9 (see expectations/*.txt).
 /// assert!(set.baseline.is_empty());
 /// assert!(set.quarantine.entries.is_empty());
 /// assert!(set.deprecated.entries.is_empty());

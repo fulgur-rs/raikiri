@@ -22,23 +22,33 @@
 #
 # ── Quarantine handling (target policy vs. transitional workflow) ──
 # Target policy (post raikiri-spike-a6s):
-#   quarantine.txt entries are NOT excluded from the baseline. Quarantine
-#   filters are platform-aware (§12.10 8-col format), so a test flaky
-#   only on some (platform, arch, renderer, tolerance) tuples must still
-#   receive baseline regression protection on stable tuples. The runner
-#   suppresses baseline gating at execution time when the current tuple
-#   matches a quarantine rule (T3 informational). Spec §12.10 already
-#   defines this as the intended semantics ("filter が baseline の実行
-#   環境と重ならなければ OK").
+#   baseline and quarantine may co-list the same test_id ONLY when the
+#   quarantine filter tuple (platform, arch, renderer, tolerance) does
+#   NOT intersect the baseline execution environment (spec §12.10:
+#   "filter が baseline の実行環境と重ならなければ OK、重なると conflict").
+#   The platform-aware analysis in a6s permits legal non-overlapping
+#   co-listing and rejects intersecting overlaps as Conflicting — so at
+#   runtime the executing tuple never simultaneously matches a
+#   baseline entry AND a quarantine rule. There is no runtime "gating
+#   suppression"; the design is that the two sets are disjoint per
+#   execution environment.
+#
+#   Consequence: a test flaky on {macos, aarch64} but stable on
+#   {linux, x86_64} stays in the baseline with the quarantine entry
+#   scoped to {macos, aarch64} — the linux CI still gates on it, the
+#   macos CI treats it as T3 informational. A test flaky on all
+#   tuples is quarantine-only (removed from baseline).
 #
 # Transitional workflow (until a6s lands):
 #   The current raikiri-wpt::lint::detect_conflicting is strict — it
-#   rejects EVERY baseline∩quarantine pair. Adopting the target policy
-#   before a6s lands would make validate-expectations block the M3
-#   baseline PR. Until then, the initial baseline PR must EXCLUDE any
-#   test_id that also appears in quarantine.txt. Once a6s implements
-#   platform-aware filter-overlap analysis, a follow-up PR re-includes
-#   those tests. raikiri-spike-a6s tracks this work.
+#   rejects EVERY baseline∩quarantine pair regardless of filter overlap.
+#   Adopting the target policy before a6s lands would make
+#   validate-expectations block the M3 baseline PR. Until then, the
+#   initial baseline PR must EXCLUDE any test_id that also appears in
+#   quarantine.txt. Once a6s implements platform-aware filter-overlap
+#   analysis, a follow-up PR re-adds those test_ids whose quarantine
+#   filters do not intersect the baseline execution environment.
+#   raikiri-spike-a6s tracks this work.
 #
 # See blitz's wpt/runner/src/report.rs `generate_expectations` for a
 # reference implementation of the runner-generated approach.
