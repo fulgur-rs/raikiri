@@ -200,11 +200,18 @@ Replace the entire file contents with the block below.
 # ── Populate policy ─────────────────────────────────────────────────
 # This file is *runner-generated*, NOT hand-authored:
 # 1. At M3 kickoff (once the reftest runner is operational), run the runner
-#    over `tracked-wpt.txt` categories.
+#    over ALL executable WPT tests — every test NOT excluded by
+#    known-issues.txt, quarantine.txt, or deprecated.txt.
 # 2. Filter runner output to tests with STATUS = PASS.
 # 3. Open a PR that adds them to this file. The PR is the initial baseline
 #    migration and requires 2-reviewer approval per §12.10.
 # Subsequent additions / removals follow the same 2-reviewer rule.
+#
+# Scope note: the baseline is *scope-independent* per §2 Goals ("regression
+# detection の flat rule": any previously-passing test regressing blocks
+# merge, whether or not the test's category is tracked). tracked-wpt.txt is
+# only a T3 reporting/prioritization view of the WPT surface; it does not
+# restrict which tests qualify for the baseline.
 #
 # See blitz's wpt/runner/src/report.rs `generate_expectations` for a
 # reference implementation of the runner-generated approach.
@@ -453,8 +460,12 @@ bd create "raikiri-baseline.txt: runner-generated populate at M3 kickoff" \
   --description "$(cat <<'EOF'
 Follow-up from raikiri-spike-g3i. raikiri-baseline.txt header now
 documents that the file is *runner-generated*: at M3 kickoff, run the
-reftest runner over tracked-wpt.txt categories, filter to STATUS=PASS,
-and open the initial baseline PR (2-reviewer approval per §12.10).
+reftest runner over ALL executable WPT tests (any test not in
+known-issues, quarantine, or deprecated), filter to STATUS=PASS, and
+open the initial baseline PR (2-reviewer approval per §12.10).
+
+Scope is intentionally flat per §2 Goals — the baseline is not
+restricted to tracked-wpt.txt categories.
 
 Ref implementation: blitz's wpt/runner/src/report.rs::generate_expectations.
 
