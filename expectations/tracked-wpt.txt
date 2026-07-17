@@ -20,7 +20,7 @@ css/css-backgrounds/
 css/css-values/
 css/css-text/
 css/css-writing-modes/
-selectors/
+css/selectors/
 html/rendering/
 
 # ── P2 — Layout primitives (build on foundation) ──
