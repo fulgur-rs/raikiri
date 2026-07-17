@@ -207,12 +207,6 @@ Replace the entire file contents with the block below.
 # 1. At M3 kickoff (once the reftest runner is operational), run the runner
 #    over ALL executable WPT tests — every test NOT excluded by
 #    known-issues.txt or deprecated.txt.
-#    Note: quarantine.txt entries are NOT excluded from the baseline.
-#    Quarantine filters are platform-aware (§12.10 8-col format), so a
-#    test flaky only on some (platform, arch, renderer, tolerance) tuples
-#    must still receive baseline regression protection on stable tuples.
-#    The runner suppresses baseline gating at execution time when the
-#    current tuple matches a quarantine rule (T3 informational).
 # 2. Filter runner output to tests with STATUS = PASS.
 # 3. Open a PR that adds them to this file. The PR is the initial baseline
 #    migration and requires 2-reviewer approval per §12.10.
@@ -224,11 +218,25 @@ Replace the entire file contents with the block below.
 # only a T3 reporting/prioritization view of the WPT surface; it does not
 # restrict which tests qualify for the baseline.
 #
-# Lint follow-up: the current lint (raikiri-wpt::lint::detect_conflicting)
-# flags every baseline∩quarantine pair as Conflicting. Baseline↔quarantine
-# co-listing is a legitimate design (per this policy); the platform-aware
-# filter-overlap analysis to suppress spurious conflicts is tracked as
-# raikiri-spike-a6s.
+# ── Quarantine handling (target policy vs. transitional workflow) ──
+# Target policy (post raikiri-spike-a6s):
+#   quarantine.txt entries are NOT excluded from the baseline. Quarantine
+#   filters are platform-aware (§12.10 8-col format), so a test flaky
+#   only on some (platform, arch, renderer, tolerance) tuples must still
+#   receive baseline regression protection on stable tuples. The runner
+#   suppresses baseline gating at execution time when the current tuple
+#   matches a quarantine rule (T3 informational). Spec §12.10 already
+#   defines this as the intended semantics ("filter が baseline の実行
+#   環境と重ならなければ OK").
+#
+# Transitional workflow (until a6s lands):
+#   The current raikiri-wpt::lint::detect_conflicting is strict — it
+#   rejects EVERY baseline∩quarantine pair. Adopting the target policy
+#   before a6s lands would make validate-expectations block the M3
+#   baseline PR. Until then, the initial baseline PR must EXCLUDE any
+#   test_id that also appears in quarantine.txt. Once a6s implements
+#   platform-aware filter-overlap analysis, a follow-up PR re-includes
+#   those tests. raikiri-spike-a6s tracks this work.
 #
 # See blitz's wpt/runner/src/report.rs `generate_expectations` for a
 # reference implementation of the runner-generated approach.
