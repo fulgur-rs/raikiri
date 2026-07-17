@@ -145,3 +145,144 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
     // PageDefaults の default paper が A4 であることも pin
     assert_eq!(PageDefaults::default().page_box, PageBox::A4);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// m1.15: public-api-compile-tests-lookaheadconfig (round 3 review #2 対応)
+//
+// 設計仕様書 §L681-715 "struct construction pattern" (§M1 Acceptance criteria)
+// を external consumer 側で pin する。`#[non_exhaustive]` は crate 外での
+// literal construction を封じるため、Consumer は必ず以下 3 pattern のいずれか
+// を使わなければならない:
+//
+//   1. `X::default()` / `X::new()`  (zero-arg constructor)
+//   2. `let mut c = X::default(); c.field = v;`  (mutation pattern)
+//   3. `X::builder().field_a(v1).field_b(v2).build()`  (fluent builder)
+//
+// これらの test は runtime 挙動ではなく **compile 契約** を pin する。
+// もし将来 `LookaheadConfig::widow_line_buffer` が pub → pub(crate) に落ちる
+// / `PageBox::new()` が削除される 等の regression が起きれば、この test は
+// compile error になる (= external consumer の API break が CI で捕捉される)。
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Pattern 1 の残り半分 (default() は既存 test で pin 済み) — `X::new()` 存在の
+/// compile pin。全 `#[non_exhaustive]` public config / page-model struct に対し
+/// zero-arg `new()` が存在することを保証する (§L703-704)。
+#[test]
+fn external_consumer_can_use_new_constructor_on_all_types() {
+    // paged model
+    let _ = PageDefaults::new();
+    let _ = PageBox::new();
+    let _ = PageContext::new();
+    let _ = PageFragment::new();
+
+    // render entry point configs
+    let _ = PlanConfig::new();
+    let _ = StreamingConfig::new();
+    let _ = BatchConfig::new();
+    let _ = LookaheadConfig::new();
+    let _ = RenderLimits::new();
+}
+
+/// Pattern 2 — mutation pattern (§L705-706 の canonical example) の compile pin。
+///
+/// `#[non_exhaustive]` 下でも pub field は crate 外から代入可能な状態を保つ
+/// 必要がある。この test は `LookaheadConfig`, `RenderLimits`, `PageDefaults`,
+/// `PageBox`, `PlanConfig`, `StreamingConfig`, `BatchConfig` の各 pub field
+/// に対し `c.field = value` が compile することで、Consumer の runtime tuning
+/// 経路を pin する。
+#[test]
+fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
+    // spec §L705-706 の canonical mutation example そのまま。
+    let mut lookahead = LookaheadConfig::default();
+    lookahead.widow_line_buffer = 5;
+    lookahead.orphan_line_buffer = 3;
+    lookahead.break_avoid_max_subtree_blocks = 40;
+    lookahead.max_container_probe_pages = Some(8);
+    lookahead.allow_cross_size_lookahead = true;
+
+    let mut limits = RenderLimits::default();
+    limits.max_document_pages = Some(50_000);
+    limits.max_dom_nodes = Some(5_000_000);
+    limits.max_target_slots = Some(200_000);
+    limits.max_layout_buffer_entries = Some(20_000);
+    limits.max_aggregate_bytes = Some(4 * 1_073_741_824);
+
+    let mut page_box = PageBox::default();
+    page_box.width = 500.0;
+    page_box.height = 700.0;
+
+    let mut page_defaults = PageDefaults::default();
+    page_defaults.page_box = PageBox::US_LETTER;
+
+    // Nested config (§4 "対象 struct" list) — inner struct の swap も pin。
+    let mut plan_cfg = PlanConfig::default();
+    plan_cfg.lookahead = lookahead.clone();
+    plan_cfg.limits = limits.clone();
+    plan_cfg.initial_registry = None;
+
+    let mut stream_cfg = StreamingConfig::default();
+    stream_cfg.lookahead = lookahead.clone();
+    stream_cfg.limits = limits.clone();
+    stream_cfg.initial_registry = None;
+
+    // `BatchConfig` は preset 上 unbounded lookahead 固定 (design §M2 / M6b) の
+    // ため `lookahead` field を持たない。limits + initial_registry のみ pin。
+    let mut batch_cfg = BatchConfig::default();
+    batch_cfg.limits = limits;
+    batch_cfg.initial_registry = None;
+
+    // consume so compiler は dead_store でなく actual read として扱う。
+    let _ = (
+        plan_cfg,
+        stream_cfg,
+        batch_cfg,
+        page_defaults,
+        page_box,
+        lookahead,
+    );
+}
+
+/// Pattern 3 — builder fluent chain (§L707-708) の compile pin。全 setter が
+/// `Self` を返すこと (= `.a(...).b(...).c(...)` が chain 可能) を保証する。
+/// もし将来誰かが `&mut Self` に変更すれば borrow-move mismatch で compile
+/// error になる。
+#[test]
+fn external_consumer_can_chain_builder_fluent_setters() {
+    // Design task title の LookaheadConfig を代表例として full-field chain。
+    let lookahead = LookaheadConfig::builder()
+        .widow_line_buffer(4)
+        .orphan_line_buffer(2)
+        .break_avoid_max_subtree_blocks(30)
+        .max_container_probe_pages(Some(6))
+        .allow_cross_size_lookahead(true)
+        .build();
+    assert_eq!(lookahead.widow_line_buffer, 4);
+    assert_eq!(lookahead.orphan_line_buffer, 2);
+    assert!(lookahead.allow_cross_size_lookahead);
+
+    let limits = RenderLimits::builder()
+        .max_document_pages(Some(100))
+        .max_dom_nodes(Some(2_000_000))
+        .build();
+    assert_eq!(limits.max_document_pages, Some(100));
+
+    // Cross-struct wiring: LookaheadConfig を PlanConfig / StreamingConfig /
+    // BatchConfig に差し込む fluent chain も pin。
+    let _plan = PlanConfig::builder()
+        .lookahead(lookahead.clone())
+        .limits(limits.clone())
+        .initial_registry(None)
+        .build();
+    let _stream = StreamingConfig::builder()
+        .lookahead(lookahead.clone())
+        .limits(limits.clone())
+        .build();
+    // BatchConfig は lookahead を持たないため limits + initial_registry chain のみ。
+    let _batch = BatchConfig::builder()
+        .limits(limits)
+        .initial_registry(None)
+        .build();
+    let _ = lookahead;
+
+    let _defaults = PageDefaults::builder().page_box(PageBox::US_LETTER).build();
+}
