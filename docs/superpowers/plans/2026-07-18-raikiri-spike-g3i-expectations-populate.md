@@ -201,7 +201,13 @@ Replace the entire file contents with the block below.
 # This file is *runner-generated*, NOT hand-authored:
 # 1. At M3 kickoff (once the reftest runner is operational), run the runner
 #    over ALL executable WPT tests — every test NOT excluded by
-#    known-issues.txt, quarantine.txt, or deprecated.txt.
+#    known-issues.txt or deprecated.txt.
+#    Note: quarantine.txt entries are NOT excluded from the baseline.
+#    Quarantine filters are platform-aware (§12.10 8-col format), so a
+#    test flaky only on some (platform, arch, renderer, tolerance) tuples
+#    must still receive baseline regression protection on stable tuples.
+#    The runner suppresses baseline gating at execution time when the
+#    current tuple matches a quarantine rule (T3 informational).
 # 2. Filter runner output to tests with STATUS = PASS.
 # 3. Open a PR that adds them to this file. The PR is the initial baseline
 #    migration and requires 2-reviewer approval per §12.10.
@@ -212,6 +218,12 @@ Replace the entire file contents with the block below.
 # merge, whether or not the test's category is tracked). tracked-wpt.txt is
 # only a T3 reporting/prioritization view of the WPT surface; it does not
 # restrict which tests qualify for the baseline.
+#
+# Lint follow-up: the current lint (raikiri-wpt::lint::detect_conflicting)
+# flags every baseline∩quarantine pair as Conflicting. Baseline↔quarantine
+# co-listing is a legitimate design (per this policy); the platform-aware
+# filter-overlap analysis to suppress spurious conflicts is tracked as
+# raikiri-spike-a6s.
 #
 # See blitz's wpt/runner/src/report.rs `generate_expectations` for a
 # reference implementation of the runner-generated approach.
@@ -461,11 +473,20 @@ bd create "raikiri-baseline.txt: runner-generated populate at M3 kickoff" \
 Follow-up from raikiri-spike-g3i. raikiri-baseline.txt header now
 documents that the file is *runner-generated*: at M3 kickoff, run the
 reftest runner over ALL executable WPT tests (any test not in
-known-issues, quarantine, or deprecated), filter to STATUS=PASS, and
-open the initial baseline PR (2-reviewer approval per §12.10).
+known-issues or deprecated), filter to STATUS=PASS, and open the
+initial baseline PR (2-reviewer approval per §12.10).
 
 Scope is intentionally flat per §2 Goals — the baseline is not
-restricted to tracked-wpt.txt categories.
+restricted to tracked-wpt.txt categories. Quarantine entries are NOT
+excluded from the baseline: quarantine filters are platform-aware
+(§12.10 8-col format), so a test flaky on some tuples must still
+receive baseline protection on stable tuples. The runner suppresses
+baseline gating at execution time when the current (platform, arch,
+renderer, tolerance) matches a quarantine rule.
+
+Lint follow-up: raikiri-spike-a6s tracks tuning
+raikiri-wpt::lint::detect_conflicting to suppress spurious
+baseline∩quarantine conflicts via filter-overlap analysis.
 
 Ref implementation: blitz's wpt/runner/src/report.rs::generate_expectations.
 
