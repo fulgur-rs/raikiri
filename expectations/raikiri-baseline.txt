@@ -8,7 +8,11 @@
 # This file is *runner-generated*, NOT hand-authored:
 # 1. At M3 kickoff (once the reftest runner is operational), run the runner
 #    over ALL executable WPT tests — every test NOT excluded by
-#    known-issues.txt or deprecated.txt.
+#    known-issues.txt, quarantine.txt, or deprecated.txt. Quarantine is
+#    excluded because M1 baseline has no per-tuple filter (see the
+#    Quarantine handling section below); relaxing this exclusion becomes
+#    possible only after raikiri-spike-a6s enables filter-disjoint
+#    co-listing.
 # 2. Filter runner output to tests with STATUS = PASS.
 # 3. Open a PR that adds them to this file. The PR is the initial baseline
 #    migration and requires 2-reviewer approval per §12.10.
