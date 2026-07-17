@@ -846,7 +846,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
                 "css/css-flexbox/",
                 // P3 — GCPM / paged media
                 "css/css-page/",
-                "css/css-fragmentation/",
+                "css/css-break/",
                 // P4 — Low priority
                 "css/css-transforms/",
             ],

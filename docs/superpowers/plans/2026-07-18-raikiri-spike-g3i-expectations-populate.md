@@ -56,8 +56,8 @@ Replace the entire file contents with the block below.
 #   regression on the baseline set blocks merge per §12.10.
 #
 # Priority reflects raikiri's *scratch-build dependency order*, not project
-# end-goal. css-page / css-fragmentation are the project goal but come AFTER
-# the foundation stabilises.
+# end-goal. css-page / css-break (paged media + fragmentation) are the
+# project goal but come AFTER the foundation stabilises.
 
 # ── P1 — Foundation (must work first; nothing renders without these) ──
 css/css-fonts/
@@ -76,7 +76,7 @@ css/css-flexbox/
 
 # ── P3 — GCPM / paged media (raikiri's project goal, layered on P1-P2) ──
 css/css-page/
-css/css-fragmentation/
+css/css-break/
 
 # ── P4 — Low priority ──
 css/css-transforms/
@@ -103,7 +103,7 @@ feat(raikiri-wpt): populate tracked-wpt.txt with §12.9 + blitz-overlap categori
 
 14 entries structured as P1 Foundation (fonts/color/backgrounds/values/text/
 writing-modes/selectors/html-rendering), P2 Layout primitives (tables/grid/
-flexbox, blitz overlap), P3 GCPM (css-page/fragmentation), P4 transforms.
+flexbox, blitz overlap), P3 GCPM (css-page/css-break), P4 transforms.
 Priority reflects scratch-build dependency order, not project end-goal.
 
 Semantics: trailing '/' = dir prefix (M3 runner starts_with match).

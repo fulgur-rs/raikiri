@@ -15,8 +15,8 @@
 #   regression on the baseline set blocks merge per §12.10.
 #
 # Priority reflects raikiri's *scratch-build dependency order*, not project
-# end-goal. css-page / css-fragmentation are the project goal but come AFTER
-# the foundation stabilises.
+# end-goal. css-page / css-break (paged media + fragmentation) are the
+# project goal but come AFTER the foundation stabilises.
 
 # ── P1 — Foundation (must work first; nothing renders without these) ──
 css/css-fonts/
@@ -35,7 +35,7 @@ css/css-flexbox/
 
 # ── P3 — GCPM / paged media (raikiri's project goal, layered on P1-P2) ──
 css/css-page/
-css/css-fragmentation/
+css/css-break/
 
 # ── P4 — Low priority ──
 css/css-transforms/
