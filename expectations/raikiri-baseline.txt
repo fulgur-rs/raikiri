@@ -4,4 +4,14 @@
 # Format: one test_id per line. Lines starting with '#' are comments.
 # Empty lines are ignored.
 #
-# Populated in M3. Additions/removals require 2-reviewer approval (§12.10 baseline migration).
+# ── Populate policy ─────────────────────────────────────────────────
+# This file is *runner-generated*, NOT hand-authored:
+# 1. At M3 kickoff (once the reftest runner is operational), run the runner
+#    over `tracked-wpt.txt` categories.
+# 2. Filter runner output to tests with STATUS = PASS.
+# 3. Open a PR that adds them to this file. The PR is the initial baseline
+#    migration and requires 2-reviewer approval per §12.10.
+# Subsequent additions / removals follow the same 2-reviewer rule.
+#
+# See blitz's wpt/runner/src/report.rs `generate_expectations` for a
+# reference implementation of the runner-generated approach.
