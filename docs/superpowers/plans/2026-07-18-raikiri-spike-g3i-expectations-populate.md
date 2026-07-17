@@ -44,7 +44,12 @@ Replace the entire file contents with the block below.
 # - Entries ending with '/' are directory prefixes; runner will match any
 #   test_id whose path starts with the prefix.
 # - Entries not ending with '/' are treated as exact test_id matches.
-# Tracked tests emit as T3 informational only; regression does NOT block PR.
+#
+# Blocking policy (spec §12.10 precedence):
+# - Tracked membership alone is informational (T3): no pass-rate threshold,
+#   no PR is blocked purely for being tracked.
+# - Tests that also appear in `raikiri-baseline.txt` become T2 gates —
+#   regression on the baseline set blocks merge per §12.10.
 #
 # Priority reflects raikiri's *scratch-build dependency order*, not project
 # end-goal. css-page / css-fragmentation are the project goal but come AFTER
@@ -311,7 +316,7 @@ EOF
 
 **Interfaces:**
 - Consumes: existing `ExpectationSet` public fields (`baseline`, `quarantine.entries`, `deprecated.entries`).
-- Produces: doctest asserts the empty-contract for the three runner-generated files, providing a red-signal when M3 kickoff populates `baseline`.
+- Produces: doctest asserts the empty contract as a **compile-time** anchor for the three runner-generated files (the ` ```no_run` fence prevents execution, so its `assert!` calls never run). The **runtime** empty-contract check that actually red-signals when a runner PR populates `baseline` is the unit test `load_from_workspace_root_reads_the_header_only_files` in `crates/raikiri-wpt/src/expectations.rs::tests` (asserts exact tracked/known-issue membership + `baseline`/`quarantine`/`deprecated` `is_empty()`); this task strengthens the doctest for docs-code cohesion while the unit test remains the actual gate.
 
 - [ ] **Step 1: Locate the current doctest**
 
