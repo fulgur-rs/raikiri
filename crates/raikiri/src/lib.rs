@@ -19,16 +19,69 @@
 
 use raikiri_style::cascade;
 
+mod html_document;
+pub use html_document::HtmlDocument;
+
+mod parse;
+pub use parse::parse_html;
+
+mod stubs;
+pub use stubs::{plan, render_streaming};
+
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 // Network API (Request / FetchedResource / NetworkError / Method / Body /
 // HeaderMap / AbortSignal / AbortController / ResourceKind) は `NetworkProvider`
 // を Consumer 側で implement する際に必須 (fetch signature の param / return type)。
 // これらを揃えて re-export することで sub-crate 直接 dep 不要にする (roborev-refine
 // job 230)。
+#[rustfmt::skip]
 pub use raikiri_traits::{
-    AbortController, AbortSignal, Body, CascadeError, Dom, Element, FetchedResource, HeaderMap,
-    Method, NetworkError, NetworkProvider, Node, NodeId, NodeKind, ParseError, QuirksMode,
-    RenderError, RenderWarning, Request, ResourceKind, StylesheetKind,
+    // ── 既存 (m1.23) ──
+    AbortController, AbortSignal, Body, CascadeError, Dom, Element,
+    FetchedResource, HeaderMap, Method, NetworkError, NetworkProvider,
+    Node, NodeId, NodeKind, ParseError, QuirksMode, RenderError, RenderWarning,
+    Request, ResourceKind, StylesheetKind,
+
+    // ── error / status 系 ──
+    RenderStatus, RenderSummary, LimitKind, UnresolvedTarget, UnresolvedReason,
+    EmittedSlotInfo, TargetSlotId, TargetKind, TargetDiscrepancy, ExhaustionPolicy,
+
+    // ── plan mode ──
+    DocumentPlan, PageSummary, BreakReason, TargetDefinition,
+
+    // ── config ──
+    RenderLimits, RenderLimitsBuilder,
+    LookaheadConfig, LookaheadConfigBuilder,
+    PlanConfig, PlanConfigBuilder,
+    StreamingConfig, StreamingConfigBuilder,
+    BatchConfig, BatchConfigBuilder,
+
+    // ── paged model ──
+    PageBox, PageContext, PageFragment,
+    PageDefaults, PageDefaultsBuilder,
+    LayoutBuffer, TargetRegistry, RunningTemplate, FormData,
+    GcpmDirective, ContentValueItem,
+
+    // ── traits (Consumer が implement) ──
+    RenderSink, ReplacedResolver, ResourcePolicy,
+
+    // ── strategy traits ──
+    LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy,
+    ReflowAction, ContainerOverflowFallback, DirtyDeadline,
+    ProbeContext, TargetRequest, ResolvedTarget,
+
+    // ── resolver 補助 ──
+    IntrinsicBox, ResolvedIntrinsic, ResolveDisposition,
+    ResolverRequest, ResolverError,
+
+    // ── policy 補助 ──
+    PolicyViolation, ViolationType,
+
+    // ── layout 補助 ──
+    LayoutError,
+
+    // ── symbol ──
+    Symbol,
 };
 
 // ── raikiri-html: parse pipeline entry ─────────────────────────────────
@@ -146,5 +199,233 @@ mod smoke_tests {
             stylesheet_kind_to_origin(StylesheetKind::Author),
             Origin::Author,
         );
+    }
+}
+
+#[cfg(test)]
+mod html_document_tests {
+    use super::*;
+
+    fn hello_world_doc() -> HtmlDocument {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = raikiri_html::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
+        let cascade = build_cascaded(&uncascaded);
+        // 内部 field 直接 construct (crate-internal test なので pub(crate) field OK)
+        HtmlDocument {
+            uncascaded,
+            cascade,
+        }
+    }
+
+    #[test]
+    fn html_document_accessors_expose_underlying_types() {
+        let doc = hello_world_doc();
+        // accessor が inner field と identity 一致 (別 heap 割当てなし)
+        let dom_ref: &raikiri_dom::Document = doc.dom();
+        let cascade_ref: &CascadeResult = doc.cascade();
+        let sources_ref: &[String] = doc.stylesheet_sources();
+
+        assert!(
+            std::ptr::eq(dom_ref, &doc.uncascaded.dom),
+            "dom() must return &doc.uncascaded.dom"
+        );
+        assert!(
+            std::ptr::eq(cascade_ref, &doc.cascade),
+            "cascade() must return &doc.cascade"
+        );
+        assert!(
+            std::ptr::eq(
+                sources_ref.as_ptr(),
+                doc.uncascaded.stylesheet_sources.as_ptr()
+            ) || (sources_ref.is_empty() && doc.uncascaded.stylesheet_sources.is_empty()),
+            "stylesheet_sources() must alias inner Vec"
+        );
+    }
+
+    #[test]
+    fn html_document_cascade_populated_after_construct() {
+        let doc = hello_world_doc();
+        assert!(
+            !doc.cascade().computed.is_empty(),
+            "cascade must be populated (build_cascaded produces per-node ComputedValues)"
+        );
+        // node_count と cascade.computed.len() 契約
+        assert_eq!(
+            doc.cascade().computed.len(),
+            doc.dom().node_count(),
+            "cascade.computed.len() must equal document.node_count() (m1.23 contract)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod parse_html_tests {
+    use super::*;
+
+    #[test]
+    fn parse_html_returns_html_document_with_cascade_populated() {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let doc = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse_html should succeed");
+        assert!(
+            !doc.cascade().computed.is_empty(),
+            "parse_html output must have populated cascade"
+        );
+        assert_eq!(
+            doc.cascade().computed.len(),
+            doc.dom().node_count(),
+            "cascade / dom node_count invariant"
+        );
+    }
+
+    #[test]
+    fn parse_html_propagates_parse_error_from_io() {
+        struct FailingReader;
+        impl std::io::Read for FailingReader {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("boom"))
+            }
+        }
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let err = parse_html(FailingReader, &opts).expect_err("must fail on reader error");
+        assert!(
+            matches!(err, RenderError::Parse(ParseError::Io(_))),
+            "expected RenderError::Parse(ParseError::Io), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_html_propagates_utf8_error() {
+        // 0x80 は UTF-8 continuation byte 単独、invalid UTF-8
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let err =
+            parse_html(&[0x80u8, 0x80, 0x80][..], &opts).expect_err("must fail on invalid UTF-8");
+        assert!(
+            matches!(err, RenderError::Parse(ParseError::Encoding { .. })),
+            "expected RenderError::Parse(ParseError::Encoding), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_html_baked_cascade_matches_manual_build_cascaded() {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        // 2 経路の cascade が同じ結果を出すことを pin (parse_html は
+        // build_cascaded を内部で呼んでいる契約)
+        let via_parse_html = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse_html");
+        let via_manual = {
+            let uncascaded = raikiri_html::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
+            build_cascaded(&uncascaded)
+        };
+        assert_eq!(
+            via_parse_html.cascade().computed.len(),
+            via_manual.computed.len(),
+            "parse_html と手動 build_cascaded で cascade node 数が一致"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stub_tests {
+    use super::*;
+
+    fn hello_world_doc() -> HtmlDocument {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse")
+    }
+
+    /// M1 では replaced element なし → resolve が呼ばれない前提で unreachable。
+    struct NoopResolver;
+    impl ReplacedResolver for NoopResolver {
+        fn resolve(
+            &self,
+            _req: raikiri_traits::ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            unreachable!("plan/render_streaming stubs must not call resolver")
+        }
+    }
+
+    /// M1 sink stub。accept_page / finish_render は No-op。stub は sink を呼ばない前提。
+    struct NoopSink;
+    impl RenderSink for NoopSink {
+        fn accept_page(
+            &mut self,
+            _fragment: raikiri_traits::PageFragment,
+        ) -> Result<(), std::io::Error> {
+            unreachable!("render_streaming stub must not call sink")
+        }
+        fn finish_render(
+            &mut self,
+            _summary: raikiri_traits::RenderSummary,
+        ) -> Result<(), std::io::Error> {
+            unreachable!("render_streaming stub must not call sink")
+        }
+    }
+
+    #[test]
+    fn plan_returns_unimplemented_with_feature_name() {
+        let doc = hello_world_doc();
+        let err = plan(
+            &doc,
+            PageDefaults::default(),
+            &NoopResolver,
+            PlanConfig::default(),
+        )
+        .expect_err("plan stub must return Err");
+        match err {
+            RenderError::Unimplemented { feature, .. } => {
+                assert_eq!(feature, "plan", "feature must identify plan API");
+            }
+            other => panic!("expected Unimplemented, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn render_streaming_returns_unimplemented_with_feature_name() {
+        let doc = hello_world_doc();
+        let mut sink = NoopSink;
+        let err = render_streaming(
+            &doc,
+            PageDefaults::default(),
+            &NoopResolver,
+            StreamingConfig::default(),
+            &mut sink,
+        )
+        .expect_err("render_streaming stub must return Err");
+        match err {
+            RenderError::Unimplemented {
+                feature,
+                migration_hint,
+            } => {
+                assert_eq!(feature, "render_streaming", "feature must identify API");
+                assert!(
+                    migration_hint.contains("html_to_png"),
+                    "hint must point Consumer to html_to_png, got {migration_hint:?}"
+                );
+            }
+            other => panic!("expected Unimplemented, got {other:?}"),
+        }
     }
 }

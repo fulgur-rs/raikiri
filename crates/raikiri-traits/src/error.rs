@@ -53,6 +53,17 @@ pub enum RenderError {
     },
     /// その他 `std::io::Error` 系。
     Io(std::io::Error),
+
+    /// M1 stub 段階の API に対する call。M2+ で実装完了時にこの variant は
+    /// **削除される** (breaking change として release notes に明記)。Consumer
+    /// は M1 期間中のみ pattern match し、M2+ upgrade 時に arm 削除でよい。
+    /// `feature` は呼ばれた stub API の識別 (`"plan"`, `"render_streaming"` 等)。
+    Unimplemented {
+        /// M1 stub の API 名。
+        feature: &'static str,
+        /// Consumer 向け migration hint。
+        migration_hint: &'static str,
+    },
 }
 
 impl std::fmt::Display for RenderError {
@@ -80,6 +91,15 @@ impl std::fmt::Display for RenderError {
                 write!(f, "target-* did not converge in {iterations} iterations")
             }
             Self::Io(_) => write!(f, "I/O error"),
+            Self::Unimplemented {
+                feature,
+                migration_hint,
+            } => {
+                write!(
+                    f,
+                    "{feature} is not implemented in M1 (hint: {migration_hint})"
+                )
+            }
         }
     }
 }
@@ -96,7 +116,8 @@ impl std::error::Error for RenderError {
             Self::Sink(e) | Self::Io(e) => Some(e),
             Self::LimitExceeded { .. }
             | Self::Configuration(_)
-            | Self::TargetDidNotConverge { .. } => None,
+            | Self::TargetDidNotConverge { .. }
+            | Self::Unimplemented { .. } => None,
         }
     }
 }
@@ -421,3 +442,36 @@ impl std::fmt::Display for LayoutError {
 }
 
 impl std::error::Error for LayoutError {}
+
+#[cfg(test)]
+mod unimplemented_variant_tests {
+    use super::*;
+
+    #[test]
+    fn unimplemented_display_includes_feature_and_hint() {
+        let err = RenderError::Unimplemented {
+            feature: "plan",
+            migration_hint: "M2+ で pagination 実装後に populate",
+        };
+        let s = format!("{err}");
+        assert!(
+            s.contains("plan"),
+            "display must include feature: got {s:?}"
+        );
+        assert!(s.contains("M2+"), "display must include hint: got {s:?}");
+        assert!(
+            s.contains("not implemented"),
+            "display must include 'not implemented': got {s:?}"
+        );
+    }
+
+    #[test]
+    fn unimplemented_source_is_none() {
+        use std::error::Error;
+        let err = RenderError::Unimplemented {
+            feature: "render_streaming",
+            migration_hint: "hint",
+        };
+        assert!(err.source().is_none(), "Unimplemented has no inner cause");
+    }
+}

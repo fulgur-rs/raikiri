@@ -50,8 +50,8 @@ pub use net::{
     NetworkProvider, Request,
 };
 pub use page::{
-    ContentValueItem, FormData, GcpmDirective, LayoutBuffer, PageBox, PageContext, PageFragment,
-    RunningTemplate, TargetRegistry,
+    ContentValueItem, FormData, GcpmDirective, LayoutBuffer, PageBox, PageContext, PageDefaults,
+    PageDefaultsBuilder, PageFragment, RunningTemplate, TargetRegistry,
 };
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
@@ -704,8 +704,8 @@ mod tests {
     #[test]
     fn page_box_a4_has_expected_dimensions() {
         let a4 = PageBox::A4;
-        assert_eq!(a4.width, 595.0);
-        assert_eq!(a4.height, 842.0);
+        assert_eq!(a4.width, 793.7008);
+        assert_eq!(a4.height, 1122.5197);
     }
 
     #[test]
@@ -719,12 +719,12 @@ mod tests {
         // #[non_exhaustive] pub struct の external constructable pattern (M1 acceptance)。
         // `..PageBox::A4` を base に width だけ変える。
         let landscape_a4 = PageBox {
-            width: 842.0,
-            height: 595.0,
+            width: 1122.5197,
+            height: 793.7008,
             ..PageBox::A4
         };
-        assert_eq!(landscape_a4.width, 842.0);
-        assert_eq!(landscape_a4.height, 595.0);
+        assert_eq!(landscape_a4.width, 1122.5197);
+        assert_eq!(landscape_a4.height, 793.7008);
     }
 
     // ── StylesheetKind trait bounds (M1.4a) ──────────────────

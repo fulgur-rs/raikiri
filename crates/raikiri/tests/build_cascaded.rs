@@ -170,8 +170,7 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     // 完全構築、ComputedValues field を型付き binding できることを compile-time で verify。
     // (roborev-refine job 228 medium finding regression)
     use raikiri::{
-        Atom, CssColor, Document, Length, NetworkProvider, ParseOptions, Url,
-        build_cascaded, parse,
+        Atom, CssColor, Document, Length, NetworkProvider, ParseOptions, Url, build_cascaded, parse,
     };
 
     // NetworkProvider trait を dyn 経由で名指し可能なことを compile-time で確認。
@@ -197,7 +196,10 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     let _font_size: Length = computed.font_size;
     let font_family: &Vec<Atom> = &computed.font_family;
     // 実 assertion — initial font-family は Atom("serif") (raikiri-style::ComputedValues::initial)。
-    assert!(!font_family.is_empty(), "font_family should have at least initial serif atom");
+    assert!(
+        !font_family.is_empty(),
+        "font_family should have at least initial serif atom"
+    );
 }
 
 #[test]
@@ -209,9 +211,7 @@ fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
     // struct 実装。round-trip 動作までは要求しない (fetch 内で NetworkError::Aborted 即返却)
     // — 目的は trait impl の name resolution 完結性の証明。
     // (roborev-refine job 230 medium finding regression)
-    use raikiri::{
-        Bytes, FetchedResource, NetworkError, NetworkProvider, Request, Url,
-    };
+    use raikiri::{Bytes, FetchedResource, NetworkError, NetworkProvider, Request, Url};
 
     struct DummyProvider;
 
