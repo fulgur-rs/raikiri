@@ -497,8 +497,8 @@ bd create "raikiri-baseline.txt: runner-generated populate at M3 kickoff" \
 Follow-up from raikiri-spike-g3i. raikiri-baseline.txt header now
 documents that the file is *runner-generated*: at M3 kickoff, run the
 reftest runner over ALL executable WPT tests (any test not in
-known-issues or deprecated), filter to STATUS=PASS, and open the
-initial baseline PR (2-reviewer approval per §12.10).
+known-issues, quarantine, or deprecated), filter to STATUS=PASS, and
+open the initial baseline PR (2-reviewer approval per §12.10).
 
 Scope is intentionally flat per §2 Goals — the baseline is not
 restricted to tracked-wpt.txt categories.
