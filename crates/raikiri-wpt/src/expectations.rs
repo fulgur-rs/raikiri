@@ -26,9 +26,11 @@ use time::{Date, macros::format_description};
 /// ```no_run
 /// use raikiri_wpt::expectations::ExpectationSet;
 /// let set = ExpectationSet::load_from_workspace_root().unwrap();
-/// // baseline/quarantine/deprecated are runner-generated at M3 kickoff and
-/// // remain empty until then; tracked/known_issues are populated statically
-/// // from spec §12.9 (see expectations/*.txt).
+/// // baseline is runner-generated at M3 kickoff (see raikiri-baseline.txt
+/// // header). quarantine/deprecated stay empty until a developer PR
+/// // adds an entry — flakes for quarantine (§12.10 procedure) and
+/// // crashers for deprecated. tracked/known_issues are populated
+/// // statically from spec §12.9 (see expectations/*.txt).
 /// assert!(set.baseline.is_empty());
 /// assert!(set.quarantine.entries.is_empty());
 /// assert!(set.deprecated.entries.is_empty());
@@ -850,25 +852,44 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
             ],
         );
 
-        let known_patterns: Vec<&str> = set
+        let known_issues: Vec<(&str, &str)> = set
             .known_issues
             .entries
             .iter()
-            .map(|(pat, _reason)| pat.as_str())
+            .map(|(pat, reason)| (pat.as_str(), reason.as_str()))
             .collect();
         assert_eq!(
-            known_patterns,
+            known_issues,
             vec![
-                "css/css-animations/",
-                "css/css-transitions/",
-                "html/interaction/",
-                "css/css-ruby/",
-                "accname/",
-                "wai-aria/",
+                (
+                    "css/css-animations/",
+                    "Non-goal (interactive, §2 Non-Goals + §12.9)",
+                ),
+                (
+                    "css/css-transitions/",
+                    "Non-goal (interactive, §2 Non-Goals + §12.9)",
+                ),
+                (
+                    "html/interaction/",
+                    "Non-goal (interactive rendering, §2 Non-Goals + §12.9)",
+                ),
+                (
+                    "css/css-ruby/",
+                    "Non-goal for MVP (JIS X 4051 / 縦書き outside MVP scope, §2 Non-Goals)",
+                ),
+                (
+                    "accname/",
+                    "Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)",
+                ),
+                (
+                    "wai-aria/",
+                    "Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)",
+                ),
             ],
         );
 
-        // The runner-generated files stay header-only until M3 kickoff.
+        // baseline is populated by an M3-kickoff runner PR; quarantine and
+        // deprecated stay empty until a developer PR adds a flake or crasher.
         assert!(set.baseline.is_empty());
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
