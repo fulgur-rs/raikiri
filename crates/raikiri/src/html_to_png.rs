@@ -12,7 +12,13 @@
 //! - 内部 pipeline: `parse_html` → `layout_single_page` → `paint_single_page`
 //!   → `anyrender::render_to_buffer::<VelloCpuImageRenderer>` → `encode_png`
 
-use raikiri_traits::RenderError;
+use anyrender::render_to_buffer;
+use anyrender_vello_cpu::VelloCpuImageRenderer;
+use raikiri_html::ParseOptions;
+use raikiri_traits::{PageBox, RenderError};
+use raikiri_vrt::encode_png;
+
+use crate::parse::parse_html;
 
 /// HTML byte stream を単一 A4 ページの PNG に raster する。
 ///
@@ -24,6 +30,70 @@ use raikiri_traits::RenderError;
 /// spec §L1118 の signature literal は `(html: &str)` だが、既存 `parse_html<R: Read>`
 /// と signature を統一するため `impl Read` を採用 (m1.14 design 決定)。
 #[allow(clippy::result_large_err)]
-pub fn html_to_png<R: std::io::Read>(_input: R) -> Result<Vec<u8>, RenderError> {
-    todo!("m1.14 Task 2 で実装")
+pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
+    // ParseOptions は default 相当 (M1 fixture は extra stylesheet / network / base_url 不要)
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let mut doc = parse_html(input, &opts)?;
+
+    let page_box = PageBox::A4;
+    // pub(crate) field を crate-internal から split-borrow。accessor 経由だと
+    // `&mut self` が要求されて cascade への同時参照が壊れるが、field 直接なら OK。
+    // `?` は raikiri-traits の `From<LayoutError> for RenderError` (error.rs:137-140)
+    // で LayoutError → RenderError::Layout に自動変換される。
+    raikiri_dom::layout_single_page(&mut doc.uncascaded.dom, &doc.cascade, page_box)?;
+
+    // PageBox = 793.7008 × 1122.5197 CSS px → 794 × 1123 u32 buffer
+    let width = page_box.width.ceil() as u32;
+    let height = page_box.height.ceil() as u32;
+
+    // paint_single_page への split-borrow (dom / cascade は render_to_buffer の
+    // closure に move されないよう `let` binding で外に出す)
+    let dom = &doc.uncascaded.dom;
+    let cascade = &doc.cascade;
+    let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
+        |scene| raikiri_paint::paint_single_page(scene, dom, cascade, page_box),
+        width,
+        height,
+    );
+
+    Ok(encode_png(&rgba, width, height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PNG magic bytes: \x89 P N G \r \n \x1A \n (raikiri-vrt tests と同じ pinning)
+    const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+
+    #[test]
+    fn html_to_png_returns_png_bytes_for_hello_world() {
+        let html = b"<p style=\"color:red\">Hi</p>";
+        let png = html_to_png(&html[..]).expect("html_to_png must succeed");
+        assert!(png.len() > 8, "PNG payload should include header + IDAT chunks");
+        assert_eq!(
+            &png[..8], &PNG_MAGIC,
+            "output must start with PNG magic bytes; got {:?}",
+            &png[..8]
+        );
+    }
+
+    #[test]
+    fn html_to_png_propagates_parse_error_from_io() {
+        struct FailingReader;
+        impl std::io::Read for FailingReader {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("boom"))
+            }
+        }
+        let err = html_to_png(FailingReader).expect_err("must fail on reader error");
+        assert!(
+            matches!(err, RenderError::Parse(raikiri_traits::ParseError::Io(_))),
+            "expected RenderError::Parse(ParseError::Io), got {err:?}"
+        );
+    }
 }
