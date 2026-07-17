@@ -4,4 +4,20 @@
 # Format: <test_id_or_pattern> | <reason>
 # Lines starting with '#' are comments. Empty lines are ignored.
 #
-# Populated in M3.
+# Semantics (consumed by M3 runner):
+# - The `test_id_or_pattern` is a WPT test id or a directory prefix
+#   ending in '/'; runner treats matched tests as intentionally SKIPped.
+# - Results are not reported as regressions and do not count toward
+#   tracked-wpt statistics.
+
+# ── §12.9 explicit non-tracked (interactive rendering non-goal) ──
+css/css-animations/ | Non-goal (interactive, §2 Non-Goals + §12.9)
+css/css-transitions/ | Non-goal (interactive, §2 Non-Goals + §12.9)
+html/interaction/ | Non-goal (interactive rendering, §2 Non-Goals + §12.9)
+
+# ── §2 Non-Goals — Japanese vertical typesetting / ruby (MVP horizontal only) ──
+css/css-ruby/ | Non-goal for MVP (JIS X 4051 / 縦書き outside MVP scope, §2 Non-Goals)
+
+# ── §2 Non-Goals — Accessibility tree construction ──
+accname/ | Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)
+wai-aria/ | Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)

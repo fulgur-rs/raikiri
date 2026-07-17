@@ -812,12 +812,12 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
 
     #[test]
     fn load_from_workspace_root_reads_the_header_only_files() {
-        // Integration-style: verifies Task 1 population of tracked-wpt.txt
-        // (14 entries: P1 foundation ×8, P2 layout ×3, P3 gcpm ×2, P4 ×1).
+        // Integration-style: verifies Task 1 tracked-wpt.txt (14 entries) and
+        // Task 2 known-issues.txt (6 entries) populate.
         let set = ExpectationSet::load_from_workspace_root()
             .expect("workspace expectations/ should be present");
         assert_eq!(set.tracked.entries.len(), 14);
-        assert!(set.known_issues.is_empty());
+        assert_eq!(set.known_issues.entries.len(), 6);
         assert!(set.baseline.is_empty());
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
