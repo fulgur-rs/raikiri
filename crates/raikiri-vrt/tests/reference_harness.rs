@@ -4,12 +4,30 @@
 //! directories. Verifies the harness independently of any real pipeline.
 #![allow(unsafe_code)]
 
-use raikiri_vrt::encode_png;
 use raikiri_vrt::reference::{FixtureError, Tolerance, compare_png, load_fixture, run_and_compare};
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
+
+/// Encode a premultiplied RGBA8 buffer to PNG bytes via `tiny_skia::Pixmap`.
+/// (Inlined from raikiri-vrt lib; removed as public API after Task 1 inlining.)
+fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let expected = (width as usize) * (height as usize) * 4;
+    assert_eq!(
+        rgba.len(),
+        expected,
+        "encode_png: expected {expected} bytes for {width}x{height}, got {}",
+        rgba.len(),
+    );
+    let size =
+        tiny_skia::IntSize::from_wh(width, height).expect("encode_png: width/height must be > 0");
+    let pixmap = tiny_skia::Pixmap::from_vec(rgba.to_vec(), size)
+        .expect("encode_png: Pixmap::from_vec rejected pre-validated buffer (tiny-skia invariant violation)");
+    pixmap
+        .encode_png()
+        .expect("encode_png: tiny_skia::Pixmap::encode_png should not fail for a valid pixmap")
+}
 
 /// Solid-color RGBA8 buffer for a given size.
 fn solid(color: [u8; 4], w: u32, h: u32) -> Vec<u8> {

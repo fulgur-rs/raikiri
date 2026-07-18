@@ -1,50 +1,19 @@
-//! raikiri-vrt — VRT harness (tiny-skia PNG encoder for anyrender pipelines).
+//! raikiri-vrt — VRT harness for raikiri (dev-only).
 //!
-//! Thin wrapper providing the last-mile of the M1 render pipeline:
-//!   RGBA8 buffer → PNG bytes.
+//! Provides the reference-image fixture / diff / tolerance harness via the
+//! `reference` module, plus anyrender rasterize + rayon determinism tests
+//! that guard the raster pipeline used by production PNG encoding.
+//! Production PNG encoding itself lives in `raikiri::html_to_png` as an
+//! inlined private helper.
 //!
-//! Scene rasterization is handled by `anyrender::render_to_buffer` (fresh
-//! renderer per call, matches blitz-paint's caller-owns-reset convention).
-//! Backend selection: caller passes the concrete `ImageRenderer` type via
-//! turbofish. M1 default = `anyrender_vello_cpu::VelloCpuImageRenderer`.
+//! This crate is `publish = false` because `reference::Fixture` and friends
+//! are test-scaffolding APIs, not production surface.
 //!
-//! Downstream consumers:
-//! - `raikiri` umbrella `html_to_png` (M1 end-to-end pipeline)
-//! - hello-world VRT (m1.14)
-//! - determinism test (m1.13)
-//! - rayon thread-count test (m1.18)
+//! Downstream consumers (all dev-only):
+//! - hello-world VRT integration test — `raikiri/tests/hello_world_vrt.rs`
+//! - determinism / rayon thread-count tests — this crate's own `#[cfg(test)]`
 
 pub mod reference;
-
-/// Encode a premultiplied RGBA8 buffer to PNG bytes via `tiny_skia::Pixmap`.
-///
-/// The buffer must be exactly `width * height * 4` bytes. Buffer format is
-/// premultiplied RGBA8 — the `anyrender_vello_cpu` output convention.
-/// `tiny_skia` stores pixmaps in the same format, so encoding is a direct
-/// wrap-then-serialize.
-///
-/// # Panics
-///
-/// - `rgba.len() != width * height * 4`
-/// - `width == 0 || height == 0` (invalid `tiny_skia::IntSize`)
-/// - PNG serialization failure (tiny-skia never returns an error for a
-///   well-formed pixmap in practice; treated as an invariant violation)
-pub fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let expected = (width as usize) * (height as usize) * 4;
-    assert_eq!(
-        rgba.len(),
-        expected,
-        "encode_png: expected {expected} bytes for {width}x{height}, got {}",
-        rgba.len(),
-    );
-    let size =
-        tiny_skia::IntSize::from_wh(width, height).expect("encode_png: width/height must be > 0");
-    let pixmap = tiny_skia::Pixmap::from_vec(rgba.to_vec(), size)
-        .expect("encode_png: Pixmap::from_vec rejected pre-validated buffer (tiny-skia invariant violation)");
-    pixmap
-        .encode_png()
-        .expect("encode_png: tiny_skia::Pixmap::encode_png should not fail for a valid pixmap")
-}
 
 #[cfg(test)]
 mod tests {
@@ -52,8 +21,6 @@ mod tests {
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use kurbo::{Affine, Rect};
     use peniko::{Color, Fill, color::palette::css};
-
-    use super::encode_png;
 
     const W: u32 = 100;
     const H: u32 = 100;
@@ -111,23 +78,6 @@ mod tests {
             "independent renderers diverged: {} of {} bytes differ",
             a.iter().zip(&b).filter(|(x, y)| x != y).count(),
             a.len(),
-        );
-    }
-
-    #[test]
-    fn encode_png_produces_png_signature() {
-        #[allow(clippy::redundant_closure)]
-        let rgba = anyrender::render_to_buffer::<VelloCpuImageRenderer, _>(
-            |scene| draw_red_rect(scene),
-            W,
-            H,
-        );
-        let png = encode_png(&rgba, W, H);
-        // PNG magic bytes: \x89 P N G \r \n \x1A \n
-        assert_eq!(
-            &png[..8],
-            &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'],
-            "PNG magic bytes mismatch — encoder produced non-PNG output",
         );
     }
 
