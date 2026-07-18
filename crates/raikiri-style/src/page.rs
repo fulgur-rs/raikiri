@@ -1,4 +1,4 @@
-//! `@page` at-rule shape — parser scaffolding for CSS Paged Media Level 3 §3.2.
+//! `@page` at-rule shape — parser scaffolding for CSS Paged Media Level 3.
 //!
 //! # Status
 //!
@@ -8,7 +8,9 @@
 //!
 //! # Primary source
 //!
-//! - CSS Paged Media Module Level 3, §3.2 "Page selectors syntax":
+//! - CSS Paged Media Module Level 3, "Page selectors syntax" — the section
+//!   number varies across W3C TR revisions, so we cite only the stable
+//!   fragment anchor:
 //!   <https://www.w3.org/TR/css-page-3/#page-selectors-syntax>
 //!
 //! # Grammar coverage
@@ -51,7 +53,8 @@ use crate::rule::Declaration;
 /// Parsed `@page` selector.
 ///
 /// Corresponds to a single `<page-selector>` production from CSS Paged Media
-/// L3 §3.2 (see module docs for the deliberate narrowings).
+/// L3 (see module docs for the deliberate narrowings; anchor fragment
+/// `#page-selectors-syntax` in the spec).
 ///
 /// TODO(M4 shape debt): full L3 `<page-selector-list>` coverage requires a
 /// `Vec<PageSelectorEntry { ident: Option<Atom>, pseudos: Vec<PagePseudo> }>`

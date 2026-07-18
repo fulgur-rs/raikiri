@@ -457,7 +457,7 @@ mod tests {
 
     // ── @page at-rule scaffolding (raikiri-spike-rbo) ──
     //
-    // Spec: CSS Paged Media Level 3 §3.2 "Page selectors syntax"
+    // Spec: CSS Paged Media Level 3, "Page selectors syntax"
     // <https://www.w3.org/TR/css-page-3/#page-selectors-syntax>
     //
     // Test で使う body は M1.4 の property.rs でサポート済み (color / font-*) を
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn page_multi_pseudo_is_dropped() {
-        // Scaffolding narrowing (see page.rs module docs): spec §3.2 では
+        // Scaffolding narrowing (see page.rs module docs): the L3 grammar (spec anchor `#page-selectors-syntax`) では
         // `<pseudo-page>*` で複数許可だが、raikiri-spike-rbo では単数のみ受理。
         // `@page :first :left` は入 rule ごと drop。
         let rules = page_rules("@page :first :left { color: red }");
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn page_unknown_pseudo_is_dropped() {
-        // `:cover` は spec §3.2 に存在しないため drop。
+        // `:cover` は the L3 grammar (spec anchor `#page-selectors-syntax`) に存在しないため drop。
         let rules = page_rules("@page :cover { color: red }");
         assert!(rules.is_empty());
     }
