@@ -148,8 +148,21 @@ impl TreeSink for RaikiriTreeSink {
         })
     }
 
-    fn create_element(&self, name: QualName, attrs: Vec<Attribute>, _flags: ElementFlags) -> usize {
-        self.make_element(name, attrs)
+    fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> usize {
+        let idx = self.make_element(name, attrs);
+        // raikiri-spike-xno Part 2: html5ever は `<template>` element を作る時
+        // `flags.template=true` を渡す (markup5ever `create_element_with_flags`)。
+        // その場で fragment root を eager allocate + template_contents slot に
+        // wire することで、後続の `TreeSink::append(get_template_contents(t), ...)`
+        // が fragment root に子を積む。template element 自身の children は
+        // 空のまま (blitz と同じ shape、詳細は
+        // `Document::allocate_template_fragment_root` doc)。
+        if flags.template {
+            self.document
+                .borrow_mut()
+                .allocate_template_fragment_root(idx);
+        }
+        idx
     }
 
     fn create_comment(&self, text: StrTendril) -> usize {
@@ -213,16 +226,22 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn get_template_contents(&self, target: &usize) -> usize {
-        // raikiri-spike-37c: template contents fragment root の識別は
-        // ElementData.template_contents slot に予約したが M1 spike では populate
-        // しない。M2+ raikiri-spike-xno Part 2 で clone/inject 用途が生じたら
-        // populate 実装 + ここを fragment index 返却へ切り替え。blitz の
-        // html_sink.rs も現在 TODO で *target を返している。
+        // raikiri-spike-xno Part 2: `create_element` が `flags.template=true`
+        // を観測した時 `template_contents` slot に fragment root の arena index
+        // を wire している。ここで返した index が html5ever の以降の
+        // `TreeSink::append` の parent handle として使われる (template contents
+        // は fragment root の子として積まれ、template element 自身は空の
+        // children を保つ)。
         //
-        // Traversal 側 (cascade / paint / extract) は Node::is_in_document()
-        // predicate で template subtree を skip するため、`get_template_contents`
-        // が *target を返しても実害は無い。
-        *target
+        // Defensive fallback: sink 経由でない直接組み立て (unit test 等) で
+        // `template_contents` が未 wire な場合は旧挙動どおり `*target` を返す。
+        // Node::is_in_document() gate は 37c 経路 (直接構築時の
+        // `mark_in_document_flags` の template skip) が引き続き cover するので
+        // silent bug には至らない。
+        let doc = self.document.borrow();
+        doc.get_node(*target)
+            .and_then(|n| n.template_contents())
+            .unwrap_or(*target)
     }
 
     fn same_node(&self, x: &usize, y: &usize) -> bool {

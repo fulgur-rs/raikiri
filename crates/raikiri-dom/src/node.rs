@@ -112,10 +112,10 @@ impl NodeData {
 /// Element-only data (raikiri-spike-37c)。blitz `ElementData` に対応。
 ///
 /// `template_contents` は `<template>` element の contents fragment root への
-/// arena index を保持する slot として予約。M1 spike では sink が populate せず
-/// `get_template_contents` は `*target` を返す (blitz と同じ TODO 状態)。M2+ で
-/// clone/inject fixture が必要になった時に populate する
-/// (raikiri-spike-xno Part 2)。
+/// arena index を保持する slot。raikiri-spike-xno Part 2 で live 化され、
+/// raikiri-html sink が `create_element` の `ElementFlags::template=true` を
+/// 観測した時 [`crate::Document::allocate_template_fragment_root`] 経由で
+/// populate する。詳細は field 側の doc comment を参照。
 #[derive(Debug)]
 pub struct ElementData {
     /// HTML / XML tag name (例: `"p"`, `"div"`)。html5ever の QualName.local から
@@ -132,13 +132,19 @@ pub struct ElementData {
     /// `style` attribute は [`ElementData::inline_style`] に分離済のためここには
     /// 含めない。
     pub(crate) attributes: Vec<Attr>,
-    /// `<template>` element の contents fragment root への arena index。
+    /// `<template>` element の contents fragment root への arena index
+    /// (raikiri-spike-xno Part 2)。
     ///
-    /// M1 spike では sink が populate しない (常に `None`)。`get_template_contents`
-    /// も `*target` を返し続ける。M2+ で raikiri-spike-xno Part 2 の中で
-    /// populate 実装 + `get_template_contents` の切り替えを行う。blitz
-    /// `blitz-dom::node::element::ElementData::template_contents` と同名・同 shape。
-    #[allow(dead_code, reason = "reserved for raikiri-spike-xno Part 2")]
+    /// raikiri-html sink が `create_element` で html5ever の
+    /// `ElementFlags::template = true` を観測した時、[`crate::Document::allocate_template_fragment_root`]
+    /// で detached な "#document-fragment" element を allocate し、その arena
+    /// index をここに格納する。`TreeSink::get_template_contents` はこの slot
+    /// を返し、以降 html5ever は template contents を fragment root の子として
+    /// append する (template element 自身の children は空のまま)。
+    ///
+    /// blitz `blitz-dom::node::element::ElementData::template_contents` と
+    /// 同名・同 shape。sink が populate しなかった (template 判定を経ずに
+    /// 直接組み立てる test / M2+ manual construction) 場合は `None` のまま。
     pub(crate) template_contents: Option<usize>,
 }
 
@@ -198,8 +204,10 @@ impl Node {
     /// Element node を tag name / style / inline_style と共に構築する。
     /// `namespace` / `attributes` / `template_contents` は初期空/None で、raikiri-html
     /// sink が finish 時に [`crate::Document::set_element_namespace`] /
-    /// [`crate::Document::set_element_attributes`] で populate する
-    /// (template_contents は M1 では populate なし)。
+    /// [`crate::Document::set_element_attributes`] で populate する。
+    /// `template_contents` は `<template>` element のみ、sink の `create_element`
+    /// が [`crate::Document::allocate_template_fragment_root`] 経由で eager
+    /// populate する (raikiri-spike-xno Part 2)。
     pub(crate) fn new_element(tag: SmolStr, style: Style, inline_style: Option<SmolStr>) -> Self {
         Self {
             style,
@@ -288,6 +296,21 @@ impl Node {
     #[inline]
     pub fn is_in_document(&self) -> bool {
         self.flags.contains(NodeFlags::IS_IN_DOCUMENT)
+    }
+
+    /// `<template>` element の contents fragment root への arena index
+    /// (raikiri-spike-xno Part 2)。Element 以外 / fragment root 未 wire の場合
+    /// は `None`。
+    ///
+    /// html5ever `TreeSink::get_template_contents` 実装が sink 経由で消費する。
+    /// blitz `blitz-dom::node::element::ElementData::template_contents` field
+    /// と同等の read-side accessor。
+    #[inline]
+    pub fn template_contents(&self) -> Option<usize> {
+        match &self.data {
+            NodeData::Element(e) => e.template_contents,
+            _ => None,
+        }
     }
 
     /// [`NodeFlags::IS_IN_DOCUMENT`] bit を明示的に上書きする (crate-private)。

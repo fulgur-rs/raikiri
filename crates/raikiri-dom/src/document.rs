@@ -262,6 +262,97 @@ impl Document {
             .collect();
     }
 
+    /// `<template>` element の contents fragment root を新規 allocate し、
+    /// その arena index を template element の `template_contents` slot に
+    /// wire する (raikiri-spike-xno Part 2)。
+    ///
+    /// # Fragment root の shape (Option B — detached subtree)
+    ///
+    /// Fragment root は `Document.nodes` arena に detached 状態で allocate される
+    /// (parent なし、Document root からも reachable でない)。tag は
+    /// `"#document-fragment"` — 既存の `#comment` / `#pi` pseudo-tag convention
+    /// を踏襲する:
+    /// - CSS selector は leading `#` の tag 名にマッチしないため、意図しない
+    ///   selector match / cascade が起きない
+    /// - real HTML tag と衝突しない
+    /// - `NodeKind::Element` として存在するが `is_in_document()` は false
+    ///   (以下 `flags_dirty=true` → `mark_in_document_flags` の step 1 で clear
+    ///   された後、step 2 で reachable でないため false のまま)
+    ///
+    /// # html5ever integration
+    ///
+    /// html5ever `TreeSink::create_element` に渡される `ElementFlags::template`
+    /// が true の時、sink がこの method を呼んで fragment root を作り
+    /// template element の `template_contents` slot に格納する。以降
+    /// `TreeSink::get_template_contents` は fragment root index を返し、
+    /// html5ever は template contents をその子として append する
+    /// (template element 自身の children は空のまま)。
+    ///
+    /// blitz `blitz-dom::html_sink::HtmlSink::create_element` の
+    /// `create_template_contents` 相当。
+    ///
+    /// # Panics
+    ///
+    /// - `template_id` が Element kind でない場合 (release + debug 共通)。
+    ///   template element でない node に fragment root を wire するのは
+    ///   caller bug なので early fail。
+    /// - `template_id` の Element の `tag_name` が `"template"` でない場合
+    ///   (release + debug 共通)。html5ever
+    ///   [`ElementFlags::template`](https://docs.rs/markup5ever/latest/markup5ever/interface/tree_builder/struct.ElementFlags.html#structfield.template)
+    ///   が true になるのは HTML namespace の `<template>` element のみ、
+    ///   したがってこの entry point は template element 限定。誤って通常
+    ///   element を渡すのは caller bug (codex final review 2026-07-19 で
+    ///   surface)。
+    /// - `template_id` の `template_contents` slot が既に populate されている
+    ///   場合 (debug のみ)。sink は template element ごとに 1 度だけこの
+    ///   method を呼ぶ契約で、二重呼び出しは古い fragment root を silently
+    ///   orphan するため debug で fail。release では上書きを許容
+    ///   (M2+ mutation runtime での再 wire を想定した保守的挙動)。
+    ///
+    /// Returns: 新規 allocate された fragment root の arena index。
+    pub fn allocate_template_fragment_root(&mut self, template_id: usize) -> usize {
+        // Precondition: template_id は Element kind、かつ tag_name == "template"、
+        // かつ template_contents slot が未 populate。
+        // 借用の都合で immutable check を先に走らせて validation を確定させる
+        // (Step 1 の append_element が &mut self を borrow するため)。
+        {
+            let data = match &self.nodes[template_id].data {
+                NodeData::Element(e) => e.as_ref(),
+                _ => panic!("allocate_template_fragment_root called on non-Element"),
+            };
+            assert_eq!(
+                data.tag_name.as_str(),
+                "template",
+                "allocate_template_fragment_root called on non-<template> element (tag = {:?})",
+                data.tag_name.as_str(),
+            );
+            debug_assert!(
+                data.template_contents.is_none(),
+                "allocate_template_fragment_root called twice on the same template \
+                 (would orphan the previous fragment root at arena index {:?})",
+                data.template_contents,
+            );
+        }
+        // Step 1: fragment root を append_element(None) で detached allocate。
+        // 内部で `flags_dirty=true` が set されるので、後段 `mark_in_document_flags`
+        // が step 1 で fragment root の default IS_IN_DOCUMENT bit を clear する。
+        let frag_root = self.append_element(
+            None::<usize>,
+            "#document-fragment",
+            Style::default(),
+            None::<&str>,
+        );
+        // Step 2: template element の template_contents slot に fragment root
+        // index を wire。precondition check 済のため as_element_mut / template
+        // tag_name の re-validation は不要。
+        let e = self.nodes[template_id]
+            .data
+            .as_element_mut()
+            .expect("allocate_template_fragment_root: element vanished between checks");
+        e.template_contents = Some(frag_root);
+        frag_root
+    }
+
     /// Element node の `inline_style` を後付けで更新する
     /// (raikiri-spike-blg)。sink が `finish()` 時に side-table から
     /// `style="..."` を抽出して呼び出す。値は生 string でよく、`style=""`
@@ -307,6 +398,15 @@ impl Document {
     ///    default true のまま残さないため)
     /// 2. Document root から iterative DFS で bit set。template element 自身
     ///    は set、その descendants は skip (bit clear の状態が残る)
+    ///
+    /// 補足 (raikiri-spike-xno Part 2 併存): sink 経由の parse では template
+    /// contents は fragment root subtree に流れ、Document root から reachable
+    /// でなくなる → step 2 の DFS は自動的に届かない (in_template branch は
+    /// 走らない)。だが本 step 2 の "template 判定 → descendants skip" logic は
+    /// 残す: 手動で `append_element(Some(tmpl), ...)` を呼ぶ code path (raikiri-dom
+    /// 内 test / raikiri-paint hello-world setup / 将来の M2+ mutation runtime
+    /// で fragment root を経由しない contents 追加) は template 直下に子を積む
+    /// ため、その inert 保証を defense-in-depth として維持する。
     ///
     /// 実装上の細かい contract:
     /// - `<template>` 判定は HTML namespace + local == "template"
