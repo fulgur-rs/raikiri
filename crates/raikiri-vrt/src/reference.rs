@@ -532,13 +532,7 @@ fn build_and_write_diff(path: &Path, actual_png: &[u8], expected_png: &[u8]) -> 
             out.extend_from_slice(&[255, 0, 255, 255]);
         }
     }
-    let size =
-        tiny_skia::IntSize::from_wh(w, h).expect("build_and_write_diff: width/height must be > 0");
-    let pixmap = tiny_skia::Pixmap::from_vec(out, size)
-        .expect("build_and_write_diff: Pixmap::from_vec rejected pre-validated buffer (tiny-skia invariant violation)");
-    let png = pixmap
-        .encode_png()
-        .expect("build_and_write_diff: tiny_skia::Pixmap::encode_png should not fail for a valid pixmap");
+    let png = crate::encode_png(&out, w, h);
     std::fs::write(path, png).is_ok()
 }
 
