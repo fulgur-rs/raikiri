@@ -16,6 +16,9 @@
 
 #![allow(missing_docs)] // M0 seed; docs come with M1
 
+pub mod style_dom;
+pub use style_dom::{CascadeError, StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
+
 pub mod property;
 pub use property::{CssColor, DisplayValue, Length, PropertyValue};
 
@@ -209,7 +212,7 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
 ///
 /// M0 seed helper — returns a `SelectorList<RaikiriSelectorImpl>` and stringifies
 /// errors for the feasibility spike. M1 will replace the `Result<_, String>` shape
-/// with a proper `raikiri_traits`-defined error type.
+/// with a proper structured error type.
 pub fn parse_selector_list(input: &str) -> Result<SelectorList<RaikiriSelectorImpl>, String> {
     let mut parser_input = ParserInput::new(input);
     let mut css_parser = CssParser::new(&mut parser_input);
