@@ -340,7 +340,8 @@ mod tests {
 
         let mut fonts = FontContext::new();
         let mut layout_cx = LayoutContext::<()>::new();
-        preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 595.0).expect("preshape Ok");
+        preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width)
+            .expect("preshape Ok");
 
         assert!(
             doc.nodes[text].text_layout().is_some(),
@@ -388,7 +389,7 @@ mod tests {
             let cr = cascade(&doc, &rules).unwrap();
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 595.0).unwrap();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width).unwrap();
             doc.nodes[text].text_layout().unwrap().height()
         }
 
