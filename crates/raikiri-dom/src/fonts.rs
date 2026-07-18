@@ -212,27 +212,45 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FontError
         path: dir.to_path_buf(),
         source,
     })?;
-    // Per-entry io error (permission denied on individual file, symlink loop 等)
-    // を silent 破棄すると incomplete font set で FontContext を組んで
-    // determinism を裏切る (roborev Medium finding e93 round 2)。
-    // filter_map(|e| e.ok()) をやめて Result<Vec<_>, _> collect + `?` で
-    // propagate する。
-    let mut paths: Vec<PathBuf> = entries
-        .map(|entry| {
-            entry
-                .map(|e| e.path())
-                .map_err(|source| FontError::Io {
-                    path: dir.to_path_buf(),
-                    source,
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    paths.sort();
-    for path in paths {
-        if path.is_dir() {
+    // 各 DirEntry を preserve して `file_type()` で kind を照会する
+    // (roborev Medium finding e93 round 4)。過去の `Path::is_dir()` 経由は:
+    // (a) symlink を follow するため `fonts/loop -> .` の cycle で無限再帰
+    //     → stack overflow abort、
+    // (b) metadata error を silently `false` として扱い entry を落とす、
+    // という 2 つの穴があった。`file_type()` は symlink を follow せず、
+    // io error も Result で返すので propagate 可能。
+    let mut entries_with_type: Vec<(PathBuf, std::fs::FileType)> = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| FontError::Io {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|source| FontError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        entries_with_type.push((path, file_type));
+    }
+    // path sort で decl-order 非依存の決定性を保つ
+    entries_with_type.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (path, file_type) in entries_with_type {
+        // symlink (dir でも file でも) は skip: cycle-safe。将来 WPT pin に
+        // 意図的な symlink が含まれるようになったら別途 canonicalize+visited
+        // set 方式に拡張する。今は WPT font tree は plain hierarchy 前提。
+        if file_type.is_symlink() {
+            eprintln!(
+                "[raikiri-dom::fonts] warn: skipping symlink entry {} (cycle-safe policy)",
+                path.display()
+            );
+            continue;
+        }
+        if file_type.is_dir() {
             collect_recursive(&path, out)?;
             continue;
         }
+        // 通常 file: extension check
         let is_font = path
             .extension()
             .and_then(|e| e.to_str())
@@ -416,6 +434,29 @@ mod tests {
             Err(other) => panic!("expected EmptyDir, got {:?}", other),
             Ok(_) => panic!("expected EmptyDir err, got Ok"),
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn walker_skips_symlink_dirs_no_cycle_overflow() {
+        // roborev Medium finding e93 round 4 regression pin: `Path::is_dir()`
+        // が symlink を follow して recursion loop に入る問題。`fonts/loop → .`
+        // のような self-cycle でも walker が有限時間で return することを pin。
+        let tmp = tempfile::tempdir().unwrap();
+        write_fake_ttf(tmp.path(), "real.ttf");
+        // symlink loop: tmp/loop → tmp (self-reference cycle)
+        let loop_path = tmp.path().join("loop");
+        std::os::unix::fs::symlink(tmp.path(), &loop_path).unwrap();
+
+        // 過去実装 (`Path::is_dir()`) では stack overflow していた
+        let paths = walk_fonts(tmp.path()).expect("walker Ok even with symlink cycle");
+        // symlink を skip したので real.ttf のみ (loop 経由で発見される
+        // 追加 real.ttf は無い)。
+        assert_eq!(paths.len(), 1, "expected only real.ttf, got: {:?}", paths);
+        assert_eq!(
+            paths[0].file_name().and_then(|f| f.to_str()),
+            Some("real.ttf")
+        );
     }
 
     #[test]
