@@ -11,16 +11,20 @@
 //! - [`taffy_impl`] — taffy 6 layout trait impls + `unsafe impl Send for Document`
 //! - [`dom_impl`] — `raikiri_traits::Dom / Node / Element` impls + `NodeRef` /
 //!   `ElementRef` types
+//! - [`fonts`] — WPT bundled font dir から cross-machine 決定性 `FontContext`
+//!   を構築する (`build_wpt_font_ctx`)
 
 mod node;
 
 pub mod document;
 pub mod dom_impl;
+pub mod fonts;
 pub mod layout;
 pub mod taffy_impl;
 
 pub use document::Document;
 pub use dom_impl::{ChildIter, ElementRef, NodeRef};
+pub use fonts::{build_wpt_font_ctx, FontError};
 pub use layout::layout_single_page;
 pub use node::Node;
 
