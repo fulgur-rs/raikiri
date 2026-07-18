@@ -2,18 +2,29 @@
 //!
 //! # Status
 //!
-//! Scaffolding only (raikiri-spike-rbo). The rule tree stores parsed `@page`
-//! rules; cascade application, per-page `PageBox` derivation, and margin-box
-//! slot layout are deferred to M4.
+//! Scaffolding only. The rule tree stores parsed `@page` rules; cascade
+//! application, per-page `PageBox` derivation, and margin-box slot layout
+//! are deferred to M4.
 //!
 //! # Primary source
 //!
-//! - CSS Paged Media Module Level 3, "Page selectors syntax" — the section
-//!   number varies across W3C TR revisions, so we cite only the stable
-//!   fragment anchor:
-//!   <https://www.w3.org/TR/css-page-3/#page-selectors-syntax>
+//! Three anchors are cited, one per production the parser consumes:
 //!
-//! # Grammar coverage
+//! - `<page-selector-list>` / `<page-selector>` grammar and the "No whitespace
+//!   is allowed between the productions" compound rule — CSS Paged Media
+//!   Module Level 3, §4.3 "@page rule grammar":
+//!   <https://www.w3.org/TR/css-page-3/#syntax-page-selector>
+//! - `<pseudo-page>` grammar production (the four `:first` / `:left` /
+//!   `:right` / `:blank` idents) — CSS Paged Media Module Level 3 §4.3, dfn
+//!   anchor for the production:
+//!   <https://www.w3.org/TR/css-page-3/#typedef-pseudo-page>
+//! - `<ident-token>` = named-page ident. This ident originates from the
+//!   `page` property (§8.1 "Using named pages: page"); its value is a
+//!   `<custom-ident>` and therefore case-sensitive even in ASCII (see
+//!   [`PageSelectorEntry::ident`] for the case-sensitivity citation chain):
+//!   <https://www.w3.org/TR/css-page-3/#using-named-pages>
+//!
+//! # Grammar coverage (raikiri-spike-mvu, M4 pre-work)
 //!
 //! The spec grammar is:
 //!
@@ -23,27 +34,37 @@
 //! <pseudo-page>        = ':' [ left | right | first | blank ]
 //! ```
 //!
-//! This scaffolding is *narrower* than the spec grammar in two deliberate
-//! ways; M4 relaxes these as the cascade side lands (tracked separately —
-//! see the bd task ledger for M4 handoff followups):
+//! The `<page-selector>` and `<pseudo-page>` productions are *compound*: the
+//! spec explicitly states "No whitespace is allowed between the productions
+//! in `<page-selector>` or `<pseudo-page>` (similar to the rule for
+//! `<compound-selector>`)". Whitespace around the `,` separator of
+//! `<page-selector-list>` is permitted (it is not a compound at that level).
 //!
-//! 1. Only a *single* page-selector is accepted (no comma-list). The spec
-//!    allows `@page :first, :left { … }`; we drop such rules for now.
-//! 2. Only *zero or one* `<pseudo-page>` per selector, and only when the
-//!    ident is absent. The spec allows `<ident> <pseudo-page>+`, so
-//!    `@page named:first { … }` and `@page :first :left { … }` are both
-//!    spec-valid but rejected here.
+//! This parser accepts the full L3 shape:
+//!
+//! - Empty prelude (`@page { … }`) — matches every page.
+//! - Named-page ident alone (`@page named { … }`).
+//! - One-or-more `<pseudo-page>` alone (`@page :first { … }`,
+//!   `@page :first:left { … }`).
+//! - Ident followed by one-or-more `<pseudo-page>` (`@page named:first { … }`).
+//! - Comma-separated list of the above (`@page :first, :left { … }`).
+//!
+//! Whitespace *within* a compound (e.g. `@page : left`, `@page named :first`,
+//! `@page :first :left`) is rejected per the compound rule — the whole
+//! `@page` rule is dropped. This tightening addresses the codex §8.3 F3
+//! finding on the raikiri-spike-rbo scaffolding.
 //!
 //! # Note on `:nth-page`
 //!
-//! Earlier scaffolding drafts included a `PageSelector::NthPage` variant for
+//! Earlier scaffolding drafts included an `NthPage` pseudo variant for
 //! `:nth-page(An+B)`. That variant was removed after reviewer verification
 //! that `:nth-page` is not part of CSS Paged Media Level 3 nor the Level 4
 //! Editor's Draft. Accepting it under autonomous authority would emit a
-//! `PageSelector` variant no primary source defines, forcing invented cascade
-//! semantics at M4. The decision on whether raikiri should ship a spec-outside
-//! `:nth-page` extension (e.g. for GCPM prototyping) is deferred to a human
-//! ledger — see the bd task filed as an M4-handoff escalation.
+//! [`PagePseudo`] variant no primary source defines, forcing invented
+//! cascade semantics at M4. The decision on whether raikiri should ship a
+//! spec-outside `:nth-page` extension (e.g. for GCPM prototyping) is
+//! deferred to a human ledger — see the bd task filed as an M4-handoff
+//! escalation.
 
 use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 
@@ -51,31 +72,68 @@ use crate::Atom;
 use crate::rule::Declaration;
 use crate::ruletree::Origin;
 
-/// Parsed `@page` selector.
+/// Parsed `@page` selector list — a comma-separated list of compound
+/// `<page-selector>` productions from CSS Paged Media L3 §4.3 (anchor
+/// [`#syntax-page-selector`](https://www.w3.org/TR/css-page-3/#syntax-page-selector)).
 ///
-/// Corresponds to a single `<page-selector>` production from CSS Paged Media
-/// L3 (see module docs for the deliberate narrowings; anchor fragment
-/// `#page-selectors-syntax` in the spec).
-///
-/// TODO(M4 shape debt): full L3 `<page-selector-list>` coverage requires a
-/// `Vec<PageSelectorEntry { ident: Option<Atom>, pseudos: Vec<PagePseudo> }>`
-/// shape. The current single-variant enum is a scaffolding compromise —
-/// relaxing it is bd-tracked as an M4 followup.
+/// An empty prelude (`@page { … }`) is represented as a single empty
+/// [`PageSelectorEntry`] so the M4 cascade code can uniformly iterate
+/// `entries` without a special "default" enum arm.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PageSelector {
-    /// `@page { … }` — matches every page (empty selector).
-    Default,
-    /// `@page :first { … }` — first page of the document.
+pub struct PageSelector {
+    /// The list of compound page-selectors (comma-separated in source
+    /// order). Always non-empty for a successfully-parsed `@page` rule.
+    pub entries: Vec<PageSelectorEntry>,
+}
+
+/// A single compound `<page-selector>` = `[ <ident-token>? <pseudo-page>* ]!`.
+///
+/// The `!` marker in the L3 grammar means at least one component (ident or
+/// pseudo) must be present, EXCEPT for the special case where the entire
+/// `@page` prelude is empty — that maps to `PageSelector { entries: vec![
+/// PageSelectorEntry::default() ] }`. Anything appearing between compound
+/// components (whitespace, extra tokens) is a compound-rule violation and
+/// causes the whole `@page` rule to be dropped.
+///
+/// See [`PageSelector`] for the surrounding list shape.
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PageSelectorEntry {
+    /// Optional named-page ident, e.g. `named` in `@page named { … }`.
+    ///
+    /// The ident originates from the `page` property (CSS Paged Media L3
+    /// §8.1, anchor
+    /// [`#using-named-pages`](https://www.w3.org/TR/css-page-3/#using-named-pages))
+    /// and is typed as `<custom-ident>`; per CSS Values L4 §4.2
+    /// [`#custom-idents`](https://www.w3.org/TR/css-values-4/#custom-idents)
+    /// `<custom-ident>` is "fully case-sensitive … even in the ASCII range".
+    /// The stored [`Atom`] therefore preserves the source casing verbatim,
+    /// and rules like `@page Cover { … }` vs `@page cover { … }` are two
+    /// distinct named-pages (pinned by
+    /// `page_named_ident_is_case_sensitive`).
+    pub ident: Option<Atom>,
+    /// Zero-or-more pseudo-pages, e.g. `[First, Left]` for `@page :first:left`.
+    pub pseudos: Vec<PagePseudo>,
+}
+
+/// The four `<pseudo-page>` idents defined in CSS Paged Media L3 §4.3
+/// (production dfn anchor
+/// [`#typedef-pseudo-page`](https://www.w3.org/TR/css-page-3/#typedef-pseudo-page)).
+///
+/// Case is not preserved — parsing is ASCII case-insensitive per CSS Syntax
+/// keyword rules (`match_ignore_ascii_case!`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PagePseudo {
+    /// `:first` — the first page of the document.
     First,
-    /// `@page :left { … }` — left (verso) pages.
+    /// `:left` — left (verso) pages.
     Left,
-    /// `@page :right { … }` — right (recto) pages.
+    /// `:right` — right (recto) pages.
     Right,
-    /// `@page :blank { … }` — blank pages inserted by forced page breaks.
+    /// `:blank` — blank pages inserted by forced page breaks.
     Blank,
-    /// `@page <ident> { … }` — named page selector.
-    Named(Atom),
 }
 
 /// Parsed `@page` rule — selector + declaration list + source order + origin.
@@ -132,56 +190,131 @@ pub struct PageRule {
 /// Parse the prelude of an `@page` rule.
 ///
 /// The caller (a cssparser `AtRuleParser::parse_prelude`) hands us a parser
-/// that ends at the block's opening `{`. We accept exactly one of:
+/// that ends at the block's opening `{`. We accept the full L3
+/// `<page-selector-list>` grammar (see module docs). An empty prelude
+/// (`@page { … }`) becomes a [`PageSelector`] with one default-constructed
+/// entry so downstream cascade code can treat "matches every page" as an
+/// entry that matches unconditionally.
 ///
-/// - empty (→ [`PageSelector::Default`])
-/// - `<ident>` (→ [`PageSelector::Named`])
-/// - `:` `ident` where ident matches one of the four L3 pseudo-pages
-///
-/// Anything else — comma-list, ident+pseudo combo, two pseudos, unknown
-/// pseudo-keyword, or a functional pseudo — is an `Err`, which cssparser
-/// converts into "drop the whole @page rule".
+/// Anything violating the compound rule — whitespace between an ident and
+/// its pseudo-page, whitespace between a `:` and its pseudo keyword, or
+/// whitespace between two pseudo-pages of the same compound — returns
+/// `Err`, which cssparser converts into "drop the whole @page rule".
 pub(crate) fn parse_page_prelude<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<PageSelector, ParseError<'i, ()>> {
-    // Empty prelude → `@page { … }` matches all pages.
+    // Empty prelude → `@page { … }` matches every page. Represented as a
+    // single empty entry so M4 cascade code can iterate uniformly.
     if input.is_exhausted() {
-        return Ok(PageSelector::Default);
+        return Ok(PageSelector {
+            entries: vec![PageSelectorEntry::default()],
+        });
     }
 
-    // Clone the token so the parser can move past it without a borrow tangle.
-    let first = input.next()?.clone();
-    let selector = match first {
-        Token::Ident(name) => PageSelector::Named(Atom::from(name.as_ref())),
-        Token::Colon => parse_pseudo_page(input)?,
-        _ => return Err(input.new_custom_error(())),
-    };
-
-    // Enforce the single-selector, single-pseudo scaffolding narrowing
-    // (see module docs). If M4 relaxes to L3-full grammar, the check moves.
-    input
-        .expect_exhausted()
-        .map_err::<ParseError<'i, ()>, _>(Into::into)?;
-    Ok(selector)
+    // `parse_comma_separated` skips whitespace around each `,` (which is
+    // spec-permitted since the list is not a compound) and, per its
+    // `parse_until_before` / `parse_entirely` internals, enforces that each
+    // closure invocation consumes every token up to the delimiter — so any
+    // trailing garbage inside a compound propagates as an Err and the whole
+    // `@page` rule is dropped.
+    let entries = input.parse_comma_separated(parse_compound_selector)?;
+    Ok(PageSelector { entries })
 }
 
-/// Parse the `<pseudo-page>` production after the leading `:` has been
-/// consumed. Only the four L3 pseudo-page idents (`first` / `left` / `right`
-/// / `blank`) are accepted; any functional pseudo (e.g. `:nth-page(...)`) is
-/// rejected as an unknown pseudo per L3.
-fn parse_pseudo_page<'i>(input: &mut Parser<'i, '_>) -> Result<PageSelector, ParseError<'i, ()>> {
-    let tok = input.next()?.clone();
+/// Parse a single compound `<page-selector>` = `[ <ident-token>?
+/// <pseudo-page>* ]!`.
+///
+/// The compound rule (spec: "No whitespace is allowed between the
+/// productions in `<page-selector>` or `<pseudo-page>`") is enforced by
+/// using `Parser::next_including_whitespace` at every intra-compound
+/// boundary — that primitive surfaces `Token::WhiteSpace(_)` but is
+/// transparent to comments (comments are stripped at CSS Syntax L3
+/// tokenization, so `:first/*x*/:left` must parse the same as
+/// `:first:left`). Only the *first* component is read with
+/// `Parser::next` (whitespace-skipping) because that skip covers the
+/// spec-permitted whitespace between commas of the outer list and before
+/// the very first entry.
+fn parse_compound_selector<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<PageSelectorEntry, ParseError<'i, ()>> {
+    let mut entry = PageSelectorEntry::default();
+
+    // First component: whitespace-skipping OK — we're either at the start of
+    // the prelude or just past a `,`, both non-compound boundaries.
+    let first = input.next()?.clone();
+    match first {
+        Token::Ident(name) => {
+            entry.ident = Some(Atom::from(name.as_ref()));
+        }
+        Token::Colon => {
+            parse_and_push_pseudo(input, &mut entry.pseudos)?;
+        }
+        other => {
+            return Err(input.new_unexpected_token_error(other));
+        }
+    }
+
+    // Additional pseudo-pages: each must be adjacent to the previous
+    // component. Save the state before each peek so a non-`:` (or an EOI /
+    // whitespace token) can rewind and let the outer `parse_comma_separated`
+    // see what actually comes next (whitespace before a `,`, or EOI).
+    //
+    // `next_including_whitespace` is used (not `..._and_comments`) because
+    // CSS Syntax L3 §4 strips comments at tokenization: `:first/*x*/:left`
+    // MUST parse identically to `:first:left`. Whitespace, however, remains
+    // a compound boundary — so this primitive surfaces `Token::WhiteSpace(_)`
+    // and lets the "no whitespace within compound" rule stay strict.
+    loop {
+        let checkpoint = input.state();
+        let peek = match input.next_including_whitespace() {
+            Ok(t) => t.clone(),
+            Err(_) => break, // EOI — compound is complete
+        };
+        match peek {
+            Token::Colon => {
+                parse_and_push_pseudo(input, &mut entry.pseudos)?;
+            }
+            _ => {
+                // Not a `:` (could be whitespace, comma, or anything else).
+                // Rewind — outer machinery handles it. Whitespace here is
+                // fine because it's *after* the compound, not within it.
+                input.reset(&checkpoint);
+                break;
+            }
+        }
+    }
+
+    Ok(entry)
+}
+
+/// Consume the ident that must immediately follow a `:` in a `<pseudo-page>`
+/// and push the matching [`PagePseudo`] variant.
+///
+/// `Parser::next_including_whitespace` is used so that a `@page : left { … }`
+/// shape (whitespace between colon and ident) surfaces as
+/// `Token::WhiteSpace(_)` rather than being silently skipped past — matching
+/// the compound rule from L3. Comments between `:` and the ident
+/// (`@page :/*x*/left`) are transparent per CSS Syntax L3 §4 (stripped at
+/// tokenization); this primitive strips them but preserves whitespace.
+fn parse_and_push_pseudo<'i>(
+    input: &mut Parser<'i, '_>,
+    pseudos: &mut Vec<PagePseudo>,
+) -> Result<(), ParseError<'i, ()>> {
+    let tok = input.next_including_whitespace()?.clone();
     match tok {
         Token::Ident(name) => {
-            let selector = match_ignore_ascii_case! { &name,
-                "first" => PageSelector::First,
-                "left"  => PageSelector::Left,
-                "right" => PageSelector::Right,
-                "blank" => PageSelector::Blank,
+            let pseudo = match_ignore_ascii_case! { &name,
+                "first" => PagePseudo::First,
+                "left"  => PagePseudo::Left,
+                "right" => PagePseudo::Right,
+                "blank" => PagePseudo::Blank,
                 _ => return Err(input.new_custom_error(())),
             };
-            Ok(selector)
+            pseudos.push(pseudo);
+            Ok(())
         }
+        // WhiteSpace here (`@page : left`), functional pseudo (`:nth-page(…)`),
+        // or any other token type is invalid per the compound rule.
         _ => Err(input.new_custom_error(())),
     }
 }

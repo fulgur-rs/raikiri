@@ -29,7 +29,7 @@ pub mod rule;
 pub use rule::{Declaration, StyleRule};
 
 pub mod page;
-pub use page::{PageRule, PageSelector};
+pub use page::{PagePseudo, PageRule, PageSelector, PageSelectorEntry};
 
 pub mod ruletree;
 pub use ruletree::{Origin, RuleTree, build_rule_tree, walk_style_elements};
