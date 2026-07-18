@@ -114,12 +114,22 @@ fn walk_and_collect<D: Dom, F: FnMut(&str)>(
     let mut stack: Vec<raikiri_traits::NodeId> = vec![id];
     while let Some(id) = stack.pop() {
         if let Some(node) = dom.node(id) {
+            // raikiri-spike-37c: <template> 子孫 + 将来の inert subtree を統一 skip。
+            // 実 Document (sink 経由 populate 済) では is_in_document() bit が
+            // primary skip 経路。
+            if !node.is_in_document() {
+                continue;
+            }
             if node.kind() == NodeKind::Element
                 && let Some(elem) = node.as_element()
             {
                 let tag = elem.tag_name();
-                // <template> subtree は spec 上 inert (HTML spec、cf. raikiri-html/src/sink.rs:315-318)。
-                // <style> があっても cascade に流さず、子孫の <style> も skip する。
+                // NOTE: raikiri-spike-37c contract — 通常経路 (sink 経由 populate
+                // 済 Document) では上の is_in_document() gate で subsumed。本 arm
+                // は TestDoc 等の default true な Node trait 実装からの呼び出しで
+                // template 内 <style> が cascade に流れ込むのを防ぐ safety net。
+                // 実本番経路の "1 か所集約" contract は sink 側の判定を primary
+                // とし、この safety net は 2nd-line defense として明示的に維持する。
                 if tag.eq_ignore_ascii_case("template") {
                     continue;
                 }

@@ -511,6 +511,69 @@ mod tests {
     }
 
     #[test]
+    fn parse_then_cascade_skips_template_descendants() {
+        // raikiri-spike-37c: cascade が template subtree を skip する silent bug fix
+        // regression pin。詳細な cascaded map の shape reflection は raikiri-style
+        // 内部の unit test で担保するのが正道 (未存在なら Task 4 で追加)、この
+        // integration test は "parse → cascade の chain が template 内 element を
+        // 触っても error / panic しない" ことと、bit populate が cascade 呼び出し
+        // 前後で保たれることを pin する。
+        //
+        // 追加 pin (roborev-equivalent advisor 指摘): resolve_inheritance の
+        // is_in_document() gate 実装ミスは `cascade.computed.len() ==
+        // dom.node_count()` という m1.23 contract (raikiri/src/lib.rs
+        // `html_document_cascade_populated_after_construct` が非-template
+        // document でのみ pin していた) を template を含む document で破り得る
+        // — raikiri-dom::layout::preshape_text / raikiri-paint::text::draw_text_node
+        // は node_id で `cascade.computed[idx]` に直接 index するため、破れると
+        // OOB panic に繋がる。TestDoc 経由の raikiri-style 内部 unit test は
+        // is_in_document() が常に true な default 実装のため、この contract
+        // 破れを検出できない (parse 経由で実際に bit が false になる document
+        // でのみ再現する) — 本 integration test がそのカバレッジを担う。
+        let html = b"<html><head><style>p { color: red }</style></head><body>\
+                     <p>outer</p>\
+                     <template><p id=\"inner\">inner</p></template>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree)
+            .expect("cascade must not error / panic on template subtree");
+
+        // m1.23 contract: cascade.computed.len() == dom.node_count() でなければ
+        // ならない — たとえ template 子孫が cascade gate で skip されても、
+        // index 契約 (raikiri-dom / raikiri-paint が node_id で直接 index) を
+        // 破ってはいけない。
+        assert_eq!(
+            cascade.computed.len(),
+            uncascaded.dom.node_count(),
+            "cascade.computed.len() must equal node_count() even with template descendants (m1.23 contract)"
+        );
+
+        // cascade 呼び出し後も inner <p> は out-of-document のまま (cascade が bit
+        // を触ることは無いという contract の pin)。
+        let mut inner_p_out = false;
+        for id_u in 0..uncascaded.dom.node_count() {
+            let id = raikiri_traits::NodeId::new(id_u as u64);
+            let n = uncascaded.dom.node(id).unwrap();
+            if let Some(el) = n.as_element()
+                && el.tag_name() == "p"
+                && el.id() == Some("inner")
+            {
+                assert!(
+                    !n.is_in_document(),
+                    "inner <p> should remain out of document after cascade"
+                );
+                inner_p_out = true;
+                // Index into cascade.computed for the inert node must not panic
+                // (proves out[idx] was still written despite the gate).
+                let _ = &cascade.computed[id_u];
+            }
+        }
+        assert!(inner_p_out, "should find <p id=inner> inside template");
+    }
+
+    #[test]
     fn parse_ignores_body_style_in_m1_scope() {
         // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。

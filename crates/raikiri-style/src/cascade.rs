@@ -112,6 +112,12 @@ fn collect_cascaded<D: Dom>(
     let mut stack: Vec<NodeId> = vec![id];
     while let Some(id) = stack.pop() {
         if let Some(node) = dom.node(id) {
+            // raikiri-spike-37c: <template> 子孫 + 将来の inert subtree を統一 skip。
+            // silent bug fix: 従来 template 内 element にも rule matching が走り
+            // Vec<CascadedDecl> が waste で膨らんでいた。
+            if !node.is_in_document() {
+                continue;
+            }
             if node.kind() == NodeKind::Element
                 && let Some(elem) = node.as_element()
             {
@@ -226,8 +232,26 @@ fn resolve_inheritance<D: Dom>(
         // initial() (spec §M1.4a、raikiri-spike-m1.22)
         let mut computed = ComputedValues::inherit_from(&parent_computed);
 
-        // 自 node の cascaded winners を apply
-        if let Some(candidates) = cascaded.get(&id) {
+        // raikiri-spike-37c: is_in_document()==false の node (<template> 子孫等)
+        // には cascaded declarations を適用しない — silent bug fix の意図明文化。
+        // collect_cascaded (Step 4) が既にこれら node を `cascaded` map から
+        // 除外済のため実質 defense-in-depth。
+        //
+        // NOTE: ここで早期 `continue` して subtree ごと skip しては **いけない**。
+        // `cascade.computed.len() == document.node_count()` は raikiri-spike-m1.23
+        // contract で (`crates/raikiri/src/lib.rs`
+        // `html_document_cascade_populated_after_construct` が pin)、
+        // `raikiri-dom::layout::preshape_text` / `raikiri-paint::text::draw_text_node`
+        // は node_id で `cascade.computed[idx]` に直接 index する。subtree を丸ごと
+        // skip すると resize が template 子孫の分だけ足りなくなり OOB panic を招く
+        // ため、resize / out 書き込み / children push は is_in_document に関わらず
+        // 必ず行う。
+        let in_document = dom.node(id).is_none_or(|n| n.is_in_document());
+
+        // 自 node の cascaded winners を apply (in-document node のみ)
+        if in_document
+            && let Some(candidates) = cascaded.get(&id)
+        {
             let winners = pick_winners(candidates);
             for value in winners.into_values() {
                 apply_value(value, &mut computed);

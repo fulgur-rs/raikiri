@@ -1617,6 +1617,7 @@ dependencies = [
  "html5ever",
  "markup5ever",
  "raikiri-dom",
+ "raikiri-style",
  "raikiri-traits",
  "rustc-hash",
  "smol_str",
