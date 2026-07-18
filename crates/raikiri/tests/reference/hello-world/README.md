@@ -23,7 +23,10 @@ M1.15 (raikiri-spike-e93) 以降、hello-world VRT は **cross-machine 決定性
 - 未 fetch なら test は "run scripts/wpt/fetch.sh first" で panic する
 - pinned SHA は `scripts/wpt/pinned_sha.txt` (fulgur pin を借用)
 
-Golden PNG の visual は Ahem で描画した "Hi" (real text)。過去 (M1.14) の
+Golden PNG の visual は **red square 2 個** (Ahem 全 glyph em box)。Ahem は WPT
+test font で、全 codepoint が em-box を埋める solid square として描画される。
+注: "hello-world" という fixture name は semantic なもので、実際の visual rendering は
+WPT-style square であり、認識可能な "Hi" letterform ではない。過去 (M1.14) の
 system serif 版とは bitmap が異なる (2026-07-18 の raikiri-spike-e93 で切替)。
 
 ## Golden 更新手順
