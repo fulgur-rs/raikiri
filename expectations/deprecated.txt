@@ -4,4 +4,11 @@
 # Format: one test_id per line. Lines starting with '#' are comments.
 # Empty lines are ignored.
 #
-# Populated in M3.
+# ── Populate policy ─────────────────────────────────────────────────
+# Empty until raikiri encounters crashers or tests requiring evaluation-blocking
+# runner-level workarounds. Additions follow §12.10 (2-reviewer approval).
+#
+# Analog: blitz's `wpt/runner/src/main.rs::BLOCKED_TESTS` const slice
+# (e.g., wgpu buffer overflows, ImageBuffer overflow crashers). raikiri
+# keeps them in this file rather than inline Rust for auditability and
+# to keep the runner rebuild-free when the exclusion list changes.

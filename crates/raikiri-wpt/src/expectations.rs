@@ -26,7 +26,14 @@ use time::{Date, macros::format_description};
 /// ```no_run
 /// use raikiri_wpt::expectations::ExpectationSet;
 /// let set = ExpectationSet::load_from_workspace_root().unwrap();
-/// assert!(set.baseline.is_empty()); // M1 skeleton: workspace files are header-only
+/// // baseline is runner-generated at M3 kickoff (see raikiri-baseline.txt
+/// // header). quarantine/deprecated stay empty until a developer PR
+/// // adds an entry — flakes for quarantine (§12.10 procedure) and
+/// // crashers for deprecated. tracked/known_issues are populated
+/// // statically from spec §12.9 (see expectations/*.txt).
+/// assert!(set.baseline.is_empty());
+/// assert!(set.quarantine.entries.is_empty());
+/// assert!(set.deprecated.entries.is_empty());
 /// ```
 #[non_exhaustive]
 pub struct ExpectationSet {
@@ -812,12 +819,77 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
 
     #[test]
     fn load_from_workspace_root_reads_the_header_only_files() {
-        // Integration-style: relies on Task 1 having created the workspace
-        // expectations/ directory with header-only files.
+        // Integration-style: verify each expectations/*.txt against the
+        // full expected content (spec §12.9 tracked categories + §2 Non-Goals
+        // waivers). Count-only assertions cannot detect typos, duplicates, or
+        // ordering drift — assert exact membership to make transcription bugs
+        // observable.
         let set = ExpectationSet::load_from_workspace_root()
             .expect("workspace expectations/ should be present");
-        assert!(set.tracked.is_empty());
-        assert!(set.known_issues.is_empty());
+
+        let tracked: Vec<&str> = set.tracked.entries.iter().map(String::as_str).collect();
+        assert_eq!(
+            tracked,
+            vec![
+                // P1 — Foundation
+                "css/css-fonts/",
+                "css/css-color/",
+                "css/css-backgrounds/",
+                "css/css-values/",
+                "css/css-text/",
+                "css/css-writing-modes/",
+                "css/selectors/",
+                "html/rendering/",
+                // P2 — Layout primitives
+                "css/css-tables/",
+                "css/css-grid/",
+                "css/css-flexbox/",
+                // P3 — GCPM / paged media
+                "css/css-page/",
+                "css/css-break/",
+                // P4 — Low priority
+                "css/css-transforms/",
+            ],
+        );
+
+        let known_issues: Vec<(&str, &str)> = set
+            .known_issues
+            .entries
+            .iter()
+            .map(|(pat, reason)| (pat.as_str(), reason.as_str()))
+            .collect();
+        assert_eq!(
+            known_issues,
+            vec![
+                (
+                    "css/css-animations/",
+                    "Non-goal (interactive, §2 Non-Goals + §12.9)",
+                ),
+                (
+                    "css/css-transitions/",
+                    "Non-goal (interactive, §2 Non-Goals + §12.9)",
+                ),
+                (
+                    "html/interaction/",
+                    "Non-goal (interactive rendering, §2 Non-Goals + §12.9)",
+                ),
+                (
+                    "css/css-ruby/",
+                    "Non-goal for MVP (JIS X 4051 / 縦書き outside MVP scope, §2 Non-Goals)",
+                ),
+                (
+                    "accname/",
+                    "Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)",
+                ),
+                (
+                    "wai-aria/",
+                    "Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)",
+                ),
+            ],
+        );
+
+        // baseline is populated by an M3-kickoff runner PR; quarantine and
+        // deprecated stay empty until a developer PR adds a flake or crasher.
         assert!(set.baseline.is_empty());
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());

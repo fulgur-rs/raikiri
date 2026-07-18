@@ -4,4 +4,46 @@
 # Format: one test_id per line. Lines starting with '#' are comments.
 # Empty lines are ignored.
 #
-# Populated in M3. Additions/removals require 2-reviewer approval (§12.10 baseline migration).
+# ── Populate policy ─────────────────────────────────────────────────
+# This file is *runner-generated*, NOT hand-authored:
+# 1. At M3 kickoff (once the reftest runner is operational), run the runner
+#    over ALL executable WPT tests — every test NOT excluded by
+#    known-issues.txt, quarantine.txt, or deprecated.txt. Quarantine is
+#    excluded because M1 baseline has no per-tuple filter (see the
+#    Quarantine handling section below); relaxing this exclusion becomes
+#    possible only after raikiri-spike-a6s enables filter-disjoint
+#    co-listing.
+# 2. Filter runner output to tests with STATUS = PASS.
+# 3. Open a PR that adds them to this file. The PR is the initial baseline
+#    migration and requires 2-reviewer approval per §12.10.
+# Subsequent additions / removals follow the same 2-reviewer rule.
+#
+# Scope note: the baseline is *scope-independent* per §2 Goals ("regression
+# detection の flat rule": any previously-passing test regressing blocks
+# merge, whether or not the test's category is tracked). tracked-wpt.txt is
+# only a T3 reporting/prioritization view of the WPT surface; it does not
+# restrict which tests qualify for the baseline.
+#
+# ── Quarantine handling ──
+# Spec §12.10 semantics: baseline and quarantine may co-list a
+# test_id ONLY when the quarantine filter tuple (platform, arch,
+# renderer, tolerance) does NOT intersect any baseline execution
+# environment; intersecting overlaps are Conflicting and rejected by
+# the lint.
+#
+# In M1, baseline has no per-tuple filter — one test_id per line — so
+# its execution environment is effectively the entire CI matrix. Any
+# test_id present in both baseline and quarantine.txt therefore causes
+# SOME CI tuple to match both, which is an intersection and thus a
+# conflict. The initial baseline PR at M3 kickoff must EXCLUDE any
+# test_id that also appears in quarantine.txt.
+#
+# The current raikiri-wpt::lint::detect_conflicting enforces this
+# exclusion: every baseline∩quarantine pair is flagged as Conflicting,
+# which matches the M1 semantics above. raikiri-spike-a6s tracks the
+# future work to permit legal non-overlapping co-listing once either
+# (a) baseline itself grows per-tuple filters, or (b) the CI matrix
+# scopes down enough for filter-disjoint quarantine entries to exist.
+#
+# See blitz's wpt/runner/src/report.rs `generate_expectations` for a
+# reference implementation of the runner-generated approach.

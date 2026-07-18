@@ -10,4 +10,9 @@
 # Multiple entries per test_id (different platform combinations) are allowed.
 # Lines starting with '#' are comments. Empty lines are ignored.
 #
-# Populated in M3.
+# ── Populate policy ─────────────────────────────────────────────────
+# Empty until the first flake is observed in M3+ CI runs. Additions follow
+# §12.10 quarantine procedure:
+#   1. Test intermittent-fails ≥3 times → developer opens quarantine PR
+#   2. Add entry with reason + issue link + added_date
+#   3. Weekly review; strategic review at 90-day expiration (§12.10)
