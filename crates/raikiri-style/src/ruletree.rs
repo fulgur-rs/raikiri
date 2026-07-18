@@ -530,10 +530,11 @@ mod tests {
     #[test]
     fn page_functional_pseudo_is_dropped() {
         // Spec-outside functional pseudo (e.g. `:nth-page(...)`) は CSS Paged
-        // Media L3 §3.2 も L4 Editor's Draft も定義していないため、raikiri-style
-        // としては未知 pseudo として rule ごと drop する。もし raikiri-local な
-        // 拡張として実装する日が来れば、そのときは明示的に variant を追加し
-        // (現在のこの guard test を反転) スコープを人間 ledger で決める。
+        // Media L3 (anchor `#page-selectors-syntax`) も L4 Editor's Draft も
+        // 定義していないため、raikiri-style としては未知 pseudo として rule ごと
+        // drop する。もし raikiri-local な拡張として実装する日が来れば、そのときは
+        // 明示的に variant を追加し (現在のこの guard test を反転) スコープを
+        // 人間 ledger で決める。
         let rules = page_rules("@page :nth-page(2n+1) { color: red }");
         assert!(rules.is_empty());
     }
