@@ -344,3 +344,28 @@ fn external_consumer_can_chain_builder_fluent_setters() {
 
     let _defaults = PageDefaults::builder().page_box(PageBox::US_LETTER).build();
 }
+
+/// External consumer が `use raikiri::*;` のみで VRT font pin API
+/// (`build_wpt_font_ctx`, `FontError`, `FontContext`, `html_to_png_with_fonts`)
+/// を chain できることを compile + run で pin (raikiri-spike-e93 roborev
+/// round 2 finding — raikiri-dom/parley を direct dep しなくて良い保証)。
+#[test]
+fn external_consumer_can_reference_vrt_font_pin_api() {
+    // 1. 型は全て `use raikiri::*;` で resolve できる
+    let _ = std::marker::PhantomData::<(FontContext, FontError)>;
+
+    // 2. build_wpt_font_ctx を呼び出せる (missing dir で DirNotFound Err を expect)
+    let bogus = std::path::Path::new("/definitely/does/not/exist/raikiri-spike-e93");
+    let err = match build_wpt_font_ctx(bogus) {
+        Err(e) => e,
+        Ok(_) => panic!("expected Err from missing dir"),
+    };
+    // FontError variant は raikiri umbrella 経由で pattern match できる
+    assert!(matches!(err, FontError::DirNotFound(_)));
+
+    // 3. html_to_png_with_fonts は FontContext を受ける signature、
+    //    system font FontContext (fallback) との組み合わせで compile pin
+    //    (実 render は system font 経路、determinism 不要な smoke)
+    let font_ctx = FontContext::new();
+    let _ = html_to_png_with_fonts(&b"<p>x</p>"[..], font_ctx);
+}

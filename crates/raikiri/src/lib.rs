@@ -31,6 +31,14 @@ pub use stubs::{plan, render_streaming};
 mod html_to_png;
 pub use html_to_png::{html_to_png, html_to_png_with_fonts};
 
+// ── VRT font pin API (raikiri-spike-e93) ────────────────────────────────
+// External consumer が `raikiri` 単独 dep で pinned `FontContext` を build
+// できるように、`html_to_png_with_fonts` の依存型を umbrella 経由で公開。
+// これが無いと consumer は raikiri-dom / parley を direct dep しなければ
+// ならず、実装 crate 依存が漏れる (roborev Medium finding e93 round 2)。
+pub use parley::FontContext;
+pub use raikiri_dom::{FontError, build_wpt_font_ctx};
+
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 // Network API (Request / FetchedResource / NetworkError / Method / Body /
 // HeaderMap / AbortSignal / AbortController / ResourceKind) は `NetworkProvider`

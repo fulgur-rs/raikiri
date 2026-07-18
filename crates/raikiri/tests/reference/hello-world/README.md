@@ -34,11 +34,11 @@ system serif 版とは bitmap が異なる (2026-07-18 の raikiri-spike-e93 で
 pipeline を意図的に変えた (font glyph tuning / paint semantics 変更等) 場合のみ:
 
 ```bash
-# 1. golden を再生成
-RAIKIRI_UPDATE_GOLDENS=1 cargo test -p raikiri --test hello_world_vrt
+# 1. golden を再生成 (VRT test は #[ignore] のため --ignored が必須)
+RAIKIRI_UPDATE_GOLDENS=1 cargo test -p raikiri --test hello_world_vrt -- --ignored
 
-# 2. 通常 test で pass 確認
-cargo test -p raikiri --test hello_world_vrt
+# 2. 通常 test で pass 確認 (同じく --ignored が必須)
+cargo test -p raikiri --test hello_world_vrt -- --ignored
 
 # 3. 変更内容を review してから commit
 git add crates/raikiri/tests/reference/hello-world/expected/

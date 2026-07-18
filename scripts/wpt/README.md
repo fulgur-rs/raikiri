@@ -27,9 +27,10 @@ Steps:
 1. Inspect upstream WPT `main` (or fulgur's next pin) and pick a green commit
 2. Replace the SHA line in `pinned_sha.txt`
 3. Re-run `scripts/wpt/fetch.sh`
-4. Re-run `cargo test -p raikiri --test hello_world_vrt`. Golden PNG may
-   need regeneration if font asset content shifted:
-   `RAIKIRI_UPDATE_GOLDENS=1 cargo test -p raikiri --test hello_world_vrt`
+4. Re-run `cargo test -p raikiri --test hello_world_vrt -- --ignored`
+   (VRT test is `#[ignore]` by default — see hello_world_vrt.rs). Golden PNG
+   may need regeneration if font asset content shifted:
+   `RAIKIRI_UPDATE_GOLDENS=1 cargo test -p raikiri --test hello_world_vrt -- --ignored`
 5. Commit `pinned_sha.txt` + updated golden (if any) in one PR
 
 ## Relation to `raikiri-wpt`

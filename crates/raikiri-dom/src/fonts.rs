@@ -208,7 +208,21 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FontError
         path: dir.to_path_buf(),
         source,
     })?;
-    let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    // Per-entry io error (permission denied on individual file, symlink loop 等)
+    // を silent 破棄すると incomplete font set で FontContext を組んで
+    // determinism を裏切る (roborev Medium finding e93 round 2)。
+    // filter_map(|e| e.ok()) をやめて Result<Vec<_>, _> collect + `?` で
+    // propagate する。
+    let mut paths: Vec<PathBuf> = entries
+        .map(|entry| {
+            entry
+                .map(|e| e.path())
+                .map_err(|source| FontError::Io {
+                    path: dir.to_path_buf(),
+                    source,
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
     for path in paths {
         if path.is_dir() {
