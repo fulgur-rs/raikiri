@@ -59,6 +59,12 @@ impl raikiri_traits::Dom for Document {
             .unwrap_or(&[]);
         ChildIter(slice.iter())
     }
+
+    fn node_count(&self) -> usize {
+        // Document::node_count() の trait 経由 view (raikiri-spike-37c, roborev
+        // job 293 M1 finding 対応)。arena 全 node の数 (detached を含む)。
+        Document::node_count(self)
+    }
 }
 
 impl<'a> raikiri_traits::Node<'a> for NodeRef<'a> {
@@ -68,34 +74,50 @@ impl<'a> raikiri_traits::Node<'a> for NodeRef<'a> {
         Self: 'b;
 
     fn kind(&self) -> NodeKind {
-        self.doc.nodes[self.id].kind
+        self.doc.nodes[self.id].kind()
     }
 
     fn as_element(&self) -> Option<Self::Element<'_>> {
         let node = &self.doc.nodes[self.id];
-        matches!(node.kind, NodeKind::Element).then(|| ElementRef { node })
+        matches!(&node.data, crate::node::NodeData::Element(_)).then(|| ElementRef { node })
     }
 
     fn text_content(&self) -> Option<&str> {
-        self.doc.nodes[self.id].text_content.as_deref()
+        match &self.doc.nodes[self.id].data {
+            crate::node::NodeData::Text(t) => Some(t.text_content.as_str()),
+            _ => None,
+        }
+    }
+
+    fn is_in_document(&self) -> bool {
+        self.doc.nodes[self.id].is_in_document()
     }
 }
 
 impl<'a> raikiri_traits::Element<'a> for ElementRef<'a> {
     fn tag_name(&self) -> &str {
-        self.node.tag_name.as_deref().unwrap_or("")
+        // ElementRef は as_element() が Some を返した後の view なので必ず
+        // NodeData::Element (invariant)、それ以外は panic 相当。
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => e.tag_name.as_str(),
+            _ => "", // defensive: 到達しない
+        }
     }
 
     fn inline_style_source(&self) -> Option<&str> {
-        // Trait contract: 空文字列 `style=""` は `None` を返す。
-        // 内部 field が `Some(SmolStr::new(""))` の場合も boundary で捨てる。
-        self.node.inline_style.as_deref().filter(|s| !s.is_empty())
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => {
+                e.inline_style.as_deref().filter(|s| !s.is_empty())
+            }
+            _ => None,
+        }
     }
 
     fn namespace_uri(&self) -> Option<&str> {
-        // HTML default namespace は Node.namespace = None として格納しているので
-        // そのまま返せばよい (fast path 済)。
-        self.node.namespace.as_deref()
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => e.namespace.as_deref(),
+            _ => None,
+        }
     }
 
     // NB: id() / has_class() は raikiri-traits::Element の default impl を
@@ -103,16 +125,17 @@ impl<'a> raikiri_traits::Element<'a> for ElementRef<'a> {
     // attr() だけ override すれば id/has_class も追従する (DRY / 契約準拠)。
 
     fn attr(&self, local: &str) -> Option<&str> {
-        // `style` は Node.inline_style に分離済のため attributes からは
-        // 探しに行かず inline_style を返す (trait default 契約と同じ view)。
         if local == "style" {
             return self.inline_style_source();
         }
-        self.node
-            .attributes
-            .iter()
-            .find(|a| a.local == local)
-            .map(|a| a.value.as_str())
-            .filter(|s| !s.is_empty())
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => e
+                .attributes
+                .iter()
+                .find(|a| a.local == local)
+                .map(|a| a.value.as_str())
+                .filter(|s| !s.is_empty()),
+            _ => None,
+        }
     }
 }

@@ -417,6 +417,189 @@ mod tests {
     }
 
     #[test]
+    fn parse_marks_template_descendants_out_of_document() {
+        // raikiri-spike-37c: <template> element 自身は flat tree の一員なので
+        // is_in_document()=true、その descendants (子孫の element / text) は
+        // false であることを parse 経路の bit populate で pin する。
+        //
+        // 現在の sink には mark_in_document_flags phase が無いため、default
+        // true が clear されず descendant も true になる → 失敗する failing test。
+        let html = b"<html><head></head><body>\
+                     <template><p id=\"inner\">hi</p></template>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let doc = &uncascaded.dom;
+
+        let mut saw_template = false;
+        let mut saw_inner_p = false;
+        let mut saw_inner_text = false;
+        for id_u in 0..doc.node_count() {
+            let id = raikiri_traits::NodeId::new(id_u as u64);
+            let n = doc.node(id).expect("in-range");
+            if let Some(el) = n.as_element() {
+                match el.tag_name() {
+                    "template" => {
+                        assert!(n.is_in_document(), "template element itself must be in document");
+                        saw_template = true;
+                    }
+                    "p" if el.id() == Some("inner") => {
+                        assert!(!n.is_in_document(), "<p> inside <template> must be out of document");
+                        saw_inner_p = true;
+                    }
+                    _ => {}
+                }
+            }
+            if n.text_content() == Some("hi") {
+                assert!(!n.is_in_document(), "text inside <template> must be out of document");
+                saw_inner_text = true;
+            }
+        }
+        assert!(saw_template, "template element should exist in parsed tree");
+        assert!(saw_inner_p, "<p id=inner> should exist inside template subtree");
+        assert!(saw_inner_text, "'hi' text should exist inside template subtree");
+    }
+
+    #[test]
+    fn parse_marks_body_children_in_document() {
+        // raikiri-spike-37c: normal HTML (template 無し) を parse すると全 node が
+        // is_in_document()=true。default true が保たれる regression pin。
+        let html = b"<html><head></head><body><p>hi</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let doc = &uncascaded.dom;
+        for id_u in 0..doc.node_count() {
+            let id = raikiri_traits::NodeId::new(id_u as u64);
+            let n = doc.node(id).expect("in-range");
+            assert!(
+                n.is_in_document(),
+                "node {} ({:?}) expected in_document",
+                id_u,
+                n.kind()
+            );
+        }
+    }
+
+    #[test]
+    fn parse_marks_nested_template_descendants_out_of_document() {
+        // raikiri-spike-37c: 深いネスト (template > div > span > text) でも
+        // in_document bit が subtree 全体に伝播する。single-pass DFS で
+        // in_template state が正しく引き継がれることを pin。
+        let html = b"<html><body>\
+                     <template><div><span>x</span></div></template>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let doc = &uncascaded.dom;
+        for id_u in 0..doc.node_count() {
+            let id = raikiri_traits::NodeId::new(id_u as u64);
+            let n = doc.node(id).expect("in-range");
+            if let Some(el) = n.as_element() {
+                match el.tag_name() {
+                    "div" | "span" => assert!(
+                        !n.is_in_document(),
+                        "<{}> inside <template> must be out of document",
+                        el.tag_name()
+                    ),
+                    _ => {}
+                }
+            }
+            if n.text_content() == Some("x") {
+                assert!(!n.is_in_document(), "text 'x' inside <template> must be out of document");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_then_cascade_skips_template_descendants() {
+        // raikiri-spike-37c: cascade が template subtree を skip する silent bug fix
+        // regression pin。詳細な cascaded map の shape reflection は raikiri-style
+        // 内部の unit test で担保するのが正道 (未存在なら Task 4 で追加)、この
+        // integration test は "parse → cascade の chain が template 内 element を
+        // 触っても error / panic しない" ことと、bit populate が cascade 呼び出し
+        // 前後で保たれることを pin する。
+        //
+        // 追加 pin (roborev-equivalent advisor 指摘): resolve_inheritance の
+        // is_in_document() gate 実装ミスは `cascade.computed.len() ==
+        // dom.node_count()` という m1.23 contract (raikiri/src/lib.rs
+        // `html_document_cascade_populated_after_construct` が非-template
+        // document でのみ pin していた) を template を含む document で破り得る
+        // — raikiri-dom::layout::preshape_text / raikiri-paint::text::draw_text_node
+        // は node_id で `cascade.computed[idx]` に直接 index するため、破れると
+        // OOB panic に繋がる。TestDoc 経由の raikiri-style 内部 unit test は
+        // is_in_document() が常に true な default 実装のため、この contract
+        // 破れを検出できない (parse 経由で実際に bit が false になる document
+        // でのみ再現する) — 本 integration test がそのカバレッジを担う。
+        let html = b"<html><head><style>p { color: red }</style></head><body>\
+                     <p>outer</p>\
+                     <template><p id=\"inner\">inner</p></template>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree)
+            .expect("cascade must not error / panic on template subtree");
+
+        // m1.23 contract: cascade.computed.len() == dom.node_count() でなければ
+        // ならない — たとえ template 子孫が cascade gate で skip されても、
+        // index 契約 (raikiri-dom / raikiri-paint が node_id で直接 index) を
+        // 破ってはいけない。
+        assert_eq!(
+            cascade.computed.len(),
+            uncascaded.dom.node_count(),
+            "cascade.computed.len() must equal node_count() even with template descendants (m1.23 contract)"
+        );
+
+        // cascade 呼び出し後も inner <p> は out-of-document のまま (cascade が bit
+        // を触ることは無いという contract の pin)。
+        //
+        // roborev job 293 L1 finding: 加えて outer <p> と inner <p> の ComputedValues
+        // を実際に検証する。gate が動いていれば outer には `p { color: red }` rule
+        // が適用され CssColor { r:255, g:0, b:0 } となり、inner には rule が適用
+        // されず initial (CssColor::BLACK = { r:0, g:0, b:0 }) が残る。もし cascade
+        // gate を両方削除したら inner にも red rule が届き BLACK ではなくなるため、
+        // この assert 対で gate 動作が本当に発火していることを pin する。
+        use raikiri_style::property::CssColor;
+        const RED: CssColor = CssColor { r: 255, g: 0, b: 0, a: 255 };
+
+        let mut outer_p_id: Option<usize> = None;
+        let mut inner_p_id: Option<usize> = None;
+        for id_u in 0..uncascaded.dom.node_count() {
+            let id = raikiri_traits::NodeId::new(id_u as u64);
+            let n = uncascaded.dom.node(id).unwrap();
+            if let Some(el) = n.as_element()
+                && el.tag_name() == "p"
+            {
+                if el.id() == Some("inner") {
+                    assert!(
+                        !n.is_in_document(),
+                        "inner <p> should remain out of document after cascade"
+                    );
+                    inner_p_id = Some(id_u);
+                } else {
+                    outer_p_id = Some(id_u);
+                }
+            }
+        }
+        let outer_p_id = outer_p_id.expect("outer <p> should exist");
+        let inner_p_id = inner_p_id.expect("<p id=inner> should exist inside template");
+
+        // Index into cascade.computed for both nodes must not panic (proves
+        // out[idx] was still written for the inert node despite the gate).
+        let outer_cv = &cascade.computed[outer_p_id];
+        let inner_cv = &cascade.computed[inner_p_id];
+
+        assert_eq!(
+            outer_cv.color, RED,
+            "outer <p> should have red rule applied (in-document, rule matches)"
+        );
+        assert_eq!(
+            inner_cv.color, CssColor::BLACK,
+            "inner <p> should keep initial color (cascade gate skips template descendants)"
+        );
+    }
+
+    #[test]
     fn parse_ignores_body_style_in_m1_scope() {
         // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。

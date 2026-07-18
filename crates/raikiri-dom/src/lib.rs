@@ -13,6 +13,27 @@
 //!   `ElementRef` types
 //! - [`fonts`] — WPT bundled font dir から cross-machine 決定性 `FontContext`
 //!   を構築する (`build_wpt_font_ctx`)
+//!
+//! # Flat tree membership
+//!
+//! [`Node`] は [`NodeFlags::IS_IN_DOCUMENT`] bit で「Document root から
+//! flat-tree-parent 経由で到達可能」を表す。以下の subtree は clear される:
+//!
+//! - `<template>` element の子孫 (element 自身は in_document=true)
+//! - 将来: shadow root 外の light-DOM 子孫、slotted-only 子孫、mutator の
+//!   transient な detached node
+//!
+//! 維持: raikiri-html sink `finish()` が
+//! [`Document::mark_in_document_flags`] を single pass で呼ぶ。M1 spike は
+//! parse-only なので finish 後は固定。M2+ で runtime mutation を導入する時に
+//! blitz `process_added_subtree` / `process_removed_subtree` 相当を追加する
+//! 予定。
+//!
+//! Traversal が inert subtree を skip したい場合、
+//! [`Node::is_in_document`] を各 iteration で呼ぶ。string 比較 (tag_name ==
+//! "template" 等) で個別判定するのは禁止 — 概念が implicit になり、shadow DOM
+//! 追加時に漏れる。設計仕様書:
+//! `docs/superpowers/specs/2026-07-18-flat-tree-membership-metadata-design.md`。
 
 mod node;
 
@@ -26,7 +47,7 @@ pub use document::Document;
 pub use dom_impl::{ChildIter, ElementRef, NodeRef};
 pub use fonts::{build_wpt_font_ctx, FontError};
 pub use layout::layout_single_page;
-pub use node::Node;
+pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};
 
 #[cfg(test)]
 mod tests {
@@ -581,7 +602,11 @@ mod tests {
         layout.break_all_lines(Some(400.0));
         layout.align(Alignment::Start, AlignmentOptions::default());
         let expected_h = layout.height();
-        doc.nodes[text].text_layout = Some(layout);
+        doc.nodes[text]
+            .data
+            .as_text_mut()
+            .expect("text node")
+            .text_layout = Some(layout);
 
         compute_root_layout(
             &mut doc,
@@ -636,24 +661,28 @@ mod tests {
         let doc = Document::new();
         assert_eq!(doc.root_index(), 0);
         let root = doc.get_node(doc.root_index()).expect("root exists");
-        assert_eq!(root.kind, NodeKind::Document);
+        assert_eq!(root.kind(), NodeKind::Document);
     }
 
     #[test]
-    fn node_pub_fields_are_readable_from_external_call_site() {
-        // pub 化した 5 field (children / unrounded_layout / kind / tag_name / text_layout)
-        // が super::* から見えることを regression pin。
+    fn node_accessors_are_callable_from_external_call_site() {
+        // raikiri-spike-37c: Node が NodeData tagged union に refactor された
+        // 後の pub_surface pin。旧 pub field (kind / tag_name / text_layout)
+        // が accessor method 化されたことを super::* から見えることで regression
+        // pin する。M1.15 external consumer 契約は無影響
+        // (crates/raikiri/tests/external_consumer.rs は Node/Element field
+        // access 0 件、こちらは raikiri-dom 内部 pub_surface)。
         let mut doc = Document::new();
         let e = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
         let t = doc.append_text(e, "hi");
         let node = doc.get_node(e).unwrap();
         let _ = &node.children;
         let _ = &node.unrounded_layout;
-        let _ = &node.kind;
-        let _ = &node.tag_name;
-        let _ = &node.text_layout;
-        // text node kind
+        let _ = node.kind();
+        let _ = node.tag_name();
+        let _ = node.text_layout();
+        let _ = node.is_in_document();
         let tn = doc.get_node(t).unwrap();
-        assert_eq!(tn.kind, NodeKind::Text);
+        assert_eq!(tn.kind(), NodeKind::Text);
     }
 }

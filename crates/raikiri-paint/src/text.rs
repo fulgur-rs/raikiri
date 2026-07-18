@@ -1,7 +1,8 @@
 //! Text glyph draw — parley Layout の GlyphRun を anyrender::draw_glyphs に pipe。
 //!
-//! m1.6 で `Node.text_layout: Option<parley::Layout<()>>` に pre-shape 済 Layout
-//! を格納する design に依拠。paint は line iteration + GlyphRun.positioned_glyphs()
+//! m1.6 で pre-shape 済 `parley::Layout<()>` を `Node::text_layout()` accessor
+//! (raikiri-spike-37c で `NodeData::Text(TextData)` 経由に refactor 済) から
+//! 取得する design に依拠。paint は line iteration + GlyphRun.positioned_glyphs()
 //! を per-run 変換 (parley::Glyph → anyrender::Glyph) して scene に送る。
 //!
 //! 座標系: parley Layout origin (0,0) 左上、positioned_glyphs() が line 内
@@ -26,7 +27,7 @@ pub(crate) fn draw_text_node(
 ) {
     // Text node の pre-shape 結果を取得。preshape_text が empty text で None を返す
     // ので、None = "empty text" の signal、silent return。
-    let Some(text_layout) = node.text_layout.as_ref() else {
+    let Some(text_layout) = node.text_layout() else {
         return;
     };
 

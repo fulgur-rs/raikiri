@@ -92,6 +92,21 @@ pub trait Dom {
     /// `id` の direct children を走査する iterator。範囲外 (invalid NodeId)
     /// なら empty iterator を返す ([`node`](Self::node) の `None` と対称)。
     fn child_ids(&self, id: NodeId) -> Self::ChildIter<'_>;
+
+    /// Arena 内の総 node 数 (Document root および detached / unreachable node
+    /// を含む) (raikiri-spike-37c, roborev job 293 M1 finding 対応)。
+    ///
+    /// cascade などの traversal が `Vec<T>` を pre-allocate する用途で使う。
+    /// **契約**: すべての `NodeId(0..node_count as u64)` が [`node`](Self::node)
+    /// で `Some` を返すこと。逆に `id.0 >= node_count as u64` なら `None` を
+    /// 返す。
+    ///
+    /// Default impl は `0` を返す。既存 caller が壊れないための safe fallback
+    /// で、`Dom` を実装する新しい type は override すべき。既存の raikiri-dom
+    /// および raikiri-style の TestDoc impl は override 済み。
+    fn node_count(&self) -> usize {
+        0
+    }
 }
 
 /// Node reference (borrowed lifetime `'a`)。kind ごとの dispatch と共通 API を
@@ -112,6 +127,44 @@ pub trait Node<'a> {
     /// kind が Text の場合 character data。それ以外 (Element / Document) は
     /// `None`。
     fn text_content(&self) -> Option<&str>;
+
+    /// この Node が flat tree に含まれるかを返す。`<template>` element の子孫
+    /// は `false`、Document root から flat-tree-parent 経由で到達可能な node
+    /// は `true` (raikiri-spike-37c)。
+    ///
+    /// Traversal 側 (cascade / paint / stylesheet extract) はこの predicate
+    /// で inert subtree を統一的に skip する。個別の tag_name 判定
+    /// (`== "template"` 等) を traversal に散らすのは禁止 — 概念が implicit
+    /// になり shadow DOM 追加時に漏れる。
+    ///
+    /// # Default impl
+    ///
+    /// 常に `true` を返す。概念未対応の Node impl (test 用 stub 等) が silent
+    /// drop されないための safe fallback (blitz `stylo.rs` `TElement::is_in_document
+    /// -> true` と同じ姿勢)。raikiri-dom `NodeRef` は override して実 bit を
+    /// 返す。
+    ///
+    /// ```
+    /// use raikiri_traits::{Dom, Node};
+    /// # struct DummyDoc;
+    /// # struct DummyNode;
+    /// # struct DummyElem;
+    /// # struct DummyIter;
+    /// # impl Iterator for DummyIter { type Item = raikiri_traits::NodeId; fn next(&mut self) -> Option<Self::Item> { None } }
+    /// # impl<'a> raikiri_traits::Element<'a> for DummyElem { fn tag_name(&self) -> &str { "" } }
+    /// # impl<'a> Node<'a> for DummyNode {
+    /// #   type Element<'b> = DummyElem where Self: 'b;
+    /// #   fn kind(&self) -> raikiri_traits::NodeKind { raikiri_traits::NodeKind::Document }
+    /// #   fn as_element(&self) -> Option<Self::Element<'_>> { None }
+    /// #   fn text_content(&self) -> Option<&str> { None }
+    /// # }
+    /// // Default impl は常に true — 概念未対応の実装は overriding 不要。
+    /// let n = DummyNode;
+    /// assert!(n.is_in_document());
+    /// ```
+    fn is_in_document(&self) -> bool {
+        true
+    }
 }
 
 /// Element reference (borrowed lifetime `'a`)。

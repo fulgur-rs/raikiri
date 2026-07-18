@@ -104,8 +104,21 @@ impl TreeSink for RaikiriTreeSink {
         // attributes → Node.attributes (null-ns、style を除く) + Node.inline_style。
         wire_side_tables(&mut document, &qual_names, &attributes);
 
-        let stylesheet_sources = extract_inline_stylesheets(&document);
+        // Comment / PI stub を先に detach (roborev job 292 finding 対応):
+        // mark_in_document_flags の後に呼ぶと strip 直後の stub が default true
+        // のまま残り、"detached だが in_document=true" という inconsistent state
+        // が発生する。strip → mark の順にすることで stub は unreachable な
+        // arena node となり、mark の step 1 (全 clear) → step 2 (root から set)
+        // で自然に false のままになる。
         strip_non_element_stubs(&mut document);
+
+        // raikiri-spike-37c: template subtree の IS_IN_DOCUMENT bit を clear
+        // + detached node (foster parenting transient / stub 除去後の孤児) の
+        // bit も clear する。extract_inline_stylesheets が新 predicate 経由で
+        // is_in_document() を見るため、その前に走らせる。
+        document.mark_in_document_flags();
+
+        let stylesheet_sources = extract_inline_stylesheets(&document);
         UncascadedDocument {
             dom: document,
             stylesheet_sources,
@@ -200,9 +213,15 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn get_template_contents(&self, target: &usize) -> usize {
-        // M1 では template contents = template element 自身 (真の template
-        // fragment 分離は M1 spike scope 外)。返り値の Handle が children
-        // 取得に使われる想定の callers に対する minimum viable。
+        // raikiri-spike-37c: template contents fragment root の識別は
+        // ElementData.template_contents slot に予約したが M1 spike では populate
+        // しない。M2+ raikiri-spike-xno Part 2 で clone/inject 用途が生じたら
+        // populate 実装 + ここを fragment index 返却へ切り替え。blitz の
+        // html_sink.rs も現在 TODO で *target を返している。
+        //
+        // Traversal 側 (cascade / paint / extract) は Node::is_in_document()
+        // predicate で template subtree を skip するため、`get_template_contents`
+        // が *target を返しても実害は無い。
         *target
     }
 
@@ -318,31 +337,27 @@ fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
     let mut out = Vec::new();
     let mut stack: Vec<raikiri_traits::NodeId> = vec![head_id];
     while let Some(id) = stack.pop() {
-        if let Some(node) = doc.node(id)
-            && let Some(el) = node.as_element()
-        {
-            match el.tag_name() {
-                "style" => {
-                    // 直下の Text children を concat
-                    let mut buf = String::new();
-                    for c in doc.child_ids(id) {
-                        if let Some(child) = doc.node(c)
-                            && let Some(t) = child.text_content()
-                        {
-                            buf.push_str(t);
-                        }
+        if let Some(node) = doc.node(id) {
+            // raikiri-spike-37c: <template> 子孫 + 将来の inert subtree を統一 skip。
+            if !node.is_in_document() {
+                continue;
+            }
+            if let Some(el) = node.as_element()
+                && el.tag_name() == "style"
+            {
+                let mut buf = String::new();
+                for c in doc.child_ids(id) {
+                    if let Some(child) = doc.node(c)
+                        && let Some(t) = child.text_content()
+                    {
+                        buf.push_str(t);
                     }
-                    if !buf.is_empty() {
-                        out.push(buf);
-                    }
-                    // <style> の内容は CSS のみ想定、子は stack に push しない
-                    continue;
                 }
-                "template" => {
-                    // spec 上 inert (bd-xno)
-                    continue;
+                if !buf.is_empty() {
+                    out.push(buf);
                 }
-                _ => {}
+                // <style> の内容は CSS のみ想定、子は stack に push しない
+                continue;
             }
         }
         // Push in reverse so LIFO pop yields document order (source-order for

@@ -16,7 +16,8 @@ kurbo          = { workspace = true }
 parley         = { workspace = true }
 
 [dev-dependencies]
-taffy = { workspace = true }
+taffy        = { workspace = true }
+raikiri-html = { workspace = true }
 
 [lints]
 workspace = true

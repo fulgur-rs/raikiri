@@ -17,13 +17,29 @@ use taffy::{
 
 use crate::document::Document;
 
-/// Child iterator for taffy traits.
-pub struct TaffyChildIter<'a>(core::slice::Iter<'a, usize>);
+/// Taffy child iterator。raw arena children から `is_in_document() == false`
+/// (`<template>` descendants など) を filter する (raikiri-spike-37c, roborev
+/// job 292 M1 finding 対応)。
+///
+/// Taffy の layout tree = web spec の "flat tree" なので、layout traversal
+/// では template contents を "存在しない" ものとして扱う必要がある (paint 側で
+/// skip しても layout 側で size / position が計算されると sibling の位置に
+/// 影響してしまう)。`raikiri_traits::Dom::child_ids` は raw children を返す
+/// 契約なので、そちらは変更せず、taffy 経路でのみ filter する。
+pub struct TaffyChildIter<'a> {
+    doc: &'a Document,
+    inner: core::slice::Iter<'a, usize>,
+}
 
 impl Iterator for TaffyChildIter<'_> {
     type Item = NodeId;
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().copied().map(NodeId::from)
+        for &c in self.inner.by_ref() {
+            if self.doc.nodes[c].is_in_document() {
+                return Some(NodeId::from(c));
+            }
+        }
+        None
     }
 }
 
@@ -31,15 +47,31 @@ impl TraversePartialTree for Document {
     type ChildIter<'a> = TaffyChildIter<'a>;
 
     fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
-        TaffyChildIter(self.nodes[usize::from(node_id)].children.iter())
+        TaffyChildIter {
+            doc: self,
+            inner: self.nodes[usize::from(node_id)].children.iter(),
+        }
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
-        self.nodes[usize::from(node_id)].children.len()
+        // Filter に一致する必要あり (is_in_document children のみ数える)。
+        self.nodes[usize::from(node_id)]
+            .children
+            .iter()
+            .filter(|&&c| self.nodes[c].is_in_document())
+            .count()
     }
 
     fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
-        NodeId::from(self.nodes[usize::from(node_id)].children[index])
+        // Filtered index — child_ids iterator と同じ view で n 番目を返す。
+        let idx = self.nodes[usize::from(node_id)]
+            .children
+            .iter()
+            .copied()
+            .filter(|&c| self.nodes[c].is_in_document())
+            .nth(index)
+            .expect("get_child_id: index out of range");
+        NodeId::from(idx)
     }
 }
 
@@ -102,7 +134,7 @@ impl LayoutPartialTree for Document {
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
                 let text_intrinsic: Option<Size<f32>> =
-                    tree.nodes[idx].text_layout.as_ref().map(|l| Size {
+                    tree.nodes[idx].text_layout().map(|l| Size {
                         width: l.width(),
                         height: l.height(),
                     });

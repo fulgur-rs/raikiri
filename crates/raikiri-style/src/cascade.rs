@@ -51,13 +51,22 @@ pub struct CascadeResult {
 /// # }
 /// ```
 pub fn cascade<D: Dom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResult, CascadeError> {
-    let mut computed: Vec<ComputedValues> = Vec::new();
     let mut cascaded: HashMap<NodeId, Vec<CascadedDecl>> = HashMap::new();
 
     // Phase 1: per-node cascaded values を収集
     collect_cascaded(dom, dom.root_id(), rule_tree, &mut cascaded);
 
-    // Phase 2: inheritance walk
+    // Phase 2: inheritance walk。
+    //
+    // raikiri-spike-37c roborev job 293 M1 finding: computed を Dom::node_count()
+    // で pre-allocate する。resolve_inheritance の DFS は root reachable な node
+    // のみを訪問するため、detached / unreachable node (foster-parenting transient、
+    // strip 後の孤児 stub 等) には entry を作らない。しかし raikiri-spike-m1.23
+    // contract `computed.len() == document.node_count()` は arena 全体を要求する
+    // (`raikiri-dom::layout::preshape_text` / `raikiri-paint::text::draw_text_node`
+    // が node_id で `computed[idx]` に直接 index する)。事前に initial() で埋めて
+    // おき、DFS で visited slot を上書きする実装。
+    let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
     resolve_inheritance(
         dom,
         dom.root_id(),
@@ -112,6 +121,12 @@ fn collect_cascaded<D: Dom>(
     let mut stack: Vec<NodeId> = vec![id];
     while let Some(id) = stack.pop() {
         if let Some(node) = dom.node(id) {
+            // raikiri-spike-37c: <template> 子孫 + 将来の inert subtree を統一 skip。
+            // silent bug fix: 従来 template 内 element にも rule matching が走り
+            // Vec<CascadedDecl> が waste で膨らんでいた。
+            if !node.is_in_document() {
+                continue;
+            }
             if node.kind() == NodeKind::Element
                 && let Some(elem) = node.as_element()
             {
@@ -222,6 +237,25 @@ fn resolve_inheritance<D: Dom>(
 ) {
     let mut stack: Vec<(NodeId, ComputedValues)> = vec![(id, parent_computed.clone())];
     while let Some((id, parent_computed)) = stack.pop() {
+        // raikiri-spike-37c roborev job 294 M2 finding: is_in_document()==false
+        // の node は subtree ごと早期 continue する。
+        //
+        // 以前は resize + write + children push を unconditional に行い computed
+        // 長を node_count() に揃えていた (m1.23 contract)。今 `cascade()` が
+        // `dom.node_count()` で `computed` を pre-allocate + initial() で埋める
+        // ように変わったため、visited しないままの slot は自然に initial()
+        // として残る。これにより:
+        //   - detached / template descendants は inherit_from(parent) の
+        //     継承値ではなく initial() となる (`<template style="color:red">`
+        //     配下は red を継承しない)
+        //   - template subtree の walk が省ける (パフォーマンス改善)
+        //
+        // 未知 NodeId (dom.node が None) の場合も skip: initial() のままにする
+        // 方が defensive (旧コードは inherit_from してから書いていた)。
+        if !dom.node(id).is_some_and(|n| n.is_in_document()) {
+            continue;
+        }
+
         // 親からの inheritance walk 開始値: inherited のみコピー、非継承は
         // initial() (spec §M1.4a、raikiri-spike-m1.22)
         let mut computed = ComputedValues::inherit_from(&parent_computed);
@@ -234,7 +268,10 @@ fn resolve_inheritance<D: Dom>(
             }
         }
 
-        // out を id+1 サイズに resize してから index 書き込み
+        // out を id+1 サイズに resize してから index 書き込み。
+        // `cascade()` の pre-allocation で通常 out.len() == node_count() のため
+        // resize は no-op、defensive safety net として維持 (Dom impl の
+        // node_count() 過小報告に対する保険)。
         let idx = id.0 as usize;
         if out.len() <= idx {
             out.resize(idx + 1, ComputedValues::initial());

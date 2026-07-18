@@ -24,11 +24,22 @@ use taffy::{AvailableSpace, Dimension, NodeId as TaffyNodeId, Size, compute_root
 /// iterative `Vec` stack で実装 (cascade §deep_nesting の pattern と一貫、
 /// deep DOM で stack overflow を回避)。fragment parse (no `<body>`) では
 /// `None`、caller が `LayoutError::Internal` に昇格させる。
+///
+/// raikiri-spike-37c roborev job 295 M3 finding: `!is_in_document()` の subtree
+/// (`<template>` descendants など) を skip する。inert subtree 内に `<body>`
+/// tag があってもそれを本物の body として選ばないため — 例えば
+/// `<template><body>ghost</body></template>` の後に real `<body>` が来る HTML
+/// で ghost body を選んでしまうと後続の layout / paint が inert subtree に対して
+/// 実行されてしまう。
 pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
         let node = &doc.nodes[node_idx];
-        if node.kind == NodeKind::Element && node.tag_name.as_deref() == Some("body") {
+        if !node.is_in_document() {
+            // inert subtree — 本 subtree の中に body があっても選ばない。
+            continue;
+        }
+        if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
             return Some(node_idx);
         }
         // children を reverse push すると document order で pop される
@@ -88,11 +99,20 @@ pub(crate) fn preshape_text(
     max_advance: f32,
 ) -> Result<(), LayoutError> {
     for idx in 0..doc.nodes.len() {
-        if doc.nodes[idx].kind != NodeKind::Text {
+        if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
         }
-        let text: String = match &doc.nodes[idx].text_content {
-            Some(s) if !s.is_empty() => s.as_str().to_string(),
+        // raikiri-spike-37c roborev job 294 M3 finding: template subtree /
+        // detached な text は paint も layout tree (taffy) からも filter される。
+        // 無駄な parley shape + intrinsic size 計算を避けるため、bit gate で
+        // 早期 skip する。paint / cascade の gate と一貫。
+        if !doc.nodes[idx].is_in_document() {
+            continue;
+        }
+        let text: String = match &doc.nodes[idx].data {
+            crate::node::NodeData::Text(t) if !t.text_content.is_empty() => {
+                t.text_content.as_str().to_string()
+            }
             _ => continue,
         };
         // cascade は Text node 位置にも ComputedValues を populate する
@@ -146,7 +166,9 @@ pub(crate) fn preshape_text(
         // 再指定不要 (内部的に break 時の width を使う)。
         layout.align(Alignment::Start, AlignmentOptions::default());
 
-        doc.nodes[idx].text_layout = Some(layout);
+        if let Some(t) = doc.nodes[idx].data.as_text_mut() {
+            t.text_layout = Some(layout);
+        }
     }
     Ok(())
 }
@@ -186,9 +208,23 @@ pub fn layout_single_page(
     page_box: PageBox,
     mut font_ctx: FontContext,
 ) -> Result<(), LayoutError> {
+    // raikiri-spike-37c roborev job 295 M1 finding: observation-side entry で
+    // membership を sync する — `mark_in_document_flags` は flags_dirty=false
+    // なら idempotent no-op なので、既に sink.finish() 経由で sync 済の場合は
+    // 事実上 free。post-parse mutation (`Document::append_*` 等) の後で cascade
+    // を skip して直接 layout する consumer に対する safety net。
+    //
+    // Contract note: cascade は `&D: Dom` を取り mutation 不可なので、cascade
+    // 呼び出し側で sync せざるを得ない (parse.finish() 経由でしか自動 sync
+    // されない)。layout はここで sync することで少なくとも layout/paint 段に
+    // stale bit を持ち込まないことを保証する。
+    document.mark_in_document_flags();
+
     // Step 0: text_layout re-entrance clear
     for node in document.nodes.iter_mut() {
-        node.text_layout = None;
+        if let Some(t) = node.data.as_text_mut() {
+            t.text_layout = None;
+        }
     }
 
     // Step 1: ComputedValues → taffy::Style bridge (M1.4 no-op site)
@@ -307,10 +343,10 @@ mod tests {
         preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 595.0).expect("preshape Ok");
 
         assert!(
-            doc.nodes[text].text_layout.is_some(),
+            doc.nodes[text].text_layout().is_some(),
             "text node's text_layout must be populated"
         );
-        let layout = doc.nodes[text].text_layout.as_ref().unwrap();
+        let layout = doc.nodes[text].text_layout().unwrap();
         assert!(layout.width() > 0.0, "text 'Hi' must have non-zero width");
         assert!(
             layout.height() > 0.0,
@@ -319,16 +355,19 @@ mod tests {
 
         // Element / Document は None のまま
         assert!(
-            doc.nodes[html].text_layout.is_none(),
+            doc.nodes[html].text_layout().is_none(),
             "html element is not text"
         );
         assert!(
-            doc.nodes[body].text_layout.is_none(),
+            doc.nodes[body].text_layout().is_none(),
             "body element is not text"
         );
-        assert!(doc.nodes[p].text_layout.is_none(), "p element is not text");
         assert!(
-            doc.nodes[0].text_layout.is_none(),
+            doc.nodes[p].text_layout().is_none(),
+            "p element is not text"
+        );
+        assert!(
+            doc.nodes[0].text_layout().is_none(),
             "document root is not text"
         );
     }
@@ -350,7 +389,7 @@ mod tests {
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
             preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 595.0).unwrap();
-            doc.nodes[text].text_layout.as_ref().unwrap().height()
+            doc.nodes[text].text_layout().unwrap().height()
         }
 
         let small = shape_text_height_at_font_size("8px");
