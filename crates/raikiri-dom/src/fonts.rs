@@ -21,8 +21,12 @@ use std::path::{Path, PathBuf};
 /// # Errors
 /// - [`FontError::DirNotFound`] — `fonts_dir` が存在しない
 /// - [`FontError::EmptyDir`] — dir は存在するが `.ttf`/`.otf` が 1 個も無い
+/// - [`FontError::PreferredFontUnavailable`] — `PREFERRED_FIRST` に list した
+///   font (現在は Ahem.ttf) が dir に無い、または fontique が register を
+///   拒否した (silent fallback は cascade 決定性を破壊するため Err にする)
 /// - [`FontError::NoFontsRegistered`] — dir には `.ttf`/`.otf` があるが 1 個も
-///   register できなかった (全 file が fontique に reject された)
+///   register できなかった (PREFERRED_FIRST 経路で先に catch されるので
+///   PREFERRED_FIRST が空の future 想定でのみ到達)
 /// - [`FontError::Io`] — dir walk 中の io failure
 pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     use parley::fontique::{Blob, Collection, CollectionOptions, GenericFamily, SourceCache};
@@ -59,6 +63,12 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     // aggregate check (`family_ids.is_empty` → NoFontsRegistered) が catch する
     // ので warn+skip のまま維持。
     let mut family_ids = Vec::new();
+    // PREFERRED_FIRST invariant tracking (roborev Medium finding e93 round 5):
+    // path が PREFERRED_FIRST member かつ register 成功したものを basename
+    // 単位で記録。loop 後にこの set と PREFERRED_FIRST を照合し、欠落 or
+    // register-empty があれば PreferredFontUnavailable。silent fallback を防ぐ。
+    let mut registered_preferred_basenames: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     for path in paths {
         let bytes = std::fs::read(&path).map_err(|source| FontError::Io {
             path: path.clone(),
@@ -73,13 +83,33 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
             );
             continue;
         }
+        // register 成功した path が PREFERRED_FIRST 対象なら record
+        if let Some(basename) = path.file_name().and_then(|f| f.to_str()) {
+            if PREFERRED_FIRST.contains(&basename) {
+                registered_preferred_basenames.insert(basename.to_string());
+            }
+        }
         family_ids.extend(registered.iter().map(|(id, _)| *id));
     }
 
-    // 全 file が fontique に reject された場合 (family_ids empty) は Err。
-    // このまま Ok を返すと FontContext.collection.generic_families が空の
-    // family_ids に append されるだけで、cascade "serif" が何にも解決されず
-    // silent regression になる (roborev Medium finding e93)。
+    // PREFERRED_FIRST invariant enforce (roborev Medium finding e93 round 5):
+    // PREFERRED_FIRST 全 member が register 成功したことを確認。missing (walker
+    // で拾えなかった) or register-empty (fontique reject) の場合、他の valid
+    // font が silent fallback として cascade "serif" に解決されないよう
+    // dedicated Err を返す。
+    for expected in PREFERRED_FIRST {
+        if !registered_preferred_basenames.contains(*expected) {
+            return Err(FontError::PreferredFontUnavailable {
+                name: (*expected).to_string(),
+                dir: fonts_dir.to_path_buf(),
+            });
+        }
+    }
+
+    // Backstop: PREFERRED_FIRST が空である将来 (現在は unreachable path、
+    // PREFERRED_FIRST=["Ahem.ttf"] の invariant check が先に fire する)
+    // に備えた defensive check。cascade "serif" が空の family_ids に対して
+    // 何にも解決されない状態を Err で surface する。
     if family_ids.is_empty() {
         return Err(FontError::NoFontsRegistered(fonts_dir.to_path_buf()));
     }
@@ -111,8 +141,18 @@ pub enum FontError {
     /// `fonts_dir` は存在するが `.ttf`/`.otf` が 1 個も見つからない
     EmptyDir(PathBuf),
     /// dir に `.ttf`/`.otf` はあったが 1 個も fontique に register されなかった
-    /// (全 file が parse-invalid、または pin drift で asset が壊れた等)
+    /// (全 file が parse-invalid、または pin drift で asset が壊れた等)。
+    /// `PREFERRED_FIRST` が空の future 想定でのみ到達する defensive backstop。
     NoFontsRegistered(PathBuf),
+    /// `PREFERRED_FIRST` に list された font が dir に存在しない、または
+    /// fontique が register を拒否した (roborev finding e93 round 5)。
+    /// silent fallback で cascade 決定性を破壊しないよう dedicated Err。
+    PreferredFontUnavailable {
+        /// 期待されたが register 成功しなかった font の basename
+        name: String,
+        /// scan 対象の fonts dir
+        dir: PathBuf,
+    },
     /// dir walk 中の io failure
     Io {
         /// walk 中に io error が発生した path
@@ -137,6 +177,12 @@ impl std::fmt::Display for FontError {
                 f,
                 "no font families registered from {} (all .ttf/.otf files rejected by parley/fontique — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
                 p.display()
+            ),
+            FontError::PreferredFontUnavailable { name, dir } => write!(
+                f,
+                "preferred font '{}' not registered under {} — missing from dir or rejected by parley/fontique; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
+                name,
+                dir.display()
             ),
             FontError::Io { path, source } => {
                 write!(f, "io error reading {}: {}", path.display(), source)
@@ -460,21 +506,53 @@ mod tests {
     }
 
     #[test]
-    fn no_registerable_fonts_returns_err() {
-        // roborev Medium finding e93 regression pin: dir has .ttf files but
-        // none register. Writing pure garbage bytes into .ttf files causes
-        // fontique's register_fonts to return empty vec (no valid font tables
-        // to parse). build_wpt_font_ctx must surface this as an error rather
-        // than silently returning an empty FontContext.
+    fn preferred_font_missing_from_disk_returns_err() {
+        // roborev Medium finding e93 round 5 regression pin: PREFERRED_FIRST
+        // font (Ahem.ttf) が dir に存在しない場合、他の valid font (Other.ttf)
+        // が silent fallback として cascade "serif" に解決されてはならない。
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("garbage1.ttf"), b"not a valid font at all").unwrap();
-        std::fs::write(tmp.path().join("garbage2.ttf"), b"also not a font").unwrap();
+        write_fake_ttf(tmp.path(), "Other.ttf"); // valid ttf (fontique accepts)
+        // Ahem.ttf は書かない → PREFERRED_FIRST invariant 違反
         match build_wpt_font_ctx(tmp.path()) {
-            Err(FontError::NoFontsRegistered(p)) => assert_eq!(p, tmp.path()),
-            Err(other) => panic!("expected NoFontsRegistered, got {:?}", other),
+            Err(FontError::PreferredFontUnavailable { name, dir }) => {
+                assert_eq!(name, "Ahem.ttf");
+                assert_eq!(dir, tmp.path());
+            }
+            Err(other) => panic!(
+                "expected PreferredFontUnavailable(Ahem.ttf), got {:?}",
+                other
+            ),
             Ok(_) => panic!(
-                "expected NoFontsRegistered err (no register-able fonts), got Ok — \
-                 silent empty FontContext would be a determinism regression"
+                "expected PreferredFontUnavailable err (Ahem missing from disk), got Ok — \
+                 silent non-Ahem fallback would break cascade determinism"
+            ),
+        }
+    }
+
+    #[test]
+    fn preferred_font_register_failure_returns_err() {
+        // roborev Medium finding e93 round 5 regression pin: PREFERRED_FIRST
+        // font (Ahem.ttf) が disk に存在するが fontique に reject された場合、
+        // 他の valid font が silent fallback として cascade "serif" に解決
+        // されてはならない (Round 3 の read failure fix と同じ精神で、
+        // register failure も dedicated Err に昇格)。
+        let tmp = tempfile::tempdir().unwrap();
+        // Ahem.ttf: garbage bytes → fontique が register 拒否
+        std::fs::write(tmp.path().join("Ahem.ttf"), b"not a valid font").unwrap();
+        // Other.ttf: valid fake ttf → fontique が register 成功
+        write_fake_ttf(tmp.path(), "Other.ttf");
+        match build_wpt_font_ctx(tmp.path()) {
+            Err(FontError::PreferredFontUnavailable { name, dir }) => {
+                assert_eq!(name, "Ahem.ttf");
+                assert_eq!(dir, tmp.path());
+            }
+            Err(other) => panic!(
+                "expected PreferredFontUnavailable(Ahem.ttf), got {:?}",
+                other
+            ),
+            Ok(_) => panic!(
+                "expected PreferredFontUnavailable err (Ahem present but rejected), got Ok — \
+                 silent fallback to Other.ttf would break cascade 'serif' → Ahem promise"
             ),
         }
     }
