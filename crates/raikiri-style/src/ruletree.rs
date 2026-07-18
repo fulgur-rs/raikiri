@@ -1,10 +1,12 @@
 //! Unified rule tree — cascade 側と GCPM 解決側 (M5+) が共有する index。
-//! M1.4 では style_rules のみ populate。at-rule (@page / @media / @import 等) は
-//! silently skip。
+//! M1.4 では style_rules を populate。raikiri-spike-rbo で @page at-rule も
+//! 非-skip 化して [`RuleTree::page_rules`] に格納する (cascade 適用は M4 defer)。
+//! それ以外の at-rule (@media / @supports / @import 等) は引き続き silently skip。
 
 use cssparser::{Parser, ParserInput, StyleSheetParser};
 use selectors::parser::{ParseRelative, SelectorList};
 
+use crate::page::{PageRule, PageSelector, parse_page_prelude};
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{RaikiriSelectorImpl, RaikiriSelectorParser};
@@ -24,14 +26,18 @@ pub enum Origin {
 
 /// Unified rule tree。cascade + GCPM (M5+) が消費する index。
 ///
-/// M1.4 では `style_rules` のみ populate。future field
-/// (page_rules / font_face_rules / counter_style_rules / media_rules /
-///  supports_rules / import_rules) は M4 で追加、`#[non_exhaustive]` の恩恵で
+/// M1.4 では `style_rules` を populate。raikiri-spike-rbo で `page_rules` を
+/// 追加 (parse のみ、cascade は M4 defer)。future field
+/// (font_face_rules / counter_style_rules / media_rules /
+///  supports_rules / import_rules) は M4+ で追加、`#[non_exhaustive]` の恩恵で
 /// 非破壊的に拡張可能。
 #[non_exhaustive]
 pub struct RuleTree {
     /// Qualified style rules (`selectors { declarations }`)、source order 保持。
     pub style_rules: Vec<StyleRule>,
+    /// `@page` at-rules。source_order は `style_rules` とは独立の 0-index。
+    /// cascade 適用は M4 defer — 現在は parse 結果を parked しているだけ。
+    pub page_rules: Vec<PageRule>,
 }
 
 impl RuleTree {
@@ -39,37 +45,52 @@ impl RuleTree {
     pub fn empty() -> Self {
         Self {
             style_rules: Vec::new(),
+            page_rules: Vec::new(),
         }
     }
 
     /// Stylesheet 文字列を parse して rule を append する。
     ///
     /// - `source_order` は既存 rule 数を起点に呼び出し順で自動採番
-    /// - `origin` は各 rule に紐付き、cascade rank 化 (`!important` 反転
-    ///   扱い) で使用される
+    ///   (`style_rules` / `page_rules` は別カウンタ — [`PageRule::source_order`]
+    ///   の doc 参照)
+    /// - `origin` は style rule に紐付き、cascade rank 化 (`!important` 反転
+    ///   扱い) で使用される。@page は cascade 側 M4 defer のため origin は
+    ///   持たない
     /// - Invalid selector / 未サポート property は既存の silent-drop 挙動を
     ///   継承 (spec §M1.4a)
     ///
-    /// spec: raikiri-spike-m1.22 (m1.21 spec addition の実装)
+    /// spec: raikiri-spike-m1.22 (m1.21 spec addition の実装)、
+    /// raikiri-spike-rbo (@page scaffolding)
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
-        let start_order = self.style_rules.len() as u32;
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
         let mut rule_parser = StyleRuleParser;
-        let mut order = start_order;
-        for (selectors, declarations) in
-            StyleSheetParser::new(&mut parser, &mut rule_parser).flatten()
-        {
-            if !is_type_or_universal_only(&selectors) {
-                continue; // class/id/attr/combinator selector は m1.4 では drop
+        let mut style_order = self.style_rules.len() as u32;
+        let mut page_order = self.page_rules.len() as u32;
+        for rule in StyleSheetParser::new(&mut parser, &mut rule_parser).flatten() {
+            match rule {
+                ParsedRule::Style(selectors, declarations) => {
+                    if !is_type_or_universal_only(&selectors) {
+                        continue; // class/id/attr/combinator selector は m1.4 では drop
+                    }
+                    self.style_rules.push(StyleRule {
+                        selectors,
+                        declarations,
+                        source_order: style_order,
+                        origin,
+                    });
+                    style_order = style_order.wrapping_add(1);
+                }
+                ParsedRule::Page(selector, declarations) => {
+                    self.page_rules.push(PageRule {
+                        selector,
+                        declarations,
+                        source_order: page_order,
+                    });
+                    page_order = page_order.wrapping_add(1);
+                }
             }
-            self.style_rules.push(StyleRule {
-                selectors,
-                declarations,
-                source_order: order,
-                origin,
-            });
-            order = order.wrapping_add(1);
         }
     }
 }
@@ -158,18 +179,57 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
     }
 }
 
-/// StyleSheetParser 実装。qualified rule のみ受理、at-rule は default drop。
+/// Top-level parsed rule shape emitted by [`StyleRuleParser`].
+///
+/// cssparser requires `AtRuleParser::AtRule` と `QualifiedRuleParser::QualifiedRule`
+/// を同一型にする必要があるため、両方をこの enum に流し込む
+/// (`StyleSheetParser::next` の `Item = R` 制約)。@media / @supports / @import
+/// は default `parse_prelude` の `Err` に落ちて cssparser 側で silent drop。
+enum ParsedRule {
+    Style(SelectorList<RaikiriSelectorImpl>, Vec<Declaration>),
+    Page(PageSelector, Vec<Declaration>),
+}
+
+/// StyleSheetParser 実装。qualified rule + `@page` を受理、他 at-rule は drop。
 struct StyleRuleParser;
 
+/// `@page` prelude を parse する。他 at-rule (@media / @supports / @import 等) は
+/// default `Err` に落として cssparser に silent drop させる。
 impl<'i> cssparser::AtRuleParser<'i> for StyleRuleParser {
-    type Prelude = ();
-    type AtRule = (SelectorList<RaikiriSelectorImpl>, Vec<Declaration>);
+    type Prelude = PageSelector;
+    type AtRule = ParsedRule;
     type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: cssparser::CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
+        if name.eq_ignore_ascii_case("page") {
+            parse_page_prelude(input)
+        } else {
+            // @media / @supports / @import 等は今 slot 未サポート — cssparser 側で
+            // block をまるごと skip させるため Err を返す。
+            Err(input.new_custom_error(()))
+        }
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        prelude: Self::Prelude,
+        _start: &cssparser::ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
+        // @page body = declaration list (M4 で margin-box at-rule 追加予定)。
+        // 未サポート property は既存の silent-drop で 0 declaration 化する。
+        let declarations = parse_declaration_block(input);
+        Ok(ParsedRule::Page(prelude, declarations))
+    }
 }
 
 impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
     type Prelude = SelectorList<RaikiriSelectorImpl>;
-    type QualifiedRule = (SelectorList<RaikiriSelectorImpl>, Vec<Declaration>);
+    type QualifiedRule = ParsedRule;
     type Error = ();
 
     fn parse_prelude<'t>(
@@ -187,7 +247,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
         let declarations = parse_declaration_block(input);
-        Ok((prelude, declarations))
+        Ok(ParsedRule::Style(prelude, declarations))
     }
 }
 
@@ -393,5 +453,195 @@ mod tests {
         // <style> outer の 1 rule のみ (div{...})、template 内は skip。
         assert_eq!(tree.style_rules.len(), 1);
         assert_eq!(tree.style_rules[0].source_order, 0);
+    }
+
+    // ── @page at-rule scaffolding (raikiri-spike-rbo) ──
+    //
+    // Spec: CSS Paged Media Level 3 §4.3
+    // <https://www.w3.org/TR/css-page-3/#page-selectors-syntax>
+    //
+    // Test で使う body は M1.4 の property.rs でサポート済み (color / font-*) を
+    // 選ぶ — parse_declaration_block を reuse しているので margin / size 等は
+    // 現時点で silent drop され declaration 0 個になる (下の
+    // page_body_unsupported_property_drops_declaration がその regression guard)。
+
+    use crate::page::PageSelector;
+    use crate::{Atom, PageRule};
+
+    fn page_rules(source: &str) -> Vec<PageRule> {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        tree.page_rules
+    }
+
+    #[test]
+    fn page_default_selector_no_prelude() {
+        // `@page { color: red }` → PageSelector::Default、declarations 1 個。
+        let rules = page_rules("@page { color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector, PageSelector::Default);
+        assert_eq!(rules[0].declarations.len(), 1);
+        assert_eq!(rules[0].source_order, 0);
+    }
+
+    #[test]
+    fn page_pseudo_first() {
+        let rules = page_rules("@page :first { color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector, PageSelector::First);
+    }
+
+    #[test]
+    fn page_pseudo_left_right_blank() {
+        let rules = page_rules(
+            "@page :left { color: red } \
+             @page :right { color: red } \
+             @page :blank { color: red }",
+        );
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].selector, PageSelector::Left);
+        assert_eq!(rules[1].selector, PageSelector::Right);
+        assert_eq!(rules[2].selector, PageSelector::Blank);
+        // page_order は @page 独立の counter。
+        assert_eq!(rules[0].source_order, 0);
+        assert_eq!(rules[1].source_order, 1);
+        assert_eq!(rules[2].source_order, 2);
+    }
+
+    #[test]
+    fn page_named_selector() {
+        let rules = page_rules("@page my-cover { color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].selector,
+            PageSelector::Named(Atom::from("my-cover"))
+        );
+    }
+
+    #[test]
+    fn page_nth_page_functional_pseudo() {
+        // 2n+1 → a=2, b=1
+        let rules = page_rules("@page :nth-page(2n+1) { color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector, PageSelector::NthPage { a: 2, b: 1 });
+    }
+
+    #[test]
+    fn page_multi_pseudo_is_dropped() {
+        // Scaffolding narrowing (see page.rs module docs): spec §4.3 では
+        // `<pseudo-page>*` で複数許可だが、raikiri-spike-rbo では単数のみ受理。
+        // `@page :first :left` は入 rule ごと drop。
+        let rules = page_rules("@page :first :left { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_ident_plus_pseudo_is_dropped() {
+        // 同じく scaffolding narrowing。spec は `<ident>? <pseudo-page>*` で
+        // `named:first` を許可するが、rbo では drop。
+        let rules = page_rules("@page named:first { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_selector_list_with_comma_is_dropped() {
+        // `page-selector-list = <page-selector>#` の comma-list も scaffolding
+        // では未対応で drop。
+        let rules = page_rules("@page :first, :left { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_unknown_pseudo_is_dropped() {
+        // `:cover` は spec §4.3 に存在しないため drop。
+        let rules = page_rules("@page :cover { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_pseudo_is_case_insensitive() {
+        // CSS keyword は ASCII case-insensitive (`match_ignore_ascii_case!` 経由)。
+        let rules = page_rules("@page :FIRST { color: red } @page :Left { color: red }");
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].selector, PageSelector::First);
+        assert_eq!(rules[1].selector, PageSelector::Left);
+    }
+
+    #[test]
+    fn page_nth_page_trailing_garbage_dropped() {
+        // `:nth-page(2n+1 garbage)` — parse_nth の後に garbage token が残るので
+        // rule ごと drop (rule.rs の rejects_trailing_garbage_after_value と同じ
+        // exhaustive-consumption discipline)。
+        let rules = page_rules("@page :nth-page(2n+1 garbage) { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_source_order_independent_from_style_rules() {
+        // page_rules の source_order は style_rules と独立の counter。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "p { color: red } \
+             @page :first { color: red } \
+             div { color: blue } \
+             @page :left { color: red }",
+            Origin::Author,
+        );
+        assert_eq!(tree.style_rules.len(), 2);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+        assert_eq!(tree.style_rules[1].source_order, 1);
+        assert_eq!(tree.page_rules.len(), 2);
+        assert_eq!(tree.page_rules[0].source_order, 0);
+        assert_eq!(tree.page_rules[1].source_order, 1);
+    }
+
+    #[test]
+    fn page_source_order_monotonic_across_add_stylesheet_calls() {
+        // 複数 add_stylesheet 呼び出し間で page_order は継続する。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page :first { color: red }", Origin::UserAgent);
+        tree.add_stylesheet("@page :left { color: blue }", Origin::Author);
+        assert_eq!(tree.page_rules.len(), 2);
+        assert_eq!(tree.page_rules[0].source_order, 0);
+        assert_eq!(tree.page_rules[1].source_order, 1);
+    }
+
+    #[test]
+    fn page_body_unsupported_property_drops_declaration() {
+        // M1.4 property.rs は margin / size 等 @page descriptor を未サポート。
+        // parse_declaration_block reuse により silent drop され declaration 0 個。
+        // M4 で @page descriptor が入るまで cascade 側は空 declarations を扱える
+        // ことを保証する regression guard。
+        let rules = page_rules("@page { margin: 1cm; size: A4 }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector, PageSelector::Default);
+        assert!(rules[0].declarations.is_empty());
+    }
+
+    #[test]
+    fn other_at_rules_still_silently_dropped() {
+        // @media / @supports / @import は default `Err` に落ちて silent drop。
+        // (raikiri-spike-rbo scope 外 — @page のみ非-skip 化)
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@media print { p { color: red } } \
+             @supports (display: block) { p { color: red } } \
+             p { color: red }",
+            Origin::Author,
+        );
+        assert_eq!(tree.page_rules.len(), 0);
+        // @media / @supports 内の p { color: red } は body parse されず drop、
+        // 末尾の p { color: red } のみ残る。
+        assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn page_rules_captured_via_build_rule_tree_from_dom() {
+        // build_rule_tree (DOM 経由) でも page_rules が populate される。
+        let doc = dom_with_style("@page :first { color: red } p { color: blue }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.page_rules.len(), 1);
+        assert_eq!(tree.page_rules[0].selector, PageSelector::First);
+        assert_eq!(tree.style_rules.len(), 1);
     }
 }
