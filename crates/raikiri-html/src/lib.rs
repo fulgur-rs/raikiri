@@ -674,6 +674,48 @@ mod tests {
         ));
     }
 
+    // End-to-end parse: annotation-xml integration point の判定は tree
+    // construction algorithm の branch を切り替えるので、parse 経由でも
+    // "子要素の namespace が予想通りか" で観測できる。
+    // - encoding=text/html → HTML integration point 発動 → 子は HTML namespace
+    //   (raikiri-dom fast path で namespace_uri() = None)
+    // - encoding 不在 → 通常の MathML foreign content → 子は MathML namespace
+
+    #[test]
+    fn parse_annotation_xml_integration_point_inherits_html_namespace_for_children() {
+        // annotation-xml encoding=text/html は HTML integration point。中の
+        // 未知要素 <foo> は HTML namespace として解釈されるべき。
+        let html =
+            br#"<math><annotation-xml encoding="text/html"><foo>x</foo></annotation-xml></math>"#;
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let foo_id = find_first_by_tag(&uncascaded.dom, "foo").expect("foo exists");
+        let foo_node = uncascaded.dom.node(foo_id).expect("foo node exists");
+        let foo = foo_node.as_element().expect("foo is element");
+        assert_eq!(
+            foo.namespace_uri(),
+            None,
+            "child inside HTML integration point should be HTML (None fast path)"
+        );
+    }
+
+    #[test]
+    fn parse_annotation_xml_non_integration_wraps_children_in_mathml_namespace() {
+        // annotation-xml (encoding 不在) は integration point ではない。中の
+        // 未知要素 <foo> は MathML foreign content として MathML namespace で解釈される。
+        let html = br#"<math><annotation-xml><foo>x</foo></annotation-xml></math>"#;
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let foo_id = find_first_by_tag(&uncascaded.dom, "foo").expect("foo exists");
+        let foo_node = uncascaded.dom.node(foo_id).expect("foo node exists");
+        let foo = foo_node.as_element().expect("foo is element");
+        assert_eq!(
+            foo.namespace_uri(),
+            Some("http://www.w3.org/1998/Math/MathML"),
+            "child inside non-integration MathML should stay in MathML namespace"
+        );
+    }
+
     #[test]
     fn parse_strips_many_comments_under_one_parent() {
         use raikiri_traits::{Dom, Element, Node};
