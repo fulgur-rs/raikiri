@@ -293,12 +293,46 @@ impl Document {
     ///
     /// # Panics
     ///
-    /// `template_id` が Element kind でない場合 (release + debug 共通)。
-    /// template element でない node に fragment root を wire するのは
-    /// caller bug なので early fail。
+    /// - `template_id` が Element kind でない場合 (release + debug 共通)。
+    ///   template element でない node に fragment root を wire するのは
+    ///   caller bug なので early fail。
+    /// - `template_id` の Element の `tag_name` が `"template"` でない場合
+    ///   (release + debug 共通)。html5ever
+    ///   [`ElementFlags::template`](https://docs.rs/markup5ever/latest/markup5ever/interface/tree_builder/struct.ElementFlags.html#structfield.template)
+    ///   が true になるのは HTML namespace の `<template>` element のみ、
+    ///   したがってこの entry point は template element 限定。誤って通常
+    ///   element を渡すのは caller bug (codex final review 2026-07-19 で
+    ///   surface)。
+    /// - `template_id` の `template_contents` slot が既に populate されている
+    ///   場合 (debug のみ)。sink は template element ごとに 1 度だけこの
+    ///   method を呼ぶ契約で、二重呼び出しは古い fragment root を silently
+    ///   orphan するため debug で fail。release では上書きを許容
+    ///   (M2+ mutation runtime での再 wire を想定した保守的挙動)。
     ///
     /// Returns: 新規 allocate された fragment root の arena index。
     pub fn allocate_template_fragment_root(&mut self, template_id: usize) -> usize {
+        // Precondition: template_id は Element kind、かつ tag_name == "template"、
+        // かつ template_contents slot が未 populate。
+        // 借用の都合で immutable check を先に走らせて validation を確定させる
+        // (Step 1 の append_element が &mut self を borrow するため)。
+        {
+            let data = match &self.nodes[template_id].data {
+                NodeData::Element(e) => e.as_ref(),
+                _ => panic!("allocate_template_fragment_root called on non-Element"),
+            };
+            assert_eq!(
+                data.tag_name.as_str(),
+                "template",
+                "allocate_template_fragment_root called on non-<template> element (tag = {:?})",
+                data.tag_name.as_str(),
+            );
+            debug_assert!(
+                data.template_contents.is_none(),
+                "allocate_template_fragment_root called twice on the same template \
+                 (would orphan the previous fragment root at arena index {:?})",
+                data.template_contents,
+            );
+        }
         // Step 1: fragment root を append_element(None) で detached allocate。
         // 内部で `flags_dirty=true` が set されるので、後段 `mark_in_document_flags`
         // が step 1 で fragment root の default IS_IN_DOCUMENT bit を clear する。
@@ -309,12 +343,12 @@ impl Document {
             None::<&str>,
         );
         // Step 2: template element の template_contents slot に fragment root
-        // index を wire。非-Element を渡した場合は as_element_mut() が None を
-        // 返して panic (blg / attributes setter と同じ strictness)。
+        // index を wire。precondition check 済のため as_element_mut / template
+        // tag_name の re-validation は不要。
         let e = self.nodes[template_id]
             .data
             .as_element_mut()
-            .expect("allocate_template_fragment_root called on non-Element");
+            .expect("allocate_template_fragment_root: element vanished between checks");
         e.template_contents = Some(frag_root);
         frag_root
     }
