@@ -89,8 +89,8 @@ impl std::fmt::Display for PolicyViolation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Policy violation ({}) at {}: {}",
-            self.violation_type, self.url, self.details
+            "Policy violation ({:?} {}) at {}: {}",
+            self.kind, self.violation_type, self.url, self.details
         )
     }
 }
@@ -162,5 +162,47 @@ impl std::fmt::Display for ViolationType {
             }
             Self::Other => write!(f, "unspecified policy violation"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policy_violation_display_includes_kind_url_violation_type_details() {
+        let violation = PolicyViolation {
+            kind: ResourceKind::ExternalStylesheet,
+            url: Url::parse("https://example.test/main.css").expect("valid url"),
+            violation_type: ViolationType::MimeNotAllowed {
+                mime: "text/plain".into(),
+            },
+            details: "expected text/css".to_string(),
+        };
+        let s = format!("{violation}");
+        // kind (Debug format of ResourceKind variant)
+        assert!(
+            s.contains("ExternalStylesheet"),
+            "display must include kind: got {s:?}"
+        );
+        // violation_type (Display of ViolationType, which for MimeNotAllowed includes the mime)
+        assert!(
+            s.contains("MIME type not allowed"),
+            "display must include violation_type: got {s:?}"
+        );
+        assert!(
+            s.contains("text/plain"),
+            "display must include violation_type payload: got {s:?}"
+        );
+        // url
+        assert!(
+            s.contains("https://example.test/main.css"),
+            "display must include url: got {s:?}"
+        );
+        // details
+        assert!(
+            s.contains("expected text/css"),
+            "display must include details: got {s:?}"
+        );
     }
 }
