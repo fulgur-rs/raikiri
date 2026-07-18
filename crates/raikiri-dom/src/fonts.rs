@@ -23,6 +23,9 @@ use std::path::{Path, PathBuf};
 /// - [`FontError::EmptyDir`] — dir は存在するが `.ttf`/`.otf` が 1 個も無い
 /// - [`FontError::Io`] — dir walk 中の io failure
 pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
+    use parley::fontique::{Blob, Collection, CollectionOptions, GenericFamily, SourceCache};
+    use std::sync::Arc;
+
     if !fonts_dir.exists() {
         return Err(FontError::DirNotFound(fonts_dir.to_path_buf()));
     }
@@ -30,10 +33,59 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     if paths.is_empty() {
         return Err(FontError::EmptyDir(fonts_dir.to_path_buf()));
     }
-    // Task 4 で register + generic alias を実装、ここでは EmptyDir 判定後
-    // に到達したことのみ担保
-    let _ = paths;
-    Err(FontError::EmptyDir(fonts_dir.to_path_buf()))
+
+    // blitz pattern (packages/blitz-dom/src/lib.rs::build_single_font_ctx):
+    // system_fonts: false で fontique の platform resolver を完全 disable
+    let mut ctx = FontContext {
+        source_cache: SourceCache::new_shared(),
+        collection: Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: false,
+        }),
+    };
+
+    // Register 順 = fallback 順。walker が PREFERRED_FIRST を先頭に置く
+    let mut family_ids = Vec::new();
+    for path in paths {
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(source) => {
+                eprintln!(
+                    "[raikiri-dom::fonts] warn: skipping {}: read failed: {}",
+                    path.display(),
+                    source
+                );
+                continue;
+            }
+        };
+        let blob = Blob::new(Arc::new(bytes) as _);
+        let registered = ctx.collection.register_fonts(blob, None);
+        if registered.is_empty() {
+            eprintln!(
+                "[raikiri-dom::fonts] warn: skipping {}: no family registered",
+                path.display()
+            );
+            continue;
+        }
+        family_ids.extend(registered.iter().map(|(id, _)| *id));
+    }
+
+    // Generic family alias remap (blitz pattern):
+    // UA CSS default "serif" cascade を bundled family (先頭 = Ahem)
+    // に解決させる
+    for generic in [
+        GenericFamily::Serif,
+        GenericFamily::SansSerif,
+        GenericFamily::Monospace,
+        GenericFamily::SystemUi,
+        GenericFamily::Cursive,
+        GenericFamily::Fantasy,
+    ] {
+        ctx.collection
+            .append_generic_families(generic, family_ids.iter().copied());
+    }
+
+    Ok(ctx)
 }
 
 /// [`build_wpt_font_ctx`] の error 型。std のみ、`thiserror` 依存なし
@@ -259,5 +311,41 @@ mod tests {
             Err(other) => panic!("expected EmptyDir, got {:?}", other),
             Ok(_) => panic!("expected EmptyDir err, got Ok"),
         }
+    }
+
+    /// 実 WPT font (target/wpt/fonts/) を使った integration-style test。
+    /// scripts/wpt/fetch.sh 未実行時は skip (should_panic 相当ではなく early return
+    /// で clean skip)。
+    #[test]
+    fn build_wpt_font_ctx_registers_generic_serif() {
+        use std::path::PathBuf;
+
+        // Locate target/wpt/fonts (workspace root からの相対)。cargo test 実行時の
+        // CWD は crate dir なので `../..` で root。
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let fonts_dir = PathBuf::from(&manifest_dir)
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts");
+
+        if !fonts_dir.join("Ahem.ttf").exists() {
+            eprintln!(
+                "skipping build_wpt_font_ctx_registers_generic_serif: \
+                 Ahem.ttf not found under {} \
+                 (run scripts/wpt/fetch.sh first)",
+                fonts_dir.display()
+            );
+            return;
+        }
+
+        let ctx = build_wpt_font_ctx(&fonts_dir).expect("build Ok with Ahem present");
+        // parley 0.10 の resolution API 経由で "serif" generic が非空 family
+        // に解決されることを assert する完全な検証は Task 8 の end-to-end VRT
+        // が担保する。ここでは build_wpt_font_ctx が real WPT font dir
+        // (Ahem.ttf 含む) に対して panic せず Ok を返すことのみを smoke
+        // check する (M1 scope、controller ambiguity resolution 済)。
+        let _ = ctx;
     }
 }
