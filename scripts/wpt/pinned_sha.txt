@@ -1,0 +1,7 @@
+# WPT upstream commit SHA pinned for raikiri VRT reproducibility.
+# Initial pin borrowed from fulgur/scripts/wpt/pinned_sha.txt (2026-04-21).
+# raikiri 専有 bump が必要な場合 (raikiri-side regression) は fulgur pin
+# にとらわれず advance 可、その際は README の "Updating the pin" 手順。
+# Verify before bumping:
+#   scripts/wpt/fetch.sh && cargo test -p raikiri --test hello_world_vrt
+97ea26e26a2aac3eec7e770650b25e7049ed4a4e
