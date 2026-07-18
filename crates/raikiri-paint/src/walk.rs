@@ -59,6 +59,11 @@ pub(crate) fn paint_document(
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
+        // raikiri-spike-37c: template 子孫 + 将来の inert subtree を統一 skip。
+        // UA CSS の display:none rule 有無に依存しない、明示的な gate。
+        if !node.is_in_document() {
+            continue;
+        }
         match node.kind() {
             NodeKind::Element => {
                 if node.is_display_none() {

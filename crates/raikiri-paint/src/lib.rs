@@ -426,4 +426,46 @@ mod tests {
         );
         assert_eq!(glyph_count1, 1, "hello world must emit exactly 1 GlyphRun");
     }
+
+    #[test]
+    fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
+        // raikiri-spike-37c: UA CSS の template { display: none } rule 存在に
+        // 依存せず、template subtree の paint を is_in_document() predicate gate で
+        // 明示的に skip する contract 回帰 pin。silent bug fix regression。
+        //
+        // Setup: <body><template><p>should_not_paint</p></template></body>。
+        // 現在 UA CSS には template rule 無し (minimal.css 確認済)、default
+        // Display::Block になる。gate 追加前は paint に降りて GlyphRun が emit
+        // されていた silent bug 表面。
+        use raikiri_html::{ParseOptions, parse};
+
+        let html = b"<html><head></head><body>\
+                     <template><p>should_not_paint</p></template>\
+                     </body></html>";
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        // parse は UncascadedDocument を返す。dom を取り出して cascade + layout + paint。
+        let mut doc = uncascaded.dom;
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+
+        let glyph_commands: Vec<_> = scene
+            .commands
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .collect();
+        assert!(
+            glyph_commands.is_empty(),
+            "text inside <template> subtree should not paint (is_in_document gate), got {} glyph runs",
+            glyph_commands.len()
+        );
+    }
 }
