@@ -266,8 +266,34 @@ impl TreeSink for RaikiriTreeSink {
             .reparent_children(*node, *new_parent);
     }
 
-    fn is_mathml_annotation_xml_integration_point(&self, _handle: &usize) -> bool {
-        false
+    fn is_mathml_annotation_xml_integration_point(&self, handle: &usize) -> bool {
+        // HTML5 §13.2.5 Tree construction: MathML `annotation-xml` element is
+        // an HTML integration point iff its `encoding` attribute value is an
+        // ASCII case-insensitive match for `text/html` or `application/xhtml+xml`.
+        // side-table (qual_names + attributes) から直接判定する。
+        let qual_names = self.qual_names.borrow();
+        let Some(name) = qual_names.get(handle) else {
+            return false;
+        };
+        if name.ns != ns!(mathml) || name.local.as_ref() != "annotation-xml" {
+            return false;
+        }
+        let attributes = self.attributes.borrow();
+        let Some(attrs) = attributes.get(handle) else {
+            return false;
+        };
+        // HTML spec §13.2.5.32: duplicate attribute → ignore later occurrences
+        // (first-wins)。`wire_side_tables` / `sink_first_wins_on_duplicate_style_attribute`
+        // で pin されている契約と整合させるため、any() ではなく find() で最初の
+        // null-ns encoding attr を取り、その value のみで判定する。
+        let Some(encoding) = attrs
+            .iter()
+            .find(|a| a.name.ns == ns!() && a.name.local.as_ref() == "encoding")
+        else {
+            return false;
+        };
+        encoding.value.eq_ignore_ascii_case("text/html")
+            || encoding.value.eq_ignore_ascii_case("application/xhtml+xml")
     }
 }
 
