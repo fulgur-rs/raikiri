@@ -49,6 +49,7 @@ mod tests {
     use super::*;
     use anyrender::Scene;
     use anyrender::recording::RenderCommand;
+    use parley::FontContext;
     use raikiri_dom::{Document, layout_single_page};
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -66,7 +67,7 @@ mod tests {
         let _t = doc.append_text(p, "Hi");
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
         (doc, cr)
     }
 
@@ -149,7 +150,7 @@ mod tests {
         let _child_of_hidden = doc.append_text(hidden, "should not be painted");
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
         // hidden の layout size は 0 になっているはず (taffy LayoutOutput::HIDDEN)
         let hidden_layout = doc.get_node(hidden).unwrap().unrounded_layout;
         assert_eq!(
@@ -196,7 +197,7 @@ mod tests {
         let _text = doc.append_text(container, "visible");
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
 
         // sanity: container の size は 0 (explicit width/height=0 を尊重)
         let container_layout = doc.get_node(container).unwrap().unrounded_layout;
@@ -304,7 +305,7 @@ mod tests {
         let text = doc.append_text(p, "Hi");
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
 
         // margin=20 が p.location を non-zero に押していることを確認 (accumulation
         // logic を exercise する前提が satisfy されていることの sanity check)。
@@ -376,7 +377,7 @@ mod tests {
         let _t = doc.append_text(p, ""); // ← empty text
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
         let glyph_commands: Vec<_> = scene

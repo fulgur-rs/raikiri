@@ -44,7 +44,8 @@ pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
     // `&mut self` が要求されて cascade への同時参照が壊れるが、field 直接なら OK。
     // `?` は raikiri-traits の `From<LayoutError> for RenderError` (error.rs:137-140)
     // で LayoutError → RenderError::Layout に自動変換される。
-    raikiri_dom::layout_single_page(&mut doc.uncascaded.dom, &doc.cascade, page_box)?;
+    let font_ctx = parley::FontContext::new();
+    raikiri_dom::layout_single_page(&mut doc.uncascaded.dom, &doc.cascade, page_box, font_ctx)?;
 
     // PageBox = 793.7008 × 1122.5197 CSS px → 794 × 1123 u32 buffer
     let width = page_box.width.ceil() as u32;

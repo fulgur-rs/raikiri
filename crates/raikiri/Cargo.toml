@@ -26,6 +26,7 @@ bytes          = { workspace = true }
 raikiri-vrt         = { workspace = true }
 anyrender           = { workspace = true }
 anyrender_vello_cpu = { workspace = true }
+parley              = { workspace = true }
 
 [lints]
 workspace = true
