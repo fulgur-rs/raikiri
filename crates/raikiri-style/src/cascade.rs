@@ -334,6 +334,11 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         PropertyValue::FontSize(s) => target.font_size = s,
         PropertyValue::FontWeight(w) => target.font_weight = w,
         PropertyValue::Display(d) => target.display = d,
+        // counter-* は M5 pre-work (raikiri-spike-s85) — parse 結果をそのまま
+        // computed value に格納。counter tree resolve は M5 本編。
+        PropertyValue::CounterReset(v) => target.counter_reset = v,
+        PropertyValue::CounterIncrement(v) => target.counter_increment = v,
+        PropertyValue::CounterSet(v) => target.counter_set = v,
     }
 }
 
@@ -344,6 +349,7 @@ mod tests {
     use crate::property::DisplayValue;
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
+    use smol_str::SmolStr;
 
     fn cascade_doc(css: &str, tag: &str, inline: Option<&str>) -> ComputedValues {
         let mut doc = TestDoc::new();
@@ -600,6 +606,20 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[div].display, DisplayValue::Block);
         assert_eq!(r.computed[span].display, DisplayValue::Inline);
+    }
+
+    // ── counter-* wire-through (CSS Lists 3 §3、raikiri-spike-s85 M5 pre-work) ──
+
+    #[test]
+    fn counter_reset_wired_through_cascade_from_inline_style() {
+        // <div style="counter-reset: chapter"> → ComputedValues.counter_reset
+        // に [("chapter", 0)] が届く。parser → PropertyValue → apply_value →
+        // ComputedValues の end-to-end 疎通 smoke。
+        let cv = cascade_doc("", "div", Some("counter-reset: chapter"));
+        assert_eq!(cv.counter_reset, vec![(SmolStr::new("chapter"), 0)]);
+        // 他 counter property は non-inherited の initial (empty) のまま
+        assert!(cv.counter_increment.is_empty());
+        assert!(cv.counter_set.is_empty());
     }
 
     #[test]

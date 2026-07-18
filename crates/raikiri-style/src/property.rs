@@ -8,6 +8,7 @@
 
 use cssparser::color::{clamp_unit_f32, parse_hash_color, parse_named_color};
 use cssparser::{ParseError, Parser, Token};
+use smol_str::SmolStr;
 
 use crate::Atom;
 
@@ -68,6 +69,18 @@ pub enum PropertyValue {
     /// `display: <block-or-inline>` — non-inherited、initial: inline
     /// (spec §M1.4a、raikiri-spike-m1.22)。
     Display(DisplayValue),
+    /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
+    /// non-inherited、initial: empty list (CSS Lists 3 §3)。
+    /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
+    CounterReset(Vec<(SmolStr, i32)>),
+    /// `counter-increment: [ <counter-name> <integer>? ]+ | none` —
+    /// non-inherited、initial: empty list (CSS Lists 3 §3)。
+    /// missing integer は 1 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
+    CounterIncrement(Vec<(SmolStr, i32)>),
+    /// `counter-set: [ <counter-name> <integer>? ]+ | none` —
+    /// non-inherited、initial: empty list (CSS Lists 3 §3)。
+    /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
+    CounterSet(Vec<(SmolStr, i32)>),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -80,6 +93,9 @@ pub(crate) enum PropertyKey {
     FontSize,
     FontWeight,
     Display,
+    CounterReset,
+    CounterIncrement,
+    CounterSet,
 }
 
 impl PropertyValue {
@@ -91,6 +107,9 @@ impl PropertyValue {
             PropertyValue::FontSize(_) => PropertyKey::FontSize,
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
             PropertyValue::Display(_) => PropertyKey::Display,
+            PropertyValue::CounterReset(_) => PropertyKey::CounterReset,
+            PropertyValue::CounterIncrement(_) => PropertyKey::CounterIncrement,
+            PropertyValue::CounterSet(_) => PropertyKey::CounterSet,
         }
     }
 }
@@ -106,6 +125,13 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "font-size" => parse_font_size(input).map(PropertyValue::FontSize),
         "font-weight" => parse_font_weight(input).map(PropertyValue::FontWeight),
         "display" => parse_display(input).map(PropertyValue::Display),
+        // CSS Lists 3 §3 counter properties (raikiri-spike-s85、M5 pre-work)。
+        // spec default: reset = 0、increment = 1、set = 0。
+        "counter-reset" => parse_counter_property(input, 0).map(PropertyValue::CounterReset),
+        "counter-increment" => {
+            parse_counter_property(input, 1).map(PropertyValue::CounterIncrement)
+        }
+        "counter-set" => parse_counter_property(input, 0).map(PropertyValue::CounterSet),
         _ => None,
     }
 }
@@ -236,6 +262,72 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         Token::Ident(name) if name.eq_ignore_ascii_case("inline") => Some(DisplayValue::Inline),
         _ => None,
     }
+}
+
+/// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
+///
+/// Grammar (CSS Lists 3 §3):
+///   `<counter-name> = <custom-ident>` — CSS-wide keyword (inherit / initial /
+///   unset / revert / revert-layer) + `default` + `none` を除く任意 ident。
+///   `[ <counter-name> <integer>? ]+ | none`。
+///
+/// `default_number`: 各 property の spec default (reset=0、increment=1、set=0)。
+///
+/// `none` を top-level alternative として先に処理。以降は ident + optional
+/// integer を LL(1) で peel。ident が reserved keyword、または最初の token が
+/// ident でない (`counter-reset: 123 abc` 等) 場合は None を返し、rule.rs 側の
+/// silent-drop で declaration が丸ごと落ちる。
+///
+/// 途中 ident (`chapter none`) が reserved の場合は `try_parse` の rewind で
+/// 未消費のまま loop を抜け、caller の `expect_exhausted` (rule.rs)
+/// が leftover token を検出して declaration を drop する。
+fn parse_counter_property(
+    input: &mut Parser<'_, '_>,
+    default_number: i32,
+) -> Option<Vec<(SmolStr, i32)>> {
+    // `none` = empty list (top-level alternative)。
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(Vec::new());
+    }
+
+    let mut result = Vec::new();
+    loop {
+        // reserved keyword を counter-name として受理しない (spec §3、`<custom-ident>`
+        // の除外リスト)。try_parse の rewind で reserved 検出時は unconsumed に戻す。
+        let name = match input.try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
+            let ident = i.expect_ident()?.clone();
+            if is_reserved_counter_name(&ident) {
+                Err(i.new_custom_error(()))
+            } else {
+                Ok(SmolStr::new(ident.as_ref()))
+            }
+        }) {
+            Ok(name) => name,
+            Err(_) => break,
+        };
+        // optional trailing `<integer>` (missing → property-specific default)。
+        let value = input
+            .try_parse(|i| i.expect_integer())
+            .unwrap_or(default_number);
+        result.push((name, value));
+    }
+
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+/// `<counter-name>` = `<custom-ident>` の除外リスト (CSS Lists 3 §3 + CSS Values 4)。
+///
+/// CSS-wide keyword + `default` (Counter Styles L3) + `none` (top-level alternative)
+/// を弾く。case-insensitive 比較。
+fn is_reserved_counter_name(ident: &str) -> bool {
+    matches!(
+        ident.to_ascii_lowercase().as_str(),
+        "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" | "none"
+    )
 }
 
 #[cfg(test)]
@@ -412,6 +504,157 @@ mod tests {
         assert_eq!(
             parse("Inline", "display"),
             Some(PropertyValue::Display(DisplayValue::Inline))
+        );
+    }
+
+    // ── counter-* (CSS Lists 3 §3、raikiri-spike-s85 M5 pre-work) ──
+
+    fn counter_pairs(pairs: &[(&str, i32)]) -> Vec<(SmolStr, i32)> {
+        pairs
+            .iter()
+            .map(|(name, value)| (SmolStr::new(name), *value))
+            .collect()
+    }
+
+    #[test]
+    fn counter_reset_single_name_defaults_to_zero() {
+        // spec: reset の default は 0
+        assert_eq!(
+            parse("chapter", "counter-reset"),
+            Some(PropertyValue::CounterReset(counter_pairs(&[(
+                "chapter", 0
+            )])))
+        );
+    }
+
+    #[test]
+    fn counter_reset_multiple_names_with_mixed_ints() {
+        // 2 番目に integer が付く → 1 番目は default 0、2 番目は 3
+        assert_eq!(
+            parse("chapter section 3", "counter-reset"),
+            Some(PropertyValue::CounterReset(counter_pairs(&[
+                ("chapter", 0),
+                ("section", 3)
+            ])))
+        );
+    }
+
+    #[test]
+    fn counter_reset_none_returns_empty_vec() {
+        // spec: `none` は空リストと同等 (top-level alternative)
+        assert_eq!(
+            parse("none", "counter-reset"),
+            Some(PropertyValue::CounterReset(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn counter_reset_rejects_number_first() {
+        // 先頭が number → ident が来るまで peel できず empty → None (drop)
+        // spec §3: `<counter-name> = <custom-ident>` (数値は counter-name ではない)
+        assert_eq!(parse("123 abc", "counter-reset"), None);
+    }
+
+    #[test]
+    fn counter_increment_single_name_defaults_to_one() {
+        // spec: increment の default は 1
+        assert_eq!(
+            parse("chapter", "counter-increment"),
+            Some(PropertyValue::CounterIncrement(counter_pairs(&[(
+                "chapter", 1
+            )])))
+        );
+    }
+
+    #[test]
+    fn counter_increment_mixed_int_and_default() {
+        // `chapter 2 section` → chapter=2、section=default(1)
+        assert_eq!(
+            parse("chapter 2 section", "counter-increment"),
+            Some(PropertyValue::CounterIncrement(counter_pairs(&[
+                ("chapter", 2),
+                ("section", 1)
+            ])))
+        );
+    }
+
+    #[test]
+    fn counter_increment_accepts_negative_integer() {
+        // spec §3: <integer> — negative も valid (counter を decrement する用途)
+        assert_eq!(
+            parse("chapter -1", "counter-increment"),
+            Some(PropertyValue::CounterIncrement(counter_pairs(&[(
+                "chapter", -1
+            )])))
+        );
+    }
+
+    #[test]
+    fn counter_increment_none_returns_empty_vec() {
+        assert_eq!(
+            parse("none", "counter-increment"),
+            Some(PropertyValue::CounterIncrement(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn counter_set_defaults_to_zero() {
+        // spec: set の default は 0
+        assert_eq!(
+            parse("page 5 note", "counter-set"),
+            Some(PropertyValue::CounterSet(counter_pairs(&[
+                ("page", 5),
+                ("note", 0)
+            ])))
+        );
+    }
+
+    #[test]
+    fn counter_set_none_returns_empty_vec() {
+        assert_eq!(
+            parse("none", "counter-set"),
+            Some(PropertyValue::CounterSet(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn counter_reset_is_case_insensitive_on_none() {
+        // CSS spec: keyword `none` は ASCII case-insensitive
+        assert_eq!(
+            parse("NONE", "counter-reset"),
+            Some(PropertyValue::CounterReset(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn counter_reset_rejects_reserved_css_wide_keyword_as_name() {
+        // spec §3: <counter-name> excludes CSS-wide keywords + `default`。
+        // 先頭 ident が `inherit` → try_parse rewind で empty result → None。
+        assert_eq!(parse("inherit", "counter-reset"), None);
+        assert_eq!(parse("initial", "counter-reset"), None);
+        assert_eq!(parse("unset", "counter-reset"), None);
+        assert_eq!(parse("revert", "counter-reset"), None);
+        assert_eq!(parse("default", "counter-reset"), None);
+    }
+
+    #[test]
+    fn counter_reset_accepts_negative_integer() {
+        // CSS Values 3 §5.1: <integer> は負値を含む。
+        // increment だけでなく reset / set も同一 grammar。
+        assert_eq!(
+            parse("chapter -5", "counter-reset"),
+            Some(PropertyValue::CounterReset(counter_pairs(&[(
+                "chapter", -5
+            )])))
+        );
+    }
+
+    #[test]
+    fn counter_set_accepts_negative_integer() {
+        // 同上 (parity with reset/increment negative-integer coverage)。
+        assert_eq!(
+            parse("page -3", "counter-set"),
+            Some(PropertyValue::CounterSet(counter_pairs(&[("page", -3)])))
         );
     }
 }
