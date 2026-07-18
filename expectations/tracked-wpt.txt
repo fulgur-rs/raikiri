@@ -19,6 +19,12 @@
 # project goal but come AFTER the foundation stabilises.
 
 # ── P1 — Foundation (must work first; nothing renders without these) ──
+# NOTE: `css/css-fonts/` tracks *local* / bundled font tests. `@font-face`
+# remote loading depends on `raikiri-net::SandboxedNetProvider<P>` (spec §M4)
+# and a font descriptor cascade + loading pipeline (TBD). Until those land,
+# remote-loading-dependent css-fonts tests fail as T3 informational (no PR
+# block). Runner-observed failing test ids will be added to known-issues.txt
+# at M3 kickoff (follow-up issue tracked separately from raikiri-spike-2sb).
 css/css-fonts/
 css/css-color/
 css/css-backgrounds/
