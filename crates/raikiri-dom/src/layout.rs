@@ -169,10 +169,22 @@ pub(crate) fn preshape_text(
 ///   incremental (差分だけ再走) は M2+ で追加
 /// - Consumer からの PageBox 上書きは M4 per-page PageBox で対応
 /// - Fragment parse (no `<body>`) support は M2+
+/// # API 互換性 (raikiri-spike-e93, spec §6.3)
+///
+/// この signature は M1.14 の 3-arg `(document, cascade, page_box)` から
+/// 4-arg `(document, cascade, page_box, font_ctx)` に **意図的に breaking
+/// change** された (spec §6.3 の choice β)。α (dual API: 既存 3-arg +
+/// 新規 `_with_fonts`) との trade-off の末、raikiri-dom 内 caller が全て
+/// in-repo (12 箇所 = production 1 + test 11) であり、内部 DI の explicit
+/// 化と signature 統一の方が長期保守で優れると判断した。詳細:
+/// - spec `docs/superpowers/specs/2026-07-18-raikiri-spike-e93-wpt-font-pin-design.md`
+///   §6.3 (β 選択の理由), §6.4 (12 caller の内訳)
+/// - roborev finding e93 round 3 M3 で reflag、user 再確認済 (plan-mandated)
 pub fn layout_single_page(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
+    mut font_ctx: FontContext,
 ) -> Result<(), LayoutError> {
     // Step 0: text_layout re-entrance clear
     for node in document.nodes.iter_mut() {
@@ -183,12 +195,13 @@ pub fn layout_single_page(
     apply_computed_to_style(document, cascade);
 
     // Step 2: pre-shape all text with parley
-    let mut fonts = FontContext::new();
+    // font_ctx は呼び出し側が構築 (system font 経路なら FontContext::new()、
+    // VRT なら raikiri_dom::fonts::build_wpt_font_ctx で pin 済)
     let mut layout_cx = LayoutContext::<()>::new();
     preshape_text(
         document,
         cascade,
-        &mut fonts,
+        &mut font_ctx,
         &mut layout_cx,
         page_box.width,
     )?;
@@ -395,7 +408,7 @@ mod tests {
     fn layout_single_page_hello_world_produces_body_at_page_width() {
         use raikiri_traits::PageBox;
         let (mut doc, cr) = hello_world_doc();
-        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
         // body の layout size.width が A4 幅 (793.7008) と一致
         let body_id = find_body(&doc).expect("body exists");
         let body_size = doc.nodes[body_id].unrounded_layout.size;
@@ -422,7 +435,7 @@ mod tests {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).unwrap();
 
-        match layout_single_page(&mut doc, &cr, PageBox::A4) {
+        match layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()) {
             Err(LayoutError::Internal { message }) => {
                 assert!(
                     message.contains("body"),
@@ -438,14 +451,14 @@ mod tests {
     fn layout_single_page_can_be_called_multiple_times() {
         use raikiri_traits::PageBox;
         let (mut doc, cr) = hello_world_doc();
-        layout_single_page(&mut doc, &cr, PageBox::A4).expect("first call Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("first call Ok");
         let body_id = find_body(&doc).expect("body exists");
         let first_size = doc.nodes[body_id].unrounded_layout.size;
 
         // 2 回目呼び出し — text_layout の re-entrance clear と layout の再走が
         // 同じ結果を返すことを pin (将来 incremental optimization が silent
         // regression を起こしても検出できる)
-        layout_single_page(&mut doc, &cr, PageBox::A4).expect("second call Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("second call Ok");
         let second_size = doc.nodes[body_id].unrounded_layout.size;
 
         assert!((first_size.width - second_size.width).abs() < 0.001);
@@ -461,7 +474,7 @@ mod tests {
         let (mut doc, cr) = hello_world_doc();
         let body_id = find_body(&doc).expect("body exists");
         let before = doc.nodes[body_id].style.display;
-        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
         let after = doc.nodes[body_id].style.display;
         assert_eq!(before, after, "display unchanged by M1.4 bridge");
         // apply_page_box_to_body により size は変わるので size は assert 対象外
@@ -476,7 +489,7 @@ mod tests {
 
         fn one_run() -> Vec<taffy::Layout> {
             let (mut doc, cr) = hello_world_doc();
-            layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+            layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
             doc.nodes.iter().map(|n| n.unrounded_layout).collect()
         }
 

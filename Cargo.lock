@@ -1581,6 +1581,7 @@ dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
  "bytes",
+ "parley",
  "raikiri-dom",
  "raikiri-html",
  "raikiri-net",
@@ -1608,6 +1609,7 @@ dependencies = [
  "raikiri-traits",
  "smol_str",
  "taffy",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,0 +1,4 @@
+# WPT subset needed for raikiri VRT tests. Keep minimal — M1 scope only
+# needs bundled fonts for cross-machine determinism.
+# Future test subsets (css/css-page, etc.) added under separate issues.
+fonts

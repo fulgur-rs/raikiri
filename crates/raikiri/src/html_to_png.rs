@@ -14,22 +14,25 @@
 
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
+use parley::FontContext;
 use raikiri_html::ParseOptions;
 use raikiri_traits::{PageBox, RenderError};
 
 use crate::parse::parse_html;
 
-/// HTML byte stream を単一 A4 ページの PNG に raster する。
+/// `html_to_png` / `html_to_png_with_fonts` の共通実装。VRT test 経路 (pinned
+/// `FontContext`) と production 経路 (`FontContext::new()`) の layout logic を
+/// 1 箇所に集約し、drift を構造的に防止する (raikiri-spike-e93 Task 6)。
 ///
 /// # Errors
 /// - `RenderError::Parse(_)` — `parse_html` からの伝播 (IO / UTF-8 / html5ever)
 /// - `RenderError::Layout(_)` — `layout_single_page` からの伝播 (`<body>` 欠落 /
 ///   parley shape / taffy internal)
-///
-/// spec §L1118 の signature literal は `(html: &str)` だが、既存 `parse_html<R: Read>`
-/// と signature を統一するため `impl Read` を採用 (m1.14 design 決定)。
 #[allow(clippy::result_large_err)]
-pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
+pub(crate) fn html_to_png_impl<R: std::io::Read>(
+    input: R,
+    font_ctx: FontContext,
+) -> Result<Vec<u8>, RenderError> {
     // ParseOptions は default 相当 (M1 fixture は extra stylesheet / network / base_url 不要)
     let opts = ParseOptions {
         extra_stylesheets: &[],
@@ -43,7 +46,7 @@ pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
     // `&mut self` が要求されて cascade への同時参照が壊れるが、field 直接なら OK。
     // `?` は raikiri-traits の `From<LayoutError> for RenderError` (error.rs:137-140)
     // で LayoutError → RenderError::Layout に自動変換される。
-    raikiri_dom::layout_single_page(&mut doc.uncascaded.dom, &doc.cascade, page_box)?;
+    raikiri_dom::layout_single_page(&mut doc.uncascaded.dom, &doc.cascade, page_box, font_ctx)?;
 
     // PageBox = 793.7008 × 1122.5197 CSS px → 794 × 1123 u32 buffer
     let width = page_box.width.ceil() as u32;
@@ -92,12 +95,60 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
         .expect("encode_png: tiny_skia::Pixmap::encode_png should not fail for a valid pixmap")
 }
 
+/// HTML byte stream を単一 A4 ページの PNG に raster する (M1.14 pub API)。
+///
+/// System font resolver 経由 (`FontContext::new()`) で `html_to_png_impl` に
+/// delegate する。production runtime 用の経路。
+///
+/// # Errors
+/// - `RenderError::Parse(_)` — `parse_html` からの伝播 (IO / UTF-8 / html5ever)
+/// - `RenderError::Layout(_)` — `layout_single_page` からの伝播 (`<body>` 欠落 /
+///   parley shape / taffy internal)
+///
+/// spec §L1118 の signature literal は `(html: &str)` だが、既存 `parse_html<R: Read>`
+/// と signature を統一するため `impl Read` を採用 (m1.14 design 決定)。
+#[allow(clippy::result_large_err)]
+pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
+    html_to_png_impl(input, FontContext::new())
+}
+
+/// Font-aware 版。渡された `FontContext` がそのまま layout に使われる。
+///
+/// cross-machine 決定性が必要な VRT test 向け (raikiri-spike-e93)。
+/// `font_ctx` が pin 済み (`build_wpt_font_ctx` 経由) の場合、system font
+/// resolver は完全 bypass される。
+///
+/// # M1 scope
+/// - VRT test 向け。production runtime は既存 [`html_to_png`] を使う
+/// - M4+ で `@font-face` 対応時に production consumer にも展開検討
+///
+/// # Errors
+/// [`html_to_png`] と同じ (`RenderError::Parse` / `RenderError::Layout`)。
+#[allow(clippy::result_large_err)]
+pub fn html_to_png_with_fonts<R: std::io::Read>(
+    input: R,
+    font_ctx: FontContext,
+) -> Result<Vec<u8>, RenderError> {
+    html_to_png_impl(input, font_ctx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// PNG magic bytes: \x89 P N G \r \n \x1A \n (raikiri-vrt tests と同じ pinning)
     const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+
+    /// `html_to_png_with_fonts` が `html_to_png` と同じ output を返す
+    /// (`FontContext::new()` を渡した場合)。DRY delegate 経路の regression pin。
+    #[test]
+    fn html_to_png_with_fonts_delegates_to_impl() {
+        let input = br#"<p>x</p>"#;
+        let a = html_to_png(&input[..]).expect("html_to_png Ok");
+        let b = html_to_png_with_fonts(&input[..], FontContext::new())
+            .expect("html_to_png_with_fonts Ok");
+        assert_eq!(a, b, "delegate path must produce byte-identical PNG");
+    }
 
     #[test]
     fn html_to_png_returns_png_bytes_for_hello_world() {
