@@ -21,11 +21,20 @@ url            = { workspace = true }
 # の `bytes` field と `Body::Bytes(Bytes)` の construction 用 (roborev-refine
 # job 230)。
 bytes          = { workspace = true }
-# m1.14 html_to_png: raster pipeline 用。raikiri-vrt は encode_png、
-# anyrender/anyrender_vello_cpu は render_to_buffer + VelloCpuImageRenderer。
-raikiri-vrt         = { workspace = true }
+# m1.14 html_to_png: raster pipeline 用 (anyrender_vello_cpu で render_to_buffer)。
 anyrender           = { workspace = true }
 anyrender_vello_cpu = { workspace = true }
+# encode_png 実装用 (raikiri-spike-e6w で raikiri-vrt から inline)。
+# reference::decode_png は raikiri-vrt に残るため tiny-skia は両 crate で使う。
+tiny-skia           = { workspace = true }
+
+[dev-dependencies]
+# hello_world_vrt integration test 用。raikiri-vrt は publish=false のため
+# workspace pin (version = "0.1.0", path = ...) を継承せず path-only で指定する
+# (workspace = true にすると version が manifest に残り、cargo publish 時に
+#  path を strip した後 crates.io からの resolution が失敗するため)。
+# path-only dev-dep は cargo publish 時に完全に strip される。
+raikiri-vrt = { path = "../raikiri-vrt" }
 
 [lints]
 workspace = true
