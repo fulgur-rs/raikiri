@@ -24,10 +24,21 @@ use taffy::{AvailableSpace, Dimension, NodeId as TaffyNodeId, Size, compute_root
 /// iterative `Vec` stack で実装 (cascade §deep_nesting の pattern と一貫、
 /// deep DOM で stack overflow を回避)。fragment parse (no `<body>`) では
 /// `None`、caller が `LayoutError::Internal` に昇格させる。
+///
+/// raikiri-spike-37c roborev job 295 M3 finding: `!is_in_document()` の subtree
+/// (`<template>` descendants など) を skip する。inert subtree 内に `<body>`
+/// tag があってもそれを本物の body として選ばないため — 例えば
+/// `<template><body>ghost</body></template>` の後に real `<body>` が来る HTML
+/// で ghost body を選んでしまうと後続の layout / paint が inert subtree に対して
+/// 実行されてしまう。
 pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
         let node = &doc.nodes[node_idx];
+        if !node.is_in_document() {
+            // inert subtree — 本 subtree の中に body があっても選ばない。
+            continue;
+        }
         if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
             return Some(node_idx);
         }
@@ -185,6 +196,18 @@ pub fn layout_single_page(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<(), LayoutError> {
+    // raikiri-spike-37c roborev job 295 M1 finding: observation-side entry で
+    // membership を sync する — `mark_in_document_flags` は flags_dirty=false
+    // なら idempotent no-op なので、既に sink.finish() 経由で sync 済の場合は
+    // 事実上 free。post-parse mutation (`Document::append_*` 等) の後で cascade
+    // を skip して直接 layout する consumer に対する safety net。
+    //
+    // Contract note: cascade は `&D: Dom` を取り mutation 不可なので、cascade
+    // 呼び出し側で sync せざるを得ない (parse.finish() 経由でしか自動 sync
+    // されない)。layout はここで sync することで少なくとも layout/paint 段に
+    // stale bit を持ち込まないことを保証する。
+    document.mark_in_document_flags();
+
     // Step 0: text_layout re-entrance clear
     for node in document.nodes.iter_mut() {
         if let Some(t) = node.data.as_text_mut() {

@@ -101,10 +101,18 @@ pub(crate) fn paint_document(
 ///
 /// iterative `Vec` stack で実装 (cascade §deep_nesting の pattern と一貫、
 /// 深 DOM で stack overflow を回避)。fragment parse (no `<body>`) では `None`。
+///
+/// raikiri-spike-37c roborev job 295 M3 finding: `!is_in_document()` の
+/// subtree (`<template>` descendants など) を skip する。inert subtree 内の
+/// hypothetical `<body>` を選ばないため。paint 側の find_body と layout 側の
+/// find_body は独立実装 (crate 境界越境コスト回避)、同じ contract を持つ。
 fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root_index()];
     while let Some(id) = stack.pop() {
         let node = doc.get_node(id)?;
+        if !node.is_in_document() {
+            continue;
+        }
         if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
             return Some(id);
         }

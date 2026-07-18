@@ -1,5 +1,26 @@
 //! Document arena — Vec-backed node arena that implements taffy layout traits
 //! (in `taffy_impl.rs`) and raikiri-traits::Dom (in `dom_impl.rs`).
+//!
+//! # Flat tree membership contract (raikiri-spike-37c)
+//!
+//! 全 tree mutation primitive (`append_*` / `attach_child` /
+//! `insert_child_before` / `detach_from_parent` / `reparent_children` /
+//! `retain_children` / `set_element_namespace` for template elements) は
+//! [`Document::flags_dirty`] を `true` に set する。`Node::is_in_document()`
+//! を観測する caller は observation 前に
+//! [`Document::mark_in_document_flags`] を呼んで bit を re-sync する必要が
+//! ある。`mark_in_document_flags` は `!flags_dirty` のとき O(1) の no-op
+//! なので、多重呼び出しも安全。
+//!
+//! Auto-sync entry:
+//! - `raikiri-html::sink::finish()` が parse の観測境界で呼ぶ
+//! - `raikiri-dom::layout_single_page()` が layout/paint の観測境界で呼ぶ
+//!
+//! Manual-sync required:
+//! - `raikiri-style::cascade()` は `&D: Dom` を取るため mutation 不可、
+//!   sync 呼び出しを caller に委ねる。cascade を直接呼ぶ consumer は
+//!   parse 経由でしか自動 sync されないため、post-parse mutation の後は
+//!   明示的に `mark_in_document_flags()` する必要がある。
 
 use smol_str::SmolStr;
 use std::borrow::Cow;
@@ -66,6 +87,16 @@ impl Document {
     ///
     /// `inline_style` は HTML `style="..."` attribute の生 string を渡す
     /// (`None` = 属性なし)。raikiri-style::cascade (M1.4) が消費する。
+    ///
+    /// # Contract (raikiri-spike-37c)
+    ///
+    /// 本 method は [`flags_dirty`](Self#structfield.flags_dirty) を `true` に
+    /// set する。`Node::is_in_document()` を観測する caller (raikiri-style::cascade
+    /// / raikiri-dom::layout_single_page / raikiri-paint::paint_single_page)
+    /// は、mutation batch 後に [`mark_in_document_flags`](Self::mark_in_document_flags)
+    /// を呼んで bit を re-sync する必要がある。`layout_single_page` は entry で
+    /// 自動 sync するため、layout/paint pipeline のみを消費する consumer は
+    /// 明示呼び出し不要。cascade を直接呼ぶ場合は明示 sync が必要。
     ///
     /// Returns: 追加された node の arena index。
     pub fn append_element(
@@ -184,11 +215,29 @@ impl Document {
     /// `NodeData::as_element_mut().expect(...)` に移行、release でも panic する
     /// ようになったのは意図的な strictness 向上)。
     pub fn set_element_namespace(&mut self, id: usize, ns: Option<SmolStr>) {
-        let e = self.nodes[id]
-            .data
-            .as_element_mut()
-            .expect("set_element_namespace called on non-Element");
-        e.namespace = ns;
+        // raikiri-spike-37c roborev job 295 M2 finding: namespace の変更は
+        // `<template>` 判定 (`namespace.is_none()` は HTML default fast path) を
+        // 変え得るため、tag_name が "template" の場合は flags_dirty を set する。
+        // これがないと HTML template → SVG template への変更 (あるいは逆) の後
+        // `mark_in_document_flags()` が early return path で no-op となり、
+        // 子孫の in_document bit が stale のまま残る。
+        //
+        // template 以外の element では namespace 変更は本 bit に無関係なので
+        // flag は set しない (invalidate_layout_cache も呼ばない: pure metadata
+        // 変更で layout 結果を変えない、既存 blg 契約と一貫)。
+        let ns_changed_for_template = {
+            let e = self.nodes[id]
+                .data
+                .as_element_mut()
+                .expect("set_element_namespace called on non-Element");
+            let is_template_tag = e.tag_name.as_str() == "template";
+            let changed = e.namespace != ns;
+            e.namespace = ns;
+            is_template_tag && changed
+        };
+        if ns_changed_for_template {
+            self.flags_dirty = true;
+        }
     }
 
     /// Element node に attribute list を紐付ける (raikiri-spike-blg)。
@@ -554,6 +603,38 @@ mod mark_in_document_flags_tests {
     }
 
     #[test]
+    fn set_element_namespace_dirties_flags_for_template_only() {
+        // roborev job 295 M2 finding pin: `set_element_namespace` は
+        // `<template>` element の namespace を変更した場合のみ flags_dirty を
+        // set する。template 以外は set しない (pure metadata、layout 無影響)。
+        let mut doc = Document::new();
+        let tmpl = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
+        let div = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        doc.mark_in_document_flags();
+        assert!(!doc.flags_dirty);
+
+        // template の namespace を変更 → dirty set される
+        doc.set_element_namespace(tmpl, Some(SmolStr::new("http://www.w3.org/2000/svg")));
+        assert!(doc.flags_dirty, "template namespace change must dirty flags");
+        doc.mark_in_document_flags();
+        assert!(!doc.flags_dirty);
+
+        // div の namespace を変更 → dirty set されない (template 判定に無関係)
+        doc.set_element_namespace(div, Some(SmolStr::new("http://www.w3.org/2000/svg")));
+        assert!(
+            !doc.flags_dirty,
+            "non-template namespace change must NOT dirty flags"
+        );
+
+        // 同じ namespace を再度 set → 変化無しなら dirty set しない
+        doc.set_element_namespace(tmpl, Some(SmolStr::new("http://www.w3.org/2000/svg")));
+        assert!(
+            !doc.flags_dirty,
+            "no-op namespace set must NOT dirty flags"
+        );
+    }
+
+    #[test]
     fn post_mark_attach_under_template_becomes_out_of_document_after_remark() {
         // roborev job 294 M1 finding: mutation → 再 mark で正しい bit 状態が復元
         // されることを end-to-end で pin。post-parse mutation の contract。
@@ -574,6 +655,34 @@ mod mark_in_document_flags_tests {
         assert!(
             !doc.get_node(new_child).unwrap().is_in_document(),
             "child attached under template must become out-of-document after remark"
+        );
+    }
+}
+
+#[cfg(test)]
+mod find_body_flat_tree_tests {
+    // roborev job 295 M3 finding pin: find_body (both layout and paint impls)
+    // must not select a <body> that lives inside an inert subtree
+    // (<template>...<body>ghost</body>...</template>).
+    use super::*;
+    use crate::layout::find_body as layout_find_body;
+
+    #[test]
+    fn layout_find_body_skips_body_inside_template() {
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let html = doc.append_element(Some(root), "html", Style::default(), None::<&str>);
+        // Ghost body under template (should NOT be picked)
+        let tmpl = doc.append_element(Some(html), "template", Style::default(), None::<&str>);
+        let _ghost = doc.append_element(Some(tmpl), "body", Style::default(), None::<&str>);
+        // Real body under html (should be picked)
+        let real = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        doc.mark_in_document_flags();
+
+        assert_eq!(
+            layout_find_body(&doc),
+            Some(real),
+            "find_body must skip inert body inside <template> and select the real body"
         );
     }
 }
