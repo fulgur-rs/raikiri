@@ -49,6 +49,7 @@ use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 
 use crate::Atom;
 use crate::rule::Declaration;
+use crate::ruletree::Origin;
 
 /// Parsed `@page` selector.
 ///
@@ -77,13 +78,17 @@ pub enum PageSelector {
     Named(Atom),
 }
 
-/// Parsed `@page` rule — selector + declaration list + source order.
+/// Parsed `@page` rule — selector + declaration list + source order + origin.
 ///
 /// `source_order` numbers `@page` rules *independently* of style rules; the
 /// two rule kinds cascade in different tuple positions in the CSS spec, so a
 /// separate 0-indexed counter keeps their bookkeeping decoupled and leaves
 /// `StyleRule::source_order` semantics untouched. Cross-kind ordering will be
 /// reconstructed by M4 cascade code if needed.
+///
+/// Field order (selector → declarations → source_order → origin) mirrors
+/// [`crate::StyleRule`] so both rule kinds present the same shape to M4
+/// cascade code (raikiri-spike-jzv M4 pre-work).
 #[derive(Clone, Debug)]
 pub struct PageRule {
     /// Which pages this rule applies to.
@@ -99,6 +104,29 @@ pub struct PageRule {
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
     pub source_order: u32,
+    /// Cascade origin this rule was parsed under. See [`Origin`] for the
+    /// current variant set — under M1.4a the crate exposes only UA and
+    /// Author because User declarations are folded into Author (that
+    /// folding rationale lives on [`Origin`] itself).
+    ///
+    /// Two primary sources back the wiring; the fragment anchors are the
+    /// stable form of each citation:
+    ///
+    /// - CSS Paged Media Level 3, "Cascading in the page context" —
+    ///   "Declarations in page and margin contexts cascade just like
+    ///   declarations in style rule for elements", i.e. `@page`
+    ///   *participates* in the cascade:
+    ///   <https://www.w3.org/TR/css-page-3/#cascading-and-page-context>
+    /// - CSS Cascading Level 4, "Cascade Origins" — the per-origin
+    ///   ordering mechanism (UA < Author, `!important` reversal) that
+    ///   `@page` rules cascade through:
+    ///   <https://www.w3.org/TR/css-cascade-4/#cascade-origin>
+    ///
+    /// M4 pre-work (raikiri-spike-jzv): the field is populated at parse
+    /// time so M4 cascade wiring never has to re-index page rules by
+    /// origin. The cascade *ordering* itself is M4 scope and not wired
+    /// here.
+    pub origin: Origin,
 }
 
 /// Parse the prelude of an `@page` rule.
