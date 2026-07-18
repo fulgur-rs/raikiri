@@ -159,8 +159,8 @@ fonts
 - 初回は fulgur の pin (`97ea26e26a2aac3eec7e770650b25e7049ed4a4e`, 2026-04-21) を採用
 - README に "raikiri 専有 bug で fresh pin 必要なら fulgur にとらわれず bump 可、
   ただし drift 追跡は raikiri 側で" と明記
-- pin bump は PR 経由、`scripts/wpt/fetch.sh && cargo test -p raikiri --test hello_world_vrt`
-  で verify
+- pin bump は PR 経由、`scripts/wpt/fetch.sh && cargo test -p raikiri --test hello_world_vrt -- --ignored`
+  で verify (VRT は `#[ignore]` のため `-- --ignored` が必須、raikiri-spike-e93 round 2 fix)
 
 ### 4.5 Fetch trigger
 
@@ -441,12 +441,13 @@ let png_bytes = raikiri::html_to_png_with_fonts(input, font_ctx)
 
 Golden PNG (`crates/raikiri/tests/reference/hello-world/expected/page-0000.png`) を
 Ahem 経路の red square 2 個で再生成。既存の
-`RAIKIRI_UPDATE_GOLDENS=1 cargo test -p raikiri --test hello_world_vrt` フロー経由。
+`RAIKIRI_UPDATE_GOLDENS=1 cargo test -p raikiri --test hello_world_vrt -- --ignored`
+フロー経由 (VRT は `#[ignore]` のため `-- --ignored` が必須)。
 
 ### 8.4 Cross-machine determinism 検証
 
 - **(D1) 手動 verify** — 別マシン (別 OS / fontconfig 環境) で
-  `cargo test -p raikiri --test hello_world_vrt` 実行、md5 一致確認
+  `cargo test -p raikiri --test hello_world_vrt -- --ignored` 実行、md5 一致確認
 - (D2) docker container multi-image cross-verify は **本 issue の scope 外**
   ([[raikiri-spike-rcf]] 枠で後追い)
 - 検証エビデンスは本 issue の close comment に "verified on X, Y machines,
