@@ -7,7 +7,7 @@
 //! `build_wpt_font_ctx` で構築した pinned `FontContext` — cross-machine
 //! 決定性のため system font 経路にはフォールバックしない。
 //!
-//! # 実行方法
+//! # 実行方法 (raikiri-spike-e93, spec §9.2)
 //!
 //! この test は **`#[ignore]`** — default `cargo test` では走らない
 //! (`target/wpt/fonts/` fetch 済を hard requirement とする為、clean checkout
@@ -18,7 +18,23 @@
 //! cargo test -p raikiri --test hello_world_vrt -- --ignored
 //! ```
 //!
-//! CI に fetch step を組み込む follow-up は spec §9.2 / raikiri-spike-rcf。
+//! # `#[ignore]` の trade-off (roborev finding e93 round 3 M2)
+//!
+//! `#[ignore]` は default CI から VRT regression coverage を外す既知の
+//! trade-off。この test は cross-machine 決定性の end-to-end 検証を担うが、
+//! CI で走らないと regression 検知は developer の local 実行 + `--ignored`
+//! に依存する。
+//!
+//! 選択肢は 3 つあり、user 判断で以下を採用:
+//! - **[採用] (B) `#[ignore]` 維持** + CI 連携は [[raikiri-spike-rcf]]
+//!   (CI fmt gate 拡張枠) の follow-up として明記
+//! - (A) `Ahem.ttf` を repo に direct bundle して `#[ignore]` を外す —
+//!   spec の "WPT 経由 fetch" 方針との整合性 tension、将来 reconsider
+//! - (C) CI に fetch step を本 branch で追加 — scope creep (raikiri-spike-rcf
+//!   の implementation 前倒し)
+//!
+//! CI 連携が landing するまでは、`scripts/wpt/fetch.sh` を PR 前 local で
+//! 実行 + `-- --ignored` で verify する運用。
 //!
 //! # Golden 更新
 //! `RAIKIRI_UPDATE_GOLDENS=1 cargo test -p raikiri --test hello_world_vrt -- --ignored`

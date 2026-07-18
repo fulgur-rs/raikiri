@@ -46,20 +46,24 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
         }),
     };
 
-    // Register 順 = fallback 順。walker が PREFERRED_FIRST を先頭に置く
+    // Register 順 = fallback 順。walker が PREFERRED_FIRST を先頭に置く。
+    //
+    // File read failure は **hard error として propagate**する
+    // (roborev Medium finding e93 round 3): 従来の eprintln! warn skip では、
+    // Ahem.ttf (PREFERRED_FIRST[0]) が read failed 時に silently 次候補
+    // (CSSTest 等) が register され、cascade "serif" が想定外の font に解決
+    // されてしまう。walker が返した path は既に存在確認済 (read_dir で
+    // 列挙された) なので、read 段階で失敗するのは permission 変更や symlink
+    // 損傷など明確な異常。ここで停止する方が「default で silent regression」
+    // より安全。個別 file の fontique reject (register.is_empty) は
+    // aggregate check (`family_ids.is_empty` → NoFontsRegistered) が catch する
+    // ので warn+skip のまま維持。
     let mut family_ids = Vec::new();
     for path in paths {
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(source) => {
-                eprintln!(
-                    "[raikiri-dom::fonts] warn: skipping {}: read failed: {}",
-                    path.display(),
-                    source
-                );
-                continue;
-            }
-        };
+        let bytes = std::fs::read(&path).map_err(|source| FontError::Io {
+            path: path.clone(),
+            source,
+        })?;
         let blob = Blob::new(Arc::new(bytes) as _);
         let registered = ctx.collection.register_fonts(blob, None);
         if registered.is_empty() {
