@@ -24,6 +24,7 @@ use crate::ruletree::RuleTree;
 /// M1.4 では `computed` のみ populate。future field
 /// (gcpm_directives / running_templates) は M5 で追加、`#[non_exhaustive]` の
 /// 恩恵で non-breaking。
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct CascadeResult {
     /// Per-node computed values (NodeId.0 as usize で index)。

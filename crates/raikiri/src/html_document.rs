@@ -13,19 +13,11 @@ use raikiri_html::UncascadedDocument;
 use raikiri_style::CascadeResult;
 
 /// Cascade まで完了した document unit。
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct HtmlDocument {
     pub(crate) uncascaded: UncascadedDocument,
     pub(crate) cascade: CascadeResult,
-}
-
-impl std::fmt::Debug for HtmlDocument {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HtmlDocument")
-            .field("uncascaded", &self.uncascaded)
-            .field("cascade", &"<CascadeResult>")
-            .finish()
-    }
 }
 
 impl HtmlDocument {
