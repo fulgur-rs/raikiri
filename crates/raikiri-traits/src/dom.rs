@@ -300,7 +300,7 @@ mod tests {
         let a = Symbol::from("a");
         let b = Symbol::from("b");
         assert!(a < b);
-        assert!(a.cmp(&b) == std::cmp::Ordering::Less);
+        assert_eq!(a.cmp(&b), std::cmp::Ordering::Less);
 
         // BTreeSet insertion 順序に依らず iteration が sorted order で走る。
         let mut set = BTreeSet::new();
