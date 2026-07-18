@@ -294,7 +294,7 @@ fn parse_counter_property(
     loop {
         // reserved keyword を counter-name として受理しない (spec §3、`<custom-ident>`
         // の除外リスト)。try_parse の rewind で reserved 検出時は unconsumed に戻す。
-        let name = match input.try_parse(|i| -> Result<SmolStr, cssparser::ParseError<'_, ()>> {
+        let name = match input.try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
             let ident = i.expect_ident()?.clone();
             if is_reserved_counter_name(&ident) {
                 Err(i.new_custom_error(()))

@@ -349,6 +349,7 @@ mod tests {
     use crate::property::DisplayValue;
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
+    use smol_str::SmolStr;
 
     fn cascade_doc(css: &str, tag: &str, inline: Option<&str>) -> ComputedValues {
         let mut doc = TestDoc::new();
@@ -615,10 +616,7 @@ mod tests {
         // に [("chapter", 0)] が届く。parser → PropertyValue → apply_value →
         // ComputedValues の end-to-end 疎通 smoke。
         let cv = cascade_doc("", "div", Some("counter-reset: chapter"));
-        assert_eq!(
-            cv.counter_reset,
-            vec![(smol_str::SmolStr::new("chapter"), 0)]
-        );
+        assert_eq!(cv.counter_reset, vec![(SmolStr::new("chapter"), 0)]);
         // 他 counter property は non-inherited の initial (empty) のまま
         assert!(cv.counter_increment.is_empty());
         assert!(cv.counter_set.is_empty());
