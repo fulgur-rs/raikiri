@@ -636,4 +636,25 @@ mod tests {
         assert_eq!(parse("revert", "counter-reset"), None);
         assert_eq!(parse("default", "counter-reset"), None);
     }
+
+    #[test]
+    fn counter_reset_accepts_negative_integer() {
+        // CSS Values 3 §5.1: <integer> は負値を含む。
+        // increment だけでなく reset / set も同一 grammar。
+        assert_eq!(
+            parse("chapter -5", "counter-reset"),
+            Some(PropertyValue::CounterReset(counter_pairs(&[(
+                "chapter", -5
+            )])))
+        );
+    }
+
+    #[test]
+    fn counter_set_accepts_negative_integer() {
+        // 同上 (parity with reset/increment negative-integer coverage)。
+        assert_eq!(
+            parse("page -3", "counter-set"),
+            Some(PropertyValue::CounterSet(counter_pairs(&[("page", -3)])))
+        );
+    }
 }
