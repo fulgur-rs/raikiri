@@ -11,14 +11,27 @@ use taffy::{Cache, Layout, Style};
 use raikiri_traits::NodeKind;
 
 bitflags::bitflags! {
-    /// Node に付随する per-node boolean 属性。blitz `NodeFlags` と bit 位置
-    /// 1:1 対応 (M6 blitz-compat の nominal 変換前提)。
+    /// Node に付随する per-node boolean 属性。blitz `NodeFlags` と **raw bit
+    /// 値まで完全一致** (raikiri-spike-37c, roborev job 292 L1 finding 対応)。
     ///
-    /// M1 spike では `IS_IN_DOCUMENT` のみ定義。将来 `IS_INLINE_ROOT` (M3
-    /// inline formatting root)、`IS_TABLE_ROOT` (M3+ table formatting root)
-    /// を blitz と同 bit 位置で追加する予定。
+    /// blitz reference (blitz-dom/src/node/node.rs:50-58):
+    /// ```text
+    /// const IS_INLINE_ROOT = 0b00000001;   // = 1 << 0
+    /// const IS_TABLE_ROOT  = 0b00000010;   // = 1 << 1
+    /// const IS_IN_DOCUMENT = 0b00000100;   // = 1 << 2
+    /// ```
+    ///
+    /// M1 spike では `IS_IN_DOCUMENT` のみ使用。`IS_INLINE_ROOT` (M3 inline
+    /// formatting root)、`IS_TABLE_ROOT` (M3+ table formatting root) は blitz
+    /// と同 bit 位置で予約定義するのみ (今は誰も set/clear しないが、bit 位置
+    /// を確保することで raw-bit 変換 `NodeFlags::from_bits(blitz_flags.bits())`
+    /// が M6 blitz-compat で正しく動く)。
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct NodeFlags: u32 {
+        /// Inline formatting context root。M3 で使用予定 (blitz と同 bit 位置)。
+        const IS_INLINE_ROOT = 1 << 0;
+        /// Table formatting context root。M3+ で使用予定 (blitz と同 bit 位置)。
+        const IS_TABLE_ROOT = 1 << 1;
         /// この Node が flat tree に含まれるか。`<template>` element の子孫は
         /// clear、Document root から flat-tree-parent 経由で到達可能な node は
         /// set。将来 shadow DOM / slot の "shadow-including tree" 意味論を
@@ -30,7 +43,7 @@ bitflags::bitflags! {
         ///   phase で single-pass DFS が set/clear
         /// - mutation runtime (M2+): mutator の `process_added_subtree` /
         ///   `process_removed_subtree` 相当が set/unset
-        const IS_IN_DOCUMENT = 1 << 0;
+        const IS_IN_DOCUMENT = 1 << 2;
     }
 }
 
@@ -323,5 +336,19 @@ mod flags_tests {
         assert!(!n.is_in_document());
         n.set_in_document(true);
         assert!(n.is_in_document());
+    }
+
+    #[test]
+    fn node_flags_bit_values_match_blitz_raw() {
+        // raikiri-spike-37c roborev job 292 L1 finding pin。blitz `NodeFlags`
+        // (blitz-dom/src/node/node.rs:50-58) と raw bit 値まで一致:
+        //   IS_INLINE_ROOT = 0b001, IS_TABLE_ROOT = 0b010, IS_IN_DOCUMENT = 0b100
+        //
+        // これにより M6 blitz-compat の変換が `NodeFlags::from_bits(x)` の
+        // trivial cast で成立する。将来 bit を追加する際は blitz と同 bit
+        // 位置に揃えること。
+        assert_eq!(NodeFlags::IS_INLINE_ROOT.bits(), 0b001);
+        assert_eq!(NodeFlags::IS_TABLE_ROOT.bits(), 0b010);
+        assert_eq!(NodeFlags::IS_IN_DOCUMENT.bits(), 0b100);
     }
 }

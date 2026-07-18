@@ -228,18 +228,35 @@ impl Document {
     }
 
     /// `<template>` element の子孫について `IS_IN_DOCUMENT` bit を clear する
-    /// single-pass DFS (raikiri-spike-37c)。sink.finish() から呼ばれる。
+    /// (raikiri-spike-37c)。sink.finish() から呼ばれる。
     ///
-    /// - Node::new_* constructor が default `IS_IN_DOCUMENT=true` を立てているため、
-    ///   本 method は「flat tree の外に落とすべき node の bit を clear する」補正
-    ///   phase として機能する。template element 自身は flat tree の一員なので bit
-    ///   set のまま、その descendants の bit を clear する。
-    /// - `<template>` 判定は HTML namespace + local == "template" (case-sensitive)。
-    ///   html5ever が local を lowercase 済で提供する契約に依存。SVG hypothetical
-    ///   `<template>` (別 namespace) は skip 対象外。
+    /// アルゴリズム (roborev job 292 findings 対応):
+    /// 1. 全 arena node の bit を先に clear (detached / unreachable node を
+    ///    default true のまま残さないため)
+    /// 2. Document root から iterative DFS で bit set。template element 自身
+    ///    は set、その descendants は skip (bit clear の状態が残る)
+    ///
+    /// 実装上の細かい contract:
+    /// - `<template>` 判定は HTML namespace + local == "template"
+    ///   (case-sensitive)。html5ever が local を lowercase 済で提供する契約に
+    ///   依存。SVG hypothetical `<template>` (別 namespace) は skip 対象外
+    ///   (spec-correct: SVG に `<template>` はそもそも定義が無いが raw parser で
+    ///   混入し得るため defensive)。
+    /// - foster parenting 中の transient detached node は Vec::retain 系
+    ///   mutation (`Document::retain_children`) や `detach_from_parent` で
+    ///   arena の子 pointer だけ切れた state になり得る。本 method は step 1 で
+    ///   全 node を clear するため、そうした node が in_document=true として
+    ///   残ることは無い。
     /// - iterative Vec stack で深い DOM での stack overflow を回避。
     /// - tree mutation ではないので `invalidate_layout_cache` は呼ばない。
     pub fn mark_in_document_flags(&mut self) {
+        // Step 1: 全 arena node の bit を先に clear。Node::new_* constructor が
+        // default true を立てるが、それは "attach 済み" の楽観的初期値。ここで
+        // 明示的に clear することで detached / unreachable node が false に落ちる。
+        for node in &mut self.nodes {
+            node.set_in_document(false);
+        }
+        // Step 2: Document root から reachable な node を DFS で set。
         let root = self.root_index();
         let mut stack: Vec<(usize, bool)> = vec![(root, false)];
         while let Some((id, in_template)) = stack.pop() {
@@ -379,5 +396,103 @@ mod stylesheets_tests {
                 StylesheetKind::UserAgent,
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod mark_in_document_flags_tests {
+    use super::*;
+
+    #[test]
+    fn mark_in_document_flags_clears_detached_arena_nodes() {
+        // raikiri-spike-37c roborev job 292 M2 finding pin。arena に存在するが
+        // Document root から reachable でない node (foster-parenting transient
+        // state / stub 除去後の孤児 等) は mark 後 is_in_document=false に落ちる
+        // (Node::new_* の default true を step 1 の全 clear が上書きする)。
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let attached = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+        // parent=None で detached を作る (append_element の primitive contract)
+        let detached = doc.append_element(None::<usize>, "span", Style::default(), None::<&str>);
+
+        // constructor default はどちらも true
+        assert!(doc.get_node(attached).unwrap().is_in_document());
+        assert!(doc.get_node(detached).unwrap().is_in_document());
+
+        doc.mark_in_document_flags();
+
+        assert!(
+            doc.get_node(attached).unwrap().is_in_document(),
+            "attached div should remain in_document after mark"
+        );
+        assert!(
+            !doc.get_node(detached).unwrap().is_in_document(),
+            "detached span must be cleared to !in_document after mark"
+        );
+    }
+
+    #[test]
+    fn mark_in_document_flags_keeps_template_element_but_clears_descendants() {
+        // Regression pin for the existing contract Task 3 pinned: template element
+        // itself stays in_document=true, its descendants get cleared. Redundant
+        // with the raikiri-html integration test but locally verifies the DFS
+        // shape (in_template state propagation) without going through parse.
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
+        let inner = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+        let text = doc.append_text(inner, "hi");
+
+        doc.mark_in_document_flags();
+
+        assert!(doc.get_node(tmpl).unwrap().is_in_document(), "template stays in doc");
+        assert!(!doc.get_node(inner).unwrap().is_in_document(), "<p> cleared");
+        assert!(!doc.get_node(text).unwrap().is_in_document(), "text cleared");
+    }
+}
+
+#[cfg(test)]
+mod taffy_filter_tests {
+    use super::*;
+    use taffy::TraversePartialTree;
+
+    #[test]
+    fn taffy_child_ids_and_count_filter_out_template_descendants() {
+        // raikiri-spike-37c roborev job 292 M1 finding pin。taffy layout tree
+        // (= web spec flat tree) から template descendants を除外する。
+        // template 自身は in_document=true なので body の child 数に含まれる、
+        // その内側の <p> は in_document=false なので template の taffy child
+        // 数 = 0 になる。
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let body = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+        let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
+        let inner = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+        let _txt = doc.append_text(inner, "hi");
+
+        doc.mark_in_document_flags();
+
+        let body_id = taffy::NodeId::from(body);
+        let tmpl_id = taffy::NodeId::from(tmpl);
+
+        // body の直接子は template 1 個 (taffy 経由 count)
+        assert_eq!(
+            <Document as TraversePartialTree>::child_count(&doc, body_id),
+            1,
+            "body has template as its one filtered child"
+        );
+        let body_children: Vec<taffy::NodeId> =
+            <Document as TraversePartialTree>::child_ids(&doc, body_id).collect();
+        assert_eq!(body_children, vec![tmpl_id]);
+
+        // template の taffy view から見た child_count = 0 (inner <p> は filter される)
+        assert_eq!(
+            <Document as TraversePartialTree>::child_count(&doc, tmpl_id),
+            0,
+            "template contents are filtered out of taffy layout tree"
+        );
+        let tmpl_children: Vec<taffy::NodeId> =
+            <Document as TraversePartialTree>::child_ids(&doc, tmpl_id).collect();
+        assert!(tmpl_children.is_empty());
     }
 }

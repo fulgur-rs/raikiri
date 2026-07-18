@@ -104,13 +104,21 @@ impl TreeSink for RaikiriTreeSink {
         // attributes → Node.attributes (null-ns、style を除く) + Node.inline_style。
         wire_side_tables(&mut document, &qual_names, &attributes);
 
-        // raikiri-spike-37c: template subtree の IS_IN_DOCUMENT bit を clear。
-        // wire_side_tables 後、他 phase の前 (extract_inline_stylesheets は新
-        // predicate 経由で is_in_document() を見るため)。
+        // Comment / PI stub を先に detach (roborev job 292 finding 対応):
+        // mark_in_document_flags の後に呼ぶと strip 直後の stub が default true
+        // のまま残り、"detached だが in_document=true" という inconsistent state
+        // が発生する。strip → mark の順にすることで stub は unreachable な
+        // arena node となり、mark の step 1 (全 clear) → step 2 (root から set)
+        // で自然に false のままになる。
+        strip_non_element_stubs(&mut document);
+
+        // raikiri-spike-37c: template subtree の IS_IN_DOCUMENT bit を clear
+        // + detached node (foster parenting transient / stub 除去後の孤児) の
+        // bit も clear する。extract_inline_stylesheets が新 predicate 経由で
+        // is_in_document() を見るため、その前に走らせる。
         document.mark_in_document_flags();
 
         let stylesheet_sources = extract_inline_stylesheets(&document);
-        strip_non_element_stubs(&mut document);
         UncascadedDocument {
             dom: document,
             stylesheet_sources,

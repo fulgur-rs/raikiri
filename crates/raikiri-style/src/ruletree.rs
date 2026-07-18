@@ -130,7 +130,12 @@ fn walk_and_collect<D: Dom, F: FnMut(&str)>(
                 // template 内 <style> が cascade に流れ込むのを防ぐ safety net。
                 // 実本番経路の "1 か所集約" contract は sink 側の判定を primary
                 // とし、この safety net は 2nd-line defense として明示的に維持する。
-                if tag.eq_ignore_ascii_case("template") {
+                //
+                // roborev job 292 L2 finding: namespace check を追加し HTML
+                // `<template>` のみを対象とする (SVG element `<template>` は spec
+                // 定義が無いが raw parser で local="template" になり得る)。sink 側
+                // の判定 (`namespace.is_none()`) と一貫。
+                if tag.eq_ignore_ascii_case("template") && elem.namespace_uri().is_none() {
                     continue;
                 }
                 if tag.eq_ignore_ascii_case("style") {
