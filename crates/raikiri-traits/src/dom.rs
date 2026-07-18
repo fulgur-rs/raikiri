@@ -150,12 +150,9 @@ pub trait Node {
     /// 返す。
     ///
     /// ```
-    /// use raikiri_traits::{Dom, Node};
-    /// # struct DummyDoc;
+    /// use raikiri_traits::Node;
     /// # struct DummyNode;
     /// # struct DummyElem;
-    /// # struct DummyIter;
-    /// # impl Iterator for DummyIter { type Item = raikiri_traits::NodeId; fn next(&mut self) -> Option<Self::Item> { None } }
     /// # impl raikiri_traits::Element for DummyElem { fn tag_name(&self) -> &str { "" } }
     /// # impl Node for DummyNode {
     /// #   type Element<'b> = DummyElem where Self: 'b;
