@@ -1,50 +1,41 @@
 //! Style-owned DOM abstraction — cleanroom decoupling of raikiri-style from
-//! raikiri-traits (Phase A of raikiri-spike-3ps).
+//! raikiri-traits (raikiri-spike-3ps Phase A + 94e Phase B).
 //!
 //! # Why a style-owned trait surface
 //!
 //! Stylo's archetype is `TDocument` / `TElement` / `TNode` living inside the
 //! style crate, with individual DOM implementations (Blitz's `blitz-dom`,
-//! Servo's `script`) providing the impls. raikiri mirrors that shape here so:
-//!
-//! - raikiri-style stops importing from raikiri-traits at the trait surface.
-//! - raikiri-dom (Phase B, coord scope) can implement `StyleDom` directly and
-//!   the workspace can drop the `raikiri-style → raikiri-traits` Cargo edge.
-//! - Downstream code that used to write `raikiri_style::cascade(&doc, …)`
-//!   against a `Document: raikiri_traits::Dom` still compiles unchanged during
-//!   Phase A thanks to blanket compat impls below.
+//! Servo's `script`) providing the impls. raikiri mirrors that shape here —
+//! raikiri-style stops depending on raikiri-traits entirely (Cargo edge
+//! dropped in Phase B), and raikiri-dom implements `StyleDom` /
+//! `StyleElement` / `StyleNode` directly on its `Document` / `NodeRef` /
+//! `ElementRef` (see `crates/raikiri-dom/src/dom_impl.rs`).
 //!
 //! # Naming: `StyleDom` vs reusing `Dom`
 //!
-//! We use `StyleDom` / `StyleElement` / `StyleNode` instead of reusing `Dom` /
-//! `Element` / `Node`. Rationale:
+//! We use `StyleDom` / `StyleElement` / `StyleNode` instead of reusing `Dom`
+//! / `Element` / `Node`. Rationale:
 //!
-//! - Downstream code often uses both crates. `raikiri_traits::Dom` and
-//!   `raikiri_style::Dom` living in the same file would create trait-selection
-//!   ambiguity (`some_doc.root_id()` — which trait's method?). `StyleDom`
-//!   disambiguates textually.
+//! - Downstream code often uses both `raikiri-style` and `raikiri-traits`.
+//!   `Dom` / `Element` / `Node` names in both crates would create
+//!   trait-selection ambiguity (`some_doc.root_id()` — which trait's
+//!   method?). `StyleDom` disambiguates textually.
 //! - Consumers importing `raikiri_style::*` are unlikely to be surprised —
 //!   Stylo-flavoured names (`TDocument` → `StyleDom`) are the established
 //!   pattern in the CSS-engine ecosystem.
 //!
 //! # `CascadeError`
 //!
-//! For Phase A we keep the raikiri-traits `CascadeError` variant and re-export
-//! it from here. That keeps `raikiri_style::cascade()` returning the same
-//! error identity umbrella code catches, and confines the raikiri-traits
-//! reference to this compat module. Decoupling `CascadeError` itself is a
-//! separate concern (it is an error taxonomy, not a DOM abstraction).
-
-// Re-export the shared error identity. Deliberately routed through this compat
-// module so `cascade.rs` does not need `use raikiri_traits::…` (Phase A grep
-// invariant: `raikiri_traits` only appears here + Cargo.toml).
-pub use raikiri_traits::CascadeError;
+//! `CascadeError` lives in [`crate::error`] (moved from `raikiri-traits`
+//! in Phase B). raikiri-traits re-exports it back so
+//! `RenderError::Cascade(CascadeError)` stays stable at the umbrella surface.
 
 /// Stable identifier for DOM nodes inside a `StyleDom`.
 ///
-/// Layout-compatible with `raikiri_traits::NodeId` on purpose: the blanket
-/// compat impl converts between them by unwrapping the inner `u64`. Consumers
-/// treat this as an opaque handle — cascade indexes `computed[id.0 as usize]`.
+/// Opaque handle — cascade indexes `computed[id.0 as usize]`. The inner
+/// `u64` layout is chosen to match raikiri-dom's arena index scheme; the
+/// raikiri-dom `StyleDom` impl converts between its arena `usize` and
+/// `StyleNodeId` at the trait boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StyleNodeId(pub u64);
 
@@ -58,7 +49,7 @@ impl StyleNodeId {
 /// DOM node kind — Element / Text / Document root.
 ///
 /// `#[non_exhaustive]` so Comment / CDATA / ProcessingInstruction can be added
-/// later without breakage (mirroring raikiri-traits' shape).
+/// later without breakage.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StyleNodeKind {
@@ -195,130 +186,5 @@ pub trait StyleElement<'a> {
         } else {
             None
         }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────
-// Blanket compat impls (Phase A only)
-//
-// TODO(raikiri-spike-3ps Phase B): remove these once raikiri-dom implements
-// `StyleDom` / `StyleElement` / `StyleNode` directly. The removal happens
-// atomically with dropping the `raikiri-traits` dependency from
-// `raikiri-style/Cargo.toml`. Until then, every type that impls
-// `raikiri_traits::Dom` (raikiri-dom's `Document`, sink adapters, etc.)
-// automatically satisfies `StyleDom` through the blanket below.
-// ─────────────────────────────────────────────────────────────
-
-/// Convert a raikiri-traits `NodeId` into a `StyleNodeId` (used by the
-/// blanket `child_ids` iterator adapter).
-fn nid_to_style(n: raikiri_traits::NodeId) -> StyleNodeId {
-    StyleNodeId(n.0)
-}
-
-/// Convert a raikiri-traits `NodeKind` into a `StyleNodeKind`.
-///
-/// Both enums are `#[non_exhaustive]` with the same variant set today. If
-/// raikiri-traits adds a new variant (Comment, CDATA, …) this arm forces us
-/// to mirror it in `StyleNodeKind` — fail-loud rather than silently
-/// misclassify.
-fn kind_to_style(k: raikiri_traits::NodeKind) -> StyleNodeKind {
-    match k {
-        raikiri_traits::NodeKind::Element => StyleNodeKind::Element,
-        raikiri_traits::NodeKind::Text => StyleNodeKind::Text,
-        raikiri_traits::NodeKind::Document => StyleNodeKind::Document,
-        // `#[non_exhaustive]` requires a wildcard; keep it fail-loud so a new
-        // upstream variant does not silently collapse to Element.
-        _ => panic!(
-            "raikiri_traits::NodeKind gained a new variant not mirrored in \
-             StyleNodeKind — extend the compat blanket in style_dom.rs"
-        ),
-    }
-}
-
-impl<T> StyleDom for T
-where
-    T: raikiri_traits::Dom + ?Sized,
-{
-    type NodeRef<'a>
-        = T::NodeRef<'a>
-    where
-        Self: 'a;
-    type ChildIter<'a>
-        = core::iter::Map<T::ChildIter<'a>, fn(raikiri_traits::NodeId) -> StyleNodeId>
-    where
-        Self: 'a;
-
-    fn root_id(&self) -> StyleNodeId {
-        // UFCS everywhere: `self.root_id()` would resolve back to this very
-        // `StyleDom::root_id` impl and infinite-recurse.
-        nid_to_style(raikiri_traits::Dom::root_id(self))
-    }
-
-    fn node(&self, id: StyleNodeId) -> Option<Self::NodeRef<'_>> {
-        raikiri_traits::Dom::node(self, raikiri_traits::NodeId(id.0))
-    }
-
-    fn child_ids(&self, id: StyleNodeId) -> Self::ChildIter<'_> {
-        raikiri_traits::Dom::child_ids(self, raikiri_traits::NodeId(id.0))
-            .map(nid_to_style as fn(raikiri_traits::NodeId) -> StyleNodeId)
-    }
-
-    fn node_count(&self) -> usize {
-        raikiri_traits::Dom::node_count(self)
-    }
-}
-
-impl<'a, N> StyleNode<'a> for N
-where
-    N: raikiri_traits::Node<'a>,
-{
-    type Element<'b>
-        = N::Element<'b>
-    where
-        Self: 'b;
-
-    fn kind(&self) -> StyleNodeKind {
-        kind_to_style(raikiri_traits::Node::kind(self))
-    }
-
-    fn as_element(&self) -> Option<Self::Element<'_>> {
-        raikiri_traits::Node::as_element(self)
-    }
-
-    fn text_content(&self) -> Option<&str> {
-        raikiri_traits::Node::text_content(self)
-    }
-
-    fn is_in_document(&self) -> bool {
-        raikiri_traits::Node::is_in_document(self)
-    }
-}
-
-impl<'a, E> StyleElement<'a> for E
-where
-    E: raikiri_traits::Element<'a>,
-{
-    fn tag_name(&self) -> &str {
-        raikiri_traits::Element::tag_name(self)
-    }
-
-    fn inline_style_source(&self) -> Option<&str> {
-        raikiri_traits::Element::inline_style_source(self)
-    }
-
-    fn namespace_uri(&self) -> Option<&str> {
-        raikiri_traits::Element::namespace_uri(self)
-    }
-
-    fn id(&self) -> Option<&str> {
-        raikiri_traits::Element::id(self)
-    }
-
-    fn has_class(&self, class: &str) -> bool {
-        raikiri_traits::Element::has_class(self, class)
-    }
-
-    fn attr(&self, local: &str) -> Option<&str> {
-        raikiri_traits::Element::attr(self, local)
     }
 }

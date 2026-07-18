@@ -9,8 +9,9 @@
 //! - [`document`] — `Document` arena + `append_element` / `append_text`
 //! - `node`     — `Node` struct (crate-private, no rustdoc entry)
 //! - [`taffy_impl`] — taffy 6 layout trait impls + `unsafe impl Send for Document`
-//! - [`dom_impl`] — `raikiri_traits::Dom / Node / Element` impls + `NodeRef` /
-//!   `ElementRef` types
+//! - [`dom_impl`] — `raikiri_traits::{Dom, Node, Element}` +
+//!   `raikiri_style::{StyleDom, StyleNode, StyleElement}` impls + `NodeRef` /
+//!   `ElementRef` types (both trait families over one arena, see file header)
 //! - [`fonts`] — WPT bundled font dir から cross-machine 決定性 `FontContext`
 //!   を構築する (`build_wpt_font_ctx`)
 //!
@@ -44,7 +45,7 @@ pub mod layout;
 pub mod taffy_impl;
 
 pub use document::Document;
-pub use dom_impl::{ChildIter, ElementRef, NodeRef};
+pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};
 pub use fonts::{FontError, build_wpt_font_ctx};
 pub use layout::layout_single_page;
 pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};

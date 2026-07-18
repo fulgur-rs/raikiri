@@ -7,11 +7,14 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-raikiri-traits = { workspace = true }
-cssparser      = { workspace = true }
-selectors      = { workspace = true }
-smol_str       = { workspace = true }
-rustc-hash     = { workspace = true }
+# NB: this crate is the leaf of raikiri's Stylo-pattern DOM abstraction
+# (raikiri-spike-94e Phase B). Its consumers depend on it; it does not
+# depend on any raikiri sub-crate. The reverse edge to the foundation
+# crate exists in that crate's own Cargo.toml.
+cssparser  = { workspace = true }
+selectors  = { workspace = true }
+smol_str   = { workspace = true }
+rustc-hash = { workspace = true }
 
 # `precomputed-hash` is a stylo-side implementation detail (`SelectorImpl`
 # bounds Identifier/LocalName/NamespaceUrl on `PrecomputedHash`). It is

@@ -12,6 +12,14 @@ use crate::page::TargetRegistry;
 use crate::policy::PolicyViolation;
 use crate::resolver::ResolverError;
 
+// CSS cascade error taxonomy is owned by raikiri-style (Stylo pattern —
+// raikiri-spike-94e Phase B). Re-exported here so `RenderError::Cascade`
+// and `impl From<CascadeError> for RenderError` below (which reference
+// `CascadeError` by unqualified path) keep the same identity, and downstream
+// consumers observing `raikiri_traits::CascadeError` (raikiri umbrella's
+// re-export at `crates/raikiri/src/lib.rs:51`) are unchanged.
+pub use raikiri_style::CascadeError;
+
 /// Terminal render error。すべての variant は "rendering がそこで停止した" を意味。
 ///
 /// Finding #10 対応 (構造化 error taxonomy)。round 4 review #1 対応で
@@ -383,37 +391,10 @@ impl From<std::io::Error> for ParseError {
     }
 }
 
-/// CSS parse / cascade 段階の terminal error (raikiri-style crate 内で発生)。
-///
-/// **Stylo/blitz と同じ責務境界**: CSS spec 準拠で invalid rule / value は
-/// silently drop され error にならない。cssparser / selectors 固有の error
-/// 型は raikiri-style 内部に閉じ込め、この enum は raikiri-style が明示的
-/// に fail-hard を選択した場合の signal のみ露出する。
-///
-/// M1.2 で `Internal` variant のみ populate。CSS 実装詳細 (property /
-/// value / source location 等) を trait layer に漏らさない。必要になった
-/// 時点で `#[non_exhaustive]` の恩恵で追加する。
-#[non_exhaustive]
-#[derive(Debug)]
-pub enum CascadeError {
-    /// raikiri-style 内で回復不能な内部 error が発生した (bug 相当、または
-    /// 明示的な strict mode で許容外の入力を受けた)。詳細メッセージは
-    /// raikiri-style 内部で log + message として構成される。
-    Internal {
-        /// 人間可読な失敗詳細 (raikiri-style 内部で構成)。
-        message: String,
-    },
-}
-
-impl std::fmt::Display for CascadeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Internal { message } => write!(f, "CSS cascade internal error: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for CascadeError {}
+// NB: `CascadeError` enum + `Display` + `Error` impls used to live here.
+// Ownership moved to `raikiri-style::error` in raikiri-spike-94e Phase B
+// (Stylo pattern — style owns its cascade error taxonomy). The re-export at
+// the top of this file preserves the `raikiri_traits::CascadeError` name path.
 
 /// Layout 段階の terminal error (raikiri-dom + taffy が発生源)。
 ///
