@@ -5,7 +5,7 @@ use smol_str::SmolStr;
 use std::borrow::Cow;
 use taffy::Style;
 
-use raikiri_traits::{NodeKind, StylesheetKind};
+use raikiri_traits::StylesheetKind;
 
 use crate::node::{Attr, Node};
 
@@ -156,16 +156,17 @@ impl Document {
     /// raikiri-html sink が `finish()` 時に qual_names side-table から呼び出す。
     /// tree mutation ではないので `invalidate_layout_cache` は call しない。
     ///
-    /// Panics (debug builds only): `id` が Element kind でない場合。Text /
-    /// Document node に attribute-family setter を呼ぶのは caller bug なので
-    /// early fail させる。
+    /// Panics (debug + release 共通、raikiri-spike-37c): `id` が Element kind
+    /// でない場合。Text / Document node に attribute-family setter を呼ぶのは
+    /// caller bug なので early fail させる (旧 `debug_assert_eq!` から
+    /// `NodeData::as_element_mut().expect(...)` に移行、release でも panic する
+    /// ようになったのは意図的な strictness 向上)。
     pub fn set_element_namespace(&mut self, id: usize, ns: Option<SmolStr>) {
-        debug_assert_eq!(
-            self.nodes[id].kind,
-            NodeKind::Element,
-            "set_element_namespace called on non-Element (id={id})"
-        );
-        self.nodes[id].namespace = ns;
+        let e = self.nodes[id]
+            .data
+            .as_element_mut()
+            .expect("set_element_namespace called on non-Element");
+        e.namespace = ns;
     }
 
     /// Element node に attribute list を紐付ける (raikiri-spike-blg)。
@@ -177,14 +178,14 @@ impl Document {
     /// raikiri-html sink が `finish()` 時に attributes side-table から呼び出す。
     /// tree mutation ではないので `invalidate_layout_cache` は call しない。
     ///
-    /// Panics (debug builds only): `id` が Element kind でない場合。
+    /// Panics (debug + release 共通、raikiri-spike-37c): `id` が Element kind
+    /// でない場合。
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
-        debug_assert_eq!(
-            self.nodes[id].kind,
-            NodeKind::Element,
-            "set_element_attributes called on non-Element (id={id})"
-        );
-        self.nodes[id].attributes = attrs
+        let e = self.nodes[id]
+            .data
+            .as_element_mut()
+            .expect("set_element_attributes called on non-Element");
+        e.attributes = attrs
             .into_iter()
             .map(|(local, value)| Attr { local, value })
             .collect();
@@ -197,14 +198,14 @@ impl Document {
     /// ([`raikiri_traits::Element::inline_style_source`]) が行う。
     /// 二重正規化を避けるため storage 層はここで判定しない。
     ///
-    /// Panics (debug builds only): `id` が Element kind でない場合。
+    /// Panics (debug + release 共通、raikiri-spike-37c): `id` が Element kind
+    /// でない場合。
     pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
-        debug_assert_eq!(
-            self.nodes[id].kind,
-            NodeKind::Element,
-            "set_element_inline_style called on non-Element (id={id})"
-        );
-        self.nodes[id].inline_style = inline_style;
+        let e = self.nodes[id]
+            .data
+            .as_element_mut()
+            .expect("set_element_inline_style called on non-Element");
+        e.inline_style = inline_style;
     }
 
     /// 全 node の children Vec に対して predicate を適用し、`false` を返す

@@ -28,7 +28,7 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
         let node = &doc.nodes[node_idx];
-        if node.kind == NodeKind::Element && node.tag_name.as_deref() == Some("body") {
+        if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
             return Some(node_idx);
         }
         // children を reverse push すると document order で pop される
@@ -88,11 +88,13 @@ pub(crate) fn preshape_text(
     max_advance: f32,
 ) -> Result<(), LayoutError> {
     for idx in 0..doc.nodes.len() {
-        if doc.nodes[idx].kind != NodeKind::Text {
+        if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
         }
-        let text: String = match &doc.nodes[idx].text_content {
-            Some(s) if !s.is_empty() => s.as_str().to_string(),
+        let text: String = match &doc.nodes[idx].data {
+            crate::node::NodeData::Text(t) if !t.text_content.is_empty() => {
+                t.text_content.as_str().to_string()
+            }
             _ => continue,
         };
         // cascade は Text node 位置にも ComputedValues を populate する
@@ -146,7 +148,9 @@ pub(crate) fn preshape_text(
         // 再指定不要 (内部的に break 時の width を使う)。
         layout.align(Alignment::Start, AlignmentOptions::default());
 
-        doc.nodes[idx].text_layout = Some(layout);
+        if let Some(t) = doc.nodes[idx].data.as_text_mut() {
+            t.text_layout = Some(layout);
+        }
     }
     Ok(())
 }
@@ -176,7 +180,9 @@ pub fn layout_single_page(
 ) -> Result<(), LayoutError> {
     // Step 0: text_layout re-entrance clear
     for node in document.nodes.iter_mut() {
-        node.text_layout = None;
+        if let Some(t) = node.data.as_text_mut() {
+            t.text_layout = None;
+        }
     }
 
     // Step 1: ComputedValues → taffy::Style bridge (M1.4 no-op site)
@@ -294,10 +300,10 @@ mod tests {
         preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 595.0).expect("preshape Ok");
 
         assert!(
-            doc.nodes[text].text_layout.is_some(),
+            doc.nodes[text].text_layout().is_some(),
             "text node's text_layout must be populated"
         );
-        let layout = doc.nodes[text].text_layout.as_ref().unwrap();
+        let layout = doc.nodes[text].text_layout().unwrap();
         assert!(layout.width() > 0.0, "text 'Hi' must have non-zero width");
         assert!(
             layout.height() > 0.0,
@@ -306,16 +312,19 @@ mod tests {
 
         // Element / Document は None のまま
         assert!(
-            doc.nodes[html].text_layout.is_none(),
+            doc.nodes[html].text_layout().is_none(),
             "html element is not text"
         );
         assert!(
-            doc.nodes[body].text_layout.is_none(),
+            doc.nodes[body].text_layout().is_none(),
             "body element is not text"
         );
-        assert!(doc.nodes[p].text_layout.is_none(), "p element is not text");
         assert!(
-            doc.nodes[0].text_layout.is_none(),
+            doc.nodes[p].text_layout().is_none(),
+            "p element is not text"
+        );
+        assert!(
+            doc.nodes[0].text_layout().is_none(),
             "document root is not text"
         );
     }
@@ -337,7 +346,7 @@ mod tests {
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
             preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 595.0).unwrap();
-            doc.nodes[text].text_layout.as_ref().unwrap().height()
+            doc.nodes[text].text_layout().unwrap().height()
         }
 
         let small = shape_text_height_at_font_size("8px");

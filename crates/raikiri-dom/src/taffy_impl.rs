@@ -102,7 +102,7 @@ impl LayoutPartialTree for Document {
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
                 let text_intrinsic: Option<Size<f32>> =
-                    tree.nodes[idx].text_layout.as_ref().map(|l| Size {
+                    tree.nodes[idx].text_layout().map(|l| Size {
                         width: l.width(),
                         height: l.height(),
                     });

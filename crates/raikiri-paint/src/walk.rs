@@ -59,7 +59,7 @@ pub(crate) fn paint_document(
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
-        match node.kind {
+        match node.kind() {
             NodeKind::Element => {
                 if node.is_display_none() {
                     continue;
@@ -100,7 +100,7 @@ fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root_index()];
     while let Some(id) = stack.pop() {
         let node = doc.get_node(id)?;
-        if node.kind == NodeKind::Element && node.tag_name.as_deref() == Some("body") {
+        if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
             return Some(id);
         }
         for &c in node.children.iter().rev() {

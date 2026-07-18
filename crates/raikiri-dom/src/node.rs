@@ -45,17 +45,114 @@ pub(crate) struct Attr {
     pub(crate) value: SmolStr,
 }
 
-/// Arena node。paint に必要な 5 field は pub、他は crate-private (gradual
-/// exposure)。M4 で cascade property 追加時に必要分を pub 化する。
+/// NodeData: kind 固有 field を集約した tagged union (raikiri-spike-37c)。
 ///
-/// M1.5 では `style` を Consumer が taffy::Style 直接構築する形。M1.6
-/// layout-single-page で ComputedValues → taffy::Style 変換 layer が入る予定。
-/// M1.4 で `inline_style` field を追加 (HTML `style="..."` 属性の生 string を保持、
-/// raikiri-style::cascade が declaration-list として parse する)。
-/// raikiri-spike-blg で `namespace` / `attributes` field を追加
-/// (raikiri-html sink が finish 時に side-table から wire)。
-/// raikiri-spike-m1.7 で `Node` を pub struct に昇格、paint に必要な field 5 個
-/// (children / unrounded_layout / kind / tag_name / text_layout) を pub 化。
+/// blitz `blitz-dom::node::node::NodeData` に対応する shape。M6 blitz-compat
+/// で nominal 変換 (`match data { NodeData::Element(e) => BlitzElement { ... }, ... }`)
+/// できるように field 名を揃える。`Element` variant のみ `Box` で indirection
+/// を挟むのは blitz と同じ選択 (Element の field 数が多く、Text / Document 側の
+/// サイズに Element を引きずられさせないため)。
+///
+/// 注意: この Box は `size_of::<NodeData>()` を小さく抑えるものではない —
+/// `TextData` が `parley::Layout<()>` を直接持つため `Element` variant
+/// (Box 経由でポインタ幅) より大きく、結局 enum 全体は `TextData` のサイズで
+/// 決まる (`clippy::large_enum_variant` が発火するのはこのため)。それでも
+/// `Text` を Box しないのは意図した trade-off: `text_layout()` は paint hot
+/// path から呼ばれるため、追加の indirection を持ち込みたくない。
+#[derive(Debug)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Element only is boxed by design (blitz-compat shape, see doc comment); \
+              Text carries parley::Layout<()> inline to avoid extra indirection on \
+              the paint hot path"
+)]
+pub enum NodeData {
+    /// HTML / XML element (tag_name + attributes + namespace + inline_style +
+    /// template_contents slot を持つ)。
+    Element(Box<ElementData>),
+    /// Character data node。
+    Text(TextData),
+    /// Document root (arena index 0 の virtual node)。
+    Document,
+}
+
+impl NodeData {
+    /// Element variant を crate-private に mut borrow (Document setter 用)。
+    #[inline]
+    pub(crate) fn as_element_mut(&mut self) -> Option<&mut ElementData> {
+        match self {
+            NodeData::Element(e) => Some(e.as_mut()),
+            _ => None,
+        }
+    }
+
+    /// Text variant を crate-private に mut borrow (layout::preshape_text 用)。
+    #[inline]
+    pub(crate) fn as_text_mut(&mut self) -> Option<&mut TextData> {
+        match self {
+            NodeData::Text(t) => Some(t),
+            _ => None,
+        }
+    }
+}
+
+/// Element-only data (raikiri-spike-37c)。blitz `ElementData` に対応。
+///
+/// `template_contents` は `<template>` element の contents fragment root への
+/// arena index を保持する slot として予約。M1 spike では sink が populate せず
+/// `get_template_contents` は `*target` を返す (blitz と同じ TODO 状態)。M2+ で
+/// clone/inject fixture が必要になった時に populate する
+/// (raikiri-spike-xno Part 2)。
+#[derive(Debug)]
+pub struct ElementData {
+    /// HTML / XML tag name (例: `"p"`, `"div"`)。html5ever の QualName.local から
+    /// SmolStr に写し取る。
+    pub(crate) tag_name: SmolStr,
+    /// HTML `style="..."` attribute の生 string (kind == Element 時のみ populate、
+    /// 空文字列 `style=""` は Element trait contract 上 `None` として view 化
+    /// されるが、storage はここでは正規化せず raw 値を持つ)。
+    pub(crate) inline_style: Option<SmolStr>,
+    /// Element namespace URI (non-HTML の場合のみ `Some`、HTML default は
+    /// `None` を fast path とする)。例: `Some("http://www.w3.org/2000/svg")`。
+    pub(crate) namespace: Option<SmolStr>,
+    /// null-namespace attribute list (順序保持、cascade tie-breaking で使う想定)。
+    /// `style` attribute は [`ElementData::inline_style`] に分離済のためここには
+    /// 含めない。
+    pub(crate) attributes: Vec<Attr>,
+    /// `<template>` element の contents fragment root への arena index。
+    ///
+    /// M1 spike では sink が populate しない (常に `None`)。`get_template_contents`
+    /// も `*target` を返し続ける。M2+ で raikiri-spike-xno Part 2 の中で
+    /// populate 実装 + `get_template_contents` の切り替えを行う。blitz
+    /// `blitz-dom::node::element::ElementData::template_contents` と同名・同 shape。
+    #[allow(dead_code, reason = "reserved for raikiri-spike-xno Part 2")]
+    pub(crate) template_contents: Option<usize>,
+}
+
+/// Text-only data (raikiri-spike-37c)。blitz `TextNodeData` (nominally) に対応。
+#[derive(Debug)]
+pub struct TextData {
+    /// Character data。
+    pub(crate) text_content: SmolStr,
+    /// Text node の pre-shaped parley Layout。
+    ///
+    /// - Populated by [`crate::layout::preshape_text`] (M1.6)
+    /// - Consumed by taffy leaf measure closure (intrinsic size) と m1.7 paint
+    ///   (glyph 位置)
+    /// - Brush type `()` は M1.6 の choice: color / decoration は持たせない
+    /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア + 再走
+    pub text_layout: Option<parley::Layout<()>>,
+}
+
+/// Arena node (raikiri-spike-37c refactor: NodeData tagged union に移行)。
+///
+/// paint / cascade / layout に必要な kind 非依存の field (children /
+/// unrounded_layout) は Node に残し、kind 固有 field は [`NodeData`] variant
+/// に集約する。raikiri-spike-m1.7 で pub 化した 5 field のうち `kind` /
+/// `tag_name` / `text_layout` は accessor method 経由に移行 (`node.kind()` /
+/// `node.tag_name()` / `node.text_layout()`)、`children` / `unrounded_layout`
+/// は pub field 継続。M1.15 external contract は Node/Element field access 0
+/// 件なので無影響、raikiri-dom 内部 pub_surface pin のみ accessor 経由に再 pin。
 #[derive(Debug)]
 pub struct Node {
     /// Taffy layout style。
@@ -66,40 +163,10 @@ pub struct Node {
     pub(crate) cache: Cache,
     /// Taffy layout 結果 (compute_root_layout が populate)。
     pub unrounded_layout: Layout,
-    /// Per-node metadata bits (raikiri-spike-37c)。IS_IN_DOCUMENT etc.
-    ///
-    /// crate-private: mutation は Document 経由 (`set_element_*` / sink の
-    /// `mark_in_document_flags` phase) で行う。参照は [`Node::is_in_document`]
-    /// 等の inherent accessor 経由。
+    /// Per-node metadata bits (IS_IN_DOCUMENT etc.)。crate-private mutation。
     pub(crate) flags: NodeFlags,
-    /// Node kind (Element / Text / Document)。
-    pub kind: NodeKind,
-    /// Element tag name (kind == Element 時のみ populate、他は `None`)。
-    pub tag_name: Option<SmolStr>,
-    /// Text character data (kind == Text 時のみ populate、他は `None`)。
-    pub(crate) text_content: Option<SmolStr>,
-    /// HTML `style="..."` attribute の生 string (kind == Element 時のみ populate、
-    /// 他は `None`)。M1.4 raikiri-style::cascade が消費。
-    pub(crate) inline_style: Option<SmolStr>,
-    /// Element namespace URI (kind == Element かつ non-HTML の場合のみ `Some`、
-    /// HTML default namespace は `None` を fast path とする)。
-    /// 例: `Some("http://www.w3.org/2000/svg")`。
-    pub(crate) namespace: Option<SmolStr>,
-    /// null-namespace attribute list (kind == Element 時のみ populate、他は空)。
-    /// 順序保持 (html5ever の source order、cascade tie-breaking で使う想定)。
-    /// `style` attribute は [`Node::inline_style`] に分離済のためここには含めない。
-    pub(crate) attributes: Vec<Attr>,
-    /// Text node の pre-shaped parley Layout。Element / Document は常に None。
-    ///
-    /// - Populated by [`crate::layout::preshape_text`] (M1.6)
-    /// - Consumed by taffy leaf measure closure (intrinsic size) と m1.7 paint
-    ///   (glyph 位置)
-    /// - Brush type `()` は M1.6 の choice: color / decoration は持たせない
-    ///   (paint 段で ComputedValues.color を別途拾う)。M3 で `peniko::Brush`
-    ///   等に昇格予定
-    /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア +
-    ///   再走。granular invalidation は M2+
-    pub text_layout: Option<parley::Layout<()>>,
+    /// Node kind + kind 固有 field (tagged union)。
+    pub(crate) data: NodeData,
 }
 
 impl Node {
@@ -111,20 +178,15 @@ impl Node {
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
-            kind: NodeKind::Document,
-            tag_name: None,
-            text_content: None,
-            inline_style: None,
-            namespace: None,
-            attributes: Vec::new(),
-            text_layout: None,
+            data: NodeData::Document,
         }
     }
 
     /// Element node を tag name / style / inline_style と共に構築する。
-    /// `namespace` / `attributes` は初期空で、raikiri-html sink が finish 時に
-    /// [`crate::Document::set_element_namespace`] / [`crate::Document::set_element_attributes`]
-    /// で populate する。
+    /// `namespace` / `attributes` / `template_contents` は初期空/None で、raikiri-html
+    /// sink が finish 時に [`crate::Document::set_element_namespace`] /
+    /// [`crate::Document::set_element_attributes`] で populate する
+    /// (template_contents は M1 では populate なし)。
     pub(crate) fn new_element(tag: SmolStr, style: Style, inline_style: Option<SmolStr>) -> Self {
         Self {
             style,
@@ -132,44 +194,14 @@ impl Node {
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
-            kind: NodeKind::Element,
-            tag_name: Some(tag),
-            text_content: None,
-            inline_style,
-            namespace: None,
-            attributes: Vec::new(),
-            text_layout: None,
+            data: NodeData::Element(Box::new(ElementData {
+                tag_name: tag,
+                inline_style,
+                namespace: None,
+                attributes: Vec::new(),
+                template_contents: None,
+            })),
         }
-    }
-
-    /// この Node が flat tree の一員かを返す (raikiri-spike-37c)。
-    ///
-    /// [`NodeFlags::IS_IN_DOCUMENT`] bit のシンプルな view。詳細は
-    /// [`NodeFlags::IS_IN_DOCUMENT`] の doc を参照。
-    #[inline]
-    pub fn is_in_document(&self) -> bool {
-        self.flags.contains(NodeFlags::IS_IN_DOCUMENT)
-    }
-
-    /// [`NodeFlags::IS_IN_DOCUMENT`] bit を明示的に上書きする (crate-private)。
-    ///
-    /// sink の `mark_in_document_flags` phase および将来の mutation runtime が
-    /// 呼ぶ。外部 consumer が直接触ることは無い。
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn set_in_document(&mut self, v: bool) {
-        self.flags.set(NodeFlags::IS_IN_DOCUMENT, v);
-    }
-
-    /// このノードの `taffy::Style.display == Display::None` を返す。
-    ///
-    /// paint 段で display:none subtree を skip する目的の predicate。size 0
-    /// による代理判定は overflow: visible の legitimate な zero-size 要素を
-    /// silent drop するため誤り (roborev job 223 finding 対応)。style field
-    /// は crate-private のまま維持し、paint に必要な最小の boolean 述語のみ
-    /// pub で公開する (gradual exposure)。
-    pub fn is_display_none(&self) -> bool {
-        self.style.display == taffy::Display::None
     }
 
     /// Text node を character data と共に構築する。
@@ -180,14 +212,80 @@ impl Node {
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
-            kind: NodeKind::Text,
-            tag_name: None,
-            text_content: Some(text),
-            inline_style: None,
-            namespace: None,
-            attributes: Vec::new(),
-            text_layout: None,
+            data: NodeData::Text(TextData {
+                text_content: text,
+                text_layout: None,
+            }),
         }
+    }
+
+    // ─── inherent accessor methods (raikiri-spike-37c) ─────────────────
+
+    /// この Node の [`NodeKind`] を返す。
+    ///
+    /// 旧 `pub kind: NodeKind` field の accessor 版 (raikiri-spike-37c refactor)。
+    /// 呼び出し側は `node.kind` → `node.kind()` の syntax 変更のみ。
+    #[inline]
+    pub fn kind(&self) -> NodeKind {
+        match &self.data {
+            NodeData::Element(_) => NodeKind::Element,
+            NodeData::Text(_) => NodeKind::Text,
+            NodeData::Document => NodeKind::Document,
+        }
+    }
+
+    /// Element の場合 tag_name を、それ以外は `None` を返す。
+    ///
+    /// 旧 `pub tag_name: Option<SmolStr>` field の accessor 版
+    /// (raikiri-spike-37c refactor)。`Option<&str>` に射影する
+    /// (SmolStr の内部 view で Copy 相当のコスト)。
+    #[inline]
+    pub fn tag_name(&self) -> Option<&str> {
+        match &self.data {
+            NodeData::Element(e) => Some(e.tag_name.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Text の場合 text_layout を、それ以外は `None` を返す。
+    ///
+    /// 旧 `pub text_layout: Option<parley::Layout<()>>` field の accessor 版
+    /// (raikiri-spike-37c refactor)。paint hot path から呼ばれるため `#[inline]`。
+    #[inline]
+    pub fn text_layout(&self) -> Option<&parley::Layout<()>> {
+        match &self.data {
+            NodeData::Text(t) => t.text_layout.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// このノードの `taffy::Style.display == Display::None` を返す。
+    ///
+    /// paint 段で display:none subtree を skip する目的の predicate。size 0
+    /// による代理判定は overflow: visible の legitimate な zero-size 要素を
+    /// silent drop するため誤り (roborev job 223 finding 対応)。style field
+    /// は crate-private のまま維持し、paint に必要な最小の boolean 述語のみ
+    /// pub で公開する (gradual exposure)。
+    #[inline]
+    pub fn is_display_none(&self) -> bool {
+        self.style.display == taffy::Display::None
+    }
+
+    /// この Node が flat tree の一員かを返す (raikiri-spike-37c)。
+    #[inline]
+    pub fn is_in_document(&self) -> bool {
+        self.flags.contains(NodeFlags::IS_IN_DOCUMENT)
+    }
+
+    /// [`NodeFlags::IS_IN_DOCUMENT`] bit を明示的に上書きする (crate-private)。
+    ///
+    /// Task 2 時点では呼び出し元が無い (Task 3 の sink `mark_in_document_flags`
+    /// phase が消費する予定)、`flags_tests::set_in_document_toggles_bit` のみ
+    /// exercise する。
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn set_in_document(&mut self, v: bool) {
+        self.flags.set(NodeFlags::IS_IN_DOCUMENT, v);
     }
 }
 
