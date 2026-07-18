@@ -84,10 +84,10 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
             continue;
         }
         // register 成功した path が PREFERRED_FIRST 対象なら record
-        if let Some(basename) = path.file_name().and_then(|f| f.to_str()) {
-            if PREFERRED_FIRST.contains(&basename) {
-                registered_preferred_basenames.insert(basename.to_string());
-            }
+        if let Some(basename) = path.file_name().and_then(|f| f.to_str())
+            && PREFERRED_FIRST.contains(&basename)
+        {
+            registered_preferred_basenames.insert(basename.to_string());
         }
         family_ids.extend(registered.iter().map(|(id, _)| *id));
     }
