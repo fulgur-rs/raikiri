@@ -5,16 +5,15 @@
 use cssparser::{Parser, ParserInput, StyleSheetParser};
 use selectors::parser::{ParseRelative, SelectorList};
 
-use raikiri_traits::{Dom, Element, Node, NodeKind};
-
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
+use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{RaikiriSelectorImpl, RaikiriSelectorParser};
 
 /// Cascade origin (CSS Cascading L4 §6.2)。M1 では UserAgent + Author の
 /// 2 段のみ。User origin は Consumer が `extra_stylesheets` 経由で Author
 /// として渡す想定 (spec §M1.4a Non-goals、raikiri-spike-m1.22)。
 ///
-/// `raikiri_traits::StylesheetKind` との対応は raikiri umbrella crate が
+/// `StylesheetKind` (dom-level tag) との対応は raikiri umbrella crate が
 /// cascade orchestration の一部として map する。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,7 +80,7 @@ impl RuleTree {
 /// raikiri umbrella が RuleTree に流し込む責務)。
 ///
 /// 詳細は spec §M1.4a (raikiri-spike-m1.22)。
-pub fn build_rule_tree<D: Dom>(dom: &D) -> RuleTree {
+pub fn build_rule_tree<D: StyleDom>(dom: &D) -> RuleTree {
     let mut tree = RuleTree::empty();
     walk_and_collect(dom, dom.root_id(), &mut |source| {
         tree.add_stylesheet(source, Origin::Author);
@@ -98,7 +97,7 @@ pub fn build_rule_tree<D: Dom>(dom: &D) -> RuleTree {
 ///
 /// 呼び出し順は `walk_and_collect` の iterative DFS に従い document order。
 /// stack overflow 保護は `walk_and_collect` と共有 (roborev job 199)。
-pub fn walk_style_elements<D: Dom, F: FnMut(&str)>(dom: &D, mut on_style_text: F) {
+pub fn walk_style_elements<D: StyleDom, F: FnMut(&str)>(dom: &D, mut on_style_text: F) {
     walk_and_collect(dom, dom.root_id(), &mut on_style_text);
 }
 
@@ -106,12 +105,8 @@ pub fn walk_style_elements<D: Dom, F: FnMut(&str)>(dom: &D, mut on_style_text: F
 /// で iterative DFS (roborev job 199 対応)。訪問順は sibling 間で recursion 版
 /// と異なり得るが、`<style>` は独立に text を emit するだけで他 node の状態に
 /// 依存しないため source_order (呼び出し側で採番) は不変。
-fn walk_and_collect<D: Dom, F: FnMut(&str)>(
-    dom: &D,
-    id: raikiri_traits::NodeId,
-    on_style_text: &mut F,
-) {
-    let mut stack: Vec<raikiri_traits::NodeId> = vec![id];
+fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_style_text: &mut F) {
+    let mut stack: Vec<StyleNodeId> = vec![id];
     while let Some(id) = stack.pop() {
         if let Some(node) = dom.node(id) {
             // raikiri-spike-37c: <template> 子孫 + 将来の inert subtree を統一 skip。
@@ -120,7 +115,7 @@ fn walk_and_collect<D: Dom, F: FnMut(&str)>(
             if !node.is_in_document() {
                 continue;
             }
-            if node.kind() == NodeKind::Element
+            if node.kind() == StyleNodeKind::Element
                 && let Some(elem) = node.as_element()
             {
                 let tag = elem.tag_name();

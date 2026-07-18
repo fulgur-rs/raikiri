@@ -9,7 +9,6 @@
 use std::collections::HashMap;
 
 use cssparser::{Parser, ParserInput};
-use raikiri_traits::{CascadeError, Dom, Element, Node, NodeId, NodeKind};
 use selectors::parser::{Selector, SelectorList};
 
 use crate::RaikiriSelectorImpl;
@@ -18,6 +17,9 @@ use crate::property::{PropertyKey, PropertyValue};
 use crate::rule::parse_declaration_block;
 use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
+use crate::style_dom::{
+    CascadeError, StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind,
+};
 
 /// Cascade 結果。
 ///
@@ -45,14 +47,14 @@ pub struct CascadeResult {
 /// // (crate cycle 回避)、実 code は integration test で確認。ここは shape のみ。
 /// use raikiri_style::{build_rule_tree, cascade, ComputedValues};
 ///
-/// # fn demo<D: raikiri_traits::Dom>(dom: &D) {
+/// # fn demo<D: raikiri_style::StyleDom>(dom: &D) {
 /// let rule_tree = build_rule_tree(dom);
 /// let result = cascade(dom, &rule_tree).expect("m1.4 では常に Ok");
 /// let root_style: &ComputedValues = &result.computed[0];
 /// # }
 /// ```
-pub fn cascade<D: Dom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResult, CascadeError> {
-    let mut cascaded: HashMap<NodeId, Vec<CascadedDecl>> = HashMap::new();
+pub fn cascade<D: StyleDom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResult, CascadeError> {
+    let mut cascaded: HashMap<StyleNodeId, Vec<CascadedDecl>> = HashMap::new();
 
     // Phase 1: per-node cascaded values を収集
     collect_cascaded(dom, dom.root_id(), rule_tree, &mut cascaded);
@@ -113,13 +115,13 @@ fn cascade_rank(origin: Origin, important: bool) -> u8 {
 /// `collect_cascaded` は本来 DFS で node を訪れるが、per-node の処理は他の
 /// node の状態に依存しないため訪問順は無関係。overflow 回避のため explicit
 /// `Vec` stack で iterative に書き換え (roborev job 199)。
-fn collect_cascaded<D: Dom>(
+fn collect_cascaded<D: StyleDom>(
     dom: &D,
-    id: NodeId,
+    id: StyleNodeId,
     rule_tree: &RuleTree,
-    out: &mut HashMap<NodeId, Vec<CascadedDecl>>,
+    out: &mut HashMap<StyleNodeId, Vec<CascadedDecl>>,
 ) {
-    let mut stack: Vec<NodeId> = vec![id];
+    let mut stack: Vec<StyleNodeId> = vec![id];
     while let Some(id) = stack.pop() {
         if let Some(node) = dom.node(id) {
             // raikiri-spike-37c: <template> 子孫 + 将来の inert subtree を統一 skip。
@@ -128,7 +130,7 @@ fn collect_cascaded<D: Dom>(
             if !node.is_in_document() {
                 continue;
             }
-            if node.kind() == NodeKind::Element
+            if node.kind() == StyleNodeKind::Element
                 && let Some(elem) = node.as_element()
             {
                 let mut per_node = Vec::new();
@@ -226,17 +228,17 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 
 /// Top-down inheritance walk。子 node は親の computed value を必要とするため
 /// (再帰の call stack で暗黙に運んでいた context)、iterative 化には各 stack
-/// entry に `(NodeId, 親の computed value)` を明示的に持たせる — Approach A
+/// entry に `(StyleNodeId, 親の computed value)` を明示的に持たせる — Approach A
 /// (roborev job 199 対応)。clone は各 entry ごとに発生するが m1.4 scope では
 /// 許容 (hot path 化した場合は将来 `Arc<ComputedValues>` で削減を検討)。
-fn resolve_inheritance<D: Dom>(
+fn resolve_inheritance<D: StyleDom>(
     dom: &D,
-    id: NodeId,
+    id: StyleNodeId,
     parent_computed: &ComputedValues,
-    cascaded: &HashMap<NodeId, Vec<CascadedDecl>>,
+    cascaded: &HashMap<StyleNodeId, Vec<CascadedDecl>>,
     out: &mut Vec<ComputedValues>,
 ) {
-    let mut stack: Vec<(NodeId, ComputedValues)> = vec![(id, parent_computed.clone())];
+    let mut stack: Vec<(StyleNodeId, ComputedValues)> = vec![(id, parent_computed.clone())];
     while let Some((id, parent_computed)) = stack.pop() {
         // raikiri-spike-37c roborev job 294 M2 finding: is_in_document()==false
         // の node は subtree ごと早期 continue する。
