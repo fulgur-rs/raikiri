@@ -170,7 +170,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn policy_violation_display_includes_kind_url_violation_type_details() {
+    fn policy_violation_display_includes_all_fields() {
         let violation = PolicyViolation {
             kind: ResourceKind::ExternalStylesheet,
             url: Url::parse("https://example.test/main.css").expect("valid url"),
