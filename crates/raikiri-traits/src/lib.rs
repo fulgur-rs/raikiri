@@ -636,7 +636,7 @@ mod tests {
         use crate::Element;
 
         struct BareElement;
-        impl<'a> Element<'a> for BareElement {
+        impl Element for BareElement {
             fn tag_name(&self) -> &str {
                 "p"
             }
@@ -663,7 +663,7 @@ mod tests {
         use crate::Element;
 
         struct AttrOnlyElement;
-        impl<'a> Element<'a> for AttrOnlyElement {
+        impl Element for AttrOnlyElement {
             fn tag_name(&self) -> &str {
                 "div"
             }

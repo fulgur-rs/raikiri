@@ -1,6 +1,6 @@
 //! DOM abstraction trait + identifier newtypes.
 //!
-//! `Dom` / `Element<'a>` / `Node<'a>` は M1.5 (`dom-model` task) で
+//! `Dom` / `Element` / `Node` は M1.5 (`dom-model` task) で
 //! associated type + method を確定する予定。M1.1 では shell として trait だけ
 //! 用意し、raikiri-dom 側の実装検討と co-design する。
 
@@ -70,11 +70,11 @@ pub enum NodeKind {
 /// wrapper trait を別途用意する。
 pub trait Dom {
     /// Node reference (borrowed) type。
-    type NodeRef<'a>: Node<'a>
+    type NodeRef<'a>: Node
     where
         Self: 'a;
     /// Element reference (borrowed) type。
-    type ElementRef<'a>: Element<'a>
+    type ElementRef<'a>: Element
     where
         Self: 'a;
     /// Child ID iterator type。
@@ -109,11 +109,16 @@ pub trait Dom {
     }
 }
 
-/// Node reference (borrowed lifetime `'a`)。kind ごとの dispatch と共通 API を
-/// 提供。
-pub trait Node<'a> {
+/// DOM node abstraction。kind ごとの dispatch と共通 API を提供。
+///
+/// **Lifetime elision** (raikiri-spike-yxq): 過去は `Node<'a>` の form を持って
+/// いたが、method signature で `'a` を使用しないため M1.5 whole-branch review で
+/// drop。borrowed Node value 自体の lifetime は `Dom::NodeRef<'a>` の `'a` で
+/// 表現されるため trait param 側は不要。GAT `Element<'b>` は borrowed element
+/// reference の型として残る。
+pub trait Node {
     /// Element downcast 用の Element reference type。
-    type Element<'b>: Element<'b>
+    type Element<'b>: Element
     where
         Self: 'b;
 
@@ -151,8 +156,8 @@ pub trait Node<'a> {
     /// # struct DummyElem;
     /// # struct DummyIter;
     /// # impl Iterator for DummyIter { type Item = raikiri_traits::NodeId; fn next(&mut self) -> Option<Self::Item> { None } }
-    /// # impl<'a> raikiri_traits::Element<'a> for DummyElem { fn tag_name(&self) -> &str { "" } }
-    /// # impl<'a> Node<'a> for DummyNode {
+    /// # impl raikiri_traits::Element for DummyElem { fn tag_name(&self) -> &str { "" } }
+    /// # impl Node for DummyNode {
     /// #   type Element<'b> = DummyElem where Self: 'b;
     /// #   fn kind(&self) -> raikiri_traits::NodeKind { raikiri_traits::NodeKind::Document }
     /// #   fn as_element(&self) -> Option<Self::Element<'_>> { None }
@@ -167,12 +172,17 @@ pub trait Node<'a> {
     }
 }
 
-/// Element reference (borrowed lifetime `'a`)。
+/// DOM element abstraction。
 ///
 /// `tag_name` は M1.5 で確定。`inline_style_source` / `namespace_uri` /
 /// `id` / `has_class` / `attr` は raikiri-spike-blg で追加。attribute lookup は
 /// null-namespace attr のみ (namespaced attr = xlink:href 等は M2+ に defer)。
-pub trait Element<'a> {
+///
+/// **Lifetime elision** (raikiri-spike-yxq): 過去は `Element<'a>` の form を
+/// 持っていたが、method signature で `'a` を使用しないため M1.5 whole-branch
+/// review で drop。borrowed Element value 自体の lifetime は `Dom::ElementRef<'a>`
+/// の `'a` で表現されるため trait param 側は不要。
+pub trait Element {
     /// HTML / XML tag name (例: `"p"`, `"div"`)。
     fn tag_name(&self) -> &str;
 

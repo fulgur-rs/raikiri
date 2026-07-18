@@ -80,7 +80,7 @@ impl raikiri_traits::Dom for Document {
     }
 }
 
-impl<'a> raikiri_traits::Node<'a> for NodeRef<'a> {
+impl<'a> raikiri_traits::Node for NodeRef<'a> {
     type Element<'b>
         = ElementRef<'b>
     where
@@ -107,7 +107,7 @@ impl<'a> raikiri_traits::Node<'a> for NodeRef<'a> {
     }
 }
 
-impl<'a> raikiri_traits::Element<'a> for ElementRef<'a> {
+impl<'a> raikiri_traits::Element for ElementRef<'a> {
     fn tag_name(&self) -> &str {
         // ElementRef は as_element() が Some を返した後の view なので必ず
         // NodeData::Element (invariant)、それ以外は panic 相当。
