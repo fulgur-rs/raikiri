@@ -13,13 +13,12 @@ use selectors::parser::{Selector, SelectorList};
 
 use crate::RaikiriSelectorImpl;
 use crate::computed::ComputedValues;
+use crate::error::CascadeError;
 use crate::property::{PropertyKey, PropertyValue};
 use crate::rule::parse_declaration_block;
 use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
-use crate::style_dom::{
-    CascadeError, StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind,
-};
+use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
 /// Cascade 結果。
 ///

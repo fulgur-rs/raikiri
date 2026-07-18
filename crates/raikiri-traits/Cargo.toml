@@ -7,10 +7,14 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-smol_str   = { workspace = true }
-bytes      = { workspace = true }
-url        = { workspace = true }
-rustc-hash = { workspace = true }
+# raikiri-style ownership of CascadeError (raikiri-spike-94e Phase B, Stylo
+# pattern). traits re-exports the enum back so `RenderError::Cascade(_)` and
+# the umbrella `raikiri_traits::CascadeError` name path stay stable.
+raikiri-style = { workspace = true }
+smol_str      = { workspace = true }
+bytes         = { workspace = true }
+url           = { workspace = true }
+rustc-hash    = { workspace = true }
 
 [lints]
 workspace = true

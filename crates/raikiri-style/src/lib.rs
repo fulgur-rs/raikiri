@@ -16,8 +16,11 @@
 
 #![allow(missing_docs)] // M0 seed; docs come with M1
 
+pub mod error;
+pub use error::CascadeError;
+
 pub mod style_dom;
-pub use style_dom::{CascadeError, StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
+pub use style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
 pub mod property;
 pub use property::{CssColor, DisplayValue, Length, PropertyValue};
