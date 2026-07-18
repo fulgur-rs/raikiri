@@ -10,7 +10,7 @@ use smol_str::SmolStr;
 /// target-* references.
 ///
 /// SmolStr newtype で inline 最適化を効かせる。M4 GCPM で本格利用開始。
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Symbol(pub SmolStr);
 
 impl Symbol {
@@ -283,4 +283,31 @@ pub enum StylesheetKind {
     /// Consumer 提供の `extra_stylesheets` 等)。M1 では User origin を
     /// Author に混ぜて扱う。
     Author,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// `Symbol` の `Ord` / `PartialOrd` 実装が SmolStr (= &str) 由来の
+    /// lexicographic order を継承していることを確認する。M4 target-* /
+    /// fragment-id で `BTreeMap<Symbol, _>` の deterministic iteration
+    /// order を根拠にした logic を書く前提の unit contract。
+    #[test]
+    fn symbol_ord_matches_str_lexicographic() {
+        // 2-element comparison: "a" < "b" (str lexicographic)。
+        let a = Symbol::from("a");
+        let b = Symbol::from("b");
+        assert!(a < b);
+        assert!(a.cmp(&b) == std::cmp::Ordering::Less);
+
+        // BTreeSet insertion 順序に依らず iteration が sorted order で走る。
+        let mut set = BTreeSet::new();
+        set.insert(Symbol::from("charlie"));
+        set.insert(Symbol::from("alpha"));
+        set.insert(Symbol::from("bravo"));
+        let collected: Vec<&str> = set.iter().map(Symbol::as_str).collect();
+        assert_eq!(collected, ["alpha", "bravo", "charlie"]);
+    }
 }
