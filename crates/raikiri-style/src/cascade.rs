@@ -228,7 +228,7 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 
 /// Top-down inheritance walk。子 node は親の computed value を必要とするため
 /// (再帰の call stack で暗黙に運んでいた context)、iterative 化には各 stack
-/// entry に `(NodeId, 親の computed value)` を明示的に持たせる — Approach A
+/// entry に `(StyleNodeId, 親の computed value)` を明示的に持たせる — Approach A
 /// (roborev job 199 対応)。clone は各 entry ごとに発生するが m1.4 scope では
 /// 許容 (hot path 化した場合は将来 `Arc<ComputedValues>` で削減を検討)。
 fn resolve_inheritance<D: StyleDom>(
