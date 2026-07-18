@@ -28,6 +28,9 @@ pub use property::{CssColor, DisplayValue, Length, PropertyValue};
 pub mod rule;
 pub use rule::{Declaration, StyleRule};
 
+pub mod page;
+pub use page::{PageRule, PageSelector};
+
 pub mod ruletree;
 pub use ruletree::{Origin, RuleTree, build_rule_tree, walk_style_elements};
 
