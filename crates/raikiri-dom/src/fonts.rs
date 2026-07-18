@@ -441,7 +441,10 @@ mod tests {
             .iter()
             .filter(|p| p.file_name().and_then(|f| f.to_str()) == Some("Ahem.ttf"))
             .count();
-        assert_eq!(ahem_count, 2, "duplicate Ahem.ttf basenames must both survive");
+        assert_eq!(
+            ahem_count, 2,
+            "duplicate Ahem.ttf basenames must both survive"
+        );
 
         // PREFERRED_FIRST の Ahem.ttf 2 個は先頭 2 slot を占める (path sort順:
         // top-level "Ahem.ttf" < "subdir/Ahem.ttf")

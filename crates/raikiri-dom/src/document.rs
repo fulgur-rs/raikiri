@@ -537,9 +537,18 @@ mod mark_in_document_flags_tests {
 
         doc.mark_in_document_flags();
 
-        assert!(doc.get_node(tmpl).unwrap().is_in_document(), "template stays in doc");
-        assert!(!doc.get_node(inner).unwrap().is_in_document(), "<p> cleared");
-        assert!(!doc.get_node(text).unwrap().is_in_document(), "text cleared");
+        assert!(
+            doc.get_node(tmpl).unwrap().is_in_document(),
+            "template stays in doc"
+        );
+        assert!(
+            !doc.get_node(inner).unwrap().is_in_document(),
+            "<p> cleared"
+        );
+        assert!(
+            !doc.get_node(text).unwrap().is_in_document(),
+            "text cleared"
+        );
     }
 
     #[test]
@@ -583,7 +592,10 @@ mod mark_in_document_flags_tests {
         doc.mark_in_document_flags();
 
         doc.retain_children(|c| c != d);
-        assert!(doc.flags_dirty, "retain_children sets dirty when a child is removed");
+        assert!(
+            doc.flags_dirty,
+            "retain_children sets dirty when a child is removed"
+        );
     }
 
     #[test]
@@ -615,7 +627,10 @@ mod mark_in_document_flags_tests {
 
         // template の namespace を変更 → dirty set される
         doc.set_element_namespace(tmpl, Some(SmolStr::new("http://www.w3.org/2000/svg")));
-        assert!(doc.flags_dirty, "template namespace change must dirty flags");
+        assert!(
+            doc.flags_dirty,
+            "template namespace change must dirty flags"
+        );
         doc.mark_in_document_flags();
         assert!(!doc.flags_dirty);
 
@@ -628,10 +643,7 @@ mod mark_in_document_flags_tests {
 
         // 同じ namespace を再度 set → 変化無しなら dirty set しない
         doc.set_element_namespace(tmpl, Some(SmolStr::new("http://www.w3.org/2000/svg")));
-        assert!(
-            !doc.flags_dirty,
-            "no-op namespace set must NOT dirty flags"
-        );
+        assert!(!doc.flags_dirty, "no-op namespace set must NOT dirty flags");
     }
 
     #[test]
