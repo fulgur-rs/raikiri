@@ -112,10 +112,10 @@ impl NodeData {
 /// Element-only data (raikiri-spike-37c)。blitz `ElementData` に対応。
 ///
 /// `template_contents` は `<template>` element の contents fragment root への
-/// arena index を保持する slot として予約。M1 spike では sink が populate せず
-/// `get_template_contents` は `*target` を返す (blitz と同じ TODO 状態)。M2+ で
-/// clone/inject fixture が必要になった時に populate する
-/// (raikiri-spike-xno Part 2)。
+/// arena index を保持する slot。raikiri-spike-xno Part 2 で live 化され、
+/// raikiri-html sink が `create_element` の `ElementFlags::template=true` を
+/// 観測した時 [`crate::Document::allocate_template_fragment_root`] 経由で
+/// populate する。詳細は field 側の doc comment を参照。
 #[derive(Debug)]
 pub struct ElementData {
     /// HTML / XML tag name (例: `"p"`, `"div"`)。html5ever の QualName.local から

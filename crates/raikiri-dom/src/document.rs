@@ -365,6 +365,15 @@ impl Document {
     /// 2. Document root から iterative DFS で bit set。template element 自身
     ///    は set、その descendants は skip (bit clear の状態が残る)
     ///
+    /// 補足 (raikiri-spike-xno Part 2 併存): sink 経由の parse では template
+    /// contents は fragment root subtree に流れ、Document root から reachable
+    /// でなくなる → step 2 の DFS は自動的に届かない (in_template branch は
+    /// 走らない)。だが本 step 2 の "template 判定 → descendants skip" logic は
+    /// 残す: 手動で `append_element(Some(tmpl), ...)` を呼ぶ code path (raikiri-dom
+    /// 内 test / raikiri-paint hello-world setup / 将来の M2+ mutation runtime
+    /// で fragment root を経由しない contents 追加) は template 直下に子を積む
+    /// ため、その inert 保証を defense-in-depth として維持する。
+    ///
     /// 実装上の細かい contract:
     /// - `<template>` 判定は HTML namespace + local == "template"
     ///   (case-sensitive)。html5ever が local を lowercase 済で提供する契約に
