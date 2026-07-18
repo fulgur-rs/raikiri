@@ -282,12 +282,18 @@ impl TreeSink for RaikiriTreeSink {
         let Some(attrs) = attributes.get(handle) else {
             return false;
         };
-        attrs.iter().any(|a| {
-            a.name.ns == ns!()
-                && a.name.local.as_ref() == "encoding"
-                && (a.value.eq_ignore_ascii_case("text/html")
-                    || a.value.eq_ignore_ascii_case("application/xhtml+xml"))
-        })
+        // HTML spec §13.2.5.32: duplicate attribute → ignore later occurrences
+        // (first-wins)。`wire_side_tables` / `sink_first_wins_on_duplicate_style_attribute`
+        // で pin されている契約と整合させるため、any() ではなく find() で最初の
+        // null-ns encoding attr を取り、その value のみで判定する。
+        let Some(encoding) = attrs
+            .iter()
+            .find(|a| a.name.ns == ns!() && a.name.local.as_ref() == "encoding")
+        else {
+            return false;
+        };
+        encoding.value.eq_ignore_ascii_case("text/html")
+            || encoding.value.eq_ignore_ascii_case("application/xhtml+xml")
     }
 }
 

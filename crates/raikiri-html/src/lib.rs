@@ -250,6 +250,9 @@ mod tests {
             fn reparent_children(&self, n: &usize, p: &usize) {
                 self.inner.reparent_children(n, p)
             }
+            fn is_mathml_annotation_xml_integration_point(&self, h: &usize) -> bool {
+                self.inner.is_mathml_annotation_xml_integration_point(h)
+            }
         }
 
         let html = b"<html><body><p>Hi</p></body></html>";
@@ -672,6 +675,62 @@ mod tests {
             "mi",
             Some("text/html"),
         ));
+    }
+
+    #[test]
+    fn annotation_xml_duplicate_encoding_attribute_uses_first_value() {
+        // HTML §13.2.5.32 duplicate attribute → ignore later occurrences。
+        // sink_first_wins_on_duplicate_style_attribute と同じ first-wins 契約を
+        // integration point 判定でも守る (later match が earlier non-match を
+        // 上書きしないことを pin する)。
+        use html5ever::interface::{Attribute, ElementFlags, QualName, TreeSink};
+        use html5ever::tendril::StrTendril;
+        use markup5ever::{LocalName, Namespace};
+
+        let encoding_attr = |v: &str| Attribute {
+            name: QualName::new(None, Namespace::from(""), LocalName::from("encoding")),
+            value: StrTendril::from(v),
+        };
+
+        // Case A: first=text/html (match), second=application/xml (non-match)
+        // → first wins → integration point (true)
+        {
+            let sink = RaikiriTreeSink::new();
+            let name = QualName::new(
+                None,
+                Namespace::from("http://www.w3.org/1998/Math/MathML"),
+                LocalName::from("annotation-xml"),
+            );
+            let idx = sink.create_element(
+                name,
+                vec![encoding_attr("text/html"), encoding_attr("application/xml")],
+                ElementFlags::default(),
+            );
+            assert!(
+                sink.is_mathml_annotation_xml_integration_point(&idx),
+                "first encoding=text/html should win over later encoding=application/xml"
+            );
+        }
+
+        // Case B: first=application/xml (non-match), second=text/html (match)
+        // → first wins → NOT integration point (false)
+        {
+            let sink = RaikiriTreeSink::new();
+            let name = QualName::new(
+                None,
+                Namespace::from("http://www.w3.org/1998/Math/MathML"),
+                LocalName::from("annotation-xml"),
+            );
+            let idx = sink.create_element(
+                name,
+                vec![encoding_attr("application/xml"), encoding_attr("text/html")],
+                ElementFlags::default(),
+            );
+            assert!(
+                !sink.is_mathml_annotation_xml_integration_point(&idx),
+                "later encoding=text/html must not override earlier non-match"
+            );
+        }
     }
 
     // End-to-end parse: annotation-xml integration point の判定は tree
