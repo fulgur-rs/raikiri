@@ -79,6 +79,10 @@ impl<'a> raikiri_traits::Node<'a> for NodeRef<'a> {
     fn text_content(&self) -> Option<&str> {
         self.doc.nodes[self.id].text_content.as_deref()
     }
+
+    fn is_in_document(&self) -> bool {
+        self.doc.nodes[self.id].is_in_document()
+    }
 }
 
 impl<'a> raikiri_traits::Element<'a> for ElementRef<'a> {

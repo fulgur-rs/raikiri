@@ -7,11 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-raikiri-traits = { workspace = true }
-raikiri-style  = { workspace = true }
-taffy          = { workspace = true }
+bitflags       = "2"
 parley         = { workspace = true }
+raikiri-style  = { workspace = true }
+raikiri-traits = { workspace = true }
 smol_str       = { workspace = true }
+taffy          = { workspace = true }
 
 [lints]
 workspace = true

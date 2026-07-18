@@ -22,7 +22,7 @@ pub mod taffy_impl;
 pub use document::Document;
 pub use dom_impl::{ChildIter, ElementRef, NodeRef};
 pub use layout::layout_single_page;
-pub use node::Node;
+pub use node::{Node, NodeFlags};
 
 #[cfg(test)]
 mod tests {

@@ -10,6 +10,30 @@ use taffy::{Cache, Layout, Style};
 
 use raikiri_traits::NodeKind;
 
+bitflags::bitflags! {
+    /// Node に付随する per-node boolean 属性。blitz `NodeFlags` と bit 位置
+    /// 1:1 対応 (M6 blitz-compat の nominal 変換前提)。
+    ///
+    /// M1 spike では `IS_IN_DOCUMENT` のみ定義。将来 `IS_INLINE_ROOT` (M3
+    /// inline formatting root)、`IS_TABLE_ROOT` (M3+ table formatting root)
+    /// を blitz と同 bit 位置で追加する予定。
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct NodeFlags: u32 {
+        /// この Node が flat tree に含まれるか。`<template>` element の子孫は
+        /// clear、Document root から flat-tree-parent 経由で到達可能な node は
+        /// set。将来 shadow DOM / slot の "shadow-including tree" 意味論を
+        /// 追加する場合、slot 割当てられない host 直下や shadow root 外の
+        /// light-DOM 子孫も同 bit で表現する予定。
+        ///
+        /// 維持タイミング:
+        /// - parse: `raikiri-html::sink::finish` の `mark_in_document_flags`
+        ///   phase で single-pass DFS が set/clear
+        /// - mutation runtime (M2+): mutator の `process_added_subtree` /
+        ///   `process_removed_subtree` 相当が set/unset
+        const IS_IN_DOCUMENT = 1 << 0;
+    }
+}
+
 /// Element attribute (null namespace only for M1)。
 ///
 /// namespaced attribute (`xlink:href` on SVG 等) は M2+ に defer。html5ever の
@@ -42,6 +66,12 @@ pub struct Node {
     pub(crate) cache: Cache,
     /// Taffy layout 結果 (compute_root_layout が populate)。
     pub unrounded_layout: Layout,
+    /// Per-node metadata bits (raikiri-spike-37c)。IS_IN_DOCUMENT etc.
+    ///
+    /// crate-private: mutation は Document 経由 (`set_element_*` / sink の
+    /// `mark_in_document_flags` phase) で行う。参照は [`Node::is_in_document`]
+    /// 等の inherent accessor 経由。
+    pub(crate) flags: NodeFlags,
     /// Node kind (Element / Text / Document)。
     pub kind: NodeKind,
     /// Element tag name (kind == Element 時のみ populate、他は `None`)。
@@ -80,6 +110,7 @@ impl Node {
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
+            flags: NodeFlags::IS_IN_DOCUMENT,
             kind: NodeKind::Document,
             tag_name: None,
             text_content: None,
@@ -100,6 +131,7 @@ impl Node {
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
+            flags: NodeFlags::IS_IN_DOCUMENT,
             kind: NodeKind::Element,
             tag_name: Some(tag),
             text_content: None,
@@ -108,6 +140,25 @@ impl Node {
             attributes: Vec::new(),
             text_layout: None,
         }
+    }
+
+    /// この Node が flat tree の一員かを返す (raikiri-spike-37c)。
+    ///
+    /// [`NodeFlags::IS_IN_DOCUMENT`] bit のシンプルな view。詳細は
+    /// [`NodeFlags::IS_IN_DOCUMENT`] の doc を参照。
+    #[inline]
+    pub fn is_in_document(&self) -> bool {
+        self.flags.contains(NodeFlags::IS_IN_DOCUMENT)
+    }
+
+    /// [`NodeFlags::IS_IN_DOCUMENT`] bit を明示的に上書きする (crate-private)。
+    ///
+    /// sink の `mark_in_document_flags` phase および将来の mutation runtime が
+    /// 呼ぶ。外部 consumer が直接触ることは無い。
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn set_in_document(&mut self, v: bool) {
+        self.flags.set(NodeFlags::IS_IN_DOCUMENT, v);
     }
 
     /// このノードの `taffy::Style.display == Display::None` を返す。
@@ -128,6 +179,7 @@ impl Node {
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
+            flags: NodeFlags::IS_IN_DOCUMENT,
             kind: NodeKind::Text,
             tag_name: None,
             text_content: Some(text),
@@ -136,5 +188,44 @@ impl Node {
             attributes: Vec::new(),
             text_layout: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod flags_tests {
+    use super::*;
+
+    #[test]
+    fn node_flags_default_is_empty() {
+        let f = NodeFlags::default();
+        assert!(!f.contains(NodeFlags::IS_IN_DOCUMENT));
+    }
+
+    #[test]
+    fn node_new_document_has_is_in_document_set_by_default() {
+        // Node::new_document() は Document root 用、常に flat tree の一員。
+        let n = Node::new_document();
+        assert!(n.is_in_document());
+    }
+
+    #[test]
+    fn node_new_element_has_is_in_document_set_by_default() {
+        let n = Node::new_element(SmolStr::new("p"), taffy::Style::default(), None);
+        assert!(n.is_in_document());
+    }
+
+    #[test]
+    fn node_new_text_has_is_in_document_set_by_default() {
+        let n = Node::new_text(SmolStr::new("hi"));
+        assert!(n.is_in_document());
+    }
+
+    #[test]
+    fn set_in_document_toggles_bit() {
+        let mut n = Node::new_document();
+        n.set_in_document(false);
+        assert!(!n.is_in_document());
+        n.set_in_document(true);
+        assert!(n.is_in_document());
     }
 }
