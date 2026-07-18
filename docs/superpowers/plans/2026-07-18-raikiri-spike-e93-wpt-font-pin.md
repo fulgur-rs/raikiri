@@ -36,9 +36,9 @@
 - `crates/raikiri-paint/src/lib.rs` — 5 test caller の rename
 - `crates/raikiri/src/html_to_png.rs` — `layout_single_page` caller に font_ctx を pass、内部関数 `html_to_png_impl(input, font_ctx)` に refactor
 - `crates/raikiri/src/lib.rs` — `pub fn html_to_png_with_fonts` を追加、既存 `html_to_png` は delegate に置換
-- `crates/raikiri/tests/hello_world_vrt.rs` — early panic (target/wpt/fonts + Lato-Regular 存在確認) + `build_wpt_font_ctx` + `html_to_png_with_fonts`
-- `crates/raikiri/tests/reference/hello-world/expected/page-0000.png` — Lato-Regular 経路の golden 再生成
-- `crates/raikiri/tests/reference/hello-world/README.md` — Lato-Regular visual への変化を追記
+- `crates/raikiri/tests/hello_world_vrt.rs` — early panic (target/wpt/fonts + Ahem.ttf 存在確認) + `build_wpt_font_ctx` + `html_to_png_with_fonts`
+- `crates/raikiri/tests/reference/hello-world/expected/page-0000.png` — Ahem 経路 (red square) の golden 再生成
+- `crates/raikiri/tests/reference/hello-world/README.md` — Ahem square visual への変化を追記
 
 ---
 
@@ -46,14 +46,14 @@
 
 | # | Task | Deliverable |
 |---|---|---|
-| 1 | scripts/wpt/ pipeline | `target/wpt/fonts/` 生成、Lato-Regular.ttf 存在 |
+| 1 | scripts/wpt/ pipeline | `target/wpt/fonts/` 生成、Ahem.ttf 存在 |
 | 2 | raikiri-dom::fonts scaffold + FontError | `build_wpt_font_ctx` stub + missing/empty dir test |
-| 3 | fonts walker + PREFERRED_FIRST | walker recursive + sort + Lato 先頭 |
+| 3 | fonts walker + PREFERRED_FIRST | walker recursive + sort + Ahem 先頭 (PREFERRED_FIRST=["Ahem.ttf"]) |
 | 4 | build_wpt_font_ctx (blitz pattern) | system_fonts:false + register + generic alias |
 | 5 | layout_single_page signature 変更 | `font_ctx` 引数追加、caller 12 箇所 update |
 | 6 | html_to_png_with_fonts + delegate | pub API 追加、既存 html_to_png は delegate |
 | 7 | hello_world_vrt.rs 更新 | build_wpt_font_ctx + early panic (golden 未更新でまだ fail 期待) |
-| 8 | golden 再生成 + README 更新 | Lato 経路の byte-identical PNG、visual 説明 |
+| 8 | golden 再生成 + README 更新 | Ahem 経路の byte-identical PNG (red square)、visual 説明 |
 
 ---
 
@@ -67,7 +67,7 @@
 
 **Interfaces:**
 - Consumes: なし (単独設定)
-- Produces: `target/wpt/fonts/` 内の WPT-standard font tree — 具体的には `target/wpt/fonts/Ahem.ttf` と `target/wpt/fonts/Lato-Regular.ttf` (+ 他 Lato weights、CSSTest 系) が checkout される。以降 task はこの path を前提
+- Produces: `target/wpt/fonts/` 内の WPT-standard font tree — 具体的には `target/wpt/fonts/Ahem.ttf` (+ 他 Lato-Bold/Medium、CSSTest 系) が checkout される。以降 task はこの path を前提。**注**: fulgur pin (`97ea26e2`) では `Lato-Regular.ttf` は不在 (Lato-Bold / Lato-Medium / Lato-Medium-Liga のみ)、そのため VRT primary は Ahem に決定 (Section 5 revised)
 
 - [ ] **Step 1: `scripts/wpt/` dir 作成**
 
@@ -209,13 +209,12 @@ Run:
 ```bash
 ls target/wpt/fonts/ | head -20
 test -f target/wpt/fonts/Ahem.ttf && echo "Ahem OK"
-test -f target/wpt/fonts/Lato-Regular.ttf && echo "Lato-Regular OK"
 ```
 Expected:
-- `Ahem.ttf`、`Lato-Regular.ttf`、`Lato-Bold.ttf` などが list に含まれる
-- 両方の `test -f` が echo を print
+- `Ahem.ttf`、`Lato-Bold.ttf`、`Lato-Medium.ttf` などが list に含まれる (Lato-Regular は fulgur pin では**不在**、Ahem のみが VRT primary として保証される)
+- `test -f Ahem.ttf` が echo を print
 
-もし Lato-Regular.ttf が無い場合、subset に `fonts` ではなく `fonts/*` などの pattern 変更検討 (fulgur pin が `fonts/` 直下に Lato を置いているか要確認)。
+もし Ahem.ttf が無い場合、pinned_sha が壊れているか fetch failed。Ahem は全 WPT SHA で存在する core determinism font なので、無いなら BLOCKED として escalate。
 
 - [ ] **Step 9: commit**
 
@@ -274,7 +273,7 @@ use std::path::{Path, PathBuf};
 
 /// WPT bundled fonts dir から FontContext を構築する。system font
 /// resolver は完全 disable、generic family (`serif`/`sans-serif`/...)
-/// は register 済 family の先頭 (Lato-Regular) に解決される。
+/// は register 済 family の先頭 (Ahem) に解決される。
 ///
 /// # Errors
 /// - [`FontError::DirNotFound`] — `fonts_dir` が存在しない
@@ -428,7 +427,7 @@ Expected: 1 commit created.
 - Consumes: (Task 2) `build_wpt_font_ctx` の DirNotFound / EmptyDir error path
 - Produces:
   - Internal helper `fn walk_fonts(dir: &Path) -> Result<Vec<PathBuf>, FontError>` — dir を recursive walk、`.ttf`/`.otf` を collect + sort + PREFERRED_FIRST 移動
-  - `PREFERRED_FIRST: &[&str] = &["Lato-Regular.ttf", "Lato-Bold.ttf", "Lato-Italic.ttf", "Lato-BoldItalic.ttf"]` const
+  - `PREFERRED_FIRST: &[&str] = &["Ahem.ttf"]` const (fulgur pin では Ahem 不在、Ahem 全 SHA で保証されるため primary)
   - `build_wpt_font_ctx` は walker を呼び EmptyDir 判定を実 collect 後に move (empty dir は EmptyDir を返す)
 
 - [ ] **Step 1: PREFERRED_FIRST const と walker skeleton を追加**
@@ -438,13 +437,11 @@ Append to `crates/raikiri-dom/src/fonts.rs` (前置 `use` block と public API �
 ```rust
 /// PREFERRED_FIRST に list した family は walker sort の結果に関わらず
 /// **配列 index 順に**先頭に register される。cascade `"serif"` の
-/// resolve 順の決定性と、hello-world VRT visual (Lato "Hi") のため。
-const PREFERRED_FIRST: &[&str] = &[
-    "Lato-Regular.ttf",
-    "Lato-Bold.ttf",
-    "Lato-Italic.ttf",
-    "Lato-BoldItalic.ttf",
-];
+/// resolve 順の決定性と、hello-world VRT visual (Ahem square "Hi") のため。
+///
+/// 現在は Ahem のみ (fulgur pin では Lato-Regular が不在)。将来 Lato-Medium 等の
+/// real-text primary を追加したい場合は array に append する。
+const PREFERRED_FIRST: &[&str] = &["Ahem.ttf"];
 
 /// dir を recursive walk して `.ttf`/`.otf` を collect + sort + PREFERRED_FIRST
 /// を先頭に move する。file_name の case は `.ttf`/`.otf` (小文字 normalize)。
@@ -634,46 +631,45 @@ Add:
 Run: `cargo test -p raikiri-dom fonts::tests::walker_sort_order_is_deterministic`
 Expected: pass
 
-- [ ] **Step 9: preferred_first_orders_lato_before_ahem test を追加 + pass 確認**
+- [ ] **Step 9: preferred_first_orders_ahem_before_csstest test を追加 + pass 確認**
 
 Add:
 
 ```rust
     #[test]
-    fn walker_preferred_first_orders_lato_before_ahem() {
+    fn walker_preferred_first_orders_ahem_before_csstest() {
         let tmp = tempfile::tempdir().unwrap();
-        // Ahem.ttf は sort 順で先頭 (A) だが、Lato-Regular.ttf が
-        // PREFERRED_FIRST[0] なので walker output の先頭に来なければならない
+        // Ahem.ttf は sort 順でも先頭 (A) だが、PREFERRED_FIRST[0] として
+        // **explicit に**先頭に来ることを regression pin。将来 PREFERRED_FIRST
+        // に Lato-Medium 等が追加されたとき Ahem が override されないよう
+        // 意図明示 (現在は array 1 要素なので default sort と重複するが OK)。
         write_fake_ttf(tmp.path(), "Ahem.ttf");
-        write_fake_ttf(tmp.path(), "Lato-Regular.ttf");
-        write_fake_ttf(tmp.path(), "Lato-Bold.ttf");
         write_fake_ttf(tmp.path(), "CSSTest-Regular.ttf");
+        write_fake_ttf(tmp.path(), "Lato-Bold.ttf");
         let paths = walk_fonts(tmp.path()).unwrap();
         let names: Vec<_> = paths
             .iter()
             .map(|p| p.file_name().and_then(|f| f.to_str()).unwrap().to_string())
             .collect();
-        // Lato-Regular → Lato-Bold (PREFERRED_FIRST 順) → 残りは path sort
-        // (Ahem, CSSTest)
+        // Ahem (PREFERRED_FIRST[0]) → 残りは path sort (CSSTest, Lato-Bold)
         assert_eq!(
             names,
             vec![
-                "Lato-Regular.ttf",
-                "Lato-Bold.ttf",
                 "Ahem.ttf",
                 "CSSTest-Regular.ttf",
+                "Lato-Bold.ttf",
             ]
         );
     }
 ```
 
-Run: `cargo test -p raikiri-dom fonts::tests::walker_preferred_first_orders_lato_before_ahem`
+Run: `cargo test -p raikiri-dom fonts::tests::walker_preferred_first_orders_ahem_before_csstest`
 Expected: pass
 
-- [ ] **Step 10: fonts::tests 全 6 test 通し実行**
+- [ ] **Step 10: fonts::tests 全 7 test 通し実行**
 
 Run: `cargo test -p raikiri-dom fonts::tests`
-Expected: 6 tests pass (`missing_dir_returns_err`, `empty_dir_returns_empty_dir_err`, `walker_loads_ttf_files`, `walker_ignores_non_font_extensions`, `walker_recurses_into_subdirs`, `walker_sort_order_is_deterministic`, `walker_preferred_first_orders_lato_before_ahem`)
+Expected: 7 tests pass (`missing_dir_returns_err`, `empty_dir_returns_empty_dir_err`, `walker_loads_ttf_files`, `walker_ignores_non_font_extensions`, `walker_recurses_into_subdirs`, `walker_sort_order_is_deterministic`, `walker_preferred_first_orders_ahem_before_csstest`)
 
 - [ ] **Step 11: commit**
 
@@ -684,13 +680,13 @@ git status
 git commit -m "feat(raikiri-dom): fonts walker + PREFERRED_FIRST (e93)
 
 walk_fonts: recursive collect + path sort + PREFERRED_FIRST partition。
-Lato-Regular/Bold/Italic/BoldItalic を配列 index 順で先頭 register する
-基盤。build_wpt_font_ctx は empty 判定を walker 出力で行う中間状態
-(register 実装は Task 4)。
+Ahem を配列 index 順で先頭 register する基盤 (現在 array 1 要素、将来
+Lato-Medium 等の real-text primary を append 拡張可能)。build_wpt_font_ctx
+は empty 判定を walker 出力で行う中間状態 (register 実装は Task 4)。
 
 - fulgur crates/fulgur-wpt/src/fonts.rs::load_fonts_dir を参考に walker
 - unit test 5 個追加 (loads / ignores / recurses / sort_deterministic /
-  preferred_first)"
+  preferred_first_orders_ahem_before_csstest)"
 ```
 
 Expected: 1 commit.
@@ -763,7 +759,7 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     }
 
     // Generic family alias remap (blitz pattern):
-    // UA CSS default "serif" cascade を bundled family (先頭 = Lato-Regular)
+    // UA CSS default "serif" cascade を bundled family (先頭 = Ahem)
     // に解決させる
     for generic in [
         GenericFamily::Serif,
@@ -802,7 +798,7 @@ Expected: 6 tests pass。 fake ttf (0x00010000 magic + 64 byte zeros) は regist
 
 - [ ] **Step 4: generic_serif_resolves_to_registered_family test を追加**
 
-⚠ この test は **実 Lato-Regular.ttf を要求** (fake ttf では family_id が生成されない場合が多い、generic alias 経由の resolution が確認できない)。方針: **`target/wpt/fonts/` の Lato-Regular を使う integration-style test**、Task 1 の fetch 済みを前提。CI 環境未実行の場合は `#[ignore]` で skip 可能に。
+⚠ この test は **実 Ahem.ttf を要求** (fake ttf では family_id が生成されない場合が多い、generic alias 経由の resolution が確認できない)。方針: **`target/wpt/fonts/` の Ahem を使う integration-style test**、Task 1 の fetch 済みを前提。CI 環境未実行の場合は `#[ignore]` で skip 可能に。
 
 Add to `#[cfg(test)] mod tests`:
 
@@ -824,32 +820,32 @@ Add to `#[cfg(test)] mod tests`:
             .join("wpt")
             .join("fonts");
 
-        if !fonts_dir.join("Lato-Regular.ttf").exists() {
+        if !fonts_dir.join("Ahem.ttf").exists() {
             eprintln!(
                 "skipping build_wpt_font_ctx_registers_generic_serif: \
-                 Lato-Regular.ttf not found under {} \
+                 Ahem.ttf not found under {} \
                  (run scripts/wpt/fetch.sh first)",
                 fonts_dir.display()
             );
             return;
         }
 
-        let ctx = build_wpt_font_ctx(&fonts_dir).expect("build Ok with Lato present");
+        let ctx = build_wpt_font_ctx(&fonts_dir).expect("build Ok with Ahem present");
         // parley 0.10 の resolution API 経由で "serif" generic が非空 family
         // に解決されることを assert。実 API 名は plan phase の cargo doc で
         // 確認済想定 (ここでは shape のみ):
         //   ctx.collection.generic_families(GenericFamily::Serif).count() > 0
         // もしくは:
-        //   ctx.collection.family_names().any(|n| n.contains("Lato"))
+        //   ctx.collection.family_names().any(|n| n.contains("Ahem"))
         // parley 実 API に合わせて 1 つ選ぶ。M1 では "family_ids append 済み" だけ
         // 確認できれば regression pin として十分。
 
         // 暫定: FontContext がそのまま返っていること (build 中で panic せず) と、
-        // Lato-Regular が family として register されていることを spot check
+        // Ahem が family として register されていることを spot check
         // ⚠ parley 0.10 の実 API で generic resolution query を叩く形に差し替え
         let _ = ctx; // build Ok まで確認できれば M1 の smoke test として十分
 
-        // TODO Task 8 で hello-world VRT が end-to-end に serif → Lato 解決を
+        // TODO Task 8 で hello-world VRT が end-to-end に serif → Ahem 解決を
         // 検証する。ここは unit の smoke test に留める。
     }
 ```
@@ -859,7 +855,7 @@ Add to `#[cfg(test)] mod tests`:
 - [ ] **Step 5: Test 実行**
 
 Run: `cargo test -p raikiri-dom fonts::tests`
-Expected: 7 tests pass — `build_wpt_font_ctx_registers_generic_serif` は Lato-Regular が存在すれば通す、なければ skip (early return) して pass。
+Expected: 7 tests pass — `build_wpt_font_ctx_registers_generic_serif` は Ahem が存在すれば通す、なければ skip (early return) して pass。
 
 - [ ] **Step 6: parley 0.10 の API 確認 (register_fonts 戻り値 shape)**
 
@@ -889,8 +885,8 @@ append で構築。
 
 - fontique の platform resolver を完全 bypass、cross-machine drift の
   構造的原因を根絶
-- walker の PREFERRED_FIRST 経由 Lato-Regular が family_ids 先頭 →
-  UA CSS default 'serif' が Lato-Regular に解決される
+- walker の PREFERRED_FIRST 経由 Ahem が family_ids 先頭 →
+  UA CSS default 'serif' が Ahem に解決される (WPT-standard square glyph)
 - generic serif smoke test (target/wpt/fonts/ 経路、未 fetch なら skip)
 - 破損 font は eprintln! warn + skip (fatal 化しない)"
 ```
@@ -1255,7 +1251,7 @@ Expected: 1 commit.
 - Consumes:
   - `raikiri_dom::build_wpt_font_ctx(&Path)` (Task 4)
   - `raikiri::html_to_png_with_fonts(input, FontContext)` (Task 6)
-  - `target/wpt/fonts/Lato-Regular.ttf` (Task 1 fetch 済)
+  - `target/wpt/fonts/Ahem.ttf` (Task 1 fetch 済)
 - Produces:
   - VRT test が font pin 経路を通り、既存 golden PNG に対して **意図的に mismatch** する状態 (Task 8 で golden 更新して pass 化)
 
@@ -1311,8 +1307,8 @@ fn hello_world_renders_pixel_exact() {
         fonts_dir.display()
     );
     assert!(
-        fonts_dir.join("Lato-Regular.ttf").exists(),
-        "Lato-Regular.ttf missing under {} — WPT pin (scripts/wpt/pinned_sha.txt) may need bump",
+        fonts_dir.join("Ahem.ttf").exists(),
+        "Ahem.ttf missing under {} — WPT pin (scripts/wpt/pinned_sha.txt) may need bump",
         fonts_dir.display()
     );
 
@@ -1341,11 +1337,11 @@ raikiri-dom = { workspace = true }
 - [ ] **Step 4: Test 実行 (意図的 fail 期待、golden mismatch)**
 
 Run: `cargo test -p raikiri --test hello_world_vrt 2>&1 | tail -30`
-Expected: **test FAILS with pixel mismatch** — 既存 golden は system serif 経路で作成、新経路は Lato-Regular で作成、bitmap 差異あり。この fail は Task 8 で golden 再生成することで解決する意図的なもの。
+Expected: **test FAILS with pixel mismatch** — 既存 golden は system serif 経路で作成、新経路は Ahem で作成、bitmap 差異あり。この fail は Task 8 で golden 再生成することで解決する意図的なもの。
 
 もし golden mismatch 以外の error (missing lato, panic, etc.) が出た場合、そのメッセージから原因追跡:
 - fonts_dir not found → Task 1 未実行、`scripts/wpt/fetch.sh` を再度実行
-- Lato-Regular.ttf missing → WPT pin の fonts/ 配下に Lato がない、pinned_sha bump が必要かも
+- Ahem.ttf missing → WPT pin の fonts/ 配下に Ahem がない (異例)、pinned_sha bump が必要かも
 - build_wpt_font_ctx panic → Task 4 の parley API 実装ミス、`cargo build -p raikiri-dom` で先に確認
 
 - [ ] **Step 5: commit (golden 更新は Task 8、ここは test wiring のみ commit)**
@@ -1358,12 +1354,12 @@ git add crates/raikiri/tests/hello_world_vrt.rs crates/raikiri/Cargo.toml
 git status
 git commit -m "test(raikiri): hello_world_vrt を build_wpt_font_ctx 経路に切替 (e93)
 
-Font 注入経路の wiring 変更。golden は次 task で Lato-Regular 経路で
+Font 注入経路の wiring 変更。golden は次 task で Ahem 経路で
 再生成するため、この commit 単独では pixel mismatch で test FAIL する。
 Task 8 で golden 更新 + 通過確認、両 commit を bundle で merge。
 
 - fonts_dir 存在 assert (fetch 未実行時は明示 error)
-- Lato-Regular.ttf 存在 assert (WPT pin drift 検知)
+- Ahem.ttf 存在 assert (WPT pin drift 検知)
 - build_wpt_font_ctx + html_to_png_with_fonts 経路"
 ```
 
@@ -1371,15 +1367,15 @@ Expected: 1 commit (test は fail する state)。
 
 ---
 
-### Task 8: hello-world golden PNG を Lato 経路で再生成 + README 更新
+### Task 8: hello-world golden PNG を Ahem 経路で再生成 + README 更新
 
 **Files:**
-- Regenerate: `crates/raikiri/tests/reference/hello-world/expected/page-0000.png` (Lato-Regular 経路の bitmap)
-- Modify: `crates/raikiri/tests/reference/hello-world/README.md` (Lato visual 説明追記)
+- Regenerate: `crates/raikiri/tests/reference/hello-world/expected/page-0000.png` (Ahem 経路の bitmap)
+- Modify: `crates/raikiri/tests/reference/hello-world/README.md` (Ahem square visual 説明追記)
 
 **Interfaces:**
 - Consumes: Task 7 の VRT test (現在 fail 状態) と `RAIKIRI_UPDATE_GOLDENS=1` env
-- Produces: byte-identical な golden PNG (Lato-Regular 経路)、hello-world VRT が pass する状態
+- Produces: byte-identical な golden PNG (Ahem 経路)、hello-world VRT が pass する状態
 
 - [ ] **Step 1: `RAIKIRI_UPDATE_GOLDENS=1` で golden 再生成**
 
@@ -1387,7 +1383,7 @@ Run:
 ```bash
 RAIKIRI_UPDATE_GOLDENS=1 cargo test -p raikiri --test hello_world_vrt 2>&1 | tail -20
 ```
-Expected: test pass (golden 書き出し mode)、`crates/raikiri/tests/reference/hello-world/expected/page-0000.png` が Lato-Regular 経路の bitmap で上書き。
+Expected: test pass (golden 書き出し mode)、`crates/raikiri/tests/reference/hello-world/expected/page-0000.png` が Ahem 経路の bitmap で上書き。
 
 - [ ] **Step 2: 通常 test で pass 確認**
 
@@ -1416,13 +1412,13 @@ Before の該当セクション付近 ("入力" or "使用 font" 前後) に以�
 M1.15 (raikiri-spike-e93) 以降、hello-world VRT は **cross-machine 決定性**
 のため WPT bundled fonts (`target/wpt/fonts/`) 経由の pin FontContext を
 使う。cascade default `font-family: "serif"` は `raikiri_dom::fonts::build_wpt_font_ctx`
-の generic alias remap で **Lato-Regular** に解決される。
+の generic alias remap で **Ahem** に解決される。
 
 - `scripts/wpt/fetch.sh` を先に実行して `target/wpt/fonts/` を準備
 - 未 fetch なら test は "run scripts/wpt/fetch.sh first" で panic
 - pinned SHA は `scripts/wpt/pinned_sha.txt` (fulgur pin 借用)
 
-Golden PNG の visual は Lato-Regular の "Hi" (real text)。過去
+Golden PNG の visual は Ahem の "Hi" (real text)。過去
 (M1.14) の system serif ("Hi") とは bitmap 異なる (2026-07-18 の
 raikiri-spike-e93 で切替)。
 ```
@@ -1440,14 +1436,14 @@ Run:
 ```bash
 git add crates/raikiri/tests/reference/hello-world/expected/page-0000.png crates/raikiri/tests/reference/hello-world/README.md
 git status
-git commit -m "test(raikiri): hello-world golden を Lato-Regular 経路で再生成 (e93)
+git commit -m "test(raikiri): hello-world golden を Ahem 経路で再生成 (e93)
 
 raikiri-spike-e93 の VRT font pin 完了。build_wpt_font_ctx 経由の
-Lato-Regular で 'Hi' を real text 描画、Tolerance::EXACT で pass。
+Ahem で 'Hi' を real text 描画、Tolerance::EXACT で pass。
 
 - expected/page-0000.png: 新 md5 (別マシン verify で cross-machine
   決定性を confirm する reference)
-- README: Lato-Regular 経由の visual と scripts/wpt/fetch.sh の
+- README: Ahem 経由の visual と scripts/wpt/fetch.sh の
   prerequisite を明記
 
 Task 7 の意図的 fail commit と併せて raikiri-spike-e93 完了。
@@ -1479,7 +1475,7 @@ Spec (`docs/superpowers/specs/2026-07-18-raikiri-spike-e93-wpt-font-pin-design.m
 
 ### Placeholder scan
 
-- "TBD", "TODO": Task 4 Step 4 の test body に "TODO Task 8 で hello-world VRT が end-to-end に serif → Lato 解決を検証する" があるが、これは comment 内の意図的な forward-reference (実 assertion は VRT test が担当)、削除不要。
+- "TBD", "TODO": Task 4 Step 4 の test body に "TODO Task 8 で hello-world VRT が end-to-end に serif → Ahem 解決を検証する" があるが、これは comment 内の意図的な forward-reference (実 assertion は VRT test が担当)、削除不要。
 - 曖昧な "add error handling" 系: 無し (全て具体 code / error variant を明示)
 - "Similar to Task N": 無し (各 task 内 code は完結)
 - 未定義 function / type 参照: 無し (parley 0.10 API は Task 4 Step 6 で確認手順 explicit)

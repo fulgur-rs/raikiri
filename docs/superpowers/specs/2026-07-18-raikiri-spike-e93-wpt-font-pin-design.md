@@ -200,7 +200,7 @@ use std::path::Path;
 /// - system_fonts: false で fontique の platform resolver bypass
 /// - generic family (Serif/SansSerif/Monospace/SystemUi/Cursive/Fantasy)
 ///   すべてに register 済 family_ids を append
-/// - `PREFERRED_FIRST` に matching する path (Lato-* 4 個) を先頭に move
+/// - `PREFERRED_FIRST` に matching する path (Ahem.ttf) を先頭に move
 ///
 /// # M1 scope
 /// - `.ttf` / `.otf` のみ受付 (WOFF/WOFF2 は M4+ / [[raikiri-spike-2sb]])
@@ -226,15 +226,10 @@ pub enum FontError {
 ### 5.3 内部 walker
 
 ```rust
-const PREFERRED_FIRST: &[&str] = &[
-    "Lato-Regular.ttf",
-    "Lato-Bold.ttf",
-    "Lato-Italic.ttf",
-    "Lato-BoldItalic.ttf",
-];
+const PREFERRED_FIRST: &[&str] = &["Ahem.ttf"];
 
 // 1. dir を recursive walk、.ttf/.otf を collect
-// 2. all.sort() で path 順
+// 2. all.sort() で path 順 (Ahem は "A" で先頭に来るが、explicit 保証)
 // 3. PREFERRED_FIRST にある file_name を先頭に partition
 // 4. preferred は PREFERRED_FIRST 配列の index 順に再ソート
 // 5. rest はそのまま path sort 順
@@ -245,8 +240,9 @@ const PREFERRED_FIRST: &[&str] = &[
 - Extension filter: `.ttf` / `.otf` (小文字 normalize)
 - 失敗した font は `eprintln!("[raikiri-dom::fonts] warn: skipping {path}: {err}")`
   で skip (parse-invalid ttf を許容、fatal にしない)
-- Missing PREFERRED_FIRST エントリ (Lato がない場合) は silent skip (VRT test 側で
-  存在 assertion して safety net)
+- Missing PREFERRED_FIRST エントリ (Ahem がない場合) は silent skip (VRT test 側で
+  存在 assertion して safety net)。将来 Lato-Medium 等の real-text primary を
+  追加したいときは array に append すれば拡張可能
 
 ### 5.4 Generic alias remap (blitz pattern)
 
@@ -267,8 +263,8 @@ for generic in [
 
 - `Emoji` / `UiSerif` / `UiSansSerif` / `UiMonospace` / `UiRounded` / `Math` は M1
   scope 外 (WPT fonts に該当 asset なし、cascade で使われる可能性なし)
-- Register 順序 = fallback 順序 (parley/fontique 仕様)、walker sort の結果
-  Lato-Regular が先頭 → cascade `"serif"` は Lato-Regular に解決
+- Register 順序 = fallback 順序 (parley/fontique 仕様)、walker sort +
+  PREFERRED_FIRST の結果 Ahem が先頭 → cascade `"serif"` は Ahem に解決
 
 ### 5.5 依存関係
 
@@ -384,18 +380,20 @@ pub fn layout_single_page(
 4. parley/fontique が **generic family "serif" を解決** — 通常は system resolver 経由
 5. しかし本 spec の `build_wpt_font_ctx` で:
    - `system_fonts: false` により system resolver は空
-   - `append_generic_families(GenericFamily::Serif, [Lato_id, Ahem_id, ...])`
-     により Serif generic に Lato-Regular (walker sort の先頭) が解決
-6. **cascade `"serif"` cascade は Lato-Regular に解決** → hello-world VRT "Hi"
-   は real text visual で描画される
+   - `append_generic_families(GenericFamily::Serif, [Ahem_id, CSSTest_id, ...])`
+     により Serif generic に Ahem (walker sort + PREFERRED_FIRST の先頭) が解決
+6. **cascade `"serif"` cascade は Ahem に解決** → hello-world VRT "Hi"
+   は Ahem の em box 完全塗りつぶし square で描画される (cross-machine
+   決定性最強、visual は WPT-standard の square glyph)
 
 ### 7.3 hello-world VRT の visual
 
 - Before (system font, host-dependent): platform serif の "Hi"
-- After (WPT Lato via generic alias): Lato-Regular の "Hi"
+- After (WPT Ahem via generic alias): red square 2 個 (Ahem 全 glyph em box)
 
-`crates/raikiri/tests/reference/hello-world/README.md` に "Lato-Regular 経由の
-visual" を追記、golden 再生成手順を残す。
+`crates/raikiri/tests/reference/hello-world/README.md` に "Ahem 経由の
+square visual" と "hello-world という name は semantic なもので visual は
+WPT-style square" を追記、golden 再生成手順を残す。
 
 ## 8. Testing Strategy
 
@@ -407,8 +405,8 @@ visual" を追記、golden 再生成手順を残す。
 - `ignores_non_font_extensions` — `.md` / `.txt` は skip
 - `recurses_into_subdirs` — subdir 下の ttf も pick up
 - `sort_order_is_deterministic` — 同 dir を 2 回 build して register 順一致
-- `preferred_first_orders_lato_before_ahem` — Ahem.ttf と Lato-Regular.ttf 両方
-  置いた dir で family_ids[0] = Lato の family_id
+- `preferred_first_orders_ahem_before_csstest` — Ahem.ttf と CSSTest*.ttf 両方
+  置いた dir で family_ids[0] = Ahem の family_id (PREFERRED_FIRST[0] 保証)
 - `generic_serif_resolves_to_registered_family` — `build_wpt_font_ctx` 後の ctx
   で `FontFamily::from("serif")` resolve が register 済 family に成功 (parley の
   resolution query API 経由、詳細は plan phase で確定)
@@ -430,8 +428,8 @@ visual" を追記、golden 再生成手順を残す。
 let fonts_dir = Path::new("target/wpt/fonts");
 assert!(fonts_dir.exists(),
     "target/wpt/fonts not found — run scripts/wpt/fetch.sh first");
-assert!(fonts_dir.join("Lato-Regular.ttf").exists(),
-    "Lato-Regular.ttf missing under target/wpt/fonts — WPT pin may need bump");
+assert!(fonts_dir.join("Ahem.ttf").exists(),
+    "Ahem.ttf missing under target/wpt/fonts — WPT pin may need bump");
 
 // build_wpt_font_ctx + html_to_png_with_fonts
 let font_ctx = raikiri_dom::fonts::build_wpt_font_ctx(fonts_dir)
@@ -442,7 +440,7 @@ let png_bytes = raikiri::html_to_png_with_fonts(input, font_ctx)
 ```
 
 Golden PNG (`crates/raikiri/tests/reference/hello-world/expected/page-0000.png`) を
-Lato 経由の "Hi" real text で再生成。既存の
+Ahem 経路の red square 2 個で再生成。既存の
 `RAIKIRI_UPDATE_GOLDENS=1 cargo test -p raikiri --test hello_world_vrt` フロー経由。
 
 ### 8.4 Cross-machine determinism 検証
@@ -456,7 +454,7 @@ Lato 経由の "Hi" real text で再生成。既存の
 
 ### 8.5 Regression pins
 
-- §8.1 の `preferred_first_orders_lato_before_ahem` と
+- §8.1 の `preferred_first_orders_ahem_before_csstest` と
   `generic_serif_resolves_to_registered_family` が §5, §7 decision の regression pin
 - hello-world VRT 自身が cross-machine determinism の end-to-end regression pin
 
@@ -473,7 +471,7 @@ Lato 経由の "Hi" real text で再生成。既存の
 4. **raikiri::html_to_png_with_fonts 追加** — 既存 `html_to_png` は delegate 経由に
 5. **hello_world_vrt.rs 更新** — early panic + build_wpt_font_ctx +
    html_to_png_with_fonts、golden 再生成 (`RAIKIRI_UPDATE_GOLDENS=1`)
-6. **README 更新** — hello-world fixture の "Lato 経由 visual" と scripts/wpt/ 使い方
+6. **README 更新** — hello-world fixture の "Ahem 経由 square visual" と scripts/wpt/ 使い方
 
 ### 9.2 CI 影響
 
