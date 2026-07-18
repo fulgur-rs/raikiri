@@ -3,6 +3,8 @@
 //! Cascade + inheritance walk が populate。M1.6 で ComputedValues → taffy::Style
 //! + paint 用色情報の抽出 layer が入る予定。
 
+use smol_str::SmolStr;
+
 use crate::Atom;
 use crate::property::{CssColor, DisplayValue, Length};
 
@@ -24,6 +26,18 @@ pub struct ComputedValues {
     /// `display`。**non-inherited**、initial: `DisplayValue::Inline` (CSS §9.2.4)。
     /// (spec §M1.4a、raikiri-spike-m1.22)
     pub display: DisplayValue,
+    /// `counter-reset`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
+    /// counter-name + initial value pairs。M5 pre-work (raikiri-spike-s85)、
+    /// counter tree resolve は M5 本編。
+    pub counter_reset: Vec<(SmolStr, i32)>,
+    /// `counter-increment`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
+    /// counter-name + increment pairs。M5 pre-work (raikiri-spike-s85)、
+    /// counter tree resolve は M5 本編。
+    pub counter_increment: Vec<(SmolStr, i32)>,
+    /// `counter-set`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
+    /// counter-name + value pairs。M5 pre-work (raikiri-spike-s85)、
+    /// counter tree resolve は M5 本編。
+    pub counter_set: Vec<(SmolStr, i32)>,
 }
 
 impl ComputedValues {
@@ -36,6 +50,10 @@ impl ComputedValues {
             font_size: Length::Px(16.0),
             font_weight: 400,
             display: DisplayValue::Inline,
+            // CSS Lists 3 §3: counter-* initial is empty list (raikiri-spike-s85)
+            counter_reset: Vec::new(),
+            counter_increment: Vec::new(),
+            counter_set: Vec::new(),
         }
     }
 
@@ -63,6 +81,10 @@ impl ComputedValues {
             font_weight: parent.font_weight,
             // non-inherited (initial 値、CSS §9.2.4 initial value of display)
             display: DisplayValue::Inline,
+            // non-inherited (CSS Lists 3 §3、raikiri-spike-s85)
+            counter_reset: Vec::new(),
+            counter_increment: Vec::new(),
+            counter_set: Vec::new(),
         }
     }
 }
@@ -79,6 +101,10 @@ mod tests {
         assert_eq!(cv.font_size, Length::Px(16.0));
         assert_eq!(cv.font_weight, 400);
         assert_eq!(cv.display, DisplayValue::Inline);
+        // CSS Lists 3 §3: counter-* initial は empty list (raikiri-spike-s85)
+        assert!(cv.counter_reset.is_empty());
+        assert!(cv.counter_increment.is_empty());
+        assert!(cv.counter_set.is_empty());
     }
 
     #[test]
@@ -110,6 +136,9 @@ mod tests {
             font_size: Length::Px(24.0),
             font_weight: 700,
             display: DisplayValue::Block,
+            counter_reset: vec![(SmolStr::new("chapter"), 3)],
+            counter_increment: vec![(SmolStr::new("section"), 2)],
+            counter_set: vec![(SmolStr::new("page"), 5)],
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -117,6 +146,23 @@ mod tests {
         assert_eq!(child.font_family, parent.font_family);
         assert_eq!(child.font_size, parent.font_size);
         assert_eq!(child.font_weight, parent.font_weight);
+    }
+
+    #[test]
+    fn inherit_from_leaves_counter_properties_at_initial() {
+        // CSS Lists 3 §3: counter-reset / counter-increment / counter-set は
+        // non-inherited → 親が値を持っていても child は empty (initial) となる
+        // (raikiri-spike-s85)
+        let parent = ComputedValues {
+            counter_reset: vec![(SmolStr::new("chapter"), 3)],
+            counter_increment: vec![(SmolStr::new("section"), 2)],
+            counter_set: vec![(SmolStr::new("page"), 5)],
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert!(child.counter_reset.is_empty());
+        assert!(child.counter_increment.is_empty());
+        assert!(child.counter_set.is_empty());
     }
 
     #[test]
