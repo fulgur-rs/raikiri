@@ -13,7 +13,7 @@
 - Rust edition: 2024 (workspace pin)
 - rust-version: 1.89.0 (workspace pin)
 - code motion + Cargo.toml edits のみ。`encode_png` 関数の logic は 1 文字も変更しない (behavior 保存)
-- baseline: `cargo test --workspace` は 13 test result group / 合計 46 test passed (2026-07-18 wt baseline)
+- baseline: `cargo test --workspace --no-fail-fast` は 27 test result group / 合計 312 test passed (2026-07-18 wt baseline)。Task 完了後は 311 (encode_png_produces_png_signature -1 削除分)
 - `raikiri-vrt/Cargo.toml` の `tiny-skia` dep は残す (`reference::decode_png` 用)
 - 参照: [[blg-attribute-wiring-design]] の m1.14 hello-world VRT pipeline は本変更で機能的変化なし
 
@@ -25,11 +25,12 @@
 |---|---|---|
 | `crates/raikiri/Cargo.toml` | umbrella crate manifest | Modify: `[dependencies]` に `tiny-skia` 追加、`raikiri-vrt` を `[dependencies]` → `[dev-dependencies]` |
 | `crates/raikiri/src/html_to_png.rs` | production HTML→PNG pipeline | Modify: `use raikiri_vrt::encode_png` 削除、private `encode_png` を module 内に inline |
-| `crates/raikiri-vrt/src/lib.rs` | VRT harness crate root | Modify: `pub fn encode_png` 削除、`encode_png_produces_png_signature` test 削除、crate-level docstring 更新 |
+| `crates/raikiri-vrt/src/lib.rs` | VRT harness crate root | Modify: `encode_png` を `pub` → `pub(crate)` に narrow (`reference::build_and_write_diff` 内部 caller 用)、`encode_png_produces_png_signature` test 削除、crate-level docstring 更新 |
+| `crates/raikiri-vrt/tests/reference_harness.rs` | integration test harness | Modify: `use raikiri_vrt::encode_png` を削除、inline copy を追加 (integration test crate は `pub(crate)` が visible ではないため unavoidable) |
 
 **Interfaces (task 間で必要な signature):**
 
-- `fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8>` — `tiny_skia::Pixmap::encode_png` の thin wrapper。inline 後は `raikiri::html_to_png` module の private fn。behavior 保存 (byte-identical)
+- `fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8>` — `tiny_skia::Pixmap::encode_png` の thin wrapper。inline 後は `raikiri::html_to_png` module の private fn。behavior 保存 (byte-identical、3 copy 全て mod visibility 同一)
 
 ---
 
@@ -168,25 +169,33 @@ EOF
 
 ---
 
-## Task 2: raikiri-vrt から encode_png を削除、docstring を dev-only crate として更新
+## Task 2: raikiri-vrt::encode_png を pub → pub(crate) に narrow、docstring を dev-only crate として更新
 
 **Files:**
 - Modify: `crates/raikiri-vrt/src/lib.rs`
+- Modify: `crates/raikiri-vrt/tests/reference_harness.rs` (integration test は `pub(crate)` が見えないため inline copy が必要 — Task 2 実施時に判明した不可避の side-effect)
 
 **Interfaces:**
 - Consumes: Task 1 が raikiri 側で自前 encode_png を持っている状態
-- Produces: `raikiri-vrt` は `pub mod reference` のみ export、crate-level 責務が「VRT harness only」に絞られる
+- Produces: `raikiri-vrt` の public API surface は `pub mod reference` のみに絞られる (encode_png は `pub(crate)` に narrow され export されない)、crate-level 責務が「VRT harness only」に絞られる
 
-- [ ] **Step 1: raikiri-vrt/src/lib.rs から encode_png fn とそのテストを削除**
+**設計注記 — pub(crate) を選ぶ理由**:
+`raikiri-vrt::reference::build_and_write_diff` (crates/raikiri-vrt/src/reference.rs:535) が `crate::encode_png(&out, w, h)` を内部呼び出ししているため、encode_png を完全に削除すると内部 caller が壊れる。`pub` → `pub(crate)` に narrow することで:
+- Public API surface は削除される (`publish = false` crate の pub(crate) fn は crates.io export されない)
+- 内部 caller `reference.rs` は unchanged (net-zero diff)
+- `raikiri-vrt/src` 内で単一 source of truth が保たれる
+- `tests/reference_harness.rs` は integration test crate なので `pub(crate)` が visible ではなく、inline copy を保持する (unavoidable 3rd copy)
 
-削除対象:
+- [ ] **Step 1: raikiri-vrt/src/lib.rs の encode_png 可視性を pub → pub(crate) に narrow、テストを削除**
+
+変更対象:
 
 1. crate-level docstring 全体 (Step 3 で書き換え)
-2. `pub fn encode_png(...)` 全体 (docstring 込み、`/// Encode a premultiplied RGBA8 ...` から `}` まで)
-3. `#[cfg(test)] mod tests` 内の `use super::encode_png;`
-4. `#[cfg(test)] mod tests` 内の `#[test] fn encode_png_produces_png_signature()` 全体
+2. `pub fn encode_png(...)` を `pub(crate) fn encode_png(...)` に narrow、docstring 末尾に "Retained as a `pub(crate)` helper for internal callers (`reference::build_and_write_diff`). Not part of the public API — production PNG encoding lives in `raikiri::html_to_png`." 段落を追加
+3. `#[cfg(test)] mod tests` 内の `use super::encode_png;` を削除
+4. `#[cfg(test)] mod tests` 内の `#[test] fn encode_png_produces_png_signature()` 全体を削除 (`raikiri::html_to_png::tests::html_to_png_returns_png_bytes_for_hello_world` が同旨の PNG magic byte assertion を保持しているため)
 
-**残す**: `pub mod reference;` 宣言、`#[cfg(test)] mod tests` 内の以下 5 tests:
+**残す**: `pub mod reference;` 宣言、`pub(crate) fn encode_png` (visibility narrow 後)、`#[cfg(test)] mod tests` 内の以下 5 tests:
 - `render_helper_produces_expected_buffer_shape`
 - `render_helper_is_byte_identical`
 - `render_to_buffer_leaves_untouched_pixels_transparent`
@@ -195,14 +204,19 @@ EOF
 
 および `draw_red_rect`, `render_with_threads` 等の test helper。
 
-- [ ] **Step 2: 削除後の raikiri-vrt/src/lib.rs 冒頭を diff で確認**
+- [ ] **Step 2: 変更後の raikiri-vrt/src/lib.rs 構造を diff で確認**
 
-削除後の file top 部分は以下になる (docstring + `pub mod reference;` + `#[cfg(test)] mod tests`):
+変更後の file 構造は以下になる (docstring + `pub mod reference;` + `pub(crate) fn encode_png` + `#[cfg(test)] mod tests`):
 
 ```rust
 //! (Step 3 で新規 docstring 挿入)
 
 pub mod reference;
+
+/// (encode_png docstring with pub(crate) rationale — Step 1 参照)
+pub(crate) fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+    // body byte-identical to Task 1 の raikiri html_to_png::encode_png
+}
 
 #[cfg(test)]
 mod tests {
@@ -217,7 +231,7 @@ mod tests {
     // ... (draw_red_rect, tests continue)
 ```
 
-`use super::encode_png;` が削除されたことを確認。
+`use super::encode_png;` が削除され、encode_png fn は `pub(crate)` に narrow された状態を確認。
 
 - [ ] **Step 3: crate-level docstring を dev-only VRT harness 用に書き換え**
 
@@ -260,7 +274,7 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 
 Run: `cargo test --workspace --no-fail-fast 2>&1 | tail -30`
 
-Expected: 全 crate 合計で baseline に対し「-1 test (encode_png_produces_png_signature 削除)」の状態で pass。baseline 46 → 45。
+Expected: 全 crate 合計で baseline に対し「-1 test (encode_png_produces_png_signature 削除)」の状態で pass。baseline 312 → 311 (27 test result groups)。
 
 hello_world_vrt.rs integration test も pass (raikiri-vrt が dev-dep として引き続き consume されている)。
 
@@ -289,25 +303,29 @@ Expected: `PASS: tiny-skia in runtime deps`
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/raikiri-vrt/src/lib.rs
+git add crates/raikiri-vrt/src/lib.rs crates/raikiri-vrt/tests/reference_harness.rs
 git commit -m "$(cat <<'EOF'
-refactor(raikiri-vrt): remove encode_png (moved to raikiri umbrella)
+refactor(raikiri-vrt): narrow encode_png to pub(crate); dev-only VRT harness
 
 encode_png は raikiri::html_to_png の private fn に inline 済 (前 commit)。
-raikiri-vrt は VRT harness 責務のみに絞り、reference module + rasterize/
-rayon 決定性 tests に集約。crate-level docstring を dev-only VRT harness
-として書き換え。
+raikiri-vrt::encode_png は internal caller (reference::build_and_write_diff)
+用に pub(crate) fn として残し、public API surface からは削除。crate-level
+docstring を dev-only VRT harness として書き換え。
 
-- Remove pub fn encode_png (docstring 込み)
+- Narrow encode_png visibility: pub → pub(crate) (docstring に rationale 追記)
 - Remove encode_png_produces_png_signature test (raikiri::html_to_png::tests
   の html_to_png_returns_png_bytes_for_hello_world が同旨の PNG magic byte
   assertion を保持)
 - Rewrite crate-level docstring to reflect dev-only VRT harness role
+- Inline encode_png in tests/reference_harness.rs (integration test は
+  pub(crate) が visible ではないため unavoidable な 3rd copy)
 
 Refs: raikiri-spike-e6w
 EOF
 )"
 ```
+
+**note**: 実装過程で Task 2 initial commit が `pub fn encode_png` を完全削除し、`reference::build_and_write_diff` の内部呼び出しが壊れたことが post-task review で判明。fix commit で `pub(crate)` に narrow し reference.rs は baseline に revert。本 Step 7 の commit message 例は最終形 (post-fix) を反映している。
 
 ---
 
@@ -315,11 +333,15 @@ EOF
 
 Task 2 完了後、以下を verify:
 
-- [ ] `grep -n "raikiri_vrt::encode_png\|use raikiri_vrt" crates/raikiri/src/` — hit なし
-- [ ] `grep -n "pub fn encode_png\|fn encode_png" crates/raikiri-vrt/src/lib.rs` — hit なし
+- [ ] `grep -n "raikiri_vrt::encode_png\|use raikiri_vrt::encode_png" crates/raikiri/src/` — hit なし
+- [ ] `grep -n "^pub fn encode_png" crates/raikiri-vrt/src/lib.rs` — hit なし (public API 削除)
+- [ ] `grep -n "^pub(crate) fn encode_png" crates/raikiri-vrt/src/lib.rs` — hit 1 件 (internal helper 残存)
 - [ ] `grep -n "fn encode_png" crates/raikiri/src/html_to_png.rs` — hit 1 件 (private fn)
+- [ ] `grep -n "fn encode_png" crates/raikiri-vrt/tests/reference_harness.rs` — hit 1 件 (inline copy)
+- [ ] `git diff <baseline>..HEAD -- crates/raikiri-vrt/src/reference.rs` — 空 (net-zero、reference module 未変更)
+- [ ] `git diff <baseline>..HEAD -- crates/raikiri-vrt/Cargo.toml` — 空 (tiny-skia dep 保持)
 - [ ] `cargo build --workspace` — clean (0 warnings)
-- [ ] `cargo test --workspace` — pass (baseline 46 → 45)
+- [ ] `cargo test --workspace` — pass (delta: -1 test = encode_png_produces_png_signature 削除分)
 - [ ] `cargo metadata` acceptance — raikiri-vrt が runtime dep にない、tiny-skia がある
 - [ ] `crates/raikiri/tests/hello_world_vrt.rs` は unchanged (git diff で verify)
 
