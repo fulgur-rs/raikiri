@@ -417,6 +417,100 @@ mod tests {
     }
 
     #[test]
+    fn parse_marks_template_descendants_out_of_document() {
+        // raikiri-spike-37c: <template> element 自身は flat tree の一員なので
+        // is_in_document()=true、その descendants (子孫の element / text) は
+        // false であることを parse 経路の bit populate で pin する。
+        //
+        // 現在の sink には mark_in_document_flags phase が無いため、default
+        // true が clear されず descendant も true になる → 失敗する failing test。
+        let html = b"<html><head></head><body>\
+                     <template><p id=\"inner\">hi</p></template>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let doc = &uncascaded.dom;
+
+        let mut saw_template = false;
+        let mut saw_inner_p = false;
+        let mut saw_inner_text = false;
+        for id_u in 0..doc.node_count() {
+            let id = raikiri_traits::NodeId::new(id_u as u64);
+            let n = doc.node(id).expect("in-range");
+            if let Some(el) = n.as_element() {
+                match el.tag_name() {
+                    "template" => {
+                        assert!(n.is_in_document(), "template element itself must be in document");
+                        saw_template = true;
+                    }
+                    "p" if el.id() == Some("inner") => {
+                        assert!(!n.is_in_document(), "<p> inside <template> must be out of document");
+                        saw_inner_p = true;
+                    }
+                    _ => {}
+                }
+            }
+            if n.text_content() == Some("hi") {
+                assert!(!n.is_in_document(), "text inside <template> must be out of document");
+                saw_inner_text = true;
+            }
+        }
+        assert!(saw_template, "template element should exist in parsed tree");
+        assert!(saw_inner_p, "<p id=inner> should exist inside template subtree");
+        assert!(saw_inner_text, "'hi' text should exist inside template subtree");
+    }
+
+    #[test]
+    fn parse_marks_body_children_in_document() {
+        // raikiri-spike-37c: normal HTML (template 無し) を parse すると全 node が
+        // is_in_document()=true。default true が保たれる regression pin。
+        let html = b"<html><head></head><body><p>hi</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let doc = &uncascaded.dom;
+        for id_u in 0..doc.node_count() {
+            let id = raikiri_traits::NodeId::new(id_u as u64);
+            let n = doc.node(id).expect("in-range");
+            assert!(
+                n.is_in_document(),
+                "node {} ({:?}) expected in_document",
+                id_u,
+                n.kind()
+            );
+        }
+    }
+
+    #[test]
+    fn parse_marks_nested_template_descendants_out_of_document() {
+        // raikiri-spike-37c: 深いネスト (template > div > span > text) でも
+        // in_document bit が subtree 全体に伝播する。single-pass DFS で
+        // in_template state が正しく引き継がれることを pin。
+        let html = b"<html><body>\
+                     <template><div><span>x</span></div></template>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let doc = &uncascaded.dom;
+        for id_u in 0..doc.node_count() {
+            let id = raikiri_traits::NodeId::new(id_u as u64);
+            let n = doc.node(id).expect("in-range");
+            if let Some(el) = n.as_element() {
+                match el.tag_name() {
+                    "div" | "span" => assert!(
+                        !n.is_in_document(),
+                        "<{}> inside <template> must be out of document",
+                        el.tag_name()
+                    ),
+                    _ => {}
+                }
+            }
+            if n.text_content() == Some("x") {
+                assert!(!n.is_in_document(), "text 'x' inside <template> must be out of document");
+            }
+        }
+    }
+
+    #[test]
     fn parse_ignores_body_style_in_m1_scope() {
         // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。

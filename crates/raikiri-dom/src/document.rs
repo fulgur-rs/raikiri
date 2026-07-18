@@ -7,7 +7,7 @@ use taffy::Style;
 
 use raikiri_traits::StylesheetKind;
 
-use crate::node::{Attr, Node};
+use crate::node::{Attr, Node, NodeData};
 
 /// DOM Document (root + Vec-backed node arena)。
 ///
@@ -224,6 +224,40 @@ impl Document {
         }
         if any_removed {
             self.invalidate_layout_cache();
+        }
+    }
+
+    /// `<template>` element の子孫について `IS_IN_DOCUMENT` bit を clear する
+    /// single-pass DFS (raikiri-spike-37c)。sink.finish() から呼ばれる。
+    ///
+    /// - Node::new_* constructor が default `IS_IN_DOCUMENT=true` を立てているため、
+    ///   本 method は「flat tree の外に落とすべき node の bit を clear する」補正
+    ///   phase として機能する。template element 自身は flat tree の一員なので bit
+    ///   set のまま、その descendants の bit を clear する。
+    /// - `<template>` 判定は HTML namespace + local == "template" (case-sensitive)。
+    ///   html5ever が local を lowercase 済で提供する契約に依存。SVG hypothetical
+    ///   `<template>` (別 namespace) は skip 対象外。
+    /// - iterative Vec stack で深い DOM での stack overflow を回避。
+    /// - tree mutation ではないので `invalidate_layout_cache` は呼ばない。
+    pub fn mark_in_document_flags(&mut self) {
+        let root = self.root_index();
+        let mut stack: Vec<(usize, bool)> = vec![(root, false)];
+        while let Some((id, in_template)) = stack.pop() {
+            let (children_snapshot, is_template_here) = {
+                let node = &mut self.nodes[id];
+                node.set_in_document(!in_template);
+                let is_template = match &node.data {
+                    NodeData::Element(e) => {
+                        e.tag_name.as_str() == "template" && e.namespace.is_none()
+                    }
+                    _ => false,
+                };
+                (node.children.clone(), is_template)
+            };
+            let child_in_template = in_template || is_template_here;
+            for c in children_snapshot.into_iter().rev() {
+                stack.push((c, child_in_template));
+            }
         }
     }
 

@@ -279,11 +279,9 @@ impl Node {
 
     /// [`NodeFlags::IS_IN_DOCUMENT`] bit を明示的に上書きする (crate-private)。
     ///
-    /// Task 2 時点では呼び出し元が無い (Task 3 の sink `mark_in_document_flags`
-    /// phase が消費する予定)、`flags_tests::set_in_document_toggles_bit` のみ
-    /// exercise する。
+    /// raikiri-spike-37c: `Document::mark_in_document_flags` (sink.finish() から
+    /// 呼ばれる single-pass DFS) が消費する。
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn set_in_document(&mut self, v: bool) {
         self.flags.set(NodeFlags::IS_IN_DOCUMENT, v);
     }
