@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 /// # Errors
 /// - [`FontError::DirNotFound`] — `fonts_dir` が存在しない
 /// - [`FontError::EmptyDir`] — dir は存在するが `.ttf`/`.otf` が 1 個も無い
+/// - [`FontError::NoFontsRegistered`] — dir には `.ttf`/`.otf` があるが 1 個も
+///   register できなかった (全 file が fontique に reject された)
 /// - [`FontError::Io`] — dir walk 中の io failure
 pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     use parley::fontique::{Blob, Collection, CollectionOptions, GenericFamily, SourceCache};
@@ -70,6 +72,14 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
         family_ids.extend(registered.iter().map(|(id, _)| *id));
     }
 
+    // 全 file が fontique に reject された場合 (family_ids empty) は Err。
+    // このまま Ok を返すと FontContext.collection.generic_families が空の
+    // family_ids に append されるだけで、cascade "serif" が何にも解決されず
+    // silent regression になる (roborev Medium finding e93)。
+    if family_ids.is_empty() {
+        return Err(FontError::NoFontsRegistered(fonts_dir.to_path_buf()));
+    }
+
     // Generic family alias remap (blitz pattern):
     // UA CSS default "serif" cascade を bundled family (先頭 = Ahem)
     // に解決させる
@@ -96,6 +106,9 @@ pub enum FontError {
     DirNotFound(PathBuf),
     /// `fonts_dir` は存在するが `.ttf`/`.otf` が 1 個も見つからない
     EmptyDir(PathBuf),
+    /// dir に `.ttf`/`.otf` はあったが 1 個も fontique に register されなかった
+    /// (全 file が parse-invalid、または pin drift で asset が壊れた等)
+    NoFontsRegistered(PathBuf),
     /// dir walk 中の io failure
     Io {
         /// walk 中に io error が発生した path
@@ -114,6 +127,11 @@ impl std::fmt::Display for FontError {
             FontError::EmptyDir(p) => write!(
                 f,
                 "fonts dir has no .ttf/.otf files: {} (did you run scripts/wpt/fetch.sh?)",
+                p.display()
+            ),
+            FontError::NoFontsRegistered(p) => write!(
+                f,
+                "no font families registered from {} (all .ttf/.otf files rejected by parley/fontique — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
                 p.display()
             ),
             FontError::Io { path, source } => {
@@ -379,6 +397,26 @@ mod tests {
             Err(FontError::EmptyDir(p)) => assert_eq!(p, tmp.path()),
             Err(other) => panic!("expected EmptyDir, got {:?}", other),
             Ok(_) => panic!("expected EmptyDir err, got Ok"),
+        }
+    }
+
+    #[test]
+    fn no_registerable_fonts_returns_err() {
+        // roborev Medium finding e93 regression pin: dir has .ttf files but
+        // none register. Writing pure garbage bytes into .ttf files causes
+        // fontique's register_fonts to return empty vec (no valid font tables
+        // to parse). build_wpt_font_ctx must surface this as an error rather
+        // than silently returning an empty FontContext.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("garbage1.ttf"), b"not a valid font at all").unwrap();
+        std::fs::write(tmp.path().join("garbage2.ttf"), b"also not a font").unwrap();
+        match build_wpt_font_ctx(tmp.path()) {
+            Err(FontError::NoFontsRegistered(p)) => assert_eq!(p, tmp.path()),
+            Err(other) => panic!("expected NoFontsRegistered, got {:?}", other),
+            Ok(_) => panic!(
+                "expected NoFontsRegistered err (no register-able fonts), got Ok — \
+                 silent empty FontContext would be a determinism regression"
+            ),
         }
     }
 
