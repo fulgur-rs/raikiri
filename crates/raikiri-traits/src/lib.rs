@@ -418,8 +418,15 @@ mod tests {
     }
 
     #[test]
-    fn render_error_policy_display_uses_violation_type_display_not_debug() {
-        // RenderError::Policy::Display も同じく Display 経由。
+    fn render_error_policy_display_is_label_only_source_carries_details() {
+        // RenderError::Policy Display は sibling arms (Parse / Cascade / Layout /
+        // Resolver / Network / Sink / Io) と同じ label-only 方針: 詳細は
+        // std::error::Error::source() 経由で PolicyViolation Display に届く。
+        // 「violation_type が Display で format される (Debug ではない)」
+        // regression pin は本 test の source 側 assert + 上段 test
+        // `policy_violation_display_uses_violation_type_display_not_debug`
+        // (PolicyViolation 直の Display) の両方でカバー。
+        use std::error::Error;
         use url::Url;
         let v = PolicyViolation {
             kind: ResourceKind::Font,
@@ -430,14 +437,19 @@ mod tests {
             details: String::from("expected font/woff2"),
         };
         let re = RenderError::Policy(v);
-        let s = re.to_string();
+        // Top-level Display: label only, matches sibling arms convention.
+        assert_eq!(re.to_string(), "Resource policy violation");
+        // source() surfaces PolicyViolation whose Display carries kind / url /
+        // details / violation_type (via ViolationType::Display, not Debug).
+        let src = re.source().expect("RenderError::Policy has source");
+        let src_s = src.to_string();
         assert!(
-            s.contains("MIME type not allowed: text/html"),
-            "RenderError::Policy Display must use ViolationType::Display, got: {s}"
+            src_s.contains("MIME type not allowed: text/html"),
+            "source Display must use ViolationType::Display, got: {src_s}"
         );
         assert!(
-            !s.contains("MimeNotAllowed {"),
-            "RenderError::Policy Display must not leak Debug format, got: {s}"
+            !src_s.contains("MimeNotAllowed {"),
+            "source Display must not leak Debug format, got: {src_s}"
         );
     }
 
