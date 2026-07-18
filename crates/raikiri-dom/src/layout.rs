@@ -91,6 +91,13 @@ pub(crate) fn preshape_text(
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
         }
+        // raikiri-spike-37c roborev job 294 M3 finding: template subtree /
+        // detached な text は paint も layout tree (taffy) からも filter される。
+        // 無駄な parley shape + intrinsic size 計算を避けるため、bit gate で
+        // 早期 skip する。paint / cascade の gate と一貫。
+        if !doc.nodes[idx].is_in_document() {
+            continue;
+        }
         let text: String = match &doc.nodes[idx].data {
             crate::node::NodeData::Text(t) if !t.text_content.is_empty() => {
                 t.text_content.as_str().to_string()

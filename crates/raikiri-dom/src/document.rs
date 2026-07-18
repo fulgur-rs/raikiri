@@ -25,6 +25,18 @@ pub struct Document {
     /// する。O(1) per-mutation cost + O(N) per-layout-batch cost で
     /// invalidation の amortized O(1) を実現。
     pub(crate) layout_dirty: bool,
+    /// IS_IN_DOCUMENT bit dirty flag (raikiri-spike-37c, roborev job 294 M1
+    /// finding 対応)。任意の tree-mutation primitive (append_* / attach_child
+    /// / insert_child_before / detach_from_parent / reparent_children /
+    /// retain_children) で set される。observation-side API (cascade / paint /
+    /// extract) は生の bit を信じる前に [`Document::mark_in_document_flags`]
+    /// を呼ぶことで dirty check + lazy recompute を強制する contract。
+    ///
+    /// M1 parse-only では `sink.finish()` が明示的に呼ぶため無視できるが、
+    /// 手動で `append_*` を呼んで Document を組み立てる code path (raikiri-dom
+    /// 内 test / raikiri-paint hello-world setup / 将来の M2+ mutation runtime)
+    /// では本 dirty flag が correctness の contract を担う。
+    pub(crate) flags_dirty: bool,
     /// Document に associate されている stylesheet の list (M1.4a、
     /// raikiri-spike-m1.22)。lazy: parse は cascade phase で行う。
     /// 呼び出し順で同 kind 内の cascade source_order が決まる。
@@ -40,6 +52,10 @@ impl Document {
             nodes,
             root: 0,
             layout_dirty: false,
+            // 初期 root node は Node::new_document() が IS_IN_DOCUMENT=true を
+            // 立てているため、"attached under root" として consistent。まだ
+            // template も detached node も無いので dirty ではない。
+            flags_dirty: false,
             stylesheets: Vec::new(),
         }
     }
@@ -69,6 +85,7 @@ impl Document {
             self.nodes[p].children.push(id);
         }
         self.invalidate_layout_cache();
+        self.flags_dirty = true;
         id
     }
 
@@ -81,6 +98,7 @@ impl Document {
         self.nodes.push(Node::new_text(text.into()));
         self.nodes[parent].children.push(id);
         self.invalidate_layout_cache();
+        self.flags_dirty = true;
         id
     }
 
@@ -93,6 +111,7 @@ impl Document {
     pub fn attach_child(&mut self, parent: usize, child: usize) {
         self.nodes[parent].children.push(child);
         self.invalidate_layout_cache();
+        self.flags_dirty = true;
     }
 
     /// `parent` の children 配列内、`before` の直前 index に `child` を挿入する。
@@ -114,6 +133,7 @@ impl Document {
             kids.push(child);
         }
         self.invalidate_layout_cache();
+        self.flags_dirty = true;
     }
 
     /// `child` を保持する parent の arena index を返す。root (index 0) や
@@ -137,6 +157,7 @@ impl Document {
             kids.remove(pos);
         }
         self.invalidate_layout_cache();
+        self.flags_dirty = true;
         Some(parent)
     }
 
@@ -146,6 +167,7 @@ impl Document {
         let moved: Vec<usize> = self.nodes[from].children.drain(..).collect();
         self.nodes[to].children.extend(moved);
         self.invalidate_layout_cache();
+        self.flags_dirty = true;
     }
 
     /// Element node に non-HTML namespace URI を紐付ける
@@ -224,11 +246,12 @@ impl Document {
         }
         if any_removed {
             self.invalidate_layout_cache();
+            self.flags_dirty = true;
         }
     }
 
     /// `<template>` element の子孫について `IS_IN_DOCUMENT` bit を clear する
-    /// (raikiri-spike-37c)。sink.finish() から呼ばれる。
+    /// (raikiri-spike-37c)。sink.finish() および mutation batch 後に呼ばれる。
     ///
     /// アルゴリズム (roborev job 292 findings 対応):
     /// 1. 全 arena node の bit を先に clear (detached / unreachable node を
@@ -253,7 +276,20 @@ impl Document {
     ///   post-condition として layout cache も無効化する — さもなくば次回
     ///   `compute_child_layout` が古い child ordering で cached result を再利用
     ///   してしまう。
+    /// - roborev job 294 M1 finding: `flags_dirty` が false のときは no-op
+    ///   (idempotent + O(1))。mutation primitive が dirty mark するため、
+    ///   observation-side は毎回本 method を呼んでも overhead が amortize される。
+    ///   Consumer は「mutation batch → mark → observation」の contract を守る
+    ///   ことでどこかの primitive で flag 更新を忘れた場合の regression を回避
+    ///   できる。
     pub fn mark_in_document_flags(&mut self) {
+        // roborev job 294 M1 finding: dirty check で cheap early return。
+        // parse.finish() 直後 (dirty) → 明示的 recompute。以降 mutation 無しで
+        // 複数回呼ばれても再計算しない。
+        if !self.flags_dirty {
+            return;
+        }
+        self.flags_dirty = false;
         // Step 1: 全 arena node の bit を先に clear。Node::new_* constructor が
         // default true を立てるが、それは "attach 済み" の楽観的初期値。ここで
         // 明示的に clear することで detached / unreachable node が false に落ちる。
@@ -455,6 +491,90 @@ mod mark_in_document_flags_tests {
         assert!(doc.get_node(tmpl).unwrap().is_in_document(), "template stays in doc");
         assert!(!doc.get_node(inner).unwrap().is_in_document(), "<p> cleared");
         assert!(!doc.get_node(text).unwrap().is_in_document(), "text cleared");
+    }
+
+    #[test]
+    fn append_operations_set_flags_dirty() {
+        // roborev job 294 M1 finding pin: mutation primitives が flags_dirty を
+        // set することで、observation-side が mark_in_document_flags を呼ぶ contract
+        // に依存できる。fresh Document は dirty=false からスタート。
+        let mut doc = Document::new();
+        assert!(!doc.flags_dirty, "fresh Document has clean flags");
+        let e = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        assert!(doc.flags_dirty, "append_element sets dirty");
+        doc.flags_dirty = false;
+        doc.append_text(e, "hi");
+        assert!(doc.flags_dirty, "append_text sets dirty");
+    }
+
+    #[test]
+    fn attach_and_detach_set_flags_dirty() {
+        // attach_child / detach_from_parent / reparent_children / insert_child_before /
+        // retain_children はいずれも tree topology を変えるため flags_dirty を
+        // set する契約。
+        let mut doc = Document::new();
+        let a = doc.append_element(Some(0), "a", Style::default(), None::<&str>);
+        let b = doc.append_element(Some(0), "b", Style::default(), None::<&str>);
+        let d = doc.append_element(None::<usize>, "d", Style::default(), None::<&str>);
+        doc.mark_in_document_flags(); // clean
+        assert!(!doc.flags_dirty);
+
+        doc.attach_child(a, d);
+        assert!(doc.flags_dirty, "attach_child sets dirty");
+        doc.mark_in_document_flags();
+
+        doc.detach_from_parent(d);
+        assert!(doc.flags_dirty, "detach_from_parent sets dirty");
+        doc.mark_in_document_flags();
+
+        doc.attach_child(a, d);
+        doc.mark_in_document_flags();
+        doc.reparent_children(a, b);
+        assert!(doc.flags_dirty, "reparent_children sets dirty");
+        doc.mark_in_document_flags();
+
+        doc.retain_children(|c| c != d);
+        assert!(doc.flags_dirty, "retain_children sets dirty when a child is removed");
+    }
+
+    #[test]
+    fn mark_in_document_flags_is_noop_when_clean() {
+        // roborev job 294 M1 finding: mark_in_document_flags は !flags_dirty のとき
+        // 何もしない。invariant: 一度 mark した後 mutation が無ければ再 mark は
+        // 高速で idempotent。
+        let mut doc = Document::new();
+        let e = doc.append_element(Some(0), "e", Style::default(), None::<&str>);
+        doc.mark_in_document_flags();
+        assert!(!doc.flags_dirty);
+        assert!(doc.get_node(e).unwrap().is_in_document());
+        // 再 mark は no-op、状態不変。
+        doc.mark_in_document_flags();
+        assert!(doc.get_node(e).unwrap().is_in_document());
+        assert!(!doc.flags_dirty);
+    }
+
+    #[test]
+    fn post_mark_attach_under_template_becomes_out_of_document_after_remark() {
+        // roborev job 294 M1 finding: mutation → 再 mark で正しい bit 状態が復元
+        // されることを end-to-end で pin。post-parse mutation の contract。
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
+        doc.mark_in_document_flags();
+        assert!(doc.get_node(tmpl).unwrap().is_in_document());
+
+        // 新規 append_element は default IS_IN_DOCUMENT=true で作られる。
+        // template 配下に attach するので flags_dirty=true になり、mark で
+        // false に落ちるべき。
+        let new_child = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+        assert!(doc.flags_dirty, "mutation → dirty");
+        // mark 前は default true (bit reset は mark でしか起きない)
+        assert!(doc.get_node(new_child).unwrap().is_in_document());
+        doc.mark_in_document_flags();
+        assert!(
+            !doc.get_node(new_child).unwrap().is_in_document(),
+            "child attached under template must become out-of-document after remark"
+        );
     }
 }
 

@@ -237,37 +237,41 @@ fn resolve_inheritance<D: Dom>(
 ) {
     let mut stack: Vec<(NodeId, ComputedValues)> = vec![(id, parent_computed.clone())];
     while let Some((id, parent_computed)) = stack.pop() {
+        // raikiri-spike-37c roborev job 294 M2 finding: is_in_document()==false
+        // の node は subtree ごと早期 continue する。
+        //
+        // 以前は resize + write + children push を unconditional に行い computed
+        // 長を node_count() に揃えていた (m1.23 contract)。今 `cascade()` が
+        // `dom.node_count()` で `computed` を pre-allocate + initial() で埋める
+        // ように変わったため、visited しないままの slot は自然に initial()
+        // として残る。これにより:
+        //   - detached / template descendants は inherit_from(parent) の
+        //     継承値ではなく initial() となる (`<template style="color:red">`
+        //     配下は red を継承しない)
+        //   - template subtree の walk が省ける (パフォーマンス改善)
+        //
+        // 未知 NodeId (dom.node が None) の場合も skip: initial() のままにする
+        // 方が defensive (旧コードは inherit_from してから書いていた)。
+        if !dom.node(id).is_some_and(|n| n.is_in_document()) {
+            continue;
+        }
+
         // 親からの inheritance walk 開始値: inherited のみコピー、非継承は
         // initial() (spec §M1.4a、raikiri-spike-m1.22)
         let mut computed = ComputedValues::inherit_from(&parent_computed);
 
-        // raikiri-spike-37c: is_in_document()==false の node (<template> 子孫等)
-        // には cascaded declarations を適用しない — silent bug fix の意図明文化。
-        // collect_cascaded (Step 4) が既にこれら node を `cascaded` map から
-        // 除外済のため実質 defense-in-depth。
-        //
-        // NOTE: ここで早期 `continue` して subtree ごと skip しては **いけない**。
-        // `cascade.computed.len() == document.node_count()` は raikiri-spike-m1.23
-        // contract で (`crates/raikiri/src/lib.rs`
-        // `html_document_cascade_populated_after_construct` が pin)、
-        // `raikiri-dom::layout::preshape_text` / `raikiri-paint::text::draw_text_node`
-        // は node_id で `cascade.computed[idx]` に直接 index する。subtree を丸ごと
-        // skip すると resize が template 子孫の分だけ足りなくなり OOB panic を招く
-        // ため、resize / out 書き込み / children push は is_in_document に関わらず
-        // 必ず行う。
-        let in_document = dom.node(id).is_none_or(|n| n.is_in_document());
-
-        // 自 node の cascaded winners を apply (in-document node のみ)
-        if in_document
-            && let Some(candidates) = cascaded.get(&id)
-        {
+        // 自 node の cascaded winners を apply
+        if let Some(candidates) = cascaded.get(&id) {
             let winners = pick_winners(candidates);
             for value in winners.into_values() {
                 apply_value(value, &mut computed);
             }
         }
 
-        // out を id+1 サイズに resize してから index 書き込み
+        // out を id+1 サイズに resize してから index 書き込み。
+        // `cascade()` の pre-allocation で通常 out.len() == node_count() のため
+        // resize は no-op、defensive safety net として維持 (Dom impl の
+        // node_count() 過小報告に対する保険)。
         let idx = id.0 as usize;
         if out.len() <= idx {
             out.resize(idx + 1, ComputedValues::initial());
