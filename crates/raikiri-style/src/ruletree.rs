@@ -460,16 +460,30 @@ mod tests {
 
     // ── @page at-rule scaffolding (raikiri-spike-rbo) ──
     //
-    // Spec: CSS Paged Media Level 3, "Page selectors syntax"
-    // <https://www.w3.org/TR/css-page-3/#page-selectors-syntax>
+    // Spec: CSS Paged Media Level 3, §4.3 "@page rule grammar"
+    // <https://www.w3.org/TR/css-page-3/#syntax-page-selector>
     //
     // Test で使う body は M1.4 の property.rs でサポート済み (color / font-*) を
     // 選ぶ — parse_declaration_block を reuse しているので margin / size 等は
     // 現時点で silent drop され declaration 0 個になる (下の
     // page_body_unsupported_property_drops_declaration がその regression guard)。
 
-    use crate::page::PageSelector;
+    use crate::page::{PagePseudo, PageSelector, PageSelectorEntry};
     use crate::{Atom, PageRule};
+
+    /// Test helper — build a `PageSelector` with a single compound entry
+    /// containing exactly the given ident and pseudo-page list. Reduces the
+    /// verbosity of `PageSelector { entries: vec![PageSelectorEntry { ident,
+    /// pseudos, .. }] }` at every assertion site (raikiri-spike-mvu).
+    fn ps_single(ident: Option<Atom>, pseudos: Vec<PagePseudo>) -> PageSelector {
+        PageSelector {
+            entries: vec![PageSelectorEntry {
+                ident,
+                pseudos,
+                ..PageSelectorEntry::default()
+            }],
+        }
+    }
 
     fn page_rules(source: &str) -> Vec<PageRule> {
         let mut tree = RuleTree::empty();
@@ -479,12 +493,13 @@ mod tests {
 
     #[test]
     fn page_default_selector_no_prelude() {
-        // `@page { color: red }` → PageSelector::Default、declarations 1 個。
-        // origin は `page_rules(...)` helper が `Origin::Author` を hardcode
-        // しているため Author が期待値 (raikiri-spike-jzv、M4 pre-work)。
+        // `@page { color: red }` → empty prelude represented as one default
+        // entry (raikiri-spike-mvu: PageSelector is now a Vec<Entry> shape,
+        // uniform for M4 cascade iteration). declarations は 1 個、origin は
+        // `page_rules(...)` helper が Author hardcode (raikiri-spike-jzv)。
         let rules = page_rules("@page { color: red }");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].selector, PageSelector::Default);
+        assert_eq!(rules[0].selector, ps_single(None, vec![]));
         assert_eq!(rules[0].declarations.len(), 1);
         assert_eq!(rules[0].source_order, 0);
         assert_eq!(rules[0].origin, Origin::Author);
@@ -494,7 +509,7 @@ mod tests {
     fn page_pseudo_first() {
         let rules = page_rules("@page :first { color: red }");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].selector, PageSelector::First);
+        assert_eq!(rules[0].selector, ps_single(None, vec![PagePseudo::First]));
     }
 
     #[test]
@@ -505,9 +520,9 @@ mod tests {
              @page :blank { color: red }",
         );
         assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].selector, PageSelector::Left);
-        assert_eq!(rules[1].selector, PageSelector::Right);
-        assert_eq!(rules[2].selector, PageSelector::Blank);
+        assert_eq!(rules[0].selector, ps_single(None, vec![PagePseudo::Left]));
+        assert_eq!(rules[1].selector, ps_single(None, vec![PagePseudo::Right]));
+        assert_eq!(rules[2].selector, ps_single(None, vec![PagePseudo::Blank]));
         // page_order は @page 独立の counter。
         assert_eq!(rules[0].source_order, 0);
         assert_eq!(rules[1].source_order, 1);
@@ -520,23 +535,31 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(
             rules[0].selector,
-            PageSelector::Named(Atom::from("my-cover"))
+            ps_single(Some(Atom::from("my-cover")), vec![])
         );
     }
 
     #[test]
-    fn page_multi_pseudo_is_dropped() {
-        // Scaffolding narrowing (see page.rs module docs): the L3 grammar (spec anchor `#page-selectors-syntax`) では
-        // `<pseudo-page>*` で複数許可だが、raikiri-spike-rbo では単数のみ受理。
-        // `@page :first :left` は入 rule ごと drop。
-        let rules = page_rules("@page :first :left { color: red }");
-        assert!(rules.is_empty());
+    fn page_multi_pseudo_is_accepted() {
+        // raikiri-spike-mvu: L3 `<page-selector>` = `[ <ident-token>?
+        // <pseudo-page>* ]!` permits any number of adjacent pseudo-pages.
+        // Compound rule ("No whitespace is allowed between the productions
+        // in `<page-selector>` or `<pseudo-page>`") — the input must be
+        // written without whitespace between the two pseudos, hence
+        // `:first:left`, not `:first :left`. The spaced form is pinned by
+        // `page_multi_pseudo_with_whitespace_between_is_dropped` below.
+        let rules = page_rules("@page :first:left { color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].selector,
+            ps_single(None, vec![PagePseudo::First, PagePseudo::Left])
+        );
     }
 
     #[test]
     fn page_functional_pseudo_is_dropped() {
         // Spec-outside functional pseudo (e.g. `:nth-page(...)`) は CSS Paged
-        // Media L3 (anchor `#page-selectors-syntax`) も L4 Editor's Draft も
+        // Media L3 (anchor `#syntax-page-selector`) も L4 Editor's Draft も
         // 定義していないため、raikiri-style としては未知 pseudo として rule ごと
         // drop する。もし raikiri-local な拡張として実装する日が来れば、そのときは
         // 明示的に variant を追加し (現在のこの guard test を反転) スコープを
@@ -546,24 +569,49 @@ mod tests {
     }
 
     #[test]
-    fn page_ident_plus_pseudo_is_dropped() {
-        // 同じく scaffolding narrowing。spec は `<ident>? <pseudo-page>*` で
-        // `named:first` を許可するが、rbo では drop。
+    fn page_ident_plus_pseudo_is_accepted() {
+        // raikiri-spike-mvu: L3 `<page-selector>` allows an ident followed
+        // by pseudo-pages (`named:first`). No whitespace between them per
+        // the compound rule — the spaced form (`named :first`) is dropped
+        // by `page_named_with_whitespace_before_pseudo_is_dropped` below.
         let rules = page_rules("@page named:first { color: red }");
-        assert!(rules.is_empty());
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].selector,
+            ps_single(Some(Atom::from("named")), vec![PagePseudo::First])
+        );
     }
 
     #[test]
-    fn page_selector_list_with_comma_is_dropped() {
-        // `page-selector-list = <page-selector>#` の comma-list も scaffolding
-        // では未対応で drop。
+    fn page_selector_list_with_comma_is_accepted() {
+        // raikiri-spike-mvu: L3 `<page-selector-list>` = `<page-selector>#`
+        // — a comma-separated list of compound page-selectors. Whitespace
+        // around the `,` is spec-permitted (the list is not itself a
+        // compound). Expected: one rule with two entries.
         let rules = page_rules("@page :first, :left { color: red }");
-        assert!(rules.is_empty());
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].selector,
+            PageSelector {
+                entries: vec![
+                    PageSelectorEntry {
+                        ident: None,
+                        pseudos: vec![PagePseudo::First],
+                        ..PageSelectorEntry::default()
+                    },
+                    PageSelectorEntry {
+                        ident: None,
+                        pseudos: vec![PagePseudo::Left],
+                        ..PageSelectorEntry::default()
+                    },
+                ],
+            }
+        );
     }
 
     #[test]
     fn page_unknown_pseudo_is_dropped() {
-        // `:cover` は the L3 grammar (spec anchor `#page-selectors-syntax`) に存在しないため drop。
+        // `:cover` は the L3 grammar (spec anchor `#syntax-page-selector`) に存在しないため drop。
         let rules = page_rules("@page :cover { color: red }");
         assert!(rules.is_empty());
     }
@@ -573,8 +621,72 @@ mod tests {
         // CSS keyword は ASCII case-insensitive (`match_ignore_ascii_case!` 経由)。
         let rules = page_rules("@page :FIRST { color: red } @page :Left { color: red }");
         assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].selector, PageSelector::First);
-        assert_eq!(rules[1].selector, PageSelector::Left);
+        assert_eq!(rules[0].selector, ps_single(None, vec![PagePseudo::First]));
+        assert_eq!(rules[1].selector, ps_single(None, vec![PagePseudo::Left]));
+    }
+
+    // ── Compound whitespace tightening (raikiri-spike-mvu, codex §8.3 F3) ──
+    //
+    // CSS Paged Media L3 (anchor `#syntax-page-selector`) states: "No
+    // whitespace is allowed between the productions in `<page-selector>` or
+    // `<pseudo-page>` (similar to the rule for `<compound-selector>`)".
+    // Whitespace *around* the `,` separator of `<page-selector-list>` is
+    // allowed (the list is not a compound); that variant is exercised by
+    // `page_comma_list_with_whitespace_around_comma_is_accepted` below.
+
+    #[test]
+    fn page_whitespace_between_colon_and_pseudo_is_dropped() {
+        // `@page : left` — whitespace between `:` and pseudo ident violates
+        // the `<pseudo-page>` compound rule. Whole rule dropped.
+        let rules = page_rules("@page : left { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_multi_pseudo_with_whitespace_between_is_dropped() {
+        // `@page :first :left` — whitespace between two pseudo-pages of the
+        // same compound violates the `<page-selector>` compound rule.
+        let rules = page_rules("@page :first :left { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_named_with_whitespace_before_pseudo_is_dropped() {
+        // `@page my-cover :first` — whitespace between ident and pseudo of
+        // the same compound violates the `<page-selector>` compound rule.
+        let rules = page_rules("@page my-cover :first { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_comma_list_with_whitespace_around_comma_is_accepted() {
+        // Whitespace around the `,` of `<page-selector-list>` is spec-
+        // permitted (the list is not a compound). Both `,` and ` , ` and
+        // `, ` MUST all yield the same two-entry result.
+        for src in [
+            "@page :first, :left { color: red }",
+            "@page :first , :left { color: red }",
+            "@page :first ,:left { color: red }",
+        ] {
+            let rules = page_rules(src);
+            assert_eq!(rules.len(), 1, "source: {src:?}");
+            assert_eq!(rules[0].selector.entries.len(), 2, "source: {src:?}");
+        }
+    }
+
+    #[test]
+    fn page_ident_with_multi_pseudo_is_accepted() {
+        // Ident + multiple pseudo-pages, all adjacent — the fullest shape
+        // the L3 compound grammar permits.
+        let rules = page_rules("@page named:first:left { color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].selector,
+            ps_single(
+                Some(Atom::from("named")),
+                vec![PagePseudo::First, PagePseudo::Left]
+            )
+        );
     }
 
     #[test]
@@ -639,7 +751,7 @@ mod tests {
         // ことを保証する regression guard。
         let rules = page_rules("@page { margin: 1cm; size: A4 }");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].selector, PageSelector::Default);
+        assert_eq!(rules[0].selector, ps_single(None, vec![]));
         assert!(rules[0].declarations.is_empty());
     }
 
@@ -660,13 +772,115 @@ mod tests {
         assert_eq!(tree.style_rules.len(), 1);
     }
 
+    // ── Comment / whitespace transparency within compound (raikiri-spike-mvu spec F2) ──
+    //
+    // CSS Syntax L3 §4.3.2 Consume comments specifies that a /*…*/
+    // sequence is consumed and the algorithm returns nothing — no token
+    // is emitted into the token stream (see
+    // <https://www.w3.org/TR/css-syntax-3/#consume-comment>). Within a
+    // `<page-selector>` compound, therefore, a comment between two
+    // components MUST behave as if absent —
+    // `:first/*x*/:left` == `:first:left`. Whitespace, by contrast, IS
+    // emitted as a <whitespace-token> and still breaks the compound per
+    // L3 §4.3.
+
+    #[test]
+    fn page_comment_between_pseudos_is_transparent() {
+        // `@page :first/*sep*/:left` — comment only, no whitespace within
+        // compound. Per CSS Syntax L3 tokenization, comments vanish, so this
+        // is equivalent to `@page :first:left` → 1 rule with two pseudos.
+        let rules = page_rules("@page :first/*sep*/:left { color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].selector,
+            ps_single(None, vec![PagePseudo::First, PagePseudo::Left])
+        );
+    }
+
+    #[test]
+    fn page_comment_between_colon_and_pseudo_is_transparent() {
+        // `@page :/*x*/first` — comment between `:` and pseudo ident.
+        // Comment vanishes at tokenization, so this equals `@page :first` →
+        // 1 rule. Contrast with `@page : first` (whitespace-separated),
+        // which is dropped by `page_whitespace_between_colon_and_pseudo_is_dropped`.
+        let rules = page_rules("@page :/*x*/first { color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector, ps_single(None, vec![PagePseudo::First]));
+    }
+
+    #[test]
+    fn page_whitespace_plus_comment_between_pseudos_is_dropped() {
+        // `@page :first /*sep*/:left` — comment is transparent, but the
+        // leading whitespace is a real compound-boundary token per L3 §4.3.
+        // Whole rule dropped (matches `page_multi_pseudo_with_whitespace_between_is_dropped`).
+        let rules = page_rules("@page :first /*sep*/:left { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    // ── <custom-ident> case-sensitivity for named-page ident (raikiri-spike-mvu spec F3) ──
+    //
+    // The named-page ident in a `<page-selector>` derives from the `page`
+    // property (CSS Paged Media L3 §8.1 `#using-named-pages`), which types
+    // its value as `<custom-ident>`. Per CSS Values L4 §4.2
+    // `#custom-idents`: "Such identifiers are fully case-sensitive
+    // (meaning they're compared using the 'identical to' operation), even
+    // in the ASCII range (e.g. example and EXAMPLE are two different,
+    // unrelated user-defined identifiers)." So `Cover` and `cover` MUST be
+    // preserved verbatim and treated as distinct named-pages.
+
+    #[test]
+    fn page_named_ident_is_case_sensitive() {
+        let rules = page_rules("@page Cover { color: red } @page cover { color: blue }");
+        assert_eq!(rules.len(), 2);
+        assert_eq!(
+            rules[0].selector,
+            ps_single(Some(Atom::from("Cover")), vec![])
+        );
+        assert_eq!(
+            rules[1].selector,
+            ps_single(Some(Atom::from("cover")), vec![])
+        );
+    }
+
+    // ── <page-selector># list-boundary invariants (raikiri-spike-mvu spec F4) ──
+    //
+    // `<page-selector-list> = <page-selector>#` per CSS Paged Media L3 §4.3
+    // (anchor `#syntax-page-selector`). The `#` multiplier is "one or more,
+    // comma-separated" per CSS Values L4 `#component-multipliers`, so each
+    // list entry must be a *non-empty* `<page-selector>`. Trailing,
+    // leading, and empty-middle commas violate this and drop the whole
+    // `@page` rule. These 3 tests close 3 of the 6 malformed-prelude
+    // debt cases enumerated in bd raikiri-spike-rm8; the remaining 3
+    // (trailing colon on named page, adjacent idents, etc.) stay in rm8.
+
+    #[test]
+    fn page_trailing_comma_is_dropped() {
+        let rules = page_rules("@page :first, { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_leading_comma_is_dropped() {
+        let rules = page_rules("@page ,:first { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_empty_middle_entry_is_dropped() {
+        let rules = page_rules("@page :first, , :left { color: red }");
+        assert!(rules.is_empty());
+    }
+
     #[test]
     fn page_rules_captured_via_build_rule_tree_from_dom() {
         // build_rule_tree (DOM 経由) でも page_rules が populate される。
         let doc = dom_with_style("@page :first { color: red } p { color: blue }");
         let tree = build_rule_tree(&doc);
         assert_eq!(tree.page_rules.len(), 1);
-        assert_eq!(tree.page_rules[0].selector, PageSelector::First);
+        assert_eq!(
+            tree.page_rules[0].selector,
+            ps_single(None, vec![PagePseudo::First])
+        );
         assert_eq!(tree.style_rules.len(), 1);
     }
 }
