@@ -11,6 +11,27 @@
 //! - [`taffy_impl`] — taffy 6 layout trait impls + `unsafe impl Send for Document`
 //! - [`dom_impl`] — `raikiri_traits::Dom / Node / Element` impls + `NodeRef` /
 //!   `ElementRef` types
+//!
+//! # Flat tree membership
+//!
+//! [`Node`] は [`NodeFlags::IS_IN_DOCUMENT`] bit で「Document root から
+//! flat-tree-parent 経由で到達可能」を表す。以下の subtree は clear される:
+//!
+//! - `<template>` element の子孫 (element 自身は in_document=true)
+//! - 将来: shadow root 外の light-DOM 子孫、slotted-only 子孫、mutator の
+//!   transient な detached node
+//!
+//! 維持: raikiri-html sink `finish()` が
+//! [`Document::mark_in_document_flags`] を single pass で呼ぶ。M1 spike は
+//! parse-only なので finish 後は固定。M2+ で runtime mutation を導入する時に
+//! blitz `process_added_subtree` / `process_removed_subtree` 相当を追加する
+//! 予定。
+//!
+//! Traversal が inert subtree を skip したい場合、
+//! [`Node::is_in_document`] を各 iteration で呼ぶ。string 比較 (tag_name ==
+//! "template" 等) で個別判定するのは禁止 — 概念が implicit になり、shadow DOM
+//! 追加時に漏れる。設計仕様書:
+//! `docs/superpowers/specs/2026-07-18-flat-tree-membership-metadata-design.md`。
 
 mod node;
 

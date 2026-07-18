@@ -512,7 +512,11 @@ regression を TestDoc で書けない。整合的な選択は **integration tes
    collect_cascaded / resolve_inheritance / paint_document) が
    `is_in_document()` predicate で統一 skip
 2. ad-hoc string 判定 `"template"` は **sink の `mark_in_document_flags`
-   判定 site 1 箇所のみ** に集約 (grep で回帰確認可能)
+   primary + `walk_and_collect` safety net の 2 か所**に集約 (grep で回帰
+   確認可能)。`walk_and_collect` の safety net は TestDoc 等 `Node::is_in_document`
+   の default true impl から直接呼ばれる cascade / ruletree unit test での
+   `<template><style>...</style></template>` skip 継続を保証するため、明示的に
+   維持する 2nd-line defense (raikiri-spike-37c Task 4)。
 3. §7.1 regression fixture 6 件が pass
 4. raikiri-dom internal pub_surface pin が accessor 経由で通る
 5. M1.15 external consumer test は無変更で pass
