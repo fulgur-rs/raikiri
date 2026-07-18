@@ -154,9 +154,13 @@ mod tests {
     fn html_to_png_returns_png_bytes_for_hello_world() {
         let html = b"<p style=\"color:red\">Hi</p>";
         let png = html_to_png(&html[..]).expect("html_to_png must succeed");
-        assert!(png.len() > 8, "PNG payload should include header + IDAT chunks");
+        assert!(
+            png.len() > 8,
+            "PNG payload should include header + IDAT chunks"
+        );
         assert_eq!(
-            &png[..8], &PNG_MAGIC,
+            &png[..8],
+            &PNG_MAGIC,
             "output must start with PNG magic bytes; got {:?}",
             &png[..8]
         );
