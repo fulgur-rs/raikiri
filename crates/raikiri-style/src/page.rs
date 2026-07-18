@@ -1,4 +1,4 @@
-//! `@page` at-rule shape — parser scaffolding for CSS Paged Media Level 3 §4.3.
+//! `@page` at-rule shape — parser scaffolding for CSS Paged Media Level 3 §3.2.
 //!
 //! # Status
 //!
@@ -8,7 +8,7 @@
 //!
 //! # Primary source
 //!
-//! - CSS Paged Media Module Level 3, §4.3 "@page rule grammar":
+//! - CSS Paged Media Module Level 3, §3.2 "Page selectors syntax":
 //!   <https://www.w3.org/TR/css-page-3/#page-selectors-syntax>
 //!
 //! # Grammar coverage
@@ -22,7 +22,8 @@
 //! ```
 //!
 //! This scaffolding is *narrower* than the spec grammar in two deliberate
-//! ways; M4 may relax these as the cascade side lands:
+//! ways; M4 relaxes these as the cascade side lands (tracked separately —
+//! see the bd task ledger for M4 handoff followups):
 //!
 //! 1. Only a *single* page-selector is accepted (no comma-list). The spec
 //!    allows `@page :first, :left { … }`; we drop such rules for now.
@@ -31,13 +32,18 @@
 //!    `@page named:first { … }` and `@page :first :left { … }` are both
 //!    spec-valid but rejected here.
 //!
-//! In addition, [`PageSelector::NthPage`] models `:nth-page(An+B)`, which is
-//! **not** part of Level 3. It is included as a task-directed scaffolding
-//! extension (raikiri-spike-rbo scope item 2) so downstream code can pattern
-//! on the variant when the CSS Paged Media Level 4 addition lands. No cascade
-//! matching is wired up yet.
+//! # Note on `:nth-page`
+//!
+//! Earlier scaffolding drafts included a `PageSelector::NthPage` variant for
+//! `:nth-page(An+B)`. That variant was removed after reviewer verification
+//! that `:nth-page` is not part of CSS Paged Media Level 3 nor the Level 4
+//! Editor's Draft. Accepting it under autonomous authority would emit a
+//! `PageSelector` variant no primary source defines, forcing invented cascade
+//! semantics at M4. The decision on whether raikiri should ship a spec-outside
+//! `:nth-page` extension (e.g. for GCPM prototyping) is deferred to a human
+//! ledger — see the bd task filed as an M4-handoff escalation.
 
-use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case, parse_nth};
+use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 
 use crate::Atom;
 use crate::rule::Declaration;
@@ -45,8 +51,12 @@ use crate::rule::Declaration;
 /// Parsed `@page` selector.
 ///
 /// Corresponds to a single `<page-selector>` production from CSS Paged Media
-/// L3 §4.3 (see module docs for the deliberate narrowings). [`Self::NthPage`]
-/// is a task-directed extension beyond L3 scope.
+/// L3 §3.2 (see module docs for the deliberate narrowings).
+///
+/// TODO(M4 shape debt): full L3 `<page-selector-list>` coverage requires a
+/// `Vec<PageSelectorEntry { ident: Option<Atom>, pseudos: Vec<PagePseudo> }>`
+/// shape. The current single-variant enum is a scaffolding compromise —
+/// relaxing it is bd-tracked as an M4 followup.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageSelector {
@@ -62,15 +72,6 @@ pub enum PageSelector {
     Blank,
     /// `@page <ident> { … }` — named page selector.
     Named(Atom),
-    /// `@page :nth-page(An+B) { … }` — task-directed extension. Not part of
-    /// CSS Paged Media Level 3; kept as a scaffolding placeholder so cascade
-    /// (M4) can pattern-match without another shape churn.
-    NthPage {
-        /// `A` coefficient of the `An+B` micro-syntax.
-        a: i32,
-        /// `B` constant of the `An+B` micro-syntax.
-        b: i32,
-    },
 }
 
 /// Parsed `@page` rule — selector + declaration list + source order.
@@ -87,6 +88,10 @@ pub struct PageRule {
     /// Declarations from the block body — parsed with the same
     /// `parse_declaration_block` used by qualified rules, so unsupported
     /// properties are silently dropped (matching the M1.4 policy).
+    ///
+    /// M4 note: `@page`-specific descriptors (`size`, `marks`, `bleed`, and
+    /// the margin-box at-rules `@top-left` etc. per L3 §5) are also dropped
+    /// by this reuse; wiring them is M4 scope.
     pub declarations: Vec<Declaration>,
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
@@ -101,11 +106,10 @@ pub struct PageRule {
 /// - empty (→ [`PageSelector::Default`])
 /// - `<ident>` (→ [`PageSelector::Named`])
 /// - `:` `ident` where ident matches one of the four L3 pseudo-pages
-/// - `:` `nth-page(An+B)` (task-directed extension)
 ///
 /// Anything else — comma-list, ident+pseudo combo, two pseudos, unknown
-/// pseudo-keyword — is an `Err`, which cssparser converts into "drop the
-/// whole @page rule".
+/// pseudo-keyword, or a functional pseudo — is an `Err`, which cssparser
+/// converts into "drop the whole @page rule".
 pub(crate) fn parse_page_prelude<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<PageSelector, ParseError<'i, ()>> {
@@ -131,7 +135,9 @@ pub(crate) fn parse_page_prelude<'i>(
 }
 
 /// Parse the `<pseudo-page>` production after the leading `:` has been
-/// consumed. Also handles the `:nth-page(An+B)` task-directed extension.
+/// consumed. Only the four L3 pseudo-page idents (`first` / `left` / `right`
+/// / `blank`) are accepted; any functional pseudo (e.g. `:nth-page(...)`) is
+/// rejected as an unknown pseudo per L3.
 fn parse_pseudo_page<'i>(input: &mut Parser<'i, '_>) -> Result<PageSelector, ParseError<'i, ()>> {
     let tok = input.next()?.clone();
     match tok {
@@ -144,18 +150,6 @@ fn parse_pseudo_page<'i>(input: &mut Parser<'i, '_>) -> Result<PageSelector, Par
                 _ => return Err(input.new_custom_error(())),
             };
             Ok(selector)
-        }
-        Token::Function(name) if name.eq_ignore_ascii_case("nth-page") => {
-            let (a, b) = input.parse_nested_block(|nested| {
-                let ab = parse_nth(nested).map_err::<ParseError<'i, ()>, _>(Into::into)?;
-                // Reject `:nth-page(2n+1 garbage)` — matches the same
-                // exhaustive-consumption discipline as DeclParser::parse_value.
-                nested
-                    .expect_exhausted()
-                    .map_err::<ParseError<'i, ()>, _>(Into::into)?;
-                Ok::<(i32, i32), ParseError<'i, ()>>(ab)
-            })?;
-            Ok(PageSelector::NthPage { a, b })
         }
         _ => Err(input.new_custom_error(())),
     }

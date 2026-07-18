@@ -457,7 +457,7 @@ mod tests {
 
     // ── @page at-rule scaffolding (raikiri-spike-rbo) ──
     //
-    // Spec: CSS Paged Media Level 3 §4.3
+    // Spec: CSS Paged Media Level 3 §3.2 "Page selectors syntax"
     // <https://www.w3.org/TR/css-page-3/#page-selectors-syntax>
     //
     // Test で使う body は M1.4 の property.rs でサポート済み (color / font-*) を
@@ -519,19 +519,22 @@ mod tests {
     }
 
     #[test]
-    fn page_nth_page_functional_pseudo() {
-        // 2n+1 → a=2, b=1
-        let rules = page_rules("@page :nth-page(2n+1) { color: red }");
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].selector, PageSelector::NthPage { a: 2, b: 1 });
-    }
-
-    #[test]
     fn page_multi_pseudo_is_dropped() {
-        // Scaffolding narrowing (see page.rs module docs): spec §4.3 では
+        // Scaffolding narrowing (see page.rs module docs): spec §3.2 では
         // `<pseudo-page>*` で複数許可だが、raikiri-spike-rbo では単数のみ受理。
         // `@page :first :left` は入 rule ごと drop。
         let rules = page_rules("@page :first :left { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_functional_pseudo_is_dropped() {
+        // Spec-outside functional pseudo (e.g. `:nth-page(...)`) は CSS Paged
+        // Media L3 §3.2 も L4 Editor's Draft も定義していないため、raikiri-style
+        // としては未知 pseudo として rule ごと drop する。もし raikiri-local な
+        // 拡張として実装する日が来れば、そのときは明示的に variant を追加し
+        // (現在のこの guard test を反転) スコープを人間 ledger で決める。
+        let rules = page_rules("@page :nth-page(2n+1) { color: red }");
         assert!(rules.is_empty());
     }
 
@@ -553,7 +556,7 @@ mod tests {
 
     #[test]
     fn page_unknown_pseudo_is_dropped() {
-        // `:cover` は spec §4.3 に存在しないため drop。
+        // `:cover` は spec §3.2 に存在しないため drop。
         let rules = page_rules("@page :cover { color: red }");
         assert!(rules.is_empty());
     }
@@ -568,12 +571,16 @@ mod tests {
     }
 
     #[test]
-    fn page_nth_page_trailing_garbage_dropped() {
-        // `:nth-page(2n+1 garbage)` — parse_nth の後に garbage token が残るので
-        // rule ごと drop (rule.rs の rejects_trailing_garbage_after_value と同じ
-        // exhaustive-consumption discipline)。
-        let rules = page_rules("@page :nth-page(2n+1 garbage) { color: red }");
-        assert!(rules.is_empty());
+    fn page_margin_box_at_rule_body_is_skipped_declaration_survives() {
+        // reviewer-spec §8.2 Finding 4 regression guard: parse_declaration_block
+        // reuse は margin-box at-rules (`@top-left { … }` per L3 §5) を DeclParser
+        // の default AtRuleParser::parse_prelude が Err で返して cssparser の
+        // error-recovery で block ごと silent skip する。その前後の通常宣言は
+        // 生き残ることを pin する。M4 で margin-box を wire するときは PageDeclParser
+        // に本物の AtRuleParser を実装する予定。
+        let rules = page_rules("@page :first { @top-left { content: 'x' } color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].declarations.len(), 1);
     }
 
     #[test]
