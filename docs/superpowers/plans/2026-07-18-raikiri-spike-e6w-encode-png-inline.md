@@ -71,12 +71,16 @@ comment は `[dependencies]` 側で以下に置き換え:
 # m1.14 html_to_png: raster pipeline 用 (anyrender_vello_cpu で render_to_buffer)。
 ```
 
-新規に `[dev-dependencies]` セクションを追加 (無ければ):
+新規に `[dev-dependencies]` セクションを追加 (無ければ)。**重要**: workspace pin (`version = "0.1.0", path = ...`) を継承せず、path-only で指定する:
 
 ```toml
 [dev-dependencies]
-# hello_world_vrt integration test 用 (raikiri-spike-e6w: production は publishable なので dev-dep へ)
-raikiri-vrt = { workspace = true }
+# hello_world_vrt integration test 用。raikiri-vrt は publish=false のため
+# workspace pin (version = "0.1.0", path = ...) を継承せず path-only で指定する
+# (workspace = true にすると version が manifest に残り、cargo publish 時に
+#  path を strip した後 crates.io からの resolution が失敗するため)。
+# path-only dev-dep は cargo publish 時に完全に strip される。
+raikiri-vrt = { path = "../raikiri-vrt" }
 ```
 
 - [ ] **Step 3: `crates/raikiri/src/html_to_png.rs` の import 差し替え**

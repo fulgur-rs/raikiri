@@ -190,8 +190,8 @@ impl std::error::Error for FixtureError {
 /// # Panics
 ///
 /// Panics if either PNG buffer fails to decode. Both inputs should be
-/// valid PNG bytes (typically produced by `encode_png` or read from a
-/// well-formed fixture).
+/// valid PNG bytes (typically produced by `tiny_skia::Pixmap::encode_png`
+/// or `raikiri::html_to_png`, or read from a well-formed fixture).
 pub fn compare_png(
     actual_png: &[u8],
     expected_png: &[u8],
