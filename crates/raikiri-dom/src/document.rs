@@ -262,6 +262,63 @@ impl Document {
             .collect();
     }
 
+    /// `<template>` element の contents fragment root を新規 allocate し、
+    /// その arena index を template element の `template_contents` slot に
+    /// wire する (raikiri-spike-xno Part 2)。
+    ///
+    /// # Fragment root の shape (Option B — detached subtree)
+    ///
+    /// Fragment root は `Document.nodes` arena に detached 状態で allocate される
+    /// (parent なし、Document root からも reachable でない)。tag は
+    /// `"#document-fragment"` — 既存の `#comment` / `#pi` pseudo-tag convention
+    /// を踏襲する:
+    /// - CSS selector は leading `#` の tag 名にマッチしないため、意図しない
+    ///   selector match / cascade が起きない
+    /// - real HTML tag と衝突しない
+    /// - `NodeKind::Element` として存在するが `is_in_document()` は false
+    ///   (以下 `flags_dirty=true` → `mark_in_document_flags` の step 1 で clear
+    ///   された後、step 2 で reachable でないため false のまま)
+    ///
+    /// # html5ever integration
+    ///
+    /// html5ever `TreeSink::create_element` に渡される `ElementFlags::template`
+    /// が true の時、sink がこの method を呼んで fragment root を作り
+    /// template element の `template_contents` slot に格納する。以降
+    /// `TreeSink::get_template_contents` は fragment root index を返し、
+    /// html5ever は template contents をその子として append する
+    /// (template element 自身の children は空のまま)。
+    ///
+    /// blitz `blitz-dom::html_sink::HtmlSink::create_element` の
+    /// `create_template_contents` 相当。
+    ///
+    /// # Panics
+    ///
+    /// `template_id` が Element kind でない場合 (release + debug 共通)。
+    /// template element でない node に fragment root を wire するのは
+    /// caller bug なので early fail。
+    ///
+    /// Returns: 新規 allocate された fragment root の arena index。
+    pub fn allocate_template_fragment_root(&mut self, template_id: usize) -> usize {
+        // Step 1: fragment root を append_element(None) で detached allocate。
+        // 内部で `flags_dirty=true` が set されるので、後段 `mark_in_document_flags`
+        // が step 1 で fragment root の default IS_IN_DOCUMENT bit を clear する。
+        let frag_root = self.append_element(
+            None::<usize>,
+            "#document-fragment",
+            Style::default(),
+            None::<&str>,
+        );
+        // Step 2: template element の template_contents slot に fragment root
+        // index を wire。非-Element を渡した場合は as_element_mut() が None を
+        // 返して panic (blg / attributes setter と同じ strictness)。
+        let e = self.nodes[template_id]
+            .data
+            .as_element_mut()
+            .expect("allocate_template_fragment_root called on non-Element");
+        e.template_contents = Some(frag_root);
+        frag_root
+    }
+
     /// Element node の `inline_style` を後付けで更新する
     /// (raikiri-spike-blg)。sink が `finish()` 時に side-table から
     /// `style="..."` を抽出して呼び出す。値は生 string でよく、`style=""`

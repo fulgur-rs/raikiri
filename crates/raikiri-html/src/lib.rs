@@ -496,6 +496,109 @@ mod tests {
     }
 
     #[test]
+    fn parse_wires_template_contents_to_detached_fragment_root() {
+        // raikiri-spike-xno Part 2: sink が `<template>` を作った時 fragment
+        // root を eager allocate し、template element の `template_contents`
+        // slot に arena index を wire する。html5ever は以降
+        // `get_template_contents(template_handle)` の戻り値を append parent と
+        // して使うため、template contents は fragment root の子として積まれ
+        // (template element 自身の children は空)、Document root からは
+        // reachable でなくなる。この smoke test は次を pin する:
+        //
+        // 1. template_contents は Some(idx) を返し、idx != template arena index
+        //    (別 arena slot に fragment root が実在する)
+        // 2. template element の arena children は空 (children は fragment root
+        //    へ流れた: 旧 M1 挙動では template 直下に <span> が居た)
+        // 3. fragment root の arena children に <span> が含まれる (reshape 到達点)
+        // 4. 37c invariant: template 自身は is_in_document()=true、fragment root
+        //    と <span>、その text は is_in_document()=false (Document root から
+        //    reachable でないため mark_in_document_flags で clear される)
+        let html = b"<html><body><template><span>x</span></template></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let doc = &uncascaded.dom;
+
+        // template element を linear scan で拾う (get_template_contents に相当
+        // する raikiri-traits API は無いため、arena 直参照で node.template_contents()
+        // を読む)。
+        let mut template_id: Option<usize> = None;
+        let mut span_id: Option<usize> = None;
+        for id_u in 0..doc.node_count() {
+            let id = raikiri_traits::NodeId::new(id_u as u64);
+            let n = doc.node(id).expect("in-range");
+            if let Some(el) = n.as_element() {
+                match el.tag_name() {
+                    "template" => template_id = Some(id_u),
+                    "span" => span_id = Some(id_u),
+                    _ => {}
+                }
+            }
+        }
+        let template_id = template_id.expect("<template> element should exist in arena");
+        let span_id = span_id.expect("<span> element should exist in arena");
+
+        let template_node = doc.get_node(template_id).expect("template node in-range");
+        let frag_root_id = template_node
+            .template_contents()
+            .expect("template_contents slot must be populated by sink");
+
+        // (1) fragment root は template element と別 arena slot に居る。
+        assert_ne!(
+            frag_root_id, template_id,
+            "fragment root must be a distinct arena node, not the template element itself"
+        );
+
+        // (2) template element 自身の arena children は空 (reshape で全ての
+        // contents が fragment root に付いた)。
+        assert!(
+            template_node.children.is_empty(),
+            "template element's own arena children must be empty (contents belong to fragment root); got {:?}",
+            template_node.children
+        );
+
+        // (3) fragment root は "#document-fragment" tag の Element として存在し、
+        // その arena children に <span> が含まれる。
+        let frag_root = doc
+            .get_node(frag_root_id)
+            .expect("fragment root should exist in arena");
+        assert_eq!(
+            frag_root.tag_name(),
+            Some("#document-fragment"),
+            "fragment root should use the '#document-fragment' pseudo-tag"
+        );
+        assert!(
+            frag_root.children.contains(&span_id),
+            "fragment root children must include the <span>; got {:?}",
+            frag_root.children
+        );
+
+        // (4) 37c invariant: template 自身は in_document、fragment root と
+        // <span> はどちらも out-of-document (Document root から reachable
+        // でないため `mark_in_document_flags` step 2 が set しない)。
+        assert!(
+            template_node.is_in_document(),
+            "template element itself must be in_document"
+        );
+        assert!(
+            !frag_root.is_in_document(),
+            "fragment root must be out-of-document (detached from Document root)"
+        );
+        let span_node = doc.get_node(span_id).expect("span in-range");
+        assert!(
+            !span_node.is_in_document(),
+            "<span> under fragment root must be out-of-document"
+        );
+        // <span> の text child も out-of-document。
+        for &c in &span_node.children {
+            let child = doc.get_node(c).expect("span child in-range");
+            assert!(
+                !child.is_in_document(),
+                "text under <span> in template must be out-of-document"
+            );
+        }
+    }
+
+    #[test]
     fn parse_marks_nested_template_descendants_out_of_document() {
         // raikiri-spike-37c: 深いネスト (template > div > span > text) でも
         // in_document bit が subtree 全体に伝播する。single-pass DFS で
