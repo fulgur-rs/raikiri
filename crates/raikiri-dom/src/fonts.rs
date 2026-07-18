@@ -154,19 +154,34 @@ fn walk_fonts(dir: &Path) -> Result<Vec<PathBuf>, FontError> {
             .map(|n| PREFERRED_FIRST.contains(&n))
             .unwrap_or(false)
     });
-    // 3. preferred は PREFERRED_FIRST の配列 index 順に再ソート
+    // 3. preferred は PREFERRED_FIRST の配列 index 順に再ソート。
+    // 同一 basename が複数 subdir に存在するケース (例: 将来の WPT pin で
+    // Ahem.ttf が fonts/ と fonts/CSSTest/ 両方に存在) では **全 match** を
+    // drain する — `.find()` を 1 回だけ呼ぶと最初の match 以外が
+    // ordered_preferred からも rest からも silently drop されてしまう
+    // (M1 finding)。`Vec::retain` で target にマッチする要素を全部
+    // 抜き取ることで、複数 match を取りこぼさない。
     let mut ordered_preferred: Vec<PathBuf> = Vec::new();
+    let mut remaining_preferred = preferred;
     for target in PREFERRED_FIRST {
-        if let Some(p) = preferred
-            .iter()
-            .find(|p| p.file_name().and_then(|f| f.to_str()) == Some(*target))
-        {
-            ordered_preferred.push(p.clone());
-        }
+        let mut matched: Vec<PathBuf> = Vec::new();
+        remaining_preferred.retain(|p| {
+            if p.file_name().and_then(|f| f.to_str()) == Some(*target) {
+                matched.push(p.clone());
+                false
+            } else {
+                true
+            }
+        });
+        ordered_preferred.extend(matched);
     }
-    // 4. preferred + rest を結合
+    // 4. preferred + rest を結合。remaining_preferred は理論上 empty
+    // (partition の条件が PREFERRED_FIRST.contains と一致する為) だが、
+    // 万一 unmatched な要素が残っても rest 側に足すことで silent drop を
+    // 防ぐ (M1 finding の根本対策)。
     let mut result = ordered_preferred;
     result.extend(rest);
+    result.extend(remaining_preferred);
     Ok(result)
 }
 
@@ -271,10 +286,12 @@ mod tests {
     #[test]
     fn walker_preferred_first_orders_ahem_before_csstest() {
         let tmp = tempfile::tempdir().unwrap();
-        // Ahem.ttf は sort 順でも先頭 (A) だが、PREFERRED_FIRST[0] として
-        // **explicit に**先頭に来ることを regression pin。将来 PREFERRED_FIRST
-        // に Lato-Medium 等が追加されたとき Ahem が override されないよう
-        // 意図明示 (現在は array 1 要素なので default sort と重複するが OK)。
+        // "AAA-non-preferred.ttf" は plain alphabetical sort だと Ahem.ttf
+        // より前に来る ('A' == 'A' だが "AAA" < "Ahem" byte-wise: 'A' < 'h').
+        // これを混ぜることで、PREFERRED_FIRST の explicit reorder が本当に
+        // 効いていることを検証する (M2 finding: これが無いと Ahem が
+        // alphabetically 先頭なだけの偶然と reorder 適用が区別できない)。
+        write_fake_ttf(tmp.path(), "AAA-non-preferred.ttf");
         write_fake_ttf(tmp.path(), "Ahem.ttf");
         write_fake_ttf(tmp.path(), "CSSTest-Regular.ttf");
         write_fake_ttf(tmp.path(), "Lato-Bold.ttf");
@@ -283,10 +300,62 @@ mod tests {
             .iter()
             .map(|p| p.file_name().and_then(|f| f.to_str()).unwrap().to_string())
             .collect();
-        // Ahem (PREFERRED_FIRST[0]) → 残りは path sort (CSSTest, Lato-Bold)
+        // Ahem (PREFERRED_FIRST[0]) が alphabetically 先頭の
+        // AAA-non-preferred.ttf を override → 残りは path sort
+        // (AAA-non-preferred, CSSTest, Lato-Bold)
         assert_eq!(
             names,
-            vec!["Ahem.ttf", "CSSTest-Regular.ttf", "Lato-Bold.ttf",]
+            vec![
+                "Ahem.ttf",
+                "AAA-non-preferred.ttf",
+                "CSSTest-Regular.ttf",
+                "Lato-Bold.ttf",
+            ]
+        );
+    }
+
+    #[test]
+    fn walker_handles_duplicate_preferred_basename_in_subdirs() {
+        // M1 regression pin: 同一 basename (Ahem.ttf) が top-level と
+        // subdir 両方に存在するケース (将来の WPT pin で fonts/Ahem.ttf +
+        // fonts/CSSTest/Ahem.ttf のような構成があり得る)。旧実装は
+        // `.find()` を 1 回しか呼ばない為、2 個目以降の match が
+        // ordered_preferred からも rest からも silently drop されていた。
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("subdir");
+        std::fs::create_dir(&sub).unwrap();
+        write_fake_ttf(tmp.path(), "Ahem.ttf");
+        write_fake_ttf(&sub, "Ahem.ttf");
+        write_fake_ttf(tmp.path(), "Other.ttf");
+
+        let paths = walk_fonts(tmp.path()).unwrap();
+        assert_eq!(
+            paths.len(),
+            3,
+            "both Ahem.ttf copies + Other.ttf must survive the walk, got: {:?}",
+            paths
+        );
+
+        // 両方の Ahem.ttf copy が結果に含まれる (basename 重複でも drop されない)
+        let ahem_count = paths
+            .iter()
+            .filter(|p| p.file_name().and_then(|f| f.to_str()) == Some("Ahem.ttf"))
+            .count();
+        assert_eq!(ahem_count, 2, "duplicate Ahem.ttf basenames must both survive");
+
+        // PREFERRED_FIRST の Ahem.ttf 2 個は先頭 2 slot を占める (path sort順:
+        // top-level "Ahem.ttf" < "subdir/Ahem.ttf")
+        assert_eq!(
+            paths[0].file_name().and_then(|f| f.to_str()),
+            Some("Ahem.ttf")
+        );
+        assert_eq!(
+            paths[1].file_name().and_then(|f| f.to_str()),
+            Some("Ahem.ttf")
+        );
+        assert_eq!(
+            paths[2].file_name().and_then(|f| f.to_str()),
+            Some("Other.ttf")
         );
     }
 
