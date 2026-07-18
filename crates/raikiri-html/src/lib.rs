@@ -553,6 +553,127 @@ mod tests {
         assert_eq!(p.inline_style_source(), Some("color:red"));
     }
 
+    // ── MathML annotation-xml integration point (raikiri-spike-eil) ─────
+    //
+    // HTML5 §13.2.5 tree construction: MathML `annotation-xml` element は
+    // `encoding` attribute の value が ASCII case-insensitive で `text/html`
+    // または `application/xhtml+xml` と一致するときに HTML integration point
+    // となる。tree construction algorithm の branch 判定に使う中心 predicate。
+
+    /// Helper: annotation-xml element を指定 namespace + encoding で作成し、
+    /// `is_mathml_annotation_xml_integration_point` の返り値を返す。
+    fn probe_annotation_xml_integration_point(
+        ns_uri: &str,
+        local: &str,
+        encoding: Option<&str>,
+    ) -> bool {
+        use html5ever::interface::{Attribute, ElementFlags, QualName, TreeSink};
+        use html5ever::tendril::StrTendril;
+        use markup5ever::{LocalName, Namespace};
+
+        let sink = RaikiriTreeSink::new();
+        let name = QualName::new(None, Namespace::from(ns_uri), LocalName::from(local));
+        let attrs = encoding
+            .map(|v| {
+                vec![Attribute {
+                    name: QualName::new(None, Namespace::from(""), LocalName::from("encoding")),
+                    value: StrTendril::from(v),
+                }]
+            })
+            .unwrap_or_default();
+        let idx = sink.create_element(name, attrs, ElementFlags::default());
+        sink.is_mathml_annotation_xml_integration_point(&idx)
+    }
+
+    #[test]
+    fn annotation_xml_with_text_html_encoding_is_integration_point() {
+        assert!(probe_annotation_xml_integration_point(
+            "http://www.w3.org/1998/Math/MathML",
+            "annotation-xml",
+            Some("text/html"),
+        ));
+    }
+
+    #[test]
+    fn annotation_xml_encoding_comparison_is_ascii_case_insensitive() {
+        // spec: "ASCII case-insensitive match"
+        for v in [
+            "Text/HTML",
+            "TEXT/HTML",
+            "text/HTML",
+            "Application/XHTML+XML",
+        ] {
+            assert!(
+                probe_annotation_xml_integration_point(
+                    "http://www.w3.org/1998/Math/MathML",
+                    "annotation-xml",
+                    Some(v),
+                ),
+                "encoding={v:?} should match (ASCII case-insensitive)"
+            );
+        }
+    }
+
+    #[test]
+    fn annotation_xml_with_application_xhtml_xml_encoding_is_integration_point() {
+        assert!(probe_annotation_xml_integration_point(
+            "http://www.w3.org/1998/Math/MathML",
+            "annotation-xml",
+            Some("application/xhtml+xml"),
+        ));
+    }
+
+    #[test]
+    fn annotation_xml_with_unrelated_encoding_is_not_integration_point() {
+        // spec は text/html と application/xhtml+xml の 2 種のみ integration point。
+        // application/xml / image/svg+xml / 空文字列 は non-match。
+        for v in ["application/xml", "image/svg+xml", "", "text/plain"] {
+            assert!(
+                !probe_annotation_xml_integration_point(
+                    "http://www.w3.org/1998/Math/MathML",
+                    "annotation-xml",
+                    Some(v),
+                ),
+                "encoding={v:?} should not match"
+            );
+        }
+    }
+
+    #[test]
+    fn annotation_xml_without_encoding_attribute_is_not_integration_point() {
+        assert!(!probe_annotation_xml_integration_point(
+            "http://www.w3.org/1998/Math/MathML",
+            "annotation-xml",
+            None,
+        ));
+    }
+
+    #[test]
+    fn non_mathml_annotation_xml_is_not_integration_point() {
+        // Defense in depth: annotation-xml でも MathML namespace 以外では
+        // integration point ではない (spec の主語が "MathML annotation-xml")。
+        assert!(!probe_annotation_xml_integration_point(
+            "http://www.w3.org/2000/svg",
+            "annotation-xml",
+            Some("text/html"),
+        ));
+        assert!(!probe_annotation_xml_integration_point(
+            "http://www.w3.org/1999/xhtml",
+            "annotation-xml",
+            Some("text/html"),
+        ));
+    }
+
+    #[test]
+    fn non_annotation_xml_mathml_element_is_not_integration_point() {
+        // annotation-xml 以外の MathML 要素は integration point ではない。
+        assert!(!probe_annotation_xml_integration_point(
+            "http://www.w3.org/1998/Math/MathML",
+            "mi",
+            Some("text/html"),
+        ));
+    }
+
     #[test]
     fn parse_strips_many_comments_under_one_parent() {
         use raikiri_traits::{Dom, Element, Node};

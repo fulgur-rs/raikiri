@@ -266,8 +266,28 @@ impl TreeSink for RaikiriTreeSink {
             .reparent_children(*node, *new_parent);
     }
 
-    fn is_mathml_annotation_xml_integration_point(&self, _handle: &usize) -> bool {
-        false
+    fn is_mathml_annotation_xml_integration_point(&self, handle: &usize) -> bool {
+        // HTML5 §13.2.5 Tree construction: MathML `annotation-xml` element is
+        // an HTML integration point iff its `encoding` attribute value is an
+        // ASCII case-insensitive match for `text/html` or `application/xhtml+xml`.
+        // side-table (qual_names + attributes) から直接判定する。
+        let qual_names = self.qual_names.borrow();
+        let Some(name) = qual_names.get(handle) else {
+            return false;
+        };
+        if name.ns != ns!(mathml) || name.local.as_ref() != "annotation-xml" {
+            return false;
+        }
+        let attributes = self.attributes.borrow();
+        let Some(attrs) = attributes.get(handle) else {
+            return false;
+        };
+        attrs.iter().any(|a| {
+            a.name.ns == ns!()
+                && a.name.local.as_ref() == "encoding"
+                && (a.value.eq_ignore_ascii_case("text/html")
+                    || a.value.eq_ignore_ascii_case("application/xhtml+xml"))
+        })
     }
 }
 
