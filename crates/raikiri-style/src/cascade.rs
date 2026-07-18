@@ -51,13 +51,22 @@ pub struct CascadeResult {
 /// # }
 /// ```
 pub fn cascade<D: Dom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResult, CascadeError> {
-    let mut computed: Vec<ComputedValues> = Vec::new();
     let mut cascaded: HashMap<NodeId, Vec<CascadedDecl>> = HashMap::new();
 
     // Phase 1: per-node cascaded values を収集
     collect_cascaded(dom, dom.root_id(), rule_tree, &mut cascaded);
 
-    // Phase 2: inheritance walk
+    // Phase 2: inheritance walk。
+    //
+    // raikiri-spike-37c roborev job 293 M1 finding: computed を Dom::node_count()
+    // で pre-allocate する。resolve_inheritance の DFS は root reachable な node
+    // のみを訪問するため、detached / unreachable node (foster-parenting transient、
+    // strip 後の孤児 stub 等) には entry を作らない。しかし raikiri-spike-m1.23
+    // contract `computed.len() == document.node_count()` は arena 全体を要求する
+    // (`raikiri-dom::layout::preshape_text` / `raikiri-paint::text::draw_text_node`
+    // が node_id で `computed[idx]` に直接 index する)。事前に initial() で埋めて
+    // おき、DFS で visited slot を上書きする実装。
+    let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
     resolve_inheritance(
         dom,
         dom.root_id(),

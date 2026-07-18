@@ -92,6 +92,21 @@ pub trait Dom {
     /// `id` の direct children を走査する iterator。範囲外 (invalid NodeId)
     /// なら empty iterator を返す ([`node`](Self::node) の `None` と対称)。
     fn child_ids(&self, id: NodeId) -> Self::ChildIter<'_>;
+
+    /// Arena 内の総 node 数 (Document root および detached / unreachable node
+    /// を含む) (raikiri-spike-37c, roborev job 293 M1 finding 対応)。
+    ///
+    /// cascade などの traversal が `Vec<T>` を pre-allocate する用途で使う。
+    /// **契約**: すべての `NodeId(0..node_count as u64)` が [`node`](Self::node)
+    /// で `Some` を返すこと。逆に `id.0 >= node_count as u64` なら `None` を
+    /// 返す。
+    ///
+    /// Default impl は `0` を返す。既存 caller が壊れないための safe fallback
+    /// で、`Dom` を実装する新しい type は override すべき。既存の raikiri-dom
+    /// および raikiri-style の TestDoc impl は override 済み。
+    fn node_count(&self) -> usize {
+        0
+    }
 }
 
 /// Node reference (borrowed lifetime `'a`)。kind ごとの dispatch と共通 API を

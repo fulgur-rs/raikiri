@@ -248,7 +248,11 @@ impl Document {
     ///   全 node を clear するため、そうした node が in_document=true として
     ///   残ることは無い。
     /// - iterative Vec stack で深い DOM での stack overflow を回避。
-    /// - tree mutation ではないので `invalidate_layout_cache` は呼ばない。
+    /// - roborev job 293 M2 finding: 本 method は taffy の effective child tree
+    ///   (`TaffyChildIter` が `is_in_document()` で filter する) を変更する。
+    ///   post-condition として layout cache も無効化する — さもなくば次回
+    ///   `compute_child_layout` が古い child ordering で cached result を再利用
+    ///   してしまう。
     pub fn mark_in_document_flags(&mut self) {
         // Step 1: 全 arena node の bit を先に clear。Node::new_* constructor が
         // default true を立てるが、それは "attach 済み" の楽観的初期値。ここで
@@ -276,6 +280,9 @@ impl Document {
                 stack.push((c, child_in_template));
             }
         }
+        // Step 3: taffy が観測する effective child tree が変わり得るため、
+        // layout cache を dirty mark する (roborev job 293 M2 finding)。
+        self.invalidate_layout_cache();
     }
 
     /// arena index `id` の node への借用参照。範囲外 index は `None`。

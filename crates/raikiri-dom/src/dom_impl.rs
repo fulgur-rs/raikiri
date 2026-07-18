@@ -59,6 +59,12 @@ impl raikiri_traits::Dom for Document {
             .unwrap_or(&[]);
         ChildIter(slice.iter())
     }
+
+    fn node_count(&self) -> usize {
+        // Document::node_count() の trait 経由 view (raikiri-spike-37c, roborev
+        // job 293 M1 finding 対応)。arena 全 node の数 (detached を含む)。
+        Document::node_count(self)
+    }
 }
 
 impl<'a> raikiri_traits::Node<'a> for NodeRef<'a> {

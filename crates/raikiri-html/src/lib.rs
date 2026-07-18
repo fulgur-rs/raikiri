@@ -552,25 +552,51 @@ mod tests {
 
         // cascade 呼び出し後も inner <p> は out-of-document のまま (cascade が bit
         // を触ることは無いという contract の pin)。
-        let mut inner_p_out = false;
+        //
+        // roborev job 293 L1 finding: 加えて outer <p> と inner <p> の ComputedValues
+        // を実際に検証する。gate が動いていれば outer には `p { color: red }` rule
+        // が適用され CssColor { r:255, g:0, b:0 } となり、inner には rule が適用
+        // されず initial (CssColor::BLACK = { r:0, g:0, b:0 }) が残る。もし cascade
+        // gate を両方削除したら inner にも red rule が届き BLACK ではなくなるため、
+        // この assert 対で gate 動作が本当に発火していることを pin する。
+        use raikiri_style::property::CssColor;
+        const RED: CssColor = CssColor { r: 255, g: 0, b: 0, a: 255 };
+
+        let mut outer_p_id: Option<usize> = None;
+        let mut inner_p_id: Option<usize> = None;
         for id_u in 0..uncascaded.dom.node_count() {
             let id = raikiri_traits::NodeId::new(id_u as u64);
             let n = uncascaded.dom.node(id).unwrap();
             if let Some(el) = n.as_element()
                 && el.tag_name() == "p"
-                && el.id() == Some("inner")
             {
-                assert!(
-                    !n.is_in_document(),
-                    "inner <p> should remain out of document after cascade"
-                );
-                inner_p_out = true;
-                // Index into cascade.computed for the inert node must not panic
-                // (proves out[idx] was still written despite the gate).
-                let _ = &cascade.computed[id_u];
+                if el.id() == Some("inner") {
+                    assert!(
+                        !n.is_in_document(),
+                        "inner <p> should remain out of document after cascade"
+                    );
+                    inner_p_id = Some(id_u);
+                } else {
+                    outer_p_id = Some(id_u);
+                }
             }
         }
-        assert!(inner_p_out, "should find <p id=inner> inside template");
+        let outer_p_id = outer_p_id.expect("outer <p> should exist");
+        let inner_p_id = inner_p_id.expect("<p id=inner> should exist inside template");
+
+        // Index into cascade.computed for both nodes must not panic (proves
+        // out[idx] was still written for the inert node despite the gate).
+        let outer_cv = &cascade.computed[outer_p_id];
+        let inner_cv = &cascade.computed[inner_p_id];
+
+        assert_eq!(
+            outer_cv.color, RED,
+            "outer <p> should have red rule applied (in-document, rule matches)"
+        );
+        assert_eq!(
+            inner_cv.color, CssColor::BLACK,
+            "inner <p> should keep initial color (cascade gate skips template descendants)"
+        );
     }
 
     #[test]

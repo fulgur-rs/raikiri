@@ -105,6 +105,11 @@ impl Dom for TestDoc {
             .unwrap_or(&[]);
         TestChildIter(slice.iter())
     }
+
+    fn node_count(&self) -> usize {
+        // raikiri-spike-37c: cascade が out.resize() の pre-allocation で消費する。
+        self.nodes.len()
+    }
 }
 
 impl<'a> Node<'a> for TestNodeRef<'a> {
