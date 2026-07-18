@@ -88,7 +88,6 @@ impl Iterator for TestChildIter<'_> {
 
 impl StyleDom for TestDoc {
     type NodeRef<'a> = TestNodeRef<'a>;
-    type ElementRef<'a> = TestElementRef<'a>;
     type ChildIter<'a> = TestChildIter<'a>;
 
     fn root_id(&self) -> StyleNodeId {

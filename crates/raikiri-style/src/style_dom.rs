@@ -88,10 +88,6 @@ pub trait StyleDom {
     type NodeRef<'a>: StyleNode<'a>
     where
         Self: 'a;
-    /// Borrowed element reference.
-    type ElementRef<'a>: StyleElement<'a>
-    where
-        Self: 'a;
     /// Iterator over child node identifiers.
     type ChildIter<'a>: Iterator<Item = StyleNodeId>
     where
@@ -245,10 +241,6 @@ where
 {
     type NodeRef<'a>
         = T::NodeRef<'a>
-    where
-        Self: 'a;
-    type ElementRef<'a>
-        = T::ElementRef<'a>
     where
         Self: 'a;
     type ChildIter<'a>
