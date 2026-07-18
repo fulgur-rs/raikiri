@@ -440,24 +440,39 @@ mod tests {
             if let Some(el) = n.as_element() {
                 match el.tag_name() {
                     "template" => {
-                        assert!(n.is_in_document(), "template element itself must be in document");
+                        assert!(
+                            n.is_in_document(),
+                            "template element itself must be in document"
+                        );
                         saw_template = true;
                     }
                     "p" if el.id() == Some("inner") => {
-                        assert!(!n.is_in_document(), "<p> inside <template> must be out of document");
+                        assert!(
+                            !n.is_in_document(),
+                            "<p> inside <template> must be out of document"
+                        );
                         saw_inner_p = true;
                     }
                     _ => {}
                 }
             }
             if n.text_content() == Some("hi") {
-                assert!(!n.is_in_document(), "text inside <template> must be out of document");
+                assert!(
+                    !n.is_in_document(),
+                    "text inside <template> must be out of document"
+                );
                 saw_inner_text = true;
             }
         }
         assert!(saw_template, "template element should exist in parsed tree");
-        assert!(saw_inner_p, "<p id=inner> should exist inside template subtree");
-        assert!(saw_inner_text, "'hi' text should exist inside template subtree");
+        assert!(
+            saw_inner_p,
+            "<p id=inner> should exist inside template subtree"
+        );
+        assert!(
+            saw_inner_text,
+            "'hi' text should exist inside template subtree"
+        );
     }
 
     #[test]
@@ -505,7 +520,10 @@ mod tests {
                 }
             }
             if n.text_content() == Some("x") {
-                assert!(!n.is_in_document(), "text 'x' inside <template> must be out of document");
+                assert!(
+                    !n.is_in_document(),
+                    "text 'x' inside <template> must be out of document"
+                );
             }
         }
     }
@@ -560,7 +578,12 @@ mod tests {
         // gate を両方削除したら inner にも red rule が届き BLACK ではなくなるため、
         // この assert 対で gate 動作が本当に発火していることを pin する。
         use raikiri_style::property::CssColor;
-        const RED: CssColor = CssColor { r: 255, g: 0, b: 0, a: 255 };
+        const RED: CssColor = CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
 
         let mut outer_p_id: Option<usize> = None;
         let mut inner_p_id: Option<usize> = None;
@@ -594,7 +617,8 @@ mod tests {
             "outer <p> should have red rule applied (in-document, rule matches)"
         );
         assert_eq!(
-            inner_cv.color, CssColor::BLACK,
+            inner_cv.color,
+            CssColor::BLACK,
             "inner <p> should keep initial color (cascade gate skips template descendants)"
         );
     }
