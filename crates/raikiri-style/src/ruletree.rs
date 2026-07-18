@@ -54,9 +54,11 @@ impl RuleTree {
     /// - `source_order` は既存 rule 数を起点に呼び出し順で自動採番
     ///   (`style_rules` / `page_rules` は別カウンタ — [`PageRule::source_order`]
     ///   の doc 参照)
-    /// - `origin` は style rule に紐付き、cascade rank 化 (`!important` 反転
-    ///   扱い) で使用される。@page は cascade 側 M4 defer のため origin は
-    ///   持たない
+    /// - `origin` は style rule と `@page` rule の両方に伝播する。cascade
+    ///   rank 化 (`!important` 反転扱い) は M4 で wire — M4 pre-work
+    ///   (raikiri-spike-jzv) で `PageRule` にも origin を保持することで
+    ///   cascade 側が re-index せずに済むようになった。CSS Cascading L4
+    ///   §"cascade-origin" (<https://www.w3.org/TR/css-cascade-4/#cascade-origin>)
     /// - Invalid selector / 未サポート property は既存の silent-drop 挙動を
     ///   継承 (spec §M1.4a)
     ///
@@ -87,6 +89,7 @@ impl RuleTree {
                         selector,
                         declarations,
                         source_order: page_order,
+                        origin,
                     });
                     page_order = page_order.wrapping_add(1);
                 }
@@ -477,11 +480,14 @@ mod tests {
     #[test]
     fn page_default_selector_no_prelude() {
         // `@page { color: red }` → PageSelector::Default、declarations 1 個。
+        // origin は `page_rules(...)` helper が `Origin::Author` を hardcode
+        // しているため Author が期待値 (raikiri-spike-jzv、M4 pre-work)。
         let rules = page_rules("@page { color: red }");
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].selector, PageSelector::Default);
         assert_eq!(rules[0].declarations.len(), 1);
         assert_eq!(rules[0].source_order, 0);
+        assert_eq!(rules[0].origin, Origin::Author);
     }
 
     #[test]
@@ -587,6 +593,8 @@ mod tests {
     #[test]
     fn page_source_order_independent_from_style_rules() {
         // page_rules の source_order は style_rules と独立の counter。
+        // 全 rule が同一 add_stylesheet call の origin (Author) を継承する
+        // ことも同時に pin する (raikiri-spike-jzv M4 pre-work: `PageRule.origin`)。
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             "p { color: red } \
@@ -600,18 +608,27 @@ mod tests {
         assert_eq!(tree.style_rules[1].source_order, 1);
         assert_eq!(tree.page_rules.len(), 2);
         assert_eq!(tree.page_rules[0].source_order, 0);
+        assert_eq!(tree.page_rules[0].origin, Origin::Author);
         assert_eq!(tree.page_rules[1].source_order, 1);
+        assert_eq!(tree.page_rules[1].origin, Origin::Author);
     }
 
     #[test]
     fn page_source_order_monotonic_across_add_stylesheet_calls() {
         // 複数 add_stylesheet 呼び出し間で page_order は継続する。
+        // 各 rule の origin は当該 add_stylesheet call の引数に一致することを
+        // pin する (raikiri-spike-jzv M4 pre-work: `PageRule.origin` は
+        // per-call の origin を保持し、cascade 側 M4 code が re-index せず
+        // per-origin cascade を組めるようにする — CSS Cascading L4
+        // <https://www.w3.org/TR/css-cascade-4/#cascade-origin>)。
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page :first { color: red }", Origin::UserAgent);
         tree.add_stylesheet("@page :left { color: blue }", Origin::Author);
         assert_eq!(tree.page_rules.len(), 2);
         assert_eq!(tree.page_rules[0].source_order, 0);
+        assert_eq!(tree.page_rules[0].origin, Origin::UserAgent);
         assert_eq!(tree.page_rules[1].source_order, 1);
+        assert_eq!(tree.page_rules[1].origin, Origin::Author);
     }
 
     #[test]
