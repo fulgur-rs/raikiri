@@ -409,7 +409,6 @@ impl Quarantine {
     pub fn parse(content: &str, file_name: &str) -> (Self, Vec<ExpectError>) {
         let mut entries = Vec::new();
         let mut errors: Vec<ExpectError> = Vec::new();
-        let added_date_fmt = format_description!("[year]-[month]-[day]");
         for (line_no, line) in iter_data_lines(content) {
             let cols: Vec<&str> = line.split('|').map(str::trim).collect();
             if cols.len() != 8 {
@@ -456,17 +455,18 @@ impl Quarantine {
                 });
                 continue;
             };
-            let added_date = match Date::parse(cols[7], &added_date_fmt) {
-                Ok(d) => d,
-                Err(e) => {
-                    errors.push(ExpectError::MalformedLine {
-                        file: file_name.to_owned(),
-                        line_no,
-                        reason: format!("added_date {:?} is not YYYY-MM-DD ({e})", cols[7]),
-                    });
-                    continue;
-                }
-            };
+            let added_date =
+                match Date::parse(cols[7], &format_description!("[year]-[month]-[day]")) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        errors.push(ExpectError::MalformedLine {
+                            file: file_name.to_owned(),
+                            line_no,
+                            reason: format!("added_date {:?} is not YYYY-MM-DD ({e})", cols[7]),
+                        });
+                        continue;
+                    }
+                };
             entries.push(QuarantineEntry {
                 test_id: cols[0].to_owned(),
                 platform,
@@ -719,6 +719,54 @@ mod tests {
             }
             other => panic!("expected MalformedLine, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn quarantine_rejects_calendar_invalid_added_date_feb30() {
+        // 2026-02-30 is syntactically YYYY-MM-DD but no such calendar day exists.
+        let content = "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2026-02-30\n";
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(q.entries.is_empty());
+        assert_eq!(errs.len(), 1);
+        match &errs[0] {
+            ExpectError::MalformedLine {
+                line_no, reason, ..
+            } => {
+                assert_eq!(*line_no, 1);
+                assert!(reason.contains("added_date"), "got: {reason}");
+                assert!(reason.contains("2026-02-30"), "got: {reason}");
+            }
+            other => panic!("expected MalformedLine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quarantine_rejects_calendar_invalid_added_date_month13() {
+        // Month 13 is syntactically valid but out of range.
+        let content = "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2026-13-01\n";
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(q.entries.is_empty());
+        assert_eq!(errs.len(), 1);
+        match &errs[0] {
+            ExpectError::MalformedLine {
+                line_no, reason, ..
+            } => {
+                assert_eq!(*line_no, 1);
+                assert!(reason.contains("added_date"), "got: {reason}");
+                assert!(reason.contains("2026-13-01"), "got: {reason}");
+            }
+            other => panic!("expected MalformedLine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quarantine_accepts_leap_year_feb_29() {
+        // 2024 is a leap year, so 2024-02-29 is a valid calendar day.
+        let content = "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2024-02-29\n";
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(errs.is_empty(), "expected no errors, got {errs:?}");
+        assert_eq!(q.entries.len(), 1);
+        assert_eq!(q.entries[0].added_date, time::macros::date!(2024 - 02 - 29));
     }
 
     #[test]
