@@ -36,6 +36,14 @@ use std::path::{Path, PathBuf};
 ///   `expected/` pre-check in [`load_fixture`], not by this gate.
 /// - **oversized regular file** (memory exhaustion): `metadata.len() >
 ///   FIXTURE_SIZE_CAP` up-front reject
+/// - **aggregate memory exhaustion via many valid files** (attacker packs
+///   `expected/` with N sub-cap page files, each individually accepted):
+///   canonical-form `page-{N:04}.png` filter (rejects `page-0.png`,
+///   `page-00000.png`, etc., before content read) plus
+///   [`MAX_EXPECTED_PAGES`] count cap
+/// - **fixture-root symlink** (caller-supplied path is itself a symlink,
+///   silently redirecting the containment anchor): pre-check via
+///   `symlink_metadata(fixture_dir)` rejects a symlinked root
 /// - **path escape via intermediate symlink** (e.g. `expected/` → `/tmp/evil`
 ///   so `expected/page-0000.png` resolves outside the fixture root):
 ///   `canonicalize` + `starts_with(canonical_root)` prefix check
@@ -43,6 +51,23 @@ use std::path::{Path, PathBuf};
 ///   +1-probe pattern (per raikiri-spike-d9y.3) catches files that grow
 ///   between the `metadata.len()` check and the actual read
 const FIXTURE_SIZE_CAP: u64 = 100 * 1024 * 1024;
+
+/// Maximum number of `expected/page-*.png` entries `load_fixture` will read.
+///
+/// Combined with [`FIXTURE_SIZE_CAP`], this bounds worst-case memory
+/// retained during load at `MAX_EXPECTED_PAGES * FIXTURE_SIZE_CAP`
+/// (~102 GiB — still a coarse theoretical cap, real fixtures are
+/// single-digit pages).  Without this, attacker-controlled `expected/`
+/// with many valid regular files could aggregate to OOM even with the
+/// per-file cap in force (raikiri-spike-d9y.6, Codex gate final review
+/// concern #1).
+///
+/// The `expected/page-{N:04}.png` name form additionally limits N to 4
+/// decimal digits (0000-9999); 1 024 is comfortably above realistic
+/// fixture sizes (real M1 fixtures are single-digit pages, paged-media
+/// exports are hundreds) while low enough to reject in tests without a
+/// 10 000-file test setup.
+const MAX_EXPECTED_PAGES: usize = 1_024;
 
 /// Loaded state of one `tests/reference/<name>/` directory.
 #[non_exhaustive]
@@ -163,9 +188,12 @@ impl fmt::Display for DiffReport {
 pub enum FixtureError {
     /// An I/O operation on the fixture directory failed.
     ///
-    /// Named `Io` (not `IoError`) to match the workspace convention seen in
-    /// `FontError::Io`, `ParseError::Io`, and `NetworkError::Io`.
-    Io {
+    /// Kept as `IoError` (not `Io`) for public API stability across d9y.6;
+    /// the sibling workspace convention (`FontError::Io`, `ParseError::Io`)
+    /// would prefer bare `Io`, but renaming this variant is a public API
+    /// break for `raikiri-vrt` consumers.  A follow-up bd captures the
+    /// desired rename bundled with the next coordinated API-break window.
+    IoError {
         /// Path being accessed when the error occurred.
         path: PathBuf,
         /// Underlying I/O error.
@@ -223,12 +251,22 @@ pub enum FixtureError {
         /// Canonicalized fixture root that the target should have stayed under.
         root: PathBuf,
     },
+    /// `expected/` contained more matching page files than [`MAX_EXPECTED_PAGES`].
+    /// Prevents aggregate OOM when an attacker-controlled `expected/` places
+    /// many valid regular files that would each pass the per-file
+    /// [`FIXTURE_SIZE_CAP`] gate individually.
+    TooManyExpectedPages {
+        /// Fixture directory that was searched.
+        fixture_dir: PathBuf,
+        /// Configured cap ([`MAX_EXPECTED_PAGES`]).
+        cap: usize,
+    },
 }
 
 impl fmt::Display for FixtureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => {
+            Self::IoError { path, source } => {
                 write!(f, "IO error at {}: {source}", path.display())
             }
             Self::MissingInputHtml { fixture_dir } => {
@@ -270,6 +308,13 @@ impl fmt::Display for FixtureError {
                     root.display()
                 )
             }
+            Self::TooManyExpectedPages { fixture_dir, cap } => {
+                write!(
+                    f,
+                    "expected/ under {} has more than {cap} matching page files",
+                    fixture_dir.display()
+                )
+            }
         }
     }
 }
@@ -277,7 +322,7 @@ impl fmt::Display for FixtureError {
 impl std::error::Error for FixtureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io { source, .. } => Some(source),
+            Self::IoError { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -381,7 +426,7 @@ pub fn compare_png(
 ///
 /// See [`FIXTURE_SIZE_CAP`] for the threat model these layers cover.
 fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u8>, FixtureError> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|source| FixtureError::Io {
+    let metadata = std::fs::symlink_metadata(path).map_err(|source| FixtureError::IoError {
         path: path.to_path_buf(),
         source,
     })?;
@@ -415,7 +460,7 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // symlink is already rejected; this branch covers intermediate-symlink
     // escapes (e.g. `expected/` symlinked to `/tmp/evil`) and any future
     // relaxation of the upstream gates.
-    let canonical = std::fs::canonicalize(path).map_err(|source| FixtureError::Io {
+    let canonical = std::fs::canonicalize(path).map_err(|source| FixtureError::IoError {
         path: path.to_path_buf(),
         source,
     })?;
@@ -429,7 +474,7 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // grew between the metadata check and the read, `take(cap + 1)` yields
     // `cap + 1` bytes and the post-read length check trips OversizedFixture
     // instead of silently truncating.
-    let mut file = std::fs::File::open(path).map_err(|source| FixtureError::Io {
+    let mut file = std::fs::File::open(path).map_err(|source| FixtureError::IoError {
         path: path.to_path_buf(),
         source,
     })?;
@@ -437,7 +482,7 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     file.by_ref()
         .take(FIXTURE_SIZE_CAP + 1)
         .read_to_end(&mut bytes)
-        .map_err(|source| FixtureError::Io {
+        .map_err(|source| FixtureError::IoError {
             path: path.to_path_buf(),
             source,
         })?;
@@ -464,13 +509,42 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
 ///
 /// See [`FIXTURE_SIZE_CAP`] and [`read_bounded_fixture_file`] for the
 /// defense stack against untrusted fixture trees (raikiri-spike-d9y.6).
-/// Briefly: leaf-symlink reject, `!is_file()` reject, per-file 100 MiB size
-/// cap, canonicalized-prefix containment check, and a bounded read that
-/// catches TOCTOU-grow.  Symlinks anywhere in the fixture tree are refused
-/// even when they'd resolve inside the fixture root — this is a deliberate
-/// blanket policy (no real reference fixture currently uses symlinks) and
-/// tests pin the behavior.
+/// Briefly: fixture-root-symlink reject, leaf-symlink reject, `!is_file()`
+/// reject, per-file 100 MiB size cap, [`MAX_EXPECTED_PAGES`] aggregate
+/// count cap, canonical `page-{N:04}.png` name filter,
+/// canonicalized-prefix containment check, and a bounded read that
+/// catches TOCTOU-grow.  Symlinks anywhere in the fixture tree — including
+/// the fixture-directory anchor itself — are refused even when they'd
+/// resolve inside the intended root; this is a deliberate blanket policy
+/// (no real reference fixture currently uses symlinks) and tests pin the
+/// behavior.
 pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
+    // Root-symlink pre-check: `canonicalize` follows symlinks silently, so
+    // a symlinked fixture root would redirect the containment anchor to the
+    // symlink target.  The declared blanket policy is "symlinks anywhere in
+    // the fixture tree are refused", and the root is part of that tree, so
+    // reject before canonicalize even sees it.  Non-existence is normal
+    // (missing input.html shape); other stat errors propagate as IoError.
+    match std::fs::symlink_metadata(fixture_dir) {
+        Ok(m) if m.file_type().is_symlink() => {
+            return Err(FixtureError::SymlinkRejected {
+                path: fixture_dir.to_path_buf(),
+            });
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(FixtureError::MissingInputHtml {
+                fixture_dir: fixture_dir.to_path_buf(),
+            });
+        }
+        Err(source) => {
+            return Err(FixtureError::IoError {
+                path: fixture_dir.to_path_buf(),
+                source,
+            });
+        }
+    }
+
     // Canonicalize the fixture root once as the containment anchor.  If
     // `fixture_dir` itself doesn't exist, preserve the legacy "missing
     // input.html" error shape so existing callers see the same variant.
@@ -482,7 +556,7 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
             });
         }
         Err(source) => {
-            return Err(FixtureError::Io {
+            return Err(FixtureError::IoError {
                 path: fixture_dir.to_path_buf(),
                 source,
             });
@@ -492,7 +566,9 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
     let input_path = canonical_root.join("input.html");
     let input_html = match read_bounded_fixture_file(&input_path, &canonical_root) {
         Ok(bytes) => bytes,
-        Err(FixtureError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+        Err(FixtureError::IoError { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
             return Err(FixtureError::MissingInputHtml {
                 fixture_dir: fixture_dir.to_path_buf(),
             });
@@ -510,7 +586,7 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
         Ok(m) => Some(m),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(source) => {
-            return Err(FixtureError::Io {
+            return Err(FixtureError::IoError {
                 path: expected_dir.clone(),
                 source,
             });
@@ -524,12 +600,13 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
             return Err(FixtureError::SymlinkRejected { path: expected_dir });
         }
         if file_type.is_dir() {
-            let entries = std::fs::read_dir(&expected_dir).map_err(|source| FixtureError::Io {
-                path: expected_dir.clone(),
-                source,
-            })?;
+            let entries =
+                std::fs::read_dir(&expected_dir).map_err(|source| FixtureError::IoError {
+                    path: expected_dir.clone(),
+                    source,
+                })?;
             for entry in entries {
-                let entry = entry.map_err(|source| FixtureError::Io {
+                let entry = entry.map_err(|source| FixtureError::IoError {
                     path: expected_dir.clone(),
                     source,
                 })?;
@@ -538,16 +615,34 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
                     Some(n) => n,
                     None => continue,
                 };
-                // Match "page-XXXX.png" exactly; ignore README.md and other files.
+                // Match "page-XXXX.png" exactly: 4-digit zero-padded index.
+                // Ignore README.md and other files.  Requiring exactly 4
+                // digits is load-bearing: without it, `page-0.png`,
+                // `page-00.png`, `page-0000.png`, `page-00000.png`, ...
+                // all parse to the same index and let an attacker
+                // multiplicatively amplify per-file caps with duplicates
+                // that only surface as NonContiguousPages *after* every
+                // one has been fully read into memory.
                 let Some(stem) = name.strip_suffix(".png") else {
                     continue;
                 };
                 let Some(num_str) = stem.strip_prefix("page-") else {
                     continue;
                 };
+                if num_str.len() != 4 || !num_str.bytes().all(|b| b.is_ascii_digit()) {
+                    continue;
+                }
                 let Ok(n) = num_str.parse::<u32>() else {
                     continue;
                 };
+                // Aggregate cap: reject before spending memory on the
+                // (cap + 1)th page.  See MAX_EXPECTED_PAGES for rationale.
+                if numbered.len() >= MAX_EXPECTED_PAGES {
+                    return Err(FixtureError::TooManyExpectedPages {
+                        fixture_dir: fixture_dir.to_path_buf(),
+                        cap: MAX_EXPECTED_PAGES,
+                    });
+                }
                 let bytes = read_bounded_fixture_file(&path, &canonical_root)?;
                 numbered.push((n, bytes));
             }
@@ -1150,5 +1245,98 @@ mod defense_tests {
         assert!(fixture.input_html.is_empty());
         assert_eq!(fixture.expected_pages.len(), 1);
         assert!(fixture.expected_pages[0].is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fixture_root_as_symlink_is_rejected() {
+        // Codex gate final review finding: `canonicalize(fixture_dir)`
+        // silently follows a symlinked root, redirecting the containment
+        // anchor to the target directory.  The declared blanket policy
+        // ("symlinks anywhere in the fixture tree are refused") must
+        // include the root itself.  Pre-check via `symlink_metadata` on
+        // the fixture root rejects with SymlinkRejected before
+        // canonicalize sees it.
+        let tmp_real = tempfile::tempdir().unwrap();
+        write_input_html(tmp_real.path(), b"<!doctype html>");
+        write_expected_png(tmp_real.path(), 0);
+
+        let tmp_parent = tempfile::tempdir().unwrap();
+        let link_root = tmp_parent.path().join("root-link");
+        std::os::unix::fs::symlink(tmp_real.path(), &link_root).unwrap();
+
+        match load_fixture(&link_root) {
+            Err(FixtureError::SymlinkRejected { path }) => {
+                assert_eq!(path, link_root);
+            }
+            other => panic!("expected SymlinkRejected for symlinked root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_page_indices_via_noncanonical_names_are_ignored() {
+        // Codex gate final review finding: `page-0.png`, `page-00.png`,
+        // `page-0000.png`, `page-00000.png` all parse to index 0.  Before
+        // the canonical-form filter, an attacker could pack N copies with
+        // different padding widths; each would pass per-file caps and be
+        // fully read into `numbered` before duplicate detection surfaced
+        // as NonContiguousPages — multiplying the per-file cap by the
+        // padding-width space.  Fix: require exactly 4 zero-padded digits
+        // in the enumeration filter; noncanonical forms are skipped
+        // (never opened, never read).  Test: place `page-0000.png` +
+        // several noncanonical duplicates; load should succeed with
+        // exactly one page (the canonical one).
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        write_expected_png(tmp.path(), 0);
+        let expected = tmp.path().join("expected");
+        // Noncanonical padding widths — all would parse to n=0.
+        // Populate with plausibly-huge fake bodies so a regression
+        // (reading them) would be easy to spot in mem accounting.
+        for name in ["page-0.png", "page-00.png", "page-00000.png"] {
+            std::fs::write(expected.join(name), vec![0u8; 8]).unwrap();
+        }
+        // Non-digit padding — should also be skipped.
+        std::fs::write(expected.join("page-000a.png"), vec![0u8; 8]).unwrap();
+
+        let fixture = load_fixture(tmp.path())
+            .expect("canonical page-0000.png with noncanonical siblings should load");
+        assert_eq!(
+            fixture.expected_pages.len(),
+            1,
+            "only the canonical page should enumerate"
+        );
+        assert_eq!(fixture.expected_pages[0], TINY_PNG);
+    }
+
+    #[test]
+    fn too_many_expected_pages_is_rejected_before_read() {
+        // Codex gate final review finding: aggregate memory is
+        // unbounded — an attacker packing `expected/` with many valid
+        // regular files, each ≤ FIXTURE_SIZE_CAP, can OOM even with the
+        // per-file cap.  Fix: MAX_EXPECTED_PAGES aggregate count cap
+        // checked before the (cap+1)th page is read.
+        //
+        // Place MAX_EXPECTED_PAGES + 1 canonical zero-byte pages: the
+        // walker enumerates them all (no I/O for content yet — just
+        // `read_dir`), each canonical name passes the syntactic filter,
+        // and the cap check `numbered.len() >= MAX_EXPECTED_PAGES` fires
+        // when the loop attempts to read the (cap+1)th entry.  Zero-byte
+        // files keep disk + total test cost minimal.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        for n in 0..=MAX_EXPECTED_PAGES {
+            std::fs::write(expected.join(format!("page-{n:04}.png")), b"").unwrap();
+        }
+
+        match load_fixture(tmp.path()) {
+            Err(FixtureError::TooManyExpectedPages { fixture_dir, cap }) => {
+                assert_eq!(fixture_dir, tmp.path());
+                assert_eq!(cap, MAX_EXPECTED_PAGES);
+            }
+            other => panic!("expected TooManyExpectedPages, got {other:?}"),
+        }
     }
 }
