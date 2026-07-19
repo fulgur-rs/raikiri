@@ -95,12 +95,30 @@ fn workspace_expectations_dir() -> PathBuf {
 
 // ── Parser helpers ─────────────────────────────────────────────────────────
 
+/// Yield `(line_no, line)` for non-comment, non-blank data lines.
+///
+/// The returned `line` is stripped of leading whitespace only. Callers
+/// that treat trailing whitespace as [`ExpectError::MalformedLine`]
+/// (spec §12.10) compare `line == line.trim_end()`. Comment and blank
+/// lines are still filtered using a fully-trimmed view so
+/// `   # comment` and `   \n` are ignored.
 fn iter_data_lines(content: &str) -> impl Iterator<Item = (usize, &str)> {
-    content
-        .lines()
-        .enumerate()
-        .map(|(i, line)| (i + 1, line.trim()))
-        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
+    content.lines().enumerate().filter_map(|(i, line)| {
+        let fully_trimmed = line.trim();
+        if fully_trimmed.is_empty() || fully_trimmed.starts_with('#') {
+            None
+        } else {
+            Some((i + 1, line.trim_start()))
+        }
+    })
+}
+
+/// True if `line` has any trailing ASCII whitespace ($space$ / tab / CR).
+///
+/// Callers use this to surface [`ExpectError::MalformedLine`] for lines
+/// like `"css/foo   "` per spec §12.10 (unexpected characters).
+fn has_trailing_whitespace(line: &str) -> bool {
+    line.len() != line.trim_end().len()
 }
 
 fn read_file(path: &Path) -> Result<String, ExpectError> {
@@ -124,7 +142,7 @@ impl TrackedWpt {
     pub fn parse(content: &str, _file_name: &str) -> Result<Self, ExpectError> {
         Ok(Self {
             entries: iter_data_lines(content)
-                .map(|(_, l)| l.to_owned())
+                .map(|(_, l)| l.trim_end().to_owned())
                 .collect(),
         })
     }
@@ -200,12 +218,34 @@ pub struct Baseline {
 
 impl Baseline {
     /// Parse `raikiri-baseline.txt` content (one test id per line).
-    pub fn parse(content: &str, _file_name: &str) -> Result<Self, ExpectError> {
-        Ok(Self {
-            entries: iter_data_lines(content)
-                .map(|(_, l)| l.to_owned())
-                .collect(),
-        })
+    ///
+    /// A data line that contains `|` or trailing whitespace surfaces as
+    /// [`ExpectError::MalformedLine`] (spec §12.10): baseline has a
+    /// single-column shape, and a pipe strongly suggests the row was
+    /// copied from `quarantine.txt`.
+    pub fn parse(content: &str, file_name: &str) -> Result<Self, ExpectError> {
+        let mut entries = HashSet::new();
+        for (line_no, raw) in iter_data_lines(content) {
+            if raw.contains('|') {
+                return Err(ExpectError::MalformedLine {
+                    file: file_name.to_owned(),
+                    line_no,
+                    reason: format!(
+                        "expected single-column test id, found pipe delimiter: {:?}",
+                        raw.trim_end()
+                    ),
+                });
+            }
+            if has_trailing_whitespace(raw) {
+                return Err(ExpectError::MalformedLine {
+                    file: file_name.to_owned(),
+                    line_no,
+                    reason: format!("trailing whitespace on data line: {raw:?}"),
+                });
+            }
+            entries.insert(raw.to_owned());
+        }
+        Ok(Self { entries })
     }
 
     /// Read and parse `raikiri-baseline.txt` from `path`.
@@ -233,12 +273,34 @@ pub struct Deprecated {
 
 impl Deprecated {
     /// Parse `deprecated.txt` content (one test id per line).
-    pub fn parse(content: &str, _file_name: &str) -> Result<Self, ExpectError> {
-        Ok(Self {
-            entries: iter_data_lines(content)
-                .map(|(_, l)| l.to_owned())
-                .collect(),
-        })
+    ///
+    /// A data line that contains `|` or trailing whitespace surfaces as
+    /// [`ExpectError::MalformedLine`] (spec §12.10): deprecated has a
+    /// single-column shape, and a pipe strongly suggests the row was
+    /// copied from `quarantine.txt`.
+    pub fn parse(content: &str, file_name: &str) -> Result<Self, ExpectError> {
+        let mut entries = HashSet::new();
+        for (line_no, raw) in iter_data_lines(content) {
+            if raw.contains('|') {
+                return Err(ExpectError::MalformedLine {
+                    file: file_name.to_owned(),
+                    line_no,
+                    reason: format!(
+                        "expected single-column test id, found pipe delimiter: {:?}",
+                        raw.trim_end()
+                    ),
+                });
+            }
+            if has_trailing_whitespace(raw) {
+                return Err(ExpectError::MalformedLine {
+                    file: file_name.to_owned(),
+                    line_no,
+                    reason: format!("trailing whitespace on data line: {raw:?}"),
+                });
+            }
+            entries.insert(raw.to_owned());
+        }
+        Ok(Self { entries })
     }
 
     /// Read and parse `deprecated.txt` from `path`.
@@ -410,6 +472,14 @@ impl Quarantine {
         let mut entries = Vec::new();
         let mut errors: Vec<ExpectError> = Vec::new();
         for (line_no, line) in iter_data_lines(content) {
+            if has_trailing_whitespace(line) {
+                errors.push(ExpectError::MalformedLine {
+                    file: file_name.to_owned(),
+                    line_no,
+                    reason: format!("trailing whitespace on data line: {line:?}"),
+                });
+                continue;
+            }
             let cols: Vec<&str> = line.split('|').map(str::trim).collect();
             if cols.len() != 8 {
                 errors.push(ExpectError::MalformedLine {
@@ -643,6 +713,83 @@ mod tests {
     }
 
     #[test]
+    fn baseline_rejects_pipe_delimiter() {
+        // Row copy-pasted from quarantine.txt should surface as Malformed
+        // rather than pass silently as a bogus test id.
+        let content = "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2026-08-01\n";
+        let err = Baseline::parse(content, "raikiri-baseline.txt").unwrap_err();
+        match err {
+            ExpectError::MalformedLine {
+                file,
+                line_no,
+                reason,
+            } => {
+                assert_eq!(file, "raikiri-baseline.txt");
+                assert_eq!(line_no, 1);
+                assert!(reason.contains("pipe delimiter"), "got: {reason}");
+            }
+            other => panic!("expected MalformedLine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn baseline_rejects_trailing_whitespace() {
+        let content = "css/foo/bar-001   \n";
+        let err = Baseline::parse(content, "raikiri-baseline.txt").unwrap_err();
+        match err {
+            ExpectError::MalformedLine {
+                line_no, reason, ..
+            } => {
+                assert_eq!(line_no, 1);
+                assert!(reason.contains("trailing whitespace"), "got: {reason}");
+            }
+            other => panic!("expected MalformedLine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deprecated_rejects_pipe_delimiter() {
+        let content = "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2026-08-01\n";
+        let err = Deprecated::parse(content, "deprecated.txt").unwrap_err();
+        match err {
+            ExpectError::MalformedLine {
+                file,
+                line_no,
+                reason,
+            } => {
+                assert_eq!(file, "deprecated.txt");
+                assert_eq!(line_no, 1);
+                assert!(reason.contains("pipe delimiter"), "got: {reason}");
+            }
+            other => panic!("expected MalformedLine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deprecated_rejects_trailing_whitespace() {
+        let content = "css/foo/bar-001\t\n";
+        let err = Deprecated::parse(content, "deprecated.txt").unwrap_err();
+        match err {
+            ExpectError::MalformedLine {
+                line_no, reason, ..
+            } => {
+                assert_eq!(line_no, 1);
+                assert!(reason.contains("trailing whitespace"), "got: {reason}");
+            }
+            other => panic!("expected MalformedLine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn baseline_and_deprecated_accept_comment_and_blank_lines() {
+        let content = "# header\n\ncss/foo/bar-001\n\n# trailing comment\n";
+        let base = Baseline::parse(content, "b.txt").unwrap();
+        assert_eq!(base.entries.len(), 1);
+        let dep = Deprecated::parse(content, "d.txt").unwrap();
+        assert_eq!(dep.entries.len(), 1);
+    }
+
+    #[test]
     fn quarantine_parses_8_cols_and_enum_values() {
         let content = "css/css-page/page-margin-boxes-001 | macos | aarch64 | vello_cpu | pixel-exact | Intermittent 1-pixel diff | https://example/issues/123 | 2026-08-01\n";
         let (q, errs) = Quarantine::parse(content, "q.txt");
@@ -767,6 +914,29 @@ mod tests {
         assert!(errs.is_empty(), "expected no errors, got {errs:?}");
         assert_eq!(q.entries.len(), 1);
         assert_eq!(q.entries[0].added_date, time::macros::date!(2024 - 02 - 29));
+    }
+
+    #[test]
+    fn quarantine_rejects_trailing_whitespace() {
+        // Trailing whitespace on a data row surfaces as MalformedLine
+        // (spec §12.10) even when the column count is right.
+        let content = "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2026-08-01   \n";
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(
+            q.entries.is_empty(),
+            "expected no entries, got {:?}",
+            q.entries
+        );
+        assert_eq!(errs.len(), 1);
+        match &errs[0] {
+            ExpectError::MalformedLine {
+                line_no, reason, ..
+            } => {
+                assert_eq!(*line_no, 1);
+                assert!(reason.contains("trailing whitespace"), "got: {reason}");
+            }
+            other => panic!("expected MalformedLine, got {other:?}"),
+        }
     }
 
     #[test]
