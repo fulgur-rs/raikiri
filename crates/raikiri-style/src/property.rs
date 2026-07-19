@@ -45,6 +45,22 @@ pub(crate) fn empty_string_set_entries() -> Arc<Vec<StringSetEntry>> {
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
+/// 空 `counter-*` entries を表す shared Arc — 3 property
+/// (`counter-reset` / `counter-increment` / `counter-set`) 全てで単一 slot を
+/// 共有する ([`Vec<(SmolStr, i32)>`] は同一型のため helper を分ける必要無し)。
+///
+/// `raikiri-spike-d9y.2` (SEC HIGH cascade memory DoS fix) の副作用 helper。
+/// counter-* は non-inherited (CSS Lists 3 §3、`counter-reset` を含む全 3 property)
+/// のため、`ComputedValues::inherit_from` が child stack entry のたびに empty 値で
+/// 初期化する。生 `Vec::new()` を使うと per-node で 3 個の `Vec` struct
+/// (24 bytes × 3) が生まれ N-node document あたり O(N) の overhead になるため、
+/// [`empty_content_list`] / [`empty_string_set_entries`] と同じ `OnceLock` 保持の
+/// shared Arc を使う (advisor calibration precedent)。
+pub(crate) fn empty_counter_entries() -> Arc<Vec<(SmolStr, i32)>> {
+    static EMPTY: OnceLock<Arc<Vec<(SmolStr, i32)>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
 /// RGBA color (0-255 per channel、`a` は 255 = fully opaque)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CssColor {
@@ -318,15 +334,30 @@ pub enum PropertyValue {
     /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited、initial: empty list (CSS Lists 3 §3)。
     /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
-    CounterReset(Vec<(SmolStr, i32)>),
+    ///
+    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`pick_winners` の
+    /// `value.clone()`) + inheritance walk clone (`resolve_inheritance` の
+    /// `stack.push((child, computed.clone()))` + `out[idx] = computed.clone()`)
+    /// が **shallow (Arc bump only)** になる。counter-* は non-inherited のため
+    /// child は inherit_from で shared empty slot に落ちるが、winner までの経路
+    /// (parent stack entry + cascaded candidates 蓄積) は deep-clone 経由だった。
+    /// `* { counter-reset: c0 c1 ... cN }` × M element で O(N × M) → O(N + M)
+    /// (raikiri-spike-d9y.2 SEC HIGH、d9y.1 Content/StringSet pattern の踏襲)。
+    CounterReset(Arc<Vec<(SmolStr, i32)>>),
     /// `counter-increment: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited、initial: empty list (CSS Lists 3 §3)。
     /// missing integer は 1 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
-    CounterIncrement(Vec<(SmolStr, i32)>),
+    ///
+    /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
+    /// (raikiri-spike-d9y.2)。
+    CounterIncrement(Arc<Vec<(SmolStr, i32)>>),
     /// `counter-set: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited、initial: empty list (CSS Lists 3 §3)。
     /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
-    CounterSet(Vec<(SmolStr, i32)>),
+    ///
+    /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
+    /// (raikiri-spike-d9y.2)。
+    CounterSet(Arc<Vec<(SmolStr, i32)>>),
     /// `content: normal | none | <content-list>` — non-inherited、initial:
     /// empty list (spec の `normal` / `none` を空 list として扱う、pseudo-element
     /// 生成判断は下流 layer)。M5 gcpm-directive-emit static-side
@@ -418,11 +449,31 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "display" => parse_display(input).map(PropertyValue::Display),
         // CSS Lists 3 §3 counter properties (raikiri-spike-s85、M5 pre-work)。
         // spec default: reset = 0、increment = 1、set = 0。
-        "counter-reset" => parse_counter_property(input, 0).map(PropertyValue::CounterReset),
-        "counter-increment" => {
-            parse_counter_property(input, 1).map(PropertyValue::CounterIncrement)
-        }
-        "counter-set" => parse_counter_property(input, 0).map(PropertyValue::CounterSet),
+        // Arc wrap は raikiri-spike-d9y.2 の cascade memory DoS fix (per-element
+        // clone を shallow bump 化)、空 list は 3 property 共通 shared Arc slot
+        // (`empty_counter_entries`) に落として per-node allocation regression を
+        // 避ける (d9y.1 Content/StringSet precedent と同 pattern)。
+        "counter-reset" => parse_counter_property(input, 0).map(|v| {
+            if v.is_empty() {
+                PropertyValue::CounterReset(empty_counter_entries())
+            } else {
+                PropertyValue::CounterReset(Arc::new(v))
+            }
+        }),
+        "counter-increment" => parse_counter_property(input, 1).map(|v| {
+            if v.is_empty() {
+                PropertyValue::CounterIncrement(empty_counter_entries())
+            } else {
+                PropertyValue::CounterIncrement(Arc::new(v))
+            }
+        }),
+        "counter-set" => parse_counter_property(input, 0).map(|v| {
+            if v.is_empty() {
+                PropertyValue::CounterSet(empty_counter_entries())
+            } else {
+                PropertyValue::CounterSet(Arc::new(v))
+            }
+        }),
         // CSS Content 3 §2.1 content property (raikiri-spike-m5.1、M5 gcpm-directive-emit static side)。
         // Arc wrap は raikiri-spike-d9y.1 の cascade memory DoS fix (per-element clone を
         // shallow bump 化)、empty list は shared Arc slot に落として per-node allocation
@@ -1293,11 +1344,16 @@ mod tests {
 
     // ── counter-* (CSS Lists 3 §3、raikiri-spike-s85 M5 pre-work) ──
 
-    fn counter_pairs(pairs: &[(&str, i32)]) -> Vec<(SmolStr, i32)> {
-        pairs
-            .iter()
-            .map(|(name, value)| (SmolStr::new(name), *value))
-            .collect()
+    // d9y.2: `PropertyValue::Counter*(Arc<Vec<..>>)` に wrap したため、
+    // literal test 比較用に Arc<Vec<..>> を返す helper に切り替え
+    // (d9y.1 content/string_set helper と同 pattern)。
+    fn counter_pairs(pairs: &[(&str, i32)]) -> Arc<Vec<(SmolStr, i32)>> {
+        Arc::new(
+            pairs
+                .iter()
+                .map(|(name, value)| (SmolStr::new(name), *value))
+                .collect(),
+        )
     }
 
     #[test]
@@ -1326,9 +1382,10 @@ mod tests {
     #[test]
     fn counter_reset_none_returns_empty_vec() {
         // spec: `none` は空リストと同等 (top-level alternative)
+        // d9y.2: empty case は shared Arc slot (`empty_counter_entries`) を使う。
         assert_eq!(
             parse("none", "counter-reset"),
-            Some(PropertyValue::CounterReset(Vec::new()))
+            Some(PropertyValue::CounterReset(empty_counter_entries()))
         );
     }
 
@@ -1375,9 +1432,10 @@ mod tests {
 
     #[test]
     fn counter_increment_none_returns_empty_vec() {
+        // d9y.2: empty case は shared Arc slot を使う。
         assert_eq!(
             parse("none", "counter-increment"),
-            Some(PropertyValue::CounterIncrement(Vec::new()))
+            Some(PropertyValue::CounterIncrement(empty_counter_entries()))
         );
     }
 
@@ -1395,18 +1453,20 @@ mod tests {
 
     #[test]
     fn counter_set_none_returns_empty_vec() {
+        // d9y.2: empty case は shared Arc slot を使う。
         assert_eq!(
             parse("none", "counter-set"),
-            Some(PropertyValue::CounterSet(Vec::new()))
+            Some(PropertyValue::CounterSet(empty_counter_entries()))
         );
     }
 
     #[test]
     fn counter_reset_is_case_insensitive_on_none() {
         // CSS spec: keyword `none` は ASCII case-insensitive
+        // d9y.2: empty case は shared Arc slot を使う。
         assert_eq!(
             parse("NONE", "counter-reset"),
-            Some(PropertyValue::CounterReset(Vec::new()))
+            Some(PropertyValue::CounterReset(empty_counter_entries()))
         );
     }
 

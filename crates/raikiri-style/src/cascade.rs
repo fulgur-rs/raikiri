@@ -641,8 +641,9 @@ mod tests {
         // <div style="counter-reset: chapter"> → ComputedValues.counter_reset
         // に [("chapter", 0)] が届く。parser → PropertyValue → apply_value →
         // ComputedValues の end-to-end 疎通 smoke。
+        // d9y.2: counter_reset は Arc<Vec<..>>、`*cv.counter_reset` で deref-compare。
         let cv = cascade_doc("", "div", Some("counter-reset: chapter"));
-        assert_eq!(cv.counter_reset, vec![(SmolStr::new("chapter"), 0)]);
+        assert_eq!(*cv.counter_reset, vec![(SmolStr::new("chapter"), 0)]);
         // 他 counter property は non-inherited の initial (empty) のまま
         assert!(cv.counter_increment.is_empty());
         assert!(cv.counter_set.is_empty());
@@ -870,6 +871,118 @@ mod tests {
             std::sync::Arc::ptr_eq(&r.computed[p1].string_set, &r.computed[p2].string_set),
             "cascade must Arc-share string_set across universal-selector matches \
              (raikiri-spike-d9y.1)"
+        );
+    }
+
+    // ── Cascade memory DoS regression (raikiri-spike-d9y.2、SEC HIGH) ──
+    //
+    // Codex Cloud Security finding (finding hash 12128875): `counter-reset` /
+    // `counter-increment` / `counter-set` は d9y.1 の Content/StringSet と同じ
+    // 3 段 clone 経路 (`decl.value.clone`、`pick_winners` の `value.clone`、
+    // `resolve_inheritance` の stack push + write) を辿るため
+    // `PropertyValue::Counter*(Vec<..>)` × universal selector × N element で
+    // O(N × M) 相当の heap 消費を招いていた。d9y.2 で全 3 property の outer
+    // `Vec` を `Arc<Vec<(SmolStr, i32)>>` に wrap、clone 経路が Arc bump に
+    // 落ちた (asymptotic は O(N + M))。short-circuit (child stack entry で
+    // counter-* を skip) は **意図的に採用せず** — d9y.1 の Content/StringSet も
+    // 同じ non-inherited Arc field でありながら short-circuit していないため、
+    // counter-* のみ特別扱いすると仕上げが非対称になる。Arc wrap 単独で DoS は
+    // 塞がる (stack 上に転がるのは Arc bump 1 個ずつだけで、直後の
+    // `inherit_from` で empty slot に落ちる)。
+
+    /// `* { counter-reset: <list> }` × N element の cascade で、matching 全
+    /// element の `ComputedValues.counter_reset` Arc は **同 underlying Vec** を
+    /// 指す (`Arc::ptr_eq` = true)。deep-clone regression の behavioral canary。
+    #[test]
+    fn cascade_shares_counter_reset_arc_across_universal_selector_matches() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        // 攻撃 vector そのものの縮小版: universal selector + 3-name payload。
+        doc.push_text(s, "* { counter-reset: c0 c1 c2 }");
+        let p1 = doc.push_element(0, "p", None);
+        let p2 = doc.push_element(0, "p", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // Sanity: 両 element とも counter_reset が届いている。
+        assert_eq!(r.computed[p1].counter_reset.len(), 3);
+        assert_eq!(r.computed[p2].counter_reset.len(), 3);
+        // Regression assert: Arc pointer identity で shallow-shared を証明。
+        // deep-clone 復活時は underlying alloc が別、ptr_eq = false → fail。
+        assert!(
+            std::sync::Arc::ptr_eq(&r.computed[p1].counter_reset, &r.computed[p2].counter_reset),
+            "cascade must Arc-share counter_reset across universal-selector matches \
+             (raikiri-spike-d9y.2 SEC HIGH DoS regression)"
+        );
+    }
+
+    /// `counter-increment` も counter-reset と同じ cascade path を辿るため、
+    /// 同種 Arc 共有が成立している必要がある (d9y.2)。
+    #[test]
+    fn cascade_shares_counter_increment_arc_across_universal_selector_matches() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "* { counter-increment: c0 c1 c2 }");
+        let p1 = doc.push_element(0, "p", None);
+        let p2 = doc.push_element(0, "p", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p1].counter_increment.len(), 3);
+        assert_eq!(r.computed[p2].counter_increment.len(), 3);
+        assert!(
+            std::sync::Arc::ptr_eq(
+                &r.computed[p1].counter_increment,
+                &r.computed[p2].counter_increment
+            ),
+            "cascade must Arc-share counter_increment across universal-selector matches \
+             (raikiri-spike-d9y.2)"
+        );
+    }
+
+    /// `counter-set` も同じ cascade path を辿るため Arc 共有が必要 (d9y.2)。
+    #[test]
+    fn cascade_shares_counter_set_arc_across_universal_selector_matches() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "* { counter-set: c0 c1 c2 }");
+        let p1 = doc.push_element(0, "p", None);
+        let p2 = doc.push_element(0, "p", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p1].counter_set.len(), 3);
+        assert_eq!(r.computed[p2].counter_set.len(), 3);
+        assert!(
+            std::sync::Arc::ptr_eq(&r.computed[p1].counter_set, &r.computed[p2].counter_set),
+            "cascade must Arc-share counter_set across universal-selector matches \
+             (raikiri-spike-d9y.2)"
+        );
+    }
+
+    /// counter-* は non-inherited (CSS Lists 3 §3) — 親 element に counter 値が
+    /// あっても child は inherit_from で shared empty Arc slot に落ちる。この
+    /// pin が「Arc wrap 単独 (short-circuit 無し) でも child stack entry の
+    /// parent Arc bump が即 empty slot に置換される」ことを保証する。d9y.2
+    /// short-circuit 不採用の正当化 assertion。
+    #[test]
+    fn resolve_inheritance_uses_initial_arc_for_non_inherited_counter_on_child() {
+        let mut doc = TestDoc::new();
+        // 親 <parent> に counter-reset を付け、child <child> は counter rule 無し。
+        let parent = doc.push_element(0, "parent", Some("counter-reset: c 1"));
+        let child = doc.push_element(parent, "child", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // 親は counter_reset を持つ、child は non-inherited のため empty。
+        assert_eq!(r.computed[parent].counter_reset.len(), 1);
+        assert!(r.computed[child].counter_reset.is_empty());
+        // child の counter_reset Arc は shared empty slot と ptr_eq (empty Arc
+        // slot 再利用の behavioral proxy)。ここが false になる regression:
+        // (a) inherit_from が parent の Arc をそのまま渡してしまう
+        // (b) inherit_from が per-node `Arc::new(Vec::new())` を alloc する
+        // どちらも d9y.2 の memory 目標を破る。
+        let shared = crate::property::empty_counter_entries();
+        assert!(
+            std::sync::Arc::ptr_eq(&r.computed[child].counter_reset, &shared),
+            "child counter_reset must point to shared empty Arc slot \
+             (raikiri-spike-d9y.2 non-inherited short-circuit-equivalent canary)"
         );
     }
 
