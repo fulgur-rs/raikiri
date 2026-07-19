@@ -8,6 +8,27 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::property::{ContentComponent, CssColor, DisplayValue, Length};
 
+/// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
+///
+/// CSS GCPM 3 §1.2.1 "The running() value"
+/// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>: `position: running(name)`
+/// された element は body flow から除去、`@page` margin box の
+/// `content: element(name)` から参照される。
+///
+/// 本 struct は design doc §7.3 の **2-tier キャッシュ** の static side seed —
+/// cascade で per-node に `name` を捕捉し、下流 (raikiri-dom) 側が subtree_root /
+/// pre-cascaded style / dynamic flags を association する
+/// (`ParsedRunningTemplate` — 本 crate は leaf、DOM node identity を持たない)。
+///
+/// `#[non_exhaustive]` により future field (e.g. `alternative_hint` 等の per-name
+/// override) を non-breaking で追加可能。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningTemplate {
+    /// `running(<name>)` の name (case-preserved smol str)。
+    pub name: SmolStr,
+}
+
 /// Per-node computed style。M1.4 では 4 property のみ (全て inherited)。
 ///
 /// `#[non_exhaustive]` により future property (background-color / display /
@@ -52,6 +73,21 @@ pub struct ComputedValues {
     /// 名前解決と runtime `string()` 参照は下流 (raikiri-dom) 責務。
     /// See <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>.
     pub string_set: Vec<(SmolStr, Vec<ContentComponent>)>,
+    /// `position: running(<custom-ident>)` の seed。**non-inherited**、initial:
+    /// empty list。CSS GCPM 3 §1.2.1
+    /// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>。
+    ///
+    /// 本 field は **per-node で常に 0 または 1 要素** (`position` は spec 上
+    /// 単一値の property、element は最大 1 つの `running(name)` しか持たない):
+    /// - `position: static` / 他 keyword / rule 無し → empty
+    /// - `position: running(name)` → `[RunningTemplate { name }]`
+    ///
+    /// `Vec` shape を採るのは m5.1 `content` / m5.3 `string_set` と同じ
+    /// SmolStr wire-through pattern の踏襲 (原則 1 前例主義)。下流 (raikiri-dom)
+    /// が per-document `Vec<RunningTemplate>` を組み立てる際に per-node seed を
+    /// concatenate する。design doc §7.3 の 2-tier キャッシュ static side に相当。
+    /// (raikiri-spike-m5.4)
+    pub running_templates: Vec<RunningTemplate>,
 }
 
 impl ComputedValues {
@@ -73,6 +109,9 @@ impl ComputedValues {
             content: Vec::new(),
             // CSS GCPM 3 §3.1: string-set initial は empty list (raikiri-spike-m5.3)。
             string_set: Vec::new(),
+            // CSS GCPM 3 §1.2.1: position: running() seed initial は empty
+            // (position の initial は `static`、running(name) 無し)。
+            running_templates: Vec::new(),
         }
     }
 
@@ -108,6 +147,8 @@ impl ComputedValues {
             content: Vec::new(),
             // non-inherited (CSS GCPM 3 §3.1、raikiri-spike-m5.3)
             string_set: Vec::new(),
+            // non-inherited (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4)
+            running_templates: Vec::new(),
         }
     }
 }
@@ -131,6 +172,9 @@ mod tests {
         // CSS Content 3 §2.1 + CSS GCPM 3 §3.1 (raikiri-spike-m5.1 / m5.3)
         assert!(cv.content.is_empty());
         assert!(cv.string_set.is_empty());
+        // CSS GCPM 3 §1.2.1 (raikiri-spike-m5.4): position initial は `static` →
+        // running() seed 無し。
+        assert!(cv.running_templates.is_empty());
     }
 
     #[test]
@@ -167,6 +211,7 @@ mod tests {
             counter_set: vec![(SmolStr::new("page"), 5)],
             content: Vec::new(),
             string_set: Vec::new(),
+            running_templates: Vec::new(),
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -202,5 +247,21 @@ mod tests {
         };
         let child = ComputedValues::inherit_from(&parent);
         assert_eq!(child.display, DisplayValue::Inline);
+    }
+
+    #[test]
+    fn inherit_from_leaves_running_templates_at_initial() {
+        // CSS GCPM 3 §1.2.1: position property は non-inherited (CSS Positioned
+        // Layout 由来)。親が running(hdr) を持っていても child は initial (empty)。
+        // 37n sibling pattern (string_set / content / counter-* non-inheritance
+        // test を踏襲、raikiri-spike-m5.4)。
+        let parent = ComputedValues {
+            running_templates: vec![RunningTemplate {
+                name: SmolStr::new("hdr"),
+            }],
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert!(child.running_templates.is_empty());
     }
 }

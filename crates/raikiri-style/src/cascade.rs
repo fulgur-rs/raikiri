@@ -12,9 +12,9 @@ use cssparser::{Parser, ParserInput};
 use selectors::parser::{Selector, SelectorList};
 
 use crate::RaikiriSelectorImpl;
-use crate::computed::ComputedValues;
+use crate::computed::{ComputedValues, RunningTemplate};
 use crate::error::CascadeError;
-use crate::property::{PropertyKey, PropertyValue};
+use crate::property::{PositionValue, PropertyKey, PropertyValue};
 use crate::rule::parse_declaration_block;
 use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
@@ -22,9 +22,12 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 
 /// Cascade 結果。
 ///
-/// M1.4 では `computed` のみ populate。future field
-/// (gcpm_directives / running_templates) は M5 で追加、`#[non_exhaustive]` の
-/// 恩恵で non-breaking。
+/// M1.4 では `computed` のみ populate。M5 static-side (raikiri-spike-m5.1 /
+/// m5.3 / m5.4) は per-node ComputedValues 内で content / string_set /
+/// running_templates を保持する canonical taxonomy に落ち着き
+/// (bd raikiri-spike-376 amended)、CascadeResult-level の `gcpm_directives` /
+/// `running_templates` は下流 (raikiri-dom) で per-document に concatenate される
+/// 責務に移った。`#[non_exhaustive]` は将来 field 追加のために維持。
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct CascadeResult {
@@ -348,6 +351,20 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // string-set は M5 static-side β (raikiri-spike-m5.3、CSS GCPM 3 §3.1)。
         // Named-string runtime resolve は下流 (raikiri-dom) 責務。
         PropertyValue::StringSet(v) => target.string_set = v,
+        // position は M5 static-side ε (raikiri-spike-m5.4、CSS GCPM 3 §1.2.1)。
+        // - `Static` は no-op: `inherit_from` が running_templates を空で初期化
+        //   するため、`position: static` が cascade winner のとき running_templates
+        //   は空のままで正しい (advisor calibration: 先行 running(hdr) を上書きして
+        //   template 登録を suppress する用途)。
+        // - `Running(name)` は 1-item seed を push。per-node で常に 0/1 要素
+        //   (position は spec 上 単一値)、per-document 集約は下流 (raikiri-dom)
+        //   の 2-tier キャッシュ static side 責務 (design doc §7.3)。
+        PropertyValue::Position(pv) => match pv {
+            PositionValue::Static => {}
+            PositionValue::Running(name) => {
+                target.running_templates.push(RunningTemplate { name });
+            }
+        },
     }
 }
 
@@ -702,6 +719,93 @@ mod tests {
         assert!(
             r.computed[span].content.is_empty(),
             "child should not inherit content"
+        );
+    }
+
+    // ── position: running() wire-through (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4) ──
+
+    #[test]
+    fn running_template_wired_through_cascade_from_inline_style() {
+        // <div style="position: running(header)"> → ComputedValues.running_templates
+        // に [RunningTemplate{name:"header"}] が届く。parser → PropertyValue::Position
+        // → apply_value → ComputedValues の end-to-end 疎通 smoke。
+        // s85 / m5.1 / m5.3 wire-through pattern を踏襲。
+        use crate::computed::RunningTemplate;
+        let cv = cascade_doc("", "div", Some("position: running(header)"));
+        assert_eq!(
+            cv.running_templates,
+            vec![RunningTemplate {
+                name: SmolStr::new("header")
+            }]
+        );
+    }
+
+    #[test]
+    fn running_template_is_non_inherited_child_starts_from_initial_empty() {
+        // CSS GCPM 3 §1.2.1 (+ CSS Positioned Layout §9.1.1): position は
+        // non-inherited。<div style="position: running(hdr)"> の子 <span> は
+        // 自身の rule がなく running_templates は initial (empty)。
+        // 37n sibling: string_set / content non-inherited と同じ shape。
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("position: running(hdr)"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[div].running_templates.len(),
+            1,
+            "parent should carry its own running_templates seed"
+        );
+        assert!(
+            r.computed[span].running_templates.is_empty(),
+            "child should not inherit running_templates"
+        );
+    }
+
+    #[test]
+    fn position_static_yields_empty_running_templates() {
+        // position: static (spec baseline) の場合 apply_value は no-op、
+        // running_templates は initial の空 Vec が残る。標準 pattern の pin。
+        let cv = cascade_doc("", "div", Some("position: static"));
+        assert!(cv.running_templates.is_empty());
+    }
+
+    #[test]
+    fn static_position_wins_over_running_via_source_order() {
+        // advisor calibration: `Static` variant の load-bearing 検証。
+        // 同一 declaration block 内で `position: running(hdr); position: static`
+        // → CSS §6.4.4 で後方 declaration が同 rank/spec/order で勝つ (source_order
+        // が同じでも `beats` の `>=` で最後の候補が上書きする)。winner は
+        // Position(Static)、apply_value は no-op → running_templates 空。
+        let cv = cascade_doc("", "div", Some("position: running(hdr); position: static"));
+        assert!(
+            cv.running_templates.is_empty(),
+            "later `position: static` must suppress earlier `running(hdr)` — \
+             running_templates should stay empty when Static wins the cascade"
+        );
+    }
+
+    #[test]
+    fn multiple_elements_each_carry_own_running_template() {
+        // 複数 element がそれぞれ異なる running(name) を持つ →
+        // per-node で seed が独立に格納される (per-document concat は下流責務)。
+        use crate::computed::RunningTemplate;
+        let mut doc = TestDoc::new();
+        let h = doc.push_element(0, "header", Some("position: running(hdr)"));
+        let f = doc.push_element(0, "footer", Some("position: running(ftr)"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[h].running_templates,
+            vec![RunningTemplate {
+                name: SmolStr::new("hdr")
+            }]
+        );
+        assert_eq!(
+            r.computed[f].running_templates,
+            vec![RunningTemplate {
+                name: SmolStr::new("ftr")
+            }]
         );
     }
 
