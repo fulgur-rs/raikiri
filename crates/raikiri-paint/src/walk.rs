@@ -64,6 +64,18 @@ pub(crate) fn paint_document(
         if !node.is_in_document() {
             continue;
         }
+        // raikiri-spike-d9y.5 (SEC MED, Codex finding): HTML の
+        // metadata / raw-text content elements (<head>/<title>/<meta>/<link>/
+        // <base>/<noscript>/<script>/<style>/<template>) は subtree ごと
+        // 描画対象外。UA CSS `display: none` は author / user CSS で
+        // override 可能なため cascade-independent な defense-in-depth gate と
+        // して paint 側で fail-close する (HTML LS §15.4.1 "Elements that are
+        // not rendered" / CSS 2.1 App.D 準拠、namespace check で SVG /
+        // MathML の同名 element は除外)。<template> は is_in_document 側と
+        // 二重 gate。
+        if node.is_non_rendered_html_element() {
+            continue;
+        }
         match node.kind() {
             NodeKind::Element => {
                 if node.is_display_none() {
