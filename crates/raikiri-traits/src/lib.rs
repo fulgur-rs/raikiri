@@ -195,6 +195,9 @@ mod tests {
         assert_eq!(d.max_target_slots, Some(100_000));
         assert_eq!(d.max_layout_buffer_entries, Some(10_000));
         assert_eq!(d.max_aggregate_bytes, Some(1_073_741_824));
+        // Sprint 10 Option A: d9y.3 stopgap の hard-coded 32 MiB を継承
+        // (bd raikiri-spike-4kw)。
+        assert_eq!(d.max_input_bytes, Some(32 * 1024 * 1024));
     }
 
     // ── Config builders ─────────────────────────────────────────

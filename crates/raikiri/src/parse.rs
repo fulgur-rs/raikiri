@@ -5,21 +5,27 @@
 //! `raikiri_html::parse` → [`build_cascaded`] → assemble。M1 では cascade は
 //! 常に `Ok` を返すため、`RenderError::Parse` のみが bubble する。
 //!
-//! # Input byte cap (raikiri-spike-d9y.3, Sprint 9 Wave 3 — Option B stopgap)
+//! # Input byte cap (Sprint 10 Option A — bd raikiri-spike-4kw)
 //!
-//! `parse_html_with_limits` は **hard-coded 32 MiB input cap** で bounded read
-//! を行い、SEC-HIGH の `parse_html` unbounded-read DoS (attacker が任意サイズの
-//! HTML を送り込み OOM を誘発) を close する。実装は `Read::take(cap + 1)` +
-//! `read_to_end` の "probe" pattern: read 完了後 `buf.len() > cap` を検出したら
-//! `RenderError::LimitExceeded` を返す (html5ever は truncated input を
-//! silently accept するため、単純 `take` では検出できない)。
+//! `parse_html_with_limits` は [`RenderLimits::max_input_bytes`] を read して
+//! bounded read を行い、SEC-HIGH の `parse_html` unbounded-read DoS (attacker
+//! が任意サイズの HTML を送り込み OOM を誘発、Sprint 9 Wave 3 bd raikiri-spike-d9y.3)
+//! を close する。実装は `Read::take(cap + 1)` + `read_to_end` の "probe" pattern:
+//! read 完了後 `buf.len() > cap` を検出したら
+//! `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }` を返す
+//! (html5ever は truncated input を silently accept するため、単純 `take`
+//! では検出できない)。
 //!
-//! Option B stopgap の semantic mismatch: 現状は `LimitKind::AggregateBytes` を
-//! re-use しているが、AggregateBytes は本来 approximate memory footprint 用途で
-//! 意味が広い。input-byte 専用の `LimitKind::InputBytes` variant + tunable
-//! `RenderLimits::max_input_bytes` field は follow-up bd task
-//! `raikiri-spike-4kw` (wall/traits crossing、human approve 必須) が
-//! Option A として担う。それまで本 stopgap で SEC-HIGH を実質 close する。
+//! Wave 3 では hard-coded `INPUT_BYTES_CAP` const と `LimitKind::AggregateBytes`
+//! re-use の Option B stopgap で SEC-HIGH を close していた。Sprint 10 で
+//! `RenderLimits::max_input_bytes: Option<u64>` (default `Some(32 * 1024 * 1024)`)
+//! および `LimitKind::InputBytes` に昇格 (Option A、wall/traits crossing、
+//! bd raikiri-spike-sve decision)。default 値は Wave 3 stopgap と同一のため、
+//! `RenderLimits::default()` を渡す consumer は behavior 不変。cap を調整したい
+//! consumer は [`RenderLimitsBuilder::max_input_bytes`](raikiri_traits::RenderLimitsBuilder::max_input_bytes)
+//! (または field への直接代入)、無効化したい consumer は `max_input_bytes = None`
+//! を設定する (**cap 無効化は SEC-HIGH d9y.3 DoS を再暴露する** — field doc
+//! の Security note 参照)。
 
 use std::io::Read;
 
@@ -28,32 +34,21 @@ use raikiri_traits::{LimitKind, ParseError, RenderError, RenderLimits};
 
 use crate::{HtmlDocument, build_cascaded};
 
-/// `parse_html_with_limits` が enforce する input byte cap (32 MiB)。
-///
-/// TODO(follow-up bd raikiri-spike-4kw): promote hard-coded `INPUT_BYTES_CAP`
-/// to `raikiri_traits::RenderLimits::max_input_bytes` when wall/traits approve
-/// is available. Until then this const is the sole knob and none of the
-/// current `RenderLimits` fields (`max_aggregate_bytes` / `max_dom_nodes` /
-/// `max_render_seconds` / …) are consulted by parse — those are reserved for
-/// downstream renderer / cascade layers.
-const INPUT_BYTES_CAP: u64 = 32 * 1024 * 1024;
-
 /// HTML byte stream を parse し、cascade まで完了した [`HtmlDocument`] を返す。
 ///
 /// 内部で [`parse_html_with_limits`] に [`RenderLimits::default()`] を渡す
-/// thin wrapper。Consumer が既存 `parse_html` を呼び出しても hard-coded
-/// 32 MiB input cap は必ず enforce される (SEC-HIGH d9y.3 close、advertised
-/// path が bounded、fail-closed 原則)。
+/// thin wrapper。Consumer が既存 `parse_html` を呼び出しても default 32 MiB
+/// input cap (`RenderLimits::default().max_input_bytes = Some(32 * 1024 * 1024)`)
+/// は必ず enforce される (SEC-HIGH d9y.3 close、advertised path が bounded、
+/// fail-closed 原則)。
 ///
 /// # Errors
 ///
 /// - `RenderError::Parse(ParseError::Io)`: `input` の read が Err を返した
 /// - `RenderError::Parse(ParseError::Encoding)`: 入力が valid UTF-8 でない
 /// - `RenderError::Parse(ParseError::*)`: html5ever が Parse error を返した
-/// - `RenderError::LimitExceeded { kind: LimitKind::AggregateBytes, .. }`:
-///   input byte 数が [`INPUT_BYTES_CAP`] を超えた (Option B stopgap: semantic
-///   上は input-byte 専用の variant が望ましいが、現状は AggregateBytes を
-///   re-use。follow-up `raikiri-spike-4kw` 参照)
+/// - `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }`:
+///   input byte 数が [`RenderLimits::max_input_bytes`] を超えた
 ///
 /// M1 では cascade は infallible (m1.23 契約、`.expect` で unwrap)。
 ///
@@ -75,66 +70,76 @@ pub fn parse_html<R: Read>(
 }
 
 /// `parse_html` と同じ pipeline を、`RenderLimits` を明示的に受け取る形で
-/// 提供する variant。Option B stopgap では `limits` の各 field は現時点で
-/// **consult されず** (`max_dom_nodes` / `max_aggregate_bytes` / etc.)、
-/// hard-coded `INPUT_BYTES_CAP` (32 MiB) のみが input read で enforce される。
+/// 提供する variant。Sprint 10 Option A (bd raikiri-spike-4kw) で
+/// [`RenderLimits::max_input_bytes`] を consult するよう昇格:
 ///
-/// Signature は将来 Option A (follow-up `raikiri-spike-4kw`) で
-/// `limits.max_input_bytes` を read するよう switch する為に予め placeholder
-/// として receive しておく (source-compat: 呼び出し側の call-site は
-/// Option A への upgrade 時に修正不要)。
+/// * `Some(cap)` の場合、input read を `cap + 1` bytes で bounded probe
+///   し、`cap` 超過なら [`RenderError::LimitExceeded`] で早期返却
+/// * `None` の場合、input を無制限に read する (Consumer が明示的に cap を
+///   無効化した場合のみ、fail-closed default は 32 MiB)
 ///
-/// # Semantic note
-///
-/// Input byte cap 超過は [`LimitKind::AggregateBytes`] として報告される。
-/// これは Option B stopgap の trade-off で、Option A 完了後は
-/// `LimitKind::InputBytes` に差し替わる予定 (follow-up bd task)。
+/// その他の `limits.*` field (`max_dom_nodes` / `max_aggregate_bytes` / etc.)
+/// は現時点で `parse_html_with_limits` 内では **consult されない** — これらは
+/// downstream renderer / cascade layers 用に予約されている。
 ///
 /// # Implementation
 ///
-/// `input.take(INPUT_BYTES_CAP + 1).read_to_end(&mut buf)` で bounded read。
-/// `buf.len() > INPUT_BYTES_CAP` なら input が cap を超えたと確定できるので
-/// `RenderError::LimitExceeded` を返す。この "+1 probe" が無いと、
-/// `Read::take(cap)` だけでは cap 到達時 silently truncate される (html5ever
-/// も truncated input を無警告で parse) ため cap 到達判定ができない。
+/// `Some(cap)` 経路: `input.by_ref().take(cap + 1).read_to_end(&mut buf)` で
+/// bounded read。`buf.len() > cap` なら input が cap を超えたと確定できる
+/// (Read::take だけでは cap 到達時 silently truncate される + html5ever も
+/// truncated input を無警告で parse するため、この "+1 probe" が無いと cap
+/// 到達判定ができない)。
+///
+/// `None` 経路: `input.read_to_end(&mut buf)` で unbounded read。
 ///
 /// # Errors
 ///
 /// - `RenderError::Parse(ParseError::Io)`: `input` の read が Err を返した
 /// - `RenderError::Parse(ParseError::Encoding)`: 入力が valid UTF-8 でない
 /// - `RenderError::Parse(ParseError::*)`: html5ever が Parse error を返した
-/// - `RenderError::LimitExceeded { kind: LimitKind::AggregateBytes, limit, actual }`:
-///   input byte 数が [`INPUT_BYTES_CAP`] を超えた。`limit` = `INPUT_BYTES_CAP`、
-///   `actual` = `INPUT_BYTES_CAP + 1` (真の input size は cap 超過 detection の
-///   都合で不明、"cap を超えたことは確実" と読む)
+/// - `RenderError::LimitExceeded { kind: LimitKind::InputBytes, limit, actual }`:
+///   input byte 数が `limits.max_input_bytes.unwrap()` を超えた。`limit` =
+///   設定 cap、`actual` は cap を超えたことのみ確定 (真の input size は cap
+///   超過 detection の都合で不明、"cap を超えたことは確実" と読む)
 #[allow(clippy::result_large_err)]
 pub fn parse_html_with_limits<R: Read>(
-    input: R,
+    mut input: R,
     options: &ParseOptions<'_>,
-    _limits: RenderLimits,
+    limits: RenderLimits,
 ) -> Result<HtmlDocument, RenderError> {
-    // "+1 probe" pattern: cap + 1 byte 読めてしまったら cap 超過確定。
-    // usize/u64 変換は saturating (32 bit target で INPUT_BYTES_CAP が
-    // usize::MAX を超えないようにするため)。
-    let probe_cap = INPUT_BYTES_CAP.saturating_add(1);
     let mut buf: Vec<u8> = Vec::new();
-    input
-        .take(probe_cap)
-        .read_to_end(&mut buf)
-        .map_err(|e| RenderError::Parse(ParseError::Io(e)))?;
+    match limits.max_input_bytes {
+        Some(cap) => {
+            // "+1 probe" pattern: cap + 1 byte 読めてしまったら cap 超過確定。
+            // saturating_add で cap == u64::MAX の overflow を guard。
+            let probe_cap = cap.saturating_add(1);
+            input
+                .by_ref()
+                .take(probe_cap)
+                .read_to_end(&mut buf)
+                .map_err(|e| RenderError::Parse(ParseError::Io(e)))?;
 
-    if (buf.len() as u64) > INPUT_BYTES_CAP {
-        return Err(RenderError::LimitExceeded {
-            kind: LimitKind::AggregateBytes,
-            limit: INPUT_BYTES_CAP,
-            actual: buf.len() as u64,
-        });
+            if (buf.len() as u64) > cap {
+                return Err(RenderError::LimitExceeded {
+                    kind: LimitKind::InputBytes,
+                    limit: cap,
+                    actual: buf.len() as u64,
+                });
+            }
+        }
+        None => {
+            // Consumer が明示的に cap 無効化 (fail-closed default は 32 MiB、
+            // ここに来るのは opt-out した場合のみ)。
+            input
+                .read_to_end(&mut buf)
+                .map_err(|e| RenderError::Parse(ParseError::Io(e)))?;
+        }
     }
 
     // Under cap: 既存 raikiri_html::parse に materialized slice で渡す。
     // raikiri_html::parse は内部で `read_to_end` するため、`&[u8]` を渡すと
     // 1 回の memcpy で済む (bytes 二重 alloc は避けられないが、cap 分の
-    // 32 MiB が memory 上限)。
+    // memory が上限)。
     let uncascaded = raikiri_html::parse(buf.as_slice(), options).map_err(RenderError::Parse)?;
     let cascade = build_cascaded(&uncascaded);
     Ok(HtmlDocument {
