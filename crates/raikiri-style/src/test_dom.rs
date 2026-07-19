@@ -116,7 +116,7 @@ impl StyleDom for TestDoc {
     }
 }
 
-impl<'a> StyleNode<'a> for TestNodeRef<'a> {
+impl<'a> StyleNode for TestNodeRef<'a> {
     type Element<'b>
         = TestElementRef<'b>
     where
@@ -134,7 +134,7 @@ impl<'a> StyleNode<'a> for TestNodeRef<'a> {
     }
 }
 
-impl<'a> StyleElement<'a> for TestElementRef<'a> {
+impl<'a> StyleElement for TestElementRef<'a> {
     fn tag_name(&self) -> &str {
         &self.node.tag
     }
