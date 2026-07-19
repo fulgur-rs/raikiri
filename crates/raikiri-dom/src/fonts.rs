@@ -12,7 +12,35 @@
 //!   (system_fonts: false + generic alias append)
 
 use parley::FontContext;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+/// [`build_wpt_font_ctx`] が個別 font file を読み込む際に許容する最大 byte 数。
+/// 100 MiB は現実の bundled font (Ahem: ~12 KiB, Noto CJK: ~20 MiB 前後) に対して
+/// 十分な余裕を残しつつ、attacker が用意した巨大 regular file による memory
+/// exhaustion を弾く閾値。
+///
+/// **Threat surface coverage** (raikiri-spike-d9y.4, Codex security finding
+/// `ffe1f9c7027c8191a8f8812a6456c7d9`):
+///
+/// - **symlink → /dev/zero**: `collect_recursive` 側の
+///   `file_type.is_symlink()` skip (roborev e93 round 4) で既に closed
+/// - **FIFO / device / socket** (indefinite block): `collect_recursive` 側の
+///   `file_type.is_file()` gate で closed。`Read::take(N)` は memory を bound
+///   するが writer 未定の FIFO に対して time は bound しないので、walk 段階で
+///   排除するのが load-bearing defense
+/// - **oversized regular file** (memory exhaustion): `metadata.len() >
+///   FONT_SIZE_CAP` skip で closed
+/// - **mid-read grow (TOCTOU)**: `File::open + take(FONT_SIZE_CAP)` bounded
+///   read で保険 (walk 直後に file が伸びても memory は bound される)
+///
+/// **Out of scope (planner-blessed 3-layer)**: walk 直後 regular file が FIFO に
+/// 差し替わる TOCTOU-swap は memory は bound されるが time は bound されない
+/// (`take(N)` は writer が close するまで block)。O_NONBLOCK + `fstat` 経由の
+/// defense が必要になるまで defer。
+///
+/// TODO(raikiri-spike-d9y.3): Wave 0 の RenderLimits と連動させる。
+const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 
 /// WPT bundled fonts dir から FontContext を構築する。system font
 /// resolver は完全 disable、generic family (`serif`/`sans-serif`/...)
@@ -70,10 +98,25 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     let mut registered_preferred_basenames: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for path in paths {
-        let bytes = std::fs::read(&path).map_err(|source| FontError::Io {
+        // Bounded read (defense in depth, raikiri-spike-d9y.4): walker が
+        // FONT_SIZE_CAP 以下だと確認済でも、walk 直後に file が伸びる TOCTOU
+        // race に備えて `take(FONT_SIZE_CAP)` で memory を hard-bound する。
+        // NB: walk 直後 regular file → FIFO 差し替え race は memory bound は
+        // 保たれるが time bound は保たれない (`take` は writer close まで
+        // block)。planner-blessed 3-layer scope 外、O_NONBLOCK path が必要な
+        // ら別 finding で入れる。
+        let mut file = std::fs::File::open(&path).map_err(|source| FontError::Io {
             path: path.clone(),
             source,
         })?;
+        let mut bytes = Vec::new();
+        file.by_ref()
+            .take(FONT_SIZE_CAP)
+            .read_to_end(&mut bytes)
+            .map_err(|source| FontError::Io {
+                path: path.clone(),
+                source,
+            })?;
         let blob = Blob::new(Arc::new(bytes) as _);
         let registered = ctx.collection.register_fonts(blob, None);
         if registered.is_empty() {
@@ -296,6 +339,20 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FontError
             collect_recursive(&path, out)?;
             continue;
         }
+        // regular file 以外 (FIFO / device / socket / BlockDevice / CharDevice) は
+        // skip: FIFO は `std::fs::read` 経由で writer 未定なら無限 block、device は
+        // /dev/zero symlink 経路が閉じられた後の直接配置 attack vector。
+        // `Read::take(N)` は memory bound しか担保しないので、時間軸の DoS
+        // (blocking read) は walk 段階で file_type filter するのが load-bearing。
+        // raikiri-spike-d9y.4, Codex finding `ffe1f9c7027c8191a8f8812a6456c7d9`。
+        if !file_type.is_file() {
+            eprintln!(
+                "[raikiri-dom::fonts] warn: skipping non-regular entry {} (file_type={:?})",
+                path.display(),
+                file_type
+            );
+            continue;
+        }
         // 通常 file: extension check
         let is_font = path
             .extension()
@@ -305,9 +362,27 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FontError
                 s == "ttf" || s == "otf"
             })
             .unwrap_or(false);
-        if is_font {
-            out.push(path);
+        if !is_font {
+            continue;
         }
+        // Size cap: attacker が用意した巨大 regular font file による memory
+        // exhaustion を弾く (raikiri-spike-d9y.4)。境界値 (== FONT_SIZE_CAP) は
+        // 通す (build_wpt_font_ctx 側の `take(FONT_SIZE_CAP)` bounded read が
+        // 完全 consume するので truncation は起きない)。
+        let metadata = std::fs::symlink_metadata(&path).map_err(|source| FontError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if metadata.len() > FONT_SIZE_CAP {
+            eprintln!(
+                "[raikiri-dom::fonts] warn: skipping oversized font {} ({} bytes > cap {})",
+                path.display(),
+                metadata.len(),
+                FONT_SIZE_CAP
+            );
+            continue;
+        }
+        out.push(path);
     }
     Ok(())
 }
@@ -483,6 +558,89 @@ mod tests {
             Err(other) => panic!("expected EmptyDir, got {:?}", other),
             Ok(_) => panic!("expected EmptyDir err, got Ok"),
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn walker_skips_named_pipe_font_entry() {
+        // raikiri-spike-d9y.4 regression pin (Codex finding
+        // `ffe1f9c7027c8191a8f8812a6456c7d9`): 攻撃者が制御下 fonts dir に
+        // `evil.ttf` という名前の FIFO を配置した場合、`std::fs::read` が
+        // writer 未定の FIFO で無限 block してしまう。walk 段階で
+        // `file_type.is_file()` filter が named pipe を弾くことを pin する。
+        // このテストが落ちる = time-DoS surface が再度開いた合図。
+        let tmp = tempfile::tempdir().unwrap();
+        write_fake_ttf(tmp.path(), "good.ttf");
+        let fifo = tmp.path().join("evil.ttf");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo(1) should be available on unix hosts");
+        assert!(status.success(), "mkfifo failed for {}", fifo.display());
+
+        let paths = walk_fonts(tmp.path()).expect("walker Ok with FIFO present");
+        // FIFO は skip、good.ttf のみ通過
+        assert_eq!(
+            paths.len(),
+            1,
+            "expected only good.ttf (FIFO skipped), got: {:?}",
+            paths
+        );
+        assert_eq!(
+            paths[0].file_name().and_then(|f| f.to_str()),
+            Some("good.ttf")
+        );
+    }
+
+    #[test]
+    fn walker_skips_oversized_font_file() {
+        // raikiri-spike-d9y.4 regression pin: FONT_SIZE_CAP + 1 byte の
+        // sparse regular file (実際には zero-block、`set_len` で logical size
+        // のみ膨らむ) を walker が skip することを pin する。
+        // sparse file を使うのは、テスト実行時に 100 MiB+ の実 block 消費を
+        // 避けるため (metadata.len() は logical size を返すので filter は
+        // 正しく発火する)。
+        let tmp = tempfile::tempdir().unwrap();
+        write_fake_ttf(tmp.path(), "ok.ttf");
+        let big = tmp.path().join("big.ttf");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(FONT_SIZE_CAP + 1).unwrap();
+
+        let paths = walk_fonts(tmp.path()).expect("walker Ok with oversized file");
+        assert_eq!(
+            paths.len(),
+            1,
+            "expected only ok.ttf (oversized big.ttf skipped), got: {:?}",
+            paths
+        );
+        assert_eq!(
+            paths[0].file_name().and_then(|f| f.to_str()),
+            Some("ok.ttf")
+        );
+    }
+
+    #[test]
+    fn walker_accepts_regular_file_at_size_cap_boundary() {
+        // raikiri-spike-d9y.4: filter が silently over-reject していないことを
+        // pin する (境界値 == FONT_SIZE_CAP は通す — build_wpt_font_ctx 側の
+        // `take(FONT_SIZE_CAP)` bounded read は境界を全 consume する)。
+        // boundary.ttf: `File::set_len(FONT_SIZE_CAP)` で sparse file を作り、
+        // 境界値ちょうど (`metadata.len() == FONT_SIZE_CAP`) が accept 側に
+        // 落ちる (`>` cap で skip、`<= cap` で accept) ことを直接 pin する
+        // (codex final review 軽微 finding fix — tiny file では境界を実際に
+        // 触れず silent over-reject を捕捉できない)。
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("boundary.ttf");
+        let f = std::fs::File::create(&path).expect("create boundary.ttf");
+        f.set_len(FONT_SIZE_CAP)
+            .expect("sparse set_len FONT_SIZE_CAP");
+        drop(f);
+        let paths = walk_fonts(tmp.path()).expect("walker Ok on boundary-size font");
+        assert_eq!(paths.len(), 1);
+        assert_eq!(
+            paths[0].file_name().and_then(|f| f.to_str()),
+            Some("boundary.ttf")
+        );
     }
 
     #[test]
