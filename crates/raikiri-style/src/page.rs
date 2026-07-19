@@ -146,7 +146,10 @@ pub enum PagePseudo {
 ///
 /// Field order (selector → declarations → source_order → origin) mirrors
 /// [`crate::StyleRule`] so both rule kinds present the same shape to M4
-/// cascade code (raikiri-spike-jzv M4 pre-work).
+/// cascade code (raikiri-spike-jzv M4 pre-work). Future field (`@page`-specific
+/// descriptor size / marks / bleed / margin-box、cascade-origin cache 等) は
+/// M4+ で追加、`#[non_exhaustive]` の恩恵で non-breaking。
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct PageRule {
     /// Which pages this rule applies to.
