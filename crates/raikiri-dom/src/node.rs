@@ -313,6 +313,59 @@ impl Node {
         }
     }
 
+    /// HTML namespace の "non-rendered" element (metadata content / raw text
+    /// container) を判定する。paint 段で subtree ごと skip する gate 用。
+    ///
+    /// 対象 (HTML LS §15.4.1 "Elements that are not rendered" / CSS 2.1 App.D):
+    /// `<head>`, `<title>`, `<meta>`, `<link>`, `<base>`, `<noscript>`,
+    /// `<script>`, `<style>`, `<template>`。namespace が HTML default
+    /// (`Node.namespace == None`) or 明示 xhtml (`"http://www.w3.org/1999/xhtml"`)
+    /// の場合のみ true、SVG / MathML namespace の同名要素は false (SVG `<style>`
+    /// / `<script>` は SVG 側 rendering 責務、HTML paint filter の対象外)。
+    ///
+    /// # 動機
+    ///
+    /// UA CSS (`style { display: none }` etc、CSS 2.1 App.D) による hide は
+    /// author / user CSS で override 可能なため、attacker-controlled HTML +
+    /// override CSS で `<style>` `<script>` 内 text が rendered artifact に
+    /// 混入する security surface が残る。paint 側で cascade-independent に
+    /// gate することで defense-in-depth 保証する (raikiri-spike-d9y.5、
+    /// Codex Cloud Security finding severity: medium)。
+    ///
+    /// # Non-goals
+    ///
+    /// - `[hidden]` attribute / `inert` attribute の filter は本 predicate
+    ///   scope 外 (M4+ で `is_display_none()` 側の cascade 経路)
+    /// - `<template>` は既に `is_in_document() == false` の gate で
+    ///   redundant に skip されるが、defense-in-depth で本 predicate にも
+    ///   含める (両 gate 独立に fail-close する)
+    #[inline]
+    pub fn is_non_rendered_html_element(&self) -> bool {
+        let NodeData::Element(e) = &self.data else {
+            return false;
+        };
+        // namespace check: HTML default (None) or explicit xhtml のみ対象。
+        // SVG / MathML の同名 element は SVG rendering 側で処理する。
+        match e.namespace.as_deref() {
+            None => {}
+            Some("http://www.w3.org/1999/xhtml") => {}
+            _ => return false,
+        }
+        // HTML tag name は html5ever が lowercase 化済 (QualName.local)。
+        matches!(
+            e.tag_name.as_str(),
+            "head"
+                | "title"
+                | "meta"
+                | "link"
+                | "base"
+                | "noscript"
+                | "script"
+                | "style"
+                | "template"
+        )
+    }
+
     /// [`NodeFlags::IS_IN_DOCUMENT`] bit を明示的に上書きする (crate-private)。
     ///
     /// raikiri-spike-37c: `Document::mark_in_document_flags` (sink.finish() から
@@ -373,5 +426,101 @@ mod flags_tests {
         assert_eq!(NodeFlags::IS_INLINE_ROOT.bits(), 0b001);
         assert_eq!(NodeFlags::IS_TABLE_ROOT.bits(), 0b010);
         assert_eq!(NodeFlags::IS_IN_DOCUMENT.bits(), 0b100);
+    }
+}
+
+#[cfg(test)]
+mod is_non_rendered_html_element_tests {
+    //! d9y.5 codex final review finding #2: `<template>` 経路 test は
+    //! `is_in_document()` が先に発火するため、predicate 自体の direct
+    //! coverage が薄い。DOM predicate を builder + namespace mutation で
+    //! namespace 分岐まで含めて直接 pin する。
+
+    use super::*;
+
+    fn html_element(tag: &str) -> Node {
+        Node::new_element(SmolStr::new(tag), taffy::Style::default(), None)
+    }
+
+    fn set_ns(n: &mut Node, ns: &str) {
+        if let NodeData::Element(e) = &mut n.data {
+            e.namespace = Some(SmolStr::new(ns));
+        }
+    }
+
+    #[test]
+    fn predicate_true_for_html_default_namespace_skip_set() {
+        for tag in [
+            "head", "title", "meta", "link", "base", "noscript", "script", "style", "template",
+        ] {
+            let n = html_element(tag);
+            assert!(
+                n.is_non_rendered_html_element(),
+                "{tag} in HTML default namespace (None) must be non-rendered"
+            );
+        }
+    }
+
+    #[test]
+    fn predicate_true_for_explicit_xhtml_namespace_skip_set() {
+        for tag in [
+            "head", "title", "meta", "link", "base", "noscript", "script", "style", "template",
+        ] {
+            let mut n = html_element(tag);
+            set_ns(&mut n, "http://www.w3.org/1999/xhtml");
+            assert!(
+                n.is_non_rendered_html_element(),
+                "{tag} with explicit xhtml namespace must be non-rendered"
+            );
+        }
+    }
+
+    #[test]
+    fn predicate_false_for_svg_namespace_same_named_elements() {
+        // SVG <title>, <style>, <script> は rendered / effective in SVG context。
+        // predicate は HTML namespace のみ filter するのが契約 (paint 側は
+        // SVG rendering を M2+ で別 pipeline)。
+        for tag in ["title", "style", "script"] {
+            let mut n = html_element(tag);
+            set_ns(&mut n, "http://www.w3.org/2000/svg");
+            assert!(
+                !n.is_non_rendered_html_element(),
+                "SVG {tag} must NOT be filtered — SVG rendering owns these"
+            );
+        }
+    }
+
+    #[test]
+    fn predicate_false_for_mathml_namespace_same_named_elements() {
+        for tag in ["style", "script"] {
+            let mut n = html_element(tag);
+            set_ns(&mut n, "http://www.w3.org/1998/Math/MathML");
+            assert!(
+                !n.is_non_rendered_html_element(),
+                "MathML {tag} must NOT be filtered"
+            );
+        }
+    }
+
+    #[test]
+    fn predicate_false_for_normal_html_elements() {
+        for tag in [
+            "p", "div", "span", "h1", "a", "body", "html", "img", "table",
+        ] {
+            let n = html_element(tag);
+            assert!(
+                !n.is_non_rendered_html_element(),
+                "{tag} is rendered content — predicate must return false"
+            );
+        }
+    }
+
+    #[test]
+    fn predicate_false_for_non_element_nodes() {
+        // Text / Document node は Element でないので false。
+        let text = Node::new_text(SmolStr::new("hi"));
+        assert!(!text.is_non_rendered_html_element());
+        let doc = Node::new_document();
+        assert!(!doc.is_non_rendered_html_element());
     }
 }
