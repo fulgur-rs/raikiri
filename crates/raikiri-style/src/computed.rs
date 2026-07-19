@@ -9,7 +9,8 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    ContentComponent, CssColor, DisplayValue, Length, empty_content_list, empty_string_set_entries,
+    ContentComponent, CssColor, DisplayValue, Length, empty_content_list, empty_counter_entries,
+    empty_string_set_entries,
 };
 
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
@@ -54,15 +55,30 @@ pub struct ComputedValues {
     /// `counter-reset`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
     /// counter-name + initial value pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
-    pub counter_reset: Vec<(SmolStr, i32)>,
+    ///
+    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`pick_winners` value.clone、
+    /// `apply_value` move) と inheritance walk clone (`resolve_inheritance` の
+    /// stack push + `out[idx] = computed.clone()`) が **shallow (Arc bump)** に
+    /// なる。`* { counter-reset: c0 c1 ... cN }` × M element の O(N × M) memory
+    /// blow-up を単一 heap slot 共有で塞ぐ (raikiri-spike-d9y.2 SEC HIGH、d9y.1
+    /// Content/StringSet pattern の踏襲)。`Arc<Vec<T>>: Deref<Target = Vec<T>>`
+    /// により downstream の `.iter()` / `.len()` / `.is_empty()` は既存 pattern
+    /// そのままで通る (dom/paint consumer 波及 0)。
+    pub counter_reset: Arc<Vec<(SmolStr, i32)>>,
     /// `counter-increment`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
     /// counter-name + increment pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
-    pub counter_increment: Vec<(SmolStr, i32)>,
+    ///
+    /// [`Arc<Vec<..>>`] wrap は [`Self::counter_reset`] と同 rationale
+    /// (raikiri-spike-d9y.2)。
+    pub counter_increment: Arc<Vec<(SmolStr, i32)>>,
     /// `counter-set`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
     /// counter-name + value pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
-    pub counter_set: Vec<(SmolStr, i32)>,
+    ///
+    /// [`Arc<Vec<..>>`] wrap は [`Self::counter_reset`] と同 rationale
+    /// (raikiri-spike-d9y.2)。
+    pub counter_set: Arc<Vec<(SmolStr, i32)>>,
     /// `content` の resolved 中間表現。**non-inherited**、initial: empty list
     /// (spec §2.1 "content" property の `normal` / `none` を空 list として扱う
     /// — 本 crate は cascade static side、pseudo-element 生成判断は下流 layer)。
@@ -118,9 +134,11 @@ impl ComputedValues {
             font_weight: 400,
             display: DisplayValue::Inline,
             // CSS Lists 3 §3: counter-* initial is empty list (raikiri-spike-s85)
-            counter_reset: Vec::new(),
-            counter_increment: Vec::new(),
-            counter_set: Vec::new(),
+            // d9y.2: shared empty Arc slot — per-node allocation 回避
+            // (advisor calibration、property.rs `empty_counter_entries` doc 参照)。
+            counter_reset: empty_counter_entries(),
+            counter_increment: empty_counter_entries(),
+            counter_set: empty_counter_entries(),
             // CSS Content 3 §2.1: content initial (normal) は下流にとって「no
             // generated content」= empty list として扱う (raikiri-spike-m5.1)。
             // d9y.1: shared empty Arc slot — per-node allocation 回避
@@ -159,10 +177,15 @@ impl ComputedValues {
             font_weight: parent.font_weight,
             // non-inherited (initial 値、CSS §9.2.4 initial value of display)
             display: DisplayValue::Inline,
-            // non-inherited (CSS Lists 3 §3、raikiri-spike-s85)
-            counter_reset: Vec::new(),
-            counter_increment: Vec::new(),
-            counter_set: Vec::new(),
+            // non-inherited (CSS Lists 3 §3、raikiri-spike-s85)。
+            // d9y.2: shared empty Arc slot (`empty_counter_entries`)、per-node
+            // allocation 回避。inherit_from は child stack entry のたびに走る
+            // ため、`Vec::new()` を直に書くと 1-doc あたり 3 × N 個の Vec
+            // struct が生まれる (advisor calibration、d9y.1 content/string_set
+            // pattern と同 rationale)。
+            counter_reset: empty_counter_entries(),
+            counter_increment: empty_counter_entries(),
+            counter_set: empty_counter_entries(),
             // non-inherited (CSS Content 3 §2.1、raikiri-spike-m5.1)。
             // d9y.1: shared empty Arc slot (`empty_content_list`)、per-node
             // allocation 回避。inherit_from は child stack entry のたびに走る
@@ -231,9 +254,10 @@ mod tests {
             font_size: Length::Px(24.0),
             font_weight: 700,
             display: DisplayValue::Block,
-            counter_reset: vec![(SmolStr::new("chapter"), 3)],
-            counter_increment: vec![(SmolStr::new("section"), 2)],
-            counter_set: vec![(SmolStr::new("page"), 5)],
+            // d9y.2: counter-* は Arc<Vec<..>>、fixture literal は Arc::new(vec![..]) で包む。
+            counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
+            counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
+            counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
             content: empty_content_list(),
             string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
@@ -251,10 +275,11 @@ mod tests {
         // CSS Lists 3 §3: counter-reset / counter-increment / counter-set は
         // non-inherited → 親が値を持っていても child は empty (initial) となる
         // (raikiri-spike-s85)
+        // d9y.2: 親 fixture の counter-* は Arc<Vec<..>> になったため Arc::new でラップ。
         let parent = ComputedValues {
-            counter_reset: vec![(SmolStr::new("chapter"), 3)],
-            counter_increment: vec![(SmolStr::new("section"), 2)],
-            counter_set: vec![(SmolStr::new("page"), 5)],
+            counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
+            counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
+            counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
             ..ComputedValues::initial()
         };
         let child = ComputedValues::inherit_from(&parent);
