@@ -23,13 +23,16 @@ pub mod style_dom;
 pub use style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
 pub mod property;
-pub use property::{CssColor, DisplayValue, Length, PropertyValue};
+pub use property::{CssColor, DisplayValue, Length, PropertyKey, PropertyValue};
 
 pub mod rule;
 pub use rule::{Declaration, StyleRule};
 
 pub mod page;
-pub use page::{PagePseudo, PageRule, PageSelector, PageSelectorEntry};
+pub use page::{
+    PageCascadeResult, PageContextQuery, PagePseudo, PageRule, PageSelector, PageSelectorEntry,
+    cascade_page,
+};
 
 pub mod ruletree;
 pub use ruletree::{Origin, RuleTree, build_rule_tree, walk_style_elements};

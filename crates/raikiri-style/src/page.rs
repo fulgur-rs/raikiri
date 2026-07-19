@@ -66,11 +66,15 @@
 //! deferred to a human ledger — see the bd task filed as an M4-handoff
 //! escalation.
 
+use std::collections::HashMap;
+
 use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 
 use crate::Atom;
+use crate::cascade::cascade_rank;
+use crate::property::{PropertyKey, PropertyValue};
 use crate::rule::Declaration;
-use crate::ruletree::Origin;
+use crate::ruletree::{Origin, RuleTree};
 
 /// Parsed `@page` selector list — a comma-separated list of compound
 /// `<page-selector>` productions from CSS Paged Media L3 §4.3 (anchor
@@ -319,5 +323,771 @@ fn parse_and_push_pseudo<'i>(
         // WhiteSpace here (`@page : left`), functional pseudo (`:nth-page(…)`),
         // or any other token type is invalid per the compound rule.
         _ => Err(input.new_custom_error(())),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// @page cascade order 本実装 (raikiri-spike-m4.1)
+//
+// CSS Paged Media Level 3, §"Cascading and page context" —
+//   <https://www.w3.org/TR/css-page-3/#cascading-and-page-context>
+// CSS Cascading and Inheritance Level 4, §"Cascade Origin" —
+//   <https://www.w3.org/TR/css-cascade-4/#cascade-origin>
+//
+// # Sibling arm convention (raikiri-spike-37n)
+//
+// Follows the sibling convention established by
+// [`crate::cascade::collect_cascaded`] + [`crate::cascade::pick_winners`]:
+// per-candidate `(value, important, origin, specificity, source_order)` tuple,
+// group by [`PropertyKey`], pick winner by `(rank, specificity, source_order)`
+// where higher tuples beat lower. `rank` reuses [`cascade_rank`] verbatim —
+// `@page` rules and style rules share the same origin ordering (spec §6.2).
+// The only diverging element is the specificity type: [`PageSpecificity`] is a
+// derived-`Ord` `(f, g, h)` triple per L3 §"Cascading and page context",
+// whereas style rules use the `selectors` crate's 32-bit packed specificity.
+// ---------------------------------------------------------------------------
+
+/// Query describing which `@page` selectors apply to the current page.
+///
+/// The consumer (raikiri umbrella, dom-level page loop) supplies this bag
+/// per page it is about to lay out. All fields are declarative — the caller
+/// pre-computes `is_left` / `is_right` from `page_index` parity, `is_first`
+/// from the page number, and `is_blank` from the fragmentation state
+/// (raikiri-spike design doc §9.1 "page name 遷移ルール"). raikiri-style does
+/// not know about page indexes, only about which pseudo-page states are
+/// currently true.
+///
+/// Fields default to `None` / `false`, i.e. an unnamed page with no
+/// pseudo-page state — matches only `@page { … }`.
+///
+/// `#[non_exhaustive]`: future M4 pseudo-pages (e.g. spec-outside extensions)
+/// or additional context (media query state, forced-orientation flags) can be
+/// added without a semver break. Consumers construct via
+/// `PageContextQuery { page_name: …, is_first: …, ..Default::default() }` per
+/// the standard `#[non_exhaustive]` pattern used throughout raikiri-style.
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PageContextQuery {
+    /// Named-page ident from the `page:` property. `None` = unnamed page
+    /// (only `@page` and `@page :<pseudo>` rules can match).
+    ///
+    /// Compared case-sensitively per CSS Values L4
+    /// [`#custom-idents`](https://www.w3.org/TR/css-values-4/#custom-idents)
+    /// `<custom-ident>` — "fully case-sensitive … even in the ASCII range"
+    /// (mirrors the parse-time invariant pinned by
+    /// `page_named_ident_is_case_sensitive` in ruletree tests, and the
+    /// sibling citation on [`PageSelectorEntry::ident`]).
+    pub page_name: Option<Atom>,
+    /// Whether this is the first page (`:first` matches).
+    pub is_first: bool,
+    /// Whether this is a left / verso page (`:left` matches).
+    pub is_left: bool,
+    /// Whether this is a right / recto page (`:right` matches).
+    pub is_right: bool,
+    /// Whether this is a blank page inserted by a forced page break
+    /// (`:blank` matches).
+    pub is_blank: bool,
+}
+
+/// Winning declarations from an `@page` cascade pass.
+///
+/// Contains one entry per property that at least one matching `@page` rule
+/// declared. Unsupported properties (e.g. `size`, `margin`, `marks` — M1.4
+/// property parser silently drops these; see
+/// `ruletree::tests::page_body_unsupported_property_drops_declaration`) are
+/// absent. Downstream page-layout code is expected to translate this bag into
+/// its page-box model and future `@page`-descriptor fields when the M4
+/// descriptor property parser lands; raikiri-style remains a leaf crate.
+///
+/// Iteration order over `declarations` is `HashMap`-random; consumers that
+/// need a deterministic order should sort or look up by [`PropertyKey`]
+/// (Tests here look up by key rather than iterating).
+#[non_exhaustive]
+#[derive(Debug, Clone, Default)]
+pub struct PageCascadeResult {
+    /// Winning `(key, value)` per property.
+    pub declarations: HashMap<PropertyKey, PropertyValue>,
+}
+
+/// Cascade all `@page` rules in `rule_tree` against `query` and return the
+/// resolved winning declarations.
+///
+/// # Algorithm (spec §"Cascading and page context" + §"Cascade Origin")
+///
+/// 1. For each rule in [`RuleTree::page_rules`], find the highest-specificity
+///    matching entry in its comma-separated `<page-selector-list>` prelude
+///    (each entry is an OR alternative; the entries within an entry — an
+///    optional ident + zero-or-more pseudo-pages — are combined AND-wise).
+///    A rule contributes its declarations if any entry matched, tagged with
+///    that entry's `(f, g, h)` specificity triple (see the crate-internal
+///    `PageSpecificity` type for the exact shape).
+/// 2. Group candidate declarations by [`PropertyKey`], pick the winner per
+///    `(rank, specificity, source_order)` tuple where higher beats lower.
+///    `rank` comes from the crate-internal `cascade_rank` (shared with the
+///    style-rule cascade) and encodes the L4 §6.2 origin ordering (Normal:
+///    UA < Author; Important: reversed — UA `!important` beats Author
+///    `!important`).
+///
+/// # Ties on equal `(rank, specificity, source_order)`
+///
+/// The spec text at the anchor says @page cascade follows normal cascade
+/// tie-breaking. Within a single rule, later declarations of the same
+/// property win per CSS Cascading §"Order of appearance"; the `>=` in the
+/// crate-internal `page_beats` mirrors the style-rule sibling's tie-break
+/// (`cascade::beats` uses `>=` on the same triple).
+///
+/// # Example
+///
+/// ```ignore
+/// use raikiri_style::{Origin, PageContextQuery, RuleTree, cascade_page};
+///
+/// let mut tree = RuleTree::empty();
+/// tree.add_stylesheet("@page :first { color: red }", Origin::Author);
+/// let query = PageContextQuery { is_first: true, ..Default::default() };
+/// let result = cascade_page(&tree, &query);
+/// // result.declarations contains one entry: PropertyKey::Color -> red
+/// ```
+pub fn cascade_page(rule_tree: &RuleTree, query: &PageContextQuery) -> PageCascadeResult {
+    // Candidate: (value, important, origin, specificity, source_order).
+    // Shape mirrors `cascade::CascadedDecl` per sibling convention (37n), with
+    // `PageSpecificity` in place of `selectors`-crate `Specificity`.
+    let mut candidates: Vec<(PropertyValue, bool, Origin, PageSpecificity, u32)> = Vec::new();
+    for rule in &rule_tree.page_rules {
+        // Comma-separated list = OR: rule contributes if any entry matches.
+        // Take the highest-specificity matching entry within this rule (spec
+        // examples in §"Cascading and page context" show the (f,g,h) triple
+        // determines the effective specificity of the whole rule).
+        let mut best_spec: Option<PageSpecificity> = None;
+        for entry in &rule.selector.entries {
+            if let Some(spec) = match_page_entry(entry, query) {
+                best_spec = Some(match best_spec {
+                    Some(prev) => prev.max(spec),
+                    None => spec,
+                });
+            }
+        }
+        if let Some(spec) = best_spec {
+            for decl in &rule.declarations {
+                candidates.push((
+                    decl.value.clone(),
+                    decl.important,
+                    rule.origin,
+                    spec,
+                    rule.source_order,
+                ));
+            }
+        }
+    }
+
+    // Winner selection — sibling arm to `cascade::pick_winners`.
+    let mut best: HashMap<PropertyKey, (u8, PageSpecificity, u32, PropertyValue)> = HashMap::new();
+    for (value, important, origin, spec, order) in candidates {
+        let rank = cascade_rank(origin, important);
+        let key = value.key();
+        let candidate = (rank, spec, order, value);
+        match best.get(&key) {
+            Some(existing) => {
+                if page_beats(&candidate, existing) {
+                    best.insert(key, candidate);
+                }
+            }
+            None => {
+                best.insert(key, candidate);
+            }
+        }
+    }
+    PageCascadeResult {
+        declarations: best.into_iter().map(|(k, (_, _, _, v))| (k, v)).collect(),
+    }
+}
+
+/// Page-selector specificity triple `(f, g, h)` per CSS Paged Media L3
+/// §"Cascading and page context":
+///
+/// - `f` = count of page type names (named ident, syntactically 0 or 1)
+/// - `g` = count of `:first` or `:blank` pseudo-classes
+/// - `h` = count of `:left` or `:right` pseudo-classes
+///
+/// Compared lexicographically (`f` beats `g` beats `h`), via
+/// `#[derive(Ord)]` on the field order.
+///
+/// Selected examples from the spec:
+///
+/// - `@page { }`        → `(0, 0, 0)`
+/// - `@page :left { }`  → `(0, 0, 1)`
+/// - `@page :first { }` → `(0, 1, 0)`
+/// - `@page artsy { }`  → `(1, 0, 0)`
+///
+/// A `u32` per component is more than enough — `f` is bounded to 1 by the
+/// grammar, and `g` / `h` in practice count `Vec<PagePseudo>` entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct PageSpecificity {
+    f: u32,
+    g: u32,
+    h: u32,
+}
+
+/// Match a single compound `<page-selector>` entry against `query`.
+///
+/// Returns the entry's [`PageSpecificity`] on a match, `None` otherwise.
+/// Matching semantics per L3 §"@page rule grammar":
+///
+/// - Optional ident: if the entry has one, `query.page_name` must be `Some`
+///   and byte-equal to it (`<custom-ident>` case-sensitivity, CSS Values L4
+///   §4.2). An entry with no ident matches every page.
+/// - Reserved-keyword exception: an ident that is `auto` under ASCII
+///   case-insensitive comparison never matches. CSS Paged Media L3
+///   §"Page selectors" states: "A page type name of auto (ASCII
+///   case-insensitive) does not make the rule invalid, but must never
+///   match." The parser therefore accepts `@page auto { … }` (the rule
+///   is spec-valid syntax) and the exclusion lives here, on the cascade
+///   side; see
+///   <https://www.w3.org/TR/css-page-3/#page-selectors>.
+/// - Zero-or-more pseudo-pages: **all** must match (compound = AND).
+fn match_page_entry(
+    entry: &PageSelectorEntry,
+    query: &PageContextQuery,
+) -> Option<PageSpecificity> {
+    if let Some(ident) = &entry.ident {
+        // Reserved-keyword exclusion: `auto` (ASCII case-insensitive) is
+        // spec-valid but must never match — CSS Paged Media L3
+        // §"Page selectors", `#page-selectors`. Applied *before* the
+        // name compare so no `query.page_name` value (including a
+        // literal `"auto"` custom-ident from an author `page` property)
+        // can bypass the rule.
+        if ident.0.eq_ignore_ascii_case("auto") {
+            return None;
+        }
+        match &query.page_name {
+            Some(name) if ident == name => {}
+            _ => return None,
+        }
+    }
+    for pseudo in &entry.pseudos {
+        let ok = match pseudo {
+            PagePseudo::First => query.is_first,
+            PagePseudo::Left => query.is_left,
+            PagePseudo::Right => query.is_right,
+            PagePseudo::Blank => query.is_blank,
+        };
+        if !ok {
+            return None;
+        }
+    }
+    let f = if entry.ident.is_some() { 1 } else { 0 };
+    let g = entry
+        .pseudos
+        .iter()
+        .filter(|p| matches!(p, PagePseudo::First | PagePseudo::Blank))
+        .count() as u32;
+    let h = entry
+        .pseudos
+        .iter()
+        .filter(|p| matches!(p, PagePseudo::Left | PagePseudo::Right))
+        .count() as u32;
+    Some(PageSpecificity { f, g, h })
+}
+
+/// Winner tie-break: `candidate` beats `existing` when its
+/// `(rank, specificity, source_order)` triple is `>=` the existing's.
+///
+/// Sibling arm to `cascade::beats`. The `>=` is intentional and mirrors the
+/// style-rule tie-break: within a single `@page` rule, later declarations of
+/// the same property beat earlier ones (CSS Cascading §"Order of appearance");
+/// across rules, `source_order` is monotonically increasing so `>` and `>=`
+/// coincide.
+fn page_beats(
+    candidate: &(u8, PageSpecificity, u32, PropertyValue),
+    existing: &(u8, PageSpecificity, u32, PropertyValue),
+) -> bool {
+    (candidate.0, candidate.1, candidate.2) >= (existing.0, existing.1, existing.2)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Verification tests for `@page` cascade order (raikiri-spike-m4.1).
+    //!
+    //! Spec anchors, verified by planner + implementer (WebFetch):
+    //! - CSS Paged Media L3 §"Cascading and page context" —
+    //!   <https://www.w3.org/TR/css-page-3/#cascading-and-page-context>
+    //! - CSS Cascading L4 §"Cascade Origin" —
+    //!   <https://www.w3.org/TR/css-cascade-4/#cascade-origin>
+    //!
+    //! Test naming mirrors `cascade::tests` (sibling convention 37n).
+    //!
+    //! **Note on task description Verification 2**: the parent bd task's prose
+    //! says "Author !important > UA !important > Author normal > UA normal",
+    //! which contradicts CSS Cascading L4 §"Cascade Origin" (Important order:
+    //! Author < User < UA — UA-important wins). The parenthetical
+    //! (`UA_imp=3` > `Author_imp=2`) is spec-correct and matches `cascade_rank`
+    //! and the existing style-rule test
+    //! `cascade::tests::important_ua_beats_important_author_display`.
+    //! Implementation follows the spec; this test asserts UA `!important` wins.
+
+    use super::*;
+    use crate::property::CssColor;
+
+    const RED: CssColor = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    const BLUE: CssColor = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    const GREEN: CssColor = CssColor {
+        r: 0,
+        g: 128,
+        b: 0,
+        a: 255,
+    };
+
+    fn color_of(result: &PageCascadeResult) -> Option<CssColor> {
+        match result.declarations.get(&PropertyKey::Color) {
+            Some(PropertyValue::Color(c)) => Some(*c),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn cascade_page_empty_rule_tree_returns_empty() {
+        let tree = RuleTree::empty();
+        let result = cascade_page(&tree, &PageContextQuery::default());
+        assert!(result.declarations.is_empty());
+    }
+
+    #[test]
+    fn cascade_page_default_selector_matches_every_page() {
+        // `@page { color: red }` has an empty prelude → matches every page.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { color: red }", Origin::Author);
+        let result = cascade_page(&tree, &PageContextQuery::default());
+        assert_eq!(color_of(&result), Some(RED));
+    }
+
+    #[test]
+    fn cascade_page_named_rule_does_not_apply_to_unnamed_page() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page my-cover { color: red }", Origin::Author);
+        let query = PageContextQuery {
+            page_name: None,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert!(color_of(&result).is_none());
+    }
+
+    // ── Verification 1: origin cascade (Author > UA for normal) ─────────────
+    // Spec: CSS Cascading L4 §"Cascade Origin" — Normal author declarations
+    // beat normal user-agent declarations.
+
+    #[test]
+    fn cascade_page_author_normal_beats_ua_normal() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { color: red }", Origin::UserAgent);
+        tree.add_stylesheet("@page { color: blue }", Origin::Author);
+        let result = cascade_page(&tree, &PageContextQuery::default());
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    #[test]
+    fn cascade_page_author_normal_beats_ua_normal_regardless_of_stylesheet_add_order() {
+        // Author added first, UA second — origin rank (not source order) still
+        // makes Author win because UA-normal rank (0) < Author-normal rank (1).
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { color: blue }", Origin::Author);
+        tree.add_stylesheet("@page { color: red }", Origin::UserAgent);
+        let result = cascade_page(&tree, &PageContextQuery::default());
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    // ── Verification 2: !important reversal (UA-important > Author-important) ─
+    // Spec: CSS Cascading L4 §"Cascade Origin". See module docstring for the
+    // task-prose divergence note.
+
+    #[test]
+    fn cascade_page_important_ua_beats_important_author() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { color: red !important }", Origin::UserAgent);
+        tree.add_stylesheet("@page { color: blue !important }", Origin::Author);
+        let result = cascade_page(&tree, &PageContextQuery::default());
+        assert_eq!(color_of(&result), Some(RED));
+    }
+
+    #[test]
+    fn cascade_page_important_author_beats_normal_ua_and_author() {
+        // rank(Author, important) = 2 > rank(Author, normal) = 1 > rank(UA, normal) = 0
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { color: green }", Origin::UserAgent);
+        tree.add_stylesheet("@page { color: blue }", Origin::Author);
+        tree.add_stylesheet("@page { color: red !important }", Origin::Author);
+        let result = cascade_page(&tree, &PageContextQuery::default());
+        assert_eq!(color_of(&result), Some(RED));
+    }
+
+    // ── Verification 3: pseudo-page specificity (:first > :left) ─────────────
+    // Spec: `@page :first` = (0,1,0), `@page :left` = (0,0,1). (0,1,0) > (0,0,1).
+
+    #[test]
+    fn cascade_page_first_beats_left_by_specificity() {
+        // Query is both :first AND :left (first page happens to also be a
+        // left/verso page). Both rules match; :first must win.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page :left { color: red } @page :first { color: blue }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            is_first: true,
+            is_left: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    #[test]
+    fn cascade_page_first_beats_left_regardless_of_source_order() {
+        // Reverse source order — specificity (rank tier 2) still dominates
+        // source order (rank tier 3).
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page :first { color: blue } @page :left { color: red }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            is_first: true,
+            is_left: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    // ── Verification 4: named ident selectivity (named > unnamed) ────────────
+    // Spec: `@page named` = (1,0,0), `@page` = (0,0,0). (1,0,0) > (0,0,0).
+
+    #[test]
+    fn cascade_page_named_ident_beats_unnamed() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: red } @page cover { color: blue }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            page_name: Some(Atom::from("cover")),
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    #[test]
+    fn cascade_page_named_ident_case_sensitive() {
+        // Cover (rule) vs cover (query) — <custom-ident> is case-sensitive
+        // per CSS Values L4 §4.2, so the rule must NOT match. Falls back
+        // to the unnamed rule.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: red } @page Cover { color: blue }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            page_name: Some(Atom::from("cover")),
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(RED));
+    }
+
+    #[test]
+    fn cascade_page_named_ident_auto_never_matches_reserved_keyword() {
+        // CSS Paged Media L3 §"Page selectors" (`#page-selectors`):
+        //   "A page type name of auto (ASCII case-insensitive) does not
+        //    make the rule invalid, but must never match."
+        // Even with `query.page_name = Some("auto")` — the strongest form
+        // of the rule where a naive byte-equality compare would match —
+        // the `@page auto` rule must be excluded from the cascade, so the
+        // unnamed fallback (red) wins over the named-auto rule (blue).
+        // This is the "rule was excluded" proof shape.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: red } @page auto { color: blue }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            page_name: Some(Atom::from("auto")),
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(RED));
+    }
+
+    #[test]
+    fn cascade_page_named_ident_auto_case_insensitive_reserved_keyword() {
+        // Same spec sentence, ASCII case-insensitive half: `Auto` and
+        // `AUTO` are equally reserved and must never match. Every named
+        // rule below is excluded, so the unnamed fallback (red) wins
+        // regardless of the query's own casing.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: red } \
+             @page Auto { color: blue } \
+             @page AUTO { color: green }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            page_name: Some(Atom::from("Auto")),
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(RED));
+    }
+
+    // ── Verification 5: named-page cascade produces named-page declarations ──
+    // Task Verification 5 target: `(page_name=Some("landscape_a3"), page_index=0,
+    // is_first=true)` — the winning declarations must come from the named-page
+    // rule. Property proxy: `color` (M1.4 supported). `size` / `margin` are
+    // M4-descriptor scope not yet wired through the declaration parser (see
+    // `ruletree::tests::page_body_unsupported_property_drops_declaration`), so
+    // this test uses `color` to prove the shape end-to-end. The named-page
+    // rule wins because its specificity `(1, 1, 0)` beats every non-named
+    // alternative under the L3 §"Cascading and page context" tuple.
+
+    #[test]
+    fn cascade_page_named_page_first_page_declarations_win_over_alternatives() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: red } \
+             @page :first { color: green } \
+             @page landscape_a3:first { color: blue } \
+             @page other-page { color: red }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            page_name: Some(Atom::from("landscape_a3")),
+            is_first: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    // ── Additional coverage: OR over entries, AND over pseudos, source order ─
+
+    #[test]
+    fn cascade_page_comma_list_or_semantics() {
+        // `@page :first, :left` — comma-separated list is OR. Only :left
+        // matches this query, but the rule still contributes.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page :first, :left { color: blue }", Origin::Author);
+        let query = PageContextQuery {
+            is_left: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    #[test]
+    fn cascade_page_compound_pseudo_and_semantics_requires_all_match() {
+        // `@page :first:left` — compound AND. Query has :first only.
+        // Rule does NOT match — falls back to nothing (no rule applies).
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page :first:left { color: blue }", Origin::Author);
+        let query = PageContextQuery {
+            is_first: true,
+            is_left: false,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert!(color_of(&result).is_none());
+    }
+
+    #[test]
+    fn cascade_page_compound_pseudo_matches_when_all_conditions_true() {
+        // Same rule, now query has both is_first + is_left.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page :first:left { color: blue }", Origin::Author);
+        let query = PageContextQuery {
+            is_first: true,
+            is_left: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    #[test]
+    fn cascade_page_source_order_tiebreak_later_wins() {
+        // Two rules of equal (rank, specificity) — later source_order wins
+        // per CSS Cascading §"Order of appearance", sibling of style-rule
+        // `cascade::tests::source_order_tiebreak_later_wins`.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page :first { color: red } @page :first { color: blue }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            is_first: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    #[test]
+    fn cascade_page_later_duplicate_in_same_rule_wins() {
+        // Sibling of `cascade::tests::later_duplicate_in_same_rule_wins`:
+        // within a single rule, later declarations of the same property win.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { color: red; color: blue }", Origin::Author);
+        let result = cascade_page(&tree, &PageContextQuery::default());
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    #[test]
+    fn cascade_page_specificity_examples_from_spec() {
+        // Directly encode the spec's own examples:
+        //   @page { }        → (0,0,0)
+        //   @page :left { }  → (0,0,1)
+        //   @page :first { } → (0,1,0)
+        //   @page artsy { }  → (1,0,0)
+        // Winner order: artsy > :first > :left > default when all match.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: red } \
+             @page :left { color: red } \
+             @page :first { color: red } \
+             @page artsy { color: blue }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            page_name: Some(Atom::from("artsy")),
+            is_first: true,
+            is_left: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    #[test]
+    fn cascade_page_blank_pseudo_contributes_to_g_component() {
+        // `:blank` counts toward `g` (same tier as `:first`) per L3 spec.
+        // `@page :blank` = (0,1,0) > `@page :left` = (0,0,1).
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page :left { color: red } @page :blank { color: blue }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            is_left: true,
+            is_blank: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(BLUE));
+    }
+
+    #[test]
+    fn cascade_page_right_pseudo_contributes_to_h_component() {
+        // `:right` = (0,0,1) — same tier as `:left`. Source order tiebreak.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page :right { color: red }", Origin::Author);
+        let query = PageContextQuery {
+            is_right: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query);
+        assert_eq!(color_of(&result), Some(RED));
+    }
+
+    #[test]
+    fn cascade_page_specificity_ordering_derived_ord() {
+        // Direct assertion on the `PageSpecificity` `Ord` derivation ensures
+        // the derive-order (f, g, h) matches the spec's tuple ordering.
+        let default_spec = PageSpecificity { f: 0, g: 0, h: 0 };
+        let left = PageSpecificity { f: 0, g: 0, h: 1 };
+        let first = PageSpecificity { f: 0, g: 1, h: 0 };
+        let named = PageSpecificity { f: 1, g: 0, h: 0 };
+        assert!(default_spec < left);
+        assert!(left < first);
+        assert!(first < named);
+    }
+
+    #[test]
+    fn cascade_page_multiple_properties_all_win_independently() {
+        // Regression: winner selection is per-property. Two rules setting
+        // different properties both contribute.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: red } @page { font-weight: 700 }",
+            Origin::Author,
+        );
+        let result = cascade_page(&tree, &PageContextQuery::default());
+        assert_eq!(color_of(&result), Some(RED));
+        assert_eq!(
+            result.declarations.get(&PropertyKey::FontWeight),
+            Some(&PropertyValue::FontWeight(700))
+        );
+    }
+
+    #[test]
+    fn cascade_page_query_default_matches_only_default_rule() {
+        // Default `PageContextQuery::default()` = unnamed + all pseudos false.
+        // Named / pseudo rules must not match; only `@page { … }` applies.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: green } \
+             @page :first { color: red } \
+             @page cover { color: blue }",
+            Origin::Author,
+        );
+        let result = cascade_page(&tree, &PageContextQuery::default());
+        assert_eq!(color_of(&result), Some(GREEN));
+    }
+
+    #[test]
+    fn cascade_page_result_default_is_empty() {
+        // `PageCascadeResult::default()` is the empty result (no rules
+        // matched) — used by consumers that need a placeholder.
+        let r = PageCascadeResult::default();
+        assert!(r.declarations.is_empty());
+    }
+
+    #[test]
+    fn cascade_page_result_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<PageCascadeResult>();
+    }
+
+    #[test]
+    fn cascade_page_deterministic_across_10_runs() {
+        // Sibling of `cascade::tests::cascade_with_ua_deterministic_across_10_runs`.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: red } \
+             @page :first { color: blue } \
+             @page cover:first { color: green }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            page_name: Some(Atom::from("cover")),
+            is_first: true,
+            ..Default::default()
+        };
+        let baseline = cascade_page(&tree, &query);
+        for _ in 0..9 {
+            let run = cascade_page(&tree, &query);
+            assert_eq!(
+                run.declarations.get(&PropertyKey::Color),
+                baseline.declarations.get(&PropertyKey::Color),
+            );
+        }
     }
 }
