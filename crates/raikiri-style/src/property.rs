@@ -124,6 +124,32 @@ pub enum ContentTextKeyword {
     FirstLetter,
 }
 
+/// [`parse_content_list_items`] の list vocabulary mode selector。
+///
+/// CSS Content 3 §2 <https://www.w3.org/TR/css-content-3/#content-list3> と
+/// CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list> は同名
+/// `<content-list>` production を持つが、後者は前者の narrower な local 再定義
+/// (GCPM 3 は `Link defaults` に CSS Content 3 を含めず、§1.1.1 L82 で自前に
+/// `<content-list> = [ <string> | <counter()> | <counters()> | <content()> |
+/// <attr()> ]+` を dfn する)。property ごとに受理される function 集合が違うため、
+/// dispatch 時に mode で分岐する ([`StringFetchMode`] / [`ContentPart`] /
+/// [`ContentTextKeyword`] と同じ per-context 専用 enum 慣行、raikiri-spike-6s1)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ContentListMode {
+    /// CSS Content 3 §2 broad `<content-list>` — `content` property 用。
+    /// 受理: `<string>` bare literal / `counter()` / `counters()` / `string()` /
+    /// `attr()` / `target-counter()` / `target-counters()` / `target-text()` /
+    /// `content()`。
+    CssContent3,
+    /// CSS GCPM 3 §1.1.1 narrow local `<content-list>` — `string-set` 用。
+    /// 受理: `<string>` bare literal / `counter()` / `counters()` / `content()` /
+    /// `attr()`。**明示 reject**: `string()` (bare `<string>` literal とは別),
+    /// `target-counter()`, `target-counters()`, `target-text()` (GCPM 3 §1.1.1
+    /// L82 verbatim grammar より導出、cascade で declaration drop → shadow 効果を
+    /// spec 準拠に一致させる)。
+    GcpmStringSet,
+}
+
 /// `content` property の value item — cascade static side の中間表現。
 ///
 /// design doc §7.1 の `raikiri_traits::ContentValueItem` に 1:1 mapping する
@@ -583,32 +609,49 @@ fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
         return Some(Vec::new());
     }
 
-    let items = parse_content_list_items(input);
+    let items = parse_content_list_items(input, ContentListMode::CssContent3);
     if items.is_empty() { None } else { Some(items) }
 }
 
-/// `<content-list> = [ <string> | <counter> | <string()> | <attr()> | <target> ]+`
-/// の items+ loop 部分 (CSS Content 3 §2)。
+/// `<content-list>` の items+ loop 部分。
 ///
-/// `<string>` literal と function token (`counter(...)` / `string(...)` /
-/// `target-*()` / `attr(...)` 等) を順次 peel。認識できない token に当たった
-/// 時点で break — 呼び出し側が leftover を検知して drop する。
+/// `<string>` bare literal と function token (`counter(...)` / `string(...)` /
+/// `target-*()` / `attr(...)` / `content(...)`) を順次 peel。認識できない
+/// token に当たった時点で break — 呼び出し側が leftover を検知して drop する。
 ///
-/// `parse_content` (`content` property) と `parse_string_set` (`string-set`
-/// property) が共有 (m5.1 で content 用に導入、m5.3 で string-set が reuse)。
-fn parse_content_list_items(input: &mut Parser<'_, '_>) -> Vec<ContentComponent> {
+/// `content` property (`parse_content`) と `string-set` property
+/// (`parse_string_set`) の両方から call されるが、GCPM 3 §1.1.1 は string-set
+/// 向けに CSS Content 3 §2 の broad list を narrower に再定義しているため、
+/// `mode` パラメータで受理 function 集合を分岐する:
+/// - [`ContentListMode::CssContent3`] — content property (CSS Content 3 §2
+///   <https://www.w3.org/TR/css-content-3/#content-list3>)。全 8 function を受理。
+/// - [`ContentListMode::GcpmStringSet`] — string-set property (CSS GCPM 3
+///   §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>)。`string()` と
+///   `target-counter()` / `target-counters()` / `target-text()` は spec grammar
+///   に含まれず reject (bare `<string>` literal は両 mode で受理)。
+///
+/// bare literal 分岐は spec 上両 mode で共通 (どちらの `<content-list>` grammar
+/// も `<string>` を top-level alternative に含む) なので mode 判定なし。分岐は
+/// [`parse_content_function`] の match arm で mode guard を掛ける。
+///
+/// (raikiri-spike-m5.1 で導入、raikiri-spike-6s1 で mode-parameterize)
+fn parse_content_list_items(
+    input: &mut Parser<'_, '_>,
+    mode: ContentListMode,
+) -> Vec<ContentComponent> {
     let mut items = Vec::new();
     loop {
-        // bare `<string>` literal
+        // bare `<string>` literal — 両 mode 共通 (mode gate 不要)。
         if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
             items.push(ContentComponent::Literal(s.as_ref().to_string()));
             continue;
         }
-        // function
+        // function — mode に応じて `string()` / `target-*()` を reject する
+        // 判定は `parse_content_function` の match arm side で実施。
         let parsed = input.try_parse(|i| -> Result<ContentComponent, ParseError<'_, ()>> {
             let name = i.expect_function()?.clone();
             i.parse_nested_block(|inner| {
-                parse_content_function(name.as_ref(), inner)
+                parse_content_function(name.as_ref(), mode, inner)
                     .ok_or_else(|| inner.new_custom_error(()))
             })
         });
@@ -658,7 +701,9 @@ fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<Cont
             Err(_) => break,
         };
         // <content-list> は 1+ items 必須。0 items → declaration drop。
-        let items = parse_content_list_items(input);
+        // GCPM 3 §1.1.1 narrow local <content-list> = `string()` と `target-*()`
+        // を受理しない (raikiri-spike-6s1、詳細は `ContentListMode` doc)。
+        let items = parse_content_list_items(input, ContentListMode::GcpmStringSet);
         if items.is_empty() {
             return None;
         }
@@ -681,19 +726,40 @@ fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<Cont
 /// 未知の function name または引数 parse 失敗は `None` — caller の
 /// `parse_nested_block` が custom error に変換する。
 ///
+/// `mode` は property ごとの `<content-list>` 語彙を選ぶ (詳細は
+/// [`ContentListMode`] doc):
+/// - [`ContentListMode::CssContent3`] (`content` property, CSS Content 3 §2)
+///   では全 arm を許可。
+/// - [`ContentListMode::GcpmStringSet`] (`string-set` property, CSS GCPM 3
+///   §1.1.1) では `string` / `target-counter` / `target-counters` /
+///   `target-text` arm を match guard で外し fall-through で `None` を返す
+///   (= declaration drop、caller の `parse_string_set` が `<content-list>` 0
+///   items → `None`)。`counter` / `counters` / `content` / `attr` は両 mode で
+///   spec grammar に含まれるため gate なし。
+///
 /// 各 `parse_*_fn` は自身では `expect_exhausted` を呼ばない —
 /// [`parse_content`] 側の `parse_nested_block` が内部で
 /// [`Parser::parse_entirely`] を経由し、closure 成功後の余剰 token を
 /// exhaustion check で拒否する ([`parse_rgb_function`] と同じ規約)。
-fn parse_content_function(name: &str, input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+fn parse_content_function(
+    name: &str,
+    mode: ContentListMode,
+    input: &mut Parser<'_, '_>,
+) -> Option<ContentComponent> {
     match name.to_ascii_lowercase().as_str() {
-        "string" => parse_string_fn(input),
+        "string" if matches!(mode, ContentListMode::CssContent3) => parse_string_fn(input),
         "counter" => parse_counter_fn(input),
         "counters" => parse_counters_fn(input),
         "attr" => parse_attr_fn(input),
-        "target-counter" => parse_target_counter_fn(input),
-        "target-counters" => parse_target_counters_fn(input),
-        "target-text" => parse_target_text_fn(input),
+        "target-counter" if matches!(mode, ContentListMode::CssContent3) => {
+            parse_target_counter_fn(input)
+        }
+        "target-counters" if matches!(mode, ContentListMode::CssContent3) => {
+            parse_target_counters_fn(input)
+        }
+        "target-text" if matches!(mode, ContentListMode::CssContent3) => {
+            parse_target_text_fn(input)
+        }
         "content" => parse_content_fn(input),
         _ => None,
     }
@@ -948,9 +1014,11 @@ fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
 /// spec default `text` を意味する。target-text() の第 2 引数と違い、keyword は
 /// paren 直下に置かれる (comma を先行させない)。
 ///
-/// context-restriction (content() を string-set 内でのみ許可) は
-/// `parse_content_list_items` の mode-parameterization = raikiri-spike-6s1 の
-/// scope。当面は content property からも受理する。
+/// GCPM 3 §1.1.1 の narrow `<content-list>` (string-set 側) と CSS Content 3
+/// §2 の broad `<content-list>` (content property 側) の **両方** に含まれる
+/// 5 alt の 1 つのため、[`ContentListMode`] mode gate なし = 両 property 共通で
+/// 受理される (raikiri-spike-6s1 で mode dispatch を導入した後もこの arm は
+/// unconditional のまま)。
 fn parse_content_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let keyword = if input.is_exhausted() {
         ContentTextKeyword::default()
@@ -1671,11 +1739,17 @@ mod tests {
 
     #[test]
     fn string_set_mixed_content_list_preserves_order() {
-        // Verification 2 (corrected): string-set: chapter_title counter(chapter) ": " string(chapter_title)
+        // Verification 2 (raikiri-spike-6s1 で adjust):
+        // string-set: chapter_title counter(chapter) ": " attr(title)
+        //
         // 先頭 `chapter_title` は entry name (tuple 第 1 要素)。content-list は
-        // 残りの `counter(chapter) ": " string(chapter_title)` = 3 items。
-        let entries =
-            string_set_entries(r#"chapter_title counter(chapter) ": " string(chapter_title)"#);
+        // 残りの `counter(chapter) ": " attr(title)` = 3 items。
+        //
+        // NB: m5.3 の原 test は末尾に `string(chapter_title)` を置いていたが、
+        // GCPM 3 §1.1.1 narrow list は `string()` function を含まないため
+        // raikiri-spike-6s1 で `attr()` (GCPM narrow list の 5 alt の 1 つ) に
+        // swap。テストの主意 (mixed content-list の order 保持) は保つ。
+        let entries = string_set_entries(r#"chapter_title counter(chapter) ": " attr(title)"#);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, SmolStr::new("chapter_title"));
         assert_eq!(entries[0].1.len(), 3);
@@ -1692,9 +1766,8 @@ mod tests {
         );
         assert_eq!(
             entries[0].1[2],
-            ContentComponent::String {
-                name: SmolStr::new("chapter_title"),
-                fetch: StringFetchMode::First,
+            ContentComponent::Attr {
+                name: SmolStr::new("title"),
             }
         );
     }
@@ -1765,13 +1838,69 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::StringSet);
     }
 
+    // ── string-set narrow <content-list> gate (CSS GCPM 3 §1.1.1、raikiri-spike-6s1) ──
+    //
+    // GCPM 3 §1.1.1 L82 verbatim: <content-list> = [ <string> | <counter()> |
+    // <counters()> | <content()> | <attr()> ]+ — CSS Content 3 §2 broad list を
+    // string-set 用に narrower 再定義。`string()` (function、bare literal とは別)
+    // および `target-counter()` / `target-counters()` / `target-text()` は
+    // spec grammar に含まれず、`ContentListMode::GcpmStringSet` mode dispatch で
+    // reject する (parse_content_list_items が 0 items → parse_string_set →
+    // None → declaration drop、bd description の cascade shadow 例
+    // `p.hi { string-set: title target-counter(url("#x"), page); }` の spec 準拠
+    // 挙動 = .hi rule drop → parser layer で確認)。
+    //
+    // 一方 content property (CssContent3 mode) はこれら全てを引き続き受理する
+    // (下の content_parse_* 系 pin test 群で non-regression 検証)。
+
+    #[test]
+    fn string_set_rejects_string_fn() {
+        // GCPM 3 §1.1.1 L82 は `string()` function を narrow list から除外。
+        // bare `<string>` literal (`"..."`) と混同しないよう function 側のみ reject。
+        assert_eq!(parse("title string(x)", "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_target_counter_fn() {
+        // GCPM 3 §1.1.1 L82 は `target-counter()` を narrow list から除外。
+        // bd description の cascade shadow 主要例、declaration drop → cascade で
+        // 先行の spec-valid rule が winner になる shape。
+        assert_eq!(
+            parse(r##"title target-counter(url("#a"), page)"##, "string-set"),
+            None
+        );
+    }
+
+    #[test]
+    fn string_set_rejects_target_counters_fn() {
+        // GCPM 3 §1.1.1 L82 は `target-counters()` を narrow list から除外。
+        assert_eq!(
+            parse(
+                r##"title target-counters(url("#a"), section, ".")"##,
+                "string-set"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn string_set_rejects_target_text_fn() {
+        // GCPM 3 §1.1.1 L82 は `target-text()` を narrow list から除外。
+        assert_eq!(
+            parse(r##"title target-text(url("#a"))"##, "string-set"),
+            None
+        );
+    }
+
     // ── content() function (CSS GCPM 3 §1.1.1.1、raikiri-spike-5ri) ──
     //
     // grammar (spec verbatim, line 758 of TR/css-gcpm-3/):
     //   content() = content([text | before | after | first-letter])
-    // 4 keyword、default `text`。§1.1.1 の `<content-list>` に含まれるため
-    // string-set および content property 双方の content-list 内で受理される
-    // (context-restriction = string-set のみ許可、は raikiri-spike-6s1 defer)。
+    // 4 keyword、default `text`。GCPM 3 §1.1.1 の narrow `<content-list>` と
+    // CSS Content 3 §2 の broad `<content-list>` の両方に含まれるため、string-set
+    // および content property 双方の content-list 内で受理される
+    // (raikiri-spike-6s1 で `ContentListMode` mode dispatch を導入した後も
+    // `content()` arm は両 mode で unconditional accept)。
     //
     // pre-fix reproduction: `string-set: title content(text)` は m5.1/m5.3 で
     // silent drop していた (parse_content_function match arm 欠如 →
