@@ -160,8 +160,18 @@ pub enum LimitKind {
     TargetSlots,
     /// `max_layout_buffer_entries` 超過。
     LayoutBufferEntries,
-    /// `max_aggregate_bytes` 超過。
+    /// `max_aggregate_bytes` 超過 (post-parse の approximate memory footprint、
+    /// DOM node arena / cascade table 等の合計)。
     AggregateBytes,
+    /// `max_input_bytes` 超過 (bd raikiri-spike-4kw、Sprint 10 Option A promotion)。
+    ///
+    /// [`AggregateBytes`](Self::AggregateBytes) との semantic 分離: `InputBytes`
+    /// は **parse-time** の raw input byte stream を pin する fail-closed 早期
+    /// 返却用 (`parse_html_with_limits` が read 段階で enforce)。`AggregateBytes`
+    /// は **post-parse** の approximate memory footprint。ゆえに attacker が
+    /// 巨大 HTML を送りつけて OOM を誘発する DoS 対策としては `InputBytes` の
+    /// 方が直接的。
+    InputBytes,
 }
 
 /// AbortSignal による graceful shutdown を error と別カテゴリで表現。
