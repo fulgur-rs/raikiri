@@ -97,6 +97,33 @@ pub enum ContentPart {
     FirstLetter,
 }
 
+/// `content()` function の引数 `[ text | before | after | first-letter ]?`。
+///
+/// CSS GCPM 3 §1.1.1.1 "The content() function"
+/// <https://www.w3.org/TR/css-gcpm-3/#content-list> の verbatim production:
+/// `content() = content([text | before | after | first-letter])`。
+/// spec default = `text` (per §1.1.1.1 の `text` dt/dd: "This is the default
+/// value"、および `h2 { string-set: heading content() }` の bare 例)。
+///
+/// NB: sibling [`ContentPart`] (target-text() 用) と keyword 集合が重なるが、
+/// `text` vs `content` の spec spelling divergence があるため型を分ける
+/// (StringFetchMode / ContentPart と同じ per-function 専用 enum 慣行、
+/// reviewer:spec: `content(content)` を silently accept してはならない)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContentTextKeyword {
+    /// `text` — spec default (element の string value、`white-space: normal`
+    /// 相当で決定)。
+    #[default]
+    Text,
+    /// `before` — `::before` pseudo-element の string value。
+    Before,
+    /// `after` — `::after` pseudo-element の string value。
+    After,
+    /// `first-letter` — `::first-letter` pseudo-element の string。
+    FirstLetter,
+}
+
 /// `content` property の value item — cascade static side の中間表現。
 ///
 /// design doc §7.1 の `raikiri_traits::ContentValueItem` に 1:1 mapping する
@@ -115,6 +142,8 @@ pub enum ContentPart {
 ///   <https://www.w3.org/TR/css-content-3/#target-counter>,
 ///   <https://www.w3.org/TR/css-content-3/#target-counters>,
 ///   <https://www.w3.org/TR/css-content-3/#target-text>
+/// - Content: CSS GCPM 3 §1.1.1.1
+///   <https://www.w3.org/TR/css-gcpm-3/#content-list> (raikiri-spike-5ri)
 ///
 /// URL は raw `String` として保持 (raikiri-style は `url` crate に依存しない —
 /// runtime resolve 段で `url::Url` へ parse する consumer 責務)。
@@ -155,6 +184,13 @@ pub enum ContentComponent {
     },
     /// `target-text([<string>|<url>], [ content | before | after | first-letter ]?)`。
     TargetText { url: String, part: ContentPart },
+    /// `content([ text | before | after | first-letter ]?)` — GCPM 3 §1.1.1.1
+    /// <https://www.w3.org/TR/css-gcpm-3/#content-list>。
+    /// 現要素 (または擬似要素) の string value を named string に挿入する用途で、
+    /// `<content-list>` の一員として `string-set` および `content` property の
+    /// content-list 内で受理される。keyword 省略時は spec default `Text`。
+    /// runtime resolve は raikiri-dom 責務 (m5.1 wire-through pattern)。
+    Content { keyword: ContentTextKeyword },
 }
 
 /// `display` property の value。M1.4a scope では `block` / `inline` のみ。
@@ -658,6 +694,7 @@ fn parse_content_function(name: &str, input: &mut Parser<'_, '_>) -> Option<Cont
         "target-counter" => parse_target_counter_fn(input),
         "target-counters" => parse_target_counters_fn(input),
         "target-text" => parse_target_text_fn(input),
+        "content" => parse_content_fn(input),
         _ => None,
     }
 }
@@ -900,6 +937,36 @@ fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
         "before" => Some(ContentPart::Before),
         "after" => Some(ContentPart::After),
         "first-letter" => Some(ContentPart::FirstLetter),
+        _ => None,
+    }
+}
+
+/// `content([ text | before | after | first-letter ]?)`。
+/// CSS GCPM 3 §1.1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>。
+///
+/// bare `content()` (spec 例 `h2 { string-set: heading content() }`) は
+/// spec default `text` を意味する。target-text() の第 2 引数と違い、keyword は
+/// paren 直下に置かれる (comma を先行させない)。
+///
+/// context-restriction (content() を string-set 内でのみ許可) は
+/// `parse_content_list_items` の mode-parameterization = raikiri-spike-6s1 の
+/// scope。当面は content property からも受理する。
+fn parse_content_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let keyword = if input.is_exhausted() {
+        ContentTextKeyword::default()
+    } else {
+        parse_content_text_keyword(input)?
+    };
+    Some(ContentComponent::Content { keyword })
+}
+
+fn parse_content_text_keyword(input: &mut Parser<'_, '_>) -> Option<ContentTextKeyword> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "text" => Some(ContentTextKeyword::Text),
+        "before" => Some(ContentTextKeyword::Before),
+        "after" => Some(ContentTextKeyword::After),
+        "first-letter" => Some(ContentTextKeyword::FirstLetter),
         _ => None,
     }
 }
@@ -1696,6 +1763,169 @@ mod tests {
         // discriminant integrity、既存 sibling counter-* / content と同じ pattern)。
         let v = PropertyValue::StringSet(Vec::new());
         assert_eq!(v.key(), PropertyKey::StringSet);
+    }
+
+    // ── content() function (CSS GCPM 3 §1.1.1.1、raikiri-spike-5ri) ──
+    //
+    // grammar (spec verbatim, line 758 of TR/css-gcpm-3/):
+    //   content() = content([text | before | after | first-letter])
+    // 4 keyword、default `text`。§1.1.1 の `<content-list>` に含まれるため
+    // string-set および content property 双方の content-list 内で受理される
+    // (context-restriction = string-set のみ許可、は raikiri-spike-6s1 defer)。
+    //
+    // pre-fix reproduction: `string-set: title content(text)` は m5.1/m5.3 で
+    // silent drop していた (parse_content_function match arm 欠如 →
+    // parse_content_list_items break → 0 items → parse_string_set None →
+    // declaration drop)。arm 追加で Some を返すことを pin する。
+
+    #[test]
+    fn string_set_content_text_reproduces_pre_fix_drop() {
+        // bd raikiri-spike-5ri description の主要 repro case:
+        // pre-fix では declaration drop = None、post-fix では
+        // (title, [Content{keyword: Text}]) を含む Some を返す。
+        let entries = string_set_entries("title content(text)");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, SmolStr::new("title"));
+        assert_eq!(
+            entries[0].1,
+            vec![ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_content_fn_explicit_text_keyword() {
+        // §1.1.1.1: `content(text)` は element の string value (default と同義だが
+        // 明示的 keyword 保持で downstream の分岐余地を残す)。
+        let items = content_items("content(text)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_content_fn_default_keyword_on_empty_parens() {
+        // §1.1.1.1 の spec 例 `h2 { string-set: heading content() }` — bare
+        // `content()` は default `text` を意味する。
+        let items = content_items("content()");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_content_fn_before_keyword() {
+        // §1.1.1.1 の spec 例 `h1 { string-set: header content(before) ':' content(text); }`
+        // で使われる `before` keyword。
+        let items = content_items("content(before)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Content {
+                keyword: ContentTextKeyword::Before,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_content_fn_after_keyword() {
+        let items = content_items("content(after)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Content {
+                keyword: ContentTextKeyword::After,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_content_fn_first_letter_keyword() {
+        let items = content_items("content(first-letter)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Content {
+                keyword: ContentTextKeyword::FirstLetter,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_content_fn_rejects_unknown_keyword() {
+        // §1.1.1.1 の grammar は `[text | before | after | first-letter]` の 4
+        // alternative のみ。それ以外の ident (spec 上存在しない `marker` 等) は
+        // parse_content_text_keyword が None を返し、上位伝播で
+        // parse_content_list_items が break、declaration drop = None。
+        // (`marker` は list-item pseudo に関する別 concept、content() には出現しない)
+        assert_eq!(parse("content(marker)", "content"), None);
+        assert_eq!(parse("content(bogus)", "content"), None);
+    }
+
+    #[test]
+    fn content_content_fn_rejects_target_text_keyword() {
+        // §1.1.1.1 は `text` alternative を持つ (target-text() §2.6.3 は `content`)。
+        // spec spelling divergence — `content(content)` は spec-invalid、reject。
+        // 混同 (sibling ContentPart 再利用) を防ぐ regression pin。
+        assert_eq!(parse("content(content)", "content"), None);
+    }
+
+    #[test]
+    fn content_content_fn_case_insensitive_keyword() {
+        // spec 慣行: keyword は ASCII case-insensitive。
+        let items = content_items("content(TEXT)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_content_fn_case_insensitive_function_name() {
+        // parse_content_function は既存 arm と同じく ASCII case-insensitive dispatch。
+        let items = content_items("CONTENT(before)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Content {
+                keyword: ContentTextKeyword::Before,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_content_fn_rejects_extra_argument() {
+        // grammar は single-argument。余剰 token は
+        // parse_nested_block 内 parse_entirely が拒否し declaration drop。
+        assert_eq!(parse("content(text, extra)", "content"), None);
+        assert_eq!(parse("content(text before)", "content"), None);
+    }
+
+    #[test]
+    fn string_set_content_fn_mixed_with_other_items() {
+        // §1.1.1.1 の spec 例:
+        //   h1 { string-set: header content(before) ':' content(text); }
+        // → (header, [Content{Before}, Literal(":"), Content{Text}]) 3 items。
+        let entries = string_set_entries(r#"header content(before) ":" content(text)"#);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, SmolStr::new("header"));
+        assert_eq!(
+            entries[0].1,
+            vec![
+                ContentComponent::Content {
+                    keyword: ContentTextKeyword::Before,
+                },
+                ContentComponent::Literal(String::from(":")),
+                ContentComponent::Content {
+                    keyword: ContentTextKeyword::Text,
+                },
+            ]
+        );
     }
 
     // ── position: running() (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4) ──
