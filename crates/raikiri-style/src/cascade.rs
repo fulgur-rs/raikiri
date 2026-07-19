@@ -656,11 +656,14 @@ mod tests {
         // [Literal("hello")] が届く。parser → PropertyValue::Content →
         // apply_value → ComputedValues の end-to-end 疎通 smoke。
         // s85 counter-* wire-through pattern を踏襲。
+        // d9y.1: content は Arc<Vec<..>>、`*cv.content` で deref-compare。
+        // Literal は SmolStr payload (owned String → SmolStr conversion)。
         use crate::property::ContentComponent;
+        use smol_str::SmolStr;
         let cv = cascade_doc("", "p", Some(r#"content: "hello""#));
         assert_eq!(
-            cv.content,
-            vec![ContentComponent::Literal(String::from("hello"))]
+            *cv.content,
+            vec![ContentComponent::Literal(SmolStr::new("hello"))]
         );
     }
 
@@ -672,13 +675,16 @@ mod tests {
         // に [(chapter_title, [Literal("hello")])] が届く。
         // parser → PropertyValue::StringSet → apply_value → ComputedValues の
         // end-to-end 疎通 smoke。s85 / m5.1 wire-through pattern を踏襲。
+        // d9y.1: string_set は Arc<Vec<..>>、Literal は SmolStr。indexing +
+        // field access は Arc<Vec<T>> の Deref chain (`&[T]`) 経由でそのまま
+        // 通る (dom/paint consumer 波及 0)。
         use crate::property::ContentComponent;
         let cv = cascade_doc("", "p", Some(r#"string-set: chapter_title "hello""#));
         assert_eq!(cv.string_set.len(), 1);
         assert_eq!(cv.string_set[0].0, SmolStr::new("chapter_title"));
         assert_eq!(
             cv.string_set[0].1,
-            vec![ContentComponent::Literal(String::from("hello"))]
+            vec![ContentComponent::Literal(SmolStr::new("hello"))]
         );
     }
 
@@ -806,6 +812,95 @@ mod tests {
             vec![RunningTemplate {
                 name: SmolStr::new("ftr")
             }]
+        );
+    }
+
+    // ── Cascade memory DoS regression (raikiri-spike-d9y.1、SEC HIGH) ──
+    //
+    // Codex Cloud Security finding: 従来 `PropertyValue::Content(Vec<ContentComponent>)` /
+    // `ComputedValues.content: Vec<ContentComponent>` は cascade 段の `decl.value.clone()`、
+    // `pick_winners` の `value.clone()`、`resolve_inheritance` の stack push + write と
+    // 段階ごとに deep-clone を経由し、`* { content: "<large>" }` × N element で
+    // O(N × M) 相当の heap 消費を招いていた。d9y.1 で outer `Vec` を
+    // `Arc<Vec<ContentComponent>>` に wrap、全 clone 経路が Arc bump に落ちた。
+    //
+    // 実 heap 計測は環境依存 (allocator hook が必要) のため、behavioral proxy として
+    // `Arc::ptr_eq` で「複数 element が同 rule から同一 underlying `Vec` を共有」を
+    // 確認する。Regression 時 (deep clone に戻る) はここが false となり test fail する。
+
+    /// `* { content: "<literal>" }` × N element の cascade で、matching 全 element
+    /// の `ComputedValues.content` Arc は **同 underlying Vec** を指す
+    /// (`Arc::ptr_eq` = true)。deep-clone regression の behavioral canary。
+    #[test]
+    fn cascade_shares_content_arc_across_universal_selector_matches() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        // 攻撃 vector そのものの縮小版: universal selector + 単一 literal payload。
+        doc.push_text(s, r#"* { content: "shared payload" }"#);
+        let p1 = doc.push_element(0, "p", None);
+        let p2 = doc.push_element(0, "p", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // Sanity: 両 element とも content が届いている。
+        assert_eq!(r.computed[p1].content.len(), 1);
+        assert_eq!(r.computed[p2].content.len(), 1);
+        // Regression assert: Arc pointer identity で shallow-shared を証明。
+        // deep-clone 復活時は underlying alloc が別、ptr_eq = false → fail。
+        assert!(
+            std::sync::Arc::ptr_eq(&r.computed[p1].content, &r.computed[p2].content),
+            "cascade must Arc-share content across universal-selector matches \
+             (raikiri-spike-d9y.1 SEC HIGH DoS regression)"
+        );
+    }
+
+    /// `string-set` も content と同じ cascade path を辿るため、同種 Arc 共有が
+    /// 成立している必要がある (d9y.1 で `PropertyValue::StringSet` も Arc wrap)。
+    #[test]
+    fn cascade_shares_string_set_arc_across_universal_selector_matches() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, r#"* { string-set: k "shared payload" }"#);
+        let p1 = doc.push_element(0, "p", None);
+        let p2 = doc.push_element(0, "p", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p1].string_set.len(), 1);
+        assert_eq!(r.computed[p2].string_set.len(), 1);
+        assert!(
+            std::sync::Arc::ptr_eq(&r.computed[p1].string_set, &r.computed[p2].string_set),
+            "cascade must Arc-share string_set across universal-selector matches \
+             (raikiri-spike-d9y.1)"
+        );
+    }
+
+    /// Empty (initial / inherit_from) の content/string_set も **shared Arc slot**
+    /// を再利用する — cascade fix の副作用で「per-node empty Arc allocation
+    /// regression」に陥っていないことを pin (advisor calibration)。
+    #[test]
+    fn initial_empty_content_and_string_set_share_arc_slot() {
+        let mut doc = TestDoc::new();
+        // rule なし、element 2 個 (両者 empty content / string_set)。
+        let p1 = doc.push_element(0, "p", None);
+        let p2 = doc.push_element(0, "p", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // どちらも empty (initial)。
+        assert!(r.computed[p1].content.is_empty());
+        assert!(r.computed[p2].content.is_empty());
+        assert!(r.computed[p1].string_set.is_empty());
+        assert!(r.computed[p2].string_set.is_empty());
+        // Shared empty Arc slot を指しているので ptr_eq = true。
+        // Arc::new(Vec::new()) を initial/inherit_from で直に呼ぶ regression が
+        // 出た瞬間ここが false になり、DoS fix が memory alloc regression に
+        // 転じたことを検知する。
+        assert!(
+            std::sync::Arc::ptr_eq(&r.computed[p1].content, &r.computed[p2].content),
+            "empty content must reuse shared Arc slot — per-node empty Arc \
+             allocation regression detected (raikiri-spike-d9y.1 side-effect canary)"
+        );
+        assert!(
+            std::sync::Arc::ptr_eq(&r.computed[p1].string_set, &r.computed[p2].string_set),
+            "empty string_set must reuse shared Arc slot (raikiri-spike-d9y.1 side-effect canary)"
         );
     }
 

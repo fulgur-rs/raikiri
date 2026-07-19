@@ -3,10 +3,14 @@
 //! Cascade + inheritance walk が populate。M1.6 で ComputedValues → taffy::Style
 //! + paint 用色情報の抽出 layer が入る予定。
 
+use std::sync::Arc;
+
 use smol_str::SmolStr;
 
 use crate::Atom;
-use crate::property::{ContentComponent, CssColor, DisplayValue, Length};
+use crate::property::{
+    ContentComponent, CssColor, DisplayValue, Length, empty_content_list, empty_string_set_entries,
+};
 
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
 ///
@@ -67,12 +71,25 @@ pub struct ComputedValues {
     /// (raikiri-style は raikiri-traits に依存しない leaf crate = 3ps/94e Phase B、
     /// counter-* wire-through pattern を踏襲、raikiri-spike-s85)。
     /// See <https://www.w3.org/TR/css-content-3/#content-property>.
-    pub content: Vec<ContentComponent>,
+    ///
+    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`pick_winners` value.clone、
+    /// `apply_value` move) と inheritance walk clone (`resolve_inheritance` の
+    /// stack push + `out[idx] = computed.clone()`) が **shallow (Arc bump)** に
+    /// なる。`* { content: "<large>" }` × N element の O(N × M) memory blow-up
+    /// を単一 heap slot 共有で塞ぐ (raikiri-spike-d9y.1 SEC HIGH)。
+    /// `Arc<Vec<T>>: Deref<Target = Vec<T>>` により downstream の `.iter()` /
+    /// `.len()` / `.is_empty()` は既存 pattern そのままで通る (dom/paint
+    /// consumer 波及 0)。
+    pub content: Arc<Vec<ContentComponent>>,
     /// `string-set` の parse 結果 — `(name, content-list)` entry の列。
     /// **non-inherited**、initial: empty list (CSS GCPM 3 §3.1)。
     /// 名前解決と runtime `string()` 参照は下流 (raikiri-dom) 責務。
     /// See <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>.
-    pub string_set: Vec<(SmolStr, Vec<ContentComponent>)>,
+    ///
+    /// [`Arc<Vec<..>>`] wrap は [`Self::content`] と同 rationale
+    /// (raikiri-spike-d9y.1、`* { string-set: name "<large>" }` × N element の
+    /// 同種 DoS 経路を塞ぐ)。
+    pub string_set: Arc<Vec<(SmolStr, Vec<ContentComponent>)>>,
     /// `position: running(<custom-ident>)` の seed。**non-inherited**、initial:
     /// empty list。CSS GCPM 3 §1.2.1
     /// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>。
@@ -106,9 +123,12 @@ impl ComputedValues {
             counter_set: Vec::new(),
             // CSS Content 3 §2.1: content initial (normal) は下流にとって「no
             // generated content」= empty list として扱う (raikiri-spike-m5.1)。
-            content: Vec::new(),
+            // d9y.1: shared empty Arc slot — per-node allocation 回避
+            // (advisor calibration、property.rs `empty_content_list` doc 参照)。
+            content: empty_content_list(),
             // CSS GCPM 3 §3.1: string-set initial は empty list (raikiri-spike-m5.3)。
-            string_set: Vec::new(),
+            // d9y.1: same shared-empty-Arc pattern。
+            string_set: empty_string_set_entries(),
             // CSS GCPM 3 §1.2.1: position: running() seed initial は empty
             // (position の initial は `static`、running(name) 無し)。
             running_templates: Vec::new(),
@@ -143,10 +163,15 @@ impl ComputedValues {
             counter_reset: Vec::new(),
             counter_increment: Vec::new(),
             counter_set: Vec::new(),
-            // non-inherited (CSS Content 3 §2.1、raikiri-spike-m5.1)
-            content: Vec::new(),
-            // non-inherited (CSS GCPM 3 §3.1、raikiri-spike-m5.3)
-            string_set: Vec::new(),
+            // non-inherited (CSS Content 3 §2.1、raikiri-spike-m5.1)。
+            // d9y.1: shared empty Arc slot (`empty_content_list`)、per-node
+            // allocation 回避。inherit_from は child stack entry のたびに走る
+            // ため、Arc::new(Vec::new()) を直に書くと 1-doc あたり O(N) 個の
+            // small heap alloc regression になる (advisor calibration)。
+            content: empty_content_list(),
+            // non-inherited (CSS GCPM 3 §3.1、raikiri-spike-m5.3)。
+            // d9y.1: same shared-empty-Arc pattern。
+            string_set: empty_string_set_entries(),
             // non-inherited (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4)
             running_templates: Vec::new(),
         }
@@ -209,8 +234,8 @@ mod tests {
             counter_reset: vec![(SmolStr::new("chapter"), 3)],
             counter_increment: vec![(SmolStr::new("section"), 2)],
             counter_set: vec![(SmolStr::new("page"), 5)],
-            content: Vec::new(),
-            string_set: Vec::new(),
+            content: empty_content_list(),
+            string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
         };
         let child = ComputedValues::inherit_from(&parent);
