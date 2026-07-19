@@ -314,23 +314,41 @@ impl Node {
     }
 
     /// HTML namespace の "non-rendered" element (metadata content / raw text
-    /// container) を判定する。paint 段で subtree ごと skip する gate 用。
+    /// container / ruby parenthesis fallback) を判定する。paint 段で subtree
+    /// ごと skip する gate 用。
     ///
-    /// 対象 (HTML LS §15.4.1 "Elements that are not rendered" / CSS 2.1 App.D):
+    /// 対象 (HTML LS §15.3.1 "Hidden elements"、
+    /// <https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements>):
     /// `<head>`, `<title>`, `<meta>`, `<link>`, `<base>`, `<noscript>`,
-    /// `<script>`, `<style>`, `<template>`。namespace が HTML default
-    /// (`Node.namespace == None`) or 明示 xhtml (`"http://www.w3.org/1999/xhtml"`)
-    /// の場合のみ true、SVG / MathML namespace の同名要素は false (SVG `<style>`
-    /// / `<script>` は SVG 側 rendering 責務、HTML paint filter の対象外)。
+    /// `<script>`, `<style>`, `<template>`、
+    /// `<datalist>` (§4.10.8、
+    /// <https://html.spec.whatwg.org/multipage/form-elements.html#the-datalist-element>)、
+    /// `<noembed>` / `<noframes>` (§13.2 RAWTEXT parsing)、`<rp>` (§4.5.12
+    /// ruby parenthesis fallback、§15.3.1 hidden-elements rule 直下で
+    /// `display: none` — §15.3.4 "Phrasing content" の ruby CSS も
+    /// `ruby { display: ruby }` / `rt { display: ruby-text }` のみで rp を
+    /// 可視化しないため、ruby-supporting UA 上でも rp は hidden のまま)。
+    /// namespace が
+    /// HTML default (`Node.namespace == None`) or 明示 xhtml
+    /// (`"http://www.w3.org/1999/xhtml"`) の場合のみ true、SVG / MathML
+    /// namespace の同名要素は false (SVG `<style>` / `<script>` は SVG 側
+    /// rendering 責務、HTML paint filter の対象外)。
+    ///
+    /// §15.3.1 hidden-elements rule には `<area>` / `<basefont>` / `<param>`
+    /// も列挙されているが、これらは通常 child content を持たない (`<area>` は
+    /// void、`<basefont>` は obsolete-void、`<param>` は object 内の attribute
+    /// 相当) ため content leak 経路が存在せず本 predicate では扱わない
+    /// (raikiri-spike-s8w bd task に enumerate 済)。
     ///
     /// # 動機
     ///
-    /// UA CSS (`style { display: none }` etc、CSS 2.1 App.D) による hide は
+    /// UA CSS (`style { display: none }` etc、HTML LS §15.3.1) による hide は
     /// author / user CSS で override 可能なため、attacker-controlled HTML +
     /// override CSS で `<style>` `<script>` 内 text が rendered artifact に
     /// 混入する security surface が残る。paint 側で cascade-independent に
     /// gate することで defense-in-depth 保証する (raikiri-spike-d9y.5、
-    /// Codex Cloud Security finding severity: medium)。
+    /// Codex Cloud Security finding severity: medium、raikiri-spike-s8w で
+    /// datalist / noembed / noframes / rp を §15.3.1 完全化のため追加)。
     ///
     /// # Non-goals
     ///
@@ -352,6 +370,9 @@ impl Node {
             _ => return false,
         }
         // HTML tag name は html5ever が lowercase 化済 (QualName.local)。
+        // Ordering: d9y.5 の既存 arms を先頭、s8w で §15.3.1 完全化のために
+        // 追加した 4 arms を末尾にグループ化 (sibling convention 37n:
+        // 既存 style を preserve しつつ差分の由来を明示)。
         matches!(
             e.tag_name.as_str(),
             "head"
@@ -363,6 +384,11 @@ impl Node {
                 | "script"
                 | "style"
                 | "template"
+                // raikiri-spike-s8w (§15.3.1 完全化):
+                | "datalist"
+                | "noembed"
+                | "noframes"
+                | "rp"
         )
     }
 
@@ -448,11 +474,19 @@ mod is_non_rendered_html_element_tests {
         }
     }
 
+    /// d9y.5 の 9 element + s8w で追加した §15.3.1 完全化 4 element
+    /// (datalist / noembed / noframes / rp)。tag 列挙は
+    /// `Node::is_non_rendered_html_element` の match arms と 1:1 対応。
+    const SKIP_SET_TAGS: &[&str] = &[
+        // d9y.5 original:
+        "head", "title", "meta", "link", "base", "noscript", "script", "style", "template",
+        // s8w additions (§15.3.1 完全化):
+        "datalist", "noembed", "noframes", "rp",
+    ];
+
     #[test]
     fn predicate_true_for_html_default_namespace_skip_set() {
-        for tag in [
-            "head", "title", "meta", "link", "base", "noscript", "script", "style", "template",
-        ] {
+        for tag in SKIP_SET_TAGS {
             let n = html_element(tag);
             assert!(
                 n.is_non_rendered_html_element(),
@@ -463,9 +497,7 @@ mod is_non_rendered_html_element_tests {
 
     #[test]
     fn predicate_true_for_explicit_xhtml_namespace_skip_set() {
-        for tag in [
-            "head", "title", "meta", "link", "base", "noscript", "script", "style", "template",
-        ] {
+        for tag in SKIP_SET_TAGS {
             let mut n = html_element(tag);
             set_ns(&mut n, "http://www.w3.org/1999/xhtml");
             assert!(
