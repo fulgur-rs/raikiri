@@ -26,6 +26,9 @@ pub struct Declaration {
 /// (同 specificity 時に「後勝ち」) に使う。
 /// `origin` は CSS Cascading L4 §6.2 の origin (M1.4a、m1.22)。cascade tuple
 /// の rank 化 (`!important` 反転扱い) に使用。
+/// Future field (specificity cache / invalidation hint 等) は M4+ で追加、
+/// `#[non_exhaustive]` の恩恵で non-breaking。
+#[non_exhaustive]
 pub struct StyleRule {
     /// Parse 済 selector list。M1.4 では type + universal のみ受理 (他は build 段で drop)。
     pub selectors: SelectorList<RaikiriSelectorImpl>,
