@@ -205,6 +205,12 @@ pub enum PropertyValue {
     /// (raikiri-spike-m5.1)、CSS Content 3 §2.1
     /// <https://www.w3.org/TR/css-content-3/#content-property>。
     Content(Vec<ContentComponent>),
+    /// `string-set: none | [ <custom-ident> <content-list> ]#` — non-inherited、
+    /// initial: empty list。各 entry は `(name, content-list)` pair。
+    /// CSS GCPM 3 §3.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>、
+    /// `<content-list>` は CSS Content 3 §2 (m5.1 で parser 実装済)。
+    /// 名前解決と runtime string() 参照は下流 (raikiri-dom) 責務。
+    StringSet(Vec<(SmolStr, Vec<ContentComponent>)>),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -228,6 +234,7 @@ pub enum PropertyKey {
     CounterIncrement,
     CounterSet,
     Content,
+    StringSet,
 }
 
 impl PropertyValue {
@@ -246,6 +253,7 @@ impl PropertyValue {
             PropertyValue::CounterIncrement(_) => PropertyKey::CounterIncrement,
             PropertyValue::CounterSet(_) => PropertyKey::CounterSet,
             PropertyValue::Content(_) => PropertyKey::Content,
+            PropertyValue::StringSet(_) => PropertyKey::StringSet,
         }
     }
 }
@@ -270,6 +278,8 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "counter-set" => parse_counter_property(input, 0).map(PropertyValue::CounterSet),
         // CSS Content 3 §2.1 content property (raikiri-spike-m5.1、M5 gcpm-directive-emit static side)
         "content" => parse_content(input).map(PropertyValue::Content),
+        // CSS GCPM 3 §3.1 string-set (raikiri-spike-m5.3、M5 static-side β)
+        "string-set" => parse_string_set(input).map(PropertyValue::StringSet),
         _ => None,
     }
 }
@@ -495,6 +505,20 @@ fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
         return Some(Vec::new());
     }
 
+    let items = parse_content_list_items(input);
+    if items.is_empty() { None } else { Some(items) }
+}
+
+/// `<content-list> = [ <string> | <counter> | <string()> | <attr()> | <target> ]+`
+/// の items+ loop 部分 (CSS Content 3 §2)。
+///
+/// `<string>` literal と function token (`counter(...)` / `string(...)` /
+/// `target-*()` / `attr(...)` 等) を順次 peel。認識できない token に当たった
+/// 時点で break — 呼び出し側が leftover を検知して drop する。
+///
+/// `parse_content` (`content` property) と `parse_string_set` (`string-set`
+/// property) が共有 (m5.1 で content 用に導入、m5.3 で string-set が reuse)。
+fn parse_content_list_items(input: &mut Parser<'_, '_>) -> Vec<ContentComponent> {
     let mut items = Vec::new();
     loop {
         // bare `<string>` literal
@@ -515,7 +539,64 @@ fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
             Err(_) => break,
         }
     }
-    if items.is_empty() { None } else { Some(items) }
+    items
+}
+
+/// `string-set: none | [ <custom-ident> <content-list> ]#` を parse する
+/// (CSS GCPM 3 §3.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>)。
+///
+/// `none` を top-level alternative として先に処理し、以降は
+/// `(name, content-list)` entry を comma-separated で peel する。
+///
+/// `<custom-ident>` は CSS-wide keyword + `default` (css-values-4 §3.6 が
+/// 将来の CSS-wide keyword 用に予約) + `none` (top-level alt、gcpm-3 §3.1) を弾く。
+/// name が reserved の場合は `try_parse` の rewind で unconsumed に戻り loop を
+/// 抜け、caller の `expect_exhausted` (rule.rs) が leftover token で declaration
+/// を drop する。
+///
+/// `<content-list>` は 1+ items 必須 (CSS Content 3 §2)。name の後に 1 item も
+/// peel できなければ malformed → `None` (declaration drop)。
+fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<ContentComponent>)>> {
+    // `none` = empty list (top-level alternative)。
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    loop {
+        // <custom-ident> — CSS-wide keyword + `default` + `none` を弾く。
+        // 既存 `is_reserved_custom_ident` (css-wide + default) と、property-specific
+        // top-level alternative の `none` reject を組み合わせる (m5.1 の
+        // `is_reserved_custom_ident` docstring の想定 usage)。
+        let name = match input.try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
+            let ident = i.expect_ident()?.clone();
+            if is_reserved_custom_ident(&ident) || ident.eq_ignore_ascii_case("none") {
+                Err(i.new_custom_error(()))
+            } else {
+                Ok(SmolStr::new(ident.as_ref()))
+            }
+        }) {
+            Ok(name) => name,
+            Err(_) => break,
+        };
+        // <content-list> は 1+ items 必須。0 items → declaration drop。
+        let items = parse_content_list_items(input);
+        if items.is_empty() {
+            return None;
+        }
+        entries.push((name, items));
+        // 次 entry の separator: comma で継続、他 token で loop を抜ける
+        // (caller `expect_exhausted` が leftover token を drop)。
+        if input.try_parse(|i| i.expect_comma()).is_err() {
+            break;
+        }
+    }
+
+    if entries.is_empty() {
+        None
+    } else {
+        Some(entries)
+    }
 }
 
 /// Dispatch on function name (ASCII-case-insensitive、spec identifier 慣行)。
@@ -1285,5 +1366,128 @@ mod tests {
         // discriminant integrity、既存 sibling counter-* と同じ pattern)。
         let cv = PropertyValue::Content(Vec::new());
         assert_eq!(cv.key(), PropertyKey::Content);
+    }
+
+    // ── string-set (CSS GCPM 3 §3.1、raikiri-spike-m5.3) ──
+    //
+    // grammar: `none | [ <custom-ident> <content-list> ]#` — 各 entry は
+    // (name, content-list) pair、m5.1 の `ContentComponent` + `parse_content_list_items`
+    // を reuse。task description の "4-item Vec" は entry name の分を content 側に
+    // 誤って含めた結果、実態は 3-item (name は tuple の第 1 要素)。
+
+    fn string_set_entries(source: &str) -> Vec<(SmolStr, Vec<ContentComponent>)> {
+        match parse(source, "string-set") {
+            Some(PropertyValue::StringSet(v)) => v,
+            other => panic!("expected PropertyValue::StringSet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn string_set_single_entry_with_literal() {
+        // Verification 1: string-set: my_str "hello"
+        // → [(SmolStr("my_str"), [Literal("hello")])]
+        let entries = string_set_entries(r#"my_str "hello""#);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, SmolStr::new("my_str"));
+        assert_eq!(
+            entries[0].1,
+            vec![ContentComponent::Literal(String::from("hello"))]
+        );
+    }
+
+    #[test]
+    fn string_set_mixed_content_list_preserves_order() {
+        // Verification 2 (corrected): string-set: chapter_title counter(chapter) ": " string(chapter_title)
+        // 先頭 `chapter_title` は entry name (tuple 第 1 要素)。content-list は
+        // 残りの `counter(chapter) ": " string(chapter_title)` = 3 items。
+        let entries =
+            string_set_entries(r#"chapter_title counter(chapter) ": " string(chapter_title)"#);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, SmolStr::new("chapter_title"));
+        assert_eq!(entries[0].1.len(), 3);
+        assert_eq!(
+            entries[0].1[0],
+            ContentComponent::Counter {
+                name: SmolStr::new("chapter"),
+                style: CounterStyle::Decimal,
+            }
+        );
+        assert_eq!(
+            entries[0].1[1],
+            ContentComponent::Literal(String::from(": "))
+        );
+        assert_eq!(
+            entries[0].1[2],
+            ContentComponent::String {
+                name: SmolStr::new("chapter_title"),
+                fetch: StringFetchMode::First,
+            }
+        );
+    }
+
+    #[test]
+    fn string_set_comma_separated_multi_entry() {
+        // Verification 3: string-set: a "x", b "y" → 2 entries
+        let entries = string_set_entries(r#"a "x", b "y""#);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, SmolStr::new("a"));
+        assert_eq!(
+            entries[0].1,
+            vec![ContentComponent::Literal(String::from("x"))]
+        );
+        assert_eq!(entries[1].0, SmolStr::new("b"));
+        assert_eq!(
+            entries[1].1,
+            vec![ContentComponent::Literal(String::from("y"))]
+        );
+    }
+
+    #[test]
+    fn string_set_none_returns_empty_vec() {
+        // spec §3.1: top-level `none` = empty list
+        assert_eq!(
+            parse("none", "string-set"),
+            Some(PropertyValue::StringSet(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn string_set_rejects_reserved_css_wide_keyword_as_name() {
+        // spec §3.1 + CSS Values 4 §3.6: `<custom-ident>` は CSS-wide keyword 除外。
+        // 先頭 ident が `inherit` → try_parse rewind で entries 空 → None。
+        //
+        // NB: 先頭が `none` の場合は top-level alternative の branch を先に
+        // 通って `Some(empty)` を返し、leftover は下流 `expect_exhausted` で
+        // declaration drop (rule.rs level)。この case は parse_value 単体では
+        // 検証しない — advisor calibration。
+        assert_eq!(parse("inherit \"x\"", "string-set"), None);
+        assert_eq!(parse("initial \"x\"", "string-set"), None);
+        assert_eq!(parse("unset \"x\"", "string-set"), None);
+        assert_eq!(parse("revert \"x\"", "string-set"), None);
+        assert_eq!(parse("default \"x\"", "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_name_without_content_list() {
+        // spec §3.1 + Content 3 §2: `<content-list>` は 1+ items 必須。
+        // name だけで items 0 → declaration drop (None)。
+        assert_eq!(parse("my_str", "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_is_case_insensitive_on_none() {
+        // CSS spec: keyword `none` は ASCII case-insensitive
+        assert_eq!(
+            parse("NONE", "string-set"),
+            Some(PropertyValue::StringSet(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn string_set_key_maps_to_string_set_property_key() {
+        // PropertyValue::StringSet → PropertyKey::StringSet (cascade winner 選択の
+        // discriminant integrity、既存 sibling counter-* / content と同じ pattern)。
+        let v = PropertyValue::StringSet(Vec::new());
+        assert_eq!(v.key(), PropertyKey::StringSet);
     }
 }

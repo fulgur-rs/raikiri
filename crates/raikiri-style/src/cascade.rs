@@ -345,6 +345,9 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // 下流 (raikiri-dom) runtime resolve が counter()/string()/target-*() の
         // 実値を組み立てる際に本 field を参照。
         PropertyValue::Content(v) => target.content = v,
+        // string-set は M5 static-side β (raikiri-spike-m5.3、CSS GCPM 3 §3.1)。
+        // Named-string runtime resolve は下流 (raikiri-dom) 責務。
+        PropertyValue::StringSet(v) => target.string_set = v,
     }
 }
 
@@ -641,6 +644,44 @@ mod tests {
         assert_eq!(
             cv.content,
             vec![ContentComponent::Literal(String::from("hello"))]
+        );
+    }
+
+    // ── string-set wire-through (CSS GCPM 3 §3.1、raikiri-spike-m5.3) ──
+
+    #[test]
+    fn string_set_wired_through_cascade_from_inline_style() {
+        // <p style='string-set: chapter_title "hello"'> → ComputedValues.string_set
+        // に [(chapter_title, [Literal("hello")])] が届く。
+        // parser → PropertyValue::StringSet → apply_value → ComputedValues の
+        // end-to-end 疎通 smoke。s85 / m5.1 wire-through pattern を踏襲。
+        use crate::property::ContentComponent;
+        let cv = cascade_doc("", "p", Some(r#"string-set: chapter_title "hello""#));
+        assert_eq!(cv.string_set.len(), 1);
+        assert_eq!(cv.string_set[0].0, SmolStr::new("chapter_title"));
+        assert_eq!(
+            cv.string_set[0].1,
+            vec![ContentComponent::Literal(String::from("hello"))]
+        );
+    }
+
+    #[test]
+    fn string_set_is_non_inherited_child_starts_from_initial_empty() {
+        // spec §3.1: string-set は non-inherited。<p style='string-set: a "x"'>
+        // の子 <span> は自身 rule がなく、string_set は initial (empty Vec)。
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some(r#"string-set: a "x""#));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].string_set.len(),
+            1,
+            "parent should carry its own string-set"
+        );
+        assert!(
+            r.computed[span].string_set.is_empty(),
+            "child should not inherit string-set"
         );
     }
 
