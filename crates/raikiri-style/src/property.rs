@@ -224,6 +224,23 @@ enum ContentListMode {
 /// runtime resolve 段で `url::Url` へ parse する consumer 責務)。
 ///
 /// (raikiri-spike-m5.1)
+///
+/// # `#[non_exhaustive]` semantics (fulgur / downstream consumer 向け verbatim)
+///
+/// enum-level `#[non_exhaustive]` は downstream の `match` に `_ =>` arm を
+/// 強制することで新 variant 追加を forward-compatible にするが、**既存 variant
+/// の tuple constructor 呼び出しは block しない**。ゆえに既存 variant の
+/// payload **type** 変更は downstream の constructor を compile-break させる。
+///
+/// Sprint 9 hardening (bd raikiri-spike-d9y.1、SEC HIGH cascade memory DoS fix)
+/// では [`Literal`](Self::Literal) の payload を `String` → [`SmolStr`] に
+/// 変更した (bd raikiri-spike-q3f wall/umbrella formal declare)。SmolStr は
+/// `Deref<Target = str>` を提供するため、pattern-match で payload を **読む**
+/// consumer は `match cc { ContentComponent::Literal(s) => &*s, .. }` や
+/// `s.as_str()` / `s.len()` などの `&str` API がそのまま動作する。**construct**
+/// する consumer のみ `ContentComponent::Literal("foo".into())` を
+/// `ContentComponent::Literal(SmolStr::new("foo"))` (または `.into()` が有効な
+/// context では対応する `From` impl) に書き換える。
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContentComponent {
@@ -233,6 +250,13 @@ pub enum ContentComponent {
     /// clone が O(1) bump になる (raikiri-spike-d9y.1 の DoS 直系 attack vector
     /// `content: "<large>"` に対する secondary defense、primary は outer
     /// [`PropertyValue::Content`] の [`Arc<Vec<..>>`] wrap)。
+    ///
+    /// **Consumer 向け** (bd raikiri-spike-q3f wall/umbrella formal declare):
+    /// pre-d9y.1 の payload は `String` だった。SmolStr は `Deref<Target = str>`
+    /// を提供するので、read-side (`&*s` / `s.as_str()` / `s.len()` / `for c in s.chars()`)
+    /// は透過的に継続動作する。construct-side のみ `SmolStr::new("foo")` (または
+    /// `SmolStr::from(String)`) へ書き換える。enum-level docstring
+    /// §`#[non_exhaustive]` semantics も参照。
     Literal(SmolStr),
     /// `counter(<counter-name>, <counter-style>?)`。
     Counter { name: SmolStr, style: CounterStyle },
@@ -317,6 +341,37 @@ pub enum PositionValue {
 /// 認識できない property (`background-color` / `margin` / ...) や invalid value
 /// (`font-size: 1em` — em 未対応) は parser 段で `None` に落として rule から
 /// silently 除外される。
+///
+/// # `#[non_exhaustive]` semantics (fulgur / downstream consumer 向け verbatim)
+///
+/// enum-level `#[non_exhaustive]` は downstream の `match` を forward-compatible
+/// にする (新 variant 追加時 `_ =>` arm が必ず求められる) が、**既存 variant の
+/// tuple constructor 呼び出しは block しない**。したがって variant の payload
+/// **type** が変わると constructor 側は普通に compile-break する。
+///
+/// Sprint 9 hardening (bd raikiri-spike-d9y.1、SEC HIGH cascade memory DoS fix)
+/// では正にこの break が発生し、Sprint 10 wall/umbrella formal declare
+/// (bd raikiri-spike-q3f) で以下を fulgur consumer 向け migration 対象として
+/// 表明する:
+///
+/// - [`Content`](Self::Content): `Content(Vec<ContentComponent>)` →
+///   `Content(Arc<Vec<ContentComponent>>)`
+/// - [`StringSet`](Self::StringSet): payload の outer `Vec<..>` を `Arc<Vec<..>>` に
+///
+/// Sprint 9 Wave 2 hardening (bd raikiri-spike-d9y.2、同 SEC HIGH の counter-*
+/// 拡張) は Sprint 10 時点で consumer live impact 0 だが同 pattern:
+///
+/// - [`CounterReset`](Self::CounterReset) / [`CounterIncrement`](Self::CounterIncrement) /
+///   [`CounterSet`](Self::CounterSet): `Vec<(SmolStr, i32)>` → `Arc<Vec<(SmolStr, i32)>>`
+///
+/// Pattern-match で payload を **読む** consumer は `Arc<Vec<T>>` の
+/// `Deref<Target = Vec<T>>` → `Deref<Target = [T]>` chain により、`match` arm
+/// で `PropertyValue::Content(components) => components.iter()` のような使い方が
+/// **透過的に継続動作** する (`&Arc<Vec<T>>` は autoderef で `&[T]` として使える)。
+/// 一方、`PropertyValue::Content(vec![...])` のように payload を **construct** する
+/// 場合は `PropertyValue::Content(Arc::new(vec![...]))` への書き換えが必要。
+/// 詳細は `docs/superpowers/specs/2026-07-20-raikiri-0.1-to-0.2-migration.md`
+/// を参照。
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyValue {
@@ -368,6 +423,13 @@ pub enum PropertyValue {
     /// entry clone + per-node write が **shallow (Arc bump only)** になる。
     /// `* { content: "<large>" }` × N element の O(N × M) memory blow-up を
     /// 単一 heap slot 共有で塞ぐ (raikiri-spike-d9y.1 SEC HIGH)。
+    ///
+    /// **Consumer 向け** (bd raikiri-spike-q3f wall/umbrella formal declare):
+    /// pattern-match で payload を **読む** 場合は `Arc<Vec<T>>` の deref chain
+    /// (Vec → slice) により従来の `PropertyValue::Content(components) =>
+    /// components.iter().for_each(..)` がそのまま動作する。**construct** する
+    /// 場合のみ `PropertyValue::Content(Arc::new(vec![..]))` の書き換えが必要。
+    /// enum-level docstring §`#[non_exhaustive]` semantics も参照。
     Content(Arc<Vec<ContentComponent>>),
     /// `string-set: none | [ <custom-ident> <content-list> ]#` — non-inherited、
     /// initial: empty list。各 entry は `(name, content-list)` pair。
@@ -378,6 +440,13 @@ pub enum PropertyValue {
     /// [`Arc<Vec<..>>`] wrap は [`Self::Content`] と同じ理由 —
     /// `* { string-set: name "<large>" }` × N element 経路の同種 DoS を塞ぐ
     /// (raikiri-spike-d9y.1)。
+    ///
+    /// **Consumer 向け** (bd raikiri-spike-q3f wall/umbrella formal declare):
+    /// [`Self::Content`] と同じく outer `Arc` は read-side は deref 透過、
+    /// construct-side (`PropertyValue::StringSet(vec![(name, items)])`) のみ
+    /// `PropertyValue::StringSet(Arc::new(vec![..]))` に書き換える。inner
+    /// `Vec<ContentComponent>` は Arc 化しない (per-entry share の hit率 が
+    /// 想定できないため、outer 単段で d9y.1 の攻撃経路を塞ぐ設計)。
     StringSet(Arc<Vec<(SmolStr, Vec<ContentComponent>)>>),
     /// `position: static | running(<custom-ident>)` — non-inherited、initial:
     /// `static`。M5 static-side ε (raikiri-spike-m5.4)。
