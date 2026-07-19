@@ -10,6 +10,13 @@
 //! Golden-update mode: setting `RAIKIRI_UPDATE_GOLDENS=1` in the environment
 //! recreates `expected/` from the pipeline output instead of comparing.
 
+// d9y.6 threat-model docs cross-link `FIXTURE_SIZE_CAP` / `MAX_EXPECTED_PAGES`
+// / `FIXTURE_AGGREGATE_BYTES_CAP` / `read_bounded_fixture_file` (module-private
+// items) from public `FixtureError` variants and `load_fixture` docstring, so
+// the links resolve under `--document-private-items` but trip `-D warnings` on
+// the public build. `publish = false` dev-only crate; keep the cross-links.
+#![allow(rustdoc::private_intra_doc_links)]
+
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
