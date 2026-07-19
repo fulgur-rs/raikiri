@@ -47,6 +47,11 @@ pub struct ComputedValues {
     /// counter-* wire-through pattern を踏襲、raikiri-spike-s85)。
     /// See <https://www.w3.org/TR/css-content-3/#content-property>.
     pub content: Vec<ContentComponent>,
+    /// `string-set` の parse 結果 — `(name, content-list)` entry の列。
+    /// **non-inherited**、initial: empty list (CSS GCPM 3 §3.1)。
+    /// 名前解決と runtime `string()` 参照は下流 (raikiri-dom) 責務。
+    /// See <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>.
+    pub string_set: Vec<(SmolStr, Vec<ContentComponent>)>,
 }
 
 impl ComputedValues {
@@ -66,6 +71,8 @@ impl ComputedValues {
             // CSS Content 3 §2.1: content initial (normal) は下流にとって「no
             // generated content」= empty list として扱う (raikiri-spike-m5.1)。
             content: Vec::new(),
+            // CSS GCPM 3 §3.1: string-set initial は empty list (raikiri-spike-m5.3)。
+            string_set: Vec::new(),
         }
     }
 
@@ -99,6 +106,8 @@ impl ComputedValues {
             counter_set: Vec::new(),
             // non-inherited (CSS Content 3 §2.1、raikiri-spike-m5.1)
             content: Vec::new(),
+            // non-inherited (CSS GCPM 3 §3.1、raikiri-spike-m5.3)
+            string_set: Vec::new(),
         }
     }
 }
@@ -119,6 +128,9 @@ mod tests {
         assert!(cv.counter_reset.is_empty());
         assert!(cv.counter_increment.is_empty());
         assert!(cv.counter_set.is_empty());
+        // CSS Content 3 §2.1 + CSS GCPM 3 §3.1 (raikiri-spike-m5.1 / m5.3)
+        assert!(cv.content.is_empty());
+        assert!(cv.string_set.is_empty());
     }
 
     #[test]
@@ -154,6 +166,7 @@ mod tests {
             counter_increment: vec![(SmolStr::new("section"), 2)],
             counter_set: vec![(SmolStr::new("page"), 5)],
             content: Vec::new(),
+            string_set: Vec::new(),
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
