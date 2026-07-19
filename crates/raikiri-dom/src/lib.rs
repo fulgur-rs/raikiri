@@ -3,6 +3,12 @@
 //! M1.5 で node arena + taffy 6 trait impl + raikiri_traits::Dom co-design を
 //! 実装。詳細は `docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md`
 //! §4 raikiri-dom 参照。
+
+// Public module rustdoc cross-links some crate-private helpers (e.g.
+// `crate::layout::preshape_text`, `Document::flags_dirty`) which resolve fine
+// under `--document-private-items` but trip the strict public build.  Preserve
+// the cross-links; the linker's audience is intra-crate readers.
+#![allow(rustdoc::private_intra_doc_links)]
 //!
 //! ## Module tour
 //!

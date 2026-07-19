@@ -308,7 +308,7 @@ pub enum PositionValue {
     /// spec default は初期化側 [`crate::computed::ComputedValues::initial`] が
     /// 直接指定する)。
     Static,
-    /// `running(<custom-ident>)`。<custom-ident> は case-preserved の smol str。
+    /// `running(<custom-ident>)`。`<custom-ident>` は case-preserved の smol str。
     Running(SmolStr),
 }
 
