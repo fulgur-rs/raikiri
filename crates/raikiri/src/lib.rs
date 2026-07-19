@@ -23,7 +23,7 @@ mod html_document;
 pub use html_document::HtmlDocument;
 
 mod parse;
-pub use parse::parse_html;
+pub use parse::{parse_html, parse_html_with_limits};
 
 mod stubs;
 pub use stubs::{plan, render_streaming};
