@@ -15,7 +15,175 @@ use std::path::Path;
 
 use time::{Date, Duration};
 
-use crate::expectations::{Baseline, Deprecated, ExpectError, KnownIssues, Quarantine, TrackedWpt};
+use crate::expectations::{
+    ArchFilter, Baseline, Deprecated, ExpectError, KnownIssues, PlatformFilter, Quarantine,
+    QuarantineEntry, RendererFilter, ToleranceFilter, TrackedWpt,
+};
+
+/// A single concrete execution environment: one row of the WPT CI matrix
+/// (spec §12.10 [`Category::Conflicting`] filter-overlap analysis).
+///
+/// `Any` in any axis is treated as a wildcard on that axis when matching
+/// against a [`QuarantineEntry`]'s filter — a matrix authored with
+/// wildcards means "we run every choice of that axis" and matches any
+/// quarantine filter for it. Real matrix rows are usually all-concrete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MatrixRow {
+    /// OS platform this row runs on.
+    pub platform: PlatformFilter,
+    /// CPU architecture this row runs on.
+    pub arch: ArchFilter,
+    /// Renderer backend this row runs.
+    pub renderer: RendererFilter,
+    /// Pixel-diff tolerance this row applies.
+    pub tolerance: ToleranceFilter,
+}
+
+impl MatrixRow {
+    /// True if a [`QuarantineEntry`]'s filter applies to this row: each
+    /// axis is either equal or one side is `Any` (wildcard).
+    fn matches_entry(&self, entry: &QuarantineEntry) -> bool {
+        axis_matches(entry.platform, self.platform, PlatformFilter::Any)
+            && axis_matches(entry.arch, self.arch, ArchFilter::Any)
+            && axis_matches(entry.renderer, self.renderer, RendererFilter::Any)
+            && axis_matches(entry.tolerance, self.tolerance, ToleranceFilter::Any)
+    }
+}
+
+fn axis_matches<T: PartialEq + Copy>(a: T, b: T, any: T) -> bool {
+    a == any || b == any || a == b
+}
+
+/// Ordered set of [`MatrixRow`] entries that the WPT runner is expected to
+/// execute (spec §12.10 filter-overlap discipline). Consumers thread this
+/// into [`run_with_matrix`] to reduce `baseline ∩ quarantine`
+/// [`Category::Conflicting`] false positives (a quarantine entry whose
+/// filter doesn't cover any matrix row can co-exist with baseline).
+///
+/// Parseable via [`str::parse`] (see the [`std::str::FromStr`] impl) using
+/// the semicolon/comma text format expected by the `RAIKIRI_WPT_MATRIX`
+/// env var contract in `validate-expectations`.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct RunMatrix {
+    /// Concrete matrix rows.
+    pub rows: Vec<MatrixRow>,
+}
+
+/// Parse errors for the [`std::str::FromStr`] impl of [`RunMatrix`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RunMatrixParseError {
+    /// A row did not have exactly 4 comma-delimited fields.
+    WrongColumnCount {
+        /// 1-based row index in the input string.
+        row: usize,
+        /// How many fields the row actually had.
+        got: usize,
+    },
+    /// A field could not be parsed as the expected enum value.
+    UnknownEnumValue {
+        /// 1-based row index in the input string.
+        row: usize,
+        /// Axis name: `"platform"`, `"arch"`, `"renderer"`, `"tolerance"`.
+        field: &'static str,
+        /// The raw value that failed to parse.
+        value: String,
+    },
+}
+
+impl std::fmt::Display for RunMatrixParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongColumnCount { row, got } => write!(
+                f,
+                "run matrix row {row}: expected 4 comma-delimited fields, got {got}"
+            ),
+            Self::UnknownEnumValue { row, field, value } => {
+                write!(f, "run matrix row {row}: unknown {field} value {value:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RunMatrixParseError {}
+
+impl RunMatrix {
+    /// True if no rows are defined (matches nothing).
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// True if any row in the matrix would apply to `entry`.
+    fn any_row_matches(&self, entry: &QuarantineEntry) -> bool {
+        self.rows.iter().any(|r| r.matches_entry(entry))
+    }
+}
+
+impl std::str::FromStr for RunMatrix {
+    type Err = RunMatrixParseError;
+
+    /// Parse `s` as `platform,arch,renderer,tolerance;...` (semicolon-
+    /// delimited rows, comma-delimited fields). Whitespace around fields
+    /// and rows is ignored; empty rows are skipped so trailing `;` is OK.
+    ///
+    /// The 4 fields accept the same enum values as `quarantine.txt`
+    /// columns 2-5 (`linux`, `x86_64`, `vello_cpu`, `pixel-exact`, `*`,
+    /// etc.). An empty string produces an empty [`RunMatrix`], which
+    /// matches nothing.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut rows = Vec::new();
+        for (i, raw_row) in s.split(';').enumerate() {
+            let row = raw_row.trim();
+            if row.is_empty() {
+                continue;
+            }
+            let cols: Vec<&str> = row.split(',').map(str::trim).collect();
+            if cols.len() != 4 {
+                return Err(RunMatrixParseError::WrongColumnCount {
+                    row: i + 1,
+                    got: cols.len(),
+                });
+            }
+            let platform = PlatformFilter::parse_str(cols[0]).ok_or_else(|| {
+                RunMatrixParseError::UnknownEnumValue {
+                    row: i + 1,
+                    field: "platform",
+                    value: cols[0].to_owned(),
+                }
+            })?;
+            let arch = ArchFilter::parse_str(cols[1]).ok_or_else(|| {
+                RunMatrixParseError::UnknownEnumValue {
+                    row: i + 1,
+                    field: "arch",
+                    value: cols[1].to_owned(),
+                }
+            })?;
+            let renderer = RendererFilter::parse_str(cols[2]).ok_or_else(|| {
+                RunMatrixParseError::UnknownEnumValue {
+                    row: i + 1,
+                    field: "renderer",
+                    value: cols[2].to_owned(),
+                }
+            })?;
+            let tolerance = ToleranceFilter::parse_str(cols[3]).ok_or_else(|| {
+                RunMatrixParseError::UnknownEnumValue {
+                    row: i + 1,
+                    field: "tolerance",
+                    value: cols[3].to_owned(),
+                }
+            })?;
+            rows.push(MatrixRow {
+                platform,
+                arch,
+                renderer,
+                tolerance,
+            });
+        }
+        Ok(Self { rows })
+    }
+}
 
 /// Aggregate lint result for a single `expectations/` directory scan.
 #[derive(Debug, Default)]
@@ -351,7 +519,18 @@ fn detect_duplicates(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
     issues
 }
 
-fn detect_conflicting(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
+/// Compute `baseline ∩ quarantine` / `deprecated ∩ baseline` /
+/// `deprecated ∩ quarantine` [`Category::Conflicting`] issues.
+///
+/// When `matrix` is `Some`, `baseline ∩ quarantine` collisions are
+/// filtered so a quarantine entry whose filter doesn't cover any
+/// [`MatrixRow`] doesn't count as a conflict (per spec §12.10:
+/// the quarantine "flaky on env X" doesn't conflict with the baseline
+/// "passes on env Y" as long as X and Y are disjoint on any axis).
+/// Deprecated ↔ baseline / deprecated ↔ quarantine remain matrix-
+/// independent — deprecated is unconditional exclusion, its overlap
+/// with anything is always a conflict.
+fn detect_conflicting(loaded: &Loaded, dir: &Path, matrix: Option<&RunMatrix>) -> Vec<LintIssue> {
     use std::collections::BTreeSet;
 
     let baseline: BTreeSet<&str> = loaded
@@ -364,7 +543,7 @@ fn detect_conflicting(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
         .as_ref()
         .map(|d| d.entries.iter().map(String::as_str).collect())
         .unwrap_or_default();
-    let quarantine: BTreeSet<&str> = loaded
+    let quarantine_ids: BTreeSet<&str> = loaded
         .quarantine
         .as_ref()
         .map(|q| q.entries.iter().map(|e| e.test_id.as_str()).collect())
@@ -385,10 +564,23 @@ fn detect_conflicting(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
     for id in deprecated.intersection(&baseline) {
         issues.push(mk(&deprecated_path, "raikiri-baseline.txt", id));
     }
-    for id in deprecated.intersection(&quarantine) {
+    for id in deprecated.intersection(&quarantine_ids) {
         issues.push(mk(&deprecated_path, "quarantine.txt", id));
     }
-    for id in baseline.intersection(&quarantine) {
+    for id in baseline.intersection(&quarantine_ids) {
+        // Optional filter-overlap suppression: with a matrix supplied,
+        // report a conflict only if at least one quarantine entry for
+        // this test_id actually applies to a matrix row.
+        if let (Some(m), Some(q)) = (matrix, loaded.quarantine.as_ref()) {
+            let applies = q
+                .entries
+                .iter()
+                .filter(|e| e.test_id == *id)
+                .any(|e| m.any_row_matches(e));
+            if !applies {
+                continue;
+            }
+        }
         issues.push(mk(&baseline_path, "quarantine.txt", id));
     }
     issues
@@ -426,11 +618,27 @@ fn detect_expired(loaded: &Loaded, dir: &Path, now: Date) -> Vec<LintIssue> {
 ///
 /// `now` is injected (rather than sourced from the system clock) so
 /// [`Category::Expired`] detection is deterministic in tests.
+///
+/// Equivalent to [`run_with_matrix`] called with `matrix = None`: every
+/// `baseline ∩ quarantine` overlap surfaces as [`Category::Conflicting`]
+/// (safe upper bound). Use [`run_with_matrix`] when a WPT run matrix is
+/// available and spurious conflicts should be filtered.
 pub fn run(dir: &Path, now: Date) -> LintReport {
+    run_with_matrix(dir, now, None)
+}
+
+/// Like [`run`] but takes a [`RunMatrix`] used for filter-overlap
+/// suppression of `baseline ∩ quarantine` [`Category::Conflicting`]
+/// issues (spec §12.10).
+///
+/// See [`RunMatrix`] for how to build one; `validate-expectations` reads
+/// the `RAIKIRI_WPT_MATRIX` env var and threads it into this function
+/// when defined.
+pub fn run_with_matrix(dir: &Path, now: Date, matrix: Option<&RunMatrix>) -> LintReport {
     let loaded = load_all(dir);
     let mut issues = loaded.issues.clone();
     issues.extend(detect_duplicates(&loaded, dir));
-    issues.extend(detect_conflicting(&loaded, dir));
+    issues.extend(detect_conflicting(&loaded, dir, matrix));
     issues.extend(detect_expired(&loaded, dir, now));
     LintReport { issues }
 }
@@ -895,5 +1103,270 @@ css/old | linux | x86_64 | vello_cpu | low | r | i | 2026-01-01
     fn format_human_empty_report_snapshot() {
         let out = LintReport::default().format_human();
         insta::assert_snapshot!("format_human_empty", out);
+    }
+
+    // ── RunMatrix — spec §12.10 filter-overlap analysis ────────────────
+
+    #[test]
+    fn run_matrix_from_str_parses_two_rows() {
+        let m = "linux,x86_64,vello_cpu,pixel-exact;macos,aarch64,skia,low"
+            .parse::<RunMatrix>()
+            .expect("valid matrix");
+        assert_eq!(m.rows.len(), 2);
+        assert_eq!(m.rows[0].platform, PlatformFilter::Linux);
+        assert_eq!(m.rows[0].arch, ArchFilter::X86_64);
+        assert_eq!(m.rows[0].renderer, RendererFilter::VelloCpu);
+        assert_eq!(m.rows[0].tolerance, ToleranceFilter::PixelExact);
+        assert_eq!(m.rows[1].platform, PlatformFilter::MacOs);
+        assert_eq!(m.rows[1].renderer, RendererFilter::Skia);
+    }
+
+    #[test]
+    fn run_matrix_from_str_accepts_wildcards() {
+        let m = "*,x86_64,vello_cpu,*".parse::<RunMatrix>().expect("valid");
+        assert_eq!(m.rows[0].platform, PlatformFilter::Any);
+        assert_eq!(m.rows[0].tolerance, ToleranceFilter::Any);
+    }
+
+    #[test]
+    fn run_matrix_from_str_empty_string_yields_zero_rows() {
+        let m = "".parse::<RunMatrix>().expect("empty ok");
+        assert!(m.is_empty());
+    }
+
+    #[test]
+    fn run_matrix_from_str_trailing_semicolon_ignored() {
+        let m = "linux,x86_64,vello_cpu,pixel-exact;"
+            .parse::<RunMatrix>()
+            .expect("ok");
+        assert_eq!(m.rows.len(), 1);
+    }
+
+    #[test]
+    fn run_matrix_from_str_rejects_wrong_column_count() {
+        let err = "linux,x86_64,vello_cpu".parse::<RunMatrix>().unwrap_err();
+        match err {
+            RunMatrixParseError::WrongColumnCount { row, got } => {
+                assert_eq!(row, 1);
+                assert_eq!(got, 3);
+            }
+            other => panic!("expected WrongColumnCount, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_matrix_from_str_rejects_unknown_platform() {
+        let err = "plan9,x86_64,vello_cpu,low"
+            .parse::<RunMatrix>()
+            .unwrap_err();
+        match err {
+            RunMatrixParseError::UnknownEnumValue { row, field, value } => {
+                assert_eq!(row, 1);
+                assert_eq!(field, "platform");
+                assert_eq!(value, "plan9");
+            }
+            other => panic!("expected UnknownEnumValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn matrix_row_matches_entry_when_axes_are_equal() {
+        let row = MatrixRow {
+            platform: PlatformFilter::Linux,
+            arch: ArchFilter::X86_64,
+            renderer: RendererFilter::VelloCpu,
+            tolerance: ToleranceFilter::Low,
+        };
+        let entry = QuarantineEntry {
+            test_id: "css/foo".to_owned(),
+            platform: PlatformFilter::Linux,
+            arch: ArchFilter::X86_64,
+            renderer: RendererFilter::VelloCpu,
+            tolerance: ToleranceFilter::Low,
+            reason: String::new(),
+            issue_link: String::new(),
+            added_date: time::macros::date!(2026 - 08 - 01),
+            line_no: 1,
+        };
+        assert!(row.matches_entry(&entry));
+    }
+
+    #[test]
+    fn matrix_row_matches_entry_via_wildcards() {
+        let row = MatrixRow {
+            platform: PlatformFilter::Linux,
+            arch: ArchFilter::X86_64,
+            renderer: RendererFilter::VelloCpu,
+            tolerance: ToleranceFilter::Low,
+        };
+        let entry_wild = QuarantineEntry {
+            test_id: "css/foo".to_owned(),
+            platform: PlatformFilter::Any, // wildcard on entry side matches
+            arch: ArchFilter::X86_64,
+            renderer: RendererFilter::VelloCpu,
+            tolerance: ToleranceFilter::Any,
+            reason: String::new(),
+            issue_link: String::new(),
+            added_date: time::macros::date!(2026 - 08 - 01),
+            line_no: 1,
+        };
+        assert!(row.matches_entry(&entry_wild));
+    }
+
+    #[test]
+    fn matrix_row_does_not_match_entry_when_axis_disjoint() {
+        let row = MatrixRow {
+            platform: PlatformFilter::Linux,
+            arch: ArchFilter::X86_64,
+            renderer: RendererFilter::VelloCpu,
+            tolerance: ToleranceFilter::Low,
+        };
+        let entry = QuarantineEntry {
+            test_id: "css/foo".to_owned(),
+            platform: PlatformFilter::Windows, // disjoint on platform
+            arch: ArchFilter::X86_64,
+            renderer: RendererFilter::VelloCpu,
+            tolerance: ToleranceFilter::Low,
+            reason: String::new(),
+            issue_link: String::new(),
+            added_date: time::macros::date!(2026 - 08 - 01),
+            line_no: 1,
+        };
+        assert!(!row.matches_entry(&entry));
+    }
+
+    #[test]
+    fn conflict_baseline_and_quarantine_suppressed_when_filter_disjoint_from_matrix() {
+        // Baseline says css/foo passes.
+        // Quarantine flags it as flaky only on Windows.
+        // Matrix says CI runs on Linux only. → No conflict (quarantine
+        // filter is disjoint from every matrix row on the platform axis).
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/foo\n");
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | windows | x86_64 | vello_cpu | low | r | i | 2026-08-01\n",
+        );
+        let matrix = "linux,x86_64,vello_cpu,low".parse::<RunMatrix>().unwrap();
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run_with_matrix(dir.path(), now, Some(&matrix));
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
+        assert!(
+            conflicts.is_empty(),
+            "expected filter-overlap suppression, got {conflicts:?}"
+        );
+    }
+
+    #[test]
+    fn conflict_baseline_and_quarantine_reported_when_matrix_matches() {
+        // Same setup, but quarantine covers Linux → matrix matches → conflict.
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/foo\n");
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | linux | x86_64 | vello_cpu | low | r | i | 2026-08-01\n",
+        );
+        let matrix = "linux,x86_64,vello_cpu,low".parse::<RunMatrix>().unwrap();
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run_with_matrix(dir.path(), now, Some(&matrix));
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].message.contains("css/foo"));
+    }
+
+    #[test]
+    fn conflict_baseline_and_quarantine_reported_when_wildcard_entry_matches_any_row() {
+        // Quarantine uses `*` on platform axis → matches every matrix row.
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/foo\n");
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | * | x86_64 | vello_cpu | low | r | i | 2026-08-01\n",
+        );
+        let matrix = "windows,x86_64,vello_cpu,low".parse::<RunMatrix>().unwrap();
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run_with_matrix(dir.path(), now, Some(&matrix));
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
+        assert_eq!(conflicts.len(), 1);
+    }
+
+    #[test]
+    fn conflict_baseline_and_quarantine_matrix_covers_via_second_entry() {
+        // Two quarantine entries share test_id but different filters.
+        // First entry disjoint from matrix (Windows-only), second matches
+        // matrix (Linux). Any-match semantics → conflict reported.
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/foo\n");
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | windows | x86_64 | vello_cpu | low | r1 | i1 | 2026-08-01\n\
+             css/foo | linux | x86_64 | vello_cpu | low | r2 | i2 | 2026-08-02\n",
+        );
+        let matrix = "linux,x86_64,vello_cpu,low".parse::<RunMatrix>().unwrap();
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run_with_matrix(dir.path(), now, Some(&matrix));
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
+        assert_eq!(conflicts.len(), 1);
+    }
+
+    #[test]
+    fn conflict_baseline_and_quarantine_no_matrix_preserves_upper_bound() {
+        // Sanity: without matrix, behavior is unchanged (every overlap is
+        // a conflict). This is the safe default `run()` uses.
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/foo\n");
+        write(
+            dir.path(),
+            "quarantine.txt",
+            "css/foo | windows | x86_64 | vello_cpu | low | r | i | 2026-08-01\n",
+        );
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run(dir.path(), now); // no matrix
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
+        assert_eq!(conflicts.len(), 1);
+    }
+
+    #[test]
+    fn conflict_deprecated_still_reported_regardless_of_matrix() {
+        // Deprecated ↔ baseline overlap is matrix-independent
+        // (deprecated is unconditional). Same for deprecated ↔ quarantine.
+        let dir = header_only_dir();
+        write(dir.path(), "raikiri-baseline.txt", "css/foo\n");
+        write(dir.path(), "deprecated.txt", "css/foo\n");
+        // Matrix has zero rows, so it would suppress any baseline ∩
+        // quarantine conflict — but that's not the pair here.
+        let matrix = RunMatrix::default();
+        let now = time::macros::date!(2026 - 07 - 16);
+        let report = run_with_matrix(dir.path(), now, Some(&matrix));
+        let conflicts: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.category == Category::Conflicting)
+            .collect();
+        assert_eq!(conflicts.len(), 1);
     }
 }

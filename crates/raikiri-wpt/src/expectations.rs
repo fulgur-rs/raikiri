@@ -412,7 +412,12 @@ pub enum ToleranceFilter {
 }
 
 impl PlatformFilter {
-    fn parse(s: &str) -> Option<Self> {
+    /// Parse a `quarantine.txt` platform column value (`"linux"`,
+    /// `"macos"`, `"windows"`, or `"*"` for [`Self::Any`]). Returns
+    /// `None` for unrecognized input. Public so `raikiri_wpt::lint`
+    /// callers can parse env-var-supplied matrix rows against the same
+    /// enum grammar.
+    pub fn parse_str(s: &str) -> Option<Self> {
         Some(match s {
             "linux" => Self::Linux,
             "macos" => Self::MacOs,
@@ -424,7 +429,11 @@ impl PlatformFilter {
 }
 
 impl ArchFilter {
-    fn parse(s: &str) -> Option<Self> {
+    /// Parse a `quarantine.txt` arch column value (`"x86_64"`,
+    /// `"aarch64"`, or `"*"` for [`Self::Any`]). Returns `None` for
+    /// unrecognized input. See [`PlatformFilter::parse_str`] for the
+    /// rationale for exposing this as public API.
+    pub fn parse_str(s: &str) -> Option<Self> {
         Some(match s {
             "x86_64" => Self::X86_64,
             "aarch64" => Self::Aarch64,
@@ -435,7 +444,11 @@ impl ArchFilter {
 }
 
 impl RendererFilter {
-    fn parse(s: &str) -> Option<Self> {
+    /// Parse a `quarantine.txt` renderer column value (`"vello_cpu"`,
+    /// `"skia"`, `"tiny_skia"`, or `"*"` for [`Self::Any`]). Returns
+    /// `None` for unrecognized input. See [`PlatformFilter::parse_str`]
+    /// for the rationale for exposing this as public API.
+    pub fn parse_str(s: &str) -> Option<Self> {
         Some(match s {
             "vello_cpu" => Self::VelloCpu,
             "skia" => Self::Skia,
@@ -447,7 +460,12 @@ impl RendererFilter {
 }
 
 impl ToleranceFilter {
-    fn parse(s: &str) -> Option<Self> {
+    /// Parse a `quarantine.txt` tolerance column value (`"pixel-exact"`,
+    /// `"low"`, `"medium"`, `"high"`, or `"*"` for [`Self::Any`]).
+    /// Returns `None` for unrecognized input. See
+    /// [`PlatformFilter::parse_str`] for the rationale for exposing
+    /// this as public API.
+    pub fn parse_str(s: &str) -> Option<Self> {
         Some(match s {
             "pixel-exact" => Self::PixelExact,
             "low" => Self::Low,
@@ -489,7 +507,7 @@ impl Quarantine {
                 });
                 continue;
             }
-            let Some(platform) = PlatformFilter::parse(cols[1]) else {
+            let Some(platform) = PlatformFilter::parse_str(cols[1]) else {
                 errors.push(ExpectError::UnknownEnum {
                     file: file_name.to_owned(),
                     line_no,
@@ -498,7 +516,7 @@ impl Quarantine {
                 });
                 continue;
             };
-            let Some(arch) = ArchFilter::parse(cols[2]) else {
+            let Some(arch) = ArchFilter::parse_str(cols[2]) else {
                 errors.push(ExpectError::UnknownEnum {
                     file: file_name.to_owned(),
                     line_no,
@@ -507,7 +525,7 @@ impl Quarantine {
                 });
                 continue;
             };
-            let Some(renderer) = RendererFilter::parse(cols[3]) else {
+            let Some(renderer) = RendererFilter::parse_str(cols[3]) else {
                 errors.push(ExpectError::UnknownEnum {
                     file: file_name.to_owned(),
                     line_no,
@@ -516,7 +534,7 @@ impl Quarantine {
                 });
                 continue;
             };
-            let Some(tolerance) = ToleranceFilter::parse(cols[4]) else {
+            let Some(tolerance) = ToleranceFilter::parse_str(cols[4]) else {
                 errors.push(ExpectError::UnknownEnum {
                     file: file_name.to_owned(),
                     line_no,
