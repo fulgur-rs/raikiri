@@ -871,6 +871,50 @@ mod tests {
         assert!(rules.is_empty());
     }
 
+    // ── Malformed prelude — trailing/isolated colon and adjacent idents (raikiri-spike-rm8) ──
+    //
+    // Companion to the F4 banner above. F4 pinned the 3 list-boundary
+    // cases (trailing / leading / empty-middle commas) of `<page-selector>#`;
+    // rm8 pins the 3 compound-internal cases against the CSS Paged Media L3
+    // §4.3 (anchor `#syntax-page-selector`) compound grammar
+    // `<page-selector> = [ <ident-token>? <pseudo-page>* ]!` with
+    // `<pseudo-page> = ':' [ left | right | first | blank ]`. Together the two
+    // banners close the 6-case malformed-prelude debt set enumerated in
+    // bd raikiri-spike-rm8:
+    //   - `named:`      — trailing colon, missing required left|right|first|blank keyword
+    //   - `:`           — bare colon, same
+    //   - `named other` — two adjacent idents, compound allows only one
+    // Each case drops the whole `@page` rule (declarations not captured).
+
+    #[test]
+    fn page_named_trailing_colon_is_dropped() {
+        // `@page named:` — named-page ident に `:` が付いて次に来るべき
+        // `<pseudo-page>` の keyword (left/right/first/blank) が来ずに block
+        // が始まる shape。compound grammar `[ <ident-token>? <pseudo-page>* ]!`
+        // の `<pseudo-page> = ':' [ left | right | first | blank ]` が
+        // required keyword を欠くため drop。
+        let rules = page_rules("@page named: { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_bare_colon_is_dropped() {
+        // `@page :` — colon 単独。`<pseudo-page> = ':' [ left | right | first |
+        // blank ]` が required keyword を欠くため drop。
+        let rules = page_rules("@page : { color: red }");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn page_two_adjacent_idents_are_dropped() {
+        // `@page named other` — compound 内で `<ident-token>` は先頭 1 個のみ。
+        // 2 個目の ident は compound 継続でも次 entry (comma がない) でもない
+        // ため、`parse_comma_separated` の entry-parses-entirely 検査が leftover
+        // を見て Err → whole rule drop。
+        let rules = page_rules("@page named other { color: red }");
+        assert!(rules.is_empty());
+    }
+
     #[test]
     fn page_rules_captured_via_build_rule_tree_from_dom() {
         // build_rule_tree (DOM 経由) でも page_rules が populate される。
