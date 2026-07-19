@@ -6,11 +6,44 @@
 //!
 //! `parse_value` は rule.rs の `DeclParser::parse_value` から呼ばれる。
 
+use std::sync::{Arc, OnceLock};
+
 use cssparser::color::{clamp_unit_f32, parse_hash_color, parse_named_color};
 use cssparser::{ParseError, Parser, Token};
 use smol_str::SmolStr;
 
 use crate::Atom;
+
+/// 空 `<content-list>` を表す shared Arc — cascade で全 node が持ちうる
+/// initial / inherit_from の default 値を per-node 新規 allocate せず、
+/// 単一 heap slot を bump-share するための helper。
+///
+/// `raikiri-spike-d9y.1` (SEC HIGH cascade memory DoS fix) の副作用として
+/// `ComputedValues.content` / `.string_set` は `Arc<Vec<..>>` に wrap したが、
+/// `Arc::new(Vec::new())` を every node で呼ぶと N-node document あたり
+/// 2N の small heap allocation regression になる (advisor calibration)。
+/// `OnceLock` で **process 全体で 1 個** の empty Arc を保持し、
+/// [`empty_content_list`] / [`empty_string_set_entries`] が各 initial spot で
+/// clone (Arc bump only) する。
+///
+/// 空 `Vec::new()` は allocation 0 だが `Vec` struct 自体の 24 bytes が per-node
+/// に生まれる — Arc 化により 8-byte pointer に置き換わり、指す先は shared。
+pub(crate) fn empty_content_list() -> Arc<Vec<ContentComponent>> {
+    static EMPTY: OnceLock<Arc<Vec<ContentComponent>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
+/// `string-set` entry の 1 要素 — `(<custom-ident> name, content-list)` pair
+/// を owned Vec で保持。alias 化により clippy::type_complexity を satisfy し、
+/// 下段の `Arc<Vec<StringSetEntry>>` shape を局所化する。
+pub(crate) type StringSetEntry = (SmolStr, Vec<ContentComponent>);
+
+/// 空 `string-set` entries を表す shared Arc — [`empty_content_list`] と同じ
+/// pattern (per-node empty allocation regression 回避、d9y.1)。
+pub(crate) fn empty_string_set_entries() -> Arc<Vec<StringSetEntry>> {
+    static EMPTY: OnceLock<Arc<Vec<StringSetEntry>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
 
 /// RGBA color (0-255 per channel、`a` は 255 = fully opaque)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,7 +212,12 @@ enum ContentListMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContentComponent {
     /// `<string>` bare literal (`content: "hello"`)。
-    Literal(String),
+    ///
+    /// [`SmolStr`] は 22 bytes 以下を inline、超過分は内部 `Arc<str>` 保存で
+    /// clone が O(1) bump になる (raikiri-spike-d9y.1 の DoS 直系 attack vector
+    /// `content: "<large>"` に対する secondary defense、primary は outer
+    /// [`PropertyValue::Content`] の [`Arc<Vec<..>>`] wrap)。
+    Literal(SmolStr),
     /// `counter(<counter-name>, <counter-style>?)`。
     Counter { name: SmolStr, style: CounterStyle },
     /// `counters(<counter-name>, <string>, <counter-style>?)`。
@@ -294,13 +332,22 @@ pub enum PropertyValue {
     /// 生成判断は下流 layer)。M5 gcpm-directive-emit static-side
     /// (raikiri-spike-m5.1)、CSS Content 3 §2.1
     /// <https://www.w3.org/TR/css-content-3/#content-property>。
-    Content(Vec<ContentComponent>),
+    ///
+    /// [`Arc<Vec<..>>`] wrap: cascade winner clone + inheritance walk stack
+    /// entry clone + per-node write が **shallow (Arc bump only)** になる。
+    /// `* { content: "<large>" }` × N element の O(N × M) memory blow-up を
+    /// 単一 heap slot 共有で塞ぐ (raikiri-spike-d9y.1 SEC HIGH)。
+    Content(Arc<Vec<ContentComponent>>),
     /// `string-set: none | [ <custom-ident> <content-list> ]#` — non-inherited、
     /// initial: empty list。各 entry は `(name, content-list)` pair。
     /// CSS GCPM 3 §3.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>、
     /// `<content-list>` は CSS Content 3 §2 (m5.1 で parser 実装済)。
     /// 名前解決と runtime string() 参照は下流 (raikiri-dom) 責務。
-    StringSet(Vec<(SmolStr, Vec<ContentComponent>)>),
+    ///
+    /// [`Arc<Vec<..>>`] wrap は [`Self::Content`] と同じ理由 —
+    /// `* { string-set: name "<large>" }` × N element 経路の同種 DoS を塞ぐ
+    /// (raikiri-spike-d9y.1)。
+    StringSet(Arc<Vec<(SmolStr, Vec<ContentComponent>)>>),
     /// `position: static | running(<custom-ident>)` — non-inherited、initial:
     /// `static`。M5 static-side ε (raikiri-spike-m5.4)。
     /// CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>。
@@ -376,10 +423,26 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
             parse_counter_property(input, 1).map(PropertyValue::CounterIncrement)
         }
         "counter-set" => parse_counter_property(input, 0).map(PropertyValue::CounterSet),
-        // CSS Content 3 §2.1 content property (raikiri-spike-m5.1、M5 gcpm-directive-emit static side)
-        "content" => parse_content(input).map(PropertyValue::Content),
-        // CSS GCPM 3 §3.1 string-set (raikiri-spike-m5.3、M5 static-side β)
-        "string-set" => parse_string_set(input).map(PropertyValue::StringSet),
+        // CSS Content 3 §2.1 content property (raikiri-spike-m5.1、M5 gcpm-directive-emit static side)。
+        // Arc wrap は raikiri-spike-d9y.1 の cascade memory DoS fix (per-element clone を
+        // shallow bump 化)、empty list は shared Arc slot に落として per-node allocation
+        // regression を避ける (advisor calibration)。
+        "content" => parse_content(input).map(|v| {
+            if v.is_empty() {
+                PropertyValue::Content(empty_content_list())
+            } else {
+                PropertyValue::Content(Arc::new(v))
+            }
+        }),
+        // CSS GCPM 3 §3.1 string-set (raikiri-spike-m5.3、M5 static-side β)。
+        // Arc wrap は raikiri-spike-d9y.1、同 rationale。
+        "string-set" => parse_string_set(input).map(|v| {
+            if v.is_empty() {
+                PropertyValue::StringSet(empty_string_set_entries())
+            } else {
+                PropertyValue::StringSet(Arc::new(v))
+            }
+        }),
         // CSS GCPM 3 §1.2.1 position: running() (raikiri-spike-m5.4、M5 static-side ε)。
         // M5 scope では `static` + `running(<custom-ident>)` のみ受理、
         // `relative` / `absolute` / `fixed` / `sticky` は silent drop (M5+ scope 外)。
@@ -643,7 +706,7 @@ fn parse_content_list_items(
     loop {
         // bare `<string>` literal — 両 mode 共通 (mode gate 不要)。
         if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
-            items.push(ContentComponent::Literal(s.as_ref().to_string()));
+            items.push(ContentComponent::Literal(SmolStr::new(s.as_ref())));
             continue;
         }
         // function — mode に応じて `string()` / `target-*()` を reject する
@@ -1389,7 +1452,9 @@ mod tests {
 
     fn content_items(source: &str) -> Vec<ContentComponent> {
         match parse(source, "content") {
-            Some(PropertyValue::Content(v)) => v,
+            // d9y.1: PropertyValue::Content(Arc<Vec<..>>) を expose するため
+            // (*v).clone() で Vec を deref-clone。tests は既存 shape のまま検証。
+            Some(PropertyValue::Content(v)) => (*v).clone(),
             other => panic!("expected PropertyValue::Content, got {other:?}"),
         }
     }
@@ -1512,7 +1577,7 @@ mod tests {
         let items = content_items(r#""hello""#);
         assert_eq!(
             items,
-            vec![ContentComponent::Literal(String::from("hello"))]
+            vec![ContentComponent::Literal(SmolStr::new("hello"))]
         );
     }
 
@@ -1524,7 +1589,7 @@ mod tests {
         assert_eq!(items.len(), 4, "expected 4 items, got {items:?}");
         assert_eq!(
             items[0],
-            ContentComponent::Literal(String::from("Chapter "))
+            ContentComponent::Literal(SmolStr::new("Chapter "))
         );
         assert_eq!(
             items[1],
@@ -1533,7 +1598,7 @@ mod tests {
                 style: CounterStyle::Decimal,
             }
         );
-        assert_eq!(items[2], ContentComponent::Literal(String::from(": ")));
+        assert_eq!(items[2], ContentComponent::Literal(SmolStr::new(": ")));
         assert_eq!(
             items[3],
             ContentComponent::String {
@@ -1551,7 +1616,7 @@ mod tests {
         // pseudo-element generation 判断は下流で行う。
         assert_eq!(
             parse("normal", "content"),
-            Some(PropertyValue::Content(Vec::new()))
+            Some(PropertyValue::Content(empty_content_list()))
         );
     }
 
@@ -1560,7 +1625,7 @@ mod tests {
         // spec §2.1: `none` — 本 crate では `normal` と同じく空 list に落とす。
         assert_eq!(
             parse("none", "content"),
-            Some(PropertyValue::Content(Vec::new()))
+            Some(PropertyValue::Content(empty_content_list()))
         );
     }
 
@@ -1647,7 +1712,7 @@ mod tests {
     fn content_key_maps_to_content_property_key() {
         // PropertyValue::Content → PropertyKey::Content (cascade winner 選択の
         // discriminant integrity、既存 sibling counter-* と同じ pattern)。
-        let cv = PropertyValue::Content(Vec::new());
+        let cv = PropertyValue::Content(empty_content_list());
         assert_eq!(cv.key(), PropertyKey::Content);
     }
 
@@ -1731,7 +1796,8 @@ mod tests {
 
     fn string_set_entries(source: &str) -> Vec<(SmolStr, Vec<ContentComponent>)> {
         match parse(source, "string-set") {
-            Some(PropertyValue::StringSet(v)) => v,
+            // d9y.1: PropertyValue::StringSet(Arc<Vec<..>>)、content_items と同 pattern。
+            Some(PropertyValue::StringSet(v)) => (*v).clone(),
             other => panic!("expected PropertyValue::StringSet, got {other:?}"),
         }
     }
@@ -1745,7 +1811,7 @@ mod tests {
         assert_eq!(entries[0].0, SmolStr::new("my_str"));
         assert_eq!(
             entries[0].1,
-            vec![ContentComponent::Literal(String::from("hello"))]
+            vec![ContentComponent::Literal(SmolStr::new("hello"))]
         );
     }
 
@@ -1774,7 +1840,7 @@ mod tests {
         );
         assert_eq!(
             entries[0].1[1],
-            ContentComponent::Literal(String::from(": "))
+            ContentComponent::Literal(SmolStr::new(": "))
         );
         assert_eq!(
             entries[0].1[2],
@@ -1792,12 +1858,12 @@ mod tests {
         assert_eq!(entries[0].0, SmolStr::new("a"));
         assert_eq!(
             entries[0].1,
-            vec![ContentComponent::Literal(String::from("x"))]
+            vec![ContentComponent::Literal(SmolStr::new("x"))]
         );
         assert_eq!(entries[1].0, SmolStr::new("b"));
         assert_eq!(
             entries[1].1,
-            vec![ContentComponent::Literal(String::from("y"))]
+            vec![ContentComponent::Literal(SmolStr::new("y"))]
         );
     }
 
@@ -1806,7 +1872,7 @@ mod tests {
         // spec §3.1: top-level `none` = empty list
         assert_eq!(
             parse("none", "string-set"),
-            Some(PropertyValue::StringSet(Vec::new()))
+            Some(PropertyValue::StringSet(empty_string_set_entries()))
         );
     }
 
@@ -1838,7 +1904,7 @@ mod tests {
         // CSS spec: keyword `none` は ASCII case-insensitive
         assert_eq!(
             parse("NONE", "string-set"),
-            Some(PropertyValue::StringSet(Vec::new()))
+            Some(PropertyValue::StringSet(empty_string_set_entries()))
         );
     }
 
@@ -1846,7 +1912,7 @@ mod tests {
     fn string_set_key_maps_to_string_set_property_key() {
         // PropertyValue::StringSet → PropertyKey::StringSet (cascade winner 選択の
         // discriminant integrity、既存 sibling counter-* / content と同じ pattern)。
-        let v = PropertyValue::StringSet(Vec::new());
+        let v = PropertyValue::StringSet(empty_string_set_entries());
         assert_eq!(v.key(), PropertyKey::StringSet);
     }
 
@@ -1905,7 +1971,7 @@ mod tests {
         assert_eq!(entries[0].0, SmolStr::new("a"));
         assert_eq!(
             entries[0].1,
-            vec![ContentComponent::Literal(String::from("x"))]
+            vec![ContentComponent::Literal(SmolStr::new("x"))]
         );
     }
 
@@ -2120,7 +2186,7 @@ mod tests {
                 ContentComponent::Content {
                     keyword: ContentTextKeyword::Before,
                 },
-                ContentComponent::Literal(String::from(":")),
+                ContentComponent::Literal(SmolStr::new(":")),
                 ContentComponent::Content {
                     keyword: ContentTextKeyword::Text,
                 },
