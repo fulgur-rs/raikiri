@@ -77,10 +77,14 @@ const MAX_EXPECTED_PAGES: usize = 1_024;
 /// 256 MiB: 2.5× the per-file cap (a single max-size page must still
 /// load), above realistic fixture aggregates (real fixtures are
 /// single-digit MiB × single-digit pages), and tight enough that the
-/// worst-case in-memory peak during load stays bounded at
+/// worst-case expected-page payload during load stays bounded at
 /// `FIXTURE_AGGREGATE_BYTES_CAP + FIXTURE_SIZE_CAP` (~356 MiB — the
 /// running total plus the last file, which is freed on the aggregate-cap
-/// reject).
+/// reject).  Total loader memory can add `input_html` (up to
+/// `FIXTURE_SIZE_CAP` = 100 MiB) plus `Vec` capacity/structural
+/// overhead on top of that; overall worst-case retained is
+/// `2 * FIXTURE_SIZE_CAP + FIXTURE_AGGREGATE_BYTES_CAP` ≈ 456 MiB
+/// (Codex gate final review round 3 doc-precision note).
 ///
 /// Legitimate fixtures approaching this cap should raise a bd request
 /// rather than bypass — the number is deliberately tight against attack.
