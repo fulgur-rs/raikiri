@@ -715,7 +715,7 @@ fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
 /// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>。
 fn parse_counter_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let name = parse_custom_ident(input)?;
-    let style = parse_optional_counter_style(input);
+    let style = parse_optional_counter_style(input)?;
     Some(ContentComponent::Counter { name, style })
 }
 
@@ -725,7 +725,7 @@ fn parse_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let name = parse_custom_ident(input)?;
     input.expect_comma().ok()?;
     let separator = input.expect_string().ok()?.as_ref().to_string();
-    let style = parse_optional_counter_style(input);
+    let style = parse_optional_counter_style(input)?;
     Some(ContentComponent::Counters {
         name,
         separator,
@@ -733,20 +733,24 @@ fn parse_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     })
 }
 
-/// optional trailing `, <counter-style>`。省略時は spec default `decimal`。
-/// `,` を consume 後に ident が期待通り parse できなかった場合、rewind せず
-/// `Decimal` を返す (fallback) — caller の `expect_exhausted` が leftover を検知して
-/// declaration ごと drop するため silent tolerance で問題ない。
-fn parse_optional_counter_style(input: &mut Parser<'_, '_>) -> CounterStyle {
+/// optional trailing `, <counter-style>`。省略時は spec default `decimal`
+/// (CSS Lists 3 §4.7 `counter()` / `counters()` の末尾引数
+/// <https://www.w3.org/TR/css-lists-3/#counter-functions>、CSS Content 3 §2.6.1-2
+/// `target-counter()` / `target-counters()` の末尾引数
+/// <https://www.w3.org/TR/css-content-3/#target-counter>)。
+///
+/// grammar は `<counter-style>?` — `,` を先行させる時は ident 必須。
+/// `,` を consume 後に ident 不在 (`counter(chapter,)` 等の trailing-comma)
+/// は spec-invalid、`None` 上位伝播で declaration ごと drop する
+/// (sibling [`parse_string_fetch`] / [`parse_content_part`] と同じ strict
+/// `?` propagation、raikiri-spike-zik で silent Decimal fallback を除去)。
+fn parse_optional_counter_style(input: &mut Parser<'_, '_>) -> Option<CounterStyle> {
     if input.try_parse(|i| i.expect_comma()).is_ok() {
-        input
-            .try_parse(|i| -> Result<CounterStyle, ParseError<'_, ()>> {
-                let ident = i.expect_ident()?.clone();
-                Ok(counter_style_from_ident(ident.as_ref()))
-            })
-            .unwrap_or_default()
+        // comma consumed — ident 必須。失敗は None として上位伝播。
+        let ident = input.expect_ident().ok()?.clone();
+        Some(counter_style_from_ident(ident.as_ref()))
     } else {
-        CounterStyle::default()
+        Some(CounterStyle::default())
     }
 }
 
@@ -785,7 +789,7 @@ fn parse_target_counter_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponen
     let url = parse_target_url(input)?;
     input.expect_comma().ok()?;
     let name = parse_custom_ident(input)?;
-    let style = parse_optional_counter_style(input);
+    let style = parse_optional_counter_style(input)?;
     Some(ContentComponent::TargetCounter { url, name, style })
 }
 
@@ -797,7 +801,7 @@ fn parse_target_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentCompone
     let name = parse_custom_ident(input)?;
     input.expect_comma().ok()?;
     let separator = input.expect_string().ok()?.as_ref().to_string();
-    let style = parse_optional_counter_style(input);
+    let style = parse_optional_counter_style(input)?;
     Some(ContentComponent::TargetCounters {
         url,
         name,
@@ -1453,6 +1457,77 @@ mod tests {
         // discriminant integrity、既存 sibling counter-* と同じ pattern)。
         let cv = PropertyValue::Content(Vec::new());
         assert_eq!(cv.key(), PropertyKey::Content);
+    }
+
+    // ── parse_optional_counter_style trailing-comma strict reject (raikiri-spike-zik) ──
+    //
+    // CSS Lists 3 §4.7 `counter(<counter-name>, <counter-style>?)` /
+    // CSS Content 3 §2.6.1-2 `target-counter()` / `target-counters()` は
+    // `<counter-style>?` — `,` を先行させる時は ident 必須。trailing-comma
+    // (`counter(chapter,)` 等) は spec-invalid → declaration ごと drop すべき。
+    // sibling `parse_string_fetch` / `parse_content_part` は既に strict `?`
+    // propagation、`parse_optional_counter_style` のみ silent Decimal fallback
+    // していた regression を pin する。
+
+    #[test]
+    fn content_counter_rejects_trailing_comma() {
+        // `counter(chapter,)` — comma 消費後に ident 不在。spec-invalid、
+        // declaration drop = None (Chrome/Firefox と同挙動)。
+        assert_eq!(parse("counter(chapter,)", "content"), None);
+    }
+
+    #[test]
+    fn content_counters_rejects_trailing_comma() {
+        // `counters(chapter, ".",)` — separator string 後の trailing comma。
+        assert_eq!(parse(r#"counters(chapter, ".",)"#, "content"), None);
+    }
+
+    #[test]
+    fn content_target_counter_rejects_trailing_comma() {
+        // `target-counter(url("#a"), page,)` — name 後の trailing comma。
+        // target-counter/target-counters は parse_optional_counter_style を
+        // 経由 (parse_target_counter_fn / parse_target_counters_fn) するため同じ pattern で drop。
+        assert_eq!(
+            parse(r##"target-counter(url("#a"), page,)"##, "content"),
+            None
+        );
+    }
+
+    #[test]
+    fn content_target_counters_rejects_trailing_comma() {
+        // `target-counters(url("#a"), section, ".",)` — separator 後の trailing。
+        assert_eq!(
+            parse(r##"target-counters(url("#a"), section, ".",)"##, "content"),
+            None
+        );
+    }
+
+    #[test]
+    fn content_string_rejects_trailing_comma() {
+        // 対照実験 (現行 strict の維持確認): `string(foo,)` は
+        // `parse_string_fetch` が `?` 経由で伝播、既に None。
+        assert_eq!(parse("string(foo,)", "content"), None);
+    }
+
+    #[test]
+    fn content_target_text_rejects_trailing_comma() {
+        // 対照実験: `target-text(url("#a"),)` は `parse_content_part` が
+        // `?` 経由で伝播、既に None。
+        assert_eq!(parse(r##"target-text(url("#a"),)"##, "content"), None);
+    }
+
+    #[test]
+    fn content_counter_accepts_bare_default() {
+        // `counter(chapter)` — trailing comma 無しの正常 case、Decimal default
+        // で Some を返す (silent fallback を strict にしても正常 path は変えない)。
+        let items = content_items("counter(chapter)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Counter {
+                name: SmolStr::new("chapter"),
+                style: CounterStyle::Decimal,
+            }]
+        );
     }
 
     // ── string-set (CSS GCPM 3 §3.1、raikiri-spike-m5.3) ──
