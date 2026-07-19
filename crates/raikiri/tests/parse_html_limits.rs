@@ -9,8 +9,9 @@
 //! `Read::take` だけでは cap 到達を検出できない。実装は
 //! `take(cap + 1) + read_to_end` の "+1 probe" pattern (crates/raikiri/src/parse.rs)。
 //!
-//! Consumer は [`RenderLimits::with_max_input_bytes`] または
-//! [`RenderLimitsBuilder::max_input_bytes`] で cap を調整、`None` で無効化できる。
+//! Consumer は [`RenderLimitsBuilder::max_input_bytes`] (または field への
+//! 直接代入) で cap を調整、`None` で無効化できる (`None` の security 上の
+//! 含意は `RenderLimits::max_input_bytes` field doc を参照)。
 
 use std::io::Read;
 
@@ -146,7 +147,7 @@ fn parse_html_rejects_input_one_byte_over_cap() {
 /// Cap = 100, input = 101 byte → reject。
 #[test]
 fn parse_html_with_limits_custom_cap_rejects_over_cap() {
-    let limits = RenderLimits::default().with_max_input_bytes(100);
+    let limits = RenderLimits::builder().max_input_bytes(Some(100)).build();
     let input = vec![b'a'; 101];
 
     let err = parse_html_with_limits(input.as_slice(), &opts(), limits)
@@ -174,7 +175,7 @@ fn parse_html_with_limits_custom_cap_rejects_over_cap() {
 /// これで cap field が actually consulted であることを確定させる)。
 #[test]
 fn parse_html_with_limits_custom_cap_accepts_under_cap() {
-    let limits = RenderLimits::default().with_max_input_bytes(200);
+    let limits = RenderLimits::builder().max_input_bytes(Some(200)).build();
     let mut input = Vec::from(&b"<!--"[..]);
     input.resize(101 - "-->".len(), b'a');
     input.extend_from_slice(b"-->");
@@ -212,7 +213,7 @@ fn parse_html_with_limits_none_disables_cap() {
     );
 
     // Contrast: 同じ input を cap=100 で試すと reject される (None 経路の意味を pin)。
-    let strict = RenderLimits::default().with_max_input_bytes(100);
+    let strict = RenderLimits::builder().max_input_bytes(Some(100)).build();
     let strict_err =
         parse_html_with_limits(input.as_slice(), &opts(), strict).expect_err("strict cap rejects");
     assert!(matches!(
@@ -226,8 +227,8 @@ fn parse_html_with_limits_none_disables_cap() {
 
 /// `RenderLimitsBuilder::max_input_bytes` の compile + runtime pin。
 ///
-/// Consumer が builder pattern で cap を tune できる契約 (`with_*` shortcut
-/// との equivalence)。
+/// Consumer が builder pattern で cap を tune できる契約 (`Some(cap)` / `None`
+/// 両経路の設定が builder + field 直接代入と equivalent であること)。
 #[test]
 fn render_limits_builder_max_input_bytes_roundtrip() {
     let via_builder = RenderLimits::builder()
@@ -235,8 +236,11 @@ fn render_limits_builder_max_input_bytes_roundtrip() {
         .build();
     assert_eq!(via_builder.max_input_bytes, Some(64 * 1024 * 1024));
 
-    let via_shortcut = RenderLimits::default().with_max_input_bytes(64 * 1024 * 1024);
-    assert_eq!(via_shortcut.max_input_bytes, Some(64 * 1024 * 1024));
+    // Direct field write pattern (`with_*` ergonomic を持たない sibling
+    // convention に揃えている、bd raikiri-spike-4kw 内 review)。
+    let mut via_field = RenderLimits::default();
+    via_field.max_input_bytes = Some(64 * 1024 * 1024);
+    assert_eq!(via_field.max_input_bytes, Some(64 * 1024 * 1024));
 
     // None も builder 経由で設定可能。
     let unbounded = RenderLimits::builder().max_input_bytes(None).build();
