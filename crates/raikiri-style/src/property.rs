@@ -671,9 +671,19 @@ fn parse_content_list_items(
 ///
 /// `<custom-ident>` は CSS-wide keyword + `default` (css-values-4 §3.6 が
 /// 将来の CSS-wide keyword 用に予約) + `none` (top-level alt、gcpm-3 §3.1) を弾く。
-/// name が reserved の場合は `try_parse` の rewind で unconsumed に戻り loop を
-/// 抜け、caller の `expect_exhausted` (rule.rs) が leftover token で declaration
-/// を drop する。
+///
+/// ## Entry separator の strict 化 (raikiri-spike-1ll)
+///
+/// `#` (comma-separated multiplier、CSS Values 4 §3.3
+/// <https://www.w3.org/TR/css-values-4/#mult-comma>) は entry 間に comma を
+/// 要求する一方、**trailing comma を許容しない**。従って comma を consume した
+/// 直後の loop iteration では次 entry の name parse **必須** — 失敗すれば
+/// `#` production 全体が spec-invalid、declaration drop = `None`。
+///
+/// 初回 iteration で name parse が失敗する case (`string-set: ,`,
+/// `string-set: "x"` 等 name 不在) も含めて `.ok()?` で一律に `None` 上位伝播
+/// する。この strict `?` propagation は sibling
+/// [`parse_optional_counter_style`] (raikiri-spike-zik) と同 principle。
 ///
 /// `<content-list>` は 1+ items 必須 (CSS Content 3 §2)。name の後に 1 item も
 /// peel できなければ malformed → `None` (declaration drop)。
@@ -689,17 +699,20 @@ fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<Cont
         // 既存 `is_reserved_custom_ident` (css-wide + default) と、property-specific
         // top-level alternative の `none` reject を組み合わせる (m5.1 の
         // `is_reserved_custom_ident` docstring の想定 usage)。
-        let name = match input.try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
-            let ident = i.expect_ident()?.clone();
-            if is_reserved_custom_ident(&ident) || ident.eq_ignore_ascii_case("none") {
-                Err(i.new_custom_error(()))
-            } else {
-                Ok(SmolStr::new(ident.as_ref()))
-            }
-        }) {
-            Ok(name) => name,
-            Err(_) => break,
-        };
+        //
+        // `.ok()?` で strict 上位伝播: (a) 初回 iteration で name 不在 = `#`
+        // production 0 entries、(b) 直前 iteration で bottom `expect_comma` が
+        // succeed した直後 = trailing comma、の 2 case を一律 `None` に落とす。
+        let name = input
+            .try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
+                let ident = i.expect_ident()?.clone();
+                if is_reserved_custom_ident(&ident) || ident.eq_ignore_ascii_case("none") {
+                    Err(i.new_custom_error(()))
+                } else {
+                    Ok(SmolStr::new(ident.as_ref()))
+                }
+            })
+            .ok()?;
         // <content-list> は 1+ items 必須。0 items → declaration drop。
         // GCPM 3 §1.1.1 narrow local <content-list> = `string()` と `target-*()`
         // を受理しない (raikiri-spike-6s1、詳細は `ContentListMode` doc)。
@@ -709,17 +722,16 @@ fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<Cont
         }
         entries.push((name, items));
         // 次 entry の separator: comma で継続、他 token で loop を抜ける
-        // (caller `expect_exhausted` が leftover token を drop)。
+        // (caller `expect_exhausted` が leftover token を drop)。break 到達時は
+        // 直前の push で entries 非空 — なので tail は無条件 `Some(entries)`。
         if input.try_parse(|i| i.expect_comma()).is_err() {
             break;
         }
     }
 
-    if entries.is_empty() {
-        None
-    } else {
-        Some(entries)
-    }
+    // break 到達 = 直前の push を経ている、`.ok()?` 経路以外で loop を抜ける
+    // 唯一の exit なので `entries` は必ず 1+。
+    Some(entries)
 }
 
 /// Dispatch on function name (ASCII-case-insensitive、spec identifier 慣行)。
@@ -1836,6 +1848,65 @@ mod tests {
         // discriminant integrity、既存 sibling counter-* / content と同じ pattern)。
         let v = PropertyValue::StringSet(Vec::new());
         assert_eq!(v.key(), PropertyKey::StringSet);
+    }
+
+    // ── string-set trailing-comma strict reject (raikiri-spike-1ll) ──
+    //
+    // `#` (comma-separated multiplier、CSS Values 4 §3.3
+    // <https://www.w3.org/TR/css-values-4/#mult-comma>) は trailing comma を
+    // 許容しない。GCPM 3 §3.1 <string-set-value> = `[ <custom-ident>
+    // <content-list> ]#` は entry 間 comma 必須 + trailing comma 禁止。
+    //
+    // m5.3 の初期実装は separator loop で `try_parse(expect_comma).is_err() {
+    // break }` していたため、trailing comma を silently 受理していた (comma を
+    // consume 後 next iteration で name parse fail → break → 既存 entries を
+    // Some で返す)。zik と同 principle の `.ok()?` propagation で strict 化。
+
+    #[test]
+    fn string_set_rejects_trailing_comma_single_entry() {
+        // `string-set: a "x",` → trailing comma → declaration drop。
+        // pre-fix は Some([(a, [Literal("x")])]) を silently 返していた。
+        assert_eq!(parse(r#"a "x","#, "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_trailing_comma_two_entries() {
+        // `string-set: a "x", b "y",` → trailing comma → declaration drop。
+        // 内部 comma 1 個は valid separator、末尾 comma のみが `#` 違反。
+        assert_eq!(parse(r#"a "x", b "y","#, "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_trailing_comma_three_entries() {
+        // 3 entries + trailing comma — chain 越しの一貫 strict reject を pin。
+        assert_eq!(parse(r#"a "x", b "y", c "z","#, "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_missing_entry_after_comma() {
+        // `string-set: a "x", b` → comma 後 name は取れるが `<content-list>`
+        // が 0 items (`parse_content_list_items` empty) → declaration drop。
+        // trailing-comma 系とは reject 経路が異なる (items-empty) 独立 pin。
+        assert_eq!(parse(r#"a "x", b"#, "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_accepts_missing_comma_single_leftover_entry() {
+        // `string-set: a "x" b "y"` は separator comma 欠如。iter 1 で
+        // (a, ["x"]) push 後、bottom expect_comma fail → break、leftover
+        // `b "y"` は本 helper (parse_value 直呼び、caller expect_exhausted
+        // 経由なし) では drop されず 1 entry の Some として観測される。
+        // 実 caller (rule.rs) は expect_exhausted で declaration drop する
+        // — 本 test は parse_string_set の break exit が Some (`.ok()?`
+        // 経路と混同しない) であることを pin する目的、trailing-comma fix の
+        // non-regression coverage。
+        let entries = string_set_entries(r#"a "x" b "y""#);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, SmolStr::new("a"));
+        assert_eq!(
+            entries[0].1,
+            vec![ContentComponent::Literal(String::from("x"))]
+        );
     }
 
     // ── string-set narrow <content-list> gate (CSS GCPM 3 §1.1.1、raikiri-spike-6s1) ──
