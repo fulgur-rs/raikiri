@@ -214,7 +214,7 @@ impl StyleDom for Document {
     }
 }
 
-impl<'a> StyleNode<'a> for NodeRef<'a> {
+impl<'a> StyleNode for NodeRef<'a> {
     type Element<'b>
         = ElementRef<'b>
     where
@@ -247,7 +247,7 @@ impl<'a> StyleNode<'a> for NodeRef<'a> {
     }
 }
 
-impl<'a> StyleElement<'a> for ElementRef<'a> {
+impl<'a> StyleElement for ElementRef<'a> {
     fn tag_name(&self) -> &str {
         match &self.node.data {
             crate::node::NodeData::Element(e) => e.tag_name.as_str(),

@@ -76,7 +76,7 @@ pub enum StyleNodeKind {
 ///   nodes. Cascade pre-allocates `Vec<ComputedValues>` at this size.
 pub trait StyleDom {
     /// Borrowed node reference.
-    type NodeRef<'a>: StyleNode<'a>
+    type NodeRef<'a>: StyleNode
     where
         Self: 'a;
     /// Iterator over child node identifiers.
@@ -102,10 +102,16 @@ pub trait StyleDom {
     }
 }
 
-/// Node reference (borrowed lifetime `'a`).
-pub trait StyleNode<'a> {
+/// DOM node abstraction — kind dispatch and common API.
+///
+/// **Lifetime elision** (raikiri-spike-2ng): method signatures do not
+/// reference `'a`; the borrowed node value's lifetime is expressed via
+/// `StyleDom::NodeRef<'a>`, so the trait itself needs no lifetime
+/// parameter. GAT `Element<'b>` remains as the borrowed element reference
+/// type.
+pub trait StyleNode {
     /// Element downcast reference type.
-    type Element<'b>: StyleElement<'b>
+    type Element<'b>: StyleElement
     where
         Self: 'b;
 
@@ -131,11 +137,16 @@ pub trait StyleNode<'a> {
     }
 }
 
-/// Element reference (borrowed lifetime `'a`).
+/// DOM element abstraction.
 ///
 /// Attribute lookup covers only null-namespace attrs (namespaced attrs like
 /// `xlink:href` are out of scope for M1).
-pub trait StyleElement<'a> {
+///
+/// **Lifetime elision** (raikiri-spike-2ng): method signatures do not
+/// reference `'a`; the borrowed element value's lifetime is expressed via
+/// `StyleDom::NodeRef<'a>` and `StyleNode::Element<'b>`, so the trait
+/// itself needs no lifetime parameter.
+pub trait StyleElement {
     /// Tag name (`"p"`, `"div"`, …).
     fn tag_name(&self) -> &str;
 
