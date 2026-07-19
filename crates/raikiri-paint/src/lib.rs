@@ -428,9 +428,11 @@ mod tests {
         assert_eq!(glyph_count1, 1, "hello world must emit exactly 1 GlyphRun");
     }
 
-    /// raikiri-spike-d9y.5 (SEC MED, Codex Cloud Security finding): HTML の
-    /// metadata / raw-text content element (`<style>` / `<script>` /
-    /// `<noscript>`) 内の text が rendered artifact に混入しないことを pin する。
+    /// raikiri-spike-d9y.5 (SEC MED, Codex Cloud Security finding) +
+    /// raikiri-spike-s8w (§15.3.1 完全化): HTML の hidden elements
+    /// (`<style>` / `<script>` / `<noscript>` / `<datalist>` / `<noembed>` /
+    /// `<noframes>` / `<rp>` 等) 内の text が rendered artifact に混入しない
+    /// ことを pin する。
     ///
     /// 各 fixture では:
     /// - inert element 手前の "before" text と後ろの "after" text を配置し、
@@ -441,8 +443,9 @@ mod tests {
     /// に潰しても pass してしまうため、"before/after は残る + inert 内は消える"
     /// の 3-way discriminant で filter が正確に働くことを assert する。
     ///
-    /// HTML LS §15.4.1 / CSS 2.1 App.D "Elements that are not rendered" が
-    /// primary source。
+    /// HTML LS §15.3.1 "Hidden elements"
+    /// (<https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements>)
+    /// が primary source。
     fn assert_inert_html_content_not_painted(html: &[u8], fixture_label: &str) {
         use raikiri_html::{ParseOptions, parse};
 
@@ -497,7 +500,7 @@ mod tests {
     #[test]
     fn paint_single_page_skips_style_subtree_content() {
         // <body>before<style>#a{color:red}</style>after</body>
-        // <style> は HTML LS §15.4.1 "Elements that are not rendered"、
+        // <style> は HTML LS §15.3.1 "Hidden elements"、
         // その raw text (`#a{color:red}`) は paint されない。
         // before / after の text は painted (GlyphRun 2 個)。
         assert_inert_html_content_not_painted(
@@ -525,6 +528,72 @@ mod tests {
         assert_inert_html_content_not_painted(
             b"<html><head></head><body>before<noscript>fallback</noscript>after</body></html>",
             "noscript",
+        );
+    }
+
+    // raikiri-spike-s8w: §15.3.1 完全化 4 element (datalist / noembed /
+    // noframes / rp)。d9y.5 の style / script / noscript / template fixture と
+    // 同じ 3-way discriminant (`before` + `after` = 11 glyphs、inert 内 text
+    // leak なら total_glyphs > 11) を継承する。
+    //
+    // 各 element の HTML5 parsing 挙動:
+    // - `<datalist>`: 通常 element、内部 character token は Text 子として保持
+    //   (HTML LS §4.10.8)。§15.3.1 UA `display:none` を override CSS 経路で
+    //   剥がしても paint 側 predicate が subtree を落とす。
+    // - `<noembed>` / `<noframes>`: "in body" 挿入モードで RAWTEXT tokenizer
+    //   state へ遷移 (HTML LS §13.2.6.4.7)、内部 chunk は 1 Text 子として保持。
+    // - `<rp>`: 通常 element parsing。`<ruby>` 外でも "in body" 挿入モード
+    //   は rp を通常挿入する ("current node が ruby / rtc でない" の条件で
+    //   parse error mark が付くのみで structure は維持、HTML LS §13.2.6.4.7)。
+    //   §15.3.1 hidden-elements rule 直下で unconditionally `display: none`
+    //   (§15.3.4 "Phrasing content" の ruby CSS も ruby / rt のみを扱い
+    //   rp を可視化しない)。ruby 実装未搭載環境でも defense-in-depth で
+    //   content-leak 経路を予防閉塞。
+
+    #[test]
+    fn paint_single_page_skips_datalist_subtree_content() {
+        // <body>before<datalist>hidden</datalist>after</body>
+        // <datalist> は §15.3.1 hidden-elements rule で `display: none`。
+        // author override で hidden content が glyph に混入する経路を閉じる。
+        assert_inert_html_content_not_painted(
+            b"<html><head></head><body>before<datalist>hidden</datalist>after</body></html>",
+            "datalist",
+        );
+    }
+
+    #[test]
+    fn paint_single_page_skips_noembed_subtree_content() {
+        // <body>before<noembed>hidden</noembed>after</body>
+        // <noembed> は RAWTEXT parsing (§13.2.6.4.7)、内部 "hidden" は raw text
+        // として Text 子で保持され、§15.3.1 で display:none。
+        assert_inert_html_content_not_painted(
+            b"<html><head></head><body>before<noembed>hidden</noembed>after</body></html>",
+            "noembed",
+        );
+    }
+
+    #[test]
+    fn paint_single_page_skips_noframes_subtree_content() {
+        // <body>before<noframes>hidden</noframes>after</body>
+        // <noframes> も §13.2.6.4.7 で RAWTEXT parsing、§15.3.1 hidden-elements。
+        assert_inert_html_content_not_painted(
+            b"<html><head></head><body>before<noframes>hidden</noframes>after</body></html>",
+            "noframes",
+        );
+    }
+
+    #[test]
+    fn paint_single_page_skips_rp_subtree_content() {
+        // <body>before<rp>hidden</rp>after</body>
+        // <rp> は ruby parenthesis fallback。`<ruby>` 外でも "in body" 挿入
+        // モードは rp を通常挿入する (§13.2.6.4.7 "current node が ruby / rtc
+        // でない" 条件で parse error mark のみ付き structure は維持)。
+        // §15.3.1 hidden-elements rule 直下で `display: none` (§15.3.4 ruby
+        // CSS も ruby / rt のみ扱い rp を可視化しない)。ruby 未搭載環境でも
+        // defense-in-depth で content-leak を閉じる。
+        assert_inert_html_content_not_painted(
+            b"<html><head></head><body>before<rp>hidden</rp>after</body></html>",
+            "rp",
         );
     }
 
