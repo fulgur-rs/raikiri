@@ -38,9 +38,11 @@ use std::path::{Path, PathBuf};
 ///   FIXTURE_SIZE_CAP` up-front reject
 /// - **aggregate memory exhaustion via many valid files** (attacker packs
 ///   `expected/` with N sub-cap page files, each individually accepted):
-///   canonical-form `page-{N:04}.png` filter (rejects `page-0.png`,
-///   `page-00000.png`, etc., before content read) plus
-///   [`MAX_EXPECTED_PAGES`] count cap
+///   three-layer defense — canonical-form `page-{N:04}.png` filter (rejects
+///   `page-0.png`, `page-00000.png`, etc., before content read),
+///   [`MAX_EXPECTED_PAGES`] enumeration count cap, and
+///   [`FIXTURE_AGGREGATE_BYTES_CAP`] running-total bytes cap that reliably
+///   bounds worst-case in-memory peak during load
 /// - **fixture-root symlink** (caller-supplied path is itself a symlink,
 ///   silently redirecting the containment anchor): pre-check via
 ///   `symlink_metadata(fixture_dir)` rejects a symlinked root
@@ -54,20 +56,35 @@ const FIXTURE_SIZE_CAP: u64 = 100 * 1024 * 1024;
 
 /// Maximum number of `expected/page-*.png` entries `load_fixture` will read.
 ///
-/// Combined with [`FIXTURE_SIZE_CAP`], this bounds worst-case memory
-/// retained during load at `MAX_EXPECTED_PAGES * FIXTURE_SIZE_CAP`
-/// (~102 GiB — still a coarse theoretical cap, real fixtures are
-/// single-digit pages).  Without this, attacker-controlled `expected/`
-/// with many valid regular files could aggregate to OOM even with the
-/// per-file cap in force (raikiri-spike-d9y.6, Codex gate final review
-/// concern #1).
+/// Companion to [`FIXTURE_AGGREGATE_BYTES_CAP`].  The bytes cap is the
+/// load-bearing aggregate-memory defense; this count cap bounds the
+/// enumeration itself against pathological many-tiny-files fixtures
+/// (10 000-canonical-file floods that individually fit under the per-file
+/// cap and collectively fit under the bytes cap but still stress the
+/// `numbered: Vec<(u32, Vec<u8>)>` accumulator).
 ///
-/// The `expected/page-{N:04}.png` name form additionally limits N to 4
-/// decimal digits (0000-9999); 1 024 is comfortably above realistic
-/// fixture sizes (real M1 fixtures are single-digit pages, paged-media
-/// exports are hundreds) while low enough to reject in tests without a
-/// 10 000-file test setup.
+/// The `expected/page-{N:04}.png` name form limits N to 4 decimal digits
+/// (0000-9999); 1 024 is comfortably above realistic fixture sizes (real
+/// M1 fixtures are single-digit pages, paged-media exports are hundreds)
+/// while low enough to reject in tests without a 10 000-file test setup.
 const MAX_EXPECTED_PAGES: usize = 1_024;
+
+/// Maximum total bytes across all `expected/page-*.png` entries.
+///
+/// Load-bearing aggregate-memory defense (raikiri-spike-d9y.6, Codex gate
+/// final review round 2).  Without this, [`MAX_EXPECTED_PAGES`] alone
+/// still admits `1 024 * FIXTURE_SIZE_CAP` = ~102 GiB.  Cap set at
+/// 256 MiB: 2.5× the per-file cap (a single max-size page must still
+/// load), above realistic fixture aggregates (real fixtures are
+/// single-digit MiB × single-digit pages), and tight enough that the
+/// worst-case in-memory peak during load stays bounded at
+/// `FIXTURE_AGGREGATE_BYTES_CAP + FIXTURE_SIZE_CAP` (~356 MiB — the
+/// running total plus the last file, which is freed on the aggregate-cap
+/// reject).
+///
+/// Legitimate fixtures approaching this cap should raise a bd request
+/// rather than bypass — the number is deliberately tight against attack.
+const FIXTURE_AGGREGATE_BYTES_CAP: u64 = 256 * 1024 * 1024;
 
 /// Loaded state of one `tests/reference/<name>/` directory.
 #[non_exhaustive]
@@ -252,14 +269,27 @@ pub enum FixtureError {
         root: PathBuf,
     },
     /// `expected/` contained more matching page files than [`MAX_EXPECTED_PAGES`].
-    /// Prevents aggregate OOM when an attacker-controlled `expected/` places
-    /// many valid regular files that would each pass the per-file
-    /// [`FIXTURE_SIZE_CAP`] gate individually.
+    /// Companion defense to [`FixtureError::OversizedFixtureAggregate`] —
+    /// this one bounds enumeration count against many-tiny-files attacks;
+    /// that one bounds aggregate memory.
     TooManyExpectedPages {
         /// Fixture directory that was searched.
         fixture_dir: PathBuf,
         /// Configured cap ([`MAX_EXPECTED_PAGES`]).
         cap: usize,
+    },
+    /// Aggregate bytes read across `expected/page-*.png` entries exceeded
+    /// [`FIXTURE_AGGREGATE_BYTES_CAP`].  Load-bearing defense against
+    /// aggregate memory exhaustion — the per-file cap alone allows
+    /// `MAX_EXPECTED_PAGES × FIXTURE_SIZE_CAP` = ~102 GiB before this cap
+    /// (raikiri-spike-d9y.6, Codex gate final review concern #1).
+    OversizedFixtureAggregate {
+        /// Fixture directory that was searched.
+        fixture_dir: PathBuf,
+        /// Running total (bytes) at the point of rejection.
+        total: u64,
+        /// Configured cap ([`FIXTURE_AGGREGATE_BYTES_CAP`]).
+        cap: u64,
     },
 }
 
@@ -312,6 +342,17 @@ impl fmt::Display for FixtureError {
                 write!(
                     f,
                     "expected/ under {} has more than {cap} matching page files",
+                    fixture_dir.display()
+                )
+            }
+            Self::OversizedFixtureAggregate {
+                fixture_dir,
+                total,
+                cap,
+            } => {
+                write!(
+                    f,
+                    "expected/ under {} totals {total} bytes across pages, exceeding aggregate cap {cap}",
                     fixture_dir.display()
                 )
             }
@@ -510,10 +551,10 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
 /// See [`FIXTURE_SIZE_CAP`] and [`read_bounded_fixture_file`] for the
 /// defense stack against untrusted fixture trees (raikiri-spike-d9y.6).
 /// Briefly: fixture-root-symlink reject, leaf-symlink reject, `!is_file()`
-/// reject, per-file 100 MiB size cap, [`MAX_EXPECTED_PAGES`] aggregate
-/// count cap, canonical `page-{N:04}.png` name filter,
-/// canonicalized-prefix containment check, and a bounded read that
-/// catches TOCTOU-grow.  Symlinks anywhere in the fixture tree — including
+/// reject, per-file 100 MiB size cap, [`MAX_EXPECTED_PAGES`] enumeration
+/// count cap, [`FIXTURE_AGGREGATE_BYTES_CAP`] aggregate bytes cap,
+/// canonical `page-{N:04}.png` name filter, canonicalized-prefix
+/// containment check, and a bounded read that catches TOCTOU-grow.  Symlinks anywhere in the fixture tree — including
 /// the fixture-directory anchor itself — are refused even when they'd
 /// resolve inside the intended root; this is a deliberate blanket policy
 /// (no real reference fixture currently uses symlinks) and tests pin the
@@ -594,6 +635,10 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
     };
 
     let mut numbered: Vec<(u32, Vec<u8>)> = Vec::new();
+    // Running aggregate-bytes total across `expected/page-*.png` reads.
+    // See `FIXTURE_AGGREGATE_BYTES_CAP`.  Not counting `input.html` — the
+    // per-file cap already bounds it and it isn't attacker-multiplied.
+    let mut aggregate_bytes: u64 = 0;
     if let Some(meta) = expected_meta {
         let file_type = meta.file_type();
         if file_type.is_symlink() {
@@ -635,8 +680,8 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
                 let Ok(n) = num_str.parse::<u32>() else {
                     continue;
                 };
-                // Aggregate cap: reject before spending memory on the
-                // (cap + 1)th page.  See MAX_EXPECTED_PAGES for rationale.
+                // Aggregate cap #1 (count): reject before spending memory
+                // on the (cap + 1)th page.  See MAX_EXPECTED_PAGES.
                 if numbered.len() >= MAX_EXPECTED_PAGES {
                     return Err(FixtureError::TooManyExpectedPages {
                         fixture_dir: fixture_dir.to_path_buf(),
@@ -644,6 +689,21 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
                     });
                 }
                 let bytes = read_bounded_fixture_file(&path, &canonical_root)?;
+                // Aggregate cap #2 (bytes): tally after read so the file
+                // just consumed drops on rejection (peak momentary memory
+                // = cap + FIXTURE_SIZE_CAP).  saturating_add can't
+                // realistically saturate here — per-file cap is 100 MiB
+                // and we've already reject-early via numbered.len() — but
+                // use saturating semantics as defense-in-depth against a
+                // future per-file cap relaxation.
+                aggregate_bytes = aggregate_bytes.saturating_add(bytes.len() as u64);
+                if aggregate_bytes > FIXTURE_AGGREGATE_BYTES_CAP {
+                    return Err(FixtureError::OversizedFixtureAggregate {
+                        fixture_dir: fixture_dir.to_path_buf(),
+                        total: aggregate_bytes,
+                        cap: FIXTURE_AGGREGATE_BYTES_CAP,
+                    });
+                }
                 numbered.push((n, bytes));
             }
         }
@@ -1337,6 +1397,54 @@ mod defense_tests {
                 assert_eq!(cap, MAX_EXPECTED_PAGES);
             }
             other => panic!("expected TooManyExpectedPages, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversized_fixture_aggregate_is_rejected() {
+        // Codex gate final review round 2: the count cap alone still
+        // admits ~102 GiB (MAX_EXPECTED_PAGES × FIXTURE_SIZE_CAP).  The
+        // load-bearing aggregate defense is FIXTURE_AGGREGATE_BYTES_CAP.
+        // Verify a running-total-exceeded fixture rejects with the
+        // dedicated variant.
+        //
+        // Setup: 3 sparse files at 100 MiB each (well under per-file
+        // cap).  Aggregate = 300 MiB > 256 MiB cap → OversizedAggregate
+        // on the 3rd file's read.  Sparse `set_len` keeps disk usage
+        // trivial; `read_to_end` materializes the zeros (~300 MiB peak
+        // in this test's RAM — acceptable for a security regression
+        // that would otherwise let an attacker exhaust orders of
+        // magnitude more).
+        const PAGE_SIZE: u64 = 100 * 1024 * 1024;
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        for n in 0..=2u32 {
+            let path = expected.join(format!("page-{n:04}.png"));
+            let f = std::fs::File::create(&path).unwrap();
+            f.set_len(PAGE_SIZE).unwrap();
+            drop(f);
+        }
+        // Sanity: our 3 files × 100 MiB = 300 MiB > 256 MiB cap.
+        // Compile-time to avoid clippy::assertions_on_constants.
+        const _: () = assert!(3 * PAGE_SIZE > FIXTURE_AGGREGATE_BYTES_CAP);
+
+        match load_fixture(tmp.path()) {
+            Err(FixtureError::OversizedFixtureAggregate {
+                fixture_dir,
+                total,
+                cap,
+            }) => {
+                assert_eq!(fixture_dir, tmp.path());
+                assert_eq!(cap, FIXTURE_AGGREGATE_BYTES_CAP);
+                // Total tallied through the (rejected-on-add) 3rd page.
+                assert!(
+                    total > FIXTURE_AGGREGATE_BYTES_CAP,
+                    "total {total} should exceed cap {cap}"
+                );
+            }
+            other => panic!("expected OversizedFixtureAggregate, got {other:?}"),
         }
     }
 }
