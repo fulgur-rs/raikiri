@@ -21,9 +21,11 @@
 //! `RenderLimits::max_input_bytes: Option<u64>` (default `Some(32 * 1024 * 1024)`)
 //! および `LimitKind::InputBytes` に昇格 (Option A、wall/traits crossing、
 //! bd raikiri-spike-sve decision)。default 値は Wave 3 stopgap と同一のため、
-//! `RenderLimits::default()` を渡す consumer は behavior 不変。cap を無効化
-//! したい consumer は `max_input_bytes = None` を、より大きな cap を設定したい
-//! consumer は [`RenderLimits::with_max_input_bytes`] を利用する。
+//! `RenderLimits::default()` を渡す consumer は behavior 不変。cap を調整したい
+//! consumer は [`RenderLimitsBuilder::max_input_bytes`](raikiri_traits::RenderLimitsBuilder::max_input_bytes)
+//! (または field への直接代入)、無効化したい consumer は `max_input_bytes = None`
+//! を設定する (**cap 無効化は SEC-HIGH d9y.3 DoS を再暴露する** — field doc
+//! の Security note 参照)。
 
 use std::io::Read;
 

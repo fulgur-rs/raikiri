@@ -23,10 +23,9 @@ use crate::page::TargetRegistry;
 /// **Migration**: Wave 3 Option B stopgap を利用していた consumer (`parse_html`
 /// / `parse_html_with_limits` を呼ぶ側) は、`RenderLimits::default()` を渡す
 /// 限り behavior 不変 (default `Some(32 * 1024 * 1024)` は d9y.3 の hard-coded
-/// 値と一致)。より大きな cap を設定したい場合は
-/// [`RenderLimits::with_max_input_bytes`] または
-/// [`RenderLimitsBuilder::max_input_bytes`] を、cap を無効化したい場合は
-/// `None` を設定する。
+/// 値と一致)。cap を調整したい場合は [`RenderLimitsBuilder::max_input_bytes`]
+/// (または field への直接代入)、無効化したい場合は `None` を設定する
+/// (**cap 無効化の security 上の含意は `max_input_bytes` field doc を参照**)。
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct RenderLimits {
@@ -43,8 +42,14 @@ pub struct RenderLimits {
     /// parse 前に読み込む raw input byte 数上限 (bd raikiri-spike-4kw、
     /// Sprint 10 Option A promotion)。超過 → `LimitExceeded { kind: InputBytes }`。
     ///
-    /// `None` で cap 無効化。Default は `Some(32 * 1024 * 1024)` (32 MiB)、
-    /// d9y.3 stopgap の hard-coded 値を継承。
+    /// Default は `Some(32 * 1024 * 1024)` (32 MiB)、d9y.3 stopgap の
+    /// hard-coded 値を継承。
+    ///
+    /// **Security**: `None` は cap を無効化し、SEC-HIGH d9y.3 で close した
+    /// `parse_html` unbounded-read DoS を **再暴露する** (attacker が任意
+    /// サイズの HTML を送り込み OOM を誘発可能)。明示的な opt-out としてのみ
+    /// 使用し、default (`Some(32 MiB)`) から離れる場合は upstream で別途
+    /// bound を設ける前提であること。
     ///
     /// **Semantic**: [`max_aggregate_bytes`](Self::max_aggregate_bytes) は
     /// post-parse の approximate memory footprint (DOM node arena / cascade
@@ -78,25 +83,6 @@ impl RenderLimits {
     /// Fluent builder を返す。
     pub fn builder() -> RenderLimitsBuilder {
         RenderLimitsBuilder::default()
-    }
-
-    /// [`max_input_bytes`](Self::max_input_bytes) を `Some(v)` に設定して
-    /// self を返す ergonomic shortcut (bd raikiri-spike-4kw)。
-    ///
-    /// `None` に設定して cap を無効化したい場合は
-    /// [`RenderLimits::builder`] または field への直接代入
-    /// (`limits.max_input_bytes = None`) を使う。
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use raikiri_traits::RenderLimits;
-    /// let limits = RenderLimits::default().with_max_input_bytes(64 * 1024 * 1024);
-    /// assert_eq!(limits.max_input_bytes, Some(64 * 1024 * 1024));
-    /// ```
-    pub fn with_max_input_bytes(mut self, v: u64) -> Self {
-        self.max_input_bytes = Some(v);
-        self
     }
 }
 
