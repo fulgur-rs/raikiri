@@ -102,7 +102,10 @@ type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
 /// - Important: UA > User > Author (反転、UA が最強)
 ///
 /// M1 では User origin を扱わないので UA + Author の 2 段。
-fn cascade_rank(origin: Origin, important: bool) -> u8 {
+///
+/// `@page` cascade (raikiri-spike-m4.1) も同じ origin ordering を共有するため
+/// `pub(crate)` で公開し [`crate::page::cascade_page`] から reuse。
+pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
     match (origin, important) {
         (Origin::UserAgent, false) => 0,
         (Origin::Author, false) => 1,

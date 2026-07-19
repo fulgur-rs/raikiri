@@ -85,9 +85,16 @@ pub enum PropertyValue {
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
 ///
-/// cascade.rs の winner selection (Task 7) が使う。
+/// cascade.rs の per-node winner selection、および page.rs の
+/// [`cascade_page`](crate::page::cascade_page) が [`PageCascadeResult`] の
+/// map key に使う。`PropertyValue` の variant tag を stateless に抜き出したもので
+/// 追加情報を持たないため public に露出する (raikiri-spike-m4.1、[`PageCascadeResult`]
+/// が `pub` 型を要求するため — clippy `private_interfaces` 対応)。
+///
+/// [`PageCascadeResult`]: crate::page::PageCascadeResult
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum PropertyKey {
+pub enum PropertyKey {
     Color,
     FontFamily,
     FontSize,
@@ -99,8 +106,11 @@ pub(crate) enum PropertyKey {
 }
 
 impl PropertyValue {
-    /// cascade.rs の winner selection (Task 7) が使う。
-    pub(crate) fn key(&self) -> PropertyKey {
+    /// この value が属する property key を返す。
+    ///
+    /// cascade winner selection で "同一 property を勝ち取る" ための discriminant として、
+    /// また `@page` cascade 結果 map の key として使う。
+    pub fn key(&self) -> PropertyKey {
         match self {
             PropertyValue::Color(_) => PropertyKey::Color,
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
