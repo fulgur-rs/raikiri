@@ -39,6 +39,124 @@ pub enum Length {
     Px(f32),
 }
 
+/// `<counter-style>` の parse 結果。
+///
+/// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>
+/// で `counter()` / `counters()` の optional 第 3 引数、CSS Content 3 §2.6
+/// で `target-counter()` / `target-counters()` の optional 末尾引数として現れる。
+/// spec default = `decimal` (`counter-style?` omitted 時)。
+///
+/// M5 static-side scope では named style を SmolStr で pass-through する
+/// (`decimal-leading-zero`, `upper-alpha`, `lower-roman` 等の解釈は下流責務、
+/// runtime resolve で counter tree を format する際に効く)。
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CounterStyle {
+    /// `decimal` — spec default (`<counter-style>?` omitted も同一 variant)。
+    #[default]
+    Decimal,
+    /// `decimal` 以外の named counter-style。値は case-preserved の smol str。
+    Named(SmolStr),
+}
+
+/// `string()` の第 2 引数 `[ first | start | last | first-except ]?`。
+///
+/// CSS Content 3 §2.7.2 "Inserting Named Strings: the string() function"
+/// <https://www.w3.org/TR/css-content-3/#string-function>。
+/// spec default = `first` (per §2.7.2 "if the second argument is omitted").
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StringFetchMode {
+    /// `first` — spec default。
+    #[default]
+    First,
+    /// `start`。
+    Start,
+    /// `last`。
+    Last,
+    /// `first-except`。
+    FirstExcept,
+}
+
+/// `target-text()` の第 2 引数 `[ content | before | after | first-letter ]?`。
+///
+/// CSS Content 3 §2.6.3 "The target-text() function"
+/// <https://www.w3.org/TR/css-content-3/#target-text>。
+/// spec default = `content` (per §2.6.3 "The default value is `content`").
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContentPart {
+    /// `content` — spec default (element の string value)。
+    #[default]
+    Content,
+    /// `before` — `::before` pseudo-element の string value。
+    Before,
+    /// `after` — `::after` pseudo-element の string value。
+    After,
+    /// `first-letter` — `::first-letter` pseudo-element の string。
+    FirstLetter,
+}
+
+/// `content` property の value item — cascade static side の中間表現。
+///
+/// design doc §7.1 の `raikiri_traits::ContentValueItem` に 1:1 mapping する
+/// (下流 raikiri-dom が runtime resolve 時に翻訳)。raikiri-style は raikiri-traits
+/// に依存しない leaf crate = 94e/3ps Phase B により、counter-* wire-through
+/// pattern (raikiri-spike-s85) と同様に **local** な intermediate type で保持し、
+/// downstream 側で shared trait type にマッピングする。
+///
+/// Variants は spec の function grammar 順:
+/// - Literal: bare `<string>` (§2.1)
+/// - Counter / Counters: CSS Lists 3 §4.7
+///   <https://www.w3.org/TR/css-lists-3/#counter-functions>
+/// - String: CSS Content 3 §2.7.2 <https://www.w3.org/TR/css-content-3/#string-function>
+/// - Attr: CSS Content 3 §2.1 <https://www.w3.org/TR/css-content-3/#strings>
+/// - Target*: CSS Content 3 §2.6.1-3
+///   <https://www.w3.org/TR/css-content-3/#target-counter>,
+///   <https://www.w3.org/TR/css-content-3/#target-counters>,
+///   <https://www.w3.org/TR/css-content-3/#target-text>
+///
+/// URL は raw `String` として保持 (raikiri-style は `url` crate に依存しない —
+/// runtime resolve 段で `url::Url` へ parse する consumer 責務)。
+///
+/// (raikiri-spike-m5.1)
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContentComponent {
+    /// `<string>` bare literal (`content: "hello"`)。
+    Literal(String),
+    /// `counter(<counter-name>, <counter-style>?)`。
+    Counter { name: SmolStr, style: CounterStyle },
+    /// `counters(<counter-name>, <string>, <counter-style>?)`。
+    Counters {
+        name: SmolStr,
+        separator: String,
+        style: CounterStyle,
+    },
+    /// `string(<custom-ident>, [ first | start | last | first-except ]?)`。
+    String {
+        name: SmolStr,
+        fetch: StringFetchMode,
+    },
+    /// `attr(<attribute-name>)` (§2.1、type/fallback は M5+ scope)。
+    Attr { name: SmolStr },
+    /// `target-counter([<string>|<url>], <counter-name>, <counter-style>?)`。
+    TargetCounter {
+        url: String,
+        name: SmolStr,
+        style: CounterStyle,
+    },
+    /// `target-counters([<string>|<url>], <counter-name>, <string>, <counter-style>?)`。
+    TargetCounters {
+        url: String,
+        name: SmolStr,
+        separator: String,
+        style: CounterStyle,
+    },
+    /// `target-text([<string>|<url>], [ content | before | after | first-letter ]?)`。
+    TargetText { url: String, part: ContentPart },
+}
+
 /// `display` property の value。M1.4a scope では `block` / `inline` のみ。
 ///
 /// spec §M1.4a Non-goals: `table*`, `flex`, `grid`, `none` 等は M6+。
@@ -81,6 +199,12 @@ pub enum PropertyValue {
     /// non-inherited、initial: empty list (CSS Lists 3 §3)。
     /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
     CounterSet(Vec<(SmolStr, i32)>),
+    /// `content: normal | none | <content-list>` — non-inherited、initial:
+    /// empty list (spec の `normal` / `none` を空 list として扱う、pseudo-element
+    /// 生成判断は下流 layer)。M5 gcpm-directive-emit static-side
+    /// (raikiri-spike-m5.1)、CSS Content 3 §2.1
+    /// <https://www.w3.org/TR/css-content-3/#content-property>。
+    Content(Vec<ContentComponent>),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -103,6 +227,7 @@ pub enum PropertyKey {
     CounterReset,
     CounterIncrement,
     CounterSet,
+    Content,
 }
 
 impl PropertyValue {
@@ -120,6 +245,7 @@ impl PropertyValue {
             PropertyValue::CounterReset(_) => PropertyKey::CounterReset,
             PropertyValue::CounterIncrement(_) => PropertyKey::CounterIncrement,
             PropertyValue::CounterSet(_) => PropertyKey::CounterSet,
+            PropertyValue::Content(_) => PropertyKey::Content,
         }
     }
 }
@@ -142,6 +268,8 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
             parse_counter_property(input, 1).map(PropertyValue::CounterIncrement)
         }
         "counter-set" => parse_counter_property(input, 0).map(PropertyValue::CounterSet),
+        // CSS Content 3 §2.1 content property (raikiri-spike-m5.1、M5 gcpm-directive-emit static side)
+        "content" => parse_content(input).map(PropertyValue::Content),
         _ => None,
     }
 }
@@ -338,6 +466,244 @@ fn is_reserved_counter_name(ident: &str) -> bool {
         ident.to_ascii_lowercase().as_str(),
         "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" | "none"
     )
+}
+
+/// `content: normal | none | <content-list>` を parse する
+/// (CSS Content 3 §2.1 <https://www.w3.org/TR/css-content-3/#content-property>)。
+///
+/// `normal` / `none` は spec で意味が異なる (pseudo-element の生成/非生成) が、
+/// 本 crate は cascade static side に留まり生成判断は下流に委ねるため、両者を
+/// 空 `Vec` に落として区別を持たない (§7.1 downstream mapping で必要になれば
+/// 変異させる)。counter-* precedent (raikiri-spike-s85) と同じ shape。
+///
+/// items+ loop は `<string>` literal と function token (`counter(...)` 等) を
+/// 順次 peel する。認識できない token に当たった時点で loop を break、caller
+/// の `expect_exhausted` (rule.rs) が leftover を検知して declaration ごと drop。
+///
+/// `alt text` (spec `... [/ <string>...]?`) は M5 pre-work scope 外、`/` 以降は
+/// unconsumed のまま caller に返す (現状 rule.rs の `expect_exhausted` により
+/// declaration drop、alt text 対応時に本関数を extend)。
+fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
+    // `normal` / `none` = 空 list (top-level alternative)。
+    if input
+        .try_parse(|i| i.expect_ident_matching("normal"))
+        .is_ok()
+    {
+        return Some(Vec::new());
+    }
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(Vec::new());
+    }
+
+    let mut items = Vec::new();
+    loop {
+        // bare `<string>` literal
+        if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
+            items.push(ContentComponent::Literal(s.as_ref().to_string()));
+            continue;
+        }
+        // function
+        let parsed = input.try_parse(|i| -> Result<ContentComponent, ParseError<'_, ()>> {
+            let name = i.expect_function()?.clone();
+            i.parse_nested_block(|inner| {
+                parse_content_function(name.as_ref(), inner)
+                    .ok_or_else(|| inner.new_custom_error(()))
+            })
+        });
+        match parsed {
+            Ok(c) => items.push(c),
+            Err(_) => break,
+        }
+    }
+    if items.is_empty() { None } else { Some(items) }
+}
+
+/// Dispatch on function name (ASCII-case-insensitive、spec identifier 慣行)。
+/// 未知の function name または引数 parse 失敗は `None` — caller の
+/// `parse_nested_block` が custom error に変換する。
+///
+/// 各 `parse_*_fn` は自身では `expect_exhausted` を呼ばない —
+/// [`parse_content`] 側の `parse_nested_block` が内部で
+/// [`Parser::parse_entirely`] を経由し、closure 成功後の余剰 token を
+/// exhaustion check で拒否する ([`parse_rgb_function`] と同じ規約)。
+fn parse_content_function(name: &str, input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    match name.to_ascii_lowercase().as_str() {
+        "string" => parse_string_fn(input),
+        "counter" => parse_counter_fn(input),
+        "counters" => parse_counters_fn(input),
+        "attr" => parse_attr_fn(input),
+        "target-counter" => parse_target_counter_fn(input),
+        "target-counters" => parse_target_counters_fn(input),
+        "target-text" => parse_target_text_fn(input),
+        _ => None,
+    }
+}
+
+/// `<custom-ident>` (CSS Values 4 §3.6): CSS-wide keyword + `default` + `none` を
+/// 除いた任意 ident。case-preserving、smol str で保持。
+///
+/// counter-name / string-name / target-* の name 引数で共通に使う。
+fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
+    let ident = input.expect_ident().ok()?.clone();
+    if is_reserved_custom_ident(&ident) {
+        None
+    } else {
+        Some(SmolStr::new(ident.as_ref()))
+    }
+}
+
+/// `<custom-ident>` 除外リスト (CSS Values 4 §3.6)。
+///
+/// CSS-wide keyword (`inherit` / `initial` / `unset` / `revert` /
+/// `revert-layer`) と `default` のみを弾く。`none` はここでは除外せず、
+/// より狭い grammar (`<counter-name>` 等) の追加除外は個別の predicate
+/// (例 [`is_reserved_counter_name`]) で行う。case-insensitive 比較。
+fn is_reserved_custom_ident(ident: &str) -> bool {
+    matches!(
+        ident.to_ascii_lowercase().as_str(),
+        "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default"
+    )
+}
+
+/// `string(<custom-ident> [, [ first | start | last | first-except ]? ])`。
+/// CSS Content 3 §2.7.2 <https://www.w3.org/TR/css-content-3/#string-function>。
+fn parse_string_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let name = parse_custom_ident(input)?;
+    let fetch = if input.try_parse(|i| i.expect_comma()).is_ok() {
+        parse_string_fetch(input)?
+    } else {
+        StringFetchMode::default()
+    };
+    Some(ContentComponent::String { name, fetch })
+}
+
+fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "first" => Some(StringFetchMode::First),
+        "start" => Some(StringFetchMode::Start),
+        "last" => Some(StringFetchMode::Last),
+        "first-except" => Some(StringFetchMode::FirstExcept),
+        _ => None,
+    }
+}
+
+/// `counter(<counter-name>, <counter-style>?)`。
+/// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>。
+fn parse_counter_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let name = parse_custom_ident(input)?;
+    let style = parse_optional_counter_style(input);
+    Some(ContentComponent::Counter { name, style })
+}
+
+/// `counters(<counter-name>, <string>, <counter-style>?)`。
+/// CSS Lists 3 §4.7。
+fn parse_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let name = parse_custom_ident(input)?;
+    input.expect_comma().ok()?;
+    let separator = input.expect_string().ok()?.as_ref().to_string();
+    let style = parse_optional_counter_style(input);
+    Some(ContentComponent::Counters {
+        name,
+        separator,
+        style,
+    })
+}
+
+/// optional trailing `, <counter-style>`。省略時は spec default `decimal`。
+/// `,` を consume 後に ident が期待通り parse できなかった場合、rewind せず
+/// `Decimal` を返す (fallback) — caller の `expect_exhausted` が leftover を検知して
+/// declaration ごと drop するため silent tolerance で問題ない。
+fn parse_optional_counter_style(input: &mut Parser<'_, '_>) -> CounterStyle {
+    if input.try_parse(|i| i.expect_comma()).is_ok() {
+        input
+            .try_parse(|i| -> Result<CounterStyle, ParseError<'_, ()>> {
+                let ident = i.expect_ident()?.clone();
+                Ok(counter_style_from_ident(ident.as_ref()))
+            })
+            .unwrap_or_default()
+    } else {
+        CounterStyle::default()
+    }
+}
+
+fn counter_style_from_ident(ident: &str) -> CounterStyle {
+    if ident.eq_ignore_ascii_case("decimal") {
+        CounterStyle::Decimal
+    } else {
+        CounterStyle::Named(SmolStr::new(ident))
+    }
+}
+
+/// `attr(<attribute-name>)`。CSS Content 3 §2.1
+/// <https://www.w3.org/TR/css-content-3/#strings>。
+///
+/// M5 static-side scope: type / fallback (attr(x string, "default") 等) は defer。
+fn parse_attr_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let name = input.expect_ident().ok()?.clone();
+    Some(ContentComponent::Attr {
+        name: SmolStr::new(name.as_ref()),
+    })
+}
+
+/// target-* の第 1 引数 `[ <string> | <url> ]` を raw String として抽出。
+/// `url("...")` / `url(...)` / bare `"..."` を統一的に受ける
+/// (cssparser の `expect_url_or_string` を使用)。
+fn parse_target_url(input: &mut Parser<'_, '_>) -> Option<String> {
+    input
+        .expect_url_or_string()
+        .ok()
+        .map(|s| s.as_ref().to_string())
+}
+
+/// `target-counter([<string>|<url>], <custom-ident>, <counter-style>?)`。
+/// CSS Content 3 §2.6.1 <https://www.w3.org/TR/css-content-3/#target-counter>。
+fn parse_target_counter_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let url = parse_target_url(input)?;
+    input.expect_comma().ok()?;
+    let name = parse_custom_ident(input)?;
+    let style = parse_optional_counter_style(input);
+    Some(ContentComponent::TargetCounter { url, name, style })
+}
+
+/// `target-counters([<string>|<url>], <custom-ident>, <string>, <counter-style>?)`。
+/// CSS Content 3 §2.6.2 <https://www.w3.org/TR/css-content-3/#target-counters>。
+fn parse_target_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let url = parse_target_url(input)?;
+    input.expect_comma().ok()?;
+    let name = parse_custom_ident(input)?;
+    input.expect_comma().ok()?;
+    let separator = input.expect_string().ok()?.as_ref().to_string();
+    let style = parse_optional_counter_style(input);
+    Some(ContentComponent::TargetCounters {
+        url,
+        name,
+        separator,
+        style,
+    })
+}
+
+/// `target-text([<string>|<url>], [ content | before | after | first-letter ]?)`。
+/// CSS Content 3 §2.6.3 <https://www.w3.org/TR/css-content-3/#target-text>。
+fn parse_target_text_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let url = parse_target_url(input)?;
+    let part = if input.try_parse(|i| i.expect_comma()).is_ok() {
+        parse_content_part(input)?
+    } else {
+        ContentPart::default()
+    };
+    Some(ContentComponent::TargetText { url, part })
+}
+
+fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "content" => Some(ContentPart::Content),
+        "before" => Some(ContentPart::Before),
+        "after" => Some(ContentPart::After),
+        "first-letter" => Some(ContentPart::FirstLetter),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -666,5 +1032,258 @@ mod tests {
             parse("page -3", "counter-set"),
             Some(PropertyValue::CounterSet(counter_pairs(&[("page", -3)])))
         );
+    }
+
+    // ── content property (CSS Content 3 §2、raikiri-spike-m5.1) ──
+    //
+    // task 9 verification items = spec-derived (9y9(a))。task 記述の
+    // `raikiri_traits::ContentValueItem` は下流 (raikiri-dom) mapping 先。
+    // raikiri-style は raikiri-traits に依存しない leaf crate (94e/3ps Phase B)
+    // のため、s85 counter-* precedent に倣い local `ContentComponent` を emit
+    // する (原則 1: 前例主義)。Symbol → SmolStr、Url → String へ substitution。
+
+    fn content_items(source: &str) -> Vec<ContentComponent> {
+        match parse(source, "content") {
+            Some(PropertyValue::Content(v)) => v,
+            other => panic!("expected PropertyValue::Content, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn content_parse_string_function() {
+        // Verification 1: content: string(my_str)
+        // → ContentComponent::String { name: "my_str", fetch: default (First) }
+        let items = content_items("string(my_str)");
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::String {
+                name: SmolStr::new("my_str"),
+                fetch: StringFetchMode::First,
+            }
+        );
+    }
+
+    #[test]
+    fn content_parse_counter_function() {
+        // Verification 2: content: counter(chapter)
+        // → ContentComponent::Counter { name: "chapter", style: default (Decimal) }
+        let items = content_items("counter(chapter)");
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::Counter {
+                name: SmolStr::new("chapter"),
+                style: CounterStyle::Decimal,
+            }
+        );
+    }
+
+    #[test]
+    fn content_parse_counters_function() {
+        // Verification 3: content: counters(section, ".")
+        // → ContentComponent::Counters { name, separator: ".", style: default }
+        let items = content_items(r#"counters(section, ".")"#);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::Counters {
+                name: SmolStr::new("section"),
+                separator: String::from("."),
+                style: CounterStyle::Decimal,
+            }
+        );
+    }
+
+    #[test]
+    fn content_parse_target_counter_function() {
+        // Verification 4: content: target-counter(url("#anchor"), page)
+        // → ContentComponent::TargetCounter { url: "#anchor", name: "page", style: default }
+        let items = content_items(r##"target-counter(url("#anchor"), page)"##);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::TargetCounter {
+                url: String::from("#anchor"),
+                name: SmolStr::new("page"),
+                style: CounterStyle::Decimal,
+            }
+        );
+    }
+
+    #[test]
+    fn content_parse_target_counters_function() {
+        // Verification 5: content: target-counters(url("#anchor"), section, ".")
+        // → ContentComponent::TargetCounters { url, name, separator, style: default }
+        let items = content_items(r##"target-counters(url("#anchor"), section, ".")"##);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::TargetCounters {
+                url: String::from("#anchor"),
+                name: SmolStr::new("section"),
+                separator: String::from("."),
+                style: CounterStyle::Decimal,
+            }
+        );
+    }
+
+    #[test]
+    fn content_parse_target_text_first_letter() {
+        // Verification 6: content: target-text(url("#anchor"), first-letter)
+        // → ContentComponent::TargetText { url, part: ContentPart::FirstLetter }
+        //
+        // NB: task description の "content-first-letter" は spec (§2.6.3
+        // `[ content | before | after | first-letter ]?`) と食い違うため、
+        // spec-correct な `first-letter` を採用 (reviewer:spec 9y9(c) の
+        // task-own-claim verification で task 側の書き振りが訂正対象)。
+        let items = content_items(r##"target-text(url("#anchor"), first-letter)"##);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::TargetText {
+                url: String::from("#anchor"),
+                part: ContentPart::FirstLetter,
+            }
+        );
+    }
+
+    #[test]
+    fn content_parse_attr_function() {
+        // Verification 7: content: attr(href) → ContentComponent::Attr { name: "href" }
+        let items = content_items("attr(href)");
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::Attr {
+                name: SmolStr::new("href"),
+            }
+        );
+    }
+
+    #[test]
+    fn content_parse_literal_string() {
+        // Verification 8: content: "hello" → ContentComponent::Literal("hello")
+        let items = content_items(r#""hello""#);
+        assert_eq!(
+            items,
+            vec![ContentComponent::Literal(String::from("hello"))]
+        );
+    }
+
+    #[test]
+    fn content_parse_mixed_sequence_preserves_order() {
+        // Verification 9: content: "Chapter " counter(chapter) ": " string(chapter_title)
+        // → 4-item Vec in order
+        let items = content_items(r#""Chapter " counter(chapter) ": " string(chapter_title)"#);
+        assert_eq!(items.len(), 4, "expected 4 items, got {items:?}");
+        assert_eq!(
+            items[0],
+            ContentComponent::Literal(String::from("Chapter "))
+        );
+        assert_eq!(
+            items[1],
+            ContentComponent::Counter {
+                name: SmolStr::new("chapter"),
+                style: CounterStyle::Decimal,
+            }
+        );
+        assert_eq!(items[2], ContentComponent::Literal(String::from(": ")));
+        assert_eq!(
+            items[3],
+            ContentComponent::String {
+                name: SmolStr::new("chapter_title"),
+                fetch: StringFetchMode::First,
+            }
+        );
+    }
+
+    // ── content property edge cases (spec-derived、guard rails) ──
+
+    #[test]
+    fn content_normal_returns_empty_list() {
+        // spec §2.1: `normal` は「content が明示されない場合と同じ」= 空 list として保持。
+        // pseudo-element generation 判断は下流で行う。
+        assert_eq!(
+            parse("normal", "content"),
+            Some(PropertyValue::Content(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn content_none_returns_empty_list() {
+        // spec §2.1: `none` — 本 crate では `normal` と同じく空 list に落とす。
+        assert_eq!(
+            parse("none", "content"),
+            Some(PropertyValue::Content(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn content_string_with_fetch_last_keyword() {
+        // spec §2.7.2 の string() 第 2 引数 keyword を全て受理することを smoke で pin。
+        let items = content_items("string(head, last)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::String {
+                name: SmolStr::new("head"),
+                fetch: StringFetchMode::Last,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_target_text_default_part_is_content() {
+        // spec §2.6.3: 第 2 引数省略時 default は `content`。
+        let items = content_items(r##"target-text(url("#a"))"##);
+        assert_eq!(
+            items,
+            vec![ContentComponent::TargetText {
+                url: String::from("#a"),
+                part: ContentPart::Content,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_counter_with_named_style_preserves_ident() {
+        // spec CSS Lists 3 §4.7: 第 2 引数 `<counter-style>` は decimal 以外の
+        // named style も受ける。下流 (raikiri-dom) が解釈するため raw ident 保持。
+        let items = content_items("counter(chapter, upper-alpha)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Counter {
+                name: SmolStr::new("chapter"),
+                style: CounterStyle::Named(SmolStr::new("upper-alpha")),
+            }]
+        );
+    }
+
+    #[test]
+    fn content_rejects_unknown_function() {
+        // 未知 function は認識できず、items 開始 token として peel 失敗。
+        // 先頭 token が unknown function だと empty items → None (drop)。
+        assert_eq!(parse("bogus(x)", "content"), None);
+    }
+
+    #[test]
+    fn content_case_insensitive_function_name() {
+        // spec: function name は ASCII case-insensitive。
+        let items = content_items("COUNTER(chapter)");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Counter {
+                name: SmolStr::new("chapter"),
+                style: CounterStyle::Decimal,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_key_maps_to_content_property_key() {
+        // PropertyValue::Content → PropertyKey::Content (cascade winner 選択の
+        // discriminant integrity、既存 sibling counter-* と同じ pattern)。
+        let cv = PropertyValue::Content(Vec::new());
+        assert_eq!(cv.key(), PropertyKey::Content);
     }
 }

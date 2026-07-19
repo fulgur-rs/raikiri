@@ -341,6 +341,10 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         PropertyValue::CounterReset(v) => target.counter_reset = v,
         PropertyValue::CounterIncrement(v) => target.counter_increment = v,
         PropertyValue::CounterSet(v) => target.counter_set = v,
+        // content は M5 gcpm-directive-emit static-side (raikiri-spike-m5.1)。
+        // 下流 (raikiri-dom) runtime resolve が counter()/string()/target-*() の
+        // 実値を組み立てる際に本 field を参照。
+        PropertyValue::Content(v) => target.content = v,
     }
 }
 
@@ -622,6 +626,42 @@ mod tests {
         // 他 counter property は non-inherited の initial (empty) のまま
         assert!(cv.counter_increment.is_empty());
         assert!(cv.counter_set.is_empty());
+    }
+
+    // ── content wire-through (CSS Content 3 §2、raikiri-spike-m5.1) ──
+
+    #[test]
+    fn content_wired_through_cascade_from_inline_style() {
+        // <p style='content: "hello"'> → ComputedValues.content に
+        // [Literal("hello")] が届く。parser → PropertyValue::Content →
+        // apply_value → ComputedValues の end-to-end 疎通 smoke。
+        // s85 counter-* wire-through pattern を踏襲。
+        use crate::property::ContentComponent;
+        let cv = cascade_doc("", "p", Some(r#"content: "hello""#));
+        assert_eq!(
+            cv.content,
+            vec![ContentComponent::Literal(String::from("hello"))]
+        );
+    }
+
+    #[test]
+    fn content_is_non_inherited_child_starts_from_initial_empty() {
+        // spec §2.1: content は non-inherited。<p style="content: 'x'">
+        // の子 <span> は自身 rule がなく、content は initial (empty Vec)。
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some(r#"content: "parent""#));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].content.len(),
+            1,
+            "parent should carry its own content"
+        );
+        assert!(
+            r.computed[span].content.is_empty(),
+            "child should not inherit content"
+        );
     }
 
     #[test]

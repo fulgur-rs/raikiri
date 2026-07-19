@@ -6,7 +6,7 @@
 use smol_str::SmolStr;
 
 use crate::Atom;
-use crate::property::{CssColor, DisplayValue, Length};
+use crate::property::{ContentComponent, CssColor, DisplayValue, Length};
 
 /// Per-node computed style。M1.4 では 4 property のみ (全て inherited)。
 ///
@@ -38,6 +38,15 @@ pub struct ComputedValues {
     /// counter-name + value pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
     pub counter_set: Vec<(SmolStr, i32)>,
+    /// `content` の resolved 中間表現。**non-inherited**、initial: empty list
+    /// (spec §2.1 "content" property の `normal` / `none` を空 list として扱う
+    /// — 本 crate は cascade static side、pseudo-element 生成判断は下流 layer)。
+    /// M5 gcpm-directive-emit (raikiri-spike-m5.1)。
+    /// 下流 (raikiri-dom) が `raikiri_traits::ContentValueItem` に mapping する
+    /// (raikiri-style は raikiri-traits に依存しない leaf crate = 3ps/94e Phase B、
+    /// counter-* wire-through pattern を踏襲、raikiri-spike-s85)。
+    /// See <https://www.w3.org/TR/css-content-3/#content-property>.
+    pub content: Vec<ContentComponent>,
 }
 
 impl ComputedValues {
@@ -54,6 +63,9 @@ impl ComputedValues {
             counter_reset: Vec::new(),
             counter_increment: Vec::new(),
             counter_set: Vec::new(),
+            // CSS Content 3 §2.1: content initial (normal) は下流にとって「no
+            // generated content」= empty list として扱う (raikiri-spike-m5.1)。
+            content: Vec::new(),
         }
     }
 
@@ -85,6 +97,8 @@ impl ComputedValues {
             counter_reset: Vec::new(),
             counter_increment: Vec::new(),
             counter_set: Vec::new(),
+            // non-inherited (CSS Content 3 §2.1、raikiri-spike-m5.1)
+            content: Vec::new(),
         }
     }
 }
@@ -139,6 +153,7 @@ mod tests {
             counter_reset: vec![(SmolStr::new("chapter"), 3)],
             counter_increment: vec![(SmolStr::new("section"), 2)],
             counter_set: vec![(SmolStr::new("page"), 5)],
+            content: Vec::new(),
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
