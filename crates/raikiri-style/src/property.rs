@@ -168,6 +168,34 @@ pub enum DisplayValue {
     Inline,
 }
 
+/// `position` property の value — M5 static-side scope では `static` (default) と
+/// GCPM `running(<custom-ident>)` のみ受理する。
+///
+/// CSS GCPM 3 §1.2.1 "The running() value"
+/// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>: `position: running(name)`
+/// は element を normal flow から取り除き、`element()` 経由で page margin box に
+/// 配置可能な template として登録する。
+///
+/// `relative` / `absolute` / `fixed` / `sticky` は M5+ scope 外、silent drop
+/// (parse_position が `None`)。`static` を明示的に variant 化しているのは、
+/// 先行の `position: running(x)` を later cascade で上書き無効化する用途
+/// (`.foo { position: running(hdr) } .foo.reset { position: static }` の
+/// 後者が winner になったとき、`apply_value` は no-op、`inherit_from` 起点で
+/// 空 `running_templates` が残る)。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PositionValue {
+    /// `static` — spec default、running() を suppress。
+    ///
+    /// `Default` は derive しない — 本 crate の convention は "derive `Default`
+    /// iff `.default()` が call される" (37n sibling [`DisplayValue`] と同じ、
+    /// spec default は初期化側 [`crate::computed::ComputedValues::initial`] が
+    /// 直接指定する)。
+    Static,
+    /// `running(<custom-ident>)`。<custom-ident> は case-preserved の smol str。
+    Running(SmolStr),
+}
+
 /// M1.4 でサポートする property の resolved value。
 ///
 /// 認識できない property (`background-color` / `margin` / ...) や invalid value
@@ -211,6 +239,14 @@ pub enum PropertyValue {
     /// `<content-list>` は CSS Content 3 §2 (m5.1 で parser 実装済)。
     /// 名前解決と runtime string() 参照は下流 (raikiri-dom) 責務。
     StringSet(Vec<(SmolStr, Vec<ContentComponent>)>),
+    /// `position: static | running(<custom-ident>)` — non-inherited、initial:
+    /// `static`。M5 static-side ε (raikiri-spike-m5.4)。
+    /// CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>。
+    /// M5 scope では `running()` seed emit のみが下流に伝わる —
+    /// `Static` は `apply_value` で no-op (先行 `running()` を上書き suppress
+    /// する discriminant 用途、spec default に相当)。
+    /// `relative` / `absolute` / `fixed` / `sticky` は M5+ scope 外、parser 段で drop。
+    Position(PositionValue),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -235,6 +271,7 @@ pub enum PropertyKey {
     CounterSet,
     Content,
     StringSet,
+    Position,
 }
 
 impl PropertyValue {
@@ -254,6 +291,7 @@ impl PropertyValue {
             PropertyValue::CounterSet(_) => PropertyKey::CounterSet,
             PropertyValue::Content(_) => PropertyKey::Content,
             PropertyValue::StringSet(_) => PropertyKey::StringSet,
+            PropertyValue::Position(_) => PropertyKey::Position,
         }
     }
 }
@@ -280,6 +318,10 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "content" => parse_content(input).map(PropertyValue::Content),
         // CSS GCPM 3 §3.1 string-set (raikiri-spike-m5.3、M5 static-side β)
         "string-set" => parse_string_set(input).map(PropertyValue::StringSet),
+        // CSS GCPM 3 §1.2.1 position: running() (raikiri-spike-m5.4、M5 static-side ε)。
+        // M5 scope では `static` + `running(<custom-ident>)` のみ受理、
+        // `relative` / `absolute` / `fixed` / `sticky` は silent drop (M5+ scope 外)。
+        "position" => parse_position(input).map(PropertyValue::Position),
         _ => None,
     }
 }
@@ -774,6 +816,51 @@ fn parse_target_text_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> 
         ContentPart::default()
     };
     Some(ContentComponent::TargetText { url, part })
+}
+
+/// `position: static | running(<custom-ident>)` を parse する
+/// (CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>)。
+///
+/// M5 static-side ε (raikiri-spike-m5.4) の scope:
+/// - `static` — [`PositionValue::Static`]、`inherit_from` の初期状態と一致するため
+///   apply_value が no-op でも問題ない。cascade winner selection では
+///   先行 `running(...)` を上書き suppress する identity 用途
+///   (advisor calibration: standalone-static test だけでは実効性が問えない)。
+/// - `running(<custom-ident>)` — [`PositionValue::Running`]、apply_value が
+///   1-item `RunningTemplate` を computed.running_templates に seed する。
+/// - 他 keyword (`relative` / `absolute` / `fixed` / `sticky`) は M5+ scope 外、
+///   silent drop = `None`。
+///
+/// `<custom-ident>` の除外は m5.3 string-set と同じ規約:
+/// [`is_reserved_custom_ident`] (CSS-wide keyword + `default`) に加えて
+/// `none` を弾く。`none` は position property の他 spec-defined keyword
+/// では無いが、custom-ident としては予約 alternative の慣行を残しつつ、
+/// runtime resolve で `element(none)` 参照を誤って matching させないためのガード
+/// (reviewer:spec interpretation point、m5.3 の `none` reject と同じ扱い)。
+fn parse_position(input: &mut Parser<'_, '_>) -> Option<PositionValue> {
+    // `static` は M5 scope で唯一受理する non-running keyword。
+    if input
+        .try_parse(|i| i.expect_ident_matching("static"))
+        .is_ok()
+    {
+        return Some(PositionValue::Static);
+    }
+    // `running(<custom-ident>)`。function name は ASCII case-insensitive、
+    // 中身の custom-ident は case-preserving で SmolStr に格納。
+    let running = input.try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
+        let fn_name = i.expect_function()?.clone();
+        if !fn_name.eq_ignore_ascii_case("running") {
+            return Err(i.new_custom_error(()));
+        }
+        i.parse_nested_block(|inner| -> Result<SmolStr, ParseError<'_, ()>> {
+            let ident = inner.expect_ident()?.clone();
+            if is_reserved_custom_ident(&ident) || ident.eq_ignore_ascii_case("none") {
+                return Err(inner.new_custom_error(()));
+            }
+            Ok(SmolStr::new(ident.as_ref()))
+        })
+    });
+    running.ok().map(PositionValue::Running)
 }
 
 fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
@@ -1489,5 +1576,113 @@ mod tests {
         // discriminant integrity、既存 sibling counter-* / content と同じ pattern)。
         let v = PropertyValue::StringSet(Vec::new());
         assert_eq!(v.key(), PropertyKey::StringSet);
+    }
+
+    // ── position: running() (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4) ──
+    //
+    // Verification items 1-6 は task description 由来 (bd raikiri-spike-m5.4)、
+    // canonical shape は bd raikiri-spike-376 amended。sibling は s85 (counter)
+    // / m5.1 (content) / m5.3 (string-set) の SmolStr wire-through pattern。
+
+    #[test]
+    fn position_parse_running_header() {
+        // Verification 1: position: running(header)
+        // → PropertyValue::Position(PositionValue::Running("header"))
+        assert_eq!(
+            parse("running(header)", "position"),
+            Some(PropertyValue::Position(PositionValue::Running(
+                SmolStr::new("header")
+            )))
+        );
+    }
+
+    #[test]
+    fn position_parse_running_footer() {
+        // Verification 2: 別 name の smoke — SmolStr::new が生きていることを pin。
+        assert_eq!(
+            parse("running(footer)", "position"),
+            Some(PropertyValue::Position(PositionValue::Running(
+                SmolStr::new("footer")
+            )))
+        );
+    }
+
+    #[test]
+    fn position_parse_static() {
+        // Verification 5 baseline: position: static → PositionValue::Static。
+        // apply_value は no-op、running_templates は inherit_from の initial
+        // (空 Vec) が残る = cascade winner が earlier running(...) を suppress する
+        // ID 用途 (cascade.rs 側の `static_position_wins_over_running` で検証)。
+        assert_eq!(
+            parse("static", "position"),
+            Some(PropertyValue::Position(PositionValue::Static))
+        );
+    }
+
+    #[test]
+    fn position_running_case_insensitive_function_name() {
+        // Verification 4: function name は ASCII case-insensitive (CSS spec 慣行)、
+        // custom-ident は case-preserving。
+        assert_eq!(
+            parse("RUNNING(header)", "position"),
+            Some(PropertyValue::Position(PositionValue::Running(
+                SmolStr::new("header")
+            )))
+        );
+    }
+
+    #[test]
+    fn position_running_rejects_none_custom_ident() {
+        // Verification 6: `running(none)` reject。`none` は position property
+        // spec-defined keyword ではないが、runtime resolve で `element(none)` 参照が
+        // silent match するのを避けるため custom-ident としても弾く (m5.3 string-set
+        // と同じ規約、reviewer:spec interpretation point)。
+        assert_eq!(parse("running(none)", "position"), None);
+    }
+
+    #[test]
+    fn position_running_rejects_reserved_css_wide_keyword() {
+        // spec CSS Values 4 §3.6: <custom-ident> は CSS-wide keyword + `default`
+        // 除外。position: running(inherit) 等は declaration drop。
+        assert_eq!(parse("running(inherit)", "position"), None);
+        assert_eq!(parse("running(initial)", "position"), None);
+        assert_eq!(parse("running(unset)", "position"), None);
+        assert_eq!(parse("running(revert)", "position"), None);
+        assert_eq!(parse("running(default)", "position"), None);
+    }
+
+    #[test]
+    fn position_rejects_missing_custom_ident() {
+        // spec §1.2.1: `running() = running( <custom-ident> )` — argument 必須。
+        // 空 argument は malformed、declaration drop。
+        assert_eq!(parse("running()", "position"), None);
+    }
+
+    #[test]
+    fn position_rejects_out_of_scope_keywords() {
+        // M5+ scope: relative / absolute / fixed / sticky は本 crate では
+        // 認識せず None を返す (spec-correct: invalid → drop)。
+        assert_eq!(parse("relative", "position"), None);
+        assert_eq!(parse("absolute", "position"), None);
+        assert_eq!(parse("fixed", "position"), None);
+        assert_eq!(parse("sticky", "position"), None);
+    }
+
+    #[test]
+    fn position_rejects_running_with_extra_arg() {
+        // `running(a, b)` — parse_nested_block が parse_entirely 経由で
+        // 余剰 token を検知し、declaration drop になる。
+        assert_eq!(parse("running(a, b)", "position"), None);
+    }
+
+    #[test]
+    fn position_key_maps_to_position_property_key() {
+        // PropertyValue::Position → PropertyKey::Position (cascade winner 選択の
+        // discriminant integrity、既存 sibling counter-* / content / string-set と
+        // 同じ pattern)。
+        let v = PropertyValue::Position(PositionValue::Static);
+        assert_eq!(v.key(), PropertyKey::Position);
+        let v = PropertyValue::Position(PositionValue::Running(SmolStr::new("hdr")));
+        assert_eq!(v.key(), PropertyKey::Position);
     }
 }
