@@ -428,6 +428,117 @@ mod tests {
         assert_eq!(glyph_count1, 1, "hello world must emit exactly 1 GlyphRun");
     }
 
+    /// raikiri-spike-d9y.5 (SEC MED, Codex Cloud Security finding): HTML の
+    /// metadata / raw-text content element (`<style>` / `<script>` /
+    /// `<noscript>`) 内の text が rendered artifact に混入しないことを pin する。
+    ///
+    /// 各 fixture では:
+    /// - inert element 手前の "before" text と後ろの "after" text を配置し、
+    ///   それらは正しく painted (GlyphRun 2 個) される
+    /// - inert element 内の raw text は painted されない (leak 検出)
+    ///
+    /// 単純な "painted 0 個" 判定だと inert filter が **全** subtree を dumb
+    /// に潰しても pass してしまうため、"before/after は残る + inert 内は消える"
+    /// の 3-way discriminant で filter が正確に働くことを assert する。
+    ///
+    /// HTML LS §15.4.1 / CSS 2.1 App.D "Elements that are not rendered" が
+    /// primary source。
+    fn assert_inert_html_content_not_painted(html: &[u8], fixture_label: &str) {
+        use raikiri_html::{ParseOptions, parse};
+
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = parse(html, &opts).expect("parse ok");
+        let mut doc = uncascaded.dom;
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+
+        let glyph_commands: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                RenderCommand::GlyphRun(cmd) => Some(cmd),
+                _ => None,
+            })
+            .collect();
+        // GlyphRun 数 = 2 (before + after)。inert が leak なら 3、boundary が
+        // 落ちるなら 1 or 0。3-way discriminant で filter over-collapse も検知。
+        assert_eq!(
+            glyph_commands.len(),
+            2,
+            "[{fixture_label}] expected 2 GlyphRuns (before + after), got {}. \
+             Any extra run indicates inert-element text leaked into paint.",
+            glyph_commands.len()
+        );
+        // codex final review finding #3: 2-of-3 selection (before + inert
+        // survived、after 落ちた) でも count==2 で pass する余地を封じる。
+        // 総 glyph 数を "before" (6 chars) + "after" (5 chars) = 11 の
+        // exact match で pin。inert content が leak なら len が増える、
+        // boundary text が落ちれば len が減る。
+        // 各 assert_inert_html_content_not_painted call site が同じ
+        // fixture "before…after" 文字列前提であることに依存。
+        let total_glyphs: usize = glyph_commands.iter().map(|cmd| cmd.glyphs.len()).sum();
+        assert_eq!(
+            total_glyphs,
+            "before".len() + "after".len(),
+            "[{fixture_label}] total glyph count must equal len('before') + len('after') = 11, \
+             got {total_glyphs}. Any deviation indicates either inert-element leak (too many) \
+             or boundary text drop (too few) — 2-of-3 selection also fails this exact match."
+        );
+    }
+
+    #[test]
+    fn paint_single_page_skips_style_subtree_content() {
+        // <body>before<style>#a{color:red}</style>after</body>
+        // <style> は HTML LS §15.4.1 "Elements that are not rendered"、
+        // その raw text (`#a{color:red}`) は paint されない。
+        // before / after の text は painted (GlyphRun 2 個)。
+        assert_inert_html_content_not_painted(
+            b"<html><head></head><body>before<style>#a{color:red}</style>after</body></html>",
+            "style",
+        );
+    }
+
+    #[test]
+    fn paint_single_page_skips_script_subtree_content() {
+        // <body>before<script>alert(1)</script>after</body>
+        // <script> raw text は paint されない (HTML LS §4.12.1)。
+        assert_inert_html_content_not_painted(
+            b"<html><head></head><body>before<script>alert(1)</script>after</body></html>",
+            "script",
+        );
+    }
+
+    #[test]
+    fn paint_single_page_skips_noscript_subtree_content() {
+        // <body>before<noscript>fallback</noscript>after</body>
+        // scripting_enabled=true (html5ever default、parse.rs で default 継承)
+        // 下では <noscript> 内容は raw text tokenize されるため paint 対象外。
+        // 将来 scripting_enabled=false に切替えた場合は本 test を quarantine → 再設計。
+        assert_inert_html_content_not_painted(
+            b"<html><head></head><body>before<noscript>fallback</noscript>after</body></html>",
+            "noscript",
+        );
+    }
+
+    #[test]
+    fn paint_single_page_skips_template_subtree_content_via_inert_predicate() {
+        // <template> は既に is_in_document() gate で skip されるが、defense-in-depth
+        // で is_non_rendered_html_element() 側も個別に発火するかを pin。
+        // "before<template>...</template>after" で 2 GlyphRun (before + after)。
+        assert_inert_html_content_not_painted(
+            b"<html><head></head><body>before<template><p>secret</p></template>after</body></html>",
+            "template",
+        );
+    }
+
     #[test]
     fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
         // raikiri-spike-37c: UA CSS の template { display: none } rule 存在に
