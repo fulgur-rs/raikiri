@@ -28,11 +28,12 @@ use std::path::{Path, PathBuf};
 ///   `is_symlink()` reject on both `input.html` and each
 ///   `expected/page-*.png`, plus an `expected/`-as-symlink pre-check
 /// - **direct char/block device / FIFO placement** (e.g. attacker `mkfifo
-///   input.html`, or an intermediate `expected/` symlink to `/dev` so
-///   `expected/zero` resolves to the char device): `!is_file()` gate rejects
-///   non-regular files.  `metadata.len()` is unreliable for devices, so this
-///   check is load-bearing and cannot be replaced by the size cap alone
-///   (mirrors d9y.4's stated `is_file()` reasoning)
+///   input.html` or `mkfifo expected/page-0000.png`): `!is_file()` gate
+///   rejects non-regular files.  `metadata.len()` is unreliable for devices,
+///   so this check is load-bearing and cannot be replaced by the size cap
+///   alone (mirrors d9y.4's stated `is_file()` reasoning).  The related
+///   `expected/`-as-symlink-to-`/dev` vector is closed by a separate
+///   `expected/` pre-check in [`load_fixture`], not by this gate.
 /// - **oversized regular file** (memory exhaustion): `metadata.len() >
 ///   FIXTURE_SIZE_CAP` up-front reject
 /// - **path escape via intermediate symlink** (e.g. `expected/` → `/tmp/evil`
@@ -161,7 +162,10 @@ impl fmt::Display for DiffReport {
 #[derive(Debug)]
 pub enum FixtureError {
     /// An I/O operation on the fixture directory failed.
-    IoError {
+    ///
+    /// Named `Io` (not `IoError`) to match the workspace convention seen in
+    /// `FontError::Io`, `ParseError::Io`, and `NetworkError::Io`.
+    Io {
         /// Path being accessed when the error occurred.
         path: PathBuf,
         /// Underlying I/O error.
@@ -224,7 +228,7 @@ pub enum FixtureError {
 impl fmt::Display for FixtureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::IoError { path, source } => {
+            Self::Io { path, source } => {
                 write!(f, "IO error at {}: {source}", path.display())
             }
             Self::MissingInputHtml { fixture_dir } => {
@@ -273,7 +277,7 @@ impl fmt::Display for FixtureError {
 impl std::error::Error for FixtureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::IoError { source, .. } => Some(source),
+            Self::Io { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -377,7 +381,7 @@ pub fn compare_png(
 ///
 /// See [`FIXTURE_SIZE_CAP`] for the threat model these layers cover.
 fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u8>, FixtureError> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|source| FixtureError::IoError {
+    let metadata = std::fs::symlink_metadata(path).map_err(|source| FixtureError::Io {
         path: path.to_path_buf(),
         source,
     })?;
@@ -387,11 +391,13 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
             path: path.to_path_buf(),
         });
     }
-    // `is_file()` gate is load-bearing: `symlink_metadata` follows intermediate
-    // symlinks (only the leaf is treated as-is), so an `expected/` symlink
-    // pointing at `/dev` would let `expected/zero` slip past the symlink
-    // check as a char device.  `metadata.len()` reports 0 for devices so
-    // the size cap won't help either.  Only `is_file()` catches this.
+    // `is_file()` gate is load-bearing: it catches direct FIFO/device/socket
+    // placement (e.g. attacker `mkfifo input.html`) that the symlink gate
+    // doesn't cover.  `metadata.len()` reports 0 for devices, so the size cap
+    // won't help either — only `is_file()` fails these entries closed.
+    // (Intermediate-symlink escape into `/dev` via `expected/`-as-symlink is
+    // already blocked by `load_fixture`'s pre-check on `expected/` itself;
+    // this gate is not load-bearing for that vector.)
     if !file_type.is_file() {
         return Err(FixtureError::NotRegularFile {
             path: path.to_path_buf(),
@@ -409,7 +415,7 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // symlink is already rejected; this branch covers intermediate-symlink
     // escapes (e.g. `expected/` symlinked to `/tmp/evil`) and any future
     // relaxation of the upstream gates.
-    let canonical = std::fs::canonicalize(path).map_err(|source| FixtureError::IoError {
+    let canonical = std::fs::canonicalize(path).map_err(|source| FixtureError::Io {
         path: path.to_path_buf(),
         source,
     })?;
@@ -423,7 +429,7 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // grew between the metadata check and the read, `take(cap + 1)` yields
     // `cap + 1` bytes and the post-read length check trips OversizedFixture
     // instead of silently truncating.
-    let mut file = std::fs::File::open(path).map_err(|source| FixtureError::IoError {
+    let mut file = std::fs::File::open(path).map_err(|source| FixtureError::Io {
         path: path.to_path_buf(),
         source,
     })?;
@@ -431,7 +437,7 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     file.by_ref()
         .take(FIXTURE_SIZE_CAP + 1)
         .read_to_end(&mut bytes)
-        .map_err(|source| FixtureError::IoError {
+        .map_err(|source| FixtureError::Io {
             path: path.to_path_buf(),
             source,
         })?;
@@ -476,7 +482,7 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
             });
         }
         Err(source) => {
-            return Err(FixtureError::IoError {
+            return Err(FixtureError::Io {
                 path: fixture_dir.to_path_buf(),
                 source,
             });
@@ -486,9 +492,7 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
     let input_path = canonical_root.join("input.html");
     let input_html = match read_bounded_fixture_file(&input_path, &canonical_root) {
         Ok(bytes) => bytes,
-        Err(FixtureError::IoError { source, .. })
-            if source.kind() == std::io::ErrorKind::NotFound =>
-        {
+        Err(FixtureError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
             return Err(FixtureError::MissingInputHtml {
                 fixture_dir: fixture_dir.to_path_buf(),
             });
@@ -506,7 +510,7 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
         Ok(m) => Some(m),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(source) => {
-            return Err(FixtureError::IoError {
+            return Err(FixtureError::Io {
                 path: expected_dir.clone(),
                 source,
             });
@@ -520,13 +524,12 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
             return Err(FixtureError::SymlinkRejected { path: expected_dir });
         }
         if file_type.is_dir() {
-            let entries =
-                std::fs::read_dir(&expected_dir).map_err(|source| FixtureError::IoError {
-                    path: expected_dir.clone(),
-                    source,
-                })?;
+            let entries = std::fs::read_dir(&expected_dir).map_err(|source| FixtureError::Io {
+                path: expected_dir.clone(),
+                source,
+            })?;
             for entry in entries {
-                let entry = entry.map_err(|source| FixtureError::IoError {
+                let entry = entry.map_err(|source| FixtureError::Io {
                     path: expected_dir.clone(),
                     source,
                 })?;
@@ -1036,14 +1039,42 @@ mod defense_tests {
         }
     }
 
+    /// Run `load_fixture(dir)` on a worker thread and fail-fast on timeout.
+    /// Prevents FIFO-regression tests from silently hanging the test suite
+    /// forever if the `!is_file()` gate ever regresses — in that case
+    /// `File::open`/`read_to_end` would block on the FIFO with no writer.
+    #[cfg(unix)]
+    fn load_fixture_with_watchdog(
+        dir: PathBuf,
+        timeout: std::time::Duration,
+    ) -> Result<Fixture, FixtureError> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let _ = tx.send(load_fixture(&dir));
+        });
+        match rx.recv_timeout(timeout) {
+            Ok(result) => {
+                // Best-effort join; thread has already sent its result.
+                let _ = handle.join();
+                result
+            }
+            Err(_) => panic!(
+                "load_fixture did not return within {:?} — FIFO gate has likely regressed \
+                 (File::open on a FIFO with no writer blocks indefinitely). \
+                 Leaving worker thread detached so the suite fails fast rather than hanging.",
+                timeout
+            ),
+        }
+    }
+
     #[test]
     #[cfg(unix)]
     fn fifo_as_input_html_is_rejected_not_blocked() {
         // If an attacker places `input.html` as a FIFO with no writer,
-        // `std::fs::read` blocks indefinitely.  The `!is_file()` gate
-        // rejects the FIFO up-front so the test process cannot hang.
-        // This test doubles as a liveness assertion — if the gate ever
-        // regresses, this test hangs forever (visible as timeout).
+        // `File::open` + `read_to_end` blocks indefinitely.  The `!is_file()`
+        // gate rejects the FIFO up-front so the test process cannot hang.
+        // A watchdog wrapper converts a regression from "test hangs forever"
+        // into "test panics after 2 s with a clear message".
         let tmp = tempfile::tempdir().unwrap();
         let fifo = tmp.path().join("input.html");
         let status = std::process::Command::new("mkfifo")
@@ -1053,7 +1084,10 @@ mod defense_tests {
         assert!(status.success(), "mkfifo failed for {}", fifo.display());
         write_expected_png(tmp.path(), 0);
 
-        match load_fixture(tmp.path()) {
+        match load_fixture_with_watchdog(
+            tmp.path().to_path_buf(),
+            std::time::Duration::from_secs(2),
+        ) {
             Err(FixtureError::NotRegularFile { path }) => {
                 assert_eq!(
                     path.file_name().and_then(|f| f.to_str()),
@@ -1062,5 +1096,59 @@ mod defense_tests {
             }
             other => panic!("expected NotRegularFile for FIFO input.html, got {other:?}"),
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fifo_at_expected_png_is_rejected_not_blocked() {
+        // Parallel to `fifo_as_input_html_is_rejected_not_blocked`, but
+        // pins the `!is_file()` gate for the second consumer of
+        // `read_bounded_fixture_file` — the `expected/page-*.png`
+        // enumeration path.  Same watchdog + same regression semantics:
+        // a gate regression here would `File::open` the FIFO and block.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        let fifo = expected.join("page-0000.png");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo(1) should be available on unix hosts");
+        assert!(status.success(), "mkfifo failed for {}", fifo.display());
+
+        match load_fixture_with_watchdog(
+            tmp.path().to_path_buf(),
+            std::time::Duration::from_secs(2),
+        ) {
+            Err(FixtureError::NotRegularFile { path }) => {
+                assert_eq!(
+                    path.file_name().and_then(|f| f.to_str()),
+                    Some("page-0000.png")
+                );
+            }
+            other => panic!("expected NotRegularFile for FIFO page-0000.png, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zero_byte_input_html_and_expected_png_load_successfully() {
+        // Boundary canary at the low end: a zero-byte file should load
+        // (`.take(cap + 1).read_to_end` yields 0 bytes; `is_file()` still
+        // true; size 0 ≤ cap).  Pins current behavior so a future hygiene
+        // check (`if metadata.len() == 0 { reject }`) doesn't silently
+        // change fixture semantics.  Cheap counterpart to
+        // `size_cap_boundary_is_accepted` at the high end.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        std::fs::write(expected.join("page-0000.png"), b"").unwrap();
+
+        let fixture =
+            load_fixture(tmp.path()).expect("zero-byte input.html + zero-byte page should load");
+        assert!(fixture.input_html.is_empty());
+        assert_eq!(fixture.expected_pages.len(), 1);
+        assert!(fixture.expected_pages[0].is_empty());
     }
 }
