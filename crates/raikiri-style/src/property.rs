@@ -711,18 +711,44 @@ fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
     }
 }
 
+/// `<counter-name>` (CSS Lists 3 §4
+/// <https://www.w3.org/TR/css-lists-3/#typedef-counter-name>):
+/// `<custom-ident>` から `none` を追加除外した production。
+/// spec 原文: "A <counter-name> name cannot match the keyword `none`; such an
+/// identifier is invalid as a <counter-name>"。
+///
+/// counter() / counters() (§4.7) の first argument、および
+/// counter-reset / counter-increment / counter-set property (§3) の name 引数で
+/// 使う。後者は既に [`parse_counter_property`] が [`is_reserved_counter_name`]
+/// 経由で reject 済 — 本 helper は前者を同じ predicate に揃えるための wrapper
+/// (raikiri-spike-afv — codex final for m5.1)。
+fn parse_counter_name(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
+    let ident = input.expect_ident().ok()?.clone();
+    if is_reserved_counter_name(&ident) {
+        None
+    } else {
+        Some(SmolStr::new(ident.as_ref()))
+    }
+}
+
 /// `counter(<counter-name>, <counter-style>?)`。
 /// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>。
+/// first argument grammar は §4 `<counter-name>`
+/// (<https://www.w3.org/TR/css-lists-3/#typedef-counter-name>) —
+/// `<custom-ident>` から `none` を追加除外。
 fn parse_counter_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
-    let name = parse_custom_ident(input)?;
+    let name = parse_counter_name(input)?;
     let style = parse_optional_counter_style(input)?;
     Some(ContentComponent::Counter { name, style })
 }
 
 /// `counters(<counter-name>, <string>, <counter-style>?)`。
-/// CSS Lists 3 §4.7。
+/// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>。
+/// first argument grammar は §4 `<counter-name>`
+/// (<https://www.w3.org/TR/css-lists-3/#typedef-counter-name>) —
+/// `<custom-ident>` から `none` を追加除外。
 fn parse_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
-    let name = parse_custom_ident(input)?;
+    let name = parse_counter_name(input)?;
     input.expect_comma().ok()?;
     let separator = input.expect_string().ok()?.as_ref().to_string();
     let style = parse_optional_counter_style(input)?;
@@ -1415,6 +1441,25 @@ mod tests {
                 part: ContentPart::Content,
             }]
         );
+    }
+
+    #[test]
+    fn content_counter_rejects_none_name() {
+        // spec CSS Lists 3 §4 <https://www.w3.org/TR/css-lists-3/#typedef-counter-name>:
+        // "A <counter-name> name cannot match the keyword `none`; such an identifier
+        // is invalid as a <counter-name>". §4.7 counter() の first argument が
+        // <counter-name> production のため `counter(none)` は declaration drop。
+        // counter-reset/increment/set (property.rs 既存) と一貫、Chrome/FF と一致。
+        // (raikiri-spike-afv — codex final for m5.1)
+        assert_eq!(parse("counter(none)", "content"), None);
+    }
+
+    #[test]
+    fn content_counters_rejects_none_name() {
+        // spec CSS Lists 3 §4 / §4.7: counters() の first argument も
+        // <counter-name> production、`none` は invalid。
+        // (raikiri-spike-afv — codex final for m5.1)
+        assert_eq!(parse(r#"counters(none, ".")"#, "content"), None);
     }
 
     #[test]
