@@ -11,7 +11,84 @@
 //! recreates `expected/` from the pipeline output instead of comparing.
 
 use std::fmt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+/// Maximum per-fixture-file size cap (input.html or expected/page-*.png).
+///
+/// Mirrors [`raikiri_dom::fonts::FONT_SIZE_CAP`] (100 MiB) as a "large but
+/// bounded" fixture size — real reference PNGs are well under 10 MiB and
+/// input.html payloads are a few KiB, so 100 MiB leaves ample headroom while
+/// still bounding attacker-supplied huge files.
+///
+/// **Threat surface coverage** (raikiri-spike-d9y.6, Codex security finding
+/// `0f198c3daa8c8191a18c1a9f16171669`):
+///
+/// - **symlink → sensitive file / `/dev/zero`**: `symlink_metadata` +
+///   `is_symlink()` reject on both `input.html` and each
+///   `expected/page-*.png`, plus an `expected/`-as-symlink pre-check
+/// - **direct char/block device / FIFO placement** (e.g. attacker `mkfifo
+///   input.html` or `mkfifo expected/page-0000.png`): `!is_file()` gate
+///   rejects non-regular files.  `metadata.len()` is unreliable for devices,
+///   so this check is load-bearing and cannot be replaced by the size cap
+///   alone (mirrors d9y.4's stated `is_file()` reasoning).  The related
+///   `expected/`-as-symlink-to-`/dev` vector is closed by a separate
+///   `expected/` pre-check in [`load_fixture`], not by this gate.
+/// - **oversized regular file** (memory exhaustion): `metadata.len() >
+///   FIXTURE_SIZE_CAP` up-front reject
+/// - **aggregate memory exhaustion via many valid files** (attacker packs
+///   `expected/` with N sub-cap page files, each individually accepted):
+///   three-layer defense — canonical-form `page-{N:04}.png` filter (rejects
+///   `page-0.png`, `page-00000.png`, etc., before content read),
+///   [`MAX_EXPECTED_PAGES`] enumeration count cap, and
+///   [`FIXTURE_AGGREGATE_BYTES_CAP`] running-total bytes cap that reliably
+///   bounds worst-case in-memory peak during load
+/// - **fixture-root symlink** (caller-supplied path is itself a symlink,
+///   silently redirecting the containment anchor): pre-check via
+///   `symlink_metadata(fixture_dir)` rejects a symlinked root
+/// - **path escape via intermediate symlink** (e.g. `expected/` → `/tmp/evil`
+///   so `expected/page-0000.png` resolves outside the fixture root):
+///   `canonicalize` + `starts_with(canonical_root)` prefix check
+/// - **mid-read grow (TOCTOU)**: `File::open + take(cap + 1) + read_to_end`
+///   +1-probe pattern (per raikiri-spike-d9y.3) catches files that grow
+///   between the `metadata.len()` check and the actual read
+const FIXTURE_SIZE_CAP: u64 = 100 * 1024 * 1024;
+
+/// Maximum number of `expected/page-*.png` entries `load_fixture` will read.
+///
+/// Companion to [`FIXTURE_AGGREGATE_BYTES_CAP`].  The bytes cap is the
+/// load-bearing aggregate-memory defense; this count cap bounds the
+/// enumeration itself against pathological many-tiny-files fixtures
+/// (10 000-canonical-file floods that individually fit under the per-file
+/// cap and collectively fit under the bytes cap but still stress the
+/// `numbered: Vec<(u32, Vec<u8>)>` accumulator).
+///
+/// The `expected/page-{N:04}.png` name form limits N to 4 decimal digits
+/// (0000-9999); 1 024 is comfortably above realistic fixture sizes (real
+/// M1 fixtures are single-digit pages, paged-media exports are hundreds)
+/// while low enough to reject in tests without a 10 000-file test setup.
+const MAX_EXPECTED_PAGES: usize = 1_024;
+
+/// Maximum total bytes across all `expected/page-*.png` entries.
+///
+/// Load-bearing aggregate-memory defense (raikiri-spike-d9y.6, Codex gate
+/// final review round 2).  Without this, [`MAX_EXPECTED_PAGES`] alone
+/// still admits `1 024 * FIXTURE_SIZE_CAP` = ~102 GiB.  Cap set at
+/// 256 MiB: 2.5× the per-file cap (a single max-size page must still
+/// load), above realistic fixture aggregates (real fixtures are
+/// single-digit MiB × single-digit pages), and tight enough that the
+/// worst-case expected-page payload during load stays bounded at
+/// `FIXTURE_AGGREGATE_BYTES_CAP + FIXTURE_SIZE_CAP` (~356 MiB — the
+/// running total plus the last file, which is freed on the aggregate-cap
+/// reject).  Total loader memory can add `input_html` (up to
+/// `FIXTURE_SIZE_CAP` = 100 MiB) plus `Vec` capacity/structural
+/// overhead on top of that; overall worst-case retained is
+/// `2 * FIXTURE_SIZE_CAP + FIXTURE_AGGREGATE_BYTES_CAP` ≈ 456 MiB
+/// (Codex gate final review round 3 doc-precision note).
+///
+/// Legitimate fixtures approaching this cap should raise a bd request
+/// rather than bypass — the number is deliberately tight against attack.
+const FIXTURE_AGGREGATE_BYTES_CAP: u64 = 256 * 1024 * 1024;
 
 /// Loaded state of one `tests/reference/<name>/` directory.
 #[non_exhaustive]
@@ -131,6 +208,12 @@ impl fmt::Display for DiffReport {
 #[derive(Debug)]
 pub enum FixtureError {
     /// An I/O operation on the fixture directory failed.
+    ///
+    /// Kept as `IoError` (not `Io`) for public API stability across d9y.6;
+    /// the sibling workspace convention (`FontError::Io`, `ParseError::Io`)
+    /// would prefer bare `Io`, but renaming this variant is a public API
+    /// break for `raikiri-vrt` consumers.  A follow-up bd captures the
+    /// desired rename bundled with the next coordinated API-break window.
     IoError {
         /// Path being accessed when the error occurred.
         path: PathBuf,
@@ -149,6 +232,69 @@ pub enum FixtureError {
         /// Page numbers actually found.
         found: Vec<u32>,
     },
+    /// A fixture-tree entry (`input.html`, `expected/`, or an
+    /// `expected/page-*.png`) is a symlink.  We refuse to follow it so an
+    /// attacker-controlled fixture cannot exfiltrate arbitrary local files.
+    /// See [`FIXTURE_SIZE_CAP`] for the full threat model
+    /// (raikiri-spike-d9y.6, Codex finding `0f198c3daa8c8191a18c1a9f16171669`).
+    SymlinkRejected {
+        /// Path of the rejected symlink.
+        path: PathBuf,
+    },
+    /// A fixture-tree entry exists but is not a regular file (FIFO, device,
+    /// socket, block/char device reached through an intermediate symlink,
+    /// etc.).  Rejected up-front — `std::fs::read` on a FIFO with no writer
+    /// blocks indefinitely, and `/dev/zero` reads exhaust memory.
+    NotRegularFile {
+        /// Path of the rejected non-regular entry.
+        path: PathBuf,
+    },
+    /// A fixture-tree file's size exceeds [`FIXTURE_SIZE_CAP`].  Either the
+    /// up-front `metadata.len()` check tripped, or the file grew between the
+    /// metadata check and the bounded read (TOCTOU-grow, caught by the
+    /// `take(cap + 1)` +1-probe).
+    OversizedFixture {
+        /// Path of the oversized file.
+        path: PathBuf,
+        /// Actual size observed (bytes).
+        size: u64,
+        /// Configured cap (bytes) — currently [`FIXTURE_SIZE_CAP`].
+        cap: u64,
+    },
+    /// After canonicalization, the fixture-tree file resolves outside its
+    /// fixture root.  Belt-and-suspenders: given the symlink and
+    /// non-regular-file gates upstream, this branch is only reachable if a
+    /// future change relaxes those gates — but the containment check is what
+    /// makes that safe.
+    PathEscape {
+        /// Canonicalized target path that fell outside the root.
+        canonical: PathBuf,
+        /// Canonicalized fixture root that the target should have stayed under.
+        root: PathBuf,
+    },
+    /// `expected/` contained more matching page files than [`MAX_EXPECTED_PAGES`].
+    /// Companion defense to [`FixtureError::OversizedFixtureAggregate`] —
+    /// this one bounds enumeration count against many-tiny-files attacks;
+    /// that one bounds aggregate memory.
+    TooManyExpectedPages {
+        /// Fixture directory that was searched.
+        fixture_dir: PathBuf,
+        /// Configured cap ([`MAX_EXPECTED_PAGES`]).
+        cap: usize,
+    },
+    /// Aggregate bytes read across `expected/page-*.png` entries exceeded
+    /// [`FIXTURE_AGGREGATE_BYTES_CAP`].  Load-bearing defense against
+    /// aggregate memory exhaustion — the per-file cap alone allows
+    /// `MAX_EXPECTED_PAGES × FIXTURE_SIZE_CAP` = ~102 GiB before this cap
+    /// (raikiri-spike-d9y.6, Codex gate final review concern #1).
+    OversizedFixtureAggregate {
+        /// Fixture directory that was searched.
+        fixture_dir: PathBuf,
+        /// Running total (bytes) at the point of rejection.
+        total: u64,
+        /// Configured cap ([`FIXTURE_AGGREGATE_BYTES_CAP`]).
+        cap: u64,
+    },
 }
 
 impl fmt::Display for FixtureError {
@@ -164,6 +310,53 @@ impl fmt::Display for FixtureError {
                 write!(
                     f,
                     "expected/ under {} has non-contiguous page numbers: {found:?}",
+                    fixture_dir.display()
+                )
+            }
+            Self::SymlinkRejected { path } => {
+                write!(
+                    f,
+                    "fixture entry {} is a symlink (rejected: symlinks in the fixture tree could redirect to arbitrary local files)",
+                    path.display()
+                )
+            }
+            Self::NotRegularFile { path } => {
+                write!(
+                    f,
+                    "fixture entry {} is not a regular file (rejected: FIFO/device/socket reads can block indefinitely or exhaust memory)",
+                    path.display()
+                )
+            }
+            Self::OversizedFixture { path, size, cap } => {
+                write!(
+                    f,
+                    "fixture file {} is {size} bytes, exceeding cap {cap}",
+                    path.display()
+                )
+            }
+            Self::PathEscape { canonical, root } => {
+                write!(
+                    f,
+                    "fixture entry canonicalizes to {} which escapes fixture root {}",
+                    canonical.display(),
+                    root.display()
+                )
+            }
+            Self::TooManyExpectedPages { fixture_dir, cap } => {
+                write!(
+                    f,
+                    "expected/ under {} has more than {cap} matching page files",
+                    fixture_dir.display()
+                )
+            }
+            Self::OversizedFixtureAggregate {
+                fixture_dir,
+                total,
+                cap,
+            } => {
+                write!(
+                    f,
+                    "expected/ under {} totals {total} bytes across pages, exceeding aggregate cap {cap}",
                     fixture_dir.display()
                 )
             }
@@ -271,6 +464,83 @@ pub fn compare_png(
     })
 }
 
+/// Read a single fixture-tree file with the full defense stack:
+/// leaf-symlink reject, `!is_file()` reject, up-front size cap,
+/// canonicalize-and-`starts_with(canonical_root)` containment check, and a
+/// bounded `take(cap + 1)` read that also catches TOCTOU-grow.
+///
+/// See [`FIXTURE_SIZE_CAP`] for the threat model these layers cover.
+fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u8>, FixtureError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|source| FixtureError::IoError {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(FixtureError::SymlinkRejected {
+            path: path.to_path_buf(),
+        });
+    }
+    // `is_file()` gate is load-bearing: it catches direct FIFO/device/socket
+    // placement (e.g. attacker `mkfifo input.html`) that the symlink gate
+    // doesn't cover.  `metadata.len()` reports 0 for devices, so the size cap
+    // won't help either — only `is_file()` fails these entries closed.
+    // (Intermediate-symlink escape into `/dev` via `expected/`-as-symlink is
+    // already blocked by `load_fixture`'s pre-check on `expected/` itself;
+    // this gate is not load-bearing for that vector.)
+    if !file_type.is_file() {
+        return Err(FixtureError::NotRegularFile {
+            path: path.to_path_buf(),
+        });
+    }
+    if metadata.len() > FIXTURE_SIZE_CAP {
+        return Err(FixtureError::OversizedFixture {
+            path: path.to_path_buf(),
+            size: metadata.len(),
+            cap: FIXTURE_SIZE_CAP,
+        });
+    }
+    // Containment check via canonicalization.  Given the symlink and
+    // non-regular-file gates upstream, an unresolvable escape via a leaf
+    // symlink is already rejected; this branch covers intermediate-symlink
+    // escapes (e.g. `expected/` symlinked to `/tmp/evil`) and any future
+    // relaxation of the upstream gates.
+    let canonical = std::fs::canonicalize(path).map_err(|source| FixtureError::IoError {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !canonical.starts_with(canonical_root) {
+        return Err(FixtureError::PathEscape {
+            canonical,
+            root: canonical_root.to_path_buf(),
+        });
+    }
+    // Bounded read with +1 probe (raikiri-spike-d9y.3 pattern): if the file
+    // grew between the metadata check and the read, `take(cap + 1)` yields
+    // `cap + 1` bytes and the post-read length check trips OversizedFixture
+    // instead of silently truncating.
+    let mut file = std::fs::File::open(path).map_err(|source| FixtureError::IoError {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(FIXTURE_SIZE_CAP + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|source| FixtureError::IoError {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if bytes.len() as u64 > FIXTURE_SIZE_CAP {
+        return Err(FixtureError::OversizedFixture {
+            path: path.to_path_buf(),
+            size: bytes.len() as u64,
+            cap: FIXTURE_SIZE_CAP,
+        });
+    }
+    Ok(bytes)
+}
+
 /// Load a `tests/reference/<name>/` fixture directory.
 ///
 /// Reads `input.html` (required) and any `expected/page-{N:04}.png` files.
@@ -279,10 +549,34 @@ pub fn compare_png(
 /// is permitted — this is the update-goldens starting state.
 ///
 /// PNG bytes are stored raw; decoding is deferred until `compare_png` runs.
+///
+/// # Security
+///
+/// See [`FIXTURE_SIZE_CAP`] and [`read_bounded_fixture_file`] for the
+/// defense stack against untrusted fixture trees (raikiri-spike-d9y.6).
+/// Briefly: fixture-root-symlink reject, leaf-symlink reject, `!is_file()`
+/// reject, per-file 100 MiB size cap, [`MAX_EXPECTED_PAGES`] enumeration
+/// count cap, [`FIXTURE_AGGREGATE_BYTES_CAP`] aggregate bytes cap,
+/// canonical `page-{N:04}.png` name filter, canonicalized-prefix
+/// containment check, and a bounded read that catches TOCTOU-grow.  Symlinks anywhere in the fixture tree — including
+/// the fixture-directory anchor itself — are refused even when they'd
+/// resolve inside the intended root; this is a deliberate blanket policy
+/// (no real reference fixture currently uses symlinks) and tests pin the
+/// behavior.
 pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
-    let input_path = fixture_dir.join("input.html");
-    let input_html = match std::fs::read(&input_path) {
-        Ok(bytes) => bytes,
+    // Root-symlink pre-check: `canonicalize` follows symlinks silently, so
+    // a symlinked fixture root would redirect the containment anchor to the
+    // symlink target.  The declared blanket policy is "symlinks anywhere in
+    // the fixture tree are refused", and the root is part of that tree, so
+    // reject before canonicalize even sees it.  Non-existence is normal
+    // (missing input.html shape); other stat errors propagate as IoError.
+    match std::fs::symlink_metadata(fixture_dir) {
+        Ok(m) if m.file_type().is_symlink() => {
+            return Err(FixtureError::SymlinkRejected {
+                path: fixture_dir.to_path_buf(),
+            });
+        }
+        Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Err(FixtureError::MissingInputHtml {
                 fixture_dir: fixture_dir.to_path_buf(),
@@ -290,45 +584,136 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
         }
         Err(source) => {
             return Err(FixtureError::IoError {
-                path: input_path,
+                path: fixture_dir.to_path_buf(),
+                source,
+            });
+        }
+    }
+
+    // Canonicalize the fixture root once as the containment anchor.  If
+    // `fixture_dir` itself doesn't exist, preserve the legacy "missing
+    // input.html" error shape so existing callers see the same variant.
+    let canonical_root = match std::fs::canonicalize(fixture_dir) {
+        Ok(p) => p,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(FixtureError::MissingInputHtml {
+                fixture_dir: fixture_dir.to_path_buf(),
+            });
+        }
+        Err(source) => {
+            return Err(FixtureError::IoError {
+                path: fixture_dir.to_path_buf(),
                 source,
             });
         }
     };
 
-    let expected_dir = fixture_dir.join("expected");
-    let mut numbered: Vec<(u32, Vec<u8>)> = Vec::new();
-    if expected_dir.is_dir() {
-        let entries = std::fs::read_dir(&expected_dir).map_err(|source| FixtureError::IoError {
-            path: expected_dir.clone(),
-            source,
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|source| FixtureError::IoError {
+    let input_path = canonical_root.join("input.html");
+    let input_html = match read_bounded_fixture_file(&input_path, &canonical_root) {
+        Ok(bytes) => bytes,
+        Err(FixtureError::IoError { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Err(FixtureError::MissingInputHtml {
+                fixture_dir: fixture_dir.to_path_buf(),
+            });
+        }
+        Err(e) => return Err(e),
+    };
+
+    let expected_dir = canonical_root.join("expected");
+    // Guard `expected/` itself against symlink shenanigans.  Non-existent is
+    // fine (update-goldens starting state); anything present must be a real
+    // directory.  Doing the pre-check here means later per-entry symlink
+    // handling only has to worry about the child files, not an intermediate
+    // symlink at `expected/`.
+    let expected_meta = match std::fs::symlink_metadata(&expected_dir) {
+        Ok(m) => Some(m),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(source) => {
+            return Err(FixtureError::IoError {
                 path: expected_dir.clone(),
                 source,
-            })?;
-            let path = entry.path();
-            let name = match path.file_name().and_then(|s| s.to_str()) {
-                Some(n) => n,
-                None => continue,
-            };
-            // Match "page-XXXX.png" exactly; ignore README.md and other files.
-            let Some(stem) = name.strip_suffix(".png") else {
-                continue;
-            };
-            let Some(num_str) = stem.strip_prefix("page-") else {
-                continue;
-            };
-            let Ok(n) = num_str.parse::<u32>() else {
-                continue;
-            };
-            let bytes = std::fs::read(&path).map_err(|source| FixtureError::IoError {
-                path: path.clone(),
-                source,
-            })?;
-            numbered.push((n, bytes));
+            });
         }
+    };
+
+    let mut numbered: Vec<(u32, Vec<u8>)> = Vec::new();
+    // Running aggregate-bytes total across `expected/page-*.png` reads.
+    // See `FIXTURE_AGGREGATE_BYTES_CAP`.  Not counting `input.html` — the
+    // per-file cap already bounds it and it isn't attacker-multiplied.
+    let mut aggregate_bytes: u64 = 0;
+    if let Some(meta) = expected_meta {
+        let file_type = meta.file_type();
+        if file_type.is_symlink() {
+            return Err(FixtureError::SymlinkRejected { path: expected_dir });
+        }
+        if file_type.is_dir() {
+            let entries =
+                std::fs::read_dir(&expected_dir).map_err(|source| FixtureError::IoError {
+                    path: expected_dir.clone(),
+                    source,
+                })?;
+            for entry in entries {
+                let entry = entry.map_err(|source| FixtureError::IoError {
+                    path: expected_dir.clone(),
+                    source,
+                })?;
+                let path = entry.path();
+                let name = match path.file_name().and_then(|s| s.to_str()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                // Match "page-XXXX.png" exactly: 4-digit zero-padded index.
+                // Ignore README.md and other files.  Requiring exactly 4
+                // digits is load-bearing: without it, `page-0.png`,
+                // `page-00.png`, `page-0000.png`, `page-00000.png`, ...
+                // all parse to the same index and let an attacker
+                // multiplicatively amplify per-file caps with duplicates
+                // that only surface as NonContiguousPages *after* every
+                // one has been fully read into memory.
+                let Some(stem) = name.strip_suffix(".png") else {
+                    continue;
+                };
+                let Some(num_str) = stem.strip_prefix("page-") else {
+                    continue;
+                };
+                if num_str.len() != 4 || !num_str.bytes().all(|b| b.is_ascii_digit()) {
+                    continue;
+                }
+                let Ok(n) = num_str.parse::<u32>() else {
+                    continue;
+                };
+                // Aggregate cap #1 (count): reject before spending memory
+                // on the (cap + 1)th page.  See MAX_EXPECTED_PAGES.
+                if numbered.len() >= MAX_EXPECTED_PAGES {
+                    return Err(FixtureError::TooManyExpectedPages {
+                        fixture_dir: fixture_dir.to_path_buf(),
+                        cap: MAX_EXPECTED_PAGES,
+                    });
+                }
+                let bytes = read_bounded_fixture_file(&path, &canonical_root)?;
+                // Aggregate cap #2 (bytes): tally after read so the file
+                // just consumed drops on rejection (peak momentary memory
+                // = cap + FIXTURE_SIZE_CAP).  saturating_add can't
+                // realistically saturate here — per-file cap is 100 MiB
+                // and we've already reject-early via numbered.len() — but
+                // use saturating semantics as defense-in-depth against a
+                // future per-file cap relaxation.
+                aggregate_bytes = aggregate_bytes.saturating_add(bytes.len() as u64);
+                if aggregate_bytes > FIXTURE_AGGREGATE_BYTES_CAP {
+                    return Err(FixtureError::OversizedFixtureAggregate {
+                        fixture_dir: fixture_dir.to_path_buf(),
+                        total: aggregate_bytes,
+                        cap: FIXTURE_AGGREGATE_BYTES_CAP,
+                    });
+                }
+                numbered.push((n, bytes));
+            }
+        }
+        // If neither symlink nor dir (e.g. `expected/` is a plain file),
+        // treat it the same as "missing expected/" — no pages to enumerate.
+        // Callers already tolerate an empty expected_pages vector.
     }
 
     numbered.sort_by_key(|(n, _)| *n);
@@ -344,6 +729,10 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
     let expected_pages = numbered.into_iter().map(|(_, bytes)| bytes).collect();
 
     Ok(Fixture {
+        // Deliberate: keep the caller's supplied path (not canonical_root).
+        // Downstream diff-artifact paths and error messages read more
+        // naturally as the fixture the caller pointed at, and no consumer
+        // relies on `root` being canonicalized.
         root: fixture_dir.to_path_buf(),
         input_html,
         expected_pages,
@@ -580,5 +969,486 @@ mod type_tests {
     fn fixture_error_is_error_trait() {
         fn assert_error<E: std::error::Error>() {}
         assert_error::<FixtureError>();
+    }
+}
+
+/// Regression tests for the `load_fixture` defense stack introduced in
+/// raikiri-spike-d9y.6 (Codex security finding
+/// `0f198c3daa8c8191a18c1a9f16171669`).  See [`FIXTURE_SIZE_CAP`] for the
+/// full threat-model breakdown.
+///
+/// Symlink-based tests are gated on `#[cfg(unix)]` because
+/// `std::os::unix::fs::symlink` isn't cross-platform.  The non-symlink
+/// tests (oversized, happy path, `expected/`-not-a-dir) run everywhere.
+#[cfg(test)]
+mod defense_tests {
+    use super::*;
+    use std::io::Write;
+
+    /// 1x1 valid PNG (transparent black), for happy-path fixtures where
+    /// we only care that bytes are read faithfully (compare_png doesn't
+    /// run in these tests).  Bytes from a small hand-generated PNG.
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // signature
+        0x00, 0x00, 0x00, 0x0d, // IHDR length
+        0x49, 0x48, 0x44, 0x52, // "IHDR"
+        0x00, 0x00, 0x00, 0x01, // width 1
+        0x00, 0x00, 0x00, 0x01, // height 1
+        0x08, 0x06, 0x00, 0x00, 0x00, // bit depth 8, color type RGBA, ...
+        0x1f, 0x15, 0xc4, 0x89, // IHDR CRC
+        0x00, 0x00, 0x00, 0x0a, // IDAT length
+        0x49, 0x44, 0x41, 0x54, // "IDAT"
+        0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, // IDAT
+        0x0d, 0x0a, 0x2d, 0xb4, // IDAT CRC
+        0x00, 0x00, 0x00, 0x00, // IEND length
+        0x49, 0x45, 0x4e, 0x44, // "IEND"
+        0xae, 0x42, 0x60, 0x82, // IEND CRC
+    ];
+
+    fn write_input_html(dir: &Path, body: &[u8]) {
+        let mut f = std::fs::File::create(dir.join("input.html")).unwrap();
+        f.write_all(body).unwrap();
+    }
+
+    fn write_expected_png(dir: &Path, idx: usize) {
+        let expected = dir.join("expected");
+        std::fs::create_dir_all(&expected).unwrap();
+        let path = expected.join(format!("page-{idx:04}.png"));
+        std::fs::write(&path, TINY_PNG).unwrap();
+    }
+
+    #[test]
+    fn happy_path_load_succeeds_after_defense_added() {
+        // Baseline: a well-formed fixture still loads through the new
+        // symlink / size / containment / bounded-read stack.  If this
+        // fails, the defense over-rejects legitimate fixtures.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html><html><body>ok</body></html>");
+        write_expected_png(tmp.path(), 0);
+        write_expected_png(tmp.path(), 1);
+
+        let fixture = load_fixture(tmp.path()).expect("well-formed fixture must load");
+        assert!(fixture.input_html.starts_with(b"<!doctype html>"));
+        assert_eq!(fixture.expected_pages.len(), 2);
+        assert_eq!(fixture.expected_pages[0], TINY_PNG);
+        assert_eq!(fixture.expected_pages[1], TINY_PNG);
+    }
+
+    #[test]
+    fn oversized_input_html_is_rejected() {
+        // TOCTOU-independent path: an up-front `metadata.len() > cap`
+        // check trips before we even open the file.  Using a sparse file
+        // (`set_len(cap + 1)`) so we don't actually spend 100 MiB of disk.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("input.html");
+        let f = std::fs::File::create(&path).unwrap();
+        f.set_len(FIXTURE_SIZE_CAP + 1).unwrap();
+        drop(f);
+        write_expected_png(tmp.path(), 0);
+
+        match load_fixture(tmp.path()) {
+            Err(FixtureError::OversizedFixture { path: p, size, cap }) => {
+                assert_eq!(p.file_name().and_then(|f| f.to_str()), Some("input.html"));
+                assert_eq!(size, FIXTURE_SIZE_CAP + 1);
+                assert_eq!(cap, FIXTURE_SIZE_CAP);
+            }
+            other => panic!("expected OversizedFixture, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversized_expected_png_is_rejected() {
+        // Same size cap applies to expected/page-*.png entries.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        let png_path = expected.join("page-0000.png");
+        let f = std::fs::File::create(&png_path).unwrap();
+        f.set_len(FIXTURE_SIZE_CAP + 1).unwrap();
+        drop(f);
+
+        match load_fixture(tmp.path()) {
+            Err(FixtureError::OversizedFixture { path: p, size, cap }) => {
+                assert_eq!(
+                    p.file_name().and_then(|f| f.to_str()),
+                    Some("page-0000.png")
+                );
+                assert_eq!(size, FIXTURE_SIZE_CAP + 1);
+                assert_eq!(cap, FIXTURE_SIZE_CAP);
+            }
+            other => panic!("expected OversizedFixture, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn size_cap_boundary_is_accepted() {
+        // Silent over-reject canary (mirrors d9y.4 boundary test): a file
+        // whose size is exactly FIXTURE_SIZE_CAP must load — the check is
+        // `>` cap, not `>=`.  Sparse file keeps disk usage minimal.
+        let tmp = tempfile::tempdir().unwrap();
+        // Small input.html so we don't spend 100 MiB there too.
+        write_input_html(tmp.path(), b"<!doctype html>");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        let png_path = expected.join("page-0000.png");
+        let f = std::fs::File::create(&png_path).unwrap();
+        f.set_len(FIXTURE_SIZE_CAP).unwrap();
+        drop(f);
+
+        let fixture = load_fixture(tmp.path())
+            .expect("boundary-size (== FIXTURE_SIZE_CAP) fixture must load");
+        // Sparse file: reads back as `FIXTURE_SIZE_CAP` zero bytes.  Verify
+        // length only (allocating a 100 MiB assertion buffer just to
+        // compare would double the memory footprint of the test needlessly).
+        assert_eq!(fixture.expected_pages.len(), 1);
+        assert_eq!(fixture.expected_pages[0].len() as u64, FIXTURE_SIZE_CAP);
+    }
+
+    #[test]
+    fn expected_dir_as_plain_file_is_ignored_not_read() {
+        // If `expected/` is a plain regular file (not a dir), we treat it
+        // the same as "no expected/ at all" — no pages to enumerate, no
+        // read attempted on it.  This documents the fallback: the
+        // filesystem type check is up-front, before any expensive read.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        std::fs::write(tmp.path().join("expected"), b"not a directory").unwrap();
+
+        let fixture =
+            load_fixture(tmp.path()).expect("fixture with plain-file `expected` should still load");
+        assert!(fixture.expected_pages.is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn symlink_input_html_to_dev_zero_is_rejected() {
+        // Core threat: attacker replaces `input.html` with a symlink to
+        // `/dev/zero`.  Old `std::fs::read` would follow it and read
+        // forever, exhausting memory.  New defense: `symlink_metadata` +
+        // `is_symlink()` rejects at the leaf, before any read.
+        let tmp = tempfile::tempdir().unwrap();
+        let link = tmp.path().join("input.html");
+        std::os::unix::fs::symlink("/dev/zero", &link).unwrap();
+        write_expected_png(tmp.path(), 0);
+
+        match load_fixture(tmp.path()) {
+            Err(FixtureError::SymlinkRejected { path }) => {
+                assert_eq!(
+                    path.file_name().and_then(|f| f.to_str()),
+                    Some("input.html")
+                );
+            }
+            other => panic!("expected SymlinkRejected for /dev/zero symlink, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn symlink_expected_png_to_sensitive_file_is_rejected() {
+        // Second-file variant: attacker replaces a page PNG with a symlink
+        // to a sensitive local file.  Same leaf-symlink reject applies.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        // Target need only exist; use /etc/hostname (readable on virtually
+        // any unix host, small, non-sensitive to actually leak in a test).
+        std::os::unix::fs::symlink("/etc/hostname", expected.join("page-0000.png")).unwrap();
+
+        match load_fixture(tmp.path()) {
+            Err(FixtureError::SymlinkRejected { path }) => {
+                assert_eq!(
+                    path.file_name().and_then(|f| f.to_str()),
+                    Some("page-0000.png")
+                );
+            }
+            other => panic!("expected SymlinkRejected for expected/ png symlink, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn path_traversal_via_expected_symlink_is_rejected() {
+        // `expected/` itself is a symlink pointing outside the fixture
+        // root.  The `expected/` pre-check catches this as
+        // SymlinkRejected before we even try to enumerate.  Per the
+        // advisor: don't lock in a specific variant here — the important
+        // property is "not accepted"; any of the three
+        // security-related variants (SymlinkRejected / NotRegularFile /
+        // PathEscape) is a valid rejection.
+        let tmp_fixture = tempfile::tempdir().unwrap();
+        let tmp_outside = tempfile::tempdir().unwrap();
+        write_input_html(tmp_fixture.path(), b"<!doctype html>");
+        // Populate outside/ with a PNG so if the reject didn't fire we'd
+        // actually escape and read the outside file.
+        std::fs::write(tmp_outside.path().join("page-0000.png"), TINY_PNG).unwrap();
+        std::os::unix::fs::symlink(tmp_outside.path(), tmp_fixture.path().join("expected"))
+            .unwrap();
+
+        match load_fixture(tmp_fixture.path()) {
+            Err(FixtureError::SymlinkRejected { .. })
+            | Err(FixtureError::NotRegularFile { .. })
+            | Err(FixtureError::PathEscape { .. }) => {
+                // any of the containment gates firing is a correct reject
+            }
+            other => {
+                panic!("expected traversal reject (Symlink/NotRegular/PathEscape), got {other:?}")
+            }
+        }
+    }
+
+    /// Run `load_fixture(dir)` on a worker thread and fail-fast on timeout.
+    /// Prevents FIFO-regression tests from silently hanging the test suite
+    /// forever if the `!is_file()` gate ever regresses — in that case
+    /// `File::open`/`read_to_end` would block on the FIFO with no writer.
+    #[cfg(unix)]
+    fn load_fixture_with_watchdog(
+        dir: PathBuf,
+        timeout: std::time::Duration,
+    ) -> Result<Fixture, FixtureError> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let _ = tx.send(load_fixture(&dir));
+        });
+        match rx.recv_timeout(timeout) {
+            Ok(result) => {
+                // Best-effort join; thread has already sent its result.
+                let _ = handle.join();
+                result
+            }
+            Err(_) => panic!(
+                "load_fixture did not return within {:?} — FIFO gate has likely regressed \
+                 (File::open on a FIFO with no writer blocks indefinitely). \
+                 Leaving worker thread detached so the suite fails fast rather than hanging.",
+                timeout
+            ),
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fifo_as_input_html_is_rejected_not_blocked() {
+        // If an attacker places `input.html` as a FIFO with no writer,
+        // `File::open` + `read_to_end` blocks indefinitely.  The `!is_file()`
+        // gate rejects the FIFO up-front so the test process cannot hang.
+        // A watchdog wrapper converts a regression from "test hangs forever"
+        // into "test panics after 2 s with a clear message".
+        let tmp = tempfile::tempdir().unwrap();
+        let fifo = tmp.path().join("input.html");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo(1) should be available on unix hosts");
+        assert!(status.success(), "mkfifo failed for {}", fifo.display());
+        write_expected_png(tmp.path(), 0);
+
+        match load_fixture_with_watchdog(
+            tmp.path().to_path_buf(),
+            std::time::Duration::from_secs(2),
+        ) {
+            Err(FixtureError::NotRegularFile { path }) => {
+                assert_eq!(
+                    path.file_name().and_then(|f| f.to_str()),
+                    Some("input.html")
+                );
+            }
+            other => panic!("expected NotRegularFile for FIFO input.html, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fifo_at_expected_png_is_rejected_not_blocked() {
+        // Parallel to `fifo_as_input_html_is_rejected_not_blocked`, but
+        // pins the `!is_file()` gate for the second consumer of
+        // `read_bounded_fixture_file` — the `expected/page-*.png`
+        // enumeration path.  Same watchdog + same regression semantics:
+        // a gate regression here would `File::open` the FIFO and block.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        let fifo = expected.join("page-0000.png");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo(1) should be available on unix hosts");
+        assert!(status.success(), "mkfifo failed for {}", fifo.display());
+
+        match load_fixture_with_watchdog(
+            tmp.path().to_path_buf(),
+            std::time::Duration::from_secs(2),
+        ) {
+            Err(FixtureError::NotRegularFile { path }) => {
+                assert_eq!(
+                    path.file_name().and_then(|f| f.to_str()),
+                    Some("page-0000.png")
+                );
+            }
+            other => panic!("expected NotRegularFile for FIFO page-0000.png, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zero_byte_input_html_and_expected_png_load_successfully() {
+        // Boundary canary at the low end: a zero-byte file should load
+        // (`.take(cap + 1).read_to_end` yields 0 bytes; `is_file()` still
+        // true; size 0 ≤ cap).  Pins current behavior so a future hygiene
+        // check (`if metadata.len() == 0 { reject }`) doesn't silently
+        // change fixture semantics.  Cheap counterpart to
+        // `size_cap_boundary_is_accepted` at the high end.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        std::fs::write(expected.join("page-0000.png"), b"").unwrap();
+
+        let fixture =
+            load_fixture(tmp.path()).expect("zero-byte input.html + zero-byte page should load");
+        assert!(fixture.input_html.is_empty());
+        assert_eq!(fixture.expected_pages.len(), 1);
+        assert!(fixture.expected_pages[0].is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fixture_root_as_symlink_is_rejected() {
+        // Codex gate final review finding: `canonicalize(fixture_dir)`
+        // silently follows a symlinked root, redirecting the containment
+        // anchor to the target directory.  The declared blanket policy
+        // ("symlinks anywhere in the fixture tree are refused") must
+        // include the root itself.  Pre-check via `symlink_metadata` on
+        // the fixture root rejects with SymlinkRejected before
+        // canonicalize sees it.
+        let tmp_real = tempfile::tempdir().unwrap();
+        write_input_html(tmp_real.path(), b"<!doctype html>");
+        write_expected_png(tmp_real.path(), 0);
+
+        let tmp_parent = tempfile::tempdir().unwrap();
+        let link_root = tmp_parent.path().join("root-link");
+        std::os::unix::fs::symlink(tmp_real.path(), &link_root).unwrap();
+
+        match load_fixture(&link_root) {
+            Err(FixtureError::SymlinkRejected { path }) => {
+                assert_eq!(path, link_root);
+            }
+            other => panic!("expected SymlinkRejected for symlinked root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_page_indices_via_noncanonical_names_are_ignored() {
+        // Codex gate final review finding: `page-0.png`, `page-00.png`,
+        // `page-0000.png`, `page-00000.png` all parse to index 0.  Before
+        // the canonical-form filter, an attacker could pack N copies with
+        // different padding widths; each would pass per-file caps and be
+        // fully read into `numbered` before duplicate detection surfaced
+        // as NonContiguousPages — multiplying the per-file cap by the
+        // padding-width space.  Fix: require exactly 4 zero-padded digits
+        // in the enumeration filter; noncanonical forms are skipped
+        // (never opened, never read).  Test: place `page-0000.png` +
+        // several noncanonical duplicates; load should succeed with
+        // exactly one page (the canonical one).
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        write_expected_png(tmp.path(), 0);
+        let expected = tmp.path().join("expected");
+        // Noncanonical padding widths — all would parse to n=0.
+        // Populate with plausibly-huge fake bodies so a regression
+        // (reading them) would be easy to spot in mem accounting.
+        for name in ["page-0.png", "page-00.png", "page-00000.png"] {
+            std::fs::write(expected.join(name), vec![0u8; 8]).unwrap();
+        }
+        // Non-digit padding — should also be skipped.
+        std::fs::write(expected.join("page-000a.png"), vec![0u8; 8]).unwrap();
+
+        let fixture = load_fixture(tmp.path())
+            .expect("canonical page-0000.png with noncanonical siblings should load");
+        assert_eq!(
+            fixture.expected_pages.len(),
+            1,
+            "only the canonical page should enumerate"
+        );
+        assert_eq!(fixture.expected_pages[0], TINY_PNG);
+    }
+
+    #[test]
+    fn too_many_expected_pages_is_rejected_before_read() {
+        // Codex gate final review finding: aggregate memory is
+        // unbounded — an attacker packing `expected/` with many valid
+        // regular files, each ≤ FIXTURE_SIZE_CAP, can OOM even with the
+        // per-file cap.  Fix: MAX_EXPECTED_PAGES aggregate count cap
+        // checked before the (cap+1)th page is read.
+        //
+        // Place MAX_EXPECTED_PAGES + 1 canonical zero-byte pages: the
+        // walker enumerates them all (no I/O for content yet — just
+        // `read_dir`), each canonical name passes the syntactic filter,
+        // and the cap check `numbered.len() >= MAX_EXPECTED_PAGES` fires
+        // when the loop attempts to read the (cap+1)th entry.  Zero-byte
+        // files keep disk + total test cost minimal.
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        for n in 0..=MAX_EXPECTED_PAGES {
+            std::fs::write(expected.join(format!("page-{n:04}.png")), b"").unwrap();
+        }
+
+        match load_fixture(tmp.path()) {
+            Err(FixtureError::TooManyExpectedPages { fixture_dir, cap }) => {
+                assert_eq!(fixture_dir, tmp.path());
+                assert_eq!(cap, MAX_EXPECTED_PAGES);
+            }
+            other => panic!("expected TooManyExpectedPages, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversized_fixture_aggregate_is_rejected() {
+        // Codex gate final review round 2: the count cap alone still
+        // admits ~102 GiB (MAX_EXPECTED_PAGES × FIXTURE_SIZE_CAP).  The
+        // load-bearing aggregate defense is FIXTURE_AGGREGATE_BYTES_CAP.
+        // Verify a running-total-exceeded fixture rejects with the
+        // dedicated variant.
+        //
+        // Setup: 3 sparse files at 100 MiB each (well under per-file
+        // cap).  Aggregate = 300 MiB > 256 MiB cap → OversizedAggregate
+        // on the 3rd file's read.  Sparse `set_len` keeps disk usage
+        // trivial; `read_to_end` materializes the zeros (~300 MiB peak
+        // in this test's RAM — acceptable for a security regression
+        // that would otherwise let an attacker exhaust orders of
+        // magnitude more).
+        const PAGE_SIZE: u64 = 100 * 1024 * 1024;
+        let tmp = tempfile::tempdir().unwrap();
+        write_input_html(tmp.path(), b"<!doctype html>");
+        let expected = tmp.path().join("expected");
+        std::fs::create_dir(&expected).unwrap();
+        for n in 0..=2u32 {
+            let path = expected.join(format!("page-{n:04}.png"));
+            let f = std::fs::File::create(&path).unwrap();
+            f.set_len(PAGE_SIZE).unwrap();
+            drop(f);
+        }
+        // Sanity: our 3 files × 100 MiB = 300 MiB > 256 MiB cap.
+        // Compile-time to avoid clippy::assertions_on_constants.
+        const _: () = assert!(3 * PAGE_SIZE > FIXTURE_AGGREGATE_BYTES_CAP);
+
+        match load_fixture(tmp.path()) {
+            Err(FixtureError::OversizedFixtureAggregate {
+                fixture_dir,
+                total,
+                cap,
+            }) => {
+                assert_eq!(fixture_dir, tmp.path());
+                assert_eq!(cap, FIXTURE_AGGREGATE_BYTES_CAP);
+                // Total tallied through the (rejected-on-add) 3rd page.
+                assert!(
+                    total > FIXTURE_AGGREGATE_BYTES_CAP,
+                    "total {total} should exceed cap {cap}"
+                );
+            }
+            other => panic!("expected OversizedFixtureAggregate, got {other:?}"),
+        }
     }
 }
