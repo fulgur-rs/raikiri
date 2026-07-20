@@ -1,7 +1,10 @@
-//! Per-node computed CSS values (M1.4 scope: 4 inherited properties)。
+//! Per-node computed CSS values.
 //!
 //! Cascade + inheritance walk が populate。M1.6 で ComputedValues → taffy::Style
 //! + paint 用色情報の抽出 layer が入る予定。
+//!
+//! 現サポート property の一覧と inherited / non-inherited 分類は
+//! [`ComputedValues`] 定義の field doc comment を参照。
 
 use std::sync::Arc;
 
@@ -34,15 +37,24 @@ pub struct RunningTemplate {
     pub name: SmolStr,
 }
 
-/// Per-node computed style。M1.4 では 4 property のみ (全て inherited)。
+/// Per-node computed style。現サポート property と inheritance 分類は下記 field
+/// doc を参照 (inherited: color / font-family / font-size / font-weight、
+/// non-inherited: background-color / display / counter-* / content / string-set /
+/// running_templates)。
 ///
-/// `#[non_exhaustive]` により future property (background-color / display /
-/// margin / padding / width / height 等) の追加が non-breaking。
+/// `#[non_exhaustive]` により future property (margin / padding / width /
+/// height / border-* / box-shadow 等) の追加が non-breaking。
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComputedValues {
     /// `color`。inherited、initial: opaque black。
     pub color: CssColor,
+    /// `background-color`。**non-inherited**、initial: `transparent`
+    /// (= [`CssColor::TRANSPARENT`])。CSS Backgrounds 3 §2.2 "Base Color:
+    /// the background-color property"
+    /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>。
+    /// (raikiri-spike-0vv.7)
+    pub background_color: CssColor,
     /// `font-family` — 優先順位順。inherited、initial: `[Atom::from("serif")]`。
     pub font_family: Vec<Atom>,
     /// `font-size`。inherited、initial: `Length::Px(16.0)` (browser default medium)。
@@ -147,6 +159,9 @@ impl ComputedValues {
     pub fn initial() -> Self {
         Self {
             color: CssColor::BLACK,
+            // CSS Backgrounds 3 §2.2: background-color initial は `transparent`
+            // (raikiri-spike-0vv.7)。
+            background_color: CssColor::TRANSPARENT,
             font_family: vec![Atom::from("serif")],
             font_size: Length::Px(16.0),
             font_weight: 400,
@@ -176,15 +191,21 @@ impl ComputedValues {
     /// 親 node の computed values から child node の 「inheritance walk 開始値」
     /// を生成する。
     ///
-    /// - **inherited** property (color / font-family / font-size / font-weight)
-    ///   は親からコピー
-    /// - **non-inherited** property (display) は `initial()` と同じ値を保持
+    /// - **inherited** property は親からコピー
+    /// - **non-inherited** property は `initial()` と同じ値を保持
+    ///
+    /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
+    /// doc comment を canonical source として参照する
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align、
+    /// non-inherited: background-color / display / counter-* / content /
+    /// string-set / running_templates)。
     ///
     /// 新 property を追加する際は分類に応じてこの struct 直下の該当行を追加する
     /// (inherited なら parent からのコピー、non-inherited なら初期値を直接指定)。
     /// initial 値との drift を避けるため、対応する `initial()` の値も同時に更新
     /// すること。
-    /// (spec §M1.4a、raikiri-spike-m1.22)
+    /// (spec §M1.4a、raikiri-spike-m1.22 (display) / raikiri-spike-0vv.7
+    /// (background-color) / raikiri-spike-0vv.8 (text-align))
     pub fn inherit_from(parent: &Self) -> Self {
         // 直接 struct literal で初期化する — Self::initial() 経由だと
         // font_family の Vec を 1 度 allocate → drop してから parent から
@@ -197,6 +218,9 @@ impl ComputedValues {
             font_weight: parent.font_weight,
             // inherited (CSS Text 3 §6.1、raikiri-spike-0vv.8)。TextAlign は Copy。
             text_align: parent.text_align,
+            // non-inherited (CSS Backgrounds 3 §2.2、initial: `transparent`、
+            // raikiri-spike-0vv.7)
+            background_color: CssColor::TRANSPARENT,
             // non-inherited (initial 値、CSS §9.2.4 initial value of display)
             display: DisplayValue::Inline,
             // non-inherited (CSS Lists 3 §3、raikiri-spike-s85)。
@@ -231,6 +255,9 @@ mod tests {
     fn initial_values_match_spec() {
         let cv = ComputedValues::initial();
         assert_eq!(cv.color, CssColor::BLACK);
+        // CSS Backgrounds 3 §2.2: background-color initial は `transparent`
+        // (= rgba(0, 0, 0, 0)、raikiri-spike-0vv.7)
+        assert_eq!(cv.background_color, CssColor::TRANSPARENT);
         assert_eq!(cv.font_family, vec![Atom::from("serif")]);
         assert_eq!(cv.font_size, Length::Px(16.0));
         assert_eq!(cv.font_weight, 400);
@@ -272,6 +299,14 @@ mod tests {
                 r: 200,
                 g: 100,
                 b: 50,
+                a: 255,
+            },
+            // 0vv.7: non-inherited、literal fixture では明示 (child 側でも同じ initial に
+            // 戻ることを確認する downstream test は inherit_from_leaves_background_color_at_initial 参照)。
+            background_color: CssColor {
+                r: 10,
+                g: 20,
+                b: 30,
                 a: 255,
             },
             font_family: vec![Atom::from("sans-serif")],
@@ -316,6 +351,25 @@ mod tests {
         assert!(child.counter_reset.is_empty());
         assert!(child.counter_increment.is_empty());
         assert!(child.counter_set.is_empty());
+    }
+
+    #[test]
+    fn inherit_from_leaves_background_color_at_initial() {
+        // CSS Backgrounds 3 §2.2: background-color は non-inherited (spec 明記
+        // "Inheritance: no")。親が red でも child は initial (transparent) となる。
+        // 37n sibling pattern (display / counter-* / content / string-set /
+        // position の non-inheritance test 群を踏襲、raikiri-spike-0vv.7)。
+        let parent = ComputedValues {
+            background_color: CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(child.background_color, CssColor::TRANSPARENT);
     }
 
     #[test]
