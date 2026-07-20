@@ -335,6 +335,9 @@ fn beats(
 fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,
+        // CSS Backgrounds 3 §2.2 (raikiri-spike-0vv.7)。sibling `Color` と対称的な
+        // 単純代入 (non-inherited、per-node で cascade winner を直接反映)。
+        PropertyValue::BackgroundColor(c) => target.background_color = c,
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
         PropertyValue::FontWeight(w) => target.font_weight = w,
@@ -632,6 +635,51 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[div].display, DisplayValue::Block);
         assert_eq!(r.computed[span].display, DisplayValue::Inline);
+    }
+
+    // ── background-color wire-through (CSS Backgrounds 3 §2.2、raikiri-spike-0vv.7) ──
+
+    #[test]
+    fn background_color_wired_through_cascade_from_inline_style() {
+        // <div style="background-color: red"> → ComputedValues.background_color
+        // に RED が届く。parser → PropertyValue::BackgroundColor → apply_value →
+        // ComputedValues の end-to-end 疎通 smoke。sibling `color` の wire-through
+        // pattern (`type_selector_applies_color`) を踏襲。
+        let cv = cascade_doc("", "div", Some("background-color: red"));
+        assert_eq!(cv.background_color, RED);
+    }
+
+    #[test]
+    fn background_color_is_non_inherited_child_starts_from_initial_transparent() {
+        // CSS Backgrounds 3 §2.2 "Inheritance: no"。<p style='background-color:red'>
+        // の子 <span> は自身 rule がなく、background_color は initial (transparent)。
+        // 37n sibling pattern (display / counter-* / content / string-set /
+        // position の non-inheritance test 群を踏襲、raikiri-spike-0vv.7)。
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("background-color: red"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].background_color, RED,
+            "parent should carry its own background-color"
+        );
+        assert_eq!(
+            r.computed[span].background_color,
+            CssColor::TRANSPARENT,
+            "child should not inherit background-color (initial: transparent)"
+        );
+    }
+
+    #[test]
+    fn background_color_transparent_keyword_resolves_to_zero_alpha() {
+        // CSS Color 4 §6.3 "The transparent keyword": `transparent`
+        // = rgba(0, 0, 0, 0)。CssColor::TRANSPARENT が cascade winner として
+        // per-node に到達することを pin (parse_color の transparent Ident branch
+        // と CssColor::TRANSPARENT const の regression canary、raikiri-spike-0vv.7)。
+        let cv = cascade_doc("", "div", Some("background-color: transparent"));
+        assert_eq!(cv.background_color, CssColor::TRANSPARENT);
+        assert_eq!(cv.background_color.a, 0);
     }
 
     // ── counter-* wire-through (CSS Lists 3 §3、raikiri-spike-s85 M5 pre-work) ──

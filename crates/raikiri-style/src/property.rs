@@ -1,8 +1,11 @@
 //! CSS property value 型と per-property parser。
 //!
-//! M1.4 では color / font-family / font-size / font-weight の 4 property のみ。
-//! 認識できない property name / invalid value は `parse_value` が `None` を返す
-//! (spec 準拠の silent drop、caller である rule.rs で declaration ごと drop)。
+//! 現サポート property の一覧は [`parse_value`] の match arm を参照
+//! (color / background-color / font-family / font-size / font-weight /
+//! display / counter-reset / counter-increment / counter-set / content /
+//! string-set / position)。認識できない property name / invalid value は
+//! `parse_value` が `None` を返す (spec 準拠の silent drop、caller である
+//! rule.rs で declaration ごと drop)。
 //!
 //! `parse_value` は rule.rs の `DeclParser::parse_value` から呼ばれる。
 
@@ -77,6 +80,20 @@ impl CssColor {
         g: 0,
         b: 0,
         a: 255,
+    };
+    /// Fully transparent — `background-color` initial value に相当。
+    ///
+    /// CSS Color 4 §6.3 "The transparent keyword"
+    /// <https://www.w3.org/TR/css-color-4/#transparent-color>:
+    /// "The keyword `transparent` specifies a transparent black; it is a
+    /// shorthand for `rgba(0, 0, 0, 0)`". `background-color` の initial value は
+    /// CSS Backgrounds 3 §2.2 <https://www.w3.org/TR/css-backgrounds-3/#background-color>
+    /// で `transparent` と規定される。
+    pub const TRANSPARENT: Self = Self {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
     };
 }
 
@@ -336,11 +353,12 @@ pub enum PositionValue {
     Running(SmolStr),
 }
 
-/// M1.4 でサポートする property の resolved value。
+/// 現サポート property の resolved value (variant 一覧は下記、
+/// property name → variant mapping は [`parse_value`] 参照)。
 ///
-/// 認識できない property (`background-color` / `margin` / ...) や invalid value
-/// (`font-size: 1em` — em 未対応) は parser 段で `None` に落として rule から
-/// silently 除外される。
+/// 認識できない property (例: `margin` / `padding` / `border-*` — M6+ scope) や
+/// invalid value (例: `font-size: 1em` — em 未対応) は parser 段で `None` に
+/// 落として rule から silently 除外される。
 ///
 /// # `#[non_exhaustive]` semantics (fulgur / downstream consumer 向け verbatim)
 ///
@@ -377,6 +395,11 @@ pub enum PositionValue {
 pub enum PropertyValue {
     /// `color: <color>` — inherited、initial: black。
     Color(CssColor),
+    /// `background-color: <color>` — **non-inherited**、initial: `transparent`。
+    /// CSS Backgrounds 3 §2.2 "Base Color: the background-color property"
+    /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>。
+    /// (raikiri-spike-0vv.7)
+    BackgroundColor(CssColor),
     /// `font-family: <family-name>#` — inherited、initial: `[Atom::from("serif")]`。
     FontFamily(Vec<Atom>),
     /// `font-size: <length>` — inherited、initial: 16px。
@@ -471,6 +494,7 @@ pub enum PropertyValue {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PropertyKey {
     Color,
+    BackgroundColor,
     FontFamily,
     FontSize,
     FontWeight,
@@ -491,6 +515,7 @@ impl PropertyValue {
     pub fn key(&self) -> PropertyKey {
         match self {
             PropertyValue::Color(_) => PropertyKey::Color,
+            PropertyValue::BackgroundColor(_) => PropertyKey::BackgroundColor,
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
             PropertyValue::FontSize(_) => PropertyKey::FontSize,
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
@@ -512,6 +537,11 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
     let normalized_name = name.to_ascii_lowercase();
     match normalized_name.as_str() {
         "color" => parse_color(input).map(PropertyValue::Color),
+        // CSS Backgrounds 3 §2.2 <https://www.w3.org/TR/css-backgrounds-3/#background-color>
+        // "Base Color: the background-color property"。value grammar は `<color>`、
+        // 直上 sibling `color` arm と同じ parse_color reuse pattern。
+        // (raikiri-spike-0vv.7)
+        "background-color" => parse_color(input).map(PropertyValue::BackgroundColor),
         "font-family" => parse_font_family(input).map(PropertyValue::FontFamily),
         "font-size" => parse_font_size(input).map(PropertyValue::FontSize),
         "font-weight" => parse_font_weight(input).map(PropertyValue::FontWeight),
@@ -578,6 +608,12 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
 /// `cssparser::color` に残っている building block (`parse_hash_color` /
 /// `parse_named_color`) と、`rgb()` / `rgba()` function の手動 parse で
 /// hex / named / rgb() の 3 形式をカバーする (m1.4 scope)。
+///
+/// `transparent` keyword は CSS Color 4 §6.3 "The transparent keyword"
+/// <https://www.w3.org/TR/css-color-4/#transparent-color> で
+/// `rgba(0, 0, 0, 0)` の shorthand と規定される — `parse_named_color` の
+/// (r, g, b) は alpha を返さないため、Ident arm 手前で明示 branch して
+/// [`CssColor::TRANSPARENT`] を返す (raikiri-spike-0vv.7)。
 fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
     let token = input.next().ok()?.clone();
     match token {
@@ -589,6 +625,9 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
                 b,
                 a: clamp_unit_f32(alpha),
             })
+        }
+        Token::Ident(ref name) if name.eq_ignore_ascii_case("transparent") => {
+            Some(CssColor::TRANSPARENT)
         }
         Token::Ident(ref name) => {
             let (r, g, b) = parse_named_color(name).ok()?;
@@ -1291,6 +1330,111 @@ mod tests {
     }
 
     #[test]
+    fn color_parse_transparent_keyword_returns_zero_alpha() {
+        // CSS Color 4 §6.3 "The transparent keyword": `transparent`
+        // = rgba(0, 0, 0, 0)。Ident arm hardcodes a=255、明示 branch が無ければ
+        // transparent が到達しても opaque black (`{0,0,0,255}`) になる bug の
+        // regression pin (raikiri-spike-0vv.7、advisor calibration)。
+        assert_eq!(
+            parse("transparent", "color"),
+            Some(PropertyValue::Color(CssColor::TRANSPARENT))
+        );
+    }
+
+    // ── background-color (CSS Backgrounds 3 §2.2、raikiri-spike-0vv.7) ──
+    //
+    // 5-sample accept pin (task description Verification #4):
+    // named / hex / rgb() / rgba() / transparent が
+    // `Some(PropertyValue::BackgroundColor(<exact RGBA>))` を返す。
+    //
+    // exact RGBA assert は advisor calibration: `Some(_)` の loose form だと
+    // `parse_color` の Ident arm が transparent に a=255 を返す regression
+    // (opaque black に落ちる bug) を silent pass してしまうため、
+    // 5 sample 全て CssColor 値まで pin する。
+
+    #[test]
+    fn background_color_parse_named() {
+        assert_eq!(
+            parse("red", "background-color"),
+            Some(PropertyValue::BackgroundColor(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }))
+        );
+    }
+
+    #[test]
+    fn background_color_parse_hex() {
+        assert_eq!(
+            parse("#ff0000", "background-color"),
+            Some(PropertyValue::BackgroundColor(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }))
+        );
+    }
+
+    #[test]
+    fn background_color_parse_rgb() {
+        assert_eq!(
+            parse("rgb(255, 0, 0)", "background-color"),
+            Some(PropertyValue::BackgroundColor(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }))
+        );
+    }
+
+    #[test]
+    fn background_color_parse_rgba() {
+        // rgba() alpha は number literal (0.0..=1.0)、clamp_unit_f32 で
+        // 0..=255 に mapping。0.5 → 128 (rounding は cssparser 準拠)。
+        assert_eq!(
+            parse("rgba(0, 0, 0, 0.5)", "background-color"),
+            Some(PropertyValue::BackgroundColor(CssColor {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 128
+            }))
+        );
+    }
+
+    #[test]
+    fn background_color_parse_transparent() {
+        // CSS Color 4 §6.3 "The transparent keyword": shorthand for
+        // rgba(0, 0, 0, 0)。spec initial value と一致 (CSS Backgrounds 3 §2.2)。
+        assert_eq!(
+            parse("transparent", "background-color"),
+            Some(PropertyValue::BackgroundColor(CssColor::TRANSPARENT))
+        );
+    }
+
+    #[test]
+    fn background_color_parse_invalid_returns_none() {
+        // `none` は <color> grammar に含まれない spec-invalid keyword (task
+        // Non-goals category (a) spec-invalid → drop)。
+        assert_eq!(parse("none", "background-color"), None);
+        // hsl() は CSS Color 4 spec-valid だが Sprint 12 では未対応 (task
+        // Non-goals category (b) milestone subset、CSS Color 4 拡張は defer)。
+        assert_eq!(parse("hsl(0, 100%, 50%)", "background-color"), None);
+    }
+
+    #[test]
+    fn background_color_key_returns_background_color() {
+        // PropertyValue::BackgroundColor → PropertyKey::BackgroundColor (cascade
+        // winner 選択の discriminant 導線、sibling `Color` key() と対称)。
+        let v = PropertyValue::BackgroundColor(CssColor::TRANSPARENT);
+        assert_eq!(v.key(), PropertyKey::BackgroundColor);
+    }
+
+    #[test]
     fn font_size_parse_px() {
         assert_eq!(
             parse("16px", "font-size"),
@@ -1360,8 +1504,11 @@ mod tests {
 
     #[test]
     fn unknown_property_returns_none() {
+        // `margin` / `padding` は現時点で未実装 property (0vv breakdown 次 Wave)、
+        // parse_value dispatch で fall-through → None。
+        // (`background-color` は 0vv.7 で追加された = ここから除外)
         assert_eq!(parse("100px", "margin"), None);
-        assert_eq!(parse("red", "background-color"), None);
+        assert_eq!(parse("10px", "padding"), None);
     }
 
     // ── Display (M1.4a、raikiri-spike-m1.22) ─────────────────────
