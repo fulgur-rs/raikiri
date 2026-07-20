@@ -21,6 +21,36 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+/// Open a regular file with the leaf-swap TOCTOU defense stack.
+///
+/// The unix impl passes `O_NOFOLLOW` to `File::open`, so a symlink swapped in
+/// between `read_bounded_fixture_file`'s pre-open `symlink_metadata` check and
+/// this `open` call cannot cause the resolver to follow a fresh target.  If a
+/// symlink is opened, the syscall returns `ELOOP`; callers map that errno to
+/// `FixtureError::SymlinkRejected` so the semantic matches the pre-open reject.
+///
+/// The non-unix fallback keeps the current default `File::open` semantics.
+/// Follow-up Windows equivalent tracked in raikiri-spike-<TBD-windows>.
+///
+/// bd raikiri-spike-8yu.
+#[cfg(unix)]
+#[allow(dead_code)]
+fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+#[allow(dead_code)]
+fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    // Follow-symlink-at-open is unresolved on non-unix; tracked in
+    // raikiri-spike-<TBD-windows>.  Regain parity when the follow-up lands.
+    std::fs::File::open(path)
+}
+
 /// Maximum per-fixture-file size cap (input.html or expected/page-*.png).
 ///
 /// Mirrors [`raikiri_dom::fonts::FONT_SIZE_CAP`] (100 MiB) as a "large but
@@ -1456,6 +1486,29 @@ mod defense_tests {
                 );
             }
             other => panic!("expected OversizedFixtureAggregate, got {other:?}"),
+        }
+    }
+
+    /// safe_open must reject a symlink at open time by returning ELOOP on unix.
+    /// This is the load-bearing regression pin for raikiri-spike-8yu: without
+    /// the O_NOFOLLOW custom_flags call, this test would pass through and read
+    /// the symlink target instead of failing.
+    #[cfg(unix)]
+    #[test]
+    fn safe_open_rejects_symlink_with_eloop() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.bin");
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"target contents")
+            .unwrap();
+        let link = dir.path().join("link.bin");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        match safe_open(&link) {
+            Err(e) if e.raw_os_error() == Some(libc::ELOOP) => {}
+            Ok(_) => panic!("safe_open followed the symlink (O_NOFOLLOW not applied)"),
+            Err(other) => panic!("expected ELOOP, got {other:?}"),
         }
     }
 }
