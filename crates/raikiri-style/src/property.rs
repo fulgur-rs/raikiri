@@ -139,6 +139,60 @@ pub enum Length {
     Pt(f32),
 }
 
+/// `line-height` property の value (Author CSS seed for m4+ inline layout)。
+///
+/// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
+/// (<https://www.w3.org/TR/css-inline-3/#line-height-property>)、value grammar
+/// `normal | <number [0,∞]> | <length-percentage [0,∞]>`。
+///
+/// 3 variant で spec の top-level alternative を保持する:
+///
+/// - [`Normal`](Self::Normal) — spec initial value。resolve は下流 (paint) が
+///   font metrics ascent+descent 相当を採用 (`parley` の default line-height 挙動)。
+/// - [`Number`](Self::Number) — unitless multiplier。`line-height: 1.5` は
+///   使用要素の computed `font-size` × 1.5。**spec special behavior**: unitless
+///   number は **specified value を child が inherit する** (資源 resolve せず
+///   raw multiplier を伝える) — cascade static side では raw value を保持し、
+///   Length variant と別 variant にすることで number-vs-length semantics 差を
+///   下流 (paint) が復元可能にする (§5.1 "When a child element inherits...")。
+/// - [`Length`](Self::Length) — `<length-percentage>` payload。`Length::Percent`
+///   の semantics は **percentage of the element's own font-size** (§5.1)。
+///   `Length::Em`/`Rem`/`Px`/`Pt` は通常の length resolve context に従う。
+///
+/// # Non-negative constraint
+///
+/// spec grammar `<number [0,∞]>` / `<length-percentage [0,∞]>` により負値は
+/// invalid → parser 側で drop ([`parse_line_height`] の post-filter)。g04
+/// category (a) spec-invalid → drop: spec grammar が range を parse-time で
+/// 制約しているため、reject 自体が spec 準拠 (stricter ではなく match)。
+///
+/// # Primary source
+///
+/// - CSS Inline 3 §5.1 "Line Spacing: the line-height property"
+///   (<https://www.w3.org/TR/css-inline-3/#line-height-property>) —
+///   "specifies the box's preferred line height, which is used in calculating
+///   its layout bounds"
+///
+/// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
+/// 変数追加が既存 pattern-match を break しない forward-compat 契約、sibling
+/// [`Length`] / [`DisplayValue`] と同 pattern)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineHeight {
+    /// `normal` — spec initial value。paint 側が font metrics ascent+descent
+    /// 相当の default line-height を採用する。
+    Normal,
+    /// `<number [0,∞]>` — unitless multiplier。`1.5` → `Number(1.5)`。
+    /// resolve 時 使用要素の computed `font-size` × 本 value。
+    /// number variant は spec 上 child が **specified value** を inherit する
+    /// (Length variant と別扱いの load-bearing distinction)。
+    Number(f32),
+    /// `<length-percentage [0,∞]>` — length or percentage。
+    /// `24px` → `Length(Length::Px(24.0))`、`150%` → `Length(Length::Percent(150.0))`。
+    /// `Length::Percent` は spec §5.1 で「element's own font-size に対する比率」。
+    Length(Length),
+}
+
 /// `<counter-style>` の parse 結果。
 ///
 /// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>
@@ -434,6 +488,13 @@ pub enum PropertyValue {
     FontSize(Length),
     /// `font-weight: <integer>` — inherited、initial: 400。
     FontWeight(u16),
+    /// `line-height: normal | <number> | <length-percentage>` — inherited、
+    /// initial: [`LineHeight::Normal`]。CSS Inline 3 §5.1
+    /// <https://www.w3.org/TR/css-inline-3/#line-height-property>。
+    /// number-vs-length distinction は下流 (paint) が resolve context に落とす
+    /// ための load-bearing 情報 (unitless number は specified-value inherit の
+    /// spec special behavior、[`LineHeight`] doc 参照)。
+    LineHeight(LineHeight),
     /// `display: <block-or-inline>` — non-inherited、initial: inline
     /// (spec §M1.4a、raikiri-spike-m1.22)。
     Display(DisplayValue),
@@ -525,6 +586,7 @@ pub enum PropertyKey {
     FontFamily,
     FontSize,
     FontWeight,
+    LineHeight,
     Display,
     CounterReset,
     CounterIncrement,
@@ -545,6 +607,7 @@ impl PropertyValue {
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
             PropertyValue::FontSize(_) => PropertyKey::FontSize,
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
+            PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
             PropertyValue::Display(_) => PropertyKey::Display,
             PropertyValue::CounterReset(_) => PropertyKey::CounterReset,
             PropertyValue::CounterIncrement(_) => PropertyKey::CounterIncrement,
@@ -566,6 +629,10 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "font-family" => parse_font_family(input).map(PropertyValue::FontFamily),
         "font-size" => parse_font_size(input).map(PropertyValue::FontSize),
         "font-weight" => parse_font_weight(input).map(PropertyValue::FontWeight),
+        // CSS Inline 3 §5.1 line-height (raikiri-spike-0vv.9)。
+        // `normal` / `<number [0,∞]>` / `<length-percentage [0,∞]>` を受理、
+        // 負値と其他 keyword は spec grammar 違反として drop。
+        "line-height" => parse_line_height(input).map(PropertyValue::LineHeight),
         "display" => parse_display(input).map(PropertyValue::Display),
         // CSS Lists 3 §3 counter properties (raikiri-spike-s85、M5 pre-work)。
         // spec default: reset = 0、increment = 1、set = 0。
@@ -787,6 +854,85 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
         Length::Px(v) if v >= 0.0 => Some(Length::Px(v)),
         // (b) milestone subset: Em/Rem/Pt は spec-valid だが font-size context resolve
         // 未実装のため drop、negative Px も spec 上 invalid のため drop。
+        _ => None,
+    }
+}
+
+/// `line-height: normal | <number> | <length-percentage>` を parse する。
+///
+/// Grammar: CSS Inline 3 §5.1 "Line Spacing: the line-height property"
+/// (<https://www.w3.org/TR/css-inline-3/#line-height-property>) — value
+/// alternative は 3 branch:
+///
+/// 1. `normal` keyword → [`LineHeight::Normal`]
+/// 2. `<number [0,∞]>` bare number (Token::Number、unit なし) → [`LineHeight::Number`]
+/// 3. `<length-percentage [0,∞]>` → [`LineHeight::Length`] with reused Length variant
+///
+/// # Number vs Length grammar distinction
+///
+/// spec は `<number>` と `<length-percentage>` を別 alternative として持つため
+/// 1 token レベルで区別が要る (Token::Number = unitless / Token::Dimension =
+/// unit-bearing / Token::Percentage)。unitless `1.5` と dimensioned `1.5em` を
+/// 別 variant に mapping することで、下流 (paint) が unitless number の
+/// spec special behavior "specified value を child が inherit する"
+/// (§5.1 "When a child element inherits a computed value...") と、length の
+/// 通常 resolve context を区別できる。
+///
+/// # Ordering
+///
+/// `normal` (`try_parse` + `expect_ident_matching`) → bare number
+/// (`try_parse(|i| i.expect_number())` — Dimension/Percentage に対しては rewind
+/// して失敗) → [`parse_length_value`] (`allow_percentage = true`)。この順で
+/// `1.5` は Number branch、`1.5em` / `1.5px` / `150%` は Length branch に確定分岐。
+///
+/// # Non-negative
+///
+/// spec `[0,∞]` により全 branch で negative reject:
+/// - Number branch: `n >= 0.0` guard、負なら `None` = declaration drop
+/// - Length branch: 全 payload の inner f32 に `>= 0.0` guard、負なら drop
+///
+/// g04 category (a) spec-invalid → drop: spec grammar が range を parse-time
+/// で制約するため、reject 自体が spec 準拠 (下段 Non-goals arm と同 label)。
+///
+/// # Non-goals (g04 3-category labels)
+///
+/// - **(b) milestone subset**: global keyword (`inherit` / `initial` / `unset` /
+///   `revert` / `revert-layer`) は Epic 7 対象、silent drop
+/// - **(b) milestone subset**: `calc()` / `var()` は Epic 5 (css-variables-and-math)
+///   対象、silent drop
+/// - **(a) spec-invalid → drop**: `<number>` / `<length-percentage>` の負値、
+///   `auto` / `medium` 等 spec-invalid keyword は spec grammar 違反、drop
+fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
+    // 1. `normal` keyword — spec initial value。
+    if input
+        .try_parse(|i| i.expect_ident_matching("normal"))
+        .is_ok()
+    {
+        return Some(LineHeight::Normal);
+    }
+    // 2. bare `<number [0,∞]>` — Token::Number (unit なし)。
+    //    Dimension (`1.5em`) / Percentage (`150%`) に対しては `expect_number` が
+    //    Err を返し `try_parse` が rewind するため、Length branch へフォールスルー。
+    //    Number token を commit した後は必ずここで確定させる (accept か drop):
+    //    `try_parse` は `Ok` の path で cursor を戻さないため、外側 `&& n >= 0.0`
+    //    で reject すると consumed cursor のまま Length branch に落ち、
+    //    `line-height: -0.5 20px` が `20px` として silently accept される
+    //    (spec-invalid CSS を通す correctness bug、raikiri-spike-0vv.9 quality)。
+    if let Ok(n) = input.try_parse(|i| i.expect_number()) {
+        // spec `<number [0,∞]>` 違反 → declaration drop (Length branch へ落とさない)。
+        return (n >= 0.0).then_some(LineHeight::Number(n));
+    }
+    // 3. `<length-percentage [0,∞]>` — helper で 5 unit + `%` を受理、
+    //    negative は post-filter で drop (helper 自体は sign check しない仕様、
+    //    parse_length_value doc "Sign / range" 参照)。
+    let l = parse_length_value(input, true)?;
+    match l {
+        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v)
+            if v >= 0.0 =>
+        {
+            Some(LineHeight::Length(l))
+        }
+        // spec `[0,∞]`: 負値は grammar 違反 → declaration drop。
         _ => None,
     }
 }
@@ -2628,6 +2774,196 @@ mod tests {
         assert_eq!(parse_length("1.5EM", false), Some(Length::Em(1.5)));
         assert_eq!(parse_length("2Rem", false), Some(Length::Rem(2.0)));
         assert_eq!(parse_length("14Pt", false), Some(Length::Pt(14.0)));
+    }
+
+    // ── line-height (CSS Inline 3 §5.1、raikiri-spike-0vv.9) ────────────────
+    //
+    // Verification 5/6/7 の spec-derived (9y9(a) + wzj): grammar `normal |
+    // <number [0,∞]> | <length-percentage [0,∞]>` — 4 accept branch + negative
+    // reject + Number vs Length variant distinction を pin する。
+    //
+    // 37n sibling: parse_display (keyword accept)、parse_font_size (Length
+    // post-filter for non-negative)、parse_length_value (unit dispatch)。
+
+    #[test]
+    fn line_height_parse_normal_keyword() {
+        // Verification 5.1: `line-height: normal` → LineHeight::Normal
+        assert_eq!(
+            parse("normal", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Normal))
+        );
+    }
+
+    #[test]
+    fn line_height_parse_bare_number() {
+        // Verification 5.2 + 6: `line-height: 1.5` (bare number, no unit) →
+        // LineHeight::Number(1.5)。Token::Number arm を通り Length branch には
+        // 落ちない (Number vs Length distinction load-bearing、下流 special
+        // behavior "specified value inherit" のための variant tag)。
+        assert_eq!(
+            parse("1.5", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Number(1.5)))
+        );
+    }
+
+    #[test]
+    fn line_height_parse_length_px() {
+        // Verification 5.3: `line-height: 24px` → LineHeight::Length(Px(24.0))
+        assert_eq!(
+            parse("24px", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Length(Length::Px(
+                24.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn line_height_parse_length_percentage() {
+        // Verification 5.4: `line-height: 150%` → LineHeight::Length(Percent(150.0))
+        // parse_length_value(allow_percentage=true) が Percent branch を有効化。
+        assert_eq!(
+            parse("150%", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Length(
+                Length::Percent(150.0)
+            )))
+        );
+    }
+
+    #[test]
+    fn line_height_number_vs_em_are_distinct_variants() {
+        // Verification 6: `1.5` (unitless) と `1.5em` (dimensioned) は同じ scalar
+        // でも別 variant に mapping (Token::Number vs Token::Dimension で分岐)。
+        // spec §5.1 unitless number は child が specified value を inherit する
+        // special behavior、Length variant は通常 resolve — 下流が区別する必要。
+        let number = parse("1.5", "line-height");
+        let length_em = parse("1.5em", "line-height");
+        assert_eq!(
+            number,
+            Some(PropertyValue::LineHeight(LineHeight::Number(1.5)))
+        );
+        assert_eq!(
+            length_em,
+            Some(PropertyValue::LineHeight(LineHeight::Length(Length::Em(
+                1.5
+            ))))
+        );
+        assert_ne!(number, length_em, "Number and Length must be distinct");
+    }
+
+    #[test]
+    fn line_height_accepts_length_em_rem_pt() {
+        // 5 unit sample の length-percentage branch smoke — parse_length_value
+        // helper との integration を pin (Task 0vv.3 helper 経由の em/rem/pt)。
+        assert_eq!(
+            parse("1.2em", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Length(Length::Em(
+                1.2
+            ))))
+        );
+        assert_eq!(
+            parse("1rem", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Length(Length::Rem(
+                1.0
+            ))))
+        );
+        assert_eq!(
+            parse("12pt", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Length(Length::Pt(
+                12.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn line_height_accepts_zero_number_and_length() {
+        // spec `[0,∞]`: 0 は境界の valid value。
+        assert_eq!(
+            parse("0", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Number(0.0)))
+        );
+        assert_eq!(
+            parse("0px", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Length(Length::Px(
+                0.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn line_height_rejects_negative_number() {
+        // Verification 7: `<number [0,∞]>` — 負値は spec grammar 違反 → drop。
+        assert_eq!(parse("-1.5", "line-height"), None);
+    }
+
+    #[test]
+    fn line_height_rejects_negative_number_with_trailing_length() {
+        // Regression (reviewer:quality raikiri-spike-0vv.9): Number branch は
+        // Token::Number を commit した後 fallthrough すべきでない。fallthrough
+        // していた旧実装では `-0.5 20px` が Length branch で `20px` を拾い
+        // silently accept されていた (spec-invalid → 本来 declaration drop)。
+        // 現行: Number 到達 = 確定、`[0,∞]` 違反は declaration drop、
+        // 後続 token は expect_exhausted なくとも parse_length_value 側で拾わない。
+        assert_eq!(parse("-0.5 20px", "line-height"), None);
+        // 対称: negative number + em / % も同じく drop。
+        assert_eq!(parse("-0.5 1em", "line-height"), None);
+        assert_eq!(parse("-1.0 50%", "line-height"), None);
+    }
+
+    #[test]
+    fn line_height_rejects_negative_length() {
+        // Verification 7: `<length-percentage [0,∞]>` — 負 length は drop。
+        assert_eq!(parse("-10px", "line-height"), None);
+        assert_eq!(parse("-1em", "line-height"), None);
+    }
+
+    #[test]
+    fn line_height_rejects_negative_percentage() {
+        // Verification 7: 負 percentage も spec `[0,∞]` 違反 → drop。
+        assert_eq!(parse("-50%", "line-height"), None);
+    }
+
+    #[test]
+    fn line_height_rejects_unknown_keyword() {
+        // spec `normal` 以外の ident (Epic 7 global keyword 含む) は本 milestone
+        // scope 外、silent drop (`auto` / `medium` は spec-invalid、CSS-wide
+        // keyword `inherit` 等は milestone subset で defer)。
+        assert_eq!(parse("auto", "line-height"), None);
+        assert_eq!(parse("medium", "line-height"), None);
+        assert_eq!(parse("inherit", "line-height"), None);
+    }
+
+    #[test]
+    fn line_height_rejects_unsupported_unit() {
+        // parse_length_value が silent drop する unit (`vw` / `ch` 等) は
+        // helper 側で `None` → line-height parse も declaration drop。
+        assert_eq!(parse("10vw", "line-height"), None);
+        assert_eq!(parse("10ch", "line-height"), None);
+    }
+
+    #[test]
+    fn line_height_normal_is_case_insensitive() {
+        // CSS spec: keyword ident は ASCII case-insensitive
+        // (expect_ident_matching が case-insensitive)。
+        assert_eq!(
+            parse("NORMAL", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Normal))
+        );
+        assert_eq!(
+            parse("Normal", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Normal))
+        );
+    }
+
+    #[test]
+    fn line_height_key_maps_to_line_height_property_key() {
+        // PropertyValue::LineHeight → PropertyKey::LineHeight (cascade winner 選択の
+        // discriminant integrity、既存 sibling font_size / display と同じ pattern)。
+        let v = PropertyValue::LineHeight(LineHeight::Normal);
+        assert_eq!(v.key(), PropertyKey::LineHeight);
+        let v = PropertyValue::LineHeight(LineHeight::Number(1.5));
+        assert_eq!(v.key(), PropertyKey::LineHeight);
+        let v = PropertyValue::LineHeight(LineHeight::Length(Length::Px(24.0)));
+        assert_eq!(v.key(), PropertyKey::LineHeight);
     }
 
     #[test]

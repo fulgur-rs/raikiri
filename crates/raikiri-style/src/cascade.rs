@@ -338,6 +338,11 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
         PropertyValue::FontWeight(w) => target.font_weight = w,
+        // CSS Inline 3 §5.1: line-height は inherited、cascade winner が
+        // raw value (Normal / Number / Length) を保持。number-vs-length
+        // distinction は下流 (paint) の resolve context で意味を持つ
+        // (raikiri-spike-0vv.9)。
+        PropertyValue::LineHeight(lh) => target.line_height = lh,
         PropertyValue::Display(d) => target.display = d,
         // counter-* は M5 pre-work (raikiri-spike-s85) — parse 結果をそのまま
         // computed value に格納。counter tree resolve は M5 本編。
@@ -632,6 +637,39 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[div].display, DisplayValue::Block);
         assert_eq!(r.computed[span].display, DisplayValue::Inline);
+    }
+
+    // ── line-height wire-through (CSS Inline 3 §5.1、raikiri-spike-0vv.9) ──
+
+    #[test]
+    fn line_height_wired_through_cascade_from_inline_style() {
+        // <p style="line-height: 1.5"> → ComputedValues.line_height に
+        // LineHeight::Number(1.5) が届く。parser → PropertyValue::LineHeight
+        // → apply_value → ComputedValues の end-to-end 疎通 smoke
+        // (font-size / color と同じ inherited property pattern)。
+        use crate::property::LineHeight;
+        let cv = cascade_doc("", "p", Some("line-height: 1.5"));
+        assert_eq!(cv.line_height, LineHeight::Number(1.5));
+    }
+
+    #[test]
+    fn line_height_is_inherited_child_carries_parent_number() {
+        // spec §5.1 "Inheritance: Yes"。<p style="line-height: 1.5"> の子 <span>
+        // は自身 rule 無しでも parent の LineHeight::Number(1.5) を継承する
+        // (unitless number の specified-value inherit special behavior は
+        // cascade static side では raw value 継承として観測される)。
+        use crate::property::LineHeight;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("line-height: 1.5"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].line_height, LineHeight::Number(1.5));
+        assert_eq!(
+            r.computed[span].line_height,
+            LineHeight::Number(1.5),
+            "line-height must be inherited (§5.1 Yes)"
+        );
     }
 
     // ── counter-* wire-through (CSS Lists 3 §3、raikiri-spike-s85 M5 pre-work) ──
