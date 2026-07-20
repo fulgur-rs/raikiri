@@ -16,5 +16,8 @@ bytes         = { workspace = true }
 url           = { workspace = true }
 rustc-hash    = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [lints]
 workspace = true
