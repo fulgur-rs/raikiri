@@ -49,8 +49,10 @@ pub struct ComputedValues {
     pub font_size: Length,
     /// `font-weight`。inherited、initial: 400 (normal)。
     pub font_weight: u16,
-    /// `display`。**non-inherited**、initial: `DisplayValue::Inline` (CSS §9.2.4)。
-    /// (spec §M1.4a、raikiri-spike-m1.22)
+    /// `display`。**non-inherited**、initial: `DisplayValue::Inline`
+    /// (CSS Display 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>)。
+    /// Sprint 12 scope: `block` / `inline` / `inline-block` / `none`
+    /// (raikiri-spike-0vv.4、詳細は [`DisplayValue`] doc)。
     pub display: DisplayValue,
     /// `counter-reset`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
     /// counter-name + initial value pairs。M5 pre-work (raikiri-spike-s85)、
