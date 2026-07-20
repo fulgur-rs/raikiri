@@ -348,15 +348,44 @@ pub enum ContentComponent {
     Content { keyword: ContentTextKeyword },
 }
 
-/// `display` property の value。M1.4a scope では `block` / `inline` のみ。
+/// `display` property の value。
 ///
-/// spec §M1.4a Non-goals: `table*`, `flex`, `grid`, `none` 等は M6+。
-/// (raikiri-spike-m1.22)
+/// CSS Display 3 §2 "Box Layout Modes: the display property"
+/// <https://www.w3.org/TR/css-display-3/#propdef-display>:
+/// value grammar は
+/// `[ <display-outside> || <display-inside> ] | <display-listitem> |
+/// <display-internal> | <display-box> | <display-legacy>`、initial value
+/// は `inline`、not inherited。
+///
+/// 現状受理する keyword は Sprint 12 scope: `block` / `inline` / `inline-block`
+/// / `none` の 4 値 (raikiri-spike-0vv.4)。`flex` / `grid` / `table*` /
+/// `list-item` / `flow-root` (standalone) / `contents` 等 spec-valid だが
+/// milestone defer 対象の keyword は `parse_display` が `None` を返し、
+/// declaration が silent drop される (rule.rs 側 invalid-value drop path)。
+///
+/// `#[non_exhaustive]`: variant 追加を non-breaking にする (Sprint 12 の
+/// InlineBlock / None 追加は本 attribute 経由で forward-compatible)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayValue {
+    /// `block` — CSS Display 3 §2 `<display-outside>` short form for
+    /// "block flow" (block-level box containing block flow layout).
+    /// <https://www.w3.org/TR/css-display-3/#typedef-display-outside>
     Block,
+    /// `inline` — CSS Display 3 §2 `<display-outside>` short form for
+    /// "inline flow" (inline-level box containing inline flow layout).
+    /// spec default (initial value)。
+    /// <https://www.w3.org/TR/css-display-3/#typedef-display-outside>
     Inline,
+    /// `inline-block` — CSS Display 3 §2 `<display-legacy>` short form for
+    /// "inline flow-root" (inline-level block container、button 相当 layout
+    /// の primary)。
+    /// <https://www.w3.org/TR/css-display-3/#typedef-display-legacy>
+    InlineBlock,
+    /// `none` — CSS Display 3 §2 `<display-box>`: element (含 subtree) を
+    /// box tree から omit する (hidden 相当)。
+    /// <https://www.w3.org/TR/css-display-3/#typedef-display-box>
+    None,
 }
 
 /// `position` property の value — M5 static-side scope では `static` (default) と
@@ -434,8 +463,10 @@ pub enum PropertyValue {
     FontSize(Length),
     /// `font-weight: <integer>` — inherited、initial: 400。
     FontWeight(u16),
-    /// `display: <block-or-inline>` — non-inherited、initial: inline
-    /// (spec §M1.4a、raikiri-spike-m1.22)。
+    /// `display: <ident>` — non-inherited、initial: `inline` (CSS Display
+    /// 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>)。
+    /// Sprint 12 scope: `block` / `inline` / `inline-block` / `none`
+    /// (raikiri-spike-0vv.4、詳細は [`DisplayValue`] doc)。
     Display(DisplayValue),
     /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited、initial: empty list (CSS Lists 3 §3)。
@@ -803,14 +834,30 @@ fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<u16> {
 
 /// `display: <ident>` を parse する。
 ///
-/// M1.4a scope では `block` / `inline` のみ受理、他 keyword (`flex`,
-/// `grid`, `none`, `table*` 等) は silent drop (`None`)。
-/// ASCII case-insensitive で ident を比較する (CSS spec 準拠)。
+/// CSS Display 3 §2 "Box Layout Modes: the display property"
+/// <https://www.w3.org/TR/css-display-3/#propdef-display>。Sprint 12 scope
+/// (raikiri-spike-0vv.4) では 4 keyword を受理:
+///
+/// - `block` — `<display-outside>` (block flow)
+/// - `inline` — `<display-outside>` (inline flow、initial value)
+/// - `inline-block` — `<display-legacy>` (inline flow-root)
+/// - `none` — `<display-box>` (subtree omitted from box tree)
+///
+/// 他 keyword (`flex` / `grid` / `table*` / `list-item` / `flow-root` /
+/// `contents` 等) は spec-valid だが milestone defer で silent drop
+/// (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
+/// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
+/// keyword は ASCII case-insensitive)。
 fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
-    let ident = input.next().ok()?;
-    match ident {
-        Token::Ident(name) if name.eq_ignore_ascii_case("block") => Some(DisplayValue::Block),
-        Token::Ident(name) if name.eq_ignore_ascii_case("inline") => Some(DisplayValue::Inline),
+    // 37n sibling multi-keyword idiom (parse_string_fetch / parse_content_part /
+    // parse_content_text_keyword) に揃える。ASCII case-insensitive matching は
+    // to_ascii_lowercase() 経由 (parse-time allocation は一 declaration 一回)。
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "block" => Some(DisplayValue::Block),
+        "inline" => Some(DisplayValue::Inline),
+        "inline-block" => Some(DisplayValue::InlineBlock),
+        "none" => Some(DisplayValue::None),
         _ => None,
     }
 }
@@ -1480,7 +1527,7 @@ mod tests {
         assert_eq!(parse("red", "background-color"), None);
     }
 
-    // ── Display (M1.4a、raikiri-spike-m1.22) ─────────────────────
+    // ── Display (CSS Display 3 §2、raikiri-spike-m1.22) ─────────────
 
     #[test]
     fn display_parse_block() {
@@ -1499,13 +1546,36 @@ mod tests {
     }
 
     #[test]
+    fn display_parse_inline_block() {
+        // CSS Display 3 §2 <display-legacy>
+        assert_eq!(
+            parse("inline-block", "display"),
+            Some(PropertyValue::Display(DisplayValue::InlineBlock))
+        );
+    }
+
+    #[test]
+    fn display_parse_none() {
+        // CSS Display 3 §2 <display-box>
+        assert_eq!(
+            parse("none", "display"),
+            Some(PropertyValue::Display(DisplayValue::None))
+        );
+    }
+
+    #[test]
     fn display_rejects_unknown_ident() {
-        // spec §M1.4a: block と inline 以外の値 (flex, grid, none, table, ...) は
-        // M6+ 対応、現状は silent drop (None を返す)
+        // Sprint 12 scope: block / inline / inline-block / none 以外は spec-valid
+        // でも milestone defer で silent drop (raikiri-spike-0vv.4)。
+        // flex / grid / table* / list-item / flow-root / contents は M6+ layout
+        // epic で対応予定。
         assert_eq!(parse("flex", "display"), None);
         assert_eq!(parse("grid", "display"), None);
-        assert_eq!(parse("none", "display"), None);
         assert_eq!(parse("table", "display"), None);
+        assert_eq!(parse("table-row", "display"), None);
+        assert_eq!(parse("list-item", "display"), None);
+        assert_eq!(parse("flow-root", "display"), None);
+        assert_eq!(parse("contents", "display"), None);
     }
 
     #[test]
@@ -1516,7 +1586,7 @@ mod tests {
 
     #[test]
     fn display_is_case_insensitive() {
-        // CSS spec: property value keyword は ASCII case-insensitive
+        // CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII case-insensitive
         assert_eq!(
             parse("BLOCK", "display"),
             Some(PropertyValue::Display(DisplayValue::Block))
@@ -1524,6 +1594,22 @@ mod tests {
         assert_eq!(
             parse("Inline", "display"),
             Some(PropertyValue::Display(DisplayValue::Inline))
+        );
+        assert_eq!(
+            parse("INLINE-BLOCK", "display"),
+            Some(PropertyValue::Display(DisplayValue::InlineBlock))
+        );
+        assert_eq!(
+            parse("Inline-Block", "display"),
+            Some(PropertyValue::Display(DisplayValue::InlineBlock))
+        );
+        assert_eq!(
+            parse("NONE", "display"),
+            Some(PropertyValue::Display(DisplayValue::None))
+        );
+        assert_eq!(
+            parse("None", "display"),
+            Some(PropertyValue::Display(DisplayValue::None))
         );
     }
 
