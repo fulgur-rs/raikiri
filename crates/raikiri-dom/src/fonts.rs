@@ -12,7 +12,6 @@
 //!   (system_fonts: false + generic alias append)
 
 use parley::FontContext;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// [`build_wpt_font_ctx`] が個別 font file を読み込む際に許容する最大 byte 数。
@@ -31,8 +30,11 @@ use std::path::{Path, PathBuf};
 ///   排除するのが load-bearing defense
 /// - **oversized regular file** (memory exhaustion): `metadata.len() >
 ///   FONT_SIZE_CAP` skip で closed
-/// - **mid-read grow (TOCTOU)**: `File::open + take(FONT_SIZE_CAP)` bounded
-///   read で保険 (walk 直後に file が伸びても memory は bound される)
+/// - **mid-read grow (TOCTOU)**: raikiri-traits::io::read_bounded_regular_file
+///   の `+1-probe` (`take(FONT_SIZE_CAP + 1) + post-read bytes.len > cap` reject)
+///   が silent truncation を防ぎ、TOCTOU-grow を `Oversized{DuringRead}` として
+///   surface (fe1 で helper 経由に切替、pre-fe1 の `take(FONT_SIZE_CAP)` silent-
+///   truncation window は closed)
 ///
 /// **Out of scope (planner-blessed 3-layer)**: walk 直後 regular file が FIFO に
 /// 差し替わる TOCTOU-swap は memory は bound されるが time は bound されない
@@ -55,7 +57,9 @@ const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 /// - [`FontError::NoFontsRegistered`] — dir には `.ttf`/`.otf` があるが 1 個も
 ///   register できなかった (PREFERRED_FIRST 経路で先に catch されるので
 ///   PREFERRED_FIRST が空の future 想定でのみ到達)
-/// - [`FontError::Io`] — dir walk 中の io failure
+/// - [`FontError::Io`] — dir walk 中、または font read
+///   (raikiri-traits::io helper 経由) の Io error propagate
+///   (`RejectReason::Io(_)` -> `FontError::Io`、他 reject reason は warn+skip)
 pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     use parley::fontique::{Blob, Collection, CollectionOptions, GenericFamily, SourceCache};
     use std::sync::Arc;
@@ -98,25 +102,56 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     let mut registered_preferred_basenames: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for path in paths {
-        // Bounded read (defense in depth, raikiri-spike-d9y.4): walker が
-        // FONT_SIZE_CAP 以下だと確認済でも、walk 直後に file が伸びる TOCTOU
-        // race に備えて `take(FONT_SIZE_CAP)` で memory を hard-bound する。
-        // NB: walk 直後 regular file → FIFO 差し替え race は memory bound は
-        // 保たれるが time bound は保たれない (`take` は writer close まで
-        // block)。planner-blessed 3-layer scope 外、O_NONBLOCK path が必要な
-        // ら別 finding で入れる。
-        let mut file = std::fs::File::open(&path).map_err(|source| FontError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        let mut bytes = Vec::new();
-        file.by_ref()
-            .take(FONT_SIZE_CAP)
-            .read_to_end(&mut bytes)
-            .map_err(|source| FontError::Io {
-                path: path.clone(),
-                source,
-            })?;
+        // Bounded read via shared helper (raikiri-spike-fe1).
+        //
+        // Callsite policy:
+        // - `Io(_)` -> hard-error propagate.  Preserves the "Ahem.ttf
+        //   silent-fallback prevention" guarantee (roborev e93 round 3): an
+        //   unexpected Io error at read time aborts the build directly, so
+        //   the registry cannot silently drop the preferred font without a
+        //   caller-visible error.  `PreferredFontUnavailable` is not the
+        //   catch for this branch — it fires only for the warn+skip arm
+        //   below (see next bullet).
+        // - `Symlink | NotRegularFile | Oversized{PreOpen|DuringRead}` ->
+        //   warn+skip.  `collect_recursive` already pre-filtered these, so
+        //   surfacing here means the tree changed between walk and read
+        //   (TOCTOU-swap or TOCTOU-grow).  Non-preferred fonts silently drop
+        //   from the registry; if Ahem.ttf is affected,
+        //   `PreferredFontUnavailable` fires downstream on the aggregate
+        //   `registered_preferred_basenames` check.  `Oversized{DuringRead}`
+        //   closes the silent-truncation window the prior `take(FONT_SIZE_CAP)`
+        //   had (fe1 fix; the helper's `+1-probe` surfaces TOCTOU-grow instead
+        //   of returning a truncated buffer).
+        //
+        // Trade-offs recorded:
+        // - The walker's symlink_metadata / is_symlink / is_file /
+        //   metadata.len checks are re-run inside the helper.  Justified by
+        //   the helper's standalone-safe invariant; the cost is `~O(N)` extra
+        //   stat syscalls at init.  Raising `FONT_SIZE_CAP` requires updating
+        //   the walker's copy too.
+        // - Directory-swap tampering (regular-file -> directory between walk
+        //   and read) previously hard-errored via `File::open` EISDIR ->
+        //   `FontError::Io`; now surfaces as `NotRegularFile` -> warn+skip.
+        //   Signal downgrade for non-preferred fonts; preferred invariant
+        //   still fires.
+        // - Leaf-swap TOCTOU between the helper's `symlink_metadata` and
+        //   `File::open` is unresolved (raikiri-spike-8yu, `O_NOFOLLOW`).
+        let bytes = match raikiri_traits::io::read_bounded_regular_file(&path, FONT_SIZE_CAP) {
+            Ok(bytes) => bytes,
+            Err(raikiri_traits::io::RejectReason::Io(source)) => {
+                return Err(FontError::Io {
+                    path: path.clone(),
+                    source,
+                });
+            }
+            Err(reason) => {
+                eprintln!(
+                    "[raikiri-dom::fonts] warn: skipping {} ({reason})",
+                    path.display()
+                );
+                continue;
+            }
+        };
         let blob = Blob::new(Arc::new(bytes) as _);
         let registered = ctx.collection.register_fonts(blob, None);
         if registered.is_empty() {
@@ -196,9 +231,12 @@ pub enum FontError {
         /// scan 対象の fonts dir
         dir: PathBuf,
     },
-    /// dir walk 中の io failure
+    /// dir walk 中の io failure、または font read (raikiri-traits::io helper
+    /// 経由) の `RejectReason::Io(_)` propagate。他 reject reason
+    /// (Symlink / NotRegularFile / Oversized) は warn+skip される (詳細は
+    /// [`build_wpt_font_ctx`] の callsite comment 参照)。
     Io {
-        /// walk 中に io error が発生した path
+        /// io error が発生した path (walk 段階または read 段階)
         path: PathBuf,
         /// 元の io error
         source: std::io::Error,

@@ -1670,6 +1670,7 @@ dependencies = [
  "raikiri-style",
  "rustc-hash",
  "smol_str",
+ "tempfile",
  "url",
 ]
 
