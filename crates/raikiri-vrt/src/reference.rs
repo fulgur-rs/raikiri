@@ -1539,4 +1539,50 @@ mod defense_tests {
             Err(other) => panic!("expected ELOOP, got {other:?}"),
         }
     }
+
+    /// End-to-end pin: read_bounded_fixture_file rejects a symlink at the
+    /// pre-open `symlink_metadata` check.  This test does NOT exercise the
+    /// O_NOFOLLOW path (safe_open never runs because the pre-open check
+    /// short-circuits) — that unit is covered by
+    /// `safe_open_rejects_symlink_with_eloop`.  Kept to pin the full-path
+    /// behavior against future refactors that might reorder the checks.
+    #[cfg(unix)]
+    #[test]
+    fn read_bounded_fixture_file_rejects_symlink_via_pre_open_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(dir.path()).unwrap();
+        let target = dir.path().join("target.bin");
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"target")
+            .unwrap();
+        let link = dir.path().join("link.bin");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        match read_bounded_fixture_file(&link, &canonical_root) {
+            Err(FixtureError::SymlinkRejected { path }) => {
+                assert_eq!(path, link);
+            }
+            other => panic!("expected SymlinkRejected, got {other:?}"),
+        }
+    }
+
+    /// Regression pin: O_NOFOLLOW on the internal open path does not reject a
+    /// legitimate regular file.  Without this test, an implementation that
+    /// broke the safe_open fallback (e.g. accidentally always returning
+    /// ELOOP) would be missed by the symlink-only tests.
+    #[test]
+    fn read_bounded_fixture_file_accepts_regular_file_with_nofollow() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = dir.path().join("regular.bin");
+        std::fs::File::create(&file_path)
+            .unwrap()
+            .write_all(b"regular content")
+            .unwrap();
+
+        let bytes = read_bounded_fixture_file(&file_path, &canonical_root)
+            .expect("regular file should be accepted");
+        assert_eq!(bytes, b"regular content");
+    }
 }
