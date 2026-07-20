@@ -16,6 +16,7 @@
 //! - [`strategy`] — Strategy traits (LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy)
 //! - [`config`]   — Entry point configs (RenderLimits, LookaheadConfig, ...)
 //! - [`plan`]     — `plan()` output types (DocumentPlan, PageSummary)
+//! - [`io`]       — bounded regular-file read primitive (raikiri-spike-fe1)
 //!
 //! ## Spec authority
 //!
@@ -26,6 +27,7 @@
 pub mod config;
 pub mod dom;
 pub mod error;
+pub mod io;
 pub mod net;
 pub mod page;
 pub mod plan;
@@ -45,6 +47,7 @@ pub use error::{
     RenderError, RenderStatus, RenderSummary, RenderWarning, TargetDiscrepancy, TargetKind,
     TargetSlotId, UnresolvedReason, UnresolvedTarget, WarningKind,
 };
+pub use io::{OversizePhase, RejectReason, read_bounded_regular_file};
 pub use net::{
     AbortController, AbortSignal, Body, FetchedResource, HeaderMap, Method, NetworkError,
     NetworkProvider, Request,
