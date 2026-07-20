@@ -21,6 +21,9 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use libc;
+
 /// Open a regular file with the leaf-swap TOCTOU defense stack.
 ///
 /// The unix impl passes `O_NOFOLLOW` to `File::open`, so a symlink swapped in
@@ -502,9 +505,15 @@ pub fn compare_png(
 }
 
 /// Read a single fixture-tree file with the full defense stack:
-/// leaf-symlink reject, `!is_file()` reject, up-front size cap,
+/// leaf-symlink reject (pre-open metadata + open-time O_NOFOLLOW on unix),
+/// `!is_file()` reject, up-front size cap,
 /// canonicalize-and-`starts_with(canonical_root)` containment check, and a
 /// bounded `take(cap + 1)` read that also catches TOCTOU-grow.
+///
+/// The open-time O_NOFOLLOW closes the leaf-swap race between the pre-open
+/// `symlink_metadata` check and `File::open` on unix (raikiri-spike-8yu).
+/// Non-unix retains follow-at-open semantics; tracked in
+/// raikiri-spike-<TBD-windows>.
 ///
 /// See [`FIXTURE_SIZE_CAP`] for the threat model these layers cover.
 fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u8>, FixtureError> {
@@ -556,10 +565,29 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // grew between the metadata check and the read, `take(cap + 1)` yields
     // `cap + 1` bytes and the post-read length check trips OversizedFixture
     // instead of silently truncating.
-    let mut file = std::fs::File::open(path).map_err(|source| FixtureError::IoError {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    // safe_open adds O_NOFOLLOW on unix so a leaf-symlink swapped in between
+    // the earlier symlink_metadata check (line above) and this open call
+    // cannot cause a fresh symlink target to be followed.  If a swap occurred,
+    // the open returns ELOOP; we map that errno to the same SymlinkRejected
+    // variant the pre-open check produces, so callers observe uniform
+    // semantic across check-time and open-time symlink rejections.
+    // bd raikiri-spike-8yu.
+    let mut file = match safe_open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            #[cfg(unix)]
+            if e.raw_os_error() == Some(libc::ELOOP) {
+                return Err(FixtureError::SymlinkRejected {
+                    path: path.to_path_buf(),
+                });
+            }
+
+            return Err(FixtureError::IoError {
+                path: path.to_path_buf(),
+                source: e,
+            });
+        }
+    };
     let mut bytes = Vec::new();
     file.by_ref()
         .take(FIXTURE_SIZE_CAP + 1)
