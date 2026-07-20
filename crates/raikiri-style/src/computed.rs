@@ -9,8 +9,8 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    ContentComponent, CssColor, DisplayValue, Length, empty_content_list, empty_counter_entries,
-    empty_string_set_entries,
+    ContentComponent, CssColor, DisplayValue, Length, LengthOrAuto, Sides, empty_content_list,
+    empty_counter_entries, empty_string_set_entries,
 };
 
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
@@ -121,6 +121,27 @@ pub struct ComputedValues {
     /// concatenate する。design doc §7.3 の 2-tier キャッシュ static side に相当。
     /// (raikiri-spike-m5.4)
     pub running_templates: Vec<RunningTemplate>,
+    /// `margin` 4-side quad (top / right / bottom / left)。**non-inherited**、
+    /// initial: `0` on each side (`Sides::all(LengthOrAuto::Length(Length::Px(0.0)))`).
+    ///
+    /// Author CSS の box model 中核 property。raikiri-style は cascade static side
+    /// に留まり、`LengthOrAuto::Length(Em/Rem/Percent/Pt)` の resolve は下流
+    /// (raikiri-dom `apply_computed_to_style` bridge、future task) 責務 —
+    /// font-size context / containing block % / DPI 変換で `taffy::LengthPercentageAuto`
+    /// 相当に翻訳される。
+    ///
+    /// # Primary sources (§ title + anchor)
+    ///
+    /// - CSS Box 3 §3.1 "Page-relative (Physical) Margin Properties":
+    ///   [`margin-top` / `margin-right` / `margin-bottom` / `margin-left`](https://www.w3.org/TR/css-box-3/#margin-physical)
+    ///   — "Value: `<length-percentage> | auto`", "Initial: 0", "Inherited: no",
+    ///   "Applies to: all elements except internal table elements".
+    /// - CSS Box 3 §3.2 "Margin Shorthand: the margin property":
+    ///   [`margin`](https://www.w3.org/TR/css-box-3/#margin-shorthand) —
+    ///   "Value: `<'margin-top'>{1,4}`", 1/2/3/4 value expansion rules.
+    ///
+    /// raikiri-spike-0vv.5。
+    pub margin: Sides<LengthOrAuto>,
 }
 
 impl ComputedValues {
@@ -150,6 +171,9 @@ impl ComputedValues {
             // CSS GCPM 3 §1.2.1: position: running() seed initial は empty
             // (position の initial は `static`、running(name) 無し)。
             running_templates: Vec::new(),
+            // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
+            // で全 4 side に spread)。raikiri-spike-0vv.5。
+            margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
         }
     }
 
@@ -197,6 +221,9 @@ impl ComputedValues {
             string_set: empty_string_set_entries(),
             // non-inherited (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4)
             running_templates: Vec::new(),
+            // non-inherited (CSS Box 3 §3.1 "Inherited: no")。initial 値と drift
+            // しないよう `Self::initial()` と同 shape で 0 spread。raikiri-spike-0vv.5。
+            margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
         }
     }
 }
@@ -223,6 +250,8 @@ mod tests {
         // CSS GCPM 3 §1.2.1 (raikiri-spike-m5.4): position initial は `static` →
         // running() seed 無し。
         assert!(cv.running_templates.is_empty());
+        // CSS Box 3 §3.1 (raikiri-spike-0vv.5): margin initial は 0 on each side。
+        assert_eq!(cv.margin, Sides::all(LengthOrAuto::Length(Length::Px(0.0))));
     }
 
     #[test]
@@ -261,6 +290,9 @@ mod tests {
             content: empty_content_list(),
             string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
+            // 0vv.5: parent に explicit margin を持たせ、child が initial に落ちる
+            // ことを他 non-inherited fixture (下の inherit_from_leaves_* 系) で pin。
+            margin: Sides::all(LengthOrAuto::Length(Length::Px(12.0))),
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -297,6 +329,27 @@ mod tests {
         };
         let child = ComputedValues::inherit_from(&parent);
         assert_eq!(child.display, DisplayValue::Inline);
+    }
+
+    #[test]
+    fn inherit_from_leaves_margin_at_initial() {
+        // CSS Box 3 §3.1 "Inherited: no" — 親が margin を持っていても child は
+        // initial (0 on each side) に戻る (raikiri-spike-0vv.5)。37n sibling:
+        // display / counter-* / content / string_set / running_templates と同 shape。
+        let parent = ComputedValues {
+            margin: Sides {
+                top: LengthOrAuto::Length(Length::Px(10.0)),
+                right: LengthOrAuto::Auto,
+                bottom: LengthOrAuto::Length(Length::Percent(50.0)),
+                left: LengthOrAuto::Length(Length::Em(2.0)),
+            },
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(
+            child.margin,
+            Sides::all(LengthOrAuto::Length(Length::Px(0.0)))
+        );
     }
 
     #[test]
