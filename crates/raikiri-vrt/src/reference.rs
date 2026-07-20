@@ -563,11 +563,6 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
             root: canonical_root.to_path_buf(),
         });
     }
-    // Bounded read with +1 probe (raikiri-spike-d9y.3 pattern): if the file
-    // grew between the metadata check and the read, `take(cap + 1)` yields
-    // `cap + 1` bytes and the post-read length check trips OversizedFixture
-    // instead of silently truncating.
-    //
     // safe_open adds O_NOFOLLOW on unix so a leaf-symlink swapped in between
     // the earlier symlink_metadata check and this open call cannot cause a
     // fresh symlink target to be followed.  The Err arm's inline comment
@@ -603,19 +598,45 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
             });
         }
     };
+    read_bounded_from_open_file(&mut file, path, FIXTURE_SIZE_CAP)
+}
+
+/// Bounded read on an already-opened file (`+1-probe` post-read length gate,
+/// raikiri-spike-d9y.3 pattern, factored out in raikiri-spike-t19 for
+/// injectable-cap testing).
+///
+/// Reads at most `size_cap + 1` bytes and returns `OversizedFixture` when
+/// the buffer grew past `size_cap`.  The `+1-probe` is the load-bearing
+/// defense that turns a TOCTOU-grow (file grew past the cap between the
+/// caller's metadata check and this read) into a hard error instead of a
+/// silently truncated buffer.  The t19 regression tests exercise the
+/// post-read length gate in isolation via a static oversized file with a
+/// small cap; simulating an actual TOCTOU-grow race remains bd
+/// raikiri-spike-51n scope.
+///
+/// `size_cap` is a `u64` parameter (rather than the hard-coded
+/// [`FIXTURE_SIZE_CAP`] const) so tests can pass a small cap against tiny
+/// test files.  `saturating_add(1)` guards against callers passing
+/// `u64::MAX` — the same regression pattern fe1's
+/// `raikiri_traits::io::read_bounded_regular_file` codifies.
+fn read_bounded_from_open_file(
+    file: &mut std::fs::File,
+    path: &Path,
+    size_cap: u64,
+) -> Result<Vec<u8>, FixtureError> {
     let mut bytes = Vec::new();
-    file.by_ref()
-        .take(FIXTURE_SIZE_CAP + 1)
+    file.take(size_cap.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|source| FixtureError::IoError {
             path: path.to_path_buf(),
             source,
         })?;
-    if bytes.len() as u64 > FIXTURE_SIZE_CAP {
+    let len = bytes.len() as u64;
+    if len > size_cap {
         return Err(FixtureError::OversizedFixture {
             path: path.to_path_buf(),
-            size: bytes.len() as u64,
-            cap: FIXTURE_SIZE_CAP,
+            size: len,
+            cap: size_cap,
         });
     }
     Ok(bytes)
@@ -1183,6 +1204,77 @@ mod defense_tests {
         // compare would double the memory footprint of the test needlessly).
         assert_eq!(fixture.expected_pages.len(), 1);
         assert_eq!(fixture.expected_pages[0].len() as u64, FIXTURE_SIZE_CAP);
+    }
+
+    #[test]
+    fn read_bounded_from_open_file_trips_plus1_probe_on_oversized_read() {
+        // raikiri-spike-t19: pins the +1-probe post-read reject in
+        // `read_bounded_from_open_file`, AND pins the `+1` bound itself.
+        //
+        // The file is deliberately much larger than `cap + 1` (20 bytes
+        // for cap=8, so 12 bytes past the probe limit) and the assertion
+        // is `size == cap + 1` (exactly).  This shape catches two
+        // regression classes at once:
+        //
+        //   1. Removing the post-read `bytes.len() > cap` check
+        //      (`OversizedFixture` never fires → test enters the panic
+        //      arm).
+        //   2. Widening the read bound to more than `cap + 1` — e.g. a
+        //      typo `take(cap + 2)` or `take(u64::MAX)` — which would
+        //      read 20 bytes into `bytes`, still trigger the reject,
+        //      but with `size = 20 ≠ cap + 1` → the equality assert
+        //      fails.  A cap+1-sized file would let both regressions
+        //      pass the reject arm silently (bd raikiri-spike-t19
+        //      §8.3 codex round 1 finding).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many_bytes.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"aaaaaaaaaaaaaaaaaaaa") // 20 bytes, well over cap + 1
+            .unwrap();
+        let mut file = std::fs::File::open(&path).unwrap();
+        let cap: u64 = 8;
+
+        match read_bounded_from_open_file(&mut file, &path, cap) {
+            Err(FixtureError::OversizedFixture {
+                path: p,
+                size,
+                cap: c,
+            }) => {
+                assert_eq!(p, path);
+                assert_eq!(
+                    size,
+                    cap + 1,
+                    "size must be exactly cap + 1 — pins the +1 bound; \
+                     a widened read (e.g. take(cap + 2)) would report size > cap + 1"
+                );
+                assert_eq!(c, cap);
+            }
+            other => {
+                panic!("expected OversizedFixture via +1-probe post-read reject, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn read_bounded_from_open_file_accepts_at_boundary_cap() {
+        // raikiri-spike-t19 companion pin: silent over-reject canary for
+        // the injectable-cap helper.  A file of exactly `cap` bytes must
+        // load successfully — the post-read check is `>` cap, not `>=`,
+        // and the `take(cap + 1)` read yields exactly `cap` bytes when
+        // the file is not growing.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eight_bytes.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"aaaaaaaa") // 8 bytes
+            .unwrap();
+        let mut file = std::fs::File::open(&path).unwrap();
+        let cap: u64 = 8;
+
+        let bytes = read_bounded_from_open_file(&mut file, &path, cap)
+            .expect("boundary-size (== cap) read must accept");
+        assert_eq!(bytes, b"aaaaaaaa");
     }
 
     #[test]
