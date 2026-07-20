@@ -12,7 +12,7 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    ContentComponent, CssColor, DisplayValue, Length, TextAlign, empty_content_list,
+    ContentComponent, CssColor, DisplayValue, Length, Sides, TextAlign, empty_content_list,
     empty_counter_entries, empty_string_set_entries,
 };
 
@@ -38,9 +38,9 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align、
 /// non-inherited: background-color / display / counter-* / content / string-set /
-/// running_templates)。
+/// running_templates / padding)。
 ///
 /// `#[non_exhaustive]` により future property (margin / padding / width /
 /// height / border-* / box-shadow 等) の追加が non-breaking。
@@ -151,6 +151,20 @@ pub struct ComputedValues {
     /// copy (`TextAlign` は `Copy`)。
     /// (raikiri-spike-0vv.8)
     pub text_align: TextAlign,
+    /// `padding` — 4-side box-model padding。**non-inherited**、initial:
+    /// `Sides::all(Length::Px(0.0))` (CSS Box 3 §6.1 initial "0")。
+    ///
+    /// - Physical longhands: [`padding-top`](https://www.w3.org/TR/css-box-3/#propdef-padding-top) /
+    ///   `padding-right` / `padding-bottom` / `padding-left`。
+    /// - Shorthand: [`padding` (§6.2)](https://www.w3.org/TR/css-box-3/#padding-shorthand)。
+    ///
+    /// Value grammar: `<length-percentage [0,∞]>` — non-negative constraint は
+    /// parse-time enforce ([`crate::property::PropertyValue::PaddingTop`] doc 参照)。
+    /// [`Sides<Length>`] は 5 [`Length`] variant (Px / Em / Rem / Percent / Pt) の
+    /// authored value を保持、resolve は下流 (raikiri-dom apply_computed_to_style
+    /// bridge、font-size context / containing block % / 96px-per-in DPI) 責務。
+    /// (raikiri-spike-0vv.6)
+    pub padding: Sides<Length>,
 }
 
 impl ComputedValues {
@@ -185,6 +199,8 @@ impl ComputedValues {
             running_templates: Vec::new(),
             // CSS Text 3 §6.1: text-align initial is `start` (raikiri-spike-0vv.8)
             text_align: TextAlign::Start,
+            // CSS Box 3 §6.1: padding initial = 0 (all 4 sides、raikiri-spike-0vv.6)。
+            padding: Sides::all(Length::Px(0.0)),
         }
     }
 
@@ -198,7 +214,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates)。
+    /// string-set / running_templates / padding)。
     ///
     /// 新 property を追加する際は分類に応じてこの struct 直下の該当行を追加する
     /// (inherited なら parent からのコピー、non-inherited なら初期値を直接指定)。
@@ -243,6 +259,9 @@ impl ComputedValues {
             string_set: empty_string_set_entries(),
             // non-inherited (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4)
             running_templates: Vec::new(),
+            // non-inherited (CSS Box 3 §6.1、raikiri-spike-0vv.6)。
+            // `Sides<Length>: Copy` により per-node write は bit-copy。
+            padding: Sides::all(Length::Px(0.0)),
         }
     }
 }
@@ -274,6 +293,8 @@ mod tests {
         assert!(cv.running_templates.is_empty());
         // CSS Text 3 §6.1 (raikiri-spike-0vv.8): text-align initial は `start`。
         assert_eq!(cv.text_align, TextAlign::Start);
+        // CSS Box 3 §6.1 (raikiri-spike-0vv.6): padding initial = 0 (all 4 sides)。
+        assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
     }
 
     #[test]
@@ -324,6 +345,7 @@ mod tests {
             // (Center) を親に持たせて child が Start (initial) ではなく Center を
             // 引き継ぐことを assert する。
             text_align: TextAlign::Center,
+            padding: Sides::all(Length::Px(0.0)),
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -381,6 +403,25 @@ mod tests {
         };
         let child = ComputedValues::inherit_from(&parent);
         assert_eq!(child.display, DisplayValue::Inline);
+    }
+
+    #[test]
+    fn inherit_from_leaves_padding_at_initial() {
+        // CSS Box 3 §6.1: padding は non-inherited。親が任意 padding を
+        // 持っていても child は initial (`Sides::all(Length::Px(0.0))`)。
+        // 37n sibling: display / counter-* / string_set / content non-inheritance
+        // test を踏襲 (raikiri-spike-0vv.6)。
+        let parent = ComputedValues {
+            padding: Sides {
+                top: Length::Px(10.0),
+                right: Length::Percent(5.0),
+                bottom: Length::Em(1.0),
+                left: Length::Pt(12.0),
+            },
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(child.padding, Sides::all(Length::Px(0.0)));
     }
 
     #[test]
