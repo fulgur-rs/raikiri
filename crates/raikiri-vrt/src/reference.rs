@@ -21,6 +21,41 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+/// Open a regular file with the leaf-swap TOCTOU defense stack.
+///
+/// The unix impl passes `O_NOFOLLOW` to `File::open` so a symlink swapped
+/// in between the pre-open `symlink_metadata` check and this open call
+/// cannot cause the resolver to follow a fresh target. POSIX mandates
+/// `ELOOP` for `open(O_NOFOLLOW)` on a symlink (Linux, macOS, and modern
+/// FreeBSD comply); legacy BSDs (NetBSD, OpenBSD, FreeBSD <10) may return
+/// `EMLINK` or `EFTYPE` instead. Callers that need to distinguish this
+/// case from other I/O errors should check the errno match against
+/// `libc::ELOOP` AND fall back to a `symlink_metadata` recheck (see
+/// `read_bounded_fixture_file` for the portable pattern).
+///
+/// The non-unix fallback keeps the current default `File::open` semantics.
+/// Windows equivalent tracked in raikiri-spike-akk.
+///
+/// bd raikiri-spike-8yu.
+// Callsite-local defense: sharing this stack with raikiri-dom is deferred to
+// raikiri-spike-7xw for walls.md §2 crate-list PMO judgment. Do not lift
+// into raikiri-traits::io without that judgment.
+#[cfg(unix)]
+fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    // Follow-symlink-at-open is unresolved on non-unix; tracked in
+    // raikiri-spike-akk.  Regain parity when the follow-up lands.
+    std::fs::File::open(path)
+}
+
 /// Maximum per-fixture-file size cap (input.html or expected/page-*.png).
 ///
 /// Mirrors [`raikiri_dom::fonts::FONT_SIZE_CAP`] (100 MiB) as a "large but
@@ -472,9 +507,15 @@ pub fn compare_png(
 }
 
 /// Read a single fixture-tree file with the full defense stack:
-/// leaf-symlink reject, `!is_file()` reject, up-front size cap,
+/// leaf-symlink reject (pre-open metadata + open-time O_NOFOLLOW on unix),
+/// `!is_file()` reject, up-front size cap,
 /// canonicalize-and-`starts_with(canonical_root)` containment check, and a
 /// bounded `take(cap + 1)` read that also catches TOCTOU-grow.
+///
+/// The open-time O_NOFOLLOW closes the leaf-swap race between the pre-open
+/// `symlink_metadata` check and `File::open` on unix (raikiri-spike-8yu).
+/// Non-unix retains follow-at-open semantics; tracked in
+/// raikiri-spike-akk.
 ///
 /// See [`FIXTURE_SIZE_CAP`] for the threat model these layers cover.
 fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u8>, FixtureError> {
@@ -526,10 +567,42 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // grew between the metadata check and the read, `take(cap + 1)` yields
     // `cap + 1` bytes and the post-read length check trips OversizedFixture
     // instead of silently truncating.
-    let mut file = std::fs::File::open(path).map_err(|source| FixtureError::IoError {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    //
+    // safe_open adds O_NOFOLLOW on unix so a leaf-symlink swapped in between
+    // the earlier symlink_metadata check and this open call cannot cause a
+    // fresh symlink target to be followed.  The Err arm's inline comment
+    // below documents the errno mapping and the portable fallback that
+    // covers legacy BSD variants.  bd raikiri-spike-8yu.
+    let mut file = match safe_open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            #[cfg(unix)]
+            {
+                // POSIX mandates ELOOP for O_NOFOLLOW on symlink (Linux, macOS,
+                // and modern FreeBSD comply). Legacy BSDs may return EMLINK or
+                // EFTYPE instead; the post-Err symlink_metadata recheck catches
+                // those cases portably at the cost of one extra stat syscall on
+                // the reject path. Not race-perfect (an attacker could swap the
+                // symlink back to a regular file between safe_open and this
+                // recheck), but covers the common attack shape while remaining
+                // simple. Full inode-verify would require fstat-after-open on the
+                // handle safe_open never returned.
+                let looks_like_symlink_swap = e.raw_os_error() == Some(libc::ELOOP)
+                    || std::fs::symlink_metadata(path)
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
+                if looks_like_symlink_swap {
+                    return Err(FixtureError::SymlinkRejected {
+                        path: path.to_path_buf(),
+                    });
+                }
+            }
+            return Err(FixtureError::IoError {
+                path: path.to_path_buf(),
+                source: e,
+            });
+        }
+    };
     let mut bytes = Vec::new();
     file.by_ref()
         .take(FIXTURE_SIZE_CAP + 1)
@@ -1457,5 +1530,87 @@ mod defense_tests {
             }
             other => panic!("expected OversizedFixtureAggregate, got {other:?}"),
         }
+    }
+
+    /// safe_open must reject a symlink at open time on unix. POSIX mandates
+    /// ELOOP (Linux, macOS, modern FreeBSD comply); legacy BSDs (NetBSD,
+    /// OpenBSD, FreeBSD <10) return EMLINK or EFTYPE. The test accepts any
+    /// Err on unix, because a passing implementation must not follow the
+    /// symlink regardless of the exact errno. The Ok arm is the regression
+    /// pin — an implementation that drops custom_flags(O_NOFOLLOW) would
+    /// silently follow the link and return Ok(file), failing this test.
+    #[cfg(unix)]
+    #[test]
+    fn safe_open_rejects_symlink_at_open_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.bin");
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"target contents")
+            .unwrap();
+        let link = dir.path().join("link.bin");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        match safe_open(&link) {
+            Err(_) => {
+                // Sanity-check that the path is still a symlink at
+                // observation time — proves the Err is due to O_NOFOLLOW
+                // (portable across ELOOP / EMLINK / EFTYPE) rather than
+                // an unrelated I/O error like permission or NotFound.
+                let post = std::fs::symlink_metadata(&link)
+                    .expect("symlink still present after safe_open Err");
+                assert!(
+                    post.file_type().is_symlink(),
+                    "link at test observation time was not a symlink"
+                );
+            }
+            Ok(_) => panic!("safe_open followed the symlink (O_NOFOLLOW not applied)"),
+        }
+    }
+
+    /// End-to-end pin: read_bounded_fixture_file rejects a symlink at the
+    /// pre-open `symlink_metadata` check.  This test does NOT exercise the
+    /// O_NOFOLLOW path (safe_open never runs because the pre-open check
+    /// short-circuits) — that unit is covered by
+    /// `safe_open_rejects_symlink_at_open_time`.  Kept to pin the full-path
+    /// behavior against future refactors that might reorder the checks.
+    #[cfg(unix)]
+    #[test]
+    fn read_bounded_fixture_file_rejects_symlink_via_pre_open_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(dir.path()).unwrap();
+        let target = dir.path().join("target.bin");
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"target")
+            .unwrap();
+        let link = dir.path().join("link.bin");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        match read_bounded_fixture_file(&link, &canonical_root) {
+            Err(FixtureError::SymlinkRejected { path }) => {
+                assert_eq!(path, link);
+            }
+            other => panic!("expected SymlinkRejected, got {other:?}"),
+        }
+    }
+
+    /// Regression pin: O_NOFOLLOW on the internal open path does not reject a
+    /// legitimate regular file.  Without this test, an implementation that
+    /// broke the safe_open fallback (e.g. accidentally always returning
+    /// ELOOP) would be missed by the symlink-only tests.
+    #[test]
+    fn read_bounded_fixture_file_accepts_regular_file_with_nofollow() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = dir.path().join("regular.bin");
+        std::fs::File::create(&file_path)
+            .unwrap()
+            .write_all(b"regular content")
+            .unwrap();
+
+        let bytes = read_bounded_fixture_file(&file_path, &canonical_root)
+            .expect("regular file should be accepted");
+        assert_eq!(bytes, b"regular content");
     }
 }
