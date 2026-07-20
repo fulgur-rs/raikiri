@@ -388,6 +388,82 @@ pub enum DisplayValue {
     None,
 }
 
+/// `text-align` property の value。
+///
+/// CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
+/// <https://www.w3.org/TR/css-text-3/#text-align-property>。**spec 上 shorthand** —
+/// `text-align-all` + `text-align-last` の 2 longhand を set する
+/// (`Initial: start` / `Inherited: yes`)。
+///
+/// Value grammar: `start | end | left | right | center | justify | match-parent | justify-all`。
+///
+/// # Scope carving (g04 3-category)
+///
+/// - **(b) milestone subset**: 本 crate は Sprint 12 seed として shorthand を expand
+///   せず、`ComputedValues.text_align` 単一 field に保持する — margin (Sides<T>) や
+///   `content` (`normal`/`none` → 空 list) と同じ「shorthand as single field」
+///   convention。text-align-all / text-align-last longhand 分離 (§6.2 / §6.3) は
+///   future task (Epic 5 or Epic 7 相当) で拡張。
+/// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` / `unset` /
+///   `revert` / `revert-layer`) は Epic 7、silent drop。
+/// - **(b) milestone subset**: `match-parent` の **computed-value 時解決**
+///   (spec §6.1 `#valdef-text-align-match-parent`: "computes to its parent's
+///   computed value except that an inherited value of start or end is interpreted
+///   against the parent's direction value and results in a computed value of
+///   either left or right"、root element では "computes to start") は
+///   Sprint 12 seed scope 外。現状 [`MatchParent`](Self::MatchParent) は
+///   specified value のまま [`crate::computed::ComputedValues::text_align`] に
+///   格納され、direction-aware resolve は future task で追加 (`direction`
+///   property + text-align-all computed-value semantics を伴う paint scope の
+///   consumer 実装タイミング — Epic 5/7 相当)。
+/// - **(a) spec-invalid**: CSS Text 3 §6.1 grammar は上記 8 keyword のみ。それ以外
+///   の ident (`middle`, `baseline` 等、および CSS Text 4 draft 相当の `<string>`
+///   character alignment は本 crate が引用する CSS Text 3 では未定義) は silent
+///   drop = `None`。
+///
+/// [`DisplayValue`] と同じ convention で `Default` を derive しない — 本 enum の
+/// `.default()` は呼ばれず、初期化側 [`crate::computed::ComputedValues::initial`]
+/// が [`TextAlign::Start`] を直接指定する (37n sibling pattern:
+/// [`DisplayValue`] / [`PositionValue`] は spec に "omitted → default" が無いため
+/// non-derive、[`CounterStyle`] / [`StringFetchMode`] / [`ContentPart`] /
+/// [`ContentTextKeyword`] は spec に omitted-default があるため derive)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextAlign {
+    /// `start` — "Inline-level content is aligned to the start edge of the line
+    /// box" (§6.1 spec verbatim)。spec initial value。writing-mode + direction
+    /// で physical edge が決まる (horizontal-tb + LTR で physical left)。
+    Start,
+    /// `end` — "Inline-level content is aligned to the end edge of the line
+    /// box" (§6.1 spec verbatim)。`start` の反対側。
+    End,
+    /// `left` — "Inline-level content is aligned to the line-left edge of the
+    /// line box" (§6.1 spec verbatim)。**physical left ではなく line-left** —
+    /// vertical writing modes では writing-mode に応じて physical top / bottom
+    /// に写像され得る (spec 注記: "In vertical writing modes, this can be either
+    /// the physical top or bottom, depending on writing-mode")。
+    Left,
+    /// `right` — "Inline-level content is aligned to the line-right edge of the
+    /// line box" (§6.1 spec verbatim)。[`Left`](Self::Left) と同様、vertical
+    /// writing modes では physical top / bottom に写像され得る。
+    Right,
+    /// `center` — "Inline-level content is centered within the line box"
+    /// (§6.1 spec verbatim)。
+    Center,
+    /// `justify` — "Text is justified according to the method specified by the
+    /// text-justify property, in order to exactly fill the line box" (§6.1 spec
+    /// verbatim)。末行 (forced line break 前) は text-align-last の指定が無ければ
+    /// start-aligned。
+    Justify,
+    /// `match-parent` — 親要素の text-align 計算値と一致させる (`start`/`end` を
+    /// 親の direction で `left`/`right` に解決した後、その解決値を継承)。
+    /// root element では `start` に fallback (§6.1 spec verbatim)。
+    MatchParent,
+    /// `justify-all` — text-align-all と text-align-last の両方を justify に set、
+    /// 末行にも justify を強制する (§6.1 spec verbatim)。
+    JustifyAll,
+}
+
 /// `position` property の value — M5 static-side scope では `static` (default) と
 /// GCPM `running(<custom-ident>)` のみ受理する。
 ///
@@ -538,6 +614,14 @@ pub enum PropertyValue {
     /// する discriminant 用途、spec default に相当)。
     /// `relative` / `absolute` / `fixed` / `sticky` は M5+ scope 外、parser 段で drop。
     Position(PositionValue),
+    /// `text-align: start | end | left | right | center | justify | match-parent
+    /// | justify-all` — **inherited**、initial: [`TextAlign::Start`]
+    /// (CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
+    /// <https://www.w3.org/TR/css-text-3/#text-align-property>)。
+    /// spec 上 shorthand (text-align-all + text-align-last) だが Sprint 12 seed
+    /// では単一 field に保持 (**g04 (b) milestone subset**、longhand 分離は
+    /// 後続 task で defer)。詳細は [`TextAlign`] doc-comment。
+    TextAlign(TextAlign),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -563,6 +647,7 @@ pub enum PropertyKey {
     Content,
     StringSet,
     Position,
+    TextAlign,
 }
 
 impl PropertyValue {
@@ -583,6 +668,7 @@ impl PropertyValue {
             PropertyValue::Content(_) => PropertyKey::Content,
             PropertyValue::StringSet(_) => PropertyKey::StringSet,
             PropertyValue::Position(_) => PropertyKey::Position,
+            PropertyValue::TextAlign(_) => PropertyKey::TextAlign,
         }
     }
 }
@@ -649,6 +735,10 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // M5 scope では `static` + `running(<custom-ident>)` のみ受理、
         // `relative` / `absolute` / `fixed` / `sticky` は silent drop (M5+ scope 外)。
         "position" => parse_position(input).map(PropertyValue::Position),
+        // CSS Text 3 §6.1 text-align (raikiri-spike-0vv.8、Sprint 12 seed)。
+        // spec 上 shorthand (text-align-all + text-align-last) だが単一 field で保持
+        // (g04 (b) milestone subset、[`TextAlign`] doc-comment 参照)。
+        "text-align" => parse_text_align(input).map(PropertyValue::TextAlign),
         _ => None,
     }
 }
@@ -858,6 +948,34 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         "inline" => Some(DisplayValue::Inline),
         "inline-block" => Some(DisplayValue::InlineBlock),
         "none" => Some(DisplayValue::None),
+        _ => None,
+    }
+}
+
+/// `text-align: <ident>` を parse する
+/// (CSS Text 3 §6.1 <https://www.w3.org/TR/css-text-3/#text-align-property>)。
+///
+/// Spec value grammar (§6.1): `start | end | left | right | center | justify |
+/// match-parent | justify-all`。ASCII case-insensitive で ident を比較する
+/// (CSS spec 慣行、37n sibling [`parse_string_fetch`] / [`parse_content_part`] /
+/// [`parse_content_text_keyword`] と同 flavor)。
+///
+/// # Scope carving (g04 3-category、[`TextAlign`] doc-comment に詳述)
+///
+/// - **(b) milestone subset**: `<string>` value (§6.1.1 experimental) は
+///   silent drop、CSS-wide keyword (`inherit` 等) も Epic 7 で silent drop。
+/// - **(a) spec-invalid**: 未知 keyword (`middle` 等) は silent drop = `None`。
+fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "start" => Some(TextAlign::Start),
+        "end" => Some(TextAlign::End),
+        "left" => Some(TextAlign::Left),
+        "right" => Some(TextAlign::Right),
+        "center" => Some(TextAlign::Center),
+        "justify" => Some(TextAlign::Justify),
+        "match-parent" => Some(TextAlign::MatchParent),
+        "justify-all" => Some(TextAlign::JustifyAll),
         _ => None,
     }
 }
@@ -2725,5 +2843,118 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::Position);
         let v = PropertyValue::Position(PositionValue::Running(SmolStr::new("hdr")));
         assert_eq!(v.key(), PropertyKey::Position);
+    }
+
+    // ── text-align (CSS Text 3 §6.1、raikiri-spike-0vv.8) ──
+    //
+    // Value grammar (§6.1 spec verbatim):
+    //   start | end | left | right | center | justify | match-parent | justify-all
+    // Initial: start / Inherited: yes / spec 上 shorthand (text-align-all +
+    // text-align-last、Sprint 12 seed は単一 field で保持 = g04 (b) milestone
+    // subset)。inheritance test は cascade.rs 側 (parent → child コピー、display
+    // non-inherited との対比)。
+
+    #[test]
+    fn text_align_parse_all_eight_keywords() {
+        // Verification 5: 8 keyword が全て正しく TextAlign variant にマップされる。
+        // 1 test で全 arm coverage (patch coverage 100% 目標、§8.1.1)。
+        assert_eq!(
+            parse("start", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::Start))
+        );
+        assert_eq!(
+            parse("end", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::End))
+        );
+        assert_eq!(
+            parse("left", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::Left))
+        );
+        assert_eq!(
+            parse("right", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::Right))
+        );
+        assert_eq!(
+            parse("center", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::Center))
+        );
+        assert_eq!(
+            parse("justify", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::Justify))
+        );
+        assert_eq!(
+            parse("match-parent", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::MatchParent))
+        );
+        assert_eq!(
+            parse("justify-all", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::JustifyAll))
+        );
+    }
+
+    #[test]
+    fn text_align_is_case_insensitive() {
+        // Verification 6: CSS spec 慣行 — property value keyword は ASCII case-insensitive。
+        assert_eq!(
+            parse("CENTER", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::Center))
+        );
+        assert_eq!(
+            parse("Justify-All", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::JustifyAll))
+        );
+        assert_eq!(
+            parse("Match-Parent", "text-align"),
+            Some(PropertyValue::TextAlign(TextAlign::MatchParent))
+        );
+    }
+
+    #[test]
+    fn text_align_rejects_unknown_keyword() {
+        // spec §6.1 grammar に含まれない keyword は silent drop (g04 (a) spec-invalid)。
+        // `middle` は typo/俗称、`text-align` spec に存在しない。
+        assert_eq!(parse("middle", "text-align"), None);
+        assert_eq!(parse("baseline", "text-align"), None);
+        assert_eq!(parse("top", "text-align"), None);
+    }
+
+    #[test]
+    fn text_align_rejects_css_wide_keyword() {
+        // g04 (b) milestone subset: `inherit` / `initial` / `unset` / `revert` /
+        // `revert-layer` は Epic 7、現状は silent drop = None
+        // (parse_text_align の `_ => None` arm 経由)。
+        assert_eq!(parse("inherit", "text-align"), None);
+        assert_eq!(parse("initial", "text-align"), None);
+        assert_eq!(parse("unset", "text-align"), None);
+        assert_eq!(parse("revert", "text-align"), None);
+        assert_eq!(parse("revert-layer", "text-align"), None);
+    }
+
+    #[test]
+    fn text_align_rejects_string_value() {
+        // CSS Text 3 §6.1 grammar は 8 keyword のみ、`<string>` value は本 crate
+        // が引用する level では未定義 → g04 (a) spec-invalid、silent drop。
+        // (Text 4 draft では tabular-data character alignment 用に `<string>` が
+        // 検討されているが本 crate は Text 3 pin。expect_ident が String token を
+        // reject する経路で `None` を返す。)
+        assert_eq!(parse(r#""." "#, "text-align"), None);
+    }
+
+    #[test]
+    fn text_align_rejects_non_ident() {
+        // Number / dimension token は expect_ident で reject。
+        assert_eq!(parse("16px", "text-align"), None);
+        assert_eq!(parse("100", "text-align"), None);
+    }
+
+    #[test]
+    fn text_align_key_maps_to_text_align_property_key() {
+        // PropertyValue::TextAlign → PropertyKey::TextAlign (cascade winner 選択の
+        // discriminant integrity、既存 sibling counter-* / content / string-set /
+        // position と同じ pattern)。
+        let v = PropertyValue::TextAlign(TextAlign::Start);
+        assert_eq!(v.key(), PropertyKey::TextAlign);
+        let v = PropertyValue::TextAlign(TextAlign::Center);
+        assert_eq!(v.key(), PropertyKey::TextAlign);
     }
 }
