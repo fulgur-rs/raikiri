@@ -9,8 +9,8 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    ContentComponent, CssColor, DisplayValue, Length, empty_content_list, empty_counter_entries,
-    empty_string_set_entries,
+    ContentComponent, CssColor, DisplayValue, Length, TextAlign, empty_content_list,
+    empty_counter_entries, empty_string_set_entries,
 };
 
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
@@ -121,6 +121,22 @@ pub struct ComputedValues {
     /// concatenate する。design doc §7.3 の 2-tier キャッシュ static side に相当。
     /// (raikiri-spike-m5.4)
     pub running_templates: Vec<RunningTemplate>,
+    /// `text-align`。**inherited**、initial: [`TextAlign::Start`]
+    /// (CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
+    /// <https://www.w3.org/TR/css-text-3/#text-align-property>)。
+    ///
+    /// spec 上 shorthand (text-align-all + text-align-last の 2 longhand を set)
+    /// だが、Sprint 12 seed では **shorthand as single field** convention (margin
+    /// Sides<T> / content-normal-none-as-empty-list precedent) を踏襲して単一
+    /// field に保持 (**g04 (b) milestone subset**、longhand 分離 §6.2 / §6.3 は
+    /// 後続 task で defer)。詳細は [`TextAlign`] doc-comment。
+    ///
+    /// 37n sibling: [`color`](Self::color) / [`font_family`](Self::font_family) /
+    /// [`font_size`](Self::font_size) / [`font_weight`](Self::font_weight) と同じ
+    /// **inherited** 系 — `inherit_from` の inherited block に配置し親から by-value
+    /// copy (`TextAlign` は `Copy`)。
+    /// (raikiri-spike-0vv.8)
+    pub text_align: TextAlign,
 }
 
 impl ComputedValues {
@@ -150,6 +166,8 @@ impl ComputedValues {
             // CSS GCPM 3 §1.2.1: position: running() seed initial は empty
             // (position の initial は `static`、running(name) 無し)。
             running_templates: Vec::new(),
+            // CSS Text 3 §6.1: text-align initial is `start` (raikiri-spike-0vv.8)
+            text_align: TextAlign::Start,
         }
     }
 
@@ -175,6 +193,8 @@ impl ComputedValues {
             font_family: parent.font_family.clone(),
             font_size: parent.font_size,
             font_weight: parent.font_weight,
+            // inherited (CSS Text 3 §6.1、raikiri-spike-0vv.8)。TextAlign は Copy。
+            text_align: parent.text_align,
             // non-inherited (initial 値、CSS §9.2.4 initial value of display)
             display: DisplayValue::Inline,
             // non-inherited (CSS Lists 3 §3、raikiri-spike-s85)。
@@ -223,6 +243,8 @@ mod tests {
         // CSS GCPM 3 §1.2.1 (raikiri-spike-m5.4): position initial は `static` →
         // running() seed 無し。
         assert!(cv.running_templates.is_empty());
+        // CSS Text 3 §6.1 (raikiri-spike-0vv.8): text-align initial は `start`。
+        assert_eq!(cv.text_align, TextAlign::Start);
     }
 
     #[test]
@@ -261,6 +283,10 @@ mod tests {
             content: empty_content_list(),
             string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
+            // raikiri-spike-0vv.8: text-align は inherited、fixture では non-initial 値
+            // (Center) を親に持たせて child が Start (initial) ではなく Center を
+            // 引き継ぐことを assert する。
+            text_align: TextAlign::Center,
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -268,6 +294,8 @@ mod tests {
         assert_eq!(child.font_family, parent.font_family);
         assert_eq!(child.font_size, parent.font_size);
         assert_eq!(child.font_weight, parent.font_weight);
+        // CSS Text 3 §6.1: text-align は inherited (raikiri-spike-0vv.8)。
+        assert_eq!(child.text_align, TextAlign::Center);
     }
 
     #[test]
