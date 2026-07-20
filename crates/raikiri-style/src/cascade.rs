@@ -373,6 +373,19 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // 親値を引き継ぐ (color / font_family / font_size / font_weight と同じ
         // handling)。TextAlign は Copy、by-value 代入で十分。
         PropertyValue::TextAlign(t) => target.text_align = t,
+        // CSS Box 3 §6.1 padding physical longhand (raikiri-spike-0vv.6)。
+        // 4 side を独立に上書き。shorthand (Padding) との cascade 干渉は
+        // `PropertyValue::Padding` doc の "Known limitation" 参照 — HashMap
+        // iteration の apply 順が非決定的なため、shorthand と longhand 同時
+        // 出現 case は将来 parse-time expansion migration で修正予定
+        // (bd raikiri-spike-5nc、margin 0vv.5 とも統合修正)。
+        PropertyValue::PaddingTop(v) => target.padding.top = v,
+        PropertyValue::PaddingRight(v) => target.padding.right = v,
+        PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
+        PropertyValue::PaddingLeft(v) => target.padding.left = v,
+        // CSS Box 3 §6.2 padding shorthand: 全 4 side を一括上書き。
+        // Sides<Length>: Copy のため move で `target.padding` に代入。
+        PropertyValue::Padding(sides) => target.padding = sides,
     }
 }
 
@@ -1152,6 +1165,87 @@ mod tests {
             std::sync::Arc::ptr_eq(&r.computed[p1].string_set, &r.computed[p2].string_set),
             "empty string_set must reuse shared Arc slot (raikiri-spike-d9y.1 side-effect canary)"
         );
+    }
+
+    // ── padding wire-through (CSS Box 3 §6.1 + §6.2、raikiri-spike-0vv.6) ──
+    //
+    // Verification #7 (cascade wire-through + non-inheritance):
+    // <div style="padding: 10px 5%"> の cascade 結果が populate、initial value 0
+    // が inheritance walk で child に伝播しない (padding は non-inherited)。
+
+    #[test]
+    fn padding_shorthand_wired_through_cascade_from_inline_style() {
+        // Verification #7: `padding: 10px 5%` → 2-value form expansion で
+        // top/bottom=10px, left/right=5% を pin。counter-* / content / string_set
+        // wire-through pattern を踏襲 (s85 / m5.1 / m5.3、raikiri-spike-0vv.6)。
+        use crate::property::{Length, Sides};
+        let cv = cascade_doc("", "div", Some("padding: 10px 5%"));
+        assert_eq!(
+            cv.padding,
+            Sides {
+                top: Length::Px(10.0),
+                right: Length::Percent(5.0),
+                bottom: Length::Px(10.0),
+                left: Length::Percent(5.0),
+            }
+        );
+    }
+
+    #[test]
+    fn padding_longhand_wired_through_cascade_from_inline_style() {
+        // 4 longhand も端から端まで届くことを smoke で pin。
+        use crate::property::{Length, Sides};
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("padding-top: 1px; padding-right: 2px; padding-bottom: 3px; padding-left: 4px"),
+        );
+        assert_eq!(
+            cv.padding,
+            Sides {
+                top: Length::Px(1.0),
+                right: Length::Px(2.0),
+                bottom: Length::Px(3.0),
+                left: Length::Px(4.0),
+            }
+        );
+    }
+
+    #[test]
+    fn padding_is_non_inherited_child_starts_from_initial_zero() {
+        // Verification #7 の後半: <div style="padding: 10px 5%"> の子 <span> は
+        // 自身 rule がなく padding は initial (Sides::all(0px))。
+        // 37n sibling: string_set / content / display / counter-* / running_templates
+        // の non-inheritance test と同じ shape。
+        use crate::property::{Length, Sides};
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("padding: 10px 5%"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // 親は shorthand 由来の値を持つ。
+        assert_eq!(
+            r.computed[div].padding,
+            Sides {
+                top: Length::Px(10.0),
+                right: Length::Percent(5.0),
+                bottom: Length::Px(10.0),
+                left: Length::Percent(5.0),
+            }
+        );
+        // 子は inherit_from 経由で initial (Sides::all(0px)) — 継承しない。
+        assert_eq!(r.computed[span].padding, Sides::all(Length::Px(0.0)));
+    }
+
+    #[test]
+    fn padding_negative_declaration_dropped_at_cascade() {
+        // spec §6.1 negative reject の end-to-end smoke: cascade まで負値が
+        // 到達せず、initial (0) が残る。property.rs test は parse_value 単体
+        // の drop、本 test は rule.rs → cascade の一貫 drop を pin。
+        use crate::property::{Length, Sides};
+        let cv = cascade_doc("", "div", Some("padding-top: -5px"));
+        // 負値 → declaration drop → padding は cascade 未 override → initial 0 が残る。
+        assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
     }
 
     #[test]
