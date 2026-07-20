@@ -156,15 +156,55 @@ pub enum Length {
     Pt(f32),
 }
 
+/// `<length-percentage> | auto` — margin grammar の Author CSS seed。
+///
+/// margin property は spec で `<length-percentage> | auto` を取る (CSS Box 3
+/// §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。`auto` は spec
+/// grammar top-level alternative として `<length-percentage>` と disjoint に
+/// 現れるため、[`Length`] を包む sum type にする。
+///
+/// NB: padding (CSS Box 3 §4) の grammar は `<length-percentage>` のみで `auto`
+/// を含まないため、0vv.6 padding は本 type を **使わず** [`Sides<Length>`] を
+/// 直接使う (`Sides<T>` のみ reuse、詳細は [`Sides`] doc の再利用先 section)。
+///
+/// `#[non_exhaustive]` は future variant (例: `<flex>` `auto-vs-fill-available`
+/// 系 CSS Box 4 拡張、または `min-content` / `max-content` 系 sizing keyword) の
+/// non-breaking 追加のため — 37n sibling [`Length`] / [`CounterStyle`] と同じ
+/// pattern。
+///
+/// [`Copy`] 導入は underlying [`Length`] が `Copy` (Px/Em/Rem/Percent/Pt は
+/// 全て単一 f32 payload) で、Sides<LengthOrAuto> = 4 × ~8 bytes に収まり
+/// per-node copy が cheap なため。
+///
+/// # Primary sources
+///
+/// - CSS Box 3 §3.1 "Page-relative (Physical) Margin Properties":
+///   [`margin-*`](https://www.w3.org/TR/css-box-3/#margin-physical) —
+///   "Value: `<length-percentage> | auto`" (top / right / bottom / left 共通)。
+///   `auto` の resolution は下流 layout 責務 (margin auto = distribute
+///   available space)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LengthOrAuto {
+    /// authored length-percentage (`10px` / `1em` / `50%` / etc.)。
+    Length(Length),
+    /// `auto` keyword — layout side で "distribute available space" として
+    /// 解釈される (CSS Box 3 §3.1)。
+    Auto,
+}
+
 /// 4-side box-model value holder。field 順は CSS Box 3 §6.2 shorthand の
 /// 4-value form `top right bottom left` に一致 (clockwise from top)。
 ///
 /// Sprint 12 で padding shorthand が最初の consumer (raikiri-spike-0vv.6)、
 /// sibling raikiri-spike-0vv.5 (margin) は `Sides<LengthOrAuto>` として reuse
-/// する想定 — 型パラメータで per-property の value type 差を吸収する。
+/// する — 型パラメータで per-property の value type 差を吸収する。
 ///
 /// `Copy` は `where T: Copy` conditional bound として transparent に伝わり、
 /// `Sides<Length>` の per-node write は bit-copy になる。
+/// `Eq` derive は `T: Eq` conditional に伝わる (`Sides<Length>` / `Sides<LengthOrAuto>`
+/// は共に inner が f32 を含むため実質 Eq にはならない — bound-伝播のみ、実 usage
+/// は PartialEq)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sides<T> {
     /// Top side (`padding-top` / `margin-top` に相当)。
@@ -178,8 +218,10 @@ pub struct Sides<T> {
 }
 
 impl<T: Clone> Sides<T> {
-    /// 4 side を全て同じ値で埋める constructor — `padding: 10px` の 1-value
-    /// shorthand expansion / `initial: 0` に相当する common construction。
+    /// 4 side を全て同じ値で埋める constructor — `padding: 10px` / `margin: 10px`
+    /// の 1-value shorthand expansion (CSS Box 3 §3.2 / §6.2 "If there is only
+    /// one component value, it applies to all sides.") + `Sides` 系 field の
+    /// spec initial value (`0` を全 side に配る) の両方で使う共通 helper。
     pub fn all(v: T) -> Self {
         Self {
             top: v.clone(),
@@ -775,13 +817,44 @@ pub enum PropertyValue {
     /// の適用順は `HashMap` iteration 由来で非決定的 (spec §Cascade 5 が要求する
     /// "shorthand は parse-time で longhand に expand してから cascade" を満たさない)。
     /// 単独 shorthand + 単独 longhand の各 case は spec 準拠 (Verification #4-6
-    /// で pin)、shorthand + longhand co-occurrence は同種 defect が margin
-    /// (raikiri-spike-0vv.5) にも波及するため、両者統合修正は別 task
-    /// **raikiri-spike-5nc** (parse-time expansion への migration、
-    /// [`apply_value`] doc も参照)。
+    /// で pin)、統合修正は別 task **raikiri-spike-5nc** で margin (0vv.5) が採った
+    /// parse-time expansion モデルに padding を migrate する予定
+    /// ([`apply_value`] doc も参照)。
     ///
     /// [`apply_value`]: crate::cascade::apply_value
     Padding(Sides<Length>),
+    /// `margin-top: <length-percentage> | auto` — non-inherited、initial: 0
+    /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
+    /// raikiri-spike-0vv.5。
+    MarginTop(LengthOrAuto),
+    /// `margin-right: <length-percentage> | auto` — non-inherited、initial: 0
+    /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
+    /// raikiri-spike-0vv.5。
+    MarginRight(LengthOrAuto),
+    /// `margin-bottom: <length-percentage> | auto` — non-inherited、initial: 0
+    /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
+    /// raikiri-spike-0vv.5。
+    MarginBottom(LengthOrAuto),
+    /// `margin-left: <length-percentage> | auto` — non-inherited、initial: 0
+    /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
+    /// raikiri-spike-0vv.5。
+    MarginLeft(LengthOrAuto),
+    /// `margin: <'margin-top'>{1,4}` shorthand — 4-side quad の一括指定
+    /// (CSS Box 3 §3.2 <https://www.w3.org/TR/css-box-3/#margin-shorthand>)。
+    ///
+    /// **cascade 上は普段この variant を観測しない**: [`crate::rule::parse_declaration_block`]
+    /// が declaration parse 直後に 4 longhand variant
+    /// ([`MarginTop`](Self::MarginTop) / [`MarginRight`](Self::MarginRight) /
+    /// [`MarginBottom`](Self::MarginBottom) / [`MarginLeft`](Self::MarginLeft))
+    /// に展開するため (spec §3.2 の 1/2/3/4 expansion + CSS Cascading L4 §3
+    /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
+    /// verbatim "A shorthand property sets all of its longhand sub-properties,
+    /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
+    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
+    /// は本 variant を受けたときも `ComputedValues.margin` field 全 4 side を
+    /// 上書きする実装を持つ (regression 時 panic 回避)。
+    /// raikiri-spike-0vv.5。
+    Margin(Sides<LengthOrAuto>),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -819,6 +892,14 @@ pub enum PropertyKey {
     /// pick される (spec §Cascade 5 の parse-time expansion モデルからは deviation、
     /// 統合修正は bd raikiri-spike-5nc)。
     Padding,
+    // margin longhand + shorthand — raikiri-spike-0vv.5 (semantics on the
+    // matching PropertyValue::Margin* variants; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention).
+    MarginTop,
+    MarginRight,
+    MarginBottom,
+    MarginLeft,
+    Margin,
 }
 
 impl PropertyValue {
@@ -847,6 +928,11 @@ impl PropertyValue {
             PropertyValue::PaddingBottom(_) => PropertyKey::PaddingBottom,
             PropertyValue::PaddingLeft(_) => PropertyKey::PaddingLeft,
             PropertyValue::Padding(_) => PropertyKey::Padding,
+            PropertyValue::MarginTop(_) => PropertyKey::MarginTop,
+            PropertyValue::MarginRight(_) => PropertyKey::MarginRight,
+            PropertyValue::MarginBottom(_) => PropertyKey::MarginBottom,
+            PropertyValue::MarginLeft(_) => PropertyKey::MarginLeft,
+            PropertyValue::Margin(_) => PropertyKey::Margin,
         }
     }
 }
@@ -939,6 +1025,18 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
         // 1-4 value expansion は parse_padding_shorthand が spec verbatim で適用。
         "padding" => parse_padding_shorthand(input).map(PropertyValue::Padding),
+        // CSS Box 3 §3.1 margin-* physical longhand (raikiri-spike-0vv.5).
+        // <length-percentage> | auto の grammar、negative 許容 (spec 準拠、layout
+        // 側で負値の意味付け)。
+        "margin-top" => parse_margin_side(input).map(PropertyValue::MarginTop),
+        "margin-right" => parse_margin_side(input).map(PropertyValue::MarginRight),
+        "margin-bottom" => parse_margin_side(input).map(PropertyValue::MarginBottom),
+        "margin-left" => parse_margin_side(input).map(PropertyValue::MarginLeft),
+        // CSS Box 3 §3.2 margin shorthand (raikiri-spike-0vv.5). 1-4 value
+        // expansion。cascade 段では `PropertyValue::Margin` は `parse_declaration_block`
+        // 内で 4 longhand に展開されるため通常観測しない (詳細は
+        // `PropertyValue::Margin` doc + `crate::rule::expand_shorthand`)。
+        "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
         _ => None,
     }
 }
@@ -1096,6 +1194,90 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
         }
         _ => None,
     }
+}
+
+/// `<length-percentage> | auto` の共通 parser — margin longhand 1 side 分。
+///
+/// grammar reference: CSS Box 3 §3.1
+/// <https://www.w3.org/TR/css-box-3/#margin-physical> "Value:
+/// `<length-percentage> | auto`"。
+///
+/// # Order of alternative
+///
+/// `auto` ident branch を **先に** try_parse する — [`parse_length_value`] は内部で
+/// `input.next()` を unconditional に消費 (fail 時も token を戻さない) するため、
+/// naive な "try length first, then auto" だと `margin: auto` の `auto` ident
+/// が length parser で drop され後段の auto match が届かない。try_parse で
+/// checkpoint 経由の rewind を確保する (sibling: [`parse_content_list_items`] の
+/// bare `<string>` literal 分岐と同 pattern)。
+///
+/// `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、既存
+/// `counter_reset_is_case_insensitive_on_none` test が挙動を pin) なので
+/// `AUTO` / `Auto` も透過的に受理される。
+fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    parse_length_value(input, true).map(LengthOrAuto::Length)
+}
+
+/// `margin: <'margin-top'>{1,4}` shorthand — 1-4 value expansion 実装。
+///
+/// grammar reference: CSS Box 3 §3.2
+/// <https://www.w3.org/TR/css-box-3/#margin-shorthand>。
+///
+/// # Expansion rules (spec verbatim, §3.2)
+///
+/// "If there is only one component value, it applies to all sides. If there
+/// are two values, the top and bottom margins are set to the first value and
+/// the right and left margins are set to the second. If there are three
+/// values, the top is set to the first value, the left and right are set to
+/// the second, and the bottom is set to the third. If there are four values
+/// they apply to the top, right, bottom, and left, respectively."
+///
+/// # Trailing garbage handling
+///
+/// 5+ value (`margin: 10px 20px 30px 40px 50px`) は本 helper では 4 value 消費
+/// して残り 1 token を unconsumed で return する。caller の
+/// [`crate::rule::DeclParser::parse_value`] が `expect_exhausted` で余剰 token を
+/// 検知して declaration ごと drop する (既存 [`parse_font_family`] 系と同じ
+/// 責務分担、`rejects_extra_length_after_font_size` 系 test で pattern を pin)。
+fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<LengthOrAuto>> {
+    let v1 = parse_margin_side(input)?;
+    // 2nd value 不在 → 1 value case: 全 4 side に spread (§3.2 "If there is only
+    // one component value, it applies to all sides")。
+    let Some(v2) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
+        return Some(Sides::all(v1));
+    };
+    // 3rd 不在 → 2 value case: top/bottom = 1st, right/left = 2nd。
+    let Some(v3) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
+        return Some(Sides {
+            top: v1,
+            right: v2,
+            bottom: v1,
+            left: v2,
+        });
+    };
+    // 4th 不在 → 3 value case: top = 1st, right/left = 2nd, bottom = 3rd。
+    let Some(v4) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
+        return Some(Sides {
+            top: v1,
+            right: v2,
+            bottom: v3,
+            left: v2,
+        });
+    };
+    // 4 values: clockwise from top (top, right, bottom, left)。5th 以降は
+    // 本 helper では消費せず、caller の `expect_exhausted` で drop される
+    // (property.rs test `margin_shorthand_leaves_extra_values_for_caller_exhausted_check`
+    //  で parse_value 単体挙動、rule.rs test `margin_shorthand_five_values_declaration_dropped`
+    //  で end-to-end drop を pin)。
+    Some(Sides {
+        top: v1,
+        right: v2,
+        bottom: v3,
+        left: v4,
+    })
 }
 
 /// `font-size: <length>` を parse する。
@@ -2125,10 +2307,10 @@ mod tests {
 
     #[test]
     fn unknown_property_returns_none() {
-        // `margin` は現時点で未実装 property (0vv.5 で追加予定)、
-        // parse_value dispatch で fall-through → None。
-        // (`background-color` は 0vv.7、`padding` は 0vv.6 で追加された = ここから除外)
-        assert_eq!(parse("100px", "margin"), None);
+        // `background-color` (0vv.7)、`padding` (0vv.6)、`margin` (0vv.5) が
+        // 順次実装済 = ここから除外。`width` は現時点で parse_value dispatch
+        // に未登録 → fall-through で None が返る canonical unknown-property canary。
+        assert_eq!(parse("100px", "width"), None);
     }
 
     // ── Display (CSS Display 3 §2、raikiri-spike-m1.22) ─────────────
@@ -3924,5 +4106,276 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::TextAlign);
         let v = PropertyValue::TextAlign(TextAlign::Center);
         assert_eq!(v.key(), PropertyKey::TextAlign);
+    }
+
+    // ── margin longhand + shorthand (CSS Box 3 §3.1/§3.2、raikiri-spike-0vv.5) ──
+    //
+    // Primary source (WebFetch verified 2026-07-20):
+    // - #margin-physical (§3.1): `<length-percentage> | auto`, initial 0, non-inherited.
+    // - #margin-shorthand (§3.2): `<'margin-top'>{1,4}` with 1/2/3/4 value expansion.
+
+    #[test]
+    fn margin_top_parse_px() {
+        // Verification 3-a: `margin-top: 10px` → MarginTop(Length(Px(10)))。
+        assert_eq!(
+            parse("10px", "margin-top"),
+            Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+                10.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn margin_right_parse_auto() {
+        // Verification 3-b: `margin-right: auto` → MarginRight(Auto)。§3.1 の
+        // `auto` alternative の受理を per-side longhand で pin。
+        assert_eq!(
+            parse("auto", "margin-right"),
+            Some(PropertyValue::MarginRight(LengthOrAuto::Auto))
+        );
+    }
+
+    #[test]
+    fn margin_bottom_parse_percentage() {
+        // Verification 3-c: `margin-bottom: 50%` → MarginBottom(Length(Percent(50)))。
+        assert_eq!(
+            parse("50%", "margin-bottom"),
+            Some(PropertyValue::MarginBottom(LengthOrAuto::Length(
+                Length::Percent(50.0)
+            )))
+        );
+    }
+
+    #[test]
+    fn margin_left_parse_em() {
+        // Verification 3-d: `margin-left: 2em` → MarginLeft(Length(Em(2)))。
+        // `<length-percentage>` mode 経由で em 受理 (parse_length_value の mode
+        // arg = true)。
+        assert_eq!(
+            parse("2em", "margin-left"),
+            Some(PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Em(
+                2.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn margin_side_accepts_negative_length() {
+        // Task Non-goals: negative margin は spec-valid (§3.1 "Negative values
+        // for margin properties are allowed")。longhand も含めて受理を pin。
+        assert_eq!(
+            parse("-10px", "margin-top"),
+            Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+                -10.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn margin_side_case_insensitive_auto() {
+        // CSS spec: ident keyword は ASCII case-insensitive。`AUTO` 受理を pin
+        // (expect_ident_matching が case-insensitive の証拠、helper 変更で
+        // regression した際の canary)。
+        assert_eq!(
+            parse("AUTO", "margin-top"),
+            Some(PropertyValue::MarginTop(LengthOrAuto::Auto))
+        );
+    }
+
+    #[test]
+    fn margin_side_rejects_unsupported_unit() {
+        // `cm` (§6.2 absolute lengths) は現行 milestone subset に含まれない
+        // (parse_length_value 側で drop、bd raikiri-spike-2x8 で追加 unit の
+        // expansion が tracked)。margin-side helper に非依存で波及ドロップを pin。
+        assert_eq!(parse("1cm", "margin-top"), None);
+    }
+
+    #[test]
+    fn margin_side_rejects_bogus_ident() {
+        // `<length-percentage> | auto` grammar 外 ident は declaration drop。
+        assert_eq!(parse("fill-available", "margin-top"), None);
+        assert_eq!(parse("initial", "margin-top"), None);
+    }
+
+    #[test]
+    fn margin_shorthand_one_value_spreads_all_sides() {
+        // Verification 4-a (§3.2 "If there is only one component value, it
+        // applies to all sides"): `margin: 10px` → 全 4 side = 10px。
+        let want = Sides::all(LengthOrAuto::Length(Length::Px(10.0)));
+        assert_eq!(parse("10px", "margin"), Some(PropertyValue::Margin(want)));
+    }
+
+    #[test]
+    fn margin_shorthand_two_values_top_bottom_and_right_left() {
+        // Verification 4-b (§3.2 "If there are two values, the top and bottom
+        // margins are set to the first value and the right and left margins
+        // are set to the second"): top/bottom = 10px, right/left = 20px。
+        let want = Sides {
+            top: LengthOrAuto::Length(Length::Px(10.0)),
+            right: LengthOrAuto::Length(Length::Px(20.0)),
+            bottom: LengthOrAuto::Length(Length::Px(10.0)),
+            left: LengthOrAuto::Length(Length::Px(20.0)),
+        };
+        assert_eq!(
+            parse("10px 20px", "margin"),
+            Some(PropertyValue::Margin(want))
+        );
+    }
+
+    #[test]
+    fn margin_shorthand_three_values_top_horiz_bottom() {
+        // Verification 4-c (§3.2 "If there are three values, the top is set to
+        // the first value, the left and right are set to the second, and the
+        // bottom is set to the third"): top = 10px, right/left = 20px,
+        // bottom = 30px。
+        let want = Sides {
+            top: LengthOrAuto::Length(Length::Px(10.0)),
+            right: LengthOrAuto::Length(Length::Px(20.0)),
+            bottom: LengthOrAuto::Length(Length::Px(30.0)),
+            left: LengthOrAuto::Length(Length::Px(20.0)),
+        };
+        assert_eq!(
+            parse("10px 20px 30px", "margin"),
+            Some(PropertyValue::Margin(want))
+        );
+    }
+
+    #[test]
+    fn margin_shorthand_four_values_clockwise() {
+        // Verification 4-d (§3.2 "If there are four values they apply to the
+        // top, right, bottom, and left, respectively"): clockwise from top。
+        let want = Sides {
+            top: LengthOrAuto::Length(Length::Px(10.0)),
+            right: LengthOrAuto::Length(Length::Px(20.0)),
+            bottom: LengthOrAuto::Length(Length::Px(30.0)),
+            left: LengthOrAuto::Length(Length::Px(40.0)),
+        };
+        assert_eq!(
+            parse("10px 20px 30px 40px", "margin"),
+            Some(PropertyValue::Margin(want))
+        );
+    }
+
+    #[test]
+    fn margin_shorthand_all_auto() {
+        // Verification 5-a: `margin: auto` (1 value auto) → 全 4 side = Auto。
+        // browser の "block-level centering" 慣用の parse pin。
+        let want = Sides::all(LengthOrAuto::Auto);
+        assert_eq!(parse("auto", "margin"), Some(PropertyValue::Margin(want)));
+    }
+
+    #[test]
+    fn margin_shorthand_zero_and_auto_horizontal_center() {
+        // Verification 5-b: `margin: 0 auto` (2 value mixed) は block-level
+        // horizontal centering の canonical form。top/bottom = 0px, right/left = auto。
+        // `0` は cssparser の Dimension token ではなく Number token になる — 現行
+        // helper は unitless zero を受理しないため代替に `0px` を用いる (spec
+        // 上は互換だが helper 挙動は milestone-strict; `parse_length_value_rejects_unitless_zero`
+        // で pin 済)。unitless-zero support は bd raikiri-spike-cxb で tracked、
+        // land 後は本 test を `0 auto` literal に戻す。
+        let want = Sides {
+            top: LengthOrAuto::Length(Length::Px(0.0)),
+            right: LengthOrAuto::Auto,
+            bottom: LengthOrAuto::Length(Length::Px(0.0)),
+            left: LengthOrAuto::Auto,
+        };
+        assert_eq!(
+            parse("0px auto", "margin"),
+            Some(PropertyValue::Margin(want))
+        );
+    }
+
+    #[test]
+    fn margin_shorthand_mixed_units() {
+        // grammar coverage: 4-value shorthand で unit / auto を全て混在させる。
+        // 32n `<length-percentage> | auto` の grammar 網羅を単一 assertion に集約。
+        let want = Sides {
+            top: LengthOrAuto::Length(Length::Px(10.0)),
+            right: LengthOrAuto::Auto,
+            bottom: LengthOrAuto::Length(Length::Percent(50.0)),
+            left: LengthOrAuto::Length(Length::Em(2.0)),
+        };
+        assert_eq!(
+            parse("10px auto 50% 2em", "margin"),
+            Some(PropertyValue::Margin(want))
+        );
+    }
+
+    #[test]
+    fn margin_shorthand_rejects_empty_input() {
+        // 空 value: parse_margin_side 1st fail → parse_margin_shorthand `?`
+        // 上位伝播で None (declaration drop)。
+        assert_eq!(parse("", "margin"), None);
+    }
+
+    #[test]
+    fn margin_shorthand_rejects_bogus_ident() {
+        // 1st value 位置に grammar 外 ident → declaration drop。
+        assert_eq!(parse("bogus", "margin"), None);
+    }
+
+    #[test]
+    fn margin_shorthand_leaves_extra_values_for_caller_exhausted_check() {
+        // 5+ value shorthand: 本 helper は 4 value 消費、5th 以降は unconsumed で
+        // return。DeclParser::parse_value の expect_exhausted で最終的に
+        // declaration drop されるので、rule.rs 側 test
+        // (`margin_shorthand_five_values_declaration_dropped`) で end-to-end
+        // 挙動を pin する。本 test は parse_value 単体 (caller expect_exhausted
+        // 経由なし) では 4 value までは Some が返る shape の pin。
+        let want = Sides {
+            top: LengthOrAuto::Length(Length::Px(10.0)),
+            right: LengthOrAuto::Length(Length::Px(20.0)),
+            bottom: LengthOrAuto::Length(Length::Px(30.0)),
+            left: LengthOrAuto::Length(Length::Px(40.0)),
+        };
+        assert_eq!(
+            parse("10px 20px 30px 40px 50px", "margin"),
+            Some(PropertyValue::Margin(want))
+        );
+    }
+
+    #[test]
+    fn margin_shorthand_case_insensitive_auto_and_units() {
+        // shorthand path でも case-insensitive dispatch が生きている pin。
+        let want = Sides {
+            top: LengthOrAuto::Auto,
+            right: LengthOrAuto::Length(Length::Px(20.0)),
+            bottom: LengthOrAuto::Auto,
+            left: LengthOrAuto::Length(Length::Px(20.0)),
+        };
+        assert_eq!(
+            parse("AUTO 20PX", "margin"),
+            Some(PropertyValue::Margin(want))
+        );
+    }
+
+    #[test]
+    fn margin_longhand_keys_map_correctly() {
+        // 4 longhand + shorthand variant → 対応 key (cascade winner 選択の
+        // discriminant integrity)。sibling `position_key_maps_to_position_property_key`
+        // と同 pattern。shorthand `Margin` key も expansion 前の PropertyValue
+        // 段で観測可能なため includes。
+        let top = PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(1.0)));
+        assert_eq!(top.key(), PropertyKey::MarginTop);
+        let right = PropertyValue::MarginRight(LengthOrAuto::Length(Length::Px(1.0)));
+        assert_eq!(right.key(), PropertyKey::MarginRight);
+        let bottom = PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Px(1.0)));
+        assert_eq!(bottom.key(), PropertyKey::MarginBottom);
+        let left = PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Px(1.0)));
+        assert_eq!(left.key(), PropertyKey::MarginLeft);
+        let shorthand = PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Px(1.0))));
+        assert_eq!(shorthand.key(), PropertyKey::Margin);
+    }
+
+    #[test]
+    fn sides_all_spreads_value_to_all_four() {
+        // Sides::all helper (37n reused by shorthand 1-value + initial value):
+        // 1 value → top/right/bottom/left が全て同値、Clone 経路 (最後の side は
+        // move 消費) が正しく動く pin。
+        let s = Sides::all(LengthOrAuto::Length(Length::Px(3.5)));
+        assert_eq!(s.top, LengthOrAuto::Length(Length::Px(3.5)));
+        assert_eq!(s.right, LengthOrAuto::Length(Length::Px(3.5)));
+        assert_eq!(s.bottom, LengthOrAuto::Length(Length::Px(3.5)));
+        assert_eq!(s.left, LengthOrAuto::Length(Length::Px(3.5)));
     }
 }

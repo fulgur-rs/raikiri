@@ -383,7 +383,8 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // `PropertyValue::Padding` doc の "Known limitation" 参照 — HashMap
         // iteration の apply 順が非決定的なため、shorthand と longhand 同時
         // 出現 case は将来 parse-time expansion migration で修正予定
-        // (bd raikiri-spike-5nc、margin 0vv.5 とも統合修正)。
+        // (bd raikiri-spike-5nc、margin 0vv.5 の parse-time expansion 方式に
+        // padding を追従させる整合 task)。
         PropertyValue::PaddingTop(v) => target.padding.top = v,
         PropertyValue::PaddingRight(v) => target.padding.right = v,
         PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
@@ -391,6 +392,22 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // CSS Box 3 §6.2 padding shorthand: 全 4 side を一括上書き。
         // Sides<Length>: Copy のため move で `target.padding` に代入。
         PropertyValue::Padding(sides) => target.padding = sides,
+        // 4 longhand margin sides (raikiri-spike-0vv.5、CSS Box 3 §3.1)。
+        // shorthand `PropertyValue::Margin` は `crate::rule::parse_declaration_block`
+        // 側で parse 直後に 4 longhand に展開されるため、cascade 段に届く declaration
+        // は per-side longhand のみ = HashMap iteration 順に依存しない per-key
+        // determinism が成立する (詳細は `PropertyValue::Margin` + `expand_shorthand` doc)。
+        PropertyValue::MarginTop(v) => target.margin.top = v,
+        PropertyValue::MarginRight(v) => target.margin.right = v,
+        PropertyValue::MarginBottom(v) => target.margin.bottom = v,
+        PropertyValue::MarginLeft(v) => target.margin.left = v,
+        // Safety-net for shorthand: expansion 経路 (parse_declaration_block) を
+        // bypass する code path が万一混入した場合でも、`ComputedValues.margin`
+        // 全 4 side を atomic に上書きする。normal flow では unreachable な arm
+        // なので `apply_value_direct_margin_shorthand_safety_net` test で
+        // 直接叩いて振る舞いを pin (panic 化を避けるための defensive fall-through、
+        // `unreachable!` を採らないのは reviewer-security の panic surface 排除方針)。
+        PropertyValue::Margin(sides) => target.margin = sides,
     }
 }
 
@@ -399,6 +416,7 @@ mod tests {
     use super::*;
     use crate::property::CssColor;
     use crate::property::DisplayValue;
+    use crate::property::{Length, LengthOrAuto, Sides};
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
     use smol_str::SmolStr;
@@ -1284,6 +1302,128 @@ mod tests {
         let cv = cascade_doc("", "div", Some("padding-top: -5px"));
         // 負値 → declaration drop → padding は cascade 未 override → initial 0 が残る。
         assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
+    }
+
+    // ── margin longhand + shorthand cascade (CSS Box 3 §3.1/§3.2、raikiri-spike-0vv.5) ──
+
+    #[test]
+    fn margin_shorthand_wired_through_cascade_two_value_expansion() {
+        // Verification 6-a: `<div style="margin: 10px 20px">` → ComputedValues.margin
+        // に top=10, right=20, bottom=10, left=20 が届く。
+        // parser → parse_declaration_block (shorthand expand) → 4 longhand
+        // PropertyValue → apply_value → ComputedValues の end-to-end 疎通 smoke。
+        let cv = cascade_doc("", "div", Some("margin: 10px 20px"));
+        assert_eq!(
+            cv.margin,
+            Sides {
+                top: LengthOrAuto::Length(Length::Px(10.0)),
+                right: LengthOrAuto::Length(Length::Px(20.0)),
+                bottom: LengthOrAuto::Length(Length::Px(10.0)),
+                left: LengthOrAuto::Length(Length::Px(20.0)),
+            }
+        );
+    }
+
+    #[test]
+    fn margin_longhand_wired_through_cascade_single_side() {
+        // longhand direct path — `<p style="margin-left: 2em">` → left = Em(2)、
+        // 他 side は initial (0)。
+        let cv = cascade_doc("", "p", Some("margin-left: 2em"));
+        assert_eq!(cv.margin.left, LengthOrAuto::Length(Length::Em(2.0)));
+        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.right, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.bottom, LengthOrAuto::Length(Length::Px(0.0)));
+    }
+
+    #[test]
+    fn margin_auto_wired_through_cascade_horizontal_centering() {
+        // Verification 5: `margin: 0 auto` (block-level horizontal centering の
+        // 慣用形) が全 4 side に正しく落ちる。cascade で LengthOrAuto::Auto の
+        // wire-through を pin。
+        let cv = cascade_doc("", "div", Some("margin: 0px auto"));
+        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.right, LengthOrAuto::Auto);
+        assert_eq!(cv.margin.bottom, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.left, LengthOrAuto::Auto);
+    }
+
+    #[test]
+    fn margin_shorthand_then_longhand_later_longhand_wins() {
+        // spec (CSS Cascading L4 §6.4.4): 同一 declaration block 内で shorthand
+        // + longhand が declared された場合、後方 declaration が同 rank/spec/order
+        // で勝つ。`margin: 0px; margin-top: 10px;` → top=10, others=0。
+        //
+        // 本 test は本 architecture の load-bearing case: expansion 前 shorthand
+        // を単一 key で cascade してしまうと apply_value 順が HashMap iteration
+        // 順に依存し nondeterministic (`margin` が後で apply → top=0 に上書き
+        // される regression) になる。expand_shorthand が parse-time で longhand
+        // 化するため per-key の cascade winner が top=10 に確定する。
+        let cv = cascade_doc("", "div", Some("margin: 0px; margin-top: 10px"));
+        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(10.0)));
+        assert_eq!(cv.margin.right, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.bottom, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.left, LengthOrAuto::Length(Length::Px(0.0)));
+    }
+
+    #[test]
+    fn margin_longhand_then_shorthand_later_shorthand_wins() {
+        // spec §6.4.4 の後方 wins を逆順で pin: `margin-top: 10px; margin: 0px;`
+        // → 全 side = 0px (後段 shorthand が top も含めて上書き)。
+        // expand_shorthand の 4 longhand 展開が source_order を保持したまま
+        // cascade に届き、後段が per-side 勝ち抜けする証拠。
+        let cv = cascade_doc("", "div", Some("margin-top: 10px; margin: 0px"));
+        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.right, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.bottom, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.left, LengthOrAuto::Length(Length::Px(0.0)));
+    }
+
+    #[test]
+    fn margin_non_inherited_child_starts_from_initial() {
+        // Verification 6-b: CSS Box 3 §3.1 "Inherited: no"。<div style="margin:
+        // 20px"> の子 <span> は自身 rule 無しで margin = initial (0 spread)。
+        // 37n sibling: display / string_set / content non-inherited と同 shape。
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("margin: 20px"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[div].margin,
+            Sides::all(LengthOrAuto::Length(Length::Px(20.0)))
+        );
+        assert_eq!(
+            r.computed[span].margin,
+            Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
+            "margin must not inherit from parent"
+        );
+    }
+
+    #[test]
+    fn margin_negative_length_accepted() {
+        // Task Non-goals: negative margin は spec-valid (§3.1)、cascade の end-to-end
+        // で受理されることを pin (parser 側 pin `margin_side_accepts_negative_length`
+        // と complementary、下流 layout 側で negative 意味付け)。
+        let cv = cascade_doc("", "div", Some("margin-top: -5px"));
+        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(-5.0)));
+    }
+
+    #[test]
+    fn apply_value_direct_margin_shorthand_safety_net() {
+        // `apply_value` の `PropertyValue::Margin(sides)` arm は normal flow で
+        // は unreachable (parse_declaration_block が 4 longhand に展開する) だが、
+        // regression / bypass 経路の safety net として `target.margin = sides` の
+        // atomic 上書きを持つ。本 test は arm を直接叩いて `unreachable!` 化 or
+        // 空 arm regression を捕捉する canary。
+        let mut cv = ComputedValues::initial();
+        let sides = Sides {
+            top: LengthOrAuto::Length(Length::Px(1.0)),
+            right: LengthOrAuto::Length(Length::Px(2.0)),
+            bottom: LengthOrAuto::Length(Length::Px(3.0)),
+            left: LengthOrAuto::Length(Length::Px(4.0)),
+        };
+        apply_value(PropertyValue::Margin(sides), &mut cv);
+        assert_eq!(cv.margin, sides);
     }
 
     #[test]
