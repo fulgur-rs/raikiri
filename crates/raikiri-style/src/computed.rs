@@ -9,8 +9,8 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    ContentComponent, CssColor, DisplayValue, Length, empty_content_list, empty_counter_entries,
-    empty_string_set_entries,
+    ContentComponent, CssColor, DisplayValue, Length, Sides, empty_content_list,
+    empty_counter_entries, empty_string_set_entries,
 };
 
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
@@ -121,6 +121,20 @@ pub struct ComputedValues {
     /// concatenate する。design doc §7.3 の 2-tier キャッシュ static side に相当。
     /// (raikiri-spike-m5.4)
     pub running_templates: Vec<RunningTemplate>,
+    /// `padding` — 4-side box-model padding。**non-inherited**、initial:
+    /// `Sides::all(Length::Px(0.0))` (CSS Box 3 §6.1 initial "0")。
+    ///
+    /// - Physical longhands: [`padding-top`](https://www.w3.org/TR/css-box-3/#propdef-padding-top) /
+    ///   `padding-right` / `padding-bottom` / `padding-left`。
+    /// - Shorthand: [`padding` (§6.2)](https://www.w3.org/TR/css-box-3/#padding-shorthand)。
+    ///
+    /// Value grammar: `<length-percentage [0,∞]>` — non-negative constraint は
+    /// parse-time enforce ([`crate::property::PropertyValue::PaddingTop`] doc 参照)。
+    /// [`Sides<Length>`] は 5 [`Length`] variant (Px / Em / Rem / Percent / Pt) の
+    /// authored value を保持、resolve は下流 (raikiri-dom apply_computed_to_style
+    /// bridge、font-size context / containing block % / 96px-per-in DPI) 責務。
+    /// (raikiri-spike-0vv.6)
+    pub padding: Sides<Length>,
 }
 
 impl ComputedValues {
@@ -150,6 +164,8 @@ impl ComputedValues {
             // CSS GCPM 3 §1.2.1: position: running() seed initial は empty
             // (position の initial は `static`、running(name) 無し)。
             running_templates: Vec::new(),
+            // CSS Box 3 §6.1: padding initial = 0 (all 4 sides、raikiri-spike-0vv.6)。
+            padding: Sides::all(Length::Px(0.0)),
         }
     }
 
@@ -197,6 +213,9 @@ impl ComputedValues {
             string_set: empty_string_set_entries(),
             // non-inherited (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4)
             running_templates: Vec::new(),
+            // non-inherited (CSS Box 3 §6.1、raikiri-spike-0vv.6)。
+            // `Sides<Length>: Copy` により per-node write は bit-copy。
+            padding: Sides::all(Length::Px(0.0)),
         }
     }
 }
@@ -223,6 +242,8 @@ mod tests {
         // CSS GCPM 3 §1.2.1 (raikiri-spike-m5.4): position initial は `static` →
         // running() seed 無し。
         assert!(cv.running_templates.is_empty());
+        // CSS Box 3 §6.1 (raikiri-spike-0vv.6): padding initial = 0 (all 4 sides)。
+        assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
     }
 
     #[test]
@@ -261,6 +282,7 @@ mod tests {
             content: empty_content_list(),
             string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
+            padding: Sides::all(Length::Px(0.0)),
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -297,6 +319,25 @@ mod tests {
         };
         let child = ComputedValues::inherit_from(&parent);
         assert_eq!(child.display, DisplayValue::Inline);
+    }
+
+    #[test]
+    fn inherit_from_leaves_padding_at_initial() {
+        // CSS Box 3 §6.1: padding は non-inherited。親が任意 padding を
+        // 持っていても child は initial (`Sides::all(Length::Px(0.0))`)。
+        // 37n sibling: display / counter-* / string_set / content non-inheritance
+        // test を踏襲 (raikiri-spike-0vv.6)。
+        let parent = ComputedValues {
+            padding: Sides {
+                top: Length::Px(10.0),
+                right: Length::Percent(5.0),
+                bottom: Length::Em(1.0),
+                left: Length::Pt(12.0),
+            },
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(child.padding, Sides::all(Length::Px(0.0)));
     }
 
     #[test]

@@ -139,6 +139,40 @@ pub enum Length {
     Pt(f32),
 }
 
+/// 4-side box-model value holder。field 順は CSS Box 3 §6.2 shorthand の
+/// 4-value form `top right bottom left` に一致 (clockwise from top)。
+///
+/// Sprint 12 で padding shorthand が最初の consumer (raikiri-spike-0vv.6)、
+/// sibling raikiri-spike-0vv.5 (margin) は `Sides<LengthOrAuto>` として reuse
+/// する想定 — 型パラメータで per-property の value type 差を吸収する。
+///
+/// `Copy` は `where T: Copy` conditional bound として transparent に伝わり、
+/// `Sides<Length>` の per-node write は bit-copy になる。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sides<T> {
+    /// Top side (`padding-top` / `margin-top` に相当)。
+    pub top: T,
+    /// Right side.
+    pub right: T,
+    /// Bottom side.
+    pub bottom: T,
+    /// Left side.
+    pub left: T,
+}
+
+impl<T: Clone> Sides<T> {
+    /// 4 side を全て同じ値で埋める constructor — `padding: 10px` の 1-value
+    /// shorthand expansion / `initial: 0` に相当する common construction。
+    pub fn all(v: T) -> Self {
+        Self {
+            top: v.clone(),
+            right: v.clone(),
+            bottom: v.clone(),
+            left: v,
+        }
+    }
+}
+
 /// `<counter-style>` の parse 結果。
 ///
 /// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>
@@ -507,6 +541,48 @@ pub enum PropertyValue {
     /// する discriminant 用途、spec default に相当)。
     /// `relative` / `absolute` / `fixed` / `sticky` は M5+ scope 外、parser 段で drop。
     Position(PositionValue),
+    /// `padding-top: <length-percentage [0,∞]>` — non-inherited、initial: `0`。
+    /// CSS Box 3 §6.1 <https://www.w3.org/TR/css-box-3/#padding-physical>。
+    /// spec grammar `<length-percentage [0,∞]>` の non-negative constraint は
+    /// [`parse_padding_side`] が parse-time enforce (負値は None 返し → declaration drop)、
+    /// `auto` keyword は grammar に含まれないため [`parse_length_value`] の
+    /// Dimension / Percentage arm fall-through で自然 reject。
+    /// (raikiri-spike-0vv.6)
+    PaddingTop(Length),
+    /// `padding-right: <length-percentage [0,∞]>` — [`Self::PaddingTop`] と同 grammar。
+    /// (raikiri-spike-0vv.6)
+    PaddingRight(Length),
+    /// `padding-bottom: <length-percentage [0,∞]>` — [`Self::PaddingTop`] と同 grammar。
+    /// (raikiri-spike-0vv.6)
+    PaddingBottom(Length),
+    /// `padding-left: <length-percentage [0,∞]>` — [`Self::PaddingTop`] と同 grammar。
+    /// (raikiri-spike-0vv.6)
+    PaddingLeft(Length),
+    /// `padding: <'padding-top'>{1,4}` shorthand — non-inherited、initial:
+    /// [`Sides::all(Length::Px(0.0))`]。CSS Box 3 §6.2
+    /// <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
+    ///
+    /// 1-4 value expansion (spec-verbatim):
+    /// - 1 value: 全 4 side
+    /// - 2 values: top/bottom = first, left/right = second
+    /// - 3 values: top = first, left/right = second, bottom = third
+    /// - 4 values: top / right / bottom / left (clockwise from top)
+    ///
+    /// # Known limitation: shorthand vs longhand cascade (raikiri-spike-0vv.6 seed)
+    ///
+    /// 本 crate の cascade は per-`PropertyKey` に winner を選ぶ設計のため、
+    /// `padding: 10px` (`PropertyKey::Padding` winner) と `padding-top: 5px`
+    /// (`PropertyKey::PaddingTop` winner) が同時に勝った場合、[`apply_value`]
+    /// の適用順は `HashMap` iteration 由来で非決定的 (spec §Cascade 5 が要求する
+    /// "shorthand は parse-time で longhand に expand してから cascade" を満たさない)。
+    /// 単独 shorthand + 単独 longhand の各 case は spec 準拠 (Verification #4-6
+    /// で pin)、shorthand + longhand co-occurrence は同種 defect が margin
+    /// (raikiri-spike-0vv.5) にも波及するため、両者統合修正は別 task
+    /// **raikiri-spike-5nc** (parse-time expansion への migration、
+    /// [`apply_value`] doc も参照)。
+    ///
+    /// [`apply_value`]: crate::cascade::apply_value
+    Padding(Sides<Length>),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -532,6 +608,15 @@ pub enum PropertyKey {
     Content,
     StringSet,
     Position,
+    PaddingTop,
+    PaddingRight,
+    PaddingBottom,
+    PaddingLeft,
+    /// [`PropertyValue::Padding`] doc の "shorthand vs longhand cascade" 制約に
+    /// 該当する discriminant — shorthand と longhand それぞれ独立 winner が
+    /// pick される (spec §Cascade 5 の parse-time expansion モデルからは deviation、
+    /// 統合修正は bd raikiri-spike-5nc)。
+    Padding,
 }
 
 impl PropertyValue {
@@ -552,6 +637,11 @@ impl PropertyValue {
             PropertyValue::Content(_) => PropertyKey::Content,
             PropertyValue::StringSet(_) => PropertyKey::StringSet,
             PropertyValue::Position(_) => PropertyKey::Position,
+            PropertyValue::PaddingTop(_) => PropertyKey::PaddingTop,
+            PropertyValue::PaddingRight(_) => PropertyKey::PaddingRight,
+            PropertyValue::PaddingBottom(_) => PropertyKey::PaddingBottom,
+            PropertyValue::PaddingLeft(_) => PropertyKey::PaddingLeft,
+            PropertyValue::Padding(_) => PropertyKey::Padding,
         }
     }
 }
@@ -618,6 +708,19 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // M5 scope では `static` + `running(<custom-ident>)` のみ受理、
         // `relative` / `absolute` / `fixed` / `sticky` は silent drop (M5+ scope 外)。
         "position" => parse_position(input).map(PropertyValue::Position),
+        // CSS Box 3 §6.1 padding physical longhand (raikiri-spike-0vv.6)。
+        // grammar: <length-percentage [0,∞]> — non-negative constraint は
+        // parse_padding_side が enforce (parse-time drop、spec-invalid → None)。
+        // `auto` keyword は spec grammar に含まれず parse_length_value の Dimension /
+        // Percentage arm fall-through で自然 reject。
+        "padding-top" => parse_padding_side(input).map(PropertyValue::PaddingTop),
+        "padding-right" => parse_padding_side(input).map(PropertyValue::PaddingRight),
+        "padding-bottom" => parse_padding_side(input).map(PropertyValue::PaddingBottom),
+        "padding-left" => parse_padding_side(input).map(PropertyValue::PaddingLeft),
+        // CSS Box 3 §6.2 padding shorthand: `<'padding-top'>{1,4}`
+        // <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
+        // 1-4 value expansion は parse_padding_shorthand が spec verbatim で適用。
+        "padding" => parse_padding_shorthand(input).map(PropertyValue::Padding),
         _ => None,
     }
 }
@@ -789,6 +892,97 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
         // 未実装のため drop、negative Px も spec 上 invalid のため drop。
         _ => None,
     }
+}
+
+/// `padding-{top,right,bottom,left}` の single-side value を parse する。
+///
+/// grammar: `<length-percentage [0,∞]>` (CSS Box 3 §6.1
+/// <https://www.w3.org/TR/css-box-3/#padding-physical>)。spec 原文:
+/// "Negative values are invalid for padding properties" — 負値は grammar 違反
+/// として declaration ごと drop する。
+///
+/// # 実装 note
+///
+/// 1. [`parse_length_value`] を `allow_percentage=true` で呼ぶ (grammar が
+///    `<length-percentage>`)。dimension 未対応 unit / `auto` keyword / non-numeric
+///    token は同 helper が `None` に落とす (font-size 経路と同 pattern)。
+/// 2. 全 [`Length`] variant (`Px` / `Em` / `Rem` / `Percent` / `Pt`) の payload
+///    に対し `>= 0.0` を確認、負値は `None` 返し (`Percent(-10.0)` = `-10%`
+///    も含む — Verification #5 で pin)。
+///
+/// # Sibling pattern
+///
+/// [`parse_font_size`] が `Length::Px` post-filter で `>= 0.0` を確認する precedent。
+/// 本 helper は全 variant を通して check する点が違うのは font-size が
+/// `<length>` (px-only milestone) なのに対し padding は `<length-percentage>`
+/// で 5 variant 全て流入するため。
+fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
+    let length = parse_length_value(input, true)?;
+    // spec §6.1: "Negative values are invalid for padding properties"。
+    // 全 variant の payload を OR-pattern で抽出し `>= 0.0` を確認、負値 → drop。
+    let v = match length {
+        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
+    };
+    (v >= 0.0).then_some(length)
+}
+
+/// `padding: <'padding-top'>{1,4}` shorthand を [`Sides<Length>`] に expand する。
+///
+/// CSS Box 3 §6.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand>: spec-verbatim
+/// 1-4 value expansion:
+///
+/// - 1 value: all 4 sides = value
+/// - 2 values: top/bottom = 1st, left/right = 2nd
+/// - 3 values: top = 1st, left/right = 2nd, bottom = 3rd
+/// - 4 values: top / right / bottom / left (clockwise from top)
+///
+/// # Robustness
+///
+/// - 5 個目以降の value は本関数では consume せず leftover として残す →
+///   caller (`rule.rs::DeclParser`) の `expect_exhausted` が declaration
+///   ごと drop する (`padding: 1px 2px 3px 4px 5px` → invalid, drop)。
+/// - 0 value (input が empty) は 1st `parse_padding_side` が `None` を返し
+///   全体 `None` propagate。
+/// - 各 value の non-negative constraint は [`parse_padding_side`] が個別に
+///   enforce (負値混じり `padding: 10px -5px` → 2nd で `None`、全体 drop)。
+fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> {
+    // 1st value 必須。無ければ全体 drop (0-value form は grammar 違反)。
+    let v1 = parse_padding_side(input)?;
+    // 2-4 value は sequential `try_parse` で optional 取得。`try_parse` は
+    // 失敗時に parser position を rewind するため、前段 None 時にも下段の
+    // try_parse は同 token を再 read → 同 fail、guard 不要 (自然 short-circuit)。
+    let v2 = input.try_parse(parse_padding_side_res).ok();
+    let v3 = input.try_parse(parse_padding_side_res).ok();
+    let v4 = input.try_parse(parse_padding_side_res).ok();
+    // spec §6.2 1-4 value expansion (verbatim):
+    let sides = match (v2, v3, v4) {
+        (None, _, _) => Sides::all(v1),
+        (Some(h), None, _) => Sides {
+            top: v1,
+            right: h,
+            bottom: v1,
+            left: h,
+        },
+        (Some(h), Some(b), None) => Sides {
+            top: v1,
+            right: h,
+            bottom: b,
+            left: h,
+        },
+        (Some(r), Some(b), Some(l)) => Sides {
+            top: v1,
+            right: r,
+            bottom: b,
+            left: l,
+        },
+    };
+    Some(sides)
+}
+
+/// [`parse_padding_side`] の `Result` 版 — `try_parse` は closure 内で
+/// `Result` を要求するため wrapper 化。
+fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, ParseError<'i, ()>> {
+    parse_padding_side(input).ok_or_else(|| input.new_custom_error(()))
 }
 
 fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<u16> {
@@ -2628,6 +2822,298 @@ mod tests {
         assert_eq!(parse_length("1.5EM", false), Some(Length::Em(1.5)));
         assert_eq!(parse_length("2Rem", false), Some(Length::Rem(2.0)));
         assert_eq!(parse_length("14Pt", false), Some(Length::Pt(14.0)));
+    }
+
+    // ── padding (CSS Box 3 §6.1 physical + §6.2 shorthand、raikiri-spike-0vv.6) ──
+    //
+    // Primary sources (WebFetch verified 2026-07-20):
+    // - https://www.w3.org/TR/css-box-3/#padding-physical
+    //   "Negative values are invalid for padding properties" — non-negative
+    //   constraint を parse-time enforce (parse_padding_side が全 Length variant
+    //   で >= 0.0 check、負値 = declaration drop)。
+    // - https://www.w3.org/TR/css-box-3/#padding-shorthand
+    //   `<'padding-top'>{1,4}` — 1-4 value expansion (top/right/bottom/left)。
+
+    fn padding_sides(top: Length, right: Length, bottom: Length, left: Length) -> Sides<Length> {
+        Sides {
+            top,
+            right,
+            bottom,
+            left,
+        }
+    }
+
+    // Verification #3 — longhand parse 4 arm (px / % / em / pt の 5 unit)。
+    #[test]
+    fn padding_top_parses_px() {
+        assert_eq!(
+            parse("10px", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Px(10.0)))
+        );
+    }
+
+    #[test]
+    fn padding_right_parses_percentage() {
+        // spec grammar `<length-percentage>` — % 受理。
+        assert_eq!(
+            parse("5%", "padding-right"),
+            Some(PropertyValue::PaddingRight(Length::Percent(5.0)))
+        );
+    }
+
+    #[test]
+    fn padding_bottom_parses_em() {
+        assert_eq!(
+            parse("1em", "padding-bottom"),
+            Some(PropertyValue::PaddingBottom(Length::Em(1.0)))
+        );
+    }
+
+    #[test]
+    fn padding_left_parses_pt() {
+        assert_eq!(
+            parse("12pt", "padding-left"),
+            Some(PropertyValue::PaddingLeft(Length::Pt(12.0)))
+        );
+    }
+
+    // Verification #4 — shorthand 1-4 value expansion (CSS Box 3 §6.2)。
+    #[test]
+    fn padding_shorthand_one_value_all_sides() {
+        // 1 value → 4 sides = value
+        let px10 = Length::Px(10.0);
+        assert_eq!(
+            parse("10px", "padding"),
+            Some(PropertyValue::Padding(Sides::all(px10)))
+        );
+    }
+
+    #[test]
+    fn padding_shorthand_two_values_top_bottom_left_right() {
+        // 2 values → top/bottom = 1st, left/right = 2nd
+        let px10 = Length::Px(10.0);
+        let px20 = Length::Px(20.0);
+        assert_eq!(
+            parse("10px 20px", "padding"),
+            Some(PropertyValue::Padding(padding_sides(
+                px10, px20, px10, px20
+            )))
+        );
+    }
+
+    #[test]
+    fn padding_shorthand_three_values_top_horizontal_bottom() {
+        // 3 values → top = 1st, left/right = 2nd, bottom = 3rd
+        let px10 = Length::Px(10.0);
+        let px20 = Length::Px(20.0);
+        let px30 = Length::Px(30.0);
+        assert_eq!(
+            parse("10px 20px 30px", "padding"),
+            Some(PropertyValue::Padding(padding_sides(
+                px10, px20, px30, px20
+            )))
+        );
+    }
+
+    #[test]
+    fn padding_shorthand_four_values_clockwise() {
+        // 4 values → top / right / bottom / left (clockwise from top)
+        assert_eq!(
+            parse("10px 20px 30px 40px", "padding"),
+            Some(PropertyValue::Padding(padding_sides(
+                Length::Px(10.0),
+                Length::Px(20.0),
+                Length::Px(30.0),
+                Length::Px(40.0),
+            )))
+        );
+    }
+
+    #[test]
+    fn padding_shorthand_mixed_units() {
+        // spec §6.2 は per-value `<'padding-top'>` = `<length-percentage>` を許容 —
+        // 混合 unit も spec-valid (padding: 10px 5% 1em 12pt)。
+        assert_eq!(
+            parse("10px 5% 1em 12pt", "padding"),
+            Some(PropertyValue::Padding(padding_sides(
+                Length::Px(10.0),
+                Length::Percent(5.0),
+                Length::Em(1.0),
+                Length::Pt(12.0),
+            )))
+        );
+    }
+
+    // Verification #5 — non-negative constraint (spec-literal claim)。
+    #[test]
+    fn padding_top_rejects_negative_px() {
+        // spec §6.1: "Negative values are invalid for padding properties"。
+        assert_eq!(parse("-5px", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_top_rejects_negative_percentage() {
+        // 負 percentage も同様に spec-invalid。
+        assert_eq!(parse("-10%", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_top_rejects_negative_em() {
+        // 負 em (font-relative) も spec-invalid。
+        assert_eq!(parse("-1em", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_top_rejects_negative_rem() {
+        // 全 Length variant 経路の non-negative check pin (rem)。
+        assert_eq!(parse("-0.5rem", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_top_rejects_negative_pt() {
+        // 全 Length variant 経路の non-negative check pin (pt)。
+        assert_eq!(parse("-3pt", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_top_accepts_zero() {
+        // zero (bound の下端) は spec grammar `[0,∞]` の閉区間で有効。
+        assert_eq!(
+            parse("0px", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Px(0.0)))
+        );
+    }
+
+    #[test]
+    fn padding_shorthand_rejects_any_negative_value() {
+        // `padding: 10px -5px` — spec §6.2 の {1,4} multiplier は各 iteration が
+        // 有効 `<'padding-top'>` であることを要求。2 番目 `-5px` は spec §6.1
+        // `[0,∞]` 制約違反で fail、try_parse rewind で 1-value form の Some を
+        // parse_padding_shorthand が返す。ここで DeclParser の expect_exhausted
+        // が leftover `-5px` を検知して declaration ごと drop する — 実 caller
+        // 経路として rule.rs 経由で drop を pin (parse_value 単体では
+        // Some(all(10px)) が観測されるが、それは leftover 込みで invalid)。
+        let decls_2 = crate::rule::parse_declaration_block(&mut Parser::new(
+            &mut ParserInput::new("padding: 10px -5px;"),
+        ));
+        assert!(
+            decls_2.is_empty(),
+            "`padding: 10px -5px` must drop via expect_exhausted leftover"
+        );
+        // 4 value form 内の 4 番目が負値 case — 同様 leftover 経由 drop。
+        let decls_4 = crate::rule::parse_declaration_block(&mut Parser::new(
+            &mut ParserInput::new("padding: 10px 20px 30px -40px;"),
+        ));
+        assert!(
+            decls_4.is_empty(),
+            "`padding: 10px 20px 30px -40px` must drop via expect_exhausted leftover"
+        );
+    }
+
+    // Verification #6 — `auto` keyword reject (spec grammar に無い)。
+    #[test]
+    fn padding_top_rejects_auto_keyword() {
+        // spec §6.1 grammar = `<length-percentage>` のみ、`auto` は margin 側の
+        // extension で padding には無い。parse_length_value の Dimension /
+        // Percentage arm fall-through で自然 reject。
+        assert_eq!(parse("auto", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_shorthand_rejects_auto_keyword() {
+        // shorthand も同様 auto reject (1st value で fail、全体 drop)。
+        assert_eq!(parse("auto", "padding"), None);
+    }
+
+    #[test]
+    fn padding_shorthand_mixed_with_auto_drops_via_leftover() {
+        // `padding: 10px auto` — 1st 成功 (10px)、2nd で auto → try_parse rewind、
+        // 1-value form の Some を parse_padding_shorthand が返す。ここまでは
+        // parse_value 単体で観測可能だが、DeclParser の expect_exhausted が
+        // leftover `auto` を検知して declaration drop する — 実 caller 経路の
+        // pin として rule.rs 経由でも drop することを確認。
+        let decls = crate::rule::parse_declaration_block(&mut Parser::new(&mut ParserInput::new(
+            "padding: 10px auto;",
+        )));
+        assert!(
+            decls.is_empty(),
+            "`padding: 10px auto` must drop via expect_exhausted leftover"
+        );
+    }
+
+    // Verification #6 — spec grammar 外 unit の drop (vw / ch 等 milestone subset)。
+    #[test]
+    fn padding_top_rejects_unsupported_unit() {
+        // (b) milestone subset — vw / ch 等は spec-valid だが Sprint 12 未対応、
+        // parse_length_value 側で drop、`None` propagate → declaration drop。
+        assert_eq!(parse("10vw", "padding-top"), None);
+        assert_eq!(parse("5ch", "padding-top"), None);
+    }
+
+    // Verification — Sides::all constructor + PropertyKey mapping smoke。
+    #[test]
+    fn padding_key_maps_to_padding_property_keys() {
+        // 5 discriminant (4 longhand + 1 shorthand) が個別 PropertyKey を返すこと。
+        // cascade winner selection の discriminant integrity 確認。
+        assert_eq!(
+            PropertyValue::PaddingTop(Length::Px(0.0)).key(),
+            PropertyKey::PaddingTop
+        );
+        assert_eq!(
+            PropertyValue::PaddingRight(Length::Px(0.0)).key(),
+            PropertyKey::PaddingRight
+        );
+        assert_eq!(
+            PropertyValue::PaddingBottom(Length::Px(0.0)).key(),
+            PropertyKey::PaddingBottom
+        );
+        assert_eq!(
+            PropertyValue::PaddingLeft(Length::Px(0.0)).key(),
+            PropertyKey::PaddingLeft
+        );
+        assert_eq!(
+            PropertyValue::Padding(Sides::all(Length::Px(0.0))).key(),
+            PropertyKey::Padding
+        );
+    }
+
+    #[test]
+    fn sides_all_constructor_replicates_value() {
+        // Sides::all(v) は 4 field を全て v で埋める。
+        let sides = Sides::all(Length::Px(7.5));
+        assert_eq!(sides.top, Length::Px(7.5));
+        assert_eq!(sides.right, Length::Px(7.5));
+        assert_eq!(sides.bottom, Length::Px(7.5));
+        assert_eq!(sides.left, Length::Px(7.5));
+    }
+
+    #[test]
+    fn padding_shorthand_five_values_dropped_by_leftover() {
+        // 5 個目以降は本 helper が consume せず leftover として残す。
+        // parse_value 単体では 4-value form の Some を返すが、caller (rule.rs)
+        // の expect_exhausted が leftover を検知して declaration drop するので、
+        // rule.rs 経由で drop 確認。
+        let source = "padding: 10px 20px 30px 40px 50px;";
+        let mut input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut input);
+        let decls = crate::rule::parse_declaration_block(&mut parser);
+        assert!(
+            decls.is_empty(),
+            "5-value form must be dropped by expect_exhausted"
+        );
+    }
+
+    #[test]
+    fn padding_case_insensitive_unit() {
+        // CSS spec: unit identifier は ASCII case-insensitive。
+        assert_eq!(
+            parse("10PX", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Px(10.0)))
+        );
+        assert_eq!(
+            parse("2EM", "padding-bottom"),
+            Some(PropertyValue::PaddingBottom(Length::Em(2.0)))
+        );
     }
 
     #[test]
