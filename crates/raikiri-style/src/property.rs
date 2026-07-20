@@ -80,12 +80,63 @@ impl CssColor {
     };
 }
 
-/// CSS length。M1.4 では pixel (`<length>` = px リテラル) のみ。
+/// CSS length or length-percentage value (Author CSS seed for m4+ box model).
+///
+/// 各 variant は authored value (raw number as written) を保持し、resolve は
+/// 下流責務 (font-size context / containing block % / DPI 変換)。sibling arm
+/// convention (37n): [`Length::Px`] が `Px(16.0)` = `16px` の pattern を確立、
+/// 他 variant も authored value をそのまま保持する (`Em(1.2)` = `1.2em`、
+/// `Percent(50.0)` = `50%` の literal 数字を格納)。
+///
+/// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
+/// 変数追加が既存 pattern-match を break しない forward-compat 契約)。既存 sibling
+/// site: `crates/raikiri-dom/src/layout.rs:143` `preshape_text` が M1.4 時点から
+/// `_ => Err(LayoutError::Internal { ... })` の defensive wildcard を持つ。
+///
+/// # Primary sources (§ title + anchor)
+///
+/// - CSS Values 4 §6.1.1 "Font-relative Lengths":
+///   [`em`](https://www.w3.org/TR/css-values-4/#em) —
+///   "Equal to the computed value of the font-size property of the element on
+///   which it is used." /
+///   [`rem`](https://www.w3.org/TR/css-values-4/#rem) —
+///   "Equal to the computed value of the em unit on the root element."
+/// - CSS Values 4 §5.5 "Percentages":
+///   [`<percentage>`](https://www.w3.org/TR/css-values-4/#percentages) —
+///   "Percentage values are denoted by &lt;percentage&gt;, and indicates a value
+///   that is some fraction of another reference value."
+/// - CSS Values 4 §6.2 "Absolute Lengths":
+///   [`pt`](https://www.w3.org/TR/css-values-4/#absolute-lengths) —
+///   `1pt = 1/72 in`, CSS で `1in = 96px` の pixel-relative absolute unit。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Length {
-    /// Absolute pixel length。
+    /// Absolute pixel length。`10px` → `Px(10.0)`。
     Px(f32),
+    /// Font-relative length: `em` — 使用要素の computed `font-size` に対する倍率。
+    /// `1.2em` → `Em(1.2)`。Resolve は下流 (font-size stack を辿る)。
+    ///
+    /// Spec: CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#em>).
+    Em(f32),
+    /// Font-relative length: `rem` — root element の computed `font-size` に対する倍率。
+    /// `1rem` → `Rem(1.0)`。
+    ///
+    /// Spec: CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#rem>).
+    Rem(f32),
+    /// Percentage — `<length-percentage>` 文脈で reference value に対する比率。
+    /// `50%` → `Percent(50.0)` (authored number をそのまま格納、divide-by-100 なし)。
+    ///
+    /// Spec: CSS Values 4 §5.5 Percentages
+    /// (<https://www.w3.org/TR/css-values-4/#percentages>).
+    Percent(f32),
+    /// Absolute length: `pt` — 1pt = 1/72 in, CSS で 1in = 96px。
+    /// `12pt` → `Pt(12.0)`、resolve 時 `12 * 96 / 72 = 16px` 相当。
+    ///
+    /// Spec: CSS Values 4 §6.2 Absolute Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>).
+    Pt(f32),
 }
 
 /// `<counter-style>` の parse 結果。
@@ -663,14 +714,79 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
     }
 }
 
-fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
-    // <length> = px リテラルのみ (m1.4 scope)。
+/// `<length>` / `<length-percentage>` の共通 parser。1 token を consume する。
+///
+/// Grammar reference: CSS Values 4 §5 <https://www.w3.org/TR/css-values-4/#lengths>
+/// / §5.5 <https://www.w3.org/TR/css-values-4/#percentages>.
+///
+/// # Mode selector
+///
+/// `allow_percentage` で受理集合を分岐:
+/// - `false` → `<length>` mode: dimension unit のみ受理 (`px` / `em` / `rem` / `pt`)。
+/// - `true` → `<length-percentage>` mode: 上記 4 unit + `%` token を受理。
+///
+/// 未対応 unit (`vw` / `vh` / `ch` / `ex` / `cm` / `mm` / `in` / `pc` / `Q` /
+/// `cap` / `rcap` / `ic` / `ric` / `lh` / `rlh`) は spec-valid だが本 milestone
+/// scope 外 (g04 category (b) milestone subset、defer 先 Sprint 13+ style backlog、
+/// 未起票 — Epic 1 planner 判定)。`0` bare (unitless zero) も後続 milestone
+/// (現行 behavior 踏襲、`parse_font_size` の existing test は unitless zero を
+/// 受理しない spec-strict 挙動)。
+///
+/// # Sign / range
+///
+/// 本 helper は sign / range check を行わない — property ごとに要件が異なるため
+/// (font-size は non-negative、margin は negative 許容、etc.)。caller 側で
+/// post-filter する ([`parse_font_size`] は `>= 0.0` の Px-only guard を持つ)。
+///
+/// # Forward-provisioning
+///
+/// `allow_percentage=true` mode は本 task では caller 未使用 (font-size は
+/// length-only)。以下 blocked task で consume 予定:
+/// - `raikiri-spike-0vv.5` margin longhand + shorthand parse
+/// - `raikiri-spike-0vv.6` padding longhand + shorthand parse
+/// - `raikiri-spike-0vv.9` line-height parse
+///
+/// これら margin/padding/line-height の grammar は spec で `<length-percentage>`
+/// (percentage 受理側)、共通 helper 化により重複 dimension unit dispatch を回避。
+fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Option<Length> {
     match input.next().ok()? {
-        Token::Dimension { value, unit, .. }
-            if unit.eq_ignore_ascii_case("px") && *value >= 0.0 =>
-        {
-            Some(Length::Px(*value))
+        Token::Dimension { value, unit, .. } => match unit.to_ascii_lowercase().as_str() {
+            "px" => Some(Length::Px(*value)),
+            "em" => Some(Length::Em(*value)),
+            "rem" => Some(Length::Rem(*value)),
+            "pt" => Some(Length::Pt(*value)),
+            // (b) milestone subset — 他 CSS Values 4 unit は未対応、silent drop。
+            _ => None,
+        },
+        Token::Percentage { unit_value, .. } if allow_percentage => {
+            // cssparser 0.37 tokenizer は `50%` を `unit_value = 0.5` として emit
+            // (`value / 100.0`)、Length::Percent は authored number (50.0) を保持する
+            // ため × 100.0 で戻す。
+            Some(Length::Percent(*unit_value * 100.0))
         }
+        _ => None,
+    }
+}
+
+/// `font-size: <length>` を parse する。
+///
+/// Grammar: `<'font-size'> = <length> | <percentage> | ...` (CSS Fonts 4
+/// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>) のうち、本 milestone は
+/// **non-negative `<length>` unit の `px` のみ**を受理 (g04 category (b) milestone
+/// subset、em/rem/pt/% は Author CSS seed [`parse_length_value`] helper 側で認識
+/// されるが font-size 経路では post-filter で drop、defer 先 未起票 — 次 planner が
+/// font-size context resolve と bundle 判定)。
+///
+/// [`Length::Em`] / [`Length::Rem`] / [`Length::Pt`] は resolve に font stack context
+/// を要し、[`Length::Percent`] は parent font-size context (spec §6.1.1) を要する。
+/// 現在 raikiri-style の cascade static side はこれら context を持たないため、
+/// helper 経由で parse 成功しても本 property では None に落として declaration drop。
+fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
+    // helper を <length> mode で呼び、Px の non-negative case のみ受理。
+    match parse_length_value(input, false)? {
+        Length::Px(v) if v >= 0.0 => Some(Length::Px(v)),
+        // (b) milestone subset: Em/Rem/Pt は spec-valid だが font-size context resolve
+        // 未実装のため drop、negative Px も spec 上 invalid のため drop。
         _ => None,
     }
 }
@@ -2418,6 +2534,100 @@ mod tests {
         // `running(a, b)` — parse_nested_block が parse_entirely 経由で
         // 余剰 token を検知し、declaration drop になる。
         assert_eq!(parse("running(a, b)", "position"), None);
+    }
+
+    // ── parse_length_value helper (raikiri-spike-0vv.3) ────────────────────
+    //
+    // helper 単体を叩く共通 fixture — property dispatcher (`parse_value`) を経由せず
+    // 5 unit sample (`px` / `em` / `rem` / `%` / `pt`) の parse を直接 verify する。
+    // `parse_font_size` 経由 test は上流に既存 (`font_size_parse_px` 等)、そちらは
+    // px-only post-filter を verify するので分離する。
+
+    fn parse_length(source: &str, allow_percentage: bool) -> Option<Length> {
+        let mut input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut input);
+        parse_length_value(&mut parser, allow_percentage)
+    }
+
+    #[test]
+    fn parse_length_value_accepts_px() {
+        assert_eq!(parse_length("10px", false), Some(Length::Px(10.0)));
+        // length-percentage mode でも px 受理 (mode 非依存)。
+        assert_eq!(parse_length("10px", true), Some(Length::Px(10.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_em() {
+        // CSS Values 4 §6.1.1 em (https://www.w3.org/TR/css-values-4/#em):
+        // authored `1.2em` を Length::Em(1.2) にそのまま保持 (resolve は下流責務)。
+        assert_eq!(parse_length("1.2em", false), Some(Length::Em(1.2)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_rem() {
+        // CSS Values 4 §6.1.1 rem (https://www.w3.org/TR/css-values-4/#rem):
+        // root element の font-size 基準、authored value を Length::Rem に格納。
+        assert_eq!(parse_length("1rem", false), Some(Length::Rem(1.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_pt() {
+        // CSS Values 4 §6.2 absolute lengths (https://www.w3.org/TR/css-values-4/#absolute-lengths):
+        // 1pt = 1/72 in, 1in = 96px、resolve 側で 12pt → 16px 相当に変換。
+        assert_eq!(parse_length("12pt", false), Some(Length::Pt(12.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_percentage_when_allowed() {
+        // CSS Values 4 §5.5 (https://www.w3.org/TR/css-values-4/#percentages):
+        // `<length-percentage>` mode でのみ受理。cssparser `unit_value = 0.5` を
+        // × 100.0 で authored `50` に戻して Length::Percent(50.0) に格納。
+        assert_eq!(parse_length("50%", true), Some(Length::Percent(50.0)));
+    }
+
+    #[test]
+    fn parse_length_value_rejects_percentage_in_length_only_mode() {
+        // `<length>` mode (font-size 等) では `%` は grammar 外、None を返す。
+        assert_eq!(parse_length("50%", false), None);
+    }
+
+    #[test]
+    fn parse_length_value_rejects_unsupported_unit() {
+        // (b) milestone subset: `vw` / `ch` / `cm` / `in` / `Q` 等は本 helper で silent drop。
+        assert_eq!(parse_length("10vw", false), None);
+        assert_eq!(parse_length("10ch", true), None);
+        assert_eq!(parse_length("1in", false), None);
+    }
+
+    #[test]
+    fn parse_length_value_rejects_unitless_zero() {
+        // 現行 behavior: unitless zero は Dimension token にならず (Number token)、
+        // 本 helper の Dimension arm に落ちず None。既存 `parse_font_size` 挙動と一致。
+        assert_eq!(parse_length("0", false), None);
+        assert_eq!(parse_length("0", true), None);
+    }
+
+    #[test]
+    fn parse_length_value_rejects_non_numeric_token() {
+        assert_eq!(parse_length("medium", false), None);
+        assert_eq!(parse_length("", false), None);
+    }
+
+    #[test]
+    fn parse_length_value_preserves_negative_sign() {
+        // helper は sign check を行わない — property ごとに要件が異なるため
+        // (font-size は non-negative post-filter、margin は negative 許容)。
+        assert_eq!(parse_length("-5px", false), Some(Length::Px(-5.0)));
+        assert_eq!(parse_length("-1em", false), Some(Length::Em(-1.0)));
+    }
+
+    #[test]
+    fn parse_length_value_unit_dispatch_case_insensitive() {
+        // CSS spec: unit identifier は ASCII case-insensitive。
+        assert_eq!(parse_length("10PX", false), Some(Length::Px(10.0)));
+        assert_eq!(parse_length("1.5EM", false), Some(Length::Em(1.5)));
+        assert_eq!(parse_length("2Rem", false), Some(Length::Rem(2.0)));
+        assert_eq!(parse_length("14Pt", false), Some(Length::Pt(14.0)));
     }
 
     #[test]
