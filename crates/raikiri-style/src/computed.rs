@@ -12,8 +12,8 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    ContentComponent, CssColor, DisplayValue, Length, Sides, TextAlign, empty_content_list,
-    empty_counter_entries, empty_string_set_entries,
+    ContentComponent, CssColor, DisplayValue, Length, LineHeight, Sides, TextAlign,
+    empty_content_list, empty_counter_entries, empty_string_set_entries,
 };
 
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
@@ -38,7 +38,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / line_height、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding)。
 ///
@@ -61,6 +61,16 @@ pub struct ComputedValues {
     pub font_size: Length,
     /// `font-weight`。inherited、initial: 400 (normal)。
     pub font_weight: u16,
+    /// `line-height`。**inherited**、initial: [`LineHeight::Normal`]。
+    /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
+    /// <https://www.w3.org/TR/css-inline-3/#line-height-property>。
+    ///
+    /// `LineHeight::Number(n)` (unitless multiplier) と `LineHeight::Length(l)`
+    /// は下流 (paint) で font-size context に対して resolve される。number 変種は
+    /// spec §5.1 の "child inherits the specified value" special behavior により
+    /// **cascade は raw value を保持** し、child の font-size で再乗算する責務を
+    /// 下流に残す (raikiri-spike-0vv.9)。
+    pub line_height: LineHeight,
     /// `display`。**non-inherited**、initial: `DisplayValue::Inline`
     /// (CSS Display 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>)。
     /// Sprint 12 scope: `block` / `inline` / `inline-block` / `none`
@@ -179,6 +189,9 @@ impl ComputedValues {
             font_family: vec![Atom::from("serif")],
             font_size: Length::Px(16.0),
             font_weight: 400,
+            // CSS Inline 3 §5.1: line-height initial は `normal` (font metrics
+            // ascent+descent 相当を paint 側で resolve、raikiri-spike-0vv.9)。
+            line_height: LineHeight::Normal,
             display: DisplayValue::Inline,
             // CSS Lists 3 §3: counter-* initial is empty list (raikiri-spike-s85)
             // d9y.2: shared empty Arc slot — per-node allocation 回避
@@ -212,7 +225,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / line_height、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding)。
     ///
@@ -221,7 +234,8 @@ impl ComputedValues {
     /// initial 値との drift を避けるため、対応する `initial()` の値も同時に更新
     /// すること。
     /// (spec §M1.4a、raikiri-spike-m1.22 (display) / raikiri-spike-0vv.7
-    /// (background-color) / raikiri-spike-0vv.8 (text-align))
+    /// (background-color) / raikiri-spike-0vv.8 (text-align) /
+    /// raikiri-spike-0vv.9 (line-height) / raikiri-spike-0vv.6 (padding))
     pub fn inherit_from(parent: &Self) -> Self {
         // 直接 struct literal で初期化する — Self::initial() 経由だと
         // font_family の Vec を 1 度 allocate → drop してから parent から
@@ -234,6 +248,9 @@ impl ComputedValues {
             font_weight: parent.font_weight,
             // inherited (CSS Text 3 §6.1、raikiri-spike-0vv.8)。TextAlign は Copy。
             text_align: parent.text_align,
+            // inherited (CSS Inline 3 §5.1 "Inheritance: Yes"、raikiri-spike-0vv.9)。
+            // LineHeight は `Copy` (Length と同 shape) なので clone 不要。
+            line_height: parent.line_height,
             // non-inherited (CSS Backgrounds 3 §2.2、initial: `transparent`、
             // raikiri-spike-0vv.7)
             background_color: CssColor::TRANSPARENT,
@@ -280,6 +297,8 @@ mod tests {
         assert_eq!(cv.font_family, vec![Atom::from("serif")]);
         assert_eq!(cv.font_size, Length::Px(16.0));
         assert_eq!(cv.font_weight, 400);
+        // CSS Inline 3 §5.1: line-height initial は `normal` (raikiri-spike-0vv.9)
+        assert_eq!(cv.line_height, LineHeight::Normal);
         assert_eq!(cv.display, DisplayValue::Inline);
         // CSS Lists 3 §3: counter-* initial は empty list (raikiri-spike-s85)
         assert!(cv.counter_reset.is_empty());
@@ -333,6 +352,7 @@ mod tests {
             font_family: vec![Atom::from("sans-serif")],
             font_size: Length::Px(24.0),
             font_weight: 700,
+            line_height: LineHeight::Number(1.5),
             display: DisplayValue::Block,
             // d9y.2: counter-* は Arc<Vec<..>>、fixture literal は Arc::new(vec![..]) で包む。
             counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
@@ -355,6 +375,23 @@ mod tests {
         assert_eq!(child.font_weight, parent.font_weight);
         // CSS Text 3 §6.1: text-align は inherited (raikiri-spike-0vv.8)。
         assert_eq!(child.text_align, TextAlign::Center);
+        // CSS Inline 3 §5.1: line-height は inherited (raikiri-spike-0vv.9)。
+        // parent `Number(1.5)` は raw specified value のまま child へ渡る
+        // (§5.1 special behavior、resolve は下流で child の font-size × 1.5)。
+        assert_eq!(child.line_height, LineHeight::Number(1.5));
+    }
+
+    #[test]
+    fn inherit_from_copies_line_height_length_variant() {
+        // §5.1 のもう一方の branch: `<length-percentage>` の inherit も raw payload
+        // をそのまま child に伝える (Percent は "element's own font-size" 相当を
+        // 下流 paint が resolve、cascade は raw を保持)。
+        let parent = ComputedValues {
+            line_height: LineHeight::Length(Length::Px(24.0)),
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(child.line_height, LineHeight::Length(Length::Px(24.0)));
     }
 
     #[test]
