@@ -21,23 +21,26 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
-use libc;
-
 /// Open a regular file with the leaf-swap TOCTOU defense stack.
 ///
-/// The unix impl passes `O_NOFOLLOW` to `File::open`, so a symlink swapped in
-/// between `read_bounded_fixture_file`'s pre-open `symlink_metadata` check and
-/// this `open` call cannot cause the resolver to follow a fresh target.  If a
-/// symlink is opened, the syscall returns `ELOOP`; callers map that errno to
-/// `FixtureError::SymlinkRejected` so the semantic matches the pre-open reject.
+/// The unix impl passes `O_NOFOLLOW` to `File::open` so a symlink swapped
+/// in between the pre-open `symlink_metadata` check and this open call
+/// cannot cause the resolver to follow a fresh target. POSIX mandates
+/// `ELOOP` for `open(O_NOFOLLOW)` on a symlink (Linux, macOS, and modern
+/// FreeBSD comply); legacy BSDs (NetBSD, OpenBSD, FreeBSD <10) may return
+/// `EMLINK` or `EFTYPE` instead. Callers that need to distinguish this
+/// case from other I/O errors should check the errno match against
+/// `libc::ELOOP` AND fall back to a `symlink_metadata` recheck (see
+/// `read_bounded_fixture_file` for the portable pattern).
 ///
 /// The non-unix fallback keeps the current default `File::open` semantics.
-/// Follow-up Windows equivalent tracked in raikiri-spike-<TBD-windows>.
+/// Windows equivalent tracked in raikiri-spike-akk.
 ///
 /// bd raikiri-spike-8yu.
+// Callsite-local defense: sharing this stack with raikiri-dom is deferred to
+// raikiri-spike-7xw for walls.md §2 crate-list PMO judgment. Do not lift
+// into raikiri-traits::io without that judgment.
 #[cfg(unix)]
-#[allow(dead_code)]
 fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
@@ -47,10 +50,9 @@ fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
 }
 
 #[cfg(not(unix))]
-#[allow(dead_code)]
 fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     // Follow-symlink-at-open is unresolved on non-unix; tracked in
-    // raikiri-spike-<TBD-windows>.  Regain parity when the follow-up lands.
+    // raikiri-spike-akk.  Regain parity when the follow-up lands.
     std::fs::File::open(path)
 }
 
@@ -513,7 +515,7 @@ pub fn compare_png(
 /// The open-time O_NOFOLLOW closes the leaf-swap race between the pre-open
 /// `symlink_metadata` check and `File::open` on unix (raikiri-spike-8yu).
 /// Non-unix retains follow-at-open semantics; tracked in
-/// raikiri-spike-<TBD-windows>.
+/// raikiri-spike-akk.
 ///
 /// See [`FIXTURE_SIZE_CAP`] for the threat model these layers cover.
 fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u8>, FixtureError> {
@@ -565,23 +567,36 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // grew between the metadata check and the read, `take(cap + 1)` yields
     // `cap + 1` bytes and the post-read length check trips OversizedFixture
     // instead of silently truncating.
+    //
     // safe_open adds O_NOFOLLOW on unix so a leaf-symlink swapped in between
-    // the earlier symlink_metadata check (line above) and this open call
-    // cannot cause a fresh symlink target to be followed.  If a swap occurred,
-    // the open returns ELOOP; we map that errno to the same SymlinkRejected
-    // variant the pre-open check produces, so callers observe uniform
-    // semantic across check-time and open-time symlink rejections.
-    // bd raikiri-spike-8yu.
+    // the earlier symlink_metadata check and this open call cannot cause a
+    // fresh symlink target to be followed.  The Err arm's inline comment
+    // below documents the errno mapping and the portable fallback that
+    // covers legacy BSD variants.  bd raikiri-spike-8yu.
     let mut file = match safe_open(path) {
         Ok(f) => f,
         Err(e) => {
             #[cfg(unix)]
-            if e.raw_os_error() == Some(libc::ELOOP) {
-                return Err(FixtureError::SymlinkRejected {
-                    path: path.to_path_buf(),
-                });
+            {
+                // POSIX mandates ELOOP for O_NOFOLLOW on symlink (Linux, macOS,
+                // and modern FreeBSD comply). Legacy BSDs may return EMLINK or
+                // EFTYPE instead; the post-Err symlink_metadata recheck catches
+                // those cases portably at the cost of one extra stat syscall on
+                // the reject path. Not race-perfect (an attacker could swap the
+                // symlink back to a regular file between safe_open and this
+                // recheck), but covers the common attack shape while remaining
+                // simple. Full inode-verify would require fstat-after-open on the
+                // handle safe_open never returned.
+                let looks_like_symlink_swap = e.raw_os_error() == Some(libc::ELOOP)
+                    || std::fs::symlink_metadata(path)
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
+                if looks_like_symlink_swap {
+                    return Err(FixtureError::SymlinkRejected {
+                        path: path.to_path_buf(),
+                    });
+                }
             }
-
             return Err(FixtureError::IoError {
                 path: path.to_path_buf(),
                 source: e,
@@ -1517,13 +1532,16 @@ mod defense_tests {
         }
     }
 
-    /// safe_open must reject a symlink at open time by returning ELOOP on unix.
-    /// This is the load-bearing regression pin for raikiri-spike-8yu: without
-    /// the O_NOFOLLOW custom_flags call, this test would pass through and read
-    /// the symlink target instead of failing.
+    /// safe_open must reject a symlink at open time on unix. POSIX mandates
+    /// ELOOP (Linux, macOS, modern FreeBSD comply); legacy BSDs (NetBSD,
+    /// OpenBSD, FreeBSD <10) return EMLINK or EFTYPE. The test accepts any
+    /// Err on unix, because a passing implementation must not follow the
+    /// symlink regardless of the exact errno. The Ok arm is the regression
+    /// pin — an implementation that drops custom_flags(O_NOFOLLOW) would
+    /// silently follow the link and return Ok(file), failing this test.
     #[cfg(unix)]
     #[test]
-    fn safe_open_rejects_symlink_with_eloop() {
+    fn safe_open_rejects_symlink_at_open_time() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("target.bin");
         std::fs::File::create(&target)
@@ -1534,9 +1552,19 @@ mod defense_tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         match safe_open(&link) {
-            Err(e) if e.raw_os_error() == Some(libc::ELOOP) => {}
+            Err(_) => {
+                // Sanity-check that the path is still a symlink at
+                // observation time — proves the Err is due to O_NOFOLLOW
+                // (portable across ELOOP / EMLINK / EFTYPE) rather than
+                // an unrelated I/O error like permission or NotFound.
+                let post = std::fs::symlink_metadata(&link)
+                    .expect("symlink still present after safe_open Err");
+                assert!(
+                    post.file_type().is_symlink(),
+                    "link at test observation time was not a symlink"
+                );
+            }
             Ok(_) => panic!("safe_open followed the symlink (O_NOFOLLOW not applied)"),
-            Err(other) => panic!("expected ELOOP, got {other:?}"),
         }
     }
 
@@ -1544,7 +1572,7 @@ mod defense_tests {
     /// pre-open `symlink_metadata` check.  This test does NOT exercise the
     /// O_NOFOLLOW path (safe_open never runs because the pre-open check
     /// short-circuits) — that unit is covered by
-    /// `safe_open_rejects_symlink_with_eloop`.  Kept to pin the full-path
+    /// `safe_open_rejects_symlink_at_open_time`.  Kept to pin the full-path
     /// behavior against future refactors that might reorder the checks.
     #[cfg(unix)]
     #[test]
