@@ -365,6 +365,11 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
                 target.running_templates.push(RunningTemplate { name });
             }
         },
+        // text-align は Sprint 12 seed (raikiri-spike-0vv.8、CSS Text 3 §6.1)。
+        // inherited property のため cascade winner が無い child は inherit_from で
+        // 親値を引き継ぐ (color / font_family / font_size / font_weight と同じ
+        // handling)。TextAlign は Copy、by-value 代入で十分。
+        PropertyValue::TextAlign(t) => target.text_align = t,
     }
 }
 
@@ -790,6 +795,90 @@ mod tests {
             "later `position: static` must suppress earlier `running(hdr)` — \
              running_templates should stay empty when Static wins the cascade"
         );
+    }
+
+    // ── text-align wire-through + inheritance (CSS Text 3 §6.1、raikiri-spike-0vv.8) ──
+
+    #[test]
+    fn text_align_wired_through_cascade_from_inline_style() {
+        // <p style="text-align: center"> → ComputedValues.text_align に
+        // TextAlign::Center が届く。parser → PropertyValue::TextAlign →
+        // apply_value → ComputedValues の end-to-end 疎通 smoke。
+        // s85 counter-* / m5.1 content / m5.3 string-set / m5.4 position wire-through
+        // pattern を踏襲 (原則 1 前例主義)。
+        use crate::property::TextAlign;
+        let cv = cascade_doc("", "p", Some("text-align: center"));
+        assert_eq!(cv.text_align, TextAlign::Center);
+    }
+
+    #[test]
+    fn text_align_inherits_from_parent_element() {
+        // CSS Text 3 §6.1: text-align は **inherited** (color と同じ handling)。
+        // <p style="text-align: center"> の子 <span> は自身 rule 無しでも
+        // 親の text_align (Center) を引き継ぐ。inheritance walk が
+        // inherit_from 経由で text_align を copy することを pin。
+        //
+        // Verification #7 の中核 assertion (parent center → child Center を確認)。
+        use crate::property::TextAlign;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-align: center"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_align, TextAlign::Center);
+        assert_eq!(
+            r.computed[span].text_align,
+            TextAlign::Center,
+            "child should inherit text-align from parent (CSS Text 3 §6.1 inherited property)"
+        );
+    }
+
+    #[test]
+    fn text_align_inheritance_contrasts_with_display_non_inheritance() {
+        // Verification #7 (contrast): text-align (inherited) と display
+        // (non-inherited) を同一 fixture で対比 — inheritance discipline を明示。
+        // parent が両 property を持ち、child は inherit で text-align のみ引き継ぐ、
+        // display は initial (Inline) に落ちる。inherit_from の inherited /
+        // non-inherited 分類が正しく機能していることの pin。
+        use crate::property::TextAlign;
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        // p に UA-like rule として display: block を Author 側で置く (M1.4a scope
+        // では UA rule も同 rank に居るので、child が inherit しない性質だけを見る)
+        doc.push_text(s, "p { display: block; text-align: right }");
+        let p = doc.push_element(0, "p", None);
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // parent: 両 property が Author rule で set される。
+        assert_eq!(r.computed[p].display, DisplayValue::Block);
+        assert_eq!(r.computed[p].text_align, TextAlign::Right);
+        // child: 自身 rule 無し。text-align (inherited) は Right を引き継ぐが、
+        // display (non-inherited) は initial (Inline) に落ちる。
+        assert_eq!(
+            r.computed[span].text_align,
+            TextAlign::Right,
+            "text-align must inherit (CSS Text 3 §6.1 inherited)"
+        );
+        assert_eq!(
+            r.computed[span].display,
+            DisplayValue::Inline,
+            "display must NOT inherit (CSS §9.2.4 non-inherited) — initial Inline"
+        );
+    }
+
+    #[test]
+    fn text_align_child_own_value_wins_over_inherited() {
+        // parent center + child left → child は自身 rule の Left が cascade winner。
+        // inheritance は「rule 無し fallback」であって override 元ではないことを pin。
+        use crate::property::TextAlign;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-align: center"));
+        let span = doc.push_element(p, "span", Some("text-align: left"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_align, TextAlign::Center);
+        assert_eq!(r.computed[span].text_align, TextAlign::Left);
     }
 
     #[test]
