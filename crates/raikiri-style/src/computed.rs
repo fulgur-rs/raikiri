@@ -12,7 +12,7 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    ContentComponent, CssColor, DisplayValue, Length, LineHeight, Sides, TextAlign,
+    ContentComponent, CssColor, DisplayValue, Length, LengthOrAuto, LineHeight, Sides, TextAlign,
     empty_content_list, empty_counter_entries, empty_string_set_entries,
 };
 
@@ -175,6 +175,27 @@ pub struct ComputedValues {
     /// bridge、font-size context / containing block % / 96px-per-in DPI) 責務。
     /// (raikiri-spike-0vv.6)
     pub padding: Sides<Length>,
+    /// `margin` 4-side quad (top / right / bottom / left)。**non-inherited**、
+    /// initial: `0` on each side (`Sides::all(LengthOrAuto::Length(Length::Px(0.0)))`).
+    ///
+    /// Author CSS の box model 中核 property。raikiri-style は cascade static side
+    /// に留まり、`LengthOrAuto::Length(Em/Rem/Percent/Pt)` の resolve は下流
+    /// (raikiri-dom `apply_computed_to_style` bridge、future task) 責務 —
+    /// font-size context / containing block % / DPI 変換で `taffy::LengthPercentageAuto`
+    /// 相当に翻訳される。
+    ///
+    /// # Primary sources (§ title + anchor)
+    ///
+    /// - CSS Box 3 §3.1 "Page-relative (Physical) Margin Properties":
+    ///   [`margin-top` / `margin-right` / `margin-bottom` / `margin-left`](https://www.w3.org/TR/css-box-3/#margin-physical)
+    ///   — "Value: `<length-percentage> | auto`", "Initial: 0", "Inherited: no",
+    ///   "Applies to: all elements except internal table elements".
+    /// - CSS Box 3 §3.2 "Margin Shorthand: the margin property":
+    ///   [`margin`](https://www.w3.org/TR/css-box-3/#margin-shorthand) —
+    ///   "Value: `<'margin-top'>{1,4}`", 1/2/3/4 value expansion rules.
+    ///
+    /// raikiri-spike-0vv.5。
+    pub margin: Sides<LengthOrAuto>,
 }
 
 impl ComputedValues {
@@ -214,6 +235,9 @@ impl ComputedValues {
             text_align: TextAlign::Start,
             // CSS Box 3 §6.1: padding initial = 0 (all 4 sides、raikiri-spike-0vv.6)。
             padding: Sides::all(Length::Px(0.0)),
+            // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
+            // で全 4 side に spread)。raikiri-spike-0vv.5。
+            margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
         }
     }
 
@@ -279,6 +303,9 @@ impl ComputedValues {
             // non-inherited (CSS Box 3 §6.1、raikiri-spike-0vv.6)。
             // `Sides<Length>: Copy` により per-node write は bit-copy。
             padding: Sides::all(Length::Px(0.0)),
+            // non-inherited (CSS Box 3 §3.1 "Inherited: no")。initial 値と drift
+            // しないよう `Self::initial()` と同 shape で 0 spread。raikiri-spike-0vv.5。
+            margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
         }
     }
 }
@@ -314,6 +341,8 @@ mod tests {
         assert_eq!(cv.text_align, TextAlign::Start);
         // CSS Box 3 §6.1 (raikiri-spike-0vv.6): padding initial = 0 (all 4 sides)。
         assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
+        // CSS Box 3 §3.1 (raikiri-spike-0vv.5): margin initial は 0 on each side。
+        assert_eq!(cv.margin, Sides::all(LengthOrAuto::Length(Length::Px(0.0))));
     }
 
     #[test]
@@ -366,6 +395,9 @@ mod tests {
             // 引き継ぐことを assert する。
             text_align: TextAlign::Center,
             padding: Sides::all(Length::Px(0.0)),
+            // 0vv.5: parent に explicit margin を持たせ、child が initial に落ちる
+            // ことを他 non-inherited fixture (下の inherit_from_leaves_* 系) で pin。
+            margin: Sides::all(LengthOrAuto::Length(Length::Px(12.0))),
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -459,6 +491,27 @@ mod tests {
         };
         let child = ComputedValues::inherit_from(&parent);
         assert_eq!(child.padding, Sides::all(Length::Px(0.0)));
+    }
+
+    #[test]
+    fn inherit_from_leaves_margin_at_initial() {
+        // CSS Box 3 §3.1 "Inherited: no" — 親が margin を持っていても child は
+        // initial (0 on each side) に戻る (raikiri-spike-0vv.5)。37n sibling:
+        // display / counter-* / content / string_set / running_templates と同 shape。
+        let parent = ComputedValues {
+            margin: Sides {
+                top: LengthOrAuto::Length(Length::Px(10.0)),
+                right: LengthOrAuto::Auto,
+                bottom: LengthOrAuto::Length(Length::Percent(50.0)),
+                left: LengthOrAuto::Length(Length::Em(2.0)),
+            },
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(
+            child.margin,
+            Sides::all(LengthOrAuto::Length(Length::Px(0.0)))
+        );
     }
 
     #[test]

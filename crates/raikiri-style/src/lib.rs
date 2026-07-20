@@ -23,7 +23,9 @@ pub mod style_dom;
 pub use style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
 pub mod property;
-pub use property::{CssColor, DisplayValue, Length, PropertyKey, PropertyValue};
+pub use property::{
+    CssColor, DisplayValue, Length, LengthOrAuto, PropertyKey, PropertyValue, Sides,
+};
 
 pub mod rule;
 pub use rule::{Declaration, StyleRule};

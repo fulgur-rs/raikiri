@@ -464,9 +464,16 @@ mod tests {
     // <https://www.w3.org/TR/css-page-3/#syntax-page-selector>
     //
     // Test で使う body は M1.4 の property.rs でサポート済み (color / font-*) を
-    // 選ぶ — parse_declaration_block を reuse しているので margin / size 等は
-    // 現時点で silent drop され declaration 0 個になる (下の
+    // 選ぶ — parse_declaration_block を reuse しているので @page descriptor
+    // (`size` / `marks` / `bleed` 等) や未サポート property は現時点で silent drop
+    // され declaration 0 個になる (下の
     // page_body_unsupported_property_drops_declaration がその regression guard)。
+    //
+    // NB (raikiri-spike-0vv.5): `margin` は 0vv.5 で author scope の supported
+    // property になった (parse_declaration_block 出口で 4 longhand に展開)。
+    // @page context での margin-box descriptor 挙動 (L3 §5) は依然 M4+ scope、
+    // 通常の longhand `margin-top` 等の parse は @page body 内でも成立するが
+    // page-context specific な意味付けは持たない。
 
     use crate::page::{PagePseudo, PageSelector, PageSelectorEntry};
     use crate::{Atom, PageRule};
@@ -745,11 +752,18 @@ mod tests {
 
     #[test]
     fn page_body_unsupported_property_drops_declaration() {
-        // M1.4 property.rs は margin / size 等 @page descriptor を未サポート。
+        // M1.4 property.rs は size / marks 等 @page descriptor を未サポート。
         // parse_declaration_block reuse により silent drop され declaration 0 個。
         // M4 で @page descriptor が入るまで cascade 側は空 declarations を扱える
         // ことを保証する regression guard。
-        let rules = page_rules("@page { margin: 1cm; size: A4 }");
+        //
+        // NB (raikiri-spike-0vv.5): pre-0vv.5 では `margin: 1cm` を dropped
+        // 例に使っていたが (`margin` property 自体が未認識だった)、0vv.5 で
+        // `margin` は author scope で認識されるようになった (unit `cm` は依然
+        // 未サポート = drop するが、drop 経路が「property 未認識」から
+        // 「unit 未サポート」に変わる)。@page-specific descriptor のみで例を
+        // 組み直し、意図する "@page descriptor drop" の regression guard に集約。
+        let rules = page_rules("@page { size: A4; marks: crop }");
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].selector, ps_single(None, vec![]));
         assert!(rules[0].declarations.is_empty());
