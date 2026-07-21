@@ -379,17 +379,16 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // handling)。TextAlign は Copy、by-value 代入で十分。
         PropertyValue::TextAlign(t) => target.text_align = t,
         // CSS Box 3 §6.1 padding physical longhand (raikiri-spike-0vv.6)。
-        // 4 side を独立に上書き。shorthand (Padding) との cascade 干渉は
-        // `PropertyValue::Padding` doc の "Known limitation" 参照 — HashMap
-        // iteration の apply 順が非決定的なため、shorthand と longhand 同時
-        // 出現 case は将来 parse-time expansion migration で修正予定
-        // (bd raikiri-spike-5nc、margin 0vv.5 の parse-time expansion 方式に
-        // padding を追従させる整合 task)。
+        // 4 side を独立に上書き。shorthand `PropertyValue::Padding` は
+        // `crate::rule::parse_declaration_block` 側で parse 直後に 4 longhand
+        // に展開されるため、cascade 段に届く declaration は per-side longhand
+        // のみ = HashMap iteration 順に依存しない per-key determinism が成立する
+        // (raikiri-spike-5nc、margin 0vv.5 の parse-time expansion model に migrate)。
         PropertyValue::PaddingTop(v) => target.padding.top = v,
         PropertyValue::PaddingRight(v) => target.padding.right = v,
         PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
         PropertyValue::PaddingLeft(v) => target.padding.left = v,
-        // CSS Box 3 §6.2 padding shorthand: 全 4 side を一括上書き。
+        // CSS Box 3 §6.2 padding shorthand: safety net (normal flow では展開済み)。
         // Sides<Length>: Copy のため move で `target.padding` に代入。
         PropertyValue::Padding(sides) => target.padding = sides,
         // 4 longhand margin sides (raikiri-spike-0vv.5、CSS Box 3 §3.1)。
@@ -1302,6 +1301,32 @@ mod tests {
         let cv = cascade_doc("", "div", Some("padding-top: -5px"));
         // 負値 → declaration drop → padding は cascade 未 override → initial 0 が残る。
         assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
+    }
+
+    #[test]
+    fn padding_shorthand_then_longhand_longhand_wins() {
+        // CSS Cascading L5 §6: shorthand は parse-time で longhand に expand
+        // してから cascade する。`padding: 10px; padding-top: 5px;` →
+        // top=5, others=10 (source-order-independent、spec-correct)。
+        // (margin 0vv.5 で実装済みの parse-time expansion model に migtate:
+        // raikiri-spike-5nc)
+        let cv = cascade_doc("", "div", Some("padding: 10px; padding-top: 5px"));
+        assert_eq!(cv.padding.top, Length::Px(5.0));
+        assert_eq!(cv.padding.right, Length::Px(10.0));
+        assert_eq!(cv.padding.bottom, Length::Px(10.0));
+        assert_eq!(cv.padding.left, Length::Px(10.0));
+    }
+
+    #[test]
+    fn padding_longhand_then_shorthand_shorthand_wins() {
+        // spec §6.4.4 の後方 wins を逆順で pin: `padding-top: 5px; padding: 10px;`
+        // → 全 side = 10px (後段 shorthand が top も含めて上書き)。
+        // (raikiri-spike-5nc)
+        let cv = cascade_doc("", "div", Some("padding-top: 5px; padding: 10px"));
+        assert_eq!(cv.padding.top, Length::Px(10.0));
+        assert_eq!(cv.padding.right, Length::Px(10.0));
+        assert_eq!(cv.padding.bottom, Length::Px(10.0));
+        assert_eq!(cv.padding.left, Length::Px(10.0));
     }
 
     // ── margin longhand + shorthand cascade (CSS Box 3 §3.1/§3.2、raikiri-spike-0vv.5) ──
