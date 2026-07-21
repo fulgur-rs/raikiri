@@ -43,6 +43,7 @@
 //! `docs/superpowers/specs/2026-07-18-flat-tree-membership-metadata-design.md`。
 
 mod node;
+mod target;
 
 pub mod document;
 pub mod dom_impl;
