@@ -1605,6 +1605,7 @@ name = "raikiri-dom"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.0",
+ "libc",
  "parley",
  "raikiri-style",
  "raikiri-traits",
