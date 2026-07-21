@@ -204,7 +204,13 @@ impl FormData {
 /// GCPM directive emitted by raikiri-style cascade (`counter-increment` /
 /// `string-set` / `position: running(name)` 等)。
 ///
-/// M4 で variant を populate (§7.1 参照)。M1.1 では uninhabited。
+/// M6+ consumer (raikiri-dom / raikiri-paint) 実装時に variant を populate、
+/// raikiri-style cascade からの From impl も同時に追加 (§7.1 参照)。
+/// M5 static-side では raikiri-style local GCPM 型が canonical
+/// (raikiri-spike-376 amended、94e/3ps Phase B により raikiri-style は
+/// leaf、raikiri-traits がその型を re-shape して trait 化する dep 方向)。
+///
+/// M1.1〜M5 では uninhabited。
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum GcpmDirective {
@@ -218,7 +224,13 @@ pub enum GcpmDirective {
 /// resolved `content` property の item (`content: string(...)`, `counter(...)`,
 /// `target-counter(...)`, `element(...)` 等の資産)。
 ///
-/// M4 で variant を populate (§7 参照)。M1.1 では uninhabited。
+/// M6+ consumer (raikiri-dom / raikiri-paint) 実装時に variant を populate、
+/// raikiri-style::property::{ContentComponent, ...} からの From impl も同時に追加。
+/// M5 static-side では raikiri-style local ContentComponent が canonical
+/// (raikiri-spike-376 amended、94e/3ps Phase B により raikiri-style は
+/// leaf、raikiri-traits がその型を re-shape して trait 化する dep 方向)。
+///
+/// M1.1〜M5 では uninhabited。
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ContentValueItem {
