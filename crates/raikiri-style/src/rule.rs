@@ -371,10 +371,7 @@ mod tests {
         // (margin 0vv.5 の parse-time expansion model を padding に migrate: raikiri-spike-5nc)
         let decls = parse_block("padding: 10px 20px;");
         assert_eq!(decls.len(), 4, "shorthand must expand to 4 longhand decls");
-        assert_eq!(
-            decls[0].value,
-            PropertyValue::PaddingTop(Length::Px(10.0))
-        );
+        assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
         assert_eq!(
             decls[1].value,
             PropertyValue::PaddingRight(Length::Px(20.0))
@@ -383,10 +380,7 @@ mod tests {
             decls[2].value,
             PropertyValue::PaddingBottom(Length::Px(10.0))
         );
-        assert_eq!(
-            decls[3].value,
-            PropertyValue::PaddingLeft(Length::Px(20.0))
-        );
+        assert_eq!(decls[3].value, PropertyValue::PaddingLeft(Length::Px(20.0)));
     }
 
     #[test]
@@ -396,10 +390,7 @@ mod tests {
         let decls = parse_block("padding: 5px !important;");
         assert_eq!(decls.len(), 4);
         for d in &decls {
-            assert!(
-                d.important,
-                "important must propagate to every longhand"
-            );
+            assert!(d.important, "important must propagate to every longhand");
         }
     }
 
@@ -408,9 +399,6 @@ mod tests {
         // longhand は expand_shorthand の match arm を no-op で通過 (1 decl のまま)。
         let decls = parse_block("padding-top: 10px;");
         assert_eq!(decls.len(), 1);
-        assert_eq!(
-            decls[0].value,
-            PropertyValue::PaddingTop(Length::Px(10.0))
-        );
+        assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
     }
 }
