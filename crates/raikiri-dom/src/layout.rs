@@ -15,9 +15,9 @@ use parley::{
     StyleProperty,
 };
 use raikiri_style::CascadeResult;
-use raikiri_style::property::Length;
+use raikiri_style::property::{DisplayValue, Length};
 use raikiri_traits::{LayoutError, PageBox};
-use taffy::{AvailableSpace, Dimension, NodeId as TaffyNodeId, Size, compute_root_layout};
+use taffy::{AvailableSpace, Dimension, Display, NodeId as TaffyNodeId, Size, compute_root_layout};
 
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
 ///
@@ -64,20 +64,31 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 
 /// ComputedValues → taffy::Style bridge の site。
 ///
-/// M1.4 property (color / font-family / font-size / font-weight) は全て
-/// inherited text-only property で taffy::Style を変えないため、M1.6 では
-/// 本体 no-op。M4 で display / margin / padding / width / height 等の
-/// layout property が加わった時、ここに merge ロジックを追加する。
-/// (この関数の存在自体が M1.6 の site 確立の遺産。)
-pub(crate) fn apply_computed_to_style(_doc: &mut Document, _cascade: &CascadeResult) {
-    // M1.4 では no-op。M4 で ComputedValues に display / size / margin / padding
-    // 等が加わった時、下記のような per-element loop を追加:
-    //
-    // for idx in 0..doc.nodes.len() {
-    //     if doc.nodes[idx].kind != NodeKind::Element { continue; }
-    //     let cv = &cascade.computed[idx];
-    //     merge_layout_properties(&mut doc.nodes[idx].style, cv);
-    // }
+/// raikiri-spike-0vv.4 (Sprint 12) で追加された [`DisplayValue`] を
+/// [`taffy::Display`] に mapping する。taffy 0.x は Block / Flex / Grid /
+/// None のみ (`Inline` / `InlineBlock` 独立 variant なし) のため:
+/// - `Inline` → `Block` (initial は Block、text-only は leaf で render)
+/// - `InlineBlock` → `Block` (block child + inline-level flow parent の
+///   separate 扱い、精密化は follow-up)
+/// - `None` → `None`
+/// - catch-all arm → `Block` (`non_exhaustive` forward-compat)
+pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        let cv = &cascade.computed[idx];
+        doc.nodes[idx].style.display = match cv.display {
+            DisplayValue::Block => Display::Block,
+            DisplayValue::Inline => Display::Block,
+            DisplayValue::InlineBlock => Display::Block,
+            DisplayValue::None => Display::None,
+            _ => {
+                // non_exhaustive catch-all — unknown future variant goes to Block
+                Display::Block
+            }
+        };
+    }
 }
 
 /// 全 Text node を parley で pre-shape、結果を `Node.text_layout` に格納する。
@@ -402,29 +413,24 @@ mod tests {
     }
 
     #[test]
-    fn apply_computed_to_style_is_noop_at_m1_4() {
-        // M1.4 の 4 property (color / font-family / font-size / font-weight) は
-        // 全て inherited かつ text-only、taffy::Style を変えない。この test は
-        // M4 で display / margin / width / height 等の layout property が入った時に
-        // ここの assertion が「変える」に反転する: bridge site が正しく機能している
-        // かの regression pin。
+    fn apply_computed_to_style_bridges_display_to_taffy() {
+        // raikiri-spike-w2s: display bridge active — DisplayValue → taffy::Display
+        // mapping が正しく行われていることを確認する regression pin。
         use raikiri_style::{build_rule_tree, cascade};
 
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("color:red"));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:none"));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-        let before = doc.nodes[body].style.clone();
         apply_computed_to_style(&mut doc, &cr);
-        let after = doc.nodes[body].style.clone();
+        assert_eq!(doc.nodes[body].style.display, Display::None);
 
-        // M1.4 では size / margin / padding など layout に効く field は変えない
-        assert_eq!(before.size, after.size, "size unchanged at M1.4");
-        assert_eq!(before.display, after.display, "display unchanged at M1.4");
-        assert_eq!(before.margin, after.margin, "margin unchanged at M1.4");
-        assert_eq!(before.padding, after.padding, "padding unchanged at M1.4");
+        let default_style = <taffy::Style as Default>::default();
+        assert_eq!(doc.nodes[body].style.size, default_style.size);
+        assert_eq!(doc.nodes[body].style.margin, default_style.margin);
+        assert_eq!(doc.nodes[body].style.padding, default_style.padding);
     }
 
     // ── layout_single_page driver (Task 7) ──────────────────────
@@ -506,18 +512,24 @@ mod tests {
     }
 
     #[test]
-    fn layout_single_page_body_bridge_is_noop_at_m1_4() {
-        // bridge site (apply_computed_to_style) が body.style の layout-affecting
-        // field を変えないことを確認 (M4 で display / margin / padding が入る時に
-        // ここが反転する)
+    fn layout_single_page_bridges_display_none() {
+        // raikiri-spike-w2s: layout_single_page 経由で display bridge が active
+        // であることを確認 — body に display:none を指定すると taffy::Style.display
+        // が Display::None になる。
+        use raikiri_style::{build_rule_tree, cascade};
         use raikiri_traits::PageBox;
-        let (mut doc, cr) = hello_world_doc();
-        let body_id = find_body(&doc).expect("body exists");
-        let before = doc.nodes[body_id].style.display;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:none"));
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("color:red"));
+        let _text = doc.append_text(p, "Hi");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
         layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-        let after = doc.nodes[body_id].style.display;
-        assert_eq!(before, after, "display unchanged by M1.4 bridge");
-        // apply_page_box_to_body により size は変わるので size は assert 対象外
+        assert_eq!(doc.nodes[body].style.display, Display::None);
     }
 
     #[test]
