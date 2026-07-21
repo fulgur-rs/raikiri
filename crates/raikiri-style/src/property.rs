@@ -809,19 +809,18 @@ pub enum PropertyValue {
     /// - 3 values: top = first, left/right = second, bottom = third
     /// - 4 values: top / right / bottom / left (clockwise from top)
     ///
-    /// # Known limitation: shorthand vs longhand cascade (raikiri-spike-0vv.6 seed)
-    ///
-    /// 本 crate の cascade は per-`PropertyKey` に winner を選ぶ設計のため、
-    /// `padding: 10px` (`PropertyKey::Padding` winner) と `padding-top: 5px`
-    /// (`PropertyKey::PaddingTop` winner) が同時に勝った場合、[`apply_value`]
-    /// の適用順は `HashMap` iteration 由来で非決定的 (spec §Cascade 5 が要求する
-    /// "shorthand は parse-time で longhand に expand してから cascade" を満たさない)。
-    /// 単独 shorthand + 単独 longhand の各 case は spec 準拠 (Verification #4-6
-    /// で pin)、統合修正は別 task **raikiri-spike-5nc** で margin (0vv.5) が採った
-    /// parse-time expansion モデルに padding を migrate する予定
-    /// ([`apply_value`] doc も参照)。
-    ///
-    /// [`apply_value`]: crate::cascade::apply_value
+    /// **cascade 上は普段この variant を観測しない**: [`crate::rule::parse_declaration_block`]
+    /// が declaration parse 直後に 4 longhand variant
+    /// ([`PaddingTop`](Self::PaddingTop) / [`PaddingRight`](Self::PaddingRight) /
+    /// [`PaddingBottom`](Self::PaddingBottom) / [`PaddingLeft`](Self::PaddingLeft))
+    /// に展開するため (1/2/3/4 expansion + CSS Cascading L5
+    /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-5/#shorthand>
+    /// verbatim "A shorthand property sets all of its longhand sub-properties,
+    /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
+    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
+    /// は本 variant を受けたときも `ComputedValues.padding` field 全 4 side を
+    /// 上書きする実装を持つ (regression 時 panic 回避)。
+    /// raikiri-spike-5nc (margin 0vv.5 の parse-time expansion model に migrate)。
     Padding(Sides<Length>),
     /// `margin-top: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。

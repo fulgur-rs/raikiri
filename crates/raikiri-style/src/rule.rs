@@ -116,6 +116,24 @@ fn expand_shorthand_into(d: Declaration, out: &mut Vec<Declaration>) {
                 important: d.important,
             });
         }
+        PropertyValue::Padding(sides) => {
+            out.push(Declaration {
+                value: PropertyValue::PaddingTop(sides.top),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::PaddingRight(sides.right),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::PaddingBottom(sides.bottom),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::PaddingLeft(sides.left),
+                important: d.important,
+            });
+        }
         _ => out.push(d),
     }
 }
@@ -342,6 +360,57 @@ mod tests {
         assert_eq!(
             decls[0].value,
             PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(10.0)))
+        );
+    }
+
+    // ── padding shorthand expansion (CSS Cascading L5、raikiri-spike-5nc) ──
+
+    #[test]
+    fn padding_shorthand_expands_into_four_longhand_declarations() {
+        // `padding: 10px 20px` → 4 longhand (top=10, right=20, bottom=10, left=20)。
+        // (margin 0vv.5 の parse-time expansion model を padding に migrate: raikiri-spike-5nc)
+        let decls = parse_block("padding: 10px 20px;");
+        assert_eq!(decls.len(), 4, "shorthand must expand to 4 longhand decls");
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::PaddingTop(Length::Px(10.0))
+        );
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::PaddingRight(Length::Px(20.0))
+        );
+        assert_eq!(
+            decls[2].value,
+            PropertyValue::PaddingBottom(Length::Px(10.0))
+        );
+        assert_eq!(
+            decls[3].value,
+            PropertyValue::PaddingLeft(Length::Px(20.0))
+        );
+    }
+
+    #[test]
+    fn padding_shorthand_important_flag_propagates_to_all_longhand() {
+        // spec CSS Cascading L5 §3: shorthand の `!important` は全 longhand に
+        // copy される (margin important 拡張と同じ)。
+        let decls = parse_block("padding: 5px !important;");
+        assert_eq!(decls.len(), 4);
+        for d in &decls {
+            assert!(
+                d.important,
+                "important must propagate to every longhand"
+            );
+        }
+    }
+
+    #[test]
+    fn padding_longhand_declaration_not_expanded() {
+        // longhand は expand_shorthand の match arm を no-op で通過 (1 decl のまま)。
+        let decls = parse_block("padding-top: 10px;");
+        assert_eq!(decls.len(), 1);
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::PaddingTop(Length::Px(10.0))
         );
     }
 }
