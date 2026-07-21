@@ -146,7 +146,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let hidden = doc.append_element(Some(body), "hidden", hidden_style, None::<&str>);
+        let hidden = doc.append_element(Some(body), "hidden", hidden_style, Some("display:none"));
         let _child_of_hidden = doc.append_text(hidden, "should not be painted");
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
