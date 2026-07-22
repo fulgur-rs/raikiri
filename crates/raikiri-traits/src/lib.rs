@@ -55,7 +55,8 @@ pub use net::{
 pub use page::{
     ContentSource, ContentValueConvertError, ContentValueItem, FormData, GcpmDirective,
     LayoutBuffer, PageBox, PageContext, PageDefaults, PageDefaultsBuilder, PageFragment,
-    RunningTemplate, RunningTemplateId, TargetRegistry,
+    PendingResolution, ResolveOutcome, RunningTemplate, RunningTemplateId, TargetInfo,
+    TargetRegistry, resolve_content_component,
 };
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};

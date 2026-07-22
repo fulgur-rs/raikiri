@@ -4,8 +4,19 @@
 //! authoritative なので、M1.1 では opaque placeholder として置き、後続の
 //! task が field / method を段階的に populate する。
 //!
-//! 全 struct は `#[non_exhaustive]` + `impl Default` + `pub fn new()` を持ち、
-//! external consumer crate から `X::default()` で construct 可能。
+//! 入力/構築対象の struct は `#[non_exhaustive]` + `impl Default` + `pub fn new()` を持ち、
+//! external consumer crate から `X::new()` / `X::default()` で construct 可能
+//! ([`TargetInfo`] は `TargetRegistry::register` の input として consumer 側で構築)。
+//! Output-only snapshot 型 (現状 [`PendingResolution`] のみ — registry 内部で
+//! populate されて API 返り値経由で consumer に届くのみ) は consumer 側で直接
+//! construct しないため Default / new を要件外とする (raikiri-spike-bsi Option C
+//! wall/traits merge で確立、`#[non_exhaustive]` は全 public struct に維持)。
+
+mod target;
+
+pub use target::{
+    PendingResolution, ResolveOutcome, TargetInfo, TargetRegistry, resolve_content_component,
+};
 
 use crate::dom::{NodeId, Symbol};
 use raikiri_style::property::{
@@ -160,21 +171,10 @@ impl LayoutBuffer {
     }
 }
 
-/// TargetRegistry — target-* placeholder emit + resolve の runtime registry。
-/// M4 target-* で populate (§7.2 参照)。
-#[allow(missing_docs)]
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub struct TargetRegistry {
-    // M4 で populate。
-}
-
-impl TargetRegistry {
-    /// Construct an empty TargetRegistry. M1.1 placeholder.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
+// `TargetRegistry` — target-* placeholder emit + resolve の runtime registry。
+// design doc §7.2 canonical shape、raikiri-spike-bsi (Sprint 15 dom-3 Wave 1)
+// で raikiri-dom `pub(crate)` shadow を Option C で本 crate に merge、canonical
+// impl は sibling `target` submodule。この module では re-export のみ。
 
 /// RunningTemplate — `position: running(name)` の template 登録。
 /// M4 で populate。
