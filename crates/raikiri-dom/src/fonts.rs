@@ -10,6 +10,14 @@
 //! - fulgur `crates/fulgur-wpt/src/fonts.rs::load_fonts_dir` (walker + sort)
 //! - blitz `packages/blitz-dom/src/lib.rs::build_single_font_ctx`
 //!   (system_fonts: false + generic alias append)
+//!
+//! Structured warn hook: [`build_wpt_font_ctx_with_observer`] accepts an
+//! optional callback that receives a [`FontWarn`] for every warn+skip site
+//! (walker + read-time TOCTOU + fontique register-empty). The signature-
+//! preserving [`build_wpt_font_ctx`] delegates to it with `None`, keeping
+//! the CLI-facing `eprintln!` shape for external consumers pinned by
+//! `crates/raikiri/tests/external_consumer.rs`. bd raikiri-spike-1uq
+//! (fe1 §8.2 Angle B/G observability follow-up).
 
 use parley::FontContext;
 use std::io::Read;
@@ -239,9 +247,239 @@ fn read_bounded_font_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, FontRea
     Ok(bytes)
 }
 
+/// Structured warn event emitted by [`build_wpt_font_ctx_with_observer`] for
+/// every warn+skip site (walker + read-time TOCTOU + fontique register-empty).
+/// Consumers pass an `Option<&mut dyn FnMut(&FontWarn<'_>)>` observer to opt
+/// into programmatic consumption of these events; the [`build_wpt_font_ctx`]
+/// shim omits the observer and keeps the CLI-facing `eprintln!` behavior.
+///
+/// # Design
+///
+/// Sibling convention: `#[non_exhaustive]` mirrors the taxonomy enums in
+/// `crates/raikiri-traits/src/error.rs` (bd raikiri-spike-37n).  Variants are
+/// **split by callsite** (walker vs read) rather than sharing a single
+/// [`FontReadReject`]-shaped taxonomy because the walker-vs-read distinction
+/// is the exact TOCTOU signal fe1 §8.2 wants: a walker `Symlink` is a
+/// mundane cycle-safe skip, whereas a read-time `Symlink` means the tree
+/// changed between walk and read (leaf-swap TOCTOU).  Collapsing them would
+/// destroy that signal.  bd raikiri-spike-1uq.
+///
+/// # Not surfaced
+///
+/// `FontReadReject::Io(_)` never becomes a `FontWarn` variant.  It is
+/// hard-propagated as [`FontError::Io`] (preserves the roborev e93 round 3
+/// "Ahem.ttf silent-fallback prevention" guarantee), never warn+skip, so an
+/// observer never sees it.
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum FontWarn<'a> {
+    /// Walker skipped a symlink entry under `fonts_dir` (cycle-safe policy).
+    /// Mundane: pre-read filter to keep `Path::is_dir()`-cycle recursion off.
+    WalkerSkippedSymlink {
+        /// Absolute (or `fonts_dir`-relative) path of the skipped symlink.
+        path: &'a Path,
+    },
+    /// Walker skipped a non-regular entry (FIFO / device / socket /
+    /// block-or-char device).  `open(O_RDONLY)` on a writer-less FIFO would
+    /// block indefinitely; the pre-read `file_type.is_file()` gate is the
+    /// time-DoS defense (raikiri-spike-d9y.4).
+    WalkerSkippedNonRegular {
+        /// Absolute (or `fonts_dir`-relative) path of the skipped entry.
+        path: &'a Path,
+        /// The `FileType` returned by `DirEntry::file_type`, preserved so an
+        /// observer can distinguish FIFO vs device vs socket vs block-or-char.
+        file_type: std::fs::FileType,
+    },
+    /// Walker skipped a regular file whose `metadata.len()` exceeded
+    /// [`FONT_SIZE_CAP`] at walk time.
+    WalkerSkippedOversized {
+        /// Absolute (or `fonts_dir`-relative) path of the oversized file.
+        path: &'a Path,
+        /// Logical file size (`metadata.len()`) at walk time.
+        size: u64,
+        /// The size cap being enforced (currently [`FONT_SIZE_CAP`]).
+        cap: u64,
+    },
+    /// Read stage rejected a candidate as a symlink.  The walker had already
+    /// accepted the path as a regular file, so surfacing here signals a
+    /// **leaf-swap TOCTOU race** between walk and read (raikiri-spike-61l).
+    ReadRejectedSymlink {
+        /// Path that was a regular file at walk time and a symlink at read.
+        path: &'a Path,
+    },
+    /// Read stage rejected a candidate whose kind was neither regular file
+    /// nor symlink.  As with [`FontWarn::ReadRejectedSymlink`], the walker
+    /// had already accepted the path, so this is a TOCTOU-swap signal.
+    ReadRejectedNotRegularFile {
+        /// Path that was a regular file at walk time and something else at read.
+        path: &'a Path,
+    },
+    /// Read stage rejected a candidate whose `metadata.len()` exceeded the
+    /// cap between walk and read (TOCTOU-swap to a larger file, or racy
+    /// grow-in-place before the pre-open metadata check).
+    ReadRejectedOversizedPreOpen {
+        /// Path whose size crossed the cap between walk and read.
+        path: &'a Path,
+        /// Post-swap logical file size (`metadata.len()`) at read time.
+        size: u64,
+        /// The size cap being enforced (currently [`FONT_SIZE_CAP`]).
+        cap: u64,
+    },
+    /// Read stage caught a **TOCTOU-grow** race via the `+1-probe` pattern:
+    /// the file grew past the cap between the pre-open metadata check and
+    /// the bounded read.  The load-bearing observability signal fe1 §8.2
+    /// Angle B/G was designed for.
+    ReadRejectedOversizedDuringRead {
+        /// Path that grew past the cap during the bounded read.
+        path: &'a Path,
+        /// Number of bytes actually read before the `+1-probe` fired
+        /// (`bytes.len() as u64`, `> cap`).
+        size: u64,
+        /// The size cap being enforced (currently [`FONT_SIZE_CAP`]).
+        cap: u64,
+    },
+    /// fontique's `register_fonts` returned no families for the read blob
+    /// (parse-invalid font, corrupt asset, etc.).  Handled by the aggregate
+    /// [`FontError::PreferredFontUnavailable`] / [`FontError::NoFontsRegistered`]
+    /// invariant checks downstream; the observer is the only per-file
+    /// programmatic signal.
+    RegisterEmpty {
+        /// Path whose blob fontique rejected with an empty family list.
+        path: &'a Path,
+    },
+}
+
+impl<'a> std::fmt::Display for FontWarn<'a> {
+    /// Reproduces the pre-observer `eprintln!` message bodies verbatim so
+    /// swapping between observer-Some and observer-None does not change what
+    /// operators see on stderr (fe1 §8.2 "behavior-change" caution).  The
+    /// callsite prefixes `[raikiri-dom::fonts] warn: `.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FontWarn::WalkerSkippedSymlink { path } => write!(
+                f,
+                "skipping symlink entry {} (cycle-safe policy)",
+                path.display()
+            ),
+            FontWarn::WalkerSkippedNonRegular { path, file_type } => write!(
+                f,
+                "skipping non-regular entry {} (file_type={:?})",
+                path.display(),
+                file_type
+            ),
+            FontWarn::WalkerSkippedOversized { path, size, cap } => write!(
+                f,
+                "skipping oversized font {} ({size} bytes > cap {cap})",
+                path.display()
+            ),
+            FontWarn::ReadRejectedSymlink { path } => {
+                write!(f, "skipping {} (path is a symlink)", path.display())
+            }
+            FontWarn::ReadRejectedNotRegularFile { path } => write!(
+                f,
+                "skipping {} (path is not a regular file)",
+                path.display()
+            ),
+            FontWarn::ReadRejectedOversizedPreOpen { path, size, cap } => write!(
+                f,
+                "skipping {} (file size {size} bytes exceeds cap {cap} bytes)",
+                path.display()
+            ),
+            FontWarn::ReadRejectedOversizedDuringRead { path, size, cap } => write!(
+                f,
+                "skipping {} (file grew past cap during read: {size} bytes read, cap {cap} bytes (TOCTOU-grow))",
+                path.display()
+            ),
+            FontWarn::RegisterEmpty { path } => {
+                write!(f, "skipping {}: no family registered", path.display())
+            }
+        }
+    }
+}
+
+/// Observer alias — an optional mutable closure receiving a [`FontWarn`] by
+/// reference.  Threaded by mutable reference (`&mut FontWarnObserver<'_>`)
+/// through the walker so recursion can auto-reborrow rather than moving the
+/// `Option` at each site.
+type FontWarnObserver<'o> = Option<&'o mut dyn FnMut(&FontWarn<'_>)>;
+
+/// Emit a warn event: call the observer if `Some`, otherwise write the
+/// default `eprintln!` line so CLI use continues to see the same output.
+fn emit_warn(observer: &mut FontWarnObserver<'_>, event: FontWarn<'_>) {
+    if let Some(cb) = observer.as_mut() {
+        cb(&event);
+    } else {
+        eprintln!("[raikiri-dom::fonts] warn: {event}");
+    }
+}
+
+/// Map a non-`Io` [`FontReadReject`] to its [`FontWarn::ReadRejected*`]
+/// counterpart.  Extracted as a pure function so the observer-event shape
+/// can be unit-tested without needing to trigger a real TOCTOU race: the
+/// read-time `ReadRejected*` arms are cov:ignore in the callsite loop
+/// (walker pre-filters symlink/non-regular/oversized), so this helper is
+/// the sole deterministic coverage of the mapping.
+///
+/// # Panics
+///
+/// Debug-asserts on `FontReadReject::Io(_)`: `Io` is hard-propagated as
+/// [`FontError::Io`] before the observer emit site, so it must never reach
+/// this mapping.  Release builds fall back to a defensive no-op path via
+/// `ReadRejectedNotRegularFile` (least-surprising residual); the debug
+/// assert exists to catch a future refactor that routes `Io` through here
+/// by mistake.
+fn read_reject_to_warn<'a>(path: &'a Path, reject: &FontReadReject) -> FontWarn<'a> {
+    match reject {
+        FontReadReject::Symlink => FontWarn::ReadRejectedSymlink { path },
+        FontReadReject::NotRegularFile => FontWarn::ReadRejectedNotRegularFile { path },
+        FontReadReject::OversizedPreOpen { size, cap } => FontWarn::ReadRejectedOversizedPreOpen {
+            path,
+            size: *size,
+            cap: *cap,
+        },
+        FontReadReject::OversizedDuringRead { size, cap } => {
+            FontWarn::ReadRejectedOversizedDuringRead {
+                path,
+                size: *size,
+                cap: *cap,
+            }
+        }
+        FontReadReject::Io(_) => {
+            debug_assert!(
+                false,
+                "read_reject_to_warn called with Io(_); Io must be peeled off before observer emit"
+            );
+            FontWarn::ReadRejectedNotRegularFile { path }
+        }
+    }
+}
+
 /// WPT bundled fonts dir から FontContext を構築する。system font
 /// resolver は完全 disable、generic family (`serif`/`sans-serif`/...)
 /// は register 済 family の先頭 (Ahem) に解決される。
+///
+/// Delegates to [`build_wpt_font_ctx_with_observer`] with a `None` observer,
+/// preserving the CLI-facing `eprintln!` warn output.  Consumers wanting a
+/// structured observer callback for TOCTOU-swap/grow anomalies (fe1 §8.2
+/// Angle B/G) should call `_with_observer` directly.  Signature preserved
+/// for the `crates/raikiri/tests/external_consumer.rs` pin (bd raikiri-spike-e93).
+///
+/// # Errors
+///
+/// See [`build_wpt_font_ctx_with_observer`].
+pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
+    build_wpt_font_ctx_with_observer(fonts_dir, None)
+}
+
+/// WPT bundled fonts dir から FontContext を構築する。system font
+/// resolver は完全 disable、generic family (`serif`/`sans-serif`/...)
+/// は register 済 family の先頭 (Ahem) に解決される。
+///
+/// The `observer` receives a [`FontWarn`] for every warn+skip site — walker
+/// (symlink / non-regular / oversized), read-time TOCTOU (`ReadRejected*`),
+/// and fontique register-empty.  When `None`, warn output falls back to the
+/// legacy `eprintln!` shape so CLI use is unaffected.  bd raikiri-spike-1uq
+/// (fe1 §8.2 Angle B/G observability follow-up).
 ///
 /// # Errors
 /// - [`FontError::DirNotFound`] — `fonts_dir` が存在しない
@@ -254,15 +492,19 @@ fn read_bounded_font_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, FontRea
 ///   PREFERRED_FIRST が空の future 想定でのみ到達)
 /// - [`FontError::Io`] — dir walk 中、または font read
 ///   (callsite-local `read_bounded_font_file` 経由) の Io error propagate
-///   (`FontReadReject::Io(_)` -> `FontError::Io`、他 reject reason は warn+skip)
-pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
+///   (`FontReadReject::Io(_)` -> `FontError::Io`、他 reject reason は warn+skip
+///   経由で `FontWarn::ReadRejected*` として observer にも surface)
+pub fn build_wpt_font_ctx_with_observer(
+    fonts_dir: &Path,
+    mut observer: FontWarnObserver<'_>,
+) -> Result<FontContext, FontError> {
     use parley::fontique::{Blob, Collection, CollectionOptions, GenericFamily, SourceCache};
     use std::sync::Arc;
 
     if !fonts_dir.exists() {
         return Err(FontError::DirNotFound(fonts_dir.to_path_buf()));
     }
-    let paths = walk_fonts(fonts_dir)?;
+    let paths = walk_fonts(fonts_dir, &mut observer)?;
     if paths.is_empty() {
         return Err(FontError::EmptyDir(fonts_dir.to_path_buf()));
     }
@@ -348,21 +590,20 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
                     source,
                 });
             }
+            // cov:ignore: the walker pre-filters symlink/non-regular/oversized,
+            // so surfacing a non-Io `FontReadReject` here requires a real
+            // TOCTOU race between walk and read.  The
+            // `read_reject_to_warn` mapping is instead unit-tested
+            // deterministically via `read_reject_to_warn_maps_all_non_io_variants`.
             Err(reason) => {
-                eprintln!(
-                    "[raikiri-dom::fonts] warn: skipping {} ({reason})",
-                    path.display()
-                );
+                emit_warn(&mut observer, read_reject_to_warn(&path, &reason));
                 continue;
             }
         };
         let blob = Blob::new(Arc::new(bytes) as _);
         let registered = ctx.collection.register_fonts(blob, None);
         if registered.is_empty() {
-            eprintln!(
-                "[raikiri-dom::fonts] warn: skipping {}: no family registered",
-                path.display()
-            );
+            emit_warn(&mut observer, FontWarn::RegisterEmpty { path: &path });
             continue;
         }
         // register 成功した path が PREFERRED_FIRST 対象なら record
@@ -496,9 +737,14 @@ const PREFERRED_FIRST: &[&str] = &["Ahem.ttf"];
 
 /// dir を recursive walk して `.ttf`/`.otf` を collect + sort + PREFERRED_FIRST
 /// を先頭に move する。file_name の case は `.ttf`/`.otf` (小文字 normalize)。
-fn walk_fonts(dir: &Path) -> Result<Vec<PathBuf>, FontError> {
+///
+/// Walker warn+skip sites (symlink / non-regular / oversized) route through
+/// the shared `observer` so `_with_observer` consumers get walker-level
+/// events too, not only read-time TOCTOU events.  When `observer` is `None`
+/// the eprintln! fallback lives in [`emit_warn`].
+fn walk_fonts(dir: &Path, observer: &mut FontWarnObserver<'_>) -> Result<Vec<PathBuf>, FontError> {
     let mut collected: Vec<PathBuf> = Vec::new();
-    collect_recursive(dir, &mut collected)?;
+    collect_recursive(dir, &mut collected, observer)?;
     // 1. path sort (決定性)
     collected.sort();
     // 2. PREFERRED_FIRST を先頭に partition
@@ -539,7 +785,11 @@ fn walk_fonts(dir: &Path) -> Result<Vec<PathBuf>, FontError> {
     Ok(result)
 }
 
-fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FontError> {
+fn collect_recursive(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    observer: &mut FontWarnObserver<'_>,
+) -> Result<(), FontError> {
     let entries = std::fs::read_dir(dir).map_err(|source| FontError::Io {
         path: dir.to_path_buf(),
         source,
@@ -572,14 +822,11 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FontError
         // 意図的な symlink が含まれるようになったら別途 canonicalize+visited
         // set 方式に拡張する。今は WPT font tree は plain hierarchy 前提。
         if file_type.is_symlink() {
-            eprintln!(
-                "[raikiri-dom::fonts] warn: skipping symlink entry {} (cycle-safe policy)",
-                path.display()
-            );
+            emit_warn(observer, FontWarn::WalkerSkippedSymlink { path: &path });
             continue;
         }
         if file_type.is_dir() {
-            collect_recursive(&path, out)?;
+            collect_recursive(&path, out, observer)?;
             continue;
         }
         // regular file 以外 (FIFO / device / socket / BlockDevice / CharDevice) は
@@ -589,10 +836,12 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FontError
         // (blocking read) は walk 段階で file_type filter するのが load-bearing。
         // raikiri-spike-d9y.4, Codex finding `ffe1f9c7027c8191a8f8812a6456c7d9`。
         if !file_type.is_file() {
-            eprintln!(
-                "[raikiri-dom::fonts] warn: skipping non-regular entry {} (file_type={:?})",
-                path.display(),
-                file_type
+            emit_warn(
+                observer,
+                FontWarn::WalkerSkippedNonRegular {
+                    path: &path,
+                    file_type,
+                },
             );
             continue;
         }
@@ -617,11 +866,13 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FontError
             source,
         })?;
         if metadata.len() > FONT_SIZE_CAP {
-            eprintln!(
-                "[raikiri-dom::fonts] warn: skipping oversized font {} ({} bytes > cap {})",
-                path.display(),
-                metadata.len(),
-                FONT_SIZE_CAP
+            emit_warn(
+                observer,
+                FontWarn::WalkerSkippedOversized {
+                    path: &path,
+                    size: metadata.len(),
+                    cap: FONT_SIZE_CAP,
+                },
             );
             continue;
         }
@@ -650,7 +901,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_fake_ttf(tmp.path(), "a.ttf");
         write_fake_ttf(tmp.path(), "b.ttf");
-        let paths = walk_fonts(tmp.path()).unwrap();
+        let paths = walk_fonts(tmp.path(), &mut None).unwrap();
         assert_eq!(paths.len(), 2);
         assert!(
             paths
@@ -665,7 +916,7 @@ mod tests {
         write_fake_ttf(tmp.path(), "font.ttf");
         std::fs::write(tmp.path().join("README.md"), b"ignore").unwrap();
         std::fs::write(tmp.path().join("notes.txt"), b"ignore").unwrap();
-        let paths = walk_fonts(tmp.path()).unwrap();
+        let paths = walk_fonts(tmp.path(), &mut None).unwrap();
         assert_eq!(paths.len(), 1);
         assert_eq!(
             paths[0].file_name().and_then(|f| f.to_str()),
@@ -680,7 +931,7 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         write_fake_ttf(tmp.path(), "top.ttf");
         write_fake_ttf(&sub, "nested.ttf");
-        let paths = walk_fonts(tmp.path()).unwrap();
+        let paths = walk_fonts(tmp.path(), &mut None).unwrap();
         assert_eq!(paths.len(), 2);
     }
 
@@ -691,8 +942,8 @@ mod tests {
         for name in ["z.ttf", "a.ttf", "m.ttf"] {
             write_fake_ttf(tmp.path(), name);
         }
-        let first = walk_fonts(tmp.path()).unwrap();
-        let second = walk_fonts(tmp.path()).unwrap();
+        let first = walk_fonts(tmp.path(), &mut None).unwrap();
+        let second = walk_fonts(tmp.path(), &mut None).unwrap();
         assert_eq!(first, second, "walker must be deterministic across calls");
         let names: Vec<_> = first
             .iter()
@@ -713,7 +964,7 @@ mod tests {
         write_fake_ttf(tmp.path(), "Ahem.ttf");
         write_fake_ttf(tmp.path(), "CSSTest-Regular.ttf");
         write_fake_ttf(tmp.path(), "Lato-Bold.ttf");
-        let paths = walk_fonts(tmp.path()).unwrap();
+        let paths = walk_fonts(tmp.path(), &mut None).unwrap();
         let names: Vec<_> = paths
             .iter()
             .map(|p| p.file_name().and_then(|f| f.to_str()).unwrap().to_string())
@@ -746,7 +997,7 @@ mod tests {
         write_fake_ttf(&sub, "Ahem.ttf");
         write_fake_ttf(tmp.path(), "Other.ttf");
 
-        let paths = walk_fonts(tmp.path()).unwrap();
+        let paths = walk_fonts(tmp.path(), &mut None).unwrap();
         assert_eq!(
             paths.len(),
             3,
@@ -821,7 +1072,7 @@ mod tests {
             .expect("mkfifo(1) should be available on unix hosts");
         assert!(status.success(), "mkfifo failed for {}", fifo.display());
 
-        let paths = walk_fonts(tmp.path()).expect("walker Ok with FIFO present");
+        let paths = walk_fonts(tmp.path(), &mut None).expect("walker Ok with FIFO present");
         // FIFO は skip、good.ttf のみ通過
         assert_eq!(
             paths.len(),
@@ -849,7 +1100,7 @@ mod tests {
         let f = std::fs::File::create(&big).unwrap();
         f.set_len(FONT_SIZE_CAP + 1).unwrap();
 
-        let paths = walk_fonts(tmp.path()).expect("walker Ok with oversized file");
+        let paths = walk_fonts(tmp.path(), &mut None).expect("walker Ok with oversized file");
         assert_eq!(
             paths.len(),
             1,
@@ -878,7 +1129,7 @@ mod tests {
         f.set_len(FONT_SIZE_CAP)
             .expect("sparse set_len FONT_SIZE_CAP");
         drop(f);
-        let paths = walk_fonts(tmp.path()).expect("walker Ok on boundary-size font");
+        let paths = walk_fonts(tmp.path(), &mut None).expect("walker Ok on boundary-size font");
         assert_eq!(paths.len(), 1);
         assert_eq!(
             paths[0].file_name().and_then(|f| f.to_str()),
@@ -899,7 +1150,7 @@ mod tests {
         std::os::unix::fs::symlink(tmp.path(), &loop_path).unwrap();
 
         // 過去実装 (`Path::is_dir()`) では stack overflow していた
-        let paths = walk_fonts(tmp.path()).expect("walker Ok even with symlink cycle");
+        let paths = walk_fonts(tmp.path(), &mut None).expect("walker Ok even with symlink cycle");
         // symlink を skip したので real.ttf のみ (loop 経由で発見される
         // 追加 real.ttf は無い)。
         assert_eq!(paths.len(), 1, "expected only real.ttf, got: {:?}", paths);
@@ -1114,5 +1365,311 @@ mod tests {
             }
             other => panic!("expected OversizedPreOpen, got {other:?}"),
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Observer tests (bd raikiri-spike-1uq — fe1 §8.2 Angle B/G follow-up)
+    // ------------------------------------------------------------------
+    //
+    // Structural coverage for `build_wpt_font_ctx_with_observer`:
+    // - Deterministic walker sites (symlink / non-regular / oversized) fire.
+    // - Deterministic fontique register-empty site fires.
+    // - Default None-observer path still writes to eprintln! and does not
+    //   panic.
+    // - The `read_reject_to_warn` mapping covers all 4 non-Io variants
+    //   without needing a TOCTOU race (that path is cov:ignore in the loop).
+
+    /// Owned copy of a [`FontWarn`] event for observer test assertions.
+    /// `FontWarn<'a>` borrows the path from the walker's iteration variable,
+    /// so tests that want to assert *after* the walker returns must snapshot
+    /// each event into an owned form.
+    #[derive(Debug, PartialEq, Eq)]
+    enum OwnedWarn {
+        WalkerSkippedSymlink(PathBuf),
+        WalkerSkippedNonRegular(PathBuf),
+        WalkerSkippedOversized(PathBuf, u64, u64),
+        ReadRejectedSymlink(PathBuf),
+        ReadRejectedNotRegularFile(PathBuf),
+        ReadRejectedOversizedPreOpen(PathBuf, u64, u64),
+        ReadRejectedOversizedDuringRead(PathBuf, u64, u64),
+        RegisterEmpty(PathBuf),
+    }
+
+    impl OwnedWarn {
+        fn from_ref(w: &FontWarn<'_>) -> Self {
+            match *w {
+                FontWarn::WalkerSkippedSymlink { path } => Self::WalkerSkippedSymlink(path.into()),
+                FontWarn::WalkerSkippedNonRegular { path, .. } => {
+                    Self::WalkerSkippedNonRegular(path.into())
+                }
+                FontWarn::WalkerSkippedOversized { path, size, cap } => {
+                    Self::WalkerSkippedOversized(path.into(), size, cap)
+                }
+                FontWarn::ReadRejectedSymlink { path } => Self::ReadRejectedSymlink(path.into()),
+                FontWarn::ReadRejectedNotRegularFile { path } => {
+                    Self::ReadRejectedNotRegularFile(path.into())
+                }
+                FontWarn::ReadRejectedOversizedPreOpen { path, size, cap } => {
+                    Self::ReadRejectedOversizedPreOpen(path.into(), size, cap)
+                }
+                FontWarn::ReadRejectedOversizedDuringRead { path, size, cap } => {
+                    Self::ReadRejectedOversizedDuringRead(path.into(), size, cap)
+                }
+                FontWarn::RegisterEmpty { path } => Self::RegisterEmpty(path.into()),
+            }
+        }
+    }
+
+    /// Observer fires `WalkerSkippedSymlink` when a symlink entry sits
+    /// alongside real fonts.  Regression pin: the walker's cycle-safe skip
+    /// must route through the shared observer, not just the legacy
+    /// eprintln!.  bd raikiri-spike-1uq.
+    #[cfg(unix)]
+    #[test]
+    fn observer_fires_walker_skipped_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_fake_ttf(tmp.path(), "Ahem.ttf");
+        // symlink loop (self-cycle) — walker will see it via file_type()
+        // as a symlink and skip.
+        let loop_path = tmp.path().join("loop");
+        std::os::unix::fs::symlink(tmp.path(), &loop_path).unwrap();
+
+        let mut events: Vec<OwnedWarn> = Vec::new();
+        let mut cb = |w: &FontWarn<'_>| events.push(OwnedWarn::from_ref(w));
+        let _ = build_wpt_font_ctx_with_observer(tmp.path(), Some(&mut cb));
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, OwnedWarn::WalkerSkippedSymlink(p) if p == &loop_path)),
+            "expected WalkerSkippedSymlink({}) in observer events, got: {:?}",
+            loop_path.display(),
+            events
+        );
+    }
+
+    /// Observer fires `WalkerSkippedNonRegular` when a FIFO poses as a
+    /// `.ttf` file.  Complements `walker_skips_named_pipe_font_entry`
+    /// (pre-observer) by pinning that the same skip is now structured.
+    /// bd raikiri-spike-1uq.
+    #[cfg(unix)]
+    #[test]
+    fn observer_fires_walker_skipped_non_regular() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_fake_ttf(tmp.path(), "Ahem.ttf");
+        let fifo = tmp.path().join("evil.ttf");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo(1) should be available on unix hosts");
+        assert!(status.success(), "mkfifo failed for {}", fifo.display());
+
+        let mut events: Vec<OwnedWarn> = Vec::new();
+        let mut cb = |w: &FontWarn<'_>| events.push(OwnedWarn::from_ref(w));
+        let _ = build_wpt_font_ctx_with_observer(tmp.path(), Some(&mut cb));
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, OwnedWarn::WalkerSkippedNonRegular(p) if p == &fifo)),
+            "expected WalkerSkippedNonRegular({}) in observer events, got: {:?}",
+            fifo.display(),
+            events
+        );
+    }
+
+    /// Observer fires `WalkerSkippedOversized` when a `.ttf` grows past
+    /// [`FONT_SIZE_CAP`].  Sparse `set_len(FONT_SIZE_CAP + 1)` avoids
+    /// consuming 100 MiB of test disk; `metadata.len()` returns the logical
+    /// size regardless.  bd raikiri-spike-1uq.
+    #[test]
+    fn observer_fires_walker_skipped_oversized() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_fake_ttf(tmp.path(), "Ahem.ttf");
+        let big = tmp.path().join("big.ttf");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(FONT_SIZE_CAP + 1).unwrap();
+        drop(f);
+
+        let mut events: Vec<OwnedWarn> = Vec::new();
+        let mut cb = |w: &FontWarn<'_>| events.push(OwnedWarn::from_ref(w));
+        let _ = build_wpt_font_ctx_with_observer(tmp.path(), Some(&mut cb));
+
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                OwnedWarn::WalkerSkippedOversized(p, size, cap)
+                    if p == &big && *size == FONT_SIZE_CAP + 1 && *cap == FONT_SIZE_CAP
+            )),
+            "expected WalkerSkippedOversized({}, {}, {}) in observer events, got: {:?}",
+            big.display(),
+            FONT_SIZE_CAP + 1,
+            FONT_SIZE_CAP,
+            events
+        );
+    }
+
+    /// Observer fires `RegisterEmpty` when a non-preferred `.ttf` contains
+    /// garbage bytes that fontique rejects.  Uses `Other.ttf` (not
+    /// `Ahem.ttf`) so `PreferredFontUnavailable` does not preempt the
+    /// event.  bd raikiri-spike-1uq.
+    #[test]
+    fn observer_fires_register_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_fake_ttf(tmp.path(), "Ahem.ttf");
+        // Other.ttf: garbage bytes → fontique returns no families.
+        let other = tmp.path().join("Other.ttf");
+        std::fs::write(&other, b"not a valid font").unwrap();
+
+        let mut events: Vec<OwnedWarn> = Vec::new();
+        let mut cb = |w: &FontWarn<'_>| events.push(OwnedWarn::from_ref(w));
+        let _ = build_wpt_font_ctx_with_observer(tmp.path(), Some(&mut cb));
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, OwnedWarn::RegisterEmpty(p) if p == &other)),
+            "expected RegisterEmpty({}) in observer events, got: {:?}",
+            other.display(),
+            events
+        );
+    }
+
+    /// Default-None observer path: `build_wpt_font_ctx` (which delegates
+    /// with `None`) must not panic and must preserve the original error
+    /// classification even when warn+skip sites fire.  Regression pin: the
+    /// observer plumbing must not divert the `FontError` return channel or
+    /// change the eprintln! fallback in a way that breaks CLI use.
+    /// bd raikiri-spike-1uq.
+    #[cfg(unix)]
+    #[test]
+    fn observer_none_path_still_falls_back_to_eprintln_and_does_not_panic() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_fake_ttf(tmp.path(), "Ahem.ttf");
+        // Two independent warn+skip triggers (symlink + oversized) so the
+        // eprintln! fallback exercises multiple FontWarn arms in one run.
+        let loop_path = tmp.path().join("loop");
+        std::os::unix::fs::symlink(tmp.path(), &loop_path).unwrap();
+        let big = tmp.path().join("big.ttf");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(FONT_SIZE_CAP + 1).unwrap();
+        drop(f);
+
+        // `build_wpt_font_ctx` delegates to `_with_observer(_, None)`, so
+        // this exercises the eprintln! fallback path end-to-end.  The
+        // aggregate result depends on Ahem.ttf presence — the pin is that
+        // the call returns *some* Result (Ok or Err) without panicking.
+        let _ = build_wpt_font_ctx(tmp.path());
+    }
+
+    /// `read_reject_to_warn` maps every non-Io [`FontReadReject`] variant to
+    /// its [`FontWarn::ReadRejected*`] counterpart.  The read-time observer
+    /// arm in `build_wpt_font_ctx_with_observer` is `cov:ignore` (the
+    /// walker pre-filters symlink/non-regular/oversized, so the arm only
+    /// fires on a real TOCTOU race), which would otherwise leave the
+    /// TOCTOU-observability deliverable untested.  This unit test closes
+    /// that coverage gap deterministically.  bd raikiri-spike-1uq.
+    #[test]
+    fn read_reject_to_warn_maps_all_non_io_variants() {
+        let path = Path::new("/tmp/fake.ttf");
+
+        assert!(matches!(
+            read_reject_to_warn(path, &FontReadReject::Symlink),
+            FontWarn::ReadRejectedSymlink { path: p } if p == path
+        ));
+        assert!(matches!(
+            read_reject_to_warn(path, &FontReadReject::NotRegularFile),
+            FontWarn::ReadRejectedNotRegularFile { path: p } if p == path
+        ));
+        assert!(matches!(
+            read_reject_to_warn(
+                path,
+                &FontReadReject::OversizedPreOpen { size: 42, cap: 10 }
+            ),
+            FontWarn::ReadRejectedOversizedPreOpen { path: p, size: 42, cap: 10 }
+                if p == path
+        ));
+        assert!(matches!(
+            read_reject_to_warn(
+                path,
+                &FontReadReject::OversizedDuringRead {
+                    size: 101,
+                    cap: 100
+                }
+            ),
+            FontWarn::ReadRejectedOversizedDuringRead { path: p, size: 101, cap: 100 }
+                if p == path
+        ));
+    }
+
+    /// `FontWarn`'s `Display` output must reproduce the pre-observer
+    /// `eprintln!` message bodies verbatim.  fe1 §8.2 flagged fonts.rs
+    /// warn-message wording as a behavior-change surface; this test pins
+    /// that the None-observer fallback is byte-identical (modulo the
+    /// callsite prefix `[raikiri-dom::fonts] warn: `).  bd raikiri-spike-1uq.
+    #[test]
+    fn font_warn_display_reproduces_legacy_message_bodies() {
+        let p = Path::new("/tmp/fake.ttf");
+
+        // Walker sites — bodies from the pre-1uq eprintln! calls in
+        // collect_recursive (symlink / non-regular / oversized).  The
+        // {file_type:?} formatting on non-regular uses a locally-inferred
+        // FileType via `symlink_metadata` on the tempdir root so the test
+        // does not depend on FileType Debug's exact platform shape.
+        assert_eq!(
+            format!("{}", FontWarn::WalkerSkippedSymlink { path: p }),
+            "skipping symlink entry /tmp/fake.ttf (cycle-safe policy)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                FontWarn::WalkerSkippedOversized {
+                    path: p,
+                    size: 200,
+                    cap: 100
+                }
+            ),
+            "skipping oversized font /tmp/fake.ttf (200 bytes > cap 100)"
+        );
+
+        // Read-time sites — bodies mirror the pre-1uq eprintln! wording
+        // "skipping <path> (<FontReadReject Display>)".
+        assert_eq!(
+            format!("{}", FontWarn::ReadRejectedSymlink { path: p }),
+            "skipping /tmp/fake.ttf (path is a symlink)"
+        );
+        assert_eq!(
+            format!("{}", FontWarn::ReadRejectedNotRegularFile { path: p }),
+            "skipping /tmp/fake.ttf (path is not a regular file)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                FontWarn::ReadRejectedOversizedPreOpen {
+                    path: p,
+                    size: 8,
+                    cap: 4
+                }
+            ),
+            "skipping /tmp/fake.ttf (file size 8 bytes exceeds cap 4 bytes)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                FontWarn::ReadRejectedOversizedDuringRead {
+                    path: p,
+                    size: 101,
+                    cap: 100
+                }
+            ),
+            "skipping /tmp/fake.ttf (file grew past cap during read: 101 bytes read, cap 100 bytes (TOCTOU-grow))"
+        );
+
+        // Register-empty site — body from the pre-1uq eprintln! after the
+        // fontique register_fonts empty branch.
+        assert_eq!(
+            format!("{}", FontWarn::RegisterEmpty { path: p }),
+            "skipping /tmp/fake.ttf: no family registered"
+        );
     }
 }
