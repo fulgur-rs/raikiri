@@ -34,9 +34,10 @@ use std::path::{Path, PathBuf};
 /// - **symlink → /dev/zero**: `collect_recursive` 側の
 ///   `file_type.is_symlink()` skip (roborev e93 round 4) で既に closed
 /// - **FIFO / device / socket** (indefinite block): `collect_recursive` 側の
-///   `file_type.is_file()` gate で closed。`Read::take(N)` は memory を bound
-///   するが writer 未定の FIFO に対して time は bound しないので、walk 段階で
-///   排除するのが load-bearing defense
+///   `file_type.is_file()` gate で walk 段階で closed。`Read::take(N)` は memory を
+///   bound するが writer 未定の FIFO に対して time は bound しないので、walk 段階で
+///   排除するのが 1st line of defense。read 段階の TOCTOU-swap (regular → FIFO /
+///   device 差し替え) は下記 leaf-swap 項の後段で defended
 /// - **oversized regular file** (memory exhaustion): `metadata.len() >
 ///   FONT_SIZE_CAP` skip で closed
 /// - **mid-read grow (TOCTOU)**: `read_bounded_font_file` の callsite-local
@@ -54,30 +55,51 @@ use std::path::{Path, PathBuf};
 ///   warn+skip し、Ahem の drop は下流の aggregate `PreferredFontUnavailable`
 ///   check が catch する。
 ///
-/// **Out of scope (planner-blessed 3-layer)**: walk 直後 regular file が FIFO に
-/// 差し替わる TOCTOU-swap は memory は bound されるが time は bound されない
-/// (`take(N)` は writer が close するまで block)。O_NONBLOCK + `fstat` 経由の
-/// defense が必要になるまで defer。
+/// - **FIFO / device-swap (TOCTOU) after pre-open metadata**: walker skip と
+///   `read_bounded_font_file` の pre-open `symlink_metadata` の間に regular file
+///   が FIFO / character device / block device に差し替わる vector は、
+///   `safe_open` (unix: `O_NOFOLLOW | O_NONBLOCK`) + post-open
+///   [`check_open_handle_regular`] fd-based fstat で closed。`O_NONBLOCK` が
+///   writer 未定 FIFO の `open()` block を防ぎ (time-DoS の 1st defense)、
+///   post-open `File::metadata().file_type().is_file()` の fd-based check が
+///   非 regular kind を race-free に reject する (`NotRegularFilePostOpen`)。
+///   pre-open path-based check と違い fd 発行後の stat なので path-swap TOCTOU
+///   では bypass 不可能。raikiri-spike-f4j (61l Codex §8.3 finding #2)。
 ///
 /// TODO(raikiri-spike-d9y.3): Wave 0 の RenderLimits と連動させる。
 const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 
 /// Open a regular file with the leaf-swap TOCTOU defense stack.
 ///
-/// The unix impl passes `O_NOFOLLOW` to `File::open` so a symlink swapped
-/// in between the pre-open `symlink_metadata` check and this open call
-/// cannot cause the resolver to follow a fresh target. POSIX mandates
-/// `ELOOP` for `open(O_NOFOLLOW)` on a symlink (Linux, macOS, and modern
-/// FreeBSD comply); legacy BSDs (NetBSD, OpenBSD, FreeBSD <10) may return
-/// `EMLINK` or `EFTYPE` instead. Callers that need to distinguish this
-/// case from other I/O errors should check the errno match against
-/// `libc::ELOOP` AND fall back to a `symlink_metadata` recheck (see
-/// [`read_bounded_font_file`] for the portable pattern).
+/// The unix impl passes `O_NOFOLLOW | O_NONBLOCK` to `File::open`:
+///
+/// - `O_NOFOLLOW`: a symlink swapped in between the pre-open
+///   `symlink_metadata` check and this open call cannot cause the resolver
+///   to follow a fresh target. POSIX mandates `ELOOP` for
+///   `open(O_NOFOLLOW)` on a symlink (Linux, macOS, and modern FreeBSD
+///   comply); legacy BSDs (NetBSD, OpenBSD, FreeBSD <10) may return
+///   `EMLINK` or `EFTYPE` instead. Callers that need to distinguish this
+///   case from other I/O errors should check the errno match against
+///   `libc::ELOOP` AND fall back to a `symlink_metadata` recheck (see
+///   [`read_bounded_font_file`] for the portable pattern).
+/// - `O_NONBLOCK`: **load-bearing time-DoS defense** paired with the
+///   post-open fstat check in [`check_open_handle_regular`]. If a regular
+///   file is swapped for a **writer-less FIFO** between the pre-open
+///   `symlink_metadata` check and this `open()`, the bare
+///   `open(O_RDONLY | O_NOFOLLOW)` call would block indefinitely at the
+///   `open()` syscall itself — `O_NOFOLLOW` does not fire (a FIFO is not a
+///   symlink), so the post-open fstat is never reached. `O_NONBLOCK` makes
+///   FIFO opens return immediately (POSIX: read-side `O_RDONLY | O_NONBLOCK`
+///   on a FIFO succeeds even with no writer), letting the post-open fstat
+///   inspect the fd and reject non-regular kinds. Regular file semantics
+///   are unaffected: POSIX specifies `O_NONBLOCK` has no effect on regular
+///   files, and Linux/macOS both honor that. bd raikiri-spike-f4j
+///   (61l Codex §8.3 finding #2).
 ///
 /// The non-unix fallback keeps the current default `File::open` semantics.
 /// Windows equivalent tracked in raikiri-spike-akk.
 ///
-/// bd raikiri-spike-61l (8yu sibling).
+/// bd raikiri-spike-61l (8yu sibling), raikiri-spike-f4j (O_NONBLOCK).
 // Callsite-local defense: sharing this stack with raikiri-vrt via
 // raikiri-traits is deferred to raikiri-spike-7xw for walls.md §2 crate-list
 // PMO judgment. Do not lift into raikiri-traits::io without that judgment.
@@ -86,7 +108,7 @@ fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
 }
 
@@ -117,6 +139,20 @@ enum FontReadReject {
     /// directory, block/char device).  Rejected at pre-open metadata time —
     /// `File::open` on a fifo with no writer would block indefinitely.
     NotRegularFile,
+    /// The fd returned by `safe_open` resolves to something other than a
+    /// regular file (FIFO / character device / block device / socket).
+    /// Rejected via a fd-based `File::metadata()` fstat after open, so the
+    /// check is race-free against a path-swap between pre-open
+    /// `symlink_metadata` and `safe_open`.  Paired with `O_NONBLOCK` in
+    /// `safe_open` (unix) so a writer-less FIFO swapped in mid-window cannot
+    /// block `open()` before the fstat is reached.  Callsite policy:
+    /// warn+skip (analogous to `NotRegularFile`).  Variant is split by
+    /// callsite (pre-open vs post-open) rather than reusing `NotRegularFile`
+    /// so the TOCTOU signal — regular at walk, non-regular at read — remains
+    /// distinguishable to observers (same philosophy as [`FontWarn`]'s
+    /// per-stage split).  bd raikiri-spike-f4j, closes 61l Codex §8.3
+    /// finding #2.
+    NotRegularFilePostOpen,
     /// Pre-open `metadata.len() > cap` reject.  The file was never opened.
     /// `cap` carries the configured cap (rather than deferring to
     /// `FONT_SIZE_CAP`) so tests that pass a small cap get honest messages.
@@ -153,6 +189,10 @@ impl std::fmt::Display for FontReadReject {
         match self {
             FontReadReject::Symlink => write!(f, "path is a symlink"),
             FontReadReject::NotRegularFile => write!(f, "path is not a regular file"),
+            FontReadReject::NotRegularFilePostOpen => write!(
+                f,
+                "opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open)"
+            ),
             FontReadReject::OversizedPreOpen { size, cap } => {
                 write!(f, "file size {size} bytes exceeds cap {cap} bytes")
             }
@@ -171,9 +211,44 @@ impl std::fmt::Display for FontReadReject {
     }
 }
 
+/// Post-open fd-based fstat: verify the handle `safe_open` returned still
+/// resolves to a regular file.  Load-bearing supplement to the pre-open
+/// path-based `symlink_metadata + is_file()` gate.
+///
+/// The pre-open path-based check is race-vulnerable — a regular file can be
+/// swapped for a FIFO / character device / block device between the pre-open
+/// metadata call and the subsequent `safe_open`.  `O_NOFOLLOW` does not
+/// filter file kind (a FIFO is not a symlink), so the swapped-in kind slips
+/// through `safe_open`.  Calling `File::metadata()` on the returned fd
+/// consults the inode already bound to the descriptor, so no path lookup
+/// re-runs and the race window is closed by construction.
+///
+/// Paired with `O_NONBLOCK` in `safe_open` (unix): without it, opening a
+/// writer-less FIFO would block at the `open()` syscall itself and this
+/// fstat would never be reached.  Together they close the FIFO-swap
+/// time-DoS the walker-only `is_file()` gate cannot cover.
+///
+/// Portable: the fstat is via `std::fs::File::metadata`, which delegates to
+/// the platform's fd-based stat (Linux `fstat`, Windows
+/// `GetFileInformationByHandle`).  Called unconditionally after safe_open
+/// Ok so non-unix builds get the defense-in-depth too, even where
+/// `safe_open`'s `O_NOFOLLOW`/`O_NONBLOCK` custom flags are absent.
+///
+/// bd raikiri-spike-f4j, closes 61l Codex §8.3 finding #2.
+fn check_open_handle_regular(file: &std::fs::File) -> Result<(), FontReadReject> {
+    let metadata = file.metadata().map_err(FontReadReject::Io)?;
+    if !metadata.file_type().is_file() {
+        return Err(FontReadReject::NotRegularFilePostOpen);
+    }
+    Ok(())
+}
+
 /// Read a regular font file with the leaf-swap TOCTOU defense stack:
 /// pre-open `symlink_metadata` + `is_file()` + size-cap gates, `safe_open`
-/// with `O_NOFOLLOW` at open time (unix), and a `+1-probe` bounded read.
+/// with `O_NOFOLLOW | O_NONBLOCK` at open time (unix), a post-open
+/// fd-based fstat via [`check_open_handle_regular`] that rejects
+/// non-regular kinds bound to the descriptor (race-free against
+/// pre-open→open path-swap), and a `+1-probe` bounded read.
 ///
 /// Callsite-local variant of `raikiri_traits::io::read_bounded_regular_file`.
 /// The traits helper's `File::open` follows symlinks, leaving a leaf-swap
@@ -185,10 +260,14 @@ impl std::fmt::Display for FontReadReject {
 /// raikiri-spike-7xw (walls.md §2 escalation).
 ///
 /// Pre-open gates are load-bearing beyond what `O_NOFOLLOW` covers:
-/// - `!is_file()` rejects direct FIFO / device placements — `open(O_RDONLY)`
-///   on a writer-less FIFO blocks *at open*, before any read.  `O_NOFOLLOW`
-///   only refuses to follow a *symlink* leaf; it does not filter device
-///   type.
+/// - `!is_file()` rejects direct FIFO / device placements at pre-open —
+///   defense-in-depth 1st layer.  `O_NOFOLLOW` only refuses to follow a
+///   *symlink* leaf; it does not filter device type.  The TOCTOU-swap
+///   subclass (regular file → FIFO / device between this pre-open check
+///   and `safe_open`) is caught by the post-open fd-based fstat in
+///   [`check_open_handle_regular`], paired with `O_NONBLOCK` in
+///   `safe_open` (unix) so a writer-less FIFO cannot block `open()`
+///   before the fstat is reached (raikiri-spike-f4j).
 /// - `metadata.len() > cap` is the up-front oversized reject; the
 ///   `+1-probe` bounded read below catches the TOCTOU-grow subclass where
 ///   the file expanded between the metadata check and the read.
@@ -281,6 +360,23 @@ fn read_bounded_font_file(
             return Err(FontReadReject::Io(e));
         }
     };
+    // Post-open fd-based fstat: reject if the descriptor `safe_open` bound
+    // does not resolve to a regular file.  Closes the FIFO / device swap
+    // TOCTOU window that the pre-open path-based `symlink_metadata` +
+    // `is_file()` gate cannot cover (an attacker can swap regular file ->
+    // FIFO between pre-open metadata and open; `O_NOFOLLOW` does not
+    // filter file kind).  Paired with `O_NONBLOCK` in `safe_open` on
+    // unix so the swapped-in writer-less FIFO cannot block `open()`
+    // before this check runs.  bd raikiri-spike-f4j, closes 61l Codex
+    // §8.3 finding #2.
+    //
+    // cov:ignore: the swap window between pre-open `symlink_metadata` and
+    // `safe_open` is not deterministically unit-testable.  The
+    // `check_open_handle_regular` helper is exercised in isolation
+    // (regular file passes, FIFO / char device reject via `safe_open`
+    // fed directly) and the `read_reject_to_warn` mapping is pinned
+    // deterministically via `read_reject_to_warn_maps_all_non_io_variants`.
+    check_open_handle_regular(&file)?;
     // Preallocate against the known-good `metadata.len()` upper bound (mirrors
     // raikiri_traits::io helper's happy-path allocation to avoid log2(N)
     // reallocations on large fonts).  `saturating_add(1)` guards against a
@@ -373,6 +469,21 @@ pub enum FontWarn<'a> {
         /// Path that was a regular file at walk time and something else at read.
         path: &'a Path,
     },
+    /// Read stage's **post-open fd-based fstat** rejected a candidate whose
+    /// opened descriptor did not resolve to a regular file.  This is the
+    /// race-free complement to [`FontWarn::ReadRejectedNotRegularFile`]: the
+    /// pre-open path-based check is TOCTOU-vulnerable (a regular file can be
+    /// swapped for a FIFO / device between pre-open metadata and
+    /// `safe_open`), whereas the post-open fstat consults the inode already
+    /// bound to the fd.  Firing here means the swap happened inside the
+    /// pre-open→open window; paired with `O_NONBLOCK` in `safe_open` (unix)
+    /// so a writer-less FIFO cannot block `open()` before this fstat runs.
+    /// bd raikiri-spike-f4j, closes 61l Codex §8.3 finding #2.
+    ReadRejectedNotRegularFilePostOpen {
+        /// Path whose opened fd resolved to a non-regular kind
+        /// (swap window between pre-open metadata and open).
+        path: &'a Path,
+    },
     /// Read stage rejected a candidate whose `metadata.len()` exceeded the
     /// cap between walk and read (TOCTOU-swap to a larger file, or racy
     /// grow-in-place before the pre-open metadata check).
@@ -453,6 +564,11 @@ impl<'a> std::fmt::Display for FontWarn<'a> {
                 "skipping {} (path is not a regular file)",
                 path.display()
             ),
+            FontWarn::ReadRejectedNotRegularFilePostOpen { path } => write!(
+                f,
+                "skipping {} (opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open))",
+                path.display()
+            ),
             FontWarn::ReadRejectedOversizedPreOpen { path, size, cap } => write!(
                 f,
                 "skipping {} (file size {size} bytes exceeds cap {cap} bytes)",
@@ -516,6 +632,9 @@ fn read_reject_to_warn<'a>(path: &'a Path, reject: &'a FontReadReject) -> FontWa
     match reject {
         FontReadReject::Symlink => FontWarn::ReadRejectedSymlink { path },
         FontReadReject::NotRegularFile => FontWarn::ReadRejectedNotRegularFile { path },
+        FontReadReject::NotRegularFilePostOpen => {
+            FontWarn::ReadRejectedNotRegularFilePostOpen { path }
+        }
         FontReadReject::OversizedPreOpen { size, cap } => FontWarn::ReadRejectedOversizedPreOpen {
             path,
             size: *size,
@@ -662,26 +781,34 @@ pub fn build_wpt_font_ctx_with_observer(
         //   caller-visible error.  `PreferredFontUnavailable` is not the
         //   catch for this branch — it fires only for the warn+skip arm
         //   below (see next bullet).
-        // - `Symlink | NotRegularFile | OversizedPreOpen | OversizedDuringRead
-        //   | PathEscape` -> warn+skip.  `collect_recursive` already
-        //   pre-filtered symlink/non-regular/oversized, so surfacing here
-        //   means the tree changed between walk and read (TOCTOU-swap /
-        //   TOCTOU-grow / intermediate-symlink swap).  Non-preferred fonts
-        //   silently drop from the registry; if Ahem.ttf is affected,
-        //   `PreferredFontUnavailable` fires downstream on the aggregate
-        //   `registered_preferred_basenames` check.  `OversizedDuringRead`
-        //   closes the silent-truncation window the prior `take(FONT_SIZE_CAP)`
-        //   had (fe1 fix; the `+1-probe` surfaces TOCTOU-grow instead of
-        //   returning a truncated buffer).  `Symlink` covers the leaf-swap
-        //   TOCTOU class: safe_open's `O_NOFOLLOW` ELOOP or the post-error
-        //   `symlink_metadata` recheck surface a mid-walk swap-in
-        //   (raikiri-spike-61l).  `PathEscape` covers the
+        // - `Symlink | NotRegularFile | NotRegularFilePostOpen |
+        //   OversizedPreOpen | OversizedDuringRead | PathEscape` -> warn+skip.
+        //   `collect_recursive` already pre-filtered symlink/non-regular/
+        //   oversized, so surfacing here means the tree changed between walk
+        //   and read (TOCTOU-swap / TOCTOU-grow / intermediate-symlink swap).
+        //   Non-preferred fonts silently drop from the registry; if Ahem.ttf
+        //   is affected, `PreferredFontUnavailable` fires downstream on the
+        //   aggregate `registered_preferred_basenames` check.
+        //   `OversizedDuringRead` closes the silent-truncation window the
+        //   prior `take(FONT_SIZE_CAP)` had (fe1 fix; the `+1-probe` surfaces
+        //   TOCTOU-grow instead of returning a truncated buffer).  `Symlink`
+        //   covers the leaf-swap TOCTOU class: safe_open's `O_NOFOLLOW`
+        //   ELOOP or the post-error `symlink_metadata` recheck surface a
+        //   mid-walk swap-in (raikiri-spike-61l).  `PathEscape` covers the
         //   intermediate-symlink-swap class (walker recorded
         //   `subdir/font.ttf`, attacker swapped `subdir/` into a symlink to
         //   `/tmp/evil/` between walk and read; the leaf still stats as a
         //   regular file so `is_symlink()` does not fire but canonicalize
         //   resolves outside `canonical_root`).  bd raikiri-spike-zr8,
-        //   closes 61l Codex §8.3 finding #1.
+        //   closes 61l Codex §8.3 finding #1.  `NotRegularFilePostOpen`
+        //   covers the FIFO/character device / block device swap TOCTOU
+        //   class (walker + pre-open metadata saw a regular file, attacker
+        //   swapped it for a FIFO / device between pre-open metadata and
+        //   `safe_open`).  `O_NONBLOCK` in `safe_open` prevents the
+        //   writer-less FIFO from blocking `open()`, and the fd-based
+        //   `File::metadata()` fstat inspects the inode already bound to the
+        //   descriptor (race-free by construction).  bd raikiri-spike-f4j,
+        //   closes 61l Codex §8.3 finding #2.
         //
         // Trade-offs recorded:
         // - The walker's symlink_metadata / is_symlink / is_file /
@@ -1592,6 +1719,111 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // Post-open fd-based fstat tests (bd raikiri-spike-f4j — 61l Codex
+    // §8.3 finding #2 FIFO/device swap TOCTOU defense)
+    // ------------------------------------------------------------------
+    //
+    // The FIFO/device swap window between the pre-open `symlink_metadata`
+    // check and `safe_open` is not deterministically reachable through
+    // `read_bounded_font_file` (walker + pre-open would need to see a
+    // regular file at path-lookup time, then swap kind before the fd is
+    // bound — that requires a threaded race).  The defense is instead
+    // exercised at the primitive level: `safe_open` + the
+    // `check_open_handle_regular` helper called directly on FIFO / char
+    // device paths, plus a happy-path regression pin that the O_NONBLOCK
+    // addition did not break regular-file reads.
+
+    /// `check_open_handle_regular` accepts a regular file opened via
+    /// `safe_open` — the primary regression pin that adding `O_NONBLOCK`
+    /// to `safe_open`'s custom_flags does not break the happy path.  POSIX
+    /// specifies `O_NONBLOCK` has no effect on regular files (Linux honors
+    /// this), so `safe_open` returns immediately and `File::metadata()`
+    /// resolves via fd-based fstat to `is_file() == true`.
+    /// bd raikiri-spike-f4j.
+    #[test]
+    fn check_open_handle_regular_accepts_regular_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("regular.ttf");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"regular content")
+            .unwrap();
+
+        let file = safe_open(&path).expect("safe_open should succeed on regular file");
+        check_open_handle_regular(&file).expect("regular file must pass post-open fstat");
+    }
+
+    /// `safe_open` + `check_open_handle_regular` rejects a FIFO.  Two
+    /// asserts pin the composite defense:
+    ///
+    /// 1. `safe_open` returns `Ok` (without hanging) — proves the
+    ///    `O_NONBLOCK` addition prevents `open()` from blocking on a
+    ///    writer-less FIFO.  Without `O_NONBLOCK`, `open(O_RDONLY)` on a
+    ///    writer-less FIFO blocks indefinitely at the syscall itself and
+    ///    the test would deadlock (never reach the fstat).
+    /// 2. `check_open_handle_regular` returns
+    ///    `Err(FontReadReject::NotRegularFilePostOpen)` — proves the
+    ///    fd-based `File::metadata()` fstat correctly identifies the FIFO
+    ///    kind and would reject before any read from the pipe.
+    ///
+    /// The regular-file `NotRegularFile` pre-open reject is bypassed here
+    /// because we call `safe_open` directly rather than through
+    /// `read_bounded_font_file` — that isolation is intentional so the
+    /// test exercises the post-open detection path, which in the composed
+    /// pipeline only fires on a real TOCTOU race (cov:ignore in the loop).
+    /// bd raikiri-spike-f4j, closes 61l Codex §8.3 finding #2.
+    #[cfg(unix)]
+    #[test]
+    fn check_open_handle_regular_rejects_fifo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fifo = tmp.path().join("evil.ttf");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo(1) should be available on unix hosts");
+        assert!(status.success(), "mkfifo failed for {}", fifo.display());
+
+        // safe_open must return Ok(fd) without blocking — O_NONBLOCK
+        // regression guard.  A test process reaching this assertion
+        // proves `open()` did not hang on the writer-less FIFO.
+        let file = safe_open(&fifo).expect(
+            "safe_open on writer-less FIFO should return Ok immediately via O_NONBLOCK, \
+             not block or Err — if this fails the O_NONBLOCK flag was dropped or the \
+             open path regressed",
+        );
+
+        match check_open_handle_regular(&file) {
+            Err(FontReadReject::NotRegularFilePostOpen) => {}
+            other => {
+                panic!("expected NotRegularFilePostOpen for FIFO post-open fstat, got {other:?}")
+            }
+        }
+    }
+
+    /// `safe_open` + `check_open_handle_regular` rejects `/dev/null`
+    /// (character device).  Complements the FIFO test by pinning that the
+    /// fd-based fstat also rejects device kinds — the same swap-window
+    /// TOCTOU attack could substitute `/dev/null` (or any device) rather
+    /// than a FIFO, and the defense must catch both.
+    ///
+    /// Uses `/dev/null` directly rather than a tempdir path because
+    /// `safe_open` performs no containment check (containment is
+    /// `read_bounded_font_file`'s responsibility).  bd raikiri-spike-f4j.
+    #[cfg(unix)]
+    #[test]
+    fn check_open_handle_regular_rejects_char_device() {
+        let file = safe_open(Path::new("/dev/null")).expect(
+            "safe_open on /dev/null should succeed (regular open semantics on char device)",
+        );
+        match check_open_handle_regular(&file) {
+            Err(FontReadReject::NotRegularFilePostOpen) => {}
+            other => panic!(
+                "expected NotRegularFilePostOpen for /dev/null post-open fstat, got {other:?}"
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Observer tests (bd raikiri-spike-1uq — fe1 §8.2 Angle B/G follow-up)
     // ------------------------------------------------------------------
     //
@@ -1600,7 +1832,8 @@ mod tests {
     // - Deterministic fontique register-empty site fires.
     // - Default None-observer path still writes to eprintln! and does not
     //   panic.
-    // - The `read_reject_to_warn` mapping covers all 4 non-Io variants
+    // - The `read_reject_to_warn` mapping covers all non-Io variants
+    //   (including `NotRegularFilePostOpen` from raikiri-spike-f4j)
     //   without needing a TOCTOU race (that path is cov:ignore in the loop).
 
     /// Owned copy of a [`FontWarn`] event for observer test assertions.
@@ -1614,6 +1847,7 @@ mod tests {
         WalkerSkippedOversized(PathBuf, u64, u64),
         ReadRejectedSymlink(PathBuf),
         ReadRejectedNotRegularFile(PathBuf),
+        ReadRejectedNotRegularFilePostOpen(PathBuf),
         ReadRejectedOversizedPreOpen(PathBuf, u64, u64),
         ReadRejectedOversizedDuringRead(PathBuf, u64, u64),
         ReadRejectedPathEscape(PathBuf, PathBuf, PathBuf),
@@ -1633,6 +1867,9 @@ mod tests {
                 FontWarn::ReadRejectedSymlink { path } => Self::ReadRejectedSymlink(path.into()),
                 FontWarn::ReadRejectedNotRegularFile { path } => {
                     Self::ReadRejectedNotRegularFile(path.into())
+                }
+                FontWarn::ReadRejectedNotRegularFilePostOpen { path } => {
+                    Self::ReadRejectedNotRegularFilePostOpen(path.into())
                 }
                 FontWarn::ReadRejectedOversizedPreOpen { path, size, cap } => {
                     Self::ReadRejectedOversizedPreOpen(path.into(), size, cap)
@@ -1811,6 +2048,14 @@ mod tests {
             read_reject_to_warn(path, &FontReadReject::NotRegularFile),
             FontWarn::ReadRejectedNotRegularFile { path: p } if p == path
         ));
+        // NotRegularFilePostOpen: the read-time arm is cov:ignore
+        // (pre-open+O_NONBLOCK+fstat window race required to fire), so
+        // this is the sole deterministic pin of the new mapping.
+        // bd raikiri-spike-f4j.
+        assert!(matches!(
+            read_reject_to_warn(path, &FontReadReject::NotRegularFilePostOpen),
+            FontWarn::ReadRejectedNotRegularFilePostOpen { path: p } if p == path
+        ));
         assert!(matches!(
             read_reject_to_warn(
                 path,
@@ -1891,6 +2136,17 @@ mod tests {
         assert_eq!(
             format!("{}", FontWarn::ReadRejectedNotRegularFile { path: p }),
             "skipping /tmp/fake.ttf (path is not a regular file)"
+        );
+        // NotRegularFilePostOpen: new variant (bd raikiri-spike-f4j).
+        // Message body pins the TOCTOU-swap wording so operators can
+        // grep for "TOCTOU-swap" and distinguish this from a mundane
+        // pre-open non-regular reject.
+        assert_eq!(
+            format!(
+                "{}",
+                FontWarn::ReadRejectedNotRegularFilePostOpen { path: p }
+            ),
+            "skipping /tmp/fake.ttf (opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open))"
         );
         assert_eq!(
             format!(
