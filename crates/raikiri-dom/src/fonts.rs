@@ -12,6 +12,7 @@
 //!   (system_fonts: false + generic alias append)
 
 use parley::FontContext;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// [`build_wpt_font_ctx`] が個別 font file を読み込む際に許容する最大 byte 数。
@@ -30,11 +31,20 @@ use std::path::{Path, PathBuf};
 ///   排除するのが load-bearing defense
 /// - **oversized regular file** (memory exhaustion): `metadata.len() >
 ///   FONT_SIZE_CAP` skip で closed
-/// - **mid-read grow (TOCTOU)**: raikiri-traits::io::read_bounded_regular_file
-///   の `+1-probe` (`take(FONT_SIZE_CAP + 1) + post-read bytes.len > cap` reject)
-///   が silent truncation を防ぎ、TOCTOU-grow を `Oversized{DuringRead}` として
-///   surface (fe1 で helper 経由に切替、pre-fe1 の `take(FONT_SIZE_CAP)` silent-
-///   truncation window は closed)
+/// - **mid-read grow (TOCTOU)**: `read_bounded_font_file` の callsite-local
+///   `+1-probe` (`take(FONT_SIZE_CAP + 1) + post-read bytes.len > cap` reject)
+///   が silent truncation を防ぎ、TOCTOU-grow を `OversizedDuringRead` として
+///   surface (fe1 で raikiri-traits helper 経由へ切替、pre-fe1 の
+///   `take(FONT_SIZE_CAP)` silent-truncation window は closed。raikiri-spike-61l
+///   で helper から離脱し 8yu 同型の callsite-local pipeline に戻したため、
+///   `+1-probe` は本 module 内に再度存在する)
+/// - **leaf-swap (TOCTOU)**: walker と `read_bounded_font_file` の pre-open
+///   `symlink_metadata` の間で regular file が symlink に差し替わる vector は、
+///   `safe_open` (unix: `O_NOFOLLOW`) で closed (raikiri-spike-61l、8yu sibling)。
+///   ELOOP (POSIX 準拠 Linux / macOS / modern FreeBSD) or 事後 `symlink_metadata`
+///   recheck (legacy BSD の EMLINK / EFTYPE) を「leaf-swap symlink 相当」として
+///   warn+skip し、Ahem の drop は下流の aggregate `PreferredFontUnavailable`
+///   check が catch する。
 ///
 /// **Out of scope (planner-blessed 3-layer)**: walk 直後 regular file が FIFO に
 /// 差し替わる TOCTOU-swap は memory は bound されるが time は bound されない
@@ -43,6 +53,191 @@ use std::path::{Path, PathBuf};
 ///
 /// TODO(raikiri-spike-d9y.3): Wave 0 の RenderLimits と連動させる。
 const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
+
+/// Open a regular file with the leaf-swap TOCTOU defense stack.
+///
+/// The unix impl passes `O_NOFOLLOW` to `File::open` so a symlink swapped
+/// in between the pre-open `symlink_metadata` check and this open call
+/// cannot cause the resolver to follow a fresh target. POSIX mandates
+/// `ELOOP` for `open(O_NOFOLLOW)` on a symlink (Linux, macOS, and modern
+/// FreeBSD comply); legacy BSDs (NetBSD, OpenBSD, FreeBSD <10) may return
+/// `EMLINK` or `EFTYPE` instead. Callers that need to distinguish this
+/// case from other I/O errors should check the errno match against
+/// `libc::ELOOP` AND fall back to a `symlink_metadata` recheck (see
+/// [`read_bounded_font_file`] for the portable pattern).
+///
+/// The non-unix fallback keeps the current default `File::open` semantics.
+/// Windows equivalent tracked in raikiri-spike-akk.
+///
+/// bd raikiri-spike-61l (8yu sibling).
+// Callsite-local defense: sharing this stack with raikiri-vrt via
+// raikiri-traits is deferred to raikiri-spike-7xw for walls.md §2 crate-list
+// PMO judgment. Do not lift into raikiri-traits::io without that judgment.
+#[cfg(unix)]
+fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
+    // Follow-symlink-at-open is unresolved on non-unix; tracked in
+    // raikiri-spike-akk.  Regain parity when the follow-up lands.
+    std::fs::File::open(path)
+}
+
+/// Reason `read_bounded_font_file` rejected a candidate font path.
+///
+/// Mirrors the shape of `raikiri_traits::io::RejectReason` so the callsite
+/// policy (`Io` → propagate, other reasons → warn+skip) reads the same as
+/// pre-61l fe1.  A local enum is used instead of the traits helper's
+/// `RejectReason` because the callsite bypasses the traits helper on this
+/// path — safe_open with `O_NOFOLLOW` is applied at the callsite until
+/// raikiri-spike-7xw lifts safe_open into `raikiri_traits::io` (walls.md §2).
+#[derive(Debug)]
+enum FontReadReject {
+    /// `symlink_metadata().file_type().is_symlink()` returned true, **or**
+    /// safe_open returned an errno consistent with `O_NOFOLLOW` refusing to
+    /// follow a symlink (POSIX `ELOOP`; a fallback `symlink_metadata` recheck
+    /// covers legacy-BSD `EMLINK` / `EFTYPE`).  Either way the leaf was a
+    /// symlink at reject time and no read happened through it.
+    Symlink,
+    /// Path is neither a regular file nor a symlink (device, fifo, socket,
+    /// directory, block/char device).  Rejected at pre-open metadata time —
+    /// `File::open` on a fifo with no writer would block indefinitely.
+    NotRegularFile,
+    /// Pre-open `metadata.len() > cap` reject.  The file was never opened.
+    /// `cap` carries the configured cap (rather than deferring to
+    /// `FONT_SIZE_CAP`) so tests that pass a small cap get honest messages.
+    OversizedPreOpen { size: u64, cap: u64 },
+    /// The file grew past `cap` between the metadata check and the bounded
+    /// read (TOCTOU-grow race), caught by the `+1-probe` pattern:
+    /// `take(cap + 1)` then post-read `bytes.len() > cap`.
+    OversizedDuringRead { size: u64, cap: u64 },
+    /// I/O error from `symlink_metadata`, `safe_open`, or `read_to_end` that
+    /// is not consistent with a symlink-swap.  Callsite propagates as
+    /// [`FontError::Io`].
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for FontReadReject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FontReadReject::Symlink => write!(f, "path is a symlink"),
+            FontReadReject::NotRegularFile => write!(f, "path is not a regular file"),
+            FontReadReject::OversizedPreOpen { size, cap } => {
+                write!(f, "file size {size} bytes exceeds cap {cap} bytes")
+            }
+            FontReadReject::OversizedDuringRead { size, cap } => write!(
+                f,
+                "file grew past cap during read: {size} bytes read, cap {cap} bytes (TOCTOU-grow)"
+            ),
+            FontReadReject::Io(source) => write!(f, "I/O error: {source}"),
+        }
+    }
+}
+
+/// Read a regular font file with the leaf-swap TOCTOU defense stack:
+/// pre-open `symlink_metadata` + `is_file()` + size-cap gates, `safe_open`
+/// with `O_NOFOLLOW` at open time (unix), and a `+1-probe` bounded read.
+///
+/// Callsite-local variant of `raikiri_traits::io::read_bounded_regular_file`.
+/// The traits helper's `File::open` follows symlinks, leaving a leaf-swap
+/// TOCTOU window between its `symlink_metadata` check and its open call
+/// (bd raikiri-spike-61l).  This function closes that window by holding the
+/// file descriptor `safe_open` returns and reading from it directly, so the
+/// pre-open gates and the actual read are one uninterrupted protected
+/// sequence.  Re-consolidation with the traits helper is tracked in
+/// raikiri-spike-7xw (walls.md §2 escalation).
+///
+/// Pre-open gates are load-bearing beyond what `O_NOFOLLOW` covers:
+/// - `!is_file()` rejects direct FIFO / device placements — `open(O_RDONLY)`
+///   on a writer-less FIFO blocks *at open*, before any read.  `O_NOFOLLOW`
+///   only refuses to follow a *symlink* leaf; it does not filter device
+///   type.
+/// - `metadata.len() > cap` is the up-front oversized reject; the
+///   `+1-probe` bounded read below catches the TOCTOU-grow subclass where
+///   the file expanded between the metadata check and the read.
+///
+/// Non-unix `safe_open` retains the follow-symlink `File::open` fallback
+/// (Windows equivalent tracked in raikiri-spike-akk); the pre-open
+/// `symlink_metadata` check still rejects the common shape there.
+fn read_bounded_font_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, FontReadReject> {
+    let metadata = std::fs::symlink_metadata(path).map_err(FontReadReject::Io)?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(FontReadReject::Symlink);
+    }
+    if !file_type.is_file() {
+        return Err(FontReadReject::NotRegularFile);
+    }
+    if metadata.len() > size_cap {
+        return Err(FontReadReject::OversizedPreOpen {
+            size: metadata.len(),
+            cap: size_cap,
+        });
+    }
+    // safe_open adds O_NOFOLLOW on unix so a leaf-symlink swapped in between
+    // the above symlink_metadata check and this open call cannot cause a
+    // fresh symlink target to be followed.  bd raikiri-spike-61l (8yu sibling).
+    //
+    // cov:ignore: the safe_open `Err` arm here needs a leaf-swap race (or a
+    // transient stat failure) to fire on a path that already passed the
+    // pre-open `symlink_metadata` gate above.  Neither is deterministically
+    // unit-testable; the `O_NOFOLLOW`-rejects-a-symlink behavior is instead
+    // pinned by the standalone `safe_open_rejects_symlink_at_open_time` test.
+    let mut file = match safe_open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            #[cfg(unix)]
+            {
+                // POSIX mandates ELOOP for O_NOFOLLOW on symlink (Linux, macOS,
+                // and modern FreeBSD comply). Legacy BSDs may return EMLINK or
+                // EFTYPE instead; the post-Err symlink_metadata recheck catches
+                // those cases portably at the cost of one extra stat syscall on
+                // the reject path. Not race-perfect (an attacker could swap the
+                // symlink back to a regular file between safe_open and this
+                // recheck), but covers the common attack shape while remaining
+                // simple. Full inode-verify would require fstat-after-open on
+                // the handle safe_open never returned.
+                let looks_like_symlink_swap = e.raw_os_error() == Some(libc::ELOOP)
+                    || std::fs::symlink_metadata(path)
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
+                if looks_like_symlink_swap {
+                    return Err(FontReadReject::Symlink);
+                }
+            }
+            return Err(FontReadReject::Io(e));
+        }
+    };
+    // Preallocate against the known-good `metadata.len()` upper bound (mirrors
+    // raikiri_traits::io helper's happy-path allocation to avoid log2(N)
+    // reallocations on large fonts).  `saturating_add(1)` guards against a
+    // future `size_cap == u64::MAX` caller — same regression pattern the
+    // traits helper codified.
+    let mut bytes = Vec::with_capacity(std::cmp::min(metadata.len(), size_cap) as usize);
+    let read_limit = size_cap.saturating_add(1);
+    file.by_ref()
+        .take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(FontReadReject::Io)?;
+    if bytes.len() as u64 > size_cap {
+        // cov:ignore: TOCTOU-grow race requires a concurrent writer to grow
+        // the file between the metadata check above and this post-read
+        // gate; the `+1-probe` shape itself is exercised by the traits
+        // helper's `t19` deterministic test on the sibling implementation.
+        // Escalating to a raikiri-spike bd would duplicate that.
+        return Err(FontReadReject::OversizedDuringRead {
+            size: bytes.len() as u64,
+            cap: size_cap,
+        });
+    }
+    Ok(bytes)
+}
 
 /// WPT bundled fonts dir から FontContext を構築する。system font
 /// resolver は完全 disable、generic family (`serif`/`sans-serif`/...)
@@ -58,8 +253,8 @@ const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 ///   register できなかった (PREFERRED_FIRST 経路で先に catch されるので
 ///   PREFERRED_FIRST が空の future 想定でのみ到達)
 /// - [`FontError::Io`] — dir walk 中、または font read
-///   (raikiri-traits::io helper 経由) の Io error propagate
-///   (`RejectReason::Io(_)` -> `FontError::Io`、他 reject reason は warn+skip)
+///   (callsite-local `read_bounded_font_file` 経由) の Io error propagate
+///   (`FontReadReject::Io(_)` -> `FontError::Io`、他 reject reason は warn+skip)
 pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     use parley::fontique::{Blob, Collection, CollectionOptions, GenericFamily, SourceCache};
     use std::sync::Arc;
@@ -102,9 +297,17 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     let mut registered_preferred_basenames: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for path in paths {
-        // Bounded read via shared helper (raikiri-spike-fe1).
+        // Bounded read via callsite-local `read_bounded_font_file`
+        // (raikiri-spike-61l).  fe1 initially routed through the shared
+        // `raikiri_traits::io::read_bounded_regular_file`, but the traits
+        // helper's `File::open` follows symlinks and leaves a leaf-swap TOCTOU
+        // window between its `symlink_metadata` check and the open.  61l
+        // closes that window here by holding the descriptor `safe_open`
+        // returns (unix `O_NOFOLLOW`) and reading from it directly.
+        // Re-consolidating with the traits helper is deferred to
+        // raikiri-spike-7xw (walls.md §2).
         //
-        // Callsite policy:
+        // Callsite policy (preserved from fe1):
         // - `Io(_)` -> hard-error propagate.  Preserves the "Ahem.ttf
         //   silent-fallback prevention" guarantee (roborev e93 round 3): an
         //   unexpected Io error at read time aborts the build directly, so
@@ -112,33 +315,34 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
         //   caller-visible error.  `PreferredFontUnavailable` is not the
         //   catch for this branch — it fires only for the warn+skip arm
         //   below (see next bullet).
-        // - `Symlink | NotRegularFile | Oversized{PreOpen|DuringRead}` ->
-        //   warn+skip.  `collect_recursive` already pre-filtered these, so
+        // - `Symlink | NotRegularFile | OversizedPreOpen | OversizedDuringRead`
+        //   -> warn+skip.  `collect_recursive` already pre-filtered these, so
         //   surfacing here means the tree changed between walk and read
         //   (TOCTOU-swap or TOCTOU-grow).  Non-preferred fonts silently drop
         //   from the registry; if Ahem.ttf is affected,
         //   `PreferredFontUnavailable` fires downstream on the aggregate
-        //   `registered_preferred_basenames` check.  `Oversized{DuringRead}`
+        //   `registered_preferred_basenames` check.  `OversizedDuringRead`
         //   closes the silent-truncation window the prior `take(FONT_SIZE_CAP)`
-        //   had (fe1 fix; the helper's `+1-probe` surfaces TOCTOU-grow instead
-        //   of returning a truncated buffer).
+        //   had (fe1 fix; the `+1-probe` surfaces TOCTOU-grow instead of
+        //   returning a truncated buffer).  `Symlink` now also covers the
+        //   leaf-swap TOCTOU class: safe_open's `O_NOFOLLOW` ELOOP or the
+        //   post-error `symlink_metadata` recheck surface a mid-walk swap-in
+        //   (raikiri-spike-61l).
         //
         // Trade-offs recorded:
         // - The walker's symlink_metadata / is_symlink / is_file /
-        //   metadata.len checks are re-run inside the helper.  Justified by
-        //   the helper's standalone-safe invariant; the cost is `~O(N)` extra
-        //   stat syscalls at init.  Raising `FONT_SIZE_CAP` requires updating
-        //   the walker's copy too.
+        //   metadata.len checks are re-run inside `read_bounded_font_file`.
+        //   Justified by the standalone-safe invariant; the cost is `~O(N)`
+        //   extra stat syscalls at init.  Raising `FONT_SIZE_CAP` requires
+        //   updating the walker's copy too.
         // - Directory-swap tampering (regular-file -> directory between walk
         //   and read) previously hard-errored via `File::open` EISDIR ->
         //   `FontError::Io`; now surfaces as `NotRegularFile` -> warn+skip.
         //   Signal downgrade for non-preferred fonts; preferred invariant
         //   still fires.
-        // - Leaf-swap TOCTOU between the helper's `symlink_metadata` and
-        //   `File::open` is unresolved (raikiri-spike-8yu, `O_NOFOLLOW`).
-        let bytes = match raikiri_traits::io::read_bounded_regular_file(&path, FONT_SIZE_CAP) {
+        let bytes = match read_bounded_font_file(&path, FONT_SIZE_CAP) {
             Ok(bytes) => bytes,
-            Err(raikiri_traits::io::RejectReason::Io(source)) => {
+            Err(FontReadReject::Io(source)) => {
                 return Err(FontError::Io {
                     path: path.clone(),
                     source,
@@ -231,9 +435,10 @@ pub enum FontError {
         /// scan 対象の fonts dir
         dir: PathBuf,
     },
-    /// dir walk 中の io failure、または font read (raikiri-traits::io helper
-    /// 経由) の `RejectReason::Io(_)` propagate。他 reject reason
-    /// (Symlink / NotRegularFile / Oversized) は warn+skip される (詳細は
+    /// dir walk 中の io failure、または font read (callsite-local
+    /// `read_bounded_font_file` 経由) の `FontReadReject::Io(_)` propagate。
+    /// 他 reject reason (Symlink / NotRegularFile / OversizedPreOpen /
+    /// OversizedDuringRead) は warn+skip される (詳細は
     /// [`build_wpt_font_ctx`] の callsite comment 参照)。
     Io {
         /// io error が発生した path (walk 段階または read 段階)
@@ -790,5 +995,124 @@ mod tests {
         // (Ahem.ttf 含む) に対して panic せず Ok を返すことのみを smoke
         // check する (M1 scope、controller ambiguity resolution 済)。
         let _ = ctx;
+    }
+
+    /// safe_open must reject a symlink at open time on unix. POSIX mandates
+    /// ELOOP (Linux, macOS, modern FreeBSD comply); legacy BSDs (NetBSD,
+    /// OpenBSD, FreeBSD <10) return EMLINK or EFTYPE. The test accepts any
+    /// Err on unix, because a passing implementation must not follow the
+    /// symlink regardless of the exact errno. The Ok arm is the regression
+    /// pin — an implementation that drops custom_flags(O_NOFOLLOW) would
+    /// silently follow the link and return Ok(file), failing this test.
+    /// bd raikiri-spike-61l (8yu sibling).
+    #[cfg(unix)]
+    #[test]
+    fn safe_open_rejects_symlink_at_open_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target.ttf");
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"target contents")
+            .unwrap();
+        let link = tmp.path().join("link.ttf");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        match safe_open(&link) {
+            Err(_) => {
+                // Sanity-check that the path is still a symlink at
+                // observation time — proves the Err is due to O_NOFOLLOW
+                // (portable across ELOOP / EMLINK / EFTYPE) rather than
+                // an unrelated I/O error like permission or NotFound.
+                let post = std::fs::symlink_metadata(&link)
+                    .expect("symlink still present after safe_open Err");
+                assert!(
+                    post.file_type().is_symlink(),
+                    "link at test observation time was not a symlink"
+                );
+            }
+            Ok(_) => panic!("safe_open followed the symlink (O_NOFOLLOW not applied)"),
+        }
+    }
+
+    /// End-to-end pin: `read_bounded_font_file` rejects a symlink at the
+    /// pre-open `symlink_metadata` check.  This test does NOT exercise the
+    /// O_NOFOLLOW path (safe_open never runs because the pre-open check
+    /// short-circuits) — that unit is covered by
+    /// `safe_open_rejects_symlink_at_open_time`.  Kept to pin the full-path
+    /// behavior against future refactors that might reorder the checks.
+    /// bd raikiri-spike-61l (8yu sibling).
+    #[cfg(unix)]
+    #[test]
+    fn read_bounded_font_file_rejects_symlink_via_pre_open_check() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target.ttf");
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"target")
+            .unwrap();
+        let link = tmp.path().join("link.ttf");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        match read_bounded_font_file(&link, FONT_SIZE_CAP) {
+            Err(FontReadReject::Symlink) => {}
+            other => panic!("expected Symlink, got {other:?}"),
+        }
+    }
+
+    /// Regression pin: O_NOFOLLOW on the internal open path does not reject a
+    /// legitimate regular file.  Without this test, an implementation that
+    /// broke the safe_open fallback (e.g. accidentally always returning
+    /// ELOOP) would be missed by the symlink-only tests.
+    /// bd raikiri-spike-61l (8yu sibling).
+    #[test]
+    fn read_bounded_font_file_accepts_regular_file_with_nofollow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("regular.ttf");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"regular content")
+            .unwrap();
+
+        let bytes =
+            read_bounded_font_file(&path, FONT_SIZE_CAP).expect("regular file should be accepted");
+        assert_eq!(bytes, b"regular content");
+    }
+
+    /// `read_bounded_font_file` rejects a directory as `NotRegularFile`
+    /// (structural coverage for the `!file_type.is_file()` branch — the same
+    /// arm also fires on FIFO / device / socket paths, whose behavior is
+    /// pinned separately by `walker_skips_named_pipe_font_entry`).
+    /// bd raikiri-spike-61l.
+    #[test]
+    fn read_bounded_font_file_rejects_directory_as_not_regular_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        match read_bounded_font_file(tmp.path(), FONT_SIZE_CAP) {
+            Err(FontReadReject::NotRegularFile) => {}
+            other => panic!("expected NotRegularFile, got {other:?}"),
+        }
+    }
+
+    /// `read_bounded_font_file` rejects an oversized regular file at the
+    /// pre-open metadata check (`metadata.len() > cap`).  Uses a small cap
+    /// against a tiny file so the test doesn't need `set_len(FONT_SIZE_CAP + 1)`
+    /// (that alternative is exercised by `walker_skips_oversized_font_file`).
+    /// bd raikiri-spike-61l.
+    #[test]
+    fn read_bounded_font_file_rejects_oversized_pre_open() {
+        let cap = 4u64;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("too-big.ttf");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&[0u8; 8])
+            .unwrap();
+
+        match read_bounded_font_file(&path, cap) {
+            Err(FontReadReject::OversizedPreOpen { size, cap: c }) => {
+                assert_eq!(size, 8);
+                assert_eq!(c, cap);
+            }
+            other => panic!("expected OversizedPreOpen, got {other:?}"),
+        }
     }
 }
