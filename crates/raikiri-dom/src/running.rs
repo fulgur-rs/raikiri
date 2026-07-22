@@ -45,13 +45,17 @@
 //! Per-page re-layout via [`layout_running_template`] is the M1〜M8 flow
 //! (§7.3 lines 2007-2012).
 //!
-//! **Divergence from canonical shape** — same convention as
-//! [`crate::target`]: this file writes `pub(crate)` and does NOT re-export
-//! through the crate root. The runtime state is scoped to raikiri-dom-internal
-//! until an eventual traits-side promotion (bd raikiri-spike-96u.4 will land
-//! the [`raikiri_traits::GcpmDirective`] variant populate; a later
-//! reconciliation task will decide whether any of these types need to cross
-//! wall/traits or wall/dom-paint).
+//! **Divergence from canonical shape** — same "pub(crate) local until
+//! traits reconciliation decision" convention that the pre-bsi `crate::target`
+//! module previously held (that reconciliation has since landed via
+//! raikiri-spike-bsi Option C — the TargetRegistry / TargetInfo /
+//! ResolveOutcome / PendingResolution / resolve_content_component API now
+//! lives at [`raikiri_traits::TargetRegistry`] and friends). This module
+//! currently writes `pub(crate)` and does NOT re-export through the crate
+//! root; a later reconciliation task will decide whether any of these types
+//! need to cross wall/traits or wall/dom-paint (bd raikiri-spike-96u.4 has
+//! since landed the [`raikiri_traits::GcpmDirective`] variant populate; a
+//! parallel promotion for RunningTemplate is not yet scheduled).
 //!
 //! **`RunningTemplateId` = subtree_root [`NodeId`]** (canonical: per-element
 //! unique). The design doc's `HashMap<RunningTemplateId, ParsedRunningTemplate>`
@@ -74,9 +78,11 @@
 //! doesn't fit ([`raikiri_style::computed::ComputedValues`] is per-node,
 //! `CascadeSubset` is a per-subtree collection) or reach into raikiri-traits
 //! to promote a placeholder (wall/traits crossing), this module defines
-//! [`CascadeSubset`] as a `pub(crate)` local. Same pattern as
-//! [`crate::target::TargetInfo`] — carry a concrete local type until a
-//! cross-crate reconciliation is scheduled.
+//! [`CascadeSubset`] as a `pub(crate)` local. This is the same "carry a
+//! concrete local type until a cross-crate reconciliation is scheduled"
+//! shape that [`raikiri_traits::TargetInfo`] previously held pre-bsi —
+//! that reconciliation has since landed (raikiri-spike-bsi Option C
+//! wall/traits merge), CascadeSubset awaits a similar promotion.
 //!
 //! **`ContentComponent::Element { name }` upstream gap** — the css-engine
 //! side of `content: element(name)` (parsing the `element(<name>)`
@@ -87,7 +93,7 @@
 //! **dom-side deliverable** — name→pool→[`ParsedRunningTemplate`] lookup —
 //! which is the actual "element(name) resolve" once the caller has extracted
 //! the name from wherever. When the css-engine adds the variant, a driver
-//! similar to [`crate::target::resolve_content_component`] can wire
+//! similar to [`raikiri_traits::resolve_content_component`] can wire
 //! ContentComponent → `resolve_element_pool` in a single call. Tracked as
 //! bd raikiri-spike-6z0 (filed by this task, blocked on css-engine sprint).
 //!
@@ -108,7 +114,7 @@
 //! [`RunningTemplateStore::register`]). Regression pin: the
 //! `re_register_same_id_under_different_name_transfers_pool_entry` unit test.
 //!
-//! **Divergence from [`crate::target::TargetRegistry`]'s register policy** —
+//! **Divergence from [`raikiri_traits::TargetRegistry`]'s register policy** —
 //! `TargetRegistry` is first-wins per DOM id-resolution
 //! (`getElementById` first-in-tree-order). This store retains all
 //! registrations per name (no wins/loses on registration; selection is a
@@ -311,7 +317,7 @@ impl RunningTemplateStore {
     /// `first-except` variants and lose the pool multi-element documents
     /// need.
     ///
-    /// This differs from [`crate::target::TargetRegistry::register`]'s
+    /// This differs from [`raikiri_traits::TargetRegistry::register`]'s
     /// first-wins policy — that's DOM id-resolution (`getElementById`,
     /// unique-id semantics); this is per-page pool selection. Different
     /// spec, different shape.
@@ -389,7 +395,7 @@ impl RunningTemplateStore {
     ///
     /// An unresolvable `element(name)` (empty pool) yields empty content per
     /// spec — this store returns `&[]` and lets the caller decide the empty
-    /// fallback (mirrors [`crate::target::TargetRegistry`]'s non-fragment
+    /// fallback (mirrors [`raikiri_traits::TargetRegistry`]'s non-fragment
     /// empty-string fallback).
     #[allow(
         dead_code,

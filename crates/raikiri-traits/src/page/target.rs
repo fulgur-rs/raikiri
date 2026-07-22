@@ -1,47 +1,38 @@
-//! GCPM `target-*()` / `element()` runtime resolve — registry + resolve pass.
+//! GCPM `target-*()` / `element()` runtime resolve — canonical registry.
 //!
-//! **Ownership** (design §7.0): raikiri-dom (runtime side) owns the resolve
-//! state; raikiri-style (static side) emits the placeholders via
-//! [`raikiri_style::property::ContentComponent`] (M5 canonical) and eventually
-//! [`raikiri_traits::GcpmDirective`] (M6+ wire-through). This file lands the
-//! runtime working registry **and** the `target-counter` / `target-counters`
-//! / `target-text` resolve pass, plus the forward-reference `pending_slots`
-//! flush (bd raikiri-spike-96u.2). `element(name)` resolve and the traits-side
-//! directive population are the remaining deferred children (96u.3 / .4).
+//! **Ownership** (design §7.0 line 1904 "shared types → raikiri-traits"): this
+//! is the single canonical [`TargetRegistry`] shared across raikiri-dom,
+//! raikiri-paint, and consumer crates. raikiri-traits owns the type; the
+//! producer side (register-site directive walker feeding
+//! [`raikiri_traits::GcpmDirective::RegisterTarget`]) lives in raikiri-dom and
+//! calls [`TargetRegistry::register`] against this canonical instance.
 //!
-//! **Canonical shape** (design §7.2, lines 1961-1964):
+//! **History** — the impl and tests here were previously a `pub(crate)` shadow
+//! at `crates/raikiri-dom/src/target.rs` alongside an empty
+//! `#[non_exhaustive]` placeholder at `crates/raikiri-traits/src/page.rs`.
+//! bd raikiri-spike-bsi (Sprint 15 dom-3 Wave 1, Option C) merged the two:
+//! the dom-side shadow was deleted, the field layout / method surface was
+//! promoted from `pub(crate)` to `pub`, and this file now hosts the canonical
+//! type.
+//!
+//! **Canonical shape** (design §7.2 lines 1961-1964):
 //! ```text
 //! pub struct TargetRegistry {
 //!     resolved: HashMap<Symbol, TargetInfo>,
 //!     pending_slots: Vec<TargetSlot>,
 //! }
 //! ```
-//!
-//! **Divergence from canonical shape** — the design doc writes `pub struct`;
-//! this file writes `pub(crate)` and does NOT re-export through the crate
-//! root (`lib.rs`). Rationale: the leaf tasks (bd raikiri-spike-96u.1 /
-//! 96u.2) scope the runtime state to raikiri-dom-internal until the eventual
-//! traits-side promotion. The field layout — `resolved` / `pending_slots`,
-//! `Symbol` key, `TargetInfo` / `TargetSlot` value types — matches §7.2
-//! verbatim. `next_sequence` (below) is an additive internal-only field to
-//! stamp stable ids on pending slots; §7.2 does not enumerate it because the
-//! design's `TargetSlotId = (page_index, sequence)` (§11.2 Finding #4) fixes
-//! the paired shape once PageContext / page_index plumbing lands. Until then
-//! the sequence alone is the stable handle.
-//!
-//! **Name collision note** — [`raikiri_traits::TargetRegistry`]
-//! (`crates/raikiri-traits/src/page.rs`) is a distinct public consumer-facing
-//! placeholder (M1.1 opaque `#[non_exhaustive]` shell used by
-//! `RenderSummary.target_registry`). This dom-internal type is the runtime
-//! working state; the two are intentionally separate. Reconcile is
-//! out-of-scope of bd raikiri-spike-96u.4 (which scopes to `GcpmDirective`
-//! / `ContentValueItem` populate) — tracked as bd raikiri-spike-bsi
-//! (blocked on 96u.2 + 96u.3 landing real fields, Sprint 14+).
+//! `next_sequence: u32` is an additive internal-only field stamping stable
+//! ids on pending slots; §7.2 does not enumerate it because
+//! `TargetSlotId = (page_index, sequence)` (§11.2 Finding #4) fixes the paired
+//! shape once PageContext / page_index plumbing lands. Until then the
+//! sequence alone is the stable handle.
 
 use std::collections::HashMap;
 
 use raikiri_style::property::{ContentComponent, ContentPart, CounterStyle};
-use raikiri_traits::Symbol;
+
+use crate::dom::Symbol;
 
 /// Runtime registry for GCPM `target-*()` / `element()` fragment references.
 ///
@@ -52,23 +43,16 @@ use raikiri_traits::Symbol;
 /// second pass ([`TargetRegistry::flush_pending`]).
 ///
 /// Design doc: `docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md`
-/// §7.2 (shape) + §7.4 (resolve strategy). Populated by
-/// bd raikiri-spike-96u.2 (this module) / .3 (`element()`).
-#[derive(Debug, Default)]
-#[allow(
-    dead_code,
-    reason = "GCPM target-* runtime skeleton: register() feeds resolved from \
-              the eventual PageContext walk (bd raikiri-spike-96u.4 \
-              directive-apply pass); until that lands the register / flush \
-              path is exercised by unit tests only, not yet by the layout \
-              driver."
-)]
-pub(crate) struct TargetRegistry {
+/// §7.2 (shape) + §7.4 (resolve strategy). Producer / register-site walker
+/// (bd raikiri-spike-96u.4) lives in raikiri-dom; the canonical type lives
+/// here (bd raikiri-spike-bsi Option C).
+#[derive(Debug, Default, Clone)]
+#[non_exhaustive]
+pub struct TargetRegistry {
     /// Fragment identifier → resolved target metadata (counter snapshot,
     /// textual content parts). Populated as the runtime walk encounters
-    /// `RegisterTarget { fragment_id }` directives (future
-    /// [`raikiri_traits::GcpmDirective`], populated by bd
-    /// raikiri-spike-96u.4).
+    /// [`crate::GcpmDirective::RegisterTarget`] directives (populator: bd
+    /// raikiri-spike-96u.4 register-site walker in raikiri-dom).
     resolved: HashMap<Symbol, TargetInfo>,
     /// Content-value sites (`target-counter(...)`, `target-counters(...)`,
     /// `target-text(...)`, and future `element(name)`) that referenced a
@@ -78,8 +62,8 @@ pub(crate) struct TargetRegistry {
     /// the queue after a flush (streaming intent: a later batch or
     /// finish_render pass may still land them; see design §7.4).
     pending_slots: Vec<TargetSlot>,
-    /// Monotonic sequence stamp for pending slots. Not in the §7.2 shape;
-    /// see module-level "Divergence from canonical shape" note.
+    /// Monotonic sequence stamp for pending slots. Not in the §7.2 shape —
+    /// see module-level "canonical shape" note.
     next_sequence: u32,
 }
 
@@ -98,10 +82,10 @@ pub(crate) struct TargetRegistry {
 /// nested scope like `[1, 1]` cannot be recovered from a single `i32` and
 /// the hierarchical join `"1.1"` is literally unrepresentable. This module
 /// therefore carries the full stack per counter; when the §11.2
-/// `TargetDefinition` public shape is reconciled with the runtime side
-/// (bd raikiri-spike-bsi, blocked on 96u.2 + 96u.3), the reconciliation
-/// must widen `counter_snapshot` to a stack — and the 96u.4 register-site
-/// directive walker must populate the stack rather than the leaf value.
+/// `TargetDefinition` public shape is reconciled with the runtime side, the
+/// reconciliation must widen `counter_snapshot` to a stack — and the 96u.4
+/// register-site directive walker must populate the stack rather than the
+/// leaf value.
 ///
 /// **Text parts**: keyed by the same
 /// [`raikiri_style::property::ContentPart`] variants that
@@ -113,25 +97,28 @@ pub(crate) struct TargetRegistry {
 /// `HashMap`, because [`ContentPart`] does not implement `Hash`
 /// (raikiri-style keeps it `#[derive(PartialEq, Eq)]` only) and adding
 /// `Hash` on the raikiri-style side would be a cross-crate public-surface
-/// change out of the 96u.2 scope. The variant set is bounded (4 keywords
-/// plus non_exhaustive room), so linear scan on lookup is fine.
+/// change out of scope here. The variant set is bounded (4 keywords plus
+/// non_exhaustive room), so linear scan on lookup is fine.
 #[derive(Debug, Default, Clone)]
-#[allow(
-    dead_code,
-    reason = "Grown by bd raikiri-spike-96u.2; consumed by 96u.4 register-site \
-              directive apply (walk-time snapshot writer)."
-)]
-pub(crate) struct TargetInfo {
+#[non_exhaustive]
+pub struct TargetInfo {
     /// counter name → nested stack (outermost first). Empty stack = 0.
-    pub(crate) counters: HashMap<Symbol, Vec<i32>>,
+    pub counters: HashMap<Symbol, Vec<i32>>,
     /// Text extracted from the register-site element, keyed by
     /// `target-text`'s second argument. Missing keys resolve to `""`.
     /// Linear scan on lookup (bounded 4-variant enum key); see type-level
     /// storage note.
-    pub(crate) text_parts: Vec<(ContentPart, String)>,
+    pub text_parts: Vec<(ContentPart, String)>,
 }
 
 impl TargetInfo {
+    /// Construct an empty `TargetInfo` (canonical zero-arg constructor per the
+    /// [`crate::page`] module contract — input type consumed by
+    /// [`TargetRegistry::register`]).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Look up a text part, returning the empty string when absent
     /// (`target-text` fallback per CSS Content 3 §2.6.3).
     fn text_part(&self, part: ContentPart) -> &str {
@@ -149,13 +136,6 @@ impl TargetInfo {
     /// per-variant semantics — missing-counter fallback, empty-stack `"0"`
     /// (CSS Content 3 §2.6.2), absent text-part `""` (§2.6.3) — in one place
     /// prevents the two paths from diverging.
-    #[allow(
-        dead_code,
-        reason = "Reached via TargetRegistry::dispatch and \
-                  TargetRegistry::flush_pending; both are exercised in unit \
-                  tests and consumed by the M6 directive-apply wire-through \
-                  (bd raikiri-spike-96u.4)."
-    )]
     fn resolve(&self, request: &TargetRequest) -> String {
         match request {
             TargetRequest::Counter { name, style } => {
@@ -192,63 +172,47 @@ impl TargetInfo {
 
 /// The three `target-*` request kinds this pass resolves.
 ///
+/// Kept crate-private inside raikiri-traits: this enum is a stored form used
+/// only inside [`TargetSlot`] / [`TargetRegistry::dispatch`], never in a
+/// public signature. The public-facing counterpart is
+/// [`crate::strategy::TargetRequest`] (the lifetimed query passed to
+/// [`crate::TargetResolver`]) — keeping this internal avoids the name
+/// collision at the crate root.
+///
 /// Mirrors design §11.2's `TargetKind` shape (subset — `Page` is out of
-/// bd raikiri-spike-96u.2 scope; it lands with the `target-page` /
-/// `element(name)` follow-up). Reused inside [`TargetSlot`] to preserve the
-/// caller's original request until the pending flush pass can serve it.
+/// current scope; it lands with the `target-page` / `element(name)`
+/// follow-up).
 #[derive(Debug, Clone)]
-#[allow(
-    dead_code,
-    reason = "Constructed on the pending path (resolve before register); read \
-              by flush_pending. Both are exercised in unit tests; production \
-              callers land with the M6 directive-apply wire-through."
-)]
 pub(crate) enum TargetRequest {
-    /// `target-counter(url, name, style)` — CSS Content 3 §2.6.2.
-    Counter { name: Symbol, style: CounterStyle },
-    /// `target-counters(url, name, separator, style)` — CSS Content 3 §2.6.2.
+    Counter {
+        name: Symbol,
+        style: CounterStyle,
+    },
     Counters {
         name: Symbol,
         separator: String,
         style: CounterStyle,
     },
-    /// `target-text(url, part)` — CSS Content 3 §2.6.3.
-    Text { part: ContentPart },
+    Text {
+        part: ContentPart,
+    },
 }
 
 /// Unresolved content-value site — a forward reference to a fragment that
-/// hasn't been walked yet.
-///
-/// Emitted by any of [`TargetRegistry::resolve_target_counter`] /
-/// `resolve_target_counters` / `resolve_target_text` when the fragment is
-/// still absent from `resolved`; the caller receives
-/// [`ResolveOutcome::Pending`] with the same `sequence` id and can
-/// re-associate the eventual value once [`TargetRegistry::flush_pending`]
-/// drains the queue.
+/// hasn't been walked yet. Crate-private: only observed externally through
+/// [`ResolveOutcome::Pending`]'s sequence handle and later
+/// [`PendingResolution`].
 ///
 /// **Sequence vs. design's `TargetSlotId = (page_index, sequence)`**
 /// (§11.2 Finding #4): the design pairs the sequence with `page_index` so
 /// (a) slot ids stay byte-identical across iterations and (b) sinks can
 /// address a slot by its owning page. `page_index` is a PageContext-owned
-/// field and is out of scope for bd raikiri-spike-96u.2. Until the
-/// PageContext plumbing lands (bd raikiri-spike-96u.4), the sequence alone
-/// is the stable handle — external callers must not treat this as the final
-/// slot-id shape.
+/// field and is out of current scope. Until the PageContext plumbing lands
+/// (bd raikiri-spike-96u.4), the sequence alone is the stable handle.
 #[derive(Debug, Clone)]
-#[allow(
-    dead_code,
-    reason = "Fields are the pending back-reference the flush_pending pass \
-              consumes; production callers land with the M6 directive-apply \
-              wire-through (bd raikiri-spike-96u.4)."
-)]
 pub(crate) struct TargetSlot {
-    /// Sequence stamp identifying this pending slot; see the type-level note
-    /// on divergence from `TargetSlotId`.
     pub(crate) sequence: u32,
-    /// The fragment id the caller was asking about (already stripped of the
-    /// leading `#`).
     pub(crate) fragment_id: Symbol,
-    /// The original request (counter / counters / text kind + parameters).
     pub(crate) request: TargetRequest,
 }
 
@@ -257,21 +221,17 @@ pub(crate) struct TargetSlot {
 /// `Resolved(String)` — the fragment was in `resolved` (or the URL was a
 /// non-fragment fallback), the formatted answer is returned inline.
 ///
-/// `Pending(sequence)` — the fragment is not yet in `resolved`; a
-/// [`TargetSlot`] with this sequence id has been queued in
-/// `pending_slots`. Call [`TargetRegistry::flush_pending`] after further
-/// register calls to receive the eventual value.
+/// `Pending(sequence)` — the fragment is not yet in `resolved`; a pending
+/// slot with this sequence id has been queued in the registry. Call
+/// [`TargetRegistry::flush_pending`] after further register calls to receive
+/// the eventual value.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "Constructed by resolve_target_*; consumed by unit tests and \
-              future M6 directive-apply wire-through (bd raikiri-spike-96u.4)."
-)]
-pub(crate) enum ResolveOutcome {
+#[non_exhaustive]
+pub enum ResolveOutcome {
     /// Immediately resolved — the fragment was in `resolved` or the URL was
     /// a non-fragment fallback (in which case the payload is empty).
     Resolved(String),
-    /// Deferred — the sequence id addresses the queued [`TargetSlot`];
+    /// Deferred — the sequence id addresses the queued pending slot;
     /// [`TargetRegistry::flush_pending`] will return the resolved value
     /// once the fragment lands.
     Pending(u32),
@@ -281,21 +241,28 @@ pub(crate) enum ResolveOutcome {
 ///
 /// `value = Some(...)` means the slot resolved on this flush; `None` is
 /// unreachable in the current implementation (unresolved slots are retained
-/// in `pending_slots` instead of being flushed with `None`), but the field
+/// in the pending queue instead of being flushed with `None`), but the field
 /// is `Option<String>` to keep the future "give up after N passes" path
 /// backwards-compatible.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "Return shape of flush_pending; caller wiring lands with the M6 \
-              directive-apply pass (bd raikiri-spike-96u.4)."
-)]
-pub(crate) struct PendingResolution {
-    pub(crate) sequence: u32,
-    pub(crate) value: Option<String>,
+#[non_exhaustive]
+pub struct PendingResolution {
+    /// Sequence id of the slot that was resolved on this flush — matches
+    /// the value returned by the original [`ResolveOutcome::Pending`].
+    pub sequence: u32,
+    /// Resolved value; `Some(...)` on successful resolve. Reserved `None`
+    /// for the future "give up after N passes" streaming exit — see the
+    /// type-level note.
+    pub value: Option<String>,
 }
 
 impl TargetRegistry {
+    /// Construct an empty `TargetRegistry` (canonical zero-arg constructor,
+    /// stable across the promotion from the M1.1 opaque placeholder).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Record a resolved target — called from the register-site directive
     /// walker (bd raikiri-spike-96u.4) once an element with an `id`
     /// attribute is fully seen.
@@ -310,29 +277,18 @@ impl TargetRegistry {
     /// raikiri-spike-96u.4) is expected to invoke `register()` in tree
     /// order, so `or_insert` preserves the spec's first-in-tree-order
     /// semantics without the walker having to check for duplicates.
-    #[allow(
-        dead_code,
-        reason = "Producer path lands with bd raikiri-spike-96u.4; exercised \
-                  by unit tests until then."
-    )]
-    pub(crate) fn register(&mut self, fragment_id: Symbol, info: TargetInfo) {
+    pub fn register(&mut self, fragment_id: Symbol, info: TargetInfo) {
         self.resolved.entry(fragment_id).or_insert(info);
     }
 
     /// Resolve `target-counter(url, name, style)`.
     ///
     /// URL parsing, resolved/pending dispatch, and per-variant evaluation
-    /// are shared with the other `target-*` entrypoints; see
-    /// [`TargetRegistry::dispatch`] for the actual work. Absent counter
-    /// yields `"0"` (CSS Content 3 §2.6.2). Non-fragment URLs resolve to an
-    /// empty string (raikiri is per-document, external target refs are
-    /// unresolvable).
-    #[allow(
-        dead_code,
-        reason = "Producer path lands with bd raikiri-spike-96u.4 (M6 \
-                  directive-apply); exercised by unit tests until then."
-    )]
-    pub(crate) fn resolve_target_counter(
+    /// are shared with the other `target-*` entrypoints via the private
+    /// `dispatch` helper. Absent counter yields `"0"` (CSS Content 3
+    /// §2.6.2). Non-fragment URLs resolve to an empty string (raikiri is
+    /// per-document, external target refs are unresolvable).
+    pub fn resolve_target_counter(
         &mut self,
         url: &str,
         name: Symbol,
@@ -344,18 +300,11 @@ impl TargetRegistry {
     /// Resolve `target-counters(url, name, separator, style)` — hierarchical
     /// counter join (CSS Content 3 §2.6.2, `counters()` join semantics).
     ///
-    /// Every element of the counter stack is formatted per [`format_counter`]
-    /// and joined with `separator`. An absent (or empty-stack) counter
-    /// yields `"0"`, not `""` — an undefined counter's initial value is `0`
-    /// per §2.6.2, so `counters(name, sep)` returns the single formatted
-    /// `0`. Shared machinery in [`TargetRegistry::dispatch`] /
-    /// [`TargetInfo::resolve`].
-    #[allow(
-        dead_code,
-        reason = "Producer path lands with bd raikiri-spike-96u.4 (M6 \
-                  directive-apply); exercised by unit tests until then."
-    )]
-    pub(crate) fn resolve_target_counters(
+    /// Every element of the counter stack is formatted per `style` and
+    /// joined with `separator`. An absent (or empty-stack) counter yields
+    /// `"0"`, not `""` — an undefined counter's initial value is `0` per
+    /// §2.6.2, so `counters(name, sep)` returns the single formatted `0`.
+    pub fn resolve_target_counters(
         &mut self,
         url: &str,
         name: Symbol,
@@ -373,14 +322,8 @@ impl TargetRegistry {
     }
 
     /// Resolve `target-text(url, part)` — text extraction (CSS Content 3
-    /// §2.6.3). Missing parts resolve to `""`. Shared machinery in
-    /// [`TargetRegistry::dispatch`] / [`TargetInfo::resolve`].
-    #[allow(
-        dead_code,
-        reason = "Producer path lands with bd raikiri-spike-96u.4 (M6 \
-                  directive-apply); exercised by unit tests until then."
-    )]
-    pub(crate) fn resolve_target_text(&mut self, url: &str, part: ContentPart) -> ResolveOutcome {
+    /// §2.6.3). Missing parts resolve to `""`.
+    pub fn resolve_target_text(&mut self, url: &str, part: ContentPart) -> ResolveOutcome {
         self.dispatch(url, TargetRequest::Text { part })
     }
 
@@ -410,20 +353,16 @@ impl TargetRegistry {
         }
     }
 
-    /// Drain `pending_slots`, resolving every slot whose fragment is now in
-    /// `resolved`. Slots whose fragment is still absent are retained in the
-    /// queue (streaming intent: a later register call + flush may still
-    /// resolve them; see design §7.4). Per-variant evaluation is delegated
-    /// to [`TargetInfo::resolve`] to keep the fallback semantics in sync
-    /// with the immediate-resolve path.
+    /// Drain the pending queue, resolving every slot whose fragment is now
+    /// in `resolved`. Slots whose fragment is still absent are retained in
+    /// the queue (streaming intent: a later register call + flush may still
+    /// resolve them; see design §7.4). Per-variant evaluation shares the
+    /// same private helper used by the immediate-resolve path, keeping the
+    /// fallback semantics in sync across both paths.
     ///
     /// Returns one [`PendingResolution`] per newly-resolved slot, in the
     /// order the slots were queued.
-    #[allow(
-        dead_code,
-        reason = "Called from the second-pass driver in bd raikiri-spike-96u.4."
-    )]
-    pub(crate) fn flush_pending(&mut self) -> Vec<PendingResolution> {
+    pub fn flush_pending(&mut self) -> Vec<PendingResolution> {
         let mut resolutions = Vec::new();
         let mut remaining = Vec::with_capacity(self.pending_slots.len());
         for slot in std::mem::take(&mut self.pending_slots) {
@@ -449,7 +388,7 @@ impl TargetRegistry {
 
 /// Drive a [`TargetRegistry`] from a
 /// [`raikiri_style::property::ContentComponent`] — the "working conversion
-/// path" the bd raikiri-spike-96u.2 scope calls out.
+/// path" for the M6 directive-apply pass.
 ///
 /// Returns `Some(outcome)` for the three target-* variants
 /// (`TargetCounter`, `TargetCounters`, `TargetText`), `None` for every
@@ -458,13 +397,8 @@ impl TargetRegistry {
 /// `#[non_exhaustive]` — any future non-target variants.
 ///
 /// The name conversion `SmolStr → Symbol` happens here so callers don't
-/// need to reach into `raikiri-traits` themselves.
-#[allow(
-    dead_code,
-    reason = "Wire-through helper for the M6 directive-apply driver \
-              (bd raikiri-spike-96u.4); exercised by unit tests until then."
-)]
-pub(crate) fn resolve_content_component(
+/// need to reach into `raikiri-traits::dom` themselves.
+pub fn resolve_content_component(
     registry: &mut TargetRegistry,
     cc: &ContentComponent,
 ) -> Option<ResolveOutcome> {
@@ -502,16 +436,15 @@ fn parse_fragment(url: &str) -> Option<&str> {
 
 /// Format one counter value.
 ///
-/// Minimal formatter for the bd raikiri-spike-96u.2 resolve pass: every
-/// [`CounterStyle`] variant currently renders as decimal. Full CSS Counter
-/// Styles Level 3 formatting (roman, alpha, and `@counter-style` at-rule
-/// resolution for `CounterStyle::Named(...)`) is tracked as
-/// **bd raikiri-spike-og2** (P4, scope/dom, discovered-from:96u.2,
-/// retro/candidate). The raikiri-style docstring for `CounterStyle`
-/// explicitly places named-style interpretation downstream in the "runtime
-/// resolve" layer, so `og2` will land it here. Partial roman/alpha would be
-/// a spec-divergence flag, so this pass intentionally does not
-/// half-implement them.
+/// Minimal formatter for the current resolve pass: every [`CounterStyle`]
+/// variant currently renders as decimal. Full CSS Counter Styles Level 3
+/// formatting (roman, alpha, and `@counter-style` at-rule resolution for
+/// `CounterStyle::Named(...)`) is tracked as **bd raikiri-spike-og2** (P4,
+/// scope/dom, discovered-from:96u.2). The raikiri-style docstring for
+/// `CounterStyle` explicitly places named-style interpretation downstream
+/// in the "runtime resolve" layer, so `og2` will land it here. Partial
+/// roman/alpha would be a spec-divergence flag, so this pass intentionally
+/// does not half-implement them.
 fn format_counter(value: i32, style: &CounterStyle) -> String {
     // Future (bd raikiri-spike-og2): dispatch on Named(...) to registered
     // @counter-style rules; Decimal / all currently-known variants fall
@@ -554,10 +487,8 @@ mod tests {
         // Canonical shape pin (design §7.2, lines 1961-1964):
         //   resolved: HashMap<Symbol, TargetInfo>
         //   pending_slots: Vec<TargetSlot>
-        // 96u.2 grew TargetInfo (counters + text_parts) and TargetSlot
-        // (sequence + fragment_id + request). If this test breaks, the leaf
-        // has drifted from the design and the coordinator should reconcile
-        // before landing the remaining 96u.3 / 96u.4 follow-ups.
+        // If this test breaks, the type has drifted from the design and the
+        // coordinator should reconcile before landing follow-up work.
         let mut reg = TargetRegistry::default();
         reg.resolved
             .insert(Symbol::new("fragment-1"), TargetInfo::default());
