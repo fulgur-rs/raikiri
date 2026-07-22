@@ -14,6 +14,12 @@
 //! `impl StyleDom for Document` は `raikiri_traits::Dom` に delegate せず
 //! Document arena に直接 dispatch する (blanket compat 経路を排除した atomic
 //! decoupling — 詳細は crates/raikiri-style/src/style_dom.rs のヘッダ参照)。
+//! Bodies shared byte-identically across the two families
+//! (as_element / text_content / is_in_document / tag_name /
+//! inline_style_source / namespace_uri / attr) live once as private inherent
+//! methods on NodeRef / ElementRef; both trait families delegate via
+//! `self.foo()` (raikiri-spike-c3b). `kind()` is excluded — it projects onto
+//! `NodeKind` vs `StyleNodeKind`.
 
 use raikiri_style::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use raikiri_traits::{NodeId, NodeKind};
@@ -39,6 +45,71 @@ impl Iterator for ChildIter<'_> {
     type Item = NodeId;
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next().copied().map(|i| NodeId::new(i as u64))
+    }
+}
+
+// Shared inherent method bodies for the two trait families below
+// (raikiri-spike-c3b — see module doc header).
+
+impl<'a> NodeRef<'a> {
+    fn as_element(&self) -> Option<ElementRef<'_>> {
+        let node = &self.doc.nodes[self.id];
+        matches!(&node.data, crate::node::NodeData::Element(_)).then(|| ElementRef { node })
+    }
+
+    fn text_content(&self) -> Option<&str> {
+        match &self.doc.nodes[self.id].data {
+            crate::node::NodeData::Text(t) => Some(t.text_content.as_str()),
+            _ => None,
+        }
+    }
+
+    fn is_in_document(&self) -> bool {
+        self.doc.nodes[self.id].is_in_document()
+    }
+}
+
+impl<'a> ElementRef<'a> {
+    fn tag_name(&self) -> &str {
+        // ElementRef は as_element() が Some を返した後の view なので必ず
+        // NodeData::Element (invariant)、それ以外は panic 相当。
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => e.tag_name.as_str(),
+            _ => "", // defensive: 到達しない
+        }
+    }
+
+    fn inline_style_source(&self) -> Option<&str> {
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => {
+                e.inline_style.as_deref().filter(|s| !s.is_empty())
+            }
+            _ => None,
+        }
+    }
+
+    fn namespace_uri(&self) -> Option<&str> {
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => e.namespace.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn attr(&self, local: &str) -> Option<&str> {
+        if local == "style" {
+            // Inherent-method resolution beats trait methods, so `self.` here
+            // routes to the inherent `inline_style_source` above without UFCS.
+            return self.inline_style_source();
+        }
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => e
+                .attributes
+                .iter()
+                .find(|a| a.local == local)
+                .map(|a| a.value.as_str())
+                .filter(|s| !s.is_empty()),
+            _ => None,
+        }
     }
 }
 
@@ -91,46 +162,29 @@ impl<'a> raikiri_traits::Node for NodeRef<'a> {
     }
 
     fn as_element(&self) -> Option<Self::Element<'_>> {
-        let node = &self.doc.nodes[self.id];
-        matches!(&node.data, crate::node::NodeData::Element(_)).then(|| ElementRef { node })
+        self.as_element()
     }
 
     fn text_content(&self) -> Option<&str> {
-        match &self.doc.nodes[self.id].data {
-            crate::node::NodeData::Text(t) => Some(t.text_content.as_str()),
-            _ => None,
-        }
+        self.text_content()
     }
 
     fn is_in_document(&self) -> bool {
-        self.doc.nodes[self.id].is_in_document()
+        self.is_in_document()
     }
 }
 
 impl<'a> raikiri_traits::Element for ElementRef<'a> {
     fn tag_name(&self) -> &str {
-        // ElementRef は as_element() が Some を返した後の view なので必ず
-        // NodeData::Element (invariant)、それ以外は panic 相当。
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => e.tag_name.as_str(),
-            _ => "", // defensive: 到達しない
-        }
+        self.tag_name()
     }
 
     fn inline_style_source(&self) -> Option<&str> {
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => {
-                e.inline_style.as_deref().filter(|s| !s.is_empty())
-            }
-            _ => None,
-        }
+        self.inline_style_source()
     }
 
     fn namespace_uri(&self) -> Option<&str> {
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => e.namespace.as_deref(),
-            _ => None,
-        }
+        self.namespace_uri()
     }
 
     // NB: id() / has_class() は raikiri-traits::Element の default impl を
@@ -138,32 +192,14 @@ impl<'a> raikiri_traits::Element for ElementRef<'a> {
     // attr() だけ override すれば id/has_class も追従する (DRY / 契約準拠)。
 
     fn attr(&self, local: &str) -> Option<&str> {
-        if local == "style" {
-            // UFCS: `ElementRef` also implements `raikiri_style::StyleElement`,
-            // so plain `self.inline_style_source()` is ambiguous (raikiri-spike-94e
-            // Phase B — both trait families coexist on the same nominal type).
-            return raikiri_traits::Element::inline_style_source(self);
-        }
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => e
-                .attributes
-                .iter()
-                .find(|a| a.local == local)
-                .map(|a| a.value.as_str())
-                .filter(|s| !s.is_empty()),
-            _ => None,
-        }
+        self.attr(local)
     }
 }
 
 // ─────────────────────────────────────────────────────────────
 // raikiri_style::{StyleDom, StyleNode, StyleElement} direct impls
-// (raikiri-spike-94e Phase B)
-//
-// These delegate to the Document arena directly, NOT via `raikiri_traits::Dom`.
-// The atomic decoupling in Phase B removed the blanket compat
-// (`impl<T: raikiri_traits::Dom> StyleDom for T`) that previously bridged the
-// two trait families, so this file provides the concrete implementations.
+// (raikiri-spike-94e Phase B — Node/Element bodies via the shared inherent
+// helpers above, raikiri-spike-c3b).
 // ─────────────────────────────────────────────────────────────
 
 /// Child `StyleNodeId` iterator for `StyleDom::child_ids`.
@@ -231,44 +267,29 @@ impl<'a> StyleNode for NodeRef<'a> {
     }
 
     fn as_element(&self) -> Option<Self::Element<'_>> {
-        let node = &self.doc.nodes[self.id];
-        matches!(&node.data, crate::node::NodeData::Element(_)).then(|| ElementRef { node })
+        self.as_element()
     }
 
     fn text_content(&self) -> Option<&str> {
-        match &self.doc.nodes[self.id].data {
-            crate::node::NodeData::Text(t) => Some(t.text_content.as_str()),
-            _ => None,
-        }
+        self.text_content()
     }
 
     fn is_in_document(&self) -> bool {
-        self.doc.nodes[self.id].is_in_document()
+        self.is_in_document()
     }
 }
 
 impl<'a> StyleElement for ElementRef<'a> {
     fn tag_name(&self) -> &str {
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => e.tag_name.as_str(),
-            _ => "", // defensive: 到達しない (ElementRef invariant)
-        }
+        self.tag_name()
     }
 
     fn inline_style_source(&self) -> Option<&str> {
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => {
-                e.inline_style.as_deref().filter(|s| !s.is_empty())
-            }
-            _ => None,
-        }
+        self.inline_style_source()
     }
 
     fn namespace_uri(&self) -> Option<&str> {
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => e.namespace.as_deref(),
-            _ => None,
-        }
+        self.namespace_uri()
     }
 
     // NB: id() / has_class() は raikiri_style::StyleElement の default impl を
@@ -276,19 +297,6 @@ impl<'a> StyleElement for ElementRef<'a> {
     // attr() だけ override すれば id/has_class も追従する (DRY / 契約準拠)。
 
     fn attr(&self, local: &str) -> Option<&str> {
-        if local == "style" {
-            // UFCS to disambiguate from the sibling `raikiri_traits::Element`
-            // impl on `ElementRef` (see the twin note in that impl above).
-            return StyleElement::inline_style_source(self);
-        }
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => e
-                .attributes
-                .iter()
-                .find(|a| a.local == local)
-                .map(|a| a.value.as_str())
-                .filter(|s| !s.is_empty()),
-            _ => None,
-        }
+        self.attr(local)
     }
 }
