@@ -53,7 +53,7 @@ pub mod taffy_impl;
 
 pub use document::Document;
 pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};
-pub use fonts::{FontError, build_wpt_font_ctx};
+pub use fonts::{FontError, FontWarn, build_wpt_font_ctx, build_wpt_font_ctx_with_observer};
 pub use layout::layout_single_page;
 pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};
 
