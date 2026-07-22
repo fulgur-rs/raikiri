@@ -125,9 +125,26 @@ enum FontReadReject {
     /// read (TOCTOU-grow race), caught by the `+1-probe` pattern:
     /// `take(cap + 1)` then post-read `bytes.len() > cap`.
     OversizedDuringRead { size: u64, cap: u64 },
-    /// I/O error from `symlink_metadata`, `safe_open`, or `read_to_end` that
-    /// is not consistent with a symlink-swap.  Callsite propagates as
-    /// [`FontError::Io`].
+    /// After canonicalization, the candidate path resolves outside the
+    /// walker's canonical root — the intermediate-symlink escape vector
+    /// (`fonts_dir/subdir/` swapped into a symlink to `/tmp/evil/` between
+    /// walk and read, with `subdir/Ahem.ttf` still a regular file leaf so
+    /// `is_symlink()` on the leaf does not fire).  Belt-and-suspenders: given
+    /// the walker's `is_symlink()` skip on directory entries this branch is
+    /// only reachable if the tree changed between walk and read, but the
+    /// containment check is what makes that safe.  Mirrors
+    /// `raikiri_vrt::reference::FixtureError::PathEscape` (bd raikiri-spike-d9y.6);
+    /// re-consolidation with the traits helper tracked in raikiri-spike-7xw
+    /// (walls.md §2).  bd raikiri-spike-zr8, closes 61l Codex §8.3 finding #1.
+    PathEscape {
+        /// Canonicalized target path that fell outside the root.
+        canonical: PathBuf,
+        /// Canonicalized fonts root that the target should have stayed under.
+        root: PathBuf,
+    },
+    /// I/O error from `symlink_metadata`, `safe_open`, `canonicalize`, or
+    /// `read_to_end` that is not consistent with a symlink-swap.  Callsite
+    /// propagates as [`FontError::Io`].
     Io(std::io::Error),
 }
 
@@ -142,6 +159,12 @@ impl std::fmt::Display for FontReadReject {
             FontReadReject::OversizedDuringRead { size, cap } => write!(
                 f,
                 "file grew past cap during read: {size} bytes read, cap {cap} bytes (TOCTOU-grow)"
+            ),
+            FontReadReject::PathEscape { canonical, root } => write!(
+                f,
+                "canonicalizes to {} which escapes fonts root {}",
+                canonical.display(),
+                root.display()
             ),
             FontReadReject::Io(source) => write!(f, "I/O error: {source}"),
         }
@@ -173,7 +196,27 @@ impl std::fmt::Display for FontReadReject {
 /// Non-unix `safe_open` retains the follow-symlink `File::open` fallback
 /// (Windows equivalent tracked in raikiri-spike-akk); the pre-open
 /// `symlink_metadata` check still rejects the common shape there.
-fn read_bounded_font_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, FontReadReject> {
+///
+/// # `canonical_root` containment
+///
+/// `canonical_root` is the pre-canonicalized walker root, threaded through
+/// so `read_bounded_font_file` can verify that after canonicalization the
+/// candidate path stays inside that root.  Belt-and-suspenders against the
+/// intermediate-symlink attack (walker recorded `subdir/font.ttf`, attacker
+/// swapped `subdir/` into a symlink to `/tmp/evil/` between walk and read).
+/// The leaf-symlink check does not cover this — `symlink_metadata` follows
+/// intermediate components and only refuses to follow the final component —
+/// so an intermediate-symlink escape produces `is_symlink() == false` on the
+/// leaf and would slip past every existing gate.  Mirrors
+/// `raikiri_vrt::reference::read_bounded_fixture_file`
+/// (bd raikiri-spike-d9y.6); re-consolidation with the traits helper
+/// tracked in raikiri-spike-7xw (walls.md §2).
+/// bd raikiri-spike-zr8, closes 61l Codex §8.3 finding #1.
+fn read_bounded_font_file(
+    path: &Path,
+    canonical_root: &Path,
+    size_cap: u64,
+) -> Result<Vec<u8>, FontReadReject> {
     let metadata = std::fs::symlink_metadata(path).map_err(FontReadReject::Io)?;
     let file_type = metadata.file_type();
     if file_type.is_symlink() {
@@ -186,6 +229,22 @@ fn read_bounded_font_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, FontRea
         return Err(FontReadReject::OversizedPreOpen {
             size: metadata.len(),
             cap: size_cap,
+        });
+    }
+    // Containment check via canonicalization.  Given the leaf `is_symlink()`
+    // gate above, an unresolvable escape via a *leaf* symlink is already
+    // rejected; this branch covers *intermediate*-directory-symlink escapes
+    // (e.g. `fonts_dir/subdir/` swapped into a symlink to `/tmp/evil/`
+    // between walk and read, with `subdir/Ahem.ttf` still a regular file
+    // leaf so `is_symlink()` on the leaf does not fire).  Mirrors
+    // `raikiri_vrt::reference::read_bounded_fixture_file` (bd raikiri-spike-d9y.6);
+    // walls.md §2 re-consolidation deferred to raikiri-spike-7xw.
+    // bd raikiri-spike-zr8, closes 61l Codex §8.3 finding #1.
+    let canonical = std::fs::canonicalize(path).map_err(FontReadReject::Io)?;
+    if !canonical.starts_with(canonical_root) {
+        return Err(FontReadReject::PathEscape {
+            canonical,
+            root: canonical_root.to_path_buf(),
         });
     }
     // safe_open adds O_NOFOLLOW on unix so a leaf-symlink swapped in between
@@ -338,6 +397,20 @@ pub enum FontWarn<'a> {
         /// The size cap being enforced (currently [`FONT_SIZE_CAP`]).
         cap: u64,
     },
+    /// Read stage caught an **intermediate-symlink escape**: the leaf
+    /// resolved (via `canonicalize` then `starts_with(canonical_root)`)
+    /// outside the walker's canonical root after an intermediate directory
+    /// was swapped into a symlink between walk and read.  Mirror of
+    /// `raikiri_vrt::reference::FixtureError::PathEscape`.  bd
+    /// raikiri-spike-zr8, closes 61l Codex §8.3 finding #1.
+    ReadRejectedPathEscape {
+        /// Walker-observed candidate path (pre-canonicalization).
+        path: &'a Path,
+        /// Canonicalized target path that fell outside the root.
+        canonical: &'a Path,
+        /// Canonicalized fonts root that the target should have stayed under.
+        root: &'a Path,
+    },
     /// fontique's `register_fonts` returned no families for the read blob
     /// (parse-invalid font, corrupt asset, etc.).  Handled by the aggregate
     /// [`FontError::PreferredFontUnavailable`] / [`FontError::NoFontsRegistered`]
@@ -390,6 +463,17 @@ impl<'a> std::fmt::Display for FontWarn<'a> {
                 "skipping {} (file grew past cap during read: {size} bytes read, cap {cap} bytes (TOCTOU-grow))",
                 path.display()
             ),
+            FontWarn::ReadRejectedPathEscape {
+                path,
+                canonical,
+                root,
+            } => write!(
+                f,
+                "skipping {} (canonicalizes to {} which escapes fonts root {})",
+                path.display(),
+                canonical.display(),
+                root.display()
+            ),
             FontWarn::RegisterEmpty { path } => {
                 write!(f, "skipping {}: no family registered", path.display())
             }
@@ -428,7 +512,7 @@ fn emit_warn(observer: &mut FontWarnObserver<'_>, event: FontWarn<'_>) {
 /// `ReadRejectedNotRegularFile` (least-surprising residual); the debug
 /// assert exists to catch a future refactor that routes `Io` through here
 /// by mistake.
-fn read_reject_to_warn<'a>(path: &'a Path, reject: &FontReadReject) -> FontWarn<'a> {
+fn read_reject_to_warn<'a>(path: &'a Path, reject: &'a FontReadReject) -> FontWarn<'a> {
     match reject {
         FontReadReject::Symlink => FontWarn::ReadRejectedSymlink { path },
         FontReadReject::NotRegularFile => FontWarn::ReadRejectedNotRegularFile { path },
@@ -444,6 +528,11 @@ fn read_reject_to_warn<'a>(path: &'a Path, reject: &FontReadReject) -> FontWarn<
                 cap: *cap,
             }
         }
+        FontReadReject::PathEscape { canonical, root } => FontWarn::ReadRejectedPathEscape {
+            path,
+            canonical: canonical.as_path(),
+            root: root.as_path(),
+        },
         FontReadReject::Io(_) => {
             debug_assert!(
                 false,
@@ -504,6 +593,22 @@ pub fn build_wpt_font_ctx_with_observer(
     if !fonts_dir.exists() {
         return Err(FontError::DirNotFound(fonts_dir.to_path_buf()));
     }
+    // Canonicalize the walker root once, up front, so
+    // `read_bounded_font_file`'s containment check compares against a stable
+    // fully-resolved prefix.  `fonts_dir.exists()` cleared the DirNotFound
+    // path above; a canonicalize failure here would be a TOCTOU race (dir
+    // unlinked between check and canonicalize) — propagate as Io rather than
+    // panic.  bd raikiri-spike-zr8 (closes 61l Codex §8.3 finding #1).
+    let canonical_root = std::fs::canonicalize(fonts_dir).map_err(|source|
+        // cov:ignore: the Err arm here needs a TOCTOU race (fonts_dir
+        // unlinked between the `.exists()` check above and canonicalize)
+        // to fire, which is not deterministically unit-testable.  The
+        // sibling races (safe_open Err arm at ~L254, TOCTOU-grow at ~L296,
+        // read-time reject arm at ~L699) use the same cov:ignore shape.
+        FontError::Io {
+            path: fonts_dir.to_path_buf(),
+            source,
+        })?;
     let paths = walk_fonts(fonts_dir, &mut observer)?;
     if paths.is_empty() {
         return Err(FontError::EmptyDir(fonts_dir.to_path_buf()));
@@ -557,19 +662,26 @@ pub fn build_wpt_font_ctx_with_observer(
         //   caller-visible error.  `PreferredFontUnavailable` is not the
         //   catch for this branch — it fires only for the warn+skip arm
         //   below (see next bullet).
-        // - `Symlink | NotRegularFile | OversizedPreOpen | OversizedDuringRead`
-        //   -> warn+skip.  `collect_recursive` already pre-filtered these, so
-        //   surfacing here means the tree changed between walk and read
-        //   (TOCTOU-swap or TOCTOU-grow).  Non-preferred fonts silently drop
-        //   from the registry; if Ahem.ttf is affected,
+        // - `Symlink | NotRegularFile | OversizedPreOpen | OversizedDuringRead
+        //   | PathEscape` -> warn+skip.  `collect_recursive` already
+        //   pre-filtered symlink/non-regular/oversized, so surfacing here
+        //   means the tree changed between walk and read (TOCTOU-swap /
+        //   TOCTOU-grow / intermediate-symlink swap).  Non-preferred fonts
+        //   silently drop from the registry; if Ahem.ttf is affected,
         //   `PreferredFontUnavailable` fires downstream on the aggregate
         //   `registered_preferred_basenames` check.  `OversizedDuringRead`
         //   closes the silent-truncation window the prior `take(FONT_SIZE_CAP)`
         //   had (fe1 fix; the `+1-probe` surfaces TOCTOU-grow instead of
-        //   returning a truncated buffer).  `Symlink` now also covers the
-        //   leaf-swap TOCTOU class: safe_open's `O_NOFOLLOW` ELOOP or the
-        //   post-error `symlink_metadata` recheck surface a mid-walk swap-in
-        //   (raikiri-spike-61l).
+        //   returning a truncated buffer).  `Symlink` covers the leaf-swap
+        //   TOCTOU class: safe_open's `O_NOFOLLOW` ELOOP or the post-error
+        //   `symlink_metadata` recheck surface a mid-walk swap-in
+        //   (raikiri-spike-61l).  `PathEscape` covers the
+        //   intermediate-symlink-swap class (walker recorded
+        //   `subdir/font.ttf`, attacker swapped `subdir/` into a symlink to
+        //   `/tmp/evil/` between walk and read; the leaf still stats as a
+        //   regular file so `is_symlink()` does not fire but canonicalize
+        //   resolves outside `canonical_root`).  bd raikiri-spike-zr8,
+        //   closes 61l Codex §8.3 finding #1.
         //
         // Trade-offs recorded:
         // - The walker's symlink_metadata / is_symlink / is_file /
@@ -582,7 +694,7 @@ pub fn build_wpt_font_ctx_with_observer(
         //   `FontError::Io`; now surfaces as `NotRegularFile` -> warn+skip.
         //   Signal downgrade for non-preferred fonts; preferred invariant
         //   still fires.
-        let bytes = match read_bounded_font_file(&path, FONT_SIZE_CAP) {
+        let bytes = match read_bounded_font_file(&path, &canonical_root, FONT_SIZE_CAP) {
             Ok(bytes) => bytes,
             Err(FontReadReject::Io(source)) => {
                 return Err(FontError::Io {
@@ -1296,6 +1408,7 @@ mod tests {
     #[test]
     fn read_bounded_font_file_rejects_symlink_via_pre_open_check() {
         let tmp = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
         let target = tmp.path().join("target.ttf");
         std::fs::File::create(&target)
             .unwrap()
@@ -1304,7 +1417,7 @@ mod tests {
         let link = tmp.path().join("link.ttf");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        match read_bounded_font_file(&link, FONT_SIZE_CAP) {
+        match read_bounded_font_file(&link, &canonical_root, FONT_SIZE_CAP) {
             Err(FontReadReject::Symlink) => {}
             other => panic!("expected Symlink, got {other:?}"),
         }
@@ -1318,14 +1431,20 @@ mod tests {
     #[test]
     fn read_bounded_font_file_accepts_regular_file_with_nofollow() {
         let tmp = tempfile::tempdir().unwrap();
+        // `tmp.path()` may contain symlinked components (e.g. macOS
+        // /tmp → /private/tmp, or `TMPDIR` on some Linux distros).  The
+        // containment check compares a canonicalized leaf against
+        // `canonical_root`, so the root must also be canonicalized or the
+        // happy path spuriously fires `PathEscape`.
+        let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
         let path = tmp.path().join("regular.ttf");
         std::fs::File::create(&path)
             .unwrap()
             .write_all(b"regular content")
             .unwrap();
 
-        let bytes =
-            read_bounded_font_file(&path, FONT_SIZE_CAP).expect("regular file should be accepted");
+        let bytes = read_bounded_font_file(&path, &canonical_root, FONT_SIZE_CAP)
+            .expect("regular file should be accepted");
         assert_eq!(bytes, b"regular content");
     }
 
@@ -1337,7 +1456,8 @@ mod tests {
     #[test]
     fn read_bounded_font_file_rejects_directory_as_not_regular_file() {
         let tmp = tempfile::tempdir().unwrap();
-        match read_bounded_font_file(tmp.path(), FONT_SIZE_CAP) {
+        let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
+        match read_bounded_font_file(tmp.path(), &canonical_root, FONT_SIZE_CAP) {
             Err(FontReadReject::NotRegularFile) => {}
             other => panic!("expected NotRegularFile, got {other:?}"),
         }
@@ -1352,18 +1472,122 @@ mod tests {
     fn read_bounded_font_file_rejects_oversized_pre_open() {
         let cap = 4u64;
         let tmp = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
         let path = tmp.path().join("too-big.ttf");
         std::fs::File::create(&path)
             .unwrap()
             .write_all(&[0u8; 8])
             .unwrap();
 
-        match read_bounded_font_file(&path, cap) {
+        match read_bounded_font_file(&path, &canonical_root, cap) {
             Err(FontReadReject::OversizedPreOpen { size, cap: c }) => {
                 assert_eq!(size, 8);
                 assert_eq!(c, cap);
             }
             other => panic!("expected OversizedPreOpen, got {other:?}"),
+        }
+    }
+
+    /// Happy path: a regular font file inside the canonical root reads
+    /// through the containment check without incident. Regression pin —
+    /// without this, an implementation that made the `starts_with`
+    /// comparison too strict (e.g. required byte-identical paths after
+    /// canonicalization but not before) would fail silently on tmpdir
+    /// layouts with symlinked prefixes. bd raikiri-spike-zr8.
+    #[test]
+    fn read_bounded_font_file_accepts_regular_file_inside_canonical_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
+        let path = tmp.path().join("inside.ttf");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"inside canonical root")
+            .unwrap();
+
+        let bytes = read_bounded_font_file(&path, &canonical_root, FONT_SIZE_CAP)
+            .expect("regular file inside canonical root should be accepted");
+        assert_eq!(bytes, b"inside canonical root");
+    }
+
+    /// Intermediate-symlink escape: an attacker swapped `sub/` (a
+    /// directory child of `fonts_dir`) into a symlink pointing at
+    /// `outside/` between walk and read. `outside/font.ttf` is a real
+    /// regular file, so `symlink_metadata(sub/font.ttf).is_symlink()`
+    /// returns `false` (symlink_metadata follows intermediate components,
+    /// only refusing to follow the final component) — the leaf-symlink,
+    /// non-regular-file, and size gates all pass. The containment check
+    /// is the load-bearing defense: canonicalize resolves the leaf to
+    /// `outside/font.ttf`, which does not `starts_with(canonical_root)`,
+    /// producing `FontReadReject::PathEscape`. Closes 61l Codex §8.3
+    /// finding #1. bd raikiri-spike-zr8.
+    #[cfg(unix)]
+    #[test]
+    fn read_bounded_font_file_rejects_intermediate_symlink_escape() {
+        // Two separate tempdirs so `outside` genuinely lives outside the
+        // canonical root of `fonts`.
+        let fonts_tmp = tempfile::tempdir().unwrap();
+        let outside_tmp = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(fonts_tmp.path()).unwrap();
+        let canonical_outside = std::fs::canonicalize(outside_tmp.path()).unwrap();
+
+        // Real regular-file leaf under the outside dir.
+        let outside_leaf = canonical_outside.join("font.ttf");
+        std::fs::File::create(&outside_leaf)
+            .unwrap()
+            .write_all(b"outside content")
+            .unwrap();
+
+        // Intermediate directory swap: `fonts/sub` → `outside/`. The leaf
+        // path the walker would have recorded is `fonts/sub/font.ttf`.
+        let sub_link = fonts_tmp.path().join("sub");
+        std::os::unix::fs::symlink(&canonical_outside, &sub_link).unwrap();
+        let leaf_via_intermediate = sub_link.join("font.ttf");
+
+        // Sanity check the setup: the leaf itself is *not* a symlink
+        // (symlink_metadata follows intermediate components).  If this
+        // assertion ever fails the test has stopped exercising the
+        // intermediate-symlink shape and is instead exercising the
+        // already-covered leaf-symlink shape.
+        let leaf_meta = std::fs::symlink_metadata(&leaf_via_intermediate).unwrap();
+        assert!(
+            !leaf_meta.file_type().is_symlink(),
+            "leaf must not be a symlink: symlink_metadata on {} reported symlink=true, \
+             which means the test is exercising the leaf-symlink vector rather than the \
+             intermediate-symlink vector this test is meant to cover",
+            leaf_via_intermediate.display()
+        );
+        assert!(
+            leaf_meta.file_type().is_file(),
+            "leaf must be a regular file"
+        );
+
+        match read_bounded_font_file(&leaf_via_intermediate, &canonical_root, FONT_SIZE_CAP) {
+            Err(FontReadReject::PathEscape { canonical, root }) => {
+                assert_eq!(canonical, outside_leaf);
+                assert_eq!(root, canonical_root);
+            }
+            other => panic!("expected PathEscape for intermediate-symlink escape, got {other:?}"),
+        }
+    }
+
+    /// Nonexistent path is caught by the pre-open `symlink_metadata` gate
+    /// and surfaced as the existing `FontReadReject::Io` variant (not
+    /// `PathEscape`). Regression pin — without this an implementation
+    /// that reordered the canonicalize call before the pre-open gate
+    /// would silently reclassify NotFound as an Io-under-canonicalize
+    /// (still Io, but with confusing provenance) or worse, the pre-open
+    /// error message would move. bd raikiri-spike-zr8.
+    #[test]
+    fn read_bounded_font_file_returns_io_for_nonexistent_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
+        let missing = tmp.path().join("does-not-exist.ttf");
+
+        match read_bounded_font_file(&missing, &canonical_root, FONT_SIZE_CAP) {
+            Err(FontReadReject::Io(source)) => {
+                assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+            }
+            other => panic!("expected Io(NotFound) for missing path, got {other:?}"),
         }
     }
 
@@ -1392,6 +1616,7 @@ mod tests {
         ReadRejectedNotRegularFile(PathBuf),
         ReadRejectedOversizedPreOpen(PathBuf, u64, u64),
         ReadRejectedOversizedDuringRead(PathBuf, u64, u64),
+        ReadRejectedPathEscape(PathBuf, PathBuf, PathBuf),
         RegisterEmpty(PathBuf),
     }
 
@@ -1415,6 +1640,11 @@ mod tests {
                 FontWarn::ReadRejectedOversizedDuringRead { path, size, cap } => {
                     Self::ReadRejectedOversizedDuringRead(path.into(), size, cap)
                 }
+                FontWarn::ReadRejectedPathEscape {
+                    path,
+                    canonical,
+                    root,
+                } => Self::ReadRejectedPathEscape(path.into(), canonical.into(), root.into()),
                 FontWarn::RegisterEmpty { path } => Self::RegisterEmpty(path.into()),
             }
         }
@@ -1599,6 +1829,26 @@ mod tests {
             ),
             FontWarn::ReadRejectedOversizedDuringRead { path: p, size: 101, cap: 100 }
                 if p == path
+        ));
+        // PathEscape: since the loop's read-time arm is cov:ignore
+        // (walker pre-filter + intermediate-symlink race required to fire),
+        // this is the sole deterministic pin of the new mapping.
+        // bd raikiri-spike-zr8.
+        let canonical = PathBuf::from("/tmp/outside/font.ttf");
+        let root = PathBuf::from("/tmp/fonts");
+        assert!(matches!(
+            read_reject_to_warn(
+                path,
+                &FontReadReject::PathEscape {
+                    canonical: canonical.clone(),
+                    root: root.clone(),
+                }
+            ),
+            FontWarn::ReadRejectedPathEscape {
+                path: p,
+                canonical: c,
+                root: r,
+            } if p == path && c == canonical.as_path() && r == root.as_path()
         ));
     }
 
