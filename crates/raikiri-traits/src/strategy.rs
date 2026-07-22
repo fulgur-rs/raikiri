@@ -115,9 +115,12 @@ impl ProbeContext {
     }
 }
 
-/// TargetResolver が受け取る request (M4 で populate)。
+/// TargetResolver が受け取る request。
 ///
-/// M1.1 では opaque placeholder。
+/// M6+ consumer (raikiri-dom / raikiri-paint) 実装時に field を populate
+/// (raikiri-spike-376 amended taxonomy、2026-07-19 PMO)。
+///
+/// M1.1〜M5 では opaque placeholder。
 #[allow(missing_docs)]
 #[derive(Debug)]
 #[non_exhaustive]
@@ -144,9 +147,12 @@ impl<'a> Default for TargetRequest<'a> {
     }
 }
 
-/// TargetResolver が返す resolved 情報 (M4 で variant を populate)。
+/// TargetResolver が返す resolved 情報。
 ///
-/// M1.1 では uninhabited。
+/// M6+ consumer (raikiri-dom / raikiri-paint) 実装時に variant を populate
+/// (raikiri-spike-376 amended taxonomy、2026-07-19 PMO)。
+///
+/// M1.1〜M5 では uninhabited。
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ResolvedTarget {
