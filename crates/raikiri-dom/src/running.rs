@@ -118,35 +118,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use raikiri_style::property::{ContentComponent, ContentTextKeyword};
-use raikiri_traits::{GcpmDirective, NodeId, Symbol};
+use raikiri_traits::{GcpmDirective, NodeId, RunningTemplateId, Symbol};
 
-/// Per-element identifier for a registered running template — a newtype over
-/// the subtree root's [`NodeId`].
-///
-/// The subtree root is already unique in the arena, so it doubles as a stable
-/// per-element key for [`RunningTemplateStore::parsed_templates`]. Wrapping
-/// it in a distinct type mirrors the design doc naming and keeps callers from
-/// accidentally passing an unrelated `NodeId` (e.g. a `<body>` node) into
-/// [`RunningTemplateStore::get`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(
-    dead_code,
-    reason = "Constructed at register time (from ParsedRunningTemplate.\
-              subtree_root); consumed by the M6 directive-apply driver (bd \
-              raikiri-spike-96u.4) that will wire element(<name>) resolves."
-)]
-pub(crate) struct RunningTemplateId(pub(crate) NodeId);
-
-impl RunningTemplateId {
-    #[allow(
-        dead_code,
-        reason = "Producer path (register-site walker) lands with bd \
-                  raikiri-spike-96u.4."
-    )]
-    pub(crate) fn new(subtree_root: NodeId) -> Self {
-        Self(subtree_root)
-    }
-}
+// [`RunningTemplateId`] is the shared identifier from raikiri-traits
+// (design §7.0 line 1904 "shared types → raikiri-traits"). Landed by bd
+// raikiri-spike-96u.4 together with the [`GcpmDirective`] populate — the
+// `RegisterRunning` variant references it (§7.1 line 1918). Previously this
+// module carried a `pub(crate)` local mirror; that mirror is dropped now that
+// the traits-side canonical location exists.
 
 /// Per-subtree pre-cascaded style block.
 ///
@@ -241,12 +220,13 @@ impl DynamicFlags {
 /// Layout is NOT cached here (§7.3 line 1979 "layout 結果はキャッシュしない");
 /// per-page re-layout runs via [`layout_running_template`].
 ///
-/// **`directives` field** — [`raikiri_traits::GcpmDirective`] is uninhabited
-/// today (M4+ variant populate, bd raikiri-spike-96u.4, wall/traits). The
-/// field carries an always-empty `Vec` as a **shape placeholder** so the
-/// design's field layout is honored and the eventual populate lands
-/// non-breakingly. Unit tests pin the vec's default-empty state to catch a
-/// future divergence.
+/// **`directives` field** — [`raikiri_traits::GcpmDirective`] was uninhabited
+/// through raikiri-spike-96u.3; the variant populate landed with
+/// raikiri-spike-96u.4 (canonical 6-variant shape per design doc §7.1
+/// line 1913-1920). The field remains an empty `Vec` by default; the
+/// register-site walker (later 96u-series task) will emit
+/// `CounterIncrement` / `CounterReset` / `CounterSet` / `StringSet` /
+/// `RegisterRunning` / `RegisterTarget` records under each subtree.
 #[derive(Debug)]
 #[allow(
     dead_code,
@@ -264,8 +244,9 @@ pub(crate) struct ParsedRunningTemplate {
     pub(crate) computed_styles: Arc<CascadeSubset>,
     /// GCPM directives that live inside the template subtree
     /// (`counter-increment`, `counter-reset`, `counter-set`, `string-set`,
-    /// nested `running()` seeds if the spec/impl allows). Uninhabited today
-    /// (see type-level note).
+    /// nested `running()` seeds if the spec/impl allows). Populated by the
+    /// register-site walker (later 96u-series task); empty by default (see
+    /// type-level `directives` field note).
     pub(crate) directives: Vec<GcpmDirective>,
     /// Which dynamic axes this template exercises (see [`DynamicFlags`]).
     pub(crate) dynamic_flags: DynamicFlags,
@@ -632,9 +613,8 @@ mod tests {
         };
         assert_eq!(parsed.subtree_root, NodeId::new(42));
         assert!(parsed.computed_styles.styles.is_empty());
-        // GcpmDirective is uninhabited today (bd raikiri-spike-96u.4 populates
-        // it under wall/traits, out of THIS task's scope). Regression pin
-        // against silent variant addition here.
+        // Default empty (populated by the later register-site walker; the
+        // enum shape landed with raikiri-spike-96u.4).
         assert!(parsed.directives.is_empty());
         assert_eq!(parsed.dynamic_flags, DynamicFlags::default());
     }

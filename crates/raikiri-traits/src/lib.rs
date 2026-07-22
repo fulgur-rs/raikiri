@@ -53,8 +53,9 @@ pub use net::{
     NetworkProvider, Request,
 };
 pub use page::{
-    ContentValueItem, FormData, GcpmDirective, LayoutBuffer, PageBox, PageContext, PageDefaults,
-    PageDefaultsBuilder, PageFragment, RunningTemplate, TargetRegistry,
+    ContentSource, ContentValueConvertError, ContentValueItem, FormData, GcpmDirective,
+    LayoutBuffer, PageBox, PageContext, PageDefaults, PageDefaultsBuilder, PageFragment,
+    RunningTemplate, RunningTemplateId, TargetRegistry,
 };
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
