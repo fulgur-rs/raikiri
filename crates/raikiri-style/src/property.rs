@@ -1,6 +1,6 @@
 //! CSS property value 型と per-property parser。
 //!
-//! 現サポート property の一覧は [`parse_value`] の match arm を参照
+//! 現サポート property の一覧は `parse_value` の match arm を参照
 //! (color / background-color / font-family / font-size / font-weight /
 //! display / counter-reset / counter-increment / counter-set / content /
 //! string-set / position)。認識できない property name / invalid value は
@@ -173,7 +173,7 @@ pub enum Length {
 /// pattern。
 ///
 /// [`Copy`] 導入は underlying [`Length`] が `Copy` (Px/Em/Rem/Percent/Pt は
-/// 全て単一 f32 payload) で、Sides<LengthOrAuto> = 4 × ~8 bytes に収まり
+/// 全て単一 f32 payload) で、`Sides<LengthOrAuto>` = 4 × ~8 bytes に収まり
 /// per-node copy が cheap なため。
 ///
 /// # Primary sources
@@ -255,7 +255,7 @@ impl<T: Clone> Sides<T> {
 /// # Non-negative constraint
 ///
 /// spec grammar `<number [0,∞]>` / `<length-percentage [0,∞]>` により負値は
-/// invalid → parser 側で drop ([`parse_line_height`] の post-filter)。g04
+/// invalid → parser 側で drop (`parse_line_height` の post-filter)。g04
 /// category (a) spec-invalid → drop: spec grammar が range を parse-time で
 /// 制約しているため、reject 自体が spec 準拠 (stricter ではなく match)。
 ///
@@ -547,7 +547,7 @@ pub enum DisplayValue {
 /// # Scope carving (g04 3-category)
 ///
 /// - **(b) milestone subset**: 本 crate は Sprint 12 seed として shorthand を expand
-///   せず、`ComputedValues.text_align` 単一 field に保持する — margin (Sides<T>) や
+///   せず、`ComputedValues.text_align` 単一 field に保持する — margin (`Sides<T>`) や
 ///   `content` (`normal`/`none` → 空 list) と同じ「shorthand as single field」
 ///   convention。text-align-all / text-align-last longhand 分離 (§6.2 / §6.3) は
 ///   future task (Epic 5 or Epic 7 相当) で拡張。
@@ -640,7 +640,7 @@ pub enum PositionValue {
 }
 
 /// 現サポート property の resolved value (variant 一覧は下記、
-/// property name → variant mapping は [`parse_value`] 参照)。
+/// property name → variant mapping は `parse_value` 参照)。
 ///
 /// 認識できない property (例: `margin` / `padding` / `border-*` — M6+ scope) や
 /// invalid value (例: `font-size: 1em` — em 未対応) は parser 段で `None` に
@@ -785,8 +785,8 @@ pub enum PropertyValue {
     /// `padding-top: <length-percentage [0,∞]>` — non-inherited、initial: `0`。
     /// CSS Box 3 §6.1 <https://www.w3.org/TR/css-box-3/#padding-physical>。
     /// spec grammar `<length-percentage [0,∞]>` の non-negative constraint は
-    /// [`parse_padding_side`] が parse-time enforce (負値は None 返し → declaration drop)、
-    /// `auto` keyword は grammar に含まれないため [`parse_length_value`] の
+    /// `parse_padding_side` が parse-time enforce (負値は None 返し → declaration drop)、
+    /// `auto` keyword は grammar に含まれないため `parse_length_value` の
     /// Dimension / Percentage arm fall-through で自然 reject。
     /// (raikiri-spike-0vv.6)
     PaddingTop(Length),
@@ -809,7 +809,7 @@ pub enum PropertyValue {
     /// - 3 values: top = first, left/right = second, bottom = third
     /// - 4 values: top / right / bottom / left (clockwise from top)
     ///
-    /// **cascade 上は普段この variant を観測しない**: [`crate::rule::parse_declaration_block`]
+    /// **cascade 上は普段この variant を観測しない**: `crate::rule::parse_declaration_block`
     /// が declaration parse 直後に 4 longhand variant
     /// ([`PaddingTop`](Self::PaddingTop) / [`PaddingRight`](Self::PaddingRight) /
     /// [`PaddingBottom`](Self::PaddingBottom) / [`PaddingLeft`](Self::PaddingLeft))
@@ -817,7 +817,7 @@ pub enum PropertyValue {
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-5/#shorthand>
     /// verbatim "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
-    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
+    /// 成立する)。expansion 経路の safety net として `crate::cascade::apply_value`
     /// は本 variant を受けたときも `ComputedValues.padding` field 全 4 side を
     /// 上書きする実装を持つ (regression 時 panic 回避)。
     /// raikiri-spike-5nc (margin 0vv.5 の parse-time expansion model に migrate)。
@@ -841,7 +841,7 @@ pub enum PropertyValue {
     /// `margin: <'margin-top'>{1,4}` shorthand — 4-side quad の一括指定
     /// (CSS Box 3 §3.2 <https://www.w3.org/TR/css-box-3/#margin-shorthand>)。
     ///
-    /// **cascade 上は普段この variant を観測しない**: [`crate::rule::parse_declaration_block`]
+    /// **cascade 上は普段この variant を観測しない**: `crate::rule::parse_declaration_block`
     /// が declaration parse 直後に 4 longhand variant
     /// ([`MarginTop`](Self::MarginTop) / [`MarginRight`](Self::MarginRight) /
     /// [`MarginBottom`](Self::MarginBottom) / [`MarginLeft`](Self::MarginLeft))
@@ -849,7 +849,7 @@ pub enum PropertyValue {
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
     /// verbatim "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
-    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
+    /// 成立する)。expansion 経路の safety net として `crate::cascade::apply_value`
     /// は本 variant を受けたときも `ComputedValues.margin` field 全 4 side を
     /// 上書きする実装を持つ (regression 時 panic 回避)。
     /// raikiri-spike-0vv.5。

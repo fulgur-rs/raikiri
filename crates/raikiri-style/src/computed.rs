@@ -151,7 +151,7 @@ pub struct ComputedValues {
     ///
     /// spec 上 shorthand (text-align-all + text-align-last の 2 longhand を set)
     /// だが、Sprint 12 seed では **shorthand as single field** convention (margin
-    /// Sides<T> / content-normal-none-as-empty-list precedent) を踏襲して単一
+    /// `Sides<T>` / content-normal-none-as-empty-list precedent) を踏襲して単一
     /// field に保持 (**g04 (b) milestone subset**、longhand 分離 §6.2 / §6.3 は
     /// 後続 task で defer)。詳細は [`TextAlign`] doc-comment。
     ///
