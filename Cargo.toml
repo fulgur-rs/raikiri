@@ -20,7 +20,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 # ── In-repo (populated per crate as they land in Tasks 2–6) ────────────
-raikiri-traits       = { version = "0.1.0", path = "./crates/raikiri-traits" }
+raikiri-traits       = { version = "0.2.0", path = "./crates/raikiri-traits" }
 raikiri-style        = { version = "0.1.0", path = "./crates/raikiri-style" }
 raikiri-net          = { version = "0.1.0", path = "./crates/raikiri-net" }
 raikiri-dom          = { version = "0.1.0", path = "./crates/raikiri-dom" }
