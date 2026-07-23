@@ -73,6 +73,7 @@ pub(crate) struct Attr {
 /// `Text` を Box しないのは意図した trade-off: `text_layout()` は paint hot
 /// path から呼ばれるため、追加の indirection を持ち込みたくない。
 #[derive(Debug)]
+#[non_exhaustive]
 #[allow(
     clippy::large_enum_variant,
     reason = "Element only is boxed by design (blitz-compat shape, see doc comment); \
@@ -87,6 +88,31 @@ pub enum NodeData {
     Text(TextData),
     /// Document root (arena index 0 の virtual node)。
     Document,
+    /// HTML / XML comment node (`<!-- ... -->`)。raikiri-spike-84y で追加
+    /// (旧 M1: `"#comment"` tag な Element として保持後 sink.finish() で strip
+    /// → 恒久 variant 化)。character data を保持するが Element ではない
+    /// (`kind() == NodeKind::Comment`、`as_element() == None`)。
+    /// `mark_in_document_flags` が明示的に `IS_IN_DOCUMENT` bit を clear するため、
+    /// cascade / paint / layout / stylesheet extraction の全 traversal は
+    /// `is_in_document()` gate で自動的に skip する (defense-in-depth: 追加の
+    /// `matches!(kind, Comment)` gate を traversal 側に散らさない)。
+    Comment(SmolStr),
+    /// Processing instruction node (`<?target data?>`)。raikiri-spike-84y で
+    /// 追加。target + data の pair を保持。同上、`IS_IN_DOCUMENT` bit を clear
+    /// することで traversal から自然に消える。
+    ProcessingInstruction {
+        /// PI target (`<?xml-stylesheet ...?>` の `xml-stylesheet` 部分)。
+        target: SmolStr,
+        /// PI data (`<?xml-stylesheet href="..."?>` の `href="..."` 部分)。
+        data: SmolStr,
+    },
+    /// Document fragment root (`<template>` contents 等の detached subtree の
+    /// 仮想 root)。raikiri-spike-84y で追加 (xno Part 2 で
+    /// `"#document-fragment"` pseudo-tag な Element として実装した shape を
+    /// 恒久 variant 化)。`kind() == NodeKind::DocumentFragment`、
+    /// `as_element() == None`。Document root からは reachable でないため
+    /// `mark_in_document_flags` は自然に `IS_IN_DOCUMENT` bit を clear する。
+    DocumentFragment,
 }
 
 impl NodeData {
@@ -133,11 +159,12 @@ pub struct ElementData {
     /// 含めない。
     pub(crate) attributes: Vec<Attr>,
     /// `<template>` element の contents fragment root への arena index
-    /// (raikiri-spike-xno Part 2)。
+    /// (raikiri-spike-xno Part 2、raikiri-spike-84y で fragment root shape を
+    /// `NodeData::DocumentFragment` variant 化)。
     ///
     /// raikiri-html sink が `create_element` で html5ever の
     /// `ElementFlags::template = true` を観測した時、[`crate::Document::allocate_template_fragment_root`]
-    /// で detached な "#document-fragment" element を allocate し、その arena
+    /// で detached な [`NodeData::DocumentFragment`] node を allocate し、その arena
     /// index をここに格納する。`TreeSink::get_template_contents` はこの slot
     /// を返し、以降 html5ever は template contents を fragment root の子として
     /// append する (template element 自身の children は空のまま)。
@@ -240,6 +267,52 @@ impl Node {
         }
     }
 
+    /// Comment node を character data と共に構築する (raikiri-spike-84y)。
+    /// `IS_IN_DOCUMENT` bit は default true で作られるが、
+    /// [`crate::Document::mark_in_document_flags`] が step 2 の DFS で必ず
+    /// clear する契約 (blitz-compat: comment は flat-tree 上不可視、layout /
+    /// paint / cascade は `is_in_document()` gate で自動 skip)。
+    pub(crate) fn new_comment(text: SmolStr) -> Self {
+        Self {
+            style: Style::default(),
+            children: Vec::new(),
+            cache: Cache::new(),
+            unrounded_layout: Layout::with_order(0),
+            flags: NodeFlags::IS_IN_DOCUMENT,
+            data: NodeData::Comment(text),
+        }
+    }
+
+    /// Processing instruction node を target + data と共に構築する
+    /// (raikiri-spike-84y)。Comment と同じく `IS_IN_DOCUMENT` bit は
+    /// [`crate::Document::mark_in_document_flags`] で clear される。
+    pub(crate) fn new_processing_instruction(target: SmolStr, data: SmolStr) -> Self {
+        Self {
+            style: Style::default(),
+            children: Vec::new(),
+            cache: Cache::new(),
+            unrounded_layout: Layout::with_order(0),
+            flags: NodeFlags::IS_IN_DOCUMENT,
+            data: NodeData::ProcessingInstruction { target, data },
+        }
+    }
+
+    /// Document fragment root を構築する (raikiri-spike-84y)。detached 状態で
+    /// arena に置くのが典型 (parent なし)、`<template>` contents の virtual
+    /// root として使用する。`IS_IN_DOCUMENT` bit は default true で作られるが、
+    /// Document root から reachable でないため `mark_in_document_flags` で
+    /// clear される。
+    pub(crate) fn new_document_fragment() -> Self {
+        Self {
+            style: Style::default(),
+            children: Vec::new(),
+            cache: Cache::new(),
+            unrounded_layout: Layout::with_order(0),
+            flags: NodeFlags::IS_IN_DOCUMENT,
+            data: NodeData::DocumentFragment,
+        }
+    }
+
     // ─── inherent accessor methods (raikiri-spike-37c) ─────────────────
 
     /// この Node の [`NodeKind`] を返す。
@@ -252,6 +325,9 @@ impl Node {
             NodeData::Element(_) => NodeKind::Element,
             NodeData::Text(_) => NodeKind::Text,
             NodeData::Document => NodeKind::Document,
+            NodeData::Comment(_) => NodeKind::Comment,
+            NodeData::ProcessingInstruction { .. } => NodeKind::ProcessingInstruction,
+            NodeData::DocumentFragment => NodeKind::DocumentFragment,
         }
     }
 
@@ -438,6 +514,46 @@ mod flags_tests {
         assert!(!n.is_in_document());
         n.set_in_document(true);
         assert!(n.is_in_document());
+    }
+
+    #[test]
+    fn node_new_comment_kind_and_default_flag_state() {
+        // raikiri-spike-84y: Comment constructor は kind = NodeKind::Comment、
+        // IS_IN_DOCUMENT は default true (mark_in_document_flags で後段 clear
+        // される optimistic 初期値、Element / Text と同じ posture)。
+        let n = Node::new_comment(SmolStr::new("hello"));
+        assert_eq!(n.kind(), NodeKind::Comment);
+        assert!(
+            n.is_in_document(),
+            "constructor default follows Element/Text pattern"
+        );
+        // tag_name accessor は Comment に対して None を返す (Element でない)。
+        assert_eq!(n.tag_name(), None);
+        // text_layout accessor は Comment に対して None を返す (Text でない)。
+        assert!(n.text_layout().is_none());
+    }
+
+    #[test]
+    fn node_new_processing_instruction_kind_and_default_flag_state() {
+        let n = Node::new_processing_instruction(
+            SmolStr::new("xml-stylesheet"),
+            SmolStr::new("href='x.css'"),
+        );
+        assert_eq!(n.kind(), NodeKind::ProcessingInstruction);
+        assert!(n.is_in_document());
+        assert_eq!(n.tag_name(), None);
+        assert!(n.text_layout().is_none());
+    }
+
+    #[test]
+    fn node_new_document_fragment_kind_and_default_flag_state() {
+        let n = Node::new_document_fragment();
+        assert_eq!(n.kind(), NodeKind::DocumentFragment);
+        // Fragment root は使用時 detached 状態で作られるため、mark 後に
+        // false に落ちる。constructor 単体では default true。
+        assert!(n.is_in_document());
+        assert_eq!(n.tag_name(), None);
+        assert!(n.text_layout().is_none());
     }
 
     #[test]

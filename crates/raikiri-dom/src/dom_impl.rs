@@ -259,10 +259,21 @@ impl<'a> StyleNode for NodeRef<'a> {
     fn kind(&self) -> StyleNodeKind {
         // NodeData variant → StyleNodeKind projection. Direct arena lookup —
         // no raikiri_traits::NodeKind bridge.
+        //
+        // raikiri-spike-84y: Comment / ProcessingInstruction / DocumentFragment
+        // arms を追加。cascade / rule-tree walk は Element のみ処理する契約
+        // (crates/raikiri-style/src/cascade.rs / ruletree.rs) なので、追加 kind
+        // は自動的に non-styling。両 trait family で kind() の projection が
+        // 一致することは Two-way invariant の一部。
         match &self.doc.nodes[self.id].data {
             crate::node::NodeData::Element(_) => StyleNodeKind::Element,
             crate::node::NodeData::Text(_) => StyleNodeKind::Text,
             crate::node::NodeData::Document => StyleNodeKind::Document,
+            crate::node::NodeData::Comment(_) => StyleNodeKind::Comment,
+            crate::node::NodeData::ProcessingInstruction { .. } => {
+                StyleNodeKind::ProcessingInstruction
+            }
+            crate::node::NodeData::DocumentFragment => StyleNodeKind::DocumentFragment,
         }
     }
 
