@@ -442,6 +442,10 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // `LengthOrAuto` は Copy)。resolve (`Percent` / `Auto` の実 layout 高さ
         // 計算) は下流責務。
         PropertyValue::Height(v) => target.height = v,
+        // CSS Sizing 3 §3.3 box-sizing (raikiri-spike-0vv.13)。non-inherited、
+        // cascade winner が specified keyword をそのまま computed value に反映。
+        // BoxSizing は Copy、by-value 代入で十分。
+        PropertyValue::BoxSizing(bs) => target.box_sizing = bs,
     }
 }
 
@@ -1030,6 +1034,21 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].text_align, TextAlign::Center);
         assert_eq!(r.computed[span].text_align, TextAlign::Left);
+    }
+
+    // ── box-sizing wire-through (CSS Sizing 3 §3.3、raikiri-spike-0vv.13) ──
+
+    #[test]
+    fn box_sizing_wired_through_cascade_from_inline_style() {
+        // <p style="box-sizing: border-box"> → ComputedValues.box_sizing に
+        // BoxSizing::BorderBox が届く。parser → PropertyValue::BoxSizing →
+        // apply_value → ComputedValues の end-to-end 疎通 smoke。
+        // 37n sibling (background-color / line-height / counter-* / content /
+        // string-set / position / text-align) の wire-through pattern を踏襲
+        // (原則 1 前例主義)。
+        use crate::property::BoxSizing;
+        let cv = cascade_doc("", "p", Some("box-sizing: border-box"));
+        assert_eq!(cv.box_sizing, BoxSizing::BorderBox);
     }
 
     #[test]

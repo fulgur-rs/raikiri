@@ -667,6 +667,56 @@ pub enum DisplayValue {
     None,
 }
 
+/// `box-sizing` property の value。
+///
+/// CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
+/// <https://www.w3.org/TR/css-sizing-3/#box-sizing>: value grammar
+/// `content-box | border-box`、initial value `content-box`、**not inherited**、
+/// computed value = specified keyword。
+///
+/// spec note (§3.3): "The definition of the box-sizing property in this module
+/// supersedes the one in [CSS-UI-3]" — CSS-UI-3 の box-sizing 定義は本 module
+/// により supersede されるため、css-sizing-3 が authoritative source。
+///
+/// # Semantics (spec verbatim summary)
+///
+/// - [`ContentBox`](Self::ContentBox) — spec initial value。指定した `width` /
+///   `height` は content box を対象とし、padding / border は content box の
+///   外側に加算される (legacy CSS 2.1 box model)。
+/// - [`BorderBox`](Self::BorderBox) — 指定した `width` / `height` は border
+///   box を対象とし、padding / border は指定 size 内で content box を縮める
+///   ("The specified padding and border of the element are laid out and drawn
+///   inside this specified width and height").
+///
+/// # Scope carving (g04 3-category)
+///
+/// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` /
+///   `unset` / `revert` / `revert-layer`) は Epic 7、silent drop。
+/// - **(a) spec-invalid**: 未知 keyword (`padding-box` — CSS UI 3 draft 相当
+///   だが css-sizing-3 では削除、`margin-box` 等) は silent drop = `None`。
+///
+/// # Downstream handoff (future scope、style-scope confined)
+///
+/// [`ComputedValues.box_sizing`] は cascade static side seed のみ保持し、
+/// `apply_computed_to_style` bridge (dom scope、`taffy::Style::box_sizing`
+/// への翻訳) は future cross-scope task に defer (bd raikiri-spike-0vv.13
+/// Non-goals)。
+///
+/// `#[non_exhaustive]` は 37n sibling [`DisplayValue`] / [`TextAlign`] /
+/// [`PositionValue`] と同じ forward-compat 契約。
+///
+/// [`ComputedValues.box_sizing`]: crate::computed::ComputedValues::box_sizing
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoxSizing {
+    /// `content-box` — spec initial value。`width` / `height` は content box
+    /// を対象とし、padding / border は content box の外側に加算される。
+    ContentBox,
+    /// `border-box` — `width` / `height` は border box を対象とし、padding /
+    /// border は指定 size 内で content box を縮める。
+    BorderBox,
+}
+
 /// `text-align` property の value。
 ///
 /// CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
@@ -1094,6 +1144,11 @@ pub enum PropertyValue {
     /// 高さ計算) は下流 (raikiri-dom `apply_computed_to_style` bridge、future task)
     /// 責務 — 本 crate は cascade static side に留まり raw specified value を保持。
     Height(LengthOrAuto),
+    /// `box-sizing: content-box | border-box` — **non-inherited**、initial:
+    /// `content-box` (CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing
+    /// property" <https://www.w3.org/TR/css-sizing-3/#box-sizing>)。
+    /// (raikiri-spike-0vv.13)
+    BoxSizing(BoxSizing),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -1161,6 +1216,10 @@ pub enum PropertyKey {
     // matching PropertyValue::Height variant; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
     Height,
+    // box-sizing — raikiri-spike-0vv.13 (CSS Sizing 3 §3.3、semantics on the
+    // matching PropertyValue::BoxSizing variant; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention).
+    BoxSizing,
 }
 
 impl PropertyValue {
@@ -1209,6 +1268,7 @@ impl PropertyValue {
             PropertyValue::Border(_) => PropertyKey::Border,
             PropertyValue::Width(_) => PropertyKey::Width,
             PropertyValue::Height(_) => PropertyKey::Height,
+            PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
         }
     }
 }
@@ -1363,6 +1423,10 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // scope 外の `min-content` / `max-content` / `fit-content()` は silent drop
         // (parse_height 内で ident branch が auto のみ受理して他 keyword 落とし)。
         "height" => parse_height(input).map(PropertyValue::Height),
+        // CSS Sizing 3 §3.3 box-sizing (raikiri-spike-0vv.13)。
+        // value grammar `content-box | border-box`、initial `content-box`、
+        // not inherited、computed value = specified keyword。
+        "box-sizing" => parse_box_sizing(input).map(PropertyValue::BoxSizing),
         _ => None,
     }
 }
@@ -2162,6 +2226,28 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         "inline" => Some(DisplayValue::Inline),
         "inline-block" => Some(DisplayValue::InlineBlock),
         "none" => Some(DisplayValue::None),
+        _ => None,
+    }
+}
+
+/// `box-sizing: <ident>` を parse する
+/// (CSS Sizing 3 §3.3 <https://www.w3.org/TR/css-sizing-3/#box-sizing>)。
+///
+/// Spec value grammar (§3.3): `content-box | border-box`。ASCII
+/// case-insensitive で ident を比較する (CSS Values 3 §3.1 "Pre-defined
+/// Keywords"、37n sibling [`parse_display`] / [`parse_text_align`] と同 flavor)。
+///
+/// # Scope carving (g04 3-category、[`BoxSizing`] doc-comment に詳述)
+///
+/// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` /
+///   `unset` / `revert` / `revert-layer`) は Epic 7 で silent drop。
+/// - **(a) spec-invalid**: 他 keyword (`padding-box` — CSS-UI 3 draft 相当
+///   だが css-sizing-3 では削除、`margin-box` 等) は silent drop = `None`。
+fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "content-box" => Some(BoxSizing::ContentBox),
+        "border-box" => Some(BoxSizing::BorderBox),
         _ => None,
     }
 }
@@ -3051,6 +3137,71 @@ mod tests {
             parse("None", "display"),
             Some(PropertyValue::Display(DisplayValue::None))
         );
+    }
+
+    // ── box-sizing (CSS Sizing 3 §3.3、raikiri-spike-0vv.13) ────────
+    //
+    // Verification anchors (bd raikiri-spike-0vv.13):
+    //   #1 content-box → Some(BoxSizing::ContentBox)
+    //   #2 border-box  → Some(BoxSizing::BorderBox)
+    //   #3 padding-box → None (spec 外、CSS UI 3 draft の削除済 keyword)
+    //   #4 initial + #5 non-inheritance test は crate::computed 側
+    //
+    // 37n sibling: `display_*` / `text_align_*` の keyword parser test 群と同構造。
+
+    #[test]
+    fn box_sizing_parse_content_box() {
+        assert_eq!(
+            parse("content-box", "box-sizing"),
+            Some(PropertyValue::BoxSizing(BoxSizing::ContentBox))
+        );
+    }
+
+    #[test]
+    fn box_sizing_parse_border_box() {
+        assert_eq!(
+            parse("border-box", "box-sizing"),
+            Some(PropertyValue::BoxSizing(BoxSizing::BorderBox))
+        );
+    }
+
+    #[test]
+    fn box_sizing_rejects_unknown_ident() {
+        // spec-invalid (category (a) → drop):
+        // - `padding-box` は CSS-UI 3 draft 相当だが css-sizing-3 では削除済み
+        //   (spec note "supersedes the one in [CSS-UI-3]")、
+        // - `margin-box` は grammar 外の任意 ident。
+        assert_eq!(parse("padding-box", "box-sizing"), None);
+        assert_eq!(parse("margin-box", "box-sizing"), None);
+        assert_eq!(parse("bogus", "box-sizing"), None);
+    }
+
+    #[test]
+    fn box_sizing_rejects_non_ident() {
+        assert_eq!(parse("16px", "box-sizing"), None);
+        assert_eq!(parse("100", "box-sizing"), None);
+    }
+
+    #[test]
+    fn box_sizing_is_case_insensitive() {
+        // CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII case-insensitive
+        // (37n sibling `display_is_case_insensitive` と同 flavor)。
+        assert_eq!(
+            parse("CONTENT-BOX", "box-sizing"),
+            Some(PropertyValue::BoxSizing(BoxSizing::ContentBox))
+        );
+        assert_eq!(
+            parse("Border-Box", "box-sizing"),
+            Some(PropertyValue::BoxSizing(BoxSizing::BorderBox))
+        );
+    }
+
+    #[test]
+    fn box_sizing_key_returns_box_sizing() {
+        // PropertyValue::BoxSizing → PropertyKey::BoxSizing (cascade winner
+        // 選択の discriminant 導線、sibling `Display` / `TextAlign` key() と対称)。
+        let v = PropertyValue::BoxSizing(BoxSizing::BorderBox);
+        assert_eq!(v.key(), PropertyKey::BoxSizing);
     }
 
     // ── counter-* (CSS Lists 3 §3、raikiri-spike-s85 M5 pre-work) ──
