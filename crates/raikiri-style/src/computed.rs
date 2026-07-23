@@ -41,10 +41,10 @@ pub struct RunningTemplate {
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
 /// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / line_height、
 /// non-inherited: background-color / display / counter-* / content / string-set /
-/// running_templates / padding / margin / width)。
+/// running_templates / padding / margin / border / width / height)。
 ///
-/// `#[non_exhaustive]` により future property (height / border-* / box-shadow
-/// 等) の追加が non-breaking。
+/// `#[non_exhaustive]` により future property (box-shadow 等) の追加が
+/// non-breaking。
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComputedValues {
@@ -263,6 +263,33 @@ pub struct ComputedValues {
     /// used-value に採る) として下流 layout で解決する — margin `auto` の余白
     /// 分配とは意味が異なる。(raikiri-spike-0vv.10)
     pub width: LengthOrAuto,
+    /// `height` — preferred vertical size。**non-inherited**、initial:
+    /// `LengthOrAuto::Auto` (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
+    /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>、
+    /// spec 明記 "Initial: auto", "Inherited: no")。
+    ///
+    /// Sprint 17 seed scope (raikiri-spike-0vv.11) では `auto` + 非負
+    /// `<length-percentage>` の 2 分岐のみ受理 — `min-content` / `max-content`
+    /// / `fit-content(<length-percentage>)` は spec-valid だが milestone subset
+    /// (g04 (b)) として parser 段で silent drop
+    /// (`parse_height` doc 参照)。
+    ///
+    /// [`LengthOrAuto`] は sibling [`Self::width`] と同 shape を reuse
+    /// (37n sibling、payload 型は共通)。resolve
+    /// (`LengthOrAuto::Length(Percent(...))` → containing block % 換算、
+    /// `LengthOrAuto::Auto` の実 layout 高さ計算) は下流 (raikiri-dom
+    /// `apply_computed_to_style` bridge、future task) 責務 — 本 crate は
+    /// cascade static side に留まり raw specified value を保持する。
+    ///
+    /// # Primary source
+    ///
+    /// - CSS Sizing 3 §3.1.1 "Preferred Size Properties":
+    ///   [`height`](https://www.w3.org/TR/css-sizing-3/#preferred-size-properties)
+    ///   — "Value: auto | `<length-percentage [0,∞]>` | min-content |
+    ///   max-content | fit-content(`<length-percentage [0,∞]>`)",
+    ///   "Initial: auto", "Applies to: all elements except non-replaced
+    ///   inlines", "Inherited: no", "Percentages: relative to containing block".
+    pub height: LengthOrAuto,
 }
 
 impl ComputedValues {
@@ -315,6 +342,8 @@ impl ComputedValues {
             }),
             // CSS Sizing 3 §3.1.1: width initial は `auto` (raikiri-spike-0vv.10)。
             width: LengthOrAuto::Auto,
+            // CSS Sizing 3 §3.1.1: height initial は `auto` (raikiri-spike-0vv.11)。
+            height: LengthOrAuto::Auto,
         }
     }
 
@@ -328,7 +357,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / line_height、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / width)。
+    /// string-set / running_templates / padding / margin / border / width / height)。
     ///
     /// 新 property を追加する際は分類に応じてこの struct 直下の該当行を追加する
     /// (inherited なら parent からのコピー、non-inherited なら初期値を直接指定)。
@@ -394,6 +423,10 @@ impl ComputedValues {
             // non-inherited (CSS Sizing 3 §3.1.1 "Inherited: no"、initial: `auto`)。
             // 親が具体 width を持っていても child は Auto に戻る。raikiri-spike-0vv.10。
             width: LengthOrAuto::Auto,
+            // non-inherited (CSS Sizing 3 §3.1.1 "Inherited: no"、
+            // raikiri-spike-0vv.11)。`Self::initial()` と同 shape で `Auto`。
+            // `LengthOrAuto: Copy` により per-node write は bit-copy。
+            height: LengthOrAuto::Auto,
         }
     }
 }
@@ -444,6 +477,8 @@ mod tests {
         );
         // CSS Sizing 3 §3.1.1 (raikiri-spike-0vv.10): width initial は `auto`。
         assert_eq!(cv.width, LengthOrAuto::Auto);
+        // CSS Sizing 3 §3.1.1 (raikiri-spike-0vv.11): height initial は `auto`。
+        assert_eq!(cv.height, LengthOrAuto::Auto);
     }
 
     #[test]
@@ -515,6 +550,10 @@ mod tests {
             // 0vv.10: 同様 parent に explicit width を持たせ、child が initial
             // (Auto) に落ちる pin は inherit_from_leaves_width_at_initial 参照。
             width: LengthOrAuto::Length(Length::Px(200.0)),
+            // 0vv.11: 同じく non-inherited fixture で parent に explicit value を
+            // 持たせ、child が initial (Auto) に落ちることを pin
+            // (inherit_from_leaves_height_at_initial 参照)。
+            height: LengthOrAuto::Length(Length::Px(200.0)),
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -690,6 +729,22 @@ mod tests {
         };
         let child = ComputedValues::inherit_from(&parent);
         assert_eq!(child.width, LengthOrAuto::Auto);
+    }
+
+    #[test]
+    fn inherit_from_leaves_height_at_initial() {
+        // CSS Sizing 3 §3.1.1 "Inherited: no" — 親が height を持っていても child
+        // は initial (`LengthOrAuto::Auto`) に戻る (raikiri-spike-0vv.11)。37n
+        // sibling: display / counter-* / content / string_set / running_templates /
+        // padding / margin と同 shape。
+        //
+        // Verification 6 (task doc) の中核 assertion。
+        let parent = ComputedValues {
+            height: LengthOrAuto::Length(Length::Px(100.0)),
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(child.height, LengthOrAuto::Auto);
     }
 
     #[test]
