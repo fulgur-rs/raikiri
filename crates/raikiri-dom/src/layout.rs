@@ -16,11 +16,13 @@ use parley::{
 };
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedValues;
-use raikiri_style::property::{Border, BorderStyle, DisplayValue, Length, LengthOrAuto};
+use raikiri_style::property::{
+    Border, BorderStyle, BoxSizing as StyleBoxSizing, DisplayValue, Length, LengthOrAuto,
+};
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
-    AvailableSpace, Dimension, Display, LengthPercentage, LengthPercentageAuto,
-    NodeId as TaffyNodeId, Rect, Size, compute_root_layout,
+    AvailableSpace, BoxSizing as TaffyBoxSizing, Dimension, Display, LengthPercentage,
+    LengthPercentageAuto, NodeId as TaffyNodeId, Rect, Size, compute_root_layout,
 };
 
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
@@ -86,6 +88,8 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///   (Wave 3) が同 helper を拡張して書き込むため本 landing では touch しない。
 /// - [`bridge_border`] — [`Sides<Border>`] → [`taffy::Rect<LengthPercentage>`]
 ///   with border-style gating (raikiri-spike-q0uc Wave 2, advisor #2 CSS Backgrounds 3 §5.2)
+/// - [`bridge_box_sizing`] — [`raikiri_style::BoxSizing`] → [`taffy::BoxSizing`]
+///   (raikiri-spike-o11x Wave 2, CSS Sizing 3 §7)
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -98,9 +102,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_padding(style, cv);
         bridge_size(style, cv);
         bridge_border(style, cv);
-        // Sprint 18 Wave 2+ で以下が追記予定 (順序: box-sizing、
-        // advisor #4 conflict 密度最小化):
-        //   bridge_box_sizing(style, cv);
+        bridge_box_sizing(style, cv);
     }
 }
 
@@ -259,6 +261,46 @@ fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues) {
     // struct literal (`style.size = Size {...}`) を使わず field assign する
     // ことで、Wave 3 マージ前でも default height を破壊しない。
     style.size.width = length_or_auto_to_taffy_dimension(cv.width);
+}
+
+/// [`raikiri_style::property::BoxSizing`] → [`taffy::BoxSizing`] bridge。
+///
+/// CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
+/// <https://www.w3.org/TR/css-sizing-3/#box-sizing>: value grammar
+/// `content-box | border-box`、spec initial `content-box`。**enum 1:1 mapping**
+/// (Length policy に不参加、Sprint 18 Wave 2 の最小 helper)。
+///
+/// # Initial-value 補正 note
+///
+/// - raikiri-style initial = `BoxSizing::ContentBox` (CSS Sizing 3 §3.3 spec 準拠)
+/// - taffy default = `taffy::BoxSizing::BorderBox` (taffy 0.12 の `#[default]`)
+///
+/// 両者の初期値は spec と食い違うが、cascade は unspecified 時に必ず
+/// [`ComputedValues::initial`] 経由で `ContentBox` を seed するため、本 bridge が
+/// 走った後の `style.box_sizing` は常に spec 初期値 (`ContentBox`) になる。
+/// つまり本 helper の副作用として "taffy default の spec 違反" を補正する。
+///
+/// # non_exhaustive catch-all
+///
+/// raikiri-style の [`BoxSizing`] は `#[non_exhaustive]` (37n sibling pattern
+/// for forward-compat)。未知 variant は spec initial (`ContentBox`) に
+/// fail-quiet — spec-violation を silent に伸ばさないよう "最も安全な既定"
+/// にする方針 ([`bridge_display`] catch-all → `Block` と同じ趣旨)。
+///
+/// taffy 側 (`taffy::BoxSizing`) は `#[non_exhaustive]` **ではない** ため、
+/// mapping 出力 arm は `ContentBox` / `BorderBox` の 2 個で網羅済。
+///
+/// (raikiri-spike-o11x Sprint 18 Wave 2)
+///
+/// [`BoxSizing`]: raikiri_style::property::BoxSizing
+fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
+    style.box_sizing = match cv.box_sizing {
+        StyleBoxSizing::ContentBox => TaffyBoxSizing::ContentBox,
+        StyleBoxSizing::BorderBox => TaffyBoxSizing::BorderBox,
+        // non_exhaustive catch-all — 未知 variant は spec initial (ContentBox)
+        // に fail-quiet (silent spec-violation 拡大を避ける)。
+        _ => TaffyBoxSizing::ContentBox,
+    };
 }
 
 /// [`Length`] → [`taffy::LengthPercentage`] bridge (padding / border 用)。
@@ -994,6 +1036,51 @@ mod tests {
                 left: LengthPercentage::length(0.0),
             }
         );
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
+        // raikiri-spike-o11x (Sprint 18 dom-4 Wave 2): bridge_box_sizing が
+        // raikiri_style::BoxSizing → taffy::BoxSizing の enum 1:1 mapping を
+        // 実施することを確認する regression pin。
+        //
+        // 3 case:
+        //   #1 border-box (specified)   → taffy::BoxSizing::BorderBox
+        //   #2 content-box (specified)  → taffy::BoxSizing::ContentBox
+        //   #3 unspecified (cascade default = raikiri-style initial = ContentBox)
+        //      → taffy::BoxSizing::ContentBox
+        //
+        // 特筆: taffy 0.12 default は BorderBox (spec 違反)、raikiri-style initial
+        // は ContentBox (CSS Sizing 3 §3.3 準拠)。#3 は cascade が initial 経由で
+        // ContentBox を seed し、bridge がそれを taffy に伝播することで、taffy default
+        // の spec 違反を副作用的に補正することを pin する。
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn box_sizing_for(inline: Option<&str>) -> TaffyBoxSizing {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), inline);
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[body].style.box_sizing
+        }
+
+        // Case 1: border-box → taffy::BoxSizing::BorderBox
+        assert_eq!(
+            box_sizing_for(Some("box-sizing: border-box")),
+            TaffyBoxSizing::BorderBox
+        );
+
+        // Case 2: content-box (explicit) → taffy::BoxSizing::ContentBox
+        assert_eq!(
+            box_sizing_for(Some("box-sizing: content-box")),
+            TaffyBoxSizing::ContentBox
+        );
+
+        // Case 3: unspecified → raikiri-style initial (ContentBox) → taffy ContentBox
+        // (taffy default の BorderBox を上書き、spec 補正 pin)
+        assert_eq!(box_sizing_for(None), TaffyBoxSizing::ContentBox);
     }
 
     #[test]
