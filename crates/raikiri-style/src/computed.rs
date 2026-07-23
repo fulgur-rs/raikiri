@@ -40,10 +40,10 @@ pub struct RunningTemplate {
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
 /// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / line_height、
 /// non-inherited: background-color / display / counter-* / content / string-set /
-/// running_templates / padding)。
+/// running_templates / padding / margin / width)。
 ///
-/// `#[non_exhaustive]` により future property (margin / padding / width /
-/// height / border-* / box-shadow 等) の追加が non-breaking。
+/// `#[non_exhaustive]` により future property (height / border-* / box-shadow
+/// 等) の追加が non-breaking。
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComputedValues {
@@ -196,6 +196,29 @@ pub struct ComputedValues {
     ///
     /// raikiri-spike-0vv.5。
     pub margin: Sides<LengthOrAuto>,
+    /// `width` — preferred physical horizontal size (writing-mode neutral な
+    /// physical property、vertical writing mode では block axis に対応)。
+    /// **non-inherited**、initial: [`LengthOrAuto::Auto`] (CSS Sizing 3 §3.1.1
+    /// "Preferred Size Properties"
+    /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
+    ///
+    /// spec value grammar は `auto | <length-percentage [0,∞]> | min-content |
+    /// max-content | fit-content(<length-percentage>)` だが、Sprint 17 では
+    /// `auto` + non-negative `<length-percentage>` のみ受理する (min-content /
+    /// max-content / fit-content() は g04 (b) milestone subset、Epic 未着手)。
+    /// 負値は spec grammar `[0,∞]` violation として parse-time drop
+    /// ([`crate::property::PropertyValue::Width`] doc + `parse_width` 参照)。
+    ///
+    /// [`LengthOrAuto`] は 0vv.5 で margin longhand 用に導入した既存 shape (共通
+    /// 型として本 property からも reuse、詳細は [`LengthOrAuto`] doc 参照)。
+    /// `Length` variant の resolve (Em/Rem/Percent/Pt) は下流 (raikiri-dom
+    /// `apply_computed_to_style` bridge、future task) 責務 — font-size context /
+    /// containing block % / DPI 変換で `taffy::Style::size.width` 相当に翻訳
+    /// される。`Auto` は CSS Sizing 3 の automatic size calculation
+    /// (containing block width から margin/border/padding を差し引いた値を
+    /// used-value に採る) として下流 layout で解決する — margin `auto` の余白
+    /// 分配とは意味が異なる。(raikiri-spike-0vv.10)
+    pub width: LengthOrAuto,
 }
 
 impl ComputedValues {
@@ -238,6 +261,8 @@ impl ComputedValues {
             // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
             // で全 4 side に spread)。raikiri-spike-0vv.5。
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
+            // CSS Sizing 3 §3.1.1: width initial は `auto` (raikiri-spike-0vv.10)。
+            width: LengthOrAuto::Auto,
         }
     }
 
@@ -251,7 +276,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / line_height、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding)。
+    /// string-set / running_templates / padding / margin / width)。
     ///
     /// 新 property を追加する際は分類に応じてこの struct 直下の該当行を追加する
     /// (inherited なら parent からのコピー、non-inherited なら初期値を直接指定)。
@@ -306,6 +331,9 @@ impl ComputedValues {
             // non-inherited (CSS Box 3 §3.1 "Inherited: no")。initial 値と drift
             // しないよう `Self::initial()` と同 shape で 0 spread。raikiri-spike-0vv.5。
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
+            // non-inherited (CSS Sizing 3 §3.1.1 "Inherited: no"、initial: `auto`)。
+            // 親が具体 width を持っていても child は Auto に戻る。raikiri-spike-0vv.10。
+            width: LengthOrAuto::Auto,
         }
     }
 }
@@ -343,6 +371,8 @@ mod tests {
         assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
         // CSS Box 3 §3.1 (raikiri-spike-0vv.5): margin initial は 0 on each side。
         assert_eq!(cv.margin, Sides::all(LengthOrAuto::Length(Length::Px(0.0))));
+        // CSS Sizing 3 §3.1.1 (raikiri-spike-0vv.10): width initial は `auto`。
+        assert_eq!(cv.width, LengthOrAuto::Auto);
     }
 
     #[test]
@@ -398,6 +428,9 @@ mod tests {
             // 0vv.5: parent に explicit margin を持たせ、child が initial に落ちる
             // ことを他 non-inherited fixture (下の inherit_from_leaves_* 系) で pin。
             margin: Sides::all(LengthOrAuto::Length(Length::Px(12.0))),
+            // 0vv.10: 同様 parent に explicit width を持たせ、child が initial
+            // (Auto) に落ちる pin は inherit_from_leaves_width_at_initial 参照。
+            width: LengthOrAuto::Length(Length::Px(200.0)),
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -512,6 +545,20 @@ mod tests {
             child.margin,
             Sides::all(LengthOrAuto::Length(Length::Px(0.0)))
         );
+    }
+
+    #[test]
+    fn inherit_from_leaves_width_at_initial() {
+        // CSS Sizing 3 §3.1.1 "Inherited: no" — 親が width: 100px を持っていても
+        // child は initial (Auto) に戻る (raikiri-spike-0vv.10)。37n sibling:
+        // display / counter-* / content / string_set / running_templates /
+        // padding / margin と同 shape の non-inheritance pin。
+        let parent = ComputedValues {
+            width: LengthOrAuto::Length(Length::Px(100.0)),
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(child.width, LengthOrAuto::Auto);
     }
 
     #[test]

@@ -1,11 +1,9 @@
 //! CSS property value 型と per-property parser。
 //!
-//! 現サポート property の一覧は `parse_value` の match arm を参照
-//! (color / background-color / font-family / font-size / font-weight /
-//! display / counter-reset / counter-increment / counter-set / content /
-//! string-set / position)。認識できない property name / invalid value は
-//! `parse_value` が `None` を返す (spec 準拠の silent drop、caller である
-//! rule.rs で declaration ごと drop)。
+//! 現サポート property の canonical 一覧は `parse_value` の match arm を参照
+//! (該 arm を single source of truth として扱う)。認識できない property name /
+//! invalid value は `parse_value` が `None` を返す (spec 準拠の silent drop、
+//! caller である rule.rs で declaration ごと drop)。
 //!
 //! `parse_value` は rule.rs の `DeclParser::parse_value` から呼ばれる。
 
@@ -156,12 +154,19 @@ pub enum Length {
     Pt(f32),
 }
 
-/// `<length-percentage> | auto` — margin grammar の Author CSS seed。
+/// `<length-percentage> | auto` — margin / width で共有される Author CSS seed
+/// (最初は 0vv.5 で margin longhand 用に導入、0vv.10 で `width` からも reuse)。
 ///
 /// margin property は spec で `<length-percentage> | auto` を取る (CSS Box 3
 /// §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。`auto` は spec
 /// grammar top-level alternative として `<length-percentage>` と disjoint に
-/// 現れるため、[`Length`] を包む sum type にする。
+/// 現れるため、[`Length`] を包む sum type にする。同じ grammar shape は CSS
+/// Sizing 3 §3.1.1 `width` / `height` の preferred-size にも現れる (`auto |
+/// <length-percentage [0,∞]> | …`) ため、本 type を型 alias 相当で共有する。
+/// **`Auto` variant の意味は property ごとに異なる** — margin は "distribute
+/// available space"、width / height は "automatic size calculation" — variant
+/// 側では意図的に property-agnostic に保ち、下流 layout / consumer 側で
+/// property-specific に解釈する。
 ///
 /// NB: padding (CSS Box 3 §4) の grammar は `<length-percentage>` のみで `auto`
 /// を含まないため、0vv.6 padding は本 type を **使わず** [`Sides<Length>`] を
@@ -183,13 +188,19 @@ pub enum Length {
 ///   "Value: `<length-percentage> | auto`" (top / right / bottom / left 共通)。
 ///   `auto` の resolution は下流 layout 責務 (margin auto = distribute
 ///   available space)。
+/// - CSS Sizing 3 §3.1.1 "Preferred Size Properties":
+///   [`width`](https://www.w3.org/TR/css-sizing-3/#preferred-size-properties)
+///   — "Value: `auto | <length-percentage [0,∞]> | …`"。`auto` は automatic
+///   size calculation (下流 layout 責務、margin の余白分配とは別意味)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LengthOrAuto {
     /// authored length-percentage (`10px` / `1em` / `50%` / etc.)。
     Length(Length),
-    /// `auto` keyword — layout side で "distribute available space" として
-    /// 解釈される (CSS Box 3 §3.1)。
+    /// `auto` keyword。意味は consumer property 依存 — margin では
+    /// "distribute available space" (CSS Box 3 §3.1)、width / height では
+    /// "automatic size calculation" (CSS Sizing 3 §3.1.1)。variant 自体は
+    /// property-agnostic に保ち、下流 layout が property-specific に解決する。
     Auto,
 }
 
@@ -854,6 +865,18 @@ pub enum PropertyValue {
     /// 上書きする実装を持つ (regression 時 panic 回避)。
     /// raikiri-spike-0vv.5。
     Margin(Sides<LengthOrAuto>),
+    /// `width: auto | <length-percentage [0,∞]>` — non-inherited、initial: `auto`
+    /// (CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
+    ///
+    /// spec value grammar は `auto | <length-percentage [0,∞]> | min-content |
+    /// max-content | fit-content(<length-percentage>)` だが、min-content /
+    /// max-content / fit-content() は g04 (b) milestone subset として本 milestone
+    /// では silent drop、`auto` と non-negative `<length-percentage>` のみ受理。
+    /// 負値は spec grammar `[0,∞]` violation として drop。
+    ///
+    /// `auto` の resolution は下流 layout (raikiri-dom apply_computed_to_style
+    /// bridge、taffy::Style::size.width 反映) 責務。raikiri-spike-0vv.10。
+    Width(LengthOrAuto),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -899,6 +922,8 @@ pub enum PropertyKey {
     MarginBottom,
     MarginLeft,
     Margin,
+    // width — raikiri-spike-0vv.10 (CSS Sizing 3 §3.1.1)。
+    Width,
 }
 
 impl PropertyValue {
@@ -932,6 +957,7 @@ impl PropertyValue {
             PropertyValue::MarginBottom(_) => PropertyKey::MarginBottom,
             PropertyValue::MarginLeft(_) => PropertyKey::MarginLeft,
             PropertyValue::Margin(_) => PropertyKey::Margin,
+            PropertyValue::Width(_) => PropertyKey::Width,
         }
     }
 }
@@ -1036,6 +1062,13 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // 内で 4 longhand に展開されるため通常観測しない (詳細は
         // `PropertyValue::Margin` doc + `crate::rule::expand_shorthand`)。
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
+        // CSS Sizing 3 §3.1.1 preferred size property (raikiri-spike-0vv.10)。
+        // grammar: `auto | <length-percentage [0,∞]> | min-content | max-content
+        // | fit-content(<length-percentage>)` のうち `auto` + non-negative
+        // `<length-percentage>` のみ受理、min-content / max-content / fit-content()
+        // は g04 (b) milestone subset として silent drop、負値は spec `[0,∞]`
+        // violation として drop (parse_width が enforce)。
+        "width" => parse_width(input).map(PropertyValue::Width),
         _ => None,
     }
 }
@@ -1277,6 +1310,50 @@ fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<LengthOrAu
         bottom: v3,
         left: v4,
     })
+}
+
+/// `width: auto | <length-percentage [0,∞]>` を parse する。
+///
+/// grammar reference: CSS Sizing 3 §3.1.1
+/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties> "Value:
+/// `auto | <length-percentage [0,∞]> | min-content | max-content |
+/// fit-content(<length-percentage>)`"、"Initial: auto"、"Inherited: no"。
+///
+/// # Milestone subset (g04 (b))
+///
+/// `min-content` / `max-content` / `fit-content()` は intrinsic sizing keyword
+/// で Epic 未着手 — 本 helper では受理せず自然に `None` に落ちる (`auto` ident
+/// 分岐で `expect_ident_matching("auto")` が fail、続く `parse_length_value` が
+/// keyword / function token を Dimension / Percentage arm fall-through で drop)。
+/// 負値 (`width: -10px`) は spec grammar `[0,∞]` violation として drop する。
+///
+/// # Order of alternatives
+///
+/// [`parse_margin_side`] と同 pattern の "auto ident branch 先行 try_parse":
+/// [`parse_length_value`] は内部で `input.next()` を unconditional に消費する
+/// (fail 時も token を戻さない) ため、naive な "try length first, then auto"
+/// だと `width: auto` の `auto` ident が length parser で drop され後段の auto
+/// match が届かない。`try_parse` で checkpoint 経由の rewind を確保する。
+///
+/// # Non-negative constraint
+///
+/// [`parse_padding_side`] と同 pattern の全 [`Length`] variant OR-pattern check —
+/// spec `[0,∞]` の closed interval を parse-time enforce (Verification #4:
+/// `width: -10px` → `None` → declaration drop)。padding と shape は同じだが
+/// `auto` keyword 分岐が先行する (padding は `auto` を受理しない grammar
+/// `<length-percentage [0,∞]>` のみ)。
+fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    let length = parse_length_value(input, true)?;
+    // spec §3.1.1 grammar `<length-percentage [0,∞]>` の non-negative constraint
+    // (padding と同 pattern の全 variant OR-pattern check、raikiri-spike-0vv.6
+    // precedent)。
+    let v = match length {
+        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
+    };
+    (v >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
 /// `font-size: <length>` を parse する。
@@ -2306,10 +2383,12 @@ mod tests {
 
     #[test]
     fn unknown_property_returns_none() {
-        // `background-color` (0vv.7)、`padding` (0vv.6)、`margin` (0vv.5) が
-        // 順次実装済 = ここから除外。`width` は現時点で parse_value dispatch
-        // に未登録 → fall-through で None が返る canonical unknown-property canary。
-        assert_eq!(parse("100px", "width"), None);
+        // `background-color` (0vv.7)、`padding` (0vv.6)、`margin` (0vv.5)、
+        // `width` (0vv.10) が順次実装済 = ここから除外。`float` は現時点で
+        // parse_value dispatch に未登録 → fall-through で None が返る canonical
+        // unknown-property canary。`height` は sibling task で registered 予定の
+        // ため canary には使わない。
+        assert_eq!(parse("left", "float"), None);
     }
 
     // ── Display (CSS Display 3 §2、raikiri-spike-m1.22) ─────────────
@@ -4376,5 +4455,143 @@ mod tests {
         assert_eq!(s.right, LengthOrAuto::Length(Length::Px(3.5)));
         assert_eq!(s.bottom, LengthOrAuto::Length(Length::Px(3.5)));
         assert_eq!(s.left, LengthOrAuto::Length(Length::Px(3.5)));
+    }
+
+    // ── width (CSS Sizing 3 §3.1.1、raikiri-spike-0vv.10) ────────────────────
+    //
+    // Primary source (WebFetch verified 2026-07-23):
+    // https://www.w3.org/TR/css-sizing-3/#preferred-size-properties
+    // Value: `auto | <length-percentage [0,∞]> | min-content | max-content |
+    //         fit-content(<length-percentage>)`
+    // Initial: auto、Inherited: no。
+    //
+    // 本 task では `auto` + non-negative `<length-percentage>` のみ受理、
+    // min-content / max-content / fit-content() は g04 (b) milestone subset。
+
+    #[test]
+    fn width_parse_auto_keyword() {
+        // Verification #1: `width: auto` → Width(Auto)。initial 値と同 shape で
+        // grammar 上位優先分岐 (parse_width の try_parse ident branch) が生きて
+        // いることを pin。
+        assert_eq!(
+            parse("auto", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Auto))
+        );
+    }
+
+    #[test]
+    fn width_parse_length_px() {
+        // Verification #2: `width: 100px` → Width(Length(Px(100)))。
+        // 従来 `unknown_property_returns_none` canary で `None` だった箇所が
+        // 実 variant を返すようになった transition pin (canary は `float` に
+        // 移設済み)。
+        assert_eq!(
+            parse("100px", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(
+                100.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn width_parse_length_percentage() {
+        // Verification #3: `width: 50%` → Width(Length(Percent(50)))。
+        // parse_length_value(allow_percentage=true) 経由の Percent branch。
+        assert_eq!(
+            parse("50%", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Length(Length::Percent(
+                50.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn width_parse_length_em() {
+        // font-relative unit 経路 pin — parse_length_value 経由で em を受理。
+        assert_eq!(
+            parse("2em", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Length(Length::Em(2.0))))
+        );
+    }
+
+    #[test]
+    fn width_rejects_negative_px() {
+        // Verification #4: `width: -10px` → None (spec grammar `[0,∞]` violation)。
+        // parse_width の post-filter が enforce (padding と同 pattern)。
+        assert_eq!(parse("-10px", "width"), None);
+    }
+
+    #[test]
+    fn width_rejects_negative_percentage() {
+        // 全 Length variant OR-pattern check の pin (Percent 分岐)。
+        assert_eq!(parse("-50%", "width"), None);
+    }
+
+    #[test]
+    fn width_rejects_negative_em() {
+        // 全 Length variant OR-pattern check の pin (Em 分岐)。
+        assert_eq!(parse("-2em", "width"), None);
+    }
+
+    #[test]
+    fn width_accepts_zero() {
+        // spec `[0,∞]` の closed interval — 下端 0 は有効。
+        assert_eq!(
+            parse("0px", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(0.0))))
+        );
+    }
+
+    #[test]
+    fn width_rejects_min_content_keyword() {
+        // Verification #5: (b) milestone subset — intrinsic sizing keyword は
+        // Epic 未着手、silent drop。auto ident 分岐は expect_ident_matching("auto")
+        // で fail → parse_length_value に落ちて Dimension/Percentage arm 外の
+        // Ident token として drop。
+        assert_eq!(parse("min-content", "width"), None);
+    }
+
+    #[test]
+    fn width_rejects_max_content_keyword() {
+        // 同上、max-content も silent drop。
+        assert_eq!(parse("max-content", "width"), None);
+    }
+
+    #[test]
+    fn width_rejects_fit_content_function() {
+        // fit-content(<length-percentage>) は function token — 受理せず drop。
+        assert_eq!(parse("fit-content(50%)", "width"), None);
+    }
+
+    #[test]
+    fn width_rejects_unsupported_unit() {
+        // (b) milestone subset — vw / ch 等は spec-valid だが Sprint 17 未対応、
+        // parse_length_value 側で drop、None propagate。
+        assert_eq!(parse("10vw", "width"), None);
+        assert_eq!(parse("5ch", "width"), None);
+    }
+
+    #[test]
+    fn width_case_insensitive_auto() {
+        // CSS spec: ident keyword は ASCII case-insensitive。`AUTO` 受理を pin
+        // (sibling `margin_side_case_insensitive_auto` と同 pattern)。
+        assert_eq!(
+            parse("AUTO", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Auto))
+        );
+    }
+
+    #[test]
+    fn width_key_maps_to_width_property_key() {
+        // PropertyValue::Width → PropertyKey::Width (cascade winner 選択の
+        // discriminant integrity、既存 sibling padding/margin と同じ pattern)。
+        assert_eq!(
+            PropertyValue::Width(LengthOrAuto::Auto).key(),
+            PropertyKey::Width
+        );
+        assert_eq!(
+            PropertyValue::Width(LengthOrAuto::Length(Length::Px(100.0))).key(),
+            PropertyKey::Width
+        );
     }
 }
