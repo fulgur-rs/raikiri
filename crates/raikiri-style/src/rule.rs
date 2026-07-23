@@ -280,12 +280,12 @@ mod tests {
 
     #[test]
     fn drops_invalid_property_and_value() {
-        // width: 未対応 property → drop (0vv.5 以前は `margin` を dropped 例に
-        // 使っていたが、margin は 0vv.5 で認識対象になったため差し替え。width
-        // は現行 milestone subset 外)
+        // float: 未対応 property → drop (0vv.5 以前は `margin`、0vv.10 直前は
+        // `width` を dropped 例に使っていたが、それぞれ 0vv.5 / 0vv.10 で認識
+        // 対象になったため差し替え。`float` は現行 milestone subset 外)。
         // font-size: 1em → em 未対応 → drop
         // color: red → 残す
-        let decls = parse_block("width: 10px; font-size: 1em; color: red;");
+        let decls = parse_block("float: left; font-size: 1em; color: red;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
             decls[0].value,

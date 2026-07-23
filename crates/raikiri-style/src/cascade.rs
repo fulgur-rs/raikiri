@@ -431,6 +431,12 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // 全 4 side × 3 sub-property を一括 atomic 上書き。normal flow では
         // unreachable — expand_shorthand_into が 12 longhand に展開する。
         PropertyValue::Border(sides) => target.border = sides,
+        // CSS Sizing 3 §3.1.1 width (raikiri-spike-0vv.10)。single-value property、
+        // `LengthOrAuto` は Copy shape (Length variant は Copy)。sibling
+        // `PropertyValue::TextAlign` と対称的な単純代入 (non-inherited、cascade
+        // winner を直接反映)。`auto` は下流 layout の automatic size calculation
+        // (CSS Sizing 3 §5) で解決される — margin `auto` の余白分配とは別意味。
+        PropertyValue::Width(v) => target.width = v,
     }
 }
 
@@ -1595,6 +1601,55 @@ mod tests {
         };
         apply_value(PropertyValue::Border(sides), &mut cv);
         assert_eq!(cv.border, sides);
+    }
+
+    #[test]
+    fn width_length_end_to_end() {
+        // Verification #7: `div { width: 100px }` が `ComputedValues.width` に
+        // Length(Px(100)) として届く。parser → PropertyValue::Width → apply_value
+        // → ComputedValues の end-to-end 疎通 smoke (sibling padding/margin と
+        // 同 pattern)。raikiri-spike-0vv.10。
+        let cv = cascade_doc("", "div", Some("width: 100px"));
+        assert_eq!(cv.width, LengthOrAuto::Length(Length::Px(100.0)));
+    }
+
+    #[test]
+    fn width_auto_end_to_end() {
+        // `width: auto` は cascade winner として apply_value で `Auto` に固定される。
+        // `inherit_from` initial も Auto なので identity になるが、cascade path が
+        // 実際に通っていることを pin (silent no-op regression 検知)。
+        let cv = cascade_doc("", "div", Some("width: auto"));
+        assert_eq!(cv.width, LengthOrAuto::Auto);
+    }
+
+    #[test]
+    fn width_default_is_initial_auto() {
+        // 未指定時は `ComputedValues::initial()` の Auto を維持 (spec §3.1.1
+        // "Initial: auto"、non-inherited なので parent も影響しない)。
+        let cv = cascade_doc("", "div", None);
+        assert_eq!(cv.width, LengthOrAuto::Auto);
+    }
+
+    #[test]
+    fn width_child_does_not_inherit_from_parent() {
+        // Verification #8: parent (div) が width: 100px を持っていても child
+        // (span、指定 無し) は initial (Auto) を保持する。non-inherited property
+        // の end-to-end pin (sibling `inherit_from_leaves_*_at_initial` computed
+        // 側 test の cascade path 版)。
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "div { width: 100px }");
+        let parent = doc.push_element(0, "div", None);
+        let child = doc.push_element(parent, "span", None);
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).unwrap();
+        // parent (div) は width: 100px を受け取る
+        assert_eq!(
+            result.computed[parent].width,
+            LengthOrAuto::Length(Length::Px(100.0))
+        );
+        // child (span) は non-inherited のため initial (Auto) を保持
+        assert_eq!(result.computed[child].width, LengthOrAuto::Auto);
     }
 
     #[test]
