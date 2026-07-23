@@ -16,7 +16,7 @@ use parley::{
 };
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedValues;
-use raikiri_style::property::{DisplayValue, Length, LengthOrAuto};
+use raikiri_style::property::{Border, BorderStyle, DisplayValue, Length, LengthOrAuto};
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
     AvailableSpace, Dimension, Display, LengthPercentage, LengthPercentageAuto,
@@ -84,6 +84,8 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 /// - [`bridge_size`] — [`LengthOrAuto`] `cv.width` → [`taffy::Style::size`]`.width`
 ///   のみ (raikiri-spike-ggig Wave 2 scaffold)。`.height` は raikiri-spike-01up
 ///   (Wave 3) が同 helper を拡張して書き込むため本 landing では touch しない。
+/// - [`bridge_border`] — [`Sides<Border>`] → [`taffy::Rect<LengthPercentage>`]
+///   with border-style gating (raikiri-spike-q0uc Wave 2, advisor #2 CSS Backgrounds 3 §5.2)
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -95,9 +97,9 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_margin(style, cv);
         bridge_padding(style, cv);
         bridge_size(style, cv);
-        // Sprint 18 Wave 2+ で以下が追記予定 (順序: border → box-sizing、
+        bridge_border(style, cv);
+        // Sprint 18 Wave 2+ で以下が追記予定 (順序: box-sizing、
         // advisor #4 conflict 密度最小化):
-        //   bridge_border(style, cv);
         //   bridge_box_sizing(style, cv);
     }
 }
@@ -172,6 +174,65 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
+/// [`ComputedValues::border`] (`Sides<Border>`) → [`taffy::Style::border`]
+/// (`Rect<LengthPercentage>`) bridge、CSS Backgrounds 3 §5.2 の
+/// **style-gating** (used border-width policy) を適用する。
+///
+/// CSS Backgrounds 3 §5.2 <https://www.w3.org/TR/css-backgrounds-3/#border-style>:
+/// > `none` — No border. Color and width are ignored (i.e., the border has
+/// > width 0, unless the border is an image, see 'border-image-width').
+///
+/// `hidden` は §5.2 で "Same as `none`, except in terms of border conflict
+/// resolution for table elements." — used border-width も 0。
+///
+/// したがって border-style が `None` / `Hidden` の側は specified border-width
+/// を無視して used border-width = 0 として taffy に渡す ([`used_border_width`]
+/// helper)。この gating を怠ると spec 違反 (`5px none red` の 5px が layout に
+/// 影響してしまう)。
+///
+/// 4-side は **field 名 mapping** で write (positional constructor は使わない —
+/// [`bridge_margin`] と同じ `Sides` vs `Rect` field 順不一致の silent transpose
+/// 防止)。
+///
+/// # taffy scope の非対応
+///
+/// - `border-color` / `border-style` 自体は taffy が track しない (taffy は
+///   border-width のみ)。色 / 線 pattern は paint scope が別途 [`ComputedValues::border`]
+///   から consume する将来 task。
+/// - `border-image` / `border-radius` は Sprint 18 スコープ外。
+///
+/// # Length policy
+///
+/// [`length_to_taffy_length_percentage`] を reuse (Unified Length policy)。
+/// taffy `border` は `LengthPercentage` (no auto、CSS Backgrounds 3 §5.1
+/// grammar `<length [0,∞]>` に percentage は含まれないが taffy 型は
+/// LengthPercentage が最小共通型)。
+///
+/// (raikiri-spike-q0uc Sprint 18 Wave 2)
+fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues) {
+    let b = cv.border;
+    style.border = Rect {
+        top: length_to_taffy_length_percentage(used_border_width(&b.top)),
+        right: length_to_taffy_length_percentage(used_border_width(&b.right)),
+        bottom: length_to_taffy_length_percentage(used_border_width(&b.bottom)),
+        left: length_to_taffy_length_percentage(used_border_width(&b.left)),
+    };
+}
+
+/// CSS Backgrounds 3 §5.2 "used border-width" policy — style が `None` /
+/// `Hidden` なら width を 0 として扱う。
+///
+/// `matches!` + `#[non_exhaustive]` 対応: 未知未来 variant は else 枝に落ちて
+/// specified width を透過 (spec 上「visible なんらかの style」が追加された時
+/// にも fail-safe に width が生きる)。
+fn used_border_width(b: &Border) -> Length {
+    if matches!(b.style, BorderStyle::None | BorderStyle::Hidden) {
+        Length::Px(0.0)
+    } else {
+        b.width
+    }
+}
+
 /// [`ComputedValues::width`] (`LengthOrAuto`) → [`taffy::Style::size`]`.width`
 /// (`Dimension`) bridge (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
 /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
@@ -216,7 +277,8 @@ fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues) {
 ///   TODO: font-size context を cascade で resolve 済にして em/rem を実 px 値へ。
 /// - `_` (non_exhaustive catch-all) → `length(0.0)` (forward-compat)
 ///
-/// Wave 2 の [`bridge_padding`] (raikiri-spike-jbu0) から consume される。
+/// Wave 2 の `bridge_padding` (raikiri-spike-jbu0) / `bridge_border`
+/// (raikiri-spike-q0uc) から consume される。
 fn length_to_taffy_length_percentage(len: Length) -> LengthPercentage {
     match len {
         Length::Px(v) => LengthPercentage::length(v),
@@ -829,6 +891,108 @@ mod tests {
         assert_eq!(
             width_for("width: 20pt"),
             Dimension::length(20.0 * 4.0 / 3.0)
+        );
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_border_to_taffy() {
+        // raikiri-spike-q0uc (Sprint 18 dom-4 Wave 2): bridge_border が
+        // Sides<Border> を taffy::Rect<LengthPercentage> に translate、CSS
+        // Backgrounds 3 §5.2 の "used border-width" style-gating を適用する
+        // ことを確認する regression pin。
+        //
+        // Advisor #2 spec correctness gate: border-style が None / Hidden の
+        // 場合、specified border-width にかかわらず used border-width = 0 で
+        // なければならない (§5.2 "The used values of the corresponding
+        // border-*-width become 0.")。gating を怠ると specified 5px が taffy
+        // に leak して layout に影響 → spec 違反。
+        //
+        // Test 戦略: `border: <w> <s> <c>` 4-side shorthand と longhand の
+        // 両方を使い、shorthand 展開 → per-side cascade → bridge_border の
+        // pipeline を end-to-end で pin する (raikiri-spike-e51 codebase note:
+        // 単一 side shorthand `border-top: ...` は現時点で parser 未対応、
+        // computed.rs 228-229 参照)。
+        use raikiri_style::{build_rule_tree, cascade};
+        use taffy::{LengthPercentage, Rect};
+
+        fn border_for(inline: &str) -> Rect<LengthPercentage> {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[body].style.border
+        }
+
+        // Case 1 (positive path): `border: 5px solid red` shorthand → 4 side
+        //   全て width=5、style=solid で cascade。gating off (solid ≠ None/Hidden)
+        //   なので 4 side 全て length(5.0) になる。Rect.top/right/bottom/left ↔
+        //   Sides.top/right/bottom/left の field-name mapping pin。
+        assert_eq!(
+            border_for("border: 5px solid red"),
+            Rect {
+                top: LengthPercentage::length(5.0),
+                right: LengthPercentage::length(5.0),
+                bottom: LengthPercentage::length(5.0),
+                left: LengthPercentage::length(5.0),
+            }
+        );
+
+        // Case 2 (spec correctness — advisor #2): `border: 5px none red` shorthand
+        //   → 4 side 全て width=5, style=None で cascade。§5.2 style-gating で
+        //   used width = 0 → 4 side 全て length(0.0)。gating が壊れると 5.0 が
+        //   leak するので、この case が canary。
+        assert_eq!(
+            border_for("border: 5px none red"),
+            Rect {
+                top: LengthPercentage::length(0.0),
+                right: LengthPercentage::length(0.0),
+                bottom: LengthPercentage::length(0.0),
+                left: LengthPercentage::length(0.0),
+            }
+        );
+
+        // Case 3 (spec correctness — advisor #2): `border: 5px hidden red`
+        //   shorthand → §5.2 で hidden は "Same as none, except in terms of
+        //   border conflict resolution for table elements." — used width = 0。
+        assert_eq!(
+            border_for("border: 5px hidden red"),
+            Rect {
+                top: LengthPercentage::length(0.0),
+                right: LengthPercentage::length(0.0),
+                bottom: LengthPercentage::length(0.0),
+                left: LengthPercentage::length(0.0),
+            }
+        );
+
+        // Case 4 (pt unit conversion): `border-top-width: 3pt` + solid → top
+        //   only、他 3 side は initial (width=medium=3px, style=None) → gating
+        //   で length(0.0)。top は 3pt × 4/3 = 4.0 px (CSS Values 4 §6.2、
+        //   1pt = 96/72 px = 4/3 px)。f32 bit-identical のため右辺は式のまま。
+        assert_eq!(
+            border_for("border-top-width: 3pt; border-top-style: solid"),
+            Rect {
+                top: LengthPercentage::length(3.0 * 4.0 / 3.0),
+                right: LengthPercentage::length(0.0),
+                bottom: LengthPercentage::length(0.0),
+                left: LengthPercentage::length(0.0),
+            }
+        );
+
+        // Case 5 (medium keyword): `border-top-width: medium` + solid → top =
+        //   3.0 px (§5.1 UA-defined recommendation の thin=1/medium=3/thick=5、
+        //   property.rs `parse_border_width_side` 参照)。他 3 side は Case 4
+        //   同様 gating で 0。medium keyword が Length::Px(3.0) にパースされる
+        //   ことを end-to-end で pin。
+        assert_eq!(
+            border_for("border-top-width: medium; border-top-style: solid"),
+            Rect {
+                top: LengthPercentage::length(3.0),
+                right: LengthPercentage::length(0.0),
+                bottom: LengthPercentage::length(0.0),
+                left: LengthPercentage::length(0.0),
+            }
         );
     }
 
