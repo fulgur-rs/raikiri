@@ -1051,6 +1051,42 @@ mod tests {
         assert_eq!(cv.box_sizing, BoxSizing::BorderBox);
     }
 
+    // ── font-weight keyword + inheritance (CSS Fonts 4 §3.2、raikiri-spike-0vv.16) ──
+
+    #[test]
+    fn font_weight_keyword_bold_wired_through_cascade_from_inline_style() {
+        // <p style="font-weight: bold"> → ComputedValues.font_weight = 700。
+        // parser Ident arm → PropertyValue::FontWeight(700) → apply_value →
+        // ComputedValues の end-to-end 疎通 smoke (0vv.8 / 0vv.9 pattern を踏襲)。
+        let cv = cascade_doc("", "p", Some("font-weight: bold"));
+        assert_eq!(cv.font_weight, 700);
+    }
+
+    #[test]
+    fn font_weight_keyword_normal_wired_through_cascade_from_inline_style() {
+        // <p style="font-weight: normal"> → ComputedValues.font_weight = 400。
+        let cv = cascade_doc("", "p", Some("font-weight: normal"));
+        assert_eq!(cv.font_weight, 400);
+    }
+
+    #[test]
+    fn font_weight_is_inherited_child_carries_parent_bold() {
+        // CSS Fonts 4 §3.2 "Inheritance: Yes"。<p style="font-weight: bold"> の
+        // 子 <span> は自身 rule 無しでも parent の 700 を継承する。
+        // Verification #7 (bd 0vv.16): parent bold + child 未指定 = child 700。
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-weight: bold"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_weight, 700);
+        assert_eq!(
+            r.computed[span].font_weight, 700,
+            "font-weight must be inherited (CSS Fonts 4 §3.2 Yes) — \
+             parent bold keyword → child inherits 700"
+        );
+    }
+
     #[test]
     fn multiple_elements_each_carry_own_running_template() {
         // 複数 element がそれぞれ異なる running(name) を持つ →

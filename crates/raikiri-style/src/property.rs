@@ -2280,11 +2280,25 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
 }
 
 fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<u16> {
-    // integer literal (100..=900) のみ、keyword は drop。
+    // CSS Fonts 4 §3.2 font-weight-prop
+    // <https://www.w3.org/TR/css-fonts-4/#font-weight-prop>:
+    //   <font-weight-absolute> = normal | bold | <number [1,1000]>
+    //   normal = 400、bold = 700。
+    //
+    // 本 arm は `<font-weight-absolute>` の keyword form (normal / bold) と
+    // 既存 integer form (100..=900) をカバーする。`bolder` / `lighter` は
+    // inherited weight を要する relative-weight algorithm (spec Table) の
+    // cascade 時 resolution が非 trivial なため milestone subset で defer
+    // (raikiri-spike-0vv.16 Non-goals)。
+    //
+    // ASCII case-insensitive matching は CSS Values 3 §3.1 "Pre-defined
+    // Keywords" <https://www.w3.org/TR/css-values-3/#keywords> 準拠。
     match input.next().ok()? {
         Token::Number {
             int_value: Some(v), ..
         } if *v >= 100 && *v <= 900 => Some(*v as u16),
+        Token::Ident(name) if name.eq_ignore_ascii_case("normal") => Some(400),
+        Token::Ident(name) if name.eq_ignore_ascii_case("bold") => Some(700),
         _ => None,
     }
 }
@@ -3278,9 +3292,52 @@ mod tests {
     }
 
     #[test]
-    fn font_weight_rejects_keyword() {
-        assert_eq!(parse("bold", "font-weight"), None);
-        assert_eq!(parse("normal", "font-weight"), None);
+    fn font_weight_parse_keyword_normal() {
+        // CSS Fonts 4 §3.2: normal = 400。
+        assert_eq!(
+            parse("normal", "font-weight"),
+            Some(PropertyValue::FontWeight(400))
+        );
+    }
+
+    #[test]
+    fn font_weight_parse_keyword_bold() {
+        // CSS Fonts 4 §3.2: bold = 700。
+        assert_eq!(
+            parse("bold", "font-weight"),
+            Some(PropertyValue::FontWeight(700))
+        );
+    }
+
+    #[test]
+    fn font_weight_keyword_case_insensitive() {
+        // CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII
+        // case-insensitive で照合する。
+        assert_eq!(
+            parse("NORMAL", "font-weight"),
+            Some(PropertyValue::FontWeight(400))
+        );
+        assert_eq!(
+            parse("Bold", "font-weight"),
+            Some(PropertyValue::FontWeight(700))
+        );
+    }
+
+    #[test]
+    fn font_weight_defers_relative_keywords() {
+        // `bolder` / `lighter` は spec-valid (`<font-weight>` grammar) だが
+        // inherited weight を要する relative-weight resolution が cascade 時
+        // context を要する。raikiri-spike-0vv.16 Non-goals に従い本 task では
+        // silent drop、future task で追加。
+        assert_eq!(parse("bolder", "font-weight"), None);
+        assert_eq!(parse("lighter", "font-weight"), None);
+    }
+
+    #[test]
+    fn font_weight_rejects_unknown_ident() {
+        // spec-invalid keyword → declaration drop。
+        assert_eq!(parse("normal-ish", "font-weight"), None);
+        assert_eq!(parse("super-bold", "font-weight"), None);
     }
 
     #[test]
