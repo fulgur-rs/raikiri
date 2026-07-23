@@ -182,6 +182,18 @@ mod tests {
         // container が skipped → 子 text の GlyphRun が失われて test failure。
         // 現行 is_display_none 判定では container は Display::Block なので walk
         // 継続 → 子 text の GlyphRun が emit される。
+        //
+        // raikiri-spike-ggig (Sprint 18 Wave 2): `apply_computed_to_style` が
+        // bridge_size (width component) を dispatch するようになった。fixture の
+        // 手構築 `taffy::Style { size.width = length(0) }` は `cv.width` = Auto
+        // 初期値で上書きされる (`<container>` に author width なしのため)。
+        // width=auto の Display::Block は containing width (=A4) に stretch され、
+        // `size.width == 0.0` sanity assert が失敗する。修正: inline に
+        // `"width: 0px; height: 0px"` を与え cv.{width,height} = Length::Px(0.0)
+        // を bridge が翻訳するようにする。**height は Wave 3 (raikiri-spike-01up)
+        // まで bridge されない**ため、`zero_block_style.size.height = length(0.0)`
+        // の手構築値を **保持** して sanity assert を維持する (Wave 3 landing 後は
+        // inline `height: 0px` が bridge_size で反映されるので手構築値は冗長になる)。
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -193,7 +205,14 @@ mod tests {
             },
             ..Default::default()
         };
-        let container = doc.append_element(Some(body), "container", zero_block_style, None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "container",
+            zero_block_style,
+            // width は bridge が clobber するため inline で明示。height は Wave 3
+            // (01up) が bridge するまで手構築 style.size.height=length(0) が残る。
+            Some("width: 0px; height: 0px"),
+        );
         let _text = doc.append_text(container, "visible");
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");

@@ -81,6 +81,9 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///   (raikiri-spike-j5rz)
 /// - [`bridge_padding`] — [`Sides<Length>`] → [`taffy::Rect<LengthPercentage>`]
 ///   (raikiri-spike-jbu0)
+/// - [`bridge_size`] — [`LengthOrAuto`] `cv.width` → [`taffy::Style::size`]`.width`
+///   のみ (raikiri-spike-ggig Wave 2 scaffold)。`.height` は raikiri-spike-01up
+///   (Wave 3) が同 helper を拡張して書き込むため本 landing では touch しない。
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -91,9 +94,9 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_display(style, cv);
         bridge_margin(style, cv);
         bridge_padding(style, cv);
-        // Sprint 18 Wave 2+ で以下が追記予定 (順序: width → border →
-        // box-sizing → height、advisor #4 conflict 密度最小化):
-        //   bridge_size(style, cv);   // width / height の両方
+        bridge_size(style, cv);
+        // Sprint 18 Wave 2+ で以下が追記予定 (順序: border → box-sizing、
+        // advisor #4 conflict 密度最小化):
         //   bridge_border(style, cv);
         //   bridge_box_sizing(style, cv);
     }
@@ -169,6 +172,34 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
+/// [`ComputedValues::width`] (`LengthOrAuto`) → [`taffy::Style::size`]`.width`
+/// (`Dimension`) bridge (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
+///
+/// **Wave 2 scaffold (raikiri-spike-ggig): width component のみ書き込む** —
+/// `style.size.height` は Wave 3 (raikiri-spike-01up) が本 helper を拡張して
+/// 書き込むまで touch しない。partial write (fields を個別 assign) にすること
+/// で height 側の default (`Dimension::auto()`) を残しつつ、両 waves 完了後は
+/// `style.size = Size { width, height }` の struct literal に refactor 可能。
+///
+/// Length policy は [`length_or_auto_to_taffy_dimension`] を参照。
+///
+/// # PageBox 妥協 (M1)
+///
+/// `<body>` element の `style.size` は本 bridge の後、[`apply_page_box_to_body`]
+/// で PageBox の値に上書きされる (layout.rs Step 1 → Step 4)。したがって
+/// `<body style="width: 100px">` の author width は本 helper で一度 taffy に
+/// write されるが、Step 4 で PageBox width に clobber される — M1 期間中の
+/// 意図された挙動 (M4 で @page cascade + per-page PageBox に refactor 予定)。
+/// regression pin は tests `apply_page_box_clobbers_body_width_from_bridge` を
+/// 参照。
+fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues) {
+    // Partial write: width のみ。height は Task D (raikiri-spike-01up) で追記。
+    // struct literal (`style.size = Size {...}`) を使わず field assign する
+    // ことで、Wave 3 マージ前でも default height を破壊しない。
+    style.size.width = length_or_auto_to_taffy_dimension(cv.width);
+}
+
 /// [`Length`] → [`taffy::LengthPercentage`] bridge (padding / border 用)。
 ///
 /// **taffy 空間 = CSS px** (raikiri-traits/src/page.rs:98 authoritative、
@@ -204,8 +235,8 @@ fn length_to_taffy_length_percentage(len: Length) -> LengthPercentage {
 /// Length policy は [`length_to_taffy_length_percentage`] と同じ。
 /// `LengthOrAuto::Auto` → `Dimension::auto()`。
 ///
-/// Wave 2 / Wave 3 の `bridge_size` (raikiri-spike-ggig / 01up) から consume される。
-#[allow(dead_code)] // consumed by bridge_size (raikiri-spike-ggig/01up, Wave 2/3)
+/// Wave 2 の [`bridge_size`] (raikiri-spike-ggig、width) から consume される。
+/// Wave 3 (raikiri-spike-01up) が height 側でも同 helper を reuse する。
 fn length_or_auto_to_taffy_dimension(loa: LengthOrAuto) -> Dimension {
     match loa {
         LengthOrAuto::Auto => Dimension::auto(),
@@ -585,6 +616,12 @@ mod tests {
         // `Sides::all(Length::Px(0.0))` → taffy `LengthPercentage::length(0.0)`
         // が入り、`taffy::Style::default().padding` と一致するため padding assertion
         // も無変更で通る pin。
+        //
+        // raikiri-spike-ggig (Sprint 18 Wave 2): bridge_size (width) が dispatch に
+        // 加わったが width unspecified の element は initial `LengthOrAuto::Auto`
+        // → `Dimension::auto()` に translate、これは `taffy::Style::default().size`
+        // (`Size::auto()`) の width と一致 (height は Wave 3 まで default 保持)。
+        // 既存 `size == default_style.size` 相当 assertion は変化なく通る。
         use raikiri_style::{build_rule_tree, cascade};
 
         let mut doc = Document::new();
@@ -741,6 +778,98 @@ mod tests {
                 bottom: LengthPercentage::length(0.0),
                 left: LengthPercentage::length(0.0),
             }
+        );
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_width_to_taffy() {
+        // raikiri-spike-ggig (Sprint 18 dom-4 Wave 2): bridge_size (width component)
+        // が cv.width: LengthOrAuto を taffy::Style::size.width: Dimension に
+        // translate することを pin する。Unified Length policy の 4 分岐
+        // (Px / Auto / Percent / Pt) をそれぞれ 1 case で covering。
+        //
+        // Test 戦略: fixture は **非 body element** (この場合 `<p>`) を使う —
+        // `<body>` は後段 `apply_page_box_to_body` で clobber されるため本 bridge
+        // の効果は observable でない (別 test `apply_page_box_clobbers_body_width_from_bridge`
+        // で clobber 挙動を pin)。inline style 経由なので raikiri-style の
+        // parse_width path + LengthOrAuto encoding も同時に regression pin。
+        //
+        // scaffold contract: height は Wave 3 (raikiri-spike-01up) が書くため
+        // 本 test では size.height を assert しない (default 保持は field assign
+        // 実装で自然に守られるが、Wave 3 との conflict 面積を最小化するため
+        // width のみに absert 対象を絞る)。
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn width_for(inline: &str) -> Dimension {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            // 非 body element (p) に inline を載せる。apply_page_box_to_body は
+            // body だけを触るため、p の style.size は bridge 実行後そのまま観測可能。
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[p].style.size.width
+        }
+
+        // Case 1: `width: 100px` → Dimension::length(100.0) (Px identity)。
+        assert_eq!(width_for("width: 100px"), Dimension::length(100.0));
+
+        // Case 2: `width: auto` → Dimension::auto() (LengthOrAuto::Auto arm)。
+        assert_eq!(width_for("width: auto"), Dimension::auto());
+
+        // Case 3: `width: 50%` → Dimension::percent(0.5)。CSS spec の authored
+        //   0-100 → taffy fraction 0.0-1.0 の div-by-100 policy を pin。
+        assert_eq!(width_for("width: 50%"), Dimension::percent(0.5));
+
+        // Case 4: `width: 20pt` → Dimension::length(20 * 4/3) = length(26.666...)。
+        //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
+        //   f32 bit-identical assert のため右辺を expression で書く。
+        assert_eq!(
+            width_for("width: 20pt"),
+            Dimension::length(20.0 * 4.0 / 3.0)
+        );
+    }
+
+    #[test]
+    fn apply_page_box_clobbers_body_width_from_bridge() {
+        // raikiri-spike-ggig (Sprint 18 dom-4 Wave 2、advisor #3): M1 PageBox
+        // 妥協の regression pin — `<body style="width: 100px">` に対して
+        //   Step 1 (`apply_computed_to_style`) → bridge_size が body.style.size.width
+        //       を length(100.0) に write
+        //   Step 4 (`apply_page_box_to_body`) → PageBox.width で clobber
+        // の順で走ると、最終 body.style.size.width は PageBox.width (author 値
+        // ではない) になる。M4 で @page per-page PageBox に refactor するまで
+        // この clobber 挙動を意図的に保つ (M1 妥協) — silent regression 検出用。
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("width: 100px"));
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cr = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+
+        // Step 1: bridge 実行後、body.style.size.width は author 値 100px。
+        apply_computed_to_style(&mut doc, &cr);
+        assert_eq!(
+            doc.nodes[body].style.size.width,
+            Dimension::length(100.0),
+            "bridge_size must first write author width (100px) to body.style.size.width"
+        );
+
+        // Step 4: PageBox clobber 後、author 値は消えて PageBox.width が入る。
+        apply_page_box_to_body(&mut doc, body, PageBox::A4);
+        assert_eq!(
+            doc.nodes[body].style.size.width,
+            Dimension::length(PageBox::A4.width),
+            "apply_page_box_to_body must clobber author width with PageBox.width (M1 妥協)"
+        );
+        // author 値と PageBox 値は不一致 (clobber が実際に起きていることを pin)。
+        assert_ne!(
+            doc.nodes[body].style.size.width,
+            Dimension::length(100.0),
+            "post-clobber body.style.size.width must NOT equal author 100px"
         );
     }
 
