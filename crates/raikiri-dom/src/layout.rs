@@ -79,6 +79,8 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///   w2s で initial landing)
 /// - [`bridge_margin`] — [`Sides<LengthOrAuto>`] → [`taffy::Rect<LengthPercentageAuto>`]
 ///   (raikiri-spike-j5rz)
+/// - [`bridge_padding`] — [`Sides<Length>`] → [`taffy::Rect<LengthPercentage>`]
+///   (raikiri-spike-jbu0)
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -88,9 +90,9 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         let style = &mut doc.nodes[idx].style;
         bridge_display(style, cv);
         bridge_margin(style, cv);
-        // Sprint 18 Wave 2+ で以下が追記予定 (順序: padding → width → border →
+        bridge_padding(style, cv);
+        // Sprint 18 Wave 2+ で以下が追記予定 (順序: width → border →
         // box-sizing → height、advisor #4 conflict 密度最小化):
-        //   bridge_padding(style, cv);
         //   bridge_size(style, cv);   // width / height の両方
         //   bridge_border(style, cv);
         //   bridge_box_sizing(style, cv);
@@ -142,6 +144,31 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
+/// [`ComputedValues::padding`] (`Sides<Length>`) → [`taffy::Style::padding`]
+/// (`Rect<LengthPercentage>`) bridge。
+///
+/// CSS Box 3 §6.1 <https://www.w3.org/TR/css-box-3/#padding-physical> の
+/// physical padding 4 side (top / right / bottom / left) を taffy `Rect` に
+/// **field 名 mapping** で write する (positional constructor は使わない —
+/// `Sides` の field 順 `top,right,bottom,left` と `Rect` の field 順
+/// `left,right,top,bottom` が異なるため silent transpose を防ぐ)。margin と
+/// の差は value type: padding は `<length-percentage [0,∞]>` (auto なし、
+/// non-negative は raikiri-style parse-time enforce) のため
+/// [`length_to_taffy_length_percentage`] を使う。
+///
+/// Length policy は [`length_to_taffy_length_percentage`] を参照。
+///
+/// (raikiri-spike-jbu0 Sprint 18 Wave 2)
+fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues) {
+    let p = cv.padding;
+    style.padding = Rect {
+        top: length_to_taffy_length_percentage(p.top),
+        right: length_to_taffy_length_percentage(p.right),
+        bottom: length_to_taffy_length_percentage(p.bottom),
+        left: length_to_taffy_length_percentage(p.left),
+    };
+}
+
 /// [`Length`] → [`taffy::LengthPercentage`] bridge (padding / border 用)。
 ///
 /// **taffy 空間 = CSS px** (raikiri-traits/src/page.rs:98 authoritative、
@@ -158,8 +185,7 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues) {
 ///   TODO: font-size context を cascade で resolve 済にして em/rem を実 px 値へ。
 /// - `_` (non_exhaustive catch-all) → `length(0.0)` (forward-compat)
 ///
-/// Wave 2 の `bridge_padding` (raikiri-spike-jbu0) から consume される。
-#[allow(dead_code)] // consumed by bridge_padding (raikiri-spike-jbu0, Wave 2)
+/// Wave 2 の [`bridge_padding`] (raikiri-spike-jbu0) から consume される。
 fn length_to_taffy_length_percentage(len: Length) -> LengthPercentage {
     match len {
         Length::Px(v) => LengthPercentage::length(v),
@@ -553,6 +579,12 @@ mod tests {
         // が cascade で入る → taffy `LengthPercentageAuto::length(0.0)` に translate、
         // これは `taffy::Style::default().margin` (all `Length(0.0)`) と一致するため
         // 既存 assertion は無変更で通ることを確認する pin にもなる。
+        //
+        // raikiri-spike-jbu0 (Sprint 18 Wave 2): bridge_padding も dispatch に
+        // 加わったが同様に padding unspecified の element では initial
+        // `Sides::all(Length::Px(0.0))` → taffy `LengthPercentage::length(0.0)`
+        // が入り、`taffy::Style::default().padding` と一致するため padding assertion
+        // も無変更で通る pin。
         use raikiri_style::{build_rule_tree, cascade};
 
         let mut doc = Document::new();
@@ -642,6 +674,72 @@ mod tests {
                 right: LengthPercentageAuto::length(0.0),
                 bottom: LengthPercentageAuto::length(0.0),
                 left: LengthPercentageAuto::length(0.0),
+            }
+        );
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_padding_to_taffy() {
+        // raikiri-spike-jbu0 (Sprint 18 dom-4 Wave 2): bridge_padding が
+        // Sides<Length> を taffy::Rect<LengthPercentage> に translate することを
+        // 確認する regression pin。padding は margin と違い `auto` を持たない
+        // (<length-percentage [0,∞]>) ため 3 分岐 (Px / Percent / Pt) を各 1 case
+        // で covering。
+        //
+        // Test 戦略: 各 case は独立 fixture で cascade → apply_computed_to_style
+        // → body.style.padding を assert。inline style 経由なので raikiri-style
+        // の parse_padding_shorthand + longhand path も同時に regression pin。
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn padding_for(inline: &str) -> Rect<LengthPercentage> {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[body].style.padding
+        }
+
+        // Case 1: shorthand `padding: 5px 10px 15px 20px` (top/right/bottom/left)
+        //   → Rect { top: 5, right: 10, bottom: 15, left: 20 } (all Px identity)。
+        //   Sides.top,right,bottom,left → Rect.top,right,bottom,left の field-name
+        //   mapping を pin (positional silent transpose を防ぐ — Sides の field 順は
+        //   top,right,bottom,left、Rect の field 順は left,right,top,bottom で異なる)。
+        assert_eq!(
+            padding_for("padding: 5px 10px 15px 20px"),
+            Rect {
+                top: LengthPercentage::length(5.0),
+                right: LengthPercentage::length(10.0),
+                bottom: LengthPercentage::length(15.0),
+                left: LengthPercentage::length(20.0),
+            }
+        );
+
+        // Case 2: longhand `padding-left: 5%` → left = percent(0.05)、他 3 side は
+        //   initial (0.0 px)。CSS spec の authored 0-100 → taffy fraction 0.0-1.0
+        //   の div-by-100 policy を pin。
+        assert_eq!(
+            padding_for("padding-left: 5%"),
+            Rect {
+                top: LengthPercentage::length(0.0),
+                right: LengthPercentage::length(0.0),
+                bottom: LengthPercentage::length(0.0),
+                left: LengthPercentage::percent(0.05),
+            }
+        );
+
+        // Case 3: longhand `padding-top: 3pt` → top = length(3 * 4/3) = length(4.0)。
+        //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
+        //   f32 bit-identical assert のため右辺を expression のまま書く
+        //   (`4.0` literal は 3*4/3 と bit-identical だが policy 明示のため式のまま)。
+        assert_eq!(
+            padding_for("padding-top: 3pt"),
+            Rect {
+                top: LengthPercentage::length(3.0 * 4.0 / 3.0),
+                right: LengthPercentage::length(0.0),
+                bottom: LengthPercentage::length(0.0),
+                left: LengthPercentage::length(0.0),
             }
         );
     }
