@@ -83,9 +83,10 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///   (raikiri-spike-j5rz)
 /// - [`bridge_padding`] — [`Sides<Length>`] → [`taffy::Rect<LengthPercentage>`]
 ///   (raikiri-spike-jbu0)
-/// - [`bridge_size`] — [`LengthOrAuto`] `cv.width` → [`taffy::Style::size`]`.width`
-///   のみ (raikiri-spike-ggig Wave 2 scaffold)。`.height` は raikiri-spike-01up
-///   (Wave 3) が同 helper を拡張して書き込むため本 landing では touch しない。
+/// - [`bridge_size`] — [`LengthOrAuto`] `cv.width` / `cv.height` →
+///   [`taffy::Style::size`] (`Size<Dimension>`)。Wave 2 (raikiri-spike-ggig) が
+///   width 側、Wave 3 (raikiri-spike-01up) が height 側を追記し struct literal
+///   1 発 assign に refactor。
 /// - [`bridge_border`] — [`Sides<Border>`] → [`taffy::Rect<LengthPercentage>`]
 ///   with border-style gating (raikiri-spike-q0uc Wave 2, advisor #2 CSS Backgrounds 3 §5.2)
 /// - [`bridge_box_sizing`] — [`raikiri_style::BoxSizing`] → [`taffy::BoxSizing`]
@@ -235,32 +236,42 @@ fn used_border_width(b: &Border) -> Length {
     }
 }
 
-/// [`ComputedValues::width`] (`LengthOrAuto`) → [`taffy::Style::size`]`.width`
-/// (`Dimension`) bridge (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
+/// [`ComputedValues::width`] / [`ComputedValues::height`] (`LengthOrAuto`) →
+/// [`taffy::Style::size`] (`Size<Dimension>`) bridge (CSS Sizing 3 §3.1.1
+/// "Preferred Size Properties"
 /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
 ///
-/// **Wave 2 scaffold (raikiri-spike-ggig): width component のみ書き込む** —
-/// `style.size.height` は Wave 3 (raikiri-spike-01up) が本 helper を拡張して
-/// 書き込むまで touch しない。partial write (fields を個別 assign) にすること
-/// で height 側の default (`Dimension::auto()`) を残しつつ、両 waves 完了後は
-/// `style.size = Size { width, height }` の struct literal に refactor 可能。
+/// Wave 2 (raikiri-spike-ggig) が width 側を landing、Wave 3
+/// (raikiri-spike-01up) が height 側を追記して両 preferred size 軸を full-bridge
+/// にした。両 field を同時に書き込むため struct literal
+/// (`style.size = Size { width, height }`) で 1 発 assign する — partial write
+/// scaffold は Wave 3 で不要になった。
 ///
 /// Length policy は [`length_or_auto_to_taffy_dimension`] を参照。
 ///
 /// # PageBox 妥協 (M1)
 ///
 /// `<body>` element の `style.size` は本 bridge の後、[`apply_page_box_to_body`]
-/// で PageBox の値に上書きされる (layout.rs Step 1 → Step 4)。したがって
-/// `<body style="width: 100px">` の author width は本 helper で一度 taffy に
-/// write されるが、Step 4 で PageBox width に clobber される — M1 期間中の
-/// 意図された挙動 (M4 で @page cascade + per-page PageBox に refactor 予定)。
-/// regression pin は tests `apply_page_box_clobbers_body_width_from_bridge` を
-/// 参照。
+/// で PageBox の値 (width / height 両方) に上書きされる (layout.rs Step 1 →
+/// Step 4)。したがって `<body style="width: 100px; height: 200px">` の author
+/// 値は本 helper で一度 taffy に write されるが、Step 4 で PageBox 値に
+/// clobber される — M1 期間中の意図された挙動 (M4 で @page cascade + per-page
+/// PageBox に refactor 予定)。width 側 clobber の author→PageBox 上書き経路は
+/// test `apply_page_box_clobbers_body_width_from_bridge` が pin する。height
+/// 側は [`apply_page_box_to_body`] が `style.size = Size { width, height }` の
+/// struct literal で **field を分岐なく一括代入する** ため、width と同じ
+/// clobber 経路を通る (両 field は同一 statement で書かれる)。同 helper の
+/// PageBox output pin は test `apply_page_box_to_body_sets_body_style_size_to_page_dimensions`
+/// が担う (author→PageBox の bridge→clobber 連鎖 test は width 側で十分、
+/// 冗長化を避け height 側は structural 保証に留める)。
 fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues) {
-    // Partial write: width のみ。height は Task D (raikiri-spike-01up) で追記。
-    // struct literal (`style.size = Size {...}`) を使わず field assign する
-    // ことで、Wave 3 マージ前でも default height を破壊しない。
-    style.size.width = length_or_auto_to_taffy_dimension(cv.width);
+    // Wave 3 完了後: width + height 両方を同時に書くので struct literal を採用。
+    // (Wave 2 の field-assign scaffold は Wave 3 マージまでの一時形態で、
+    //  もはや保つ必要がない — default 保持は cv 側で `Auto` を返せば自然に達成。)
+    style.size = Size {
+        width: length_or_auto_to_taffy_dimension(cv.width),
+        height: length_or_auto_to_taffy_dimension(cv.height),
+    };
 }
 
 /// [`raikiri_style::property::BoxSizing`] → [`taffy::BoxSizing`] bridge。
@@ -339,8 +350,8 @@ fn length_to_taffy_length_percentage(len: Length) -> LengthPercentage {
 /// Length policy は [`length_to_taffy_length_percentage`] と同じ。
 /// `LengthOrAuto::Auto` → `Dimension::auto()`。
 ///
-/// Wave 2 の [`bridge_size`] (raikiri-spike-ggig、width) から consume される。
-/// Wave 3 (raikiri-spike-01up) が height 側でも同 helper を reuse する。
+/// [`bridge_size`] から width (raikiri-spike-ggig Wave 2) / height
+/// (raikiri-spike-01up Wave 3) 両方で consume される。
 fn length_or_auto_to_taffy_dimension(loa: LengthOrAuto) -> Dimension {
     match loa {
         LengthOrAuto::Auto => Dimension::auto(),
@@ -898,10 +909,9 @@ mod tests {
         // で clobber 挙動を pin)。inline style 経由なので raikiri-style の
         // parse_width path + LengthOrAuto encoding も同時に regression pin。
         //
-        // scaffold contract: height は Wave 3 (raikiri-spike-01up) が書くため
-        // 本 test では size.height を assert しない (default 保持は field assign
-        // 実装で自然に守られるが、Wave 3 との conflict 面積を最小化するため
-        // width のみに absert 対象を絞る)。
+        // 本 test は width 軸に絞る — height 軸は sibling test
+        // `apply_computed_to_style_bridges_height_to_taffy` (Wave 3、raikiri-spike-01up)
+        // が同 fixture pattern で LengthOrAuto → Dimension bridge を pin する。
         use raikiri_style::{build_rule_tree, cascade};
 
         fn width_for(inline: &str) -> Dimension {
@@ -934,6 +944,50 @@ mod tests {
             width_for("width: 20pt"),
             Dimension::length(20.0 * 4.0 / 3.0)
         );
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_height_to_taffy() {
+        // raikiri-spike-01up (Sprint 18 dom-4 Wave 3): bridge_size の height 側
+        // 拡張。cv.height: LengthOrAuto を taffy::Style::size.height: Dimension に
+        // translate することを pin する。Wave 2 sibling test
+        // `apply_computed_to_style_bridges_width_to_taffy` と対を成し、Wave 3 の
+        // struct literal 化 (Size { width, height } の 1 発 assign) で height 側の
+        // 3 分岐 (Px / Auto / Percent) が意図通り書き込まれるか確認する。
+        //
+        // Test 戦略: fixture は **非 body element** (`<p>`) を使う — `<body>` は
+        // 後段 `apply_page_box_to_body` で height も clobber されるため本 bridge
+        // の効果は body 上で observable でない。inline style 経由で raikiri-style
+        // の parse_height path + LengthOrAuto encoding も同時に regression pin。
+        //
+        // Pt case は sibling width test が同じ length_or_auto_to_taffy_dimension
+        // policy を pin しているため redundant。ここでは height 特有の 3 分岐
+        // (auto default 保持、Length::Px 通路、Length::Percent 通路) に絞る。
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn height_for(inline: &str) -> Dimension {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            // 非 body element (p) に inline を載せる。apply_page_box_to_body は
+            // body だけを触るため、p の style.size は bridge 実行後そのまま観測可能。
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[p].style.size.height
+        }
+
+        // Case 1: `height: 100px` → Dimension::length(100.0) (Px identity)。
+        assert_eq!(height_for("height: 100px"), Dimension::length(100.0));
+
+        // Case 2: `height: auto` → Dimension::auto() (LengthOrAuto::Auto arm)。
+        //   CSS Sizing 3 §3.1.1 initial `height: auto` の identity round-trip pin。
+        assert_eq!(height_for("height: auto"), Dimension::auto());
+
+        // Case 3: `height: 50%` → Dimension::percent(0.5)。CSS spec の authored
+        //   0-100 → taffy fraction 0.0-1.0 の div-by-100 policy を pin。
+        assert_eq!(height_for("height: 50%"), Dimension::percent(0.5));
     }
 
     #[test]
