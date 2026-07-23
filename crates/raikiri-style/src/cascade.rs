@@ -407,6 +407,30 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // 直接叩いて振る舞いを pin (panic 化を避けるための defensive fall-through、
         // `unreachable!` を採らないのは reviewer-security の panic surface 排除方針)。
         PropertyValue::Margin(sides) => target.margin = sides,
+        // CSS Backgrounds 3 §5.1/§5.2/§5.3 border physical longhand
+        // (raikiri-spike-0vv.12)。4 side × 3 sub-property の 12 arm。shorthand
+        // `PropertyValue::Border` は `crate::rule::parse_declaration_block` 側で
+        // parse 直後に 12 longhand に展開されるため、cascade 段に届く declaration
+        // は per-side / per-sub-property longhand のみ = HashMap iteration 順に
+        // 依存しない per-key determinism が成立する (margin / padding precedent
+        // 踏襲)。
+        PropertyValue::BorderTopWidth(v) => target.border.top.width = v,
+        PropertyValue::BorderRightWidth(v) => target.border.right.width = v,
+        PropertyValue::BorderBottomWidth(v) => target.border.bottom.width = v,
+        PropertyValue::BorderLeftWidth(v) => target.border.left.width = v,
+        PropertyValue::BorderTopStyle(v) => target.border.top.style = v,
+        PropertyValue::BorderRightStyle(v) => target.border.right.style = v,
+        PropertyValue::BorderBottomStyle(v) => target.border.bottom.style = v,
+        PropertyValue::BorderLeftStyle(v) => target.border.left.style = v,
+        PropertyValue::BorderTopColor(v) => target.border.top.color = v,
+        PropertyValue::BorderRightColor(v) => target.border.right.color = v,
+        PropertyValue::BorderBottomColor(v) => target.border.bottom.color = v,
+        PropertyValue::BorderLeftColor(v) => target.border.left.color = v,
+        // Safety-net for `border` shorthand (safety net の意義は sibling
+        // `PropertyValue::Margin` / `PropertyValue::Padding` arm doc 参照)。
+        // 全 4 side × 3 sub-property を一括 atomic 上書き。normal flow では
+        // unreachable — expand_shorthand_into が 12 longhand に展開する。
+        PropertyValue::Border(sides) => target.border = sides,
     }
 }
 
@@ -415,7 +439,7 @@ mod tests {
     use super::*;
     use crate::property::CssColor;
     use crate::property::DisplayValue;
-    use crate::property::{Length, LengthOrAuto, Sides};
+    use crate::property::{Border, BorderStyle, Length, LengthOrAuto, Sides};
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
     use smol_str::SmolStr;
@@ -1449,6 +1473,128 @@ mod tests {
         };
         apply_value(PropertyValue::Margin(sides), &mut cv);
         assert_eq!(cv.margin, sides);
+    }
+
+    // ── border longhand + shorthand cascade (raikiri-spike-0vv.12) ──
+
+    #[test]
+    fn border_shorthand_then_longhand_later_longhand_wins() {
+        // spec (CSS Cascading L5 §6.4.4): 同一 declaration block 内で shorthand
+        // + longhand が declared された場合、後方 declaration が同 rank/spec/order
+        // で勝つ。`border: 1px solid red; border-top-width: 10px;` →
+        // top.width=10、他 side の width=1、top.style=Solid、top.color=red 保持。
+        //
+        // 本 test は本 architecture の load-bearing case (advisor calibration):
+        // expansion 前 shorthand を単一 key で cascade してしまうと apply_value 順
+        // が HashMap iteration 順に依存し nondeterministic (`Border` が後で apply
+        // → top.width=1 に上書きされる regression) になる。expand_shorthand_into
+        // が parse-time で 12 longhand 化するため per-key の cascade winner が
+        // top.width=10 に確定する (margin 0vv.5 precedent の 12-longhand 版)。
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("border: 1px solid red; border-top-width: 10px"),
+        );
+        assert_eq!(cv.border.top.width, Length::Px(10.0));
+        assert_eq!(cv.border.right.width, Length::Px(1.0));
+        assert_eq!(cv.border.bottom.width, Length::Px(1.0));
+        assert_eq!(cv.border.left.width, Length::Px(1.0));
+        // style / color は shorthand から expand された値のまま (per-side longhand
+        // として cascade winner に居座る)。
+        let red = CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        assert_eq!(cv.border.top.style, BorderStyle::Solid);
+        assert_eq!(cv.border.top.color, red);
+        assert_eq!(cv.border.right.style, BorderStyle::Solid);
+        assert_eq!(cv.border.left.color, red);
+    }
+
+    #[test]
+    fn border_longhand_then_shorthand_later_shorthand_wins() {
+        // spec §6.4.4 の後方 wins を逆順で pin: `border-top-width: 10px; border:
+        // 1px solid red;` → top.width も 1px (後段 shorthand が top も含めて
+        // 上書き)。expand_shorthand_into の 12 longhand 展開が source_order を
+        // 保持したまま cascade に届き、後段が per-side / per-sub-property
+        // 勝ち抜けする証拠 (margin sibling と対称)。
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("border-top-width: 10px; border: 1px solid red"),
+        );
+        assert_eq!(cv.border.top.width, Length::Px(1.0));
+        assert_eq!(cv.border.right.width, Length::Px(1.0));
+        assert_eq!(cv.border.bottom.width, Length::Px(1.0));
+        assert_eq!(cv.border.left.width, Length::Px(1.0));
+    }
+
+    #[test]
+    fn border_non_inherited_child_starts_from_initial() {
+        // CSS Backgrounds 3 §5 "Inherited: no"。<div style="border: 5px solid red">
+        // の子 <span> は自身 rule 無しで border = initial (medium / none / BLACK)。
+        // 37n sibling: margin / padding non-inherited test を踏襲。
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("border: 5px solid red"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let red = CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        // parent は shorthand から expand された per-side 値。
+        assert_eq!(r.computed[div].border.top.width, Length::Px(5.0));
+        assert_eq!(r.computed[div].border.top.style, BorderStyle::Solid);
+        assert_eq!(r.computed[div].border.top.color, red);
+        // child は inherit_from が initial に戻す (non-inherited)。
+        assert_eq!(
+            r.computed[span].border,
+            Sides::all(Border {
+                width: Length::Px(3.0),
+                style: BorderStyle::None,
+                color: CssColor::BLACK,
+            }),
+            "border must not inherit from parent"
+        );
+    }
+
+    #[test]
+    fn apply_value_direct_border_shorthand_safety_net() {
+        // `apply_value` の `PropertyValue::Border(sides)` arm は normal flow で
+        // は unreachable (parse_declaration_block が 12 longhand に展開する) だが、
+        // regression / bypass 経路の safety net として `target.border = sides` の
+        // atomic 上書きを持つ。本 test は arm を直接叩いて `unreachable!` 化 or
+        // 空 arm regression を捕捉する canary (margin safety net と対称)。
+        let mut cv = ComputedValues::initial();
+        let sides = Sides {
+            top: Border {
+                width: Length::Px(1.0),
+                style: BorderStyle::Solid,
+                color: CssColor::BLACK,
+            },
+            right: Border {
+                width: Length::Px(2.0),
+                style: BorderStyle::Dashed,
+                color: CssColor::BLACK,
+            },
+            bottom: Border {
+                width: Length::Px(3.0),
+                style: BorderStyle::Dotted,
+                color: CssColor::BLACK,
+            },
+            left: Border {
+                width: Length::Px(4.0),
+                style: BorderStyle::Double,
+                color: CssColor::BLACK,
+            },
+        };
+        apply_value(PropertyValue::Border(sides), &mut cv);
+        assert_eq!(cv.border, sides);
     }
 
     #[test]
