@@ -134,6 +134,63 @@ fn expand_shorthand_into(d: Declaration, out: &mut Vec<Declaration>) {
                 important: d.important,
             });
         }
+        // `border` shorthand (CSS Backgrounds 3 §5.4) を 12 longhand
+        // (4 side × 3 sub-property = width / style / color) に展開する
+        // (raikiri-spike-0vv.12)。margin / padding shorthand precedent と同 pattern。
+        // spec `border` grammar は 4 side 共通 (`Sides::all(border)`) だが、cascade
+        // 段では per-side longhand として書き込むことで、`border: 1px solid red;
+        // border-top-color: blue;` のような longhand override が per-side
+        // determinism で解決する。
+        PropertyValue::Border(sides) => {
+            out.push(Declaration {
+                value: PropertyValue::BorderTopWidth(sides.top.width),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderTopStyle(sides.top.style),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderTopColor(sides.top.color),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderRightWidth(sides.right.width),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderRightStyle(sides.right.style),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderRightColor(sides.right.color),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderBottomWidth(sides.bottom.width),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderBottomStyle(sides.bottom.style),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderBottomColor(sides.bottom.color),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderLeftWidth(sides.left.width),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderLeftStyle(sides.left.style),
+                important: d.important,
+            });
+            out.push(Declaration {
+                value: PropertyValue::BorderLeftColor(sides.left.color),
+                important: d.important,
+            });
+        }
         _ => out.push(d),
     }
 }
@@ -189,7 +246,7 @@ impl<'i> RuleBodyItemParser<'i, Declaration, ()> for DeclParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::property::{CssColor, Length, LengthOrAuto};
+    use crate::property::{BorderStyle, CssColor, Length, LengthOrAuto};
     use cssparser::ParserInput;
 
     fn parse_block(source: &str) -> Vec<Declaration> {
@@ -400,5 +457,109 @@ mod tests {
         let decls = parse_block("padding-top: 10px;");
         assert_eq!(decls.len(), 1);
         assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
+    }
+
+    // ── border shorthand expansion (CSS Cascading L5、raikiri-spike-0vv.12) ──
+    //
+    // `parse_declaration_block` は shorthand `border` を 12 longhand
+    // (4 side × 3 sub-property: width / style / color) に展開する。
+    // spec §3 "Shorthand Properties" の "sets all of its longhand sub-properties,
+    // exactly as if expanded in place" 準拠、cascade 段の HashMap 順非依存
+    // determinism を parse-time で担保する。margin (0vv.5) / padding (5nc)
+    // precedent を 12 longhand shape に拡張。
+
+    #[test]
+    fn border_shorthand_expands_into_twelve_longhand_declarations() {
+        // `border: 1px solid red` → 12 longhand (4 side × {width, style, color})。
+        // order: top-w / top-s / top-c / right-w / right-s / right-c / bottom-* /
+        // left-* (advisor calibration — `expand_shorthand_into` の hand-written
+        // order を pin することでcopy-paste regression を検知)。
+        let decls = parse_block("border: 1px solid red;");
+        assert_eq!(
+            decls.len(),
+            12,
+            "border shorthand must expand to 12 longhand decls"
+        );
+        let red = CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::BorderTopWidth(Length::Px(1.0))
+        );
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::BorderTopStyle(BorderStyle::Solid)
+        );
+        assert_eq!(decls[2].value, PropertyValue::BorderTopColor(red));
+        assert_eq!(
+            decls[3].value,
+            PropertyValue::BorderRightWidth(Length::Px(1.0))
+        );
+        assert_eq!(
+            decls[4].value,
+            PropertyValue::BorderRightStyle(BorderStyle::Solid)
+        );
+        assert_eq!(decls[5].value, PropertyValue::BorderRightColor(red));
+        assert_eq!(
+            decls[6].value,
+            PropertyValue::BorderBottomWidth(Length::Px(1.0))
+        );
+        assert_eq!(
+            decls[7].value,
+            PropertyValue::BorderBottomStyle(BorderStyle::Solid)
+        );
+        assert_eq!(decls[8].value, PropertyValue::BorderBottomColor(red));
+        assert_eq!(
+            decls[9].value,
+            PropertyValue::BorderLeftWidth(Length::Px(1.0))
+        );
+        assert_eq!(
+            decls[10].value,
+            PropertyValue::BorderLeftStyle(BorderStyle::Solid)
+        );
+        assert_eq!(decls[11].value, PropertyValue::BorderLeftColor(red));
+    }
+
+    #[test]
+    fn border_shorthand_important_flag_propagates_to_all_longhand() {
+        // spec CSS Cascading L5 §3: shorthand `!important` は全 longhand に copy
+        // される (margin / padding important 拡張と同 pattern、12 longhand 全て
+        // 検証)。
+        let decls = parse_block("border: 5px dashed blue !important;");
+        assert_eq!(decls.len(), 12);
+        for d in &decls {
+            assert!(d.important, "important must propagate to every longhand");
+        }
+    }
+
+    #[test]
+    fn border_longhand_declaration_not_expanded() {
+        // longhand は expand_shorthand の match arm を no-op で通過 (1 decl のまま)。
+        // shorthand-only expansion の scope を pin する negative test (margin /
+        // padding sibling と同 pattern)。
+        let decls = parse_block("border-top-width: 10px;");
+        assert_eq!(decls.len(), 1);
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::BorderTopWidth(Length::Px(10.0))
+        );
+    }
+
+    #[test]
+    fn border_shorthand_two_widths_declaration_dropped() {
+        // property.rs `border_shorthand_two_widths_leaves_leftover_for_caller_exhausted_check`
+        // の end-to-end 側 pin: `border: 1px 2px` は shorthand helper が 1px を
+        // width slot に置いた後 2px は他 slot (style/color) に match しないため
+        // fall-through 到達で leftover になり、caller の `expect_exhausted` が
+        // declaration 全体を drop する (0 decl)。
+        let decls = parse_block("border: 1px 2px;");
+        assert!(
+            decls.is_empty(),
+            "border shorthand with leftover token must be dropped, got {decls:?}"
+        );
     }
 }
