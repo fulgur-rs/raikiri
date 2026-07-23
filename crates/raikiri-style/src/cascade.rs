@@ -407,6 +407,10 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // 直接叩いて振る舞いを pin (panic 化を避けるための defensive fall-through、
         // `unreachable!` を採らないのは reviewer-security の panic surface 排除方針)。
         PropertyValue::Margin(sides) => target.margin = sides,
+        // CSS Sizing 3 §3.1.1 height (raikiri-spike-0vv.11)。sibling `Padding*` /
+        // `Margin*` と同じ per-node winner 直接代入 (non-inherited、`LengthOrAuto`
+        // は Copy)。resolve (`Percent` / `Auto` の実 layout 高さ計算) は下流責務。
+        PropertyValue::Height(v) => target.height = v,
     }
 }
 
@@ -1431,6 +1435,74 @@ mod tests {
         // と complementary、下流 layout 側で negative 意味付け)。
         let cv = cascade_doc("", "div", Some("margin-top: -5px"));
         assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(-5.0)));
+    }
+
+    // ── height wire-through (CSS Sizing 3 §3.1.1、raikiri-spike-0vv.11) ──
+
+    #[test]
+    fn height_wired_through_cascade_from_inline_style() {
+        // <div style="height: 100px"> → ComputedValues.height に
+        // LengthOrAuto::Length(Length::Px(100)) が届く。parser →
+        // PropertyValue::Height → apply_value → ComputedValues の end-to-end
+        // 疎通 smoke (0vv.5 margin / 0vv.6 padding wire-through pattern を踏襲)。
+        let cv = cascade_doc("", "div", Some("height: 100px"));
+        assert_eq!(cv.height, LengthOrAuto::Length(Length::Px(100.0)));
+    }
+
+    #[test]
+    fn height_auto_wired_through_cascade() {
+        // `height: auto` は spec initial (§3.1.1) だが cascade winner として
+        // declaration が到達した場合の受理 pattern を明示 pin
+        // (`static_position_wins_over_running_via_source_order` 系の pattern、
+        // parser の auto ident branch と apply_value の LengthOrAuto::Auto 経路
+        // が疎通することを保証)。
+        let cv = cascade_doc("", "div", Some("height: auto"));
+        assert_eq!(cv.height, LengthOrAuto::Auto);
+    }
+
+    #[test]
+    fn height_percentage_wired_through_cascade() {
+        // `height: 50%` の end-to-end 疎通。resolve (containing block % → 実寸)
+        // は下流責務、cascade は authored value をそのまま保持することを pin。
+        let cv = cascade_doc("", "div", Some("height: 50%"));
+        assert_eq!(cv.height, LengthOrAuto::Length(Length::Percent(50.0)));
+    }
+
+    #[test]
+    fn height_non_inherited_child_starts_from_initial() {
+        // Verification 6 (task doc): CSS Sizing 3 §3.1.1 "Inherited: no"。
+        // <div style="height: 100px"> の子 <span> は自身 rule 無しで
+        // height = initial (`LengthOrAuto::Auto`)。37n sibling: margin / padding
+        // / display / string_set / content non-inherited と同 shape
+        // (raikiri-spike-0vv.11)。
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("height: 100px"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[div].height,
+            LengthOrAuto::Length(Length::Px(100.0))
+        );
+        assert_eq!(
+            r.computed[span].height,
+            LengthOrAuto::Auto,
+            "height must not inherit from parent (§3.1.1 Inherited: no)"
+        );
+    }
+
+    #[test]
+    fn height_negative_length_rejected_at_parse_time() {
+        // Non-goal (a) spec-invalid: `height: -10px` は grammar `[0,∞]` 違反、
+        // declaration 段で drop → cascade に届かず、height は initial (Auto) の
+        // まま。parser 側 pin (`height_rejects_negative_length`) と complementary
+        // な end-to-end 挙動を確認。
+        let cv = cascade_doc("", "div", Some("height: -10px"));
+        assert_eq!(
+            cv.height,
+            LengthOrAuto::Auto,
+            "negative height declaration must be dropped; height stays at initial"
+        );
     }
 
     #[test]

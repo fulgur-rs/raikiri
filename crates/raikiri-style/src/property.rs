@@ -854,6 +854,24 @@ pub enum PropertyValue {
     /// 上書きする実装を持つ (regression 時 panic 回避)。
     /// raikiri-spike-0vv.5。
     Margin(Sides<LengthOrAuto>),
+    /// `height: <length-percentage [0,∞]> | auto` — **non-inherited**、initial:
+    /// `auto` (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
+    /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
+    ///
+    /// Sprint 17 seed scope (raikiri-spike-0vv.11) は `auto` + 非負
+    /// `<length-percentage>` の 2 分岐のみ受理。`min-content` / `max-content` /
+    /// `fit-content(<length-percentage>)` は spec-valid だが milestone subset
+    /// (g04 (b)) として parser 段で silent drop する — `parse_height` doc 参照。
+    ///
+    /// margin (`<length-percentage> | auto`) の non-negative constraint が違うだけの
+    /// grammar のため、payload 型は sibling [`Self::MarginTop`] と同じ
+    /// [`LengthOrAuto`] を reuse (37n sibling: `parse_padding_side` の非負フィルタ +
+    /// `parse_margin_side` の auto 分岐を合成、`parse_height` doc 参照)。
+    ///
+    /// resolve (percentage → containing block, `LengthOrAuto::Auto` の実 layout
+    /// 高さ計算) は下流 (raikiri-dom `apply_computed_to_style` bridge、future task)
+    /// 責務 — 本 crate は cascade static side に留まり raw specified value を保持。
+    Height(LengthOrAuto),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -899,6 +917,10 @@ pub enum PropertyKey {
     MarginBottom,
     MarginLeft,
     Margin,
+    // height — raikiri-spike-0vv.11 (semantics on the matching
+    // PropertyValue::Height variant; sibling PropertyKey variants carry no
+    // per-variant docs per crate convention).
+    Height,
 }
 
 impl PropertyValue {
@@ -932,6 +954,7 @@ impl PropertyValue {
             PropertyValue::MarginBottom(_) => PropertyKey::MarginBottom,
             PropertyValue::MarginLeft(_) => PropertyKey::MarginLeft,
             PropertyValue::Margin(_) => PropertyKey::Margin,
+            PropertyValue::Height(_) => PropertyKey::Height,
         }
     }
 }
@@ -1036,6 +1059,11 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // 内で 4 longhand に展開されるため通常観測しない (詳細は
         // `PropertyValue::Margin` doc + `crate::rule::expand_shorthand`)。
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
+        // CSS Sizing 3 §3.1.1 preferred size — height (raikiri-spike-0vv.11)。
+        // grammar: `auto | <length-percentage [0,∞]>` + spec-valid だが本 milestone
+        // scope 外の `min-content` / `max-content` / `fit-content()` は silent drop
+        // (parse_height 内で ident branch が auto のみ受理して他 keyword 落とし)。
+        "height" => parse_height(input).map(PropertyValue::Height),
         _ => None,
     }
 }
@@ -1391,6 +1419,63 @@ fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> 
 /// `Result` を要求するため wrapper 化。
 fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, ParseError<'i, ()>> {
     parse_padding_side(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `height: <length-percentage [0,∞]> | auto` を parse する。
+///
+/// grammar reference: CSS Sizing 3 §3.1.1 "Preferred Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>。value
+/// grammar は `auto | <length-percentage [0,∞]> | min-content | max-content |
+/// fit-content(<length-percentage>)`、initial value `auto`、Inheritance `No`。
+///
+/// # Scope carving (g04 3-category)
+///
+/// - **(a) spec-invalid → drop**: 負値 (`height: -10px`) は grammar `[0,∞]` 違反、
+///   全 [`Length`] variant の payload に対し `>= 0.0` post-filter で reject
+///   ([`parse_padding_side`] の非負フィルタ pattern と同 shape)。
+/// - **(b) milestone subset — 未対応 sizing keyword**: `min-content` /
+///   `max-content` / `fit-content(<length-percentage>)` は Sprint 17 seed scope
+///   外、silent drop (auto ident branch から外れる他 keyword は
+///   `expect_ident_matching("auto")` が失敗 → length parser の Dimension /
+///   Percentage arm でも受理されず None に落ちる)。
+/// - **(b) milestone subset — CSS-wide keyword**: `inherit` / `initial` /
+///   `unset` / `revert` / `revert-layer` / `all` は Epic 7、silent drop
+///   (同 ident 経路で他 keyword と同じく落ちる)。
+/// - **calc() / var()**: Epic 5 対象、本 task scope 外
+///   (`Token::Function` は `parse_length_value` が Dimension / Percentage 以外を
+///   silent drop)。
+///
+/// # Order of alternative (sibling: [`parse_margin_side`])
+///
+/// `auto` ident branch を **先に** try_parse する — [`parse_length_value`] は内部
+/// で `input.next()` を unconditional に消費するため、naive な "try length first,
+/// then auto" だと `height: auto` の `auto` ident が length parser で drop され
+/// 後段の auto match が届かない。`try_parse` で checkpoint 経由の rewind を
+/// 確保する ([`parse_margin_side`] と同 pattern — margin の grammar `<length-
+/// percentage> | auto` と同 shape を LengthOrAuto payload で共有)。
+///
+/// `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、既存
+/// `counter_reset_is_case_insensitive_on_none` test が挙動を pin) なので
+/// `AUTO` / `Auto` も透過的に受理される。
+///
+/// # Non-negative filter (sibling: [`parse_padding_side`])
+///
+/// spec `<length-percentage [0,∞]>` (§3.1.1) の非負制約は全 [`Length`] variant
+/// (`Px` / `Em` / `Rem` / `Percent` / `Pt`) の payload に対し `>= 0.0` を確認 —
+/// [`parse_padding_side`] の同名 pattern を踏襲 (`<length-percentage [0,∞]>`
+/// grammar と非負フィルタが対応する 37n sibling)。`Percent(-10.0)` = `-10%` も
+/// 含めて全 variant 経由で reject する。
+fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    let length = parse_length_value(input, true)?;
+    // spec §3.1.1: <length-percentage [0,∞]>。全 variant の payload を OR-pattern
+    // で抽出し `>= 0.0` を確認、負値 → drop (parse_padding_side の同 pattern)。
+    let v = match length {
+        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
+    };
+    (v >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
 /// `line-height: normal | <number> | <length-percentage>` を parse する。
@@ -2306,9 +2391,11 @@ mod tests {
 
     #[test]
     fn unknown_property_returns_none() {
-        // `background-color` (0vv.7)、`padding` (0vv.6)、`margin` (0vv.5) が
-        // 順次実装済 = ここから除外。`width` は現時点で parse_value dispatch
-        // に未登録 → fall-through で None が返る canonical unknown-property canary。
+        // `background-color` (0vv.7)、`padding` (0vv.6)、`margin` (0vv.5)、
+        // `height` (0vv.11) が順次実装済 = ここから除外。`width` は本 branch
+        // (0vv.11 height) 時点で parse_value dispatch に未登録 (parallel sibling
+        // task 0vv.10 で追加予定) → fall-through で None が返る canonical
+        // unknown-property canary。
         assert_eq!(parse("100px", "width"), None);
     }
 
@@ -4376,5 +4463,139 @@ mod tests {
         assert_eq!(s.right, LengthOrAuto::Length(Length::Px(3.5)));
         assert_eq!(s.bottom, LengthOrAuto::Length(Length::Px(3.5)));
         assert_eq!(s.left, LengthOrAuto::Length(Length::Px(3.5)));
+    }
+
+    // ── height (CSS Sizing 3 §3.1.1、raikiri-spike-0vv.11) ─────────────
+    //
+    // Primary source (WebFetch verified 2026-07-23):
+    // - #preferred-size-properties: `auto | <length-percentage [0,∞]> |
+    //   min-content | max-content | fit-content(<length-percentage>)`,
+    //   initial `auto`, Inheritance `No`.
+    //
+    // Sprint 17 seed scope は `auto` + 非負 `<length-percentage>` の 2 分岐のみ、
+    // 他 sizing keyword / global keyword / calc() / var() は silent drop
+    // (parse_height doc の g04 3-category 参照)。
+    //
+    // 37n sibling: margin (`<length-percentage> | auto`) と非負制約付き padding
+    // (`<length-percentage [0,∞]>`) の合成 pattern。
+
+    #[test]
+    fn height_parse_auto() {
+        // Verification 1 (task doc): `auto` ident は spec initial value でもある
+        // (§3.1.1 "Initial: auto") — cascade winner として declaration が到達
+        // した場合の受理 pattern を pin。
+        assert_eq!(
+            parse("auto", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Auto))
+        );
+    }
+
+    #[test]
+    fn height_parse_px() {
+        // Verification 2 (task doc): 非負 px は spec-valid `<length-percentage>`
+        // (§3.1.1)。sibling `margin_top_parse_px` と同 shape。
+        assert_eq!(
+            parse("100px", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(Length::Px(
+                100.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn height_parse_percentage() {
+        // Verification 3 (task doc): percentage 受理 (parse_length_value の
+        // allow_percentage = true 経路)。resolve (containing block % → 実寸)
+        // は下流責務。
+        assert_eq!(
+            parse("50%", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(
+                Length::Percent(50.0)
+            )))
+        );
+    }
+
+    #[test]
+    fn height_rejects_negative_length() {
+        // Verification 4 (task doc): `<length-percentage [0,∞]>` (§3.1.1) の
+        // 非負制約により `-10px` は spec-invalid → drop (g04 (a))。sibling
+        // padding の非負フィルタ pattern と同 shape、margin の `-10px` 受理
+        // (§3.1) との対称的な reject を pin。
+        assert_eq!(parse("-10px", "height"), None);
+    }
+
+    #[test]
+    fn height_rejects_negative_percentage() {
+        // 非負フィルタが Percent variant にも効く pin (parse_padding_side の
+        // 同 pattern、Verification 4 の姉妹)。
+        assert_eq!(parse("-10%", "height"), None);
+    }
+
+    #[test]
+    fn height_rejects_unsupported_sizing_keyword() {
+        // Non-goal (b) milestone subset: `min-content` / `max-content` /
+        // `fit-content()` は spec-valid だが本 milestone scope 外、silent drop。
+        // ident branch は `auto` matching のみ、length parser の Dimension /
+        // Percentage arm でも受理されず None に落ちる pin。
+        assert_eq!(parse("min-content", "height"), None);
+        assert_eq!(parse("max-content", "height"), None);
+        assert_eq!(parse("fit-content(50%)", "height"), None);
+    }
+
+    #[test]
+    fn height_rejects_global_keyword() {
+        // Non-goal (b): CSS-wide keyword (`inherit` / `initial` / `unset` /
+        // `revert` / `revert-layer`) は Epic 7、silent drop。auto 以外の ident
+        // は length parser でも受理されず None。
+        assert_eq!(parse("inherit", "height"), None);
+        assert_eq!(parse("initial", "height"), None);
+        assert_eq!(parse("unset", "height"), None);
+    }
+
+    #[test]
+    fn height_case_insensitive_auto() {
+        // CSS spec: ident keyword は ASCII case-insensitive
+        // (`expect_ident_matching` の cssparser 慣行、sibling
+        // `margin_side_case_insensitive_auto` と同 pattern)。
+        assert_eq!(
+            parse("AUTO", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Auto))
+        );
+    }
+
+    #[test]
+    fn height_rejects_unsupported_unit() {
+        // `cm` (§6.2 absolute lengths) は現行 milestone subset に含まれない
+        // (parse_length_value 側で drop、bd raikiri-spike-2x8 で追加 unit の
+        // expansion が tracked)。sibling `margin_side_rejects_unsupported_unit`
+        // と同 pattern。
+        assert_eq!(parse("1cm", "height"), None);
+    }
+
+    #[test]
+    fn height_parse_em_and_rem() {
+        // grammar coverage: font-relative units (`em` / `rem`) も
+        // `<length-percentage>` mode で受理される。resolve は下流
+        // (font-size context / root font-size context) 責務。
+        assert_eq!(
+            parse("1.2em", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(Length::Em(1.2))))
+        );
+        assert_eq!(
+            parse("2rem", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(Length::Rem(
+                2.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn height_key_maps_to_height_property_key() {
+        // sibling `margin_longhand_keys_map_correctly` と同 pattern — cascade
+        // winner selection の discriminant integrity を pin。
+        let v = PropertyValue::Height(LengthOrAuto::Auto);
+        assert_eq!(v.key(), PropertyKey::Height);
+        let v = PropertyValue::Height(LengthOrAuto::Length(Length::Px(100.0)));
+        assert_eq!(v.key(), PropertyKey::Height);
     }
 }
