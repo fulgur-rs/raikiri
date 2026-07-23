@@ -12,8 +12,8 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    ContentComponent, CssColor, DisplayValue, Length, LengthOrAuto, LineHeight, Sides, TextAlign,
-    empty_content_list, empty_counter_entries, empty_string_set_entries,
+    BoxSizing, ContentComponent, CssColor, DisplayValue, Length, LengthOrAuto, LineHeight, Sides,
+    TextAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
 };
 
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
@@ -40,7 +40,7 @@ pub struct RunningTemplate {
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
 /// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / line_height、
 /// non-inherited: background-color / display / counter-* / content / string-set /
-/// running_templates / padding)。
+/// running_templates / padding / margin / box_sizing)。
 ///
 /// `#[non_exhaustive]` により future property (margin / padding / width /
 /// height / border-* / box-shadow 等) の追加が non-breaking。
@@ -196,6 +196,29 @@ pub struct ComputedValues {
     ///
     /// raikiri-spike-0vv.5。
     pub margin: Sides<LengthOrAuto>,
+    /// `box-sizing`。**non-inherited**、initial: [`BoxSizing::ContentBox`]
+    /// (CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
+    /// <https://www.w3.org/TR/css-sizing-3/#box-sizing>、"Initial: `content-box`"
+    /// / "Inherited: no")。computed value = specified keyword。
+    ///
+    /// spec note (§3.3): "The definition of the box-sizing property in this
+    /// module supersedes the one in [CSS-UI-3]" — CSS-UI-3 の box-sizing
+    /// 定義は本 module により supersede されるため、css-sizing-3 が authoritative
+    /// source。
+    ///
+    /// 37n sibling: [`display`](Self::display) / [`background_color`](Self::background_color)
+    /// と同じ **non-inherited** 系 — `inherit_from` の non-inherited block に
+    /// 配置し initial 値を直接指定 (親からコピーしない)。
+    ///
+    /// # Downstream handoff (future scope、style-scope confined)
+    ///
+    /// 本 field は cascade static side seed のみ保持し、
+    /// `apply_computed_to_style` bridge (dom scope、`taffy::Style::box_sizing`
+    /// への翻訳) は future cross-scope task に defer
+    /// (bd raikiri-spike-0vv.13 Non-goals)。
+    ///
+    /// (raikiri-spike-0vv.13)
+    pub box_sizing: BoxSizing,
 }
 
 impl ComputedValues {
@@ -238,6 +261,9 @@ impl ComputedValues {
             // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
             // で全 4 side に spread)。raikiri-spike-0vv.5。
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
+            // CSS Sizing 3 §3.3: box-sizing initial は `content-box`
+            // (raikiri-spike-0vv.13)。
+            box_sizing: BoxSizing::ContentBox,
         }
     }
 
@@ -251,7 +277,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / line_height、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding)。
+    /// string-set / running_templates / padding / margin / box_sizing)。
     ///
     /// 新 property を追加する際は分類に応じてこの struct 直下の該当行を追加する
     /// (inherited なら parent からのコピー、non-inherited なら初期値を直接指定)。
@@ -259,7 +285,8 @@ impl ComputedValues {
     /// すること。
     /// (spec §M1.4a、raikiri-spike-m1.22 (display) / raikiri-spike-0vv.7
     /// (background-color) / raikiri-spike-0vv.8 (text-align) /
-    /// raikiri-spike-0vv.9 (line-height) / raikiri-spike-0vv.6 (padding))
+    /// raikiri-spike-0vv.9 (line-height) / raikiri-spike-0vv.6 (padding) /
+    /// raikiri-spike-0vv.13 (box-sizing))
     pub fn inherit_from(parent: &Self) -> Self {
         // 直接 struct literal で初期化する — Self::initial() 経由だと
         // font_family の Vec を 1 度 allocate → drop してから parent から
@@ -306,6 +333,10 @@ impl ComputedValues {
             // non-inherited (CSS Box 3 §3.1 "Inherited: no")。initial 値と drift
             // しないよう `Self::initial()` と同 shape で 0 spread。raikiri-spike-0vv.5。
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
+            // non-inherited (CSS Sizing 3 §3.3 "Inherited: no"、raikiri-spike-0vv.13)。
+            // BoxSizing は Copy、initial 値を直接指定 (親からコピーしない — Verification #5
+            // "parent border-box + child unset = child ContentBox" の pin)。
+            box_sizing: BoxSizing::ContentBox,
         }
     }
 }
@@ -343,6 +374,8 @@ mod tests {
         assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
         // CSS Box 3 §3.1 (raikiri-spike-0vv.5): margin initial は 0 on each side。
         assert_eq!(cv.margin, Sides::all(LengthOrAuto::Length(Length::Px(0.0))));
+        // CSS Sizing 3 §3.3 (raikiri-spike-0vv.13): box-sizing initial は `content-box`。
+        assert_eq!(cv.box_sizing, BoxSizing::ContentBox);
     }
 
     #[test]
@@ -398,6 +431,10 @@ mod tests {
             // 0vv.5: parent に explicit margin を持たせ、child が initial に落ちる
             // ことを他 non-inherited fixture (下の inherit_from_leaves_* 系) で pin。
             margin: Sides::all(LengthOrAuto::Length(Length::Px(12.0))),
+            // 0vv.13: parent に non-initial (BorderBox) を持たせ、child が initial
+            // (ContentBox) に落ちることは `inherit_from_leaves_box_sizing_at_initial`
+            // で pin する (Verification #5、CSS Sizing 3 §3.3 "Inherited: no")。
+            box_sizing: BoxSizing::BorderBox,
         };
         let child = ComputedValues::inherit_from(&parent);
         // inherited: 親からコピー
@@ -512,6 +549,20 @@ mod tests {
             child.margin,
             Sides::all(LengthOrAuto::Length(Length::Px(0.0)))
         );
+    }
+
+    #[test]
+    fn inherit_from_leaves_box_sizing_at_initial() {
+        // CSS Sizing 3 §3.3 "Inherited: no" — 親が box-sizing: border-box を
+        // 持っていても child は initial (`BoxSizing::ContentBox`) に戻る
+        // (raikiri-spike-0vv.13 Verification #5)。37n sibling: display /
+        // counter-* / content / string_set / padding / margin と同 shape。
+        let parent = ComputedValues {
+            box_sizing: BoxSizing::BorderBox,
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(child.box_sizing, BoxSizing::ContentBox);
     }
 
     #[test]
