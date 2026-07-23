@@ -1561,21 +1561,102 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
     }
 }
 
-/// `rgb( <integer> , <integer> , <integer> [, <number>]? )` の中身 (関数呼び出しの
-/// 括弧内) を parse する。`parse_nested_block` の caller 側で `rgb(` / `rgba(` の
-/// function token は既に consume 済み。
+/// `rgb()` / `rgba()` legacy comma syntax の中身 (関数呼び出しの括弧内) を
+/// parse する。`parse_nested_block` の caller 側で `rgb(` / `rgba(` の function
+/// token は既に consume 済み。`rgb` / `rgba` の function name は spec 上 alias
+/// (CSS Color 4 §5.1: "rgb() and rgba() are now aliases for each other")
+/// — alpha 省略は両者で許容し、name-based branching は行わない。
+///
+/// # Grammar (CSS Color 4 §5.1)
+///
+/// <https://www.w3.org/TR/css-color-4/#rgb-functions>
+///
+/// ```text
+/// legacy-rgb-syntax  = rgb(  <legacy-rgb-channel>#{3} , <alpha-value>? )
+/// legacy-rgba-syntax = rgba( <legacy-rgb-channel>#{3} , <alpha-value>? )
+/// legacy-rgb-channel = <number> | <percentage>
+/// alpha-value        = <number> | <percentage>
+/// ```
+///
+/// legacy form の 3 channel は **all-number** or **all-percentage** の同一種で
+/// なければならず、mix (`rgb(255, 50%, 0)`) は spec-invalid (§5.1:
+/// "In the legacy form, the color channels can only be either all `<number>`s
+/// or all `<percentage>`s — mixing types isn't allowed.")。
+///
+/// # Clamping
+///
+/// §5.1: "Values outside these ranges are not invalid, but are clamped to the
+/// ranges defined here at parsed-value time" — 負値 / >255 (number) や
+/// 100% 超も spec-valid、clamp only。
+///
+/// - `<number>` 0..=255 → `clamp_channel` で `i32.clamp(0, 255) as u8`
+/// - `<percentage>` 0%..=100% → `expect_percentage` は `0%`→0.0 / `100%`→1.0
+///   の unit_value を返すため [`clamp_unit_f32`] (`round(v * 255).clamp(0, 255)`)
+///   で `u8` へ mapping
+/// - `<alpha-value>` は `<number>` 0..=1 または `<percentage>` 0%..=100% —
+///   どちらも [`clamp_unit_f32`] で単一 formula に統合
+///
+/// # Milestone subset (g04 category (b))
+///
+/// - Modern (space + slash) syntax `rgb(R G B / A)` は本 task 対象外。legacy
+///   と modern の mix は spec で禁止だが、本 helper は最初の channel の直後で
+///   `expect_comma` を要求するため modern syntax は fall-through で reject。
+/// - Fractional number channel (`rgb(127.5, 0, 0)`) は spec grammar 上 valid
+///   だが、`expect_integer` (整数 `int_value` 必須) を採用しているため drop
+///   — category (b) milestone subset、future task で `<number>` に緩める余地。
+/// - Alpha の `none` component は modern syntax でのみ許容 — 本 task 対象外。
 fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<CssColor, ParseError<'i, ()>> {
-    let r = clamp_channel(input.expect_integer()?);
+    // 1st channel: try percentage first、fail → integer number。
+    // 成功した variant が以降 2 channel の kind を固定する。
+    let (r, is_pct) = if let Ok(pct) = input.try_parse(|i| i.expect_percentage()) {
+        (clamp_unit_f32(pct), true)
+    } else {
+        (clamp_channel(input.expect_integer()?), false)
+    };
     input.expect_comma()?;
-    let g = clamp_channel(input.expect_integer()?);
+    let g = parse_rgb_channel(input, is_pct)?;
     input.expect_comma()?;
-    let b = clamp_channel(input.expect_integer()?);
-    let a = if input.try_parse(|input| input.expect_comma()).is_ok() {
-        clamp_unit_f32(input.expect_number()?)
+    let b = parse_rgb_channel(input, is_pct)?;
+    // 4 番目 comma がある場合のみ alpha を parse。無ければ opaque (a=255)。
+    // `rgba(...)` name 側で alpha 必須にしない (spec §5.1 alias 規定)。
+    let a = if input.try_parse(|i| i.expect_comma()).is_ok() {
+        parse_alpha_value(input)?
     } else {
         255
     };
     Ok(CssColor { r, g, b, a })
+}
+
+/// legacy rgb() の 2 番目 / 3 番目 channel を parse する。1 番目 channel で
+/// 決定した `is_pct` kind に沿って `<number>` / `<percentage>` のどちらかを
+/// hard-expect し、mix (`rgb(255, 50%, 0)` / `rgb(50%, 255, 0)`) は Err で
+/// 弾く (spec §5.1: "mixing types isn't allowed")。
+fn parse_rgb_channel<'i>(
+    input: &mut Parser<'i, '_>,
+    is_pct: bool,
+) -> Result<u8, ParseError<'i, ()>> {
+    if is_pct {
+        Ok(clamp_unit_f32(input.expect_percentage()?))
+    } else {
+        Ok(clamp_channel(input.expect_integer()?))
+    }
+}
+
+/// `<alpha-value>` (CSS Color 4 §5.1 grammar: `<number> | <percentage>`)。
+/// `<number>` は 0..=1、`<percentage>` は 0%..=100% で、どちらも clamp 後
+/// [`clamp_unit_f32`] で 0..=255 の `u8` に mapping する
+/// (`expect_percentage` の unit_value は既に 0..=1 化されているため同一 formula)。
+///
+/// try_parse で percentage を先行させる — `<percentage>` は Token::Percentage、
+/// `<number>` は Token::Number で orthogonal だが、percentage-first は
+/// [`parse_rgb_function`] の 1 番目 channel と対称の順序 (mix reject と同じ
+/// pattern で読める)。
+fn parse_alpha_value<'i>(input: &mut Parser<'i, '_>) -> Result<u8, ParseError<'i, ()>> {
+    if let Ok(pct) = input.try_parse(|i| i.expect_percentage()) {
+        Ok(clamp_unit_f32(pct))
+    } else {
+        Ok(clamp_unit_f32(input.expect_number()?))
+    }
 }
 
 fn clamp_channel(value: i32) -> u8 {
@@ -3040,6 +3121,161 @@ mod tests {
                 g: 0,
                 b: 0,
                 a: 255
+            }))
+        );
+    }
+
+    // ── rgb() / rgba() function form (raikiri-spike-0vv.15) ──
+    //
+    // CSS Color 4 §5.1 legacy comma syntax の追加 form covers。
+    // 1 sample あたり CssColor 値まで pin (loose `Some(_)` は mix reject 系
+    // regression が silent pass するため避ける、既存 background_color assert
+    // pattern に揃える)。
+
+    #[test]
+    fn color_parse_rgb_percentage_form() {
+        // §5.1: `<percentage>` 0%/100% は `<number>` 0/255 と等価。
+        // 100% → 1.0 unit_value → clamp_unit_f32(1.0) = round(255) = 255。
+        assert_eq!(
+            parse("rgb(100%, 0%, 0%)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_rgba_number_alpha() {
+        // §5.1 alpha-value = <number> 0..=1。0.5 → clamp_unit_f32(0.5) =
+        // round(127.5) = 128 (cssparser convention)。
+        assert_eq!(
+            parse("rgba(255, 0, 0, 0.5)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 128,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_rgba_percentage_alpha() {
+        // §5.1 alpha-value = <percentage> 0%..=100% は <number> 0..=1 と
+        // 同じ mapping (50% → unit_value 0.5 → 128)。
+        assert_eq!(
+            parse("rgba(255, 0, 0, 50%)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 128,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_rgb_clamps_overflow() {
+        // §5.1: "Values outside these ranges are not invalid, but are
+        // clamped to the ranges defined here at parsed-value time"。300 → 255。
+        assert_eq!(
+            parse("rgb(300, 0, 0)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_rgb_clamps_negative() {
+        // §5.1 同上、負値も spec-valid で clamp のみ。-10 → 0。
+        assert_eq!(
+            parse("rgb(-10, 0, 0)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_rgb_mix_number_percentage_returns_none() {
+        // §5.1: legacy form は "all-number or all-percentage"、mix は禁止。
+        // 1 番目 = <number> 255 → is_pct=false 固定、2 番目 `50%` は
+        // expect_integer が Percentage token を reject → Err → None。
+        assert_eq!(parse("rgb(255, 50%, 0)", "color"), None);
+    }
+
+    #[test]
+    fn color_parse_rgb_mix_percentage_number_returns_none() {
+        // 逆方向 mix (percentage → number): 1 番目 = <pct> 50% → is_pct=true
+        // 固定、2 番目 `255` は expect_percentage が Number token を reject。
+        assert_eq!(parse("rgb(50%, 255, 0)", "color"), None);
+    }
+
+    #[test]
+    fn color_parse_rgb_modern_syntax_returns_none() {
+        // §5.1 modern (space + slash) syntax `rgb(R G B / A)` は本 task
+        // 対象外 (Non-goals category (b) milestone subset)。1 番目 channel
+        // (255) の後で `expect_comma` を要求するため、space separator は
+        // fall-through で reject。
+        assert_eq!(parse("rgb(255 0 0)", "color"), None);
+        assert_eq!(parse("rgb(255 0 0 / 0.5)", "color"), None);
+    }
+
+    #[test]
+    fn color_parse_rgb_too_few_args_returns_none() {
+        // §5.1 legacy grammar は 3 channel 必須。2 個 (`rgb(255, 0)`) は
+        // 3 番目 channel 手前で `)` (block 終端) に達し、expect_integer が
+        // Err → None。
+        assert_eq!(parse("rgb(255, 0)", "color"), None);
+    }
+
+    #[test]
+    fn color_parse_rgb_too_many_args_returns_none() {
+        // §5.1 legacy grammar は最大 4 slot (3 channel + optional alpha)。
+        // 5 個目は `parse_nested_block` 内部の `parse_entirely` (cssparser
+        // 0.37 parser.rs:1149) が exhaustion check で Err → None。
+        assert_eq!(parse("rgb(255, 0, 0, 0.5, 99)", "color"), None);
+    }
+
+    #[test]
+    fn color_parse_rgb_name_accepts_alpha() {
+        // §5.1 alias 規定 cross-cover: rgb() name でも alpha を受理。
+        // parse_rgb_function は function name に依存せず、4 番目 comma の有無
+        // だけで alpha slot を判定するため、`rgb(R, G, B, A)` は valid。
+        // name-based branching が retro で入った場合の regression guard。
+        assert_eq!(
+            parse("rgb(255, 0, 0, 0.5)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 128,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_rgba_name_accepts_no_alpha() {
+        // §5.1 alias 規定 cross-cover: rgba() name でも alpha を省略できる
+        // (opaque と等価)。`rgba(R, G, B)` は spec grammar 上 valid で、
+        // parse_rgb_function は name に依存せず 4 番目 comma 無し → a=255。
+        assert_eq!(
+            parse("rgba(255, 0, 0)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
             }))
         );
     }
