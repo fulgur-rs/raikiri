@@ -11,7 +11,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use cssparser::color::{clamp_unit_f32, parse_hash_color, parse_named_color};
+use cssparser::color::{clamp_unit_f32, parse_named_color};
 use cssparser::{ParseError, Parser, Token};
 use smol_str::SmolStr;
 
@@ -95,6 +95,94 @@ impl CssColor {
         b: 0,
         a: 0,
     };
+
+    /// hex-notation payload (leading `#` を除いた digit 列) を parse する。
+    ///
+    /// CSS Color 4 §5.1 "The RGB hexadecimal notations: `#RRGGBB`"
+    /// <https://www.w3.org/TR/css-color-4/#hex-notation> の 4 form を受理:
+    ///
+    /// - **3-digit** `rgb`     → 各 nibble を duplicate → `#RRGGBB`, `a = 255`
+    /// - **4-digit** `rgba`    → 3-digit と同じ duplicate + alpha 4-bit nibble
+    /// - **6-digit** `rrggbb`  → `a = 255` (fully opaque)
+    /// - **8-digit** `rrggbbaa` → 末尾 byte が alpha (0..=255)
+    ///
+    /// 短縮形 (3/4-digit) の "digit duplicate" は spec §5.1 直訳:
+    ///
+    /// > "The 3 and 4-digit hex color is a shorter variant of the 6 and
+    /// > 8-digit form, respectively. […] The shorter form is expanded into
+    /// > the longer form by duplicating each digit: `#rgb` becomes `#rrggbb`,
+    /// > and `#rgba` becomes `#rrggbbaa`."
+    ///
+    /// 実装上は nibble `n` (0..=15) を `(n << 4) | n = n * 17` に展開する。
+    ///
+    /// # Case
+    ///
+    /// `0-9` / `a-f` / `A-F` を受理 (ASCII case-insensitive, §5.1 —
+    /// "The letters `A`–`F` may be in uppercase or lowercase")。
+    ///
+    /// # Invalid input
+    ///
+    /// 他 length (0/1/2/5/7/9+) や non-hex byte を含む場合は `None` を返す
+    /// (g04 category (a) spec-invalid → drop)。leading `#` は tokenizer
+    /// (`Token::Hash`) 側で剥がされて渡ってくるため、本 helper は expect しない
+    /// (parser 経由でない直接呼び出しは caller 責務で `#` を落とすこと)。
+    pub fn from_hex(payload: &str) -> Option<Self> {
+        let hex = payload.as_bytes();
+        match hex.len() {
+            3 => {
+                let r = expand_hex_nibble(hex_digit(hex[0])?);
+                let g = expand_hex_nibble(hex_digit(hex[1])?);
+                let b = expand_hex_nibble(hex_digit(hex[2])?);
+                Some(Self { r, g, b, a: 255 })
+            }
+            4 => {
+                let r = expand_hex_nibble(hex_digit(hex[0])?);
+                let g = expand_hex_nibble(hex_digit(hex[1])?);
+                let b = expand_hex_nibble(hex_digit(hex[2])?);
+                let a = expand_hex_nibble(hex_digit(hex[3])?);
+                Some(Self { r, g, b, a })
+            }
+            6 => {
+                let r = hex_byte(hex[0], hex[1])?;
+                let g = hex_byte(hex[2], hex[3])?;
+                let b = hex_byte(hex[4], hex[5])?;
+                Some(Self { r, g, b, a: 255 })
+            }
+            8 => {
+                let r = hex_byte(hex[0], hex[1])?;
+                let g = hex_byte(hex[2], hex[3])?;
+                let b = hex_byte(hex[4], hex[5])?;
+                let a = hex_byte(hex[6], hex[7])?;
+                Some(Self { r, g, b, a })
+            }
+            // 0/1/2/5/7/9+ digit は §5.1 hex-notation grammar に無い spec-invalid。
+            _ => None,
+        }
+    }
+}
+
+/// ASCII hex digit (`0-9` / `a-f` / `A-F`) を 0..=15 の nibble へ変換。
+/// case-insensitive per CSS Color 4 §5.1。non-hex → `None`。
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// 2 桁 hex byte を組み立てる。`hi` / `lo` それぞれの nibble を [`hex_digit`]
+/// で validate し、`(hi << 4) | lo` に合成する。どちらか non-hex なら `None`。
+fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
+    Some((hex_digit(hi)? << 4) | hex_digit(lo)?)
+}
+
+/// 4-bit nibble `n` (`0..=15`) を 8-bit channel `nn` に展開する。
+/// `(n << 4) | n = n * 17` — CSS Color 4 §5.1 の "duplicating each digit"
+/// を実装した short-form 展開 helper (`#f` → `0xff`, `#8` → `0x88`)。
+fn expand_hex_nibble(n: u8) -> u8 {
+    (n << 4) | n
 }
 
 /// CSS length or length-percentage value (Author CSS seed for m4+ box model).
@@ -1044,9 +1132,18 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
 ///
 /// cssparser 0.37 は (0.36 までと異なり) 汎用 `Color` enum / `Color::parse` を
 /// 提供しない — それは別 crate `cssparser-color` 側に移った。ここでは
-/// `cssparser::color` に残っている building block (`parse_hash_color` /
-/// `parse_named_color`) と、`rgb()` / `rgba()` function の手動 parse で
-/// hex / named / rgb() の 3 形式をカバーする (m1.4 scope)。
+/// 各 form の parse を自前 (cleanroom) で組み立て、hex / named / rgb() の
+/// 3 形式をカバーする (m1.4 scope):
+///
+/// - **Hex** (`#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa`) は
+///   [`CssColor::from_hex`] を呼び出す — CSS Color 4 §5.1 準拠の cleanroom 実装。
+///   `Token::Hash` / `Token::IDHash` の payload は leading `#` を含まないため
+///   そのまま渡す (raikiri-spike-0vv.14)。
+/// - **Named color** は `parse_named_color` (Sprint 12 style-7 precedent、
+///   Non-goals defer 対象の 140+ CSS Color L3 keyword table を再実装しない
+///   ため cssparser の table を暫定利用)。
+/// - **`rgb()` / `rgba()` function form** は [`parse_rgb_function`] で
+///   `parse_nested_block` 経由の手動 parse。
 ///
 /// `transparent` keyword は CSS Color 4 §6.3 "The transparent keyword"
 /// <https://www.w3.org/TR/css-color-4/#transparent-color> で
@@ -1056,15 +1153,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
 fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
     let token = input.next().ok()?.clone();
     match token {
-        Token::Hash(ref value) | Token::IDHash(ref value) => {
-            let (r, g, b, alpha) = parse_hash_color(value.as_bytes()).ok()?;
-            Some(CssColor {
-                r,
-                g,
-                b,
-                a: clamp_unit_f32(alpha),
-            })
-        }
+        Token::Hash(ref value) | Token::IDHash(ref value) => CssColor::from_hex(value),
         Token::Ident(ref name) if name.eq_ignore_ascii_case("transparent") => {
             Some(CssColor::TRANSPARENT)
         }
@@ -2100,6 +2189,82 @@ mod tests {
     }
 
     #[test]
+    fn color_parse_hex_3digit_duplicates_nibbles() {
+        // CSS Color 4 §5.1: "The shorter form is expanded into the longer
+        // form by duplicating each digit: `#rgb` becomes `#rrggbb`."
+        // `#f00` == `#ff0000`.
+        assert_eq!(
+            parse("#f00", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_hex_4digit_duplicates_alpha_nibble() {
+        // CSS Color 4 §5.1: `#rgba` becomes `#rrggbbaa`。alpha nibble `8`
+        // → `0x88` = 136 (8 * 17)。
+        assert_eq!(
+            parse("#f008", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 136
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_hex_8digit_alpha_byte() {
+        // CSS Color 4 §5.1 8-digit form: 末尾 byte が alpha (0..=255)。
+        // `#ff000080` → alpha = 0x80 = 128。
+        assert_eq!(
+            parse("#ff000080", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 128
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_hex_case_insensitive() {
+        // CSS Color 4 §5.1: "The letters `A`–`F` may be in uppercase or
+        // lowercase" — `#FF0000` == `#ff0000`。
+        assert_eq!(
+            parse("#FF0000", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_hex_invalid_char_returns_none() {
+        // spec-invalid: `g` は hex digit ではない (g04 category (a) → drop)。
+        assert_eq!(parse("#gggggg", "color"), None);
+    }
+
+    #[test]
+    fn color_parse_hex_invalid_length_returns_none() {
+        // spec-invalid: hex-notation grammar は 3/4/6/8 digit のみ。
+        // 5-digit は spec に無い (g04 category (a) → drop)。
+        assert_eq!(parse("#12345", "color"), None);
+        // 7-digit も同様に spec-invalid。
+        assert_eq!(parse("#1234567", "color"), None);
+    }
+
+    #[test]
     fn color_parse_named() {
         assert_eq!(
             parse("red", "color"),
@@ -2141,6 +2306,80 @@ mod tests {
             parse("transparent", "color"),
             Some(PropertyValue::Color(CssColor::TRANSPARENT))
         );
+    }
+
+    // ── CssColor::from_hex (raikiri-spike-0vv.14) direct helper contract ──
+    //
+    // parse_color 経由の integration test は上で網羅済み。以下は helper 自体の
+    // API contract を pin する direct call test — 0vv.15 (rgb() function form)
+    // や future property (border-*-color 等) が同じ primitive を消費するため、
+    // 内部形状の regression を早く捕まえる目的。
+
+    #[test]
+    fn css_color_from_hex_6digit_returns_channels() {
+        // 6-digit form: `rrggbb` は各 2 桁を byte として解釈、alpha = 255。
+        assert_eq!(
+            CssColor::from_hex("336699"),
+            Some(CssColor {
+                r: 0x33,
+                g: 0x66,
+                b: 0x99,
+                a: 255,
+            })
+        );
+    }
+
+    #[test]
+    fn css_color_from_hex_3digit_expands_by_duplication() {
+        // 3-digit form: 各 nibble を duplicate。`#369` == `#336699`。
+        assert_eq!(CssColor::from_hex("369"), CssColor::from_hex("336699"));
+    }
+
+    #[test]
+    fn css_color_from_hex_4digit_expands_alpha_nibble() {
+        // 4-digit form: `#369c` == `#336699cc`。alpha nibble `c` (12) →
+        // `0xcc` = 204。
+        assert_eq!(CssColor::from_hex("369c"), CssColor::from_hex("336699cc"));
+    }
+
+    #[test]
+    fn css_color_from_hex_8digit_carries_alpha_byte() {
+        // 8-digit form: 末尾 byte がそのまま alpha (0..=255)。
+        assert_eq!(
+            CssColor::from_hex("336699cc"),
+            Some(CssColor {
+                r: 0x33,
+                g: 0x66,
+                b: 0x99,
+                a: 0xcc,
+            })
+        );
+    }
+
+    #[test]
+    fn css_color_from_hex_mixed_case_accepted() {
+        // §5.1 case-insensitive: `#aBcDeF` == `#abcdef`。
+        assert_eq!(CssColor::from_hex("aBcDeF"), CssColor::from_hex("abcdef"));
+    }
+
+    #[test]
+    fn css_color_from_hex_invalid_length_returns_none() {
+        // hex-notation grammar 外の length は spec-invalid → None。
+        assert_eq!(CssColor::from_hex(""), None);
+        assert_eq!(CssColor::from_hex("1"), None);
+        assert_eq!(CssColor::from_hex("12"), None);
+        assert_eq!(CssColor::from_hex("12345"), None);
+        assert_eq!(CssColor::from_hex("1234567"), None);
+        assert_eq!(CssColor::from_hex("123456789"), None);
+    }
+
+    #[test]
+    fn css_color_from_hex_non_hex_char_returns_none() {
+        // non-hex byte → None (nibble parse で早期 fail)。
+        assert_eq!(CssColor::from_hex("gggggg"), None);
+        assert_eq!(CssColor::from_hex("12x456"), None);
+        // 3-digit 内の non-hex も同様。
+        assert_eq!(CssColor::from_hex("f0z"), None);
     }
 
     // ── background-color (CSS Backgrounds 3 §2.2、raikiri-spike-0vv.7) ──
