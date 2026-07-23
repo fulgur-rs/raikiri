@@ -15,9 +15,13 @@ use parley::{
     StyleProperty,
 };
 use raikiri_style::CascadeResult;
-use raikiri_style::property::{DisplayValue, Length};
+use raikiri_style::ComputedValues;
+use raikiri_style::property::{DisplayValue, Length, LengthOrAuto};
 use raikiri_traits::{LayoutError, PageBox};
-use taffy::{AvailableSpace, Dimension, Display, NodeId as TaffyNodeId, Size, compute_root_layout};
+use taffy::{
+    AvailableSpace, Dimension, Display, LengthPercentage, LengthPercentageAuto,
+    NodeId as TaffyNodeId, Rect, Size, compute_root_layout,
+};
 
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
 ///
@@ -50,7 +54,7 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     None
 }
 
-/// `<body>` の taffy::Style.size を PageBox の width / height (CSS pt) に強制する。
+/// `<body>` の taffy::Style.size を PageBox の width / height (CSS px) に強制する。
 ///
 /// CSS Paged Media の initial containing block = @page size。M1 は @page 非対応
 /// のため body.style.size に直接注入する妥協。M4 で @page cascade + per-page
@@ -62,7 +66,38 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
     };
 }
 
-/// ComputedValues → taffy::Style bridge の site。
+/// ComputedValues → taffy::Style bridge の dispatch site。
+///
+/// Sprint 18 (raikiri-spike-j5rz) で per-element for loop 内 inline mapping から
+/// per-field `bridge_*` helper へ dispatch する pattern に refactor
+/// (advisor #4 first-merged refactor scaffold)。Wave 2+ で bridge_padding /
+/// bridge_size / bridge_border / bridge_box_sizing を helper add + dispatch 1 行
+/// 追加 のみで conflict 密度最小化。
+///
+/// 現時点で active な bridge:
+/// - [`bridge_display`] — [`DisplayValue`] → [`taffy::Display`] (Sprint 13
+///   w2s で initial landing)
+/// - [`bridge_margin`] — [`Sides<LengthOrAuto>`] → [`taffy::Rect<LengthPercentageAuto>`]
+///   (raikiri-spike-j5rz)
+pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        let cv = &cascade.computed[idx];
+        let style = &mut doc.nodes[idx].style;
+        bridge_display(style, cv);
+        bridge_margin(style, cv);
+        // Sprint 18 Wave 2+ で以下が追記予定 (順序: padding → width → border →
+        // box-sizing → height、advisor #4 conflict 密度最小化):
+        //   bridge_padding(style, cv);
+        //   bridge_size(style, cv);   // width / height の両方
+        //   bridge_border(style, cv);
+        //   bridge_box_sizing(style, cv);
+    }
+}
+
+/// [`DisplayValue`] → [`taffy::Display`] mapping。
 ///
 /// raikiri-spike-0vv.4 (Sprint 12) で追加された [`DisplayValue`] を
 /// [`taffy::Display`] に mapping する。taffy 0.x は Block / Flex / Grid /
@@ -72,22 +107,118 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///   separate 扱い、精密化は follow-up)
 /// - `None` → `None`
 /// - catch-all arm → `Block` (`non_exhaustive` forward-compat)
-pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
-    for idx in 0..doc.nodes.len() {
-        if doc.nodes[idx].kind() != NodeKind::Element {
-            continue;
+fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
+    style.display = match cv.display {
+        DisplayValue::Block => Display::Block,
+        DisplayValue::Inline => Display::Block,
+        DisplayValue::InlineBlock => Display::Block,
+        DisplayValue::None => Display::None,
+        _ => {
+            // non_exhaustive catch-all — unknown future variant goes to Block
+            Display::Block
         }
-        let cv = &cascade.computed[idx];
-        doc.nodes[idx].style.display = match cv.display {
-            DisplayValue::Block => Display::Block,
-            DisplayValue::Inline => Display::Block,
-            DisplayValue::InlineBlock => Display::Block,
-            DisplayValue::None => Display::None,
-            _ => {
-                // non_exhaustive catch-all — unknown future variant goes to Block
-                Display::Block
-            }
-        };
+    };
+}
+
+/// [`ComputedValues::margin`] (`Sides<LengthOrAuto>`) → [`taffy::Style::margin`]
+/// (`Rect<LengthPercentageAuto>`) bridge。
+///
+/// CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical> の
+/// physical margin 4 side (top / right / bottom / left) を taffy `Rect` に
+/// **field 名 mapping** で write する (positional constructor は使わない —
+/// `Sides` の field 順 `top,right,bottom,left` と `Rect` の field 順
+/// `left,right,top,bottom` が異なるため silent transpose を防ぐ)。
+///
+/// Length policy は [`length_or_auto_to_taffy_lpa`] を参照。
+///
+/// (raikiri-spike-j5rz Sprint 18 Wave 1)
+fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues) {
+    let m = cv.margin;
+    style.margin = Rect {
+        top: length_or_auto_to_taffy_lpa(m.top),
+        right: length_or_auto_to_taffy_lpa(m.right),
+        bottom: length_or_auto_to_taffy_lpa(m.bottom),
+        left: length_or_auto_to_taffy_lpa(m.left),
+    };
+}
+
+/// [`Length`] → [`taffy::LengthPercentage`] bridge (padding / border 用)。
+///
+/// **taffy 空間 = CSS px** (raikiri-traits/src/page.rs:98 authoritative、
+/// PageBox width / height は CSS px、`1 CSS px = 1/96 in`)。
+///
+/// Unified Length policy (Sprint 18 全 6 bridge task で verbatim 共有):
+/// - `Length::Px(v)` → `length(v)` (identity)
+/// - `Length::Pt(v)` → `length(v * 4.0 / 3.0)` — CSS Values 4 §6.2 で
+///   `1pt = 1/72 in`、CSS で `1in = 96 px` なので `1 pt = 96/72 px = 4/3 px`。
+/// - `Length::Percent(p)` → `percent(p / 100.0)` — CSS spec の authored 0-100 を
+///   taffy fraction 0.0-1.0 に。
+/// - `Length::Em(_)` / `Length::Rem(_)` → defensive `length(0.0)` — cascade
+///   em→px resolution 未実装 (Sprint 18 スコープ外、drain 時に spinout 候補)。
+///   TODO: font-size context を cascade で resolve 済にして em/rem を実 px 値へ。
+/// - `_` (non_exhaustive catch-all) → `length(0.0)` (forward-compat)
+///
+/// Wave 2 の `bridge_padding` (raikiri-spike-jbu0) から consume される。
+#[allow(dead_code)] // consumed by bridge_padding (raikiri-spike-jbu0, Wave 2)
+fn length_to_taffy_length_percentage(len: Length) -> LengthPercentage {
+    match len {
+        Length::Px(v) => LengthPercentage::length(v),
+        Length::Pt(v) => LengthPercentage::length(v * 4.0 / 3.0),
+        Length::Percent(p) => LengthPercentage::percent(p / 100.0),
+        // TODO(raikiri-spike-0vv.17 相当): cascade で em/rem を px に resolve、
+        // ここでは defensive 0.0 で fail-quiet (Sprint 18 スコープ外)。
+        Length::Em(_) | Length::Rem(_) => LengthPercentage::length(0.0),
+        // non_exhaustive catch-all — unknown future variant は 0.0 で fail-quiet。
+        _ => LengthPercentage::length(0.0),
+    }
+}
+
+/// [`LengthOrAuto`] → [`taffy::Dimension`] bridge (width / height 用)。
+///
+/// Length policy は [`length_to_taffy_length_percentage`] と同じ。
+/// `LengthOrAuto::Auto` → `Dimension::auto()`。
+///
+/// Wave 2 / Wave 3 の `bridge_size` (raikiri-spike-ggig / 01up) から consume される。
+#[allow(dead_code)] // consumed by bridge_size (raikiri-spike-ggig/01up, Wave 2/3)
+fn length_or_auto_to_taffy_dimension(loa: LengthOrAuto) -> Dimension {
+    match loa {
+        LengthOrAuto::Auto => Dimension::auto(),
+        LengthOrAuto::Length(len) => match len {
+            Length::Px(v) => Dimension::length(v),
+            Length::Pt(v) => Dimension::length(v * 4.0 / 3.0),
+            Length::Percent(p) => Dimension::percent(p / 100.0),
+            // TODO(raikiri-spike-0vv.17 相当): cascade で em/rem を px に resolve。
+            Length::Em(_) | Length::Rem(_) => Dimension::length(0.0),
+            _ => Dimension::length(0.0),
+        },
+        // non_exhaustive catch-all — 未知 variant は auto に fail-quiet
+        // (Sizing spec の initial default が auto なので、safe fallback)。
+        _ => Dimension::auto(),
+    }
+}
+
+/// [`LengthOrAuto`] → [`taffy::LengthPercentageAuto`] bridge (margin 用)。
+///
+/// Length policy は [`length_to_taffy_length_percentage`] と同じ。
+/// `LengthOrAuto::Auto` → `LengthPercentageAuto::auto()` (CSS Box 3 §3.1
+/// "margin auto = distribute available space" を taffy に委譲)。
+fn length_or_auto_to_taffy_lpa(loa: LengthOrAuto) -> LengthPercentageAuto {
+    match loa {
+        LengthOrAuto::Auto => LengthPercentageAuto::auto(),
+        LengthOrAuto::Length(len) => match len {
+            Length::Px(v) => LengthPercentageAuto::length(v),
+            Length::Pt(v) => LengthPercentageAuto::length(v * 4.0 / 3.0),
+            Length::Percent(p) => LengthPercentageAuto::percent(p / 100.0),
+            // TODO(raikiri-spike-0vv.17 相当): cascade で em/rem を px に resolve、
+            // ここでは defensive 0.0 で fail-quiet (Sprint 18 スコープ外)。
+            Length::Em(_) | Length::Rem(_) => LengthPercentageAuto::length(0.0),
+            // non_exhaustive catch-all — unknown future variant は 0.0 で fail-quiet。
+            _ => LengthPercentageAuto::length(0.0),
+        },
+        // non_exhaustive catch-all — 未知 variant は auto に fail-quiet
+        // (margin の initial value は 0 だが、Auto に落とすことで taffy が
+        // property-specific resolution を行う余地を残す)。
+        _ => LengthPercentageAuto::auto(),
     }
 }
 
@@ -416,6 +547,12 @@ mod tests {
     fn apply_computed_to_style_bridges_display_to_taffy() {
         // raikiri-spike-w2s: display bridge active — DisplayValue → taffy::Display
         // mapping が正しく行われていることを確認する regression pin。
+        //
+        // raikiri-spike-j5rz (Sprint 18): bridge_margin が dispatch に加わったが
+        // margin unspecified の element では initial `Sides::all(Length::Px(0.0))`
+        // が cascade で入る → taffy `LengthPercentageAuto::length(0.0)` に translate、
+        // これは `taffy::Style::default().margin` (all `Length(0.0)`) と一致するため
+        // 既存 assertion は無変更で通ることを確認する pin にもなる。
         use raikiri_style::{build_rule_tree, cascade};
 
         let mut doc = Document::new();
@@ -431,6 +568,82 @@ mod tests {
         assert_eq!(doc.nodes[body].style.size, default_style.size);
         assert_eq!(doc.nodes[body].style.margin, default_style.margin);
         assert_eq!(doc.nodes[body].style.padding, default_style.padding);
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_margin_to_taffy() {
+        // raikiri-spike-j5rz (Sprint 18 dom-4 Wave 1): bridge_margin が
+        // Sides<LengthOrAuto> を taffy::Rect<LengthPercentageAuto> に translate
+        // することを確認する regression pin。Unified Length policy の 4 分岐
+        // (Px / Auto / Percent / Pt) をそれぞれ 1 case で covering。
+        //
+        // Test 戦略: 各 case は独立 fixture で cascade → apply_computed_to_style
+        // → body.style.margin を assert。inline style 経由なので raikiri-style
+        // の parse_margin_shorthand + longhand path も同時に regression pin。
+        use raikiri_style::{build_rule_tree, cascade};
+        use taffy::{LengthPercentageAuto, Rect};
+
+        fn margin_for(inline: &str) -> Rect<LengthPercentageAuto> {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[body].style.margin
+        }
+
+        // Case 1: shorthand `margin: 10px 20px 30px 40px` (top/right/bottom/left)
+        //   → Rect { top: 10, right: 20, bottom: 30, left: 40 } (all Px identity)。
+        //   Sides.top,right,bottom,left → Rect.top,right,bottom,left の field-name
+        //   mapping を pin (positional silent transpose を防ぐ)。
+        assert_eq!(
+            margin_for("margin: 10px 20px 30px 40px"),
+            Rect {
+                top: LengthPercentageAuto::length(10.0),
+                right: LengthPercentageAuto::length(20.0),
+                bottom: LengthPercentageAuto::length(30.0),
+                left: LengthPercentageAuto::length(40.0),
+            }
+        );
+
+        // Case 2: shorthand `margin: auto` → 4 side 全て auto()。
+        assert_eq!(
+            margin_for("margin: auto"),
+            Rect {
+                top: LengthPercentageAuto::auto(),
+                right: LengthPercentageAuto::auto(),
+                bottom: LengthPercentageAuto::auto(),
+                left: LengthPercentageAuto::auto(),
+            }
+        );
+
+        // Case 3: longhand `margin-left: 50%` → left = percent(0.5)、他 3 side は
+        //   initial (0.0 px)。CSS spec の authored 0-100 → taffy fraction 0.0-1.0
+        //   の div-by-100 policy を pin。
+        assert_eq!(
+            margin_for("margin-left: 50%"),
+            Rect {
+                top: LengthPercentageAuto::length(0.0),
+                right: LengthPercentageAuto::length(0.0),
+                bottom: LengthPercentageAuto::length(0.0),
+                left: LengthPercentageAuto::percent(0.5),
+            }
+        );
+
+        // Case 4: longhand `margin-top: 10pt` → top = length(10 * 4/3) = length(13.333...)。
+        //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
+        //   f32 bit-identical assert のため右辺を expression のまま書く
+        //   (`13.333` literal は round-trip で drift する)。
+        assert_eq!(
+            margin_for("margin-top: 10pt"),
+            Rect {
+                top: LengthPercentageAuto::length(10.0 * 4.0 / 3.0),
+                right: LengthPercentageAuto::length(0.0),
+                bottom: LengthPercentageAuto::length(0.0),
+                left: LengthPercentageAuto::length(0.0),
+            }
+        );
     }
 
     // ── layout_single_page driver (Task 7) ──────────────────────

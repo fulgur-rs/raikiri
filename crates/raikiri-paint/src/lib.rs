@@ -53,7 +53,7 @@ mod tests {
     use raikiri_dom::{Document, layout_single_page};
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
-    use taffy::{Dimension, Display, LengthPercentageAuto, Rect, Size, Style};
+    use taffy::{Dimension, Display, Size, Style};
 
     /// hello-world (`<html><head></head><body><p style="color:red">Hi</p></body></html>`) を
     /// m1.6 layout_single_page まで完了させた Document + CascadeResult を返す。
@@ -288,20 +288,28 @@ mod tests {
         // taffy margin を付けて p.location.x/y を non-zero に押し、accumulation
         // logic を実 exercise する。expected = body.location + p.location +
         // text.location (block layout の flow 累積)。
+        //
+        // raikiri-spike-j5rz (Sprint 18) 以降 `apply_computed_to_style` が
+        // `bridge_margin` で cascade → taffy 変換を行うため、hand-set した
+        // taffy `Style { margin: ... }` は cascade の initial 0 で上書きされる。
+        // 従って margin は CSS inline (`style="margin: ..."`) 経路で与える —
+        // これが production の real code path とも整合する。
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let p_style = Style {
-            margin: Rect {
-                left: LengthPercentageAuto::length(20.0),
-                top: LengthPercentageAuto::length(20.0),
-                right: LengthPercentageAuto::length(0.0),
-                bottom: LengthPercentageAuto::length(0.0),
-            },
-            ..Default::default()
-        };
-        let p = doc.append_element(Some(body), "p", p_style, Some("color:red"));
+        // `margin: 20px 0px 0px 20px` (top=20, right=0, bottom=0, left=20) — 従来の
+        // hand-set と同 shape を CSS で再現。`0px` は明示 (raikiri-style
+        // `parse_length_value` は bare unitless `0` を受理しない spec-subset
+        // 実装のため、shorthand の 4 side で unit を全 side に付ける)。
+        // `color:red` は既存 assertion で brush 経路の regression pin として
+        // 保持されているため concatenate する。
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("margin: 20px 0px 0px 20px; color: red"),
+        );
         let text = doc.append_text(p, "Hi");
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
