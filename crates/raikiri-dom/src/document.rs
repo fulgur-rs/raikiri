@@ -133,14 +133,102 @@ impl Document {
         id
     }
 
+    /// Comment node を arena に追加する (raikiri-spike-84y)。
+    ///
+    /// `parent` が `Some(idx)` の場合その node の children に append される。
+    /// `None` の場合 detached (html5ever `TreeSink::create_comment` の primitive
+    /// と対応 — html5ever は comment を detached に作ってから後で
+    /// `append(parent, AppendNode(c))` する)。
+    ///
+    /// # Flat tree semantics (advisor step-6 (i))
+    ///
+    /// Comment は `NodeKind::Element` ではなく `NodeKind::Comment` なので
+    /// cascade / paint / stylesheet extraction は Element gate で自動 skip する。
+    /// 追加で [`Document::mark_in_document_flags`] が Comment / PI variant を
+    /// 観測すると `IS_IN_DOCUMENT` bit を clear する contract により、Taffy layout
+    /// tree (is_in_document filter) からも自動的に消える。旧 M1 の
+    /// `strip_non_element_stubs` (arena children Vec からの physical 除去) は
+    /// この 2 段 gate に置き換わったため raikiri-html sink から廃止 (84y)。
+    ///
+    /// Returns: 追加された node の arena index。
+    pub fn append_comment(&mut self, parent: Option<usize>, text: impl Into<SmolStr>) -> usize {
+        let id = self.nodes.len();
+        self.nodes.push(Node::new_comment(text.into()));
+        if let Some(p) = parent {
+            self.nodes[p].children.push(id);
+        }
+        self.invalidate_layout_cache();
+        self.flags_dirty = true;
+        id
+    }
+
+    /// Processing instruction node を arena に追加する (raikiri-spike-84y)。
+    ///
+    /// `parent` は Comment と同じ semantics (Some で attach、None で detached)。
+    /// HTML では実質発生しないが XML / XHTML では有効な NodeType (WHATWG DOM §4)。
+    ///
+    /// Flat tree semantics: Comment と同一 (Element でないので cascade / paint /
+    /// extract の Element gate で skip、`IS_IN_DOCUMENT` clear で taffy からも
+    /// 消える)。
+    ///
+    /// Returns: 追加された node の arena index。
+    pub fn append_processing_instruction(
+        &mut self,
+        parent: Option<usize>,
+        target: impl Into<SmolStr>,
+        data: impl Into<SmolStr>,
+    ) -> usize {
+        let id = self.nodes.len();
+        self.nodes
+            .push(Node::new_processing_instruction(target.into(), data.into()));
+        if let Some(p) = parent {
+            self.nodes[p].children.push(id);
+        }
+        self.invalidate_layout_cache();
+        self.flags_dirty = true;
+        id
+    }
+
     /// 既存の detached node を `parent` の末尾 child として attach する。
     ///
     /// html5ever `TreeSink::append(parent, AppendNode(child))` の primitive。
     /// `child` は既に arena に存在している必要があり、既に別 parent の下にいる
     /// 場合は事前に [`Document::detach_from_parent`] で detach しておくこと
     /// (tree の重複配置を防ぐため raikiri-dom は自動 detach しない)。
+    ///
+    /// # Fragment-aware semantics (raikiri-spike-84y、WHATWG DOM §4.2.5-6)
+    ///
+    /// `child` が [`NodeData::DocumentFragment`] variant の場合、fragment node
+    /// 自身は `parent.children` に append せず、fragment の全 children を parent
+    /// の末尾に移動する (fragment の children は空になる、pre-insert step 5 /
+    /// insert algorithm §4.2.6)。これは spec-conformant な DocumentFragment
+    /// insertion semantics で、fragment そのものは常に unrendered な virtual
+    /// container として振る舞う。
+    ///
+    /// Element / Text / Comment / PI / Document は fragment 以外なので直接 append
+    /// (旧挙動保持)。html5ever が実行時に fragment を parent として渡すことは
+    /// ない (fragment は `get_template_contents` の返り値になる parent 側のみで
+    /// child 側では現れない) ため、この分岐は raikiri-dom を直接 driving する
+    /// consumer (test / 将来の DOM Mutation API) のためのもの。
+    ///
+    /// # Panics
+    ///
+    /// - `parent` / `child` が arena 範囲外 (`nodes[..]` indexing による)。
+    /// - `parent == child` の場合 (spec HierarchyRequestError 相当) は現状
+    ///   detect しない (M1 spike 範囲では発生しない、M4+ で spec-conformant
+    ///   mutation API 化する時 raise 判定)。
     pub fn attach_child(&mut self, parent: usize, child: usize) {
-        self.nodes[parent].children.push(child);
+        // Fragment-aware branch: DocumentFragment child は自身を append せず
+        // その children を parent に move する (WHATWG DOM §4.2.6 insertion
+        // algorithm step 8.2 の効果と一致)。
+        if matches!(self.nodes[child].data, NodeData::DocumentFragment) {
+            // reparent_children の drain + extend pattern と一致。fragment 自身
+            // は `parent.children` に含まれない (contract test (c) 参照)。
+            let moved: Vec<usize> = self.nodes[child].children.drain(..).collect();
+            self.nodes[parent].children.extend(moved);
+        } else {
+            self.nodes[parent].children.push(child);
+        }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
     }
@@ -264,20 +352,21 @@ impl Document {
 
     /// `<template>` element の contents fragment root を新規 allocate し、
     /// その arena index を template element の `template_contents` slot に
-    /// wire する (raikiri-spike-xno Part 2)。
+    /// wire する (raikiri-spike-xno Part 2、raikiri-spike-84y で恒久 shape 化)。
     ///
-    /// # Fragment root の shape (Option B — detached subtree)
+    /// # Fragment root の shape (raikiri-spike-84y、NodeData::DocumentFragment)
     ///
     /// Fragment root は `Document.nodes` arena に detached 状態で allocate される
-    /// (parent なし、Document root からも reachable でない)。tag は
-    /// `"#document-fragment"` — 既存の `#comment` / `#pi` pseudo-tag convention
-    /// を踏襲する:
-    /// - CSS selector は leading `#` の tag 名にマッチしないため、意図しない
-    ///   selector match / cascade が起きない
-    /// - real HTML tag と衝突しない
-    /// - `NodeKind::Element` として存在するが `is_in_document()` は false
-    ///   (以下 `flags_dirty=true` → `mark_in_document_flags` の step 1 で clear
-    ///   された後、step 2 で reachable でないため false のまま)
+    /// (parent なし、Document root からも reachable でない)。旧 xno Part 2 は
+    /// `"#document-fragment"` pseudo-tag な Element として実装していたが、
+    /// 84y で [`NodeData::DocumentFragment`] variant に恒久化:
+    /// - `NodeKind::DocumentFragment` として存在 (Element ではない)、
+    ///   `as_element() == None` — CSS selector / cascade はそもそも Element gate
+    ///   で自動 skip
+    /// - `tag_name()` は `None` (pseudo-tag pollution 廃止)
+    /// - `is_in_document()` は false (以下 `flags_dirty=true` →
+    ///   `mark_in_document_flags` の step 1 で clear された後、step 2 で reachable
+    ///   でないため false のまま)
     ///
     /// # html5ever integration
     ///
@@ -333,15 +422,15 @@ impl Document {
                 data.template_contents,
             );
         }
-        // Step 1: fragment root を append_element(None) で detached allocate。
-        // 内部で `flags_dirty=true` が set されるので、後段 `mark_in_document_flags`
-        // が step 1 で fragment root の default IS_IN_DOCUMENT bit を clear する。
-        let frag_root = self.append_element(
-            None::<usize>,
-            "#document-fragment",
-            Style::default(),
-            None::<&str>,
-        );
+        // Step 1: fragment root を detached DocumentFragment として allocate
+        // (raikiri-spike-84y、旧 append_element(None, "#document-fragment", ...)
+        // pseudo-tag を廃止)。flags_dirty を明示的に set することで、後段
+        // mark_in_document_flags が step 1 で default IS_IN_DOCUMENT bit を
+        // clear する。
+        let frag_root = self.nodes.len();
+        self.nodes.push(Node::new_document_fragment());
+        self.invalidate_layout_cache();
+        self.flags_dirty = true;
         // Step 2: template element の template_contents slot に fragment root
         // index を wire。precondition check 済のため as_element_mut / template
         // tag_name の re-validation は不要。
@@ -371,10 +460,20 @@ impl Document {
     }
 
     /// 全 node の children Vec に対して predicate を適用し、`false` を返す
-    /// entry を除去する。html5ever の comment / PI stub を single-pass で
-    /// 除去する目的で raikiri-html が使用する。個別に `detach_from_parent`
-    /// を呼ぶ O(K*N) 実装を回避 (attacker-controlled な多量 stub で quadratic
-    /// を防ぐ)。tree mutation なので `invalidate_layout_cache` も call する。
+    /// entry を除去する generic bulk-detach primitive。個別に
+    /// `detach_from_parent` を N 回呼ぶ O(K*N) 実装を回避 (attacker-controlled
+    /// な多量 mutation で quadratic を防ぐ)。tree mutation なので
+    /// `invalidate_layout_cache` も call する。
+    ///
+    /// **Historical note (raikiri-spike-84y)**: 旧 raikiri-html sink の
+    /// `strip_non_element_stubs` が Comment / PI stub Element の bulk 除去に
+    /// 消費していたが、84y で Comment / ProcessingInstruction が
+    /// [`NodeData`] variant として恒久 tree 保持 + `mark_in_document_flags`
+    /// による IS_IN_DOCUMENT clear の 2 段 gate に置換されたため、この primitive
+    /// の parse 経路での使用は無くなった。現在は将来の M2+ mutation runtime /
+    /// 直接組み立てを行う consumer 向けの汎用 helper として存置。
+    /// [`flags_dirty`](Self#structfield.flags_dirty) `true` を tree topology
+    /// 変更時に set する契約は他 mutation primitive と一致。
     pub fn retain_children(&mut self, mut predicate: impl FnMut(usize) -> bool) {
         let mut any_removed = false;
         for node in &mut self.nodes {
@@ -390,14 +489,27 @@ impl Document {
         }
     }
 
-    /// `<template>` element の子孫について `IS_IN_DOCUMENT` bit を clear する
-    /// (raikiri-spike-37c)。sink.finish() および mutation batch 後に呼ばれる。
+    /// Flat tree membership bit (`IS_IN_DOCUMENT`) を全 arena node について
+    /// dirty flag ベースで recompute する (raikiri-spike-37c、raikiri-spike-84y で
+    /// Comment / PI kind への拡張)。sink.finish() および mutation batch 後に呼ばれる。
     ///
-    /// アルゴリズム (roborev job 292 findings 対応):
+    /// **どの node が clear されるか** (post-condition):
+    /// - Document root から reachable でない (detached / unreachable) node
+    /// - `<template>` element の子孫 (element 自身は set、その中身は clear)
+    /// - `NodeData::Comment` / `NodeData::ProcessingInstruction` variant
+    ///   (**reachable でも unconditionally clear**、raikiri-spike-84y advisor
+    ///   step-6 option (i) — flat tree 上 unrendered な kind として rendering
+    ///   traversal から統一 skip)
+    ///
+    /// `NodeData::DocumentFragment` は typically detached なので step 2 の DFS
+    /// が届かず step 1 の clear が残る (kind-based clear は不要)。
+    ///
+    /// アルゴリズム (roborev job 292 findings + 84y advisor step-6 (i) 対応):
     /// 1. 全 arena node の bit を先に clear (detached / unreachable node を
     ///    default true のまま残さないため)
     /// 2. Document root から iterative DFS で bit set。template element 自身
-    ///    は set、その descendants は skip (bit clear の状態が残る)
+    ///    は set、その descendants は skip (bit clear の状態が残る)。
+    ///    Comment / PI variant は reachable でも set しない (kind gate、84y)
     ///
     /// 補足 (raikiri-spike-xno Part 2 併存): sink 経由の parse では template
     /// contents は fragment root subtree に流れ、Document root から reachable
@@ -446,12 +558,26 @@ impl Document {
             node.set_in_document(false);
         }
         // Step 2: Document root から reachable な node を DFS で set。
+        //
+        // raikiri-spike-84y (advisor step-6 option (i)): Comment /
+        // ProcessingInstruction は flat tree 上 unrendered なので、reachable
+        // でも `IS_IN_DOCUMENT` bit は clear のままにする。これにより
+        // TaffyChildIter の is_in_document filter で自動的に skip され、
+        // cascade / paint / stylesheet extraction の同 filter も一貫して
+        // Comment/PI を触らない (「traversal に個別の kind gate を散らさない」
+        // 契約 = crates/raikiri-traits/src/dom.rs の Node::is_in_document doc)。
+        // DocumentFragment は detached なので DFS が届かず、step 1 の clear
+        // 状態のまま残る (追加処理不要)。
         let root = self.root_index();
         let mut stack: Vec<(usize, bool)> = vec![(root, false)];
         while let Some((id, in_template)) = stack.pop() {
             let (children_snapshot, is_template_here) = {
                 let node = &mut self.nodes[id];
-                node.set_in_document(!in_template);
+                let is_unrendered_by_kind = matches!(
+                    node.data,
+                    NodeData::Comment(_) | NodeData::ProcessingInstruction { .. }
+                );
+                node.set_in_document(!in_template && !is_unrendered_by_kind);
                 let is_template = match &node.data {
                     NodeData::Element(e) => {
                         e.tag_name.as_str() == "template" && e.namespace.is_none()
@@ -842,5 +968,197 @@ mod taffy_filter_tests {
         let tmpl_children: Vec<taffy::NodeId> =
             <Document as TraversePartialTree>::child_ids(&doc, tmpl_id).collect();
         assert!(tmpl_children.is_empty());
+    }
+
+    #[test]
+    fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
+        // raikiri-spike-84y regression pin (advisor caveat step-6 (i)):
+        // Comment / ProcessingInstruction variant を body 直下に attach した後
+        // mark_in_document_flags を経由すると、TaffyChildIter は
+        // is_in_document filter でこれらを skip する。旧 strip_non_element_stubs
+        // が担っていた "layout tree から non-Element stub を消す" 機能が、
+        // strip 廃止後は「NodeData variant → mark_in_document_flags で
+        // IS_IN_DOCUMENT clear → TaffyChildIter が filter」の chain に置き換わって
+        // いることを end-to-end で pin。
+        //
+        // 特に advisor 指摘の「Comment/PI が layout child count に leak する」
+        // failure mode を stress する: body 直下に Comment 3 個 + PI 2 個 + <p>、
+        // という mix で、body の taffy child_count == 1 (<p> only) を要求する。
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let body = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+        // Interleaved で attach、ordering に依存しないことを確認。
+        let _c0 = doc.append_comment(Some(body), "hello");
+        let _pi0 = doc.append_processing_instruction(Some(body), "xml-stylesheet", "href='x'");
+        let _c1 = doc.append_comment(Some(body), "middle");
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let _c2 = doc.append_comment(Some(body), "end");
+        let _pi1 = doc.append_processing_instruction(Some(body), "xml", "version='1.0'");
+
+        doc.mark_in_document_flags();
+
+        // (a) Comment / PI variant node は IS_IN_DOCUMENT が clear されている。
+        for i in 0..doc.node_count() {
+            let n = doc.get_node(i).unwrap();
+            match n.kind() {
+                raikiri_traits::NodeKind::Comment
+                | raikiri_traits::NodeKind::ProcessingInstruction => {
+                    assert!(
+                        !n.is_in_document(),
+                        "Comment/PI at arena idx {i} must have IS_IN_DOCUMENT cleared \
+                         after mark_in_document_flags (advisor step-6 (i) contract)"
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        // (b) taffy layout tree から見た body の child は <p> の 1 個のみ。
+        let body_taffy = taffy::NodeId::from(body);
+        let p_taffy = taffy::NodeId::from(p);
+        assert_eq!(
+            <Document as TraversePartialTree>::child_count(&doc, body_taffy),
+            1,
+            "body's taffy child_count must be 1 (only <p>), Comment/PI filtered"
+        );
+        let kids: Vec<taffy::NodeId> =
+            <Document as TraversePartialTree>::child_ids(&doc, body_taffy).collect();
+        assert_eq!(kids, vec![p_taffy]);
+
+        // (c) get_child_id も filtered view で consistent (index 0 = <p>)。
+        assert_eq!(
+            <Document as TraversePartialTree>::get_child_id(&doc, body_taffy, 0),
+            p_taffy
+        );
+    }
+}
+
+#[cfg(test)]
+mod attach_child_fragment_tests {
+    //! raikiri-spike-84y bundled Codex xno §8.3 finding #2: attach_child が
+    //! `NodeData::DocumentFragment` を child に受け取った時、WHATWG DOM §4.2.5
+    //! (pre-insert step 5) / §4.2.6 (insertion algorithm step 8.2) と一致する
+    //! fragment-aware semantics で動作する契約を pin。
+    //!
+    //! Spec ref:
+    //! - <https://dom.spec.whatwg.org/#concept-node-pre-insert>
+    //! - <https://dom.spec.whatwg.org/#concept-node-insert>
+    //!
+    //! 契約 (test 3 分割):
+    //! (a) parent.children が fragment の children で source order に extend される
+    //! (b) fragment の children Vec が empty 化される (move、not clone)
+    //! (c) fragment node 自身は parent.children に含まれない
+    use super::*;
+    use crate::node::NodeData;
+
+    fn make_fragment_with_two_children(doc: &mut Document) -> (usize, usize, usize) {
+        let frag = doc.nodes.len();
+        doc.nodes.push(Node::new_document_fragment());
+        // fragment の children は detached の Element 2 個。
+        let c0 = doc.append_element(Some(frag), "span", Style::default(), None::<&str>);
+        let c1 = doc.append_element(Some(frag), "div", Style::default(), None::<&str>);
+        (frag, c0, c1)
+    }
+
+    #[test]
+    fn attach_child_extends_parent_with_fragment_children_in_order() {
+        // WHATWG DOM §4.2.6 step 8.2 with a fragment child: node's children →
+        // parent's children, in tree order.
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+        // parent には先に既存 child を 1 個入れておく。
+        let pre_existing = doc.append_element(Some(parent), "pre", Style::default(), None::<&str>);
+
+        let (frag, c0, c1) = make_fragment_with_two_children(&mut doc);
+        doc.attach_child(parent, frag);
+
+        // (a): parent.children == [pre_existing, c0, c1] (append at tail, source order)。
+        assert_eq!(
+            doc.nodes[parent].children,
+            vec![pre_existing, c0, c1],
+            "attach_child with DocumentFragment must extend parent's children with fragment's children in source order"
+        );
+    }
+
+    #[test]
+    fn attach_child_empties_fragments_children_after_move() {
+        // (b): fragment の children Vec は空になる (move semantics、clone ではない)。
+        // 旧 push 挙動なら fragment.children は保たれるので、この test が move を pin する。
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+        let (frag, _c0, _c1) = make_fragment_with_two_children(&mut doc);
+
+        // 事前確認: fragment 自身は 2 個の children を持つ。
+        assert_eq!(doc.nodes[frag].children.len(), 2);
+
+        doc.attach_child(parent, frag);
+        assert!(
+            doc.nodes[frag].children.is_empty(),
+            "fragment's children must be drained after attach_child (move semantics per WHATWG DOM §4.2.6)"
+        );
+        // fragment 自身は arena には残る (kind = DocumentFragment、detached)。
+        assert!(matches!(doc.nodes[frag].data, NodeData::DocumentFragment));
+    }
+
+    #[test]
+    fn attach_child_does_not_push_the_fragment_node_itself() {
+        // (c): fragment node 自身は parent.children に絶対に含まれない。
+        // WHATWG DOM §4.2.6 step 8.2 は fragment を "container" として扱い、
+        // fragment node 自体は tree に挿入されない (mutation record 上も
+        // parent → fragment ではなく parent → fragment's children で観測される)。
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+        let (frag, _c0, _c1) = make_fragment_with_two_children(&mut doc);
+
+        doc.attach_child(parent, frag);
+
+        assert!(
+            !doc.nodes[parent].children.contains(&frag),
+            "fragment node itself must NOT appear in parent.children (spec: fragment is unrendered container)"
+        );
+    }
+
+    #[test]
+    fn attach_child_with_empty_fragment_is_noop_on_parent_children() {
+        // Edge case: empty fragment attach は parent の children を変えない。
+        // security lens (raw-arena-index footgun): empty fragment で
+        // drain().collect() が空 Vec を返し extend が何もしないことを pin。
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+        let existing = doc.append_element(Some(parent), "p", Style::default(), None::<&str>);
+
+        // Empty fragment。
+        let empty_frag = doc.nodes.len();
+        doc.nodes.push(Node::new_document_fragment());
+
+        doc.attach_child(parent, empty_frag);
+        assert_eq!(
+            doc.nodes[parent].children,
+            vec![existing],
+            "empty fragment attach must not change parent.children"
+        );
+        assert!(!doc.nodes[parent].children.contains(&empty_frag));
+    }
+
+    #[test]
+    fn attach_child_non_fragment_keeps_existing_push_semantics() {
+        // Regression pin: fragment 以外 (Element / Text / Comment / PI /
+        // Document) は旧 挙動 (単純 push) 継続、fragment 分岐が collateral damage
+        // を出さないことを pin。
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+        // Element child, detached。
+        let elem = doc.append_element(None, "span", Style::default(), None::<&str>);
+        doc.attach_child(parent, elem);
+        assert_eq!(doc.nodes[parent].children, vec![elem]);
+        // Comment child, detached。
+        let comment = doc.append_comment(None, "hi");
+        doc.attach_child(parent, comment);
+        assert_eq!(doc.nodes[parent].children, vec![elem, comment]);
     }
 }

@@ -46,10 +46,17 @@ impl StyleNodeId {
     }
 }
 
-/// DOM node kind — Element / Text / Document root.
+/// DOM node kind — mirror of `raikiri_traits::NodeKind` for the style-owned
+/// trait surface (Phase B decoupling, raikiri-spike-3ps + 94e).
 ///
-/// `#[non_exhaustive]` so Comment / CDATA / ProcessingInstruction can be added
-/// later without breakage.
+/// raikiri-spike-84y (Sprint 20) で `Comment` / `ProcessingInstruction` /
+/// `DocumentFragment` を追加。`#[non_exhaustive]` により変更は non-breaking。
+///
+/// Two-way invariant ([`StyleNode::kind`] / [`StyleNode::as_element`]):
+/// `kind() == StyleNodeKind::Element` iff `as_element().is_some()`。追加された
+/// 3 variant はすべて `as_element() == None`。cascade / rule-tree walk は
+/// `StyleNodeKind::Element` のみ処理し、他 kind は skip する契約なので、新
+/// variant は自動的に non-styling (cascade は 触らない) となる。
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StyleNodeKind {
@@ -59,6 +66,16 @@ pub enum StyleNodeKind {
     Text,
     /// Document root (virtual node at arena index 0 by contract).
     Document,
+    /// Comment node (`<!-- ... -->`)。cascade は skip する (Element でない)。
+    /// raikiri-spike-84y で追加。
+    Comment,
+    /// Processing instruction node (`<?target data?>`)。cascade は skip する。
+    /// raikiri-spike-84y で追加。
+    ProcessingInstruction,
+    /// Document fragment root (`<template>` contents 等)。detached subtree の
+    /// virtual root、Document root から reachable でない。cascade は
+    /// `is_in_document()` gate で skip する。raikiri-spike-84y で追加。
+    DocumentFragment,
 }
 
 /// DOM tree abstraction consumed by raikiri-style's cascade / rule-tree walk.

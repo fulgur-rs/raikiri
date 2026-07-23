@@ -277,31 +277,90 @@ mod tests {
     }
 
     #[test]
-    fn parse_strips_comment_nodes_from_dom_tree() {
-        use raikiri_traits::{Dom, Element, Node};
+    fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit() {
+        // raikiri-spike-84y contract rewrite (旧 84y 前: pseudo-tag "#comment"
+        // Element を strip する契約 — 84y で `NodeData::Comment` variant として
+        // 恒久 tree 内保持 + `mark_in_document_flags` step 2 で
+        // IS_IN_DOCUMENT bit clear + Element でないので cascade/paint の Element
+        // gate で skip、の 2 段 gate に置換)。
+        //
+        // 旧 test 名 `parse_strips_comment_nodes_from_dom_tree` は "#comment"
+        // pseudo-tag Element の非存在を scan していたが、84y 後は Comment が
+        // Element でない → as_element() == None → scan は自動で "見つからない"
+        // → vacuously pass するため active positive assertion に rewrite する
+        // (advisor 指摘: run-and-see-pass に頼らない coverage)。
+        use raikiri_traits::{Dom, Node};
 
         let html = b"<html><body><!-- a comment --><p>hi</p></body></html>";
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let doc = &uncascaded.dom;
 
-        // walk the tree and verify no #comment tags remain
-        fn scan(doc: &raikiri_dom::Document, id: raikiri_traits::NodeId) -> bool {
-            if let Some(node) = doc.node(id)
-                && let Some(el) = node.as_element()
-                && matches!(el.tag_name(), "#comment" | "#pi")
-            {
-                return true;
+        // (a) arena に必ず 1 個以上 Comment kind の node が存在する。
+        let mut comment_ids: Vec<usize> = Vec::new();
+        for i in 0..doc.node_count() {
+            let n = doc.node(raikiri_traits::NodeId::new(i as u64)).unwrap();
+            if n.kind() == NodeKind::Comment {
+                comment_ids.push(i);
             }
-            for c in doc.child_ids(id) {
-                if scan(doc, c) {
-                    return true;
-                }
-            }
-            false
         }
+        assert_eq!(
+            comment_ids.len(),
+            1,
+            "expected exactly 1 Comment node in arena after parse"
+        );
+        let comment_id = comment_ids[0];
+        let comment_node = doc
+            .node(raikiri_traits::NodeId::new(comment_id as u64))
+            .unwrap();
+
+        // (b) Comment は as_element() == None (Two-way invariant)。
         assert!(
-            !scan(&uncascaded.dom, uncascaded.dom.root_id()),
-            "expected no #comment stub elements in the DOM tree after parse"
+            comment_node.as_element().is_none(),
+            "NodeKind::Comment must project as_element() == None (Two-way invariant)"
+        );
+
+        // (c) sink.finish() 後 mark_in_document_flags は Comment の
+        //     IS_IN_DOCUMENT bit を clear している (advisor step-6 (i))。
+        assert!(
+            !comment_node.is_in_document(),
+            "Comment's IS_IN_DOCUMENT bit must be cleared after parse"
+        );
+
+        // (d) Comment は tree 内に persist している (body の children に含まれる)。
+        //     旧挙動: strip 済で detach されていたため、body の直接子は <p> のみ
+        //     だった。新挙動: body の children = [Comment, <p>] (source order)。
+        //     NB: `Dom::child_ids` と `TraversePartialTree::child_ids` の
+        //     inherent-method ambiguity 回避のため UFCS で trait を明示する。
+        //     raw arena children を見たいので Dom (unfiltered) を選択、次段の
+        //     taffy filter test は TraversePartialTree を明示する。
+        let body_id = find_first_by_tag(doc, "body").expect("body exists");
+        let body_kids: Vec<usize> = Dom::child_ids(doc, body_id)
+            .map(|id| id.0 as usize)
+            .collect();
+        assert!(
+            body_kids.contains(&comment_id),
+            "Comment node must persist as a child of body (not physically stripped); body kids = {body_kids:?}"
+        );
+
+        // (e) taffy layout tree からは leak しない。TaffyChildIter は
+        //     is_in_document() filter (raikiri-dom/src/taffy_impl.rs) を
+        //     経由するため、body の taffy child_count = 1 (`<p>` only)。
+        //     この behaviour は既に `taffy_child_ids_and_count_filter_out_template_descendants`
+        //     で pin されているが、Comment/PI 経路の独立 regression として
+        //     ここでも assert する。
+        use taffy::TraversePartialTree;
+        let body_taffy_id = taffy::NodeId::from(body_id.0 as usize);
+        assert_eq!(
+            <raikiri_dom::Document as TraversePartialTree>::child_count(doc, body_taffy_id),
+            1,
+            "taffy tree must not leak Comment into body's child count"
+        );
+        let taffy_body_children: Vec<taffy::NodeId> =
+            <raikiri_dom::Document as TraversePartialTree>::child_ids(doc, body_taffy_id).collect();
+        assert!(
+            !taffy_body_children.contains(&taffy::NodeId::from(comment_id)),
+            "taffy body children must not include Comment"
         );
     }
 
@@ -556,16 +615,34 @@ mod tests {
             template_node.children
         );
 
-        // (3) fragment root は "#document-fragment" tag の Element として存在し、
-        // その arena children に <span> が含まれる。
+        // (3) fragment root は NodeKind::DocumentFragment として存在する
+        //     (raikiri-spike-84y — 旧: "#document-fragment" pseudo-tag Element)。
+        //     as_element() == None、tag_name() == None (pseudo-tag pollution 廃止)、
+        //     しかし children slot は使えて <span> を保持する。
         let frag_root = doc
             .get_node(frag_root_id)
             .expect("fragment root should exist in arena");
         assert_eq!(
-            frag_root.tag_name(),
-            Some("#document-fragment"),
-            "fragment root should use the '#document-fragment' pseudo-tag"
+            frag_root.kind(),
+            NodeKind::DocumentFragment,
+            "fragment root must be NodeKind::DocumentFragment (84y contract, replaces '#document-fragment' pseudo-tag)"
         );
+        assert_eq!(
+            frag_root.tag_name(),
+            None,
+            "fragment root must not carry a tag_name (Two-way invariant: non-Element kind → tag_name None)"
+        );
+        // NodeRef 経由でも as_element() == None を confirm (dom_impl surface で
+        // Two-way invariant が保たれることを end-to-end で pin)。
+        {
+            let frag_ref = doc
+                .node(raikiri_traits::NodeId::new(frag_root_id as u64))
+                .expect("fragment root NodeRef");
+            assert!(
+                frag_ref.as_element().is_none(),
+                "fragment root as_element() must be None (kind = DocumentFragment ⇒ Element downcast fails)"
+            );
+        }
         assert!(
             frag_root.children.contains(&span_id),
             "fragment root children must include the <span>; got {:?}",
@@ -1086,10 +1163,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_strips_many_comments_under_one_parent() {
-        use raikiri_traits::{Dom, Element, Node};
+    fn parse_persists_bulk_comments_and_filters_them_from_taffy_child_count() {
+        // raikiri-spike-84y contract rewrite (旧: 100 個の "#comment" pseudo-tag
+        // Element が strip されるか、を "#comment" tag の非存在で確認)。
+        // 84y 後は Comment kind node が 100 個 arena に存在し、taffy child_count
+        // からは 100 個すべて filter され、body の taffy child は <p> の 1 個のみ、
+        // という bulk invariant を positive に pin する。旧 form は Comment が
+        // Element でないため as_element() == None → scan は空振り → vacuously
+        // pass するため content 保証にならない (advisor).
+        use raikiri_traits::{Dom, Node};
 
-        // 100 comments under body — verifies retain_children handles bulk correctly.
+        // 100 comments under body — verifies mark_in_document_flags handles bulk
+        // correctly (旧 retain_children ベース bulk strip の 代替 stress test)。
         let mut html = String::from("<html><head></head><body>");
         for i in 0..100 {
             html.push_str(&format!("<!-- comment {i} -->"));
@@ -1097,25 +1182,41 @@ mod tests {
         html.push_str("<p>x</p></body></html>");
         let opts = empty_options();
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
+        let doc = &uncascaded.dom;
 
-        // No #comment / #pi should remain in the tree.
-        fn scan(doc: &raikiri_dom::Document, id: raikiri_traits::NodeId) -> bool {
-            if let Some(node) = doc.node(id)
-                && let Some(el) = node.as_element()
-                && matches!(el.tag_name(), "#comment" | "#pi")
-            {
-                return true;
-            }
-            for c in doc.child_ids(id) {
-                if scan(doc, c) {
-                    return true;
+        // (a) arena 中の Comment node の総数 == 100 (persist されている)。
+        let mut comment_count = 0usize;
+        let mut in_document_comments = 0usize;
+        for i in 0..doc.node_count() {
+            let n = doc.node(raikiri_traits::NodeId::new(i as u64)).unwrap();
+            if n.kind() == NodeKind::Comment {
+                comment_count += 1;
+                if n.is_in_document() {
+                    in_document_comments += 1;
                 }
             }
-            false
         }
-        assert!(
-            !scan(&uncascaded.dom, uncascaded.dom.root_id()),
-            "100 comment stubs must all be stripped"
+        assert_eq!(
+            comment_count, 100,
+            "expected 100 Comment nodes to persist in the arena"
+        );
+        // (b) すべての Comment の IS_IN_DOCUMENT bit は clear されている
+        //     (bulk mark_in_document_flags 契約)。
+        assert_eq!(
+            in_document_comments, 0,
+            "all 100 Comment nodes must have IS_IN_DOCUMENT cleared"
+        );
+
+        // (c) body の taffy child_count == 1 (<p> only)、100 個の Comment は
+        //     TaffyChildIter の is_in_document filter で完全に除去される
+        //     (attacker-controlled bulk stress でも leak しない = defense-in-depth)。
+        let body_id = find_first_by_tag(doc, "body").expect("body exists");
+        use taffy::TraversePartialTree;
+        let body_taffy_id = taffy::NodeId::from(body_id.0 as usize);
+        assert_eq!(
+            <raikiri_dom::Document as TraversePartialTree>::child_count(doc, body_taffy_id),
+            1,
+            "taffy body child_count must be 1 (only <p>), 100 comments filtered"
         );
     }
 

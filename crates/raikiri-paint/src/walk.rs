@@ -104,8 +104,15 @@ pub(crate) fn paint_document(
                 // M1.7 では扱わない。defensive: subtree を skip。
             }
             _ => {
-                // NodeKind is #[non_exhaustive] (M4+ で Comment/CDATA 等が追加され得る)。
-                // M1.7 では未知 kind は subtree ごと skip。
+                // NodeKind is #[non_exhaustive]: raikiri-spike-84y で追加された
+                // `Comment` / `ProcessingInstruction` / `DocumentFragment` は
+                // ここに落ちる (paint 対象外)。実際には mark_in_document_flags が
+                // Comment/PI の IS_IN_DOCUMENT bit を clear しているため、この
+                // walker 到達前段の is_in_document() gate で先に filter される
+                // ことが expected — defense-in-depth の第 2 gate として本 arm を
+                // 保持 (kind gate と is_in_document gate の両方が failing した
+                // 場合でも subtree ごと skip)。M4+ で CDATA / DocumentType 等が
+                // 追加された場合も同じ扱い。
             }
         }
     }

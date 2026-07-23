@@ -10,7 +10,7 @@ use html5ever::tree_builder::QuirksMode;
 use markup5ever::ns;
 use raikiri_dom::Document;
 use raikiri_traits::{Dom, RenderWarning, WarningKind};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use taffy::Style;
 
@@ -104,18 +104,23 @@ impl TreeSink for RaikiriTreeSink {
         // attributes → Node.attributes (null-ns、style を除く) + Node.inline_style。
         wire_side_tables(&mut document, &qual_names, &attributes);
 
-        // Comment / PI stub を先に detach (roborev job 292 finding 対応):
-        // mark_in_document_flags の後に呼ぶと strip 直後の stub が default true
-        // のまま残り、"detached だが in_document=true" という inconsistent state
-        // が発生する。strip → mark の順にすることで stub は unreachable な
-        // arena node となり、mark の step 1 (全 clear) → step 2 (root から set)
-        // で自然に false のままになる。
-        strip_non_element_stubs(&mut document);
-
+        // raikiri-spike-84y: 旧 strip_non_element_stubs (pseudo-tag な
+        // "#comment" / "#pi" Element を tree から physical 除去) を廃止。
+        // Comment / ProcessingInstruction は NodeData::Comment /
+        // NodeData::ProcessingInstruction variant として tree 内に persist する
+        // (WHATWG DOM §4 NodeType との alignment)。両 variant は
+        // `mark_in_document_flags` step 2 で IS_IN_DOCUMENT bit が clear される
+        // 契約 (advisor step-6 option (i))、したがって:
+        // - TaffyChildIter の is_in_document filter で layout child count に leak
+        //   しない (raikiri-dom/src/taffy_impl.rs:38,61,71 の filter)
+        // - extract_inline_stylesheets / find_head_element / find_body の
+        //   is_in_document() gate + Element gate で自動 skip
+        // - cascade / paint 全 traversal も同 gate で skip
+        //
         // raikiri-spike-37c: template subtree の IS_IN_DOCUMENT bit を clear
-        // + detached node (foster parenting transient / stub 除去後の孤児) の
-        // bit も clear する。extract_inline_stylesheets が新 predicate 経由で
-        // is_in_document() を見るため、その前に走らせる。
+        // + detached node (foster parenting transient) + Comment/PI (84y) の
+        // bit を clear する。extract_inline_stylesheets が is_in_document() gate
+        // 経由でこれらを skip するため、その前に走らせる。
         document.mark_in_document_flags();
 
         let stylesheet_sources = extract_inline_stylesheets(&document);
@@ -166,26 +171,23 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn create_comment(&self, text: StrTendril) -> usize {
-        // M1 workaround: comment node を "#comment" tag の element として保持。
-        // Task 9 で NodeKind::Comment を検討 (m1.5 の dom-model 昇格候補)。
-        let idx = self.document.borrow_mut().append_element(
-            None,
-            "#comment",
-            Style::default(),
-            None::<&str>,
-        );
-        // side-table には登録しない (elem_name 呼ばれるべきではない)
-        let _ = text;
-        idx
+        // raikiri-spike-84y: NodeData::Comment variant として恒久保持
+        // (旧 M1: "#comment" pseudo-tag Element + sink.finish 内で strip)。
+        // detached (parent=None) で allocate、html5ever が後で append(parent, ...)
+        // で attach する。
+        self.document
+            .borrow_mut()
+            .append_comment(None, text.to_string())
     }
 
     fn create_pi(&self, target: StrTendril, data: StrTendril) -> usize {
-        let idx =
-            self.document
-                .borrow_mut()
-                .append_element(None, "#pi", Style::default(), None::<&str>);
-        let _ = (target, data);
-        idx
+        // raikiri-spike-84y: NodeData::ProcessingInstruction variant として
+        // 恒久保持 (旧 M1: "#pi" pseudo-tag Element + strip)。
+        self.document.borrow_mut().append_processing_instruction(
+            None,
+            target.to_string(),
+            data.to_string(),
+        )
     }
 
     fn append(&self, parent: &usize, child: NodeOrText<usize>) {
@@ -215,6 +217,12 @@ impl TreeSink for RaikiriTreeSink {
             self.append(prev_element, child);
         }
     }
+
+    // NB (raikiri-spike-84y): raikiri-dom は NodeKind::Comment /
+    // NodeKind::ProcessingInstruction を variant として持つようになったため
+    // (旧 Task 9 pending item)、create_comment / create_pi は上で直接
+    // NodeData variant を allocate している。旧 `#comment` / `#pi` pseudo-tag
+    // + strip_non_element_stubs 二段構えは廃止。
 
     fn append_doctype_to_document(
         &self,
@@ -467,45 +475,6 @@ fn wire_side_tables(
             doc.set_element_attributes(*idx, native);
         }
     }
-}
-
-/// html5ever が emit した comment / processing-instruction を parent から detach する。
-/// M1 spike では raikiri-dom::Node は Element / Text / Document のみ表現できるため、
-/// `create_comment` / `create_pi` は `#comment` / `#pi` tag の element として保持され
-/// ている。これらを DOM tree から除去することで cascade / selector matching が誤って
-/// 拾わないようにする。arena からは削除しない (index の再利用が起こらないため無害)。
-/// NodeKind への Comment / ProcessingInstruction 追加 (恒久対応) は別 issue に defer。
-///
-/// Single-pass O(N + total_children) 実装: 全 node をスキャンし、children 内に
-/// stub tag を含む node について children Vec を一度だけ retain。per-stub の
-/// parent_of + children.remove(pos) を回避 (attacker-controlled な多量 comment で
-/// quadratic を防ぐ)。
-fn strip_non_element_stubs(doc: &mut Document) {
-    use raikiri_traits::{Dom, Element, Node};
-
-    // Pass 1: 全 node をスキャンし、tag が "#comment" / "#pi" の arena index を集める。
-    let mut stub_indices = FxHashSet::default();
-    let root = doc.root_id();
-    let mut stack: Vec<raikiri_traits::NodeId> = vec![root];
-    while let Some(id) = stack.pop() {
-        if let Some(node) = doc.node(id)
-            && let Some(el) = node.as_element()
-            && matches!(el.tag_name(), "#comment" | "#pi")
-        {
-            stub_indices.insert(id.0 as usize);
-        }
-        let kids: Vec<_> = doc.child_ids(id).collect();
-        for c in kids.into_iter().rev() {
-            stack.push(c);
-        }
-    }
-
-    if stub_indices.is_empty() {
-        return;
-    }
-
-    // Pass 2: 各 parent の children を single retain で filter。
-    doc.retain_children(|c| !stub_indices.contains(&c));
 }
 
 /// html5ever `QuirksMode` を raikiri-native `QuirksMode` へ変換する

@@ -45,11 +45,20 @@ impl NodeId {
     }
 }
 
-/// DOM node の種別 (Element / Text / Document root)。
+/// DOM node の種別 (Element / Text / Document root / Comment /
+/// ProcessingInstruction / DocumentFragment)。
 ///
-/// M1.5 で raikiri-dom node arena の kind field と対応する。将来 (M4)
-/// Comment / CDATA / ProcessingInstruction 等が加わる可能性があるため
-/// `#[non_exhaustive]`。
+/// M1.5 で raikiri-dom node arena の kind field と対応する。
+/// raikiri-spike-84y (Sprint 20) で `Comment` / `ProcessingInstruction` /
+/// `DocumentFragment` を追加 (WHATWG DOM §4 で列挙された NodeType のうち
+/// paged-media rendering に関係する 3 種)。`#[non_exhaustive]` により変更は
+/// non-breaking (existing callers は wildcard arm または `matches!(_, Element)`
+/// 形式で match するため影響なし)。
+///
+/// Two-way invariant ([`Node::kind`] / [`Node::as_element`]):
+/// `kind() == NodeKind::Element` iff `as_element().is_some()`。追加された
+/// `Comment` / `ProcessingInstruction` / `DocumentFragment` はすべて
+/// `as_element() == None`。
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
@@ -59,6 +68,22 @@ pub enum NodeKind {
     Text,
     /// Document root (arena index 0 に配置される仮想 node)。
     Document,
+    /// HTML / XML comment node (`<!-- ... -->`)。character data を保持する
+    /// が Element ではない (`as_element() == None`)。cascade / paint / layout
+    /// traversal は typically `is_in_document()` gate で skip されるが、DOM
+    /// mutation API の対象としては存在する。raikiri-spike-84y で追加。
+    Comment,
+    /// Processing instruction node (`<?target data?>`、HTML では実質発生
+    /// しないが XML / XHTML では有効)。target + data を保持する。
+    /// raikiri-spike-84y で追加。
+    ProcessingInstruction,
+    /// Document fragment root (`<template>` の contents fragment root や
+    /// createDocumentFragment 相当の detached subtree の virtual root)。
+    /// arena 内に detached 状態で存在し、Document root からは reachable
+    /// でない (mark_in_document_flags 後 `is_in_document() == false`)。
+    /// raikiri-spike-84y で `<template>` fragment root の shape 修正のため
+    /// 追加 (旧: `"#document-fragment"` pseudo-tag な Element)。
+    DocumentFragment,
 }
 
 /// DOM tree abstraction。raikiri-dom / raikiri-style / raikiri-paint / raikiri
@@ -126,11 +151,15 @@ pub trait Node {
     fn kind(&self) -> NodeKind;
 
     /// kind が Element の場合 Element reference を返す。それ以外 (Text /
-    /// Document) は `None`。
+    /// Document / Comment / ProcessingInstruction / DocumentFragment) は
+    /// `None` — Two-way invariant で pinned (`kind() == NodeKind::Element` iff
+    /// `as_element().is_some()`)。raikiri-spike-84y で新 3 variant 追加。
     fn as_element(&self) -> Option<Self::Element<'_>>;
 
-    /// kind が Text の場合 character data。それ以外 (Element / Document) は
-    /// `None`。
+    /// kind が Text の場合 character data。それ以外 (Element / Document /
+    /// Comment / ProcessingInstruction / DocumentFragment) は `None`。
+    /// Comment / PI が character data 相当を持つ場合でも本 method は Text
+    /// variant のみを返す (kind 分岐で明示区別、raikiri-spike-84y)。
     fn text_content(&self) -> Option<&str>;
 
     /// この Node が flat tree に含まれるかを返す。`<template>` element の子孫
@@ -316,5 +345,37 @@ mod tests {
         set.insert(Symbol::from("bravo"));
         let collected: Vec<&str> = set.iter().map(Symbol::as_str).collect();
         assert_eq!(collected, ["alpha", "bravo", "charlie"]);
+    }
+
+    /// raikiri-spike-84y: `NodeKind` に追加された `Comment` /
+    /// `ProcessingInstruction` / `DocumentFragment` variant が pattern-match
+    /// で discriminate 可能かつ `Element` と PartialEq で区別できることを
+    /// pin する (Two-way invariant の trait 側 constraint)。
+    #[test]
+    fn node_kind_variants_are_distinct_and_matchable() {
+        for kind in [
+            NodeKind::Element,
+            NodeKind::Text,
+            NodeKind::Document,
+            NodeKind::Comment,
+            NodeKind::ProcessingInstruction,
+            NodeKind::DocumentFragment,
+        ] {
+            // 84y 3 variant はすべて Element とは PartialEq 上区別される。
+            if !matches!(kind, NodeKind::Element) {
+                assert_ne!(
+                    kind,
+                    NodeKind::Element,
+                    "{kind:?} must not compare equal to Element"
+                );
+            }
+        }
+        // discriminant 一致性: 同じ variant 同士は equal。
+        assert_eq!(NodeKind::Comment, NodeKind::Comment);
+        assert_eq!(
+            NodeKind::ProcessingInstruction,
+            NodeKind::ProcessingInstruction
+        );
+        assert_eq!(NodeKind::DocumentFragment, NodeKind::DocumentFragment);
     }
 }
