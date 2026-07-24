@@ -5983,11 +5983,12 @@ mod tests {
         // は shorthand の width slot を bare-zero で埋めた canonical form。
         // parse_border_shorthand の width slot が parse_border_width_side_res 経由で
         // parse_length_value Number arm を通して Length::Px(0.0) を取り、
-        // style slot は Solid、color slot は省略で BLACK (currentColor placeholder)。
+        // style slot は Solid、color slot は省略で spec initial =
+        // [`BorderColor::CurrentColor`] (CSS Backgrounds 3 §5.3、raikiri-spike-0vv.17)。
         let border = Border {
             width: Length::Px(0.0),
             style: BorderStyle::Solid,
-            color: CssColor::BLACK,
+            color: BorderColor::CurrentColor,
         };
         assert_eq!(
             parse("0 solid", "border"),
