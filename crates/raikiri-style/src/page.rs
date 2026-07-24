@@ -625,7 +625,7 @@ mod tests {
     //! Implementation follows the spec; this test asserts UA `!important` wins.
 
     use super::*;
-    use crate::property::CssColor;
+    use crate::property::{CssColor, FontWeightValue};
 
     const RED: CssColor = CssColor {
         r: 255,
@@ -1033,7 +1033,7 @@ mod tests {
         assert_eq!(color_of(&result), Some(RED));
         assert_eq!(
             result.declarations.get(&PropertyKey::FontWeight),
-            Some(&PropertyValue::FontWeight(700))
+            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(700)))
         );
     }
 

@@ -14,7 +14,7 @@ use selectors::parser::{Selector, SelectorList};
 use crate::RaikiriSelectorImpl;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::error::CascadeError;
-use crate::property::{PositionValue, PropertyKey, PropertyValue};
+use crate::property::{FontWeightValue, PositionValue, PropertyKey, PropertyValue};
 use crate::rule::parse_declaration_block;
 use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
@@ -332,6 +332,61 @@ fn beats(
     (candidate.0, candidate.1, candidate.2) >= (existing.0, existing.1, existing.2)
 }
 
+/// `font-weight` の specified value を computed absolute weight に解決する。
+///
+/// CSS Fonts 4 §2.2.1 "Relative Weights"
+/// <https://www.w3.org/TR/css-fonts-4/#relative-weights> の
+/// bolder / lighter table を **そのまま 6 行** で写したもの (`inherited` = 表の
+/// `w`):
+///
+/// | inherited value | `bolder` | `lighter` |
+/// |---|---|---|
+/// | `w < 100`       | 400 | `w` (no change) |
+/// | `100 <= w < 350`| 400 | 100 |
+/// | `350 <= w < 550`| 700 | 100 |
+/// | `550 <= w < 750`| 900 | 400 |
+/// | `750 <= w < 900`| 900 | 700 |
+/// | `900 <= w`      | `w` (no change) | 700 |
+///
+/// # 算術式で書いてはいけない理由
+///
+/// `min(w + 300, 900)` / `max(w - 300, 100)` のような近似は表の両端 2 行
+/// ("no change" 行) を落とす。`<number [1,1000]>` の全域が author から到達
+/// 可能になった今 (raikiri-spike-5iy)、その 2 行は実際に踏まれる:
+///
+/// - 親 `font-weight: 1000` + 子 `bolder` → **1000** (`900 <= w` 行の no change)。
+///   `min(1300, 900)` なら誤って 900 に落ちる。
+/// - 親 `font-weight: 50` + 子 `lighter` → **50** (`w < 100` 行の no change)。
+///   `max(-250, 100)` なら誤って 100 に上がる。
+///
+/// なお表の境界は半開区間 (`350 <= w < 550` 等)。実装は match arm を上から順に
+/// 評価させ、各 guard には **上限のみ** (`w < N`) を書く — 下限は直前 arm の
+/// 否定として暗黙に成立する。したがって **arm の順序が spec の行順と 1 対 1** で
+/// あることが正しさの条件であり、並べ替えは不可。
+fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
+    match specified {
+        FontWeightValue::Absolute(w) => w,
+        FontWeightValue::Bolder => match inherited {
+            w if w < 100 => 400,
+            w if w < 350 => 400,
+            w if w < 550 => 700,
+            w if w < 750 => 900,
+            w if w < 900 => 900,
+            // `900 <= w`: no change (1000 のような 900 超の継承値をそのまま返す)
+            w => w,
+        },
+        FontWeightValue::Lighter => match inherited {
+            // `w < 100`: no change (50 のような 100 未満の継承値をそのまま返す)
+            w if w < 100 => w,
+            w if w < 350 => 100,
+            w if w < 550 => 100,
+            w if w < 750 => 400,
+            w if w < 900 => 700,
+            _ => 700,
+        },
+    }
+}
+
 fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,
@@ -340,7 +395,26 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         PropertyValue::BackgroundColor(c) => target.background_color = c,
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
-        PropertyValue::FontWeight(w) => target.font_weight = w,
+        // CSS Fonts 4 §2.2 (raikiri-spike-5iy + raikiri-spike-17s8)。specified
+        // value は `FontWeightValue` (relative keyword を保持)、computed value
+        // は resolve 済み `u16` — `bolder` / `lighter` はここで絶対値に落とす。
+        //
+        // 継承値の出所: `target` は直前に `ComputedValues::inherit_from(parent)`
+        // で seed されており (`resolve_inheritance` 参照)、`font_weight` は
+        // inherited property なので **この時点の `target.font_weight` は親の
+        // computed font-weight そのもの**。さらに `pick_winners` は
+        // `PropertyKey` ごとに勝者を 1 つだけ返すため `FontWeight` arm が同一
+        // node で 2 回走ることはなく、HashMap iteration 順にも依存しない。
+        // この 2 つが relative-weight resolution の正しさを支える invariant。
+        //
+        // なお本 arm は `apply_value` 中で **唯一の read-modify-write** (他は
+        // すべて冪等な単純代入)。`Padding` / `Margin` / `Border` arm のような
+        // "safety net" 二重適用経路を font-weight に足すと `bolder` が
+        // 400 → 700 → 900 と複合するため、上記 2 invariant を崩す変更は不可。
+        PropertyValue::FontWeight(fw) => {
+            let inherited = target.font_weight;
+            target.font_weight = resolve_relative_weight(fw, inherited);
+        }
         // CSS Inline 3 §5.1: line-height は inherited、cascade winner が
         // raw value (Normal / Number / Length) を保持。number-vs-length
         // distinction は下流 (paint) の resolve context で意味を持つ
@@ -1051,12 +1125,12 @@ mod tests {
         assert_eq!(cv.box_sizing, BoxSizing::BorderBox);
     }
 
-    // ── font-weight keyword + inheritance (CSS Fonts 4 §3.2、raikiri-spike-0vv.16) ──
+    // ── font-weight keyword + inheritance (CSS Fonts 4 §2.2、raikiri-spike-0vv.16) ──
 
     #[test]
     fn font_weight_keyword_bold_wired_through_cascade_from_inline_style() {
         // <p style="font-weight: bold"> → ComputedValues.font_weight = 700。
-        // parser Ident arm → PropertyValue::FontWeight(700) → apply_value →
+        // parser Ident arm → PropertyValue::FontWeight(Absolute(700)) → apply_value →
         // ComputedValues の end-to-end 疎通 smoke (0vv.8 / 0vv.9 pattern を踏襲)。
         let cv = cascade_doc("", "p", Some("font-weight: bold"));
         assert_eq!(cv.font_weight, 700);
@@ -1071,7 +1145,7 @@ mod tests {
 
     #[test]
     fn font_weight_is_inherited_child_carries_parent_bold() {
-        // CSS Fonts 4 §3.2 "Inheritance: Yes"。<p style="font-weight: bold"> の
+        // CSS Fonts 4 §2.2 "Inheritance: Yes"。<p style="font-weight: bold"> の
         // 子 <span> は自身 rule 無しでも parent の 700 を継承する。
         // Verification #7 (bd 0vv.16): parent bold + child 未指定 = child 700。
         let mut doc = TestDoc::new();
@@ -1082,8 +1156,188 @@ mod tests {
         assert_eq!(r.computed[p].font_weight, 700);
         assert_eq!(
             r.computed[span].font_weight, 700,
-            "font-weight must be inherited (CSS Fonts 4 §3.2 Yes) — \
+            "font-weight must be inherited (CSS Fonts 4 §2.2 Yes) — \
              parent bold keyword → child inherits 700"
+        );
+    }
+
+    // ── font-weight bolder / lighter (CSS Fonts 4 §2.2、raikiri-spike-17s8) ──
+
+    /// `<p style="font-weight: {parent}"><span style="font-weight: {child}">` を
+    /// cascade して span の computed font-weight を返す。
+    ///
+    /// **親の computed value** を経由することが本 helper の主眼 — child は
+    /// literal な spec 値ではなく、親が cascade を通して確定させた weight に
+    /// 対して relative resolution される (bd 17s8 Verification #7)。
+    fn relative_weight_through_cascade(parent_decl: &str, child_decl: &str) -> u16 {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some(parent_decl));
+        let span = doc.push_element(p, "span", Some(child_decl));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        r.computed[span].font_weight
+    }
+
+    #[test]
+    fn font_weight_bolder_lighter_table_all_six_rows() {
+        // CSS Fonts 4 §2.2.1 の bolder/lighter table を 6 行 × 2 列すべて直接
+        // 検証する。unit 関数を叩くことで cascade harness に依存せず表の
+        // 境界 (半開区間) を網羅する。
+        //
+        // | inherited w    | bolder | lighter |
+        // | w < 100        | 400    | w       |
+        // | 100 <= w < 350 | 400    | 100     |
+        // | 350 <= w < 550 | 700    | 100     |
+        // | 550 <= w < 750 | 900    | 400     |
+        // | 750 <= w < 900 | 900    | 700     |
+        // | 900 <= w       | w      | 700     |
+        let bolder = |w| resolve_relative_weight(FontWeightValue::Bolder, w);
+        let lighter = |w| resolve_relative_weight(FontWeightValue::Lighter, w);
+
+        // row 1: w < 100 (lighter = no change)
+        assert_eq!(bolder(1), 400);
+        assert_eq!(bolder(99), 400);
+        assert_eq!(lighter(1), 1);
+        assert_eq!(lighter(99), 99);
+        // row 2: 100 <= w < 350
+        assert_eq!(bolder(100), 400);
+        assert_eq!(bolder(349), 400);
+        assert_eq!(lighter(100), 100);
+        assert_eq!(lighter(349), 100);
+        // row 3: 350 <= w < 550
+        assert_eq!(bolder(350), 700);
+        assert_eq!(bolder(549), 700);
+        assert_eq!(lighter(350), 100);
+        assert_eq!(lighter(549), 100);
+        // row 4: 550 <= w < 750
+        assert_eq!(bolder(550), 900);
+        assert_eq!(bolder(749), 900);
+        assert_eq!(lighter(550), 400);
+        assert_eq!(lighter(749), 400);
+        // row 5: 750 <= w < 900
+        assert_eq!(bolder(750), 900);
+        assert_eq!(bolder(899), 900);
+        assert_eq!(lighter(750), 700);
+        assert_eq!(lighter(899), 700);
+        // row 6: 900 <= w (bolder = no change)
+        assert_eq!(bolder(900), 900);
+        assert_eq!(bolder(1000), 1000);
+        assert_eq!(lighter(900), 700);
+        assert_eq!(lighter(1000), 700);
+    }
+
+    #[test]
+    fn font_weight_table_no_change_rows_are_not_clamps() {
+        // 表の両端 2 行は "no change" であって clamp ではない。算術近似
+        // (`min(w + 300, 900)` / `max(w - 300, 100)`) を書くとここが壊れる。
+        // この 2 行は raikiri-spike-5iy が range を [1,1000] に広げて初めて
+        // author から到達可能になったため、bundle 固有の regression guard。
+        assert_eq!(
+            resolve_relative_weight(FontWeightValue::Bolder, 1000),
+            1000,
+            "900 <= w row is no-change: bolder(1000) must stay 1000, not clamp to 900"
+        );
+        assert_eq!(
+            resolve_relative_weight(FontWeightValue::Lighter, 50),
+            50,
+            "w < 100 row is no-change: lighter(50) must stay 50, not rise to 100"
+        );
+    }
+
+    #[test]
+    fn font_weight_absolute_ignores_inherited_weight() {
+        // `<font-weight-absolute>` は継承値と無関係にそのまま computed になる。
+        assert_eq!(
+            resolve_relative_weight(FontWeightValue::Absolute(250), 900),
+            250
+        );
+    }
+
+    #[test]
+    fn font_weight_bolder_wired_through_cascade_from_parent_computed() {
+        // bd 17s8 Verification #3 / #4 / #5。親の **computed** weight に対して
+        // resolve される (parse → PropertyValue::FontWeight(Bolder) →
+        // apply_value → ComputedValues の end-to-end 疎通)。
+        assert_eq!(
+            relative_weight_through_cascade("font-weight: 400", "font-weight: bolder"),
+            700
+        );
+        assert_eq!(
+            relative_weight_through_cascade("font-weight: 700", "font-weight: bolder"),
+            900
+        );
+        assert_eq!(
+            relative_weight_through_cascade("font-weight: 900", "font-weight: bolder"),
+            900,
+            "900 <= w row: bolder is a no-op at 900"
+        );
+    }
+
+    #[test]
+    fn font_weight_lighter_wired_through_cascade_from_parent_computed() {
+        // bd 17s8 Verification #6。
+        assert_eq!(
+            relative_weight_through_cascade("font-weight: 100", "font-weight: lighter"),
+            100,
+            "100 <= w < 350 row: lighter(100) = 100"
+        );
+        assert_eq!(
+            relative_weight_through_cascade("font-weight: 700", "font-weight: lighter"),
+            400
+        );
+    }
+
+    #[test]
+    fn font_weight_relative_resolves_against_computed_not_literal_parent_value() {
+        // bd 17s8 Verification #7 の核心。親の declaration は `bold` keyword
+        // (literal な spec 値は "bold" であって数値ではない) だが、resolution は
+        // 親の **computed** 700 に対して行われる → bolder(700) = 900。
+        assert_eq!(
+            relative_weight_through_cascade("font-weight: bold", "font-weight: bolder"),
+            900,
+            "parent keyword `bold` must be computed to 700 first, then bolder(700) = 900"
+        );
+        // 親自身が bolder の場合は連鎖する: 親 = bolder(400 initial) = 700、
+        // 子 = bolder(700) = 900。継承値が「親の computed」であることの証明。
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-weight: bolder"));
+        let span = doc.push_element(p, "span", Some("font-weight: bolder"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].font_weight, 700,
+            "root-level bolder resolves against the initial 400"
+        );
+        assert_eq!(
+            r.computed[span].font_weight, 900,
+            "nested bolder must chain off the parent's computed 700, not off 400"
+        );
+    }
+
+    #[test]
+    fn font_weight_relative_is_inherited_as_resolved_absolute() {
+        // bolder を解決した親の値は、以降 absolute weight として通常どおり
+        // inherit される (computed side に sentinel が漏れない証明)。
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-weight: bolder"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[span].font_weight, 700);
+    }
+
+    #[test]
+    fn font_weight_full_range_wired_through_cascade() {
+        // raikiri-spike-5iy: spec range [1,1000] の両端が cascade まで届く。
+        assert_eq!(cascade_doc("", "p", Some("font-weight: 1")).font_weight, 1);
+        assert_eq!(
+            cascade_doc("", "p", Some("font-weight: 1000")).font_weight,
+            1000
+        );
+        // fractional は parse 段で round-half-away-from-zero 済み。
+        assert_eq!(
+            cascade_doc("", "p", Some("font-weight: 100.5")).font_weight,
+            101
         );
     }
 
