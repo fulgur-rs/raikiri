@@ -31,6 +31,24 @@ pub use stubs::{plan, render_streaming};
 mod html_to_png;
 pub use html_to_png::{html_to_png, html_to_png_with_fonts};
 
+// ── M2 kickoff seed: PageScene + PageDrawables consumer surface ────────
+// raikiri-spike-os52 (Sprint 22)。実装 body は placeholder (empty struct + Default)、
+// consumer facade の pub type surface のみを landing する。
+// `NodeId` は既存 [`raikiri_traits::NodeId`] (m1.23 landed re-export) を再利用し
+// PageScene と Document 間で node identity を統一する (coord Option A on
+// raikiri-spike-os52、bd comment 参照)。
+mod page_scene;
+pub use page_scene::{Fragment, Orientation, PageMetadata, PageScene, Pt};
+
+mod page_drawables;
+pub use page_drawables::{PageDrawables, TrackedMap};
+
+mod entries;
+pub use entries::{
+    BlockEntry, BookmarkAnchorEntry, ImageEntry, LinkSpanEntry, ListItemEntry, MulticolRuleEntry,
+    ParagraphEntry, SemanticEntry, SvgEntry, TableEntry, TransformEntry,
+};
+
 // ── VRT font pin API (raikiri-spike-e93) ────────────────────────────────
 // External consumer が `raikiri` 単独 dep で pinned `FontContext` を build
 // できるように、`html_to_png_with_fonts` の依存型を umbrella 経由で公開。
