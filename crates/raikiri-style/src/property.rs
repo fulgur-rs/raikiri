@@ -1716,9 +1716,23 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// 未対応 unit (`vw` / `vh` / `ch` / `ex` / `cm` / `mm` / `in` / `pc` / `Q` /
 /// `cap` / `rcap` / `ic` / `ric` / `lh` / `rlh`) は spec-valid だが本 milestone
 /// scope 外 (g04 category (b) milestone subset、defer 先 Sprint 13+ style backlog、
-/// 未起票 — Epic 1 planner 判定)。`0` bare (unitless zero) も後続 milestone
-/// (現行 behavior 踏襲、`parse_font_size` の existing test は unitless zero を
-/// 受理しない spec-strict 挙動)。
+/// 未起票 — Epic 1 planner 判定)。
+///
+/// # Unitless zero
+///
+/// CSS Values 3 §5 "Distance Units: the `<length>` type"
+/// <https://www.w3.org/TR/css-values-3/#lengths> 原文: "For zero lengths the
+/// unit identifier is optional (i.e. can be syntactically represented as the
+/// `<number>` 0)." — bare `0` (Token::Number, value == 0.0) を [`Length::Px`]
+/// `(0.0)` として受理する (mode 非依存: `<length>` / `<length-percentage>` 両方)。
+/// 非零 unitless number (`5`, `-1` etc.) は grammar 上 `<length>` にならないため
+/// 引き続き drop する (`== 0.0` guard で判定)。
+///
+/// 同 spec §5 clause 2: "if a 0 could be parsed as either a `<number>` or a
+/// `<length>` in a property (such as line-height), it must parse as a `<number>`"
+/// — [`parse_line_height`] は本 helper より先に `expect_number` branch を試すため
+/// 該当分岐は `LineHeight::Number(0.0)` を返し、本 helper 経由の `Length::Px(0.0)`
+/// には落ちない (spec-required disambiguation)。
 ///
 /// # Sign / range
 ///
@@ -1752,6 +1766,8 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             // ため × 100.0 で戻す。
             Some(Length::Percent(*unit_value * 100.0))
         }
+        // CSS Values 3 §5 unitless-zero clause (doc "# Unitless zero" 参照)。
+        Token::Number { value, .. } if *value == 0.0 => Some(Length::Px(0.0)),
         _ => None,
     }
 }
@@ -3488,8 +3504,15 @@ mod tests {
 
     #[test]
     fn font_size_accepts_zero() {
+        // spec `[0,∞]` の閉区間下端。`0px` は Dimension arm、bare `0` は
+        // CSS Values 3 §5 unitless-zero clause の Number arm を通し (raikiri-spike-fnqx)、
+        // parse_font_size の非負 Px post-filter を pass。
         assert_eq!(
             parse("0px", "font-size"),
+            Some(PropertyValue::FontSize(Length::Px(0.0)))
+        );
+        assert_eq!(
+            parse("0", "font-size"),
             Some(PropertyValue::FontSize(Length::Px(0.0)))
         );
     }
@@ -4809,11 +4832,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_length_value_rejects_unitless_zero() {
-        // 現行 behavior: unitless zero は Dimension token にならず (Number token)、
-        // 本 helper の Dimension arm に落ちず None。既存 `parse_font_size` 挙動と一致。
-        assert_eq!(parse_length("0", false), None);
-        assert_eq!(parse_length("0", true), None);
+    fn parse_length_value_accepts_unitless_zero_only() {
+        // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths>:
+        // "For zero lengths the unit identifier is optional (i.e. can be
+        // syntactically represented as the `<number>` 0)." — bare `0` は
+        // mode 非依存で Length::Px(0.0) 受理 (両 mode 網羅で mode-independence pin)。
+        assert_eq!(parse_length("0", false), Some(Length::Px(0.0)));
+        assert_eq!(parse_length("0", true), Some(Length::Px(0.0)));
+        // 非零 unitless number は grammar 上 length ではない — `== 0.0` guard で
+        // 分岐して下段 `_ => None` fallthrough で drop。drop 経路は mode 非依存
+        // (guard を通らず fallthrough する path が両 mode 共通) のため 1 mode で pin。
+        assert_eq!(parse_length("5", false), None);
+        assert_eq!(parse_length("-1", false), None);
     }
 
     #[test]
@@ -4993,8 +5023,14 @@ mod tests {
     #[test]
     fn padding_top_accepts_zero() {
         // zero (bound の下端) は spec grammar `[0,∞]` の閉区間で有効。
+        // `0px` は Dimension arm、bare `0` は CSS Values 3 §5 unitless-zero clause
+        // の Number arm を通し (raikiri-spike-fnqx)、非負 filter を pass。
         assert_eq!(
             parse("0px", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Px(0.0)))
+        );
+        assert_eq!(
+            parse("0", "padding-top"),
             Some(PropertyValue::PaddingTop(Length::Px(0.0)))
         );
     }
@@ -5219,6 +5255,12 @@ mod tests {
     #[test]
     fn line_height_accepts_zero_number_and_length() {
         // spec `[0,∞]`: 0 は境界の valid value。
+        // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths> clause 2:
+        // "if a 0 could be parsed as either a `<number>` or a `<length>` in a
+        // property (such as line-height), it must parse as a `<number>`" —
+        // parse_line_height は expect_number branch を parse_length_value より
+        // 先に試すため、bare `0` は LineHeight::Number(0.0) として確定 (unitless-zero
+        // clause の Length 経路 raikiri-spike-fnqx が導入した Px(0.0) route ではない)。
         assert_eq!(
             parse("0", "line-height"),
             Some(PropertyValue::LineHeight(LineHeight::Number(0.0)))
@@ -5509,6 +5551,25 @@ mod tests {
     }
 
     #[test]
+    fn margin_top_accepts_zero() {
+        // spec `<length-percentage> | auto` — 0 は valid length。`0px` は Dimension arm、
+        // bare `0` は CSS Values 3 §5 unitless-zero clause の Number arm を通す
+        // (raikiri-spike-fnqx)。margin は non-negative filter を持たないため素通り。
+        assert_eq!(
+            parse("0px", "margin-top"),
+            Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+                0.0
+            ))))
+        );
+        assert_eq!(
+            parse("0", "margin-top"),
+            Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+                0.0
+            ))))
+        );
+    }
+
+    #[test]
     fn margin_side_case_insensitive_auto() {
         // CSS spec: ident keyword は ASCII case-insensitive。`AUTO` 受理を pin
         // (expect_ident_matching が case-insensitive の証拠、helper 変更で
@@ -5605,21 +5666,17 @@ mod tests {
     fn margin_shorthand_zero_and_auto_horizontal_center() {
         // Verification 5-b: `margin: 0 auto` (2 value mixed) は block-level
         // horizontal centering の canonical form。top/bottom = 0px, right/left = auto。
-        // `0` は cssparser の Dimension token ではなく Number token になる — 現行
-        // helper は unitless zero を受理しないため代替に `0px` を用いる (spec
-        // 上は互換だが helper 挙動は milestone-strict; `parse_length_value_rejects_unitless_zero`
-        // で pin 済)。unitless-zero support は bd raikiri-spike-cxb で tracked、
-        // land 後は本 test を `0 auto` literal に戻す。
+        // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths> の
+        // unitless-zero clause により bare `0` は Length::Px(0.0) 受理
+        // (raikiri-spike-fnqx で `parse_length_value` に arm 追加、`parse_length_value_accepts_unitless_zero_only`
+        // で pin)。
         let want = Sides {
             top: LengthOrAuto::Length(Length::Px(0.0)),
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Length(Length::Px(0.0)),
             left: LengthOrAuto::Auto,
         };
-        assert_eq!(
-            parse("0px auto", "margin"),
-            Some(PropertyValue::Margin(want))
-        );
+        assert_eq!(parse("0 auto", "margin"), Some(PropertyValue::Margin(want)));
     }
 
     #[test]
@@ -5812,6 +5869,40 @@ mod tests {
     }
 
     #[test]
+    fn border_top_width_accepts_zero() {
+        // spec `<line-width>` = `<length [0,∞]>` — 0 は閉区間下端。`0px` は
+        // Dimension arm、bare `0` は CSS Values 3 §5 unitless-zero clause の
+        // Number arm を通す (raikiri-spike-fnqx)。parse_border_width_side の
+        // `>= 0.0` 非負 filter を pass。
+        assert_eq!(
+            parse("0px", "border-top-width"),
+            Some(PropertyValue::BorderTopWidth(Length::Px(0.0)))
+        );
+        assert_eq!(
+            parse("0", "border-top-width"),
+            Some(PropertyValue::BorderTopWidth(Length::Px(0.0)))
+        );
+    }
+
+    #[test]
+    fn border_shorthand_accepts_bare_zero_width() {
+        // Follow-on coverage (raikiri-spike-fnqx bd comment 2026-07-23): `0 solid`
+        // は shorthand の width slot を bare-zero で埋めた canonical form。
+        // parse_border_shorthand の width slot が parse_border_width_side_res 経由で
+        // parse_length_value Number arm を通して Length::Px(0.0) を取り、
+        // style slot は Solid、color slot は省略で BLACK (currentColor placeholder)。
+        let border = Border {
+            width: Length::Px(0.0),
+            style: BorderStyle::Solid,
+            color: CssColor::BLACK,
+        };
+        assert_eq!(
+            parse("0 solid", "border"),
+            Some(PropertyValue::Border(Sides::all(border)))
+        );
+    }
+
+    #[test]
     fn border_width_rejects_percentage() {
         // `<line-width>` grammar は `<percentage>` を含まない (padding とは
         // 違う点、advisor calibration)。`parse_length_value(input, false)` の
@@ -5911,6 +6002,14 @@ mod tests {
         // spec `[0,∞]` の closed interval — 下端 0 は有効。
         assert_eq!(
             parse("0px", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(0.0))))
+        );
+        // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths>
+        // unitless-zero clause 経由 (raikiri-spike-fnqx): bare `0` も同 Px(0.0)
+        // として受理 (width は `<length-percentage [0,∞]>`、helper が Number arm で
+        // 拾い parse_width の非負 filter を pass)。
+        assert_eq!(
+            parse("0", "width"),
             Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(0.0))))
         );
     }
@@ -6264,6 +6363,21 @@ mod tests {
         // padding の非負フィルタ pattern と同 shape、margin の `-10px` 受理
         // (§3.1) との対称的な reject を pin。
         assert_eq!(parse("-10px", "height"), None);
+    }
+
+    #[test]
+    fn height_accepts_zero() {
+        // spec `<length-percentage [0,∞]>` — 0 は閉区間下端。`0px` は Dimension arm、
+        // bare `0` は CSS Values 3 §5 unitless-zero clause の Number arm を通す
+        // (raikiri-spike-fnqx)。parse_height の `>= 0.0` 非負 filter を pass。
+        assert_eq!(
+            parse("0px", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(Length::Px(0.0))))
+        );
+        assert_eq!(
+            parse("0", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(Length::Px(0.0))))
+        );
     }
 
     #[test]
