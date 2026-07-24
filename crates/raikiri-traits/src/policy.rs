@@ -72,6 +72,20 @@ pub enum ResourceKind {
     Other,
 }
 
+impl std::fmt::Display for ResourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StylesheetImport => write!(f, "stylesheet @import"),
+            Self::ExternalStylesheet => write!(f, "external stylesheet"),
+            Self::Image => write!(f, "image"),
+            Self::Font => write!(f, "font"),
+            Self::Svg => write!(f, "SVG"),
+            Self::MathML => write!(f, "MathML"),
+            Self::Other => write!(f, "other resource"),
+        }
+    }
+}
+
 /// Policy 違反の詳細情報。
 #[derive(Debug, Clone)]
 pub struct PolicyViolation {
@@ -89,7 +103,7 @@ impl std::fmt::Display for PolicyViolation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Policy violation ({:?} {}) at {}: {}",
+            "Policy violation ({} {}) at {}: {}",
             self.kind, self.violation_type, self.url, self.details
         )
     }
@@ -170,7 +184,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn policy_violation_display_includes_all_fields() {
+    fn policy_violation_display_includes_kind_url_violation_type_details() {
         let violation = PolicyViolation {
             kind: ResourceKind::ExternalStylesheet,
             url: Url::parse("https://example.test/main.css").expect("valid url"),
@@ -180,10 +194,17 @@ mod tests {
             details: "expected text/css".to_string(),
         };
         let s = format!("{violation}");
-        // kind (Debug format of ResourceKind variant)
+        // kind (Display of ResourceKind — raikiri-spike-d6j: Debug → Display swap)
         assert!(
-            s.contains("ExternalStylesheet"),
-            "display must include kind: got {s:?}"
+            s.contains("external stylesheet"),
+            "display must include kind via ResourceKind::Display: got {s:?}"
+        );
+        // Regression pin: Debug format must not leak (auto-derived Debug can
+        // silently change when variant fields are added; new tests below pin
+        // every ResourceKind variant's Display string).
+        assert!(
+            !s.contains("ExternalStylesheet"),
+            "display must not leak ResourceKind Debug format: got {s:?}"
         );
         // violation_type (Display of ViolationType, which for MimeNotAllowed includes the mime)
         assert!(

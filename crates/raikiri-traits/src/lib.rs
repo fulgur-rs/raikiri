@@ -401,9 +401,10 @@ mod tests {
 
     #[test]
     fn policy_violation_display_uses_violation_type_display_not_debug() {
-        // PolicyViolation::Display が violation_type を `{}` で format
+        // PolicyViolation::Display が violation_type / kind を `{}` で format
         // することを regression pin。旧実装は `{:?}` で
-        // "FetchTooLarge { limit: .., actual: .. }" を垂れ流していた。
+        // "FetchTooLarge { limit: .., actual: .. }" や "Image" を垂れ流していた。
+        // kind Display swap (raikiri-spike-d6j) 分の kind assertion も含む。
         use url::Url;
         let v = PolicyViolation {
             kind: ResourceKind::Image,
@@ -421,8 +422,65 @@ mod tests {
         );
         assert!(
             !s.contains("FetchTooLarge {"),
-            "PolicyViolation Display must not leak Debug format, got: {s}"
+            "PolicyViolation Display must not leak ViolationType Debug format, got: {s}"
         );
+        // kind: Display は "image" (lowercase), Debug は "Image" (CamelCase)。
+        assert!(
+            s.contains("(image "),
+            "PolicyViolation Display must delegate to ResourceKind::Display, got: {s}"
+        );
+        assert!(
+            !s.contains("Image"),
+            "PolicyViolation Display must not leak ResourceKind Debug format, got: {s}"
+        );
+    }
+
+    // ── ResourceKind::Display (raikiri-spike-d6j) ───────────────
+    // Debug-in-Display の排除 (bz9 sister task 完結)。Display 出力は
+    // stability 契約の対象なので、全 7 variants の string を pin する。
+    // Debug format (auto-derived) が variant 追加時に silently 変わるのを
+    // 防ぐため、bz9 の `violation_type_display_*` pattern に合わせて
+    // per-variant assert_eq! で固定する。
+
+    #[test]
+    fn resource_kind_display_stylesheet_import() {
+        assert_eq!(
+            ResourceKind::StylesheetImport.to_string(),
+            "stylesheet @import"
+        );
+    }
+
+    #[test]
+    fn resource_kind_display_external_stylesheet() {
+        assert_eq!(
+            ResourceKind::ExternalStylesheet.to_string(),
+            "external stylesheet"
+        );
+    }
+
+    #[test]
+    fn resource_kind_display_image() {
+        assert_eq!(ResourceKind::Image.to_string(), "image");
+    }
+
+    #[test]
+    fn resource_kind_display_font() {
+        assert_eq!(ResourceKind::Font.to_string(), "font");
+    }
+
+    #[test]
+    fn resource_kind_display_svg() {
+        assert_eq!(ResourceKind::Svg.to_string(), "SVG");
+    }
+
+    #[test]
+    fn resource_kind_display_mathml() {
+        assert_eq!(ResourceKind::MathML.to_string(), "MathML");
+    }
+
+    #[test]
+    fn resource_kind_display_other() {
+        assert_eq!(ResourceKind::Other.to_string(), "other resource");
     }
 
     #[test]
