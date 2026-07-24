@@ -392,6 +392,56 @@ pub enum BorderStyle {
     Outset,
 }
 
+/// `border-*-color` computed value — spec `currentcolor` keyword と resolved
+/// `<color>` の specified-value distinction を cascade static side で保持する。
+///
+/// CSS Backgrounds 3 §5.3 "The border-color property"
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-color> — "Initial:
+/// currentcolor" (initial value は `currentcolor` keyword、literal `<color>`
+/// (`black` を含む) とは区別される)。
+///
+/// CSS Color 3 §4.4 "currentColor color keyword"
+/// <https://www.w3.org/TR/css-color-3/#currentColor-def> — "The used value of
+/// the `currentColor` keyword is the computed value of the `color` property"。
+/// used-value resolution (currentcolor → 同 node の computed `color` property
+/// lookup) は paint scope 責務 (bd raikiri-spike-q7qf、border 描画実装との
+/// 合流で end-to-end 疎通)。
+///
+/// # なぜ cascade static side で enum 保持するか (Option A / B の A 採用理由)
+///
+/// `ComputedValues::initial` と `ComputedValues::inherit_from` (crate::computed
+/// module) は node の自 `color` declaration が cascade `apply_value` で書き込まれる
+/// **前** に border 全 side を構築する。author `<div style="color:red">` で
+/// border-color 省略 (initial 直行) の hazard case では、border-color が
+/// `apply_value` を一切通らないため cascade 段で node 自 color を捕捉できない
+/// (parent の color のみが inherit_from の入力になる)。Option B (cascade 段で
+/// 事前 baked-in) は post-cascade resolution pass + sentinel 判別を要求し、
+/// sentinel 自体が本 enum と等価になる — 本 crate の "per-longhand cascade は
+/// declaration 順非依存" invariant (margin / padding precedent、`apply_value`
+/// arm doc 群参照) も同時に破ることになる。Option A は specified value を
+/// preserve して paint scope に resolution を委譲することで、両制約
+/// (initial-path correctness + per-key determinism) を同時に満たす。
+///
+/// # `#[non_exhaustive]`
+///
+/// Sibling [`Length`] / [`LengthOrAuto`] / [`BorderStyle`] / [`Border`] と
+/// 同 pattern — future variant 追加 (例: CSS Color 4 §17 system-color keyword)
+/// の forward-compat 契約 (37n sibling convention)。
+///
+/// (raikiri-spike-0vv.17)
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BorderColor {
+    /// `currentcolor` keyword — border-*-color の spec-mandated initial value
+    /// (CSS Backgrounds 3 §5.3)。used-value は paint scope で node の computed
+    /// `color` property を lookup して確定する (bd raikiri-spike-q7qf)。
+    CurrentColor,
+    /// Resolved `<color>` value — author が hex / named / `rgb(a)` /
+    /// `transparent` で明示指定した場合、または `border` / `border-color`
+    /// shorthand から expand された場合の payload。
+    Resolved(CssColor),
+}
+
 /// `border` — 3 sub-property を単一 side 分にまとめた intermediate 型。
 ///
 /// CSS Backgrounds 3 §5 "Borders" の 3 sub-property を 1 side 分保持する:
@@ -399,11 +449,11 @@ pub enum BorderStyle {
 ///   medium/thick → 1/3/5 px) と length の non-negative check を担う。
 /// - `style`: [`BorderStyle`] — `parse_border_style_side` が 10 alternative を
 ///   受理。
-/// - `color`: [`CssColor`] — 既存 `parse_color` を reuse (§5.3 border-color の
-///   grammar は `<color>` そのもの)。initial spec は `currentColor` だが本 crate
-///   は cascade static side に留まるため placeholder [`CssColor::BLACK`] を
-///   保持する (真の currentColor resolution は future paint scope で cascade
-///   context 経由で決着 — bd spinout 検討、raikiri-spike-0vv.12 Non-goals 参照)。
+/// - `color`: [`BorderColor`] — `parse_border_color` (spec §5.3 の `<color>`
+///   grammar に加え `currentcolor` keyword を先取り) が返す enum。initial
+///   [`BorderColor::CurrentColor`] は paint scope が `color` property で
+///   resolve する (raikiri-spike-0vv.17 で `CssColor::BLACK` placeholder から
+///   格上げ、CSS Backgrounds 3 §5.3 の initial 契約準拠)。
 ///
 /// # `<line-width>` keyword mapping (§5.1)
 ///
@@ -445,11 +495,13 @@ pub struct Border {
     pub width: Length,
     /// border-style (CSS Backgrounds 3 §5.2)。initial `none`。
     pub style: BorderStyle,
-    /// border-color (CSS Backgrounds 3 §5.3)。initial は spec 上 `currentColor`
-    /// だが cascade static side では placeholder [`CssColor::BLACK`] を保持
-    /// (真の currentColor resolution は future paint scope で解決、bd spinout
-    /// 検討)。
-    pub color: CssColor,
+    /// border-color (CSS Backgrounds 3 §5.3 <https://www.w3.org/TR/css-backgrounds-3/#border-color>)。
+    /// initial は `currentcolor` keyword — [`BorderColor::CurrentColor`] を
+    /// enum variant として保持し、used-value resolution (currentcolor →
+    /// 同 node の computed `color` property) は paint scope で確定する
+    /// (bd raikiri-spike-q7qf)。raikiri-spike-0vv.17 で `CssColor` から
+    /// [`BorderColor`] enum へ格上げ (spec initial 契約 fidelity)。
+    pub color: BorderColor,
 }
 
 /// `line-height` property の value (Author CSS seed for m4+ inline layout)。
@@ -1157,22 +1209,26 @@ pub enum PropertyValue {
     /// `border-left-style: <line-style>` — [`Self::BorderTopStyle`] と同 grammar。
     /// (raikiri-spike-0vv.12)
     BorderLeftStyle(BorderStyle),
-    /// `border-top-color: <color>` — non-inherited、initial spec は `currentColor`
-    /// だが cascade static side では placeholder [`CssColor::BLACK`] を保持
-    /// (CSS Backgrounds 3 §5.3
-    /// <https://www.w3.org/TR/css-backgrounds-3/#border-color>、真の
-    /// currentColor resolution は future paint scope 責務、bd spinout 検討)。
-    /// (raikiri-spike-0vv.12)
-    BorderTopColor(CssColor),
+    /// `border-top-color: <color>` — non-inherited、initial: `currentcolor`
+    /// keyword ([`BorderColor::CurrentColor`]、CSS Backgrounds 3 §5.3
+    /// <https://www.w3.org/TR/css-backgrounds-3/#border-color> "Initial:
+    /// currentcolor")。cascade static side は [`BorderColor`] enum で
+    /// specified value (currentcolor vs. resolved `<color>`) を保持し、
+    /// used-value resolution (currentcolor → 同 node computed `color` property
+    /// lookup、CSS Color 3 §4.4 <https://www.w3.org/TR/css-color-3/#currentColor-def>)
+    /// は paint scope 責務 (bd raikiri-spike-q7qf)。
+    /// (raikiri-spike-0vv.12 initial seed、raikiri-spike-0vv.17 で
+    /// `CssColor` から [`BorderColor`] へ格上げ)
+    BorderTopColor(BorderColor),
     /// `border-right-color: <color>` — [`Self::BorderTopColor`] と同 grammar。
-    /// (raikiri-spike-0vv.12)
-    BorderRightColor(CssColor),
+    /// (raikiri-spike-0vv.12、raikiri-spike-0vv.17)
+    BorderRightColor(BorderColor),
     /// `border-bottom-color: <color>` — [`Self::BorderTopColor`] と同 grammar。
-    /// (raikiri-spike-0vv.12)
-    BorderBottomColor(CssColor),
+    /// (raikiri-spike-0vv.12、raikiri-spike-0vv.17)
+    BorderBottomColor(BorderColor),
     /// `border-left-color: <color>` — [`Self::BorderTopColor`] と同 grammar。
-    /// (raikiri-spike-0vv.12)
-    BorderLeftColor(CssColor),
+    /// (raikiri-spike-0vv.12、raikiri-spike-0vv.17)
+    BorderLeftColor(BorderColor),
     /// `border: <line-width> || <line-style> || <color>` shorthand — 4 side
     /// 全てに同一の [`Border`] を配る (CSS Backgrounds 3 §5.4
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>)。
@@ -1180,7 +1236,7 @@ pub enum PropertyValue {
     /// spec grammar は `||` (any-order、each component at most once、at least
     /// 1 必須) — `parse_border_shorthand` が unfilled slot loop で peel する。
     /// 省略成分は initial: width=`Length::Px(3.0)` (medium)、style=`BorderStyle::None`、
-    /// color=[`CssColor::BLACK`] (currentColor placeholder)。
+    /// color=[`BorderColor::CurrentColor`] (spec §5.3 initial、raikiri-spike-0vv.17)。
     ///
     /// **cascade 上は普段この variant を観測しない**: `crate::rule::parse_declaration_block`
     /// が declaration parse 直後に 12 longhand variant (4 side × 3 sub-property)
@@ -1484,14 +1540,15 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         }
         "border-left-style" => parse_border_style_side(input).map(PropertyValue::BorderLeftStyle),
         // CSS Backgrounds 3 §5.3 border-color physical longhand
-        // (raikiri-spike-0vv.12)。grammar: `<color>` — 既存 `parse_color` を
-        // reuse (background-color と同 pattern、raikiri-spike-0vv.7 precedent)。
-        // initial spec は `currentColor` だが cascade static side では
-        // placeholder BLACK を computed に保持 (future paint scope で真の resolve)。
-        "border-top-color" => parse_color(input).map(PropertyValue::BorderTopColor),
-        "border-right-color" => parse_color(input).map(PropertyValue::BorderRightColor),
-        "border-bottom-color" => parse_color(input).map(PropertyValue::BorderBottomColor),
-        "border-left-color" => parse_color(input).map(PropertyValue::BorderLeftColor),
+        // (raikiri-spike-0vv.12 initial seed、raikiri-spike-0vv.17 で
+        // `parse_border_color` 経由に格上げ)。grammar: `<color>` に加え
+        // `currentcolor` keyword を先取り (CSS Color 3 §4.4)。`BorderColor` enum
+        // で specified value distinction を保持し、used-value resolution は
+        // paint scope 責務 (bd raikiri-spike-q7qf)。
+        "border-top-color" => parse_border_color(input).map(PropertyValue::BorderTopColor),
+        "border-right-color" => parse_border_color(input).map(PropertyValue::BorderRightColor),
+        "border-bottom-color" => parse_border_color(input).map(PropertyValue::BorderBottomColor),
+        "border-left-color" => parse_border_color(input).map(PropertyValue::BorderLeftColor),
         // CSS Backgrounds 3 §5.4 border shorthand: `<line-width> || <line-style>
         // || <color>` (any-order、each component at most once、at least 1 present)。
         // 4 side 全てに同一 Border を配る。cascade 段では
@@ -1559,6 +1616,37 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
         }
         _ => None,
     }
+}
+
+/// `border-*-color` の value parser — `currentcolor` keyword を先取りしてから
+/// 既存 [`parse_color`] に委譲する。
+///
+/// CSS Backgrounds 3 §5.3 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
+/// の border-*-color grammar は `<color>` そのもの、`<color>` production は
+/// CSS Color 3 §4.4 <https://www.w3.org/TR/css-color-3/#currentColor-def>
+/// `currentcolor` keyword を含む。しかし本 crate の [`parse_color`] は
+/// cssparser の `parse_named_color` (RGB triple mapping、Sprint 12 precedent)
+/// 経由のため `currentcolor` は named-color table 未収載として `None` 側に
+/// 落ちる — 本 helper が Ident 段で先取りする必要がある。resolution 委譲の
+/// rationale は [`BorderColor`] enum doc 参照 (bd raikiri-spike-q7qf paint
+/// scope 責務)。
+///
+/// 5 call site (4 longhand + [`parse_border_shorthand`] color slot) が本
+/// helper を経由する (37n sibling-arm convention consistency)。
+///
+/// (raikiri-spike-0vv.17)
+fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
+    // `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、
+    // sibling `parse_margin_side` line 1892 と同 shape の keyword intercept)。
+    // 失敗時 `try_parse` が rewind、続く `parse_color` が Ident (named /
+    // transparent) / Hash / Function の全 alternative を担当。
+    if input
+        .try_parse(|i| i.expect_ident_matching("currentcolor"))
+        .is_ok()
+    {
+        return Some(BorderColor::CurrentColor);
+    }
+    parse_color(input).map(BorderColor::Resolved)
 }
 
 /// `rgb()` / `rgba()` legacy comma syntax の中身 (関数呼び出しの括弧内) を
@@ -2146,8 +2234,8 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 /// spec §5.4 verbatim "Omitted values are set to their initial values":
 /// - width 省略 → `Length::Px(3.0)` (medium initial)
 /// - style 省略 → `BorderStyle::None` (initial、spec §5.2)
-/// - color 省略 → [`CssColor::BLACK`] (currentColor placeholder、future paint
-///   scope で resolve、raikiri-spike-0vv.12 Non-goals 参照)
+/// - color 省略 → [`BorderColor::CurrentColor`] (spec §5.3 initial、used-value
+///   resolution は paint scope 責務、raikiri-spike-0vv.17)
 ///
 /// # Non-goals (spec deviation 明示)
 ///
@@ -2167,7 +2255,7 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
     let mut width: Option<Length> = None;
     let mut style: Option<BorderStyle> = None;
-    let mut color: Option<CssColor> = None;
+    let mut color: Option<BorderColor> = None;
 
     // `||` grammar: at least 1 component 必須、each component 最大 1 回、
     // order 自由。全 slot 満了 or 未 match token 到達で break。
@@ -2207,11 +2295,14 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
             continue;
         }
 
-        // color slot — `parse_color` を reuse。hex / named / rgb(a) / transparent
-        // の全 alternative を受理。
+        // color slot — [`parse_border_color`] を reuse。hex / named / rgb(a) /
+        // transparent の全 alternative + `currentcolor` keyword (CSS Color 3
+        // §4.4) を受理。4 longhand parse site (border-{top,right,bottom,left}-color)
+        // と同じ helper を経由することで 37n sibling convention consistency を
+        // 担保 (raikiri-spike-0vv.17)。
         if color.is_none()
-            && let Ok(c) = input.try_parse(|i| -> Result<CssColor, ParseError<'_, ()>> {
-                parse_color(i).ok_or_else(|| i.new_custom_error(()))
+            && let Ok(c) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
+                parse_border_color(i).ok_or_else(|| i.new_custom_error(()))
             })
         {
             color = Some(c);
@@ -2235,7 +2326,9 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
     let border = Border {
         width: width.unwrap_or(Length::Px(3.0)), // medium
         style: style.unwrap_or(BorderStyle::None),
-        color: color.unwrap_or(CssColor::BLACK), // currentColor placeholder
+        // §5.3 initial "currentcolor" — used-value resolution は paint scope
+        // 責務 (bd raikiri-spike-q7qf、raikiri-spike-0vv.17)。
+        color: color.unwrap_or(BorderColor::CurrentColor),
     };
     Some(Sides::all(border))
 }
@@ -6071,20 +6164,20 @@ mod tests {
 
     #[test]
     fn border_top_color_parse_hex() {
-        // Verification #4 note stale: task description は "parse_color 現状
-        // (transparent/BLACK) の制約下で fail" と書いているが、`parse_color` は
-        // 既に hex/named/rgb(a)/transparent を受理する (background_color_parse_hex
-        // が pin 済み)。border-top-color も同 parse_color reuse のため #ff0000 は
-        // 通る (advisor calibration verified、stale note は無視して actual behavior
-        // を pin)。
+        // border-*-color の hex form は `parse_color` (background-color と同じ
+        // helper) が hex/named/rgb(a)/transparent を受理し、`parse_border_color`
+        // が [`BorderColor::Resolved`] で wrap して cascade static side に届く
+        // (raikiri-spike-0vv.17)。
         assert_eq!(
             parse("#ff0000", "border-top-color"),
-            Some(PropertyValue::BorderTopColor(CssColor {
-                r: 255,
-                g: 0,
-                b: 0,
-                a: 255
-            }))
+            Some(PropertyValue::BorderTopColor(BorderColor::Resolved(
+                CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255
+                }
+            )))
         );
     }
 
@@ -6092,27 +6185,56 @@ mod tests {
     fn border_color_named_and_rgb() {
         // 4 side 各 arm の smoke + 3 color form (named / rgb / transparent) を
         // 分散して cross-arm regression 検知 (background-color test の pattern)。
+        // raikiri-spike-0vv.17: `BorderColor::Resolved` wrap。
         assert_eq!(
             parse("red", "border-right-color"),
-            Some(PropertyValue::BorderRightColor(CssColor {
-                r: 255,
-                g: 0,
-                b: 0,
-                a: 255
-            }))
+            Some(PropertyValue::BorderRightColor(BorderColor::Resolved(
+                CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255
+                }
+            )))
         );
         assert_eq!(
             parse("rgb(0, 0, 255)", "border-bottom-color"),
-            Some(PropertyValue::BorderBottomColor(CssColor {
-                r: 0,
-                g: 0,
-                b: 255,
-                a: 255
-            }))
+            Some(PropertyValue::BorderBottomColor(BorderColor::Resolved(
+                CssColor {
+                    r: 0,
+                    g: 0,
+                    b: 255,
+                    a: 255
+                }
+            )))
         );
         assert_eq!(
             parse("transparent", "border-left-color"),
-            Some(PropertyValue::BorderLeftColor(CssColor::TRANSPARENT))
+            Some(PropertyValue::BorderLeftColor(BorderColor::Resolved(
+                CssColor::TRANSPARENT
+            )))
+        );
+    }
+
+    #[test]
+    fn border_top_color_parse_currentcolor() {
+        // CSS Backgrounds 3 §5.3 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
+        // "Initial: currentcolor" — author 明示 `border-*-color: currentcolor` が
+        // [`BorderColor::CurrentColor`] variant として保持されることを pin する
+        // (0vv.17 hazard case 1 の cascade-side coverage、used-value resolution は
+        // bd raikiri-spike-q7qf の paint scope 責務)。
+        assert_eq!(
+            parse("currentcolor", "border-top-color"),
+            Some(PropertyValue::BorderTopColor(BorderColor::CurrentColor))
+        );
+        // CSS Color 3 §4.4 keyword は ASCII case-insensitive。
+        assert_eq!(
+            parse("CurrentColor", "border-right-color"),
+            Some(PropertyValue::BorderRightColor(BorderColor::CurrentColor))
+        );
+        assert_eq!(
+            parse("CURRENTCOLOR", "border-bottom-color"),
+            Some(PropertyValue::BorderBottomColor(BorderColor::CurrentColor))
         );
     }
 
@@ -6120,15 +6242,16 @@ mod tests {
     fn border_shorthand_all_three_components() {
         // Verification #5: parse("1px solid red", "border") = shorthand 経由で
         // 全 4 side の Border {width: 1px, style: Solid, color: red} を expand。
+        // raikiri-spike-0vv.17: color slot は `BorderColor::Resolved` に wrap。
         let border = Border {
             width: Length::Px(1.0),
             style: BorderStyle::Solid,
-            color: CssColor {
+            color: BorderColor::Resolved(CssColor {
                 r: 255,
                 g: 0,
                 b: 0,
                 a: 255,
-            },
+            }),
         };
         assert_eq!(
             parse("1px solid red", "border"),
@@ -6143,12 +6266,12 @@ mod tests {
         let expected = Border {
             width: Length::Px(2.0),
             style: BorderStyle::Dashed,
-            color: CssColor {
+            color: BorderColor::Resolved(CssColor {
                 r: 255,
                 g: 0,
                 b: 0,
                 a: 255,
-            },
+            }),
         };
         // color first
         assert_eq!(
@@ -6166,17 +6289,18 @@ mod tests {
     fn border_shorthand_omitted_components_use_initial() {
         // spec §5.4 "Omitted values are set to their initial values" —
         // width 省略 → medium (3px)、style 省略 → None、color 省略 →
-        // currentColor placeholder BLACK。
+        // `currentcolor` keyword ([`BorderColor::CurrentColor`]、spec §5.3
+        // initial、raikiri-spike-0vv.17)。
         // 1 component only (color) — width と style は initial:
         let with_only_color = Border {
             width: Length::Px(3.0), // medium initial
             style: BorderStyle::None,
-            color: CssColor {
+            color: BorderColor::Resolved(CssColor {
                 r: 255,
                 g: 0,
                 b: 0,
                 a: 255,
-            },
+            }),
         };
         assert_eq!(
             parse("red", "border"),
@@ -6186,11 +6310,32 @@ mod tests {
         let with_only_style = Border {
             width: Length::Px(3.0),
             style: BorderStyle::Solid,
-            color: CssColor::BLACK, // currentColor placeholder
+            color: BorderColor::CurrentColor, // spec §5.3 initial
         };
         assert_eq!(
             parse("solid", "border"),
             Some(PropertyValue::Border(Sides::all(with_only_style)))
+        );
+    }
+
+    #[test]
+    fn border_shorthand_color_slot_accepts_currentcolor() {
+        // 37n sibling: border shorthand の color slot は 4 longhand と同じ
+        // [`parse_border_color`] を経由するため、`currentcolor` keyword も
+        // shorthand から受理される (0vv.17)。
+        let expected = Border {
+            width: Length::Px(1.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::CurrentColor,
+        };
+        assert_eq!(
+            parse("1px solid currentcolor", "border"),
+            Some(PropertyValue::Border(Sides::all(expected)))
+        );
+        // 引数 order は自由。style first。
+        assert_eq!(
+            parse("solid currentcolor 1px", "border"),
+            Some(PropertyValue::Border(Sides::all(expected)))
         );
     }
 
@@ -6218,7 +6363,7 @@ mod tests {
         let expected = Border {
             width: Length::Px(1.0),
             style: BorderStyle::None,
-            color: CssColor::BLACK,
+            color: BorderColor::CurrentColor, // spec §5.3 initial (0vv.17)
         };
         let mut input = ParserInput::new("1px 2px");
         let mut parser = Parser::new(&mut input);
@@ -6266,25 +6411,25 @@ mod tests {
             PropertyKey::BorderLeftStyle
         );
         assert_eq!(
-            PropertyValue::BorderTopColor(CssColor::BLACK).key(),
+            PropertyValue::BorderTopColor(BorderColor::CurrentColor).key(),
             PropertyKey::BorderTopColor
         );
         assert_eq!(
-            PropertyValue::BorderRightColor(CssColor::BLACK).key(),
+            PropertyValue::BorderRightColor(BorderColor::CurrentColor).key(),
             PropertyKey::BorderRightColor
         );
         assert_eq!(
-            PropertyValue::BorderBottomColor(CssColor::BLACK).key(),
+            PropertyValue::BorderBottomColor(BorderColor::CurrentColor).key(),
             PropertyKey::BorderBottomColor
         );
         assert_eq!(
-            PropertyValue::BorderLeftColor(CssColor::BLACK).key(),
+            PropertyValue::BorderLeftColor(BorderColor::CurrentColor).key(),
             PropertyKey::BorderLeftColor
         );
         let default_border = Border {
             width: Length::Px(3.0),
             style: BorderStyle::None,
-            color: CssColor::BLACK,
+            color: BorderColor::CurrentColor, // spec §5.3 initial (0vv.17)
         };
         assert_eq!(
             PropertyValue::Border(Sides::all(default_border)).key(),

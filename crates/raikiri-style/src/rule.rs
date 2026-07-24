@@ -246,7 +246,7 @@ impl<'i> RuleBodyItemParser<'i, Declaration, ()> for DeclParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::property::{BorderStyle, CssColor, Length, LengthOrAuto};
+    use crate::property::{BorderColor, BorderStyle, CssColor, Length, LengthOrAuto};
     use cssparser::ParserInput;
 
     fn parse_block(source: &str) -> Vec<Declaration> {
@@ -486,6 +486,10 @@ mod tests {
             b: 0,
             a: 255,
         };
+        // raikiri-spike-0vv.17: color longhand は `BorderColor::Resolved(red)`
+        // で cascade に届く (shorthand の author-specified color slot は
+        // Resolved variant を渡す — hazard case 3 の pin)。
+        let red_bc = BorderColor::Resolved(red);
         assert_eq!(
             decls[0].value,
             PropertyValue::BorderTopWidth(Length::Px(1.0))
@@ -494,7 +498,7 @@ mod tests {
             decls[1].value,
             PropertyValue::BorderTopStyle(BorderStyle::Solid)
         );
-        assert_eq!(decls[2].value, PropertyValue::BorderTopColor(red));
+        assert_eq!(decls[2].value, PropertyValue::BorderTopColor(red_bc));
         assert_eq!(
             decls[3].value,
             PropertyValue::BorderRightWidth(Length::Px(1.0))
@@ -503,7 +507,7 @@ mod tests {
             decls[4].value,
             PropertyValue::BorderRightStyle(BorderStyle::Solid)
         );
-        assert_eq!(decls[5].value, PropertyValue::BorderRightColor(red));
+        assert_eq!(decls[5].value, PropertyValue::BorderRightColor(red_bc));
         assert_eq!(
             decls[6].value,
             PropertyValue::BorderBottomWidth(Length::Px(1.0))
@@ -512,7 +516,7 @@ mod tests {
             decls[7].value,
             PropertyValue::BorderBottomStyle(BorderStyle::Solid)
         );
-        assert_eq!(decls[8].value, PropertyValue::BorderBottomColor(red));
+        assert_eq!(decls[8].value, PropertyValue::BorderBottomColor(red_bc));
         assert_eq!(
             decls[9].value,
             PropertyValue::BorderLeftWidth(Length::Px(1.0))
@@ -521,7 +525,7 @@ mod tests {
             decls[10].value,
             PropertyValue::BorderLeftStyle(BorderStyle::Solid)
         );
-        assert_eq!(decls[11].value, PropertyValue::BorderLeftColor(red));
+        assert_eq!(decls[11].value, PropertyValue::BorderLeftColor(red_bc));
     }
 
     #[test]
