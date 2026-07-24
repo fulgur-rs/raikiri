@@ -454,7 +454,7 @@ mod tests {
     use super::*;
     use crate::property::CssColor;
     use crate::property::DisplayValue;
-    use crate::property::{Border, BorderStyle, Length, LengthOrAuto, Sides};
+    use crate::property::{Border, BorderColor, BorderStyle, Length, LengthOrAuto, Sides};
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
     use smol_str::SmolStr;
@@ -1642,9 +1642,11 @@ mod tests {
             a: 255,
         };
         assert_eq!(cv.border.top.style, BorderStyle::Solid);
-        assert_eq!(cv.border.top.color, red);
+        // raikiri-spike-0vv.17: border.color は `BorderColor` enum、shorthand
+        // 由来の author-specified red は `Resolved` variant で cascade に届く。
+        assert_eq!(cv.border.top.color, BorderColor::Resolved(red));
         assert_eq!(cv.border.right.style, BorderStyle::Solid);
-        assert_eq!(cv.border.left.color, red);
+        assert_eq!(cv.border.left.color, BorderColor::Resolved(red));
     }
 
     #[test]
@@ -1668,8 +1670,9 @@ mod tests {
     #[test]
     fn border_non_inherited_child_starts_from_initial() {
         // CSS Backgrounds 3 §5 "Inherited: no"。<div style="border: 5px solid red">
-        // の子 <span> は自身 rule 無しで border = initial (medium / none / BLACK)。
-        // 37n sibling: margin / padding non-inherited test を踏襲。
+        // の子 <span> は自身 rule 無しで border = initial (medium / none /
+        // currentcolor)。37n sibling: margin / padding non-inherited test
+        // を踏襲。raikiri-spike-0vv.17: color は `BorderColor` enum で保持。
         let mut doc = TestDoc::new();
         let div = doc.push_element(0, "div", Some("border: 5px solid red"));
         let span = doc.push_element(div, "span", None);
@@ -1684,14 +1687,14 @@ mod tests {
         // parent は shorthand から expand された per-side 値。
         assert_eq!(r.computed[div].border.top.width, Length::Px(5.0));
         assert_eq!(r.computed[div].border.top.style, BorderStyle::Solid);
-        assert_eq!(r.computed[div].border.top.color, red);
+        assert_eq!(r.computed[div].border.top.color, BorderColor::Resolved(red));
         // child は inherit_from が initial に戻す (non-inherited)。
         assert_eq!(
             r.computed[span].border,
             Sides::all(Border {
                 width: Length::Px(3.0),
                 style: BorderStyle::None,
-                color: CssColor::BLACK,
+                color: BorderColor::CurrentColor,
             }),
             "border must not inherit from parent"
         );
@@ -1705,26 +1708,28 @@ mod tests {
         // atomic 上書きを持つ。本 test は arm を直接叩いて `unreachable!` 化 or
         // 空 arm regression を捕捉する canary (margin safety net と対称)。
         let mut cv = ComputedValues::initial();
+        // raikiri-spike-0vv.17: `BorderColor::CurrentColor` を明示 fixture 化
+        // (safety net arm は payload の shape を保持することを pin する)。
         let sides = Sides {
             top: Border {
                 width: Length::Px(1.0),
                 style: BorderStyle::Solid,
-                color: CssColor::BLACK,
+                color: BorderColor::CurrentColor,
             },
             right: Border {
                 width: Length::Px(2.0),
                 style: BorderStyle::Dashed,
-                color: CssColor::BLACK,
+                color: BorderColor::Resolved(CssColor::BLACK),
             },
             bottom: Border {
                 width: Length::Px(3.0),
                 style: BorderStyle::Dotted,
-                color: CssColor::BLACK,
+                color: BorderColor::CurrentColor,
             },
             left: Border {
                 width: Length::Px(4.0),
                 style: BorderStyle::Double,
-                color: CssColor::BLACK,
+                color: BorderColor::Resolved(CssColor::TRANSPARENT),
             },
         };
         apply_value(PropertyValue::Border(sides), &mut cv);

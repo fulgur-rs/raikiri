@@ -12,8 +12,8 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    Border, BorderStyle, BoxSizing, ContentComponent, CssColor, DisplayValue, Length, LengthOrAuto,
-    LineHeight, Sides, TextAlign, empty_content_list, empty_counter_entries,
+    Border, BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, DisplayValue, Length,
+    LengthOrAuto, LineHeight, Sides, TextAlign, empty_content_list, empty_counter_entries,
     empty_string_set_entries,
 };
 
@@ -199,9 +199,9 @@ pub struct ComputedValues {
     pub margin: Sides<LengthOrAuto>,
     /// `border` — 4-side box-model border (width / style / color × 4 side)。
     /// **non-inherited**、initial: 各 side `Border { width: Length::Px(3.0),
-    /// style: BorderStyle::None, color: CssColor::BLACK }`
-    /// (`medium` UA-defined recommendation × `none` initial × currentColor
-    /// placeholder)。
+    /// style: BorderStyle::None, color: BorderColor::CurrentColor }`
+    /// (`medium` UA-defined recommendation × `none` initial × `currentcolor`
+    /// keyword、CSS Backgrounds 3 §5 initial 群、raikiri-spike-0vv.17)。
     ///
     /// - Physical longhands: [`border-top-width`](https://www.w3.org/TR/css-backgrounds-3/#border-width) /
     ///   `border-top-style` / `border-top-color` × 4 side。
@@ -210,25 +210,28 @@ pub struct ComputedValues {
     /// # Value semantics
     ///
     /// - `Sides<Border>: Copy` により per-node write は bit-copy (Border は
-    ///   f32/enum/CssColor payload の POD 集合)。
+    ///   f32/enum/BorderColor payload の POD 集合、BorderColor も Copy)。
     /// - `width` は [`Length`] variant (Px / Em / Rem / Pt) を保持。resolve は
     ///   下流責務 (font-size context / DPI 変換)。`<percentage>` は spec grammar
     ///   に含まれないため Length::Percent 変種は流入しない (advisor calibration
     ///   verified、[`crate::property::PropertyValue::BorderTopWidth`] doc 参照)。
-    /// - `color` は cascade static side では placeholder [`CssColor::BLACK`] を
-    ///   保持 — spec initial は `currentColor` (§5.3) だが、真の resolution は
-    ///   cascade context (`color` property の computed value を per-node で参照)
-    ///   を必要とするため future paint scope で解決 (bd spinout 検討)。
+    /// - `color` は cascade static side で [`BorderColor`] enum として保持し、
+    ///   spec `currentcolor` keyword vs. 明示 `<color>` の specified-value
+    ///   distinction を preserve する (CSS Backgrounds 3 §5.3
+    ///   <https://www.w3.org/TR/css-backgrounds-3/#border-color> initial:
+    ///   currentcolor)。used-value resolution (currentcolor → 同 node の
+    ///   computed `color` property lookup、CSS Color 3 §4.4) は paint scope
+    ///   責務 (bd raikiri-spike-q7qf)。
     ///
-    /// # Non-goals (raikiri-spike-0vv.12 defer)
+    /// # Non-goals (raikiri-spike-0vv.12 initial、raikiri-spike-0vv.17 部分解消)
     ///
     /// - `border-image-*` sub-property (source/slice/width/outset/repeat) は
     ///   Epic 未着手、shorthand `border:` も border-image を reset しない
     ///   (spec deviation 明示、future 統合 task で対応)。
     /// - `border-{top,right,bottom,left}` 4-side single-side shorthand (例:
     ///   `border-top: 1px solid red`) は本 task では未対応、future 追加。
-    /// - `currentColor` resolution は future paint scope で cascade context 経由
-    ///   で解決 (bd spinout 検討)。
+    /// - `currentcolor` の cascade-side enum 保持は 0vv.17 で解消。
+    ///   used-value resolution (paint scope) は bd raikiri-spike-q7qf に defer。
     ///
     /// # Primary sources
     ///
@@ -356,12 +359,14 @@ impl ComputedValues {
             // で全 4 side に spread)。raikiri-spike-0vv.5。
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             // CSS Backgrounds 3 §5.1/§5.2/§5.3: border initial は各 side で
-            // width=medium (3px)、style=none、color=currentColor (cascade static
-            // side では placeholder BLACK、raikiri-spike-0vv.12)。
+            // width=medium (3px)、style=none、color=`currentcolor` keyword
+            // ([`BorderColor::CurrentColor`]、raikiri-spike-0vv.12 seed +
+            // raikiri-spike-0vv.17 で `CssColor::BLACK` placeholder から
+            // enum variant へ格上げ、spec §5.3 initial 契約 fidelity)。
             border: Sides::all(Border {
                 width: Length::Px(3.0),
                 style: BorderStyle::None,
-                color: CssColor::BLACK,
+                color: BorderColor::CurrentColor,
             }),
             // CSS Sizing 3 §3.1.1: width initial は `auto` (raikiri-spike-0vv.10)。
             width: LengthOrAuto::Auto,
@@ -441,11 +446,12 @@ impl ComputedValues {
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             // non-inherited (CSS Backgrounds 3 §5、raikiri-spike-0vv.12)。initial
             // 値と drift しないよう `Self::initial()` と同 shape で明示。`Sides<Border>:
-            // Copy` により per-node write は bit-copy。
+            // Copy` により per-node write は bit-copy。raikiri-spike-0vv.17: color
+            // は `BorderColor::CurrentColor` (spec §5.3 initial)。
             border: Sides::all(Border {
                 width: Length::Px(3.0),
                 style: BorderStyle::None,
-                color: CssColor::BLACK,
+                color: BorderColor::CurrentColor,
             }),
             // non-inherited (CSS Sizing 3 §3.1.1 "Inherited: no"、initial: `auto`)。
             // 親が具体 width を持っていても child は Auto に戻る。raikiri-spike-0vv.10。
@@ -495,15 +501,18 @@ mod tests {
         assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
         // CSS Box 3 §3.1 (raikiri-spike-0vv.5): margin initial は 0 on each side。
         assert_eq!(cv.margin, Sides::all(LengthOrAuto::Length(Length::Px(0.0))));
-        // CSS Backgrounds 3 §5 (raikiri-spike-0vv.12): border initial は
-        // 各 side {width: medium (3px), style: none, color: currentColor
-        // placeholder BLACK}。
+        // CSS Backgrounds 3 §5 (raikiri-spike-0vv.12 seed、raikiri-spike-0vv.17
+        // で currentcolor へ格上げ): border initial は各 side {width: medium
+        // (3px), style: none, color: `currentcolor` (BorderColor::CurrentColor)}。
+        // hazard case 2 (author `color:red` + border-color 省略 → cascade static
+        // side が initial 直行) の enum coverage — used-value resolution は
+        // paint scope (bd raikiri-spike-q7qf) で `color` property に対して確定。
         assert_eq!(
             cv.border,
             Sides::all(Border {
                 width: Length::Px(3.0),
                 style: BorderStyle::None,
-                color: CssColor::BLACK,
+                color: BorderColor::CurrentColor,
             })
         );
         // CSS Sizing 3 §3.1.1 (raikiri-spike-0vv.10): width initial は `auto`。
@@ -568,17 +577,18 @@ mod tests {
             // ことを他 non-inherited fixture (下の inherit_from_leaves_* 系) で pin。
             margin: Sides::all(LengthOrAuto::Length(Length::Px(12.0))),
             // 0vv.12: parent に non-initial border を持たせ、child が initial (medium
-            // none BLACK) に落ちることを他 non-inherited fixture
-            // (inherit_from_leaves_border_at_initial) で pin。
+            // none currentcolor) に落ちることを他 non-inherited fixture
+            // (inherit_from_leaves_border_at_initial) で pin。raikiri-spike-0vv.17:
+            // color は `BorderColor::Resolved` variant で明示 color を保持。
             border: Sides::all(Border {
                 width: Length::Px(5.0),
                 style: BorderStyle::Solid,
-                color: CssColor {
+                color: BorderColor::Resolved(CssColor {
                     r: 128,
                     g: 128,
                     b: 128,
                     a: 255,
-                },
+                }),
             }),
             // 0vv.10: 同様 parent に explicit width を持たせ、child が initial
             // (Auto) に落ちる pin は inherit_from_leaves_width_at_initial 参照。
@@ -710,35 +720,43 @@ mod tests {
     #[test]
     fn inherit_from_leaves_border_at_initial() {
         // CSS Backgrounds 3 §5 "Inherited: no" — 親が border を持っていても
-        // child は initial (各 side {medium, none, BLACK}) に戻る
-        // (raikiri-spike-0vv.12)。37n sibling: display / counter-* / margin /
-        // padding / running_templates と同 shape。
+        // child は initial (各 side {medium, none, currentcolor}) に戻る
+        // (raikiri-spike-0vv.12 seed、raikiri-spike-0vv.17 で `BorderColor`
+        // enum へ格上げ)。37n sibling: display / counter-* / margin /
+        // padding / running_templates と同 shape。hazard case 2 の
+        // inheritance-path coverage: parent が author 明示 red border を
+        // 持っていても child の cascade static side は `CurrentColor` に戻る
+        // (paint scope は child 自身の `color` property で resolve する)。
         let parent = ComputedValues {
             border: Sides {
                 top: Border {
                     width: Length::Px(10.0),
                     style: BorderStyle::Solid,
-                    color: CssColor {
+                    color: BorderColor::Resolved(CssColor {
                         r: 255,
                         g: 0,
                         b: 0,
                         a: 255,
-                    },
+                    }),
                 },
                 right: Border {
                     width: Length::Em(2.0),
                     style: BorderStyle::Dashed,
-                    color: CssColor::BLACK,
+                    color: BorderColor::Resolved(CssColor::BLACK),
                 },
                 bottom: Border {
                     width: Length::Px(1.0),
                     style: BorderStyle::Dotted,
-                    color: CssColor::TRANSPARENT,
+                    color: BorderColor::Resolved(CssColor::TRANSPARENT),
                 },
                 left: Border {
                     width: Length::Pt(12.0),
                     style: BorderStyle::Double,
-                    color: CssColor::BLACK,
+                    // Parent が明示 currentcolor を書いた state も 1 side で
+                    // fixture 化し、child が initial (CurrentColor) に戻ることを
+                    // pin (variant coverage — Resolved vs CurrentColor 両方が
+                    // inherit_from を通過)。
+                    color: BorderColor::CurrentColor,
                 },
             },
             ..ComputedValues::initial()
@@ -749,7 +767,7 @@ mod tests {
             Sides::all(Border {
                 width: Length::Px(3.0),
                 style: BorderStyle::None,
-                color: CssColor::BLACK,
+                color: BorderColor::CurrentColor,
             })
         );
     }
