@@ -246,7 +246,9 @@ impl<'i> RuleBodyItemParser<'i, Declaration, ()> for DeclParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::property::{BorderColor, BorderStyle, CssColor, Length, LengthOrAuto};
+    use crate::property::{
+        BorderColor, BorderStyle, CssColor, FontWeightValue, Length, LengthOrAuto,
+    };
     use cssparser::ParserInput;
 
     fn parse_block(source: &str) -> Vec<Declaration> {
@@ -304,7 +306,10 @@ mod tests {
         assert_eq!(decls.len(), 3);
         assert!(matches!(decls[0].value, PropertyValue::Color(_)));
         assert_eq!(decls[1].value, PropertyValue::FontSize(Length::Px(16.0)));
-        assert_eq!(decls[2].value, PropertyValue::FontWeight(700));
+        assert_eq!(
+            decls[2].value,
+            PropertyValue::FontWeight(FontWeightValue::Absolute(700))
+        );
     }
 
     #[test]

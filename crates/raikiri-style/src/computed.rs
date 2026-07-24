@@ -61,6 +61,25 @@ pub struct ComputedValues {
     /// `font-size`。inherited、initial: `Length::Px(16.0)` (browser default medium)。
     pub font_size: Length,
     /// `font-weight`。inherited、initial: 400 (normal)。
+    ///
+    /// **常に resolve 済みの absolute weight** (`[1, 1000]`)。specified value 側の
+    /// `bolder` / `lighter` sentinel ([`crate::property::FontWeightValue`]) は
+    /// `crate::cascade::apply_value` が親の computed weight と CSS Fonts 4 §2.2
+    /// の table から絶対値に解決してから書き込むため、この field に relative
+    /// keyword が残ることはない。これは spec とも一致する — §2.2 の property
+    /// table は `Computed value: a number, see below` と規定し、§2.2.1
+    /// "Relative Weights" が "Specified values of `bolder` and `lighter`
+    /// indicate weights relative to the weight of the parent element. The
+    /// computed weight is calculated based on the inherited `font-weight`
+    /// value" と規定している
+    /// (<https://www.w3.org/TR/css-fonts-4/#relative-weights>)。
+    ///
+    /// なお `u16` 表現のため **computed value の fractional 精度は保持されない**
+    /// (spec §2.2.2 は fractional weight を valid とする)。既知 divergence、
+    /// 追跡: bd raikiri-spike-e52s。
+    ///
+    /// 型を `u16` のまま保つことは下流契約でもある: `raikiri-dom` の layout が
+    /// `cv.font_weight as f32` で読み戻す (raikiri-spike-5iy + 17s8)。
     pub font_weight: u16,
     /// `line-height`。**inherited**、initial: [`LineHeight::Normal`]。
     /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
