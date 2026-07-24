@@ -9,15 +9,19 @@
 //!   `html_to_png_with(input, PageBox, PageDefaults)` variant を追加予定
 //! - `ReplacedResolver` 不要 (M1 replaced element 非対応)
 //! - 単一ページのみ。overflow の 2 ページ目 clip は M2 pagestream-state-machine
-//! - 内部 pipeline: `parse_html` → `layout_single_page` → `paint_single_page`
-//!   → `anyrender::render_to_buffer::<VelloCpuImageRenderer>` → `encode_png`
+//! - 内部 pipeline (Sprint 23 raikiri-spike-bkkm):
+//!   `parse_html` → `layout_single_page` → `build_page_scene` →
+//!   `PageScene::rasterize` (`raikiri_paint::paint_single_page` +
+//!   `anyrender::render_to_buffer::<VelloCpuImageRenderer>` + `encode_png` を
+//!   内部で verbatim call) → PNG bytes
+//!   raster / encode の byte-identical triple は [`crate::PageScene::rasterize`]
+//!   に集約された (byte-identical 契約 = 同 triple 呼び出しの verbatim 維持)。
 
-use anyrender::render_to_buffer;
-use anyrender_vello_cpu::VelloCpuImageRenderer;
 use parley::FontContext;
 use raikiri_html::ParseOptions;
 use raikiri_traits::{PageBox, RenderError};
 
+use crate::page_scene::build_page_scene;
 use crate::parse::parse_html;
 
 /// `html_to_png` / `html_to_png_with_fonts` の共通実装。VRT test 経路 (pinned
@@ -48,51 +52,16 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     // で LayoutError → RenderError::Layout に自動変換される。
     raikiri_dom::layout_single_page(&mut doc.uncascaded.dom, &doc.cascade, page_box, font_ctx)?;
 
-    // PageBox = 793.7008 × 1122.5197 CSS px → 794 × 1123 u32 buffer
-    let width = page_box.width.ceil() as u32;
-    let height = page_box.height.ceil() as u32;
-
-    // paint_single_page への split-borrow (dom / cascade は render_to_buffer の
-    // closure に move されないよう `let` binding で外に出す)
+    // Sprint 23 raikiri-spike-bkkm: post-layout Document から PageScene snapshot を
+    // 抽出し、byte-identical な raster + encode triple は PageScene::rasterize に
+    // 集約された。dom / cascade は rasterize に thread されて既存 paint pipeline
+    // が verbatim reuse される (Finding 1: Sprint 23 では PageDrawables 経由 paint
+    // 再導出は byte-identical を破るため defer、rasterize が真の snapshot に至る
+    // までの過渡形として dom + cascade を param に受ける)。
     let dom = &doc.uncascaded.dom;
     let cascade = &doc.cascade;
-    let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
-        |scene| raikiri_paint::paint_single_page(scene, dom, cascade, page_box),
-        width,
-        height,
-    );
-
-    Ok(encode_png(&rgba, width, height))
-}
-
-/// Encode a premultiplied RGBA8 buffer to PNG bytes via `tiny_skia::Pixmap`.
-///
-/// The buffer must be exactly `width * height * 4` bytes. Buffer format is
-/// premultiplied RGBA8 — the `anyrender_vello_cpu` output convention.
-/// `tiny_skia` stores pixmaps in the same format, so encoding is a direct
-/// wrap-then-serialize.
-///
-/// # Panics
-///
-/// - `rgba.len() != width * height * 4`
-/// - `width == 0 || height == 0` (invalid `tiny_skia::IntSize`)
-/// - PNG serialization failure (tiny-skia never returns an error for a
-///   well-formed pixmap in practice; treated as an invariant violation)
-fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let expected = (width as usize) * (height as usize) * 4;
-    assert_eq!(
-        rgba.len(),
-        expected,
-        "encode_png: expected {expected} bytes for {width}x{height}, got {}",
-        rgba.len(),
-    );
-    let size =
-        tiny_skia::IntSize::from_wh(width, height).expect("encode_png: width/height must be > 0");
-    let pixmap = tiny_skia::Pixmap::from_vec(rgba.to_vec(), size)
-        .expect("encode_png: Pixmap::from_vec rejected pre-validated buffer (tiny-skia invariant violation)");
-    pixmap
-        .encode_png()
-        .expect("encode_png: tiny_skia::Pixmap::encode_png should not fail for a valid pixmap")
+    let scene = build_page_scene(dom, cascade, page_box);
+    Ok(scene.rasterize(dom, cascade, page_box))
 }
 
 /// HTML byte stream を単一 A4 ページの PNG に raster する (M1.14 pub API)。
