@@ -36,7 +36,8 @@ pub struct RuleTree {
     /// Qualified style rules (`selectors { declarations }`)、source order 保持。
     pub style_rules: Vec<StyleRule>,
     /// `@page` at-rules。source_order は `style_rules` とは独立の 0-index。
-    /// cascade 適用は M4 defer — 現在は parse 結果を parked しているだけ。
+    /// cascade は [`crate::page::cascade_page`] が適用する; per-page `PageBox`
+    /// derivation と margin-box slot layout は M4 defer。
     pub page_rules: Vec<PageRule>,
 }
 

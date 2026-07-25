@@ -1099,14 +1099,17 @@ pub enum PropertyValue {
     /// 解決して [`crate::computed::ComputedValues::font_weight`] (`u16`) に
     /// 格納する (raikiri-spike-17s8)。
     ///
-    /// **既知の gap**: 解決を行うのは `apply_value` を通る element cascade のみ。
-    /// [`crate::page::cascade_page`] は winner を specified value のまま
-    /// `PageCascadeResult.declarations` に格納するため、`@page { font-weight:
-    /// bolder }` は sentinel のまま public な結果に現れる。CSS Paged Media 3
-    /// "Page Properties" <https://www.w3.org/TR/css-page-3/#page-properties> は
-    /// "The page context inherits from the root element" と規定しており解決先は
-    /// 定義されているので、これは spec からの divergence。追跡: bd
-    /// raikiri-spike-ygl0。
+    /// **page context 側も解決される** (raikiri-spike-ygl0)。
+    /// [`crate::page::cascade_page`] は winner を
+    /// `crate::cascade::resolve_against_inherited` (`apply_value` の sibling、
+    /// 同じ relative-weight table を共有) に通してから
+    /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
+    /// に格納するので、`@page { font-weight: bolder }` も `Absolute` に
+    /// 落ちた形でしか public な結果に現れない。継承元は
+    /// CSS Paged Media 3 §6 "Page Properties"
+    /// <https://www.w3.org/TR/css-page-3/#page-properties> の "The page context
+    /// inherits from the root element" どおり root element の computed weight
+    /// (未供給時は同 §の legacy exception により initial 値 400)。
     FontWeight(FontWeightValue),
     /// `line-height: normal | <number> | <length-percentage>` — inherited、
     /// initial: [`LineHeight::Normal`]。CSS Inline 3 §5.1
