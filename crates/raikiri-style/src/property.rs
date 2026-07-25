@@ -796,13 +796,37 @@ pub enum ContentComponent {
     },
     /// `attr(<attribute-name>)` (§2.1、type/fallback は M5+ scope)。
     Attr { name: SmolStr },
-    /// `target-counter([<string>|<url>], <counter-name>, <counter-style>?)`。
+    /// `target-counter([<string>|<url>], <custom-ident>, <counter-style>?)`。
+    /// CSS Content 3 §2.6.1 <https://www.w3.org/TR/css-content-3/#target-counter>。
+    ///
+    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec 原文
+    /// (§2.6.1 の value definition):
+    ///
+    /// ```text
+    /// target-counter() = target-counter( [ <string> | <url> ] , <custom-ident> , <counter-style>? )
+    /// ```
+    ///
+    /// `counter()` / `counters()` (CSS Lists 3 §4 `<counter-name>`
+    /// <https://www.w3.org/TR/css-lists-3/#typedef-counter-name>) と異なり
+    /// `none` を追加除外しない点に注意。
     TargetCounter {
         url: String,
         name: SmolStr,
         style: CounterStyle,
     },
-    /// `target-counters([<string>|<url>], <counter-name>, <string>, <counter-style>?)`。
+    /// `target-counters([<string>|<url>], <custom-ident>, <string>, <counter-style>?)`。
+    /// CSS Content 3 §2.6.2 <https://www.w3.org/TR/css-content-3/#target-counters>。
+    ///
+    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec 原文
+    /// (§2.6.2 の value definition):
+    ///
+    /// ```text
+    /// target-counters() = target-counters( [ <string> | <url> ] , <custom-ident> , <string> , <counter-style>? )
+    /// ```
+    ///
+    /// `counter()` / `counters()` (CSS Lists 3 §4 `<counter-name>`
+    /// <https://www.w3.org/TR/css-lists-3/#typedef-counter-name>) と異なり
+    /// `none` を追加除外しない点に注意。
     TargetCounters {
         url: String,
         name: SmolStr,
@@ -2958,10 +2982,26 @@ fn parse_content_function(
     }
 }
 
-/// `<custom-ident>` (CSS Values 4 §3.6): CSS-wide keyword + `default` + `none` を
-/// 除いた任意 ident。case-preserving、smol str で保持。
+/// `<custom-ident>` (CSS Values 4 §4.2
+/// <https://www.w3.org/TR/css-values-4/#custom-idents>): CSS-wide keyword と
+/// `default` を除いた任意 ident。case-preserving、smol str で保持。
 ///
-/// counter-name / string-name / target-* の name 引数で共通に使う。
+/// `none` はここでは除外しない。spec 原文が "Specifications using `<custom-ident>`
+/// must specify clearly what other keywords are excluded from `<custom-ident>`,
+/// if any…" と述べるとおり、より狭い grammar (`<counter-name>` 等) の追加除外は
+/// 個別の predicate (例 [`is_reserved_counter_name`]) 側の責務。
+/// [`is_reserved_custom_ident`] の docstring も参照。
+///
+/// **呼び出し元は 3 箇所のみ**: `string()` の name 引数 ([`parse_string_fn`])、
+/// `target-counter()` / `target-counters()` の第 2 引数
+/// ([`parse_target_counter_fn`] / [`parse_target_counters_fn`])。いずれも spec 上
+/// `<custom-ident>` を取り `none` は valid。
+///
+/// `<counter-name>` を取る `counter()` / `counters()` および counter-* property は
+/// **本関数を経由しない** — [`parse_counter_name`] / [`parse_counter_property`] が
+/// [`is_reserved_counter_name`] で `none` を追加除外する。したがって本関数に
+/// `none` 除外を足してはならない (足すと `target-counter(url(#a), none)` と
+/// `string(none)` を spec に反して reject する)。
 fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
     let ident = input.expect_ident().ok()?.clone();
     if is_reserved_custom_ident(&ident) {
@@ -2971,7 +3011,8 @@ fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
     }
 }
 
-/// `<custom-ident>` 除外リスト (CSS Values 4 §3.6)。
+/// `<custom-ident>` 除外リスト (CSS Values 4 §4.2
+/// <https://www.w3.org/TR/css-values-4/#custom-idents>)。
 ///
 /// CSS-wide keyword (`inherit` / `initial` / `unset` / `revert` /
 /// `revert-layer`) と `default` のみを弾く。`none` はここでは除外せず、
