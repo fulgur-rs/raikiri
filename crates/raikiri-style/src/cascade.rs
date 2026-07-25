@@ -387,6 +387,149 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
     }
 }
 
+/// specified value を継承元の computed values に対して解決し、**`PropertyValue`
+/// 表現のまま** computed-equivalent な値を返す。
+///
+/// # なぜ [`apply_value`] と別に必要か
+///
+/// [`apply_value`] は解決結果を [`ComputedValues`] の field へ直接書き込むため、
+/// 結果を `PropertyValue` として受け取りたい呼び手から reuse できない。
+/// [`crate::page::cascade_page`] の結果は
+/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
+/// という `HashMap<PropertyKey, PropertyValue>` として public に出るので、格納前に
+/// この関数を通す必要がある。CSS Fonts 4 §2.2.1 の relative-weight table 自体は
+/// `resolve_relative_weight` に 1 つしか存在せず、本関数と [`apply_value`] は
+/// どちらもそこへ funnel する (table の二重実装は無い)。
+///
+/// # wildcard arm を置かない理由 (契約)
+///
+/// pass-through 側は全 variant を明示列挙し `_ => value` を使わない。これは意図的な
+/// compile-time guard である: **継承元に依存する解決を持つ property を新しく足した
+/// とき、`_` があると本関数を素通りして未解決値が public な結果に漏れる**。
+/// bd raikiri-spike-ygl0 (`@page { font-weight: bolder }` が
+/// `FontWeightValue::Bolder` のまま park していた regression) がまさにこの形
+/// だった。exhaustive match なら variant 追加が本関数と [`apply_value`] の
+/// **両方**で compile error になり、2 経路を数え上げることが強制される。
+///
+/// # この guard が守らない範囲 (明示)
+///
+/// 本 match が compile error で捕まえるのは **`PropertyValue` の variant 追加**
+/// だけである。以下 2 つは捕まらない:
+///
+/// 1. 既存 variant の **payload** に継承元依存が入る場合 — pass-through arm は
+///    payload を `_` で捨てるので、`Length` に `Larger` / `Smaller`
+///    (CSS Fonts 4 の relative size keyword) や `TextAlign` に `MatchParent`
+///    (CSS Text 3) が増えても `PropertyValue::FontSize(_)` /
+///    `PropertyValue::TextAlign(_)` を素通りする。これらは `bolder` /
+///    `lighter` と**同型**の解決を要するので、実装時は本関数の arm で payload を
+///    destructure して guard を payload 層に降ろすこと。
+/// 2. **本関数を呼ばない新しい entry point** — ygl0 の regression はこの形
+///    だった (`cascade_page` が `apply_value` を通らなかった)。CSS Paged Media 3
+///    §6 の margin-box cascade は page context を継承元とする第 3 の経路になる。
+///    exhaustive match は「経路の数え上げ」を強制しない。
+///
+/// # pass-through は「specified == computed」ではない
+///
+/// 未解決のまま通る既知の値が 2 系統ある:
+///
+/// - [`Length`](crate::property::Length) の `Em` / `Rem` / `Percent` (box
+///   properties)。CSS Paged Media 3 §6
+///   <https://www.w3.org/TR/css-page-3/#page-properties> の "Values in units of
+///   em and ex are interpreted relative to the font associated with their
+///   context" どおり `Em` は page context 自身の font に対する倍率であり、その
+///   font-size は同 cascade の兄弟 declaration から来得るため `inherited` だけでは
+///   決まらない。`Percent` は同 §6 が "Percentage values on the margin and
+///   padding properties are relative to the dimensions of the containing block"
+///   と規定するとおり containing block を要する。**ただし `font-size` property 上
+///   の `em` / `ex` は同 §6 が "When used on the font-size property in the page
+///   context, they are relative to the font-size of the root element" と明文で
+///   規定しており `inherited` だけで解ける** (同 §はさらに "an implementation that
+///   treats em and ex on font-size as relative to the initial value is also
+///   conformant" という conformance exception も置いている) — 到達しないのは
+///   `parse_font_size` が `Em` を parse 時に drop し、`%` は
+///   `parse_length_value(input, false)` が percentage token 自体を拒否するから
+///   である。なお §6 は `font-size` 上の `%` については何も規定していない。
+///   より根本には raikiri が length
+///   解決を現時点でどの層でも行っておらず
+///   [`ComputedValues::font_size`](crate::computed::ComputedValues::font_size)
+///   自体が未解決 `Length` である (element 経路の [`apply_value`] も単純代入)。
+///   型レベルの specified/computed 分離は bd raikiri-spike-082k /
+///   raikiri-spike-zls8 scope。
+/// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent)。CSS
+///   Text 3 §6.1
+///   <https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent> は
+///   継承元の computed `text-align` を継承元の `direction` に対して解釈した値を
+///   computed value と規定する。**原理的には `inherited` だけで解けるが**
+///   raikiri は `direction` を computed 層に持たないため未実装
+///   ([`TextAlign`](crate::property::TextAlign) doc の (b) milestone subset
+///   carve-out と同じ gap)。
+///
+/// 本関数が担うのは「継承元 computed values だけで解ける」解決に限る。
+///
+/// 帰結として
+/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
+/// は **layer-heterogeneous** な bag である:
+/// `FontWeight` は computed-equivalent、`FontSize(Length::Em(_))` は specified の
+/// まま。082k Phase 2 の型分離は property ごとにどちらの層かを決める必要がある
+/// (一律変換では済まない)。
+pub(crate) fn resolve_against_inherited(
+    value: PropertyValue,
+    inherited: &ComputedValues,
+) -> PropertyValue {
+    match value {
+        // CSS Fonts 4 §2.2.1 "Relative Weights"
+        // <https://www.w3.org/TR/css-fonts-4/#relative-weights>: `bolder` /
+        // `lighter` は継承元の computed weight に対して解決される。ここで
+        // `Absolute` に落とすので戻り値に relative keyword は残らない
+        // (`Absolute(u16)` → `u16` → `Absolute(u16)` の round-trip は無損失)。
+        PropertyValue::FontWeight(fw) => PropertyValue::FontWeight(FontWeightValue::Absolute(
+            resolve_relative_weight(fw, inherited.font_weight),
+        )),
+        // 本関数では解決しない property — pass-through。上記 doc の「pass-through は
+        // 『specified 表現 == computed 表現』ではない」節が既知の未解決値を
+        // 列挙している。`_` に潰さないこと。
+        v @ (PropertyValue::Color(_)
+        | PropertyValue::BackgroundColor(_)
+        | PropertyValue::FontFamily(_)
+        | PropertyValue::FontSize(_)
+        | PropertyValue::LineHeight(_)
+        | PropertyValue::Display(_)
+        | PropertyValue::CounterReset(_)
+        | PropertyValue::CounterIncrement(_)
+        | PropertyValue::CounterSet(_)
+        | PropertyValue::Content(_)
+        | PropertyValue::StringSet(_)
+        | PropertyValue::Position(_)
+        | PropertyValue::TextAlign(_)
+        | PropertyValue::PaddingTop(_)
+        | PropertyValue::PaddingRight(_)
+        | PropertyValue::PaddingBottom(_)
+        | PropertyValue::PaddingLeft(_)
+        | PropertyValue::Padding(_)
+        | PropertyValue::MarginTop(_)
+        | PropertyValue::MarginRight(_)
+        | PropertyValue::MarginBottom(_)
+        | PropertyValue::MarginLeft(_)
+        | PropertyValue::Margin(_)
+        | PropertyValue::BorderTopWidth(_)
+        | PropertyValue::BorderRightWidth(_)
+        | PropertyValue::BorderBottomWidth(_)
+        | PropertyValue::BorderLeftWidth(_)
+        | PropertyValue::BorderTopStyle(_)
+        | PropertyValue::BorderRightStyle(_)
+        | PropertyValue::BorderBottomStyle(_)
+        | PropertyValue::BorderLeftStyle(_)
+        | PropertyValue::BorderTopColor(_)
+        | PropertyValue::BorderRightColor(_)
+        | PropertyValue::BorderBottomColor(_)
+        | PropertyValue::BorderLeftColor(_)
+        | PropertyValue::Border(_)
+        | PropertyValue::Width(_)
+        | PropertyValue::Height(_)
+        | PropertyValue::BoxSizing(_)) => v,
+    }
+}
+
 fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,
@@ -411,6 +554,14 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // すべて冪等な単純代入)。`Padding` / `Margin` / `Border` arm のような
         // "safety net" 二重適用経路を font-weight に足すと `bolder` が
         // 400 → 700 → 900 と複合するため、上記 2 invariant を崩す変更は不可。
+        //
+        // **契約 (raikiri-spike-ygl0)**: 継承元依存の解決を持つ property を新しく
+        // 追加するときは、本 arm だけでなく sibling の
+        // [`resolve_against_inherited`] にも arm を足すこと — そちらは
+        // `PropertyValue` を返す形で同じ解決を提供し、
+        // [`crate::page::cascade_page`] (`apply_value` を通らない第 2 の public
+        // entry point) が使う。両者とも wildcard 無しの exhaustive match なので
+        // variant 追加時は compiler が 2 経路を数え上げさせる。
         PropertyValue::FontWeight(fw) => {
             let inherited = target.font_weight;
             target.font_weight = resolve_relative_weight(fw, inherited);
