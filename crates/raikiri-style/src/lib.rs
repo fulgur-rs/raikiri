@@ -42,6 +42,14 @@ pub use ruletree::{Origin, RuleTree, build_rule_tree, walk_style_elements};
 pub mod computed;
 pub use computed::ComputedValues;
 
+pub mod resolve;
+pub use resolve::{
+    ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedLineHeight, ResolveContext, lift_font_size, lift_line_height, resolve_border,
+    resolve_font_size, resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_line_height,
+};
+
 pub mod cascade;
 pub use cascade::{CascadeResult, cascade};
 
