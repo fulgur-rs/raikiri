@@ -122,11 +122,33 @@ pub use raikiri_html::{MINIMAL_UA_CSS, ParseOptions, UncascadedDocument, parse};
 pub use raikiri_dom::Document;
 
 // ── raikiri-style: cascade pipeline output + value 型 ──────────────────
-// ComputedValues field の型 (Atom / CssColor / Length) は Consumer が読み書きに
-// 直接名指しするため、value 系も re-export (roborev-refine job 228)。
+// ComputedValues field の型は Consumer が読み書きに直接名指しするため、value 系も
+// re-export (roborev-refine job 228)。
+//
+// bd raikiri-spike-zls8 (decision raikiri-spike-082k Phase 2) で
+// `ComputedValues` の length 系 field が **computed value 層**の型になったため、
+// `Computed*` 5 型を追加した。これが `ComputedValues` の field を型付きで受ける
+// ために必要な surface のすべてである:
+//
+// - `ComputedLength`                  — `font_size` / `ComputedBorder::width`
+// - `ComputedLengthPercentage`        — `padding` の各 side
+// - `ComputedLengthPercentageOrAuto`  — `margin` の各 side / `width` / `height`
+// - `ComputedLineHeight`              — `line_height`
+// - `ComputedBorder`                  — `border` の各 side
+//
+// `Length` (specified 層) は**残す** — `ComputedValues` の field 型ではなくなった
+// が、同じく re-export している `PropertyValue` の variant payload
+// (`PropertyValue::FontSize(Length)` 等) は specified 層のままであり、Consumer が
+// declaration を読むには依然として名指しが要る。外すと `PropertyValue` を扱う
+// Consumer が孤立する。
+//
+// `Sides<T>` (padding / margin / border の 4-side container) は **追加しない** —
+// 従来から re-export していない既存の gap であり、本 task の approved surface
+// (「`ComputedValues` の field 型が名指す computed 層の型」) に含まれない。
 pub use raikiri_style::{
-    Atom, CascadeResult, ComputedValues, CssColor, DisplayValue, Length, Origin, PropertyValue,
-    RuleTree,
+    Atom, CascadeResult, ComputedBorder, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues, CssColor, DisplayValue,
+    Length, Origin, PropertyValue, RuleTree,
 };
 
 // ── url: `ParseOptions.base_url: Option<Url>` の実体型 ─────────────────

@@ -14,10 +14,10 @@ use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontWeight, Layout, LayoutContext,
     StyleProperty,
 };
-use raikiri_style::CascadeResult;
-use raikiri_style::ComputedValues;
-use raikiri_style::property::{
-    Border, BorderStyle, BoxSizing as StyleBoxSizing, DisplayValue, Length, LengthOrAuto,
+use raikiri_style::property::{BoxSizing as StyleBoxSizing, DisplayValue};
+use raikiri_style::{
+    CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
@@ -79,16 +79,19 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 /// 現時点で active な bridge:
 /// - [`bridge_display`] — [`DisplayValue`] → [`taffy::Display`] (Sprint 13
 ///   w2s で initial landing)
-/// - [`bridge_margin`] — [`Sides<LengthOrAuto>`] → [`taffy::Rect<LengthPercentageAuto>`]
+/// - [`bridge_margin`] — `Sides<ComputedLengthPercentageOrAuto>` → [`taffy::Rect<LengthPercentageAuto>`]
 ///   (raikiri-spike-j5rz)
-/// - [`bridge_padding`] — [`Sides<Length>`] → [`taffy::Rect<LengthPercentage>`]
+/// - [`bridge_padding`] — `Sides<ComputedLengthPercentage>` → [`taffy::Rect<LengthPercentage>`]
 ///   (raikiri-spike-jbu0)
-/// - [`bridge_size`] — [`LengthOrAuto`] `cv.width` / `cv.height` →
+/// - [`bridge_size`] — [`ComputedLengthPercentageOrAuto`] `cv.width` / `cv.height` →
 ///   [`taffy::Style::size`] (`Size<Dimension>`)。Wave 2 (raikiri-spike-ggig) が
 ///   width 側、Wave 3 (raikiri-spike-01up) が height 側を追記し struct literal
 ///   1 発 assign に refactor。
-/// - [`bridge_border`] — [`Sides<Border>`] → [`taffy::Rect<LengthPercentage>`]
-///   with border-style gating (raikiri-spike-q0uc Wave 2, advisor #2 CSS Backgrounds 3 §5.2)
+/// - [`bridge_border`] — `Sides<ComputedBorder>` → [`taffy::Rect<LengthPercentage>`]
+///   (raikiri-spike-q0uc Wave 2)。**border-style gating は本 bridge ではなく上流の
+///   `raikiri_style::resolve_border` (computed 層) が持つ** — CSS Backgrounds 3
+///   §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>、
+///   bd raikiri-spike-zls8 で移動
 /// - [`bridge_box_sizing`] — [`raikiri_style::BoxSizing`] → [`taffy::BoxSizing`]
 ///   (raikiri-spike-o11x Wave 2, CSS Sizing 3 §7)
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
@@ -130,7 +133,7 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
-/// [`ComputedValues::margin`] (`Sides<LengthOrAuto>`) → [`taffy::Style::margin`]
+/// [`ComputedValues::margin`] (`Sides<ComputedLengthPercentageOrAuto>`) → [`taffy::Style::margin`]
 /// (`Rect<LengthPercentageAuto>`) bridge。
 ///
 /// CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical> の
@@ -152,7 +155,7 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
-/// [`ComputedValues::padding`] (`Sides<Length>`) → [`taffy::Style::padding`]
+/// [`ComputedValues::padding`] (`Sides<ComputedLengthPercentage>`) → [`taffy::Style::padding`]
 /// (`Rect<LengthPercentage>`) bridge。
 ///
 /// CSS Box 3 §6.1 <https://www.w3.org/TR/css-box-3/#padding-physical> の
@@ -177,21 +180,29 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
-/// [`ComputedValues::border`] (`Sides<Border>`) → [`taffy::Style::border`]
-/// (`Rect<LengthPercentage>`) bridge、CSS Backgrounds 3 §5.2 の
-/// **style-gating** (used border-width policy) を適用する。
+/// [`ComputedValues::border`] (`Sides<ComputedBorder>`) → [`taffy::Style::border`]
+/// (`Rect<LengthPercentage>`) bridge。
 ///
-/// CSS Backgrounds 3 §5.2 <https://www.w3.org/TR/css-backgrounds-3/#border-style>:
-/// > `none` — No border. Color and width are ignored (i.e., the border has
-/// > width 0, unless the border is an image, see 'border-image-width').
+/// # style-gating は **上流** で済んでいる (bd raikiri-spike-zls8)
 ///
-/// `hidden` は §5.2 で "Same as `none`, except in terms of border conflict
-/// resolution for table elements." — used border-width も 0。
+/// `border-style: none` / `hidden` の側で width を 0 にする規則は、CSS
+/// Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>
+/// の propdef table が "Computed value: absolute length, snapped as a border
+/// width; **zero if the border style is `none` or `hidden`**" と規定するとおり
+/// **computed 層**の要求である。したがって gate は
+/// `raikiri_style::resolve_border` が持ち、[`ComputedValues::border`] に届く
+/// 時点で width は既に 0 に潰れている。
 ///
-/// したがって border-style が `None` / `Hidden` の側は specified border-width
-/// を無視して used border-width = 0 として taffy に渡す ([`used_border_width`]
-/// helper)。この gating を怠ると spec 違反 (`5px none red` の 5px が layout に
-/// 影響してしまう)。
+/// 本 bridge が同じ判定を再実装してはならない (spec 規則の二重実装になり、
+/// 一方だけ直す drift の温床になる)。Sprint 18 の `used_border_width` helper は
+/// この理由で削除した。end-to-end の gating pin は本 file の
+/// `apply_computed_to_style_bridges_border_to_taffy` が引き続き持つ。
+///
+/// **この「上流で済んでいる」は element 経路 (per-node cascade) の話である** —
+/// `@page` 経路の `PageCascadeResult::declarations` には gate が無く非 gating の
+/// border-width が出る (raikiri-style 側 `resolve_border` doc の caveat 参照)。
+/// 本 bridge が読むのは per-node [`ComputedValues`] なので影響しないが、将来
+/// page-margin box の layout を本 bridge に通すなら再確認が必要。
 ///
 /// 4-side は **field 名 mapping** で write (positional constructor は使わない —
 /// [`bridge_margin`] と同じ `Sides` vs `Rect` field 順不一致の silent transpose
@@ -204,39 +215,18 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues) {
 ///   から consume する将来 task。
 /// - `border-image` / `border-radius` は Sprint 18 スコープ外。
 ///
-/// # Length policy
-///
-/// [`length_to_taffy_length_percentage`] を reuse (Unified Length policy)。
-/// taffy `border` は `LengthPercentage` (no auto、CSS Backgrounds 3 §5.1
-/// grammar `<length [0,∞]>` に percentage は含まれないが taffy 型は
-/// LengthPercentage が最小共通型)。
-///
-/// (raikiri-spike-q0uc Sprint 18 Wave 2)
+/// (raikiri-spike-q0uc Sprint 18 Wave 2、raikiri-spike-zls8 で computed 層へ移行)
 fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues) {
     let b = cv.border;
     style.border = Rect {
-        top: length_to_taffy_length_percentage(used_border_width(&b.top)),
-        right: length_to_taffy_length_percentage(used_border_width(&b.right)),
-        bottom: length_to_taffy_length_percentage(used_border_width(&b.bottom)),
-        left: length_to_taffy_length_percentage(used_border_width(&b.left)),
+        top: computed_length_to_taffy_length_percentage(b.top.width),
+        right: computed_length_to_taffy_length_percentage(b.right.width),
+        bottom: computed_length_to_taffy_length_percentage(b.bottom.width),
+        left: computed_length_to_taffy_length_percentage(b.left.width),
     };
 }
 
-/// CSS Backgrounds 3 §5.2 "used border-width" policy — style が `None` /
-/// `Hidden` なら width を 0 として扱う。
-///
-/// `matches!` + `#[non_exhaustive]` 対応: 未知未来 variant は else 枝に落ちて
-/// specified width を透過 (spec 上「visible なんらかの style」が追加された時
-/// にも fail-safe に width が生きる)。
-fn used_border_width(b: &Border) -> Length {
-    if matches!(b.style, BorderStyle::None | BorderStyle::Hidden) {
-        Length::Px(0.0)
-    } else {
-        b.width
-    }
-}
-
-/// [`ComputedValues::width`] / [`ComputedValues::height`] (`LengthOrAuto`) →
+/// [`ComputedValues::width`] / [`ComputedValues::height`] (`ComputedLengthPercentageOrAuto`) →
 /// [`taffy::Style::size`] (`Size<Dimension>`) bridge (CSS Sizing 3 §3.1.1
 /// "Preferred Size Properties"
 /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
@@ -314,84 +304,354 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
-/// [`Length`] → [`taffy::LengthPercentage`] bridge (padding / border 用)。
+// ---------------------------------------------------------------------------
+// 非有限 f32 の guard (bd raikiri-spike-2ui0、PMO 判断 2026-07-27)
+// ---------------------------------------------------------------------------
+
+/// taffy に渡す幾何値の絶対値上限 (px、および percentage の fraction)。
 ///
-/// **taffy 空間 = CSS px** (raikiri-traits/src/page.rs:98 authoritative、
-/// PageBox width / height は CSS px、`1 CSS px = 1/96 in`)。
+/// # なぜ clamp が要るのか
 ///
-/// Unified Length policy (Sprint 18 全 6 bridge task で verbatim 共有):
-/// - `Length::Px(v)` → `length(v)` (identity)
-/// - `Length::Pt(v)` → `length(v * 4.0 / 3.0)` — CSS Values 4 §6.2 で
-///   `1pt = 1/72 in`、CSS で `1in = 96 px` なので `1 pt = 96/72 px = 4/3 px`。
-/// - `Length::Percent(p)` → `percent(p / 100.0)` — CSS spec の authored 0-100 を
-///   taffy fraction 0.0-1.0 に。
-/// - `Length::Em(_)` / `Length::Rem(_)` → defensive `length(0.0)` — cascade
-///   em→px resolution 未実装 (Sprint 18 スコープ外、drain 時に spinout 候補)。
-///   TODO: font-size context を cascade で resolve 済にして em/rem を実 px 値へ。
-/// - `_` (non_exhaustive catch-all) → `length(0.0)` (forward-compat)
+/// author CSS は untrusted 入力である。`padding: 1e40px` は cssparser の
+/// f64 → f32 変換で **+Inf** になり、`padding: 1e40em` は絶対化の乗算で
+/// **+Inf**、`font-size: 0px` と組み合わせると `0.0 * inf` = **NaN** になる。
+/// 極端な literal すら不要で、`font-size: 10em` を 38 段 nest するだけで
+/// `16 * 10^38 > f32::MAX` から +Inf が出る。
 ///
-/// Wave 2 の `bridge_padding` (raikiri-spike-jbu0) / `bridge_border`
-/// (raikiri-spike-q0uc) から consume される。
-fn length_to_taffy_length_percentage(len: Length) -> LengthPercentage {
+/// これらは bd raikiri-spike-zls8 (decision raikiri-spike-082k Phase 2) が
+/// 絶対化を cascade に入れるまで、`layout.rs` の
+/// `Length::Em(_) | Length::Rem(_) => length(0.0)` arm に**偶然**吸収されて
+/// いた。網羅 match 化自体は正しいが、その arm は病的な数値も潰していた。
+///
+/// # spec 根拠 (§ title + anchor、`data-level` 実検証済)
+///
+/// CSS Values 4 §5 "Numeric Data Types"
+/// (<https://www.w3.org/TR/css-values-4/#numeric-types>) verbatim:
+///
+/// > The precision and supported range of numeric values in CSS is
+/// > implementation-defined, and can vary based on the property or other
+/// > context a value is used in. However, within the CSS specifications,
+/// > infinite precision and range is assumed. When a value cannot be explicitly
+/// > supported due to range/precision limitations, it must be converted to the
+/// > closest value supported by the implementation, but how the implementation
+/// > defines "closest" is implementation-defined as well.
+///
+/// すなわち (a) 上限を持つこと自体が spec 準拠、(b) **上限は property / context
+/// ごとに違ってよい**、(c) 超過値は「実装がサポートする最も近い値」= 上限に
+/// 変換する。§5 は `must be converted` と**命令形**で書いており値を捨てろとは
+/// 言っていないので、declaration はそのまま生き残る。本 module が site ごとに
+/// 別の上限を持つのは (b) の直接の適用である。
+///
+/// (「declaration を invalid にしない」という明示的な phrasing は §5 には
+/// **無い** — それは §3.1 / §10.12 の文言なので、そちらから import しない。)
+///
+/// # §5 と §5.1 の切り分け
+///
+/// §5.1 "Range Restrictions and Range Definition Notation"
+/// (<https://www.w3.org/TR/css-values-4/#numeric-ranges>) の range 記法
+/// (`<length-percentage [0,∞]>` 等) に対する違反は **parse 段で declaration を
+/// drop** する話で、raikiri では `parse_padding_side` などが済ませている。
+/// 本 guard が扱うのは **§5.1 の range 内だが実装 capacity 外**の値であり、
+/// §5 の適用対象である。両者は別の layer なので混同しないこと。
+///
+/// 同 spec の §10.12 "Range Checking"
+/// (<https://www.w3.org/TR/css-values-4/#calc-range>) は math function の
+/// 結果について "the value resulting from a top-level calculation must be
+/// clamped to the range allowed in the target context" と規定し、clamp が
+/// computed / used value に対して行われるとする — 本 guard と同じ作法だが、
+/// **本 guard の入力は `calc()` ではなく素の `em` 乗算なので直接の根拠には
+/// ならない**。§3.1 "Range Checking"
+/// (<https://www.w3.org/TR/css-values-4/#combining-range>) の同文言は
+/// interpolation 専用の条項であり、こちらも本 case には適用されない。
+/// 直接の根拠は上記 §5 である。
+///
+/// # 値の決定 (1e7 px)
+///
+/// spec は上限を定めないので実装裁量 (上記 (b)(c))。実装が実際に持つ帯を
+/// 一次 source から取った: CSSWG issue #4552 の Tab Atkins 投稿
+/// (<https://lists.w3.org/Archives/Public/public-css-archive/2019Dec/0015.html>、
+/// 2019-12-02) verbatim:
+///
+/// > right now an s32 LayoutUnit's upper range is between 1e7px and 1e8px
+/// > (exact value depends on the LU->px conversion in use)
+///
+/// 同投稿は units-per-px を **Firefox 60 / Chrome 64 / old-Edge 100** と述べる
+/// ので `2^31 / units` は 3.58e7 / 3.36e7 / 2.15e7 px。本実装は帯の**下端**
+/// `1e7` を採る (3 engine のいずれの上限より下)。
+///
+/// **これは normative spec text ではない** — CSSWG issue の comment であり、
+/// 「実装が現に持っている桁」を示す engineering evidence として使っている。
+///
+/// 1e7 px は 96dpi で約 2.6 km / A4 約 8900 ページ相当なので実用上の制約に
+/// ならない。f32 の上限 (3.4e38) から 31 桁の余裕があるので、taffy が内部で行う
+/// **和** (width + padding + border + margin) が overflow して非有限に戻ることは
+/// ない。
+///
+/// # 本 guard が保証しないこと (射程の明示)
+///
+/// **guard が bound するのは bridge の「入力」だけで、taffy の「出力」
+/// (used value) は bound されない。** percentage は親の resolved box に対して
+/// 解決されるので **nest ごとに再び掛かる**:
+///
+/// - `width: 1e9%` (= fraction 1e7、本定数ちょうど) は **depth 6** で非有限に
+///   達する。`padding-left: 1e9%` は **depth 4** (実測)。
+/// - depth 1 の直接証拠: `width: 1e9%` → `size.width = 7937008000.0`
+///   (= A4 793.7008px × 1e7) で、既に「長さ 1e7 px」の 3 桁上。
+/// - px 経路 (`1e7px` を全 property に) は depth 45 まで非有限に到達しない。
+///
+/// すなわち **percentage の乗数に対する bound としては本定数は不十分**であり、
+/// CSSWG #4552 も px の話しかしていない (percentage の乗数について何も
+/// 言っていない)。fraction 側に独立した上限を持たせるかは
+/// **bd raikiri-spike-r8ew**。
+///
+/// なおこれは本 guard の regression ではない — guard 導入前 (base) と bit 一致で
+/// あり、閾値超え入力では guard 有りの方が strict improvement (`width: 1e40%` は
+/// base で depth 1 → guard 後 depth 6)。可用性影響も測定済で、完全な render
+/// pipeline (`raikiri::html_to_png`) は depth 1 / 3 / 4 / 6 のいずれでも
+/// ~200ms で正常な PNG を出す (hang / OOM / panic なし)。
+const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
+
+/// parley に渡す `font-size` の上限 (px)。
+///
+/// taffy 幾何 ([`MAX_TAFFY_MAGNITUDE`]) と分けているのは CSS Values 4 §5 の
+/// 「supported range は property / context ごとに違ってよい」に従うため
+/// (PMO 判断 2026-07-27 §4「site ごとに target context が違うので一律に
+/// しない」)。font-size の target context は parley → skrifa の glyph scaler
+/// であり、幾何とは妥当域が違う。
+///
+/// # 値の決定 (1e6 px)
+///
+/// 上限の**測定値**: 依存 chain の `skrifa` は font size を 16.16 固定小数へ
+/// 変換する際 `Fixed::from_bits((ppem * 64.) as i32)` を通す
+/// (`skrifa-0.42.1/src/instance.rs` の `Size::fixed_linear_scale`、FreeType の
+/// `FT_Set_Pixel_Size` 互換のため)。したがって `ppem * 64.0` が `i32` に
+/// 収まらなくなる `i32::MAX / 64 ≈ 3.36e7` ppem で変換が saturate する
+/// (Rust の `f32 as i32` は saturating cast なので UB ではないが、scale factor
+/// が無意味な値になる)。
+///
+/// 本実装はそこから 1 桁以上下の `1e6` を採る。差分は parley が font-size に
+/// 掛ける係数 (`line-height` の unitless multiplier、ascent / descent の
+/// `metric / units_per_em` 比) の余裕として残す — `parley-0.10.0` の
+/// `layout/data.rs` は `LineHeight::FontSizeRelative(value) * font_size` と
+/// `font_size / units_per_em` を計算する。
+///
+/// 1e6 px の glyph は A4 高さの約 890 倍で typographic な意味を持たないので、
+/// 実用上の制約にはならない。
+///
+/// # 本 site の harm は「値が壊れる」ではなく **hang** (実測)
+///
+/// bd raikiri-spike-2ui0 の security lens は下流 sink の帰結を「PLAUSIBLE、
+/// 未 characterize」としていたが、本 guard の実装時に実測した:
+/// `sanitize_finite` を恒等関数に差し替えて
+/// `nonfinite_font_size_is_clamped_before_parley` を単独実行すると
+/// **25 秒経っても終了しない**。すなわち非有限 font-size は parley の shaping を
+/// 有界時間で終わらせない。
+///
+/// 対して site 1-4 の taffy 側 test は **本 test 入力では**即座に assert 失敗する
+/// (値が壊れるだけ)。これは「taffy は非有限で hang しない」という一般命題では
+/// ない — 測ったのは 5 本の入力だけである。taffy 内部の used value に対する
+/// 挙動は bd raikiri-spike-r8ew / 下流 sink の characterize 課題を参照。
+///
+/// 1 element の untrusted author CSS (`<p style="font-size: 1e40px">`) で
+/// 到達するので、**本 site の guard は正しさではなく可用性の要求**である。
+/// 削除・迂回しないこと。
+///
+/// regression 検出は `nonfinite_font_size_is_clamped_before_parley` が
+/// worker thread + `recv_timeout` で**有界化**してある。CI の timeout
+/// (`.github/workflows/ci.yml` の job 単位 `timeout-minutes` のみで nextest 設定は
+/// 無い) には頼らない — job kill は infra flake と区別できず、同一 test binary の
+/// 後続 test の結果もまとめて失われるため。
+const MAX_FONT_SIZE_PX: f32 = 1e6;
+
+/// 非有限 f32 を `[min, max]` の有限値に落とす。
+///
+/// - **NaN → 0.0**。`f32::clamp` は NaN を **NaN のまま**返す (`NaN.clamp(a, b)`
+///   は NaN) ので、clamp だけでは潰せない。NaN は数直線上の点ではないため
+///   §5 の「closest value supported」も定義できない。
+///
+///   0.0 を選ぶ根拠は「spec initial だから」**ではない** — initial が幾何 `0`
+///   なのは padding / margin だけで (CSS Box 3 `#propdef-padding-top` /
+///   `#propdef-margin-top` とも `Initial: 0`)、`width` / `height` の initial は
+///   **`auto`** (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
+///   <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>、
+///   `data-level="3.1.1"` 実検証済)、`border-*-width` は **`medium`**
+///   (CSS Backgrounds 3 §3.3 "Line Thickness: the border-width properties"
+///   <https://www.w3.org/TR/css-backgrounds-3/#border-width>、
+///   `data-level="3.3"`、TR / ED とも `Initial: medium`) である。
+///   `auto` も `medium` も幾何値ではなく**解決規則 / キーワード**なので f32 の
+///   代替値として選べない。よって **全 site 一律 0.0** に倒す。§5 が "closest"
+///   の定義を実装裁量とするので、この選択自体が spec 準拠である。
+///
+///   さらに `raikiri-style::resolve` で NaN が生じる経路 (`0px` × `1e40em` = `0.0 * inf`) に
+///   限れば、**0.0 は spec 上の正解と一致する** — §5 が "within the CSS
+///   specifications, infinite precision and range is assumed" と述べる以上、
+///   無限精度で評価した computed value は `0 × 10^40 = 0px` である。NaN は
+///   f32 の有限精度が生んだ artifact にすぎない。
+///
+///   傍証 (直接の根拠ではない): CSS Values 4 §10.9.1 "Infinities, NaN, and
+///   Signed Zero" (<https://www.w3.org/TR/css-values-4/#calc-ieee>、
+///   `data-level="10.9.1"` 実検証済。ED では §10.9.2 に採番されるが anchor は
+///   同一) は math function について verbatim で
+///   `NaN does not escape a top-level calculation; it's censored into a zero
+///   value` / `Infinities do not escape a top-level calculation; they're clamped
+///   to the minimum or maximum value allowed in the context …` と規定する (後者は原文では
+///   `, as defined in § 10.12 Range Checking.` と続く — 省略を `…` で示した)。
+///   **本 guard の入力は `calc()` ではないので直接の根拠にはならない**
+///   (#4552 と同じく engineering evidence 扱い) が、CSS が同種の状況で採る
+///   censoring 規則が NaN→zero / Inf→clamp の 2 分岐でありここでの選択と
+///   一致することは、選択の妥当性を補強する。
+/// - **±Inf と範囲外の有限値 → `min` / `max`**。CSS Values 4 §5 の "converted
+///   to the closest value supported by the implementation" の適用。
+///
+/// **巨大な有限値も clamp する** (単に有限化するだけにしない) — `1e38%` は
+/// bridge では有限だが、taffy 内部で containing block と掛けた時点で +Inf に
+/// なり、guard を置いた意味が消える。§5 は「supported range」を実装が決めると
+/// しているので、範囲外の有限値を上限に寄せるのも同じ条項の適用である。
+///
+/// panic しない (`LayoutError` も返さない) — PMO 判断 2026-07-27 §5 のとおり
+/// **clamp して続行**する。
+///
+/// # なぜ warn しないのか (silent clamp)
+///
+/// `log` / `tracing` は workspace に依存が無い (`grep` → 0 hit) が、**それが
+/// 理由ではない** — 同一 crate の `fonts.rs` に dep 追加ゼロの診断機構が既に
+/// ある (`FontWarn` enum + `FontWarnObserver = Option<&mut dyn FnMut(&FontWarn)>`
+/// + `emit_warn`、bd raikiri-spike-1uq)。
+///
+/// 採らない理由は **observer を本 site まで通すと公開 signature に波及する**
+/// から: `sanitize_*` は `bridge_*` → `apply_computed_to_style` →
+/// `layout_single_page` の奥にあり、observer を渡すにはこの chain の signature を
+/// 変えるか、per-node で裸の `eprintln!` を撒いて spam するかの二択になる。
+/// `fonts.rs` 型の観測機構を本 site に導入するのは別 task の判断
+/// (coordinator が起票予定、`wall/build` 壁予兆として declare 済)。
+///
+/// **残余リスク (declare)**: silent なので、将来 absolutize 側に本物の算術 bug
+/// (例: 単位換算ミスで `1e9px`) が入ると、本 guard が 1e7 に吸収して
+/// **「それらしい layout」として描画されてしまう** — NaN や破綻として可視化
+/// されない。これは decision 082k が削除した fail-quiet arm
+/// (`Em(_) => length(0.0)`) と**同じ class の残余リスク**であり、本 guard は
+/// 値の病理を可用性と引き換えに隠している。
+fn sanitize_finite(v: f32, min: f32, max: f32) -> f32 {
+    if v.is_nan() { 0.0 } else { v.clamp(min, max) }
+}
+
+/// [`MAX_TAFFY_MAGNITUDE`] を上限とする対称 clamp (taffy 幾何用)。
+///
+/// 対称 (`[-MAX, MAX]`) なのは **`margin` の負値が spec-valid** だから。
+/// CSS Box 3 §3.1 "Page-relative (Physical) Margin Properties"
+/// (<https://www.w3.org/TR/css-box-3/#margin-physical>、`data-level="3.1"`
+/// 実検証済) は verbatim で
+///
+/// > Negative values for margin properties are allowed,
+/// > but there may be implementation-specific limits.
+///
+/// と規定する。これは本 delta で clamp する property のうち**唯一、spec が
+/// 「implementation-specific limits」の存在を明示的に認めている**箇所であり、
+/// 対称であることと上限があることを同時に正当化する
+/// (「非負制約が無い」という不在の論証より強い)。
+///
+/// `padding` / `width` / `height` / `border-width` は parse 段で非負が
+/// enforce されているので、対称にしても値は変わらない。
+fn sanitize_taffy(v: f32) -> f32 {
+    sanitize_finite(v, -MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+}
+
+/// [`ComputedLengthPercentage`] → [`taffy::LengthPercentage`] bridge
+/// (padding 用)。
+///
+/// # 網羅 match (bd raikiri-spike-zls8 / decision raikiri-spike-082k)
+///
+/// 引数が **computed 層**の型になったため 2 arm で網羅する。Sprint 18 の
+/// `Length::Em(_) | Length::Rem(_) => length(0.0)` (font-relative unit を黙って
+/// 0px に潰す fail-quiet) と `_ => length(0.0)` (non_exhaustive catch-all) は
+/// **削除した** — `em` / `rem` / `pt` は cascade の phase 3 で px に絶対化済み
+/// であり、computed 層に到達しない。
+///
+/// **ただし削除した arm は「単位」だけでなく「病的な f32 の値」も吸収していた**
+/// (`Em(inf)` / `0.0 * inf` = NaN)。その分は [`sanitize_taffy`] が
+/// backfill している (bd raikiri-spike-2ui0) — **guard を「不要な防御」と
+/// 判断して外さないこと。**
+///
+/// [`ComputedLengthPercentage`] に `#[non_exhaustive]` が付いていないのは、
+/// この網羅性を今得るための explicit trade である (Epic 5 で `Calc` variant が
+/// 増えるときに coordinated breaking change を払う。`raikiri_style::resolve`
+/// の module doc 参照)。**`_` arm を足して「forward-compat」にしてはならない** —
+/// trade の得る側を捨てることになる。
+///
+/// # Percent policy
+///
+/// `Percent(p)` → `percent(sanitize_taffy(p / 100.0))` — CSS spec の authored
+/// 0-100 を taffy の fraction 0.0-1.0 に変換し、[`sanitize_taffy`] で有限化する
+/// (bd raikiri-spike-2ui0)。containing block に対する解決は **used value 層**
+/// (CSS Cascade 5 §4.5 <https://www.w3.org/TR/css-cascade-5/#used>) であり
+/// taffy に委譲する — **guard が bound するのは fraction であって解決後の
+/// used value ではない** ([`MAX_TAFFY_MAGNITUDE`] の射程節を参照)。
+fn length_to_taffy_length_percentage(len: ComputedLengthPercentage) -> LengthPercentage {
     match len {
-        Length::Px(v) => LengthPercentage::length(v),
-        Length::Pt(v) => LengthPercentage::length(v * 4.0 / 3.0),
-        Length::Percent(p) => LengthPercentage::percent(p / 100.0),
-        // TODO(raikiri-spike-0vv.17 相当): cascade で em/rem を px に resolve、
-        // ここでは defensive 0.0 で fail-quiet (Sprint 18 スコープ外)。
-        Length::Em(_) | Length::Rem(_) => LengthPercentage::length(0.0),
-        // non_exhaustive catch-all — unknown future variant は 0.0 で fail-quiet。
-        _ => LengthPercentage::length(0.0),
+        // site 1 (bd raikiri-spike-2ui0): `sanitize_taffy` で非有限を落とす。
+        ComputedLengthPercentage::Px(v) => LengthPercentage::length(sanitize_taffy(v)),
+        ComputedLengthPercentage::Percent(p) => {
+            LengthPercentage::percent(sanitize_taffy(p / 100.0))
+        }
     }
 }
 
-/// [`LengthOrAuto`] → [`taffy::Dimension`] bridge (width / height 用)。
+/// [`ComputedLengthPercentageOrAuto`] → [`taffy::Dimension`] bridge
+/// (width / height 用)。
 ///
-/// Length policy は [`length_to_taffy_length_percentage`] と同じ。
-/// `LengthOrAuto::Auto` → `Dimension::auto()`。
+/// 網羅 match / Percent policy / 非有限 guard は
+/// [`length_to_taffy_length_percentage`] と同じ (3 arm、catch-all なし)。
+/// `Auto` → `Dimension::auto()` (f32 を持たないので guard 対象外)。
 ///
 /// [`bridge_size`] から width (raikiri-spike-ggig Wave 2) / height
 /// (raikiri-spike-01up Wave 3) 両方で consume される。
-fn length_or_auto_to_taffy_dimension(loa: LengthOrAuto) -> Dimension {
+fn length_or_auto_to_taffy_dimension(loa: ComputedLengthPercentageOrAuto) -> Dimension {
     match loa {
-        LengthOrAuto::Auto => Dimension::auto(),
-        LengthOrAuto::Length(len) => match len {
-            Length::Px(v) => Dimension::length(v),
-            Length::Pt(v) => Dimension::length(v * 4.0 / 3.0),
-            Length::Percent(p) => Dimension::percent(p / 100.0),
-            // TODO(raikiri-spike-0vv.17 相当): cascade で em/rem を px に resolve。
-            Length::Em(_) | Length::Rem(_) => Dimension::length(0.0),
-            _ => Dimension::length(0.0),
-        },
-        // non_exhaustive catch-all — 未知 variant は auto に fail-quiet
-        // (Sizing spec の initial default が auto なので、safe fallback)。
-        _ => Dimension::auto(),
+        // site 2 (bd raikiri-spike-2ui0)。
+        ComputedLengthPercentageOrAuto::Px(v) => Dimension::length(sanitize_taffy(v)),
+        ComputedLengthPercentageOrAuto::Percent(p) => Dimension::percent(sanitize_taffy(p / 100.0)),
+        ComputedLengthPercentageOrAuto::Auto => Dimension::auto(),
     }
 }
 
-/// [`LengthOrAuto`] → [`taffy::LengthPercentageAuto`] bridge (margin 用)。
+/// [`ComputedLengthPercentageOrAuto`] → [`taffy::LengthPercentageAuto`] bridge
+/// (margin 用)。
 ///
-/// Length policy は [`length_to_taffy_length_percentage`] と同じ。
-/// `LengthOrAuto::Auto` → `LengthPercentageAuto::auto()` (CSS Box 3 §3.1
-/// "margin auto = distribute available space" を taffy に委譲)。
-fn length_or_auto_to_taffy_lpa(loa: LengthOrAuto) -> LengthPercentageAuto {
+/// 網羅 match / Percent policy / 非有限 guard は
+/// [`length_to_taffy_length_percentage`] と同じ。`Auto` →
+/// `LengthPercentageAuto::auto()` (CSS Box 3 §3.1 "margin auto = distribute
+/// available space" を taffy に委譲、f32 を持たないので guard 対象外)。
+fn length_or_auto_to_taffy_lpa(loa: ComputedLengthPercentageOrAuto) -> LengthPercentageAuto {
     match loa {
-        LengthOrAuto::Auto => LengthPercentageAuto::auto(),
-        LengthOrAuto::Length(len) => match len {
-            Length::Px(v) => LengthPercentageAuto::length(v),
-            Length::Pt(v) => LengthPercentageAuto::length(v * 4.0 / 3.0),
-            Length::Percent(p) => LengthPercentageAuto::percent(p / 100.0),
-            // TODO(raikiri-spike-0vv.17 相当): cascade で em/rem を px に resolve、
-            // ここでは defensive 0.0 で fail-quiet (Sprint 18 スコープ外)。
-            Length::Em(_) | Length::Rem(_) => LengthPercentageAuto::length(0.0),
-            // non_exhaustive catch-all — unknown future variant は 0.0 で fail-quiet。
-            _ => LengthPercentageAuto::length(0.0),
-        },
-        // non_exhaustive catch-all — 未知 variant は auto に fail-quiet
-        // (margin の initial value は 0 だが、Auto に落とすことで taffy が
-        // property-specific resolution を行う余地を残す)。
-        _ => LengthPercentageAuto::auto(),
+        // site 3 (bd raikiri-spike-2ui0)。margin は負値が spec-valid なので
+        // `sanitize_taffy` の対称 clamp が load-bearing。
+        ComputedLengthPercentageOrAuto::Px(v) => LengthPercentageAuto::length(sanitize_taffy(v)),
+        ComputedLengthPercentageOrAuto::Percent(p) => {
+            LengthPercentageAuto::percent(sanitize_taffy(p / 100.0))
+        }
+        ComputedLengthPercentageOrAuto::Auto => LengthPercentageAuto::auto(),
     }
+}
+
+/// [`ComputedLength`] (px) → [`taffy::LengthPercentage`] bridge
+/// (`border-*-width` 用)。
+///
+/// sibling 3 helper (`length_to_taffy_length_percentage` /
+/// `length_or_auto_to_taffy_dimension` / `length_or_auto_to_taffy_lpa`) と同じ
+/// `<src>_to_taffy_<dst>` 命名 / 同じ cluster に置く (37n sibling convention)。
+///
+/// `border-*-width` 専用に分けているのは、grammar (`<line-width>` =
+/// `<length [0,∞]> | thin | medium | thick`) が `<percentage>` を含まないため
+/// computed 層でも length しか来ないから (CSS Backgrounds 3 §3.3 "Line
+/// Thickness: the border-width properties"
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。戻り値型は
+/// [`length_to_taffy_length_percentage`] と同一 (`LengthPercentage` が taffy
+/// 側の最小共通型) だが、入力型が [`ComputedLength`] なので percentage arm を
+/// 持たない点が違う。非有限 guard ([`sanitize_taffy`]) は同じく通す
+/// (bd raikiri-spike-2ui0)。
+fn computed_length_to_taffy_length_percentage(len: ComputedLength) -> LengthPercentage {
+    // site 4 (bd raikiri-spike-2ui0)。
+    LengthPercentage::length(sanitize_taffy(len.px()))
 }
 
 /// 全 Text node を parley で pre-shape、結果を `Node.text_layout` に格納する。
@@ -402,16 +662,22 @@ fn length_or_auto_to_taffy_lpa(loa: LengthOrAuto) -> LengthPercentageAuto {
 /// Font stack / size / weight は `cascade.computed[idx]` (親から inherit 済) を消費。
 /// `max_advance` は行折り返し境界で、通常 `page_box.width`。
 ///
-/// # Errors
-/// - `LayoutError::Internal` — parley shape が想定外の状態で失敗した場合
-///   (M1 ASCII 前提では発生想定なし、defensive)
+/// # 失敗しない (bd raikiri-spike-zls8)
+///
+/// 以前は `Result<(), LayoutError>` を返していた。唯一の `Err` 経路は
+/// `cv.font_size` が specified 層の `Length` で `Px` 以外だった場合の
+/// `LayoutError::Internal` だったが、`font_size` が [`ComputedLength`] (px) に
+/// なって match 自体が消えたため到達不能になった。`pub(crate)` なので戻り値の
+/// narrowing は crate 内で完結する (外部影響 0)。
+///
+/// [`ComputedLength`]: raikiri_style::ComputedLength
 pub(crate) fn preshape_text(
     doc: &mut Document,
     cascade: &CascadeResult,
     fonts: &mut FontContext,
     layout_cx: &mut LayoutContext<()>,
     max_advance: f32,
-) -> Result<(), LayoutError> {
+) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
@@ -450,20 +716,16 @@ pub(crate) fn preshape_text(
             .join(", ");
         let font_family = FontFamily::from(family_str.as_str());
 
-        // API tuning: `Length` is `#[non_exhaustive]` (raikiri-style may add
-        // non-Px variants in a later milestone), so this match requires a
-        // wildcard arm even though M1.4 scope only produces `Length::Px`.
-        // Defensive: surface as `LayoutError::Internal` rather than panic.
-        let font_size_px = match cv.font_size {
-            Length::Px(v) => v,
-            _ => {
-                return Err(LayoutError::Internal {
-                    message: format!(
-                        "preshape_text: unsupported Length variant for font-size at node {idx}"
-                    ),
-                });
-            }
-        };
+        // bd raikiri-spike-zls8: `cv.font_size` は computed 層の
+        // `ComputedLength` (px) になったので match も fallback も要らない。
+        // Sprint 18 までは specified 層の `Length` を受けていたため
+        // `LayoutError::Internal` を返す wildcard arm があったが、`em` / `rem` /
+        // `pt` は cascade の phase 2 で絶対化されるようになり到達しない。
+        //
+        // site 5 (bd raikiri-spike-2ui0): ただし**値**は非有限になり得るので
+        // parley に渡す直前で有限化する。下限 0.0 は grammar
+        // `<length-percentage [0,∞]>` (CSS Fonts 4 §2.5) に一致。
+        let font_size_px = sanitize_finite(cv.font_size.px(), 0.0, MAX_FONT_SIZE_PX);
 
         let mut builder = layout_cx.ranged_builder(fonts, &text, 1.0, true);
         builder.push_default(StyleProperty::FontFamily(font_family));
@@ -484,7 +746,6 @@ pub(crate) fn preshape_text(
             t.text_layout = Some(layout);
         }
     }
-    Ok(())
 }
 
 /// 単一 A4 (or 指定 PageBox) ページに Document を layout する。
@@ -498,7 +759,10 @@ pub(crate) fn preshape_text(
 ///
 /// # Errors
 /// - `LayoutError::Internal` — `<body>` element が見つからない (fragment
-///   parse は M1 非対応) / parley shape が失敗 / taffy internal
+///   parse は M1 非対応) / taffy internal
+///
+///   parley shape (`preshape_text`) は bd raikiri-spike-zls8 以降 **失敗しない**
+///   (同関数の doc 参照)。
 ///
 /// # Non-goals in M1.6
 /// - 同じ Document で複数回呼ぶことは safe (text_layout を毎回 clear) だが、
@@ -554,7 +818,7 @@ pub fn layout_single_page(
         &mut font_ctx,
         &mut layout_cx,
         page_box.width,
-    )?;
+    );
 
     // Step 3: <body> lookup
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
@@ -654,8 +918,7 @@ mod tests {
 
         let mut fonts = FontContext::new();
         let mut layout_cx = LayoutContext::<()>::new();
-        preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width)
-            .expect("preshape Ok");
+        preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
 
         assert!(
             doc.nodes[text].text_layout().is_some(),
@@ -703,7 +966,7 @@ mod tests {
             let cr = cascade(&doc, &rules).unwrap();
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width).unwrap();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
             doc.nodes[text].text_layout().unwrap().height()
         }
 
@@ -757,9 +1020,13 @@ mod tests {
     #[test]
     fn apply_computed_to_style_bridges_margin_to_taffy() {
         // raikiri-spike-j5rz (Sprint 18 dom-4 Wave 1): bridge_margin が
-        // Sides<LengthOrAuto> を taffy::Rect<LengthPercentageAuto> に translate
-        // することを確認する regression pin。Unified Length policy の 4 分岐
-        // (Px / Auto / Percent / Pt) をそれぞれ 1 case で covering。
+        // Sides<ComputedLengthPercentageOrAuto> を taffy::Rect<LengthPercentageAuto>
+        // に translate することを確認する regression pin。bridge の 3 分岐
+        // (Px / Percent / Auto) をそれぞれ 1 case で covering。
+        //
+        // bd raikiri-spike-zls8: Case 4 の `pt` は bridge の分岐ではなくなった
+        // (cascade の phase 3 が px に絶対化する) が、end-to-end の期待値は
+        // 変わらないので test は残す。
         //
         // Test 戦略: 各 case は独立 fixture で cascade → apply_computed_to_style
         // → body.style.margin を assert。inline style 経由なので raikiri-style
@@ -817,8 +1084,13 @@ mod tests {
 
         // Case 4: longhand `margin-top: 10pt` → top = length(10 * 4/3) = length(13.333...)。
         //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
+        //   **この変換は bridge ではなく cascade の phase 3
+        //   (`raikiri_style::resolve_length_percentage_or_auto`) が行う**
+        //   (bd raikiri-spike-zls8)。bridge に届く時点で既に px。本 case は
+        //   end-to-end の値を pin する。
         //   f32 bit-identical assert のため右辺を expression のまま書く
-        //   (`13.333` literal は round-trip で drift する)。
+        //   (`13.333` literal は round-trip で drift する。上流も同じ
+        //   `v * 4.0 / 3.0` の評価順を使う — `resolve::pt_to_px` の doc 参照)。
         assert_eq!(
             margin_for("margin-top: 10pt"),
             Rect {
@@ -833,10 +1105,14 @@ mod tests {
     #[test]
     fn apply_computed_to_style_bridges_padding_to_taffy() {
         // raikiri-spike-jbu0 (Sprint 18 dom-4 Wave 2): bridge_padding が
-        // Sides<Length> を taffy::Rect<LengthPercentage> に translate することを
-        // 確認する regression pin。padding は margin と違い `auto` を持たない
-        // (<length-percentage [0,∞]>) ため 3 分岐 (Px / Percent / Pt) を各 1 case
-        // で covering。
+        // Sides<ComputedLengthPercentage> を taffy::Rect<LengthPercentage> に
+        // translate することを確認する regression pin。padding は margin と違い
+        // `auto` を持たない (<length-percentage [0,∞]>) ため bridge は **2 arm**
+        // (Px / Percent) で網羅する。
+        //
+        // bd raikiri-spike-zls8: Case 3 の `pt` は **bridge の分岐ではなくなった**
+        // (cascade の phase 3 が px に絶対化する) が、end-to-end の期待値は
+        // 変わらないので test は残す。
         //
         // Test 戦略: 各 case は独立 fixture で cascade → apply_computed_to_style
         // → body.style.padding を assert。inline style 経由なので raikiri-style
@@ -883,6 +1159,8 @@ mod tests {
 
         // Case 3: longhand `padding-top: 3pt` → top = length(3 * 4/3) = length(4.0)。
         //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
+        //   **変換の所在は cascade の phase 3** (`resolve_length_percentage`) で
+        //   bridge ではない (bd raikiri-spike-zls8)。
         //   f32 bit-identical assert のため右辺を expression のまま書く
         //   (`4.0` literal は 3*4/3 と bit-identical だが policy 明示のため式のまま)。
         assert_eq!(
@@ -899,15 +1177,17 @@ mod tests {
     #[test]
     fn apply_computed_to_style_bridges_width_to_taffy() {
         // raikiri-spike-ggig (Sprint 18 dom-4 Wave 2): bridge_size (width component)
-        // が cv.width: LengthOrAuto を taffy::Style::size.width: Dimension に
-        // translate することを pin する。Unified Length policy の 4 分岐
-        // (Px / Auto / Percent / Pt) をそれぞれ 1 case で covering。
+        // が cv.width: ComputedLengthPercentageOrAuto を taffy::Style::size.width:
+        // Dimension に translate することを pin する。bridge の 3 分岐
+        // (Px / Percent / Auto) をそれぞれ 1 case で covering
+        // (`pt` は cascade の phase 3 で px 化される — raikiri-spike-zls8)。
         //
         // Test 戦略: fixture は **非 body element** (この場合 `<p>`) を使う —
         // `<body>` は後段 `apply_page_box_to_body` で clobber されるため本 bridge
         // の効果は observable でない (別 test `apply_page_box_clobbers_body_width_from_bridge`
         // で clobber 挙動を pin)。inline style 経由なので raikiri-style の
-        // parse_width path + LengthOrAuto encoding も同時に regression pin。
+        // parse_width path + ComputedLengthPercentageOrAuto encoding も同時に
+        // regression pin。
         //
         // 本 test は width 軸に絞る — height 軸は sibling test
         // `apply_computed_to_style_bridges_height_to_taffy` (Wave 3、raikiri-spike-01up)
@@ -930,7 +1210,8 @@ mod tests {
         // Case 1: `width: 100px` → Dimension::length(100.0) (Px identity)。
         assert_eq!(width_for("width: 100px"), Dimension::length(100.0));
 
-        // Case 2: `width: auto` → Dimension::auto() (LengthOrAuto::Auto arm)。
+        // Case 2: `width: auto` → Dimension::auto()
+        //   (ComputedLengthPercentageOrAuto::Auto arm)。
         assert_eq!(width_for("width: auto"), Dimension::auto());
 
         // Case 3: `width: 50%` → Dimension::percent(0.5)。CSS spec の authored
@@ -939,6 +1220,8 @@ mod tests {
 
         // Case 4: `width: 20pt` → Dimension::length(20 * 4/3) = length(26.666...)。
         //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
+        //   **変換の所在は cascade の phase 3** で bridge ではない
+        //   (bd raikiri-spike-zls8)。
         //   f32 bit-identical assert のため右辺を expression で書く。
         assert_eq!(
             width_for("width: 20pt"),
@@ -949,20 +1232,23 @@ mod tests {
     #[test]
     fn apply_computed_to_style_bridges_height_to_taffy() {
         // raikiri-spike-01up (Sprint 18 dom-4 Wave 3): bridge_size の height 側
-        // 拡張。cv.height: LengthOrAuto を taffy::Style::size.height: Dimension に
-        // translate することを pin する。Wave 2 sibling test
-        // `apply_computed_to_style_bridges_width_to_taffy` と対を成し、Wave 3 の
-        // struct literal 化 (Size { width, height } の 1 発 assign) で height 側の
-        // 3 分岐 (Px / Auto / Percent) が意図通り書き込まれるか確認する。
+        // 拡張。cv.height: ComputedLengthPercentageOrAuto を
+        // taffy::Style::size.height: Dimension に translate することを pin する。
+        // Wave 2 sibling test `apply_computed_to_style_bridges_width_to_taffy` と
+        // 対を成し、Wave 3 の struct literal 化 (Size { width, height } の 1 発
+        // assign) で height 側の 3 分岐 (Px / Percent / Auto) が意図通り
+        // 書き込まれるか確認する (型名は bd raikiri-spike-zls8 で更新)。
         //
         // Test 戦略: fixture は **非 body element** (`<p>`) を使う — `<body>` は
         // 後段 `apply_page_box_to_body` で height も clobber されるため本 bridge
         // の効果は body 上で observable でない。inline style 経由で raikiri-style
-        // の parse_height path + LengthOrAuto encoding も同時に regression pin。
+        // の parse_height path + ComputedLengthPercentageOrAuto encoding も同時に
+        // regression pin。
         //
         // Pt case は sibling width test が同じ length_or_auto_to_taffy_dimension
-        // policy を pin しているため redundant。ここでは height 特有の 3 分岐
-        // (auto default 保持、Length::Px 通路、Length::Percent 通路) に絞る。
+        // policy を pin しているため redundant (かつ pt → px 変換は bd
+        // raikiri-spike-zls8 以降 cascade の phase 3 の責務)。ここでは height
+        // 特有の 3 arm (auto default 保持、`Px` 通路、`Percent` 通路) に絞る。
         use raikiri_style::{build_rule_tree, cascade};
 
         fn height_for(inline: &str) -> Dimension {
@@ -981,7 +1267,8 @@ mod tests {
         // Case 1: `height: 100px` → Dimension::length(100.0) (Px identity)。
         assert_eq!(height_for("height: 100px"), Dimension::length(100.0));
 
-        // Case 2: `height: auto` → Dimension::auto() (LengthOrAuto::Auto arm)。
+        // Case 2: `height: auto` → Dimension::auto()
+        //   (ComputedLengthPercentageOrAuto::Auto arm)。
         //   CSS Sizing 3 §3.1.1 initial `height: auto` の identity round-trip pin。
         assert_eq!(height_for("height: auto"), Dimension::auto());
 
@@ -993,15 +1280,30 @@ mod tests {
     #[test]
     fn apply_computed_to_style_bridges_border_to_taffy() {
         // raikiri-spike-q0uc (Sprint 18 dom-4 Wave 2): bridge_border が
-        // Sides<Border> を taffy::Rect<LengthPercentage> に translate、CSS
-        // Backgrounds 3 §5.2 の "used border-width" style-gating を適用する
-        // ことを確認する regression pin。
+        // Sides<ComputedBorder> を taffy::Rect<LengthPercentage> に translate
+        // することを確認する regression pin。
         //
-        // Advisor #2 spec correctness gate: border-style が None / Hidden の
-        // 場合、specified border-width にかかわらず used border-width = 0 で
-        // なければならない (§5.2 "The used values of the corresponding
-        // border-*-width become 0.")。gating を怠ると specified 5px が taffy
-        // に leak して layout に影響 → spec 違反。
+        // spec correctness gate: border-style が `none` / `hidden` の場合、
+        // specified border-width にかかわらず width は 0 でなければならない。
+        // **gate の所在は本 bridge ではなく上流の
+        // `raikiri_style::resolve_border` (computed 層)** — CSS Backgrounds 3
+        // §3.3 "Line Thickness: the border-width properties"
+        // <https://www.w3.org/TR/css-backgrounds-3/#border-width> の propdef が
+        // "Computed value: absolute length, snapped as a border width; zero if
+        // the border style is none or hidden" と規定するため
+        // (bd raikiri-spike-zls8 で used 層から computed 層へ移動、bridge 側の
+        // `used_border_width` helper は削除済)。§3.2 "Line Patterns: the
+        // border-style properties"
+        // <https://www.w3.org/TR/css-backgrounds-3/#border-style> の `none` も
+        // "No border. Color and width are ignored (i.e., the border has width
+        // 0)." と整合する。
+        //
+        // 本 test は依然 gating の **end-to-end** pin である (gate が上流に
+        // 移っても `5px none red` の 5px が taffy に leak しないことを保証する
+        // のが目的)。§ 番号と引用は spec の `data-level` / 本文実測に基づく —
+        // 以前あった "§5.2 The used values of the corresponding border-*-width
+        // become 0." は css-backgrounds-3 に存在しない文だったので差し替えた
+        // (bd raikiri-spike-zls8 §8.2 spec lens SPEC-7)。
         //
         // Test 戦略: `border: <w> <s> <c>` 4-side shorthand と longhand の
         // 両方を使い、shorthand 展開 → per-side cascade → bridge_border の
@@ -1090,6 +1392,65 @@ mod tests {
                 left: LengthPercentage::length(0.0),
             }
         );
+    }
+
+    #[test]
+    fn font_relative_lengths_reach_taffy_as_real_pixels() {
+        // bd raikiri-spike-zls8 (decision raikiri-spike-082k Phase 2)。
+        //
+        // Sprint 18 の bridge は specified 層の `Length` を受けており、
+        // `Length::Em(_) | Length::Rem(_) => length(0.0)` で font-relative unit
+        // を **黙って 0px に潰していた** (fail-quiet)。cascade が phase 2 /
+        // phase 3 で絶対化するようになったので、実 px が taffy に届く。
+        //
+        // この test は「0.0 に潰れる」regression の canary である — 期待値は
+        // すべて font-size から計算した非ゼロ値。
+        use raikiri_style::{build_rule_tree, cascade};
+        use taffy::{Dimension, LengthPercentage, LengthPercentageAuto, Rect};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("font-size: 20px"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            // font-size は inherit で 20px。em は自 node の 20px、rem は root の
+            // 20px 基準。
+            Some(
+                "padding: 2em; margin: 1.5rem; width: 3em; \
+                 border-top-width: 0.5em; border-top-style: solid",
+            ),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+        let style = &doc.nodes[body].style;
+
+        // 2em × 20px = 40px (従来は 0.0)。
+        assert_eq!(
+            style.padding,
+            Rect {
+                top: LengthPercentage::length(40.0),
+                right: LengthPercentage::length(40.0),
+                bottom: LengthPercentage::length(40.0),
+                left: LengthPercentage::length(40.0),
+            }
+        );
+        // 1.5rem × 20px (root font-size) = 30px (従来は 0.0)。
+        assert_eq!(
+            style.margin,
+            Rect {
+                top: LengthPercentageAuto::length(30.0),
+                right: LengthPercentageAuto::length(30.0),
+                bottom: LengthPercentageAuto::length(30.0),
+                left: LengthPercentageAuto::length(30.0),
+            }
+        );
+        // 3em × 20px = 60px (従来は 0.0)。
+        assert_eq!(style.size.width, Dimension::length(60.0));
+        // 0.5em × 20px = 10px、style: solid なので gating も通り抜ける
+        // (従来は 0.0)。
+        assert_eq!(style.border.top, LengthPercentage::length(10.0));
     }
 
     #[test]
@@ -1328,6 +1689,328 @@ mod tests {
             elapsed.as_secs() < 5,
             "FontContext::new() too slow: 10x = {:?}",
             elapsed
+        );
+    }
+
+    // ── 非有限 f32 guard (bd raikiri-spike-2ui0、PMO 判断 2026-07-27) ────────
+    //
+    // untrusted author CSS から +Inf / NaN が taffy / parley に到達しないことを
+    // **5 site すべて**で pin する。reproducer は 2ui0 の probe comment 由来。
+    //
+    // 期待値は「非有限でない」ではなく **clamp 後の具体値** で書く — NaN は
+    // `NaN != NaN` なので `assert_ne!(x, ...NAN)` は無条件に pass してしまい
+    // guard の有無を判別できない。
+
+    /// cascade → `apply_computed_to_style` を通した後の対象 element の
+    /// `taffy::Style` を返す。
+    ///
+    /// fixture は **非 body element** (`<p>`) — `<body>` は後段
+    /// `apply_page_box_to_body` で size を clobber されるため。
+    fn guarded_style_for(inline: &str) -> taffy::Style {
+        use raikiri_style::{build_rule_tree, cascade};
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+        doc.nodes[p].style.clone()
+    }
+
+    /// site 1 — `length_to_taffy_length_percentage` (padding)。
+    #[test]
+    fn nonfinite_padding_is_clamped_before_taffy() {
+        use taffy::LengthPercentage;
+
+        // Reproducer A': `1e40px` は cssparser の f64→f32 変換で +Inf になり、
+        // `parse_padding_side` の `v >= 0.0` を **通過する** (inf >= 0.0 は true)。
+        assert_eq!(
+            guarded_style_for("padding-top: 1e40px").padding.top,
+            LengthPercentage::length(MAX_TAFFY_MAGNITUDE),
+        );
+
+        // Reproducer A: IEEE 754 `0.0 * inf = NaN` — em の乗算で NaN が生まれる。
+        // zls8 以前は `Em(_) => length(0.0)` arm がこれを吸収していた。
+        assert_eq!(
+            guarded_style_for("font-size: 0px; padding-top: 1e40em")
+                .padding
+                .top,
+            LengthPercentage::length(0.0),
+            "NaN は clamp では潰れないので is_nan() → 0.0 で処理する",
+        );
+
+        // percentage 側 (`Percent` arm) も同じ guard を通す。
+        // (`1e40%` は raikiri の `parse_percentage` が cssparser の unit_value
+        //  1e38 を `* 100.0` して +Inf にする — 実測。)
+        assert_eq!(
+            guarded_style_for("padding-top: 1e40%").padding.top,
+            LengthPercentage::percent(MAX_TAFFY_MAGNITUDE),
+        );
+
+        // **有限だが巨大**な値も clamp する。上の 3 case はすべて f32 で既に
+        // 非有限 (`1e40` は f32 で +Inf) なので、実装を
+        // `if v.is_finite() { v } else { ... }` に「簡素化」しても全部 pass して
+        // しまう。`1e38%` は `Percent(1e38)` = **有限** (実測) で fraction は
+        // 1e36 になるため、この 1 本だけがその簡素化を殺す。
+        assert_eq!(
+            guarded_style_for("padding-top: 1e38%").padding.top,
+            LengthPercentage::percent(MAX_TAFFY_MAGNITUDE),
+            "有限だが巨大な percentage も clamp する (is_finite() だけの実装への regression guard)",
+        );
+    }
+
+    /// site 2 — `length_or_auto_to_taffy_dimension` (width / height)。
+    #[test]
+    fn nonfinite_size_is_clamped_before_taffy() {
+        use taffy::Dimension;
+        let s = guarded_style_for("width: 1e40px; height: 1e40%");
+        assert_eq!(s.size.width, Dimension::length(MAX_TAFFY_MAGNITUDE));
+        assert_eq!(s.size.height, Dimension::percent(MAX_TAFFY_MAGNITUDE));
+
+        // NaN 経路 (em × font-size 0)。
+        let n = guarded_style_for("font-size: 0px; width: 1e40em");
+        assert_eq!(n.size.width, Dimension::length(0.0));
+    }
+
+    /// site 3 — `length_or_auto_to_taffy_lpa` (margin)。
+    ///
+    /// margin は **負値が spec-valid** (CSS Box 3 §3.1) なので clamp は対称
+    /// (`[-MAX, MAX]`) でなければならない。
+    #[test]
+    fn nonfinite_margin_is_clamped_symmetrically_before_taffy() {
+        use taffy::LengthPercentageAuto;
+        assert_eq!(
+            guarded_style_for("margin-top: 1e40px").margin.top,
+            LengthPercentageAuto::length(MAX_TAFFY_MAGNITUDE),
+        );
+        assert_eq!(
+            guarded_style_for("margin-top: -1e40px").margin.top,
+            LengthPercentageAuto::length(-MAX_TAFFY_MAGNITUDE),
+            "負の margin は spec-valid なので -MAX 側に clamp する (0 に潰さない)",
+        );
+        assert_eq!(
+            guarded_style_for("font-size: 0px; margin-top: 1e40em")
+                .margin
+                .top,
+            LengthPercentageAuto::length(0.0),
+        );
+        // `Percent` の負値経路 (`parse_margin_side` は allow-negative なので
+        // `-1e40%` が parse を通り `Percent(-inf)` になる — 実測)。
+        // `Px` 側だけだと `Percent` arm から `sanitize_taffy` を外す変更が
+        // test を素通りする。
+        assert_eq!(
+            guarded_style_for("margin-left: -1e40%").margin.left,
+            LengthPercentageAuto::percent(-MAX_TAFFY_MAGNITUDE),
+        );
+    }
+
+    /// site 4 — `computed_length_to_taffy_length_percentage` (border-width)。
+    #[test]
+    fn nonfinite_border_width_is_clamped_before_taffy() {
+        use taffy::LengthPercentage;
+        assert_eq!(
+            guarded_style_for("border-top-width: 1e40px; border-top-style: solid")
+                .border
+                .top,
+            LengthPercentage::length(MAX_TAFFY_MAGNITUDE),
+        );
+        assert_eq!(
+            guarded_style_for("font-size: 0px; border-top-width: 1e40em; border-top-style: solid")
+                .border
+                .top,
+            LengthPercentage::length(0.0),
+        );
+    }
+
+    /// site 5 — `preshape_text` の `cv.font_size.px()` → parley
+    /// `StyleProperty::FontSize`。
+    ///
+    /// 観測は shape 後の `Layout::height()` — font-size が非有限なら line metrics
+    /// が汚染されて height も非有限になる。
+    ///
+    /// # guard を外すと fail ではなく **hang** する
+    ///
+    /// 実測 (`sanitize_finite` を恒等関数に差し替えて単独実行): site 1-4 は即座に
+    /// assert 失敗するが、本 site は 25 秒経っても終了しない。機構は
+    /// `parley-0.10.0/src/layout/line_break.rs` の `if next_x <= max_advance` が
+    /// `next_x = inf` で恒偽になり、`while self.break_next().is_some() {}` が
+    /// 前進しないこと (shaping 自体は完了しており spin するのは `break_all_lines`)。
+    ///
+    /// そのため本 test は **worker thread + `recv_timeout` で有界化**してある —
+    /// guard が消えた場合に「CI job が 20 分で殺される」(infra flake と区別
+    /// できず、同一 binary の後続 test の結果も失われる) ではなく
+    /// **assert failure** として落ちる。
+    #[test]
+    fn nonfinite_font_size_is_clamped_before_parley() {
+        // 親 / 子の inline style を分けて渡す — `font-size` の `em` は **親**の
+        // computed font-size 基準 (CSS Values 4 §6.1.1) なので、NaN (`0 * inf`)
+        // を作るには乗数 `font-size: 0px` が親側に載っている必要がある。
+        // site 1-4 は乗数が同一 element に載るので 1 element で作れるが、
+        // font-size だけは 2 element 要る。
+        fn shaped_height(parent_inline: Option<&str>, child_inline: &str) -> f32 {
+            use parley::{FontContext, LayoutContext};
+            use raikiri_style::{build_rule_tree, cascade};
+
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), parent_inline);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(child_inline));
+            let text = doc.append_text(p, "Hi");
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            doc.nodes[text].text_layout().unwrap().height()
+        }
+
+        /// guard 消失時の hang を **有界時間の失敗**に変える wrapper。
+        ///
+        /// 有界なのは **test** であって process ではない — timeout しても worker
+        /// thread は spin したまま残る (parley に cancellation が無く、`break_all_lines`
+        /// を中断する手段がないため)。test binary の終了時に process ごと落ちるので
+        /// 実害は無いが、「有界化した」の射程はここまで。
+        fn shaped_height_bounded(parent_inline: Option<&str>, child_inline: &str) -> f32 {
+            use std::sync::mpsc::RecvTimeoutError;
+
+            let parent = parent_inline.map(str::to_owned);
+            let child = child_inline.to_owned();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(shaped_height(parent.as_deref(), &child));
+            });
+            // `Timeout` と `Disconnected` を混同しないこと — `shaped_height` は
+            // 内部に `.expect("cascade Ok")` / `.unwrap()` を持つので、worker が
+            // panic すると `tx` が drop されて **数 ms で** `Disconnected` が
+            // 返る。これを「30 秒で終わらなかった」と報告すると cascade の
+            // regression を guard 消失として調査させてしまい、本 wrapper の
+            // 導入目的 (hang を通常の失敗と区別する) の裏返しになる。
+            match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(h) => h,
+                Err(RecvTimeoutError::Timeout) => panic!(
+                    "parley shaping が 30 秒で終わらなかった — font-size の非有限 \
+                     guard (sanitize_finite) が外れると break_all_lines が spin \
+                     する (bd raikiri-spike-2ui0)"
+                ),
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!("worker thread が panic した (hang ではない、上の stderr を参照)")
+                }
+            }
+        }
+
+        // (a) +Inf font-size。`1e40px` は cssparser の f64→f32 で +Inf。
+        let inf_px = shaped_height_bounded(None, "font-size: 1e40px");
+        assert!(
+            inf_px.is_finite(),
+            "font-size +Inf (px 由来) が parley に届いた: {inf_px}"
+        );
+
+        // (b) +Inf font-size (em compounding 由来)。親は initial の 16px なので
+        // `16.0 * inf = +Inf` — **NaN ではない**。
+        let inf_em = shaped_height_bounded(None, "font-size: 1e40em");
+        assert!(
+            inf_em.is_finite(),
+            "font-size +Inf (em 由来) が parley に届いた: {inf_em}"
+        );
+
+        // (c) **NaN** font-size — `0.0 * inf` (IEEE 754)。`font-size` の `em` は
+        // **親**の computed font-size 基準 (CSS Values 4 §6.1.1) なので乗数
+        // `font-size: 0px` は親側に載る。site 1-4 は乗数が同一 element に載るので
+        // 1 element で作れるが、font-size だけは 2 element 要る。
+        //
+        // **`is_nan()` 分岐削除 mutation は本 case では死なない (実測)。** guard が生きている限り
+        // parley が受け取るのは 0.0 であって NaN ではないので、**parley 側の
+        // NaN 許容が変わってもここでは気づけない** (「上流の canary」ではない)。
+        // `is_nan()` 分岐を殺す mutation を検出するのは site 1-4 の e2e 4 本と
+        // `sanitize_finite_maps_nan_to_zero` の計 5 本 (mutation testing 実測)。
+        //
+        // それでも置く理由は 2 つ:
+        //   1. NaN を作れる経路の一つ (親 `0px` × 子 `em`) が e2e で構築
+        //      できることの pin。site 1-4 と違い 1 element では作れない。
+        //   2. 「guard 消失 × 上流の NaN 許容変化」という複合 regression への
+        //      保険 (単独ではどちらも他の test が拾う)。
+        let nan = shaped_height_bounded(Some("font-size: 0px"), "font-size: 1e40em");
+        assert!(nan.is_finite(), "font-size NaN が parley に届いた: {nan}");
+        assert_eq!(
+            nan, 0.0,
+            "guard 後の font-size 0.0 に対する parley の height (上流変更の canary)",
+        );
+    }
+
+    // ── guard 関数そのものの unit test ───────────────────────────────────
+    //
+    // e2e test は site 5 が hang し得るうえ 1 本あたり FontContext 構築を伴う。
+    // guard の算術は純関数なので直接叩く (数 ms、hang し得ない)。
+
+    #[test]
+    fn sanitize_finite_maps_nan_to_zero() {
+        // `f32::clamp` は NaN を NaN のまま返すので、この分岐が無いと NaN が
+        // 素通りする。
+        assert_eq!(sanitize_finite(f32::NAN, -1.0, 1.0), 0.0);
+        assert_eq!(sanitize_finite(f32::NAN, 0.0, MAX_FONT_SIZE_PX), 0.0);
+    }
+
+    #[test]
+    fn sanitize_finite_clamps_infinities_to_bounds() {
+        assert_eq!(
+            sanitize_finite(f32::INFINITY, 0.0, MAX_FONT_SIZE_PX),
+            MAX_FONT_SIZE_PX
+        );
+        assert_eq!(
+            sanitize_finite(f32::NEG_INFINITY, -MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE),
+            -MAX_TAFFY_MAGNITUDE
+        );
+        // 下限が 0.0 の site (font-size) では -Inf は 0.0 に落ちる。
+        assert_eq!(
+            sanitize_finite(f32::NEG_INFINITY, 0.0, MAX_FONT_SIZE_PX),
+            0.0
+        );
+    }
+
+    #[test]
+    fn sanitize_taffy_clamps_out_of_range_finite_values() {
+        // 有限でも範囲外なら寄せる (「有限化するだけ」ではない)。
+        assert_eq!(sanitize_taffy(1e30), MAX_TAFFY_MAGNITUDE);
+        assert_eq!(sanitize_taffy(-1e30), -MAX_TAFFY_MAGNITUDE);
+    }
+
+    #[test]
+    fn sanitize_taffy_passes_through_in_range_values() {
+        // 通常値は bit-identical に素通しする (VRT が pixel-exact である前提)。
+        for v in [0.0_f32, 1.0, -1.0, 16.0, 793.7008, MAX_TAFFY_MAGNITUDE] {
+            assert_eq!(
+                sanitize_taffy(v),
+                v,
+                "in-range value must pass through: {v}"
+            );
+        }
+    }
+
+    /// clamp 定数が **doc が主張する帯の中にある**ことの pin。
+    ///
+    /// literal との `assert_eq!` は同語反復なので使わない — 定数を書き換えれば
+    /// test も一緒に書き換わり、何も検出しない。doc が根拠として挙げた
+    /// **関係式**を書く。
+    #[test]
+    fn clamp_limits_are_in_the_documented_range() {
+        // taffy 幾何: CSSWG issue #4552 が報告する実装の LayoutUnit 上限帯
+        // (1e7〜1e8 px) の中にあること。
+        assert!(
+            (1e7..=1e8).contains(&MAX_TAFFY_MAGNITUDE),
+            "MAX_TAFFY_MAGNITUDE は CSSWG #4552 の 1e7..=1e8 px 帯に収まること: {MAX_TAFFY_MAGNITUDE}"
+        );
+        // doc はより強く「帯の**下端**を採る = 3 engine のいずれの上限より下」と
+        // 主張している。最小は old-Edge の `2^31 / 100 ≈ 2.15e7 px`。
+        assert!(
+            MAX_TAFFY_MAGNITUDE <= (i32::MAX / 100) as f32,
+            "MAX_TAFFY_MAGNITUDE は 3 engine の最小上限 (2^31/100 ≈ 2.15e7 px) 以下であること: {MAX_TAFFY_MAGNITUDE}"
+        );
+        // font-size: skrifa の 16.16 fixed 変換が saturate する
+        // `i32::MAX / 64 ≈ 3.36e7` ppem より **1 桁以上**下 (doc の主張)。
+        assert!(
+            MAX_FONT_SIZE_PX * 10.0 < (i32::MAX / 64) as f32,
+            "MAX_FONT_SIZE_PX は skrifa の saturation 点より 1 桁以上下であること: {MAX_FONT_SIZE_PX}"
         );
     }
 }

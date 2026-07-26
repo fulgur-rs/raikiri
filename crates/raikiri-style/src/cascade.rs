@@ -5,6 +5,21 @@
 //!    specificity + !important + source order で winner を選択
 //! 2. inheritance walk — top-down DFS で親の computed value を継承 + 自 node の
 //!    cascaded value で override
+//!
+//! # inheritance walk 内部の 3 phase (bd decision raikiri-spike-082k)
+//!
+//! 上記 phase 2 の per-node 処理は、さらに 3 段に分かれる:
+//!
+//! 1. **winner の staging** — 親の [`ComputedValues`] から
+//!    [`SpecifiedValues`] を seed し、その node の全 winner を `apply_value` で
+//!    適用する。この段では length は specified 表現のまま。
+//! 2. **font-size の絶対化** — **親の** computed font-size 基準。
+//! 3. **残り全 length の絶対化** — **自 node の** computed font-size 基準。
+//!
+//! 2 / 3 は [`SpecifiedValues::finalize`] に閉じている。分離が必要な理由は
+//! [`crate::specified`] の module doc を参照 (winner の適用順が
+//! `pick_winners` の `HashMap` iteration 順に依存するため、winner 適用の
+//! 途中で絶対化することはできない)。
 
 use std::collections::HashMap;
 
@@ -14,10 +29,12 @@ use selectors::parser::{Selector, SelectorList};
 use crate::RaikiriSelectorImpl;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::error::CascadeError;
-use crate::property::{FontWeightValue, PositionValue, PropertyKey, PropertyValue};
+use crate::property::{FontWeightValue, Length, PositionValue, PropertyKey, PropertyValue};
+use crate::resolve::{ComputedLength, ResolveContext};
 use crate::rule::parse_declaration_block;
 use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
+use crate::specified::SpecifiedValues;
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
 /// Cascade 結果。
@@ -233,9 +250,35 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 
 /// Top-down inheritance walk。子 node は親の computed value を必要とするため
 /// (再帰の call stack で暗黙に運んでいた context)、iterative 化には各 stack
-/// entry に `(StyleNodeId, 親の computed value)` を明示的に持たせる — Approach A
-/// (roborev job 199 対応)。clone は各 entry ごとに発生するが m1.4 scope では
-/// 許容 (hot path 化した場合は将来 `Arc<ComputedValues>` で削減を検討)。
+/// entry に `(StyleNodeId, 親の computed value, rem context)` を明示的に持たせる —
+/// Approach A (roborev job 199 対応)。clone は各 entry ごとに発生するが m1.4
+/// scope では許容 (hot path 化した場合は将来 `Arc<ComputedValues>` で削減を検討)。
+///
+/// # `rem` context の threading (設計文書 §6.3)
+///
+/// stack entry 第 3 要素の `Option<ResolveContext>` は「この node より上に
+/// **element 祖先が居るか**」を表す:
+///
+/// - `None` — element 祖先が無い。すなわちこの node が element なら **root
+///   element** であり、[`SpecifiedValues::finalize_as_root`] を通す。同関数の
+///   doc が CSS Values 4 §6.1.1
+///   (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) の
+///   parent-metrics 条項を verbatim で引き、`font-size` (initial 16px 基準) と
+///   box property (自 font-size 基準) で `rem` の基準が違う理由を説明する。
+///   **`html { font-size: 2rem }` が自己参照になる誤実装 (tree 全体に単一
+///   context を配る) を塞ぐのはここ。**
+/// - `Some(ctx)` — element 祖先が居る。その最上位 element (= root element) の
+///   computed font-size が `ctx.root_font_size`。
+///
+/// [`StyleDom::root_id`] は Document node であって root element ではない
+/// ([`crate::style_dom`] の Contract 節) ため、Document / Comment / Text の
+/// ような非 element node は `None` をそのまま子へ渡す。
+///
+/// well-formed な HTML document の root element は 1 つだが、`StyleDom` は
+/// それを強制しない。Document 直下に element が複数ある合成 DOM では**各々が
+/// root element として扱われる** (自分の subtree の `rem` 基準になる) —
+/// 「親 element を持たない element は initial values を参照する」という §6.1.1
+/// の規則を素直に適用した結果であり、意図した挙動である。
 fn resolve_inheritance<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
@@ -243,8 +286,9 @@ fn resolve_inheritance<D: StyleDom>(
     cascaded: &HashMap<StyleNodeId, Vec<CascadedDecl>>,
     out: &mut Vec<ComputedValues>,
 ) {
-    let mut stack: Vec<(StyleNodeId, ComputedValues)> = vec![(id, parent_computed.clone())];
-    while let Some((id, parent_computed)) = stack.pop() {
+    let mut stack: Vec<(StyleNodeId, ComputedValues, Option<ResolveContext>)> =
+        vec![(id, parent_computed.clone(), None)];
+    while let Some((id, parent_computed, rem_ctx)) = stack.pop() {
         // raikiri-spike-37c roborev job 294 M2 finding: is_in_document()==false
         // の node は subtree ごと早期 continue する。
         //
@@ -260,21 +304,63 @@ fn resolve_inheritance<D: StyleDom>(
         //
         // 未知 NodeId (dom.node が None) の場合も skip: initial() のままにする
         // 方が defensive (旧コードは inherit_from してから書いていた)。
-        if !dom.node(id).is_some_and(|n| n.is_in_document()) {
+        let Some(node) = dom.node(id).filter(|n| n.is_in_document()) else {
             continue;
-        }
+        };
+        let is_element = node.kind() == StyleNodeKind::Element;
 
-        // 親からの inheritance walk 開始値: inherited のみコピー、非継承は
-        // initial() (spec §M1.4a、raikiri-spike-m1.22)
-        let mut computed = ComputedValues::inherit_from(&parent_computed);
-
-        // 自 node の cascaded winners を apply
+        // phase 1: 親からの inheritance walk 開始値 (inherited のみ親の computed
+        // からコピー、非継承は initial) に自 node の cascaded winner を適用する。
+        // 適用対象は staging 表現なので、winner の適用順 (HashMap iteration 順)
+        // に依存しない (spec §M1.4a、raikiri-spike-m1.22 / raikiri-spike-082k)。
+        let mut specified = SpecifiedValues::inherit_from(&parent_computed);
         if let Some(candidates) = cascaded.get(&id) {
             let winners = pick_winners(candidates);
             for value in winners.into_values() {
-                apply_value(value, &mut computed);
+                apply_value(value, &mut specified);
             }
         }
+
+        // phase 2 + phase 3: 絶対化。root element (element 祖先なし) は `rem` の
+        // 基準が phase 2 / phase 3 で異なるため専用 entry point を通す
+        // ([`SpecifiedValues::finalize_as_root`] の doc に spec verbatim)。
+        let computed = match &rem_ctx {
+            Some(ctx) => specified.finalize(parent_computed.font_size, ctx),
+            None => {
+                // `finalize_as_root` は phase 2 の基準を initial value に固定する
+                // (§6.1.1 の "if the element has no parent")。それが正しいのは
+                // **`rem_ctx == None` ならこの node に element 親が居ない**からで
+                // あり、その caller-side invariant を pin しておく:
+                //
+                // - `cascade()` は必ず `dom.root_id()` (= Document node) から
+                //   walk を開始し、そこに `ComputedValues::initial()` を渡す。
+                // - `collect_cascaded` は Element にしか winner を作らないので
+                //   Document node の computed は initial のまま。
+                // - `rem_ctx` が `None` のままなのは Document 自身とその直接の子
+                //   だけ (element を 1 つ通れば `Some` になる)。
+                //
+                // したがって subtree の途中から `resolve_inheritance` を呼ぶ
+                // entry point (incremental restyle 等) を将来足すなら、
+                // `rem_ctx` を呼び出し側から供給しなければならない。この assert が
+                // その見落としを debug build で捕まえる。
+                debug_assert_eq!(
+                    parent_computed.font_size,
+                    ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
+                    "rem_ctx == None は element 親が居ないことを意味するので、\
+                     親の computed font-size は initial でなければならない \
+                     (subtree の途中から walk を開始していないか?)"
+                );
+                specified.finalize_as_root()
+            }
+        };
+
+        // 子へ渡す rem context。root element の phase 2 が終わった時点で
+        // `root_font_size` が確定するので、ここで初めて `Some` になる。
+        let child_ctx = match rem_ctx {
+            Some(ctx) => Some(ctx),
+            None if is_element => Some(ResolveContext::new(computed.font_size)),
+            None => None,
+        };
 
         // out を id+1 サイズに resize してから index 書き込み。
         // `cascade()` の pre-allocation で通常 out.len() == node_count() のため
@@ -290,7 +376,7 @@ fn resolve_inheritance<D: StyleDom>(
         // stack は LIFO なので document order で push するため reverse。
         let children: Vec<_> = dom.child_ids(id).collect();
         for child_id in children.into_iter().rev() {
-            stack.push((child_id, computed.clone()));
+            stack.push((child_id, computed.clone(), child_ctx));
         }
     }
 }
@@ -392,7 +478,7 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 ///
 /// # なぜ [`apply_value`] と別に必要か
 ///
-/// [`apply_value`] は解決結果を [`ComputedValues`] の field へ直接書き込むため、
+/// [`apply_value`] は解決結果を [`SpecifiedValues`] の field へ直接書き込むため、
 /// 結果を `PropertyValue` として受け取りたい呼び手から reuse できない。
 /// [`crate::page::cascade_page`] の結果は
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
@@ -417,12 +503,12 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 /// だけである。以下 2 つは捕まらない:
 ///
 /// 1. 既存 variant の **payload** に継承元依存が入る場合 — pass-through arm は
-///    payload を `_` で捨てるので、`Length` に `Larger` / `Smaller`
-///    (CSS Fonts 4 の relative size keyword) や `TextAlign` に `MatchParent`
-///    (CSS Text 3) が増えても `PropertyValue::FontSize(_)` /
-///    `PropertyValue::TextAlign(_)` を素通りする。これらは `bolder` /
+///    payload を `_` で捨てるので、`TextAlign` に `MatchParent` (CSS Text 3) が
+///    増えても `PropertyValue::TextAlign(_)` を素通りする。これは `bolder` /
 ///    `lighter` と**同型**の解決を要するので、実装時は本関数の arm で payload を
-///    destructure して guard を payload 層に降ろすこと。
+///    destructure して guard を payload 層に降ろすこと (`FontSize` は
+///    bd raikiri-spike-zls8 でそれを済ませた — payload を destructure して
+///    `resolve_font_size` に渡している)。
 /// 2. **本関数を呼ばない新しい entry point** — ygl0 の regression はこの形
 ///    だった (`cascade_page` が `apply_value` を通らなかった)。CSS Paged Media 3
 ///    §6 の margin-box cascade は page context を継承元とする第 3 の経路になる。
@@ -432,29 +518,30 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 ///
 /// 未解決のまま通る既知の値が 2 系統ある:
 ///
-/// - [`Length`](crate::property::Length) の `Em` / `Rem` / `Percent` (box
-///   properties)。CSS Paged Media 3 §6
+/// - **box property** ([`padding`](PropertyValue::PaddingTop) /
+///   [`margin`](PropertyValue::MarginTop) / [`width`](PropertyValue::Width) /
+///   [`height`](PropertyValue::Height) / `border-*-width`) の
+///   [`Length`](crate::property::Length) `Em` / `Rem` / `Percent`。
+///   CSS Paged Media 3 §6 "Page Properties"
 ///   <https://www.w3.org/TR/css-page-3/#page-properties> の "Values in units of
 ///   em and ex are interpreted relative to the font associated with their
 ///   context" どおり `Em` は page context 自身の font に対する倍率であり、その
-///   font-size は同 cascade の兄弟 declaration から来得るため `inherited` だけでは
-///   決まらない。`Percent` は同 §6 が "Percentage values on the margin and
+///   font-size は**同 cascade の兄弟 declaration から来得る**ため `inherited`
+///   だけでは決まらない。`Percent` は同 §6 が "Percentage values on the margin and
 ///   padding properties are relative to the dimensions of the containing block"
-///   と規定するとおり containing block を要する。**ただし `font-size` property 上
-///   の `em` / `ex` は同 §6 が "When used on the font-size property in the page
-///   context, they are relative to the font-size of the root element" と明文で
-///   規定しており `inherited` だけで解ける** (同 §はさらに "an implementation that
-///   treats em and ex on font-size as relative to the initial value is also
-///   conformant" という conformance exception も置いている) — 到達しないのは
-///   `parse_font_size` が `Em` を parse 時に drop し、`%` は
-///   `parse_length_value(input, false)` が percentage token 自体を拒否するから
-///   である。なお §6 は `font-size` 上の `%` については何も規定していない。
-///   より根本には raikiri が length
-///   解決を現時点でどの層でも行っておらず
-///   [`ComputedValues::font_size`](crate::computed::ComputedValues::font_size)
-///   自体が未解決 `Length` である (element 経路の [`apply_value`] も単純代入)。
-///   型レベルの specified/computed 分離は bd raikiri-spike-082k /
-///   raikiri-spike-zls8 scope。
+///   と規定するとおり containing block を要する。
+///
+///   **element 経路との非対称**: element 側は本関数を通らず [`apply_value`] →
+///   [`SpecifiedValues::finalize`] の経路を取り、そこで phase 2 (font-size 確定)
+///   → phase 3 (自 font-size 基準で残りを絶対化) が走るため box property も
+///   computed 層まで解決される。page 経路には phase 3 に相当する段が無い
+///   (page context の font-size 確定と box property の絶対化を分ける実装が要る —
+///   bd raikiri-spike-zls8 の scope 外)。したがって box property の `Em` /
+///   `Rem` / `Percent` は **page 経路でのみ**未解決のまま public に出る。
+///
+///   `font-size` property 上の `Em` / `Rem` / `Percent` は例外で、本関数が
+///   解決する (上の `FontSize` arm)。
+///
 /// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent)。CSS
 ///   Text 3 §6.1
 ///   <https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent> は
@@ -468,10 +555,35 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 ///
 /// 帰結として
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
-/// は **layer-heterogeneous** な bag である:
-/// `FontWeight` は computed-equivalent、`FontSize(Length::Em(_))` は specified の
-/// まま。082k Phase 2 の型分離は property ごとにどちらの層かを決める必要がある
-/// (一律変換では済まない)。
+/// は **layer-heterogeneous** な bag である。property → 層の対応表:
+///
+/// | 層 | property |
+/// |---|---|
+/// | computed-equivalent | `font-weight` (`Absolute(u16)`) / `font-size` (`Length::Px`) / length を含まない全 property |
+/// | specified のまま | box property (`padding` / `margin` / `width` / `height` / `border-*-width`) の `Em` / `Rem` / `Percent`、`line-height` の `Em` / `Rem` / `Percent`、`text-align: match-parent` |
+/// | **`Px` でも computed 層未達** | `border-*-width` — style gating が未適用 (下記 caveat) |
+///
+/// すなわち「この map は specified 型」という一律変換では扱えない。
+///
+/// **caveat — `border-*-width` の `Px` は「絶対長だから computed」ではない**:
+/// CSS Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>
+/// は "Computed value: absolute length, snapped as a border width; **zero if the
+/// border style is `none` or `hidden`**" と規定するので、style gating も computed
+/// 層の要求である。page 経路にはその gate が**どこにも無い**ため
+/// `@page { border-top-width: 5px; border-top-style: none }` は
+/// `BorderTopWidth(Length::Px(5.0))` を public な `declarations` に出す
+/// (spec 上は 0 が computed value)。element 経路は
+/// [`crate::resolve::resolve_border`] が正しく gate するのでこの穴は無い。
+///
+/// この gap の根は bd raikiri-spike-ygl0 由来で **pre-existing** (layout への
+/// leak も無い)。上の table を「完全な対応表」として読まないこと — 本体の修正は
+/// 別 task に defer されている。
+///
+/// element 経路では 082k Phase 2 (bd raikiri-spike-zls8) が対応表を**型で**
+/// 表現した — [`SpecifiedValues`] の field 型そのものが表であり、同 struct の
+/// doc に 2 列で列挙してある (そちらは phase 3 まで走るので box property も
+/// computed 側)。page 経路は `PropertyValue` の bag なので型では表現されず、
+/// 上の表が対応表を兼ねる。
 pub(crate) fn resolve_against_inherited(
     value: PropertyValue,
     inherited: &ComputedValues,
@@ -485,13 +597,49 @@ pub(crate) fn resolve_against_inherited(
         PropertyValue::FontWeight(fw) => PropertyValue::FontWeight(FontWeightValue::Absolute(
             resolve_relative_weight(fw, inherited.font_weight),
         )),
+        // `font-size` は継承元の computed font-size だけで解ける (bd
+        // raikiri-spike-zls8)。`crate::resolve::resolve_font_size` に funnel し、
+        // 結果を `Length::Px` で包み直して computed-equivalent にする
+        // (`FontWeight` arm が `Absolute(u16)` を返すのと同じ形)。
+        //
+        // 基準が `inherited.font_size` でよい根拠:
+        //
+        // - `em`: CSS Paged Media 3 §6 "Page Properties"
+        //   <https://www.w3.org/TR/css-page-3/#page-properties> verbatim —
+        //   "When used on the font-size property in the page context, they are
+        //   relative to the font-size of the root element."
+        //   `cascade_page` の `inherited` は root element の `ComputedValues`
+        //   そのもの (無い場合は initial) なので、これが §6 の言う基準である。
+        // - `rem`: CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>
+        //   "Equal to the computed value of the em unit on the root element." —
+        //   同じく `inherited.font_size`。
+        // - `%`: **§6 は page context の `font-size` 上の `%` を規定していない。**
+        //   CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop>
+        //   の "Percentages: refer to parent element's font size" と、§6 の
+        //   "The page context inherits from the root element." を合わせると
+        //   基準は root element の font-size になる、という**導出**であって
+        //   §6 の明文ではない。
+        // - `px` / `pt`: 絶対単位なので context 非依存。
+        //
+        // element 経路と違い page 経路には phase 3 が無い — box property
+        // (`padding` / `margin` / `width` / `height` / `border-*-width`) の
+        // `em` は page context 自身の font-size を要し、それは同 cascade の兄弟
+        // declaration から来得るので `inherited` だけでは決まらない。したがって
+        // 本 arm は `font-size` に限る (下の pass-through 節を参照)。
+        PropertyValue::FontSize(len) => PropertyValue::FontSize(Length::Px(
+            crate::resolve::resolve_font_size(
+                len,
+                inherited.font_size,
+                &ResolveContext::new(inherited.font_size),
+            )
+            .px(),
+        )),
         // 本関数では解決しない property — pass-through。上記 doc の「pass-through は
         // 『specified 表現 == computed 表現』ではない」節が既知の未解決値を
         // 列挙している。`_` に潰さないこと。
         v @ (PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
-        | PropertyValue::FontSize(_)
         | PropertyValue::LineHeight(_)
         | PropertyValue::Display(_)
         | PropertyValue::CounterReset(_)
@@ -530,7 +678,19 @@ pub(crate) fn resolve_against_inherited(
     }
 }
 
-fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
+/// Cascade winner 1 つを staging 表現 ([`SpecifiedValues`]) に書き込む
+/// (**phase 1**)。
+///
+/// length を運ぶ property は **specified 表現のまま**格納する — 絶対化は
+/// [`SpecifiedValues::finalize`] (phase 2 + phase 3) の責務であり、本関数の中で
+/// 行うことは decision raikiri-spike-082k により禁じられている (winner の適用順が
+/// 非決定的なので、`padding: 2em` の基準となる font-size がこの時点では確定して
+/// いない)。
+///
+/// 例外は `font-weight` — `bolder` / `lighter` は**継承元**の computed weight
+/// だけで解ける (自 node の他 winner に依存しない) ため、ここで絶対値に落とす。
+/// 詳細は該当 arm の comment を参照。
+fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,
         // CSS Backgrounds 3 §2.2 (raikiri-spike-0vv.7)。sibling `Color` と対称的な
@@ -542,10 +702,15 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         // value は `FontWeightValue` (relative keyword を保持)、computed value
         // は resolve 済み `u16` — `bolder` / `lighter` はここで絶対値に落とす。
         //
-        // 継承値の出所: `target` は直前に `ComputedValues::inherit_from(parent)`
+        // 継承値の出所: `target` は直前に `SpecifiedValues::inherit_from(parent)`
         // で seed されており (`resolve_inheritance` 参照)、`font_weight` は
         // inherited property なので **この時点の `target.font_weight` は親の
-        // computed font-weight そのもの**。さらに `pick_winners` は
+        // computed font-weight そのもの**。`SpecifiedValues` が
+        // `font_weight: u16` を「既に computed-equivalent」として持つのはこの
+        // invariant のため — `SpecifiedValues::initial()` から seed する実装に
+        // 変えると `bolder` が常に 400 起点になり、compile error にも既存 test の
+        // 失敗にもならずに壊れる (bd raikiri-spike-i5bs §8.2 debt lens D5)。
+        // さらに `pick_winners` は
         // `PropertyKey` ごとに勝者を 1 つだけ返すため `FontWeight` arm が同一
         // node で 2 回走ることはなく、HashMap iteration 順にも依存しない。
         // この 2 つが relative-weight resolution の正しさを支える invariant。
@@ -626,7 +791,7 @@ fn apply_value(value: PropertyValue, target: &mut ComputedValues) {
         PropertyValue::MarginBottom(v) => target.margin.bottom = v,
         PropertyValue::MarginLeft(v) => target.margin.left = v,
         // Safety-net for shorthand: expansion 経路 (parse_declaration_block) を
-        // bypass する code path が万一混入した場合でも、`ComputedValues.margin`
+        // bypass する code path が万一混入した場合でも、`SpecifiedValues.margin`
         // 全 4 side を atomic に上書きする。normal flow では unreachable な arm
         // なので `apply_value_direct_margin_shorthand_safety_net` test で
         // 直接叩いて振る舞いを pin (panic 化を避けるための defensive fall-through、
@@ -680,6 +845,10 @@ mod tests {
     use crate::property::CssColor;
     use crate::property::DisplayValue;
     use crate::property::{Border, BorderColor, BorderStyle, Length, LengthOrAuto, Sides};
+    use crate::resolve::{
+        ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+        ComputedLineHeight,
+    };
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
     use smol_str::SmolStr;
@@ -797,6 +966,316 @@ mod tests {
     fn cascade_result_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<CascadeResult>();
+    }
+
+    // ── 絶対化 (082k Phase 2 / bd raikiri-spike-zls8) ───────────────────
+    //
+    // ここから下の test 群は「cascade を抜けた時点で length が px に解決されて
+    // いる」ことを pin する。従来 (Sprint 18 まで) は specified value が
+    // `ComputedValues` に素通りし、`em` / `rem` は下流 (raikiri-dom layout.rs)
+    // で黙って 0px に潰れていた。
+
+    /// 2 段の element を作り、両者の [`ComputedValues`] を返す。
+    ///
+    /// `cascade_doc` は `<style>` と対象 element を **兄弟**として Document 直下に
+    /// 置くため、親子関係を要する test (inheritance / `rem` の root element 判定)
+    /// には使えない。
+    fn cascade_parent_child(
+        parent_tag: &str,
+        parent_inline: Option<&str>,
+        child_tag: &str,
+        child_inline: Option<&str>,
+    ) -> (ComputedValues, ComputedValues) {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, parent_tag, parent_inline);
+        let child = doc.push_element(parent, child_tag, child_inline);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        (r.computed[parent].clone(), r.computed[child].clone())
+    }
+
+    /// decision raikiri-spike-082k Rationale 1 — **本 task の存在理由**。
+    ///
+    /// 従来はどちらの `<span>` も `font_size == Length::Em(1.5)` になり、
+    /// 「宣言由来の `em`」と「inherit 由来の値」が区別できなかった (下流から
+    /// 修復不能な live bug)。CSS Cascade 5 §7.2
+    /// (<https://www.w3.org/TR/css-cascade-5/#inheriting>) が「inheritance が
+    /// 運ぶのは computed value である」と規定するため、両者は別の値でなければ
+    /// ならない。
+    ///
+    /// - (i) `<div style="font-size:1.5em"><span style="font-size:1.5em">` →
+    ///   span は **36px** (自 declaration が親 24px に対して解決)
+    /// - (ii) `<div style="font-size:1.5em"><span>` → span は **24px**
+    ///   (親の computed value を継承)
+    #[test]
+    fn declared_em_and_inherited_em_produce_different_computed_font_sizes() {
+        let (div_i, span_i) = cascade_parent_child(
+            "div",
+            Some("font-size: 1.5em"),
+            "span",
+            Some("font-size: 1.5em"),
+        );
+        let (div_ii, span_ii) = cascade_parent_child("div", Some("font-size: 1.5em"), "span", None);
+
+        // 親はどちらも initial 16px に対する 1.5em = 24px。
+        assert_eq!(div_i.font_size, ComputedLength(24.0));
+        assert_eq!(div_ii.font_size, ComputedLength(24.0));
+
+        // (i) 宣言由来 — 自 node で再度 1.5 倍される。
+        assert_eq!(span_i.font_size, ComputedLength(36.0));
+        // (ii) inherit 由来 — 親の computed value がそのまま。
+        assert_eq!(span_ii.font_size, ComputedLength(24.0));
+        assert_ne!(
+            span_i.font_size, span_ii.font_size,
+            "declared em と inherited em が同値になるのが 082k Rationale 1 の live bug"
+        );
+    }
+
+    /// `em` の compounding が cascade 経由で成立する (16px → 1.5em → 1.5em)。
+    /// CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#em>。
+    #[test]
+    fn em_font_size_compounds_across_cascade_levels() {
+        let mut doc = TestDoc::new();
+        let a = doc.push_element(0, "div", Some("font-size: 1.5em"));
+        let b = doc.push_element(a, "div", Some("font-size: 1.5em"));
+        let c = doc.push_element(b, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[a].font_size, ComputedLength(24.0));
+        assert_eq!(r.computed[b].font_size, ComputedLength(36.0));
+        // 孫は宣言が無いので親の computed value を継承 (再乗算しない)。
+        assert_eq!(r.computed[c].font_size, ComputedLength(36.0));
+    }
+
+    /// `font-size` 以外の length は **自 node の** computed font-size 基準
+    /// (CSS Values 4 §6.1.1 `em`)。従来は下流で 0px に潰れていた経路。
+    #[test]
+    fn box_property_em_resolves_against_own_computed_font_size() {
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some(
+                "font-size: 20px; padding: 2em; margin-left: 1.5em; border-top-width: 0.5em; border-top-style: solid; width: 3em; line-height: 1.2em",
+            ),
+        );
+        assert_eq!(cv.font_size, ComputedLength(20.0));
+        assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(40.0)));
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(30.0));
+        assert_eq!(cv.border.top.width, ComputedLength(10.0));
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(60.0));
+        assert_eq!(
+            cv.line_height,
+            ComputedLineHeight::Length(ComputedLength(24.0))
+        );
+    }
+
+    /// **root element 自身の `Nrem`** は initial value (16px) 基準。
+    ///
+    /// CSS Values 4 §6.1.1 "Font-relative Lengths"
+    /// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>): "…or
+    /// against the computed metrics corresponding to the initial values of the
+    /// font and line-height properties, **if the element has no parent**."
+    ///
+    /// この case は `resolve_inheritance` が root element を過小に special-case
+    /// した場合 (tree 全体に単一の `ResolveContext::new(root_font_size)` を配る
+    /// 誤実装) に落ちる — 自己参照になり `2rem` が発散/固定点に落ちる。
+    #[test]
+    fn rem_on_root_element_resolves_against_initial_font_size() {
+        let cv = cascade_doc("", "html", Some("font-size: 2rem"));
+        assert_eq!(cv.font_size, ComputedLength(32.0));
+    }
+
+    /// **root element の子の `Nrem`** は root element の computed font-size 基準。
+    ///
+    /// CSS Values 4 §6.1.1 (<https://www.w3.org/TR/css-values-4/#rem>): `rem` —
+    /// "Equal to the computed value of the em unit on the root element."
+    ///
+    /// この case は root element を **過剰に** special-case した場合 (子まで
+    /// `ResolveContext::initial()` を配る誤実装) に落ちる — 40px ではなく 32px に
+    /// なる。上の test と対で初めて閉じる。
+    #[test]
+    fn rem_below_root_element_resolves_against_root_computed_font_size() {
+        let (root, child) = cascade_parent_child(
+            "html",
+            Some("font-size: 20px"),
+            "p",
+            Some("font-size: 2rem"),
+        );
+        assert_eq!(root.font_size, ComputedLength(20.0));
+        assert_eq!(child.font_size, ComputedLength(40.0));
+    }
+
+    /// root element 上の **box property** の `rem` は自 font-size 基準
+    /// (font-\* property ではないので CSS Values 4 §6.1.1 の parent-metrics
+    /// 条項は発火せず、`rem` は素の定義「root element の computed font-size」に
+    /// なる)。
+    ///
+    /// 上 2 test と合わせて root element の `rem` を 2 方向から挟む — phase 2 は
+    /// initial 16px 基準 (32px)、phase 3 は自 20px 基準 (40px)。
+    /// **root 全体に `ResolveContext::initial()` を配る実装ではここが 32px に
+    /// なって落ちる。**
+    #[test]
+    fn rem_on_root_element_box_property_uses_own_font_size() {
+        let cv = cascade_doc("", "html", Some("font-size: 20px; padding: 2rem"));
+        assert_eq!(cv.font_size, ComputedLength(20.0));
+        assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(40.0)));
+    }
+
+    /// Document 直下の **非 element** node は rem context を確定させない
+    /// (`resolve_inheritance` の `child_ctx` の `None => None` arm)。
+    ///
+    /// [`StyleDom::root_id`] は Document node であって root element ではないので、
+    /// element を 1 つも通っていない経路では `rem` の参照値が未確定のままで
+    /// なければならない。Text / Comment node が誤って「root element」扱いされると
+    /// 兄弟 element より先に walk された場合に rem 基準が汚染される。
+    #[test]
+    fn non_element_node_under_document_does_not_establish_rem_context() {
+        let mut doc = TestDoc::new();
+        let text = doc.push_text(0, "bare text");
+        let html = doc.push_element(0, "html", Some("font-size: 20px"));
+        let child = doc.push_element(html, "p", Some("padding: 1rem"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        // 非 element node は cascade winner を持たないので全 field が initial。
+        assert_eq!(r.computed[text], ComputedValues::initial());
+        // 兄弟 element 側の subtree は自身の root element (html) 基準で解決される
+        // — text node の存在に影響されない。
+        assert_eq!(r.computed[html].font_size, ComputedLength(20.0));
+        assert_eq!(
+            r.computed[child].padding,
+            Sides::all(ComputedLengthPercentage::Px(20.0))
+        );
+    }
+
+    /// `rem` は **root element** 基準であって直近の親基準ではない。
+    #[test]
+    fn rem_ignores_intermediate_font_sizes() {
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(0, "html", Some("font-size: 20px"));
+        let mid = doc.push_element(html, "div", Some("font-size: 40px"));
+        let leaf = doc.push_element(mid, "span", Some("padding: 1rem"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[leaf].padding,
+            Sides::all(ComputedLengthPercentage::Px(20.0)),
+            "rem は root element (20px) 基準 — 直近の親 (40px) ではない"
+        );
+    }
+
+    /// **D5 invariant** (bd raikiri-spike-i5bs §8.2 debt lens D5)。
+    ///
+    /// `bolder` は `SpecifiedValues` の staging 上で解決されるが、その基準は
+    /// **親の computed font-weight** でなければならない (CSS Fonts 4 §2.2.1
+    /// <https://www.w3.org/TR/css-fonts-4/#relative-weights>)。
+    /// `SpecifiedValues::inherit_from` が `font_weight` を親からではなく
+    /// `initial()` (400) から seed すると 400 → 700 になり、この test だけが
+    /// 落ちる (compile error にはならない)。
+    #[test]
+    fn bolder_resolves_against_parent_computed_weight_through_staging() {
+        let (parent, child) = cascade_parent_child(
+            "div",
+            Some("font-weight: 700"),
+            "span",
+            Some("font-weight: bolder"),
+        );
+        assert_eq!(parent.font_weight, 700);
+        assert_eq!(
+            child.font_weight, 900,
+            "bolder は親の computed 700 に対して解決される (initial 400 起点なら 700 になる)"
+        );
+
+        // lighter 側も同じ経路を通る (700 → 400)。
+        let (_, lighter) = cascade_parent_child(
+            "div",
+            Some("font-weight: 700"),
+            "span",
+            Some("font-weight: lighter"),
+        );
+        assert_eq!(lighter.font_weight, 400);
+    }
+
+    /// 3 段の `bolder` chain — staging を経ても compounding が spec table どおり
+    /// 進む (400 → 700 → 900 → 900)。
+    #[test]
+    fn bolder_chain_compounds_through_staging() {
+        let mut doc = TestDoc::new();
+        let a = doc.push_element(0, "div", Some("font-weight: bolder"));
+        let b = doc.push_element(a, "div", Some("font-weight: bolder"));
+        let c = doc.push_element(b, "div", Some("font-weight: bolder"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[a].font_weight, 700);
+        assert_eq!(r.computed[b].font_weight, 900);
+        assert_eq!(r.computed[c].font_weight, 900);
+    }
+
+    /// `pt` は cascade 段で px に絶対化される (CSS Values 4 §6.2
+    /// <https://www.w3.org/TR/css-values-4/#absolute-lengths>、`1pt = 4/3px`)。
+    ///
+    /// **font-size の期待値は initial (16px) と一致させてはならない** — 一致させると
+    /// `parse_font_size` が `pt` を drop しても (= 本 commit が受理可能にした経路が
+    /// 壊れても) initial が残って pass してしまう。`15pt = 20px` を使う。
+    #[test]
+    fn pt_is_absolutized_at_cascade() {
+        let cv = cascade_doc("", "div", Some("font-size: 15pt; padding-top: 9pt"));
+        assert_eq!(cv.font_size, ComputedLength(20.0));
+        assert_ne!(
+            cv.font_size,
+            ComputedValues::initial().font_size,
+            "initial と一致する期待値は parse 側の drop を検出できない"
+        );
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(12.0));
+    }
+
+    /// `line-height: <percentage>` は **宣言要素**で絶対化され、子は length を
+    /// そのまま継承する (CSS Inline 3 §5.1
+    /// <https://www.w3.org/TR/css-inline-3/#propdef-line-height>
+    /// "Percentages: computed relative to 1em" + "Computed value: … a computed
+    /// `<length>` value")。子の font-size で再解決してはならない。
+    #[test]
+    fn line_height_percentage_is_resolved_at_declaring_element() {
+        let (parent, child) = cascade_parent_child(
+            "div",
+            Some("font-size: 20px; line-height: 150%"),
+            "span",
+            Some("font-size: 10px"),
+        );
+        assert_eq!(
+            parent.line_height,
+            ComputedLineHeight::Length(ComputedLength(30.0))
+        );
+        assert_eq!(
+            child.line_height,
+            ComputedLineHeight::Length(ComputedLength(30.0)),
+            "子は 30px をそのまま継承する (15px に再解決しない)"
+        );
+    }
+
+    /// `line-height: <number>` は computed 層でも number のまま継承され、
+    /// **子自身の** font-size に掛かる余地を残す (§5.1 の special behavior)。
+    #[test]
+    fn line_height_number_stays_unitless_through_computed_layer() {
+        let (_, child) = cascade_parent_child(
+            "div",
+            Some("font-size: 20px; line-height: 1.5"),
+            "span",
+            Some("font-size: 10px"),
+        );
+        assert_eq!(child.line_height, ComputedLineHeight::Number(1.5));
+    }
+
+    /// cascade winner の適用順 (HashMap iteration 順) が絶対化の基準に影響しない
+    /// — decision 082k の拘束事項 (絶対化を winner 適用と別 phase にした理由)。
+    /// declaration の並び順を入れ替えても `padding: 2em` は同じ 40px になる。
+    #[test]
+    fn absolutization_is_independent_of_declaration_order() {
+        let a = cascade_doc("", "div", Some("font-size: 20px; padding: 2em"));
+        let b = cascade_doc("", "div", Some("padding: 2em; font-size: 20px"));
+        assert_eq!(a.padding, Sides::all(ComputedLengthPercentage::Px(40.0)));
+        assert_eq!(a.padding, b.padding);
+        assert_eq!(a.font_size, b.font_size);
     }
 
     #[test]
@@ -994,9 +1473,8 @@ mod tests {
         // LineHeight::Number(1.5) が届く。parser → PropertyValue::LineHeight
         // → apply_value → ComputedValues の end-to-end 疎通 smoke
         // (font-size / color と同じ inherited property pattern)。
-        use crate::property::LineHeight;
         let cv = cascade_doc("", "p", Some("line-height: 1.5"));
-        assert_eq!(cv.line_height, LineHeight::Number(1.5));
+        assert_eq!(cv.line_height, ComputedLineHeight::Number(1.5));
     }
 
     #[test]
@@ -1005,16 +1483,15 @@ mod tests {
         // は自身 rule 無しでも parent の LineHeight::Number(1.5) を継承する
         // (unitless number の specified-value inherit special behavior は
         // cascade static side では raw value 継承として観測される)。
-        use crate::property::LineHeight;
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", Some("line-height: 1.5"));
         let span = doc.push_element(p, "span", None);
         let tree = build_rule_tree(&doc);
         let r = cascade(&doc, &tree).expect("cascade Ok");
-        assert_eq!(r.computed[p].line_height, LineHeight::Number(1.5));
+        assert_eq!(r.computed[p].line_height, ComputedLineHeight::Number(1.5));
         assert_eq!(
             r.computed[span].line_height,
-            LineHeight::Number(1.5),
+            ComputedLineHeight::Number(1.5),
             "line-height must be inherited (§5.1 Yes)"
         );
     }
@@ -1728,15 +2205,15 @@ mod tests {
         // Verification #7: `padding: 10px 5%` → 2-value form expansion で
         // top/bottom=10px, left/right=5% を pin。counter-* / content / string_set
         // wire-through pattern を踏襲 (s85 / m5.1 / m5.3、raikiri-spike-0vv.6)。
-        use crate::property::{Length, Sides};
+        use crate::property::Sides;
         let cv = cascade_doc("", "div", Some("padding: 10px 5%"));
         assert_eq!(
             cv.padding,
             Sides {
-                top: Length::Px(10.0),
-                right: Length::Percent(5.0),
-                bottom: Length::Px(10.0),
-                left: Length::Percent(5.0),
+                top: ComputedLengthPercentage::Px(10.0),
+                right: ComputedLengthPercentage::Percent(5.0),
+                bottom: ComputedLengthPercentage::Px(10.0),
+                left: ComputedLengthPercentage::Percent(5.0),
             }
         );
     }
@@ -1744,7 +2221,7 @@ mod tests {
     #[test]
     fn padding_longhand_wired_through_cascade_from_inline_style() {
         // 4 longhand も端から端まで届くことを smoke で pin。
-        use crate::property::{Length, Sides};
+        use crate::property::Sides;
         let cv = cascade_doc(
             "",
             "div",
@@ -1753,10 +2230,10 @@ mod tests {
         assert_eq!(
             cv.padding,
             Sides {
-                top: Length::Px(1.0),
-                right: Length::Px(2.0),
-                bottom: Length::Px(3.0),
-                left: Length::Px(4.0),
+                top: ComputedLengthPercentage::Px(1.0),
+                right: ComputedLengthPercentage::Px(2.0),
+                bottom: ComputedLengthPercentage::Px(3.0),
+                left: ComputedLengthPercentage::Px(4.0),
             }
         );
     }
@@ -1767,7 +2244,7 @@ mod tests {
         // 自身 rule がなく padding は initial (Sides::all(0px))。
         // 37n sibling: string_set / content / display / counter-* / running_templates
         // の non-inheritance test と同じ shape。
-        use crate::property::{Length, Sides};
+        use crate::property::Sides;
         let mut doc = TestDoc::new();
         let div = doc.push_element(0, "div", Some("padding: 10px 5%"));
         let span = doc.push_element(div, "span", None);
@@ -1777,14 +2254,17 @@ mod tests {
         assert_eq!(
             r.computed[div].padding,
             Sides {
-                top: Length::Px(10.0),
-                right: Length::Percent(5.0),
-                bottom: Length::Px(10.0),
-                left: Length::Percent(5.0),
+                top: ComputedLengthPercentage::Px(10.0),
+                right: ComputedLengthPercentage::Percent(5.0),
+                bottom: ComputedLengthPercentage::Px(10.0),
+                left: ComputedLengthPercentage::Percent(5.0),
             }
         );
         // 子は inherit_from 経由で initial (Sides::all(0px)) — 継承しない。
-        assert_eq!(r.computed[span].padding, Sides::all(Length::Px(0.0)));
+        assert_eq!(
+            r.computed[span].padding,
+            Sides::all(ComputedLengthPercentage::Px(0.0))
+        );
     }
 
     #[test]
@@ -1792,10 +2272,10 @@ mod tests {
         // spec §6.1 negative reject の end-to-end smoke: cascade まで負値が
         // 到達せず、initial (0) が残る。property.rs test は parse_value 単体
         // の drop、本 test は rule.rs → cascade の一貫 drop を pin。
-        use crate::property::{Length, Sides};
+        use crate::property::Sides;
         let cv = cascade_doc("", "div", Some("padding-top: -5px"));
         // 負値 → declaration drop → padding は cascade 未 override → initial 0 が残る。
-        assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
+        assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
     }
 
     #[test]
@@ -1806,10 +2286,10 @@ mod tests {
         // (margin 0vv.5 で実装済みの parse-time expansion model に migtate:
         // raikiri-spike-5nc)
         let cv = cascade_doc("", "div", Some("padding: 10px; padding-top: 5px"));
-        assert_eq!(cv.padding.top, Length::Px(5.0));
-        assert_eq!(cv.padding.right, Length::Px(10.0));
-        assert_eq!(cv.padding.bottom, Length::Px(10.0));
-        assert_eq!(cv.padding.left, Length::Px(10.0));
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(5.0));
+        assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
+        assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(10.0));
     }
 
     #[test]
@@ -1818,10 +2298,10 @@ mod tests {
         // → 全 side = 10px (後段 shorthand が top も含めて上書き)。
         // (raikiri-spike-5nc)
         let cv = cascade_doc("", "div", Some("padding-top: 5px; padding: 10px"));
-        assert_eq!(cv.padding.top, Length::Px(10.0));
-        assert_eq!(cv.padding.right, Length::Px(10.0));
-        assert_eq!(cv.padding.bottom, Length::Px(10.0));
-        assert_eq!(cv.padding.left, Length::Px(10.0));
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(10.0));
+        assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
+        assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(10.0));
     }
 
     // ── margin longhand + shorthand cascade (CSS Box 3 §3.1/§3.2、raikiri-spike-0vv.5) ──
@@ -1836,10 +2316,10 @@ mod tests {
         assert_eq!(
             cv.margin,
             Sides {
-                top: LengthOrAuto::Length(Length::Px(10.0)),
-                right: LengthOrAuto::Length(Length::Px(20.0)),
-                bottom: LengthOrAuto::Length(Length::Px(10.0)),
-                left: LengthOrAuto::Length(Length::Px(20.0)),
+                top: ComputedLengthPercentageOrAuto::Px(10.0),
+                right: ComputedLengthPercentageOrAuto::Px(20.0),
+                bottom: ComputedLengthPercentageOrAuto::Px(10.0),
+                left: ComputedLengthPercentageOrAuto::Px(20.0),
             }
         );
     }
@@ -1849,10 +2329,10 @@ mod tests {
         // longhand direct path — `<p style="margin-left: 2em">` → left = Em(2)、
         // 他 side は initial (0)。
         let cv = cascade_doc("", "p", Some("margin-left: 2em"));
-        assert_eq!(cv.margin.left, LengthOrAuto::Length(Length::Em(2.0)));
-        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(0.0)));
-        assert_eq!(cv.margin.right, LengthOrAuto::Length(Length::Px(0.0)));
-        assert_eq!(cv.margin.bottom, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(32.0));
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(0.0));
     }
 
     #[test]
@@ -1861,10 +2341,10 @@ mod tests {
         // 慣用形) が全 4 side に正しく落ちる。cascade で LengthOrAuto::Auto の
         // wire-through を pin。
         let cv = cascade_doc("", "div", Some("margin: 0px auto"));
-        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(0.0)));
-        assert_eq!(cv.margin.right, LengthOrAuto::Auto);
-        assert_eq!(cv.margin.bottom, LengthOrAuto::Length(Length::Px(0.0)));
-        assert_eq!(cv.margin.left, LengthOrAuto::Auto);
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Auto);
     }
 
     #[test]
@@ -1879,10 +2359,10 @@ mod tests {
         // される regression) になる。expand_shorthand が parse-time で longhand
         // 化するため per-key の cascade winner が top=10 に確定する。
         let cv = cascade_doc("", "div", Some("margin: 0px; margin-top: 10px"));
-        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(10.0)));
-        assert_eq!(cv.margin.right, LengthOrAuto::Length(Length::Px(0.0)));
-        assert_eq!(cv.margin.bottom, LengthOrAuto::Length(Length::Px(0.0)));
-        assert_eq!(cv.margin.left, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(10.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(0.0));
     }
 
     #[test]
@@ -1892,10 +2372,10 @@ mod tests {
         // expand_shorthand の 4 longhand 展開が source_order を保持したまま
         // cascade に届き、後段が per-side 勝ち抜けする証拠。
         let cv = cascade_doc("", "div", Some("margin-top: 10px; margin: 0px"));
-        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(0.0)));
-        assert_eq!(cv.margin.right, LengthOrAuto::Length(Length::Px(0.0)));
-        assert_eq!(cv.margin.bottom, LengthOrAuto::Length(Length::Px(0.0)));
-        assert_eq!(cv.margin.left, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(0.0));
     }
 
     #[test]
@@ -1910,11 +2390,11 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(
             r.computed[div].margin,
-            Sides::all(LengthOrAuto::Length(Length::Px(20.0)))
+            Sides::all(ComputedLengthPercentageOrAuto::Px(20.0))
         );
         assert_eq!(
             r.computed[span].margin,
-            Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
+            Sides::all(ComputedLengthPercentageOrAuto::Px(0.0)),
             "margin must not inherit from parent"
         );
     }
@@ -1925,7 +2405,7 @@ mod tests {
         // で受理されることを pin (parser 側 pin `margin_side_accepts_negative_length`
         // と complementary、下流 layout 側で negative 意味付け)。
         let cv = cascade_doc("", "div", Some("margin-top: -5px"));
-        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(-5.0)));
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(-5.0));
     }
 
     // ── height wire-through (CSS Sizing 3 §3.1.1、raikiri-spike-0vv.11) ──
@@ -1937,7 +2417,7 @@ mod tests {
         // PropertyValue::Height → apply_value → ComputedValues の end-to-end
         // 疎通 smoke (0vv.5 margin / 0vv.6 padding wire-through pattern を踏襲)。
         let cv = cascade_doc("", "div", Some("height: 100px"));
-        assert_eq!(cv.height, LengthOrAuto::Length(Length::Px(100.0)));
+        assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Px(100.0));
     }
 
     #[test]
@@ -1948,7 +2428,7 @@ mod tests {
         // parser の auto ident branch と apply_value の LengthOrAuto::Auto 経路
         // が疎通することを保証)。
         let cv = cascade_doc("", "div", Some("height: auto"));
-        assert_eq!(cv.height, LengthOrAuto::Auto);
+        assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Auto);
     }
 
     #[test]
@@ -1956,7 +2436,7 @@ mod tests {
         // `height: 50%` の end-to-end 疎通。resolve (containing block % → 実寸)
         // は下流責務、cascade は authored value をそのまま保持することを pin。
         let cv = cascade_doc("", "div", Some("height: 50%"));
-        assert_eq!(cv.height, LengthOrAuto::Length(Length::Percent(50.0)));
+        assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Percent(50.0));
     }
 
     #[test]
@@ -1973,11 +2453,11 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(
             r.computed[div].height,
-            LengthOrAuto::Length(Length::Px(100.0))
+            ComputedLengthPercentageOrAuto::Px(100.0)
         );
         assert_eq!(
             r.computed[span].height,
-            LengthOrAuto::Auto,
+            ComputedLengthPercentageOrAuto::Auto,
             "height must not inherit from parent (§3.1.1 Inherited: no)"
         );
     }
@@ -1991,7 +2471,7 @@ mod tests {
         let cv = cascade_doc("", "div", Some("height: -10px"));
         assert_eq!(
             cv.height,
-            LengthOrAuto::Auto,
+            ComputedLengthPercentageOrAuto::Auto,
             "negative height declaration must be dropped; height stays at initial"
         );
     }
@@ -2003,7 +2483,7 @@ mod tests {
         // regression / bypass 経路の safety net として `target.margin = sides` の
         // atomic 上書きを持つ。本 test は arm を直接叩いて `unreachable!` 化 or
         // 空 arm regression を捕捉する canary。
-        let mut cv = ComputedValues::initial();
+        let mut cv = SpecifiedValues::initial();
         let sides = Sides {
             top: LengthOrAuto::Length(Length::Px(1.0)),
             right: LengthOrAuto::Length(Length::Px(2.0)),
@@ -2034,10 +2514,10 @@ mod tests {
             "div",
             Some("border: 1px solid red; border-top-width: 10px"),
         );
-        assert_eq!(cv.border.top.width, Length::Px(10.0));
-        assert_eq!(cv.border.right.width, Length::Px(1.0));
-        assert_eq!(cv.border.bottom.width, Length::Px(1.0));
-        assert_eq!(cv.border.left.width, Length::Px(1.0));
+        assert_eq!(cv.border.top.width, ComputedLength(10.0));
+        assert_eq!(cv.border.right.width, ComputedLength(1.0));
+        assert_eq!(cv.border.bottom.width, ComputedLength(1.0));
+        assert_eq!(cv.border.left.width, ComputedLength(1.0));
         // style / color は shorthand から expand された値のまま (per-side longhand
         // として cascade winner に居座る)。
         let red = CssColor {
@@ -2066,10 +2546,10 @@ mod tests {
             "div",
             Some("border-top-width: 10px; border: 1px solid red"),
         );
-        assert_eq!(cv.border.top.width, Length::Px(1.0));
-        assert_eq!(cv.border.right.width, Length::Px(1.0));
-        assert_eq!(cv.border.bottom.width, Length::Px(1.0));
-        assert_eq!(cv.border.left.width, Length::Px(1.0));
+        assert_eq!(cv.border.top.width, ComputedLength(1.0));
+        assert_eq!(cv.border.right.width, ComputedLength(1.0));
+        assert_eq!(cv.border.bottom.width, ComputedLength(1.0));
+        assert_eq!(cv.border.left.width, ComputedLength(1.0));
     }
 
     #[test]
@@ -2090,14 +2570,18 @@ mod tests {
             a: 255,
         };
         // parent は shorthand から expand された per-side 値。
-        assert_eq!(r.computed[div].border.top.width, Length::Px(5.0));
+        assert_eq!(r.computed[div].border.top.width, ComputedLength(5.0));
         assert_eq!(r.computed[div].border.top.style, BorderStyle::Solid);
         assert_eq!(r.computed[div].border.top.color, BorderColor::Resolved(red));
         // child は inherit_from が initial に戻す (non-inherited)。
         assert_eq!(
             r.computed[span].border,
-            Sides::all(Border {
-                width: Length::Px(3.0),
+            Sides::all(ComputedBorder {
+                // specified initial は `medium` (3px) だが border-style が
+                // `none` なので computed width は 0px (CSS Backgrounds 3 §3.3
+                // "Computed value: … zero if the border style is `none` or
+                // `hidden`")。
+                width: ComputedLength::ZERO,
                 style: BorderStyle::None,
                 color: BorderColor::CurrentColor,
             }),
@@ -2112,7 +2596,7 @@ mod tests {
         // regression / bypass 経路の safety net として `target.border = sides` の
         // atomic 上書きを持つ。本 test は arm を直接叩いて `unreachable!` 化 or
         // 空 arm regression を捕捉する canary (margin safety net と対称)。
-        let mut cv = ComputedValues::initial();
+        let mut cv = SpecifiedValues::initial();
         // raikiri-spike-0vv.17: `BorderColor::CurrentColor` を明示 fixture 化
         // (safety net arm は payload の shape を保持することを pin する)。
         let sides = Sides {
@@ -2148,7 +2632,7 @@ mod tests {
         // → ComputedValues の end-to-end 疎通 smoke (sibling padding/margin と
         // 同 pattern)。raikiri-spike-0vv.10。
         let cv = cascade_doc("", "div", Some("width: 100px"));
-        assert_eq!(cv.width, LengthOrAuto::Length(Length::Px(100.0)));
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(100.0));
     }
 
     #[test]
@@ -2157,7 +2641,7 @@ mod tests {
         // `inherit_from` initial も Auto なので identity になるが、cascade path が
         // 実際に通っていることを pin (silent no-op regression 検知)。
         let cv = cascade_doc("", "div", Some("width: auto"));
-        assert_eq!(cv.width, LengthOrAuto::Auto);
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
     }
 
     #[test]
@@ -2165,7 +2649,7 @@ mod tests {
         // 未指定時は `ComputedValues::initial()` の Auto を維持 (spec §3.1.1
         // "Initial: auto"、non-inherited なので parent も影響しない)。
         let cv = cascade_doc("", "div", None);
-        assert_eq!(cv.width, LengthOrAuto::Auto);
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
     }
 
     #[test]
@@ -2184,10 +2668,13 @@ mod tests {
         // parent (div) は width: 100px を受け取る
         assert_eq!(
             result.computed[parent].width,
-            LengthOrAuto::Length(Length::Px(100.0))
+            ComputedLengthPercentageOrAuto::Px(100.0)
         );
         // child (span) は non-inherited のため initial (Auto) を保持
-        assert_eq!(result.computed[child].width, LengthOrAuto::Auto);
+        assert_eq!(
+            result.computed[child].width,
+            ComputedLengthPercentageOrAuto::Auto
+        );
     }
 
     #[test]

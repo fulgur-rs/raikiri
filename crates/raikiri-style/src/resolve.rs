@@ -33,10 +33,19 @@
 //! **順序は型で縛られていない。** 引数はただの [`ComputedLength`] なので、winner を
 //! 1 つ適用するたびに本 module の関数を呼び、親の font-size や phase 2 前の中間値を
 //! 基準として渡す誤実装は**普通に書ける** (型検査は通る)。すなわち decision 082k の
-//! 拘束事項は現時点では**規約として**守るものであり、下の doctest がその規約である。
-//! 型 level の enforcement (phase-typed context、あるいは `OwnFontSize` /
-//! `ParentFontSize` newtype) は呼び出しループを書く Phase 2
-//! (bd raikiri-spike-zls8) の判断に委ねる。
+//! 拘束事項は本 module では**規約として**守るものであり、下の doctest がその規約
+//! である。
+//!
+//! **cascade pipeline 側は規約に頼っていない** (bd raikiri-spike-zls8 の判断):
+//! 絶対化の入口を [`SpecifiedValues::finalize`] /
+//! [`SpecifiedValues::finalize_as_root`] の 2 つに絞り、phase 3 を
+//! `parent_font_size` を受け取らない private 関数に閉じ込めてある。
+//! `OwnFontSize` / `ParentFontSize` newtype による型 level の enforcement は
+//! **採らなかった** — 守る距離が各 entry point の 2 行しかない一方、本 module の
+//! public 関数とその doctest 全体の signature churn を伴うため。
+//!
+//! [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
+//! [`SpecifiedValues::finalize_as_root`]: crate::specified::SpecifiedValues::finalize_as_root
 //!
 //! # 想定される 3 phase の呼び出し順序
 //!
@@ -359,11 +368,12 @@ pub enum ComputedLineHeight {
 /// 層の [`Border`] と同じ判断。
 ///
 /// ```
-/// use raikiri_style::{ComputedLength, ComputedValues, ResolveContext, resolve_border};
+/// use raikiri_style::{ComputedLength, ResolveContext, SpecifiedValues, resolve_border};
 /// use raikiri_style::property::BorderStyle;
 ///
 /// let ctx = ResolveContext::initial();
-/// let initial = ComputedValues::initial().border.top;
+/// // specified 層の initial border (computed 層の initial は下記のとおり 0px)。
+/// let initial = SpecifiedValues::initial().border.top;
 ///
 /// // specified の border-width `medium` = 3px — CSS Backgrounds 3 §3.3 は
 /// // "The thin, medium, and thick keywords are equivalent to 1px, 3px, and 5px,
@@ -453,7 +463,7 @@ impl ResolveContext {
     /// `root_font_size` は `font-size` の initial value (16px) —
     /// [`crate::computed::ComputedValues::initial`] の `font_size` と同一値。
     ///
-    /// root element 自身の `font-size: Nrem` もこの値を参照する: CSS Values 4
+    /// root element 自身の **`font-size: Nrem`** もこの値を参照する: CSS Values 4
     /// §6.1.1 "Font-relative Lengths"
     /// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) の
     /// "When used in the value of any font-* property on the element they refer
@@ -461,6 +471,15 @@ impl ResolveContext {
     /// parent element—or against the computed metrics corresponding to the
     /// initial values of the font and line-height properties, if the element has
     /// no parent." により、root element では initial value 基準になる。
+    ///
+    /// **root element の box property (`padding` 等) は対象外** — 上記条項は
+    /// "any font-* property" に限定されており、`padding: 2rem` の `rem` は素の
+    /// 定義どおり root element の computed font-size を参照する。すなわち root
+    /// element でも phase 3 では本 context ではなく
+    /// `ResolveContext::new(自 font-size)` を使う
+    /// ([`SpecifiedValues::finalize_as_root`] が実装している)。
+    ///
+    /// [`SpecifiedValues::finalize_as_root`]: crate::specified::SpecifiedValues::finalize_as_root
     pub fn initial() -> Self {
         Self {
             root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
@@ -517,14 +536,23 @@ fn pt_to_px(v: f32) -> f32 {
 ///   "Percentages: refer to parent element's font size" /
 ///   "Computed value: an absolute length"。
 ///
-/// # Caller contract (Phase 2 = bd raikiri-spike-zls8)
+/// # Caller contract
 ///
 /// **root element の `font-size` を絶対化するときは [`ResolveContext::initial`]
 /// を渡すこと。** `Rem` arm は `ctx.root_font_size` を無条件に参照するため、
 /// tree 全体で同一の `ResolveContext::new(root_font_size)` を使い回すと
 /// `html { font-size: 2rem }` が自己参照になる (CSS Values 4 §6.1.1 の
 /// parent-metrics 条項 — root には親がないので initial values 基準)。
-/// この contract 違反は本 crate の test では検出できない。
+///
+/// cascade pipeline ではこの contract を
+/// [`SpecifiedValues::finalize_as_root`] が守る (bd raikiri-spike-zls8) —
+/// end-to-end の pin は `crate::cascade` の
+/// `rem_on_root_element_resolves_against_initial_font_size` /
+/// `rem_below_root_element_resolves_against_root_computed_font_size` /
+/// `rem_on_root_element_box_property_uses_own_font_size` の 3 本。
+/// 本関数を直接呼ぶ code はこの contract を自分で守ること。
+///
+/// [`SpecifiedValues::finalize_as_root`]: crate::specified::SpecifiedValues::finalize_as_root
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ResolveContext, resolve_font_size};
@@ -586,8 +614,9 @@ pub fn resolve_font_size(
 /// spec initial 相当の保守的な値であり、fail-quiet を許すためではなく
 /// 「grammar 上ありえない入力に対する全域性」のための arm である。
 ///
-/// これは設計文書 §4.6 が Option A で削除するとしている下流 (`raikiri-dom`
-/// `layout.rs`) の catch-all とは別物である — あちらは **computed 層**の型を
+/// これは設計文書 §4.6 が Option A で削除するとした下流 (`raikiri-dom`
+/// `layout.rs`) の catch-all とは別物である (あちらは bd raikiri-spike-zls8 で
+/// 実際に削除済) — あちらは **computed 層**の型を
 /// match して `Em` / `Rem` という **spec-valid な入力**を黙って 0px に潰す
 /// (= fail-quiet)。本 arm は **specified 層の [`Length`]** に対するもので、
 /// 潰れる入力が grammar 上存在しない。
@@ -695,11 +724,19 @@ pub fn resolve_line_height(
 /// width is 0." と **used** 層で述べる一方、規範な propdef table は **computed**
 /// 層を指定している。Note は非規範なので propdef table が governs。
 ///
-/// なお `raikiri-dom` の `layout.rs` にある `used_border_width` は同じ gating を
-/// **used 層**で行っている (1 層遅い)。Phase 2 (bd raikiri-spike-zls8) が
-/// `layout.rs` を [`ComputedBorder`] consumer に migrate する際、gate が
-/// 上流 (本関数) で済んでいることを根拠に `used_border_width` を落としてよい —
-/// 本 task では別 crate なので触っていない。
+/// **本関数は element 経路における gate の単一 source である** —
+/// `raikiri-dom` の `layout.rs` は Sprint 18 まで同じ gating を used 層
+/// (`used_border_width` helper) で 1 層遅れて行っていたが、bd raikiri-spike-zls8
+/// が `layout.rs` を [`ComputedBorder`] consumer に migrate した際に削除した。
+/// 下流に同じ判定を再実装してはならない (spec 規則の二重実装は片方だけ直す
+/// drift を生む)。
+///
+/// **page 経路 (`@page`) には gate が無い** — `crate::page::cascade_page` の
+/// 結果は `PropertyValue` の bag であり本関数を通らないため、
+/// `@page { border-top-width: 5px; border-top-style: none }` は非 gating の
+/// `Px(5.0)` を public に出す。詳細と根拠は
+/// `crate::cascade::resolve_against_inherited` の対応表の caveat を参照
+/// (pre-existing gap、別 task に defer)。
 ///
 /// # CAVEAT: border-image
 ///
@@ -719,7 +756,7 @@ pub fn resolve_border(
     // `matches!` + else 枝: 未知の future `BorderStyle` variant は「visible な
     // style」側に落として specified width を透過させる (spec 上 visible な style
     // が追加されたときに width が黙って 0 にならないよう fail-safe に倒す)。
-    // `layout.rs` の `used_border_width` と同じ方針。
+    // (下流の `layout.rs` は本 gate の結果を受け取るだけで再判定しない。)
     let width = if matches!(specified.style, BorderStyle::None | BorderStyle::Hidden) {
         ComputedLength::ZERO
     } else {
@@ -814,8 +851,8 @@ pub fn lift_line_height(computed: ComputedLineHeight) -> LineHeight {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::computed::ComputedValues;
     use crate::property::Sides;
+    use crate::specified::SpecifiedValues;
 
     /// `root_font_size` = 16px の共通 context (`rem` の参照値)。
     /// `Rem` を含む test の期待値はこの 16px に依存する — 変更すると落ちる。
@@ -839,29 +876,6 @@ mod tests {
         assert_eq!(
             ResolveContext::new(ComputedLength(20.0)).root_font_size,
             ComputedLength(20.0),
-        );
-    }
-
-    /// `ResolveContext::initial()` の root font-size は
-    /// `ComputedValues::initial().font_size` と drift してはならない。
-    ///
-    /// bd raikiri-spike-jaww (b) で両者を `INITIAL_FONT_SIZE_PX` の単一 source に
-    /// 束ねたため本 assertion は現状 tautology。それでも残すのは次の 2 点を
-    /// pin するため:
-    ///
-    /// 1. 将来この単一 source が解かれて両者が独立の literal に戻った際、値の
-    ///    **乖離**を捕らえる。同値のまま書き戻す変更自体は通る — 捕らえるのは
-    ///    書き戻し「後」に生じる drift である。
-    /// 2. 左辺が `Length::Px` variant であること (単位表現の shape)。
-    ///
-    /// 値そのものが 16px であることの literal pin は test 側にある
-    /// (`computed.rs` の `initial_values_match_spec` ほか)。rule と列挙方法は
-    /// `INITIAL_FONT_SIZE_PX` の doc を参照。
-    #[test]
-    fn resolve_context_initial_matches_computed_values_initial_font_size() {
-        assert_eq!(
-            ComputedValues::initial().font_size,
-            Length::Px(ResolveContext::initial().root_font_size.0),
         );
     }
 
@@ -1117,7 +1131,7 @@ mod tests {
 
     #[test]
     fn border_absolutizes_width_and_carries_style_and_color() {
-        let mut specified = ComputedValues::initial().border.top;
+        let mut specified = SpecifiedValues::initial().border.top;
         specified.style = BorderStyle::Solid;
         let computed = resolve_border(specified, ComputedLength(20.0), &CTX);
         // specified `medium` = 3px (CSS Backgrounds 3 §3.3: thin/medium/thick は
@@ -1131,7 +1145,7 @@ mod tests {
     /// none or hidden" — style gating は **computed 層**の要求。
     #[test]
     fn border_width_is_zero_when_style_is_none_or_hidden() {
-        let mut b = ComputedValues::initial().border.top;
+        let mut b = SpecifiedValues::initial().border.top;
         b.width = Length::Px(5.0);
         for style in [BorderStyle::None, BorderStyle::Hidden] {
             b.style = style;
@@ -1149,7 +1163,7 @@ mod tests {
 
     #[test]
     fn border_em_width_resolves_against_own_font_size() {
-        let mut specified = ComputedValues::initial().border.top;
+        let mut specified = SpecifiedValues::initial().border.top;
         specified.width = Length::Em(0.5);
         specified.style = BorderStyle::Solid;
         let computed = resolve_border(specified, ComputedLength(20.0), &CTX);
@@ -1226,16 +1240,20 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // ComputedValues::initial() との initial value 整合 (drift 検出)
+    // specified initial → computed initial (per-function 粒度の drift 検出)
     // -----------------------------------------------------------------
 
-    /// non-inherited な length 系 field の initial value を絶対化した結果が
-    /// spec initial (padding/margin = 0、width/height = auto、border-width =
-    /// medium = 3px) になることを pin する。Phase 2 で `ComputedValues` の
-    /// field 型を差し替える際の期待値表になる。
+    /// specified 層の initial value を各絶対化関数に個別に通した結果が、
+    /// spec の computed initial (padding / margin = 0px、width / height = auto、
+    /// border-width = 0px、line-height = normal、font-size = 16px) になることを
+    /// pin する。
+    ///
+    /// 集約版 (`SpecifiedValues::finalize` 全体) は `crate::specified` の
+    /// `initial_specified_finalizes_to_initial_computed` が持つ。こちらは
+    /// **どの関数が壊れたか**を局所化するための per-function 粒度。
     #[test]
     fn initial_length_fields_absolutize_to_spec_initials() {
-        let initial = ComputedValues::initial();
+        let initial = SpecifiedValues::initial();
         let fs = ComputedLength(INITIAL_FONT_SIZE_PX);
 
         assert_eq!(initial.padding, Sides::all(Length::Px(0.0)));
@@ -1258,6 +1276,7 @@ mod tests {
         // CSS Backgrounds 3 §3.3 "Computed value: … zero if the border style is
         // none or hidden" — initial style は `none` なので computed width は 0px
         // (specified の `medium` = 3px は style gating で潰れる)。
+        assert_eq!(initial.border.left.width, Length::Px(3.0));
         assert_eq!(
             resolve_border(initial.border.left, fs, &CTX).width,
             ComputedLength::ZERO,

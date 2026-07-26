@@ -50,6 +50,9 @@ pub use resolve::{
     resolve_line_height,
 };
 
+pub mod specified;
+pub use specified::SpecifiedValues;
+
 pub mod cascade;
 pub use cascade::{CascadeResult, cascade};
 
