@@ -170,7 +170,8 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     // 完全構築、ComputedValues field を型付き binding できることを compile-time で verify。
     // (roborev-refine job 228 medium finding regression)
     use raikiri::{
-        Atom, CssColor, Document, Length, NetworkProvider, ParseOptions, Url, build_cascaded, parse,
+        Atom, ComputedLength, CssColor, Document, Length, NetworkProvider, ParseOptions,
+        PropertyValue, Url, build_cascaded, parse,
     };
 
     // NetworkProvider trait を dyn 経由で名指し可能なことを compile-time で確認。
@@ -193,7 +194,11 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
 
     // ComputedValues field を型付き binding で受け、value 型が名指しできることを verify。
     let _color: CssColor = computed.color;
-    let _font_size: Length = computed.font_size;
+    // bd raikiri-spike-zls8: `font_size` は computed 層の `ComputedLength`。
+    let _font_size: ComputedLength = computed.font_size;
+    // specified 層の `Length` は `PropertyValue` の payload 型として引き続き
+    // Consumer から名指しできる必要がある (umbrella re-export list の rationale)。
+    let _specified_font_size: PropertyValue = PropertyValue::FontSize(Length::Px(12.0));
     let font_family: &Vec<Atom> = &computed.font_family;
     // 実 assertion — initial font-family は Atom("serif") (raikiri-style::ComputedValues::initial)。
     assert!(

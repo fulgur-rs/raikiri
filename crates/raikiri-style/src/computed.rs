@@ -12,9 +12,12 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    Border, BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, DisplayValue, Length,
-    LengthOrAuto, LineHeight, Sides, TextAlign, empty_content_list, empty_counter_entries,
-    empty_string_set_entries,
+    BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, DisplayValue, Sides,
+    TextAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
+};
+use crate::resolve::{
+    ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedLineHeight,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
@@ -63,6 +66,22 @@ pub struct RunningTemplate {
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing)。
 ///
+/// # 層 (bd decision raikiri-spike-082k)
+///
+/// 本 struct が保持するのは **computed value 層**の値だけである。length を運ぶ
+/// field は [`crate::resolve`] の `Computed*` 型で、`em` / `rem` / `pt` は既に
+/// px へ絶対化されている (CSS Cascade 5 §7.2
+/// <https://www.w3.org/TR/css-cascade-5/#inheriting> が「inheritance が運ぶのは
+/// computed value である」と規定するため、この絶対化は inheritance より前に
+/// 済んでいなければならない)。`<percentage>` は property ごとに扱いが異なる —
+/// 各 field doc を参照。
+///
+/// 絶対化前の staging 表現は [`crate::specified::SpecifiedValues`]。cascade
+/// winner の適用はそちらに対して行い、[`SpecifiedValues::finalize`] が本 struct
+/// を produce する。
+///
+/// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
+///
 /// `#[non_exhaustive]` により future property (box-shadow 等) の追加が
 /// non-breaking。
 #[non_exhaustive]
@@ -80,8 +99,13 @@ pub struct ComputedValues {
     pub font_family: Vec<Atom>,
     /// `font-size`。**inherited**、initial: 16px (spec は `medium`、実 px は
     /// UA 依存)。CSS Fonts 4 §2.5 "Font size: the font-size property"
-    /// <https://www.w3.org/TR/css-fonts-4/#propdef-font-size>。
-    pub font_size: Length,
+    /// <https://www.w3.org/TR/css-fonts-4/#propdef-font-size> は
+    /// "Computed value: an absolute length" と規定する。
+    ///
+    /// 型は [`ComputedLength`] — `em` (親基準) / `rem` (root 基準) / `<percentage>`
+    /// (親基準) / `pt` は cascade の phase 2
+    /// ([`crate::resolve::resolve_font_size`]) で px へ絶対化済み。
+    pub font_size: ComputedLength,
     /// `font-weight`。inherited、initial: 400 (normal)。
     ///
     /// **常に resolve 済みの absolute weight** (`[1, 1000]`)。specified value 側の
@@ -103,16 +127,23 @@ pub struct ComputedValues {
     /// 型を `u16` のまま保つことは下流契約でもある: `raikiri-dom` の layout が
     /// `cv.font_weight as f32` で読み戻す (raikiri-spike-5iy + 17s8)。
     pub font_weight: u16,
-    /// `line-height`。**inherited**、initial: [`LineHeight::Normal`]。
+    /// `line-height`。**inherited**、initial: [`ComputedLineHeight::Normal`]。
     /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
     /// <https://www.w3.org/TR/css-inline-3/#line-height-property>。
     ///
-    /// `LineHeight::Number(n)` (unitless multiplier) と `LineHeight::Length(l)`
-    /// は下流 (paint) で font-size context に対して resolve される。number 変種は
-    /// spec §5.1 の "child inherits the specified value" special behavior により
-    /// **cascade は raw value を保持** し、child の font-size で再乗算する責務を
-    /// 下流に残す (raikiri-spike-0vv.9)。
-    pub line_height: LineHeight,
+    /// spec の "Computed value: the specified keyword, a number, or a computed
+    /// `<length>` value" に 1:1 対応する 3 variant
+    /// ([`ComputedLineHeight`])。**computed 層に percentage は存在しない** —
+    /// `<percentage>` は宣言要素の computed font-size に対して cascade の
+    /// phase 3 で絶対化される (§5.1 "Percentages: computed relative to 1em")。
+    ///
+    /// [`ComputedLineHeight::Number`] (unitless multiplier) は computed 層でも
+    /// number のまま残る。これは §5.1 の "child inherits the specified value"
+    /// special behavior に対応し、child の font-size で再乗算する責務を下流
+    /// (paint) に残す (raikiri-spike-0vv.9)。逆に
+    /// [`ComputedLineHeight::Length`] は宣言要素で確定した px であり、
+    /// child は**再解決せずそのまま継承する**。
+    pub line_height: ComputedLineHeight,
     /// `display`。**non-inherited**、initial: `DisplayValue::Inline`
     /// (CSS Display 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>)。
     /// Sprint 12 scope: `block` / `inline` / `inline-block` / `none`
@@ -204,7 +235,7 @@ pub struct ComputedValues {
     /// (raikiri-spike-0vv.8)
     pub text_align: TextAlign,
     /// `padding` — 4-side box-model padding。**non-inherited**、initial:
-    /// `Sides::all(Length::Px(0.0))` (CSS Box 3 §6.1 initial "0")。
+    /// `Sides::all(ComputedLengthPercentage::Px(0.0))` (CSS Box 3 §6.1 initial "0")。
     ///
     /// - Physical longhands: [`padding-top`](https://www.w3.org/TR/css-box-3/#propdef-padding-top) /
     ///   `padding-right` / `padding-bottom` / `padding-left`。
@@ -212,19 +243,21 @@ pub struct ComputedValues {
     ///
     /// Value grammar: `<length-percentage [0,∞]>` — non-negative constraint は
     /// parse-time enforce ([`crate::property::PropertyValue::PaddingTop`] doc 参照)。
-    /// [`Sides<Length>`] は 5 [`Length`] variant (Px / Em / Rem / Percent / Pt) の
-    /// authored value を保持、resolve は下流 (raikiri-dom apply_computed_to_style
-    /// bridge、font-size context / containing block % / 96px-per-in DPI) 責務。
+    /// "Computed value: a computed `<length-percentage>` value" のとおり
+    /// `Px` / `Percent` の 2 形態 ([`ComputedLengthPercentage`]) を取る。
+    /// **`<percentage>` は computed 層に残る** — 参照値 (containing block width)
+    /// が used value 層でしか決まらないため (CSS Cascade 5 §4.5
+    /// <https://www.w3.org/TR/css-cascade-5/#used>、raikiri では taffy 委譲)。
     /// (raikiri-spike-0vv.6)
-    pub padding: Sides<Length>,
+    pub padding: Sides<ComputedLengthPercentage>,
     /// `margin` 4-side quad (top / right / bottom / left)。**non-inherited**、
-    /// initial: `0` on each side (`Sides::all(LengthOrAuto::Length(Length::Px(0.0)))`).
+    /// initial: `0` on each side (`Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))`).
     ///
-    /// Author CSS の box model 中核 property。raikiri-style は cascade static side
-    /// に留まり、`LengthOrAuto::Length(Em/Rem/Percent/Pt)` の resolve は下流
-    /// (raikiri-dom `apply_computed_to_style` bridge、future task) 責務 —
-    /// font-size context / containing block % / DPI 変換で `taffy::LengthPercentageAuto`
-    /// 相当に翻訳される。
+    /// Author CSS の box model 中核 property。`em` / `rem` / `pt` は cascade の
+    /// phase 3 で px に絶対化済み。`<percentage>` と `auto` は computed 層に残り
+    /// (spec "Computed value: the keyword `auto` or a computed
+    /// `<length-percentage>` value")、containing block に対する解決と余白分配は
+    /// used value 層 = 下流 (taffy) の責務。
     ///
     /// # Primary sources (§ title + anchor)
     ///
@@ -237,12 +270,18 @@ pub struct ComputedValues {
     ///   "Value: `<'margin-top'>{1,4}`", 1/2/3/4 value expansion rules.
     ///
     /// raikiri-spike-0vv.5。
-    pub margin: Sides<LengthOrAuto>,
+    pub margin: Sides<ComputedLengthPercentageOrAuto>,
     /// `border` — 4-side box-model border (width / style / color × 4 side)。
-    /// **non-inherited**、initial: 各 side `Border { width: Length::Px(3.0),
-    /// style: BorderStyle::None, color: BorderColor::CurrentColor }`
-    /// (`medium` UA-defined recommendation × `none` initial × `currentcolor`
-    /// keyword、CSS Backgrounds 3 §5 initial 群、raikiri-spike-0vv.17)。
+    /// **non-inherited**、initial: 各 side `ComputedBorder { width:
+    /// ComputedLength::ZERO, style: BorderStyle::None, color:
+    /// BorderColor::CurrentColor }`。
+    ///
+    /// specified の initial は width = `medium` (= 3px) だが、**computed 層では
+    /// 0px** になる — CSS Backgrounds 3 §3.3
+    /// <https://www.w3.org/TR/css-backgrounds-3/#border-width> の propdef が
+    /// "Computed value: absolute length, snapped as a border width; zero if the
+    /// border style is `none` or `hidden`" と規定し、initial の border-style が
+    /// `none` であるため ([`crate::resolve::resolve_border`] が gate する)。
     ///
     /// - Physical longhands: [`border-top-width`](https://www.w3.org/TR/css-backgrounds-3/#border-width) /
     ///   `border-top-style` / `border-top-color` × 4 side。
@@ -250,11 +289,10 @@ pub struct ComputedValues {
     ///
     /// # Value semantics
     ///
-    /// - `Sides<Border>: Copy` により per-node write は bit-copy (Border は
-    ///   f32/enum/BorderColor payload の POD 集合、BorderColor も Copy)。
-    /// - `width` は [`Length`] variant (Px / Em / Rem / Pt) を保持。resolve は
-    ///   下流責務 (font-size context / DPI 変換)。`<percentage>` は spec grammar
-    ///   に含まれないため Length::Percent 変種は流入しない (advisor calibration
+    /// - `Sides<ComputedBorder>: Copy` により per-node write は bit-copy
+    ///   (ComputedBorder は f32/enum/BorderColor payload の POD 集合)。
+    /// - `width` は [`ComputedLength`] (px)。`<percentage>` は spec grammar に
+    ///   含まれないため computed 層でも length のみで足りる (advisor calibration
     ///   verified、[`crate::property::PropertyValue::BorderTopWidth`] doc 参照)。
     /// - `color` は cascade static side で [`BorderColor`] enum として保持し、
     ///   spec `currentcolor` keyword vs. 明示 `<color>` の specified-value
@@ -283,10 +321,10 @@ pub struct ComputedValues {
     ///   [`border shorthand`](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)。
     ///
     /// (raikiri-spike-0vv.12)
-    pub border: Sides<Border>,
+    pub border: Sides<ComputedBorder>,
     /// `width` — preferred physical horizontal size (writing-mode neutral な
     /// physical property、vertical writing mode では block axis に対応)。
-    /// **non-inherited**、initial: [`LengthOrAuto::Auto`] (CSS Sizing 3 §3.1.1
+    /// **non-inherited**、initial: [`ComputedLengthPercentageOrAuto::Auto`] (CSS Sizing 3 §3.1.1
     /// "Preferred Size Properties"
     /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
     ///
@@ -297,18 +335,16 @@ pub struct ComputedValues {
     /// 負値は spec grammar `[0,∞]` violation として parse-time drop
     /// ([`crate::property::PropertyValue::Width`] doc + `parse_width` 参照)。
     ///
-    /// [`LengthOrAuto`] は 0vv.5 で margin longhand 用に導入した既存 shape (共通
-    /// 型として本 property からも reuse、詳細は [`LengthOrAuto`] doc 参照)。
-    /// `Length` variant の resolve (Em/Rem/Percent/Pt) は下流 (raikiri-dom
-    /// `apply_computed_to_style` bridge、future task) 責務 — font-size context /
-    /// containing block % / DPI 変換で `taffy::Style::size.width` 相当に翻訳
-    /// される。`Auto` は CSS Sizing 3 の automatic size calculation
-    /// (containing block width から margin/border/padding を差し引いた値を
-    /// used-value に採る) として下流 layout で解決する — margin `auto` の余白
-    /// 分配とは意味が異なる。(raikiri-spike-0vv.10)
-    pub width: LengthOrAuto,
+    /// spec の "Computed value: as specified, with `<length-percentage>` values
+    /// computed" のとおり、length は px へ絶対化され percentage は残る
+    /// ([`ComputedLengthPercentageOrAuto`]、margin と同型)。`Auto` は CSS
+    /// Sizing 3 の automatic size calculation (containing block width から
+    /// margin/border/padding を差し引いた値を used-value に採る) として下流
+    /// layout で解決する — margin `auto` の余白分配とは意味が異なる。
+    /// (raikiri-spike-0vv.10)
+    pub width: ComputedLengthPercentageOrAuto,
     /// `height` — preferred vertical size。**non-inherited**、initial:
-    /// `LengthOrAuto::Auto` (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
+    /// `ComputedLengthPercentageOrAuto::Auto` (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
     /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>、
     /// spec 明記 "Initial: auto", "Inherited: no")。
     ///
@@ -318,12 +354,9 @@ pub struct ComputedValues {
     /// (g04 (b)) として parser 段で silent drop
     /// (`parse_height` doc 参照)。
     ///
-    /// [`LengthOrAuto`] は sibling [`Self::width`] と同 shape を reuse
-    /// (37n sibling、payload 型は共通)。resolve
-    /// (`LengthOrAuto::Length(Percent(...))` → containing block % 換算、
-    /// `LengthOrAuto::Auto` の実 layout 高さ計算) は下流 (raikiri-dom
-    /// `apply_computed_to_style` bridge、future task) 責務 — 本 crate は
-    /// cascade static side に留まり raw specified value を保持する。
+    /// [`ComputedLengthPercentageOrAuto`] は sibling [`Self::width`] と同 shape を
+    /// reuse (37n sibling、payload 型は共通)。percentage の containing block 換算と
+    /// `Auto` の実 layout 高さ計算は used value 層 = 下流 (taffy) 責務。
     ///
     /// # Primary source
     ///
@@ -333,7 +366,7 @@ pub struct ComputedValues {
     ///   max-content | fit-content(`<length-percentage [0,∞]>`)",
     ///   "Initial: auto", "Applies to: all elements except non-replaced
     ///   inlines", "Inherited: no", "Percentages: relative to containing block".
-    pub height: LengthOrAuto,
+    pub height: ComputedLengthPercentageOrAuto,
     /// `box-sizing`。**non-inherited**、initial: [`BoxSizing::ContentBox`]
     /// (CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
     /// <https://www.w3.org/TR/css-sizing-3/#box-sizing>、"Initial: `content-box`"
@@ -369,11 +402,11 @@ impl ComputedValues {
             // (raikiri-spike-0vv.7)。
             background_color: CssColor::TRANSPARENT,
             font_family: vec![Atom::from("serif")],
-            font_size: Length::Px(INITIAL_FONT_SIZE_PX),
+            font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
             font_weight: 400,
             // CSS Inline 3 §5.1: line-height initial は `normal` (font metrics
             // ascent+descent 相当を paint 側で resolve、raikiri-spike-0vv.9)。
-            line_height: LineHeight::Normal,
+            line_height: ComputedLineHeight::Normal,
             display: DisplayValue::Inline,
             // CSS Lists 3 §3: counter-* initial is empty list (raikiri-spike-s85)
             // d9y.2: shared empty Arc slot — per-node allocation 回避
@@ -395,32 +428,39 @@ impl ComputedValues {
             // CSS Text 3 §6.1: text-align initial is `start` (raikiri-spike-0vv.8)
             text_align: TextAlign::Start,
             // CSS Box 3 §6.1: padding initial = 0 (all 4 sides、raikiri-spike-0vv.6)。
-            padding: Sides::all(Length::Px(0.0)),
+            padding: Sides::all(ComputedLengthPercentage::Px(0.0)),
             // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
             // で全 4 side に spread)。raikiri-spike-0vv.5。
-            margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
+            margin: Sides::all(ComputedLengthPercentageOrAuto::Px(0.0)),
             // CSS Backgrounds 3 §5.1/§5.2/§5.3: border initial は各 side で
-            // width=medium (3px)、style=none、color=`currentcolor` keyword
+            // style=none、color=`currentcolor` keyword
             // ([`BorderColor::CurrentColor`]、raikiri-spike-0vv.12 seed +
             // raikiri-spike-0vv.17 で `CssColor::BLACK` placeholder から
             // enum variant へ格上げ、spec §5.3 initial 契約 fidelity)。
-            border: Sides::all(Border {
-                width: Length::Px(3.0),
+            //
+            // width は specified では `medium` (3px) だが **computed 層では 0px** —
+            // §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width> の
+            // "Computed value: … zero if the border style is `none` or `hidden`"
+            // による (bd raikiri-spike-zls8、gate 実装は
+            // `crate::resolve::resolve_border`)。specified 側の initial は
+            // `crate::specified::SpecifiedValues::initial` が持つ。
+            border: Sides::all(ComputedBorder {
+                width: ComputedLength::ZERO,
                 style: BorderStyle::None,
                 color: BorderColor::CurrentColor,
             }),
             // CSS Sizing 3 §3.1.1: width initial は `auto` (raikiri-spike-0vv.10)。
-            width: LengthOrAuto::Auto,
+            width: ComputedLengthPercentageOrAuto::Auto,
             // CSS Sizing 3 §3.1.1: height initial は `auto` (raikiri-spike-0vv.11)。
-            height: LengthOrAuto::Auto,
+            height: ComputedLengthPercentageOrAuto::Auto,
             // CSS Sizing 3 §3.3: box-sizing initial は `content-box`
             // (raikiri-spike-0vv.13)。
             box_sizing: BoxSizing::ContentBox,
         }
     }
 
-    /// 親 node の computed values から child node の 「inheritance walk 開始値」
-    /// を生成する。
+    /// 親 node の computed values から child node の「declaration が 1 つも無い
+    /// 場合の computed values」を生成する。
     ///
     /// - **inherited** property は親からコピー
     /// - **non-inherited** property は `initial()` と同じ値を保持
@@ -431,81 +471,42 @@ impl ComputedValues {
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing)。
     ///
-    /// 新 property を追加する際は分類に応じてこの struct 直下の該当行を追加する
-    /// (inherited なら parent からのコピー、non-inherited なら初期値を直接指定)。
-    /// initial 値との drift を避けるため、対応する `initial()` の値も同時に更新
-    /// すること。
-    /// (spec §M1.4a、raikiri-spike-m1.22 (display) / raikiri-spike-0vv.7
-    /// (background-color) / raikiri-spike-0vv.8 (text-align) /
-    /// raikiri-spike-0vv.9 (line-height) / raikiri-spike-0vv.6 (padding) /
-    /// raikiri-spike-0vv.13 (box-sizing))
+    /// # 実装 (bd raikiri-spike-zls8 以降は delegation)
+    ///
+    /// cascade pipeline は本 method を使わない — winner の適用が staging 層
+    /// ([`SpecifiedValues`]) に移ったため、`resolve_inheritance` は
+    /// [`SpecifiedValues::inherit_from`] → [`SpecifiedValues::finalize`] を通る。
+    /// 本 method はそこへ delegate する thin wrapper であり、**分類の実装は
+    /// [`SpecifiedValues::inherit_from`] の 1 箇所だけに存在する** (新 property
+    /// 追加時に 2 箇所を更新する必要はない)。
+    ///
+    /// delegation が恒等である根拠 — [`SpecifiedValues::inherit_from`] の出力に
+    /// **font-relative な値は 1 つも含まれない**:
+    ///
+    /// - inherited な length 系 (`font_size` / `line_height`) は
+    ///   [`lift_font_size`](crate::resolve::lift_font_size) /
+    ///   [`lift_line_height`](crate::resolve::lift_line_height) が `Px` /
+    ///   keyword / number にしか写さず、いずれも絶対化の**不動点**である。
+    /// - non-inherited は全て initial value (`Px(0)` / `Auto` / `medium`+`none`)。
+    ///
+    /// 帰結として `finalize` は `em` / `rem` / `%` の arm を一度も踏まないので、
+    /// **`ResolveContext` の中身は結果に影響しない** (`rem` の参照値が現れない)。
+    /// 下で `parent.font_size` を渡しているのは形式上の要請にすぎず、
+    /// `ResolveContext::initial()` でも同じ値になる。pin:
+    /// `inherit_from_is_independent_of_resolve_context`。
+    ///
+    /// `border` だけは「specified の initial (`medium` = 3px) が computed 層で
+    /// style gating により 0px に潰れる」変換を経るが、これは
+    /// [`Self::initial`] の `border` と同じ値であり non-inherited の要求どおり。
+    ///
+    /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
+    /// [`SpecifiedValues::inherit_from`]: crate::specified::SpecifiedValues::inherit_from
+    /// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
     pub fn inherit_from(parent: &Self) -> Self {
-        // 直接 struct literal で初期化する — Self::initial() 経由だと
-        // font_family の Vec を 1 度 allocate → drop してから parent から
-        // clone し直すことになり無駄 (roborev job 217 medium 対応)。
-        Self {
-            // inherited (親からコピー)
-            color: parent.color,
-            font_family: parent.font_family.clone(),
-            font_size: parent.font_size,
-            font_weight: parent.font_weight,
-            // inherited (CSS Text 3 §6.1、raikiri-spike-0vv.8)。TextAlign は Copy。
-            text_align: parent.text_align,
-            // inherited (CSS Inline 3 §5.1 "Inheritance: Yes"、raikiri-spike-0vv.9)。
-            // LineHeight は `Copy` (Length と同 shape) なので clone 不要。
-            line_height: parent.line_height,
-            // non-inherited (CSS Backgrounds 3 §2.2、initial: `transparent`、
-            // raikiri-spike-0vv.7)
-            background_color: CssColor::TRANSPARENT,
-            // non-inherited (initial 値、CSS §9.2.4 initial value of display)
-            display: DisplayValue::Inline,
-            // non-inherited (CSS Lists 3 §3、raikiri-spike-s85)。
-            // d9y.2: shared empty Arc slot (`empty_counter_entries`)、per-node
-            // allocation 回避。inherit_from は child stack entry のたびに走る
-            // ため、`Vec::new()` を直に書くと 1-doc あたり 3 × N 個の Vec
-            // struct が生まれる (advisor calibration、d9y.1 content/string_set
-            // pattern と同 rationale)。
-            counter_reset: empty_counter_entries(),
-            counter_increment: empty_counter_entries(),
-            counter_set: empty_counter_entries(),
-            // non-inherited (CSS Content 3 §2.1、raikiri-spike-m5.1)。
-            // d9y.1: shared empty Arc slot (`empty_content_list`)、per-node
-            // allocation 回避。inherit_from は child stack entry のたびに走る
-            // ため、Arc::new(Vec::new()) を直に書くと 1-doc あたり O(N) 個の
-            // small heap alloc regression になる (advisor calibration)。
-            content: empty_content_list(),
-            // non-inherited (CSS GCPM 3 §3.1、raikiri-spike-m5.3)。
-            // d9y.1: same shared-empty-Arc pattern。
-            string_set: empty_string_set_entries(),
-            // non-inherited (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4)
-            running_templates: Vec::new(),
-            // non-inherited (CSS Box 3 §6.1、raikiri-spike-0vv.6)。
-            // `Sides<Length>: Copy` により per-node write は bit-copy。
-            padding: Sides::all(Length::Px(0.0)),
-            // non-inherited (CSS Box 3 §3.1 "Inherited: no")。initial 値と drift
-            // しないよう `Self::initial()` と同 shape で 0 spread。raikiri-spike-0vv.5。
-            margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
-            // non-inherited (CSS Backgrounds 3 §5、raikiri-spike-0vv.12)。initial
-            // 値と drift しないよう `Self::initial()` と同 shape で明示。`Sides<Border>:
-            // Copy` により per-node write は bit-copy。raikiri-spike-0vv.17: color
-            // は `BorderColor::CurrentColor` (spec §5.3 initial)。
-            border: Sides::all(Border {
-                width: Length::Px(3.0),
-                style: BorderStyle::None,
-                color: BorderColor::CurrentColor,
-            }),
-            // non-inherited (CSS Sizing 3 §3.1.1 "Inherited: no"、initial: `auto`)。
-            // 親が具体 width を持っていても child は Auto に戻る。raikiri-spike-0vv.10。
-            width: LengthOrAuto::Auto,
-            // non-inherited (CSS Sizing 3 §3.1.1 "Inherited: no"、
-            // raikiri-spike-0vv.11)。`Self::initial()` と同 shape で `Auto`。
-            // `LengthOrAuto: Copy` により per-node write は bit-copy。
-            height: LengthOrAuto::Auto,
-            // non-inherited (CSS Sizing 3 §3.3 "Inherited: no"、raikiri-spike-0vv.13)。
-            // BoxSizing は Copy、initial 値を直接指定 (親からコピーしない — Verification #5
-            // "parent border-box + child unset = child ContentBox" の pin)。
-            box_sizing: BoxSizing::ContentBox,
-        }
+        crate::specified::SpecifiedValues::inherit_from(parent).finalize(
+            parent.font_size,
+            &crate::resolve::ResolveContext::new(parent.font_size),
+        )
     }
 }
 
@@ -526,10 +527,10 @@ mod tests {
         // **この 16.0 は意図的な literal** — `INITIAL_FONT_SIZE_PX` 参照に
         // 書き換えると同 const の誤編集を検出できなくなる (bd raikiri-spike-jaww、
         // 同 const の doc も参照)。
-        assert_eq!(cv.font_size, Length::Px(16.0));
+        assert_eq!(cv.font_size, ComputedLength(16.0));
         assert_eq!(cv.font_weight, 400);
         // CSS Inline 3 §5.1: line-height initial は `normal` (raikiri-spike-0vv.9)
-        assert_eq!(cv.line_height, LineHeight::Normal);
+        assert_eq!(cv.line_height, ComputedLineHeight::Normal);
         assert_eq!(cv.display, DisplayValue::Inline);
         // CSS Lists 3 §3: counter-* initial は empty list (raikiri-spike-s85)
         assert!(cv.counter_reset.is_empty());
@@ -544,27 +545,37 @@ mod tests {
         // CSS Text 3 §6.1 (raikiri-spike-0vv.8): text-align initial は `start`。
         assert_eq!(cv.text_align, TextAlign::Start);
         // CSS Box 3 §6.1 (raikiri-spike-0vv.6): padding initial = 0 (all 4 sides)。
-        assert_eq!(cv.padding, Sides::all(Length::Px(0.0)));
+        assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
         // CSS Box 3 §3.1 (raikiri-spike-0vv.5): margin initial は 0 on each side。
-        assert_eq!(cv.margin, Sides::all(LengthOrAuto::Length(Length::Px(0.0))));
+        assert_eq!(
+            cv.margin,
+            Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))
+        );
         // CSS Backgrounds 3 §5 (raikiri-spike-0vv.12 seed、raikiri-spike-0vv.17
-        // で currentcolor へ格上げ): border initial は各 side {width: medium
-        // (3px), style: none, color: `currentcolor` (BorderColor::CurrentColor)}。
+        // で currentcolor へ格上げ): border initial は各 side {style: none,
+        // color: `currentcolor` (BorderColor::CurrentColor)}。
         // hazard case 2 (author `color:red` + border-color 省略 → cascade static
         // side が initial 直行) の enum coverage — used-value resolution は
         // paint scope (bd raikiri-spike-q7qf) で `color` property に対して確定。
+        //
+        // width は **0px** — specified の initial は `medium` (3px) だが CSS
+        // Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>
+        // の "Computed value: … zero if the border style is `none` or `hidden`"
+        // により computed 層で潰れる (bd raikiri-spike-zls8)。specified 側の
+        // initial は `crate::specified` の
+        // `initial_border_width_is_gated_to_zero_at_computed_layer` が pin する。
         assert_eq!(
             cv.border,
-            Sides::all(Border {
-                width: Length::Px(3.0),
+            Sides::all(ComputedBorder {
+                width: ComputedLength(0.0),
                 style: BorderStyle::None,
                 color: BorderColor::CurrentColor,
             })
         );
         // CSS Sizing 3 §3.1.1 (raikiri-spike-0vv.10): width initial は `auto`。
-        assert_eq!(cv.width, LengthOrAuto::Auto);
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
         // CSS Sizing 3 §3.1.1 (raikiri-spike-0vv.11): height initial は `auto`。
-        assert_eq!(cv.height, LengthOrAuto::Auto);
+        assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Auto);
         // CSS Sizing 3 §3.3 (raikiri-spike-0vv.13): box-sizing initial は `content-box`。
         assert_eq!(cv.box_sizing, BoxSizing::ContentBox);
     }
@@ -577,7 +588,7 @@ mod tests {
         assert_clone::<ComputedValues>();
     }
 
-    // ── display + inherit_from (M1.4a、raikiri-spike-m1.22) ─────
+    // ── display initial (M1.4a、raikiri-spike-m1.22) ─────
 
     #[test]
     fn initial_display_is_inline() {
@@ -585,17 +596,21 @@ mod tests {
         assert_eq!(ComputedValues::initial().display, DisplayValue::Inline);
     }
 
-    #[test]
-    fn inherit_from_copies_inherited_fields() {
-        let parent = ComputedValues {
+    // ── inherit_from (delegation の pin、bd raikiri-spike-zls8 §8.2 debt D1) ──
+
+    /// 全 field が initial から離れた親 fixture。
+    ///
+    /// inherited / non-inherited のどちらの分岐が壊れても検出できるよう、
+    /// **全 field を non-initial 値**にしてある (non-inherited が親から漏れれば
+    /// initial との比較で落ち、inherited が initial に落ちれば親との比較で落ちる)。
+    fn non_initial_parent() -> ComputedValues {
+        ComputedValues {
             color: CssColor {
                 r: 200,
                 g: 100,
                 b: 50,
                 a: 255,
             },
-            // 0vv.7: non-inherited、literal fixture では明示 (child 側でも同じ initial に
-            // 戻ることを確認する downstream test は inherit_from_leaves_background_color_at_initial 参照)。
             background_color: CssColor {
                 r: 10,
                 g: 20,
@@ -603,278 +618,110 @@ mod tests {
                 a: 255,
             },
             font_family: vec![Atom::from("sans-serif")],
-            font_size: Length::Px(24.0),
+            font_size: ComputedLength(24.0),
             font_weight: 700,
-            line_height: LineHeight::Number(1.5),
+            line_height: ComputedLineHeight::Length(ComputedLength(30.0)),
             display: DisplayValue::Block,
-            // d9y.2: counter-* は Arc<Vec<..>>、fixture literal は Arc::new(vec![..]) で包む。
             counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
             counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
             counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
-            content: empty_content_list(),
-            string_set: empty_string_set_entries(),
-            running_templates: Vec::new(),
-            // raikiri-spike-0vv.8: text-align は inherited、fixture では non-initial 値
-            // (Center) を親に持たせて child が Start (initial) ではなく Center を
-            // 引き継ぐことを assert する。
+            content: Arc::new(vec![ContentComponent::Literal(SmolStr::new("x"))]),
+            string_set: Arc::new(vec![(SmolStr::new("s"), Vec::new())]),
+            running_templates: vec![RunningTemplate {
+                name: SmolStr::new("hdr"),
+            }],
             text_align: TextAlign::Center,
-            padding: Sides::all(Length::Px(0.0)),
-            // 0vv.5: parent に explicit margin を持たせ、child が initial に落ちる
-            // ことを他 non-inherited fixture (下の inherit_from_leaves_* 系) で pin。
-            margin: Sides::all(LengthOrAuto::Length(Length::Px(12.0))),
-            // 0vv.12: parent に non-initial border を持たせ、child が initial (medium
-            // none currentcolor) に落ちることを他 non-inherited fixture
-            // (inherit_from_leaves_border_at_initial) で pin。raikiri-spike-0vv.17:
-            // color は `BorderColor::Resolved` variant で明示 color を保持。
-            border: Sides::all(Border {
-                width: Length::Px(5.0),
+            padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
+            margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
+            border: Sides::all(ComputedBorder {
+                width: ComputedLength(5.0),
                 style: BorderStyle::Solid,
-                color: BorderColor::Resolved(CssColor {
-                    r: 128,
-                    g: 128,
-                    b: 128,
-                    a: 255,
-                }),
+                color: BorderColor::Resolved(CssColor::BLACK),
             }),
-            // 0vv.10: 同様 parent に explicit width を持たせ、child が initial
-            // (Auto) に落ちる pin は inherit_from_leaves_width_at_initial 参照。
-            width: LengthOrAuto::Length(Length::Px(200.0)),
-            // 0vv.11: 同じく non-inherited fixture で parent に explicit value を
-            // 持たせ、child が initial (Auto) に落ちることを pin
-            // (inherit_from_leaves_height_at_initial 参照)。
-            height: LengthOrAuto::Length(Length::Px(200.0)),
-            // 0vv.13: parent に non-initial (BorderBox) を持たせ、child が initial
-            // (ContentBox) に落ちることは `inherit_from_leaves_box_sizing_at_initial`
-            // で pin する (Verification #5、CSS Sizing 3 §3.3 "Inherited: no")。
+            width: ComputedLengthPercentageOrAuto::Px(200.0),
+            height: ComputedLengthPercentageOrAuto::Px(200.0),
             box_sizing: BoxSizing::BorderBox,
-        };
+        }
+    }
+
+    /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
+    /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
+    ///
+    /// field 単位で全 20 field を検査する — delegation は `finalize` を通るので、
+    /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
+    /// `resolve_border` の gating が消える) もここに現れる。
+    #[test]
+    fn inherit_from_copies_inherited_and_resets_non_inherited() {
+        let parent = non_initial_parent();
         let child = ComputedValues::inherit_from(&parent);
-        // inherited: 親からコピー
+        let initial = ComputedValues::initial();
+
+        // inherited — 親からコピー (CSS Cascade 5 §7.2: inheritance が運ぶのは
+        // computed value)。
         assert_eq!(child.color, parent.color);
         assert_eq!(child.font_family, parent.font_family);
         assert_eq!(child.font_size, parent.font_size);
         assert_eq!(child.font_weight, parent.font_weight);
-        // CSS Text 3 §6.1: text-align は inherited (raikiri-spike-0vv.8)。
-        assert_eq!(child.text_align, TextAlign::Center);
-        // CSS Inline 3 §5.1: line-height は inherited (raikiri-spike-0vv.9)。
-        // parent `Number(1.5)` は raw specified value のまま child へ渡る
-        // (§5.1 special behavior、resolve は下流で child の font-size × 1.5)。
-        assert_eq!(child.line_height, LineHeight::Number(1.5));
-    }
+        assert_eq!(child.text_align, parent.text_align);
+        // `line-height` の computed `<length>` は子で **再解決されない**
+        // (CSS Inline 3: percentage は宣言要素で絶対化済)。
+        assert_eq!(child.line_height, parent.line_height);
 
-    #[test]
-    fn inherit_from_copies_line_height_length_variant() {
-        // §5.1 のもう一方の branch: `<length-percentage>` の inherit も raw payload
-        // をそのまま child に伝える (Percent は "element's own font-size" 相当を
-        // 下流 paint が resolve、cascade は raw を保持)。
-        let parent = ComputedValues {
-            line_height: LineHeight::Length(Length::Px(24.0)),
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
-        assert_eq!(child.line_height, LineHeight::Length(Length::Px(24.0)));
-    }
-
-    #[test]
-    fn inherit_from_leaves_counter_properties_at_initial() {
-        // CSS Lists 3 §3: counter-reset / counter-increment / counter-set は
-        // non-inherited → 親が値を持っていても child は empty (initial) となる
-        // (raikiri-spike-s85)
-        // d9y.2: 親 fixture の counter-* は Arc<Vec<..>> になったため Arc::new でラップ。
-        let parent = ComputedValues {
-            counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
-            counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
-            counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
+        // non-inherited — initial に戻る。
+        assert_eq!(child.background_color, initial.background_color);
+        assert_eq!(child.display, initial.display);
         assert!(child.counter_reset.is_empty());
         assert!(child.counter_increment.is_empty());
         assert!(child.counter_set.is_empty());
-    }
-
-    #[test]
-    fn inherit_from_leaves_background_color_at_initial() {
-        // CSS Backgrounds 3 §2.2: background-color は non-inherited (spec 明記
-        // "Inheritance: no")。親が red でも child は initial (transparent) となる。
-        // 37n sibling pattern (display / counter-* / content / string-set /
-        // position の non-inheritance test 群を踏襲、raikiri-spike-0vv.7)。
-        let parent = ComputedValues {
-            background_color: CssColor {
-                r: 255,
-                g: 0,
-                b: 0,
-                a: 255,
-            },
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
-        assert_eq!(child.background_color, CssColor::TRANSPARENT);
-    }
-
-    #[test]
-    fn inherit_from_leaves_display_at_initial() {
-        // display は non-inherited → 親が Block でも child は Inline (initial)
-        let parent = ComputedValues {
-            display: DisplayValue::Block,
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
-        assert_eq!(child.display, DisplayValue::Inline);
-    }
-
-    #[test]
-    fn inherit_from_leaves_padding_at_initial() {
-        // CSS Box 3 §6.1: padding は non-inherited。親が任意 padding を
-        // 持っていても child は initial (`Sides::all(Length::Px(0.0))`)。
-        // 37n sibling: display / counter-* / string_set / content non-inheritance
-        // test を踏襲 (raikiri-spike-0vv.6)。
-        let parent = ComputedValues {
-            padding: Sides {
-                top: Length::Px(10.0),
-                right: Length::Percent(5.0),
-                bottom: Length::Em(1.0),
-                left: Length::Pt(12.0),
-            },
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
-        assert_eq!(child.padding, Sides::all(Length::Px(0.0)));
-    }
-
-    #[test]
-    fn inherit_from_leaves_margin_at_initial() {
-        // CSS Box 3 §3.1 "Inherited: no" — 親が margin を持っていても child は
-        // initial (0 on each side) に戻る (raikiri-spike-0vv.5)。37n sibling:
-        // display / counter-* / content / string_set / running_templates と同 shape。
-        let parent = ComputedValues {
-            margin: Sides {
-                top: LengthOrAuto::Length(Length::Px(10.0)),
-                right: LengthOrAuto::Auto,
-                bottom: LengthOrAuto::Length(Length::Percent(50.0)),
-                left: LengthOrAuto::Length(Length::Em(2.0)),
-            },
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
-        assert_eq!(
-            child.margin,
-            Sides::all(LengthOrAuto::Length(Length::Px(0.0)))
-        );
-    }
-
-    #[test]
-    fn inherit_from_leaves_border_at_initial() {
-        // CSS Backgrounds 3 §5 "Inherited: no" — 親が border を持っていても
-        // child は initial (各 side {medium, none, currentcolor}) に戻る
-        // (raikiri-spike-0vv.12 seed、raikiri-spike-0vv.17 で `BorderColor`
-        // enum へ格上げ)。37n sibling: display / counter-* / margin /
-        // padding / running_templates と同 shape。hazard case 2 の
-        // inheritance-path coverage: parent が author 明示 red border を
-        // 持っていても child の cascade static side は `CurrentColor` に戻る
-        // (paint scope は child 自身の `color` property で resolve する)。
-        let parent = ComputedValues {
-            border: Sides {
-                top: Border {
-                    width: Length::Px(10.0),
-                    style: BorderStyle::Solid,
-                    color: BorderColor::Resolved(CssColor {
-                        r: 255,
-                        g: 0,
-                        b: 0,
-                        a: 255,
-                    }),
-                },
-                right: Border {
-                    width: Length::Em(2.0),
-                    style: BorderStyle::Dashed,
-                    color: BorderColor::Resolved(CssColor::BLACK),
-                },
-                bottom: Border {
-                    width: Length::Px(1.0),
-                    style: BorderStyle::Dotted,
-                    color: BorderColor::Resolved(CssColor::TRANSPARENT),
-                },
-                left: Border {
-                    width: Length::Pt(12.0),
-                    style: BorderStyle::Double,
-                    // Parent が明示 currentcolor を書いた state も 1 side で
-                    // fixture 化し、child が initial (CurrentColor) に戻ることを
-                    // pin (variant coverage — Resolved vs CurrentColor 両方が
-                    // inherit_from を通過)。
-                    color: BorderColor::CurrentColor,
-                },
-            },
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
-        assert_eq!(
-            child.border,
-            Sides::all(Border {
-                width: Length::Px(3.0),
-                style: BorderStyle::None,
-                color: BorderColor::CurrentColor,
-            })
-        );
-    }
-
-    #[test]
-    fn inherit_from_leaves_width_at_initial() {
-        // CSS Sizing 3 §3.1.1 "Inherited: no" — 親が width: 100px を持っていても
-        // child は initial (Auto) に戻る (raikiri-spike-0vv.10)。37n sibling:
-        // display / counter-* / content / string_set / running_templates /
-        // padding / margin と同 shape の non-inheritance pin。
-        let parent = ComputedValues {
-            width: LengthOrAuto::Length(Length::Px(100.0)),
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
-        assert_eq!(child.width, LengthOrAuto::Auto);
-    }
-
-    #[test]
-    fn inherit_from_leaves_height_at_initial() {
-        // CSS Sizing 3 §3.1.1 "Inherited: no" — 親が height を持っていても child
-        // は initial (`LengthOrAuto::Auto`) に戻る (raikiri-spike-0vv.11)。37n
-        // sibling: display / counter-* / content / string_set / running_templates /
-        // padding / margin と同 shape。
-        //
-        // Verification 6 (task doc) の中核 assertion。
-        let parent = ComputedValues {
-            height: LengthOrAuto::Length(Length::Px(100.0)),
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
-        assert_eq!(child.height, LengthOrAuto::Auto);
-    }
-
-    #[test]
-    fn inherit_from_leaves_box_sizing_at_initial() {
-        // CSS Sizing 3 §3.3 "Inherited: no" — 親が box-sizing: border-box を
-        // 持っていても child は initial (`BoxSizing::ContentBox`) に戻る
-        // (raikiri-spike-0vv.13 Verification #5)。37n sibling: display /
-        // counter-* / content / string_set / padding / margin と同 shape。
-        let parent = ComputedValues {
-            box_sizing: BoxSizing::BorderBox,
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
-        assert_eq!(child.box_sizing, BoxSizing::ContentBox);
-    }
-
-    #[test]
-    fn inherit_from_leaves_running_templates_at_initial() {
-        // CSS GCPM 3 §1.2.1: position property は non-inherited (CSS Positioned
-        // Layout 由来)。親が running(hdr) を持っていても child は initial (empty)。
-        // 37n sibling pattern (string_set / content / counter-* non-inheritance
-        // test を踏襲、raikiri-spike-m5.4)。
-        let parent = ComputedValues {
-            running_templates: vec![RunningTemplate {
-                name: SmolStr::new("hdr"),
-            }],
-            ..ComputedValues::initial()
-        };
-        let child = ComputedValues::inherit_from(&parent);
+        assert!(child.content.is_empty());
+        assert!(child.string_set.is_empty());
         assert!(child.running_templates.is_empty());
+        assert_eq!(child.padding, initial.padding);
+        assert_eq!(child.margin, initial.margin);
+        // specified の initial border-width は `medium` (3px) だが computed 層では
+        // style gating で 0px (CSS Backgrounds 3 §3.3)。delegation が
+        // `resolve_border` を通っている証拠でもある。
+        assert_eq!(child.border, initial.border);
+        assert_eq!(child.border.top.width, ComputedLength::ZERO);
+        assert_eq!(child.width, initial.width);
+        assert_eq!(child.height, initial.height);
+        assert_eq!(child.box_sizing, initial.box_sizing);
+    }
+
+    /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
+    ///
+    /// [`ComputedValues::inherit_from`] の doc が主張する invariant の pin —
+    /// `SpecifiedValues::inherit_from` の出力に font-relative な値が 1 つも
+    /// 含まれないので、`finalize` は `rem` arm を踏まず context を参照しない。
+    /// 将来 lift 側が `Px` 以外を返すようになったら (= 不動点性が壊れたら)
+    /// ここが落ちて delegation の前提が崩れたことを知らせる。
+    #[test]
+    fn inherit_from_is_independent_of_resolve_context() {
+        use crate::resolve::ResolveContext;
+        use crate::specified::SpecifiedValues;
+
+        let parent = non_initial_parent();
+        let expected = ComputedValues::inherit_from(&parent);
+        for root_font_size in [
+            ComputedLength(1.0),
+            ComputedLength(16.0),
+            ComputedLength(999.0),
+        ] {
+            let via_staging = SpecifiedValues::inherit_from(&parent)
+                .finalize(parent.font_size, &ResolveContext::new(root_font_size));
+            assert_eq!(
+                via_staging, expected,
+                "inherit_from must not depend on the rem basis ({root_font_size:?})"
+            );
+        }
+    }
+
+    /// 親が initial なら child も initial (inheritance chain の terminate)。
+    #[test]
+    fn inherit_from_initial_parent_yields_initial() {
+        assert_eq!(
+            ComputedValues::inherit_from(&ComputedValues::initial()),
+            ComputedValues::initial(),
+        );
     }
 }

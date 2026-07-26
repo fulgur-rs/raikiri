@@ -413,26 +413,34 @@ pub struct PageCascadeResult {
     /// Winning `(key, value)` per property, after the resolution pass described
     /// below.
     ///
-    /// `font-weight`'s `bolder` / `lighter` relative keywords are resolved
-    /// against the inherited weight here, so **no relative font-weight**
-    /// sentinel reaches the consumer. The inheritance parent is the
-    /// `root_style` argument of [`cascade_page`]; CSS Paged Media 3 §6 "Page
-    /// Properties" (<https://www.w3.org/TR/css-page-3/#page-properties>) states
-    /// that "both the page context and the margin context have a computed value
-    /// for every property" and that "The page context inherits from the root
-    /// element" (raikiri-spike-ygl0).
+    /// Two properties are resolved to computed-equivalent values here; the
+    /// inheritance parent is the `root_style` argument of [`cascade_page`].
+    /// CSS Paged Media 3 §6 "Page Properties"
+    /// (<https://www.w3.org/TR/css-page-3/#page-properties>) states that "both
+    /// the page context and the margin context have a computed value for every
+    /// property" and that "The page context inherits from the root element".
     ///
-    /// **Values other than `font-weight` are still specified values.**
-    /// Resolution that needs more than the inheritance parent's computed values
-    /// is out of scope for this pass and the value passes through unchanged.
-    /// Known cases:
+    /// - `font-weight` — `bolder` / `lighter` are resolved against the
+    ///   inherited weight, so **no relative font-weight sentinel** reaches the
+    ///   consumer (raikiri-spike-ygl0).
+    /// - `font-size` — `em` / `rem` / `%` are absolutized against the root
+    ///   element's computed font-size, so the value is always
+    ///   [`Length::Px`](crate::property::Length::Px). §6 verbatim: "When used on
+    ///   the font-size property in the page context, they are relative to the
+    ///   font-size of the root element." (raikiri-spike-zls8).
+    ///
+    /// **Other values are still specified values.** Resolution that needs more
+    /// than the inheritance parent's computed values is out of scope for this
+    /// pass and the value passes through unchanged. Known cases:
     ///
     /// - [`Length::Em`](crate::property::Length::Em) / `Rem` / `Percent` on the
-    ///   box properties — `em` is relative to "the font associated with their
-    ///   context" (§6 above) and the page context's own font-size can come from
-    ///   a sibling `@page` declaration, so `root_style` alone does not determine
-    ///   it; `Percent` needs the containing block. Tracked: bd
-    ///   raikiri-spike-082k.
+    ///   box properties and `line-height` — `em` is relative to "the font
+    ///   associated with their context" (§6 above) and the page context's own
+    ///   font-size can come from a sibling `@page` declaration, so `root_style`
+    ///   alone does not determine it; `Percent` needs the containing block.
+    ///   The element path solves this with a separate absolutization phase
+    ///   (`crate::specified::SpecifiedValues::finalize`); the page path has no
+    ///   equivalent phase yet. Tracked: bd raikiri-spike-082k.
     /// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) —
     ///   CSS Text 3 §6.1
     ///   (<https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent>)
@@ -725,6 +733,7 @@ mod tests {
 
     use super::*;
     use crate::property::{CssColor, FontWeightValue, Length, LengthOrAuto, TextAlign};
+    use crate::resolve::ComputedLength;
 
     const RED: CssColor = CssColor {
         r: 255,
@@ -1224,6 +1233,73 @@ mod tests {
         assert_eq!(lighter(700), 400, "550 <= w < 750 row");
         assert_eq!(lighter(800), 700, "750 <= w < 900 row");
         assert_eq!(lighter(1000), 700, "900 <= w row");
+    }
+
+    // ── font-size in the page context (bd raikiri-spike-zls8) ──────────────
+    //
+    // CSS Page 3 §6 "Page Properties"
+    // <https://www.w3.org/TR/css-page-3/#page-properties> verbatim: "When used
+    // on the font-size property in the page context, they are relative to the
+    // font-size of the root element." `resolve_against_inherited` resolves it
+    // so the public `declarations` map carries an absolute `Length::Px`.
+
+    /// Cascade `@page { font-size: <decl> }` and return the resolved px value.
+    ///
+    /// Panics unless the winner is an already-absolutized `Length::Px` — a
+    /// font-relative unit surviving into the public map is the same class of
+    /// regression as ygl0's `FontWeightValue::Bolder`.
+    fn page_font_size_px(decl: &str, root: Option<&ComputedValues>) -> f32 {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&format!("@page {{ font-size: {decl} }}"), Origin::Author);
+        let result = cascade_page(&tree, &PageContextQuery::default(), root);
+        match result.declarations.get(&PropertyKey::FontSize) {
+            Some(PropertyValue::FontSize(Length::Px(v))) => *v,
+            Some(other) => panic!(
+                "an unresolved font-size value reached the public \
+                 PageCascadeResult.declarations — expected FontSize(Px(_)), \
+                 got {other:?}"
+            ),
+            None => panic!(
+                "no font-size winner in PageCascadeResult.declarations for \
+                 `@page {{ font-size: {decl} }}`"
+            ),
+        }
+    }
+
+    /// Root [`ComputedValues`] with `font-size: px`, everything else initial.
+    fn root_with_font_size(px: f32) -> ComputedValues {
+        ComputedValues {
+            font_size: ComputedLength(px),
+            ..ComputedValues::initial()
+        }
+    }
+
+    #[test]
+    fn cascade_page_font_size_resolves_against_root_computed_font_size() {
+        let root = root_with_font_size(20.0);
+        // §6: em on font-size in the page context is relative to the root
+        // element's font-size.
+        assert_eq!(page_font_size_px("2em", Some(&root)), 40.0);
+        // CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>: rem is
+        // the computed font-size of the root element — the same basis here.
+        assert_eq!(page_font_size_px("1.5rem", Some(&root)), 30.0);
+        // Derived (not stated by §6): CSS Fonts 4 §2.5 "Percentages: refer to
+        // parent element's font size" + §6 "The page context inherits from the
+        // root element."
+        assert_eq!(page_font_size_px("150%", Some(&root)), 30.0);
+        // Absolute units are context-independent.
+        assert_eq!(page_font_size_px("18px", Some(&root)), 18.0);
+        assert_eq!(page_font_size_px("12pt", Some(&root)), 16.0);
+    }
+
+    #[test]
+    fn cascade_page_font_size_without_root_style_uses_initial_16px() {
+        // `root_style: None` = the L3 legacy exception (initial values). §6 also
+        // records the matching conformance exception for em/ex on font-size:
+        // "an implementation that treats em and ex on font-size as relative to
+        // the initial value is also conformant".
+        assert_eq!(page_font_size_px("2em", None), 32.0);
+        assert_eq!(page_font_size_px("2rem", None), 32.0);
     }
 
     #[test]

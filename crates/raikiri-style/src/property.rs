@@ -52,7 +52,7 @@ pub(crate) fn empty_string_set_entries() -> Arc<Vec<StringSetEntry>> {
 ///
 /// `raikiri-spike-d9y.2` (SEC HIGH cascade memory DoS fix) の副作用 helper。
 /// counter-* は non-inherited (CSS Lists 3 §3、`counter-reset` を含む全 3 property)
-/// のため、`ComputedValues::inherit_from` が child stack entry のたびに empty 値で
+/// のため、`SpecifiedValues::inherit_from` が child stack entry のたびに empty 値で
 /// 初期化する。生 `Vec::new()` を使うと per-node で 3 個の `Vec` struct
 /// (24 bytes × 3) が生まれ N-node document あたり O(N) の overhead になるため、
 /// [`empty_content_list`] / [`empty_string_set_entries`] と同じ `OnceLock` 保持の
@@ -331,6 +331,26 @@ impl<T: Clone> Sides<T> {
     }
 }
 
+impl<T> Sides<T> {
+    /// 4 side を独立に写像する。
+    ///
+    /// specified 層の `Sides<Length>` / `Sides<LengthOrAuto>` / `Sides<Border>` を
+    /// computed 層の対応型へ絶対化する phase 3
+    /// ([`crate::specified::SpecifiedValues::finalize`]) で使う。side ごとに
+    /// 4 行書き下すのと等価だが、side の取り違え (`right` に `bottom` を書く等)
+    /// を構造的に防ぐ。
+    ///
+    /// `pub(crate)` — 現状 consumer は crate 内の絶対化のみ。
+    pub(crate) fn map<U>(self, mut f: impl FnMut(T) -> U) -> Sides<U> {
+        Sides {
+            top: f(self.top),
+            right: f(self.right),
+            bottom: f(self.bottom),
+            left: f(self.left),
+        }
+    }
+}
+
 /// `border-style` の value — spec `<line-style>` production の 10 keyword。
 ///
 /// CSS Backgrounds 3 §5.2 "Line Patterns: the border-style properties"
@@ -409,8 +429,8 @@ pub enum BorderStyle {
 ///
 /// # なぜ cascade static side で enum 保持するか (Option A / B の A 採用理由)
 ///
-/// `ComputedValues::initial` と `ComputedValues::inherit_from` (crate::computed
-/// module) は node の自 `color` declaration が cascade `apply_value` で書き込まれる
+/// `SpecifiedValues::initial` と `SpecifiedValues::inherit_from`
+/// (crate::specified module) は node の自 `color` declaration が cascade `apply_value` で書き込まれる
 /// **前** に border 全 side を構築する。author `<div style="color:red">` で
 /// border-color 省略 (initial 直行) の hazard case では、border-color が
 /// `apply_value` を一切通らないため cascade 段で node 自 color を捕捉できない
@@ -2085,27 +2105,37 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     (v >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
-/// `font-size: <length>` を parse する。
+/// `font-size: <length-percentage [0,∞]>` を parse する。
 ///
-/// Grammar: `<'font-size'> = <length> | <percentage> | ...` (CSS Fonts 4
-/// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>) のうち、本 milestone は
-/// **non-negative `<length>` unit の `px` のみ**を受理 (g04 category (b) milestone
-/// subset、em/rem/pt/% は Author CSS seed [`parse_length_value`] helper 側で認識
-/// されるが font-size 経路では post-filter で drop、defer 先 未起票 — 次 planner が
-/// font-size context resolve と bundle 判定)。
+/// Grammar (CSS Fonts 4 §2.5 "Font size: the font-size property"
+/// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>):
+/// `<absolute-size> | <relative-size> | <length-percentage [0,∞]> | math`。
+/// 本実装が受理するのは **non-negative `<length-percentage>`** のみ —
+/// `<absolute-size>` (`medium` / `large` …) / `<relative-size>`
+/// (`larger` / `smaller`) / `math` は g04 category (b) milestone subset として
+/// 未対応 (`parse_length_value` が ident token を `None` に落とす)。
 ///
-/// [`Length::Em`] / [`Length::Rem`] / [`Length::Pt`] は resolve に font stack context
-/// を要し、[`Length::Percent`] は parent font-size context (spec §6.1.1) を要する。
-/// 現在 raikiri-style の cascade static side はこれら context を持たないため、
-/// helper 経由で parse 成功しても本 property では None に落として declaration drop。
+/// # `em` / `rem` / `%` / `pt` を受理するようになった経緯 (bd raikiri-spike-zls8)
+///
+/// Sprint 18 までは `px` 以外を post-filter で drop していた。理由は「font-size
+/// context resolve 未実装」であり、その resolve が decision raikiri-spike-082k
+/// Phase 2 で実装された — cascade が phase 2 で
+/// [`crate::resolve::resolve_font_size`] を呼び、`em` は**親の** computed
+/// font-size、`rem` は root element の computed font-size、`%` は同 §2.5
+/// "Percentages: refer to parent element's font size" に従って絶対化する。
+/// したがって drop の理由が消えたので受理する。
+///
+/// # Non-negative constraint
+///
+/// grammar の `[0,∞]` を parse-time enforce する。[`parse_padding_side`] /
+/// [`parse_width`] と同じ全 [`Length`] variant OR-pattern check — `-5px` だけで
+/// なく `-50%` / `-1em` も drop する。
 fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
-    // helper を <length> mode で呼び、Px の non-negative case のみ受理。
-    match parse_length_value(input, false)? {
-        Length::Px(v) if v >= 0.0 => Some(Length::Px(v)),
-        // (b) milestone subset: Em/Rem/Pt は spec-valid だが font-size context resolve
-        // 未実装のため drop、negative Px も spec 上 invalid のため drop。
-        _ => None,
-    }
+    let length = parse_length_value(input, true)?;
+    let v = match length {
+        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
+    };
+    (v >= 0.0).then_some(length)
 }
 
 /// `padding-{top,right,bottom,left}` の single-side value を parse する。
@@ -3750,17 +3780,47 @@ mod tests {
         );
     }
 
+    /// CSS Fonts 4 §2.5 の grammar `<length-percentage [0,∞]>` は font-relative
+    /// unit と percentage を含む。bd raikiri-spike-zls8 で cascade の phase 2
+    /// (絶対化) が入ったので、これらを parse 段で drop しなくなった。
     #[test]
-    fn font_size_rejects_em_and_keyword() {
-        assert_eq!(parse("1em", "font-size"), None);
+    fn font_size_accepts_font_relative_and_percentage() {
+        assert_eq!(
+            parse("1.5em", "font-size"),
+            Some(PropertyValue::FontSize(Length::Em(1.5)))
+        );
+        assert_eq!(
+            parse("2rem", "font-size"),
+            Some(PropertyValue::FontSize(Length::Rem(2.0)))
+        );
+        assert_eq!(
+            parse("12pt", "font-size"),
+            Some(PropertyValue::FontSize(Length::Pt(12.0)))
+        );
+        assert_eq!(
+            parse("150%", "font-size"),
+            Some(PropertyValue::FontSize(Length::Percent(150.0)))
+        );
+    }
+
+    /// `<absolute-size>` (`medium` 等) / `<relative-size>` (`larger` /
+    /// `smaller`) / `math` は spec-valid だが (b) milestone subset として未対応。
+    #[test]
+    fn font_size_rejects_size_keywords() {
         assert_eq!(parse("medium", "font-size"), None);
+        assert_eq!(parse("larger", "font-size"), None);
+        assert_eq!(parse("math", "font-size"), None);
     }
 
     #[test]
     fn font_size_rejects_negative() {
-        // spec: font-size は non-negative <length> のみ。
+        // spec grammar `[0,∞]`: 負値は全 unit で drop (px だけではない)。
         assert_eq!(parse("-10px", "font-size"), None);
         assert_eq!(parse("-0.5px", "font-size"), None);
+        assert_eq!(parse("-1em", "font-size"), None);
+        assert_eq!(parse("-2rem", "font-size"), None);
+        assert_eq!(parse("-12pt", "font-size"), None);
+        assert_eq!(parse("-50%", "font-size"), None);
     }
 
     #[test]
