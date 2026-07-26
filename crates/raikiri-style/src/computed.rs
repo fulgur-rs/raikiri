@@ -17,6 +17,26 @@ use crate::property::{
     empty_string_set_entries,
 };
 
+/// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
+///
+/// CSS Fonts 4 §2.5 "Font size: the font-size property"
+/// (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>) は "Initial: medium"
+/// と規定し、`medium` の実 px は UA 依存。本実装は browser default の 16px を
+/// 採る。
+///
+/// **非 test code で 16px を書く単一 source** (bd raikiri-spike-jaww) —
+/// [`ComputedValues::initial`] の `font_size` と
+/// [`crate::resolve::ResolveContext::initial`] の `root_font_size` が参照する。
+/// 両者は同一値でなければならず、独立に literal を持つと乖離を型検査で拾えない。
+///
+/// 一方「initial value が **16px そのものである**」ことの pin は test 側が
+/// literal で持つ。**これらを「一貫性のため」本 const への参照に書き換えては
+/// ならない** — 全体が自己参照になり、const の誤編集を何も検出できなくなる。
+/// 該当 test は本 const を `20.0` 等に摂動すれば列挙できる (lib test が
+/// fail-fast して doctest section まで到達しないので、
+/// `cargo test -p raikiri-style` と `--doc` を別々に走らせること)。
+pub(crate) const INITIAL_FONT_SIZE_PX: f32 = 16.0;
+
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
 ///
 /// CSS GCPM 3 §1.2.1 "The running() value"
@@ -58,7 +78,9 @@ pub struct ComputedValues {
     pub background_color: CssColor,
     /// `font-family` — 優先順位順。inherited、initial: `[Atom::from("serif")]`。
     pub font_family: Vec<Atom>,
-    /// `font-size`。inherited、initial: `Length::Px(16.0)` (browser default medium)。
+    /// `font-size`。**inherited**、initial: 16px (spec は `medium`、実 px は
+    /// UA 依存)。CSS Fonts 4 §2.5 "Font size: the font-size property"
+    /// <https://www.w3.org/TR/css-fonts-4/#propdef-font-size>。
     pub font_size: Length,
     /// `font-weight`。inherited、initial: 400 (normal)。
     ///
@@ -347,7 +369,7 @@ impl ComputedValues {
             // (raikiri-spike-0vv.7)。
             background_color: CssColor::TRANSPARENT,
             font_family: vec![Atom::from("serif")],
-            font_size: Length::Px(16.0),
+            font_size: Length::Px(INITIAL_FONT_SIZE_PX),
             font_weight: 400,
             // CSS Inline 3 §5.1: line-height initial は `normal` (font metrics
             // ascent+descent 相当を paint 側で resolve、raikiri-spike-0vv.9)。
@@ -499,6 +521,11 @@ mod tests {
         // (= rgba(0, 0, 0, 0)、raikiri-spike-0vv.7)
         assert_eq!(cv.background_color, CssColor::TRANSPARENT);
         assert_eq!(cv.font_family, vec![Atom::from("serif")]);
+        // CSS Fonts 4 §2.5: font-size initial は `medium` = 本実装では 16px
+        // (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>)。
+        // **この 16.0 は意図的な literal** — `INITIAL_FONT_SIZE_PX` 参照に
+        // 書き換えると同 const の誤編集を検出できなくなる (bd raikiri-spike-jaww、
+        // 同 const の doc も参照)。
         assert_eq!(cv.font_size, Length::Px(16.0));
         assert_eq!(cv.font_weight, 400);
         // CSS Inline 3 §5.1: line-height initial は `normal` (raikiri-spike-0vv.9)

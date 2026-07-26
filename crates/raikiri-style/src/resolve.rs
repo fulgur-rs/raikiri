@@ -49,7 +49,7 @@
 //!
 //! // 親の computed font-size (inheritance が運んできた computed value)。
 //! let parent_font_size = ComputedLength(16.0);
-//! let ctx = ResolveContext::new(16.0);
+//! let ctx = ResolveContext::new(ComputedLength(16.0));
 //!
 //! // phase 1: cascade winner を specified 表現のまま staging する (順不同)。
 //! let specified_font_size = Length::Em(1.5);
@@ -115,16 +115,8 @@
 //!
 //! [`ComputedLength`] はこの trade の対象外 — 詳細は同型の doc を参照。
 
+use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{Border, BorderColor, BorderStyle, Length, LengthOrAuto, LineHeight};
-
-/// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
-///
-/// CSS Fonts 4 §2.5 "Font size: the font-size property"
-/// (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>) は "Initial: medium"
-/// と規定し、`medium` の実 px は UA 依存。本実装は browser default の 16px を
-/// 採る — [`crate::computed::ComputedValues::initial`] の
-/// `font_size: Length::Px(16.0)` と同一値であることは unit test で pin 済。
-const INITIAL_FONT_SIZE_PX: f32 = 16.0;
 
 // ---------------------------------------------------------------------------
 // computed value 層の value 型
@@ -430,23 +422,29 @@ pub struct ComputedBorder {
 /// 強制される。field 追加を本当に非破壊にしたいなら後者を採ること。
 ///
 /// ```
-/// use raikiri_style::ResolveContext;
+/// use raikiri_style::{ComputedLength, ResolveContext};
 ///
 /// // root element の font-size が確定する前 (および root element 自身の
 /// // `font-size: Nrem`) は initial value 基準。
-/// assert_eq!(ResolveContext::initial().root_font_size, 16.0);
-/// assert_eq!(ResolveContext::new(20.0).root_font_size, 20.0);
+/// assert_eq!(ResolveContext::initial().root_font_size, ComputedLength(16.0));
+/// assert_eq!(
+///     ResolveContext::new(ComputedLength(20.0)).root_font_size,
+///     ComputedLength(20.0),
+/// );
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ResolveContext {
-    /// root element の computed font-size (px)。`rem` の参照値。
-    pub root_font_size: f32,
+    /// root element の computed font-size。`rem` の参照値。
+    ///
+    /// 型は [`ComputedLength`] — 本 field が保持するのは**絶対化済の computed
+    /// `<length>`** であり、[`resolve_font_size`] の戻り値をそのまま格納できる。
+    pub root_font_size: ComputedLength,
 }
 
 impl ResolveContext {
-    /// root font-size (px) を指定して構築する。
-    pub fn new(root_font_size: f32) -> Self {
+    /// root element の computed font-size を指定して構築する。
+    pub fn new(root_font_size: ComputedLength) -> Self {
         Self { root_font_size }
     }
 
@@ -465,7 +463,7 @@ impl ResolveContext {
     /// no parent." により、root element では initial value 基準になる。
     pub fn initial() -> Self {
         Self {
-            root_font_size: INITIAL_FONT_SIZE_PX,
+            root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
         }
     }
 }
@@ -549,7 +547,7 @@ pub fn resolve_font_size(
         Length::Px(v) => ComputedLength(v),
         Length::Pt(v) => ComputedLength(pt_to_px(v)),
         Length::Em(v) => ComputedLength(parent_font_size.0 * v),
-        Length::Rem(v) => ComputedLength(ctx.root_font_size * v),
+        Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
         // CSS Fonts 4 `font-size` propdef: "Percentages: refer to parent
         // element's font size" — font-size は §5.5.1 の「percentage は
         // percentage のまま computed される」原則の明示的な例外。
@@ -602,7 +600,7 @@ pub(crate) fn resolve_length(
         Length::Px(v) => ComputedLength(v),
         Length::Pt(v) => ComputedLength(pt_to_px(v)),
         Length::Em(v) => ComputedLength(font_size.0 * v),
-        Length::Rem(v) => ComputedLength(ctx.root_font_size * v),
+        Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
         Length::Percent(_) => ComputedLength::ZERO,
     }
 }
@@ -624,7 +622,7 @@ pub fn resolve_length_percentage(
         Length::Px(v) => ComputedLengthPercentage::Px(v),
         Length::Pt(v) => ComputedLengthPercentage::Px(pt_to_px(v)),
         Length::Em(v) => ComputedLengthPercentage::Px(font_size.0 * v),
-        Length::Rem(v) => ComputedLengthPercentage::Px(ctx.root_font_size * v),
+        Length::Rem(v) => ComputedLengthPercentage::Px(ctx.root_font_size.0 * v),
         Length::Percent(p) => ComputedLengthPercentage::Percent(p),
     }
 }
@@ -823,7 +821,7 @@ mod tests {
     /// `Rem` を含む test の期待値はこの 16px に依存する — 変更すると落ちる。
     /// 自 node / 親の font-size は各 test が引数で個別に渡す。
     const CTX: ResolveContext = ResolveContext {
-        root_font_size: INITIAL_FONT_SIZE_PX,
+        root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
     };
 
     // -----------------------------------------------------------------
@@ -838,17 +836,32 @@ mod tests {
 
     #[test]
     fn resolve_context_new_stores_root_font_size() {
-        assert_eq!(ResolveContext::new(20.0).root_font_size, 20.0);
+        assert_eq!(
+            ResolveContext::new(ComputedLength(20.0)).root_font_size,
+            ComputedLength(20.0),
+        );
     }
 
     /// `ResolveContext::initial()` の root font-size は
-    /// `ComputedValues::initial().font_size` と drift してはならない
-    /// (両者が独立に 16px を書いているため、値の乖離を型検査では拾えない)。
+    /// `ComputedValues::initial().font_size` と drift してはならない。
+    ///
+    /// bd raikiri-spike-jaww (b) で両者を `INITIAL_FONT_SIZE_PX` の単一 source に
+    /// 束ねたため本 assertion は現状 tautology。それでも残すのは次の 2 点を
+    /// pin するため:
+    ///
+    /// 1. 将来この単一 source が解かれて両者が独立の literal に戻った際、値の
+    ///    **乖離**を捕らえる。同値のまま書き戻す変更自体は通る — 捕らえるのは
+    ///    書き戻し「後」に生じる drift である。
+    /// 2. 左辺が `Length::Px` variant であること (単位表現の shape)。
+    ///
+    /// 値そのものが 16px であることの literal pin は test 側にある
+    /// (`computed.rs` の `initial_values_match_spec` ほか)。rule と列挙方法は
+    /// `INITIAL_FONT_SIZE_PX` の doc を参照。
     #[test]
     fn resolve_context_initial_matches_computed_values_initial_font_size() {
         assert_eq!(
             ComputedValues::initial().font_size,
-            Length::Px(ResolveContext::initial().root_font_size),
+            Length::Px(ResolveContext::initial().root_font_size.0),
         );
     }
 
@@ -899,7 +912,7 @@ mod tests {
     /// 親の font-size には**依存しない**。
     #[test]
     fn font_size_rem_resolves_against_root_font_size() {
-        let ctx = ResolveContext::new(20.0);
+        let ctx = ResolveContext::new(ComputedLength(20.0));
         assert_eq!(
             resolve_font_size(Length::Rem(2.0), ComputedLength(64.0), &ctx),
             ComputedLength(40.0),
@@ -957,7 +970,7 @@ mod tests {
 
     #[test]
     fn length_rem_resolves_against_root_font_size() {
-        let ctx = ResolveContext::new(10.0);
+        let ctx = ResolveContext::new(ComputedLength(10.0));
         assert_eq!(
             resolve_length(Length::Rem(2.5), ComputedLength(64.0), &ctx),
             ComputedLength(25.0),
@@ -1160,7 +1173,11 @@ mod tests {
         );
         // 基準を変えても不変 (= 二重適用が起きない)。
         assert_eq!(
-            resolve_font_size(lifted, ComputedLength(100.0), &ResolveContext::new(100.0)),
+            resolve_font_size(
+                lifted,
+                ComputedLength(100.0),
+                &ResolveContext::new(ComputedLength(100.0)),
+            ),
             inherited,
         );
     }

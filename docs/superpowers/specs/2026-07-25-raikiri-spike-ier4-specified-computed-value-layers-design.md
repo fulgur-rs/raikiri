@@ -8,6 +8,7 @@
 - **Date**: 2026-07-25
 - **Sprint**: Sprint 26 (sprint/style/10)
 - **Status**: Decided — Option A (完全な層分離)
+- **Amended**: 2026-07-26 (bd raikiri-spike-jaww) — §6.3 の `ResolveContext.root_font_size` を `f32` から `ComputedLength` に変更。型精度のみの変更で、決定内容 (Option A) と意味論は不変。
 
 ## 0. 結論 (summary)
 
@@ -550,7 +551,10 @@ percentage を再解決しない** — これが CSS Inline 3 §5.1 の要求す
 
 `resolve_inheritance` の stack entry を
 `(StyleNodeId, ComputedValues, ResolveContext)` に拡張し、
-`ResolveContext { root_font_size: f32 }` を運ぶ。
+`ResolveContext { root_font_size: ComputedLength }` を運ぶ
+(bd raikiri-spike-jaww で `f32` → `ComputedLength` に変更 — 本 field が保持するのは
+§6.1 の computed `<length>` そのものであり、絶対化関数の戻り値をそのまま格納できる
+形に揃えた。consumer 0 の Phase 1 完了直後に確定させたもので、意味論は不変)。
 
 - 初期値は `ComputedValues::initial().font_size` 相当 (16px)。
 - walk が最初に `StyleNodeKind::Element` に到達した node
