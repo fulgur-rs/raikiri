@@ -9,6 +9,11 @@
 target/
 **/*.rs.bk
 
+# Agent workflow docs (plans / retros / specs / sprints)
+# flow 情報であって stock 情報ではないため tracked にしない。
+# 規則の正典は AGENTS.md の「docs/superpowers/ は flow 情報」節を参照。
+docs/superpowers/
+
 # Claude Code worktrees
 .claude/worktrees/
 

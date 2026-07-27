@@ -47,6 +47,59 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
+## docs/superpowers/ は flow 情報 (tracked にしない)
+
+**`docs/superpowers/` 配下 (plans / retros / specs / sprints) は flow 情報であって
+stock 情報ではない** (user 明言 2026-07-26)。したがって **git で tracked にしない**。
+
+- **既存 doc**: tracked にしない。`.gitignore` の `docs/superpowers/` で除外済み
+- **新規 doc**: 同様に untracked のまま。**`git add -f` で追加しないこと**
+- **例外を作らない**: 「この設計文書は重要だから stock 扱い」といった個別判断はしない。
+  重要な決定は doc ではなく **bd issue / bd decision** に残す (そちらが stock)
+
+### 経緯
+
+2026-07-26 時点で 47 file (plans 31 / retros 9 / specs 7) が tracked のまま残っており、
+しかも境界が日付順ですらなかった (`.git/info/exclude` に追加された後も一部が index に
+残存)。方針と実態が食い違い、実際に retro-facilitator の誤認 (n=1 一般化 miscite) を
+誘発した実績がある。
+
+2026-07-27 に user 判断 (**Option A: 全部 untrack**) で既存 47 file を
+`git rm --cached` により index から外した (bd `raikiri-spike-ggxj`)。
+specs/ の 082k 設計文書と retro 9 本が untracked になる点も user 確認済み。
+
+除外は元々 `.git/info/exclude` にあったが、**これは local 設定で共有されない**ため
+`.gitignore` へ移した。`.git/info/exclude` 側の記述は残っていても害はない。
+
+### 観測上の注意
+
+`git worktree` は **tracked file しか materialize しない**。`docs/superpowers/` は
+untracked なので、**これ以降に作成した worktree にはこのディレクトリが現れない**。
+これは git の挙動であって、特定の環境の状態には依存しない。
+
+したがって worktree 内の `ls docs/superpowers/` が空であることは、**tracking 状態の観測**
+であって **実体の所在の観測ではない**。ここから「他の場所にも無い」とも「他の場所には
+ある」とも**推論できない**。
+
+実体が存在するかは環境ごとに異なる (`git clean`、untrack 前から存在する clone や worktree、
+手動コピー、CI cache 等で変わる) ため、**この文書では所在を断定しない**。
+必要なら **確認したい場所で直接 `ls` すること**。過去の内容は履歴から読める:
+
+```bash
+P=docs/superpowers/specs/<name>.md
+git show "$(git rev-list -1 HEAD -- "$P")^:$P"   # untrack 直前の内容を読む
+```
+
+末尾の `^` が要る。`git rev-list -1 -- <path>` が返すのは **untrack commit 自身**で、
+そこには既に path が無いため、`^` を付けないと
+`fatal: path ... exists on disk, but not in <sha>` になる (2026-07-27 に実測)。
+
+**working tree に無くても履歴には残る**という点は、`docs/superpowers/specs/...` を参照する
+doc comment にも当てはまる。2026-07-27 時点で **7 file 中 8 箇所** (`crates/` 6 file +
+`docs/feasibility-report.md`) がこれらの spec を参照しているが、**参照先が working tree に
+無い環境では dangling ref になる**。これは Option A の既知の帰結で、読みたい場合は
+上の履歴参照を使う。
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 
