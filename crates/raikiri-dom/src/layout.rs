@@ -199,11 +199,11 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues) {
 /// この理由で削除した。end-to-end の gating pin は本 file の
 /// `apply_computed_to_style_bridges_border_to_taffy` が引き続き持つ。
 ///
-/// **この「上流で済んでいる」は element 経路 (per-node cascade) の話である** —
-/// `@page` 経路の `PageCascadeResult::declarations` には gate が無く非 gating の
-/// border-width が出る (raikiri-style 側 `resolve_border` doc の caveat 参照)。
-/// 本 bridge が読むのは per-node [`ComputedValues`] なので影響しないが、将来
-/// page-margin box の layout を本 bridge に通すなら再確認が必要。
+/// `@page` 経路 (`PageCascadeResult::declarations`) も同じ `resolve_border` へ
+/// funnel するようになった (bd raikiri-spike-sshp) ので、border-width の gate は
+/// raikiri-style 側に 1 本しか無い。本 bridge が読むのは per-node
+/// [`ComputedValues`] なので直接の影響は無いが、将来 page-margin box の layout を
+/// 本 bridge に通す場合も **gate を再実装せず** 上流の値を信頼すること。
 ///
 /// 4-side は **field 名 mapping** で write (positional constructor は使わない —
 /// [`bridge_margin`] と同じ `Sides` vs `Rect` field 順不一致の silent transpose

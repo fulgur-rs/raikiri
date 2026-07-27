@@ -4,8 +4,10 @@
 //!
 //! The rule tree stores parsed `@page` rules and [`cascade_page`] resolves the
 //! winning declarations for a given page context (origin / specificity /
-//! source-order cascade + resolution against the page context's inheritance
-//! parent — see that function's doc). Per-page `PageBox` derivation and
+//! source-order cascade, then phase 2 = resolution against the page context's
+//! inheritance parent, then phase 3 = absolutization against the page context's
+//! own font-size + `border-*-width` style gating — see that function's doc).
+//! Per-page `PageBox` derivation and
 //! margin-box slot layout remain deferred to M4 and live downstream; this
 //! module produces the declaration bag they consume.
 //!
@@ -77,9 +79,17 @@ use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 use crate::Atom;
 use crate::cascade::{cascade_rank, resolve_against_inherited};
 use crate::computed::ComputedValues;
-use crate::property::{PropertyKey, PropertyValue};
+use crate::property::{
+    Border, BorderColor, BorderStyle, Length, LengthOrAuto, PropertyKey, PropertyValue, Sides,
+};
+use crate::resolve::{
+    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
+    lift_line_height, resolve_border, resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_line_height,
+};
 use crate::rule::Declaration;
 use crate::ruletree::{Origin, RuleTree};
+use crate::specified::INITIAL_BORDER;
 
 /// Parsed `@page` selector list — a comma-separated list of compound
 /// `<page-selector>` productions from CSS Paged Media L3 §4.3 (anchor
@@ -397,12 +407,18 @@ pub struct PageContextQuery {
 /// Winning declarations from an `@page` cascade pass.
 ///
 /// Contains one entry per property that at least one matching `@page` rule
-/// declared. Unsupported properties (e.g. `size`, `margin`, `marks` — M1.4
-/// property parser silently drops these; see
-/// `ruletree::tests::page_body_unsupported_property_drops_declaration`) are
-/// absent. Downstream page-layout code is expected to translate this bag into
-/// its page-box model and future `@page`-descriptor fields when the M4
-/// descriptor property parser lands; raikiri-style remains a leaf crate.
+/// declared. `@page`-specific **descriptors** (`size`, `marks`, `bleed`) are
+/// absent — the M1.4 property parser silently drops them, and wiring them is
+/// M4 scope (see
+/// `ruletree::tests::page_body_unsupported_property_drops_declaration`).
+///
+/// The ordinary box properties are **not** in that category: `margin` /
+/// `padding` / `border-*` / `width` / `height` are parsed (the `margin`
+/// shorthand has been expanded to longhands since raikiri-spike-0vv.5) and go
+/// through both resolution phases below. Downstream page-layout code is
+/// expected to translate this bag into its page-box model and future
+/// `@page`-descriptor fields when the M4 descriptor property parser lands;
+/// raikiri-style remains a leaf crate.
 ///
 /// Iteration order over `declarations` is `HashMap`-random; consumers that
 /// need a deterministic order should sort or look up by [`PropertyKey`]
@@ -410,37 +426,54 @@ pub struct PageContextQuery {
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageCascadeResult {
-    /// Winning `(key, value)` per property, after the resolution pass described
-    /// below.
+    /// Winning `(key, value)` per property, after the two resolution passes
+    /// described below.
     ///
-    /// Two properties are resolved to computed-equivalent values here; the
-    /// inheritance parent is the `root_style` argument of [`cascade_page`].
-    /// CSS Paged Media 3 §6 "Page Properties"
+    /// **These are computed values**, with the single documented exception at
+    /// the end of this list. CSS Paged Media 3 §6 "Page Properties"
     /// (<https://www.w3.org/TR/css-page-3/#page-properties>) states that "both
     /// the page context and the margin context have a computed value for every
-    /// property" and that "The page context inherits from the root element".
+    /// property" and that "The page context inherits from the root element";
+    /// the inheritance parent is the `root_style` argument of [`cascade_page`].
+    ///
+    /// **Phase 2** — resolution against the inheritance parent
+    /// (`crate::cascade::resolve_against_inherited`):
     ///
     /// - `font-weight` — `bolder` / `lighter` are resolved against the
     ///   inherited weight, so **no relative font-weight sentinel** reaches the
     ///   consumer (raikiri-spike-ygl0).
     /// - `font-size` — `em` / `rem` / `%` are absolutized against the root
     ///   element's computed font-size, so the value is always
-    ///   [`Length::Px`](crate::property::Length::Px). §6 verbatim: "When used on
+    ///   [`Length::Px`]. §6 verbatim: "When used on
     ///   the font-size property in the page context, they are relative to the
     ///   font-size of the root element." (raikiri-spike-zls8).
     ///
-    /// **Other values are still specified values.** Resolution that needs more
-    /// than the inheritance parent's computed values is out of scope for this
-    /// pass and the value passes through unchanged. Known cases:
+    /// **Phase 3** — absolutization against the page context's *own*
+    /// `font-size` (`absolutize_in_page_context`, raikiri-spike-sshp):
     ///
-    /// - [`Length::Em`](crate::property::Length::Em) / `Rem` / `Percent` on the
-    ///   box properties and `line-height` — `em` is relative to "the font
-    ///   associated with their context" (§6 above) and the page context's own
-    ///   font-size can come from a sibling `@page` declaration, so `root_style`
-    ///   alone does not determine it; `Percent` needs the containing block.
-    ///   The element path solves this with a separate absolutization phase
-    ///   (`crate::specified::SpecifiedValues::finalize`); the page path has no
-    ///   equivalent phase yet. Tracked: bd raikiri-spike-082k.
+    /// - `padding` / `margin` / `width` / `height` / `border-*-width` /
+    ///   `line-height` — [`Length::Em`] / `Rem` /
+    ///   `Pt` become [`Length::Px`]. `em` is
+    ///   relative to "the font associated with their context" (§6 above), which
+    ///   is the page context's own `font-size` — possibly declared by a sibling
+    ///   `@page` declaration, hence a phase of its own. `rem` stays relative to
+    ///   the root element (CSS Values 4 §6.1.1
+    ///   <https://www.w3.org/TR/css-values-4/#rem>).
+    /// - `border-*-width` is additionally **gated to `0px` when the side's
+    ///   computed `border-*-style` is `none` or `hidden`** — CSS Backgrounds 3
+    ///   §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width> makes that
+    ///   part of the *computed* value ("Computed value: absolute length, snapped
+    ///   as a border width; zero if the border style is `none` or `hidden`").
+    ///   An **undeclared** `border-*-style` counts as its initial value `none`
+    ///   per the §6 sentence quoted above, so `@page { border-top-width: 5px }`
+    ///   alone computes to `0px`, matching the element path.
+    /// - `<percentage>` on `padding` / `margin` / `width` / `height` **stays**
+    ///   [`Length::Percent`]: §6 makes it
+    ///   relative to "the dimensions of the containing block", i.e. a used-value
+    ///   input. That is the computed value, not an unresolved one.
+    ///
+    /// **The one value that is still a specified value**:
+    ///
     /// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) —
     ///   CSS Text 3 §6.1
     ///   (<https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent>)
@@ -449,7 +482,8 @@ pub struct PageCascadeResult {
     ///   (see the (b) milestone-subset carve-out on
     ///   [`TextAlign`](crate::property::TextAlign)).
     ///
-    /// See `cascade::resolve_against_inherited` for the exact contract.
+    /// See `cascade::resolve_against_inherited` and
+    /// `absolutize_in_page_context` for the exact per-phase contracts.
     ///
     /// **This map is not a full computed-value bag.** It contains only the
     /// properties that some matching `@page` rule actually *declared*;
@@ -479,14 +513,24 @@ pub struct PageCascadeResult {
 ///    style-rule cascade) and encodes the L4 §6.2 origin ordering (Normal:
 ///    UA < Author; Important: reversed — UA `!important` beats Author
 ///    `!important`).
-/// 3. Resolve each winner against the page context's inheritance parent
-///    (`root_style`) through the crate-internal `resolve_against_inherited` —
-///    the sibling of `cascade::apply_value` that keeps the `PropertyValue`
-///    shape. Today this resolves `font-weight: bolder` / `lighter` only (CSS
-///    Fonts 4 §2.2.1 "Relative Weights"); every other value passes through
-///    unchanged and therefore reaches the resolved declaration map as a
-///    *specified* value — that field's doc enumerates which ones are still
-///    unresolved.
+/// 3. **Phase 2** — resolve each winner against the page context's inheritance
+///    parent (`root_style`) through the crate-internal
+///    `resolve_against_inherited`, the sibling of `cascade::apply_value` that
+///    keeps the `PropertyValue` shape. This covers the two properties that are
+///    determined by the inheritance parent alone: `font-weight: bolder` /
+///    `lighter` (CSS Fonts 4 §2.2.1 "Relative Weights") and `font-size`.
+/// 4. **Phase 3** — absolutize the remaining lengths through the crate-internal
+///    `absolutize_in_page_context`, using the page context's own `font-size`
+///    (step 3's output, or the inherited value when `@page` declared none) as
+///    the `em` basis and the root element's font-size as the `rem` basis, and
+///    apply the `border-*-width` style gate. Mirrors the element path's
+///    `crate::specified::SpecifiedValues::finalize`; the split into two phases
+///    is required because `padding: 2em` depends on a sibling declaration whose
+///    winner is only known after step 2 (decision raikiri-spike-082k).
+///
+/// The result is a bag of **computed** values —
+/// [`PageCascadeResult::declarations`] documents the one remaining exception
+/// (`text-align: match-parent`) and the per-phase citations.
 ///
 /// # The inheritance parent (`root_style`)
 ///
@@ -591,20 +635,313 @@ pub fn cascade_page(
             }
         }
     }
-    // Step 3: resolve winners against the page context's inheritance parent.
-    // `root_style == None` falls back to the initial values, which the L3 legacy
-    // exception in CSS Paged Media 3 §6 "Page Properties" permits explicitly
-    // (see the `root_style` section of this function's doc). Shared static: the
-    // fallback is immutable and `initial()` costs a heap allocation, which the
-    // `None` path would otherwise take on every call (`property.rs` の
+    // Step 3 (phase 2): resolve winners against the page context's inheritance
+    // parent. `root_style == None` falls back to the initial values, which the
+    // L3 legacy exception in CSS Paged Media 3 §6 "Page Properties" permits
+    // explicitly (see the `root_style` section of this function's doc). Shared
+    // static: the fallback is immutable and `initial()` costs a heap allocation,
+    // which the `None` path would otherwise take on every call (`property.rs` の
     // `empty_counter_entries` と同じ前例)。
     static INITIAL_PAGE_PARENT: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
     let inherited = root_style.unwrap_or(&INITIAL_PAGE_PARENT);
+    let resolved: HashMap<PropertyKey, PropertyValue> = best
+        .into_iter()
+        .map(|(k, (_, _, _, v))| (k, resolve_against_inherited(v, inherited)))
+        .collect();
+
+    // Step 4 (phase 3): absolutize the remaining lengths against the page
+    // context's own font-size and apply the `border-*-width` style gate.
+    // Splitting this out of step 3 is forced by the same constraint the element
+    // path has (decision raikiri-spike-082k): `padding: 2em` needs the page
+    // context's font-size, which step 3 only finalises once *all* winners have
+    // been seen — `best` iteration order is `HashMap`-random.
+    let font_size = page_context_font_size(&resolved, inherited);
+    // `rem` = "the computed value of the em unit on the root element"
+    // (CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>). The page
+    // context is *not* the root element, so this stays the inheritance parent's
+    // font-size even after `font_size` above diverges from it — the element-path
+    // sibling is `SpecifiedValues::finalize`, not `finalize_as_root`.
+    let ctx = ResolveContext::new(inherited.font_size);
+    let border_styles = page_context_border_styles(&resolved);
     PageCascadeResult {
-        declarations: best
+        declarations: resolved
             .into_iter()
-            .map(|(k, (_, _, _, v))| (k, resolve_against_inherited(v, inherited)))
+            .map(|(k, v)| {
+                (
+                    k,
+                    absolutize_in_page_context(v, font_size, &ctx, border_styles),
+                )
+            })
             .collect(),
+    }
+}
+
+/// The page context's own computed `font-size` — the `em` basis for phase 3.
+///
+/// CSS Paged Media 3 §6 "Page Properties"
+/// (<https://www.w3.org/TR/css-page-3/#page-properties>) verbatim: "Values in
+/// units of em and ex are interpreted relative to the font associated with
+/// their context." The font associated with the page context is the one its own
+/// `font-size` declaration establishes; with no such declaration the same §
+/// gives the inherited value ("The page context inherits from the root
+/// element", plus "both the page context and the margin context have a computed
+/// value for every property").
+///
+/// `declarations` must already have been through phase 2
+/// (`crate::cascade::resolve_against_inherited`), whose `FontSize` arm always
+/// wraps its result in [`Length::Px`]. **That invariant is what makes the read
+/// below total**: any other `Length` variant under `PropertyKey::FontSize` is
+/// unreachable, and the catch-all falls back to the inherited value rather than
+/// panicking (crate policy: no panic surface in the cascade — see the
+/// `PropertyValue::Margin` safety-net arm in `crate::cascade::apply_value`).
+/// If that arm ever stops normalising to `Px`, this function silently starts
+/// using the wrong basis, so the two must be changed together.
+fn page_context_font_size(
+    declarations: &HashMap<PropertyKey, PropertyValue>,
+    inherited: &ComputedValues,
+) -> ComputedLength {
+    match declarations.get(&PropertyKey::FontSize) {
+        Some(PropertyValue::FontSize(Length::Px(px))) => ComputedLength(*px),
+        other => {
+            // cov:ignore: the `Some(non-`Px`)` half is unreachable — phase 2's
+            // `FontSize` arm wraps its result in `Length::Px` unconditionally.
+            // The `None` half *is* covered, by
+            // `page_context_font_size_falls_back_to_inherited`.
+            //
+            // The assert exists because the silent-fallback behaviour must not
+            // be relied on: if someone adds `font-size: larger | smaller` and
+            // stops normalising to `Px`, the page context would quietly use the
+            // root's font-size as the `em` basis and every length in the page
+            // box would be wrong, with every test still green.
+            debug_assert!(
+                other.is_none(),
+                "phase 2 must normalise `font-size` to `Length::Px`; got {other:?}"
+            );
+            inherited.font_size
+        }
+    }
+}
+
+/// The page context's computed `border-*-style` per side — the gate input for
+/// `border-*-width` in phase 3.
+///
+/// An **absent** declaration means the initial value: CSS Paged Media 3 §6
+/// (<https://www.w3.org/TR/css-page-3/#page-properties>) gives the page context
+/// "a computed value for every property", and `border-style` is not inherited
+/// (CSS Backgrounds 3 §3.2
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-style>), so the computed
+/// value of an undeclared side is [`INITIAL_BORDER`]`.style` = `none`.
+///
+/// The consequence is load-bearing and matches the element path: `@page {
+/// border-top-width: 5px }` **on its own** computes to `0px`, exactly as
+/// `ComputedValues::initial().border.top.width` is `0px` for an element that
+/// declares no `border-style` (pin:
+/// `specified::tests::initial_border_width_is_gated_to_zero_at_computed_layer`).
+fn page_context_border_styles(
+    declarations: &HashMap<PropertyKey, PropertyValue>,
+) -> Sides<BorderStyle> {
+    // **Dispatch on the variant, never on the key.** A `PropertyKey` lookup
+    // followed by a payload match would make correctness depend on the map's
+    // keying invariant (`PropertyValue::key()` agreeing with the key it is
+    // stored under) — an invariant that lives only in prose, and whose
+    // violation would degrade silently to the initial value. Scanning the
+    // values makes the invariant irrelevant: each arm names the side it writes
+    // (bd raikiri-spike-sshp §8.2 debt lens D3).
+    //
+    // Order-independence: `cascade_page` keeps at most one winner per
+    // `PropertyKey`, so at most one value matches each arm and the
+    // `HashMap`-random iteration order cannot change the result.
+    //
+    // The `_` arm here is a *filter*, not a classification — it does not weaken
+    // the variant-addition tripwire, which lives in
+    // `absolutize_in_page_context`: a new `border-*-width`-like variant fails to
+    // compile there first, and fixing it forces the author back through this
+    // function.
+    let mut sides = Sides::all(INITIAL_BORDER.style);
+    for value in declarations.values() {
+        match value {
+            PropertyValue::BorderTopStyle(s) => sides.top = *s,
+            PropertyValue::BorderRightStyle(s) => sides.right = *s,
+            PropertyValue::BorderBottomStyle(s) => sides.bottom = *s,
+            PropertyValue::BorderLeftStyle(s) => sides.left = *s,
+            _ => {}
+        }
+    }
+    sides
+}
+
+/// **phase 3** for the page context — absolutize one winner against the page
+/// context's own `font-size` and apply the `border-*-width` style gate.
+///
+/// Sibling of the element path's `crate::specified::SpecifiedValues::finalize`
+/// second half (`absolutize_with`). Both funnel into the *same*
+/// `crate::resolve` functions, so the spec rules (`em` / `rem` basis,
+/// percentage pass-through, border style gating) have a single implementation
+/// per rule; only the plumbing differs, because the page path carries a
+/// `PropertyValue` bag instead of a typed struct.
+///
+/// # What stays unresolved on purpose
+///
+/// - `<percentage>` on `padding` / `margin` / `width` / `height` stays
+///   [`Length::Percent`]. CSS Paged Media 3 §6
+///   (<https://www.w3.org/TR/css-page-3/#page-properties>): "Percentage values
+///   on the margin and padding properties are relative to the dimensions of the
+///   containing block" — a used-value-layer input, exactly as in the element
+///   path (`crate::resolve::resolve_length_percentage`).
+/// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) —
+///   needs the inheritance parent's `direction`, which raikiri does not model.
+///   Not a phase-3 concern (it is inherited-value dependent, i.e. phase 2), so
+///   it passes through here as well.
+///
+/// # No wildcard arm
+///
+/// The match is exhaustive without `_`, like its two siblings
+/// (`crate::cascade::apply_value` / `crate::cascade::resolve_against_inherited`).
+/// A new [`PropertyValue`] variant that carries a length must be classified
+/// here explicitly; a catch-all would let it reach the public `declarations`
+/// map as a specified value — the exact regression shape of bd
+/// raikiri-spike-ygl0. (What this guard does *not* catch is a new **payload**
+/// case inside an existing variant, or a new entry point that skips this
+/// function — bd raikiri-spike-7m33.)
+fn absolutize_in_page_context(
+    value: PropertyValue,
+    font_size: ComputedLength,
+    ctx: &ResolveContext,
+    border_styles: Sides<BorderStyle>,
+) -> PropertyValue {
+    /// `<length-percentage>` → computed, mapped back into the specified-layer
+    /// `Length` shape that `PropertyValue` carries (`Px` / `Percent` only —
+    /// `Em` / `Rem` / `Pt` are gone after this).
+    fn lp(specified: Length, font_size: ComputedLength, ctx: &ResolveContext) -> Length {
+        match resolve_length_percentage(specified, font_size, ctx) {
+            ComputedLengthPercentage::Px(v) => Length::Px(v),
+            ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+        }
+    }
+    /// `<length-percentage> | auto` — same mapping, `auto` preserved.
+    fn lpa(
+        specified: LengthOrAuto,
+        font_size: ComputedLength,
+        ctx: &ResolveContext,
+    ) -> LengthOrAuto {
+        match resolve_length_percentage_or_auto(specified, font_size, ctx) {
+            ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+            ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
+            ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
+        }
+    }
+    /// One `border-*` side: absolutize the width and apply the style gate.
+    ///
+    /// Routed through [`resolve_border`] rather than re-testing
+    /// `none` / `hidden` locally — that function's doc calls itself the single
+    /// source of the gate and forbids re-implementing the rule elsewhere.
+    fn border(specified: Border, font_size: ComputedLength, ctx: &ResolveContext) -> Border {
+        let computed = resolve_border(specified, font_size, ctx);
+        Border {
+            width: Length::Px(computed.width.px()),
+            style: computed.style,
+            color: computed.color,
+        }
+    }
+    /// A `border-*-width` longhand, gated by the side's computed style.
+    ///
+    /// `color` is a placeholder — [`resolve_border`] never reads it, and the
+    /// longhand carries no colour. Building the `Border` here (instead of
+    /// branching on `style` locally) is what keeps the gate single-sourced.
+    fn border_width(
+        width: Length,
+        style: BorderStyle,
+        font_size: ComputedLength,
+        ctx: &ResolveContext,
+    ) -> Length {
+        border(
+            Border {
+                width,
+                style,
+                color: BorderColor::CurrentColor,
+            },
+            font_size,
+            ctx,
+        )
+        .width
+    }
+
+    match value {
+        // ── already computed-equivalent after phase 2 ──────────────────────
+        // `font-size` is phase 2's output (`Length::Px`); re-absolutizing it
+        // here would be a second application against the *wrong* basis (its
+        // own value instead of the inheritance parent's).
+        v @ (PropertyValue::Color(_)
+        | PropertyValue::BackgroundColor(_)
+        | PropertyValue::FontFamily(_)
+        | PropertyValue::FontSize(_)
+        | PropertyValue::FontWeight(_)
+        | PropertyValue::Display(_)
+        | PropertyValue::CounterReset(_)
+        | PropertyValue::CounterIncrement(_)
+        | PropertyValue::CounterSet(_)
+        | PropertyValue::Content(_)
+        | PropertyValue::StringSet(_)
+        | PropertyValue::Position(_)
+        | PropertyValue::TextAlign(_)
+        | PropertyValue::BorderTopStyle(_)
+        | PropertyValue::BorderRightStyle(_)
+        | PropertyValue::BorderBottomStyle(_)
+        | PropertyValue::BorderLeftStyle(_)
+        | PropertyValue::BorderTopColor(_)
+        | PropertyValue::BorderRightColor(_)
+        | PropertyValue::BorderBottomColor(_)
+        | PropertyValue::BorderLeftColor(_)
+        | PropertyValue::BoxSizing(_)) => v,
+        // ── line-height ───────────────────────────────────────────────────
+        // CSS Inline 3 §5.1 <https://www.w3.org/TR/css-inline-3/#propdef-line-height>:
+        // `<percentage>` is "computed relative to 1em" of the declaring
+        // context. `normal` / `<number>` survive as keywords by spec.
+        PropertyValue::LineHeight(lh) => {
+            PropertyValue::LineHeight(lift_line_height(resolve_line_height(lh, font_size, ctx)))
+        }
+        // ── padding ───────────────────────────────────────────────────────
+        PropertyValue::PaddingTop(v) => PropertyValue::PaddingTop(lp(v, font_size, ctx)),
+        PropertyValue::PaddingRight(v) => PropertyValue::PaddingRight(lp(v, font_size, ctx)),
+        PropertyValue::PaddingBottom(v) => PropertyValue::PaddingBottom(lp(v, font_size, ctx)),
+        PropertyValue::PaddingLeft(v) => PropertyValue::PaddingLeft(lp(v, font_size, ctx)),
+        // Shorthand safety net — `crate::rule::parse_declaration_block` expands
+        // shorthands at parse time, so `@page` declarations reach the cascade as
+        // longhands only (`ruletree` reuses that parser). Kept for the same
+        // reason `cascade::apply_value` keeps its shorthand arms.
+        PropertyValue::Padding(sides) => {
+            PropertyValue::Padding(sides.map(|l| lp(l, font_size, ctx)))
+        }
+        // ── margin ────────────────────────────────────────────────────────
+        PropertyValue::MarginTop(v) => PropertyValue::MarginTop(lpa(v, font_size, ctx)),
+        PropertyValue::MarginRight(v) => PropertyValue::MarginRight(lpa(v, font_size, ctx)),
+        PropertyValue::MarginBottom(v) => PropertyValue::MarginBottom(lpa(v, font_size, ctx)),
+        PropertyValue::MarginLeft(v) => PropertyValue::MarginLeft(lpa(v, font_size, ctx)),
+        PropertyValue::Margin(sides) => {
+            PropertyValue::Margin(sides.map(|l| lpa(l, font_size, ctx)))
+        }
+        // ── border-*-width (absolutized **and** style-gated) ──────────────
+        PropertyValue::BorderTopWidth(w) => {
+            PropertyValue::BorderTopWidth(border_width(w, border_styles.top, font_size, ctx))
+        }
+        PropertyValue::BorderRightWidth(w) => {
+            PropertyValue::BorderRightWidth(border_width(w, border_styles.right, font_size, ctx))
+        }
+        PropertyValue::BorderBottomWidth(w) => {
+            PropertyValue::BorderBottomWidth(border_width(w, border_styles.bottom, font_size, ctx))
+        }
+        PropertyValue::BorderLeftWidth(w) => {
+            PropertyValue::BorderLeftWidth(border_width(w, border_styles.left, font_size, ctx))
+        }
+        // Shorthand safety net (see `Padding` above). Each side gates on the
+        // style it carries itself, which is where a `border` shorthand's style
+        // lives.
+        PropertyValue::Border(sides) => {
+            PropertyValue::Border(sides.map(|b| border(b, font_size, ctx)))
+        }
+        // ── width / height ────────────────────────────────────────────────
+        PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, ctx)),
+        PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, ctx)),
     }
 }
 
@@ -732,7 +1069,7 @@ mod tests {
     //! Implementation follows the spec; this test asserts UA `!important` wins.
 
     use super::*;
-    use crate::property::{CssColor, FontWeightValue, Length, LengthOrAuto, TextAlign};
+    use crate::property::{CssColor, FontWeightValue, Length, LengthOrAuto, LineHeight, TextAlign};
     use crate::resolve::ComputedLength;
 
     const RED: CssColor = CssColor {
@@ -959,10 +1296,12 @@ mod tests {
     // ── Verification 5: named-page cascade produces named-page declarations ──
     // Task Verification 5 target: `(page_name=Some("landscape_a3"), page_index=0,
     // is_first=true)` — the winning declarations must come from the named-page
-    // rule. Property proxy: `color` (M1.4 supported). `size` / `margin` are
-    // M4-descriptor scope not yet wired through the declaration parser (see
-    // `ruletree::tests::page_body_unsupported_property_drops_declaration`), so
-    // this test uses `color` to prove the shape end-to-end. The named-page
+    // rule. Property proxy: `color` (M1.4 supported). `size` is an
+    // `@page` descriptor and is still not wired through the declaration parser
+    // (see `ruletree::tests::page_body_unsupported_property_drops_declaration`);
+    // `margin` *is* supported (raikiri-spike-0vv.5) but `color` keeps this test
+    // focused on selector specificity rather than on length resolution, which
+    // the phase 3 tests cover. The named-page
     // rule wins because its specificity `(1, 1, 0)` beats every non-named
     // alternative under the L3 §"Cascading and page context" tuple.
 
@@ -1361,27 +1700,459 @@ mod tests {
     }
 
     #[test]
-    fn cascade_page_length_em_passes_through_as_specified_value() {
-        // Contract pin for the pass-through arm on a value that is *not*
-        // computed-equivalent. CSS Paged Media 3 §6
-        // <https://www.w3.org/TR/css-page-3/#page-properties>: "Values in units
-        // of em and ex are interpreted relative to the font associated with
-        // their context" — so `2em` is not a computed value, but resolving it
-        // needs the page context's *own* font-size (possibly declared by a
-        // sibling `@page` declaration), not just the inheritance parent. It
-        // therefore stays specified here and the downstream page-layout
-        // consumer resolves it (bd raikiri-spike-082k). This test exists so the
-        // public doc claim on `PageCascadeResult::declarations` cannot drift.
+    fn cascade_page_length_em_is_absolutized_against_page_context_font_size() {
+        // Was `cascade_page_length_em_passes_through_as_specified_value` until
+        // bd raikiri-spike-sshp added phase 3 (082k Phase 3). CSS Paged Media 3
+        // §6 <https://www.w3.org/TR/css-page-3/#page-properties>: "Values in
+        // units of em and ex are interpreted relative to the font associated
+        // with their context". With no `font-size` in the page context the
+        // associated font is the inherited one ("The page context inherits from
+        // the root element"), i.e. the initial 16px here → 32px.
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { margin-top: 2em }", Origin::Author);
         let root = root_with_weight(700);
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
         assert_eq!(
             result.declarations.get(&PropertyKey::MarginTop),
-            Some(&PropertyValue::MarginTop(LengthOrAuto::Length(Length::Em(
-                2.0
+            Some(&PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+                32.0
             )))),
-            "pass-through must be documented as specified-value, not claimed resolved"
+            "`em` must be resolved against the page context's font-size"
+        );
+    }
+
+    // ── 082k Phase 3 (bd raikiri-spike-sshp): phase 3 in the page context ───
+    //
+    // Primary sources, fetched as raw HTML (`curl -sL`) so the `data-level`
+    // attributes are visible:
+    // - CSS Paged Media 3 §6 "Page Properties"
+    //   <https://www.w3.org/TR/css-page-3/#page-properties>
+    // - CSS Backgrounds 3 §3.3 "Line Thickness: the border-width properties"
+    //   <https://www.w3.org/TR/css-backgrounds-3/#border-width>
+    // - CSS Values 4 §6.1.1 `rem` <https://www.w3.org/TR/css-values-4/#rem>
+
+    // `root_with_font_size` (above) supplies a non-initial root font-size so
+    // the assertions below cannot pass by accident off the 16px initial.
+
+    fn padding_top_of(result: &PageCascadeResult) -> Option<Length> {
+        match result.declarations.get(&PropertyKey::PaddingTop) {
+            Some(PropertyValue::PaddingTop(l)) => Some(*l),
+            _ => None,
+        }
+    }
+
+    fn page(css: &str, root: &ComputedValues) -> PageCascadeResult {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(css, Origin::Author);
+        cascade_page(&tree, &PageContextQuery::default(), Some(root))
+    }
+
+    /// `@page { padding: 2em }` — the `em` basis is the page context's own
+    /// font-size, which here comes from the inheritance parent (§6 "The page
+    /// context inherits from the root element"). Root 20px → 40px.
+    #[test]
+    fn cascade_page_padding_em_uses_inherited_font_size_when_page_declares_none() {
+        let root = root_with_font_size(20.0);
+        let result = page("@page { padding: 2em }", &root);
+        assert_eq!(padding_top_of(&result), Some(Length::Px(40.0)));
+    }
+
+    /// The sibling-declaration case that forces phase 3 to be its own pass:
+    /// `font-size` is declared in the same `@page` block, so the `em` basis is
+    /// the page context's *own* font-size (20px), not the root's (16px).
+    #[test]
+    fn cascade_page_padding_em_uses_own_font_size_over_inherited() {
+        let root = ComputedValues::initial(); // 16px
+        let result = page("@page { font-size: 20px; padding: 2em }", &root);
+        assert_eq!(
+            padding_top_of(&result),
+            Some(Length::Px(40.0)),
+            "`em` must use the page context's declared font-size, not the root's"
+        );
+    }
+
+    /// `rem` stays relative to the **root element** even when the page context
+    /// declares its own `font-size` — CSS Values 4 §6.1.1: "Equal to the
+    /// computed value of the em unit on the root element." The page context is
+    /// not the root element, so this is the `finalize` case, not
+    /// `finalize_as_root`.
+    ///
+    /// `font-size: 2em` on the page context resolves against the root (§6:
+    /// "When used on the font-size property in the page context, they are
+    /// relative to the font-size of the root element") → 32px; `padding: 1rem`
+    /// must still be 16px, **not** 32px.
+    #[test]
+    fn cascade_page_rem_resolves_against_root_element_not_page_context() {
+        let root = ComputedValues::initial(); // 16px
+        let result = page("@page { font-size: 2em; padding: 1rem }", &root);
+        assert_eq!(
+            result.declarations.get(&PropertyKey::FontSize),
+            Some(&PropertyValue::FontSize(Length::Px(32.0))),
+        );
+        assert_eq!(
+            padding_top_of(&result),
+            Some(Length::Px(16.0)),
+            "`rem` is the root element's font-size, not the page context's"
+        );
+    }
+
+    /// `<percentage>` on `padding` is **not** absolutized — §6: "Percentage
+    /// values on the margin and padding properties are relative to the
+    /// dimensions of the containing block", i.e. a used-value input. The
+    /// computed value is the percentage itself (CSS Values 4 §5.5.1), same as
+    /// the element path (`resolve_length_percentage`).
+    #[test]
+    fn cascade_page_padding_percentage_stays_a_percentage() {
+        let root = root_with_font_size(20.0);
+        let result = page("@page { padding: 25%; margin-top: 10%; width: 50% }", &root);
+        assert_eq!(padding_top_of(&result), Some(Length::Percent(25.0)));
+        // `<length-percentage> | auto` takes a separate resolve path from the
+        // `<length-percentage>` one above — both must pass the percentage
+        // through.
+        assert_eq!(
+            result.declarations.get(&PropertyKey::MarginTop),
+            Some(&PropertyValue::MarginTop(LengthOrAuto::Length(
+                Length::Percent(10.0)
+            ))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::Width),
+            Some(&PropertyValue::Width(LengthOrAuto::Length(
+                Length::Percent(50.0)
+            ))),
+        );
+    }
+
+    /// `pt` is an absolute unit but not the canonical one — phase 3 normalises
+    /// it to `px` (CSS Values 4 §6.2: 1pt = 1/72in, 1px = 1/96in → 12pt = 16px).
+    #[test]
+    fn cascade_page_absolute_units_are_normalised_to_px() {
+        let root = ComputedValues::initial();
+        let result = page("@page { padding: 12pt }", &root);
+        assert_eq!(padding_top_of(&result), Some(Length::Px(16.0)));
+    }
+
+    /// The (b) case of bd raikiri-spike-sshp. CSS Backgrounds 3 §3.3 propdef
+    /// verbatim: "Computed value: absolute length, snapped as a border width;
+    /// zero if the border style is `none` or `hidden`" — a **computed**-layer
+    /// requirement, so the declared `5px` must not reach `declarations`.
+    #[test]
+    fn cascade_page_border_width_is_gated_by_border_style_none() {
+        let root = ComputedValues::initial();
+        let result = page(
+            "@page { border-top-width: 5px; border-top-style: none }",
+            &root,
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderTopWidth),
+            Some(&PropertyValue::BorderTopWidth(Length::Px(0.0))),
+        );
+    }
+
+    /// `hidden` gates identically to `none` (same §3.3 clause).
+    #[test]
+    fn cascade_page_border_width_is_gated_by_border_style_hidden() {
+        let root = ComputedValues::initial();
+        let result = page(
+            "@page { border-top-width: 5px; border-top-style: hidden }",
+            &root,
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderTopWidth),
+            Some(&PropertyValue::BorderTopWidth(Length::Px(0.0))),
+        );
+    }
+
+    /// An **undeclared** `border-*-style` is its initial value `none` — §6
+    /// gives the page context "a computed value for every property" and
+    /// `border-style` is not inherited. So a lone `border-top-width` gates to
+    /// zero, exactly as `ComputedValues::initial().border.top.width` does on
+    /// the element path.
+    #[test]
+    fn cascade_page_border_width_alone_gates_to_zero_via_initial_style() {
+        let root = ComputedValues::initial();
+        let result = page("@page { border-top-width: 5px }", &root);
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderTopWidth),
+            Some(&PropertyValue::BorderTopWidth(Length::Px(0.0))),
+        );
+        assert_eq!(
+            crate::computed::ComputedValues::initial().border.top.width,
+            ComputedLength::ZERO,
+            "element path agrees — the gate is one rule, not two",
+        );
+    }
+
+    /// A visible style lets the width through, absolutized against the page
+    /// context's font-size (`0.5em` of 20px = 10px). Guards against a gate that
+    /// zeroes everything.
+    #[test]
+    fn cascade_page_border_width_with_visible_style_is_absolutized() {
+        let root = ComputedValues::initial();
+        let result = page(
+            "@page { font-size: 20px; border-top-width: 0.5em; border-top-style: solid }",
+            &root,
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderTopWidth),
+            Some(&PropertyValue::BorderTopWidth(Length::Px(10.0))),
+        );
+    }
+
+    /// The gate is per side, and all four sides are exercised — this is the
+    /// only test that reaches the `BorderRightWidth` / `BorderBottomWidth` arms
+    /// of `absolutize_in_page_context` and the `right` / `bottom` writes in
+    /// `page_context_border_styles`.
+    ///
+    /// **What it does and does not catch**: the gate is binary, so of the 6
+    /// possible side pairings this catches the 4 that straddle it
+    /// (gated ↔ ungated); swapping the two gated sides (top ↔ bottom) or the
+    /// two ungated ones is observable only through the distinct widths, which
+    /// is why `6px` and `8px` differ. A mix-up *within* the gated pair stays
+    /// invisible here — `page_context_border_styles` guards that structurally
+    /// by naming the side in each match arm rather than looking it up by key.
+    #[test]
+    fn cascade_page_border_width_gate_is_per_side() {
+        let root = ComputedValues::initial();
+        let result = page(
+            "@page { border-top-width: 5px; border-top-style: none; \
+             border-right-width: 6px; border-right-style: solid; \
+             border-bottom-width: 7px; border-bottom-style: none; \
+             border-left-width: 8px; border-left-style: solid }",
+            &root,
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderTopWidth),
+            Some(&PropertyValue::BorderTopWidth(Length::Px(0.0))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderRightWidth),
+            Some(&PropertyValue::BorderRightWidth(Length::Px(6.0))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderBottomWidth),
+            Some(&PropertyValue::BorderBottomWidth(Length::Px(0.0))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderLeftWidth),
+            Some(&PropertyValue::BorderLeftWidth(Length::Px(8.0))),
+        );
+    }
+
+    /// `line-height: <percentage>` is absolutized against the page context's
+    /// own font-size — CSS Inline 3 §5.1
+    /// <https://www.w3.org/TR/css-inline-3/#propdef-line-height> "Percentages:
+    /// computed relative to 1em". 150% of 20px = 30px.
+    #[test]
+    fn cascade_page_line_height_percentage_is_absolutized() {
+        let root = ComputedValues::initial();
+        let result = page("@page { font-size: 20px; line-height: 150% }", &root);
+        assert_eq!(
+            result.declarations.get(&PropertyKey::LineHeight),
+            Some(&PropertyValue::LineHeight(LineHeight::Length(Length::Px(
+                30.0
+            )))),
+        );
+    }
+
+    /// `line-height: <number>` survives phase 3 as a number — the distinction
+    /// is load-bearing in the computed layer (§5.1: the number is inherited and
+    /// multiplied by each context's own font-size). `normal` likewise stays a
+    /// keyword (resolved at the used-value layer).
+    #[test]
+    fn cascade_page_line_height_number_and_normal_stay_keywords() {
+        let root = ComputedValues::initial();
+        assert_eq!(
+            page("@page { line-height: 1.5 }", &root)
+                .declarations
+                .get(&PropertyKey::LineHeight),
+            Some(&PropertyValue::LineHeight(LineHeight::Number(1.5))),
+        );
+        assert_eq!(
+            page("@page { line-height: normal }", &root)
+                .declarations
+                .get(&PropertyKey::LineHeight),
+            Some(&PropertyValue::LineHeight(LineHeight::Normal)),
+        );
+    }
+
+    /// `margin` / `width` / `height` take `<length-percentage> | auto`; `auto`
+    /// is a keyword in the computed layer and must survive phase 3.
+    #[test]
+    fn cascade_page_auto_survives_phase_3() {
+        let root = ComputedValues::initial();
+        let result = page("@page { margin-top: auto; width: auto }", &root);
+        assert_eq!(
+            result.declarations.get(&PropertyKey::MarginTop),
+            Some(&PropertyValue::MarginTop(LengthOrAuto::Auto)),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::Width),
+            Some(&PropertyValue::Width(LengthOrAuto::Auto)),
+        );
+    }
+
+    /// Every remaining box property goes through phase 3, not just `padding` —
+    /// enumerated so a missing arm in `absolutize_in_page_context` cannot hide
+    /// behind the `padding` tests.
+    #[test]
+    fn cascade_page_all_box_properties_are_absolutized() {
+        let root = ComputedValues::initial(); // 16px
+        let result = page(
+            "@page { padding-right: 1em; margin-bottom: 1em; width: 1em; height: 1em }",
+            &root,
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::PaddingRight),
+            Some(&PropertyValue::PaddingRight(Length::Px(16.0))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::MarginBottom),
+            Some(&PropertyValue::MarginBottom(LengthOrAuto::Length(
+                Length::Px(16.0)
+            ))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::Width),
+            Some(&PropertyValue::Width(LengthOrAuto::Length(Length::Px(
+                16.0
+            )))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::Height),
+            Some(&PropertyValue::Height(LengthOrAuto::Length(Length::Px(
+                16.0
+            )))),
+        );
+    }
+
+    /// The `None` (L3 legacy exception) path also runs phase 3, against the
+    /// initial values. Guards against the absolutization being wired only into
+    /// the `Some` branch.
+    #[test]
+    fn cascade_page_phase_3_runs_on_the_legacy_none_path() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { padding: 2em }", Origin::Author);
+        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        assert_eq!(padding_top_of(&result), Some(Length::Px(32.0)));
+    }
+
+    /// Phase 3 must not re-absolutize `font-size` — phase 2 already resolved it
+    /// against the *inheritance parent*, and a second pass would use the page
+    /// context's own (already-resolved) value as the basis. Root 20px, `2em`
+    /// → 40px; a double application would give 80px.
+    #[test]
+    fn cascade_page_font_size_is_not_absolutized_twice() {
+        let root = root_with_font_size(20.0);
+        let result = page("@page { font-size: 2em }", &root);
+        assert_eq!(
+            result.declarations.get(&PropertyKey::FontSize),
+            Some(&PropertyValue::FontSize(Length::Px(40.0))),
+        );
+    }
+
+    /// Direct unit test of the total fallback in `page_context_font_size`: with
+    /// no `font-size` winner the basis is the inheritance parent's computed
+    /// font-size (§6 "The page context inherits from the root element").
+    #[test]
+    fn page_context_font_size_falls_back_to_inherited() {
+        let root = root_with_font_size(24.0);
+        assert_eq!(
+            page_context_font_size(&HashMap::new(), &root),
+            ComputedLength(24.0),
+        );
+    }
+
+    /// Direct unit test of the "undeclared style = initial `none`" rule in
+    /// `page_context_border_styles`, on all four sides.
+    #[test]
+    fn page_context_border_styles_default_to_initial_none() {
+        let styles = page_context_border_styles(&HashMap::new());
+        assert_eq!(styles.top, BorderStyle::None);
+        assert_eq!(styles.right, BorderStyle::None);
+        assert_eq!(styles.bottom, BorderStyle::None);
+        assert_eq!(styles.left, BorderStyle::None);
+    }
+
+    /// Direct exercise of the three **shorthand safety-net arms** of
+    /// `absolutize_in_page_context`. `crate::rule::parse_declaration_block`
+    /// expands shorthands at parse time, so these are unreachable through
+    /// `cascade_page`; they are driven directly here for the same reason
+    /// `cascade::tests::apply_value_direct_margin_shorthand_safety_net` exists
+    /// (behaviour pinned instead of `unreachable!` — the crate keeps the
+    /// cascade panic-free).
+    #[test]
+    fn absolutize_in_page_context_shorthand_safety_nets() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        assert_eq!(
+            absolutize_in_page_context(
+                PropertyValue::Padding(Sides::all(Length::Em(2.0))),
+                fs,
+                &ctx,
+                styles,
+            ),
+            PropertyValue::Padding(Sides::all(Length::Px(40.0))),
+        );
+        assert_eq!(
+            absolutize_in_page_context(
+                PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Rem(2.0)))),
+                fs,
+                &ctx,
+                styles,
+            ),
+            PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Px(32.0)))),
+        );
+        // Each side of the `border` shorthand gates on the style it carries
+        // itself, not on `border_styles` (which describes the longhands).
+        assert_eq!(
+            absolutize_in_page_context(
+                PropertyValue::Border(Sides::all(Border {
+                    width: Length::Em(1.0),
+                    style: BorderStyle::Solid,
+                    color: BorderColor::CurrentColor,
+                })),
+                fs,
+                &ctx,
+                styles,
+            ),
+            PropertyValue::Border(Sides::all(Border {
+                width: Length::Px(20.0),
+                style: BorderStyle::Solid,
+                color: BorderColor::CurrentColor,
+            })),
+        );
+    }
+
+    /// Phase 3 must leave every computed-equivalent value untouched — the
+    /// pass-through arm covers 22 of the 40 `PropertyValue` variants (the other
+    /// 18 are transformed: padding 5 / margin 5 / border-width 5 /
+    /// line-height 1 / width + height 2) and a wrong classification there
+    /// would corrupt a value rather than merely leave it unresolved.
+    #[test]
+    fn cascade_page_computed_equivalent_values_pass_phase_3_unchanged() {
+        let root = root_with_weight(700);
+        let result = page(
+            "@page { color: red; font-weight: bolder; display: block; \
+             box-sizing: border-box; border-top-color: red; text-align: center }",
+            &root,
+        );
+        assert_eq!(color_of(&result), Some(RED));
+        assert_eq!(
+            result.declarations.get(&PropertyKey::FontWeight),
+            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BoxSizing),
+            Some(&PropertyValue::BoxSizing(
+                crate::property::BoxSizing::BorderBox
+            )),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::TextAlign),
+            Some(&PropertyValue::TextAlign(TextAlign::Center)),
         );
     }
 

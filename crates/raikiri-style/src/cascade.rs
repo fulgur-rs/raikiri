@@ -660,76 +660,53 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 ///    §6 の margin-box cascade は page context を継承元とする第 3 の経路になる。
 ///    exhaustive match は「経路の数え上げ」を強制しない。
 ///
-/// # pass-through は「specified == computed」ではない
+/// # 本関数の pass-through は「解決済」ではない (phase 3 が要る)
 ///
-/// 未解決のまま通る既知の値が 2 系統ある:
+/// 本関数が担うのは「継承元 computed values **だけ**で解ける」解決に限る =
+/// **phase 2**。pass-through arm を通った値のうち、box property
+/// ([`padding`](PropertyValue::PaddingTop) /
+/// [`margin`](PropertyValue::MarginTop) / [`width`](PropertyValue::Width) /
+/// [`height`](PropertyValue::Height) / `border-*-width`) と `line-height` の
+/// [`Length`](crate::property::Length) `Em` / `Rem` / `Pt` は**まだ specified
+/// 値**である。CSS Paged Media 3 §6 "Page Properties"
+/// <https://www.w3.org/TR/css-page-3/#page-properties> の "Values in units of
+/// em and ex are interpreted relative to the font associated with their
+/// context" どおり `Em` は page context 自身の font に対する倍率であり、その
+/// font-size は**同 cascade の兄弟 declaration から来得る**ため `inherited`
+/// だけでは決まらない。`border-*-width` の style gating (CSS Backgrounds 3 §3.3)
+/// も同様に兄弟 declaration (`border-*-style`) を要する。
 ///
-/// - **box property** ([`padding`](PropertyValue::PaddingTop) /
-///   [`margin`](PropertyValue::MarginTop) / [`width`](PropertyValue::Width) /
-///   [`height`](PropertyValue::Height) / `border-*-width`) の
-///   [`Length`](crate::property::Length) `Em` / `Rem` / `Percent`。
-///   CSS Paged Media 3 §6 "Page Properties"
-///   <https://www.w3.org/TR/css-page-3/#page-properties> の "Values in units of
-///   em and ex are interpreted relative to the font associated with their
-///   context" どおり `Em` は page context 自身の font に対する倍率であり、その
-///   font-size は**同 cascade の兄弟 declaration から来得る**ため `inherited`
-///   だけでは決まらない。`Percent` は同 §6 が "Percentage values on the margin and
-///   padding properties are relative to the dimensions of the containing block"
-///   と規定するとおり containing block を要する。
+/// **その解決は呼び手の責務である。** 唯一の呼び手
+/// [`crate::page::cascade_page`] は本関数の直後に **phase 3**
+/// (`crate::page::absolutize_in_page_context`) を走らせ、そこで page context の
+/// font-size を基準に絶対化 + style gating を行う (bd raikiri-spike-sshp)。
+/// したがって
+/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
+/// に届く時点では computed 値になっている — **本関数の戻り値をそのまま public に
+/// 出す新しい呼び手を書いてはならない**。
 ///
-///   **element 経路との非対称**: element 側は本関数を通らず [`apply_value`] →
-///   [`SpecifiedValues::finalize`] の経路を取り、そこで phase 2 (font-size 確定)
-///   → phase 3 (自 font-size 基準で残りを絶対化) が走るため box property も
-///   computed 層まで解決される。page 経路には phase 3 に相当する段が無い
-///   (page context の font-size 確定と box property の絶対化を分ける実装が要る —
-///   bd raikiri-spike-zls8 の scope 外)。したがって box property の `Em` /
-///   `Rem` / `Percent` は **page 経路でのみ**未解決のまま public に出る。
+/// element 経路の対応物は [`apply_value`] → [`SpecifiedValues::finalize`] で、
+/// phase 2 (font-size 確定) → phase 3 (自 font-size 基準で残りを絶対化) が
+/// 同じ順に走る。両経路の phase 3 は `crate::resolve` の同じ関数群へ funnel する
+/// ので、spec 規則 (`em` / `rem` の基準、percentage の素通し、border style
+/// gating) の実装は 1 本ずつしかない。
 ///
-///   `font-size` property 上の `Em` / `Rem` / `Percent` は例外で、本関数が
-///   解決する (上の `FontSize` arm)。
+/// # phase 3 でも解けない値 (1 つだけ)
 ///
 /// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent)。CSS
 ///   Text 3 §6.1
 ///   <https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent> は
 ///   継承元の computed `text-align` を継承元の `direction` に対して解釈した値を
-///   computed value と規定する。**原理的には `inherited` だけで解けるが**
-///   raikiri は `direction` を computed 層に持たないため未実装
-///   ([`TextAlign`](crate::property::TextAlign) doc の (b) milestone subset
-///   carve-out と同じ gap)。
+///   computed value と規定する。**原理的には `inherited` だけで解ける** (=
+///   本関数の担当) **が** raikiri は `direction` を computed 層に持たないため
+///   未実装 ([`TextAlign`](crate::property::TextAlign) doc の (b) milestone
+///   subset carve-out と同じ gap)。phase 3 を足しても解決しない唯一の残り。
 ///
-/// 本関数が担うのは「継承元 computed values だけで解ける」解決に限る。
-///
-/// 帰結として
-/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
-/// は **layer-heterogeneous** な bag である。property → 層の対応表:
-///
-/// | 層 | property |
-/// |---|---|
-/// | computed-equivalent | `font-weight` (`Absolute(u16)`) / `font-size` (`Length::Px`) / length を含まない全 property |
-/// | specified のまま | box property (`padding` / `margin` / `width` / `height` / `border-*-width`) の `Em` / `Rem` / `Percent`、`line-height` の `Em` / `Rem` / `Percent`、`text-align: match-parent` |
-/// | **`Px` でも computed 層未達** | `border-*-width` — style gating が未適用 (下記 caveat) |
-///
-/// すなわち「この map は specified 型」という一律変換では扱えない。
-///
-/// **caveat — `border-*-width` の `Px` は「絶対長だから computed」ではない**:
-/// CSS Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>
-/// は "Computed value: absolute length, snapped as a border width; **zero if the
-/// border style is `none` or `hidden`**" と規定するので、style gating も computed
-/// 層の要求である。page 経路にはその gate が**どこにも無い**ため
-/// `@page { border-top-width: 5px; border-top-style: none }` は
-/// `BorderTopWidth(Length::Px(5.0))` を public な `declarations` に出す
-/// (spec 上は 0 が computed value)。element 経路は
-/// [`crate::resolve::resolve_border`] が正しく gate するのでこの穴は無い。
-///
-/// この gap の根は bd raikiri-spike-ygl0 由来で **pre-existing** (layout への
-/// leak も無い)。上の table を「完全な対応表」として読まないこと — 本体の修正は
-/// 別 task に defer されている。
-///
-/// element 経路では 082k Phase 2 (bd raikiri-spike-zls8) が対応表を**型で**
-/// 表現した — [`SpecifiedValues`] の field 型そのものが表であり、同 struct の
-/// doc に 2 列で列挙してある (そちらは phase 3 まで走るので box property も
-/// computed 側)。page 経路は `PropertyValue` の bag なので型では表現されず、
-/// 上の表が対応表を兼ねる。
+/// なお `Percent` は「未解決」ではない: box property の computed value は
+/// percentage のままである (CSS Values 4 §5.5.1、および §6 の "Percentage values
+/// on the margin and padding properties are relative to the dimensions of the
+/// containing block" = used 層の入力)。element 経路の
+/// [`crate::resolve::resolve_length_percentage`] と同じ扱い。
 pub(crate) fn resolve_against_inherited(
     value: PropertyValue,
     inherited: &ComputedValues,
@@ -767,11 +744,15 @@ pub(crate) fn resolve_against_inherited(
         //   §6 の明文ではない。
         // - `px` / `pt`: 絶対単位なので context 非依存。
         //
-        // element 経路と違い page 経路には phase 3 が無い — box property
+        // 本 arm が `font-size` に限る理由: box property
         // (`padding` / `margin` / `width` / `height` / `border-*-width`) の
         // `em` は page context 自身の font-size を要し、それは同 cascade の兄弟
-        // declaration から来得るので `inherited` だけでは決まらない。したがって
-        // 本 arm は `font-size` に限る (下の pass-through 節を参照)。
+        // declaration から来得るので `inherited` だけでは決まらない。それらは
+        // 呼び手 (`cascade_page`) が本関数の後に走らせる phase 3 の担当である
+        // (上の「本関数の pass-through は『解決済』ではない」節を参照)。
+        // **本 arm の戻り値が常に `Length::Px` であることは load-bearing** —
+        // phase 3 はその値を page context の font-size (= `em` の基準) として
+        // 読み戻す (`crate::page::page_context_font_size`)。
         PropertyValue::FontSize(len) => PropertyValue::FontSize(Length::Px(
             crate::resolve::resolve_font_size(
                 len,
@@ -780,9 +761,9 @@ pub(crate) fn resolve_against_inherited(
             )
             .px(),
         )),
-        // 本関数では解決しない property — pass-through。上記 doc の「pass-through は
-        // 『specified 表現 == computed 表現』ではない」節が既知の未解決値を
-        // 列挙している。`_` に潰さないこと。
+        // 本関数では解決しない property — pass-through。上記 doc の「本関数の
+        // pass-through は『解決済』ではない (phase 3 が要る)」節が、これらを
+        // 呼び手の phase 3 が絶対化することを説明している。`_` に潰さないこと。
         v @ (PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)

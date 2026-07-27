@@ -1,10 +1,20 @@
 //! Computed value 層の value 型 + specified → computed の絶対化 (absolutization)。
 //!
-//! 本 module は **層の分離**を担う。[`crate::property`] の [`Length`] /
-//! [`LengthOrAuto`] / [`LineHeight`] / [`Border`] は **specified value 層**の型
-//! (authored unit をそのまま保持) であり、本 module の `Computed*` 型群が
-//! **computed value 層**を表す。[`crate::computed::ComputedValues`] は per-node の
-//! 集約 struct として `computed.rs` に残る (本 module は value 型と絶対化関数のみ)。
+//! 本 module は **層の分離**を担う。本 module の絶対化関数群は
+//! [`crate::property`] の [`Length`] / [`LengthOrAuto`] / [`LineHeight`] /
+//! [`Border`] を **入力**に取り、`Computed*` 型群を **出力**する。すなわち
+//! `Computed*` 型は「computed value 層である」ことを型で表明する。
+//! [`crate::computed::ComputedValues`] は per-node の集約 struct として
+//! `computed.rs` に残る (本 module は value 型と絶対化関数のみ)。
+//!
+//! **逆は成り立たない — [`Length`] 等は「specified 層である」ことを表明しない。**
+//! 本 module の入力に現れるときは specified 層だが、型そのものが層を決めるわけ
+//! ではなく、**層は値の出所で決まる**。実際 page 経路
+//! ([`crate::page::cascade_page`]) は `PropertyValue` の bag を運ぶので
+//! **computed 値も [`Length`] で運ばれる** (bd raikiri-spike-sshp)。
+//! canonical な説明は [`Length`] の doc の「本型は『specified 層』を意味しない
+//! — 層は出所で決まる」節にあり、**本節を書き換えるときは必ずあちらと揃える
+//! こと** (片方だけが更新される drift への手当て)。
 //!
 //! bd decision raikiri-spike-082k (Option A) / bd task raikiri-spike-i5bs
 //! (Phase 1 = additive)。
@@ -725,19 +735,22 @@ pub fn resolve_line_height(
 /// width is 0." と **used** 層で述べる一方、規範な propdef table は **computed**
 /// 層を指定している。Note は非規範なので propdef table が governs。
 ///
-/// **本関数は element 経路における gate の単一 source である** —
+/// **本関数は gate の単一 source である (element 経路 / page 経路の両方)** —
 /// `raikiri-dom` の `layout.rs` は Sprint 18 まで同じ gating を used 層
 /// (`used_border_width` helper) で 1 層遅れて行っていたが、bd raikiri-spike-zls8
 /// が `layout.rs` を [`ComputedBorder`] consumer に migrate した際に削除した。
 /// 下流に同じ判定を再実装してはならない (spec 規則の二重実装は片方だけ直す
 /// drift を生む)。
 ///
-/// **page 経路 (`@page`) には gate が無い** — `crate::page::cascade_page` の
-/// 結果は `PropertyValue` の bag であり本関数を通らないため、
-/// `@page { border-top-width: 5px; border-top-style: none }` は非 gating の
-/// `Px(5.0)` を public に出す。詳細と根拠は
-/// `crate::cascade::resolve_against_inherited` の対応表の caveat を参照
-/// (pre-existing gap、別 task に defer)。
+/// page 経路 (`@page`) は `PropertyValue` の bag を運ぶが、bd raikiri-spike-sshp
+/// 以降 `crate::page::cascade_page` の phase 3 が `border-*-width` longhand を
+/// [`Border`] に組み直して**本関数へ funnel する** — `matches!(style, None |
+/// Hidden)` を page 側で書き直してはならない。longhand には color が無いので
+/// placeholder を渡すが、本関数は width の判定に color を読まない。
+/// `border-*-style` **未宣言**時の基準は `crate::specified::INITIAL_BORDER` の
+/// `style` (= `none`) であり、CSS Paged Media 3 §6 "Page Properties"
+/// <https://www.w3.org/TR/css-page-3/#page-properties> の "both the page context
+/// and the margin context have a computed value for every property" が根拠。
 ///
 /// # CAVEAT: border-image
 ///

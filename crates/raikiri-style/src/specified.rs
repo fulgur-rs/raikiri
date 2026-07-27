@@ -61,10 +61,13 @@ use crate::resolve::{
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は `crate::cascade::apply_value` が**この struct へ書き込む
 /// 時点で**親の computed weight に対して解決するので、`u16` で保持される
-/// (下記「D5 invariant」節)。同じ heterogeneity は
-/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
-/// にも現れる — あちらは `PropertyValue` の bag なので型では表現されず、
-/// `crate::cascade::resolve_against_inherited` の doc が散文で列挙している。
+/// (下記「D5 invariant」節)。
+///
+/// page 経路には本 struct に相当する staging 型が無い —
+/// [`crate::page::cascade_page`] は同じ 2 phase を `PropertyValue` の bag の上で
+/// 直接走らせるので、中間状態は関数 local に閉じており public には出ない
+/// (bd raikiri-spike-sshp)。両経路の phase 3 は [`crate::resolve`] の同じ関数群へ
+/// funnel する。
 ///
 /// # D5 invariant — inherited field は**親の computed 値**で seed すること
 ///
@@ -401,7 +404,17 @@ impl SpecifiedValues {
 /// **computed 層の initial は本値ではない** — style が `none` なので
 /// [`resolve_border`] の gating により width が 0px に潰れる
 /// ([`ComputedValues::initial`] 参照)。
-const INITIAL_BORDER: Border = Border {
+///
+/// `pub(crate)` なのは page 経路の phase 3 (`crate::page::cascade_page`) が
+/// `border-*-style` **未宣言**時の gating 基準として `.style` を読むため
+/// (bd raikiri-spike-sshp)。CSS Paged Media 3 §6 "Page Properties"
+/// <https://www.w3.org/TR/css-page-3/#page-properties> の "both the page context
+/// and the margin context have a computed value for every property" により、
+/// 未宣言 property の computed value は initial 値であり、`border-*-style` は
+/// non-inherited なので継承値ではなくここが唯一の source になる。
+/// **「initial の border-style は `none`」を page.rs 側で literal 再掲しない**
+/// ための共有である。
+pub(crate) const INITIAL_BORDER: Border = Border {
     width: Length::Px(3.0),
     style: BorderStyle::None,
     color: BorderColor::CurrentColor,

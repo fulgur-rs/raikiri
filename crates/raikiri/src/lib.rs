@@ -137,10 +137,23 @@ pub use raikiri_dom::Document;
 // - `ComputedBorder`                  — `border` の各 side
 //
 // `Length` (specified 層) は**残す** — `ComputedValues` の field 型ではなくなった
-// が、同じく re-export している `PropertyValue` の variant payload
-// (`PropertyValue::FontSize(Length)` 等) は specified 層のままであり、Consumer が
-// declaration を読むには依然として名指しが要る。外すと `PropertyValue` を扱う
-// Consumer が孤立する。
+// が、同じく re-export している `PropertyValue` は variant payload に `Length` を
+// 持ち続ける (`PropertyValue::FontSize(Length)` 等) ので、Consumer が declaration
+// を読むには依然として名指しが要る。外すと `PropertyValue` を扱う Consumer が
+// 孤立する。
+//
+// `Length` が payload に居ることは「その値が specified 層である」ことを意味しない
+// — **どの層かは PropertyValue をどこから受け取ったかで決まる** (bd
+// raikiri-spike-sshp):
+//
+// - `RuleTree` / `Declaration` 由来 (parse 直後の cascade 入力) は specified 層。
+//   `Em` / `Rem` / `Pt` / `Percent` がそのまま入る。
+// - `raikiri_style::cascade_page` の `PageCascadeResult.declarations` 由来は
+//   **computed 層**。page 経路は phase 2 + phase 3 を通すので `Length` は
+//   `Px` か `Percent` にしかならず、`border-*-width` は style gating 済み。
+//   `Length` はその computed 値の運搬 shape として使われている。
+//   (`cascade_page` 自体は umbrella が re-export していないので、この経路に
+//   届く Consumer は raikiri-style へ直接 dep している場合のみ。)
 //
 // `Sides<T>` (padding / margin / border の 4-side container) は **追加しない** —
 // 従来から re-export していない既存の gap であり、本 task の approved surface
