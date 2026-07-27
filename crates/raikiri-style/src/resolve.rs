@@ -498,8 +498,9 @@ impl ResolveContext {
 /// absolute length units are compatible, and px is their canonical unit."
 ///
 /// 式は `v * 4.0 / 3.0` の形 (乗算を先) で書く — `raikiri-dom` の `layout.rs` の
-/// 既存 bridge (`length_to_taffy_length_percentage` 他) と**同一の評価順**にし、
-/// 同じ authored value に対して両者が bit 単位で同じ f32 を返すことを保つため。
+/// 既存 bridge (`computed_length_percentage_to_taffy_length_percentage` 他) と
+/// **同一の評価順**にし、同じ authored value に対して両者が bit 単位で同じ f32
+/// を返すことを保つため。
 /// f32 は結合則を満たさないので `v * (4.0 / 3.0)` に「簡約」してはならない。
 fn pt_to_px(v: f32) -> f32 {
     v * 4.0 / 3.0

@@ -143,16 +143,16 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
 /// `Sides` の field 順 `top,right,bottom,left` と `Rect` の field 順
 /// `left,right,top,bottom` が異なるため silent transpose を防ぐ)。
 ///
-/// Length policy は [`length_or_auto_to_taffy_lpa`] を参照。
+/// Length policy は [`computed_length_percentage_or_auto_to_taffy_length_percentage_auto`] を参照。
 ///
 /// (raikiri-spike-j5rz Sprint 18 Wave 1)
 fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues) {
     let m = cv.margin;
     style.margin = Rect {
-        top: length_or_auto_to_taffy_lpa(m.top),
-        right: length_or_auto_to_taffy_lpa(m.right),
-        bottom: length_or_auto_to_taffy_lpa(m.bottom),
-        left: length_or_auto_to_taffy_lpa(m.left),
+        top: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.top),
+        right: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.right),
+        bottom: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.bottom),
+        left: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.left),
     };
 }
 
@@ -166,18 +166,18 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues) {
 /// `left,right,top,bottom` が異なるため silent transpose を防ぐ)。margin と
 /// の差は value type: padding は `<length-percentage [0,∞]>` (auto なし、
 /// non-negative は raikiri-style parse-time enforce) のため
-/// [`length_to_taffy_length_percentage`] を使う。
+/// [`computed_length_percentage_to_taffy_length_percentage`] を使う。
 ///
-/// Length policy は [`length_to_taffy_length_percentage`] を参照。
+/// Length policy は [`computed_length_percentage_to_taffy_length_percentage`] を参照。
 ///
 /// (raikiri-spike-jbu0 Sprint 18 Wave 2)
 fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues) {
     let p = cv.padding;
     style.padding = Rect {
-        top: length_to_taffy_length_percentage(p.top),
-        right: length_to_taffy_length_percentage(p.right),
-        bottom: length_to_taffy_length_percentage(p.bottom),
-        left: length_to_taffy_length_percentage(p.left),
+        top: computed_length_percentage_to_taffy_length_percentage(p.top),
+        right: computed_length_percentage_to_taffy_length_percentage(p.right),
+        bottom: computed_length_percentage_to_taffy_length_percentage(p.bottom),
+        left: computed_length_percentage_to_taffy_length_percentage(p.left),
     };
 }
 
@@ -238,7 +238,7 @@ fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues) {
 /// (`style.size = Size { width, height }`) で 1 発 assign する — partial write
 /// scaffold は Wave 3 で不要になった。
 ///
-/// Length policy は [`length_or_auto_to_taffy_dimension`] を参照。
+/// Length policy は [`computed_length_percentage_or_auto_to_taffy_dimension`] を参照。
 ///
 /// # PageBox 妥協 (M1)
 ///
@@ -260,8 +260,8 @@ fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues) {
     // (Wave 2 の field-assign scaffold は Wave 3 マージまでの一時形態で、
     //  もはや保つ必要がない — default 保持は cv 側で `Auto` を返せば自然に達成。)
     style.size = Size {
-        width: length_or_auto_to_taffy_dimension(cv.width),
-        height: length_or_auto_to_taffy_dimension(cv.height),
+        width: computed_length_percentage_or_auto_to_taffy_dimension(cv.width),
+        height: computed_length_percentage_or_auto_to_taffy_dimension(cv.height),
     };
 }
 
@@ -727,7 +727,9 @@ pub(crate) fn sanitize_taffy_layout(layout: &TaffyLayout) -> TaffyLayout {
 /// (CSS Cascade 5 §4.5 <https://www.w3.org/TR/css-cascade-5/#used>) であり
 /// taffy に委譲する — **guard が bound するのは fraction であって解決後の
 /// used value ではない** ([`MAX_TAFFY_MAGNITUDE`] の射程節を参照)。
-fn length_to_taffy_length_percentage(len: ComputedLengthPercentage) -> LengthPercentage {
+fn computed_length_percentage_to_taffy_length_percentage(
+    len: ComputedLengthPercentage,
+) -> LengthPercentage {
     match len {
         // site 1 (bd raikiri-spike-2ui0): `sanitize_taffy` で非有限を落とす。
         ComputedLengthPercentage::Px(v) => LengthPercentage::length(sanitize_taffy(v)),
@@ -741,12 +743,14 @@ fn length_to_taffy_length_percentage(len: ComputedLengthPercentage) -> LengthPer
 /// (width / height 用)。
 ///
 /// 網羅 match / Percent policy / 非有限 guard は
-/// [`length_to_taffy_length_percentage`] と同じ (3 arm、catch-all なし)。
+/// [`computed_length_percentage_to_taffy_length_percentage`] と同じ (3 arm、catch-all なし)。
 /// `Auto` → `Dimension::auto()` (f32 を持たないので guard 対象外)。
 ///
 /// [`bridge_size`] から width (raikiri-spike-ggig Wave 2) / height
 /// (raikiri-spike-01up Wave 3) 両方で consume される。
-fn length_or_auto_to_taffy_dimension(loa: ComputedLengthPercentageOrAuto) -> Dimension {
+fn computed_length_percentage_or_auto_to_taffy_dimension(
+    loa: ComputedLengthPercentageOrAuto,
+) -> Dimension {
     match loa {
         // site 2 (bd raikiri-spike-2ui0)。
         ComputedLengthPercentageOrAuto::Px(v) => Dimension::length(sanitize_taffy(v)),
@@ -759,10 +763,12 @@ fn length_or_auto_to_taffy_dimension(loa: ComputedLengthPercentageOrAuto) -> Dim
 /// (margin 用)。
 ///
 /// 網羅 match / Percent policy / 非有限 guard は
-/// [`length_to_taffy_length_percentage`] と同じ。`Auto` →
+/// [`computed_length_percentage_to_taffy_length_percentage`] と同じ。`Auto` →
 /// `LengthPercentageAuto::auto()` (CSS Box 3 §3.1 "margin auto = distribute
 /// available space" を taffy に委譲、f32 を持たないので guard 対象外)。
-fn length_or_auto_to_taffy_lpa(loa: ComputedLengthPercentageOrAuto) -> LengthPercentageAuto {
+fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+    loa: ComputedLengthPercentageOrAuto,
+) -> LengthPercentageAuto {
     match loa {
         // site 3 (bd raikiri-spike-2ui0)。margin は負値が spec-valid なので
         // `sanitize_taffy` の対称 clamp が load-bearing。
@@ -777,8 +783,9 @@ fn length_or_auto_to_taffy_lpa(loa: ComputedLengthPercentageOrAuto) -> LengthPer
 /// [`ComputedLength`] (px) → [`taffy::LengthPercentage`] bridge
 /// (`border-*-width` 用)。
 ///
-/// sibling 3 helper (`length_to_taffy_length_percentage` /
-/// `length_or_auto_to_taffy_dimension` / `length_or_auto_to_taffy_lpa`) と同じ
+/// sibling 3 helper (`computed_length_percentage_to_taffy_length_percentage` /
+/// `computed_length_percentage_or_auto_to_taffy_dimension` /
+/// `computed_length_percentage_or_auto_to_taffy_length_percentage_auto`) と同じ
 /// `<src>_to_taffy_<dst>` 命名 / 同じ cluster に置く (37n sibling convention)。
 ///
 /// `border-*-width` 専用に分けているのは、grammar (`<line-width>` =
@@ -786,8 +793,9 @@ fn length_or_auto_to_taffy_lpa(loa: ComputedLengthPercentageOrAuto) -> LengthPer
 /// computed 層でも length しか来ないから (CSS Backgrounds 3 §3.3 "Line
 /// Thickness: the border-width properties"
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。戻り値型は
-/// [`length_to_taffy_length_percentage`] と同一 (`LengthPercentage` が taffy
-/// 側の最小共通型) だが、入力型が [`ComputedLength`] なので percentage arm を
+/// [`computed_length_percentage_to_taffy_length_percentage`] と同一
+/// (`LengthPercentage` が taffy 側の最小共通型) だが、入力型が
+/// [`ComputedLength`] なので percentage arm を
 /// 持たない点が違う。非有限 guard ([`sanitize_taffy`]) は同じく通す
 /// (bd raikiri-spike-2ui0)。
 fn computed_length_to_taffy_length_percentage(len: ComputedLength) -> LengthPercentage {
@@ -1386,8 +1394,9 @@ mod tests {
         // の parse_height path + ComputedLengthPercentageOrAuto encoding も同時に
         // regression pin。
         //
-        // Pt case は sibling width test が同じ length_or_auto_to_taffy_dimension
-        // policy を pin しているため redundant (かつ pt → px 変換は bd
+        // Pt case は sibling width test が同じ
+        // computed_length_percentage_or_auto_to_taffy_dimension policy を
+        // pin しているため redundant (かつ pt → px 変換は bd
         // raikiri-spike-zls8 以降 cascade の phase 3 の責務)。ここでは height
         // 特有の 3 arm (auto default 保持、`Px` 通路、`Percent` 通路) に絞る。
         use raikiri_style::{build_rule_tree, cascade};
@@ -1859,7 +1868,7 @@ mod tests {
         doc.nodes[p].style.clone()
     }
 
-    /// site 1 — `length_to_taffy_length_percentage` (padding)。
+    /// site 1 — `computed_length_percentage_to_taffy_length_percentage` (padding)。
     #[test]
     fn nonfinite_padding_is_clamped_before_taffy() {
         use taffy::LengthPercentage;
@@ -1901,7 +1910,7 @@ mod tests {
         );
     }
 
-    /// site 2 — `length_or_auto_to_taffy_dimension` (width / height)。
+    /// site 2 — `computed_length_percentage_or_auto_to_taffy_dimension` (width / height)。
     #[test]
     fn nonfinite_size_is_clamped_before_taffy() {
         use taffy::Dimension;
@@ -1914,7 +1923,7 @@ mod tests {
         assert_eq!(n.size.width, Dimension::length(0.0));
     }
 
-    /// site 3 — `length_or_auto_to_taffy_lpa` (margin)。
+    /// site 3 — `computed_length_percentage_or_auto_to_taffy_length_percentage_auto` (margin)。
     ///
     /// margin は **負値が spec-valid** (CSS Box 3 §3.1) なので clamp は対称
     /// (`[-MAX, MAX]`) でなければならない。
