@@ -1440,7 +1440,8 @@ mod tests {
         // §3.3 "Line Thickness: the border-width properties"
         // <https://www.w3.org/TR/css-backgrounds-3/#border-width> の propdef が
         // "Computed value: absolute length, snapped as a border width; zero if
-        // the border style is none or hidden" と規定するため
+        // the border style is none or hidden" と規定するため (TR 版 — ED は
+        // CSSWG Issue 11494 で resolved-value 効果へ移動済、bd raikiri-spike-8dfv)
         // (bd raikiri-spike-zls8 で used 層から computed 層へ移動、bridge 側の
         // `used_border_width` helper は削除済)。§3.2 "Line Patterns: the
         // border-style properties"
@@ -1488,9 +1489,10 @@ mod tests {
         );
 
         // Case 2 (spec correctness — advisor #2): `border: 5px none red` shorthand
-        //   → 4 side 全て width=5, style=None で cascade。§5.2 style-gating で
-        //   used width = 0 → 4 side 全て length(0.0)。gating が壊れると 5.0 が
-        //   leak するので、この case が canary。
+        //   → 4 side 全て width=5, style=None で cascade。§3.2 の `none` と
+        //   §3.3 propdef (TR 版、逐語引用は冒頭 block) による style-gating で
+        //   computed width = 0 → 4 side 全て length(0.0)。gating が壊れると 5.0
+        //   が leak するので、この case が canary。
         assert_eq!(
             border_for("border: 5px none red"),
             Rect {
@@ -1502,8 +1504,11 @@ mod tests {
         );
 
         // Case 3 (spec correctness — advisor #2): `border: 5px hidden red`
-        //   shorthand → §5.2 で hidden は "Same as none, except in terms of
-        //   border conflict resolution for table elements." — used width = 0。
+        //   shorthand → computed width = 0。直接の根拠は §3.3 propdef (TR 版) が
+        //   `none` と並べて `hidden` を名指ししていること。§3.2 の `hidden` は
+        //   "Same as none, but has different behavior in the border conflict
+        //   resolution rules for border-collapsed tables [CSS2]." であり、`none`
+        //   との差は border-collapsed table の conflict resolution だけ。
         assert_eq!(
             border_for("border: 5px hidden red"),
             Rect {
@@ -1529,8 +1534,12 @@ mod tests {
         );
 
         // Case 5 (medium keyword): `border-top-width: medium` + solid → top =
-        //   3.0 px (§5.1 UA-defined recommendation の thin=1/medium=3/thick=5、
-        //   property.rs `parse_border_width_side` 参照)。他 3 side は Case 4
+        //   3.0 px (property.rs `parse_border_width_side` 参照)。§3.3 は "The
+        //   thin, medium, and thick keywords are equivalent to 1px, 3px, and
+        //   5px, respectively." と**固定値を規定**する。CSS2.1 §8.5.1
+        //   <https://www.w3.org/TR/CSS21/box.html#border-width-properties>
+        //   の "The interpretation of the first three values depends on the
+        //   user agent." から性格が変わっている点に注意。他 3 side は Case 4
         //   同様 gating で 0。medium keyword が Length::Px(3.0) にパースされる
         //   ことを end-to-end で pin。
         assert_eq!(
