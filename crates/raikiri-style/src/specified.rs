@@ -18,11 +18,11 @@
 //! 絶対化した `2em` は古い基準で焼き付いている)。**絶対化を winner 適用とは別
 //! phase に分けることは decision 082k の拘束事項**である。
 //!
-//! なお `crate::cascade::pick_winners` の winner 適用順そのものは
-//! **決定的** — `PropertyKey` discriminant を index にした slot 配列を昇順に
-//! 走査するため (bd raikiri-spike-8kn8 以前は `HashMap` iteration 順で
-//! 非決定的だった)。上の拘束は適用順の決定性とは独立に成り立つ: どの順に
-//! 適用しようと「全 winner 適用後」でなければ基準 `font-size` は確定しない。
+//! なお cascade 段の winner 適用順そのものは **決定的**である —
+//! `PropertyKey` discriminant を index にした slot 配列を昇順に走査するため
+//! (bd raikiri-spike-8kn8 以前は `HashMap` iteration 順で非決定的だった)。
+//! 上の拘束は適用順の決定性とは独立に成り立つ: どの順に適用しようと
+//! 「全 winner 適用後」でなければ基準 `font-size` は確定しない。
 
 use std::sync::Arc;
 

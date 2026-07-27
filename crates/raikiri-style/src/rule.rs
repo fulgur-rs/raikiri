@@ -70,13 +70,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// の field が 1:1 disjoint なので winner の適用順に依存しない。ところが
 /// `margin` shorthand + `margin-*` longhand は **cross-key dependency** を持ち
 /// (`margin: 0; margin-top: 10px` は spec 上 top=10、他=0)、両者が別 key の
-/// winner として cascade 段に届くと適用順が結果を左右してしまう。
-///
-/// [`crate::cascade::apply_value`] の呼び出し順は `PropertyKey` discriminant
-/// 昇順 (= enum 宣言順) であり、shorthand variant は対応する longhand variant
-/// より**後**に置かれている。したがって shorthand を cascade 段まで運ぶと
-/// **shorthand が常に後勝ちする** — 上の例で `margin: 0` が `margin-top: 10px`
-/// を潰す、spec と逆の結果になる。
+/// winner として cascade 段に届くと **適用順が結果を左右してしまう**。
 ///
 /// spec CSS Cascading L4 §3 "Shorthand Properties"
 /// <https://www.w3.org/TR/css-cascade-4/#shorthand> は shorthand を "sets all
@@ -87,8 +81,17 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// 影響しなくなる (`static ordering after cascade` の deterministic な source
 /// of truth)。
 ///
-/// shorthand key が cascade 段に到達した場合の統合修正 (spec §Cascade 5 の
-/// parse-time expansion model への完全準拠) は bd raikiri-spike-5nc の scope。
+/// つまり本関数の rationale は「cascade 段の適用順が具体的に何であるか」には
+/// **依存しない** — 適用順に賭けないことそのものが目的である。参考までに現在の
+/// 適用順は `PropertyKey` discriminant 昇順であり、shorthand variant が longhand
+/// より後ろに置かれている都合で shorthand が後勝ちするが、それが spec と
+/// 食い違うかは declaration の並び順次第で変わる (方向依存の内訳は
+/// [`crate::cascade`] の `apply_winners` doc)。**variant の並び順は本 rationale
+/// の根拠ではない**ので、並べ替えでこの gap を塞ごうとしないこと。
+///
+/// 展開漏れ (catch-all arm により compile error にならない) を塞ぐ exhaustive 化は
+/// **bd raikiri-spike-3wq6** の scope。それが入るまでの中間 guard が本 module の
+/// [`tests::declaration_block_never_emits_shorthand_keys`] test。
 ///
 /// # `important` flag propagation
 ///
@@ -262,6 +265,45 @@ mod tests {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
         parse_declaration_block(&mut parser)
+    }
+
+    /// [`parse_declaration_block`] の出口に shorthand key が 1 つも残らないこと。
+    ///
+    /// この不変は cascade 段の正しさに load-bearing である
+    /// ([`crate::cascade`] の `apply_winners` doc): shorthand key が cascade に
+    /// 届くと `PropertyKey` 宣言順で longhand より後に適用され、declaration の
+    /// 並び方によっては longhand winner を潰して spec と食い違う。
+    ///
+    /// [`expand_shorthand_into`] は catch-all arm で **fail-open** なので、新しい
+    /// shorthand variant の展開 arm を書き忘れても compile error にならない。
+    /// 本 test はその抜けを実行時に捕まえる中間 guard で、compile-time 強制
+    /// (exhaustive 化) は bd raikiri-spike-3wq6 の scope。
+    #[test]
+    fn declaration_block_never_emits_shorthand_keys() {
+        use crate::property::PropertyKey;
+
+        let decls = parse_block(
+            "margin: 1px; padding: 2px; border: 3px solid red; \
+             margin-top: 4px; padding-left: 5px; border-top-width: 6px; \
+             color: red; font-size: 10px",
+        );
+        assert!(
+            !decls.is_empty(),
+            "parse が空 — test corpus 側の regression"
+        );
+
+        for decl in &decls {
+            let key = decl.value.key();
+            assert!(
+                !matches!(
+                    key,
+                    PropertyKey::Margin | PropertyKey::Padding | PropertyKey::Border
+                ),
+                "shorthand key {key:?} が cascade 段へ漏れている — \
+                 `expand_shorthand_into` に対応する展開 arm を追加すること \
+                 (catch-all arm があるため compile error にはならない)"
+            );
+        }
     }
 
     #[test]
