@@ -185,11 +185,20 @@ fn expand_hex_nibble(n: u8) -> u8 {
 
 /// CSS length or length-percentage value (Author CSS seed for m4+ box model).
 ///
-/// 各 variant は authored value (raw number as written) を保持し、resolve は
-/// 下流責務 (font-size context / containing block % / DPI 変換)。sibling arm
+/// 各 variant は authored value (raw number as written) を保持する。sibling arm
 /// convention (37n): [`Length::Px`] が `Px(16.0)` = `16px` の pattern を確立、
 /// 他 variant も authored value をそのまま保持する (`Em(1.2)` = `1.2em`、
 /// `Percent(50.0)` = `50%` の literal 数字を格納)。
+///
+/// # 本型は「specified 層」を意味しない — 層は出所で決まる
+///
+/// element 経路では絶対化の結果が [`crate::resolve`] の `Computed*` 型になるので
+/// 本型 = specified 層で読んでよい。**page 経路は違う** —
+/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
+/// は `PropertyValue` の bag なので computed 値も本型で運ばれる (bd
+/// raikiri-spike-sshp)。そこに届く `Length` は `Px` か `Percent` だけで、
+/// `Em` / `Rem` / `Pt` は phase 3 で解決済みである。
+/// したがって「`Length` が見えたから未解決」と判断してはならない。
 ///
 /// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
 /// 変数追加が既存 pattern-match を break しない forward-compat 契約)。既存 sibling
@@ -1061,9 +1070,19 @@ pub enum PositionValue {
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
-/// 認識できない property (例: `margin` / `padding` / `border-*` — M6+ scope) や
-/// invalid value (例: `font-size: 1em` — em 未対応) は parser 段で `None` に
+/// 認識できない property (例: `float` — 現行 milestone subset 外) や
+/// invalid value (例: `font-size: medium` — `<absolute-size>` keyword 未対応 /
+/// `margin-top: 1cm` — `cm` unit 未対応) は parser 段で `None` に
 /// 落として rule から silently 除外される。
+///
+/// **box property は「認識できない」側ではない** — `margin` / `padding` /
+/// `border-*` / `width` / `height` はいずれも認識対象で、下記に variant を持つ
+/// (bd raikiri-spike-0vv.5 / .6 / .10 / .11 / .12)。`font-size: 1em` 等の
+/// font-relative unit も bd raikiri-spike-zls8 以降は valid である。
+/// **例を差し替えるときは sibling の `crate::rule` の
+/// `drops_invalid_property_and_value` と揃えること** — 両者は同じ milestone
+/// subset を説明しており、あちらだけ更新されて本 doc が取り残される drift が
+/// 実際に起きた (bd raikiri-spike-sshp §8.3)。
 ///
 /// # `#[non_exhaustive]` semantics (fulgur / downstream consumer 向け verbatim)
 ///
@@ -1942,19 +1961,23 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// # Sign / range
 ///
 /// 本 helper は sign / range check を行わない — property ごとに要件が異なるため
-/// (font-size は non-negative、margin は negative 許容、etc.)。caller 側で
-/// post-filter する ([`parse_font_size`] は `>= 0.0` の Px-only guard を持つ)。
+/// (padding は non-negative、margin は negative 許容、etc.)。caller 側で
+/// post-filter する ([`parse_font_size`] は **全 [`Length`] variant** の payload に
+/// 対して `>= 0.0` を確認する)。
 ///
-/// # Forward-provisioning
+/// # `allow_percentage=true` の caller
 ///
-/// `allow_percentage=true` mode は本 task では caller 未使用 (font-size は
-/// length-only)。以下 blocked task で consume 予定:
-/// - `raikiri-spike-0vv.5` margin longhand + shorthand parse
-/// - `raikiri-spike-0vv.6` padding longhand + shorthand parse
-/// - `raikiri-spike-0vv.9` line-height parse
+/// forward-provisioning として導入した mode だが、現在は 6 caller が使用する:
+/// [`parse_margin_side`] / [`parse_padding_side`] / [`parse_width`] /
+/// [`parse_height`] / [`parse_line_height`] / [`parse_font_size`]。いずれも
+/// grammar が spec で `<length-percentage>` を含む
+/// (bd raikiri-spike-0vv.5 / .6 / .9 / .10 / .11、`font-size` は
+/// bd raikiri-spike-zls8 で `<length>` 限定から拡張)。共通 helper 化により
+/// 重複 dimension unit dispatch を回避している。
 ///
-/// これら margin/padding/line-height の grammar は spec で `<length-percentage>`
-/// (percentage 受理側)、共通 helper 化により重複 dimension unit dispatch を回避。
+/// `allow_percentage=false` (= `<length>` mode) の caller は
+/// [`parse_border_width_side`] のみ — CSS Backgrounds 3 §3.3 の
+/// `<line-width>` grammar が `<percentage>` を含まないため。
 fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Option<Length> {
     match input.next().ok()? {
         Token::Dimension { value, unit, .. } => match unit.to_ascii_lowercase().as_str() {
@@ -2156,10 +2179,13 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
 ///
 /// # Sibling pattern
 ///
-/// [`parse_font_size`] が `Length::Px` post-filter で `>= 0.0` を確認する precedent。
-/// 本 helper は全 variant を通して check する点が違うのは font-size が
-/// `<length>` (px-only milestone) なのに対し padding は `<length-percentage>`
-/// で 5 variant 全て流入するため。
+/// [`parse_font_size`] と **同形** — どちらも `allow_percentage=true` で
+/// [`parse_length_value`] を呼び、全 [`Length`] variant の payload を OR-pattern で
+/// 抽出して `>= 0.0` を post-filter する (body は現在 identical)。
+///
+/// 両者が非対称だった時期 (font-size が `<length>` px-only milestone で、padding
+/// だけが `<length-percentage>` の 5 variant を受けていた頃) の記述は
+/// bd raikiri-spike-zls8 の font-relative unit 対応で解消済み。
 fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
     // spec §6.1: "Negative values are invalid for padding properties"。
