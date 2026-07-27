@@ -1147,7 +1147,7 @@ pub enum PropertyValue {
     /// non-inherited、initial: empty list (CSS Lists 3 §4.1)。
     /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
     ///
-    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`pick_winners` の
+    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`apply_winners` の drain での
     /// `value.clone()`) + inheritance walk clone (`resolve_inheritance` の
     /// `stack.push((child, computed.clone()))` + `out[idx] = computed.clone()`)
     /// が **shallow (Arc bump only)** になる。counter-* は non-inherited のため
@@ -1420,6 +1420,29 @@ pub enum PropertyValue {
 /// 追加情報を持たないため public に露出する (raikiri-spike-m4.1、[`PageCascadeResult`]
 /// が `pub` 型を要求するため — clippy `private_interfaces` 対応)。
 ///
+/// # ⚠️ variant の**宣言順は load-bearing** (bd raikiri-spike-8kn8)
+///
+/// element cascade は本 enum の discriminant (`key as usize`) を scratch buffer
+/// の slot index に使い、**slot を index 昇順に走査して winner を適用する**
+/// (`crate::cascade` の `apply_winners`)。したがって:
+///
+/// - **variant を追加する位置**と**既存 variant の並び順**が、同一 node で
+///   複数の winner が同じ [`crate::specified::SpecifiedValues`] field に書く
+///   場合の**最終値を変えうる**。
+/// - 現状これが効くのは shorthand key (`Padding` / `Margin` / `Border`) だけで、
+///   いずれも longhand より後ろに置かれている。ただし
+///   `crate::rule::parse_declaration_block` が parse 段で shorthand を longhand
+///   に展開するため、正常系では shorthand key が cascade 段に到達しない。
+///
+/// **並び順を「直す」ことで shorthand/longhand の cascade を修正しようとしない
+/// こと** — divergence は declaration の並び順に依存する方向依存の gap であり、
+/// variant を動かすと別の case が壊れる (詳細は `apply_winners` の doc)。
+/// 恒久 fix は bd raikiri-spike-3wq6 (展開の exhaustive 化)。
+///
+/// 新しい variant を足すときは、それが既存 variant と同じ `SpecifiedValues`
+/// field に書くかどうかを確認すること。書かないなら (= 1:1 disjoint なら)
+/// 位置は自由でよい。
+///
 /// [`PageCascadeResult`]: crate::page::PageCascadeResult
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1444,8 +1467,13 @@ pub enum PropertyKey {
     PaddingLeft,
     /// [`PropertyValue::Padding`] doc の "shorthand vs longhand cascade" 制約に
     /// 該当する discriminant — shorthand と longhand それぞれ独立 winner が
-    /// pick される (spec §Cascade 5 の parse-time expansion モデルからは deviation、
-    /// 統合修正は bd raikiri-spike-5nc)。
+    /// pick される。CSS Cascading L4 §3
+    /// <https://www.w3.org/TR/css-cascade-4/#shorthand> の
+    /// "exactly as if expanded in place" は本来 shorthand を longhand の
+    /// syntactic sugar として畳むことを意味するので、これは deviation。
+    /// 正常系では `crate::rule::parse_declaration_block` の parse-time 展開が
+    /// 本 variant を cascade 段に到達させないことで塞いでおり、その担保を
+    /// compile-time に強制する恒久 fix は bd raikiri-spike-3wq6。
     Padding,
     // margin longhand + shorthand — raikiri-spike-0vv.5 (semantics on the
     // matching PropertyValue::Margin* variants; sibling PropertyKey variants

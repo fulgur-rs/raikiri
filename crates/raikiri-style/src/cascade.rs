@@ -17,9 +17,9 @@
 //! 3. **残り全 length の絶対化** — **自 node の** computed font-size 基準。
 //!
 //! 2 / 3 は [`SpecifiedValues::finalize`] に閉じている。分離が必要な理由は
-//! [`crate::specified`] の module doc を参照 (winner の適用順が
-//! `pick_winners` の `HashMap` iteration 順に依存するため、winner 適用の
-//! 途中で絶対化することはできない)。
+//! [`crate::specified`] の module doc を参照 (`padding: 2em` の基準となる
+//! `font-size` はその node の**全** winner を適用し終えるまで確定しないため、
+//! winner 適用の途中で絶対化することはできない)。
 
 use std::collections::HashMap;
 
@@ -29,7 +29,7 @@ use selectors::parser::{Selector, SelectorList};
 use crate::RaikiriSelectorImpl;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::error::CascadeError;
-use crate::property::{FontWeightValue, Length, PositionValue, PropertyKey, PropertyValue};
+use crate::property::{FontWeightValue, Length, PositionValue, PropertyValue};
 use crate::resolve::{ComputedLength, ResolveContext};
 use crate::rule::parse_declaration_block;
 use crate::ruletree::Origin;
@@ -114,6 +114,34 @@ const INLINE_SOURCE_ORDER: u32 = u32::MAX;
 /// `collect_cascaded` が populate、`pick_winners` が rank 化して winner を選ぶ
 /// (raikiri-spike-m1.22 で `Origin` を追加、clippy::type_complexity 回避のため alias 化)。
 type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
+
+/// [`pick_winners`] の scratch slot — 1 property key の暫定勝者。
+///
+/// [`idx`](Self::idx) が [`PropertyValue`] 本体ではなく **index** なのが要点
+/// (bd raikiri-spike-8kn8):
+///
+/// - slot が `Copy` になり `Drop` を持たないので、slot の reset が
+///   [`Option::take`] だけで済む (buffer 全体を drop / 再確保しなくてよい)。
+/// - 敗者を clone しなくなる。従来は候補 1 つごとに `value.clone()` してから
+///   比較で捨てていたが、clone は winner を [`apply_value`] に渡す 1 回だけになる。
+///
+/// sibling の [`CascadedDecl`] は tuple alias のままだが、そちらは常に named
+/// binding へ destructure され positional access されない。本型は [`beats`] が
+/// 3 field を**順序付き比較**するので named field にしてある —
+/// [`specificity`](Self::specificity) は `u32` の alias、隣の
+/// [`source_order`](Self::source_order) も `u32` であり、tuple の `.1` / `.2`
+/// では取り違えても compile が通って cascade の勝敗が静かに壊れる。
+#[derive(Clone, Copy)]
+struct RankedDecl {
+    /// [`cascade_rank`] の origin + `!important` 優先度。
+    rank: u8,
+    /// selector specificity (inline style は [`INLINE_SPECIFICITY`])。
+    specificity: Specificity,
+    /// stylesheet 内出現順 (inline style は [`INLINE_SOURCE_ORDER`])。
+    source_order: u32,
+    /// [`pick_winners`] に渡された `candidates` slice 内の位置。
+    idx: usize,
+}
 
 /// Cascade origin + `!important` flag に基づく優先度 rank (raikiri-spike-m1.22)。
 ///
@@ -288,6 +316,13 @@ fn resolve_inheritance<D: StyleDom>(
 ) {
     let mut stack: Vec<(StyleNodeId, ComputedValues, Option<ResolveContext>)> =
         vec![(id, parent_computed.clone(), None)];
+    // `apply_winners` の scratch buffer。walk loop の**外**で確保して全 node で
+    // 使い回す (bd raikiri-spike-8kn8) — per-node の `HashMap` 2 個が
+    // n=1000 node で 3,667 allocs / 3.0 MB = cascade 全 heap traffic の 56.7%
+    // を占めていた。buffer は最初の数 node で最大 `PropertyKey` index まで
+    // 育ち、以降は 0 alloc。fill と drain は `apply_winners` に閉じており、
+    // walk loop 側は「使い回す入れ物を貸す」以上の責務を持たない。
+    let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     while let Some((id, parent_computed, rem_ctx)) = stack.pop() {
         // raikiri-spike-37c roborev job 294 M2 finding: is_in_document()==false
         // の node は subtree ごと早期 continue する。
@@ -311,14 +346,11 @@ fn resolve_inheritance<D: StyleDom>(
 
         // phase 1: 親からの inheritance walk 開始値 (inherited のみ親の computed
         // からコピー、非継承は initial) に自 node の cascaded winner を適用する。
-        // 適用対象は staging 表現なので、winner の適用順 (HashMap iteration 順)
-        // に依存しない (spec §M1.4a、raikiri-spike-m1.22 / raikiri-spike-082k)。
+        // 適用対象は staging 表現なので winner の適用順に依存しない
+        // (spec §M1.4a、raikiri-spike-m1.22 / raikiri-spike-082k)。
         let mut specified = SpecifiedValues::inherit_from(&parent_computed);
         if let Some(candidates) = cascaded.get(&id) {
-            let winners = pick_winners(candidates);
-            for value in winners.into_values() {
-                apply_value(value, &mut specified);
-            }
+            apply_winners(candidates, &mut winners, &mut specified);
         }
 
         // phase 2 + phase 3: 絶対化。root element (element 祖先なし) は `rem` の
@@ -381,41 +413,155 @@ fn resolve_inheritance<D: StyleDom>(
     }
 }
 
-/// property key ごとに勝者 declaration を pick (specificity + !important + source order)。
-fn pick_winners(candidates: &[CascadedDecl]) -> HashMap<PropertyKey, PropertyValue> {
-    // best entry: (rank, spec, source_order, value)
-    let mut best: HashMap<PropertyKey, (u8, Specificity, u32, PropertyValue)> = HashMap::new();
-
-    for (value, important, origin, spec, order) in candidates {
-        let rank = cascade_rank(*origin, *important);
-        let key = value.key();
-        let candidate = (rank, *spec, *order, value.clone());
-        match best.get(&key) {
-            Some(existing) => {
-                if beats(&candidate, existing) {
-                    best.insert(key, candidate);
-                }
-            }
-            None => {
-                best.insert(key, candidate);
-            }
+/// 1 node 分の cascade winner を選び、staging 表現へ適用する (**phase 1**)。
+///
+/// `winners` は caller が walk loop の外で確保した scratch buffer
+/// (bd raikiri-spike-8kn8)。本関数が fill ([`pick_winners`]) と drain を対で
+/// 行い、抜けるときは全 slot が `None` に戻っている。
+///
+/// # 適用順
+///
+/// slot を index 昇順 = [`PropertyKey`] の**宣言順**に走査する。
+/// [`Option::take`] が slot を `None` に戻すので、この走査自体が次 node 用の
+/// reset を兼ねる。
+///
+/// 8kn8 以前は `HashMap` iteration 順 (per-process random seed) だった。既存
+/// property は key と [`SpecifiedValues`] の field が 1:1 disjoint なので、
+/// 決定的になったこと自体に観測可能な差は無い。
+///
+/// ## shorthand key が cascade 段に届いた場合の divergence
+///
+/// 例外は shorthand key (`PropertyKey::{Padding, Margin, Border}`) で、宣言順
+/// では対応する longhand より**後**に来るため必ず後勝ちする。これが spec と
+/// 食い違うかどうかは **declaration の並び順に依存する**:
+///
+/// ```text
+/// margin: 0px; margin-top: 10px  → spec top=10 / 本実装 top=0   ← 食い違う
+/// margin-top: 10px; margin: 0px  → spec top=0  / 本実装 top=0   ← 一致
+/// ```
+///
+/// spec は「longhand が勝つ」とは言っていない。CSS Cascading L4 §3
+/// <https://www.w3.org/TR/css-cascade-4/#shorthand> が shorthand を
+/// "exactly as if expanded in place" と定義し、勝者は §6.1
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の "the last declaration
+/// in document order wins" で決まるだけである。
+///
+/// **したがって `PropertyKey` の variant 順を入れ替える fix は誤り** — 上の
+/// 2 例は鏡像なので、shorthand を longhand の前に動かすと今度は 2 番目の case
+/// が spec 違反になる。正しい fix は「shorthand を cascade 段に**到達させない**」
+/// 方向にしかない。
+///
+/// 現状それを担っているのは [`crate::rule::parse_declaration_block`] の
+/// parse-time 展開だが (rationale は同 module 側に置いてある)、**compile-time
+/// には強制されていない** — 展開関数の catch-all arm があるため、新しい
+/// shorthand variant の展開 arm を書き忘れても compile error にならず、その
+/// shorthand が黙って cascade 段へ流れる。exhaustive 化は
+/// **bd raikiri-spike-3wq6** の scope。それが入るまでの中間 guard として
+/// `crate::rule` の `declaration_block_never_emits_shorthand_keys` test が
+/// 「parse 出口に shorthand key が残らない」を pin している。
+///
+/// # `candidates[winner.idx]` の unchecked index について
+///
+/// `winner.idx` は直前の [`pick_winners`] が **同じ `candidates`** に対して
+/// 作ったものなので in-bounds。fill と drain が本関数 body 内で隣接しており、
+/// 間に `candidates` を差し替える経路が無いことが根拠。
+///
+/// **この bare index は防御機構ではない。** slot が前 node から漏れた場合、
+/// 漏れた `idx` は次 node の candidate list に対しても通常 in-bounds なので
+/// (candidate list はたいてい漏れた index より長い)、panic せず**別 node の
+/// declaration を静かに適用**してしまう。実際
+/// `winner_does_not_leak_into_next_sibling` が捕まえるのも panic ではなく
+/// in-bounds の二重適用である。leak に対する実効的な net は [`pick_winners`]
+/// 冒頭の debug_assert (**release build では消える**) と同 test の 2 つ。
+///
+/// [`PropertyKey`]: crate::property::PropertyKey
+fn apply_winners(
+    candidates: &[CascadedDecl],
+    winners: &mut Vec<Option<RankedDecl>>,
+    specified: &mut SpecifiedValues,
+) {
+    pick_winners(candidates, winners);
+    for slot in winners.iter_mut() {
+        if let Some(winner) = slot.take() {
+            apply_value(candidates[winner.idx].0.clone(), specified);
         }
     }
-
-    best.into_iter().map(|(k, (_, _, _, v))| (k, v)).collect()
 }
 
-fn beats(
-    candidate: &(u8, Specificity, u32, PropertyValue),
-    existing: &(u8, Specificity, u32, PropertyValue),
-) -> bool {
+/// property key ごとに勝者 declaration を pick (specificity + !important + source order)。
+///
+/// 結果は返さず `best` に書く。`best` は [`PropertyKey`] の discriminant を
+/// そのまま index にした **direct-address table** で、`best[k as usize]` が
+/// key `k` の勝者 (= `candidates` 内 index) を持つ。
+///
+/// # なぜ `HashMap` を返さないのか (bd raikiri-spike-8kn8)
+///
+/// [`PropertyKey`] は payload を持たない ~40 variant の 1-byte enum、すなわち
+/// **既に密な小整数**であり、hash して bucket を引く価値がない。従来実装は
+/// per-node に `HashMap` を 2 つ (作業用と戻り値) 建てており、n=1000 node の
+/// cascade で 3,667 allocs / 3.0 MB — 全 heap traffic の 56.7% を占めていた。
+/// slot 配列にすると allocation は buffer が最大 index まで育つ最初の数 node
+/// だけで済み、以降の node は再利用で 0 alloc になる。
+///
+/// 唯一の caller は [`apply_winners`]。buffer の確保と使い回しは
+/// [`resolve_inheritance`] の walk loop が持つ。
+///
+/// # 呼び出し契約
+///
+/// - **entry**: `winners` の全 slot が `None` であること (debug_assert で検査)。
+/// - **exit**: 出現した key の slot だけが `Some`。
+///
+/// [`apply_winners`] が fill と drain を対で行うので、通常この契約は自明に
+/// 満たされる。debug_assert を残してあるのは、drain loop が unwind
+/// (`apply_value` 内 panic) 等で途中終了した場合に slot が生き残る経路が
+/// あるため — 次 node がその残骸を拾うと **別 node の declaration を適用**して
+/// しまう。安いので保険として置いてある。
+///
+/// [`PropertyKey`]: crate::property::PropertyKey
+fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option<RankedDecl>>) {
+    debug_assert!(
+        winners.iter().all(Option::is_none),
+        "pick_winners は空の scratch buffer を要求する — \
+         前 node の winner slot が生き残っている (drain の unwind 等)"
+    );
+
+    for (idx, (value, important, origin, spec, order)) in candidates.iter().enumerate() {
+        // fieldless enum の discriminant をそのまま slot index に使う。
+        // variant が増えても `resize` が追随するので上限定数は持たない。
+        let slot = value.key() as usize;
+        if winners.len() <= slot {
+            winners.resize(slot + 1, None);
+        }
+        let candidate = RankedDecl {
+            rank: cascade_rank(*origin, *important),
+            specificity: *spec,
+            source_order: *order,
+            idx,
+        };
+        if winners[slot].is_none_or(|existing| beats(candidate, existing)) {
+            winners[slot] = Some(candidate);
+        }
+    }
+}
+
+fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
     // Tuple compare: (rank, specificity, source_order)
     // - rank 高い方が勝つ (Important UA > Important Author > Normal Author > Normal UA)
     // - 同 rank なら specificity 高い方が勝つ
     // - 同 rank + spec なら source_order 大 (=後ろ) が勝つ
-    // `>=` は同一 rule 内 duplicate property の後方勝ち (spec §6.4.4) のため
-    // 意図的。cross-rule では source_order が異なるので `>=` でも安全。
-    (candidate.0, candidate.1, candidate.2) >= (existing.0, existing.1, existing.2)
+    // `>=` は同一 rule 内 duplicate property の後方勝ち (CSS Cascading L4 §6.1
+    // "Order of Appearance" <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
+    // の "the last declaration in document order wins") のため意図的。
+    // cross-rule では source_order が異なるので `>=` でも安全。
+    //
+    // `idx` を比較 key に**入れないこと** — `idx` は candidates 走査順に単調
+    // 増加するので第 4 key に足しても結果は変わらないが、tie-break 規則が
+    // 「同 rank/spec/order なら後方勝ち」であることが code から読めなくなる。
+    (
+        candidate.rank,
+        candidate.specificity,
+        candidate.source_order,
+    ) >= (existing.rank, existing.specificity, existing.source_order)
 }
 
 /// `font-weight` の specified value を computed absolute weight に解決する。
@@ -683,9 +829,9 @@ pub(crate) fn resolve_against_inherited(
 ///
 /// length を運ぶ property は **specified 表現のまま**格納する — 絶対化は
 /// [`SpecifiedValues::finalize`] (phase 2 + phase 3) の責務であり、本関数の中で
-/// 行うことは decision raikiri-spike-082k により禁じられている (winner の適用順が
-/// 非決定的なので、`padding: 2em` の基準となる font-size がこの時点では確定して
-/// いない)。
+/// 行うことは decision raikiri-spike-082k により禁じられている (`padding: 2em` の
+/// 基準となる font-size は**その node の全 winner を適用し終える**まで確定せず、
+/// 本関数は winner 1 つ分しか見ていないため)。
 ///
 /// 例外は `font-weight` — `bolder` / `lighter` は**継承元**の computed weight
 /// だけで解ける (自 node の他 winner に依存しない) ため、ここで絶対値に落とす。
@@ -711,8 +857,10 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 変えると `bolder` が常に 400 起点になり、compile error にも既存 test の
         // 失敗にもならずに壊れる (bd raikiri-spike-i5bs §8.2 debt lens D5)。
         // さらに `pick_winners` は
-        // `PropertyKey` ごとに勝者を 1 つだけ返すため `FontWeight` arm が同一
-        // node で 2 回走ることはなく、HashMap iteration 順にも依存しない。
+        // `PropertyKey` ごとに slot を 1 つだけ埋めるため `FontWeight` arm が同一
+        // node で 2 回走ることはなく、winner の適用順にも依存しない
+        // (`winner_does_not_leak_into_next_sibling` test がこの "1 回だけ" を pin
+        // する — 二重適用は 400 → 700 → 900 と複合するので観測可能)。
         // この 2 つが relative-weight resolution の正しさを支える invariant。
         //
         // なお本 arm は `apply_value` 中で **唯一の read-modify-write** (他は
@@ -772,36 +920,49 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 4 side を独立に上書き。shorthand `PropertyValue::Padding` は
         // `crate::rule::parse_declaration_block` 側で parse 直後に 4 longhand
         // に展開されるため、cascade 段に届く declaration は per-side longhand
-        // のみ = HashMap iteration 順に依存しない per-key determinism が成立する
+        // のみ = shorthand/longhand の cross-key dependency が消え、winner の
+        // 適用順に依存しない per-key determinism が成立する
         // (raikiri-spike-5nc、margin 0vv.5 の parse-time expansion model に migrate)。
         PropertyValue::PaddingTop(v) => target.padding.top = v,
         PropertyValue::PaddingRight(v) => target.padding.right = v,
         PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
         PropertyValue::PaddingLeft(v) => target.padding.left = v,
-        // CSS Box 3 §6.2 padding shorthand: safety net (normal flow では展開済み)。
+        // CSS Box 3 §6.2 padding shorthand fall-through (normal flow では展開済み)。
+        // sibling `PropertyValue::Margin` arm と同じく **safety net ではない** —
+        // 到達すれば 4 longhand winner を破壊し spec と食い違う。
         // Sides<Length>: Copy のため move で `target.padding` に代入。
         PropertyValue::Padding(sides) => target.padding = sides,
         // 4 longhand margin sides (raikiri-spike-0vv.5、CSS Box 3 §3.1)。
         // shorthand `PropertyValue::Margin` は `crate::rule::parse_declaration_block`
         // 側で parse 直後に 4 longhand に展開されるため、cascade 段に届く declaration
-        // は per-side longhand のみ = HashMap iteration 順に依存しない per-key
+        // は per-side longhand のみ = winner の適用順に依存しない per-key
         // determinism が成立する (詳細は `PropertyValue::Margin` + `expand_shorthand` doc)。
         PropertyValue::MarginTop(v) => target.margin.top = v,
         PropertyValue::MarginRight(v) => target.margin.right = v,
         PropertyValue::MarginBottom(v) => target.margin.bottom = v,
         PropertyValue::MarginLeft(v) => target.margin.left = v,
-        // Safety-net for shorthand: expansion 経路 (parse_declaration_block) を
-        // bypass する code path が万一混入した場合でも、`SpecifiedValues.margin`
-        // 全 4 side を atomic に上書きする。normal flow では unreachable な arm
-        // なので `apply_value_direct_margin_shorthand_safety_net` test で
-        // 直接叩いて振る舞いを pin (panic 化を避けるための defensive fall-through、
-        // `unreachable!` を採らないのは reviewer-security の panic surface 排除方針)。
+        // ⚠️ **これは "safety" net ではない** (bd raikiri-spike-8kn8 で framing 訂正)。
+        // 本 arm に到達するということは shorthand が cascade 段まで届いたという
+        // ことであり、`PropertyKey` 宣言順では `Margin` が `MarginTop` 等より
+        // **後**に適用される。したがってこの atomic 上書きは **longhand winner を
+        // 必ず破壊する** — `margin: 0; margin-top: 10px` が top=0 になり
+        // CSS Cascading L4 §3 <https://www.w3.org/TR/css-cascade-4/#shorthand> と
+        // 食い違う。net は degraded ではなく **deterministic に spec 違反**。
+        // 到達した時点で既に bug であり、本 arm はそれを穏当に見せない。
+        //
+        // それでも `unreachable!` を採らないのは reviewer-security の panic
+        // surface 排除方針による。normal flow で unreachable なのは
+        // `parse_declaration_block` の parse-time 展開が担保しており、その担保が
+        // compile-time に強制されていない件と恒久 fix は
+        // `crate::rule::expand_shorthand_into` の "既知の gap" 節を参照
+        // (bd raikiri-spike-3wq6)。振る舞い自体は
+        // `apply_value_direct_margin_shorthand_safety_net` test が直接叩いて pin。
         PropertyValue::Margin(sides) => target.margin = sides,
         // CSS Backgrounds 3 §5.1/§5.2/§5.3 border physical longhand
         // (raikiri-spike-0vv.12)。4 side × 3 sub-property の 12 arm。shorthand
         // `PropertyValue::Border` は `crate::rule::parse_declaration_block` 側で
         // parse 直後に 12 longhand に展開されるため、cascade 段に届く declaration
-        // は per-side / per-sub-property longhand のみ = HashMap iteration 順に
+        // は per-side / per-sub-property longhand のみ = winner の適用順に
         // 依存しない per-key determinism が成立する (margin / padding precedent
         // 踏襲)。
         PropertyValue::BorderTopWidth(v) => target.border.top.width = v,
@@ -816,10 +977,11 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderRightColor(v) => target.border.right.color = v,
         PropertyValue::BorderBottomColor(v) => target.border.bottom.color = v,
         PropertyValue::BorderLeftColor(v) => target.border.left.color = v,
-        // Safety-net for `border` shorthand (safety net の意義は sibling
-        // `PropertyValue::Margin` / `PropertyValue::Padding` arm doc 参照)。
-        // 全 4 side × 3 sub-property を一括 atomic 上書き。normal flow では
-        // unreachable — expand_shorthand_into が 12 longhand に展開する。
+        // `border` shorthand fall-through。sibling `PropertyValue::Margin` arm と
+        // 同じく **safety net ではない** — 到達すれば 12 longhand winner を一括で
+        // 破壊し spec と食い違う。normal flow では unreachable
+        // (`expand_shorthand_into` が 12 longhand に展開する)。詳細な framing と
+        // 恒久 fix (bd raikiri-spike-3wq6) は `Margin` arm の comment 参照。
         PropertyValue::Border(sides) => target.border = sides,
         // CSS Sizing 3 §3.1.1 width (raikiri-spike-0vv.10)。single-value property、
         // `LengthOrAuto` は Copy shape (Length variant は Copy)。sibling
@@ -929,6 +1091,68 @@ mod tests {
         // inline style 内で同じ property が 2 回 — 同様に後方が勝つ。
         let cv = cascade_doc("", "p", Some("color: red; color: blue"));
         assert_eq!(cv.color, BLUE);
+    }
+
+    /// `pick_winners` の scratch buffer は walk loop の外で確保され全 node で
+    /// 共有される (bd raikiri-spike-8kn8)。**この共有が持ち込む唯一の新しい
+    /// 失敗様式が「前 node の winner slot が drain されずに残り、次 node へ
+    /// 漏れる」**であり、本 test がそれを pin する。
+    ///
+    /// 兄弟 2 つに **互いに素な property** を当てるのが要点:
+    /// `<p>` は `background-color` slot (discriminant 1) だけを、`<span>` は
+    /// `font-weight` slot (discriminant 4) だけを埋める。
+    ///
+    /// # なぜ `font-weight: bolder` なのか
+    ///
+    /// slot が持つのは値そのものではなく **`candidates` 内 index** なので、
+    /// 漏れた slot は「次 node の candidate list を誤った index で読む」形で
+    /// 顕在化する。ここでは `<span>` の `candidates[0]` が `font-weight:
+    /// bolder` なので、`<p>` の残した slot 1 と自分の slot 4 が**同じ
+    /// declaration を 2 回**適用する。`bolder` は [`apply_value`] 中で唯一の
+    /// read-modify-write arm であるため 400 → 700 → **900** と複合し、
+    /// 期待値 700 とずれる。単純代入 property を選ぶと二重適用が冪等になって
+    /// leak を素通ししてしまう (実際 `padding` で書いた初版は、drain の
+    /// `take()` を `*slot` に落とす mutant を release build で検出できなかった)。
+    ///
+    /// `background_color` 側の assertion は構造的な control で、こちらは
+    /// **non-inherited** であることが効いている — `color` のような inherited
+    /// property では「親から継承した値」と「兄弟から漏れた値」が区別できない。
+    ///
+    /// # 本 test の射程
+    ///
+    /// - leak の**向き**は traversal 順に依存するので、検出できるのは
+    ///   document order で先行する `<p>` → 後続 `<span>` の向きだけ。
+    /// - `cargo test` は debug build なので、実際に leak すると
+    ///   [`pick_winners`] 冒頭の debug_assert が先に落ちる。`bolder` の二重適用
+    ///   機構が単独で load-bearing になるのは **release build** (debug_assert が
+    ///   消える) のみ。逆に言えば本 test の価値は release build での検出可能性と、
+    ///   失敗時の診断 message の明示性にある。
+    #[test]
+    fn winner_does_not_leak_into_next_sibling() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            "p { background-color: red } span { font-weight: bolder }",
+        );
+        let wrapper = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrapper, "p", None);
+        let span = doc.push_element(wrapper, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).unwrap();
+
+        let initial = ComputedValues::initial();
+        assert_eq!(r.computed[p].background_color, RED);
+        assert_eq!(
+            r.computed[span].background_color, initial.background_color,
+            "span に p の background-color winner が漏れた"
+        );
+        // 親 <div> は initial の 400。CSS Fonts 4 §2.2.1 の表で
+        // 350 <= 400 < 550 → bolder = 700。二重適用なら 900 になる。
+        assert_eq!(
+            r.computed[span].font_weight, 700,
+            "font-weight: bolder が 2 回適用された (slot leak による二重 drain)"
+        );
     }
 
     #[test]
@@ -1266,7 +1490,7 @@ mod tests {
         assert_eq!(child.line_height, ComputedLineHeight::Number(1.5));
     }
 
-    /// cascade winner の適用順 (HashMap iteration 順) が絶対化の基準に影響しない
+    /// cascade winner の適用順が絶対化の基準に影響しない
     /// — decision 082k の拘束事項 (絶対化を winner 適用と別 phase にした理由)。
     /// declaration の並び順を入れ替えても `padding: 2em` は同じ 40px になる。
     #[test]
@@ -1997,7 +2221,7 @@ mod tests {
     //
     // Codex Cloud Security finding: 従来 `PropertyValue::Content(Vec<ContentComponent>)` /
     // `ComputedValues.content: Vec<ContentComponent>` は cascade 段の `decl.value.clone()`、
-    // `pick_winners` の `value.clone()`、`resolve_inheritance` の stack push + write と
+    // `apply_winners` の drain の `value.clone()`、`resolve_inheritance` の stack push + write と
     // 段階ごとに deep-clone を経由し、`* { content: "<large>" }` × N element で
     // O(N × M) 相当の heap 消費を招いていた。d9y.1 で outer `Vec` を
     // `Arc<Vec<ContentComponent>>` に wrap、全 clone 経路が Arc bump に落ちた。
@@ -2055,7 +2279,7 @@ mod tests {
     //
     // Codex Cloud Security finding (finding hash 12128875): `counter-reset` /
     // `counter-increment` / `counter-set` は d9y.1 の Content/StringSet と同じ
-    // 3 段 clone 経路 (`decl.value.clone`、`pick_winners` の `value.clone`、
+    // 3 段 clone 経路 (`decl.value.clone`、`apply_winners` の drain の `value.clone`、
     // `resolve_inheritance` の stack push + write) を辿るため
     // `PropertyValue::Counter*(Vec<..>)` × universal selector × N element で
     // O(N × M) 相当の heap 消費を招いていた。d9y.2 で全 3 property の outer
@@ -2354,9 +2578,9 @@ mod tests {
         // で勝つ。`margin: 0px; margin-top: 10px;` → top=10, others=0。
         //
         // 本 test は本 architecture の load-bearing case: expansion 前 shorthand
-        // を単一 key で cascade してしまうと apply_value 順が HashMap iteration
-        // 順に依存し nondeterministic (`margin` が後で apply → top=0 に上書き
-        // される regression) になる。expand_shorthand が parse-time で longhand
+        // を単一 key で cascade してしまうと、`PropertyKey` 宣言順では `Margin`
+        // が `MarginTop` より後に来るため `margin` が必ず後勝ちし top=0 に
+        // 上書きされる (spec と逆)。expand_shorthand が parse-time で longhand
         // 化するため per-key の cascade winner が top=10 に確定する。
         let cv = cascade_doc("", "div", Some("margin: 0px; margin-top: 10px"));
         assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(10.0));
@@ -2504,9 +2728,9 @@ mod tests {
         // top.width=10、他 side の width=1、top.style=Solid、top.color=red 保持。
         //
         // 本 test は本 architecture の load-bearing case (advisor calibration):
-        // expansion 前 shorthand を単一 key で cascade してしまうと apply_value 順
-        // が HashMap iteration 順に依存し nondeterministic (`Border` が後で apply
-        // → top.width=1 に上書きされる regression) になる。expand_shorthand_into
+        // expansion 前 shorthand を単一 key で cascade してしまうと、`PropertyKey`
+        // 宣言順では `Border` が `BorderTopWidth` より後に来るため `border` が
+        // 必ず後勝ちし top.width=1 に上書きされる (spec と逆)。expand_shorthand_into
         // が parse-time で 12 longhand 化するため per-key の cascade winner が
         // top.width=10 に確定する (margin 0vv.5 precedent の 12-longhand 版)。
         let cv = cascade_doc(
