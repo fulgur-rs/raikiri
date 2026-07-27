@@ -50,9 +50,8 @@ pub struct StyleRule {
 /// property sets all of its longhand sub-properties, exactly as if expanded
 /// in place." に準拠して、[`PropertyValue::Margin`] 系の shorthand declaration
 /// は本関数の出口で 4 longhand declaration に展開される。cascade 段の
-/// per-side winner selection が自然に成立 (HashMap iteration 順に依存しない
-/// determinism) を担保するための spec-correct な expansion — 詳細は
-/// [`expand_shorthand_into`] doc 参照。
+/// per-side winner selection が自然に成立することを担保するための spec-correct
+/// な expansion — 詳細は [`expand_shorthand_into`] doc 参照。
 pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
     let mut parser = DeclParser;
     let mut out = Vec::new();
@@ -67,21 +66,32 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///
 /// # Rationale (per-key cascade determinism)
 ///
-/// [`crate::cascade::apply_value`] は [`crate::cascade::pick_winners`] 結果を
-/// `HashMap::into_values()` で iterate する。std [`std::collections::HashMap`] の
-/// iteration 順は per-process randomly seeded で decl 適用順が nondeterministic
-/// になる。既存 property は全て key と field が 1:1 disjoint のため apply 順
-/// に依存しなかったが、`margin` shorthand + `margin-*` longhand の cross-key
-/// dependency (`margin: 0; margin-top: 10px` は spec 上 top=10、他=0) では
-/// apply 順が結果を左右する。
+/// 既存 property は全て `PropertyKey` と [`crate::specified::SpecifiedValues`]
+/// の field が 1:1 disjoint なので winner の適用順に依存しない。ところが
+/// `margin` shorthand + `margin-*` longhand は **cross-key dependency** を持ち
+/// (`margin: 0; margin-top: 10px` は spec 上 top=10、他=0)、両者が別 key の
+/// winner として cascade 段に届くと **適用順が結果を左右してしまう**。
 ///
 /// spec CSS Cascading L4 §3 "Shorthand Properties"
 /// <https://www.w3.org/TR/css-cascade-4/#shorthand> は shorthand を "sets all
 /// of its longhand sub-properties, exactly as if expanded in place" と定義し
 /// shorthand を longhand の syntactic sugar と扱う。本関数は parse 直後に spec
-/// のこの等価変換を実行することで、cascade 段には longhand のみが伝わる不変を
-/// 確立する — HashMap iteration 順に依存しない per-side cascade を得る
-/// (`static ordering after cascade` の deterministic な source of truth)。
+/// のこの等価変換を実行することで、**cascade 段には longhand のみが伝わる**
+/// 不変を確立する。cross-key dependency 自体が消えるので、適用順は結果に
+/// 影響しなくなる (`static ordering after cascade` の deterministic な source
+/// of truth)。
+///
+/// つまり本関数の rationale は「cascade 段の適用順が具体的に何であるか」には
+/// **依存しない** — 適用順に賭けないことそのものが目的である。参考までに現在の
+/// 適用順は `PropertyKey` discriminant 昇順であり、shorthand variant が longhand
+/// より後ろに置かれている都合で shorthand が後勝ちするが、それが spec と
+/// 食い違うかは declaration の並び順次第で変わる (方向依存の内訳は
+/// [`crate::cascade`] の `apply_winners` doc)。**variant の並び順は本 rationale
+/// の根拠ではない**ので、並べ替えでこの gap を塞ごうとしないこと。
+///
+/// 展開漏れ (catch-all arm により compile error にならない) を塞ぐ exhaustive 化は
+/// **bd raikiri-spike-3wq6** の scope。それが入るまでの中間 guard が本 module の
+/// [`tests::declaration_block_never_emits_shorthand_keys`] test。
 ///
 /// # `important` flag propagation
 ///
@@ -257,6 +267,45 @@ mod tests {
         parse_declaration_block(&mut parser)
     }
 
+    /// [`parse_declaration_block`] の出口に shorthand key が 1 つも残らないこと。
+    ///
+    /// この不変は cascade 段の正しさに load-bearing である
+    /// ([`crate::cascade`] の `apply_winners` doc): shorthand key が cascade に
+    /// 届くと `PropertyKey` 宣言順で longhand より後に適用され、declaration の
+    /// 並び方によっては longhand winner を潰して spec と食い違う。
+    ///
+    /// [`expand_shorthand_into`] は catch-all arm で **fail-open** なので、新しい
+    /// shorthand variant の展開 arm を書き忘れても compile error にならない。
+    /// 本 test はその抜けを実行時に捕まえる中間 guard で、compile-time 強制
+    /// (exhaustive 化) は bd raikiri-spike-3wq6 の scope。
+    #[test]
+    fn declaration_block_never_emits_shorthand_keys() {
+        use crate::property::PropertyKey;
+
+        let decls = parse_block(
+            "margin: 1px; padding: 2px; border: 3px solid red; \
+             margin-top: 4px; padding-left: 5px; border-top-width: 6px; \
+             color: red; font-size: 10px",
+        );
+        assert!(
+            !decls.is_empty(),
+            "parse が空 — test corpus 側の regression"
+        );
+
+        for decl in &decls {
+            let key = decl.value.key();
+            assert!(
+                !matches!(
+                    key,
+                    PropertyKey::Margin | PropertyKey::Padding | PropertyKey::Border
+                ),
+                "shorthand key {key:?} が cascade 段へ漏れている — \
+                 `expand_shorthand_into` に対応する展開 arm を追加すること \
+                 (catch-all arm があるため compile error にはならない)"
+            );
+        }
+    }
+
     #[test]
     fn parses_single_declaration() {
         let decls = parse_block("color: red;");
@@ -363,7 +412,7 @@ mod tests {
     // spec §3 "Shorthand Properties"
     // <https://www.w3.org/TR/css-cascade-4/#shorthand> の "sets all of its
     // longhand sub-properties, exactly as if expanded in place" 準拠、cascade 段
-    // の HashMap 順非依存 determinism を parse-time で担保する。
+    // に shorthand key を届かせない不変を parse-time で担保する。
 
     #[test]
     fn margin_shorthand_expands_into_four_longhand_declarations() {
@@ -471,8 +520,8 @@ mod tests {
     // `parse_declaration_block` は shorthand `border` を 12 longhand
     // (4 side × 3 sub-property: width / style / color) に展開する。
     // spec §3 "Shorthand Properties" の "sets all of its longhand sub-properties,
-    // exactly as if expanded in place" 準拠、cascade 段の HashMap 順非依存
-    // determinism を parse-time で担保する。margin (0vv.5) / padding (5nc)
+    // exactly as if expanded in place" 準拠、cascade 段に shorthand key を
+    // 届かせない不変を parse-time で担保する。margin (0vv.5) / padding (5nc)
     // precedent を 12 longhand shape に拡張。
 
     #[test]

@@ -51,7 +51,7 @@ pub(crate) fn empty_string_set_entries() -> Arc<Vec<StringSetEntry>> {
 /// 共有する ([`Vec<(SmolStr, i32)>`] は同一型のため helper を分ける必要無し)。
 ///
 /// `raikiri-spike-d9y.2` (SEC HIGH cascade memory DoS fix) の副作用 helper。
-/// counter-* は non-inherited (CSS Lists 3 §3、`counter-reset` を含む全 3 property)
+/// counter-* は non-inherited (CSS Lists 3 §4、`counter-reset` を含む全 3 property)
 /// のため、`SpecifiedValues::inherit_from` が child stack entry のたびに empty 値で
 /// 初期化する。生 `Vec::new()` を使うと per-node で 3 個の `Vec` struct
 /// (24 bytes × 3) が生まれ N-node document あたり O(N) の overhead になるため、
@@ -1163,10 +1163,10 @@ pub enum PropertyValue {
     /// (raikiri-spike-0vv.4、詳細は [`DisplayValue`] doc)。
     Display(DisplayValue),
     /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
-    /// non-inherited、initial: empty list (CSS Lists 3 §3)。
+    /// non-inherited、initial: empty list (CSS Lists 3 §4.1)。
     /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
     ///
-    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`pick_winners` の
+    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`apply_winners` の drain での
     /// `value.clone()`) + inheritance walk clone (`resolve_inheritance` の
     /// `stack.push((child, computed.clone()))` + `out[idx] = computed.clone()`)
     /// が **shallow (Arc bump only)** になる。counter-* は non-inherited のため
@@ -1176,14 +1176,14 @@ pub enum PropertyValue {
     /// (raikiri-spike-d9y.2 SEC HIGH、d9y.1 Content/StringSet pattern の踏襲)。
     CounterReset(Arc<Vec<(SmolStr, i32)>>),
     /// `counter-increment: [ <counter-name> <integer>? ]+ | none` —
-    /// non-inherited、initial: empty list (CSS Lists 3 §3)。
+    /// non-inherited、initial: empty list (CSS Lists 3 §4.2)。
     /// missing integer は 1 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
     ///
     /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
     /// (raikiri-spike-d9y.2)。
     CounterIncrement(Arc<Vec<(SmolStr, i32)>>),
     /// `counter-set: [ <counter-name> <integer>? ]+ | none` —
-    /// non-inherited、initial: empty list (CSS Lists 3 §3)。
+    /// non-inherited、initial: empty list (CSS Lists 3 §4.2)。
     /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
     ///
     /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
@@ -1439,6 +1439,29 @@ pub enum PropertyValue {
 /// 追加情報を持たないため public に露出する (raikiri-spike-m4.1、[`PageCascadeResult`]
 /// が `pub` 型を要求するため — clippy `private_interfaces` 対応)。
 ///
+/// # ⚠️ variant の**宣言順は load-bearing** (bd raikiri-spike-8kn8)
+///
+/// element cascade は本 enum の discriminant (`key as usize`) を scratch buffer
+/// の slot index に使い、**slot を index 昇順に走査して winner を適用する**
+/// (`crate::cascade` の `apply_winners`)。したがって:
+///
+/// - **variant を追加する位置**と**既存 variant の並び順**が、同一 node で
+///   複数の winner が同じ [`crate::specified::SpecifiedValues`] field に書く
+///   場合の**最終値を変えうる**。
+/// - 現状これが効くのは shorthand key (`Padding` / `Margin` / `Border`) だけで、
+///   いずれも longhand より後ろに置かれている。ただし
+///   `crate::rule::parse_declaration_block` が parse 段で shorthand を longhand
+///   に展開するため、正常系では shorthand key が cascade 段に到達しない。
+///
+/// **並び順を「直す」ことで shorthand/longhand の cascade を修正しようとしない
+/// こと** — divergence は declaration の並び順に依存する方向依存の gap であり、
+/// variant を動かすと別の case が壊れる (詳細は `apply_winners` の doc)。
+/// 恒久 fix は bd raikiri-spike-3wq6 (展開の exhaustive 化)。
+///
+/// 新しい variant を足すときは、それが既存 variant と同じ `SpecifiedValues`
+/// field に書くかどうかを確認すること。書かないなら (= 1:1 disjoint なら)
+/// 位置は自由でよい。
+///
 /// [`PageCascadeResult`]: crate::page::PageCascadeResult
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1463,8 +1486,13 @@ pub enum PropertyKey {
     PaddingLeft,
     /// [`PropertyValue::Padding`] doc の "shorthand vs longhand cascade" 制約に
     /// 該当する discriminant — shorthand と longhand それぞれ独立 winner が
-    /// pick される (spec §Cascade 5 の parse-time expansion モデルからは deviation、
-    /// 統合修正は bd raikiri-spike-5nc)。
+    /// pick される。CSS Cascading L4 §3
+    /// <https://www.w3.org/TR/css-cascade-4/#shorthand> の
+    /// "exactly as if expanded in place" は本来 shorthand を longhand の
+    /// syntactic sugar として畳むことを意味するので、これは deviation。
+    /// 正常系では `crate::rule::parse_declaration_block` の parse-time 展開が
+    /// 本 variant を cascade 段に到達させないことで塞いでおり、その担保を
+    /// compile-time に強制する恒久 fix は bd raikiri-spike-3wq6。
     Padding,
     // margin longhand + shorthand — raikiri-spike-0vv.5 (semantics on the
     // matching PropertyValue::Margin* variants; sibling PropertyKey variants
@@ -1573,7 +1601,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // 負値と其他 keyword は spec grammar 違反として drop。
         "line-height" => parse_line_height(input).map(PropertyValue::LineHeight),
         "display" => parse_display(input).map(PropertyValue::Display),
-        // CSS Lists 3 §3 counter properties (raikiri-spike-s85、M5 pre-work)。
+        // CSS Lists 3 §4 counter properties (raikiri-spike-s85、M5 pre-work)。
         // spec default: reset = 0、increment = 1、set = 0。
         // Arc wrap は raikiri-spike-d9y.2 の cascade memory DoS fix (per-element
         // clone を shallow bump 化)、空 list は 3 property 共通 shared Arc slot
@@ -2782,7 +2810,7 @@ fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
 
 /// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
 ///
-/// Grammar (CSS Lists 3 §3):
+/// Grammar (CSS Lists 3 §4):
 ///   `<counter-name> = <custom-ident>` — CSS-wide keyword (inherit / initial /
 ///   unset / revert / revert-layer) + `default` + `none` を除く任意 ident。
 ///   `[ <counter-name> <integer>? ]+ | none`。
@@ -2808,7 +2836,7 @@ fn parse_counter_property(
 
     let mut result = Vec::new();
     loop {
-        // reserved keyword を counter-name として受理しない (spec §3、`<custom-ident>`
+        // reserved keyword を counter-name として受理しない (spec §4、`<custom-ident>`
         // の除外リスト)。try_parse の rewind で reserved 検出時は unconsumed に戻す。
         let name = match input.try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
             let ident = i.expect_ident()?.clone();
@@ -2835,7 +2863,8 @@ fn parse_counter_property(
     }
 }
 
-/// `<counter-name>` = `<custom-ident>` の除外リスト (CSS Lists 3 §3 + CSS Values 4)。
+/// `<counter-name>` = `<custom-ident>` の除外リスト (CSS Lists 3 §4 + CSS Values 4
+/// §4.2 <https://www.w3.org/TR/css-values-4/#custom-idents>)。
 ///
 /// CSS-wide keyword + `default` (Counter Styles L3) + `none` (top-level alternative)
 /// を弾く。case-insensitive 比較。
@@ -2933,8 +2962,9 @@ fn parse_content_list_items(
 /// `none` を top-level alternative として先に処理し、以降は
 /// `(name, content-list)` entry を comma-separated で peel する。
 ///
-/// `<custom-ident>` は CSS-wide keyword + `default` (css-values-4 §3.6 が
-/// 将来の CSS-wide keyword 用に予約) + `none` (top-level alt、gcpm-3 §3.1) を弾く。
+/// `<custom-ident>` は CSS-wide keyword + `default` (css-values-4 §4.2
+/// <https://www.w3.org/TR/css-values-4/#custom-idents> が将来の CSS-wide
+/// keyword 用に予約) + `none` (top-level alt、gcpm-3 §3.1) を弾く。
 ///
 /// ## Entry separator の strict 化 (raikiri-spike-1ll)
 ///
@@ -3114,8 +3144,9 @@ fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
 /// identifier is invalid as a <counter-name>"。
 ///
 /// counter() / counters() (§4.7) の first argument、および
-/// counter-reset / counter-increment / counter-set property (§3) の name 引数で
-/// 使う。後者は既に [`parse_counter_property`] が [`is_reserved_counter_name`]
+/// counter-reset / counter-increment / counter-set property
+/// (§4.1 / §4.2) の name 引数で使う。後者は既に [`parse_counter_property`] が
+/// [`is_reserved_counter_name`]
 /// 経由で reject 済 — 本 helper は前者を同じ predicate に揃えるための wrapper
 /// (raikiri-spike-afv — codex final for m5.1)。
 fn parse_counter_name(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
@@ -4169,7 +4200,7 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::BoxSizing);
     }
 
-    // ── counter-* (CSS Lists 3 §3、raikiri-spike-s85 M5 pre-work) ──
+    // ── counter-* (CSS Lists 3 §4、raikiri-spike-s85 M5 pre-work) ──
 
     // d9y.2: `PropertyValue::Counter*(Arc<Vec<..>>)` に wrap したため、
     // literal test 比較用に Arc<Vec<..>> を返す helper に切り替え
@@ -4219,7 +4250,7 @@ mod tests {
     #[test]
     fn counter_reset_rejects_number_first() {
         // 先頭が number → ident が来るまで peel できず empty → None (drop)
-        // spec §3: `<counter-name> = <custom-ident>` (数値は counter-name ではない)
+        // spec §4: `<counter-name> = <custom-ident>` (数値は counter-name ではない)
         assert_eq!(parse("123 abc", "counter-reset"), None);
     }
 
@@ -4248,7 +4279,7 @@ mod tests {
 
     #[test]
     fn counter_increment_accepts_negative_integer() {
-        // spec §3: <integer> — negative も valid (counter を decrement する用途)
+        // spec §4: <integer> — negative も valid (counter を decrement する用途)
         assert_eq!(
             parse("chapter -1", "counter-increment"),
             Some(PropertyValue::CounterIncrement(counter_pairs(&[(
@@ -4299,7 +4330,7 @@ mod tests {
 
     #[test]
     fn counter_reset_rejects_reserved_css_wide_keyword_as_name() {
-        // spec §3: <counter-name> excludes CSS-wide keywords + `default`。
+        // spec §4: <counter-name> excludes CSS-wide keywords + `default`。
         // 先頭 ident が `inherit` → try_parse rewind で empty result → None。
         assert_eq!(parse("inherit", "counter-reset"), None);
         assert_eq!(parse("initial", "counter-reset"), None);
@@ -4765,7 +4796,9 @@ mod tests {
 
     #[test]
     fn string_set_rejects_reserved_css_wide_keyword_as_name() {
-        // spec §3.1 + CSS Values 4 §3.6: `<custom-ident>` は CSS-wide keyword 除外。
+        // spec §3.1 + CSS Values 4 §4.2
+        // <https://www.w3.org/TR/css-values-4/#custom-idents>:
+        // `<custom-ident>` は CSS-wide keyword 除外。
         // 先頭 ident が `inherit` → try_parse rewind で entries 空 → None。
         //
         // NB: 先頭が `none` の場合は top-level alternative の branch を先に
@@ -5145,8 +5178,9 @@ mod tests {
 
     #[test]
     fn position_running_rejects_reserved_css_wide_keyword() {
-        // spec CSS Values 4 §3.6: <custom-ident> は CSS-wide keyword + `default`
-        // 除外。position: running(inherit) 等は declaration drop。
+        // spec CSS Values 4 §4.2 <https://www.w3.org/TR/css-values-4/#custom-idents>:
+        // <custom-ident> は CSS-wide keyword + `default` 除外。
+        // position: running(inherit) 等は declaration drop。
         assert_eq!(parse("running(inherit)", "position"), None);
         assert_eq!(parse("running(initial)", "position"), None);
         assert_eq!(parse("running(unset)", "position"), None);
