@@ -104,8 +104,17 @@ impl LayoutPartialTree for Document {
         &self.nodes[usize::from(node_id)].style
     }
 
+    /// taffy が arena へ layout を書き戻す**唯一の**経路。
+    ///
+    /// ここで [`crate::layout::sanitize_taffy_layout`] を通すことで
+    /// 「`Node.unrounded_layout` は決して非有限 f32 を含まない」を構造的に
+    /// 保証する (bd raikiri-spike-r8ew)。bridge 側の入力 guard
+    /// (`layout::sanitize_taffy`) だけでは nested percentage が used value 層で
+    /// 複利して非有限に戻るため閉じない — 理由と実測は
+    /// `layout::sanitize_taffy_layout` の doc を参照。
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        self.nodes[usize::from(node_id)].unrounded_layout = *layout;
+        self.nodes[usize::from(node_id)].unrounded_layout =
+            crate::layout::sanitize_taffy_layout(layout);
     }
 
     fn resolve_calc_value(&self, _val: *const (), _basis: f32) -> f32 {
