@@ -2,6 +2,13 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+## docs/superpowers/ は flow 情報
+
+`docs/superpowers/` 配下 (plans / retros / specs / sprints) は **flow 情報であって stock
+情報ではない**ため、**tracked にしない**。新規 doc も untracked のままにし、`git add -f`
+で追加しないこと。規則の正典と経緯は **AGENTS.md の「docs/superpowers/ は flow 情報
+(tracked にしない)」節**を参照。
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 
