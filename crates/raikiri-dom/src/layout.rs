@@ -21,8 +21,9 @@ use raikiri_style::{
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
-    AvailableSpace, BoxSizing as TaffyBoxSizing, Dimension, Display, LengthPercentage,
-    LengthPercentageAuto, NodeId as TaffyNodeId, Rect, Size, compute_root_layout,
+    AvailableSpace, BoxSizing as TaffyBoxSizing, Dimension, Display, Layout as TaffyLayout,
+    LengthPercentage, LengthPercentageAuto, NodeId as TaffyNodeId, Point, Rect, Size,
+    compute_root_layout,
 };
 
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
@@ -387,28 +388,83 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
 /// **和** (width + padding + border + margin) が overflow して非有限に戻ることは
 /// ない。
 ///
-/// # 本 guard が保証しないこと (射程の明示)
+/// # 入力側 bound の射程と、出力側 guard による決着 (bd raikiri-spike-r8ew)
 ///
-/// **guard が bound するのは bridge の「入力」だけで、taffy の「出力」
-/// (used value) は bound されない。** percentage は親の resolved box に対して
-/// 解決されるので **nest ごとに再び掛かる**:
+/// 本定数は [`sanitize_taffy`] 経由で **px 幾何と percentage の fraction の
+/// 両方**に適用されている。px 側については上の #4552 の導出がそのまま効くが、
+/// **fraction 側の bound としては、値をどれだけ小さく取っても不十分である。**
 ///
-/// - `width: 1e9%` (= fraction 1e7、本定数ちょうど) は **depth 6** で非有限に
-///   達する。`padding-left: 1e9%` は **depth 4** (実測)。
-/// - depth 1 の直接証拠: `width: 1e9%` → `size.width = 7937008000.0`
-///   (= A4 793.7008px × 1e7) で、既に「長さ 1e7 px」の 3 桁上。
-/// - px 経路 (`1e7px` を全 property に) は depth 45 まで非有限に到達しない。
+/// percentage の containing block に対する解決は used value 層 (taffy 側) で
+/// 起き、**nest するたびに再び掛かる**ので深さについて指数的に複利する。A4
+/// (793.7 px) を起点にすると f32 が非有限になるまでの余裕は約 35.6 桁なので、
+/// fraction の上限を `F` (> 1) としたとき最初に非有限になる深さは概ね
+/// `35.6 / log10(F)` — **常に有限**である。修正前の depth sweep 実測はこの
+/// model と一致する:
 ///
-/// すなわち **percentage の乗数に対する bound としては本定数は不十分**であり、
-/// CSSWG #4552 も px の話しかしていない (percentage の乗数について何も
-/// 言っていない)。fraction 側に独立した上限を持たせるかは
-/// **bd raikiri-spike-r8ew**。
+/// | decl | fraction | `35.6 / log10(F)` | 実測の最初の非有限 depth |
+/// |---|---|---|---|
+/// | `width: 1e9%` (本定数ちょうど) | 1e7 | 5.1 | 6 |
+/// | `width: 100000%` | 1e3 | 11.9 | 12 |
+/// | `width: 10000%` | 1e2 | 17.8 | 18 |
+/// | `width: 1000%` | 1e1 | 35.6 | 36 |
 ///
-/// なおこれは本 guard の regression ではない — guard 導入前 (base) と bit 一致で
-/// あり、閾値超え入力では guard 有りの方が strict improvement (`width: 1e40%` は
-/// base で depth 1 → guard 後 depth 6)。可用性影響も測定済で、完全な render
-/// pipeline (`raikiri::html_to_png`) は depth 1 / 3 / 4 / 6 のいずれでも
-/// ~200ms で正常な PNG を出す (hang / OOM / panic なし)。
+/// (`padding-left` を同じ値にすると probe harness で 4 / 8 / — / 25 とより
+/// 浅い。padding は `location` / `content_size` の累積にも寄与するため。)
+///
+/// depth 1 の直接証拠: `width: 1e9%` → `size.width = 7937008000.0`
+/// (= A4 793.7008px × fraction 1e7) — 既に「長さ 1e7 px」の 3 桁上。対して
+/// px 経路は健全で、全 property を `1e7px` にしても depth 45 まで有限のまま。
+///
+/// `F <= 1.0` (= `100%`) にすれば深さ非依存になるが、`width: 200%` のような
+/// spec-valid で日常的な declaration を殺すので採れない。すなわち **fraction
+/// 側の入力 bound をどう選んでもこの穴は閉じられない**。CSSWG #4552 も px の
+/// 話しかしておらず (percentage の乗数については何も言っていない)、fraction
+/// 専用の定数を導出する一次根拠も無い。
+///
+/// **決着は出力側に置いた** — [`sanitize_taffy_layout`] が taffy の
+/// **resolve 後**の [`taffy::Layout`] を同じ `[-MAX, MAX]` で clamp する。
+/// これは深さに依存しない。
+///
+/// この clamp が属する cascade stage は **actual value** である
+/// (CSS Cascade 5 §4.6 "Actual Values"、
+/// <https://www.w3.org/TR/css-cascade-5/#actual-value> verbatim:
+/// "A used value is in principle ready to be used, but a user agent may not
+/// be able to make use of the value in a given environment. For example, a
+/// user agent may only be able to render borders with integer pixel widths
+/// and may therefore have to approximate the used width.")。すなわち
+/// **used value (= taffy が計算した値) は書き換えていない** — 環境由来の
+/// 近似を適用した actual value を arena に置いているだけである。近似の作法は
+/// CSS Values 4 §Range Restrictions
+/// (<https://www.w3.org/TR/css-values-4/#numeric-ranges>) の "must be
+/// converted to the closest value supported by the implementation, but how
+/// the implementation defines "closest" is implementation-defined as well"
+/// に従う。なお #4552 の px 由来の根拠が**本来当てはまるのはこの出力側**で
+/// ある — そこで近似される値は fraction ではなく px の used value だから。
+///
+/// 入力側 guard ([`sanitize_taffy`]) は出力側 guard 導入後も**外さないこと**:
+/// ±Inf / NaN を taffy の内部演算に入れない役割が残っており (bd
+/// raikiri-spike-2ui0 の site 1-4 test が pin)、出力側 clamp は「arena に
+/// 非有限が入らない」ことしか保証しない。
+///
+/// # 出力側 clamp が実際に効く帯 (通常 layout との境界)
+///
+/// 本定数は actual value の上限でもあるので、**used value が 1e7 px を超える
+/// 入力では病的でなくても値が動く**。例: `width: 200%` を 14 段 nest すると
+/// used width = 793.7008 × 2^14 ≒ 1.30e7 px で、actual value は 1e7 に
+/// 近似される (修正前は 1.30e7 がそのまま arena に入っていた)。
+///
+/// これは CSS Values 4 §Range Restrictions が許す範囲だが、#4552 が挙げる
+/// 3 engine の上限 (2.15e7 / 3.36e7 / 3.58e7 px) より本実装は 2.2〜3.6 倍
+/// strict である点は意図的な選択として記録しておく — 同 § の "should support
+/// reasonably useful ranges" は SHOULD であり、1e7 px ≒ 2.6 km / A4 8900
+/// ページで充足する。「影響ゼロ」が成り立つのは `[-1e7, 1e7]` 内に収まる
+/// layout に限る。
+///
+/// なお修正前の穴は本 guard の regression ではなかった — guard 導入前 (base) と
+/// bit 一致であり、閾値超え入力では guard 有りの方が strict improvement
+/// (`width: 1e40%` は base で depth 1 → guard 後 depth 6)。可用性影響も測定済で、
+/// 完全な render pipeline (`raikiri::html_to_png`) は depth 1 / 3 / 4 / 6 の
+/// いずれでも ~200ms で正常な PNG を出していた (hang / OOM / panic なし)。
 const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 
 /// parley に渡す `font-size` の上限 (px)。
@@ -554,6 +610,91 @@ fn sanitize_finite(v: f32, min: f32, max: f32) -> f32 {
 /// enforce されているので、対称にしても値は変わらない。
 fn sanitize_taffy(v: f32) -> f32 {
     sanitize_finite(v, -MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+}
+
+/// taffy が resolve した [`taffy::Layout`] の全 f32 field を
+/// [`sanitize_taffy`] に通す **出力側** guard (bd raikiri-spike-r8ew)。
+///
+/// # なぜ出力側なのか (入力側の bound では閉じられない)
+///
+/// [`MAX_TAFFY_MAGNITUDE`] の「入力側 bound の射程」節のとおり、percentage は
+/// used value 層で containing block に対して解決されるため nest ごとに複利し、
+/// **1 より大きい fraction 上限はどれを選んでも有限の深さで f32 を溢れさせる**。
+/// 深さは untrusted な入力 (DOM の nest) が決めるので、深さ非依存の場所 —
+/// resolve の**後** — に guard を置く以外に閉じ方が無い。
+///
+/// # call site は 1 箇所 (choke point)
+///
+/// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
+/// (`taffy_impl.rs`) — taffy が arena へ layout を書き戻す**唯一の**経路
+/// (`taffy-0.12.1` の block / flexbox / grid / leaf 各 algorithm はすべて
+/// この 1 メソッドを通る)。したがって「`Node.unrounded_layout` は決して
+/// 非有限を含まない」は構造的な invariant であり、後付けの一括 sweep のように
+/// 呼び忘れで破れることがない。
+///
+/// invariant の残り半分は**初期値**: `Node::new*` は
+/// `Layout::with_order(0)` (`node.rs`) を置き、これは全 field 0 で有限。
+/// 以降の書き込みは上記のとおり本 guard を通るので、arena が非有限 layout を
+/// 持つ瞬間が存在しない。
+///
+/// # taffy の内部計算は変えない (used value は不変、actual value のみ近似)
+///
+/// `taffy::Layout` を arena から**読み戻す**のは `RoundTree::get_unrounded_layout`
+/// だけで、これは `taffy::round_layout` 専用である。raikiri は `round_layout` を
+/// 呼ばず `RoundTree` も実装していない (`grep -rn 'round_layout\|RoundTree'
+/// crates/` → 本 doc comment 以外 0 hit、実測)。よって本 clamp は
+/// **観測面だけ**を縛り、taffy 内部の
+/// percentage 解決 chain (`LayoutInput::parent_size`) には影響しない。
+/// すなわち「深いところで内部的に inf になった結果が clamp 済の値として
+/// 見える」のであって、レイアウト計算自体を書き換えてはいない。
+///
+/// # 網羅的な struct literal (`..` を使わない)
+///
+/// 全 f32 field を明示列挙する。`..*layout` にすると taffy が将来 f32 field を
+/// 増やしたときに**黙って guard の外に漏れる**が、網羅 literal なら compile
+/// error になって review を強制できる。`order` は `u32` なので guard 対象外。
+///
+/// paint が現に読む 4 field だけに絞らないのも同じ理由 —
+/// 「arena は非有限幾何を持たない」は述べられて test できる invariant だが、
+/// 「paint がたまたま読む field」はそうではない。
+///
+/// # 保証するのは finiteness だけ (box model の包含関係は保存しない)
+///
+/// なお本 guard が保証するのは **finiteness だけ**で、box model の包含関係
+/// (CSS Box 3 の content ⊆ padding ⊆ border) は保存しない — field ごとに
+/// 独立に clamp するので、`size.width` と `padding.{left,right}` が同時に
+/// 飽和すると `size.width - padding.left - padding.right` は負になりうる。
+/// 現在 `padding` / `border` / `content_size` / `scrollbar_size` を読む
+/// consumer は無い (grep 実測) が、将来 paint がこれらを使うときは
+/// 非負性を仮定しないこと。
+pub(crate) fn sanitize_taffy_layout(layout: &TaffyLayout) -> TaffyLayout {
+    fn size(s: Size<f32>) -> Size<f32> {
+        Size {
+            width: sanitize_taffy(s.width),
+            height: sanitize_taffy(s.height),
+        }
+    }
+    fn rect(r: Rect<f32>) -> Rect<f32> {
+        Rect {
+            left: sanitize_taffy(r.left),
+            right: sanitize_taffy(r.right),
+            top: sanitize_taffy(r.top),
+            bottom: sanitize_taffy(r.bottom),
+        }
+    }
+    TaffyLayout {
+        order: layout.order,
+        location: Point {
+            x: sanitize_taffy(layout.location.x),
+            y: sanitize_taffy(layout.location.y),
+        },
+        size: size(layout.size),
+        content_size: size(layout.content_size),
+        scrollbar_size: size(layout.scrollbar_size),
+        border: rect(layout.border),
+        padding: rect(layout.padding),
+        margin: rect(layout.margin),
+    }
 }
 
 /// [`ComputedLengthPercentage`] → [`taffy::LengthPercentage`] bridge
@@ -2012,5 +2153,288 @@ mod tests {
             MAX_FONT_SIZE_PX * 10.0 < (i32::MAX / 64) as f32,
             "MAX_FONT_SIZE_PX は skrifa の saturation 点より 1 桁以上下であること: {MAX_FONT_SIZE_PX}"
         );
+    }
+
+    // ── 出力側 guard: nested percentage (bd raikiri-spike-r8ew) ──────────
+    //
+    // 入力側 guard (上の site 1-4) は bridge に入る f32 を有限化するが、
+    // percentage は used value 層 (taffy) で containing block に対して解決され
+    // nest ごとに複利するため、**出力**は非有限に戻りうる。以下はその出力側
+    // guard (`sanitize_taffy_layout`) の pin。
+
+    /// [`sanitize_taffy_layout`] が保証する invariant の述語 —
+    /// [`taffy::Layout`] の全 f32 field が有限。
+    ///
+    /// paint が現に読む 4 field ではなく全 field を見る (guard 側と同じ理由)。
+    ///
+    /// `..` を使わず網羅 destructure するのも guard 側と同じ理由 — taffy が
+    /// f32 field を増やしたときに guard 側 (網羅 literal) だけが compile error に
+    /// なり、**述語側は黙って旧 field しか見ない**、という非対称を作らないため。
+    fn layout_all_finite(l: &TaffyLayout) -> bool {
+        fn size_ok(s: Size<f32>) -> bool {
+            s.width.is_finite() && s.height.is_finite()
+        }
+        fn rect_ok(r: Rect<f32>) -> bool {
+            r.left.is_finite() && r.right.is_finite() && r.top.is_finite() && r.bottom.is_finite()
+        }
+        let TaffyLayout {
+            // `order` は u32 — guard 対象外 (`sanitize_taffy_layout` の doc)。
+            order: _,
+            location,
+            size,
+            content_size,
+            scrollbar_size,
+            border,
+            padding,
+            margin,
+        } = l;
+        location.x.is_finite()
+            && location.y.is_finite()
+            && size_ok(*size)
+            && size_ok(*content_size)
+            && size_ok(*scrollbar_size)
+            && rect_ok(*border)
+            && rect_ok(*padding)
+            && rect_ok(*margin)
+    }
+
+    /// `<html><body>` の下に `decl` を持つ `<div>` を `depth` 段 nest した
+    /// document を [`layout_single_page`] に通し、**各段の**
+    /// `unrounded_layout` を浅い順に返す。
+    ///
+    /// 起点は probe 材料の depth sweep harness
+    /// (`docs/superpowers/specs/2026-07-28-r8ew-probe-materials/probe2.rs`、
+    /// zls8 perf lens iter2) だが、**depth ごとに document を作り直さない** —
+    /// depth `N` の chain は 1..=`N` の各深さの node を既に含んでおり、
+    /// probe が depth ごとに払っていた `FontContext::new()`
+    /// (`font_context_new_cost_is_reasonable` が 10 回 5 秒未満を pin =
+    /// 決して安くない) を depth 数だけ払う理由が無いため。
+    fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<TaffyLayout> {
+        use raikiri_style::{build_rule_tree, cascade};
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let mut parent = body;
+        let mut ids = Vec::with_capacity(depth);
+        for _ in 0..depth {
+            parent = doc.append_element(Some(parent), "div", Style::default(), Some(decl));
+            ids.push(parent);
+        }
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        ids.into_iter()
+            .map(|i| doc.nodes[i].unrounded_layout)
+            .collect()
+    }
+
+    /// 修正前 (bd raikiri-spike-r8ew) は下記の depth で `unrounded_layout` が
+    /// 非有限に戻っていた。probe 材料 RAWDATA.txt の depth sweep 実測では
+    /// **base (guard 前) / head (入力側 guard 後) が完全に一致**していた =
+    /// 入力側 guard では閉じない穴であることの証拠:
+    ///
+    /// | decl | probe harness | 本 harness (実測) |
+    /// |---|---|---|
+    /// | `width: 1e9%` | 6 | 6 |
+    /// | `width: 100000%` | 12 | 12 |
+    /// | `width: 10000%` | 18 | 18 |
+    /// | `width: 1000%` | 36 | 36 |
+    /// | `width: 200%` | 到達せず | 到達せず |
+    /// | `padding-left: 1e9%` | 4 | 5 |
+    /// | `padding-left: 100000%` | 8 | 9 |
+    /// | `padding-left: 1000%` | 25 | 25 |
+    /// | `padding-left: 200%` | 到達せず | 到達せず |
+    ///
+    /// (`padding-left` 系 2 行の ±1 は 2 harness の差に由来する。probe は
+    /// depth ごとに document を作り直すので最深段が leaf になるが、本 harness
+    /// は 1 本の chain を最深まで伸ばして各段を見るので同じ段が container に
+    /// なる。**ただし機構は特定できていない** — この構造差が原因なら padding
+    /// 系 3 行すべてがずれるはずだが `padding-left: 1000%` は 25/25 で一致
+    /// する。数値自体は再現可能で、本 harness 列は `set_unrounded_layout` の
+    /// [`sanitize_taffy_layout`] 呼び出しだけを外して実測した値である。
+    /// `width` 系 4 行は完全一致。)
+    ///
+    /// 修正後はすべて「到達せず」になる。
+    ///
+    /// **検査幅 45 は表の sweep 範囲に揃えた値であって、保証の上限ではない。**
+    /// 本 test が pin するのは「この 9 declaration を深さ 45 まで見た範囲で
+    /// 保存値が全 field 有限」という**検査した点**だけである。深さ非依存性
+    /// そのものは test からは出てこない — 根拠は
+    /// [`sanitize_taffy_layout`] が taffy から arena への唯一の書き込み経路に
+    /// 置かれているという **choke point の構造的議論**の側にある。
+    /// [`nested_percentage_output_stays_finite_far_past_the_sweep`] も
+    /// 「sweep よりかなり深い一例」を足すだけで、全称的な深さ非依存性を
+    /// pin するものではない。したがってこの 45 を「安全な上限」として
+    /// 下げないこと (下げてよい根拠は test ではなく構造の側にある)。
+    #[test]
+    fn nested_percentage_output_is_finite_through_probe_sweep_depth() {
+        const SWEEP_DEPTH: usize = 45;
+        for decl in [
+            "width: 1e9%",
+            "width: 100000%",
+            "width: 10000%",
+            "width: 1000%",
+            "width: 200%",
+            "padding-left: 1e9%",
+            "padding-left: 100000%",
+            "padding-left: 1000%",
+            "padding-left: 200%",
+        ] {
+            let layouts = nested_decl_layouts(decl, SWEEP_DEPTH);
+            assert_eq!(layouts.len(), SWEEP_DEPTH);
+            if let Some((i, bad)) = layouts
+                .iter()
+                .enumerate()
+                .find(|(_, l)| !layout_all_finite(l))
+            {
+                panic!(
+                    "decl {decl:?}: nest depth {} の unrounded_layout に非有限 f32 が残っている: {bad:?}",
+                    i + 1
+                );
+            }
+        }
+    }
+
+    /// **深さ 96 でも保存値が有限**であることの pin。
+    ///
+    /// [`nested_percentage_output_is_finite_through_probe_sweep_depth`] は bd
+    /// の表に揃えた深さ 45 までしか見ないので、修正前に最も浅く破れた
+    /// `padding-left: 1e9%` (probe harness で depth 4 / 本 harness で depth 5)
+    /// を、その sweep 幅の 2 倍超で追加の 1 点として見る。
+    ///
+    /// **本 test は深さ非依存性を pin しない** — 有限深さの test が示せるのは
+    /// 常に「検査した深さでは有限」までである。深さ非依存性の根拠は
+    /// [`sanitize_taffy_layout`] が taffy から arena への唯一の書き込み経路に
+    /// 置かれているという **choke point の構造的議論**であって、本 test では
+    /// ない。本 test はその構造的議論に対する sanity check の位置づけ。
+    ///
+    /// **本 test は (a) / (b) 案を排除しない** (できない) — 入力側 fraction
+    /// bound `F` に対する破綻深さ `35.6 / log10(F)`
+    /// (`MAX_TAFFY_MAGNITUDE` の doc の表) は深さ 96 では `F >= 2.35` しか
+    /// 捕まえられず、`width: 200%` を温存する最小の `F = 2.0` は `D = 118` で
+    /// **本 test を通ってしまう**。有限深さの test は原理的に (a) を排除できない。
+    /// (a) 却下の根拠は「深さ非依存には `F <= 1` が要り、それが `width: 200%` を
+    /// 殺す」という `MAX_TAFFY_MAGNITUDE` の doc の議論であって、本 test ではない。
+    #[test]
+    fn nested_percentage_output_stays_finite_far_past_the_sweep() {
+        const DEEP: usize = 96;
+        let layouts = nested_decl_layouts("padding-left: 1e9%", DEEP);
+        assert_eq!(layouts.len(), DEEP);
+        for (i, l) in layouts.iter().enumerate() {
+            assert!(
+                layout_all_finite(l),
+                "nest depth {} で非有限に戻った: {l:?}",
+                i + 1
+            );
+        }
+    }
+
+    /// [`sanitize_taffy_layout`] の field 単位の挙動 (上の 2 test は「有限で
+    /// ある」までしか見ないので、どの値に落ちるかはこちらで pin する)。
+    #[test]
+    fn sanitize_taffy_layout_clamps_every_f32_field() {
+        let poisoned = TaffyLayout {
+            order: 7,
+            location: Point {
+                x: f32::INFINITY,
+                y: f32::NEG_INFINITY,
+            },
+            size: Size {
+                width: f32::NAN,
+                height: 1e30,
+            },
+            content_size: Size {
+                width: -1e30,
+                height: f32::NAN,
+            },
+            scrollbar_size: Size {
+                width: f32::INFINITY,
+                height: 12.0,
+            },
+            border: Rect {
+                left: f32::NAN,
+                right: f32::INFINITY,
+                top: f32::NEG_INFINITY,
+                bottom: 1.0,
+            },
+            padding: Rect {
+                left: 1e30,
+                right: -1e30,
+                top: f32::NAN,
+                bottom: 2.0,
+            },
+            margin: Rect {
+                left: f32::NEG_INFINITY,
+                right: f32::INFINITY,
+                top: -3.0,
+                bottom: f32::NAN,
+            },
+        };
+        let s = sanitize_taffy_layout(&poisoned);
+
+        // `order` は u32 なので guard 対象外 — 素通しすること。
+        assert_eq!(s.order, 7, "order は clamp 対象ではない");
+
+        assert_eq!(s.location.x, MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.location.y, -MAX_TAFFY_MAGNITUDE);
+        // NaN は clamp では潰れないので `is_nan()` → 0.0 (sanitize_finite)。
+        assert_eq!(s.size.width, 0.0);
+        assert_eq!(s.size.height, MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.content_size.width, -MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.content_size.height, 0.0);
+        assert_eq!(s.scrollbar_size.width, MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.scrollbar_size.height, 12.0, "範囲内の値は素通し");
+        assert_eq!(s.border.left, 0.0);
+        assert_eq!(s.border.right, MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.border.top, -MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.border.bottom, 1.0);
+        assert_eq!(s.padding.left, MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.padding.right, -MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.padding.top, 0.0);
+        assert_eq!(s.padding.bottom, 2.0);
+        assert_eq!(s.margin.left, -MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.margin.right, MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.margin.top, -3.0);
+        assert_eq!(s.margin.bottom, 0.0);
+
+        // `[-MAX, MAX]` に収まる Layout の 1 例が bit 単位で不変であることの
+        // pin。「通常 layout への影響ゼロ」を示すものではない — 影響が無いのは
+        // 帯の内側に収まる場合だけで、外に出る入力 (`width: 200%` × 14 段 nest
+        // など) では値が動く (`MAX_TAFFY_MAGNITUDE` の「clamp が実際に効く帯」節)。
+        let benign = TaffyLayout {
+            order: 3,
+            location: Point { x: 10.0, y: -20.5 },
+            size: Size {
+                width: 793.7008,
+                height: 1122.52,
+            },
+            content_size: Size {
+                width: 100.0,
+                height: 200.0,
+            },
+            scrollbar_size: Size {
+                width: 0.0,
+                height: 0.0,
+            },
+            border: Rect {
+                left: 1.0,
+                right: 2.0,
+                top: 3.0,
+                bottom: 4.0,
+            },
+            padding: Rect {
+                left: 5.0,
+                right: 6.0,
+                top: 7.0,
+                bottom: 8.0,
+            },
+            margin: Rect {
+                left: -9.0,
+                right: 10.0,
+                top: 11.0,
+                bottom: 12.0,
+            },
+        };
+        assert_eq!(sanitize_taffy_layout(&benign), benign);
     }
 }
