@@ -280,7 +280,7 @@ impl ContentSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GcpmDirective {
     /// `counter-increment: name delta` — 指定 counter `name` を `delta` だけ増分
-    /// (CSS Lists 3 §5.1 <https://www.w3.org/TR/css-lists-3/#propdef-counter-increment>)。
+    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#propdef-counter-increment>)。
     CounterIncrement {
         /// Counter name (custom-ident)。
         name: Symbol,
@@ -288,7 +288,7 @@ pub enum GcpmDirective {
         delta: i32,
     },
     /// `counter-reset: name value` — 指定 counter `name` を `value` に reset
-    /// (CSS Lists 3 §5.2 <https://www.w3.org/TR/css-lists-3/#propdef-counter-reset>)。
+    /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#propdef-counter-reset>)。
     CounterReset {
         /// Counter name (custom-ident)。
         name: Symbol,
@@ -296,7 +296,7 @@ pub enum GcpmDirective {
         value: i32,
     },
     /// `counter-set: name value` — 現要素で counter `name` を `value` に set
-    /// (CSS Lists 3 §5.3 <https://www.w3.org/TR/css-lists-3/#propdef-counter-set>)。
+    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#propdef-counter-set>)。
     CounterSet {
         /// Counter name (custom-ident)。
         name: Symbol,
