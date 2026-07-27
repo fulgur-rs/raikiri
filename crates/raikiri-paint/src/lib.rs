@@ -189,11 +189,18 @@ mod tests {
         // 初期値で上書きされる (`<container>` に author width なしのため)。
         // width=auto の Display::Block は containing width (=A4) に stretch され、
         // `size.width == 0.0` sanity assert が失敗する。修正: inline に
-        // `"width: 0px; height: 0px"` を与え cv.{width,height} = Length::Px(0.0)
-        // を bridge が翻訳するようにする。**height は Wave 3 (raikiri-spike-01up)
-        // まで bridge されない**ため、`zero_block_style.size.height = length(0.0)`
-        // の手構築値を **保持** して sanity assert を維持する (Wave 3 landing 後は
-        // inline `height: 0px` が bridge_size で反映されるので手構築値は冗長になる)。
+        // `"width: 0px; height: 0px"` を与え cv.{width,height} =
+        // ComputedLengthPercentageOrAuto::Px(0.0) を bridge が翻訳するようにする。
+        // **height は Wave 3 (raikiri-spike-01up) まで bridge されない**ため、
+        // `zero_block_style.size.height = length(0.0)` の手構築値を **保持** して
+        // sanity assert を維持する (Wave 3 landing 後は inline `height: 0px` が
+        // bridge_size で反映されるので手構築値は冗長になる)。
+        //
+        // raikiri-spike-01up (Sprint 18 Wave 3) 以降: bridge_size が
+        // `style.size = Size { width, height }` の struct literal を書くように
+        // なり、height も bridge 対象になった。上記 `zero_block_style` の
+        // `size.height = length(0.0)` 手構築値は inline `height: 0px` 由来の
+        // 同値で上書きされるため現在は冗長 (behavior 差はなし)。
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -209,8 +216,8 @@ mod tests {
             Some(body),
             "container",
             zero_block_style,
-            // width は bridge が clobber するため inline で明示。height は Wave 3
-            // (01up) が bridge するまで手構築 style.size.height=length(0) が残る。
+            // width / height とも bridge が clobber するため inline で明示
+            // (height は raikiri-spike-01up で bridge 対象に加わった)。
             Some("width: 0px; height: 0px"),
         );
         let _text = doc.append_text(container, "visible");
