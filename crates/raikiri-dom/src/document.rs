@@ -196,14 +196,20 @@ impl Document {
     /// 場合は事前に [`Document::detach_from_parent`] で detach しておくこと
     /// (tree の重複配置を防ぐため raikiri-dom は自動 detach しない)。
     ///
-    /// # Fragment-aware semantics (raikiri-spike-84y、WHATWG DOM §4.2.5-6)
+    /// # Fragment-aware semantics (raikiri-spike-84y、WHATWG DOM §4.2.3 Mutation algorithms)
     ///
     /// `child` が [`NodeData::DocumentFragment`] variant の場合、fragment node
     /// 自身は `parent.children` に append せず、fragment の全 children を parent
-    /// の末尾に移動する (fragment の children は空になる、pre-insert step 5 /
-    /// insert algorithm §4.2.6)。これは spec-conformant な DocumentFragment
-    /// insertion semantics で、fragment そのものは常に unrendered な virtual
-    /// container として振る舞う。
+    /// の末尾に移動する (fragment の children は afterwards 空になる、
+    /// insert algorithm steps 1 + 4.1 + 7.2 —
+    /// step 1 で fragment の場合 nodes = fragment.children、step 4.1 で fragment の
+    /// children を drain、step 7.2 で parent.children の末尾に append
+    /// (spec は append を "pre-insert node into parent before null" と定義するので
+    /// 本 method は referenceChild = null 経路 = step 7.2 分岐、non-null
+    /// referenceChild の positional splice は step 7.3 で
+    /// [`Document::insert_child_before`] 側が該当))。これは
+    /// spec-conformant な DocumentFragment insertion semantics で、fragment そのもの
+    /// は常に unrendered な virtual container として振る舞う。
     ///
     /// Element / Text / Comment / PI / Document は fragment 以外なので直接 append
     /// (旧挙動保持)。html5ever が実行時に fragment を parent として渡すことは
@@ -218,9 +224,10 @@ impl Document {
     ///   detect しない (M1 spike 範囲では発生しない、M4+ で spec-conformant
     ///   mutation API 化する時 raise 判定)。
     pub fn attach_child(&mut self, parent: usize, child: usize) {
-        // Fragment-aware branch: DocumentFragment child は自身を append せず
-        // その children を parent に move する (WHATWG DOM §4.2.6 insertion
-        // algorithm step 8.2 の効果と一致)。
+        // Fragment-aware branch: WHATWG DOM insert algorithm steps 1 + 4.1 + 7.2
+        // (§4.2.3 Mutation algorithms) の効果と一致 — fragment 自身は
+        // parent.children に含めず、fragment の children を parent の末尾へ
+        // move する。insert_child_before (positional splice) の tail append 対応。
         if matches!(self.nodes[child].data, NodeData::DocumentFragment) {
             // reparent_children の drain + extend pattern と一致。fragment 自身
             // は `parent.children` に含まれない (contract test (c) 参照)。
@@ -1081,18 +1088,22 @@ mod taffy_filter_tests {
 #[cfg(test)]
 mod attach_child_fragment_tests {
     //! raikiri-spike-84y bundled Codex xno §8.3 finding #2: attach_child が
-    //! `NodeData::DocumentFragment` を child に受け取った時、WHATWG DOM §4.2.5
-    //! (pre-insert step 5) / §4.2.6 (insertion algorithm step 8.2) と一致する
-    //! fragment-aware semantics で動作する契約を pin。
+    //! `NodeData::DocumentFragment` を child に受け取った時、WHATWG DOM §4.2.3
+    //! Mutation algorithms — insert algorithm steps 1 + 4.1 + 7.2 と一致する
+    //! fragment-aware semantics で動作する契約を pin (append が positional
+    //! splice の step 7.3 ではなく 7.2 に対応する導出は `Document::attach_child`
+    //! の doc comment 参照)。
     //!
     //! Spec ref:
     //! - <https://dom.spec.whatwg.org/#concept-node-pre-insert>
     //! - <https://dom.spec.whatwg.org/#concept-node-insert>
     //!
-    //! 契約 (test 3 分割):
+    //! 契約 (test 5 分割):
     //! (a) parent.children が fragment の children で source order に extend される
     //! (b) fragment の children Vec が empty 化される (move、not clone)
     //! (c) fragment node 自身は parent.children に含まれない
+    //! (d) empty fragment attach は parent.children を変えない (edge)
+    //! (e) fragment 以外の child は旧 push 挙動を維持する (regression pin)
     use super::*;
     use crate::node::NodeData;
 
@@ -1107,8 +1118,8 @@ mod attach_child_fragment_tests {
 
     #[test]
     fn attach_child_extends_parent_with_fragment_children_in_order() {
-        // WHATWG DOM §4.2.6 step 8.2 with a fragment child: node's children →
-        // parent's children, in tree order.
+        // WHATWG DOM §4.2.3 Mutation algorithms — insert steps 1 + 7.2 with a
+        // fragment child: node's children → parent's children, in tree order.
         let mut doc = Document::new();
         let root = doc.root_index();
         let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
@@ -1141,7 +1152,7 @@ mod attach_child_fragment_tests {
         doc.attach_child(parent, frag);
         assert!(
             doc.nodes[frag].children.is_empty(),
-            "fragment's children must be drained after attach_child (move semantics per WHATWG DOM §4.2.6)"
+            "fragment's children must be drained after attach_child (move semantics per WHATWG DOM §4.2.3 Mutation algorithms — insert step 4.1)"
         );
         // fragment 自身は arena には残る (kind = DocumentFragment、detached)。
         assert!(matches!(doc.nodes[frag].data, NodeData::DocumentFragment));
@@ -1150,8 +1161,9 @@ mod attach_child_fragment_tests {
     #[test]
     fn attach_child_does_not_push_the_fragment_node_itself() {
         // (c): fragment node 自身は parent.children に絶対に含まれない。
-        // WHATWG DOM §4.2.6 step 8.2 は fragment を "container" として扱い、
-        // fragment node 自体は tree に挿入されない (mutation record 上も
+        // WHATWG DOM §4.2.3 Mutation algorithms — insert step 1 は fragment の
+        // 場合 nodes = fragment.children と定義し、fragment 自身は tree
+        // insertion 対象外となる (mutation record 上も
         // parent → fragment ではなく parent → fragment's children で観測される)。
         let mut doc = Document::new();
         let root = doc.root_index();
@@ -1222,11 +1234,13 @@ mod insert_child_before_fragment_tests {
     //! - <https://dom.spec.whatwg.org/#concept-node-pre-insert>
     //! - <https://dom.spec.whatwg.org/#concept-node-insert>
     //!
-    //! 契約 (test 3 分割 = 84y `attach_child_fragment_tests` の mirror):
+    //! 契約 (test 5 分割 = 84y `attach_child_fragment_tests` の mirror):
     //! (a) parent.children が fragment の children で `before` position から
     //!     source order で splice される
     //! (b) fragment の children Vec が empty 化される (move、not clone)
     //! (c) fragment node 自身は parent.children に含まれない
+    //! (d) empty fragment splice は parent.children を変えない (edge)
+    //! (e) fragment 以外の child は旧 insert 挙動を維持する (regression pin)
     use super::*;
     use crate::node::NodeData;
 
