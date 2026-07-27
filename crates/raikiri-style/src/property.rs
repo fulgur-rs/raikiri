@@ -1147,8 +1147,8 @@ pub enum PropertyValue {
     /// non-inherited、initial: empty list (CSS Lists 3 §3)。
     /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
     ///
-    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`pick_winners` の
-    /// `value.clone()`) + inheritance walk clone (`resolve_inheritance` の
+    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`resolve_inheritance` の
+    /// winner drain での `value.clone()`) + inheritance walk clone (同 関数 の
     /// `stack.push((child, computed.clone()))` + `out[idx] = computed.clone()`)
     /// が **shallow (Arc bump only)** になる。counter-* は non-inherited のため
     /// child は inherit_from で shared empty slot に落ちるが、winner までの経路

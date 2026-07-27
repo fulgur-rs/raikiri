@@ -153,9 +153,10 @@ pub struct ComputedValues {
     /// counter-name + initial value pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
     ///
-    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`pick_winners` value.clone、
-    /// `apply_value` move) と inheritance walk clone (`resolve_inheritance` の
-    /// stack push + `out[idx] = computed.clone()`) が **shallow (Arc bump)** に
+    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`resolve_inheritance` の
+    /// winner drain での `value.clone()`、`apply_value` move) と inheritance walk
+    /// clone (`resolve_inheritance` の stack push + `out[idx] = computed.clone()`)
+    /// が **shallow (Arc bump)** に
     /// なる。`* { counter-reset: c0 c1 ... cN }` × M element の O(N × M) memory
     /// blow-up を単一 heap slot 共有で塞ぐ (raikiri-spike-d9y.2 SEC HIGH、d9y.1
     /// Content/StringSet pattern の踏襲)。`Arc<Vec<T>>: Deref<Target = Vec<T>>`
@@ -185,9 +186,10 @@ pub struct ComputedValues {
     /// counter-* wire-through pattern を踏襲、raikiri-spike-s85)。
     /// See <https://www.w3.org/TR/css-content-3/#content-property>.
     ///
-    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`pick_winners` value.clone、
-    /// `apply_value` move) と inheritance walk clone (`resolve_inheritance` の
-    /// stack push + `out[idx] = computed.clone()`) が **shallow (Arc bump)** に
+    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`resolve_inheritance` の
+    /// winner drain での `value.clone()`、`apply_value` move) と inheritance walk
+    /// clone (`resolve_inheritance` の stack push + `out[idx] = computed.clone()`)
+    /// が **shallow (Arc bump)** に
     /// なる。`* { content: "<large>" }` × N element の O(N × M) memory blow-up
     /// を単一 heap slot 共有で塞ぐ (raikiri-spike-d9y.1 SEC HIGH)。
     /// `Arc<Vec<T>>: Deref<Target = Vec<T>>` により downstream の `.iter()` /

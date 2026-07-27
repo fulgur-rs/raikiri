@@ -14,9 +14,15 @@
 //! この中間状態が独立に必要な理由は [`crate::resolve`] の module doc が述べる
 //! とおり — `padding: 2em` の基準となる `font-size` は、その node の**全** winner を
 //! 適用し終えた後にしか確定しない。winner を 1 つ適用するたびに絶対化する実装は
-//! 適用順に依存してしまい成立しない (`crate::cascade::pick_winners` の戻り値は
-//! `HashMap` であり iteration 順は非決定的)。**絶対化を winner 適用とは別 phase に
-//! 分けることは decision 082k の拘束事項**である。
+//! 適用順に依存してしまい成立しない (`font-size` が最後に適用されれば、それ以前に
+//! 絶対化した `2em` は古い基準で焼き付いている)。**絶対化を winner 適用とは別
+//! phase に分けることは decision 082k の拘束事項**である。
+//!
+//! なお `crate::cascade::pick_winners` の winner 適用順そのものは
+//! **決定的** — `PropertyKey` discriminant を index にした slot 配列を昇順に
+//! 走査するため (bd raikiri-spike-8kn8 以前は `HashMap` iteration 順で
+//! 非決定的だった)。上の拘束は適用順の決定性とは独立に成り立つ: どの順に
+//! 適用しようと「全 winner 適用後」でなければ基準 `font-size` は確定しない。
 
 use std::sync::Arc;
 
