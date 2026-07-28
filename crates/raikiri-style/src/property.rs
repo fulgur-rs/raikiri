@@ -96,7 +96,7 @@ impl CssColor {
 
     /// hex-notation payload (leading `#` を除いた digit 列) を parse する。
     ///
-    /// CSS Color 4 §5.1 "The RGB hexadecimal notations: `#RRGGBB`"
+    /// CSS Color 4 §5.2 "The RGB hexadecimal notations: `#RRGGBB`"
     /// <https://www.w3.org/TR/css-color-4/#hex-notation> の 4 form を受理:
     ///
     /// - **3-digit** `rgb`     → 各 nibble を duplicate → `#RRGGBB`, `a = 255`
@@ -104,7 +104,7 @@ impl CssColor {
     /// - **6-digit** `rrggbb`  → `a = 255` (fully opaque)
     /// - **8-digit** `rrggbbaa` → 末尾 byte が alpha (0..=255)
     ///
-    /// 短縮形 (3/4-digit) の "digit duplicate" は spec §5.1 直訳:
+    /// 短縮形 (3/4-digit) の "digit duplicate" は spec §5.2 直訳:
     ///
     /// > "The 3 and 4-digit hex color is a shorter variant of the 6 and
     /// > 8-digit form, respectively. […] The shorter form is expanded into
@@ -115,7 +115,7 @@ impl CssColor {
     ///
     /// # Case
     ///
-    /// `0-9` / `a-f` / `A-F` を受理 (ASCII case-insensitive, §5.1 —
+    /// `0-9` / `a-f` / `A-F` を受理 (ASCII case-insensitive, §5.2 —
     /// "The letters `A`–`F` may be in uppercase or lowercase")。
     ///
     /// # Invalid input
@@ -153,14 +153,14 @@ impl CssColor {
                 let a = hex_byte(hex[6], hex[7])?;
                 Some(Self { r, g, b, a })
             }
-            // 0/1/2/5/7/9+ digit は §5.1 hex-notation grammar に無い spec-invalid。
+            // 0/1/2/5/7/9+ digit は §5.2 hex-notation grammar に無い spec-invalid。
             _ => None,
         }
     }
 }
 
 /// ASCII hex digit (`0-9` / `a-f` / `A-F`) を 0..=15 の nibble へ変換。
-/// case-insensitive per CSS Color 4 §5.1。non-hex → `None`。
+/// case-insensitive per CSS Color 4 §5.2。non-hex → `None`。
 fn hex_digit(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
@@ -177,7 +177,7 @@ fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
 }
 
 /// 4-bit nibble `n` (`0..=15`) を 8-bit channel `nn` に展開する。
-/// `(n << 4) | n = n * 17` — CSS Color 4 §5.1 の "duplicating each digit"
+/// `(n << 4) | n = n * 17` — CSS Color 4 §5.2 の "duplicating each digit"
 /// を実装した short-form 展開 helper (`#f` → `0xff`, `#8` → `0x88`)。
 fn expand_hex_nibble(n: u8) -> u8 {
     (n << 4) | n
@@ -301,7 +301,7 @@ pub enum LengthOrAuto {
     Auto,
 }
 
-/// 4-side box-model value holder。field 順は CSS Box 3 §6.2 shorthand の
+/// 4-side box-model value holder。field 順は CSS Box 3 §4.2 shorthand の
 /// 4-value form `top right bottom left` に一致 (clockwise from top)。
 ///
 /// Sprint 12 で padding shorthand が最初の consumer (raikiri-spike-0vv.6)、
@@ -327,7 +327,7 @@ pub struct Sides<T> {
 
 impl<T: Clone> Sides<T> {
     /// 4 side を全て同じ値で埋める constructor — `padding: 10px` / `margin: 10px`
-    /// の 1-value shorthand expansion (CSS Box 3 §3.2 / §6.2 "If there is only
+    /// の 1-value shorthand expansion (CSS Box 3 §3.2 / §4.2 "If there is only
     /// one component value, it applies to all sides.") + `Sides` 系 field の
     /// spec initial value (`0` を全 side に配る) の両方で使う共通 helper。
     pub fn all(v: T) -> Self {
@@ -362,10 +362,10 @@ impl<T> Sides<T> {
 
 /// `border-style` の value — spec `<line-style>` production の 10 keyword。
 ///
-/// CSS Backgrounds 3 §5.2 "Line Patterns: the border-style properties"
+/// CSS Backgrounds 3 §3.2 "Line Patterns: the border-style properties"
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-style>:
 /// `<line-style> = none | hidden | dotted | dashed | solid | double | groove |
-/// ridge | inset | outset`。initial value は `none`、not inherited (§5.2)。
+/// ridge | inset | outset`。initial value は `none`、not inherited (§3.2)。
 ///
 /// UA stylesheet 差はあるが本 crate は cleanroom scope (`walls.md` §1) のため
 /// spec-defined 10 alternative のみ受理する。ASCII case-insensitive で
@@ -395,36 +395,36 @@ impl<T> Sides<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BorderStyle {
     /// `none` — no border (initial value)、border-width is treated as `0`
-    /// (§5.2 "The used values of the corresponding border-*-width become 0.")。
+    /// (§3.2 "The used values of the corresponding border-*-width become 0.")。
     None,
     /// `hidden` — none と同 rendering、table conflict resolution で異なる
-    /// (§5.2 "Same as none, except in terms of border conflict resolution for
+    /// (§3.2 "Same as none, except in terms of border conflict resolution for
     /// table elements.")。
     Hidden,
-    /// `dotted` — series of round dots (§5.2)。
+    /// `dotted` — series of round dots (§3.2)。
     Dotted,
-    /// `dashed` — series of short line segments (§5.2)。
+    /// `dashed` — series of short line segments (§3.2)。
     Dashed,
-    /// `solid` — single line segment (§5.2)。
+    /// `solid` — single line segment (§3.2)。
     Solid,
-    /// `double` — two parallel solid lines (§5.2)。
+    /// `double` — two parallel solid lines (§3.2)。
     Double,
     /// `groove` — border makes the box look as though it were carved out of
-    /// the canvas (§5.2、3D shading effect)。
+    /// the canvas (§3.2、3D shading effect)。
     Groove,
-    /// `ridge` — opposite of `groove` (§5.2)。
+    /// `ridge` — opposite of `groove` (§3.2)。
     Ridge,
     /// `inset` — border makes the entire box look as though it were embedded
-    /// in the canvas (§5.2)。
+    /// in the canvas (§3.2)。
     Inset,
-    /// `outset` — opposite of `inset` (§5.2)。
+    /// `outset` — opposite of `inset` (§3.2)。
     Outset,
 }
 
 /// `border-*-color` computed value — spec `currentcolor` keyword と resolved
 /// `<color>` の specified-value distinction を cascade static side で保持する。
 ///
-/// CSS Backgrounds 3 §5.3 "The border-color property"
+/// CSS Backgrounds 3 §3.1 "Line Colors: the border-color properties"
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-color> — "Initial:
 /// currentcolor" (initial value は `currentcolor` keyword、literal `<color>`
 /// (`black` を含む) とは区別される)。
@@ -462,7 +462,7 @@ pub enum BorderStyle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BorderColor {
     /// `currentcolor` keyword — border-*-color の spec-mandated initial value
-    /// (CSS Backgrounds 3 §5.3)。used-value は paint scope で node の computed
+    /// (CSS Backgrounds 3 §3.1)。used-value は paint scope で node の computed
     /// `color` property を lookup して確定する (bd raikiri-spike-q7qf)。
     CurrentColor,
     /// Resolved `<color>` value — author が hex / named / `rgb(a)` /
@@ -473,22 +473,23 @@ pub enum BorderColor {
 
 /// `border` — 3 sub-property を単一 side 分にまとめた intermediate 型。
 ///
-/// CSS Backgrounds 3 §5 "Borders" の 3 sub-property を 1 side 分保持する:
+/// CSS Backgrounds 3 §3 "Borders" の 3 sub-property を 1 side 分保持する:
 /// - `width`: [`Length`] — `parse_border_width_side` が px keyword 変換 (thin/
 ///   medium/thick → 1/3/5 px) と length の non-negative check を担う。
 /// - `style`: [`BorderStyle`] — `parse_border_style_side` が 10 alternative を
 ///   受理。
-/// - `color`: [`BorderColor`] — `parse_border_color` (spec §5.3 の `<color>`
+/// - `color`: [`BorderColor`] — `parse_border_color` (spec §3.1 の `<color>`
 ///   grammar に加え `currentcolor` keyword を先取り) が返す enum。initial
 ///   [`BorderColor::CurrentColor`] は paint scope が `color` property で
 ///   resolve する (raikiri-spike-0vv.17 で `CssColor::BLACK` placeholder から
-///   格上げ、CSS Backgrounds 3 §5.3 の initial 契約準拠)。
+///   格上げ、CSS Backgrounds 3 §3.1 の initial 契約準拠)。
 ///
-/// # `<line-width>` keyword mapping (§5.1)
+/// # `<line-width>` keyword mapping (§3.3)
 ///
-/// spec §5.1 "The border-width properties" は `<line-width> = <length [0,∞]> |
-/// thin | medium | thick`。UA-defined recommendation で thin=1px、medium=3px、
-/// thick=5px を採用 (`parse_border_width_side` doc 参照)。
+/// spec §3.3 "Line Thickness: the border-width properties" は
+/// `<line-width> = <length [0,∞]> | thin | medium | thick`。thin=1px、
+/// medium=3px、thick=5px は spec 規定値 (verbatim "are equivalent to 1px,
+/// 3px, and 5px, respectively")。詳細は `parse_border_width_side` doc 参照。
 ///
 /// # `#[non_exhaustive]`
 ///
@@ -517,14 +518,14 @@ pub enum BorderColor {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Border {
-    /// border-width (CSS Backgrounds 3 §5.1)。initial `medium` = `Length::Px(3.0)`。
+    /// border-width (CSS Backgrounds 3 §3.3)。initial `medium` = `Length::Px(3.0)`。
     /// grammar は `<length [0,∞]>` — non-negative 制約は
     /// `parse_border_width_side` が parse-time で enforce。`<percentage>` は spec
     /// に含まれない (padding とは違う grammar、advisor calibration)。
     pub width: Length,
-    /// border-style (CSS Backgrounds 3 §5.2)。initial `none`。
+    /// border-style (CSS Backgrounds 3 §3.2)。initial `none`。
     pub style: BorderStyle,
-    /// border-color (CSS Backgrounds 3 §5.3 <https://www.w3.org/TR/css-backgrounds-3/#border-color>)。
+    /// border-color (CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color>)。
     /// initial は `currentcolor` keyword — [`BorderColor::CurrentColor`] を
     /// enum variant として保持し、used-value resolution (currentcolor →
     /// 同 node の computed `color` property) は paint scope で確定する
@@ -701,7 +702,7 @@ pub enum ContentPart {
 /// `content()` function の引数 `[ text | before | after | first-letter ]?`。
 ///
 /// CSS GCPM 3 §1.1.1.1 "The content() function"
-/// <https://www.w3.org/TR/css-gcpm-3/#content-list> の verbatim production:
+/// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> の verbatim production:
 /// `content() = content([text | before | after | first-letter])`。
 /// spec default = `text` (per §1.1.1.1 の `text` dt/dd: "This is the default
 /// value"、および `h2 { string-set: heading content() }` の bare 例)。
@@ -727,7 +728,7 @@ pub enum ContentTextKeyword {
 
 /// [`parse_content_list_items`] の list vocabulary mode selector。
 ///
-/// CSS Content 3 §2 <https://www.w3.org/TR/css-content-3/#content-list3> と
+/// CSS Content 3 §2 <https://www.w3.org/TR/css-content-3/#content-values> と
 /// CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list> は同名
 /// `<content-list>` production を持つが、後者は前者の narrower な local 再定義
 /// (GCPM 3 は `Link defaults` に CSS Content 3 を含めず、§1.1.1 L82 で自前に
@@ -770,7 +771,7 @@ enum ContentListMode {
 ///   <https://www.w3.org/TR/css-content-3/#target-counters>,
 ///   <https://www.w3.org/TR/css-content-3/#target-text>
 /// - Content: CSS GCPM 3 §1.1.1.1
-///   <https://www.w3.org/TR/css-gcpm-3/#content-list> (raikiri-spike-5ri)
+///   <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> (raikiri-spike-5ri)
 ///
 /// URL は raw `String` として保持 (raikiri-style は `url` crate に依存しない —
 /// runtime resolve 段で `url::Url` へ parse する consumer 責務)。
@@ -865,7 +866,7 @@ pub enum ContentComponent {
     /// `target-text([<string>|<url>], [ content | before | after | first-letter ]?)`。
     TargetText { url: String, part: ContentPart },
     /// `content([ text | before | after | first-letter ]?)` — GCPM 3 §1.1.1.1
-    /// <https://www.w3.org/TR/css-gcpm-3/#content-list>。
+    /// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>。
     /// 現要素 (または擬似要素) の string value を named string に挿入する用途で、
     /// `<content-list>` の一員として `string-set` および `content` property の
     /// content-list 内で受理される。keyword 省略時は spec default `Text`。
@@ -1192,7 +1193,7 @@ pub enum PropertyValue {
     /// `content: normal | none | <content-list>` — non-inherited、initial:
     /// empty list (spec の `normal` / `none` を空 list として扱う、pseudo-element
     /// 生成判断は下流 layer)。M5 gcpm-directive-emit static-side
-    /// (raikiri-spike-m5.1)、CSS Content 3 §2.1
+    /// (raikiri-spike-m5.1)、CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>。
     ///
     /// [`Arc<Vec<..>>`] wrap: cascade winner clone + inheritance walk stack
@@ -1209,7 +1210,7 @@ pub enum PropertyValue {
     Content(Arc<Vec<ContentComponent>>),
     /// `string-set: none | [ <custom-ident> <content-list> ]#` — non-inherited、
     /// initial: empty list。各 entry は `(name, content-list)` pair。
-    /// CSS GCPM 3 §3.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>、
+    /// CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>、
     /// `<content-list>` は CSS Content 3 §2 (m5.1 で parser 実装済)。
     /// 名前解決と runtime string() 参照は下流 (raikiri-dom) 責務。
     ///
@@ -1241,7 +1242,7 @@ pub enum PropertyValue {
     /// 後続 task で defer)。詳細は [`TextAlign`] doc-comment。
     TextAlign(TextAlign),
     /// `padding-top: <length-percentage [0,∞]>` — non-inherited、initial: `0`。
-    /// CSS Box 3 §6.1 <https://www.w3.org/TR/css-box-3/#padding-physical>。
+    /// CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>。
     /// spec grammar `<length-percentage [0,∞]>` の non-negative constraint は
     /// `parse_padding_side` が parse-time enforce (負値は None 返し → declaration drop)、
     /// `auto` keyword は grammar に含まれないため `parse_length_value` の
@@ -1258,7 +1259,7 @@ pub enum PropertyValue {
     /// (raikiri-spike-0vv.6)
     PaddingLeft(Length),
     /// `padding: <'padding-top'>{1,4}` shorthand — non-inherited、initial:
-    /// [`Sides::all(Length::Px(0.0))`]。CSS Box 3 §6.2
+    /// [`Sides::all(Length::Px(0.0))`]。CSS Box 3 §4.2
     /// <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
     ///
     /// 1-4 value expansion (spec-verbatim):
@@ -1317,11 +1318,11 @@ pub enum PropertyValue {
     /// raikiri-spike-0vv.5。
     Margin(Sides<LengthOrAuto>),
     /// `border-top-width: <line-width>` — non-inherited、initial: `medium`
-    /// = `Length::Px(3.0)` (CSS Backgrounds 3 §5.1
+    /// = `Length::Px(3.0)` (CSS Backgrounds 3 §3.3
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。
     /// `<line-width>` = `<length [0,∞]> | thin | medium | thick`。
     /// `<percentage>` は grammar に含まれない (padding とは違う点、advisor
-    /// calibration)。keyword mapping は UA-defined: thin=1px、medium=3px、
+    /// calibration)。keyword mapping は spec 規定値: thin=1px、medium=3px、
     /// thick=5px (`parse_border_width_side` doc 参照)。
     /// (raikiri-spike-0vv.12)
     BorderTopWidth(Length),
@@ -1335,7 +1336,7 @@ pub enum PropertyValue {
     /// (raikiri-spike-0vv.12)
     BorderLeftWidth(Length),
     /// `border-top-style: <line-style>` — non-inherited、initial: `none`
-    /// (CSS Backgrounds 3 §5.2
+    /// (CSS Backgrounds 3 §3.2
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-style>)。10 keyword は
     /// [`BorderStyle`] variant を参照。
     /// (raikiri-spike-0vv.12)
@@ -1350,7 +1351,7 @@ pub enum PropertyValue {
     /// (raikiri-spike-0vv.12)
     BorderLeftStyle(BorderStyle),
     /// `border-top-color: <color>` — non-inherited、initial: `currentcolor`
-    /// keyword ([`BorderColor::CurrentColor`]、CSS Backgrounds 3 §5.3
+    /// keyword ([`BorderColor::CurrentColor`]、CSS Backgrounds 3 §3.1
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-color> "Initial:
     /// currentcolor")。cascade static side は [`BorderColor`] enum で
     /// specified value (currentcolor vs. resolved `<color>`) を保持し、
@@ -1370,13 +1371,13 @@ pub enum PropertyValue {
     /// (raikiri-spike-0vv.12、raikiri-spike-0vv.17)
     BorderLeftColor(BorderColor),
     /// `border: <line-width> || <line-style> || <color>` shorthand — 4 side
-    /// 全てに同一の [`Border`] を配る (CSS Backgrounds 3 §5.4
+    /// 全てに同一の [`Border`] を配る (CSS Backgrounds 3 §3.4
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>)。
     ///
     /// spec grammar は `||` (any-order、each component at most once、at least
     /// 1 必須) — `parse_border_shorthand` が unfilled slot loop で peel する。
     /// 省略成分は initial: width=`Length::Px(3.0)` (medium)、style=`BorderStyle::None`、
-    /// color=[`BorderColor::CurrentColor`] (spec §5.3 initial、raikiri-spike-0vv.17)。
+    /// color=[`BorderColor::CurrentColor`] (spec §3.1 initial、raikiri-spike-0vv.17)。
     ///
     /// **element cascade 段でこの variant は観測されない**:
     /// `crate::rule::expand_shorthand_into` が parse 出口
@@ -1399,7 +1400,7 @@ pub enum PropertyValue {
     ///
     /// # Non-goals (spec deviation 明示)
     ///
-    /// spec §5.4 では border shorthand が **border-image-* も reset** する (spec
+    /// spec §3.4 では border shorthand が **border-image-* も reset** する (spec
     /// verbatim "Also resets border-image to its initial value.") が、本 crate は
     /// border-image を milestone defer (未実装、bd raikiri-spike-0vv Epic の
     /// (b) milestone subset)。future 統合 task で border-image longhand と併せて
@@ -1648,7 +1649,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
                 PropertyValue::CounterSet(Arc::new(v))
             }
         }),
-        // CSS Content 3 §2.1 content property (raikiri-spike-m5.1、M5 gcpm-directive-emit static side)。
+        // CSS Content 3 §1 content property (raikiri-spike-m5.1、M5 gcpm-directive-emit static side)。
         // Arc wrap は raikiri-spike-d9y.1 の cascade memory DoS fix (per-element clone を
         // shallow bump 化)、empty list は shared Arc slot に落として per-node allocation
         // regression を避ける (advisor calibration)。
@@ -1659,7 +1660,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
                 PropertyValue::Content(Arc::new(v))
             }
         }),
-        // CSS GCPM 3 §3.1 string-set (raikiri-spike-m5.3、M5 static-side β)。
+        // CSS GCPM 3 §1.1.1 string-set (raikiri-spike-m5.3、M5 static-side β)。
         // Arc wrap は raikiri-spike-d9y.1、同 rationale。
         "string-set" => parse_string_set(input).map(|v| {
             if v.is_empty() {
@@ -1676,7 +1677,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // spec 上 shorthand (text-align-all + text-align-last) だが単一 field で保持
         // (g04 (b) milestone subset、[`TextAlign`] doc-comment 参照)。
         "text-align" => parse_text_align(input).map(PropertyValue::TextAlign),
-        // CSS Box 3 §6.1 padding physical longhand (raikiri-spike-0vv.6)。
+        // CSS Box 3 §4.1 padding physical longhand (raikiri-spike-0vv.6)。
         // grammar: <length-percentage [0,∞]> — non-negative constraint は
         // parse_padding_side が enforce (parse-time drop、spec-invalid → None)。
         // `auto` keyword は spec grammar に含まれず parse_length_value の Dimension /
@@ -1685,7 +1686,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "padding-right" => parse_padding_side(input).map(PropertyValue::PaddingRight),
         "padding-bottom" => parse_padding_side(input).map(PropertyValue::PaddingBottom),
         "padding-left" => parse_padding_side(input).map(PropertyValue::PaddingLeft),
-        // CSS Box 3 §6.2 padding shorthand: `<'padding-top'>{1,4}`
+        // CSS Box 3 §4.2 padding shorthand: `<'padding-top'>{1,4}`
         // <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
         // 1-4 value expansion は parse_padding_shorthand が spec verbatim で適用。
         "padding" => parse_padding_shorthand(input).map(PropertyValue::Padding),
@@ -1701,10 +1702,10 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // 内で 4 longhand に展開されるため通常観測しない (詳細は
         // `PropertyValue::Margin` doc + `crate::rule::expand_shorthand_into`)。
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
-        // CSS Backgrounds 3 §5.1 border-width physical longhand
+        // CSS Backgrounds 3 §3.3 border-width physical longhand
         // (raikiri-spike-0vv.12)。grammar: `<line-width>` = `<length [0,∞]> |
         // thin | medium | thick`。`<percentage>` は含まれない (advisor
-        // calibration、padding とは違う点)。keyword mapping は UA-defined:
+        // calibration、padding とは違う点)。keyword mapping は spec 規定値:
         // thin=1px、medium=3px、thick=5px。負値は spec grammar 違反 → drop
         // (`parse_border_width_side` が enforce)。
         "border-top-width" => parse_border_width_side(input).map(PropertyValue::BorderTopWidth),
@@ -1713,7 +1714,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
             parse_border_width_side(input).map(PropertyValue::BorderBottomWidth)
         }
         "border-left-width" => parse_border_width_side(input).map(PropertyValue::BorderLeftWidth),
-        // CSS Backgrounds 3 §5.2 border-style physical longhand
+        // CSS Backgrounds 3 §3.2 border-style physical longhand
         // (raikiri-spike-0vv.12)。grammar: `<line-style>` = 10 alternative
         // (none / hidden / dotted / dashed / solid / double / groove / ridge /
         // inset / outset)。他 keyword は silent drop。
@@ -1723,7 +1724,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
             parse_border_style_side(input).map(PropertyValue::BorderBottomStyle)
         }
         "border-left-style" => parse_border_style_side(input).map(PropertyValue::BorderLeftStyle),
-        // CSS Backgrounds 3 §5.3 border-color physical longhand
+        // CSS Backgrounds 3 §3.1 border-color physical longhand
         // (raikiri-spike-0vv.12 initial seed、raikiri-spike-0vv.17 で
         // `parse_border_color` 経由に格上げ)。grammar: `<color>` に加え
         // `currentcolor` keyword を先取り (CSS Color 3 §4.4)。`BorderColor` enum
@@ -1733,7 +1734,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "border-right-color" => parse_border_color(input).map(PropertyValue::BorderRightColor),
         "border-bottom-color" => parse_border_color(input).map(PropertyValue::BorderBottomColor),
         "border-left-color" => parse_border_color(input).map(PropertyValue::BorderLeftColor),
-        // CSS Backgrounds 3 §5.4 border shorthand: `<line-width> || <line-style>
+        // CSS Backgrounds 3 §3.4 border shorthand: `<line-width> || <line-style>
         // || <color>` (any-order、each component at most once、at least 1 present)。
         // 4 side 全てに同一 Border を配る。cascade 段では
         // `PropertyValue::Border` は `parse_declaration_block` 内で 12 longhand
@@ -1768,7 +1769,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
 /// 3 形式をカバーする (m1.4 scope):
 ///
 /// - **Hex** (`#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa`) は
-///   [`CssColor::from_hex`] を呼び出す — CSS Color 4 §5.1 準拠の cleanroom 実装。
+///   [`CssColor::from_hex`] を呼び出す — CSS Color 4 §5.2 準拠の cleanroom 実装。
 ///   `Token::Hash` / `Token::IDHash` の payload は leading `#` を含まないため
 ///   そのまま渡す (raikiri-spike-0vv.14)。
 /// - **Named color** は `parse_named_color` (Sprint 12 style-7 precedent、
@@ -1805,7 +1806,7 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
 /// `border-*-color` の value parser — `currentcolor` keyword を先取りしてから
 /// 既存 [`parse_color`] に委譲する。
 ///
-/// CSS Backgrounds 3 §5.3 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
+/// CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
 /// の border-*-color grammar は `<color>` そのもの、`<color>` production は
 /// CSS Color 3 §4.4 <https://www.w3.org/TR/css-color-3/#currentColor-def>
 /// `currentcolor` keyword を含む。しかし本 crate の [`parse_color`] は
@@ -1976,7 +1977,7 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 
 /// `<length>` / `<length-percentage>` の共通 parser。1 token を consume する。
 ///
-/// Grammar reference: CSS Values 4 §5 <https://www.w3.org/TR/css-values-4/#lengths>
+/// Grammar reference: CSS Values 4 §6 <https://www.w3.org/TR/css-values-4/#lengths>
 /// / §5.5 <https://www.w3.org/TR/css-values-4/#percentages>.
 ///
 /// # Mode selector
@@ -2211,7 +2212,7 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
 
 /// `padding-{top,right,bottom,left}` の single-side value を parse する。
 ///
-/// grammar: `<length-percentage [0,∞]>` (CSS Box 3 §6.1
+/// grammar: `<length-percentage [0,∞]>` (CSS Box 3 §4.1
 /// <https://www.w3.org/TR/css-box-3/#padding-physical>)。spec 原文:
 /// "Negative values are invalid for padding properties" — 負値は grammar 違反
 /// として declaration ごと drop する。
@@ -2236,7 +2237,7 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
 /// bd raikiri-spike-zls8 の font-relative unit 対応で解消済み。
 fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
-    // spec §6.1: "Negative values are invalid for padding properties"。
+    // spec §4.1: "Negative values are invalid for padding properties"。
     // 全 variant の payload を OR-pattern で抽出し `>= 0.0` を確認、負値 → drop。
     let v = match length {
         Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
@@ -2246,7 +2247,7 @@ fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
 
 /// `padding: <'padding-top'>{1,4}` shorthand を [`Sides<Length>`] に expand する。
 ///
-/// CSS Box 3 §6.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand>: spec-verbatim
+/// CSS Box 3 §4.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand>: spec-verbatim
 /// 1-4 value expansion:
 ///
 /// - 1 value: all 4 sides = value
@@ -2272,7 +2273,7 @@ fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> 
     let v2 = input.try_parse(parse_padding_side_res).ok();
     let v3 = input.try_parse(parse_padding_side_res).ok();
     let v4 = input.try_parse(parse_padding_side_res).ok();
-    // spec §6.2 1-4 value expansion (verbatim):
+    // spec §4.2 1-4 value expansion (verbatim):
     let sides = match (v2, v3, v4) {
         (None, _, _) => Sides::all(v1),
         (Some(h), None, _) => Sides {
@@ -2306,20 +2307,21 @@ fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, Pars
 /// `border-{top,right,bottom,left}-width` の single-side value を parse する。
 ///
 /// Grammar: `<line-width>` = `<length [0,∞]> | thin | medium | thick`
-/// (CSS Backgrounds 3 §5.1 <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。
+/// (CSS Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。
 /// **`<percentage>` は含まれない** — padding とは違う (advisor calibration、
 /// `parse_length_value(input, false)` = `<length>` mode を渡す)。
 ///
-/// # Keyword mapping (UA-defined recommendation)
+/// # Keyword mapping (spec 規定値)
 ///
-/// spec §5.1 は 3 keyword の UA-defined mapping を許容:
+/// spec §3.3 は 3 keyword を normative に規定する — verbatim "The thin,
+/// medium, and thick keywords are equivalent to 1px, 3px, and 5px,
+/// respectively":
 /// - `thin`   → `Length::Px(1.0)`
 /// - `medium` → `Length::Px(3.0)` (initial value)
 /// - `thick`  → `Length::Px(5.0)`
 ///
-/// 本 crate は spec §5.1 の recommendation 値 (1/3/5 px) を採用する
-/// (Chromium / Firefox / WebKit の慣行と一致、UA CSS の cleanroom 制約下で
-/// spec-defined 値のみに limit)。
+/// UA 裁量ではなく spec 規定の equivalence なので、cleanroom 制約下でも
+/// そのまま採用できる (Chromium / Firefox / WebKit の実装とも一致)。
 ///
 /// # Sign / range
 ///
@@ -2378,7 +2380,7 @@ fn parse_border_width_side_res<'i>(
 /// `border-{top,right,bottom,left}-style` の single-side value を parse する。
 ///
 /// Grammar: `<line-style>` = `none | hidden | dotted | dashed | solid | double
-/// | groove | ridge | inset | outset` (CSS Backgrounds 3 §5.2
+/// | groove | ridge | inset | outset` (CSS Backgrounds 3 §3.2
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-style>)。
 /// ASCII case-insensitive で ident と照合 (37n sibling
 /// [`parse_display`] / [`parse_text_align`] と同 flavor)。
@@ -2408,7 +2410,7 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 
 /// `border: <line-width> || <line-style> || <color>` shorthand を parse する。
 ///
-/// CSS Backgrounds 3 §5.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>。
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>。
 /// 4 side 全てに同一 [`Border`] を配る (`Sides::all`)。
 ///
 /// # `||` (any-order) grammar semantics
@@ -2432,15 +2434,15 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 ///
 /// # Initial value fill (省略成分)
 ///
-/// spec §5.4 verbatim "Omitted values are set to their initial values":
+/// spec §3.4 verbatim "Omitted values are set to their initial values":
 /// - width 省略 → `Length::Px(3.0)` (medium initial)
-/// - style 省略 → `BorderStyle::None` (initial、spec §5.2)
-/// - color 省略 → [`BorderColor::CurrentColor`] (spec §5.3 initial、used-value
+/// - style 省略 → `BorderStyle::None` (initial、spec §3.2)
+/// - color 省略 → [`BorderColor::CurrentColor`] (spec §3.1 initial、used-value
 ///   resolution は paint scope 責務、raikiri-spike-0vv.17)
 ///
 /// # Non-goals (spec deviation 明示)
 ///
-/// spec §5.4 では border shorthand が **border-image-* も reset** する (spec
+/// spec §3.4 では border shorthand が **border-image-* も reset** する (spec
 /// verbatim "Also resets border-image to its initial value.") が、本 crate は
 /// border-image を milestone defer で実装しないため reset side effect を省略。
 /// bd raikiri-spike-0vv (Epic) の border-image longhand 実装時に統合する。
@@ -2523,11 +2525,11 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
         return None;
     }
 
-    // 省略成分は spec §5.4 の initial value で埋める。
+    // 省略成分は spec §3.4 の initial value で埋める。
     let border = Border {
         width: width.unwrap_or(Length::Px(3.0)), // medium
         style: style.unwrap_or(BorderStyle::None),
-        // §5.3 initial "currentcolor" — used-value resolution は paint scope
+        // §3.1 initial "currentcolor" — used-value resolution は paint scope
         // 責務 (bd raikiri-spike-q7qf、raikiri-spike-0vv.17)。
         color: color.unwrap_or(BorderColor::CurrentColor),
     };
@@ -2896,7 +2898,7 @@ fn is_reserved_counter_name(ident: &str) -> bool {
 }
 
 /// `content: normal | none | <content-list>` を parse する
-/// (CSS Content 3 §2.1 <https://www.w3.org/TR/css-content-3/#content-property>)。
+/// (CSS Content 3 §1 <https://www.w3.org/TR/css-content-3/#content-property>)。
 ///
 /// `normal` / `none` は spec で意味が異なる (pseudo-element の生成/非生成) が、
 /// 本 crate は cascade static side に留まり生成判断は下流に委ねるため、両者を
@@ -2937,7 +2939,7 @@ fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
 /// 向けに CSS Content 3 §2 の broad list を narrower に再定義しているため、
 /// `mode` パラメータで受理 function 集合を分岐する:
 /// - [`ContentListMode::CssContent3`] — content property (CSS Content 3 §2
-///   <https://www.w3.org/TR/css-content-3/#content-list3>)。全 8 function を受理。
+///   <https://www.w3.org/TR/css-content-3/#content-values>)。全 8 function を受理。
 /// - [`ContentListMode::GcpmStringSet`] — string-set property (CSS GCPM 3
 ///   §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>)。`string()` と
 ///   `target-counter()` / `target-counters()` / `target-text()` は spec grammar
@@ -2977,18 +2979,18 @@ fn parse_content_list_items(
 }
 
 /// `string-set: none | [ <custom-ident> <content-list> ]#` を parse する
-/// (CSS GCPM 3 §3.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>)。
+/// (CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>)。
 ///
 /// `none` を top-level alternative として先に処理し、以降は
 /// `(name, content-list)` entry を comma-separated で peel する。
 ///
 /// `<custom-ident>` は CSS-wide keyword + `default` (css-values-4 §4.2
 /// <https://www.w3.org/TR/css-values-4/#custom-idents> が将来の CSS-wide
-/// keyword 用に予約) + `none` (top-level alt、gcpm-3 §3.1) を弾く。
+/// keyword 用に予約) + `none` (top-level alt、gcpm-3 §1.1.1) を弾く。
 ///
 /// ## Entry separator の strict 化 (raikiri-spike-1ll)
 ///
-/// `#` (comma-separated multiplier、CSS Values 4 §3.3
+/// `#` (comma-separated multiplier、CSS Values 4 §2.3
 /// <https://www.w3.org/TR/css-values-4/#mult-comma>) は entry 間に comma を
 /// 要求する一方、**trailing comma を許容しない**。従って comma を consume した
 /// 直後の loop iteration では次 entry の name parse **必須** — 失敗すれば
@@ -3352,7 +3354,7 @@ fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
 }
 
 /// `content([ text | before | after | first-letter ]?)`。
-/// CSS GCPM 3 §1.1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>。
+/// CSS GCPM 3 §1.1.1.1 <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>。
 ///
 /// bare `content()` (spec 例 `h2 { string-set: heading content() }`) は
 /// spec default `text` を意味する。target-text() の第 2 引数と違い、keyword は
@@ -3409,7 +3411,7 @@ mod tests {
 
     #[test]
     fn color_parse_hex_3digit_duplicates_nibbles() {
-        // CSS Color 4 §5.1: "The shorter form is expanded into the longer
+        // CSS Color 4 §5.2: "The shorter form is expanded into the longer
         // form by duplicating each digit: `#rgb` becomes `#rrggbb`."
         // `#f00` == `#ff0000`.
         assert_eq!(
@@ -3425,7 +3427,7 @@ mod tests {
 
     #[test]
     fn color_parse_hex_4digit_duplicates_alpha_nibble() {
-        // CSS Color 4 §5.1: `#rgba` becomes `#rrggbbaa`。alpha nibble `8`
+        // CSS Color 4 §5.2: `#rgba` becomes `#rrggbbaa`。alpha nibble `8`
         // → `0x88` = 136 (8 * 17)。
         assert_eq!(
             parse("#f008", "color"),
@@ -3440,7 +3442,7 @@ mod tests {
 
     #[test]
     fn color_parse_hex_8digit_alpha_byte() {
-        // CSS Color 4 §5.1 8-digit form: 末尾 byte が alpha (0..=255)。
+        // CSS Color 4 §5.2 8-digit form: 末尾 byte が alpha (0..=255)。
         // `#ff000080` → alpha = 0x80 = 128。
         assert_eq!(
             parse("#ff000080", "color"),
@@ -3455,7 +3457,7 @@ mod tests {
 
     #[test]
     fn color_parse_hex_case_insensitive() {
-        // CSS Color 4 §5.1: "The letters `A`–`F` may be in uppercase or
+        // CSS Color 4 §5.2: "The letters `A`–`F` may be in uppercase or
         // lowercase" — `#FF0000` == `#ff0000`。
         assert_eq!(
             parse("#FF0000", "color"),
@@ -3732,7 +3734,7 @@ mod tests {
 
     #[test]
     fn css_color_from_hex_mixed_case_accepted() {
-        // §5.1 case-insensitive: `#aBcDeF` == `#abcdef`。
+        // §5.2 case-insensitive: `#aBcDeF` == `#abcdef`。
         assert_eq!(CssColor::from_hex("aBcDeF"), CssColor::from_hex("abcdef"));
     }
 
@@ -4550,7 +4552,7 @@ mod tests {
 
     #[test]
     fn content_normal_returns_empty_list() {
-        // spec §2.1: `normal` は「content が明示されない場合と同じ」= 空 list として保持。
+        // spec §1: `normal` は「content が明示されない場合と同じ」= 空 list として保持。
         // pseudo-element generation 判断は下流で行う。
         assert_eq!(
             parse("normal", "content"),
@@ -4560,7 +4562,7 @@ mod tests {
 
     #[test]
     fn content_none_returns_empty_list() {
-        // spec §2.1: `none` — 本 crate では `normal` と同じく空 list に落とす。
+        // spec §1: `none` — 本 crate では `normal` と同じく空 list に落とす。
         assert_eq!(
             parse("none", "content"),
             Some(PropertyValue::Content(empty_content_list()))
@@ -4725,7 +4727,7 @@ mod tests {
         );
     }
 
-    // ── string-set (CSS GCPM 3 §3.1、raikiri-spike-m5.3) ──
+    // ── string-set (CSS GCPM 3 §1.1.1、raikiri-spike-m5.3) ──
     //
     // grammar: `none | [ <custom-ident> <content-list> ]#` — 各 entry は
     // (name, content-list) pair、m5.1 の `ContentComponent` + `parse_content_list_items`
@@ -4807,7 +4809,7 @@ mod tests {
 
     #[test]
     fn string_set_none_returns_empty_vec() {
-        // spec §3.1: top-level `none` = empty list
+        // spec §1.1.1: top-level `none` = empty list
         assert_eq!(
             parse("none", "string-set"),
             Some(PropertyValue::StringSet(empty_string_set_entries()))
@@ -4816,7 +4818,7 @@ mod tests {
 
     #[test]
     fn string_set_rejects_reserved_css_wide_keyword_as_name() {
-        // spec §3.1 + CSS Values 4 §4.2
+        // spec §1.1.1 + CSS Values 4 §4.2
         // <https://www.w3.org/TR/css-values-4/#custom-idents>:
         // `<custom-ident>` は CSS-wide keyword 除外。
         // 先頭 ident が `inherit` → try_parse rewind で entries 空 → None。
@@ -4834,7 +4836,7 @@ mod tests {
 
     #[test]
     fn string_set_rejects_name_without_content_list() {
-        // spec §3.1 + Content 3 §2: `<content-list>` は 1+ items 必須。
+        // spec §1.1.1 + Content 3 §2: `<content-list>` は 1+ items 必須。
         // name だけで items 0 → declaration drop (None)。
         assert_eq!(parse("my_str", "string-set"), None);
     }
@@ -4858,9 +4860,9 @@ mod tests {
 
     // ── string-set trailing-comma strict reject (raikiri-spike-1ll) ──
     //
-    // `#` (comma-separated multiplier、CSS Values 4 §3.3
+    // `#` (comma-separated multiplier、CSS Values 4 §2.3
     // <https://www.w3.org/TR/css-values-4/#mult-comma>) は trailing comma を
-    // 許容しない。GCPM 3 §3.1 <string-set-value> = `[ <custom-ident>
+    // 許容しない。GCPM 3 §1.1.1 <string-set-value> = `[ <custom-ident>
     // <content-list> ]#` は entry 間 comma 必須 + trailing comma 禁止。
     //
     // m5.3 の初期実装は separator loop で `try_parse(expect_comma).is_err() {
@@ -5333,7 +5335,7 @@ mod tests {
         assert_eq!(parse_length("14Pt", false), Some(Length::Pt(14.0)));
     }
 
-    // ── padding (CSS Box 3 §6.1 physical + §6.2 shorthand、raikiri-spike-0vv.6) ──
+    // ── padding (CSS Box 3 §4.1 physical + §4.2 shorthand、raikiri-spike-0vv.6) ──
     //
     // Primary sources (WebFetch verified 2026-07-20):
     // - https://www.w3.org/TR/css-box-3/#padding-physical
@@ -5386,7 +5388,7 @@ mod tests {
         );
     }
 
-    // Verification #4 — shorthand 1-4 value expansion (CSS Box 3 §6.2)。
+    // Verification #4 — shorthand 1-4 value expansion (CSS Box 3 §4.2)。
     #[test]
     fn padding_shorthand_one_value_all_sides() {
         // 1 value → 4 sides = value
@@ -5440,7 +5442,7 @@ mod tests {
 
     #[test]
     fn padding_shorthand_mixed_units() {
-        // spec §6.2 は per-value `<'padding-top'>` = `<length-percentage>` を許容 —
+        // spec §4.2 は per-value `<'padding-top'>` = `<length-percentage>` を許容 —
         // 混合 unit も spec-valid (padding: 10px 5% 1em 12pt)。
         assert_eq!(
             parse("10px 5% 1em 12pt", "padding"),
@@ -5456,7 +5458,7 @@ mod tests {
     // Verification #5 — non-negative constraint (spec-literal claim)。
     #[test]
     fn padding_top_rejects_negative_px() {
-        // spec §6.1: "Negative values are invalid for padding properties"。
+        // spec §4.1: "Negative values are invalid for padding properties"。
         assert_eq!(parse("-5px", "padding-top"), None);
     }
 
@@ -5501,8 +5503,8 @@ mod tests {
 
     #[test]
     fn padding_shorthand_rejects_any_negative_value() {
-        // `padding: 10px -5px` — spec §6.2 の {1,4} multiplier は各 iteration が
-        // 有効 `<'padding-top'>` であることを要求。2 番目 `-5px` は spec §6.1
+        // `padding: 10px -5px` — spec §4.2 の {1,4} multiplier は各 iteration が
+        // 有効 `<'padding-top'>` であることを要求。2 番目 `-5px` は spec §4.1
         // `[0,∞]` 制約違反で fail、try_parse rewind で 1-value form の Some を
         // parse_padding_shorthand が返す。ここで DeclParser の expect_exhausted
         // が leftover `-5px` を検知して declaration ごと drop する — 実 caller
@@ -5528,7 +5530,7 @@ mod tests {
     // Verification #6 — `auto` keyword reject (spec grammar に無い)。
     #[test]
     fn padding_top_rejects_auto_keyword() {
-        // spec §6.1 grammar = `<length-percentage>` のみ、`auto` は margin 側の
+        // spec §4.1 grammar = `<length-percentage>` のみ、`auto` は margin 側の
         // extension で padding には無い。parse_length_value の Dimension /
         // Percentage arm fall-through で自然 reject。
         assert_eq!(parse("auto", "padding-top"), None);
@@ -6237,7 +6239,7 @@ mod tests {
         assert_eq!(s.left, LengthOrAuto::Length(Length::Px(3.5)));
     }
 
-    // ── border longhand + shorthand (CSS Backgrounds 3 §5、raikiri-spike-0vv.12) ──
+    // ── border longhand + shorthand (CSS Backgrounds 3 §3、raikiri-spike-0vv.12) ──
 
     #[test]
     fn border_top_width_parse_px() {
@@ -6275,7 +6277,7 @@ mod tests {
     fn border_top_width_parse_medium_keyword() {
         // Verification #2: parse("medium", "border-top-width") =
         // Some(PropertyValue::BorderTopWidth(Length::Px(3.0)))。
-        // UA-defined recommendation (spec §5.1) の 1/3/5 px mapping。
+        // spec §3.3 規定値 (normative equivalence) の 1/3/5 px mapping。
         assert_eq!(
             parse("medium", "border-top-width"),
             Some(PropertyValue::BorderTopWidth(Length::Px(3.0)))
@@ -6298,7 +6300,7 @@ mod tests {
 
     #[test]
     fn border_width_thin_thick_keywords_map_to_1px_5px() {
-        // spec §5.1 UA recommendation: thin=1px、thick=5px。
+        // spec §3.3 規定値: thin=1px、thick=5px。
         // 4 side 各 arm の smoke — arm cross-copy regression pin (`top` arm を
         // `right` arm に誤 wire しても本 test で fail する)。
         assert_eq!(
@@ -6355,7 +6357,7 @@ mod tests {
         // parse_border_shorthand の width slot が parse_border_width_side_res 経由で
         // parse_length_value Number arm を通して Length::Px(0.0) を取り、
         // style slot は Solid、color slot は省略で spec initial =
-        // [`BorderColor::CurrentColor`] (CSS Backgrounds 3 §5.3、raikiri-spike-0vv.17)。
+        // [`BorderColor::CurrentColor`] (CSS Backgrounds 3 §3.1、raikiri-spike-0vv.17)。
         let border = Border {
             width: Length::Px(0.0),
             style: BorderStyle::Solid,
@@ -6377,7 +6379,7 @@ mod tests {
 
     #[test]
     fn border_width_rejects_unknown_keyword() {
-        // spec §5.1 の keyword 集合外は drop (`auto` / `fat` / `bold` etc.)。
+        // spec §3.3 の keyword 集合外は drop (`auto` / `fat` / `bold` etc.)。
         assert_eq!(parse("auto", "border-top-width"), None);
         assert_eq!(parse("fat", "border-top-width"), None);
     }
@@ -6403,7 +6405,7 @@ mod tests {
 
     #[test]
     fn border_style_all_10_variants_accepted() {
-        // spec §5.2 `<line-style>` の 10 alternative 全てを smoke (arm 削り
+        // spec §3.2 `<line-style>` の 10 alternative 全てを smoke (arm 削り
         // regression 検知)。
         assert_eq!(
             parse("none", "border-top-style"),
@@ -6590,7 +6592,7 @@ mod tests {
 
     #[test]
     fn border_top_color_parse_currentcolor() {
-        // CSS Backgrounds 3 §5.3 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
+        // CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
         // "Initial: currentcolor" — author 明示 `border-*-color: currentcolor` が
         // [`BorderColor::CurrentColor`] variant として保持されることを pin する
         // (0vv.17 hazard case 1 の cascade-side coverage、used-value resolution は
@@ -6633,7 +6635,7 @@ mod tests {
 
     #[test]
     fn border_shorthand_any_order() {
-        // spec §5.4 grammar は `||` (any-order)。全 6 permutation を pin する
+        // spec §3.4 grammar は `||` (any-order)。全 6 permutation を pin する
         // 代わりに 3 order (color-first / style-first / mixed) を smoke。
         let expected = Border {
             width: Length::Px(2.0),
@@ -6659,9 +6661,9 @@ mod tests {
 
     #[test]
     fn border_shorthand_omitted_components_use_initial() {
-        // spec §5.4 "Omitted values are set to their initial values" —
+        // spec §3.4 "Omitted values are set to their initial values" —
         // width 省略 → medium (3px)、style 省略 → None、color 省略 →
-        // `currentcolor` keyword ([`BorderColor::CurrentColor`]、spec §5.3
+        // `currentcolor` keyword ([`BorderColor::CurrentColor`]、spec §3.1
         // initial、raikiri-spike-0vv.17)。
         // 1 component only (color) — width と style は initial:
         let with_only_color = Border {
@@ -6682,7 +6684,7 @@ mod tests {
         let with_only_style = Border {
             width: Length::Px(3.0),
             style: BorderStyle::Solid,
-            color: BorderColor::CurrentColor, // spec §5.3 initial
+            color: BorderColor::CurrentColor, // spec §3.1 initial
         };
         assert_eq!(
             parse("solid", "border"),
@@ -6735,7 +6737,7 @@ mod tests {
         let expected = Border {
             width: Length::Px(1.0),
             style: BorderStyle::None,
-            color: BorderColor::CurrentColor, // spec §5.3 initial (0vv.17)
+            color: BorderColor::CurrentColor, // spec §3.1 initial (0vv.17)
         };
         let mut input = ParserInput::new("1px 2px");
         let mut parser = Parser::new(&mut input);
@@ -6801,7 +6803,7 @@ mod tests {
         let default_border = Border {
             width: Length::Px(3.0),
             style: BorderStyle::None,
-            color: BorderColor::CurrentColor, // spec §5.3 initial (0vv.17)
+            color: BorderColor::CurrentColor, // spec §3.1 initial (0vv.17)
         };
         assert_eq!(
             PropertyValue::Border(Sides::all(default_border)).key(),
