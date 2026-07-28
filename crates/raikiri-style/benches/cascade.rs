@@ -444,14 +444,16 @@ fn workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
     let (css, want) = stylesheet(n_rules);
     tree.add_stylesheet(&css, Origin::Author);
 
+    // Accessors, not fields: a bench is a separate compilation unit, so the
+    // `pub(crate)` fields do not resolve here (bd raikiri-spike-qzn3).
     assert_eq!(
-        tree.style_rules.len(),
+        tree.style_rules().len(),
         n_rules,
         "stylesheet did not parse into the expected rule count"
     );
-    for rule in &tree.style_rules {
+    for rule in tree.style_rules() {
         assert_eq!(
-            rule.declarations.len(),
+            rule.declarations().len(),
             DECLS_PER_RULE,
             "rule did not parse into the expected declaration count"
         );

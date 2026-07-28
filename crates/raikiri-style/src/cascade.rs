@@ -471,9 +471,10 @@ fn resolve_inheritance<D: StyleDom>(
 ///   [`crate::rule::parse_declaration_block`] を通すので parse 出口で展開済み。
 /// - **stylesheet rule** — [`collect_cascaded`] が candidate に積む直前に
 ///   [`crate::rule::expand_shorthand_into`] を通す (bd raikiri-spike-nqkj)。
-///   [`RuleTree`] は `pub` field かつ umbrella re-export なので Consumer が
-///   parse 後に shorthand を書き戻せる。**parse 出口の展開だけでは守れない**
-///   のはこの経路。
+///   parse 出口の展開だけでは post-parse mutation 経路を守れないため
+///   (bd raikiri-spike-qzn3 以降この経路は crate 内限定 — 根拠は
+///   [`crate::rule::expand_shorthand_into`] doc が canonical)。**shorthand が
+///   到達したら既に bug** なので削除可能な dead defensive code ではない。
 ///
 /// 展開後は同一 key の longhand が複数 candidate になるが、[`beats`] の `>=`
 /// が「同 rank/spec/order なら後方勝ち」を与えるので §6.1 の order of appearance
@@ -2981,12 +2982,13 @@ mod tests {
 
     // ── post-parse shorthand injection (bd raikiri-spike-nqkj) ──────────────
     //
-    // `RuleTree.style_rules` / `StyleRule.declarations` / `Declaration.value`
-    // は `pub` field で、`raikiri` umbrella crate が `RuleTree` を re-export して
-    // いる。したがって Consumer は `add_stylesheet` の**後**に declaration を
-    // shorthand variant へ書き戻せる — `crate::rule::parse_declaration_block` の
+    // `add_stylesheet` の**後**に declaration を shorthand variant へ書き戻す
+    // post-parse mutation 経路 — `crate::rule::parse_declaration_block` の
     // parse-time 展開はこの経路を守らない (`declaration_block_never_emits_
-    // shorthand_keys` は parse 出口しか見ない)。
+    // shorthand_keys` は parse 出口しか見ない)。bd raikiri-spike-qzn3 以降この
+    // 経路は crate 内からのみ到達可能なので `collect_cascaded` 入口の展開は
+    // crate 内 invariant guard である。根拠は
+    // `crate::rule::expand_shorthand_into` doc が canonical。
     //
     // 守るべき spec は 2 条:
     //
@@ -3003,9 +3005,12 @@ mod tests {
 
     /// nqkj の repro を機械的に再現する helper。
     ///
-    /// `css` を `RuleTree::add_stylesheet` で parse したあと、Consumer と同じ
-    /// 手つきで `style_rules[0].declarations[idx].value` を `injected` に差し替え、
+    /// `css` を `RuleTree::add_stylesheet` で parse したあと、
+    /// `style_rules[0].declarations[idx].value` を `injected` に差し替え、
     /// `<div>` 1 個の document に cascade して computed value を返す。
+    ///
+    /// この手つきは **nqkj が報告した当時の Consumer 経路**そのもの。qzn3 で
+    /// 3 field を `pub(crate)` に絞ったので、もう crate 外からは書けない。
     ///
     /// `StyleRule` を直接 literal 構築しないのが要点 — `#[non_exhaustive]` は
     /// crate 内構築を妨げないので、literal だと **report された経路とは別の
