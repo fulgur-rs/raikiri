@@ -479,11 +479,12 @@ fn resolve_inheritance<D: StyleDom>(
 /// が「同 rank/spec/order なら後方勝ち」を与えるので §6.1 の order of appearance
 /// がそのまま成立する。
 ///
-/// 残る穴は **compile-time に強制されていない**こと — 展開関数の catch-all arm
-/// があるため、新しい shorthand variant の展開 arm を書き忘れても compile error
-/// にならず、その shorthand が黙ってここへ流れる。exhaustive 化は
-/// **bd raikiri-spike-ez7b** の scope で、展開の match arm は 1 関数に集約されて
-/// いるので ez7b が入れば上の 2 経路が同時に保証を得る。それが入るまでの中間
+/// 「展開 arm の書き忘れ」形の壊れ方は **compile-time に強制されている**
+/// (bd raikiri-spike-ez7b) — [`crate::rule::expand_shorthand_into`] の match は
+/// exhaustive で、`PropertyValue` に variant を足すと同関数に arm を書くまで
+/// compile error になる。arm list は 1 関数に集約されているので上の 2 経路が
+/// 同時に保証を得る。**強制されるのは arm を書くことだけ**で、残る範囲は同関数
+/// doc の「この guard が守らない範囲」節。defense-in-depth の runtime
 /// guard は `crate::rule` の `declaration_block_never_emits_shorthand_keys`
 /// (parse 出口) と、本 module の `post_parse_*` test 群
 /// (6 本、`RuleTree` post-parse mutation 経路 — うち展開の有無を実際に区別する
@@ -980,9 +981,10 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // それでも `unreachable!` を採らないのは reviewer-security の panic
         // surface 排除方針による。cascade 経路で unreachable なのは
         // `crate::rule::expand_shorthand_into` の call site 1 / 2 (parse 出口 と
-        // element cascade 入口) が担保しており、その
-        // 担保が compile-time に強制されていない件と恒久 fix は同関数 doc を参照
-        // (bd raikiri-spike-ez7b)。振る舞い自体は
+        // element cascade 入口) が担保しており、その担保のうち「展開 arm の
+        // 書き忘れ」は同関数の exhaustive match で compile-time に排除されている
+        // (bd raikiri-spike-ez7b。残る範囲は同関数 doc の
+        // 「この guard が守らない範囲」節)。振る舞い自体は
         // `apply_value_direct_margin_shorthand_safety_net` test が直接叩いて pin。
         PropertyValue::Margin(sides) => target.margin = sides,
         // CSS Backgrounds 3 §3.3/§3.2/§3.1 border physical longhand
@@ -1009,7 +1011,8 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 同じく **safety net ではない** — 到達すれば 12 longhand winner を一括で
         // 破壊し spec と食い違う。cascade 経路では unreachable
         // (`expand_shorthand_into` が 12 longhand に展開する)。詳細な framing と
-        // 恒久 fix (bd raikiri-spike-ez7b) は `Margin` arm の comment 参照。
+        // その unreachability の compile-time 強制 (bd raikiri-spike-ez7b) は
+        // `Margin` arm の comment 参照。
         PropertyValue::Border(sides) => target.border = sides,
         // CSS Sizing 3 §3.1.1 width (raikiri-spike-0vv.10)。single-value property、
         // `LengthOrAuto` は Copy shape (Length variant は Copy)。sibling

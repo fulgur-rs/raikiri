@@ -1498,8 +1498,9 @@ pub enum PropertyValue {
 /// こと** — 順序任せの解は `margin: 0; margin-top: 10px` と
 /// `margin-top: 10px; margin: 0` という鏡像 2 例のうち必ず片方を壊す
 /// (詳細は `apply_winners` の doc)。正しい解は既に採られている
-/// 「shorthand を cascade 段に到達させない」方向であり、それを compile-time に
-/// 強制する (展開 arm の exhaustive 化) のが bd raikiri-spike-ez7b。
+/// 「shorthand を cascade 段に到達させない」方向であり、その展開 arm の
+/// 書き忘れは `crate::rule::expand_shorthand_into` の exhaustive match により
+/// compile-time に排除されている (bd raikiri-spike-ez7b)。
 ///
 /// 新しい variant を足すときは、それが既存 variant と同じ `SpecifiedValues`
 /// field に書くかどうかを確認すること。書かないなら (= 1:1 disjoint なら)
@@ -1537,8 +1538,9 @@ pub enum PropertyKey {
     /// cascade 入口の両方で shorthand を畳むため本 variant は element cascade 段に
     /// 到達せず (bd raikiri-spike-nqkj)、observable な divergence は無い
     /// (`@page` 経路の同 shape gap も `crate::page::cascade_page` の入口側展開で
-    /// 塞がれている — bd raikiri-spike-3svx)。その担保を
-    /// compile-time に強制する恒久 fix は bd raikiri-spike-ez7b。
+    /// 塞がれている — bd raikiri-spike-3svx)。その担保のうち「展開 arm の
+    /// 書き忘れ」は `crate::rule::expand_shorthand_into` の exhaustive match により
+    /// compile-time に排除されている (bd raikiri-spike-ez7b)。
     Padding,
     // margin longhand + shorthand — raikiri-spike-0vv.5 (semantics on the
     // matching PropertyValue::Margin* variants; sibling PropertyKey variants
