@@ -1267,8 +1267,10 @@ pub enum PropertyValue {
     /// - 3 values: top = first, left/right = second, bottom = third
     /// - 4 values: top / right / bottom / left (clockwise from top)
     ///
-    /// **cascade 上は普段この variant を観測しない**: `crate::rule::parse_declaration_block`
-    /// が declaration parse 直後に 4 longhand variant
+    /// **element cascade 段でこの variant は観測されない**:
+    /// `crate::rule::expand_shorthand_into` が parse 出口
+    /// (`parse_declaration_block`) と element cascade 入口
+    /// (`crate::cascade` の `collect_cascaded`) の両方で 4 longhand variant
     /// ([`PaddingTop`](Self::PaddingTop) / [`PaddingRight`](Self::PaddingRight) /
     /// [`PaddingBottom`](Self::PaddingBottom) / [`PaddingLeft`](Self::PaddingLeft))
     /// に展開するため (1/2/3/4 expansion + CSS Cascading L5
@@ -1299,8 +1301,10 @@ pub enum PropertyValue {
     /// `margin: <'margin-top'>{1,4}` shorthand — 4-side quad の一括指定
     /// (CSS Box 3 §3.2 <https://www.w3.org/TR/css-box-3/#margin-shorthand>)。
     ///
-    /// **cascade 上は普段この variant を観測しない**: `crate::rule::parse_declaration_block`
-    /// が declaration parse 直後に 4 longhand variant
+    /// **element cascade 段でこの variant は観測されない**:
+    /// `crate::rule::expand_shorthand_into` が parse 出口
+    /// (`parse_declaration_block`) と element cascade 入口
+    /// (`crate::cascade` の `collect_cascaded`) の両方で 4 longhand variant
     /// ([`MarginTop`](Self::MarginTop) / [`MarginRight`](Self::MarginRight) /
     /// [`MarginBottom`](Self::MarginBottom) / [`MarginLeft`](Self::MarginLeft))
     /// に展開するため (spec §3.2 の 1/2/3/4 expansion + CSS Cascading L4 §3
@@ -1374,8 +1378,11 @@ pub enum PropertyValue {
     /// 省略成分は initial: width=`Length::Px(3.0)` (medium)、style=`BorderStyle::None`、
     /// color=[`BorderColor::CurrentColor`] (spec §5.3 initial、raikiri-spike-0vv.17)。
     ///
-    /// **cascade 上は普段この variant を観測しない**: `crate::rule::parse_declaration_block`
-    /// が declaration parse 直後に 12 longhand variant (4 side × 3 sub-property)
+    /// **element cascade 段でこの variant は観測されない**:
+    /// `crate::rule::expand_shorthand_into` が parse 出口
+    /// (`parse_declaration_block`) と element cascade 入口
+    /// (`crate::cascade` の `collect_cascaded`) の両方で 12 longhand variant
+    /// (4 side × 3 sub-property)
     /// に展開するため (spec CSS Cascading L5 §"Shorthand Properties"
     /// <https://www.w3.org/TR/css-cascade-5/#shorthand> verbatim "A shorthand
     /// property sets all of its longhand sub-properties, exactly as if expanded
@@ -1384,6 +1391,11 @@ pub enum PropertyValue {
     /// safety net として `crate::cascade::apply_value` は本 variant を受けたときも
     /// `ComputedValues.border` field 全 4 side × 3 sub-property を上書きする
     /// 実装を持つ (regression 時 panic 回避)。
+    ///
+    /// ⚠️ spec の "all of its longhand sub-properties" には reset-only の
+    /// `border-image-*` (5 本) も含まれる (CSS Backgrounds 3 §3.4: the `border`
+    /// shorthand also resets `border-image` to its initial value) が、それらは
+    /// 未実装なので本展開は 12 longhand に留まる — 下の `# Non-goals` 節参照。
     ///
     /// # Non-goals (spec deviation 明示)
     ///
@@ -1448,15 +1460,21 @@ pub enum PropertyValue {
 /// - **variant を追加する位置**と**既存 variant の並び順**が、同一 node で
 ///   複数の winner が同じ [`crate::specified::SpecifiedValues`] field に書く
 ///   場合の**最終値を変えうる**。
-/// - 現状これが効くのは shorthand key (`Padding` / `Margin` / `Border`) だけで、
-///   いずれも longhand より後ろに置かれている。ただし
-///   `crate::rule::parse_declaration_block` が parse 段で shorthand を longhand
-///   に展開するため、正常系では shorthand key が cascade 段に到達しない。
+/// - 現状これが効きうるのは shorthand key (`Padding` / `Margin` / `Border`)
+///   だけで、いずれも longhand より後ろに置かれている。ただし
+///   `crate::rule::expand_shorthand_into` が parse 出口と element cascade 入口の
+///   両方で shorthand を longhand に展開するため、**shorthand key は element
+///   cascade 段には到達しない** (bd raikiri-spike-nqkj)。`@page` cascade
+///   (`crate::page::cascade_page`) は入口側の展開を持たず、`PageRule` の
+///   `pub declarations` を post-parse mutation された場合の同 shape の gap が
+///   残る — bd raikiri-spike-3svx。
 ///
 /// **並び順を「直す」ことで shorthand/longhand の cascade を修正しようとしない
-/// こと** — divergence は declaration の並び順に依存する方向依存の gap であり、
-/// variant を動かすと別の case が壊れる (詳細は `apply_winners` の doc)。
-/// 恒久 fix は bd raikiri-spike-3wq6 (展開の exhaustive 化)。
+/// こと** — 順序任せの解は `margin: 0; margin-top: 10px` と
+/// `margin-top: 10px; margin: 0` という鏡像 2 例のうち必ず片方を壊す
+/// (詳細は `apply_winners` の doc)。正しい解は既に採られている
+/// 「shorthand を cascade 段に到達させない」方向であり、それを compile-time に
+/// 強制する (展開 arm の exhaustive 化) のが bd raikiri-spike-ez7b。
 ///
 /// 新しい variant を足すときは、それが既存 variant と同じ `SpecifiedValues`
 /// field に書くかどうかを確認すること。書かないなら (= 1:1 disjoint なら)
@@ -1489,10 +1507,12 @@ pub enum PropertyKey {
     /// pick される。CSS Cascading L4 §3
     /// <https://www.w3.org/TR/css-cascade-4/#shorthand> の
     /// "exactly as if expanded in place" は本来 shorthand を longhand の
-    /// syntactic sugar として畳むことを意味するので、これは deviation。
-    /// 正常系では `crate::rule::parse_declaration_block` の parse-time 展開が
-    /// 本 variant を cascade 段に到達させないことで塞いでおり、その担保を
-    /// compile-time に強制する恒久 fix は bd raikiri-spike-3wq6。
+    /// syntactic sugar として畳むことを意味するので、独立 winner を持つこと自体は
+    /// deviation。`crate::rule::expand_shorthand_into` が parse 出口と element
+    /// cascade 入口の両方で shorthand を畳むため本 variant は element cascade 段に
+    /// 到達せず (bd raikiri-spike-nqkj)、observable な divergence は無い
+    /// (`@page` 経路の同 shape gap は bd raikiri-spike-3svx)。その担保を
+    /// compile-time に強制する恒久 fix は bd raikiri-spike-ez7b。
     Padding,
     // margin longhand + shorthand — raikiri-spike-0vv.5 (semantics on the
     // matching PropertyValue::Margin* variants; sibling PropertyKey variants
@@ -1679,7 +1699,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Box 3 §3.2 margin shorthand (raikiri-spike-0vv.5). 1-4 value
         // expansion。cascade 段では `PropertyValue::Margin` は `parse_declaration_block`
         // 内で 4 longhand に展開されるため通常観測しない (詳細は
-        // `PropertyValue::Margin` doc + `crate::rule::expand_shorthand`)。
+        // `PropertyValue::Margin` doc + `crate::rule::expand_shorthand_into`)。
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
         // CSS Backgrounds 3 §5.1 border-width physical longhand
         // (raikiri-spike-0vv.12)。grammar: `<line-width>` = `<length [0,∞]> |
