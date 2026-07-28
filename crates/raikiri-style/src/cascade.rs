@@ -675,7 +675,15 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 ///    `lighter` と**同型**の解決を要するので、実装時は本関数の arm で payload を
 ///    destructure して guard を payload 層に降ろすこと (`FontSize` は
 ///    bd raikiri-spike-zls8 でそれを済ませた — payload を destructure して
-///    `resolve_font_size` に渡している)。
+///    `resolve_font_size` に渡している)。**page 経路の、かつ payload 型が
+///    `Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
+///    `TextAlign` の 5 つに限れば**、この形の漏れは `page::tests` の
+///    `specified_layer_residue` が網羅 match しているので test compile 段で
+///    捕まる (bd raikiri-spike-awjx)。それ以外 (`BorderStyle` / `BorderColor`
+///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`)
+///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
+///    field access で読んでいるため捕まらない。compile error になるのも
+///    test target であって本関数ではない。
 /// 2. **本関数を呼ばない新しい entry point** — ygl0 の regression はこの形
 ///    だった (`cascade_page` が `apply_value` を通らなかった)。CSS Paged Media 3
 ///    §6 の margin-box cascade は page context を継承元とする第 3 の経路になる。
@@ -712,21 +720,22 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 /// ので、spec 規則 (`em` / `rem` の基準、percentage の素通し、border style
 /// gating) の実装は 1 本ずつしかない。
 ///
-/// # phase 3 でも解けない値 (1 つだけ)
+/// # 本関数が解けない唯一の値
 ///
-/// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent)。CSS
-///   Text 3 §6.1
-///   <https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent> は
-///   継承元の computed `text-align` を継承元の `direction` に対して解釈した値を
-///   computed value と規定する。**原理的には `inherited` だけで解ける** (=
-///   本関数の担当) **が** raikiri は `direction` を computed 層に持たないため
-///   未実装 ([`TextAlign`](crate::property::TextAlign) doc の (b) milestone
-///   subset carve-out と同じ gap)。phase 3 を足しても解決しない唯一の残り。
+/// [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) は
+/// **原理的には `inherited` だけで解ける** (= 本関数の担当) **が** raikiri は
+/// `direction` を computed 層に持たないため未実装 (bd raikiri-spike-l3wg、
+/// [`TextAlign`](crate::property::TextAlign) doc の (b) milestone subset
+/// carve-out と同じ gap)。spec citation と「public な結果に残る例外はこれ 1 つ」
+/// の宣言は
+/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
+/// が canonical で、`page::tests` の
+/// `page_declarations_carry_exactly_one_specified_layer_residue` が pin する。
 ///
-/// なお `Percent` は「未解決」ではない: box property の computed value は
-/// percentage のままである (CSS Values 4 §5.5.1、および §6 の "Percentage values
-/// on the margin and padding properties are relative to the dimensions of the
-/// containing block" = used 層の入力)。element 経路の
+/// なお `Percent` は「未解決」ではない — box property の computed value は
+/// percentage のままである (CSS Paged Media 3 §6 の "Percentage values on the
+/// margin and padding properties are relative to the dimensions of the
+/// containing block" = used 層の入力。引用は canonical 側)。element 経路の
 /// [`crate::resolve::resolve_length_percentage`] と同じ扱い。
 pub(crate) fn resolve_against_inherited(
     value: PropertyValue,

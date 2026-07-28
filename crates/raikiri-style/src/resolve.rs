@@ -13,8 +13,13 @@
 //! ([`crate::page::cascade_page`]) は `PropertyValue` の bag を運ぶので
 //! **computed 値も [`Length`] で運ばれる** (bd raikiri-spike-sshp)。
 //! canonical な説明は [`Length`] の doc の「本型は『specified 層』を意味しない
-//! — 層は出所で決まる」節にあり、**本節を書き換えるときは必ずあちらと揃える
-//! こと** (片方だけが更新される drift への手当て)。
+//! — 層は出所で決まる」節、page 経路が保証する内容は
+//! [`crate::page::PageCascadeResult::declarations`] の doc が canonical。
+//! **本節は要約に留め、規則の中身をここに書き足さないこと** — 以前ここには
+//! 「書き換えるときは必ずあちらと揃えること」と書いてあったが、その手運用は
+//! 実際に 2 度 drift した (bd raikiri-spike-awjx)。現在は `page::tests` の
+//! `page_declarations_carry_exactly_one_specified_layer_residue` が保証内容を
+//! 機械的に pin している。
 //!
 //! bd decision raikiri-spike-082k (Option A) / bd task raikiri-spike-i5bs
 //! (Phase 1 = additive)。
