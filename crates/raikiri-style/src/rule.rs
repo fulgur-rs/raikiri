@@ -9,7 +9,7 @@ use cssparser::{
 use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
-use crate::property::{PropertyValue, parse_value};
+use crate::property::{Border, Length, LengthOrAuto, PropertyValue, Sides, parse_value};
 
 /// 1 property declaration = value + `!important` flag。
 #[derive(Clone, Debug, PartialEq)]
@@ -56,13 +56,53 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
     let mut parser = DeclParser;
     let mut out = Vec::new();
     for decl in RuleBodyParser::new(input, &mut parser).flatten() {
-        expand_shorthand_into(decl, &mut out);
+        expand_shorthand_into(&decl, |d| out.push(d));
     }
     out
 }
 
-/// Shorthand declaration を対応する longhand declaration 列に展開して
-/// `out` に in-place push する。non-shorthand はそのまま 1 個 push される。
+/// Shorthand declaration を対応する longhand declaration 列に展開して sink
+/// `push` に流す。non-shorthand はそのまま 1 個 push される。
+///
+/// # どの variant が shorthand かの列挙はここ 1 箇所だけ (call site は 2 つ)
+///
+/// 呼ぶのは 2 箇所だが、**「どの `PropertyValue` variant が shorthand か」を
+/// 列挙する match は本関数だけ**である (per-family の展開表は
+/// [`expand_margin`] / [`expand_padding`] / [`expand_border`] に、non-shorthand
+/// path は [`expand_none`] に分離してあるが、これは perf 上の hot/cold split
+/// であって分岐の追加ではない — **4 helper のいずれも `match` を持たず**、
+/// `_` arm は本関数に 1 つだけである)。したがって
+/// **bd raikiri-spike-ez7b の exhaustive 化 target は本関数の match のまま**で
+/// あり、それが入れば下の 2 call site が同時に compile-time 保証を継承する:
+///
+/// 1. [`parse_declaration_block`] — parse 出口。author CSS / inline style / UA
+///    stylesheet が通る。
+/// 2. `crate::cascade` の `collect_cascaded` — **[`crate::ruletree::RuleTree`]
+///    の declaration が cascade candidate になる境界**。
+///
+/// ⚠️ **`@page` cascade (`crate::page::cascade_page`) は 2 の対象外**。
+/// `RuleTree::page_rules` の declaration も `parse_declaration_block` 由来なので
+/// 1 でカバーされるが、`PageRule.declarations` も `pub` field なので同じ
+/// post-parse mutation gap が残る — それは bd raikiri-spike-3svx の scope
+/// (`crate::page::PageCascadeResult` の `declarations` narrowing task である
+/// bd raikiri-spike-dyxj とは **別 struct・別 gap**。dyxj は cascade の出力側、
+/// 3svx は入力側)。
+///
+/// 2 が要るのは `RuleTree.style_rules` / [`StyleRule::declarations`] /
+/// [`Declaration::value`] が `pub` field で、かつ `raikiri` umbrella crate が
+/// `RuleTree` を re-export しているため、Consumer が
+/// `add_stylesheet` の**後**に shorthand variant を書き戻せるからである
+/// (bd raikiri-spike-nqkj)。parse 出口の guard は parse 出口しか見ないので
+/// この経路を守らない。cascade 入口で同じ等価変換を通すことで、**declaration
+/// がどこから来たかに依らず** 下の不変が成立する。
+///
+/// sink を取る形にしてあるのは call site 2 の受け皿が
+/// `Vec<(PropertyValue, bool, Origin, Specificity, u32)>` であって
+/// `Vec<Declaration>` ではないためで、`Vec` 返しにすると declaration ごとの
+/// 一時 alloc か scratch buffer の状態管理を強いられる。call site 1 は
+/// `Vec` へ push するだけの closure を渡す。sink 化そのものは alloc 中立〜改善
+/// と実測されている (§8.2 reviewer:perf) — hot loop の regression 要因は sink
+/// ではなく引数の受け方だった。下の「signature は perf 要件である」節を参照。
 ///
 /// # Rationale (per-key cascade determinism)
 ///
@@ -75,23 +115,37 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// spec CSS Cascading L4 §3 "Shorthand Properties"
 /// <https://www.w3.org/TR/css-cascade-4/#shorthand> は shorthand を "sets all
 /// of its longhand sub-properties, exactly as if expanded in place" と定義し
-/// shorthand を longhand の syntactic sugar と扱う。本関数は parse 直後に spec
-/// のこの等価変換を実行することで、**cascade 段には longhand のみが伝わる**
+/// shorthand を longhand の syntactic sugar と扱う。本関数は上記 2 つの境界で
+/// spec のこの等価変換を実行することで、**cascade 段には longhand のみが伝わる**
 /// 不変を確立する。cross-key dependency 自体が消えるので、適用順は結果に
 /// 影響しなくなる (`static ordering after cascade` の deterministic な source
 /// of truth)。
 ///
+/// 展開後は同一 property key の longhand が複数 candidate になるが、勝者は
+/// `crate::cascade` の `beats` が `(rank, specificity, source_order)` を `>=`
+/// で比較する — 全 key が同値なら**後に現れたほうが勝つ**ので、
+/// CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
+/// の "the last declaration in document order wins" が
+/// "expanded in place" と組み合わさって自然に成立する。
+///
 /// つまり本関数の rationale は「cascade 段の適用順が具体的に何であるか」には
 /// **依存しない** — 適用順に賭けないことそのものが目的である。参考までに現在の
 /// 適用順は `PropertyKey` discriminant 昇順であり、shorthand variant が longhand
-/// より後ろに置かれている都合で shorthand が後勝ちするが、それが spec と
-/// 食い違うかは declaration の並び順次第で変わる (方向依存の内訳は
-/// [`crate::cascade`] の `apply_winners` doc)。**variant の並び順は本 rationale
-/// の根拠ではない**ので、並べ替えでこの gap を塞ごうとしないこと。
+/// より後ろに置かれている都合で shorthand key が cascade 段に届いたら必ず後勝ち
+/// する。これは上の不変により**到達不能**だが、**variant の並び順は本 rationale
+/// の根拠ではない**ので、並べ替えでこの gap を塞ごうとしないこと (並べ替えは
+/// `margin: 0; margin-top: 10px` と `margin-top: 10px; margin: 0` の鏡像 2 例の
+/// うち片方を必ず壊す。詳細は [`crate::cascade`] の `apply_winners` doc)。
 ///
 /// 展開漏れ (catch-all arm により compile error にならない) を塞ぐ exhaustive 化は
-/// **bd raikiri-spike-3wq6** の scope。それが入るまでの中間 guard が本 module の
-/// [`tests::declaration_block_never_emits_shorthand_keys`] test。
+/// **bd raikiri-spike-ez7b** の scope。ez7b は本関数の arm list を exhaustive に
+/// する話なので、call site が 2 つあっても**両方が同時にその compile-time 保証を
+/// 継承する** (直交ではなく additive)。それが入るまでの中間 guard が本 module の
+/// [`tests::declaration_block_never_emits_shorthand_keys`] (call site 1) と
+/// `crate::cascade` の `post_parse_*` test 群 (call site 2、6 本 — うち展開の
+/// 有無を実際に区別するのは 4 本。残り 2 本は `PropertyKey` 宣言順のせいで
+/// 展開しない実装でも偶然 pass する弱い guard で、各 test の comment に
+/// その旨を開示してある)。
 ///
 /// # `important` flag propagation
 ///
@@ -101,108 +155,162 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///
 /// # Allocation shape
 ///
-/// caller が保持する `out: &mut Vec<Declaration>` に直接 push する — 従来の
+/// caller の sink に直接 push する — 従来の
 /// `flat_map + vec![d].into_iter()` は non-shorthand path で per-decl の 1-slot
 /// heap Vec を alloc していた (common case regression、reviewer:quality F6)、
 /// in-place push で除去。shorthand path は 4 longhand を 4 回 push (同 alloc
-/// budget、shape のみ変更)。
-fn expand_shorthand_into(d: Declaration, out: &mut Vec<Declaration>) {
+/// budget、shape のみ変更)。sink 化で call site 2 も中間 buffer 無しになるので、
+/// non-shorthand の common case でも追加の heap alloc は発生しない。
+///
+/// # ⚠️ signature は perf 要件である (単純化しないこと)
+///
+/// 以下の 3 点は好みではなく **cascade hot loop の実測に基づく要件**である
+/// (§8.2 reviewer:perf 実測、bd raikiri-spike-nqkj):
+///
+/// 1. **`d: &Declaration` (by-value にしないこと)** — call site 2 は
+///    `crate::cascade` の `collect_cascaded` の per-declaration loop
+///    (72 byte = `size_of::<Declaration>()` stride) の中にあり、by-value 受けは
+///    declaration ごとに 72 byte の stack temp + memcpy を強制する
+///    (objdump で materialize → `lea` byval ポインタ渡しを確認)。
+///    by-value 版は cascade を **heavy config +22% / light config +16%**
+///    (どちらも ≈4 ns/declaration) 遅くしていた。
+/// 2. **`#[inline]` + per-family helper への分割** — 展開 arm を全て本体に置くと
+///    ~4KB の body になり inline 対象にならない。`#[inline(never)]` helper に
+///    逃がして hot path を「discriminant を見て 4 way 分岐するだけ」に保つ。
+///    分割せずに `#[inline]` だけ付けるのは「20 arm 全部を hot loop に展開せよ」
+///    という誤った要求になる。
+/// 3. **helper に `#[cold]` は付けないこと** — `margin:` / `padding:` /
+///    `border:` は author CSS では普通に頻出するので、call site 1 (parse) 側で
+///    誤った branch hint になる。
+///
+/// 切り分け実測: `#[inline]` + split のみ (by-value 維持) では 1/3 しか回復せず、
+/// `&Declaration` 化のみ (split 無し) で 2/3 回復、**両方で完全回復** (展開前と
+/// 同等〜やや高速)。
+///
+/// ## 未計測の trade-off
+///
+/// call site 1 (parse) の non-shorthand path は owned move から `d.clone()` に
+/// 変わったので、declaration あたり `PropertyValue::clone()` が 1 回増える
+/// (`FontFamily(Vec<Atom>)` 等では実 heap alloc)。parse は stylesheet あたり
+/// 1 回 = `O(declaration 数)`、cascade は毎回
+/// `O(element × match した rule × declaration)` なので trade は cascade 側に
+/// 倒すのが正しいが、**parse 側の delta 自体は計測していない**。
+#[inline]
+pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaration)) {
     match d.value {
-        PropertyValue::Margin(sides) => {
-            out.push(Declaration {
-                value: PropertyValue::MarginTop(sides.top),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::MarginRight(sides.right),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::MarginBottom(sides.bottom),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::MarginLeft(sides.left),
-                important: d.important,
-            });
-        }
-        PropertyValue::Padding(sides) => {
-            out.push(Declaration {
-                value: PropertyValue::PaddingTop(sides.top),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::PaddingRight(sides.right),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::PaddingBottom(sides.bottom),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::PaddingLeft(sides.left),
-                important: d.important,
-            });
-        }
-        // `border` shorthand (CSS Backgrounds 3 §5.4) を 12 longhand
-        // (4 side × 3 sub-property = width / style / color) に展開する
-        // (raikiri-spike-0vv.12)。margin / padding shorthand precedent と同 pattern。
-        // spec `border` grammar は 4 side 共通 (`Sides::all(border)`) だが、cascade
-        // 段では per-side longhand として書き込むことで、`border: 1px solid red;
-        // border-top-color: blue;` のような longhand override が per-side
-        // determinism で解決する。
-        PropertyValue::Border(sides) => {
-            out.push(Declaration {
-                value: PropertyValue::BorderTopWidth(sides.top.width),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderTopStyle(sides.top.style),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderTopColor(sides.top.color),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderRightWidth(sides.right.width),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderRightStyle(sides.right.style),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderRightColor(sides.right.color),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderBottomWidth(sides.bottom.width),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderBottomStyle(sides.bottom.style),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderBottomColor(sides.bottom.color),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderLeftWidth(sides.left.width),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderLeftStyle(sides.left.style),
-                important: d.important,
-            });
-            out.push(Declaration {
-                value: PropertyValue::BorderLeftColor(sides.left.color),
-                important: d.important,
-            });
-        }
-        _ => out.push(d),
+        PropertyValue::Margin(sides) => expand_margin(sides, d.important, push),
+        PropertyValue::Padding(sides) => expand_padding(sides, d.important, push),
+        PropertyValue::Border(sides) => expand_border(sides, d.important, push),
+        _ => expand_none(d, push),
     }
+}
+
+/// non-shorthand の共通 path。`expand_shorthand_into` から分離してあるのは
+/// hot path の code size を最小に保つため (下の per-family helper と対)。
+#[inline(always)]
+fn expand_none(d: &Declaration, mut push: impl FnMut(Declaration)) {
+    push(d.clone());
+}
+
+/// `margin` shorthand を 4 longhand に展開する cold helper。
+#[inline(never)]
+fn expand_margin(sides: Sides<LengthOrAuto>, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::MarginTop(sides.top),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::MarginRight(sides.right),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::MarginBottom(sides.bottom),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::MarginLeft(sides.left),
+        important,
+    });
+}
+
+/// `padding` shorthand を 4 longhand に展開する cold helper。
+#[inline(never)]
+fn expand_padding(sides: Sides<Length>, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::PaddingTop(sides.top),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::PaddingRight(sides.right),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::PaddingBottom(sides.bottom),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::PaddingLeft(sides.left),
+        important,
+    });
+}
+
+/// `border` shorthand (CSS Backgrounds 3 §5.4) を 12 longhand
+/// (4 side × 3 sub-property = width / style / color) に展開する
+/// (raikiri-spike-0vv.12)。margin / padding shorthand precedent と同 pattern。
+/// spec `border` grammar は 4 side 共通 (`Sides::all(border)`) だが、cascade
+/// 段では per-side longhand として書き込むことで、`border: 1px solid red;
+/// border-top-color: blue;` のような longhand override が per-side
+/// determinism で解決する。
+#[inline(never)]
+fn expand_border(sides: Sides<Border>, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::BorderTopWidth(sides.top.width),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderTopStyle(sides.top.style),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderTopColor(sides.top.color),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderRightWidth(sides.right.width),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderRightStyle(sides.right.style),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderRightColor(sides.right.color),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderBottomWidth(sides.bottom.width),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderBottomStyle(sides.bottom.style),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderBottomColor(sides.bottom.color),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderLeftWidth(sides.left.width),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderLeftStyle(sides.left.style),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderLeftColor(sides.left.color),
+        important,
+    });
 }
 
 /// Per-declaration parser for cssparser::RuleBodyParser。
@@ -277,7 +385,13 @@ mod tests {
     /// [`expand_shorthand_into`] は catch-all arm で **fail-open** なので、新しい
     /// shorthand variant の展開 arm を書き忘れても compile error にならない。
     /// 本 test はその抜けを実行時に捕まえる中間 guard で、compile-time 強制
-    /// (exhaustive 化) は bd raikiri-spike-3wq6 の scope。
+    /// (exhaustive 化) は bd raikiri-spike-ez7b の scope。
+    ///
+    /// ⚠️ 本 test が見るのは [`expand_shorthand_into`] の **call site 1 (parse
+    /// 出口) だけ**である。[`crate::ruletree::RuleTree`] は `pub` field なので
+    /// Consumer が parse 後に shorthand を書き戻せ、その経路は本 test を素通り
+    /// する (bd raikiri-spike-nqkj)。call site 2 (cascade 入口) の guard は
+    /// `crate::cascade` の `post_parse_*` test 群 (6 本) が持つ。
     #[test]
     fn declaration_block_never_emits_shorthand_keys() {
         use crate::property::PropertyKey;
@@ -466,7 +580,7 @@ mod tests {
 
     #[test]
     fn margin_longhand_declaration_not_expanded() {
-        // longhand は expand_shorthand の match arm を no-op で通過 (1 decl のまま)。
+        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl のまま)。
         // shorthand-only expansion の scope を pin する negative test。
         let decls = parse_block("margin-top: 10px;");
         assert_eq!(decls.len(), 1);
@@ -509,7 +623,7 @@ mod tests {
 
     #[test]
     fn padding_longhand_declaration_not_expanded() {
-        // longhand は expand_shorthand の match arm を no-op で通過 (1 decl のまま)。
+        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl のまま)。
         let decls = parse_block("padding-top: 10px;");
         assert_eq!(decls.len(), 1);
         assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
@@ -598,7 +712,7 @@ mod tests {
 
     #[test]
     fn border_longhand_declaration_not_expanded() {
-        // longhand は expand_shorthand の match arm を no-op で通過 (1 decl のまま)。
+        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl のまま)。
         // shorthand-only expansion の scope を pin する negative test (margin /
         // padding sibling と同 pattern)。
         let decls = parse_block("border-top-width: 10px;");

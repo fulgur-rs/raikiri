@@ -906,9 +906,16 @@ fn absolutize_in_page_context(
         PropertyValue::PaddingBottom(v) => PropertyValue::PaddingBottom(lp(v, font_size, ctx)),
         PropertyValue::PaddingLeft(v) => PropertyValue::PaddingLeft(lp(v, font_size, ctx)),
         // Shorthand safety net — `crate::rule::parse_declaration_block` expands
-        // shorthands at parse time, so `@page` declarations reach the cascade as
-        // longhands only (`ruletree` reuses that parser). Kept for the same
-        // reason `cascade::apply_value` keeps its shorthand arms.
+        // shorthands at parse time, so `@page` declarations *parsed from CSS*
+        // reach the cascade as longhands only (`ruletree` reuses that parser).
+        //
+        // ⚠️ Unlike the element path, `cascade_page` has **no entry-side
+        // expansion**: `crate::cascade`'s `collect_cascaded` re-expands via
+        // `crate::rule::expand_shorthand_into` (bd raikiri-spike-nqkj) but
+        // `cascade_page` does not, and `PageRule.declarations` is a `pub` field,
+        // so a consumer can inject a shorthand after parse and it reaches here
+        // (bd raikiri-spike-3svx). Kept for the same reason
+        // `cascade::apply_value` keeps its shorthand arms.
         PropertyValue::Padding(sides) => {
             PropertyValue::Padding(sides.map(|l| lp(l, font_size, ctx)))
         }
@@ -2077,7 +2084,10 @@ mod tests {
     /// Direct exercise of the three **shorthand safety-net arms** of
     /// `absolutize_in_page_context`. `crate::rule::parse_declaration_block`
     /// expands shorthands at parse time, so these are unreachable through
-    /// `cascade_page`; they are driven directly here for the same reason
+    /// `cascade_page` *for declarations parsed from CSS* — but `cascade_page`
+    /// has no entry-side expansion of its own, so a shorthand injected into the
+    /// `pub` field `PageRule.declarations` after parse does reach them
+    /// (bd raikiri-spike-3svx). They are driven directly here for the same reason
     /// `cascade::tests::apply_value_direct_margin_shorthand_safety_net` exists
     /// (behaviour pinned instead of `unreachable!` — the crate keeps the
     /// cascade panic-free).
