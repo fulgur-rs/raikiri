@@ -110,7 +110,7 @@ pub struct ComputedValues {
     ///
     /// **常に resolve 済みの absolute weight** (`[1, 1000]`)。specified value 側の
     /// `bolder` / `lighter` sentinel ([`crate::property::FontWeightValue`]) は
-    /// `crate::cascade::apply_value` が親の computed weight と CSS Fonts 4 §2.2
+    /// [`crate::cascade::apply_value`] が親の computed weight と CSS Fonts 4 §2.2
     /// の table から絶対値に解決してから書き込むため、この field に relative
     /// keyword が残ることはない。これは spec とも一致する — §2.2 の property
     /// table は `Computed value: a number, see below` と規定し、§2.2.1

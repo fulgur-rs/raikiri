@@ -183,11 +183,7 @@ pub struct PageRule {
     ///
     /// Still `pub` after bd raikiri-spike-qzn3 — deliberately, and outside that
     /// task's approved scope. What the asymmetry implies is documented at
-    /// `crate::rule::expand_shorthand_into`.
-    // ⚠️ Do not turn the reference above into an intra-doc link: this field is
-    // `pub` and `expand_shorthand_into` is `pub(crate)`, so linking from a
-    // public item trips `rustdoc::private_intra_doc_links` under `-D warnings`
-    // (hit for real during the bd raikiri-spike-qzn3 gate).
+    /// [`crate::rule::expand_shorthand_into`].
     pub declarations: Vec<Declaration>,
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
@@ -472,8 +468,8 @@ pub struct PageCascadeResult {
     ///   Media 3 §6's page-margin-box cascade ("page-margin boxes inherit from
     ///   the page context") would be a third path, and nothing here or in the
     ///   type system forces it to run phase 3 (bd raikiri-spike-7m33 gap (b);
-    ///   `crate::cascade`'s `resolve_against_inherited` doc states the same
-    ///   limit from its side).
+    ///   [`crate::cascade::resolve_against_inherited`] doc states the same limit
+    ///   from its side).
     /// - The residue detector classifies five payload types exhaustively
     ///   (`Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
     ///   `TextAlign`); a new payload case in any *other* type is not caught.
@@ -490,7 +486,7 @@ pub struct PageCascadeResult {
     /// the inheritance parent is the `root_style` argument of [`cascade_page`].
     ///
     /// **Phase 2** — resolution against the inheritance parent
-    /// (`crate::cascade::resolve_against_inherited`):
+    /// ([`crate::cascade::resolve_against_inherited`]):
     ///
     /// - `font-weight` — `bolder` / `lighter` are resolved against the
     ///   inherited weight, so **no relative font-weight sentinel** reaches the
@@ -533,7 +529,7 @@ pub struct PageCascadeResult {
     ///   so do not attribute those two to the margin/padding sentence). Either
     ///   way that is the computed value, not an unresolved one; the element
     ///   path resolves it the same way
-    ///   (`crate::resolve::resolve_length_percentage`).
+    ///   ([`crate::resolve::resolve_length_percentage`]).
     ///
     ///   ⚠️ **`font-size` and `line-height` are the opposite case** — their
     ///   `<percentage>` does *not* survive into the computed layer (§5.5.1's
@@ -565,8 +561,8 @@ pub struct PageCascadeResult {
     ///   would make `@page { text-align: match-parent }` always compute to
     ///   `start`.
     ///
-    /// See `cascade::resolve_against_inherited` and
-    /// `absolutize_in_page_context` for the exact per-phase contracts.
+    /// See [`crate::cascade::resolve_against_inherited`] and
+    /// [`absolutize_in_page_context`] for the exact per-phase contracts.
     ///
     /// **This map is not a full computed-value bag.** It contains only the
     /// properties that some matching `@page` rule actually *declared*;
@@ -598,7 +594,8 @@ pub struct PageCascadeResult {
 ///    `!important`).
 /// 3. **Phase 2** — resolve each winner against the page context's inheritance
 ///    parent (`root_style`) through the crate-internal
-///    `resolve_against_inherited`, the sibling of `cascade::apply_value` that
+///    [`crate::cascade::resolve_against_inherited`], the sibling of
+///    [`crate::cascade::apply_value`] that
 ///    keeps the `PropertyValue` shape. This covers the two properties that are
 ///    determined by the inheritance parent alone: `font-weight: bolder` /
 ///    `lighter` (CSS Fonts 4 §2.2.1 "Relative Weights") and `font-size`.
@@ -607,7 +604,7 @@ pub struct PageCascadeResult {
 ///    (step 3's output, or the inherited value when `@page` declared none) as
 ///    the `em` basis and the root element's font-size as the `rem` basis, and
 ///    apply the `border-*-width` style gate. Mirrors the element path's
-///    `crate::specified::SpecifiedValues::finalize`; the split into two phases
+///    [`crate::specified::SpecifiedValues::finalize`]; the split into two phases
 ///    is required because `padding: 2em` depends on a sibling declaration whose
 ///    winner is only known after step 2 (decision raikiri-spike-082k).
 ///
@@ -773,12 +770,12 @@ pub fn cascade_page(
 /// value for every property").
 ///
 /// `declarations` must already have been through phase 2
-/// (`crate::cascade::resolve_against_inherited`), whose `FontSize` arm always
+/// ([`crate::cascade::resolve_against_inherited`]), whose `FontSize` arm always
 /// wraps its result in [`Length::Px`]. **That invariant is what makes the read
 /// below total**: any other `Length` variant under `PropertyKey::FontSize` is
 /// unreachable, and the catch-all falls back to the inherited value rather than
 /// panicking (crate policy: no panic surface in the cascade — see the
-/// `PropertyValue::Margin` fall-through arm in `crate::cascade::apply_value`).
+/// `PropertyValue::Margin` fall-through arm in [`crate::cascade::apply_value`]).
 /// If that arm ever stops normalising to `Px`, this function silently starts
 /// using the wrong basis, so the two must be changed together.
 fn page_context_font_size(
@@ -858,9 +855,9 @@ fn page_context_border_styles(
 /// **phase 3** for the page context — absolutize one winner against the page
 /// context's own `font-size` and apply the `border-*-width` style gate.
 ///
-/// Sibling of the element path's `crate::specified::SpecifiedValues::finalize`
+/// Sibling of the element path's [`crate::specified::SpecifiedValues::finalize`]
 /// second half (`absolutize_with`). Both funnel into the *same*
-/// `crate::resolve` functions, so the spec rules (`em` / `rem` basis,
+/// [`crate::resolve`] functions, so the spec rules (`em` / `rem` basis,
 /// percentage pass-through, border style gating) have a single implementation
 /// per rule; only the plumbing differs, because the page path carries a
 /// `PropertyValue` bag instead of a typed struct.
@@ -878,14 +875,16 @@ fn page_context_border_styles(
 /// # No wildcard arm
 ///
 /// The match is exhaustive without `_`, like its two siblings
-/// (`crate::cascade::apply_value` / `crate::cascade::resolve_against_inherited`).
+/// ([`crate::cascade::apply_value`] / [`crate::cascade::resolve_against_inherited`]).
 /// A new [`PropertyValue`] variant that carries a length must be classified
 /// here explicitly; a catch-all would let it reach the public `declarations`
 /// map as a specified value — the exact regression shape of bd
 /// raikiri-spike-ygl0. (What this guard does *not* catch is a new **payload**
 /// case inside an existing variant, or a new entry point that skips this
 /// function — bd raikiri-spike-7m33.)
-fn absolutize_in_page_context(
+///
+/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で補助 doc build が red (規約 3)。
+pub(crate) fn absolutize_in_page_context(
     value: PropertyValue,
     font_size: ComputedLength,
     ctx: &ResolveContext,
@@ -1068,8 +1067,10 @@ fn absolutize_in_page_context(
 ///
 /// A `u32` per component is more than enough — `f` is bounded to 1 by the
 /// grammar, and `g` / `h` in practice count `Vec<PagePseudo>` entries.
+///
+/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で補助 doc build が red (規約 3)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct PageSpecificity {
+pub(crate) struct PageSpecificity {
     f: u32,
     g: u32,
     h: u32,
@@ -2373,7 +2374,7 @@ mod tests {
     ///
     /// `Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
     /// `TextAlign`。この 5 型については
-    /// `crate::cascade::resolve_against_inherited` の doc が「この guard が
+    /// [`crate::cascade::resolve_against_inherited`] の doc が「この guard が
     /// 守らない範囲」として挙げる **既存 variant への payload 追加**
     /// (bd raikiri-spike-7m33 の gap (a)) もここで compile error になる。
     ///
@@ -2859,7 +2860,7 @@ mod tests {
     /// 16 site に膨らむため。key ↔ variant が食い違う形の bug は本 helper では
     /// 検出できないが、`cascade_page` の key は `PropertyValue::key()` 由来であり
     /// (winner selection の `let key = value.key();`)、その対応は
-    /// `crate::property` の `margin_longhand_keys_map_correctly` が pin 済み。
+    /// [`crate::property`] の `margin_longhand_keys_map_correctly` が pin 済み。
     /// border 側に同型 helper を置かず explicit assert にしてあるのは、3
     /// sub-property family ぶんの helper が要るのに対し assert が 12 個で済むため。
     fn margin_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {

@@ -95,7 +95,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///
 /// 1. [`parse_declaration_block`] — parse 出口。author CSS / inline style / UA
 ///    stylesheet が通る。
-/// 2. `crate::cascade` の `collect_cascaded` — **[`crate::ruletree::RuleTree`]
+/// 2. [`mod@crate::cascade`] の `collect_cascaded` — **[`crate::ruletree::RuleTree`]
 ///    の declaration が element cascade candidate になる境界**
 ///    (bd raikiri-spike-nqkj)。
 /// 3. [`crate::page::cascade_page`] — **`RuleTree::page_rules` の declaration が
@@ -115,7 +115,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// - **2 (element)** は可視性だけで閉じる。Consumer が到達できるのは read-only な
 ///   `&[StyleRule]` / `&[Declaration]` までで、declaration を書き戻す `&mut`
 ///   経路が public に存在しない。
-/// - **3 (`@page`)** は `RuleTree::page_rules` / `crate::page::PageRule::declarations`
+/// - **3 (`@page`)** は `RuleTree::page_rules` / [`crate::page::PageRule::declarations`]
 ///   が `pub` のままなので、Consumer は既存 `Declaration` の複製 / 削除 /
 ///   並べ替え / `important` 書き換え、および既存 `PageRule` を clone して中身を
 ///   差し替えたものの push を依然できる (`PageRule` は `#[non_exhaustive]` なので
@@ -124,7 +124,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///   その根拠は 2 段ある: (a) `value` が私有なので struct literal /
 ///   functional-update 構築が不可、(b) `Clone` 元になりうる declaration が
 ///   longhand しか無いのは [`parse_declaration_block`] が shorthand key を
-///   emit しないため ([`tests::declaration_block_never_emits_shorthand_keys`] と
+///   emit しないため (`tests::declaration_block_never_emits_shorthand_keys` と
 ///   本関数の exhaustive match = bd raikiri-spike-ez7b が pin)。**(a) か (b) が
 ///   破れると 3 の経路は crate 外から再び開く** — `Declaration` に公開 ctor を
 ///   足す変更は本節を再導出してから行うこと。
@@ -147,16 +147,16 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// どちらも下の spec 違反である。silent drop のほうが検出が難しいが、
 /// **「@page の破れは silent drop だけ」ではない**。上の 2 症状を family ごとの
 /// 具体形に落としたもの、および「どの test が展開の有無を実際に区別するか」の
-/// hunk-revert 実測は `crate::page` の `post_parse_page_*` test 群の comment 側に
+/// hunk-revert 実測は [`crate::page`] の `post_parse_page_*` test 群の comment 側に
 /// ある。
 ///
-/// `crate::page::PageCascadeResult` の `declarations` を private + accessor に
+/// [`crate::page::PageCascadeResult`] の `declarations` を private + accessor に
 /// 絞る bd raikiri-spike-dyxj は cascade の**出力**側の話であり、3 (入力側) とは
 /// 別 struct・別 gap である。
 ///
 /// sink を取る形にしてあるのは call site 2 / 3 の受け皿が
 /// `Vec<(PropertyValue, bool, Origin, _, u32)>` (2 は `selectors` crate の
-/// `Specificity`、3 は `crate::page::PageSpecificity`) であって
+/// `Specificity`、3 は [`crate::page::PageSpecificity`]) であって
 /// `Vec<Declaration>` ではないためで、`Vec` 返しにすると declaration ごとの
 /// 一時 alloc か scratch buffer の状態管理を強いられる。call site 1 は
 /// `Vec` へ push するだけの closure を渡す。sink 化そのものは alloc 中立〜改善
@@ -182,7 +182,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///
 /// 展開後は同一 property key の longhand が複数 candidate になるが、勝者は
 /// `(rank, specificity, source_order)` を `>=` で比較して決まる — call site 2 は
-/// `crate::cascade` の `beats`、call site 3 は `crate::page` の `page_beats` が
+/// [`mod@crate::cascade`] の `beats`、call site 3 は [`crate::page`] の `page_beats` が
 /// **同じ `>=` semantics** を持つ。全 key が同値なら**後に現れたほうが勝つ**ので、
 /// CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
 /// の "the last declaration in document order wins" が
@@ -195,15 +195,15 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// する。これは上の不変により**到達不能**だが、**variant の並び順は本 rationale
 /// の根拠ではない**ので、並べ替えでこの gap を塞ごうとしないこと (並べ替えは
 /// `margin: 0; margin-top: 10px` と `margin-top: 10px; margin: 0` の鏡像 2 例の
-/// うち片方を必ず壊す。詳細は [`crate::cascade`] の `apply_winners` doc)。
+/// うち片方を必ず壊す。詳細は [`mod@crate::cascade`] の `apply_winners` doc)。
 ///
 /// 本関数の exhaustive match (下の「wildcard arm を置かない理由 (契約)」節) に
 /// 対する defense-in-depth の runtime guard は本 module の
-/// [`tests::declaration_block_never_emits_shorthand_keys`] (call site 1)、
-/// `crate::cascade` の `post_parse_*` test 群 (call site 2、6 本 — うち展開の
+/// `tests::declaration_block_never_emits_shorthand_keys` (call site 1)、
+/// [`mod@crate::cascade`] の `post_parse_*` test 群 (call site 2、6 本 — うち展開の
 /// 有無を実際に区別するのは 4 本。残り 2 本は `PropertyKey` 宣言順のせいで
 /// 展開しない実装でも偶然 pass する弱い guard で、各 test の comment に
-/// その旨を開示してある)、`crate::page` の `post_parse_page_*` test 群
+/// その旨を開示してある)、[`crate::page`] の `post_parse_page_*` test 群
 /// (call site 3、6 本 — こちらは shorthand が独立 key に park するかどうかを
 /// 直接 assert するので **6 本とも展開の有無を区別する**。hunk-revert 実測で
 /// 6/6 fail を確認済 — bd raikiri-spike-3svx gate §8.2)。
@@ -257,7 +257,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// (§8.2 reviewer:perf 実測、bd raikiri-spike-nqkj):
 ///
 /// 1. **`d: &Declaration` (by-value にしないこと)** — call site 2 は
-///    `crate::cascade` の `collect_cascaded` の per-declaration loop
+///    [`mod@crate::cascade`] の `collect_cascaded` の per-declaration loop
 ///    (72 byte = `size_of::<Declaration>()` stride) の中にあり、by-value 受けは
 ///    declaration ごとに 72 byte の stack temp + memcpy を強制する
 ///    (objdump で materialize → `lea` byval ポインタ渡しを確認)。
@@ -444,7 +444,9 @@ fn expand_border(sides: Sides<Border>, important: bool, mut push: impl FnMut(Dec
 }
 
 /// Per-declaration parser for cssparser::RuleBodyParser。
-struct DeclParser;
+///
+/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で補助 doc build が red (規約 3)。
+pub(crate) struct DeclParser;
 
 impl<'i> DeclarationParser<'i> for DeclParser {
     type Declaration = Declaration;
@@ -508,7 +510,7 @@ mod tests {
     /// [`parse_declaration_block`] の出口に shorthand key が 1 つも残らないこと。
     ///
     /// この不変は cascade 段の正しさに load-bearing である
-    /// ([`crate::cascade`] の `apply_winners` doc): shorthand key が cascade に
+    /// (`crate::cascade` の `apply_winners` doc): shorthand key が cascade に
     /// 届くと `PropertyKey` 宣言順で longhand より後に適用され、declaration の
     /// 並び方によっては longhand winner を潰して spec と食い違う。
     ///

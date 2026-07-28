@@ -100,6 +100,121 @@ doc comment にも当てはまる。2026-07-27 時点で **7 file 中 8 箇所**
 無い環境では dangling ref になる**。これは Option A の既知の帰結で、読みたい場合は
 上の履歴参照を使う。
 
+## `crate::…` pointer は intra-doc link で書く
+
+**doc comment (`///` / `//!`) 中の `crate::…` 参照は intra-doc link
+(``[`crate::foo::Bar`]``) で書く。plain code span (``` `crate::foo::Bar` ```) で書かない。**
+module-relative な pointer (``` `cascade::foo` ```) も同じ — audit grep を `crate::` だけで
+書くとこの形を取りこぼす。
+
+理由は実証済み: plain code span の pointer は **誤っていても永久に検出されない**。
+bd raikiri-spike-nqkj では lens が提案した ``` `crate::computed::ComputedBorder` ```
+が実際には誤った path だったが、intra-doc link へ変えて初めて
+`RUSTDOCFLAGS="-D warnings" cargo doc` が unresolved link として落とした
+(bd raikiri-spike-ulzv)。
+
+### 規約
+
+1. **既定は link 化**。
+2. **crate-internal な target を指してよい。** その crate の `lib.rs` (または link を書く
+   側の module の先頭) に `#![allow(rustdoc::private_intra_doc_links)]` を宣言する。
+   この allow が黙らせるのは「private を指した」という**表示上**の lint だけで、
+   `broken_intra_doc_links` はそのまま残る (本 repo の doc command はすべて `-D warnings`
+   を渡すので hard error) ため **path の正しさの検証は失われない**。
+   宣言の有無は `git grep -n 'private_intra_doc_links' -- crates/` で確認する。
+   **hit の中身まで見ること** — この grep は (a) `lib.rs` の crate 全体宣言、
+   (b) 単一 module file 先頭の module scope 宣言、(c) lint 名に言及しただけの comment を
+   区別しない。**(b) が何を covers するかは grep からは予測できない** — 同じ
+   target・同じ (b) でも、referrer の書き方だけで黙るか red になるかが反転する
+   実測を確認済み。分類せず「わざと壊して確かめる」で個別に決めること。
+3. **module-private な item を指すときは、既定では visibility を広げない。**
+   ``[`mod@crate::cascade`] の `collect_cascaded` `` のように **module だけ link 化し
+   item 名は plain code span** にする。**この形も module 自身が link 元から見えなければ
+   解決しない** — 迷ったら下の「わざと壊して確かめる」で決めること。
+   `pub(crate)` へ広げるのは他 module の doc から item 自体を指す必要がある場合に限り、
+   **広げた item の doc に理由を 1 行書く** (例: `crates/raikiri-style/src/cascade.rs` の
+   `apply_value`)。**この hatch の閾値はまだ無い** — 整備は bd raikiri-spike-uy4g。
+4. **同じ scope に同名の item がある module は `mod@` を付ける。** `raikiri-style` では
+   `pub mod cascade` と `pub use cascade::{…, cascade}` が module と関数を同名で crate root
+   に置くため ``[`mod@crate::cascade`]`` と書く。無印は ambiguous link になる。
+5. **trait impl の method は trait 側の full path で書く** —
+   ``[`cssparser::DeclarationParser::parse_value`]``。trait を宣言している crate からの path
+   なら import 無しでも依存 crate のものでも解決する (rustc 1.89.0 で実測)。書けない場合に限り `Type` までを
+   link 化し method 名を code span で添える。
+
+### ⚠️ 「link 化した = 検証された」ではない
+
+gate `§8.1` の `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace` が検証するのは
+**rustdoc が document する doc に書かれた link だけ**である。**どの位置が検証されるかは
+source の見た目から予測できない。**
+
+これは推測ではない。bd raikiri-spike-ulzv の gate §8.2 で **4 iter にわたり分類を書いては
+実測で反証される**ことを繰り返した。反転させる変数として少なくとも **module の nest、
+`pub use` re-export の有無、`#[doc(hidden)]`、`#[test]` 属性、target 自身の可視性**の
+5 つが確認されており、**網羅は取れていない**。
+
+**したがって分類で判断しないこと。測ること。** 触る crate に対し gate とは別に 2 本走らせる:
+
+```
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items -p <crate>
+RUSTDOCFLAGS="-D warnings --cfg test" cargo doc --no-deps --document-private-items -p <crate>
+```
+
+- 判定は **baseline 差分**で行う。crate によっては既存の未修正 error が残るので
+  「clean になるか」では判定できず、「自分が追加した link だけ見る」でも**不足**である
+  (item の可視性を狭める / rename する変更は、**自分が触っていない別 module の link** を
+  壊す)。変更前後で同じ 2 本を走らせ **`error` 行が 1 件も増えていない**ことを確認する。
+- **`E0432` / `E0433` を含む run は「検証していない」と扱う。** `--cfg test` は
+  `cargo doc` が dev-dependency を link しないことと組み合わさり rustdoc を compile 段階で
+  止めることがあり、その run では intra-doc link 検査が 1 本も走らない
+  (raikiri-vrt では既存の unresolved link が E0432 に隠れて消える)。
+  **その run は判定材料から外し、もう 1 本の結果で判断すること。**
+  **2 本とも `E0432` / `E0433` で止まった場合は、その crate の doc build は
+  auxiliary command では判定不能** — link の正しさは gate と同じ command
+  (`--document-private-items` 無し) 1 本だけで判断すること。
+- **ある位置が検証されるかを知りたい場合は、link をわざと壊して**
+  (``[`crate::foo::Bar`]`` → ``[`crate::foo::BarXX`]``) **どの command が自分の `file:line`
+  を報告するかを見る。** 無出力は「正しい」ではなく「見られていない」かもしれない。
+  gate と同じ command で出た位置だけが以後 CI に守られる。補助 command でだけ出た位置は
+  authoring 時の 1 回きりの確認であり、**壊した分は必ずその場で戻すこと** — 忘れると
+  gate は green のまま壊れた pointer が merge される。
+
+gate 側の doc command を広げるかの判断と、**上記 5 変数の実測 table** は
+bd raikiri-spike-8yj6 が持つ。
+
+### opt-out (link 化しない)
+
+どの command でも検証できない位置は code span にする。以下は今日わかっている該当で、
+**網羅である保証は無い** — 迷ったら上の「わざと壊して確かめる」で決めること。
+
+1. **歴史参照** (既に削除された item を指す): ``` `crate::target` (removed) ``` の形で
+   **code span と同じ行に** `(removed)` marker を置く (1 行 grep で audit できるように)。
+   例: `crates/raikiri-dom/src/running.rs`。
+2. **指す先が `#[cfg(test)] mod tests` の中**: 一般に解決しない。plain code span のままに
+   する (path 中の `tests::` が test であることを示すので追加の marker は要らない)。
+   例: `crates/raikiri-style/src/rule.rs`。
+   ⚠️ **一部の組合せでは解決する** (link 元も同じ test module 内で、指す先が `#[test]` でなく
+   十分な可視性を持つ場合)。link 化したいなら**測ってから**にすること。
+3. **書いた場所が rustdoc に拾われない位置** (今日わかっている該当。**この列挙も
+   網羅の保証は無い** — 上の「⚠️」で述べた反転変数がここにも及ぶので、迷ったら
+   分類ではなく測って決めること): `#[test]` item の doc、関数 body の中で宣言された
+   item の doc、`#[doc(hidden)]` な item (module を除く) の doc、
+   `crates/*/tests/` `benches/` `examples/` (`cargo doc` が document しない)、
+   `#[cfg]` で落ちる item、未展開の `macro_rules!` body。
+
+### 既知の限界
+
+- **plain `//` comment には rustdoc が届かない。** link 化しても検証されない
+  (bracket を書くと「検証済みに見えるのに実は未検証」でかえって危険)。→ bd raikiri-spike-vyse
+- **既存の `#[test]` item doc に残る短縮 link** (``[`expand_shorthand_into`]`` 等) は
+  opt-out 3 の位置なので未検証。既存分の一括変換は bd raikiri-spike-acsw。
+  **新規に書く doc では opt-out 3 に従い code span にすること。**
+- **本規約には enforcement が無い。** 規約に従わない新規記述は何も止めない
+  (実測: 規約 landing 前の 3 merge が bare pointer を 7 site 追加した)。→ bd raikiri-spike-luxp
+- **toolchain 依存がある。** intra-doc link の解決は rustc version で変わる。
+  `rust-toolchain.toml` の pin (1.89.0) では出ない unresolved link が新しい toolchain では
+  出る実例があるため、toolchain bump 時は本節の command を再走させること。
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 

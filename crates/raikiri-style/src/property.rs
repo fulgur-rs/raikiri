@@ -571,7 +571,7 @@ pub struct Border {
 ///   sentinel variant として保持する。
 /// - **computed side** ([`crate::computed::ComputedValues::font_weight`]、`u16`)
 ///   — resolution 済みの absolute weight のみ。`bolder` / `lighter` は
-///   `crate::cascade::apply_value` で解決されてから格納される。
+///   [`crate::cascade::apply_value`] で解決されてから格納される。
 ///
 /// この分離は spec 準拠でもある: §2.2 の property table は
 /// `Computed value: a number, see below` と規定し、§2.2.1 "Relative Weights"
@@ -598,7 +598,7 @@ pub enum FontWeightValue {
     /// `<number [1,1000]>` を単一の絶対 weight に畳んだもの。
     Absolute(u16),
     /// `bolder` — 継承値より 1 段太い weight。cascade 時に
-    /// `crate::cascade::resolve_relative_weight` が spec §2.2.1 table で
+    /// [`crate::cascade::resolve_relative_weight`] が spec §2.2.1 table で
     /// 絶対値に解決する。
     Bolder,
     /// `lighter` — 継承値より 1 段細い weight。解決タイミングは
@@ -1099,7 +1099,7 @@ pub enum PositionValue {
 /// `border-*` / `width` / `height` はいずれも認識対象で、下記に variant を持つ
 /// (bd raikiri-spike-0vv.5 / .6 / .10 / .11 / .12)。`font-size: 1em` 等の
 /// font-relative unit も bd raikiri-spike-zls8 以降は valid である。
-/// **例を差し替えるときは sibling の `crate::rule` の
+/// **例を差し替えるときは sibling の [`crate::rule`] の
 /// `drops_invalid_property_and_value` と揃えること** — 両者は同じ milestone
 /// subset を説明しており、あちらだけ更新されて本 doc が取り残される drift が
 /// 実際に起きた (bd raikiri-spike-sshp §8.3)。
@@ -1154,13 +1154,13 @@ pub enum PropertyValue {
     ///
     /// payload は **specified value** ([`FontWeightValue`])。`bolder` /
     /// `lighter` は継承値依存の relative weight なので parse 段では解けず、
-    /// `crate::cascade::apply_value` が親の computed weight から絶対値に
+    /// [`crate::cascade::apply_value`] が親の computed weight から絶対値に
     /// 解決して [`crate::computed::ComputedValues::font_weight`] (`u16`) に
     /// 格納する (raikiri-spike-17s8)。
     ///
     /// **page context 側も解決される** (raikiri-spike-ygl0)。
     /// [`crate::page::cascade_page`] は winner を
-    /// `crate::cascade::resolve_against_inherited` (`apply_value` の sibling、
+    /// [`crate::cascade::resolve_against_inherited`] (`apply_value` の sibling、
     /// 同じ relative-weight table を共有) に通してから
     /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
     /// に格納するので、`@page { font-weight: bolder }` も `Absolute` に
@@ -1282,7 +1282,7 @@ pub enum PropertyValue {
     /// (raikiri-spike-0vv.6)
     PaddingLeft(Length),
     /// `padding: <'padding-top'>{1,4}` shorthand — non-inherited、initial:
-    /// [`Sides::all(Length::Px(0.0))`]。CSS Box 3 §4.2
+    /// `Sides::all(Length::Px(0.0))`。CSS Box 3 §4.2
     /// <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
     ///
     /// 1-4 value expansion (spec-verbatim):
@@ -1292,16 +1292,16 @@ pub enum PropertyValue {
     /// - 4 values: top / right / bottom / left (clockwise from top)
     ///
     /// **element cascade 段でこの variant は観測されない**:
-    /// `crate::rule::expand_shorthand_into` が parse 出口
+    /// [`crate::rule::expand_shorthand_into`] が parse 出口
     /// (`parse_declaration_block`) と element cascade 入口
-    /// (`crate::cascade` の `collect_cascaded`) の両方で 4 longhand variant
+    /// ([`mod@crate::cascade`] の `collect_cascaded`) の両方で 4 longhand variant
     /// ([`PaddingTop`](Self::PaddingTop) / [`PaddingRight`](Self::PaddingRight) /
     /// [`PaddingBottom`](Self::PaddingBottom) / [`PaddingLeft`](Self::PaddingLeft))
     /// に展開するため (1/2/3/4 expansion + CSS Cascading L5
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-5/#shorthand>
     /// verbatim "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
-    /// 成立する)。expansion 経路の safety net として `crate::cascade::apply_value`
+    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
     /// は本 variant を受けたときも `ComputedValues.padding` field 全 4 side を
     /// 上書きする実装を持つ (regression 時 panic 回避)。
     /// raikiri-spike-5nc (margin 0vv.5 の parse-time expansion model に migrate)。
@@ -1326,16 +1326,16 @@ pub enum PropertyValue {
     /// (CSS Box 3 §3.2 <https://www.w3.org/TR/css-box-3/#margin-shorthand>)。
     ///
     /// **element cascade 段でこの variant は観測されない**:
-    /// `crate::rule::expand_shorthand_into` が parse 出口
+    /// [`crate::rule::expand_shorthand_into`] が parse 出口
     /// (`parse_declaration_block`) と element cascade 入口
-    /// (`crate::cascade` の `collect_cascaded`) の両方で 4 longhand variant
+    /// ([`mod@crate::cascade`] の `collect_cascaded`) の両方で 4 longhand variant
     /// ([`MarginTop`](Self::MarginTop) / [`MarginRight`](Self::MarginRight) /
     /// [`MarginBottom`](Self::MarginBottom) / [`MarginLeft`](Self::MarginLeft))
     /// に展開するため (spec §3.2 の 1/2/3/4 expansion + CSS Cascading L4 §3
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
     /// verbatim "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
-    /// 成立する)。expansion 経路の safety net として `crate::cascade::apply_value`
+    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
     /// は本 variant を受けたときも `ComputedValues.margin` field 全 4 side を
     /// 上書きする実装を持つ (regression 時 panic 回避)。
     /// raikiri-spike-0vv.5。
@@ -1403,16 +1403,16 @@ pub enum PropertyValue {
     /// color=[`BorderColor::CurrentColor`] (spec §3.1 initial、raikiri-spike-0vv.17)。
     ///
     /// **element cascade 段でこの variant は観測されない**:
-    /// `crate::rule::expand_shorthand_into` が parse 出口
+    /// [`crate::rule::expand_shorthand_into`] が parse 出口
     /// (`parse_declaration_block`) と element cascade 入口
-    /// (`crate::cascade` の `collect_cascaded`) の両方で 12 longhand variant
+    /// ([`mod@crate::cascade`] の `collect_cascaded`) の両方で 12 longhand variant
     /// (4 side × 3 sub-property)
     /// に展開するため (spec CSS Cascading L5 §"Shorthand Properties"
     /// <https://www.w3.org/TR/css-cascade-5/#shorthand> verbatim "A shorthand
     /// property sets all of its longhand sub-properties, exactly as if expanded
     /// in place." 準拠、cascade の per-side / per-sub-property 勝ち抜けが自然に
     /// 成立する — margin / padding shorthand precedent 踏襲)。expansion 経路の
-    /// safety net として `crate::cascade::apply_value` は本 variant を受けたときも
+    /// safety net として [`crate::cascade::apply_value`] は本 variant を受けたときも
     /// `ComputedValues.border` field 全 4 side × 3 sub-property を上書きする
     /// 実装を持つ (regression 時 panic 回避)。
     ///
@@ -1480,17 +1480,17 @@ pub enum PropertyValue {
 ///
 /// element cascade は本 enum の discriminant (`key as usize`) を scratch buffer
 /// の slot index に使い、**slot を index 昇順に走査して winner を適用する**
-/// (`crate::cascade` の `apply_winners`)。したがって:
+/// ([`mod@crate::cascade`] の `apply_winners`)。したがって:
 ///
 /// - **variant を追加する位置**と**既存 variant の並び順**が、同一 node で
 ///   複数の winner が同じ [`crate::specified::SpecifiedValues`] field に書く
 ///   場合の**最終値を変えうる**。
 /// - 現状これが効きうるのは shorthand key (`Padding` / `Margin` / `Border`)
 ///   だけで、いずれも longhand より後ろに置かれている。ただし
-///   `crate::rule::expand_shorthand_into` が parse 出口と element cascade 入口の
+///   [`crate::rule::expand_shorthand_into`] が parse 出口と element cascade 入口の
 ///   両方で shorthand を longhand に展開するため、**shorthand key は element
 ///   cascade 段には到達しない** (bd raikiri-spike-nqkj)。`@page` cascade
-///   (`crate::page::cascade_page`) も入口側で同じ展開を通すので、`PageRule` の
+///   ([`crate::page::cascade_page`]) も入口側で同じ展開を通すので、`PageRule` の
 ///   `pub declarations` を post-parse mutation された場合の同 shape の gap も
 ///   塞がっている (bd raikiri-spike-3svx)。
 ///
@@ -1499,7 +1499,7 @@ pub enum PropertyValue {
 /// `margin-top: 10px; margin: 0` という鏡像 2 例のうち必ず片方を壊す
 /// (詳細は `apply_winners` の doc)。正しい解は既に採られている
 /// 「shorthand を cascade 段に到達させない」方向であり、その展開 arm の
-/// 書き忘れは `crate::rule::expand_shorthand_into` の exhaustive match により
+/// 書き忘れは [`crate::rule::expand_shorthand_into`] の exhaustive match により
 /// compile-time に排除されている (bd raikiri-spike-ez7b)。
 ///
 /// 新しい variant を足すときは、それが既存 variant と同じ `SpecifiedValues`
@@ -1534,12 +1534,12 @@ pub enum PropertyKey {
     /// <https://www.w3.org/TR/css-cascade-4/#shorthand> の
     /// "exactly as if expanded in place" は本来 shorthand を longhand の
     /// syntactic sugar として畳むことを意味するので、独立 winner を持つこと自体は
-    /// deviation。`crate::rule::expand_shorthand_into` が parse 出口と element
+    /// deviation。[`crate::rule::expand_shorthand_into`] が parse 出口と element
     /// cascade 入口の両方で shorthand を畳むため本 variant は element cascade 段に
     /// 到達せず (bd raikiri-spike-nqkj)、observable な divergence は無い
-    /// (`@page` 経路の同 shape gap も `crate::page::cascade_page` の入口側展開で
+    /// (`@page` 経路の同 shape gap も [`crate::page::cascade_page`] の入口側展開で
     /// 塞がれている — bd raikiri-spike-3svx)。その担保のうち「展開 arm の
-    /// 書き忘れ」は `crate::rule::expand_shorthand_into` の exhaustive match により
+    /// 書き忘れ」は [`crate::rule::expand_shorthand_into`] の exhaustive match により
     /// compile-time に排除されている (bd raikiri-spike-ez7b)。
     Padding,
     // margin longhand + shorthand — raikiri-spike-0vv.5 (semantics on the
@@ -2119,7 +2119,8 @@ fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 ///
 /// 5+ value (`margin: 10px 20px 30px 40px 50px`) は本 helper では 4 value 消費
 /// して残り 1 token を unconsumed で return する。caller の
-/// [`crate::rule::DeclParser::parse_value`] が `expect_exhausted` で余剰 token を
+/// [`crate::rule::DeclParser`] の [`cssparser::DeclarationParser::parse_value`]
+/// impl が `expect_exhausted` で余剰 token を
 /// 検知して declaration ごと drop する (既存 [`parse_font_family`] 系と同じ
 /// 責務分担、`rejects_extra_length_after_font_size` 系 test で pattern を pin)。
 fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<LengthOrAuto>> {
@@ -2714,7 +2715,7 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
 /// - `normal` = 400 / `bold` = 700 (spec §2.2 の keyword 定義)
 /// - `bolder` / `lighter` は継承値依存の relative weight。parse 段では解けない
 ///   ため sentinel variant ([`FontWeightValue::Bolder`] /
-///   [`FontWeightValue::Lighter`]) で保持し、`crate::cascade::apply_value`
+///   [`FontWeightValue::Lighter`]) で保持し、[`crate::cascade::apply_value`]
 ///   が親の computed weight から解決する (raikiri-spike-17s8)。
 ///
 /// ASCII case-insensitive matching は CSS Values 3 §3.1 "Pre-defined Keywords"
@@ -3195,8 +3196,8 @@ fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
 /// `<counter-name>` (CSS Lists 3 §4
 /// <https://www.w3.org/TR/css-lists-3/#typedef-counter-name>):
 /// `<custom-ident>` から `none` を追加除外した production。
-/// spec 原文: "A <counter-name> name cannot match the keyword `none`; such an
-/// identifier is invalid as a <counter-name>"。
+/// spec 原文: "A `<counter-name>` name cannot match the keyword `none`; such an
+/// identifier is invalid as a `<counter-name>`"。
 ///
 /// counter() / counters() (§4.7) の first argument、および
 /// counter-reset / counter-increment / counter-set property

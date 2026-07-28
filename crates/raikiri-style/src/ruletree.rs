@@ -41,11 +41,7 @@ pub struct RuleTree {
     ///
     /// `style_rules` と違い `pub` のまま — 意図的で、bd raikiri-spike-qzn3 の
     /// approved scope 外である。非対称の帰結は
-    /// `crate::rule::expand_shorthand_into` doc が canonical。
-    // ⚠️ 上の参照を intra-doc link にしないこと — 本 field は `pub` で
-    // `expand_shorthand_into` は `pub(crate)` なので、public item の doc から
-    // link すると `rustdoc::private_intra_doc_links` が `-D warnings` で落ちる
-    // (bd raikiri-spike-qzn3 gate で実際に踏んだ)。
+    /// [`crate::rule::expand_shorthand_into`] doc が canonical。
     pub page_rules: Vec<PageRule>,
 }
 
