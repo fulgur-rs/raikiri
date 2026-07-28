@@ -429,6 +429,51 @@ pub struct PageCascadeResult {
     /// Winning `(key, value)` per property, after the two resolution passes
     /// described below.
     ///
+    /// **This doc is the canonical statement of that contract.** Other sites
+    /// that touch it point here instead of restating it — enumerate them with
+    /// `git grep "PageCascadeResult::declarations"` rather than trusting a
+    /// list, because a list of pointer sites drifts exactly the way the
+    /// duplicated rule statements did (bd raikiri-spike-ygl0 /
+    /// raikiri-spike-sshp, twice). **A new site that mentions this contract
+    /// must spell `PageCascadeResult::declarations` verbatim** (in an
+    /// intra-doc link, or in plain text where links do not resolve, as the
+    /// umbrella crate's `pub use` commentary does) — that is what keeps the
+    /// grep recipe complete. The layer-vs-type rule the whole contract rests
+    /// on ("the type does not name a layer") is canonical on [`Length`].
+    ///
+    /// # What is pinned mechanically, and what is not
+    ///
+    /// The **"exactly one specified-layer residue"** claim below is pinned by
+    /// `page::tests`'
+    /// `page_declarations_carry_exactly_one_specified_layer_residue`,
+    /// `cascade_page_output_carries_no_specified_layer_residue` and
+    /// `phase_3_variant_classification_matches_the_documented_counts`
+    /// (bd raikiri-spike-awjx). The **individual phase-table rows** below (the
+    /// `border-*-width` style gate, the `<percentage>` pass-through, `auto`,
+    /// `line-height: <number>`) are *not* covered by those three — they each
+    /// have their own acceptance test in `page::tests` instead, and their
+    /// payloads are deliberately absent from `page_corpus` (one payload per
+    /// variant is all it can carry).
+    ///
+    /// Three further limits, stated here so a consumer need not read the test
+    /// module to learn them:
+    ///
+    /// - Both residue pins terminate at [`cascade_page`]. They assert that
+    ///   *this* entry point's output is a computed-value bag; they cannot
+    ///   assert it for an entry point that does not exist yet. CSS Paged
+    ///   Media 3 §6's page-margin-box cascade ("page-margin boxes inherit from
+    ///   the page context") would be a third path, and nothing here or in the
+    ///   type system forces it to run phase 3 (bd raikiri-spike-7m33 gap (b);
+    ///   `crate::cascade`'s `resolve_against_inherited` doc states the same
+    ///   limit from its side).
+    /// - The residue detector classifies five payload types exhaustively
+    ///   (`Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
+    ///   `TextAlign`); a new payload case in any *other* type is not caught.
+    /// - The detector's variant-addition tripwire is **one-way**: adding a
+    ///   `PropertyValue` variant is a compile error in the test module, but
+    ///   nothing then forces the author to extend `page_corpus`, so a new
+    ///   variant can sit outside the corpus with every test green.
+    ///
     /// **These are computed values**, with the single documented exception at
     /// the end of this list. CSS Paged Media 3 §6 "Page Properties"
     /// (<https://www.w3.org/TR/css-page-3/#page-properties>) states that "both
@@ -468,19 +513,49 @@ pub struct PageCascadeResult {
     ///   per the §6 sentence quoted above, so `@page { border-top-width: 5px }`
     ///   alone computes to `0px`, matching the element path.
     /// - `<percentage>` on `padding` / `margin` / `width` / `height` **stays**
-    ///   [`Length::Percent`]: §6 makes it
-    ///   relative to "the dimensions of the containing block", i.e. a used-value
-    ///   input. That is the computed value, not an unresolved one.
+    ///   [`Length::Percent`]. The governing rule is the general one — CSS
+    ///   Values 4 §5.5.1 "Computation and Combination of `<percentage>`"
+    ///   (<https://www.w3.org/TR/css-values-4/#combine-percentages>): "Unless
+    ///   otherwise specified (such as in font-size, which computes its
+    ///   `<percentage>` values to `<length>`), the computed value of a
+    ///   percentage is the specified percentage." For `padding` / `margin`
+    ///   specifically, §6 adds that it is relative to "the dimensions of the
+    ///   containing block", i.e. a used-value input (§6 treats `width` /
+    ///   `height` in a *separate* sentence about used-value computation rules,
+    ///   so do not attribute those two to the margin/padding sentence). Either
+    ///   way that is the computed value, not an unresolved one; the element
+    ///   path resolves it the same way
+    ///   (`crate::resolve::resolve_length_percentage`).
+    ///
+    ///   ⚠️ **`font-size` and `line-height` are the opposite case** — their
+    ///   `<percentage>` does *not* survive into the computed layer (§5.5.1's
+    ///   own parenthetical names `font-size`; CSS Inline 3 §5.1
+    ///   <https://www.w3.org/TR/css-inline-3/#line-height-property> gives
+    ///   `line-height` "Percentages: computed relative to 1em"). They are
+    ///   handled by phase 2 and phase 3 respectively.
     ///
     /// **The one value that is still a specified value**:
     ///
     /// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) —
     ///   CSS Text 3 §6.1
     ///   (<https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent>)
-    ///   computes it to the parent's computed `text-align` interpreted against
-    ///   the parent's `direction`; raikiri models no `direction` property yet
-    ///   (see the (b) milestone-subset carve-out on
-    ///   [`TextAlign`](crate::property::TextAlign)).
+    ///   computes it to the parent's computed `text-align`, "except that an
+    ///   inherited value of `start` or `end` is interpreted against the
+    ///   parent's `direction` value". **The `direction` dependency is therefore
+    ///   conditional**: an inherited `left` / `right` / `center` / `justify`
+    ///   would resolve without it. raikiri leaves *all* cases unresolved
+    ///   because it models no `direction` property and has not implemented the
+    ///   unconditional half either (see the (b) milestone-subset carve-out on
+    ///   [`TextAlign`](crate::property::TextAlign); bd raikiri-spike-l3wg) —
+    ///   that is an implementation subset, not something the spec forces.
+    ///
+    ///   ⚠️ A trap for whoever implements it here: the same value definition's
+    ///   "Computes to `start` when specified on the root element" **does not
+    ///   apply to the page context**. §6 says "The page context *inherits
+    ///   from* the root element" — inheriting from the root element does not
+    ///   make the page context *be* the root element. Applying that clause
+    ///   would make `@page { text-align: match-parent }` always compute to
+    ///   `start`.
     ///
     /// See `cascade::resolve_against_inherited` and
     /// `absolutize_in_page_context` for the exact per-phase contracts.
@@ -782,16 +857,13 @@ fn page_context_border_styles(
 ///
 /// # What stays unresolved on purpose
 ///
-/// - `<percentage>` on `padding` / `margin` / `width` / `height` stays
-///   [`Length::Percent`]. CSS Paged Media 3 §6
-///   (<https://www.w3.org/TR/css-page-3/#page-properties>): "Percentage values
-///   on the margin and padding properties are relative to the dimensions of the
-///   containing block" — a used-value-layer input, exactly as in the element
-///   path (`crate::resolve::resolve_length_percentage`).
-/// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) —
-///   needs the inheritance parent's `direction`, which raikiri does not model.
-///   Not a phase-3 concern (it is inherited-value dependent, i.e. phase 2), so
-///   it passes through here as well.
+/// `<percentage>` on the box properties, and
+/// [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent). The
+/// spec citations and the "exactly one exception" claim live in
+/// [`PageCascadeResult::declarations`] (canonical); what is local to *this*
+/// function is only that neither is a phase-3 concern —
+/// `<percentage>` is a used-value-layer input, and `match-parent` is
+/// inherited-value dependent (phase 2's shape), so both pass through here.
 ///
 /// # No wildcard arm
 ///
@@ -1076,7 +1148,10 @@ mod tests {
     //! Implementation follows the spec; this test asserts UA `!important` wins.
 
     use super::*;
-    use crate::property::{CssColor, FontWeightValue, Length, LengthOrAuto, LineHeight, TextAlign};
+    use crate::property::{
+        BoxSizing, ContentComponent, CssColor, DisplayValue, FontWeightValue, Length, LengthOrAuto,
+        LineHeight, PositionValue, TextAlign,
+    };
     use crate::resolve::ComputedLength;
 
     const RED: CssColor = CssColor {
@@ -2136,11 +2211,463 @@ mod tests {
         );
     }
 
+    // ── 「`declarations` は computed 値」契約の機械的 pin ────────────────────
+    //
+    // bd raikiri-spike-awjx。契約の canonical な記述は
+    // `PageCascadeResult::declarations` の doc にあり、本節はそれを**散文では
+    // なく実行可能な形で**押さえる。散文だけで保っていた間に drift が 2 回
+    // 起きている: (1) bd raikiri-spike-ygl0 で対応表が実装と乖離し
+    // bd raikiri-spike-zls8 が in-band caveat で patch、(2) bd raikiri-spike-sshp
+    // の diff 内で pass-through arm の数え上げが「21」と書かれた (実測 22)。
+    //
+    // 本節が壊れる条件:
+    //
+    // - `PropertyValue` に variant を足す → `specified_layer_residue` の網羅
+    //   match が **compile error**。ただし分類を書いた後、`page_corpus` /
+    //   `PROPERTY_VALUE_VARIANTS` の更新を強制するものは無い — 両者が 40 で
+    //   整合したまま新 variant が corpus 外に残る case は**全 test green に
+    //   なる** (bd raikiri-spike-awjx §8.2 debt lens が `PropertyValue::Orphan`
+    //   を足して実測: 網羅 match 5 site を素直に分類しただけで 561 passed /
+    //   0 failed、新 variant は 3 本の pin のどれにも通らなかった)。
+    //   guard は「作者を本 module へ連れてくる」までの **one-way** であり、
+    //   corpus の完全性は保証しない。手順は compile error の出る
+    //   `specified_layer_residue` の doc 側に置いてある。
+    // - `absolutize_in_page_context` の arm 分類を動かす →
+    //   `phase_3_variant_classification_matches_the_documented_counts` が落ちる。
+    // - phase 2 / phase 3 を素通りする値が `declarations` に届くようになる →
+    //   `page_declarations_carry_exactly_one_specified_layer_residue` /
+    //   `cascade_page_output_carries_no_specified_layer_residue` が落ちる。
+    // - `text-align: match-parent` が解決可能になる (bd raikiri-spike-l3wg) →
+    //   同 test が落ち、doc の「例外は 1 つ」を直させる。
+
+    /// `PropertyValue` の variant 総数。
+    ///
+    /// stable Rust に variant 数を数える手段が無い (`mem::variant_count` は
+    /// unstable) ため手で持つ。本節の hand-maintained な数は**これを含めて 3 つ**
+    /// — 他は `PHASE_3_PASS_THROUGH_VARIANTS` と `RAW_CORPUS_RESIDUE_VARIANTS`
+    /// の `+ 3` 項。いずれも機械導出できない。
+    ///
+    /// ⚠️ **本定数は `page_corpus().len()` としか照合されない。** 新 variant を
+    /// 足した作者が両方を放置すれば 40 同士で整合してしまうため、「variant 追加
+    /// が compile error になる」ことは「corpus が完全である」ことを**含意しない**
+    /// (`specified_layer_residue` の tripwire は one-way)。この穴を閉じるには
+    /// corpus を `PropertyKey` の網羅 match から生成する必要がある — 別 task。
+    const PROPERTY_VALUE_VARIANTS: usize = 40;
+
+    /// phase 3 (`absolutize_in_page_context`) が**素通しする** variant 数。
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 22;
+
+    /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
+    /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
+    /// border-width (longhand 4 + `border` shorthand 1) / width + height 2。
+    const PHASE_3_TRANSFORMED_VARIANTS: usize =
+        PROPERTY_VALUE_VARIANTS - PHASE_3_PASS_THROUGH_VARIANTS;
+
+    /// phase 2 / phase 3 を**通す前**の corpus が持つ specified 層残滓の数 =
+    /// `PHASE_3_TRANSFORMED_VARIANTS` + phase 2 が解決する `font-size` /
+    /// `font-weight` の 2 + どちらも解決しない `text-align: match-parent` の 1。
+    const RAW_CORPUS_RESIDUE_VARIANTS: usize = PHASE_3_TRANSFORMED_VARIANTS + 3;
+
+    /// 全 `PropertyValue` variant を **specified 層の worst case** payload で
+    /// 1 つずつ並べたもの。並び順は `PropertyValue` の宣言順。
+    ///
+    /// worst case = 「phase 2 / phase 3 を通さなければ specified 層の残滓が
+    /// 残る」値: length は `Em` / `Rem` / `Pt` (`Px` / `Percent` は既に computed
+    /// 層なので使わない)、`font-weight` は `bolder`、`text-align` は
+    /// `match-parent`。
+    fn page_corpus() -> Vec<PropertyValue> {
+        use std::sync::Arc;
+
+        let literal = || vec![ContentComponent::Literal("x".into())];
+        let solid_border = Border {
+            width: Length::Em(1.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::CurrentColor,
+        };
+        vec![
+            PropertyValue::Color(RED),
+            PropertyValue::BackgroundColor(BLUE),
+            PropertyValue::FontFamily(vec![Atom::from("serif")]),
+            PropertyValue::FontSize(Length::Em(2.0)),
+            PropertyValue::FontWeight(FontWeightValue::Bolder),
+            PropertyValue::LineHeight(LineHeight::Length(Length::Em(2.0))),
+            PropertyValue::Display(DisplayValue::Block),
+            PropertyValue::CounterReset(Arc::new(vec![("c".into(), 0)])),
+            PropertyValue::CounterIncrement(Arc::new(vec![("c".into(), 1)])),
+            PropertyValue::CounterSet(Arc::new(vec![("c".into(), 2)])),
+            PropertyValue::Content(Arc::new(literal())),
+            PropertyValue::StringSet(Arc::new(vec![("s".into(), literal())])),
+            PropertyValue::Position(PositionValue::Static),
+            PropertyValue::TextAlign(TextAlign::MatchParent),
+            PropertyValue::PaddingTop(Length::Em(2.0)),
+            PropertyValue::PaddingRight(Length::Em(2.0)),
+            PropertyValue::PaddingBottom(Length::Em(2.0)),
+            PropertyValue::PaddingLeft(Length::Em(2.0)),
+            PropertyValue::Padding(Sides::all(Length::Em(2.0))),
+            PropertyValue::MarginTop(LengthOrAuto::Length(Length::Rem(2.0))),
+            PropertyValue::MarginRight(LengthOrAuto::Length(Length::Rem(2.0))),
+            PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Rem(2.0))),
+            PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Rem(2.0))),
+            PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Rem(2.0)))),
+            PropertyValue::BorderTopWidth(Length::Pt(12.0)),
+            PropertyValue::BorderRightWidth(Length::Pt(12.0)),
+            PropertyValue::BorderBottomWidth(Length::Pt(12.0)),
+            PropertyValue::BorderLeftWidth(Length::Pt(12.0)),
+            PropertyValue::BorderTopStyle(BorderStyle::Solid),
+            PropertyValue::BorderRightStyle(BorderStyle::Solid),
+            PropertyValue::BorderBottomStyle(BorderStyle::Solid),
+            PropertyValue::BorderLeftStyle(BorderStyle::Solid),
+            PropertyValue::BorderTopColor(BorderColor::CurrentColor),
+            PropertyValue::BorderRightColor(BorderColor::CurrentColor),
+            PropertyValue::BorderBottomColor(BorderColor::CurrentColor),
+            PropertyValue::BorderLeftColor(BorderColor::CurrentColor),
+            PropertyValue::Border(Sides::all(solid_border)),
+            PropertyValue::Width(LengthOrAuto::Length(Length::Em(3.0))),
+            PropertyValue::Height(LengthOrAuto::Length(Length::Em(4.0))),
+            PropertyValue::BoxSizing(BoxSizing::BorderBox),
+        ]
+    }
+
+    /// `value` が **specified 層でしか意味を持たない表現**を残しているか。
+    ///
+    /// `PageCascadeResult::declarations` の doc が宣言する「これは computed 値だ」
+    /// を検査可能にしたもの。`Some(_)` は「その値は phase 2 / phase 3 を素通り
+    /// した」を意味する。
+    ///
+    /// **wildcard arm を置かない** — `PropertyValue` に variant を足すとここで
+    /// compile error になる。**その場で `PROPERTY_VALUE_VARIANTS` を +1 し、
+    /// `page_corpus` に worst-case payload の sample を足すこと** — この 2 つは
+    /// 機械的に強制されない。忘れると `corpus.len()` も定数も 40 のまま揃って
+    /// しまい、本節の pin 3 本が黙って通る。
+    ///
+    /// # 網羅 match が及ぶ payload 型は 5 つだけ
+    ///
+    /// `Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
+    /// `TextAlign`。この 5 型については
+    /// `crate::cascade::resolve_against_inherited` の doc が「この guard が
+    /// 守らない範囲」として挙げる **既存 variant への payload 追加**
+    /// (bd raikiri-spike-7m33 の gap (a)) もここで compile error になる。
+    ///
+    /// **及ばない**もの: `BorderStyle` / `BorderColor` / `DisplayValue` /
+    /// `PositionValue` / `BoxSizing` / `ContentComponent` などは `(_)` で捨てて
+    /// いる。また `PropertyValue::Border` は struct pattern ではなく field
+    /// access (`b.width`) で読むので、[`Border`] に length を運ぶ field を
+    /// 追加しても compile error にならない。
+    fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
+        /// box property (`padding` / `margin` / `width` / `height` /
+        /// `border-*-width`) の `<length-percentage>`。
+        ///
+        /// `%` は CSS Values 4 §5.5.1
+        /// <https://www.w3.org/TR/css-values-4/#combine-percentages> の既定
+        /// ("the computed value of a percentage is the specified percentage")
+        /// どおり computed 層に残る。`Pt` を残滓とする根拠は「absolute で
+        /// ない」ではない — CSS Values 4 §6.2
+        /// <https://www.w3.org/TR/css-values-4/#absolute-lengths> は `pt` も
+        /// absolute length に数える。根拠は同 § の "px is their canonical
+        /// unit" 側であり、computed 層の運搬 shape を `Px` に正規化する
+        /// raikiri の invariant である。
+        fn length(l: Length) -> Option<&'static str> {
+            match l {
+                Length::Px(_) | Length::Percent(_) => None,
+                Length::Em(_) => Some("Length::Em"),
+                Length::Rem(_) => Some("Length::Rem"),
+                Length::Pt(_) => Some("Length::Pt"),
+            }
+        }
+        /// `%` が computed 層に**残らない** position 用 — `font-size` と
+        /// `line-height`。
+        ///
+        /// CSS Values 4 §5.5.1 の既定文が `font-size` を明示的な例外として
+        /// 名指ししている ("such as in font-size, which computes its
+        /// `<percentage>` values to `<length>`)。`line-height` は CSS Inline 3
+        /// §5.1 <https://www.w3.org/TR/css-inline-3/#line-height-property> が
+        /// "Percentages: computed relative to 1em" と規定する。実装側は
+        /// `crate::resolve` の `resolve_font_size` / `resolve_line_height` が
+        /// 両方とも `%` を絶対化しており、本 helper 以前の検出器はそれを
+        /// computed 層と誤分類していた。
+        fn length_absolute_only(l: Length, what: &'static str) -> Option<&'static str> {
+            match l {
+                Length::Percent(_) => Some(what),
+                other => length(other),
+            }
+        }
+        fn length_or_auto(l: LengthOrAuto) -> Option<&'static str> {
+            match l {
+                LengthOrAuto::Auto => None,
+                LengthOrAuto::Length(l) => length(l),
+            }
+        }
+        fn line_height(lh: LineHeight) -> Option<&'static str> {
+            match lh {
+                // CSS Inline 3 §5.1: `normal` / `<number>` は computed 値のまま。
+                LineHeight::Normal | LineHeight::Number(_) => None,
+                LineHeight::Length(l) => length_absolute_only(l, "line-height: <percentage>"),
+            }
+        }
+        fn font_weight(fw: FontWeightValue) -> Option<&'static str> {
+            match fw {
+                FontWeightValue::Absolute(_) => None,
+                FontWeightValue::Bolder => Some("font-weight: bolder"),
+                FontWeightValue::Lighter => Some("font-weight: lighter"),
+            }
+        }
+        fn text_align(ta: TextAlign) -> Option<&'static str> {
+            match ta {
+                TextAlign::Start
+                | TextAlign::End
+                | TextAlign::Left
+                | TextAlign::Right
+                | TextAlign::Center
+                | TextAlign::Justify
+                | TextAlign::JustifyAll => None,
+                // 唯一の文書化された例外 (bd raikiri-spike-l3wg)。
+                TextAlign::MatchParent => Some("text-align: match-parent"),
+            }
+        }
+        fn sides<T: Copy>(
+            s: Sides<T>,
+            f: impl Fn(T) -> Option<&'static str>,
+        ) -> Option<&'static str> {
+            [s.top, s.right, s.bottom, s.left].into_iter().find_map(f)
+        }
+
+        match value {
+            PropertyValue::FontWeight(fw) => font_weight(*fw),
+            PropertyValue::TextAlign(ta) => text_align(*ta),
+            PropertyValue::LineHeight(lh) => line_height(*lh),
+            // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
+            PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),
+            PropertyValue::PaddingTop(l)
+            | PropertyValue::PaddingRight(l)
+            | PropertyValue::PaddingBottom(l)
+            | PropertyValue::PaddingLeft(l)
+            | PropertyValue::BorderTopWidth(l)
+            | PropertyValue::BorderRightWidth(l)
+            | PropertyValue::BorderBottomWidth(l)
+            | PropertyValue::BorderLeftWidth(l) => length(*l),
+            PropertyValue::MarginTop(l)
+            | PropertyValue::MarginRight(l)
+            | PropertyValue::MarginBottom(l)
+            | PropertyValue::MarginLeft(l)
+            | PropertyValue::Width(l)
+            | PropertyValue::Height(l) => length_or_auto(*l),
+            PropertyValue::Padding(s) => sides(*s, length),
+            PropertyValue::Margin(s) => sides(*s, length_or_auto),
+            PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
+            // 層に依存しない payload — keyword / color / ident list / counter。
+            PropertyValue::Color(_)
+            | PropertyValue::BackgroundColor(_)
+            | PropertyValue::FontFamily(_)
+            | PropertyValue::Display(_)
+            | PropertyValue::CounterReset(_)
+            | PropertyValue::CounterIncrement(_)
+            | PropertyValue::CounterSet(_)
+            | PropertyValue::Content(_)
+            | PropertyValue::StringSet(_)
+            | PropertyValue::Position(_)
+            | PropertyValue::BorderTopStyle(_)
+            | PropertyValue::BorderRightStyle(_)
+            | PropertyValue::BorderBottomStyle(_)
+            | PropertyValue::BorderLeftStyle(_)
+            | PropertyValue::BorderTopColor(_)
+            | PropertyValue::BorderRightColor(_)
+            | PropertyValue::BorderBottomColor(_)
+            | PropertyValue::BorderLeftColor(_)
+            | PropertyValue::BoxSizing(_) => None,
+        }
+    }
+
+    /// `%` が computed 層に残らない 2 つの position を検出器が取りこぼさないこと。
+    ///
+    /// `page_corpus` は variant あたり payload を 1 つしか持てない
+    /// (`page_corpus_covers_every_property_value_variant` が 40 entry / 40 key を
+    /// 要求する) ので、この 2 payload は corpus ではなく検出器を直接叩く。
+    /// corpus 側の `Em` payload は据え置きなので raw residue の数え上げにも
+    /// 影響しない。
+    #[test]
+    fn percentage_is_specified_layer_residue_on_font_size_and_line_height() {
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::FontSize(Length::Percent(150.0))),
+            Some("font-size: <percentage>"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::LineHeight(LineHeight::Length(
+                Length::Percent(150.0)
+            ))),
+            Some("line-height: <percentage>"),
+        );
+        // 対照 — box property では `%` が computed 値 (CSS Values 4 §5.5.1 既定)。
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Percent(50.0))),
+            None,
+        );
+    }
+
+    /// `page_corpus` が全 variant を過不足なく 1 度ずつ覆うこと。
+    ///
+    /// `PropertyValue::key()` は variant → key の単射なので、40 entry から
+    /// 相異なる 40 key が出れば 40 variant を覆っている。
+    ///
+    /// ⚠️ これは「corpus に**重複や欠落が無い**」の pin であって「corpus が
+    /// `PropertyValue` の**現在の** variant 集合を覆っている」の pin ではない —
+    /// 照合相手が `PROPERTY_VALUE_VARIANTS` (手で持つ数) だからである。
+    #[test]
+    fn page_corpus_covers_every_property_value_variant() {
+        let corpus = page_corpus();
+        assert_eq!(
+            corpus.len(),
+            PROPERTY_VALUE_VARIANTS,
+            "page_corpus は PropertyValue の全 variant を 1 つずつ持つこと",
+        );
+        let keys: std::collections::HashSet<PropertyKey> =
+            corpus.iter().map(PropertyValue::key).collect();
+        assert_eq!(
+            keys.len(),
+            PROPERTY_VALUE_VARIANTS,
+            "page_corpus に同じ variant が 2 度現れている (key が重複)",
+        );
+    }
+
+    /// phase 3 の「素通し / 変換」分類が doc の数え上げと一致すること。
+    ///
+    /// bd raikiri-spike-sshp が doc に書いた「21」が実測 22 だった drift の
+    /// 再発 pin。分類 (どの arm にどの variant を置くか) を動かすと落ちる。
+    ///
+    /// ⚠️ **射程**: 判定は `out == value` なので、pin しているのは arm の所属
+    /// ではなく「`page_corpus` の payload に対する挙動」である。local 名を
+    /// `unchanged` / `changed` にしてあるのはそのため。corpus が payload を
+    /// variant あたり 1 つしか持たない以上、`border_styles` を
+    /// `Sides::all(Solid)` に固定した本 test は **style gate 自体を pin しない**
+    /// (gate は `cascade_page_border_width_*` の 4 本が持つ)。同様に `%` /
+    /// `auto` / `line-height: <number>` の挙動も本 test の射程外で、それぞれ
+    /// 専用の acceptance test がある。
+    #[test]
+    fn phase_3_variant_classification_matches_the_documented_counts() {
+        let font_size = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        // `Solid` にしておかないと border-*-width が style gate で `0px` に
+        // 潰れ、「変換された」判定が gate 由来か絶対化由来か区別できない。
+        let styles = Sides::all(BorderStyle::Solid);
+
+        let (mut unchanged, mut changed) = (0usize, 0usize);
+        for value in page_corpus() {
+            let out = absolutize_in_page_context(value.clone(), font_size, &ctx, styles);
+            if out == value {
+                unchanged += 1;
+            } else {
+                changed += 1;
+            }
+        }
+        assert_eq!(
+            unchanged, PHASE_3_PASS_THROUGH_VARIANTS,
+            "phase 3 の pass-through arm が覆う variant 数が doc とずれた",
+        );
+        assert_eq!(
+            changed, PHASE_3_TRANSFORMED_VARIANTS,
+            "phase 3 が変換する variant 数が doc とずれた",
+        );
+    }
+
+    /// **本節の中心 pin** — phase 2 → phase 3 を通した後、`declarations` に
+    /// 届く値の specified 層残滓は `text-align: match-parent` **ただ 1 つ**。
+    ///
+    /// `PageCascadeResult::declarations` の doc が consumer に宣言している
+    /// 「These are computed values, with the single documented exception」
+    /// そのもの。例外が増減したらここで落ち、doc を直させる。
+    #[test]
+    fn page_declarations_carry_exactly_one_specified_layer_residue() {
+        let root = root_with_font_size(16.0);
+        let font_size = ComputedLength(20.0);
+        let ctx = ResolveContext::new(root.font_size);
+        let styles = Sides::all(BorderStyle::Solid);
+
+        let residues: Vec<(PropertyKey, &'static str)> = page_corpus()
+            .into_iter()
+            .map(|v| resolve_against_inherited(v, &root))
+            .map(|v| absolutize_in_page_context(v, font_size, &ctx, styles))
+            .filter_map(|v| specified_layer_residue(&v).map(|r| (v.key(), r)))
+            .collect();
+
+        assert_eq!(
+            residues,
+            vec![(PropertyKey::TextAlign, "text-align: match-parent")],
+            "PageCascadeResult::declarations の doc が宣言する例外は 1 つだけ",
+        );
+    }
+
+    /// 同じ規則を **`cascade_page` の出力そのもの** に対して確かめる。
+    ///
+    /// 上の test は phase 2 ∘ phase 3 を直接合成しているので、`cascade_page`
+    /// が phase 3 を呼ばなくなっても落ちない。契約が書かれているのは
+    /// `PageCascadeResult::declarations` = `cascade_page` の戻り値なので、
+    /// 主語を合わせた pin をもう 1 本置く (bd raikiri-spike-7m33 が言う
+    /// 「本関数を呼ばない entry point」を型で数え上げられない以上、既存経路の
+    /// wiring だけでも押さえておく)。
+    #[test]
+    fn cascade_page_output_carries_no_specified_layer_residue() {
+        let root = root_with_font_size(16.0);
+        let result = page(
+            "@page { font-size: 2em; font-weight: bolder; line-height: 1.5em; \
+             padding: 2em; margin: 3rem; border: 12pt solid red; \
+             width: 4em; height: 5em; text-align: match-parent }",
+            &root,
+        );
+        // vacuity guard — stylesheet が黙って落ちていないこと。
+        //
+        // exact count で持つ。`>= N` 形だと `border` shorthand の 12 longhand が
+        // 丸ごと落ちる parse regression が起きても残りで閾値を超えてしまい、
+        // かつ落ちた分は residue も 0 なので本 pin が素通りする。
+        //
+        // 26 = font-size / font-weight / line-height / text-align / width /
+        // height の 6 + padding 4 + margin 4 + `border` shorthand の展開 12
+        // (4 side × width / style / color)。`@page` の shorthand 展開が変わったら
+        // ここが先に落ちる。
+        assert_eq!(
+            result.declarations.len(),
+            26,
+            "corpus stylesheet が期待通り parse / 展開されていない: {}",
+            result.declarations.len(),
+        );
+
+        // `declarations` は HashMap-random 順なので sort して比較する。
+        let mut residues: Vec<String> = result
+            .declarations
+            .values()
+            .filter_map(|v| specified_layer_residue(v).map(|r| format!("{:?}: {r}", v.key())))
+            .collect();
+        residues.sort();
+        assert_eq!(
+            residues,
+            vec!["TextAlign: text-align: match-parent".to_string()],
+            "cascade_page の出力に documented exception 以外の specified 層 \
+             残滓が居る",
+        );
+    }
+
+    /// `page_declarations_carry_exactly_one_specified_layer_residue` と
+    /// `cascade_page_output_carries_no_specified_layer_residue` が vacuous で
+    /// ないこと (negative control) — 検出器は phase 2 / phase 3 を通していない
+    /// 値に対しては実際に発火する。
+    #[test]
+    fn specified_layer_residue_detector_is_not_vacuous() {
+        let raw = page_corpus()
+            .iter()
+            .filter(|v| specified_layer_residue(v).is_some())
+            .count();
+        assert_eq!(
+            raw, RAW_CORPUS_RESIDUE_VARIANTS,
+            "corpus の worst-case payload が specified 層残滓として検出されない \
+             — 検出器か corpus のどちらかが骨抜きになっている",
+        );
+    }
+
     /// Phase 3 must leave every computed-equivalent value untouched — the
-    /// pass-through arm covers 22 of the 40 `PropertyValue` variants (the other
-    /// 18 are transformed: padding 5 / margin 5 / border-width 5 /
-    /// line-height 1 / width + height 2) and a wrong classification there
-    /// would corrupt a value rather than merely leave it unresolved.
+    /// pass-through arm covers `PHASE_3_PASS_THROUGH_VARIANTS` of the
+    /// `PROPERTY_VALUE_VARIANTS` `PropertyValue` variants (the rest are
+    /// transformed) and a wrong classification there would corrupt a value
+    /// rather than merely leave it unresolved. The counts themselves are pinned
+    /// by `phase_3_variant_classification_matches_the_documented_counts`; this
+    /// test drives the same rule end-to-end through `cascade_page`.
     #[test]
     fn cascade_page_computed_equivalent_values_pass_phase_3_unchanged() {
         let root = root_with_weight(700);

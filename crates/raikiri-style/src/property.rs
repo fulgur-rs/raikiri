@@ -196,9 +196,17 @@ fn expand_hex_nibble(n: u8) -> u8 {
 /// 本型 = specified 層で読んでよい。**page 経路は違う** —
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
 /// は `PropertyValue` の bag なので computed 値も本型で運ばれる (bd
-/// raikiri-spike-sshp)。そこに届く `Length` は `Px` か `Percent` だけで、
-/// `Em` / `Rem` / `Pt` は phase 3 で解決済みである。
-/// したがって「`Length` が見えたから未解決」と判断してはならない。
+/// raikiri-spike-sshp)。したがって「`Length` が見えたから未解決」と判断しては
+/// ならない。
+///
+/// **本節が「型は層を表明しない」規則の canonical な記述である。**
+/// 一方、page 経路が具体的に何を保証するか (どの値が computed 層に居るのか、
+/// 例外は何か) は
+/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
+/// の doc が canonical であり、その内容は `page::tests` の
+/// `page_declarations_carry_exactly_one_specified_layer_residue` が機械的に
+/// pin している。**ここに保証の中身を書き足して重複させないこと** — 手で 2 site
+/// を揃える運用は既に 2 度 drift した (bd raikiri-spike-awjx)。
 ///
 /// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
 /// 変数追加が既存 pattern-match を break しない forward-compat 契約)。既存 sibling

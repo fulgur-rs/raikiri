@@ -144,14 +144,18 @@ pub use raikiri_dom::Document;
 //
 // `Length` が payload に居ることは「その値が specified 層である」ことを意味しない
 // — **どの層かは PropertyValue をどこから受け取ったかで決まる** (bd
-// raikiri-spike-sshp):
+// raikiri-spike-sshp)。この規則自体の canonical な記述は
+// `raikiri_style::Length` の doc の「本型は『specified 層』を意味しない —
+// 層は出所で決まる」節にある (`Length` は下で re-export しているので Consumer
+// から到達可能)。出所ごとの内訳:
 //
 // - `RuleTree` / `Declaration` 由来 (parse 直後の cascade 入力) は specified 層。
 //   `Em` / `Rem` / `Pt` / `Percent` がそのまま入る。
 // - `raikiri_style::cascade_page` の `PageCascadeResult.declarations` 由来は
-//   **computed 層**。page 経路は phase 2 + phase 3 を通すので `Length` は
-//   `Px` か `Percent` にしかならず、`border-*-width` は style gating 済み。
-//   `Length` はその computed 値の運搬 shape として使われている。
+//   **computed 層** — `Length` はその computed 値の運搬 shape として使われて
+//   いる。**何が保証され例外が何かの canonical な記述は
+//   `raikiri_style::page::PageCascadeResult::declarations` の doc** であり、
+//   ここで再掲しない (再掲は既に 2 度 drift した — bd raikiri-spike-awjx)。
 //   (`cascade_page` 自体は umbrella が re-export していないので、この経路に
 //   届く Consumer は raikiri-style へ直接 dep している場合のみ。)
 //
