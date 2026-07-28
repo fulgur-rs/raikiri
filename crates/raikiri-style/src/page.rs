@@ -180,6 +180,14 @@ pub struct PageRule {
     /// M4 note: `@page`-specific descriptors (`size`, `marks`, `bleed`, and
     /// the margin-box at-rules `@top-left` etc. per L3 §5) are also dropped
     /// by this reuse; wiring them is M4 scope.
+    ///
+    /// Still `pub` after bd raikiri-spike-qzn3 — deliberately, and outside that
+    /// task's approved scope. What the asymmetry implies is documented at
+    /// `crate::rule::expand_shorthand_into`.
+    // ⚠️ Do not turn the reference above into an intra-doc link: this field is
+    // `pub` and `expand_shorthand_into` is `pub(crate)`, so linking from a
+    // public item trips `rustdoc::private_intra_doc_links` under `-D warnings`
+    // (hit for real during the bd raikiri-spike-qzn3 gate).
     pub declarations: Vec<Declaration>,
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
@@ -2764,12 +2772,17 @@ mod tests {
 
     // ── post-parse shorthand injection into `@page` (bd raikiri-spike-3svx) ──
     //
-    // `RuleTree.page_rules` / `PageRule.declarations` / `Declaration.value` は
-    // `pub` field なので、Consumer は `add_stylesheet` の**後**に declaration を
-    // shorthand variant へ書き戻せる。`crate::rule::parse_declaration_block` の
+    // `add_stylesheet` の**後**に declaration を shorthand variant へ書き戻す
+    // post-parse mutation 経路。`crate::rule::parse_declaration_block` の
     // parse-time 展開はこの経路を守らない。element 経路の同形 gap を塞いだのが
     // bd raikiri-spike-nqkj (`crate::cascade` の `collect_cascaded`)、`@page`
     // 経路 = `cascade_page` を塞いだのが bd raikiri-spike-3svx。
+    //
+    // `RuleTree.page_rules` / `PageRule.declarations` は bd raikiri-spike-qzn3
+    // の後も `pub` field である (element 経路と違い可視性では閉じない)。何が
+    // 閉じていて何が開いているかは `crate::rule::expand_shorthand_into` doc の
+    // 「2 と 3 で閉じている範囲が違う」節が canonical — ここには再掲しない
+    // (再掲は既に 2 度 drift した — bd raikiri-spike-awjx)。
     //
     // 守るべき spec は 2 条:
     //
@@ -2793,9 +2806,13 @@ mod tests {
     /// nqkj の element 経路 helper (`cascade::tests::
     /// cascade_with_post_parse_injection`) の `@page` 版。
     ///
-    /// `css` を `RuleTree::add_stylesheet` で parse したあと、Consumer と同じ
-    /// 手つきで `page_rules[0].declarations[idx].value` を `injected` に差し替え、
+    /// `css` を `RuleTree::add_stylesheet` で parse したあと、
+    /// `page_rules[0].declarations[idx].value` を `injected` に差し替え、
     /// `cascade_page` を通した結果を返す。
+    ///
+    /// この手つきは **3svx が報告した当時の Consumer 経路**そのもの。qzn3 で
+    /// `Declaration::value` が `pub(crate)` になったので、もう crate 外からは
+    /// 書けない。
     ///
     /// `PageRule` を直接 literal 構築しないのが要点 — `#[non_exhaustive]` は
     /// crate 内構築を妨げないので、literal だと **報告された経路とは別の経路**を

@@ -12,12 +12,22 @@ use crate::RaikiriSelectorImpl;
 use crate::property::{Border, Length, LengthOrAuto, PropertyValue, Sides, parse_value};
 
 /// 1 property declaration = value + `!important` flag。
+///
+/// `value` が私有なので、crate 外からは struct literal / functional-update
+/// のいずれでも構築できない (bd raikiri-spike-qzn3)。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Declaration {
     /// resolved property value。
-    pub value: PropertyValue,
+    pub(crate) value: PropertyValue,
     /// `!important` flag (true なら importance 上げ)。
     pub important: bool,
+}
+
+impl Declaration {
+    /// resolved property value への read-only accessor (bd raikiri-spike-qzn3)。
+    pub fn value(&self) -> &PropertyValue {
+        &self.value
+    }
 }
 
 /// Qualified style rule (`selectors { declarations }`)。
@@ -33,11 +43,19 @@ pub struct StyleRule {
     /// Parse 済 selector list。M1.4 では type + universal のみ受理 (他は build 段で drop)。
     pub selectors: SelectorList<RaikiriSelectorImpl>,
     /// このルールの declaration list (invalid は含まない)。
-    pub declarations: Vec<Declaration>,
+    pub(crate) declarations: Vec<Declaration>,
     /// RuleTree 全体を通した 0-indexed source order。
     pub source_order: u32,
     /// この rule が属する cascade origin (raikiri-spike-m1.22)。
     pub origin: crate::ruletree::Origin,
+}
+
+impl StyleRule {
+    /// このルールの declaration list への read-only accessor
+    /// (invalid は含まない、bd raikiri-spike-qzn3)。
+    pub fn declarations(&self) -> &[Declaration] {
+        &self.declarations
+    }
 }
 
 /// declaration-list を消費して `Vec<Declaration>` を produce。
@@ -83,16 +101,35 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// 3. [`crate::page::cascade_page`] — **`RuleTree::page_rules` の declaration が
 ///    `@page` cascade candidate になる境界** (bd raikiri-spike-3svx)。
 ///
-/// 2 と 3 が要るのは `RuleTree.style_rules` / [`StyleRule::declarations`] /
-/// `RuleTree.page_rules` / `crate::page::PageRule::declarations` /
-/// [`Declaration::value`] がいずれも `pub` field で、かつ `raikiri` umbrella
-/// crate が `RuleTree` を re-export しているため、Consumer が
-/// `add_stylesheet` の**後**に shorthand variant を書き戻せるからである
+/// 2 と 3 が要るのは、`add_stylesheet` の**後**に declaration を shorthand
+/// variant へ書き戻す post-parse mutation 経路が存在するからである
 /// (bd raikiri-spike-nqkj / bd raikiri-spike-3svx)。parse 出口の guard は parse
 /// 出口しか見ないのでこの経路を守らない。cascade 入口で同じ等価変換を通すことで、
 /// **declaration がどこから来たかに依らず** 下の不変が成立する。
 ///
-/// ⚠️ 2 と 3 で **破れ方が違う**。2 (element) の winner は
+/// bd raikiri-spike-qzn3 で [`crate::ruletree::RuleTree::style_rules()`] /
+/// [`StyleRule::declarations()`] / [`Declaration::value()`] を `pub(crate)` +
+/// read-only accessor に絞ったので、2 / 3 は現在 **crate 内 invariant guard**
+/// である。ただし **2 と 3 で閉じている範囲が違う**:
+///
+/// - **2 (element)** は可視性だけで閉じる。Consumer が到達できるのは read-only な
+///   `&[StyleRule]` / `&[Declaration]` までで、declaration を書き戻す `&mut`
+///   経路が public に存在しない。
+/// - **3 (`@page`)** は `RuleTree::page_rules` / `crate::page::PageRule::declarations`
+///   が `pub` のままなので、Consumer は既存 `Declaration` の複製 / 削除 /
+///   並べ替え / `important` 書き換え、および既存 `PageRule` を clone して中身を
+///   差し替えたものの push を依然できる (`PageRule` は `#[non_exhaustive]` なので
+///   新規 literal 構築はできず、seed に既存 `@page` rule が 1 つ要る)。
+///   閉じているのは **shorthand を載せた `Declaration` を新規に作れない**点だけで、
+///   その根拠は 2 段ある: (a) `value` が私有なので struct literal /
+///   functional-update 構築が不可、(b) `Clone` 元になりうる declaration が
+///   longhand しか無いのは [`parse_declaration_block`] が shorthand key を
+///   emit しないため ([`tests::declaration_block_never_emits_shorthand_keys`] と
+///   本関数の exhaustive match = bd raikiri-spike-ez7b が pin)。**(a) か (b) が
+///   破れると 3 の経路は crate 外から再び開く** — `Declaration` に公開 ctor を
+///   足す変更は本節を再導出してから行うこと。
+///
+/// ⚠️ **2 と 3 で破れ方が違う**。2 (element) の winner は
 /// [`crate::specified::SpecifiedValues`] の longhand と同じ field に畳まれるので
 /// shorthand が**誤って後勝ちする**。3 (`@page`) の出力は
 /// `HashMap<PropertyKey, PropertyValue>` のままなので、shorthand winner は
@@ -482,9 +519,9 @@ mod tests {
     /// 参照。
     ///
     /// ⚠️ 本 test が見るのは [`expand_shorthand_into`] の **call site 1 (parse
-    /// 出口) だけ**である。[`crate::ruletree::RuleTree`] は `pub` field なので
-    /// Consumer が parse 後に shorthand を書き戻せ、その経路は本 test を素通り
-    /// する (bd raikiri-spike-nqkj)。call site 2 (element cascade 入口) の guard は
+    /// 出口) だけ**である。post-parse mutation 経路 (bd raikiri-spike-qzn3 以降は
+    /// crate 内からのみ到達可能) は本 test を素通りする
+    /// (bd raikiri-spike-nqkj)。call site 2 (element cascade 入口) の guard は
     /// `crate::cascade` の `post_parse_*` test 群 (6 本) が、call site 3
     /// (`@page` cascade 入口) の guard は `crate::page` の `post_parse_page_*`
     /// test 群 (6 本) が持つ (bd raikiri-spike-3svx)。

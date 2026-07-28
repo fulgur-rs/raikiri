@@ -34,14 +34,31 @@ pub enum Origin {
 #[non_exhaustive]
 pub struct RuleTree {
     /// Qualified style rules (`selectors { declarations }`)、source order 保持。
-    pub style_rules: Vec<StyleRule>,
+    pub(crate) style_rules: Vec<StyleRule>,
     /// `@page` at-rules。source_order は `style_rules` とは独立の 0-index。
     /// cascade は [`crate::page::cascade_page`] が適用する; per-page `PageBox`
     /// derivation と margin-box slot layout は M4 defer。
+    ///
+    /// `style_rules` と違い `pub` のまま — 意図的で、bd raikiri-spike-qzn3 の
+    /// approved scope 外である。非対称の帰結は
+    /// `crate::rule::expand_shorthand_into` doc が canonical。
+    // ⚠️ 上の参照を intra-doc link にしないこと — 本 field は `pub` で
+    // `expand_shorthand_into` は `pub(crate)` なので、public item の doc から
+    // link すると `rustdoc::private_intra_doc_links` が `-D warnings` で落ちる
+    // (bd raikiri-spike-qzn3 gate で実際に踏んだ)。
     pub page_rules: Vec<PageRule>,
 }
 
 impl RuleTree {
+    /// Qualified style rules への read-only accessor (source order 順)。
+    ///
+    /// **qualified style rules に関しては**書き込み経路が
+    /// [`RuleTree::add_stylesheet`] のみになった (bd raikiri-spike-qzn3)。
+    /// `page_rules` 側は approved scope 外で `pub` のまま — 同 field の doc 参照。
+    pub fn style_rules(&self) -> &[StyleRule] {
+        &self.style_rules
+    }
+
     /// 空の RuleTree (0 rule)。
     pub fn empty() -> Self {
         Self {

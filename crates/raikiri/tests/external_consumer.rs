@@ -145,6 +145,31 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
     let _doc = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse");
 }
 
+/// `RuleTree` の read-only accessor chain (`style_rules()` → `declarations()`
+/// → `value()`) が external crate から通ることを compile + run で pin
+/// (bd raikiri-spike-qzn3、PMO 判断 (B) 可視性を絞る)。
+///
+/// ⚠️ 本 test が pin するのは **read 経路が届くこと**だけである。「write 経路が
+/// 無い」ことは compile する code では表現できないので pin されていない
+/// (compile-fail harness = bd raikiri-spike-ejia)。
+#[test]
+fn external_consumer_reads_rule_tree_through_readonly_accessors() {
+    let mut tree = RuleTree::empty();
+    assert!(tree.style_rules().is_empty(), "empty() は 0 rule");
+
+    tree.add_stylesheet("p { color: red; }", Origin::Author);
+
+    let rules = tree.style_rules();
+    assert_eq!(rules.len(), 1, "type selector 1 rule が入る");
+
+    let decls = rules[0].declarations();
+    assert_eq!(decls.len(), 1);
+    assert!(
+        matches!(decls[0].value(), PropertyValue::Color(_)),
+        "accessor 経由で読めた value は color 宣言"
+    );
+}
+
 /// PageBox の px 単位切替の regression pin (design test #11)。
 #[test]
 fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
