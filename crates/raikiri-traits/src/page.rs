@@ -51,7 +51,8 @@ impl PageFragment {
 /// M1.6 layout-single-page で width / height + `A4` / `US_LETTER` const を populate。
 /// margins / margin_boxes は M4 で populate。
 ///
-/// **単位 = CSS px** (1 CSS px = 1/96 in in print context per CSS Values L4 §5.2)。
+/// **単位 = CSS px** (1 CSS px = 1/96 in in print context per CSS Values L4 §6.2
+/// "Absolute Lengths" <https://www.w3.org/TR/css-values-4/#absolute-lengths>)。
 /// pt / mm / in への換算は Consumer 責務。
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -305,7 +306,7 @@ pub enum GcpmDirective {
     },
     /// `string-set: name <content-list>` — resolve 済 content-list を named-string
     /// `name` の 4-snapshot state (start / first / last / first-except) に snapshot
-    /// (CSS GCPM 3 §3.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>)。
+    /// (CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>)。
     StringSet {
         /// Named-string identifier。
         name: Symbol,

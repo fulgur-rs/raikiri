@@ -281,7 +281,8 @@ fn expand_padding(sides: Sides<Length>, important: bool, mut push: impl FnMut(De
     });
 }
 
-/// `border` shorthand (CSS Backgrounds 3 §5.4) を 12 longhand
+/// `border` shorthand (CSS Backgrounds 3 §3.4 "Border Shorthand Properties"
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>) を 12 longhand
 /// (4 side × 3 sub-property = width / style / color) に展開する
 /// (raikiri-spike-0vv.12)。margin / padding shorthand precedent と同 pattern。
 /// spec `border` grammar は 4 side 共通 (`Sides::all(border)`) だが、cascade

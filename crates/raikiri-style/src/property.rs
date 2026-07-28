@@ -96,7 +96,7 @@ impl CssColor {
 
     /// hex-notation payload (leading `#` を除いた digit 列) を parse する。
     ///
-    /// CSS Color 4 §5.2 "The RGB hexadecimal notations: `#RRGGBB`"
+    /// CSS Color 4 §5.2 "The RGB Hexadecimal Notations: `#RRGGBB`"
     /// <https://www.w3.org/TR/css-color-4/#hex-notation> の 4 form を受理:
     ///
     /// - **3-digit** `rgb`     → 各 nibble を duplicate → `#RRGGBB`, `a = 255`
@@ -104,19 +104,26 @@ impl CssColor {
     /// - **6-digit** `rrggbb`  → `a = 255` (fully opaque)
     /// - **8-digit** `rrggbbaa` → 末尾 byte が alpha (0..=255)
     ///
-    /// 短縮形 (3/4-digit) の "digit duplicate" は spec §5.2 直訳:
+    /// 短縮形 (3/4-digit) の "digit duplicate" は §5.2 verbatim:
     ///
-    /// > "The 3 and 4-digit hex color is a shorter variant of the 6 and
-    /// > 8-digit form, respectively. […] The shorter form is expanded into
-    /// > the longer form by duplicating each digit: `#rgb` becomes `#rrggbb`,
-    /// > and `#rgba` becomes `#rrggbbaa`."
+    /// > This syntax is often explained by saying that it’s identical to a
+    /// > 6-digit notation obtained by "duplicating" all of the digits. For
+    /// > example, the notation #123 specifies the same color as the notation
+    /// > #112233.
+    ///
+    /// 4-digit も同様 — §5.2 verbatim:
+    ///
+    /// > This is a shorter variant of the 8-digit notation, "expanded" in the
+    /// > same way as the 3-digit notation is.
     ///
     /// 実装上は nibble `n` (0..=15) を `(n << 4) | n = n * 17` に展開する。
     ///
     /// # Case
     ///
-    /// `0-9` / `a-f` / `A-F` を受理 (ASCII case-insensitive, §5.2 —
-    /// "The letters `A`–`F` may be in uppercase or lowercase")。
+    /// `0-9` / `a-f` / `A-F` を受理 (ASCII case-insensitive)。§5.2 verbatim:
+    ///
+    /// > the case of the letters doesn’t matter - #00ff00 is identical to
+    /// > #00FF00
     ///
     /// # Invalid input
     ///
@@ -177,8 +184,8 @@ fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
 }
 
 /// 4-bit nibble `n` (`0..=15`) を 8-bit channel `nn` に展開する。
-/// `(n << 4) | n = n * 17` — CSS Color 4 §5.2 の "duplicating each digit"
-/// を実装した short-form 展開 helper (`#f` → `0xff`, `#8` → `0x88`)。
+/// `(n << 4) | n = n * 17` — CSS Color 4 §5.2 の「"duplicating" all of the
+/// digits」を実装した short-form 展開 helper (`#f` → `0xff`, `#8` → `0x88`)。
 fn expand_hex_nibble(n: u8) -> u8 {
     (n << 4) | n
 }
@@ -402,30 +409,33 @@ impl<T> Sides<T> {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BorderStyle {
-    /// `none` — no border (initial value)、border-width is treated as `0`
-    /// (§3.2 "The used values of the corresponding border-*-width become 0.")。
+    /// `none` — initial value。CSS Backgrounds 3 §3.2 verbatim: "No border.
+    /// Color and width are ignored (i.e., the border has width 0)."
+    /// (<https://www.w3.org/TR/css-backgrounds-3/#valdef-line-style-none>)
     None,
-    /// `hidden` — none と同 rendering、table conflict resolution で異なる
-    /// (§3.2 "Same as none, except in terms of border conflict resolution for
-    /// table elements.")。
+    /// `hidden` — §3.2 verbatim: "Same as none, but has different behavior in
+    /// the border conflict resolution rules for border-collapsed tables
+    /// \[CSS2\]."
     Hidden,
-    /// `dotted` — series of round dots (§3.2)。
+    /// `dotted` — §3.2 verbatim: "A series of round dots."
     Dotted,
-    /// `dashed` — series of short line segments (§3.2)。
+    /// `dashed` — §3.2 verbatim: "A series of square-ended dashes."
     Dashed,
-    /// `solid` — single line segment (§3.2)。
+    /// `solid` — §3.2 verbatim: "A single line segment."
     Solid,
-    /// `double` — two parallel solid lines (§3.2)。
+    /// `double` — §3.2 verbatim: "Two parallel solid lines with some space
+    /// between them."
     Double,
-    /// `groove` — border makes the box look as though it were carved out of
-    /// the canvas (§3.2、3D shading effect)。
+    /// `groove` — §3.2 verbatim: "Looks as if it were carved in the canvas."
     Groove,
-    /// `ridge` — opposite of `groove` (§3.2)。
+    /// `ridge` — §3.2 verbatim: "Looks as if it were coming out of the
+    /// canvas."
     Ridge,
-    /// `inset` — border makes the entire box look as though it were embedded
-    /// in the canvas (§3.2)。
+    /// `inset` — §3.2 verbatim: "Looks as if the content on the inside of the
+    /// border is sunken into the canvas."
     Inset,
-    /// `outset` — opposite of `inset` (§3.2)。
+    /// `outset` — §3.2 verbatim: "Looks as if the content on the inside of the
+    /// border is raised out of the canvas."
     Outset,
 }
 
@@ -462,7 +472,8 @@ pub enum BorderStyle {
 /// # `#[non_exhaustive]`
 ///
 /// Sibling [`Length`] / [`LengthOrAuto`] / [`BorderStyle`] / [`Border`] と
-/// 同 pattern — future variant 追加 (例: CSS Color 4 §17 system-color keyword)
+/// 同 pattern — future variant 追加 (例: CSS Color 4 §6.2 "System Colors"
+/// <https://www.w3.org/TR/css-color-4/#css-system-colors> の system-color keyword)
 /// の forward-compat 契約 (37n sibling convention)。
 ///
 /// (raikiri-spike-0vv.17)
@@ -1172,7 +1183,8 @@ pub enum PropertyValue {
     /// (raikiri-spike-0vv.4、詳細は [`DisplayValue`] doc)。
     Display(DisplayValue),
     /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
-    /// non-inherited、initial: empty list (CSS Lists 3 §4.1)。
+    /// non-inherited。spec initial は `none` (CSS Lists 3 §4.1)、本 impl はそれを
+    /// 空 list で表現する。
     /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
     ///
     /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`apply_winners` の drain での
@@ -1185,22 +1197,24 @@ pub enum PropertyValue {
     /// (raikiri-spike-d9y.2 SEC HIGH、d9y.1 Content/StringSet pattern の踏襲)。
     CounterReset(Arc<Vec<(SmolStr, i32)>>),
     /// `counter-increment: [ <counter-name> <integer>? ]+ | none` —
-    /// non-inherited、initial: empty list (CSS Lists 3 §4.2)。
+    /// non-inherited。spec initial は `none` (CSS Lists 3 §4.2)、本 impl はそれを
+    /// 空 list で表現する。
     /// missing integer は 1 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
     ///
     /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
     /// (raikiri-spike-d9y.2)。
     CounterIncrement(Arc<Vec<(SmolStr, i32)>>),
     /// `counter-set: [ <counter-name> <integer>? ]+ | none` —
-    /// non-inherited、initial: empty list (CSS Lists 3 §4.2)。
+    /// non-inherited。spec initial は `none` (CSS Lists 3 §4.2)、本 impl はそれを
+    /// 空 list で表現する。
     /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
     ///
     /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
     /// (raikiri-spike-d9y.2)。
     CounterSet(Arc<Vec<(SmolStr, i32)>>),
-    /// `content: normal | none | <content-list>` — non-inherited、initial:
-    /// empty list (spec の `normal` / `none` を空 list として扱う、pseudo-element
-    /// 生成判断は下流 layer)。M5 gcpm-directive-emit static-side
+    /// `content: normal | none | <content-list>` — non-inherited。spec initial は
+    /// `normal`、本 impl は `normal` / `none` をどちらも空 list で表現する
+    /// (pseudo-element 生成判断は下流 layer)。M5 gcpm-directive-emit static-side
     /// (raikiri-spike-m5.1)、CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>。
     ///
@@ -1216,8 +1230,9 @@ pub enum PropertyValue {
     /// 場合のみ `PropertyValue::Content(Arc::new(vec![..]))` の書き換えが必要。
     /// enum-level docstring §`#[non_exhaustive]` semantics も参照。
     Content(Arc<Vec<ContentComponent>>),
-    /// `string-set: none | [ <custom-ident> <content-list> ]#` — non-inherited、
-    /// initial: empty list。各 entry は `(name, content-list)` pair。
+    /// `string-set: none | [ <custom-ident> <content-list> ]#` — non-inherited。
+    /// spec initial は `none`、本 impl はそれを空 list で表現する。各 entry は
+    /// `(name, content-list)` pair。
     /// CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>、
     /// `<content-list>` は CSS Content 3 §2 (m5.1 で parser 実装済)。
     /// 名前解決と runtime string() 参照は下流 (raikiri-dom) 責務。
@@ -1408,8 +1423,9 @@ pub enum PropertyValue {
     ///
     /// # Non-goals (spec deviation 明示)
     ///
-    /// spec §3.4 では border shorthand が **border-image-* も reset** する (spec
-    /// verbatim "Also resets border-image to its initial value.") が、本 crate は
+    /// spec §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
+    /// では border shorthand が **border-image-* も reset** する (spec verbatim は
+    /// `parse_border_shorthand` doc に 1 site だけ置く) が、本 crate は
     /// border-image を milestone defer (未実装、bd raikiri-spike-0vv Epic の
     /// (b) milestone subset)。future 統合 task で border-image longhand と併せて
     /// 対応。
@@ -2223,7 +2239,7 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
 ///
 /// grammar: `<length-percentage [0,∞]>` (CSS Box 3 §4.1
 /// <https://www.w3.org/TR/css-box-3/#padding-physical>)。spec 原文:
-/// "Negative values are invalid for padding properties" — 負値は grammar 違反
+/// "Negative values for padding properties are invalid." — 負値は grammar 違反
 /// として declaration ごと drop する。
 ///
 /// # 実装 note
@@ -2246,7 +2262,7 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
 /// bd raikiri-spike-zls8 の font-relative unit 対応で解消済み。
 fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
-    // spec §4.1: "Negative values are invalid for padding properties"。
+    // spec (CSS Box 3) §4.1: "Negative values for padding properties are invalid."。
     // 全 variant の payload を OR-pattern で抽出し `>= 0.0` を確認、負値 → drop。
     let v = match length {
         Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
@@ -2282,7 +2298,7 @@ fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> 
     let v2 = input.try_parse(parse_padding_side_res).ok();
     let v3 = input.try_parse(parse_padding_side_res).ok();
     let v4 = input.try_parse(parse_padding_side_res).ok();
-    // spec §4.2 1-4 value expansion (verbatim):
+    // spec (CSS Box 3) §4.2 1-4 value expansion (verbatim):
     let sides = match (v2, v3, v4) {
         (None, _, _) => Sides::all(v1),
         (Some(h), None, _) => Sides {
@@ -2424,8 +2440,10 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 ///
 /// # `||` (any-order) grammar semantics
 ///
-/// spec CSS Values 4 §2.4 `<a> || <b>` は "one or more of the components must
-/// occur, in any order" — 本 shorthand では:
+/// spec CSS Values 4 §2.2 "Component Value Combinators"
+/// <https://www.w3.org/TR/css-values-4/#component-combinators> verbatim:
+/// "A double bar (||) separates two or more options: one or more of them must
+/// occur, in any order." — 本 shorthand では:
 /// - each component は最大 1 回 (2 回目の同 slot ident は spec-invalid = drop)
 /// - at least 1 component が必須 (0 component の empty `border:` は drop)
 /// - order は自由 (`1px solid red` / `red 1px solid` / `solid 1px` 全て valid)
@@ -2452,8 +2470,9 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 /// # Non-goals (spec deviation 明示)
 ///
 /// spec §3.4 では border shorthand が **border-image-* も reset** する (spec
-/// verbatim "Also resets border-image to its initial value.") が、本 crate は
-/// border-image を milestone defer で実装しないため reset side effect を省略。
+/// verbatim "The border shorthand also resets border-image to its initial
+/// value.") が、本 crate は border-image を milestone defer で実装しないため
+/// reset side effect を省略。
 /// bd raikiri-spike-0vv (Epic) の border-image longhand 実装時に統合する。
 ///
 /// # Sibling pattern
@@ -2821,8 +2840,11 @@ fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
 ///
 /// # Scope carving (g04 3-category、[`TextAlign`] doc-comment に詳述)
 ///
-/// - **(b) milestone subset**: `<string>` value (§6.1.1 experimental) は
-///   silent drop、CSS-wide keyword (`inherit` 等) も Epic 7 で silent drop。
+/// - **(b) milestone subset**: `<string>` value は silent drop。CSS Text 3
+///   §6.1 の grammar には無く、CSS Text 4 §7.1
+///   <https://www.w3.org/TR/css-text-4/#text-align-property> で追加された
+///   alternative (semantics は同 §7.2 "Character-based Alignment in a Table
+///   Column")。CSS-wide keyword (`inherit` 等) も Epic 7 で silent drop。
 /// - **(a) spec-invalid**: 未知 keyword (`middle` 等) は silent drop = `None`。
 fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
     let ident = input.expect_ident().ok()?.clone();
@@ -3420,9 +3442,9 @@ mod tests {
 
     #[test]
     fn color_parse_hex_3digit_duplicates_nibbles() {
-        // CSS Color 4 §5.2: "The shorter form is expanded into the longer
-        // form by duplicating each digit: `#rgb` becomes `#rrggbb`."
-        // `#f00` == `#ff0000`.
+        // CSS Color 4 §5.2 verbatim: "This syntax is often explained by saying
+        // that it’s identical to a 6-digit notation obtained by "duplicating"
+        // all of the digits." `#f00` == `#ff0000`.
         assert_eq!(
             parse("#f00", "color"),
             Some(PropertyValue::Color(CssColor {
@@ -3466,8 +3488,8 @@ mod tests {
 
     #[test]
     fn color_parse_hex_case_insensitive() {
-        // CSS Color 4 §5.2: "The letters `A`–`F` may be in uppercase or
-        // lowercase" — `#FF0000` == `#ff0000`。
+        // CSS Color 4 §5.2 verbatim: "the case of the letters doesn’t matter -
+        // #00ff00 is identical to #00FF00" — `#FF0000` == `#ff0000`。
         assert_eq!(
             parse("#FF0000", "color"),
             Some(PropertyValue::Color(CssColor {
@@ -4372,7 +4394,8 @@ mod tests {
 
     #[test]
     fn counter_reset_accepts_negative_integer() {
-        // CSS Values 3 §5.1: <integer> は負値を含む。
+        // CSS Values 3 §4.2 "Integers: the <integer> type"
+        // (https://www.w3.org/TR/css-values-3/#integers): <integer> は負値を含む。
         // increment だけでなく reset / set も同一 grammar。
         assert_eq!(
             parse("chapter -5", "counter-reset"),
@@ -5348,7 +5371,7 @@ mod tests {
     //
     // Primary sources (WebFetch verified 2026-07-20):
     // - https://www.w3.org/TR/css-box-3/#padding-physical
-    //   "Negative values are invalid for padding properties" — non-negative
+    //   "Negative values for padding properties are invalid." — non-negative
     //   constraint を parse-time enforce (parse_padding_side が全 Length variant
     //   で >= 0.0 check、負値 = declaration drop)。
     // - https://www.w3.org/TR/css-box-3/#padding-shorthand
@@ -5451,7 +5474,7 @@ mod tests {
 
     #[test]
     fn padding_shorthand_mixed_units() {
-        // spec §4.2 は per-value `<'padding-top'>` = `<length-percentage>` を許容 —
+        // spec (CSS Box 3) §4.2 は per-value `<'padding-top'>` = `<length-percentage>` を許容 —
         // 混合 unit も spec-valid (padding: 10px 5% 1em 12pt)。
         assert_eq!(
             parse("10px 5% 1em 12pt", "padding"),
@@ -5467,7 +5490,7 @@ mod tests {
     // Verification #5 — non-negative constraint (spec-literal claim)。
     #[test]
     fn padding_top_rejects_negative_px() {
-        // spec §4.1: "Negative values are invalid for padding properties"。
+        // spec (CSS Box 3) §4.1: "Negative values for padding properties are invalid."。
         assert_eq!(parse("-5px", "padding-top"), None);
     }
 
@@ -5512,8 +5535,8 @@ mod tests {
 
     #[test]
     fn padding_shorthand_rejects_any_negative_value() {
-        // `padding: 10px -5px` — spec §4.2 の {1,4} multiplier は各 iteration が
-        // 有効 `<'padding-top'>` であることを要求。2 番目 `-5px` は spec §4.1
+        // `padding: 10px -5px` — spec (CSS Box 3) §4.2 の {1,4} multiplier は各 iteration が
+        // 有効 `<'padding-top'>` であることを要求。2 番目 `-5px` は spec (CSS Box 3) §4.1
         // `[0,∞]` 制約違反で fail、try_parse rewind で 1-value form の Some を
         // parse_padding_shorthand が返す。ここで DeclParser の expect_exhausted
         // が leftover `-5px` を検知して declaration ごと drop する — 実 caller
@@ -5539,7 +5562,7 @@ mod tests {
     // Verification #6 — `auto` keyword reject (spec grammar に無い)。
     #[test]
     fn padding_top_rejects_auto_keyword() {
-        // spec §4.1 grammar = `<length-percentage>` のみ、`auto` は margin 側の
+        // spec (CSS Box 3) §4.1 grammar = `<length-percentage>` のみ、`auto` は margin 側の
         // extension で padding には無い。parse_length_value の Dimension /
         // Percentage arm fall-through で自然 reject。
         assert_eq!(parse("auto", "padding-top"), None);

@@ -103,9 +103,14 @@ pub fn cascade<D: StyleDom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResu
 /// selectors 由来の 32-bit specificity。u32 で完全順序比較。
 type Specificity = u32;
 
-/// inline style の specificity — spec §6.3 で `(1, 0, 0, 0)` に相当。
-/// selectors crate は 32-bit packed で `id << 20 | class << 10 | element` を使うので、
-/// inline の 1,0,0,0 相当は 1 << 30 とみなす (どの selector 由来 spec より大)。
+/// inline style の specificity。CSS Cascading L4 §6.1 "Cascade Sorting Order"
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Specificity 段 verbatim:
+/// "declarations that do not belong to a style rule (such as the contents of a
+/// style attribute) are considered to have a specificity higher than any
+/// selector." (`(1, 0, 0, 0)` は CSS 2.1 §6.4.3 の旧表現であり L4 の規定ではない)。
+/// selectors crate は 32-bit packed で `id << 20 | class << 10 | element` を使う。
+/// `1 << 30` はその packed 空間のどの selector 由来 specificity よりも大きいので、
+/// 上記 "higher than any selector" を満たす。
 const INLINE_SPECIFICITY: Specificity = 1 << 30;
 /// inline style の source_order — 全 stylesheet rule より後 (最終出現扱い)。
 const INLINE_SOURCE_ORDER: u32 = u32::MAX;
@@ -145,7 +150,11 @@ struct RankedDecl {
 
 /// Cascade origin + `!important` flag に基づく優先度 rank (raikiri-spike-m1.22)。
 ///
-/// 高いほど勝つ。CSS Cascading L4 §6.4.4 の origin 反転扱いを表現:
+/// 高いほど勝つ。CSS Cascading L4 §6.1 "Cascade Sorting Order"
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Origin and Importance
+/// 段を表現する (origin の定義は §6.2
+/// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>、`!important` に
+/// よる反転は §6.3 <https://www.w3.org/TR/css-cascade-4/#importance>):
 /// - Normal   : UA < User < Author (Author が最強、UA が最弱)
 /// - Important: UA > User > Author (反転、UA が最強)
 ///
@@ -905,7 +914,7 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 下流 (raikiri-dom) runtime resolve が counter()/string()/target-*() の
         // 実値を組み立てる際に本 field を参照。
         PropertyValue::Content(v) => target.content = v,
-        // string-set は M5 static-side β (raikiri-spike-m5.3、CSS GCPM 3 §3.1)。
+        // string-set は M5 static-side β (raikiri-spike-m5.3、CSS GCPM 3 §1.1.1)。
         // Named-string runtime resolve は下流 (raikiri-dom) 責務。
         PropertyValue::StringSet(v) => target.string_set = v,
         // position は M5 static-side ε (raikiri-spike-m5.4、CSS GCPM 3 §1.2.1)。
@@ -927,7 +936,8 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 親値を引き継ぐ (color / font_family / font_size / font_weight と同じ
         // handling)。TextAlign は Copy、by-value 代入で十分。
         PropertyValue::TextAlign(t) => target.text_align = t,
-        // CSS Box 3 §6.1 padding physical longhand (raikiri-spike-0vv.6)。
+        // CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>
+        // padding physical longhand (raikiri-spike-0vv.6)。
         // 4 side を独立に上書き。shorthand `PropertyValue::Padding` は
         // `crate::rule::expand_shorthand_into` により parse 出口と cascade 入口
         // (`collect_cascaded`) の両方で 4 longhand に展開されるため、cascade 段に
@@ -939,7 +949,8 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::PaddingRight(v) => target.padding.right = v,
         PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
         PropertyValue::PaddingLeft(v) => target.padding.left = v,
-        // CSS Box 3 §6.2 padding shorthand fall-through (normal flow では展開済み)。
+        // CSS Box 3 §4.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand>
+        // padding shorthand fall-through (normal flow では展開済み)。
         // sibling `PropertyValue::Margin` arm と同じく **safety net ではない** —
         // 到達すれば 4 longhand winner を破壊し spec と食い違う。
         // Sides<Length>: Copy のため move で `target.padding` に代入。
@@ -974,7 +985,7 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // (bd raikiri-spike-ez7b)。振る舞い自体は
         // `apply_value_direct_margin_shorthand_safety_net` test が直接叩いて pin。
         PropertyValue::Margin(sides) => target.margin = sides,
-        // CSS Backgrounds 3 §5.1/§5.2/§5.3 border physical longhand
+        // CSS Backgrounds 3 §3.3/§3.2/§3.1 border physical longhand
         // (raikiri-spike-0vv.12)。4 side × 3 sub-property の 12 arm。shorthand
         // `PropertyValue::Border` は `crate::rule::expand_shorthand_into` により
         // parse 出口と cascade 入口の両方で 12 longhand に展開されるため、
@@ -1098,7 +1109,9 @@ mod tests {
 
     #[test]
     fn later_duplicate_in_same_rule_wins() {
-        // 同一 rule 内で同じ property が 2 回 — CSS §6.4.4: 後方の declaration が勝つ。
+        // 同一 rule 内で同じ property が 2 回 — CSS Cascading L4 §6.1 "Order of
+        // Appearance" <https://www.w3.org/TR/css-cascade-4/#cascade-sort>:
+        // "The last declaration in document order wins."
         let cv = cascade_doc("p { color: red; color: blue }", "p", None);
         assert_eq!(cv.color, BLUE);
     }
@@ -1771,7 +1784,7 @@ mod tests {
         );
     }
 
-    // ── string-set wire-through (CSS GCPM 3 §3.1、raikiri-spike-m5.3) ──
+    // ── string-set wire-through (CSS GCPM 3 §1.1.1、raikiri-spike-m5.3) ──
 
     #[test]
     fn string_set_wired_through_cascade_from_inline_style() {
@@ -1794,7 +1807,8 @@ mod tests {
 
     #[test]
     fn string_set_is_non_inherited_child_starts_from_initial_empty() {
-        // spec §3.1: string-set は non-inherited。<p style='string-set: a "x"'>
+        // CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>:
+        // string-set は non-inherited。<p style='string-set: a "x"'>
         // の子 <span> は自身 rule がなく、string_set は initial (empty Vec)。
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", Some(r#"string-set: a "x""#));
@@ -1852,9 +1866,10 @@ mod tests {
 
     #[test]
     fn running_template_is_non_inherited_child_starts_from_initial_empty() {
-        // CSS GCPM 3 §1.2.1 (+ CSS Positioned Layout §9.1.1): position は
-        // non-inherited。<div style="position: running(hdr)"> の子 <span> は
-        // 自身の rule がなく running_templates は initial (empty)。
+        // CSS GCPM 3 §1.2.1。position が non-inherited であることは CSS
+        // Positioned Layout 3 §2 <https://www.w3.org/TR/css-position-3/#position-property>
+        // の propdef "Inherited: no"。<div style="position: running(hdr)"> の
+        // 子 <span> は自身の rule がなく running_templates は initial (empty)。
         // 37n sibling: string_set / content non-inherited と同じ shape。
         let mut doc = TestDoc::new();
         let div = doc.push_element(0, "div", Some("position: running(hdr)"));
@@ -1884,7 +1899,9 @@ mod tests {
     fn static_position_wins_over_running_via_source_order() {
         // advisor calibration: `Static` variant の load-bearing 検証。
         // 同一 declaration block 内で `position: running(hdr); position: static`
-        // → CSS §6.4.4 で後方 declaration が同 rank/spec/order で勝つ (source_order
+        // → CSS Cascading L4 §6.1 "Order of Appearance"
+        // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> で後方
+        // declaration が同 rank/spec/order で勝つ (source_order
         // が同じでも `beats` の `>=` で最後の候補が上書きする)。winner は
         // Position(Static)、apply_value は no-op → running_templates 空。
         let cv = cascade_doc("", "div", Some("position: running(hdr); position: static"));
@@ -1961,7 +1978,7 @@ mod tests {
         assert_eq!(
             r.computed[span].display,
             DisplayValue::Inline,
-            "display must NOT inherit (CSS §9.2.4 non-inherited) — initial Inline"
+            "display must NOT inherit (CSS Display 3 §2 Inherited: no) — initial Inline"
         );
     }
 
@@ -2438,7 +2455,7 @@ mod tests {
         );
     }
 
-    // ── padding wire-through (CSS Box 3 §6.1 + §6.2、raikiri-spike-0vv.6) ──
+    // ── padding wire-through (CSS Box 3 §4.1 + §4.2、raikiri-spike-0vv.6) ──
     //
     // Verification #7 (cascade wire-through + non-inheritance):
     // <div style="padding: 10px 5%"> の cascade 結果が populate、initial value 0
@@ -2513,7 +2530,7 @@ mod tests {
 
     #[test]
     fn padding_negative_declaration_dropped_at_cascade() {
-        // spec §6.1 negative reject の end-to-end smoke: cascade まで負値が
+        // spec (CSS Box 3) §4.1 negative reject の end-to-end smoke: cascade まで負値が
         // 到達せず、initial (0) が残る。property.rs test は parse_value 単体
         // の drop、本 test は rule.rs → cascade の一貫 drop を pin。
         use crate::property::Sides;
@@ -2524,8 +2541,10 @@ mod tests {
 
     #[test]
     fn padding_shorthand_then_longhand_longhand_wins() {
-        // CSS Cascading L5 §6: shorthand は parse-time で longhand に expand
-        // してから cascade する。`padding: 10px; padding-top: 5px;` →
+        // CSS Cascading L4 §3 "Shorthand Properties"
+        // <https://www.w3.org/TR/css-cascade-4/#shorthand>: shorthand は
+        // parse-time で longhand に expand してから cascade する。
+        // `padding: 10px; padding-top: 5px;` →
         // top=5, others=10 (source-order-independent、spec-correct)。
         // (margin 0vv.5 で実装済みの parse-time expansion model に migtate:
         // raikiri-spike-5nc)
@@ -2538,7 +2557,9 @@ mod tests {
 
     #[test]
     fn padding_longhand_then_shorthand_shorthand_wins() {
-        // spec §6.4.4 の後方 wins を逆順で pin: `padding-top: 5px; padding: 10px;`
+        // CSS Cascading L4 §6.1 "Order of Appearance"
+        // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
+        // 逆順で pin: `padding-top: 5px; padding: 10px;`
         // → 全 side = 10px (後段 shorthand が top も含めて上書き)。
         // (raikiri-spike-5nc)
         let cv = cascade_doc("", "div", Some("padding-top: 5px; padding: 10px"));
@@ -2593,9 +2614,11 @@ mod tests {
 
     #[test]
     fn margin_shorthand_then_longhand_later_longhand_wins() {
-        // spec (CSS Cascading L4 §6.4.4): 同一 declaration block 内で shorthand
-        // + longhand が declared された場合、後方 declaration が同 rank/spec/order
-        // で勝つ。`margin: 0px; margin-top: 10px;` → top=10, others=0。
+        // spec (CSS Cascading L4 §6.1 "Order of Appearance"
+        // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>): 同一 declaration
+        // block 内で shorthand + longhand が declared された場合、後方
+        // declaration が同 rank/spec/order で勝つ。
+        // `margin: 0px; margin-top: 10px;` → top=10, others=0。
         //
         // 本 test は本 architecture の load-bearing case: expansion 前 shorthand
         // を単一 key で cascade してしまうと、`PropertyKey` 宣言順では `Margin`
@@ -2611,7 +2634,9 @@ mod tests {
 
     #[test]
     fn margin_longhand_then_shorthand_later_shorthand_wins() {
-        // spec §6.4.4 の後方 wins を逆順で pin: `margin-top: 10px; margin: 0px;`
+        // CSS Cascading L4 §6.1 "Order of Appearance"
+        // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
+        // 逆順で pin: `margin-top: 10px; margin: 0px;`
         // → 全 side = 0px (後段 shorthand が top も含めて上書き)。
         // expand_shorthand_into の 4 longhand 展開が source_order を保持したまま
         // cascade に届き、後段が per-side 勝ち抜けする証拠。
@@ -2742,9 +2767,11 @@ mod tests {
 
     #[test]
     fn border_shorthand_then_longhand_later_longhand_wins() {
-        // spec (CSS Cascading L5 §6.4.4): 同一 declaration block 内で shorthand
-        // + longhand が declared された場合、後方 declaration が同 rank/spec/order
-        // で勝つ。`border: 1px solid red; border-top-width: 10px;` →
+        // spec (CSS Cascading L4 §6.1 "Order of Appearance"
+        // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>): 同一 declaration
+        // block 内で shorthand + longhand が declared された場合、後方
+        // declaration が同 rank/spec/order で勝つ。
+        // `border: 1px solid red; border-top-width: 10px;` →
         // top.width=10、他 side の width=1、top.style=Solid、top.color=red 保持。
         //
         // 本 test は本 architecture の load-bearing case (advisor calibration):
@@ -2780,10 +2807,12 @@ mod tests {
 
     #[test]
     fn border_longhand_then_shorthand_later_shorthand_wins() {
-        // spec §6.4.4 の後方 wins を逆順で pin: `border-top-width: 10px; border:
-        // 1px solid red;` → top.width も 1px (後段 shorthand が top も含めて
-        // 上書き)。expand_shorthand_into の 12 longhand 展開が source_order を
-        // 保持したまま cascade に届き、後段が per-side / per-sub-property
+        // CSS Cascading L4 §6.1 "Order of Appearance"
+        // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
+        // 逆順で pin: `border-top-width: 10px; border: 1px solid red;`
+        // → top.width も 1px (後段 shorthand が top も含めて上書き)。
+        // expand_shorthand_into の 12 longhand 展開が source_order を保持した
+        // まま cascade に届き、後段が per-side / per-sub-property
         // 勝ち抜けする証拠 (margin sibling と対称)。
         let cv = cascade_doc(
             "",
@@ -2798,9 +2827,10 @@ mod tests {
 
     #[test]
     fn border_non_inherited_child_starts_from_initial() {
-        // CSS Backgrounds 3 §5 "Inherited: no"。<div style="border: 5px solid red">
-        // の子 <span> は自身 rule 無しで border = initial (medium / none /
-        // currentcolor)。37n sibling: margin / padding non-inherited test
+        // CSS Backgrounds 3 §3 "Borders" — border-* propdef は "Inherited: no"。
+        // <div style="border: 5px solid red"> の子 <span> は自身 rule 無しで
+        // border = initial (medium / none / currentcolor)。
+        // 37n sibling: margin / padding non-inherited test
         // を踏襲。raikiri-spike-0vv.17: color は `BorderColor` enum で保持。
         let mut doc = TestDoc::new();
         let div = doc.push_element(0, "div", Some("border: 5px solid red"));

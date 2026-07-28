@@ -149,8 +149,9 @@ pub struct ComputedValues {
     /// Sprint 12 scope: `block` / `inline` / `inline-block` / `none`
     /// (raikiri-spike-0vv.4、詳細は [`DisplayValue`] doc)。
     pub display: DisplayValue,
-    /// `counter-reset`。**non-inherited**、initial: `none` = empty list
-    /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>)。
+    /// `counter-reset`。**non-inherited**。spec initial は `none`
+    /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>)、
+    /// 本 impl はそれを空 list で表現する。
     /// counter-name + initial value pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
     ///
@@ -164,25 +165,28 @@ pub struct ComputedValues {
     /// により downstream の `.iter()` / `.len()` / `.is_empty()` は既存 pattern
     /// そのままで通る (dom/paint consumer 波及 0)。
     pub counter_reset: Arc<Vec<(SmolStr, i32)>>,
-    /// `counter-increment`。**non-inherited**、initial: `none` = empty list
-    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#increment-set>)。
+    /// `counter-increment`。**non-inherited**。spec initial は `none`
+    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#increment-set>)、
+    /// 本 impl はそれを空 list で表現する。
     /// counter-name + increment pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
     ///
     /// [`Arc<Vec<..>>`] wrap は [`Self::counter_reset`] と同 rationale
     /// (raikiri-spike-d9y.2)。
     pub counter_increment: Arc<Vec<(SmolStr, i32)>>,
-    /// `counter-set`。**non-inherited**、initial: `none` = empty list
-    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#increment-set>)。
+    /// `counter-set`。**non-inherited**。spec initial は `none`
+    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#increment-set>)、
+    /// 本 impl はそれを空 list で表現する。
     /// counter-name + value pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
     ///
     /// [`Arc<Vec<..>>`] wrap は [`Self::counter_reset`] と同 rationale
     /// (raikiri-spike-d9y.2)。
     pub counter_set: Arc<Vec<(SmolStr, i32)>>,
-    /// `content` の resolved 中間表現。**non-inherited**、initial: empty list
-    /// (spec §2.1 "content" property の `normal` / `none` を空 list として扱う
-    /// — 本 crate は cascade static side、pseudo-element 生成判断は下流 layer)。
+    /// `content` の resolved 中間表現。**non-inherited**。spec initial は
+    /// `normal` (CSS Content 3 §1 propdef-content "Initial: normal") で、本 impl
+    /// は `normal` / `none` をどちらも空 list で表現する (本 crate は cascade
+    /// static side に留まり、pseudo-element 生成判断は下流 layer)。
     /// M5 gcpm-directive-emit (raikiri-spike-m5.1)。
     /// 下流 (raikiri-dom) が `raikiri_traits::ContentValueItem` に mapping する
     /// (raikiri-style は raikiri-traits に依存しない leaf crate = 3ps/94e Phase B、
@@ -200,7 +204,8 @@ pub struct ComputedValues {
     /// consumer 波及 0)。
     pub content: Arc<Vec<ContentComponent>>,
     /// `string-set` の parse 結果 — `(name, content-list)` entry の列。
-    /// **non-inherited**、initial: empty list (CSS GCPM 3 §3.1)。
+    /// **non-inherited**。spec initial は `none` (CSS GCPM 3 §1.1.1
+    /// propdef-string-set "Initial: none")、本 impl はそれを空 list で表現する。
     /// 名前解決と runtime `string()` 参照は下流 (raikiri-dom) 責務。
     /// See <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>.
     ///
@@ -208,9 +213,10 @@ pub struct ComputedValues {
     /// (raikiri-spike-d9y.1、`* { string-set: name "<large>" }` × N element の
     /// 同種 DoS 経路を塞ぐ)。
     pub string_set: Arc<Vec<(SmolStr, Vec<ContentComponent>)>>,
-    /// `position: running(<custom-ident>)` の seed。**non-inherited**、initial:
-    /// empty list。CSS GCPM 3 §1.2.1
-    /// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>。
+    /// `position: running(<custom-ident>)` の seed。**non-inherited**。spec
+    /// initial は `position: static` (running() seed 無し、CSS GCPM 3 §1.2.1
+    /// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>)、本 impl はそれを
+    /// 空 list で表現する。
     ///
     /// 本 field は **per-node で常に 0 または 1 要素** (`position` は spec 上
     /// 単一値の property、element は最大 1 つの `running(name)` しか持たない):
@@ -240,11 +246,12 @@ pub struct ComputedValues {
     /// (raikiri-spike-0vv.8)
     pub text_align: TextAlign,
     /// `padding` — 4-side box-model padding。**non-inherited**、initial:
-    /// `Sides::all(ComputedLengthPercentage::Px(0.0))` (CSS Box 3 §6.1 initial "0")。
+    /// `Sides::all(ComputedLengthPercentage::Px(0.0))` — CSS Box 3 §4.1
+    /// <https://www.w3.org/TR/css-box-3/#padding-physical> initial "0"。
     ///
     /// - Physical longhands: [`padding-top`](https://www.w3.org/TR/css-box-3/#propdef-padding-top) /
     ///   `padding-right` / `padding-bottom` / `padding-left`。
-    /// - Shorthand: [`padding` (§6.2)](https://www.w3.org/TR/css-box-3/#padding-shorthand)。
+    /// - Shorthand: [`padding` (§4.2)](https://www.w3.org/TR/css-box-3/#padding-shorthand)。
     ///
     /// Value grammar: `<length-percentage [0,∞]>` — non-negative constraint は
     /// parse-time enforce ([`crate::property::PropertyValue::PaddingTop`] doc 参照)。
@@ -290,7 +297,7 @@ pub struct ComputedValues {
     ///
     /// - Physical longhands: [`border-top-width`](https://www.w3.org/TR/css-backgrounds-3/#border-width) /
     ///   `border-top-style` / `border-top-color` × 4 side。
-    /// - Shorthand: [`border` (§5.4)](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)。
+    /// - Shorthand: [`border` (§3.4)](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)。
     ///
     /// # Value semantics
     ///
@@ -301,7 +308,7 @@ pub struct ComputedValues {
     ///   verified、[`crate::property::PropertyValue::BorderTopWidth`] doc 参照)。
     /// - `color` は cascade static side で [`BorderColor`] enum として保持し、
     ///   spec `currentcolor` keyword vs. 明示 `<color>` の specified-value
-    ///   distinction を preserve する (CSS Backgrounds 3 §5.3
+    ///   distinction を preserve する (CSS Backgrounds 3 §3.1
     ///   <https://www.w3.org/TR/css-backgrounds-3/#border-color> initial:
     ///   currentcolor)。used-value resolution (currentcolor → 同 node の
     ///   computed `color` property lookup、CSS Color 3 §4.4) は paint scope
@@ -319,7 +326,7 @@ pub struct ComputedValues {
     ///
     /// # Primary sources
     ///
-    /// - CSS Backgrounds 3 §5 "Borders":
+    /// - CSS Backgrounds 3 §3 "Borders":
     ///   [`border-width`](https://www.w3.org/TR/css-backgrounds-3/#border-width) /
     ///   [`border-style`](https://www.w3.org/TR/css-backgrounds-3/#border-style) /
     ///   [`border-color`](https://www.w3.org/TR/css-backgrounds-3/#border-color) /
@@ -414,18 +421,19 @@ impl ComputedValues {
             line_height: ComputedLineHeight::Normal,
             display: DisplayValue::Inline,
             // CSS Lists 3 §4: counter-* の spec initial は `none`、本 impl は
-            // empty list で表現する (raikiri-spike-s85、anchor は field doc 参照)。
+            // 空 list で表現する (raikiri-spike-s85、anchor は field doc 参照)。
             // d9y.2: shared empty Arc slot — per-node allocation 回避
             // (advisor calibration、property.rs `empty_counter_entries` doc 参照)。
             counter_reset: empty_counter_entries(),
             counter_increment: empty_counter_entries(),
             counter_set: empty_counter_entries(),
-            // CSS Content 3 §2.1: content initial (normal) は下流にとって「no
-            // generated content」= empty list として扱う (raikiri-spike-m5.1)。
+            // CSS Content 3 §1: content の spec initial は `normal`。本 impl は下流に
+            // とって「no generated content」= 空 list で表現する (raikiri-spike-m5.1)。
             // d9y.1: shared empty Arc slot — per-node allocation 回避
             // (advisor calibration、property.rs `empty_content_list` doc 参照)。
             content: empty_content_list(),
-            // CSS GCPM 3 §3.1: string-set initial は empty list (raikiri-spike-m5.3)。
+            // CSS GCPM 3 §1.1.1: string-set の spec initial は `none`。本 impl は
+            // それを空 list で表現する (raikiri-spike-m5.3)。
             // d9y.1: same shared-empty-Arc pattern。
             string_set: empty_string_set_entries(),
             // CSS GCPM 3 §1.2.1: position: running() seed initial は empty
@@ -433,16 +441,18 @@ impl ComputedValues {
             running_templates: Vec::new(),
             // CSS Text 3 §6.1: text-align initial is `start` (raikiri-spike-0vv.8)
             text_align: TextAlign::Start,
-            // CSS Box 3 §6.1: padding initial = 0 (all 4 sides、raikiri-spike-0vv.6)。
+            // CSS Box 3 §4.1: padding initial = 0 (all 4 sides、raikiri-spike-0vv.6)。
             padding: Sides::all(ComputedLengthPercentage::Px(0.0)),
             // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
             // で全 4 side に spread)。raikiri-spike-0vv.5。
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(0.0)),
-            // CSS Backgrounds 3 §5.1/§5.2/§5.3: border initial は各 side で
+            // CSS Backgrounds 3 §3.3/§3.2/§3.1: border initial は各 side で
             // style=none、color=`currentcolor` keyword
             // ([`BorderColor::CurrentColor`]、raikiri-spike-0vv.12 seed +
             // raikiri-spike-0vv.17 で `CssColor::BLACK` placeholder から
-            // enum variant へ格上げ、spec §5.3 initial 契約 fidelity)。
+            // enum variant へ格上げ、CSS Backgrounds 3 §3.1 initial 契約
+            // fidelity — 上の margin 行の CSS Box 3 §3.1 とは別 spec の同番号
+            // なので注意)。
             //
             // width は specified では `medium` (3px) だが **computed 層では 0px** —
             // §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width> の
@@ -544,7 +554,8 @@ mod tests {
         assert!(cv.counter_reset.is_empty());
         assert!(cv.counter_increment.is_empty());
         assert!(cv.counter_set.is_empty());
-        // CSS Content 3 §2.1 + CSS GCPM 3 §3.1 (raikiri-spike-m5.1 / m5.3)
+        // CSS Content 3 §1 (content: Initial: normal) + CSS GCPM 3 §1.1.1
+        // (string-set: Initial: none) — どちらも空 list 表現 (m5.1 / m5.3)
         assert!(cv.content.is_empty());
         assert!(cv.string_set.is_empty());
         // CSS GCPM 3 §1.2.1 (raikiri-spike-m5.4): position initial は `static` →
@@ -552,14 +563,14 @@ mod tests {
         assert!(cv.running_templates.is_empty());
         // CSS Text 3 §6.1 (raikiri-spike-0vv.8): text-align initial は `start`。
         assert_eq!(cv.text_align, TextAlign::Start);
-        // CSS Box 3 §6.1 (raikiri-spike-0vv.6): padding initial = 0 (all 4 sides)。
+        // CSS Box 3 §4.1 (raikiri-spike-0vv.6): padding initial = 0 (all 4 sides)。
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
         // CSS Box 3 §3.1 (raikiri-spike-0vv.5): margin initial は 0 on each side。
         assert_eq!(
             cv.margin,
             Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))
         );
-        // CSS Backgrounds 3 §5 (raikiri-spike-0vv.12 seed、raikiri-spike-0vv.17
+        // CSS Backgrounds 3 §3 (raikiri-spike-0vv.12 seed、raikiri-spike-0vv.17
         // で currentcolor へ格上げ): border initial は各 side {style: none,
         // color: `currentcolor` (BorderColor::CurrentColor)}。
         // hazard case 2 (author `color:red` + border-color 省略 → cascade static
@@ -600,7 +611,8 @@ mod tests {
 
     #[test]
     fn initial_display_is_inline() {
-        // CSS §9.2.4: initial value of display is inline
+        // CSS Display 3 §2: display initial は `inline`
+        // (anchor は [`ComputedValues::display`] field doc 側)。
         assert_eq!(ComputedValues::initial().display, DisplayValue::Inline);
     }
 

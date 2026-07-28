@@ -170,9 +170,10 @@ impl SpecifiedValues {
             // style=none / color=currentcolor。computed 層では style gating に
             // より width が 0px に潰れる (`resolve_border`)。
             // (§ 番号は spec の `data-level` 実測値 — bd raikiri-spike-zls8
-            // §8.2 spec lens SPEC-5 で 5.x から訂正。**crate の他 file には
-            // まだ古い §5.x label が残っている** — 一括 sweep が別 task に
-            // 起票済なので、「一貫性のため」本 file を 5.x に戻さないこと。)
+            // §8.2 spec lens SPEC-5 で 5.x から訂正。crate 全域の一括 sweep は
+            // bd raikiri-spike-bcmu / raikiri-spike-xpd4 で完了しており、
+            // Backgrounds 3 の §5.x は border-image の節なので
+            // 「一貫性のため」本 file を 5.x に戻してはならない。)
             border: Sides::all(INITIAL_BORDER),
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
