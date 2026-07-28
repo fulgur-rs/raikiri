@@ -1701,7 +1701,7 @@ mod tests {
         );
     }
 
-    // ── counter-* wire-through (CSS Lists 3 §3、raikiri-spike-s85 M5 pre-work) ──
+    // ── counter-* wire-through (CSS Lists 3 §4、raikiri-spike-s85 M5 pre-work) ──
 
     #[test]
     fn counter_reset_wired_through_cascade_from_inline_style() {
@@ -2339,11 +2339,14 @@ mod tests {
         );
     }
 
-    /// counter-* は non-inherited (CSS Lists 3 §3) — 親 element に counter 値が
-    /// あっても child は inherit_from で shared empty Arc slot に落ちる。この
-    /// pin が「Arc wrap 単独 (short-circuit 無し) でも child stack entry の
-    /// parent Arc bump が即 empty slot に置換される」ことを保証する。d9y.2
-    /// short-circuit 不採用の正当化 assertion。
+    /// counter-* は non-inherited — 親 element に counter 値があっても child は
+    /// inherit_from で shared empty Arc slot に落ちる。この pin が「Arc wrap 単独
+    /// (short-circuit 無し) でも child stack entry の parent Arc bump が即 empty
+    /// slot に置換される」ことを保証する。d9y.2 short-circuit 不採用の正当化
+    /// assertion。
+    ///
+    /// CSS Lists 3 §4: 3 property とも property table が `Inherited: no`。
+    /// See <https://www.w3.org/TR/css-lists-3/#auto-numbering>.
     #[test]
     fn resolve_inheritance_uses_initial_arc_for_non_inherited_counter_on_child() {
         let mut doc = TestDoc::new();
