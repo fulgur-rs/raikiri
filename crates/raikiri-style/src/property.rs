@@ -1474,9 +1474,9 @@ pub enum PropertyValue {
 ///   `crate::rule::expand_shorthand_into` が parse 出口と element cascade 入口の
 ///   両方で shorthand を longhand に展開するため、**shorthand key は element
 ///   cascade 段には到達しない** (bd raikiri-spike-nqkj)。`@page` cascade
-///   (`crate::page::cascade_page`) は入口側の展開を持たず、`PageRule` の
-///   `pub declarations` を post-parse mutation された場合の同 shape の gap が
-///   残る — bd raikiri-spike-3svx。
+///   (`crate::page::cascade_page`) も入口側で同じ展開を通すので、`PageRule` の
+///   `pub declarations` を post-parse mutation された場合の同 shape の gap も
+///   塞がっている (bd raikiri-spike-3svx)。
 ///
 /// **並び順を「直す」ことで shorthand/longhand の cascade を修正しようとしない
 /// こと** — 順序任せの解は `margin: 0; margin-top: 10px` と
@@ -1520,7 +1520,8 @@ pub enum PropertyKey {
     /// deviation。`crate::rule::expand_shorthand_into` が parse 出口と element
     /// cascade 入口の両方で shorthand を畳むため本 variant は element cascade 段に
     /// 到達せず (bd raikiri-spike-nqkj)、observable な divergence は無い
-    /// (`@page` 経路の同 shape gap は bd raikiri-spike-3svx)。その担保を
+    /// (`@page` 経路の同 shape gap も `crate::page::cascade_page` の入口側展開で
+    /// 塞がれている — bd raikiri-spike-3svx)。その担保を
     /// compile-time に強制する恒久 fix は bd raikiri-spike-ez7b。
     Padding,
     // margin longhand + shorthand — raikiri-spike-0vv.5 (semantics on the

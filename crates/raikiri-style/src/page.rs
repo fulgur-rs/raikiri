@@ -87,7 +87,7 @@ use crate::resolve::{
     lift_line_height, resolve_border, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_line_height,
 };
-use crate::rule::Declaration;
+use crate::rule::{Declaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
 use crate::specified::INITIAL_BORDER;
 
@@ -682,13 +682,15 @@ pub fn cascade_page(
         }
         if let Some(spec) = best_spec {
             for decl in &rule.declarations {
-                candidates.push((
-                    decl.value.clone(),
-                    decl.important,
-                    rule.origin,
-                    spec,
-                    rule.source_order,
-                ));
+                // Expand shorthands into longhands before pushing candidates —
+                // the parse-time expansion alone does not cover the post-parse
+                // mutation path through the `pub` field `PageRule::declarations`
+                // (bd raikiri-spike-3svx; the element-path sibling is
+                // `crate::cascade`'s `collect_cascaded`, bd raikiri-spike-nqkj).
+                // Rationale is consolidated in `crate::rule::expand_shorthand_into`.
+                expand_shorthand_into(decl, |d| {
+                    candidates.push((d.value, d.important, rule.origin, spec, rule.source_order));
+                });
             }
         }
     }
@@ -768,7 +770,7 @@ pub fn cascade_page(
 /// below total**: any other `Length` variant under `PropertyKey::FontSize` is
 /// unreachable, and the catch-all falls back to the inherited value rather than
 /// panicking (crate policy: no panic surface in the cascade — see the
-/// `PropertyValue::Margin` safety-net arm in `crate::cascade::apply_value`).
+/// `PropertyValue::Margin` fall-through arm in `crate::cascade::apply_value`).
 /// If that arm ever stops normalising to `Px`, this function silently starts
 /// using the wrong basis, so the two must be changed together.
 fn page_context_font_size(
@@ -977,17 +979,30 @@ fn absolutize_in_page_context(
         PropertyValue::PaddingRight(v) => PropertyValue::PaddingRight(lp(v, font_size, ctx)),
         PropertyValue::PaddingBottom(v) => PropertyValue::PaddingBottom(lp(v, font_size, ctx)),
         PropertyValue::PaddingLeft(v) => PropertyValue::PaddingLeft(lp(v, font_size, ctx)),
-        // Shorthand safety net — `crate::rule::parse_declaration_block` expands
-        // shorthands at parse time, so `@page` declarations *parsed from CSS*
-        // reach the cascade as longhands only (`ruletree` reuses that parser).
+        // Shorthand fall-through — **unreachable through `cascade_page`**.
+        // `crate::rule::expand_shorthand_into` runs at both boundaries that feed
+        // this function: the parse exit (`crate::rule::parse_declaration_block`,
+        // which `ruletree` reuses) and the `@page` cascade entry (the candidate
+        // loop in `cascade_page` itself, bd raikiri-spike-3svx — the sibling of
+        // `crate::cascade`'s `collect_cascaded`, bd raikiri-spike-nqkj). The
+        // entry-side expansion is what covers the post-parse mutation path
+        // through the `pub` field `PageRule::declarations`.
         //
-        // ⚠️ Unlike the element path, `cascade_page` has **no entry-side
-        // expansion**: `crate::cascade`'s `collect_cascaded` re-expands via
-        // `crate::rule::expand_shorthand_into` (bd raikiri-spike-nqkj) but
-        // `cascade_page` does not, and `PageRule.declarations` is a `pub` field,
-        // so a consumer can inject a shorthand after parse and it reaches here
-        // (bd raikiri-spike-3svx). Kept for the same reason
-        // `cascade::apply_value` keeps its shorthand arms.
+        // ⚠️ **これは "safety" net ではない — 到達したら既に bug である**
+        // (element 側 bd raikiri-spike-8kn8 の framing 訂正と同旨)。到達した
+        // winner は `PropertyKey::Margin` 等の独立 key に park したまま
+        // absolutize され、well-formed に見える値のまま `MarginTop` を読む
+        // consumer から黙って消える — bd raikiri-spike-3svx の headline failure
+        // mode そのものである。degraded ではなく deterministic に CSS Cascading
+        // L4 §3 <https://www.w3.org/TR/css-cascade-4/#shorthand> 違反であり、
+        // 本 arm はそれを穏当に見せない。
+        //
+        // The arms are kept rather than folded into `unreachable!` for the same
+        // reason `cascade::apply_value` keeps its shorthand arms: the guarantee
+        // above is not compile-time enforced (the expansion `match` has a
+        // catch-all arm — bd raikiri-spike-ez7b), and the crate keeps the cascade
+        // panic-free per reviewer:security policy. Behaviour is pinned directly
+        // by `tests::absolutize_in_page_context_shorthand_fall_throughs`.
         PropertyValue::Padding(sides) => {
             PropertyValue::Padding(sides.map(|l| lp(l, font_size, ctx)))
         }
@@ -996,6 +1011,7 @@ fn absolutize_in_page_context(
         PropertyValue::MarginRight(v) => PropertyValue::MarginRight(lpa(v, font_size, ctx)),
         PropertyValue::MarginBottom(v) => PropertyValue::MarginBottom(lpa(v, font_size, ctx)),
         PropertyValue::MarginLeft(v) => PropertyValue::MarginLeft(lpa(v, font_size, ctx)),
+        // Shorthand fall-through (see `Padding` above).
         PropertyValue::Margin(sides) => {
             PropertyValue::Margin(sides.map(|l| lpa(l, font_size, ctx)))
         }
@@ -1012,7 +1028,7 @@ fn absolutize_in_page_context(
         PropertyValue::BorderLeftWidth(w) => {
             PropertyValue::BorderLeftWidth(border_width(w, border_styles.left, font_size, ctx))
         }
-        // Shorthand safety net (see `Padding` above). Each side gates on the
+        // Shorthand fall-through (see `Padding` above). Each side gates on the
         // style it carries itself, which is where a `border` shorthand's style
         // lives.
         PropertyValue::Border(sides) => {
@@ -2156,18 +2172,22 @@ mod tests {
         assert_eq!(styles.left, BorderStyle::None);
     }
 
-    /// Direct exercise of the three **shorthand safety-net arms** of
-    /// `absolutize_in_page_context`. `crate::rule::parse_declaration_block`
-    /// expands shorthands at parse time, so these are unreachable through
-    /// `cascade_page` *for declarations parsed from CSS* — but `cascade_page`
-    /// has no entry-side expansion of its own, so a shorthand injected into the
-    /// `pub` field `PageRule.declarations` after parse does reach them
-    /// (bd raikiri-spike-3svx). They are driven directly here for the same reason
+    /// Direct exercise of the three **shorthand fall-through arms** of
+    /// `absolutize_in_page_context`. They are unreachable through `cascade_page`:
+    /// `crate::rule::expand_shorthand_into` runs both at the parse exit
+    /// (`parse_declaration_block`) and at the `@page` cascade entry (the
+    /// candidate loop in `cascade_page`, bd raikiri-spike-3svx), so the
+    /// post-parse mutation path through the `pub` field
+    /// `PageRule::declarations` is covered too — that is what the
+    /// `post_parse_page_*` tests in this module pin.
+    ///
+    /// They are therefore driven directly here, for the same reason
     /// `cascade::tests::apply_value_direct_margin_shorthand_safety_net` exists
     /// (behaviour pinned instead of `unreachable!` — the crate keeps the
-    /// cascade panic-free).
+    /// cascade panic-free, and the expansion `match` still has a catch-all arm
+    /// until bd raikiri-spike-ez7b).
     #[test]
-    fn absolutize_in_page_context_shorthand_safety_nets() {
+    fn absolutize_in_page_context_shorthand_fall_throughs() {
         let fs = ComputedLength(20.0);
         let ctx = ResolveContext::new(ComputedLength(16.0));
         let styles = Sides::all(BorderStyle::None);
@@ -2739,6 +2759,342 @@ mod tests {
     fn cascade_page_result_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<PageCascadeResult>();
+    }
+
+    // ── post-parse shorthand injection into `@page` (bd raikiri-spike-3svx) ──
+    //
+    // `RuleTree.page_rules` / `PageRule.declarations` / `Declaration.value` は
+    // `pub` field なので、Consumer は `add_stylesheet` の**後**に declaration を
+    // shorthand variant へ書き戻せる。`crate::rule::parse_declaration_block` の
+    // parse-time 展開はこの経路を守らない。element 経路の同形 gap を塞いだのが
+    // bd raikiri-spike-nqkj (`crate::cascade` の `collect_cascaded`)、`@page`
+    // 経路 = `cascade_page` を塞いだのが bd raikiri-spike-3svx。
+    //
+    // 守るべき spec は 2 条:
+    //
+    // - CSS Cascading L4 §3 <https://www.w3.org/TR/css-cascade-4/#shorthand>
+    //   "A shorthand property sets all of its longhand sub-properties, exactly
+    //   as if expanded in place."
+    // - CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
+    //   "Order of Appearance: … the last declaration in document order wins."
+    //
+    // ⚠️ **失敗の形は element 経路と異なる** (silent drop になる理由は
+    // `crate::rule::expand_shorthand_into` doc の「2 と 3 で破れ方が違う」節)。
+    // 展開しないと shorthand winner が `PropertyKey::Margin` 等の独立 key に
+    // park するため、各 family test は「shorthand key が結果に存在しないこと」を
+    // 直接 assert する — element 経路には書けなかった強い guard である。
+    //
+    // 各 test の comment にある「展開の有無を区別する / しない」の判定は、
+    // `cascade_page` の展開 hunk を revert した状態での実測に基づく
+    // (bd raikiri-spike-3svx gate §8.2、`crate::cascade` の `post_parse_*` 群が
+    // 採ったのと同じ hunk-revert 法)。
+
+    /// nqkj の element 経路 helper (`cascade::tests::
+    /// cascade_with_post_parse_injection`) の `@page` 版。
+    ///
+    /// `css` を `RuleTree::add_stylesheet` で parse したあと、Consumer と同じ
+    /// 手つきで `page_rules[0].declarations[idx].value` を `injected` に差し替え、
+    /// `cascade_page` を通した結果を返す。
+    ///
+    /// `PageRule` を直接 literal 構築しないのが要点 — `#[non_exhaustive]` は
+    /// crate 内構築を妨げないので、literal だと **報告された経路とは別の経路**を
+    /// test してしまう。
+    ///
+    /// ⚠️ 差し替えるのは `.value` **だけ**なので、`css` の `idx` 番目の
+    /// declaration は 2 役を持つ:
+    ///
+    /// 1. **値は捨てられる** — 単に「その位置に declaration を 1 個作る」ための
+    ///    placeholder (以降の assert に一切現れない `99px` を置いている)。
+    /// 2. **`important` flag は生き残り、injected shorthand に載る** — 展開時に
+    ///    各 longhand へ copy される。これを利用して「注入 shorthand は normal」
+    ///    を作っているのが
+    ///    `post_parse_page_important_longhand_survives_later_normal_shorthand`。
+    ///
+    /// `root_style` は `None` = L3 legacy exception (initial values に解決)。
+    /// 本節の fixture は全て `px` なので phase 2 / phase 3 は恒等写像になる。
+    fn page_with_post_parse_injection(
+        css: &str,
+        idx: usize,
+        injected: PropertyValue,
+    ) -> PageCascadeResult {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(css, Origin::Author);
+        tree.page_rules[0].declarations[idx].value = injected;
+        cascade_page(&tree, &PageContextQuery::default(), None)
+    }
+
+    /// 4 side が全て互いに異なり、かつ initial (0) とも異なる margin fixture。
+    /// `Sides::all` だと「1 side しか展開していない」実装と「4 side 展開した」
+    /// 実装が区別できず、0 を使うと initial と区別できない
+    /// (`cascade::tests::distinct_margin_sides` と同じ意図)。
+    fn distinct_page_margin_sides() -> Sides<LengthOrAuto> {
+        Sides {
+            top: LengthOrAuto::Length(Length::Px(1.0)),
+            right: LengthOrAuto::Length(Length::Px(2.0)),
+            bottom: LengthOrAuto::Length(Length::Px(3.0)),
+            left: LengthOrAuto::Length(Length::Px(4.0)),
+        }
+    }
+
+    /// `key` 位置に入っている margin longhand の px 値。4 variant を or-pattern で
+    /// 畳んでいるのは、explicit な `PropertyValue` assert だと 4 side × 4 test で
+    /// 16 site に膨らむため。key ↔ variant が食い違う形の bug は本 helper では
+    /// 検出できないが、`cascade_page` の key は `PropertyValue::key()` 由来であり
+    /// (winner selection の `let key = value.key();`)、その対応は
+    /// `crate::property` の `margin_longhand_keys_map_correctly` が pin 済み。
+    /// border 側に同型 helper を置かず explicit assert にしてあるのは、3
+    /// sub-property family ぶんの helper が要るのに対し assert が 12 個で済むため。
+    fn margin_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {
+        match result.declarations.get(&key) {
+            Some(
+                PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(v)))
+                | PropertyValue::MarginRight(LengthOrAuto::Length(Length::Px(v)))
+                | PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Px(v)))
+                | PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Px(v))),
+            ) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// `margin_px` の padding 版 (or-pattern の是非は同 doc を参照)。
+    fn padding_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {
+        match result.declarations.get(&key) {
+            Some(
+                PropertyValue::PaddingTop(Length::Px(v))
+                | PropertyValue::PaddingRight(Length::Px(v))
+                | PropertyValue::PaddingBottom(Length::Px(v))
+                | PropertyValue::PaddingLeft(Length::Px(v)),
+            ) => Some(*v),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn post_parse_page_margin_shorthand_before_longhand_lets_longhand_win() {
+        // 注入後の declaration 列 (= `margin: 1px 2px 3px 4px; margin-top: 10px`):
+        //   [0] Margin(1,2,3,4)   ← 注入
+        //   [1] MarginTop(10px)
+        // spec §3 + §6.1 → top=10 (後方 longhand)、right/bottom/left=2/3/4。
+        //
+        // **展開の有無を区別する**: 展開しない実装では `PropertyKey::Margin` が
+        // 独立 winner として park し、`MarginRight` 等は結果に現れない
+        // (top だけが 10px で残る silent drop)。
+        let result = page_with_post_parse_injection(
+            "@page { margin-left: 99px; margin-top: 10px }",
+            0,
+            PropertyValue::Margin(distinct_page_margin_sides()),
+        );
+        assert_eq!(
+            margin_px(&result, PropertyKey::MarginTop),
+            Some(10.0),
+            "後方 longhand が order of appearance で勝つこと (§6.1)"
+        );
+        // 残り 3 side は shorthand 由来の per-side 値。全て assert するのは
+        // 「shorthand を単に落とす」実装と「top arm だけ展開する」実装を弾くため。
+        assert_eq!(margin_px(&result, PropertyKey::MarginRight), Some(2.0));
+        assert_eq!(margin_px(&result, PropertyKey::MarginBottom), Some(3.0));
+        assert_eq!(margin_px(&result, PropertyKey::MarginLeft), Some(4.0));
+        assert!(
+            !result.declarations.contains_key(&PropertyKey::Margin),
+            "shorthand key が独立 slot に park してはならない (silent drop の直接 pin)"
+        );
+    }
+
+    #[test]
+    fn post_parse_page_margin_shorthand_after_longhand_lets_shorthand_win() {
+        // 鏡像方向 (`margin-top: 10px; margin: 1px 2px 3px 4px`):
+        //   [0] MarginTop(10px)
+        //   [1] Margin(1,2,3,4)   ← 注入
+        // spec §6.1 → 全 side が shorthand 由来 = 1/2/3/4。
+        //
+        // **展開の有無を区別する** — element 経路の同名 test
+        // (`post_parse_margin_shorthand_after_longhand_lets_shorthand_win`) は
+        // `PropertyKey` 宣言順のせいで偶然 pass する弱い guard だったが、
+        // `@page` では shorthand が独立 key に park するので top は 10px のまま
+        // 残り (spec は 1px)、区別できる。
+        let result = page_with_post_parse_injection(
+            "@page { margin-top: 10px; margin-left: 99px }",
+            1,
+            PropertyValue::Margin(distinct_page_margin_sides()),
+        );
+        assert_eq!(margin_px(&result, PropertyKey::MarginTop), Some(1.0));
+        assert_eq!(margin_px(&result, PropertyKey::MarginRight), Some(2.0));
+        assert_eq!(margin_px(&result, PropertyKey::MarginBottom), Some(3.0));
+        assert_eq!(margin_px(&result, PropertyKey::MarginLeft), Some(4.0));
+        assert!(!result.declarations.contains_key(&PropertyKey::Margin));
+    }
+
+    #[test]
+    fn post_parse_page_padding_shorthand_before_longhand_lets_longhand_win() {
+        // margin と同じ形を padding family でも pin (展開 arm が family ごとに
+        // 独立に書かれているため)。1/2/3/4px の意図は
+        // `distinct_page_margin_sides` doc と同じ。**展開の有無を区別する**。
+        let result = page_with_post_parse_injection(
+            "@page { padding-left: 99px; padding-top: 10px }",
+            0,
+            PropertyValue::Padding(Sides {
+                top: Length::Px(1.0),
+                right: Length::Px(2.0),
+                bottom: Length::Px(3.0),
+                left: Length::Px(4.0),
+            }),
+        );
+        assert_eq!(padding_px(&result, PropertyKey::PaddingTop), Some(10.0));
+        assert_eq!(padding_px(&result, PropertyKey::PaddingRight), Some(2.0));
+        assert_eq!(padding_px(&result, PropertyKey::PaddingBottom), Some(3.0));
+        assert_eq!(padding_px(&result, PropertyKey::PaddingLeft), Some(4.0));
+        assert!(!result.declarations.contains_key(&PropertyKey::Padding));
+    }
+
+    #[test]
+    fn post_parse_page_border_shorthand_before_longhand_lets_longhand_win() {
+        // border は 4 side × 3 sub-property = 12 longhand に展開される。
+        // width / style を per-side で全て違う値にして、12 arm が sink 経由でも
+        // 落ちていないことを pin する。
+        //
+        // **展開の有無を区別する**、しかも二重に: 展開しないと (a) 12 longhand
+        // が結果に現れず、(b) `page_context_border_styles` が style longhand を
+        // 1 つも見つけられないので initial `none` と判定し、残った
+        // `border-top-width: 10px` すら §3.3 の style gate で 0px に潰れる。
+        let result = page_with_post_parse_injection(
+            "@page { border-left-width: 99px; border-top-width: 10px }",
+            0,
+            PropertyValue::Border(Sides {
+                top: Border {
+                    width: Length::Px(1.0),
+                    style: BorderStyle::Solid,
+                    color: BorderColor::Resolved(RED),
+                },
+                right: Border {
+                    width: Length::Px(2.0),
+                    style: BorderStyle::Dashed,
+                    color: BorderColor::Resolved(BLUE),
+                },
+                bottom: Border {
+                    width: Length::Px(3.0),
+                    style: BorderStyle::Dotted,
+                    color: BorderColor::CurrentColor,
+                },
+                left: Border {
+                    width: Length::Px(4.0),
+                    style: BorderStyle::Double,
+                    color: BorderColor::Resolved(RED),
+                },
+            }),
+        );
+        // top.width だけ後方 longhand が勝つ。
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderTopWidth),
+            Some(&PropertyValue::BorderTopWidth(Length::Px(10.0))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderRightWidth),
+            Some(&PropertyValue::BorderRightWidth(Length::Px(2.0))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderBottomWidth),
+            Some(&PropertyValue::BorderBottomWidth(Length::Px(3.0))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderLeftWidth),
+            Some(&PropertyValue::BorderLeftWidth(Length::Px(4.0))),
+        );
+        // style / color は shorthand 由来のまま per-side に残る。
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderTopStyle),
+            Some(&PropertyValue::BorderTopStyle(BorderStyle::Solid)),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderRightStyle),
+            Some(&PropertyValue::BorderRightStyle(BorderStyle::Dashed)),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderBottomStyle),
+            Some(&PropertyValue::BorderBottomStyle(BorderStyle::Dotted)),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderLeftStyle),
+            Some(&PropertyValue::BorderLeftStyle(BorderStyle::Double)),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderTopColor),
+            Some(&PropertyValue::BorderTopColor(BorderColor::Resolved(RED))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderRightColor),
+            Some(&PropertyValue::BorderRightColor(BorderColor::Resolved(
+                BLUE
+            ))),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderBottomColor),
+            Some(&PropertyValue::BorderBottomColor(BorderColor::CurrentColor)),
+        );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::BorderLeftColor),
+            Some(&PropertyValue::BorderLeftColor(BorderColor::Resolved(RED))),
+        );
+        assert!(!result.declarations.contains_key(&PropertyKey::Border));
+    }
+
+    #[test]
+    fn post_parse_page_shorthand_injection_propagates_important() {
+        // 展開時の `!important` copy (spec §3 verbatim: "Declaring a shorthand
+        // property to be !important is equivalent to declaring all of its
+        // sub-properties to be !important.") が `@page` 入口の展開でも保たれる
+        // こと。注入した shorthand は placeholder の `!important` を継承するので
+        // 後方の normal longhand には**負けない**。
+        //
+        // **展開の有無を区別する** (element 経路の同名 test は区別しなかった) —
+        // 展開しないと `MarginTop` は 10px のまま残り、1/2/3/4 のどれも現れない。
+        let result = page_with_post_parse_injection(
+            "@page { margin-left: 99px !important; margin-top: 10px }",
+            0,
+            PropertyValue::Margin(distinct_page_margin_sides()),
+        );
+        assert_eq!(
+            margin_px(&result, PropertyKey::MarginTop),
+            Some(1.0),
+            "important shorthand 由来の MarginTop が normal longhand に勝つこと"
+        );
+        assert_eq!(margin_px(&result, PropertyKey::MarginRight), Some(2.0));
+        assert_eq!(margin_px(&result, PropertyKey::MarginBottom), Some(3.0));
+        assert_eq!(margin_px(&result, PropertyKey::MarginLeft), Some(4.0));
+        assert!(!result.declarations.contains_key(&PropertyKey::Margin));
+    }
+
+    #[test]
+    fn post_parse_page_important_longhand_survives_later_normal_shorthand() {
+        // 注入後の declaration 列
+        // (= `margin-top: 10px !important; margin: 1px 2px 3px 4px`):
+        //   [0] MarginTop(10px) !important
+        //   [1] Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
+        //
+        // CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
+        // の cascade sort は Origin and Importance を Order of Appearance
+        // **より上位**に置く。したがって後方の normal shorthand は前方の
+        // important longhand に勝てない → top=10。残り 3 side は shorthand 由来
+        // = 2/3/4。
+        //
+        // **展開の有無を区別する** — ただし区別しているのは下の 3 side assert と
+        // `contains_key` assert であり、headline の `MarginTop == 10.0` (§6.1) は
+        // 展開しない実装でも pass する (`MarginTop(10px) !important` がそのまま
+        // 独立 winner として残るため)。3 side assert を「冗長」として削らないこと。
+        let result = page_with_post_parse_injection(
+            "@page { margin-top: 10px !important; margin-left: 99px }",
+            1,
+            PropertyValue::Margin(distinct_page_margin_sides()),
+        );
+        assert_eq!(
+            margin_px(&result, PropertyKey::MarginTop),
+            Some(10.0),
+            "important longhand が後方の normal shorthand 由来 longhand に勝つこと \
+             (§6.1 Origin and Importance)"
+        );
+        assert_eq!(margin_px(&result, PropertyKey::MarginRight), Some(2.0));
+        assert_eq!(margin_px(&result, PropertyKey::MarginBottom), Some(3.0));
+        assert_eq!(margin_px(&result, PropertyKey::MarginLeft), Some(4.0));
+        assert!(!result.declarations.contains_key(&PropertyKey::Margin));
     }
 
     #[test]
