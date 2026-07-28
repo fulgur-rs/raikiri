@@ -149,7 +149,8 @@ pub struct ComputedValues {
     /// Sprint 12 scope: `block` / `inline` / `inline-block` / `none`
     /// (raikiri-spike-0vv.4、詳細は [`DisplayValue`] doc)。
     pub display: DisplayValue,
-    /// `counter-reset`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
+    /// `counter-reset`。**non-inherited**、initial: `none` = empty list
+    /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>)。
     /// counter-name + initial value pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
     ///
@@ -163,14 +164,16 @@ pub struct ComputedValues {
     /// により downstream の `.iter()` / `.len()` / `.is_empty()` は既存 pattern
     /// そのままで通る (dom/paint consumer 波及 0)。
     pub counter_reset: Arc<Vec<(SmolStr, i32)>>,
-    /// `counter-increment`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
+    /// `counter-increment`。**non-inherited**、initial: `none` = empty list
+    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#increment-set>)。
     /// counter-name + increment pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
     ///
     /// [`Arc<Vec<..>>`] wrap は [`Self::counter_reset`] と同 rationale
     /// (raikiri-spike-d9y.2)。
     pub counter_increment: Arc<Vec<(SmolStr, i32)>>,
-    /// `counter-set`。**non-inherited**、initial: empty list (CSS Lists 3 §3)。
+    /// `counter-set`。**non-inherited**、initial: `none` = empty list
+    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#increment-set>)。
     /// counter-name + value pairs。M5 pre-work (raikiri-spike-s85)、
     /// counter tree resolve は M5 本編。
     ///
@@ -410,7 +413,8 @@ impl ComputedValues {
             // ascent+descent 相当を paint 側で resolve、raikiri-spike-0vv.9)。
             line_height: ComputedLineHeight::Normal,
             display: DisplayValue::Inline,
-            // CSS Lists 3 §3: counter-* initial is empty list (raikiri-spike-s85)
+            // CSS Lists 3 §4: counter-* の spec initial は `none`、本 impl は
+            // empty list で表現する (raikiri-spike-s85、anchor は field doc 参照)。
             // d9y.2: shared empty Arc slot — per-node allocation 回避
             // (advisor calibration、property.rs `empty_counter_entries` doc 参照)。
             counter_reset: empty_counter_entries(),
@@ -534,7 +538,9 @@ mod tests {
         // CSS Inline 3 §5.1: line-height initial は `normal` (raikiri-spike-0vv.9)
         assert_eq!(cv.line_height, ComputedLineHeight::Normal);
         assert_eq!(cv.display, DisplayValue::Inline);
-        // CSS Lists 3 §3: counter-* initial は empty list (raikiri-spike-s85)
+        // CSS Lists 3 §4: counter-* の spec initial は `none`、本 impl では
+        // empty list 表現 (<https://www.w3.org/TR/css-lists-3/#auto-numbering>、
+        // raikiri-spike-s85)。
         assert!(cv.counter_reset.is_empty());
         assert!(cv.counter_increment.is_empty());
         assert!(cv.counter_set.is_empty());
