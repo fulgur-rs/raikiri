@@ -64,40 +64,62 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// Shorthand declaration を対応する longhand declaration 列に展開して sink
 /// `push` に流す。non-shorthand はそのまま 1 個 push される。
 ///
-/// # どの variant が shorthand かの列挙はここ 1 箇所だけ (call site は 2 つ)
+/// # どの variant が shorthand かの列挙はここ 1 箇所だけ (call site は 3 つ)
 ///
-/// 呼ぶのは 2 箇所だが、**「どの `PropertyValue` variant が shorthand か」を
+/// 呼ぶのは 3 箇所だが、**「どの `PropertyValue` variant が shorthand か」を
 /// 列挙する match は本関数だけ**である (per-family の展開表は
 /// [`expand_margin`] / [`expand_padding`] / [`expand_border`] に、non-shorthand
 /// path は [`expand_none`] に分離してあるが、これは perf 上の hot/cold split
 /// であって分岐の追加ではない — **4 helper のいずれも `match` を持たず**、
 /// `_` arm は本関数に 1 つだけである)。したがって
 /// **bd raikiri-spike-ez7b の exhaustive 化 target は本関数の match のまま**で
-/// あり、それが入れば下の 2 call site が同時に compile-time 保証を継承する:
+/// あり、それが入れば下の 3 call site が同時に compile-time 保証を継承する:
 ///
 /// 1. [`parse_declaration_block`] — parse 出口。author CSS / inline style / UA
 ///    stylesheet が通る。
 /// 2. `crate::cascade` の `collect_cascaded` — **[`crate::ruletree::RuleTree`]
-///    の declaration が cascade candidate になる境界**。
+///    の declaration が element cascade candidate になる境界**
+///    (bd raikiri-spike-nqkj)。
+/// 3. [`crate::page::cascade_page`] — **`RuleTree::page_rules` の declaration が
+///    `@page` cascade candidate になる境界** (bd raikiri-spike-3svx)。
 ///
-/// ⚠️ **`@page` cascade (`crate::page::cascade_page`) は 2 の対象外**。
-/// `RuleTree::page_rules` の declaration も `parse_declaration_block` 由来なので
-/// 1 でカバーされるが、`PageRule.declarations` も `pub` field なので同じ
-/// post-parse mutation gap が残る — それは bd raikiri-spike-3svx の scope
-/// (`crate::page::PageCascadeResult` の `declarations` narrowing task である
-/// bd raikiri-spike-dyxj とは **別 struct・別 gap**。dyxj は cascade の出力側、
-/// 3svx は入力側)。
-///
-/// 2 が要るのは `RuleTree.style_rules` / [`StyleRule::declarations`] /
-/// [`Declaration::value`] が `pub` field で、かつ `raikiri` umbrella crate が
-/// `RuleTree` を re-export しているため、Consumer が
+/// 2 と 3 が要るのは `RuleTree.style_rules` / [`StyleRule::declarations`] /
+/// `RuleTree.page_rules` / `crate::page::PageRule::declarations` /
+/// [`Declaration::value`] がいずれも `pub` field で、かつ `raikiri` umbrella
+/// crate が `RuleTree` を re-export しているため、Consumer が
 /// `add_stylesheet` の**後**に shorthand variant を書き戻せるからである
-/// (bd raikiri-spike-nqkj)。parse 出口の guard は parse 出口しか見ないので
-/// この経路を守らない。cascade 入口で同じ等価変換を通すことで、**declaration
-/// がどこから来たかに依らず** 下の不変が成立する。
+/// (bd raikiri-spike-nqkj / bd raikiri-spike-3svx)。parse 出口の guard は parse
+/// 出口しか見ないのでこの経路を守らない。cascade 入口で同じ等価変換を通すことで、
+/// **declaration がどこから来たかに依らず** 下の不変が成立する。
 ///
-/// sink を取る形にしてあるのは call site 2 の受け皿が
-/// `Vec<(PropertyValue, bool, Origin, Specificity, u32)>` であって
+/// ⚠️ 2 と 3 で **破れ方が違う**。2 (element) の winner は
+/// [`crate::specified::SpecifiedValues`] の longhand と同じ field に畳まれるので
+/// shorthand が**誤って後勝ちする**。3 (`@page`) の出力は
+/// `HashMap<PropertyKey, PropertyValue>` のままなので、shorthand winner は
+/// `PropertyKey::Margin` 等の**独立 key に park** する。3 の破れ方はさらに
+/// 2 つの症状に分かれる:
+///
+/// - **silent drop** — shorthand が担うはずだった side が longhand key に
+///   一切現れず、`.get(&PropertyKey::MarginRight)` が `None` を返す。
+/// - **present-but-wrong** — longhand key は存在するのに値が spec と違う。
+///   `@page` の `border` では特に鋭く、style longhand が 1 つも現れないため
+///   `page_context_border_styles` が initial `none` と判定し、生き残った
+///   `border-top-width` まで CSS Backgrounds 3 §3.3 の style gate で 0 に
+///   潰される。
+///
+/// どちらも下の spec 違反である。silent drop のほうが検出が難しいが、
+/// **「@page の破れは silent drop だけ」ではない**。上の 2 症状を family ごとの
+/// 具体形に落としたもの、および「どの test が展開の有無を実際に区別するか」の
+/// hunk-revert 実測は `crate::page` の `post_parse_page_*` test 群の comment 側に
+/// ある。
+///
+/// `crate::page::PageCascadeResult` の `declarations` を private + accessor に
+/// 絞る bd raikiri-spike-dyxj は cascade の**出力**側の話であり、3 (入力側) とは
+/// 別 struct・別 gap である。
+///
+/// sink を取る形にしてあるのは call site 2 / 3 の受け皿が
+/// `Vec<(PropertyValue, bool, Origin, _, u32)>` (2 は `selectors` crate の
+/// `Specificity`、3 は `crate::page::PageSpecificity`) であって
 /// `Vec<Declaration>` ではないためで、`Vec` 返しにすると declaration ごとの
 /// 一時 alloc か scratch buffer の状態管理を強いられる。call site 1 は
 /// `Vec` へ push するだけの closure を渡す。sink 化そのものは alloc 中立〜改善
@@ -115,15 +137,16 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// spec CSS Cascading L4 §3 "Shorthand Properties"
 /// <https://www.w3.org/TR/css-cascade-4/#shorthand> は shorthand を "sets all
 /// of its longhand sub-properties, exactly as if expanded in place" と定義し
-/// shorthand を longhand の syntactic sugar と扱う。本関数は上記 2 つの境界で
+/// shorthand を longhand の syntactic sugar と扱う。本関数は上記 3 つの境界で
 /// spec のこの等価変換を実行することで、**cascade 段には longhand のみが伝わる**
 /// 不変を確立する。cross-key dependency 自体が消えるので、適用順は結果に
 /// 影響しなくなる (`static ordering after cascade` の deterministic な source
 /// of truth)。
 ///
 /// 展開後は同一 property key の longhand が複数 candidate になるが、勝者は
-/// `crate::cascade` の `beats` が `(rank, specificity, source_order)` を `>=`
-/// で比較する — 全 key が同値なら**後に現れたほうが勝つ**ので、
+/// `(rank, specificity, source_order)` を `>=` で比較して決まる — call site 2 は
+/// `crate::cascade` の `beats`、call site 3 は `crate::page` の `page_beats` が
+/// **同じ `>=` semantics** を持つ。全 key が同値なら**後に現れたほうが勝つ**ので、
 /// CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
 /// の "the last declaration in document order wins" が
 /// "expanded in place" と組み合わさって自然に成立する。
@@ -139,13 +162,16 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///
 /// 展開漏れ (catch-all arm により compile error にならない) を塞ぐ exhaustive 化は
 /// **bd raikiri-spike-ez7b** の scope。ez7b は本関数の arm list を exhaustive に
-/// する話なので、call site が 2 つあっても**両方が同時にその compile-time 保証を
+/// する話なので、call site が 3 つあっても**全てが同時にその compile-time 保証を
 /// 継承する** (直交ではなく additive)。それが入るまでの中間 guard が本 module の
-/// [`tests::declaration_block_never_emits_shorthand_keys`] (call site 1) と
+/// [`tests::declaration_block_never_emits_shorthand_keys`] (call site 1)、
 /// `crate::cascade` の `post_parse_*` test 群 (call site 2、6 本 — うち展開の
 /// 有無を実際に区別するのは 4 本。残り 2 本は `PropertyKey` 宣言順のせいで
 /// 展開しない実装でも偶然 pass する弱い guard で、各 test の comment に
-/// その旨を開示してある)。
+/// その旨を開示してある)、`crate::page` の `post_parse_page_*` test 群
+/// (call site 3、6 本 — こちらは shorthand が独立 key に park するかどうかを
+/// 直接 assert するので **6 本とも展開の有無を区別する**。hunk-revert 実測で
+/// 6/6 fail を確認済 — bd raikiri-spike-3svx gate §8.2)。
 ///
 /// # `important` flag propagation
 ///
@@ -159,7 +185,8 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// `flat_map + vec![d].into_iter()` は non-shorthand path で per-decl の 1-slot
 /// heap Vec を alloc していた (common case regression、reviewer:quality F6)、
 /// in-place push で除去。shorthand path は 4 longhand を 4 回 push (同 alloc
-/// budget、shape のみ変更)。sink 化で call site 2 も中間 buffer 無しになるので、
+/// budget、shape のみ変更)。sink 化で call site 2 / 3 (どちらも受け皿が
+/// `Vec<Declaration>` ではない cascade 入口) も中間 buffer 無しになるので、
 /// non-shorthand の common case でも追加の heap alloc は発生しない。
 ///
 /// # ⚠️ signature は perf 要件である (単純化しないこと)
@@ -390,8 +417,10 @@ mod tests {
     /// ⚠️ 本 test が見るのは [`expand_shorthand_into`] の **call site 1 (parse
     /// 出口) だけ**である。[`crate::ruletree::RuleTree`] は `pub` field なので
     /// Consumer が parse 後に shorthand を書き戻せ、その経路は本 test を素通り
-    /// する (bd raikiri-spike-nqkj)。call site 2 (cascade 入口) の guard は
-    /// `crate::cascade` の `post_parse_*` test 群 (6 本) が持つ。
+    /// する (bd raikiri-spike-nqkj)。call site 2 (element cascade 入口) の guard は
+    /// `crate::cascade` の `post_parse_*` test 群 (6 本) が、call site 3
+    /// (`@page` cascade 入口) の guard は `crate::page` の `post_parse_page_*`
+    /// test 群 (6 本) が持つ (bd raikiri-spike-3svx)。
     #[test]
     fn declaration_block_never_emits_shorthand_keys() {
         use crate::property::PropertyKey;

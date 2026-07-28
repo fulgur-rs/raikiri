@@ -968,7 +968,8 @@ fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //
         // それでも `unreachable!` を採らないのは reviewer-security の panic
         // surface 排除方針による。cascade 経路で unreachable なのは
-        // `crate::rule::expand_shorthand_into` の 2 call site が担保しており、その
+        // `crate::rule::expand_shorthand_into` の call site 1 / 2 (parse 出口 と
+        // element cascade 入口) が担保しており、その
         // 担保が compile-time に強制されていない件と恒久 fix は同関数 doc を参照
         // (bd raikiri-spike-ez7b)。振る舞い自体は
         // `apply_value_direct_margin_shorthand_safety_net` test が直接叩いて pin。
