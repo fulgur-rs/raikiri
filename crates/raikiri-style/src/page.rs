@@ -999,9 +999,10 @@ fn absolutize_in_page_context(
         //
         // The arms are kept rather than folded into `unreachable!` for the same
         // reason `cascade::apply_value` keeps its shorthand arms: the guarantee
-        // above is not compile-time enforced (the expansion `match` has a
-        // catch-all arm — bd raikiri-spike-ez7b), and the crate keeps the cascade
-        // panic-free per reviewer:security policy. Behaviour is pinned directly
+        // above is only partly compile-time enforced — the carve-outs are in the
+        // expansion `match`'s own doc (bd raikiri-spike-ez7b) — and the crate
+        // keeps the cascade panic-free per reviewer:security policy. Behaviour
+        // is pinned directly
         // by `tests::absolutize_in_page_context_shorthand_fall_throughs`.
         PropertyValue::Padding(sides) => {
             PropertyValue::Padding(sides.map(|l| lp(l, font_size, ctx)))
@@ -2184,8 +2185,8 @@ mod tests {
     /// They are therefore driven directly here, for the same reason
     /// `cascade::tests::apply_value_direct_margin_shorthand_safety_net` exists
     /// (behaviour pinned instead of `unreachable!` — the crate keeps the
-    /// cascade panic-free, and the expansion `match` still has a catch-all arm
-    /// until bd raikiri-spike-ez7b).
+    /// cascade panic-free, and the exhaustive expansion `match` does not
+    /// enforce everything; see its doc, bd raikiri-spike-ez7b).
     #[test]
     fn absolutize_in_page_context_shorthand_fall_throughs() {
         let fs = ComputedLength(20.0);

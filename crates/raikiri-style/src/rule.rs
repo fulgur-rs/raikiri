@@ -70,10 +70,10 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// 列挙する match は本関数だけ**である (per-family の展開表は
 /// [`expand_margin`] / [`expand_padding`] / [`expand_border`] に、non-shorthand
 /// path は [`expand_none`] に分離してあるが、これは perf 上の hot/cold split
-/// であって分岐の追加ではない — **4 helper のいずれも `match` を持たず**、
-/// `_` arm は本関数に 1 つだけである)。したがって
-/// **bd raikiri-spike-ez7b の exhaustive 化 target は本関数の match のまま**で
-/// あり、それが入れば下の 3 call site が同時に compile-time 保証を継承する:
+/// であって分岐の追加ではない — **4 helper のいずれも `match` を持たない**)。
+/// 本関数の match は exhaustive であり (下の「wildcard arm を置かない理由
+/// (契約)」節、bd raikiri-spike-ez7b)、下の 3 call site が同時にその
+/// compile-time 保証を継承する:
 ///
 /// 1. [`parse_declaration_block`] — parse 出口。author CSS / inline style / UA
 ///    stylesheet が通る。
@@ -160,10 +160,8 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// `margin: 0; margin-top: 10px` と `margin-top: 10px; margin: 0` の鏡像 2 例の
 /// うち片方を必ず壊す。詳細は [`crate::cascade`] の `apply_winners` doc)。
 ///
-/// 展開漏れ (catch-all arm により compile error にならない) を塞ぐ exhaustive 化は
-/// **bd raikiri-spike-ez7b** の scope。ez7b は本関数の arm list を exhaustive に
-/// する話なので、call site が 3 つあっても**全てが同時にその compile-time 保証を
-/// 継承する** (直交ではなく additive)。それが入るまでの中間 guard が本 module の
+/// 本関数の exhaustive match (下の「wildcard arm を置かない理由 (契約)」節) に
+/// 対する defense-in-depth の runtime guard は本 module の
 /// [`tests::declaration_block_never_emits_shorthand_keys`] (call site 1)、
 /// `crate::cascade` の `post_parse_*` test 群 (call site 2、6 本 — うち展開の
 /// 有無を実際に区別するのは 4 本。残り 2 本は `PropertyKey` 宣言順のせいで
@@ -172,6 +170,33 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// (call site 3、6 本 — こちらは shorthand が独立 key に park するかどうかを
 /// 直接 assert するので **6 本とも展開の有無を区別する**。hunk-revert 実測で
 /// 6/6 fail を確認済 — bd raikiri-spike-3svx gate §8.2)。
+///
+/// # wildcard arm を置かない理由 (契約)
+///
+/// non-shorthand 側は全 variant を明示列挙し `_ => expand_none(d, push)` を
+/// 使わない。これは意図的な compile-time guard である: **`_` があると新しい
+/// shorthand variant の展開 arm を書き忘れても compile error にならず、その
+/// shorthand が黙って cascade 段へ流れる**。上の不変 (「cascade 段には longhand
+/// のみが伝わる」) は per-key cascade determinism の前提なので、黙って破れる形に
+/// はしない。同 crate の [`mod@crate::cascade`] `resolve_against_inherited` が同じ理由
+/// で同じ契約を持つ (bd raikiri-spike-ygl0 —『`_` があると素通りして未解決値が
+/// public な結果に漏れた』regression が precedent)。
+///
+/// ## この guard が守らない範囲 (明示)
+///
+/// 強制されるのは **arm を書くこと**だけである。正しい側に書くことでも、本関数が
+/// 呼ばれることでもない:
+///
+/// 1. **新 variant を or-pattern 側へ足した場合** — 展開先の longhand を持つ
+///    variant を「展開先が無い」側の末尾に足せば compile error は黙る。
+///    **or-pattern への追加は「展開先が無い」という主張として書くこと。**
+///    [`PropertyValue::TextAlign`] が実在の境界例で、spec 上 shorthand だが
+///    展開先 variant を本 crate が持たないので or-pattern 側に居る (spec citation
+///    と milestone carve-out は同 variant の doc が canonical)。longhand 分離が
+///    入ったら本 match の arm も移すこと。
+/// 2. **本関数を呼ばない経路** — exhaustive match が強制するのは *arm を書く
+///    こと*であって *本関数が呼ばれること*ではない。既知の境界は上の 3 call site
+///    に列挙してあり、そこから呼び出しを消しても compile は通る。
 ///
 /// # `important` flag propagation
 ///
@@ -204,8 +229,9 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// 2. **`#[inline]` + per-family helper への分割** — 展開 arm を全て本体に置くと
 ///    ~4KB の body になり inline 対象にならない。`#[inline(never)]` helper に
 ///    逃がして hot path を「discriminant を見て 4 way 分岐するだけ」に保つ。
-///    分割せずに `#[inline]` だけ付けるのは「20 arm 全部を hot loop に展開せよ」
-///    という誤った要求になる。
+///    分割せずに `#[inline]` だけ付けるのは「展開表の全 `push` を hot loop に
+///    展開せよ」という誤った要求になる。禁じているのは展開を本体に置くことで
+///    あって、variant を列挙すること自体ではない。
 /// 3. **helper に `#[cold]` は付けないこと** — `margin:` / `padding:` /
 ///    `border:` は author CSS では普通に頻出するので、call site 1 (parse) 側で
 ///    誤った branch hint になる。
@@ -228,7 +254,46 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         PropertyValue::Margin(sides) => expand_margin(sides, d.important, push),
         PropertyValue::Padding(sides) => expand_padding(sides, d.important, push),
         PropertyValue::Border(sides) => expand_border(sides, d.important, push),
-        _ => expand_none(d, push),
+        // 展開先の longhand variant を持たない — そのまま 1 個 push。
+        // `_` に潰さないこと (上の「wildcard arm を置かない理由 (契約)」節)。
+        // ここへ variant を足すことは「展開先が無い」という主張である。
+        PropertyValue::Color(_)
+        | PropertyValue::BackgroundColor(_)
+        | PropertyValue::FontFamily(_)
+        | PropertyValue::FontSize(_)
+        | PropertyValue::FontWeight(_)
+        | PropertyValue::LineHeight(_)
+        | PropertyValue::Display(_)
+        | PropertyValue::CounterReset(_)
+        | PropertyValue::CounterIncrement(_)
+        | PropertyValue::CounterSet(_)
+        | PropertyValue::Content(_)
+        | PropertyValue::StringSet(_)
+        | PropertyValue::Position(_)
+        | PropertyValue::TextAlign(_)
+        | PropertyValue::PaddingTop(_)
+        | PropertyValue::PaddingRight(_)
+        | PropertyValue::PaddingBottom(_)
+        | PropertyValue::PaddingLeft(_)
+        | PropertyValue::MarginTop(_)
+        | PropertyValue::MarginRight(_)
+        | PropertyValue::MarginBottom(_)
+        | PropertyValue::MarginLeft(_)
+        | PropertyValue::BorderTopWidth(_)
+        | PropertyValue::BorderRightWidth(_)
+        | PropertyValue::BorderBottomWidth(_)
+        | PropertyValue::BorderLeftWidth(_)
+        | PropertyValue::BorderTopStyle(_)
+        | PropertyValue::BorderRightStyle(_)
+        | PropertyValue::BorderBottomStyle(_)
+        | PropertyValue::BorderLeftStyle(_)
+        | PropertyValue::BorderTopColor(_)
+        | PropertyValue::BorderRightColor(_)
+        | PropertyValue::BorderBottomColor(_)
+        | PropertyValue::BorderLeftColor(_)
+        | PropertyValue::Width(_)
+        | PropertyValue::Height(_)
+        | PropertyValue::BoxSizing(_) => expand_none(d, push),
     }
 }
 
@@ -410,10 +475,11 @@ mod tests {
     /// 届くと `PropertyKey` 宣言順で longhand より後に適用され、declaration の
     /// 並び方によっては longhand winner を潰して spec と食い違う。
     ///
-    /// [`expand_shorthand_into`] は catch-all arm で **fail-open** なので、新しい
-    /// shorthand variant の展開 arm を書き忘れても compile error にならない。
-    /// 本 test はその抜けを実行時に捕まえる中間 guard で、compile-time 強制
-    /// (exhaustive 化) は bd raikiri-spike-ez7b の scope。
+    /// 「展開 arm の書き忘れ」形の壊れ方は [`expand_shorthand_into`] の
+    /// **exhaustive match** が compile error にするので、本 test が走るより前に
+    /// 落ちる (bd raikiri-spike-ez7b)。本 test は一次 guard ではなく
+    /// defense-in-depth である — 同関数 doc の「この guard が守らない範囲」節を
+    /// 参照。
     ///
     /// ⚠️ 本 test が見るのは [`expand_shorthand_into`] の **call site 1 (parse
     /// 出口) だけ**である。[`crate::ruletree::RuleTree`] は `pub` field なので
@@ -444,8 +510,11 @@ mod tests {
                     PropertyKey::Margin | PropertyKey::Padding | PropertyKey::Border
                 ),
                 "shorthand key {key:?} が cascade 段へ漏れている — \
-                 `expand_shorthand_into` に対応する展開 arm を追加すること \
-                 (catch-all arm があるため compile error にはならない)"
+                 `expand_shorthand_into` の展開 arm は exhaustive match により \
+                 存在するはずなので、疑うのは `parse_declaration_block` が \
+                 同関数を通さなくなったか、当該 variant が展開 arm ではなく \
+                 non-shorthand 側の or-pattern に書かれているか (どちらも \
+                 compile は通る)"
             );
         }
     }
