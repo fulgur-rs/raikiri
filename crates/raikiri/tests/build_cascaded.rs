@@ -129,7 +129,10 @@ fn style_inside_template_element_does_not_affect_cascade() {
 
 #[test]
 fn author_important_beats_normal_ua_via_umbrella() {
-    // CSS Cascading L4 §6.4.4 の cascade rank ordering:
+    // CSS Cascading L4 §6.1 "Cascade Sorting Order"
+    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Origin and
+    // Importance 段 (`!important` による反転は §6.3
+    // <https://www.w3.org/TR/css-cascade-4/#importance>) の cascade rank ordering:
     //   Normal UA (rank 0) < Normal Author (1) < Important Author (2) < Important UA (3)。
     // bundled UA CSS (spec §M1.4a minimal.css) は !important を含まないため、
     // Important UA > Important Author の反転検証は本 test では直接行えない。
