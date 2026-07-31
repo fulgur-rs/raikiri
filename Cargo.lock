@@ -1730,6 +1730,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "raikiri-bench"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "raikiri",
+]
+
+[[package]]
 name = "raikiri-blitz-compat"
 version = "0.1.0"
 dependencies = [
