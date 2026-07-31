@@ -1705,4 +1705,191 @@ mod defense_tests {
             .expect("regular file should be accepted");
         assert_eq!(bytes, b"regular content");
     }
+
+    /// **Race regression** (raikiri-spike-51n, follow-up to raikiri-spike-8yu):
+    /// races a writer against a reader across the exact TOCTOU window
+    /// `safe_open` closes — the pre-open `symlink_metadata` check vs. the
+    /// real open — and asserts the reader can never observe the symlink
+    /// target's ("evil") contents.
+    ///
+    /// ## Design
+    ///
+    /// A writer thread atomically swaps `target` back and forth between a
+    /// regular file and a symlink to `evil.bin`, both swaps done via
+    /// `rename(2)` of a pre-built source onto `target`. `rename` replaces
+    /// the destination in one syscall regardless of the entry's prior
+    /// type, so there is no "missing file" window to conflate with the
+    /// race under test — unlike the `rm target; symlink(evil, target)` (or
+    /// `rm target; File::create(target)`) sequence the issue sketches,
+    /// which opens an ENOENT gap that races something else (a plain
+    /// not-found error) rather than the metadata-vs-open TOCTOU this test
+    /// targets. A reader thread concurrently calls
+    /// `read_bounded_fixture_file(target, canonical_root)` in a tight loop.
+    ///
+    /// `evil.bin` is placed **inside** `canonical_root`, deliberately — if
+    /// it lived outside the fixture root, a weakened build (no
+    /// `O_NOFOLLOW`) would still get caught by the *unrelated* `PathEscape`
+    /// containment check (`canonicalize` follows the symlink before
+    /// `safe_open` ever runs), and this test would pass even with the
+    /// `O_NOFOLLOW` defense removed — zero detection power. Keeping
+    /// `evil.bin` in-root routes execution through `safe_open`, the one
+    /// line this test exists to pin. **Do not relocate `evil.bin` outside
+    /// the tmp root** — that silently neuters the test.
+    ///
+    /// ## Assertion
+    ///
+    /// `Ok(bytes)` must always equal `REGULAR_CONTENTS` exactly;
+    /// `Ok(bytes) == EVIL_CONTENTS` is an immediate hard failure — the
+    /// property this test exists to guard. Any `Err` is accepted: by
+    /// 8yu's design the pre-open `symlink_metadata` rejection and the
+    /// open-time `O_NOFOLLOW` rejection both map to the same
+    /// `SymlinkRejected` variant (intentionally indistinguishable to the
+    /// caller), so this test does not attempt to prove which of the two
+    /// gates fired on a given iteration — only that neither ever leaks
+    /// `evil.bin`'s contents.
+    ///
+    /// After the loop, `ok_regular > 0 && symlink_rejected > 0` proves the
+    /// writer was actually observed in both states (guards against a
+    /// vacuous pass where the writer thread never got scheduled, or the
+    /// target never actually changed type). It does **not** prove the
+    /// tight metadata-says-regular-then-open-sees-symlink window was hit —
+    /// that window is invisible from outside the function under test.
+    /// `symlink_rejected` fires overwhelmingly from the cheaper pre-open
+    /// check, since the target is a symlink for roughly half of
+    /// wall-clock time.
+    ///
+    /// ## Flakiness / gating
+    ///
+    /// Timing-dependent by nature (racing OS thread scheduling against a
+    /// rename is the whole point), so this is `#[ignore]`d to keep `cargo
+    /// test --workspace` deterministic. `#[ignore]` (rather than an
+    /// env-var early-return) is deliberate: an env-var gate that
+    /// early-returns success on a skipped run reports the test as green
+    /// without it ever having run — a silent-pass hazard. `#[ignore]`
+    /// reports "ignored" in the default run, which is honest signal that
+    /// distinguishes "ran and passed" from "didn't run".
+    ///
+    /// Run manually:
+    ///
+    /// ```text
+    /// cargo test -p raikiri-vrt --lib -- --ignored concurrent_leaf_swap_never_yields_evil_contents
+    /// ```
+    ///
+    /// `ITERATIONS` was sized empirically: with `safe_open`'s `O_NOFOLLOW`
+    /// temporarily reverted to a plain `File::open` (bd raikiri-spike-51n),
+    /// 8 repeated runs observed the first `Ok(evil contents)` at iteration
+    /// 6, 7, 7, 8, 8, 49, 82, and 171 — worst case 171. `ITERATIONS = 20_000`
+    /// here is ~100x that worst-observed margin, so a regression
+    /// reintroducing the bug reliably trips this test rather than getting
+    /// lucky.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "timing-dependent race simulation; run manually: \
+                cargo test -p raikiri-vrt --lib -- --ignored \
+                concurrent_leaf_swap_never_yields_evil_contents"]
+    fn concurrent_leaf_swap_never_yields_evil_contents() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        const REGULAR_CONTENTS: &[u8] = b"regular contents";
+        const EVIL_CONTENTS: &[u8] = b"evil contents";
+        const ITERATIONS: usize = 20_000;
+
+        let dir = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(dir.path()).unwrap();
+        let target = dir.path().join("target.bin");
+        // Deliberately inside canonical_root — see "Design" above. Moving
+        // this outside the root would make the containment check (not
+        // O_NOFOLLOW) the thing that rejects the race, neutering the test.
+        let evil = dir.path().join("evil.bin");
+        std::fs::write(&evil, EVIL_CONTENTS).unwrap();
+
+        // Two swap sources the writer alternately `rename`s onto `target`.
+        // Each is recreated after being consumed by a `rename` (rename
+        // moves the source; it doesn't copy it).
+        let regular_src = dir.path().join("regular_src.bin");
+        let evil_link_src = dir.path().join("evil_link_src.bin");
+        std::fs::write(&regular_src, REGULAR_CONTENTS).unwrap();
+        std::os::unix::fs::symlink(&evil, &evil_link_src).unwrap();
+        // Seed `target` so the reader always has something to open.
+        std::fs::rename(&regular_src, &target).unwrap();
+        std::fs::write(&regular_src, REGULAR_CONTENTS).unwrap();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer_stop = Arc::clone(&stop);
+        let writer_target = target.clone();
+        let writer_evil = evil.clone();
+        let writer_regular_src = regular_src.clone();
+        let writer_evil_link_src = evil_link_src.clone();
+        let writer = std::thread::spawn(move || -> std::io::Result<()> {
+            while !writer_stop.load(Ordering::Relaxed) {
+                std::fs::rename(&writer_regular_src, &writer_target)?;
+                std::fs::write(&writer_regular_src, REGULAR_CONTENTS)?;
+
+                std::fs::rename(&writer_evil_link_src, &writer_target)?;
+                std::os::unix::fs::symlink(&writer_evil, &writer_evil_link_src)?;
+            }
+            Ok(())
+        });
+
+        // The reader loop runs inside `catch_unwind` so that a failing
+        // assertion (the exact case this test exists to catch) still lets
+        // us signal `stop` and join the writer below, rather than leaking
+        // a spinning background thread into the rest of the test binary's
+        // process if this test is ever run non-isolated. The original
+        // panic (with its diagnostic message) is re-raised via
+        // `resume_unwind` afterward — this is bookkeeping around the
+        // panic, not suppression of it.
+        let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut ok_regular = 0usize;
+            let mut symlink_rejected = 0usize;
+            let mut other_err = 0usize;
+            for i in 0..ITERATIONS {
+                match read_bounded_fixture_file(&target, &canonical_root) {
+                    Ok(bytes) => {
+                        assert_ne!(
+                            bytes, EVIL_CONTENTS,
+                            "SECURITY REGRESSION at iteration {i}: reader observed the \
+                             symlink target's contents through the leaf-swap race \
+                             (O_NOFOLLOW / pre-open check both failed to close the \
+                             TOCTOU window)"
+                        );
+                        assert_eq!(
+                            bytes, REGULAR_CONTENTS,
+                            "iteration {i}: reader returned Ok with unexpected contents: {bytes:?}"
+                        );
+                        ok_regular += 1;
+                    }
+                    Err(FixtureError::SymlinkRejected { .. }) => symlink_rejected += 1,
+                    Err(_) => other_err += 1,
+                }
+            }
+            (ok_regular, symlink_rejected, other_err)
+        }));
+
+        stop.store(true, Ordering::Relaxed);
+        let writer_result = writer.join();
+
+        let (ok_regular, symlink_rejected, other_err) = match loop_result {
+            Ok(counts) => counts,
+            Err(payload) => std::panic::resume_unwind(payload),
+        };
+        writer_result
+            .expect("writer thread panicked")
+            .expect("writer thread hit an unexpected IO error");
+
+        assert!(
+            ok_regular > 0,
+            "reader never observed the regular-file state — race not exercised"
+        );
+        assert!(
+            symlink_rejected > 0,
+            "reader never observed the symlink state — writer thread may not have \
+             been scheduled, or the swap never actually raced the reader"
+        );
+        eprintln!(
+            "concurrent_leaf_swap_never_yields_evil_contents: {ITERATIONS} iterations \
+             — ok_regular={ok_regular} symlink_rejected={symlink_rejected} other_err={other_err}"
+        );
+    }
 }
