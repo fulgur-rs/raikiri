@@ -605,12 +605,16 @@ type FontWarnObserver<'o> = Option<&'o mut dyn FnMut(&FontWarn<'_>)>;
 
 /// Emit a warn event: call the observer if `Some`, otherwise write the
 /// default `eprintln!` line so CLI use continues to see the same output.
+///
+/// Delegates to the crate-common [`crate::diag::emit_warn_via`] macro so this
+/// site and `layout.rs`'s [`crate::layout::LayoutWarn`] silent-clamp
+/// diagnostics share one mechanism instead of two independent answers to the
+/// same need (bd raikiri-spike-7t1t). See that module's doc for why this is
+/// a macro rather than a generic `Observer<W>` type — `FontWarn`'s observer
+/// is higher-ranked over `FontWarn`'s own borrowed lifetime, which a
+/// monomorphic generic parameter cannot express.
 fn emit_warn(observer: &mut FontWarnObserver<'_>, event: FontWarn<'_>) {
-    if let Some(cb) = observer.as_mut() {
-        cb(&event);
-    } else {
-        eprintln!("[raikiri-dom::fonts] warn: {event}");
-    }
+    crate::diag::emit_warn_via!(observer, "[raikiri-dom::fonts]", event);
 }
 
 /// Map a non-`Io` [`FontReadReject`] to its [`FontWarn::ReadRejected*`]

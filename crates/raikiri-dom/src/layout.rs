@@ -103,10 +103,10 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         let cv = &cascade.computed[idx];
         let style = &mut doc.nodes[idx].style;
         bridge_display(style, cv);
-        bridge_margin(style, cv);
-        bridge_padding(style, cv);
-        bridge_size(style, cv);
-        bridge_border(style, cv);
+        bridge_margin(style, cv, &mut doc.layout_warnings);
+        bridge_padding(style, cv, &mut doc.layout_warnings);
+        bridge_size(style, cv, &mut doc.layout_warnings);
+        bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
     }
 }
@@ -146,13 +146,13 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
 /// Length policy は [`computed_length_percentage_or_auto_to_taffy_length_percentage_auto`] を参照。
 ///
 /// (raikiri-spike-j5rz Sprint 18 Wave 1)
-fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues) {
+fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let m = cv.margin;
     style.margin = Rect {
-        top: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.top),
-        right: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.right),
-        bottom: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.bottom),
-        left: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.left),
+        top: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.top, diag),
+        right: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.right, diag),
+        bottom: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.bottom, diag),
+        left: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.left, diag),
     };
 }
 
@@ -171,13 +171,13 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues) {
 /// Length policy は [`computed_length_percentage_to_taffy_length_percentage`] を参照。
 ///
 /// (raikiri-spike-jbu0 Sprint 18 Wave 2)
-fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues) {
+fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let p = cv.padding;
     style.padding = Rect {
-        top: computed_length_percentage_to_taffy_length_percentage(p.top),
-        right: computed_length_percentage_to_taffy_length_percentage(p.right),
-        bottom: computed_length_percentage_to_taffy_length_percentage(p.bottom),
-        left: computed_length_percentage_to_taffy_length_percentage(p.left),
+        top: computed_length_percentage_to_taffy_length_percentage(p.top, diag),
+        right: computed_length_percentage_to_taffy_length_percentage(p.right, diag),
+        bottom: computed_length_percentage_to_taffy_length_percentage(p.bottom, diag),
+        left: computed_length_percentage_to_taffy_length_percentage(p.left, diag),
     };
 }
 
@@ -217,13 +217,13 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues) {
 /// - `border-image` / `border-radius` は Sprint 18 スコープ外。
 ///
 /// (raikiri-spike-q0uc Sprint 18 Wave 2、raikiri-spike-zls8 で computed 層へ移行)
-fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues) {
+fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let b = cv.border;
     style.border = Rect {
-        top: computed_length_to_taffy_length_percentage(b.top.width),
-        right: computed_length_to_taffy_length_percentage(b.right.width),
-        bottom: computed_length_to_taffy_length_percentage(b.bottom.width),
-        left: computed_length_to_taffy_length_percentage(b.left.width),
+        top: computed_length_to_taffy_length_percentage(b.top.width, diag),
+        right: computed_length_to_taffy_length_percentage(b.right.width, diag),
+        bottom: computed_length_to_taffy_length_percentage(b.bottom.width, diag),
+        left: computed_length_to_taffy_length_percentage(b.left.width, diag),
     };
 }
 
@@ -255,13 +255,13 @@ fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues) {
 /// PageBox output pin は test `apply_page_box_to_body_sets_body_style_size_to_page_dimensions`
 /// が担う (author→PageBox の bridge→clobber 連鎖 test は width 側で十分、
 /// 冗長化を避け height 側は structural 保証に留める)。
-fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues) {
+fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     // Wave 3 完了後: width + height 両方を同時に書くので struct literal を採用。
     // (Wave 2 の field-assign scaffold は Wave 3 マージまでの一時形態で、
     //  もはや保つ必要がない — default 保持は cv 側で `Auto` を返せば自然に達成。)
     style.size = Size {
-        width: computed_length_percentage_or_auto_to_taffy_dimension(cv.width),
-        height: computed_length_percentage_or_auto_to_taffy_dimension(cv.height),
+        width: computed_length_percentage_or_auto_to_taffy_dimension(cv.width, "width", diag),
+        height: computed_length_percentage_or_auto_to_taffy_dimension(cv.height, "height", diag),
     };
 }
 
@@ -567,28 +567,78 @@ const MAX_FONT_SIZE_PX: f32 = 1e6;
 /// panic しない (`LayoutError` も返さない) — PMO 判断 2026-07-27 §5 のとおり
 /// **clamp して続行**する。
 ///
-/// # なぜ warn しないのか (silent clamp)
+/// # なぜ silent clamp ではないのか (bd raikiri-spike-7t1t)
 ///
 /// `log` / `tracing` は workspace に依存が無い (`grep` → 0 hit) が、**それが
 /// 理由ではない** — 同一 crate の `fonts.rs` に dep 追加ゼロの診断機構が既に
 /// ある (`FontWarn` enum + `FontWarnObserver = Option<&mut dyn FnMut(&FontWarn)>`
 /// + `emit_warn`、bd raikiri-spike-1uq)。
 ///
-/// 採らない理由は **observer を本 site まで通すと公開 signature に波及する**
-/// から: `sanitize_*` は `bridge_*` → `apply_computed_to_style` →
-/// `layout_single_page` の奥にあり、observer を渡すにはこの chain の signature を
-/// 変えるか、per-node で裸の `eprintln!` を撒いて spam するかの二択になる。
-/// `fonts.rs` 型の観測機構を本 site に導入するのは別 task の判断
-/// (coordinator が起票予定、`wall/build` 壁予兆として declare 済)。
+/// 当初 (bd raikiri-spike-2ui0) この observer を本 site まで通すと公開
+/// signature に波及すると判断し silent のままにしていた: `sanitize_*` は
+/// `bridge_*` → `apply_computed_to_style` → `layout_single_page` の奥にあり、
+/// また出力側の choke point (`sanitize_taffy_layout`) は
+/// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout` から
+/// 呼ばれる — これは `taffy` crate 側が固定した trait method signature なので
+/// **観測用引数を追加できない**。
 ///
-/// **残余リスク (declare)**: silent なので、将来 absolutize 側に本物の算術 bug
-/// (例: 単位換算ミスで `1e9px`) が入ると、本 guard が 1e7 に吸収して
-/// **「それらしい layout」として描画されてしまう** — NaN や破綻として可視化
-/// されない。これは decision 082k が削除した fail-quiet arm
-/// (`Em(_) => length(0.0)`) と**同じ class の残余リスク**であり、本 guard は
-/// 値の病理を可用性と引き換えに隠している。
-fn sanitize_finite(v: f32, min: f32, max: f32) -> f32 {
-    if v.is_nan() { 0.0 } else { v.clamp(min, max) }
+/// bd raikiri-spike-7t1t で `crate::diag::emit_warn_via` 共通機構を導入し、
+/// この 2 点を以下で解決した:
+/// - `bridge_*` → `apply_computed_to_style` の chain は crate 内 private
+///   function のみで構成されるため、`diag: &mut Vec<LayoutWarn>` を通すのは
+///   crate-internal な signature 変更で完結する (pub シグネチャは無傷)。
+/// - `set_unrounded_layout` は `self` (`&mut Document`) は受け取れるので、
+///   observer を **closure ではなく owned buffer**
+///   (`Document::layout_warnings`) として `self` に持たせることで、
+///   trait signature を変えずに choke point からも push できるようにした。
+///   `layout_single_page` がこの buffer をパスの最後で drain し、
+///   `fonts.rs` と同じ `emit_warn_via` 経由で observer-or-eprintln に流す。
+///
+/// 「per-node で裸の `eprintln!` を撒いて spam する」ことは避けている —
+/// [`push_layout_warn`] は実際に clamp が起きた (値が変わった) 場合のみ
+/// event を積むので、通常範囲の layout は buffer に何も残らない。これは
+/// `FontWarn` が「warn+skip の異常」だけを observer に渡し、処理した file
+/// 全部を都度報告しないのと同じ設計原則である。
+///
+/// **残余リスク (bd raikiri-spike-2ui0 での declare、部分的にのみ縮小)**:
+/// 将来 absolutize 側に本物の算術 bug (例: 単位換算ミスで `1e9px`) が入ると、
+/// 本 guard が 1e7 に吸収して**「それらしい layout」として描画されてしまう**
+/// リスクは元々あった — NaN や破綻として可視化されない。これは decision
+/// 082k が削除した fail-quiet arm (`Em(_) => length(0.0)`) と**同じ class の
+/// 残余リスク**である。
+///
+/// 今は clamp が発生するたび [`LayoutWarn::NonFiniteClamped`] が
+/// observer-or-eprintln 経由で外に出るが、**「解消」ではなく「silent から
+/// stderr-visible への降格」**と正確に言うべきである — `layout_single_page`
+/// に external observer を差し込む口は現状無い (`LayoutWarnObserver`
+/// scaffolding の doc参照) ので、本 crate 内に stderr を能動的に監視する
+/// consumer が無い限り、この event は誰にも読まれない。`fonts.rs` の
+/// `FontWarn` も同じ状態 (observer 無しなら stderr のみ) なので同水準の
+/// 可視性にはなったが、「値の病理が可視化される」と言えるのは stderr を
+/// 見ている human operator がいる場合に限る。
+fn sanitize_finite(
+    v: f32,
+    min: f32,
+    max: f32,
+    site: &'static str,
+    diag: &mut Vec<LayoutWarn>,
+) -> f32 {
+    let clamped = if v.is_nan() { 0.0 } else { v.clamp(min, max) };
+    // `v != clamped` は NaN 入力でも正しく true になる (NaN の比較は IEEE 754
+    // で常に false 「以外」= `!=` は true) ので、NaN → 0.0 の代入も
+    // out-of-range 値の clamp も同じ条件で拾える。範囲内の通常値は
+    // `clamped == v` なので何も積まない (spam 回避、上の doc 参照)。
+    if clamped != v {
+        push_layout_warn(
+            diag,
+            LayoutWarn::NonFiniteClamped {
+                site,
+                raw: v,
+                clamped,
+            },
+        );
+    }
+    clamped
 }
 
 /// [`MAX_TAFFY_MAGNITUDE`] を上限とする対称 clamp (taffy 幾何用)。
@@ -608,8 +658,125 @@ fn sanitize_finite(v: f32, min: f32, max: f32) -> f32 {
 ///
 /// `padding` / `width` / `height` / `border-width` は parse 段で非負が
 /// enforce されているので、対称にしても値は変わらない。
-fn sanitize_taffy(v: f32) -> f32 {
-    sanitize_finite(v, -MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+///
+/// `site` は [`LayoutWarn::NonFiniteClamped`] の call-site label としてのみ
+/// 使う (clamp の算術には影響しない)。
+fn sanitize_taffy(v: f32, site: &'static str, diag: &mut Vec<LayoutWarn>) -> f32 {
+    sanitize_finite(v, -MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE, site, diag)
+}
+
+/// Structured warn event for this module's non-finite-clamp diagnostic sites
+/// (`sanitize_finite` / `sanitize_taffy` / `sanitize_taffy_layout`). Sibling
+/// of [`crate::fonts::FontWarn`] (bd raikiri-spike-1uq), generalized via the
+/// shared [`crate::diag::emit_warn_via`] mechanism (bd raikiri-spike-7t1t) so
+/// the "silent clamp" residual risk documented on [`sanitize_finite`] gets
+/// the same observability `fonts.rs` already has.
+///
+/// Every variant is fully owned (no borrowed `Path`, unlike `FontWarn`)
+/// because these clamp sites only ever see primitive `f32` values. See
+/// `crate::diag`'s module doc for why this owned shape — not `FontWarn`'s
+/// borrowed one — is what a shared generic `Observer<W>` type could actually
+/// have supported, and why a macro was used instead so both shapes share one
+/// mechanism anyway.
+///
+/// No `#[non_exhaustive]` (unlike `FontWarn`, which is `pub`): that attribute
+/// only constrains *downstream crates*, and this enum is `pub(crate)` with no
+/// external consumer to protect. Add it back if this type is ever promoted
+/// to a public export.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LayoutWarn {
+    /// A non-finite (NaN / +-Inf) or out-of-range `f32` was clamped to a
+    /// finite in-range value before being written into `taffy::Style` or the
+    /// `Node.unrounded_layout` arena field. Only emitted when clamping
+    /// actually changed the value (not on every call) so ordinary in-range
+    /// layouts stay silent — the "warn+skip" shape `FontWarn` uses, not a
+    /// per-node trace.
+    NonFiniteClamped {
+        /// Call-site label (e.g. `"font-size"`, `"margin"`,
+        /// `"layout.size"`) — a human-readable category, not a stable
+        /// machine-parseable identifier.
+        site: &'static str,
+        /// Pre-clamp value (may be NaN or +-Inf).
+        raw: f32,
+        /// Post-clamp value actually used.
+        clamped: f32,
+    },
+    /// `suppressed` additional [`LayoutWarn::NonFiniteClamped`] events were
+    /// dropped once [`LAYOUT_WARN_CAP`] was reached during a single
+    /// `layout_single_page` pass, bounding memory / `eprintln!` spam under a
+    /// pathological input that clamps every field of every node (e.g. deep
+    /// `width: 200%` nesting — see [`MAX_TAFFY_MAGNITUDE`]'s doc). Emitted at
+    /// most once per pass, after all the real events it summarizes.
+    Truncated {
+        /// Count of additional `NonFiniteClamped` events dropped after the
+        /// cap was reached.
+        suppressed: usize,
+    },
+}
+
+impl std::fmt::Display for LayoutWarn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LayoutWarn::NonFiniteClamped { site, raw, clamped } => write!(
+                f,
+                "{site}: clamped non-finite/out-of-range value {raw} to {clamped}"
+            ),
+            LayoutWarn::Truncated { suppressed } => write!(
+                f,
+                "{suppressed} additional layout clamp warning(s) suppressed (buffer cap reached)"
+            ),
+        }
+    }
+}
+
+/// Observer alias for [`LayoutWarn`] — sibling of `fonts.rs`'s
+/// `FontWarnObserver`. Unlike that alias, this one carries no inner lifetime
+/// (`LayoutWarn` is fully owned), so it is a plain, non-higher-ranked
+/// `Option<&mut dyn FnMut(&LayoutWarn)>`. Not yet reachable from any public
+/// entry point — see [`Document::layout_warnings`](crate::document::Document)
+/// for why (dom→paint wall: `layout_single_page`'s signature is consumed by
+/// `raikiri-paint` and the `raikiri` crate, so adding a parameter — or a new
+/// `_with_observer` sibling — to it is a decision for that wall, not this
+/// task). This scaffolding exists so a future `_with_observer` addition only
+/// has to plumb one new parameter through, rather than re-deriving the whole
+/// mechanism.
+type LayoutWarnObserver<'o> = Option<&'o mut dyn FnMut(&LayoutWarn)>;
+
+/// Emit a [`LayoutWarn`] event: call the observer if `Some`, otherwise
+/// `eprintln!` (matches [`crate::fonts::emit_warn`]'s shape exactly, via the
+/// shared [`crate::diag::emit_warn_via`] macro).
+fn emit_layout_warn(observer: &mut LayoutWarnObserver<'_>, event: LayoutWarn) {
+    crate::diag::emit_warn_via!(observer, "[raikiri-dom::layout]", event);
+}
+
+/// Cap on buffered [`LayoutWarn::NonFiniteClamped`] events per
+/// `layout_single_page` pass.
+///
+/// A single pathological input (e.g. deep `width: 200%` nesting hitting
+/// every node, [`MAX_TAFFY_MAGNITUDE`]'s doc) can clamp every `f32` field of
+/// every node in the arena, which would otherwise make both the buffer and
+/// the eventual `eprintln!` replay unbounded — precisely the "per-node spam"
+/// concern [`sanitize_finite`]'s doc raised about threading an observer down
+/// this chain in the first place. [`push_layout_warn`] collapses anything
+/// past this cap into a single running [`LayoutWarn::Truncated`] counter
+/// instead of dropping it silently.
+pub(crate) const LAYOUT_WARN_CAP: usize = 63;
+
+/// Push a [`LayoutWarn`] onto `diag`, respecting [`LAYOUT_WARN_CAP`].
+///
+/// Once the cap is reached, further events collapse into (rather than grow)
+/// a single trailing [`LayoutWarn::Truncated`] counter, so the buffer size is
+/// bounded (`LAYOUT_WARN_CAP + 1`) regardless of how many clamp sites fire in
+/// one pass.
+fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
+    if diag.len() < LAYOUT_WARN_CAP {
+        diag.push(event);
+        return;
+    }
+    match diag.last_mut() {
+        Some(LayoutWarn::Truncated { suppressed }) => *suppressed += 1,
+        _ => diag.push(LayoutWarn::Truncated { suppressed: 1 }),
+    }
 }
 
 /// taffy が resolve した [`taffy::Layout`] の全 f32 field を
@@ -667,33 +834,46 @@ fn sanitize_taffy(v: f32) -> f32 {
 /// 現在 `padding` / `border` / `content_size` / `scrollbar_size` を読む
 /// consumer は無い (grep 実測) が、将来 paint がこれらを使うときは
 /// 非負性を仮定しないこと。
-pub(crate) fn sanitize_taffy_layout(layout: &TaffyLayout) -> TaffyLayout {
-    fn size(s: Size<f32>) -> Size<f32> {
+///
+/// `diag` collects [`LayoutWarn::NonFiniteClamped`] events for whichever
+/// fields actually get clamped (site labels: `"layout.location"`,
+/// `"layout.size"`, `"layout.content_size"`, `"layout.scrollbar_size"`,
+/// `"layout.border"`, `"layout.padding"`, `"layout.margin"`). The sole caller
+/// (`<Document as taffy::LayoutPartialTree>::set_unrounded_layout` in
+/// `taffy_impl.rs`) passes `&mut self.layout_warnings` — an owned buffer on
+/// `Document`, not a live observer — because that trait method's signature
+/// is fixed by `taffy` and cannot receive one (see
+/// `Document::layout_warnings`'s doc for why).
+pub(crate) fn sanitize_taffy_layout(
+    layout: &TaffyLayout,
+    diag: &mut Vec<LayoutWarn>,
+) -> TaffyLayout {
+    fn size(s: Size<f32>, site: &'static str, diag: &mut Vec<LayoutWarn>) -> Size<f32> {
         Size {
-            width: sanitize_taffy(s.width),
-            height: sanitize_taffy(s.height),
+            width: sanitize_taffy(s.width, site, diag),
+            height: sanitize_taffy(s.height, site, diag),
         }
     }
-    fn rect(r: Rect<f32>) -> Rect<f32> {
+    fn rect(r: Rect<f32>, site: &'static str, diag: &mut Vec<LayoutWarn>) -> Rect<f32> {
         Rect {
-            left: sanitize_taffy(r.left),
-            right: sanitize_taffy(r.right),
-            top: sanitize_taffy(r.top),
-            bottom: sanitize_taffy(r.bottom),
+            left: sanitize_taffy(r.left, site, diag),
+            right: sanitize_taffy(r.right, site, diag),
+            top: sanitize_taffy(r.top, site, diag),
+            bottom: sanitize_taffy(r.bottom, site, diag),
         }
     }
     TaffyLayout {
         order: layout.order,
         location: Point {
-            x: sanitize_taffy(layout.location.x),
-            y: sanitize_taffy(layout.location.y),
+            x: sanitize_taffy(layout.location.x, "layout.location", diag),
+            y: sanitize_taffy(layout.location.y, "layout.location", diag),
         },
-        size: size(layout.size),
-        content_size: size(layout.content_size),
-        scrollbar_size: size(layout.scrollbar_size),
-        border: rect(layout.border),
-        padding: rect(layout.padding),
-        margin: rect(layout.margin),
+        size: size(layout.size, "layout.size", diag),
+        content_size: size(layout.content_size, "layout.content_size", diag),
+        scrollbar_size: size(layout.scrollbar_size, "layout.scrollbar_size", diag),
+        border: rect(layout.border, "layout.border", diag),
+        padding: rect(layout.padding, "layout.padding", diag),
+        margin: rect(layout.margin, "layout.margin", diag),
     }
 }
 
@@ -729,12 +909,16 @@ pub(crate) fn sanitize_taffy_layout(layout: &TaffyLayout) -> TaffyLayout {
 /// used value ではない** ([`MAX_TAFFY_MAGNITUDE`] の射程節を参照)。
 fn computed_length_percentage_to_taffy_length_percentage(
     len: ComputedLengthPercentage,
+    diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentage {
     match len {
         // site 1 (bd raikiri-spike-2ui0): `sanitize_taffy` で非有限を落とす。
-        ComputedLengthPercentage::Px(v) => LengthPercentage::length(sanitize_taffy(v)),
+        // 唯一の caller (`bridge_padding`) 由来なので site label は固定。
+        ComputedLengthPercentage::Px(v) => {
+            LengthPercentage::length(sanitize_taffy(v, "padding", diag))
+        }
         ComputedLengthPercentage::Percent(p) => {
-            LengthPercentage::percent(sanitize_taffy(p / 100.0))
+            LengthPercentage::percent(sanitize_taffy(p / 100.0, "padding", diag))
         }
     }
 }
@@ -748,13 +932,20 @@ fn computed_length_percentage_to_taffy_length_percentage(
 ///
 /// [`bridge_size`] から width (raikiri-spike-ggig Wave 2) / height
 /// (raikiri-spike-01up Wave 3) 両方で consume される。
+///
+/// `site` distinguishes the two [`bridge_size`] callers (`"width"` /
+/// `"height"`) in [`LayoutWarn::NonFiniteClamped`] events.
 fn computed_length_percentage_or_auto_to_taffy_dimension(
     loa: ComputedLengthPercentageOrAuto,
+    site: &'static str,
+    diag: &mut Vec<LayoutWarn>,
 ) -> Dimension {
     match loa {
         // site 2 (bd raikiri-spike-2ui0)。
-        ComputedLengthPercentageOrAuto::Px(v) => Dimension::length(sanitize_taffy(v)),
-        ComputedLengthPercentageOrAuto::Percent(p) => Dimension::percent(sanitize_taffy(p / 100.0)),
+        ComputedLengthPercentageOrAuto::Px(v) => Dimension::length(sanitize_taffy(v, site, diag)),
+        ComputedLengthPercentageOrAuto::Percent(p) => {
+            Dimension::percent(sanitize_taffy(p / 100.0, site, diag))
+        }
         ComputedLengthPercentageOrAuto::Auto => Dimension::auto(),
     }
 }
@@ -768,13 +959,17 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
 /// available space" を taffy に委譲、f32 を持たないので guard 対象外)。
 fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
     loa: ComputedLengthPercentageOrAuto,
+    diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentageAuto {
     match loa {
         // site 3 (bd raikiri-spike-2ui0)。margin は負値が spec-valid なので
-        // `sanitize_taffy` の対称 clamp が load-bearing。
-        ComputedLengthPercentageOrAuto::Px(v) => LengthPercentageAuto::length(sanitize_taffy(v)),
+        // `sanitize_taffy` の対称 clamp が load-bearing。唯一の caller
+        // (`bridge_margin`) 由来なので site label は固定。
+        ComputedLengthPercentageOrAuto::Px(v) => {
+            LengthPercentageAuto::length(sanitize_taffy(v, "margin", diag))
+        }
         ComputedLengthPercentageOrAuto::Percent(p) => {
-            LengthPercentageAuto::percent(sanitize_taffy(p / 100.0))
+            LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, "margin", diag))
         }
         ComputedLengthPercentageOrAuto::Auto => LengthPercentageAuto::auto(),
     }
@@ -798,9 +993,13 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
 /// [`ComputedLength`] なので percentage arm を
 /// 持たない点が違う。非有限 guard ([`sanitize_taffy`]) は同じく通す
 /// (bd raikiri-spike-2ui0)。
-fn computed_length_to_taffy_length_percentage(len: ComputedLength) -> LengthPercentage {
-    // site 4 (bd raikiri-spike-2ui0)。
-    LengthPercentage::length(sanitize_taffy(len.px()))
+fn computed_length_to_taffy_length_percentage(
+    len: ComputedLength,
+    diag: &mut Vec<LayoutWarn>,
+) -> LengthPercentage {
+    // site 4 (bd raikiri-spike-2ui0)。唯一の caller (`bridge_border`) 由来
+    // なので site label は固定。
+    LengthPercentage::length(sanitize_taffy(len.px(), "border-width", diag))
 }
 
 /// 全 Text node を parley で pre-shape、結果を `Node.text_layout` に格納する。
@@ -873,8 +1072,17 @@ pub(crate) fn preshape_text(
         //
         // site 5 (bd raikiri-spike-2ui0): ただし**値**は非有限になり得るので
         // parley に渡す直前で有限化する。下限 0.0 は grammar
-        // `<length-percentage [0,∞]>` (CSS Fonts 4 §2.5) に一致。
-        let font_size_px = sanitize_finite(cv.font_size.px(), 0.0, MAX_FONT_SIZE_PX);
+        // `<length-percentage [0,∞]>` (CSS Fonts 4 §2.5) に一致。clamp が
+        // 実際に発火した場合は `doc.layout_warnings` に積む (bd
+        // raikiri-spike-7t1t、silent から stderr-visible への降格 —
+        // `sanitize_finite` の doc参照)。
+        let font_size_px = sanitize_finite(
+            cv.font_size.px(),
+            0.0,
+            MAX_FONT_SIZE_PX,
+            "font-size",
+            &mut doc.layout_warnings,
+        );
 
         let mut builder = layout_cx.ranged_builder(fonts, &text, 1.0, true);
         builder.push_default(StyleProperty::FontFamily(font_family));
@@ -953,6 +1161,13 @@ pub fn layout_single_page(
             t.text_layout = None;
         }
     }
+    // Step 0b: layout_warnings re-entrance clear (bd raikiri-spike-7t1t) —
+    // same rationale as the text_layout clear above: this Vec is populated
+    // over the course of a pass (bridges below, then the taffy compute step
+    // via `set_unrounded_layout`) and drained near the end of this function,
+    // but an early `?` return (Step 3) would otherwise leave a previous call's
+    // leftover entries for the next call to inherit.
+    document.layout_warnings.clear();
 
     // Step 1: ComputedValues → taffy::Style bridge (M1.4 no-op site)
     apply_computed_to_style(document, cascade);
@@ -986,6 +1201,29 @@ pub fn layout_single_page(
             height: AvailableSpace::Definite(page_box.height),
         },
     );
+
+    // Step 6: replay buffered LayoutWarn events (bd raikiri-spike-7t1t).
+    //
+    // `document.layout_warnings` accumulated events from both this
+    // function's own bridge calls (Step 1 / Step 2, via `&mut
+    // document.layout_warnings` passed directly) and from
+    // `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
+    // (invoked internally by `compute_root_layout` just above, via `self` —
+    // see `Document::layout_warnings`'s doc for why that trait-fixed
+    // signature can only reach an owned buffer, not a live observer).
+    //
+    // No external caller can supply an observer yet — `layout_single_page`'s
+    // signature is a dom→paint boundary (`raikiri-paint` and `raikiri` both
+    // call it directly) and adding a parameter, or a new `_with_observer`
+    // sibling, is a decision for that wall rather than this task. `observer`
+    // is therefore always `None` today, so this always falls back to the
+    // same `eprintln!` shape `fonts.rs` uses when uncalled with an observer —
+    // but the plumbing is real and ready for a future `_with_observer`
+    // sibling to wire an observer through with no further refactor.
+    let mut observer: LayoutWarnObserver<'_> = None;
+    for event in document.layout_warnings.drain(..) {
+        emit_layout_warn(&mut observer, event);
+    }
 
     Ok(())
 }
@@ -2106,44 +2344,195 @@ mod tests {
     fn sanitize_finite_maps_nan_to_zero() {
         // `f32::clamp` は NaN を NaN のまま返すので、この分岐が無いと NaN が
         // 素通りする。
-        assert_eq!(sanitize_finite(f32::NAN, -1.0, 1.0), 0.0);
-        assert_eq!(sanitize_finite(f32::NAN, 0.0, MAX_FONT_SIZE_PX), 0.0);
+        let mut diag = Vec::new();
+        assert_eq!(sanitize_finite(f32::NAN, -1.0, 1.0, "test", &mut diag), 0.0);
+        assert_eq!(
+            sanitize_finite(f32::NAN, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
+            0.0
+        );
+        // 両方とも実際に clamp した (NaN != 0.0) ので、それぞれ 1 event ずつ
+        // `LayoutWarn::NonFiniteClamped` が積まれる (bd raikiri-spike-7t1t)。
+        assert_eq!(
+            diag.len(),
+            2,
+            "clamp が発火した回数だけ event が積まれること"
+        );
+        for event in &diag {
+            match event {
+                LayoutWarn::NonFiniteClamped { site, raw, clamped } => {
+                    assert_eq!(*site, "test");
+                    assert!(raw.is_nan());
+                    assert_eq!(*clamped, 0.0);
+                }
+                other => panic!("unexpected LayoutWarn variant: {other:?}"),
+            }
+        }
     }
 
     #[test]
     fn sanitize_finite_clamps_infinities_to_bounds() {
+        let mut diag = Vec::new();
         assert_eq!(
-            sanitize_finite(f32::INFINITY, 0.0, MAX_FONT_SIZE_PX),
+            sanitize_finite(f32::INFINITY, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
             MAX_FONT_SIZE_PX
         );
         assert_eq!(
-            sanitize_finite(f32::NEG_INFINITY, -MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE),
+            sanitize_finite(
+                f32::NEG_INFINITY,
+                -MAX_TAFFY_MAGNITUDE,
+                MAX_TAFFY_MAGNITUDE,
+                "test",
+                &mut diag
+            ),
             -MAX_TAFFY_MAGNITUDE
         );
         // 下限が 0.0 の site (font-size) では -Inf は 0.0 に落ちる。
         assert_eq!(
-            sanitize_finite(f32::NEG_INFINITY, 0.0, MAX_FONT_SIZE_PX),
+            sanitize_finite(f32::NEG_INFINITY, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
             0.0
         );
+        assert_eq!(diag.len(), 3, "3 回とも clamp が発火する (全て非有限入力)");
     }
 
     #[test]
     fn sanitize_taffy_clamps_out_of_range_finite_values() {
         // 有限でも範囲外なら寄せる (「有限化するだけ」ではない)。
-        assert_eq!(sanitize_taffy(1e30), MAX_TAFFY_MAGNITUDE);
-        assert_eq!(sanitize_taffy(-1e30), -MAX_TAFFY_MAGNITUDE);
+        let mut diag = Vec::new();
+        assert_eq!(sanitize_taffy(1e30, "test", &mut diag), MAX_TAFFY_MAGNITUDE);
+        assert_eq!(
+            sanitize_taffy(-1e30, "test", &mut diag),
+            -MAX_TAFFY_MAGNITUDE
+        );
+        assert_eq!(diag.len(), 2);
     }
 
     #[test]
     fn sanitize_taffy_passes_through_in_range_values() {
         // 通常値は bit-identical に素通しする (VRT が pixel-exact である前提)。
+        let mut diag = Vec::new();
         for v in [0.0_f32, 1.0, -1.0, 16.0, 793.7008, MAX_TAFFY_MAGNITUDE] {
             assert_eq!(
-                sanitize_taffy(v),
+                sanitize_taffy(v, "test", &mut diag),
                 v,
                 "in-range value must pass through: {v}"
             );
         }
+        // 範囲内 (clamp が実質 no-op) では何も積まない — per-node spam を
+        // 避ける設計の pin (`sanitize_finite` の doc / bd raikiri-spike-7t1t)。
+        assert!(
+            diag.is_empty(),
+            "in-range value must not push a LayoutWarn: {diag:?}"
+        );
+    }
+
+    // ── crate::diag 経由の generalized 診断 channel (bd raikiri-spike-7t1t) ──
+    // fonts.rs の FontWarn observer pattern を汎用化した LayoutWarn 側の
+    // 独自 unit test。fonts.rs の `observer_fires_*` test 群と対になる。
+
+    /// [`emit_layout_warn`] は observer が `Some` ならそれを呼び、`eprintln!`
+    /// はしない — fonts.rs の `emit_warn` と対称的な契約 (両方とも
+    /// `crate::diag::emit_warn_via` を経由するので同じ振る舞いになるはず)。
+    #[test]
+    fn emit_layout_warn_calls_observer_when_some() {
+        let mut collected: Vec<LayoutWarn> = Vec::new();
+        let mut cb = |w: &LayoutWarn| collected.push(*w);
+        let mut observer: LayoutWarnObserver<'_> = Some(&mut cb);
+        emit_layout_warn(
+            &mut observer,
+            LayoutWarn::NonFiniteClamped {
+                site: "test",
+                raw: f32::NAN,
+                clamped: 0.0,
+            },
+        );
+        assert_eq!(collected.len(), 1);
+        // float literal は pattern に書けない (`illegal_floating_point_literal_pattern`
+        // は deny-by-default) ので variant/site だけ matches! で確認し、
+        // `clamped` の値は別途 `if let` で束縛して assert する。
+        assert!(matches!(
+            collected[0],
+            LayoutWarn::NonFiniteClamped { site: "test", .. }
+        ));
+        if let LayoutWarn::NonFiniteClamped { clamped, .. } = collected[0] {
+            assert_eq!(clamped, 0.0);
+        }
+    }
+
+    /// `observer == None` では代わりに `eprintln!` する — 呼び出しても panic
+    /// しないことだけを確認する (stderr の内容は capture しない、fonts.rs の
+    /// 対応する経路も同様に未検証)。
+    #[test]
+    fn emit_layout_warn_falls_back_to_eprintln_when_none() {
+        let mut observer: LayoutWarnObserver<'_> = None;
+        emit_layout_warn(&mut observer, LayoutWarn::Truncated { suppressed: 3 });
+    }
+
+    /// [`push_layout_warn`] は [`LAYOUT_WARN_CAP`] を超えた分を個別 event
+    /// としてではなく単一の running `Truncated` counter に畳み込む —
+    /// 「病的な入力で every field が毎回 clamp される」場合に buffer と
+    /// 後段の eprintln! replay を有界にするための cap (doc 参照)。
+    #[test]
+    fn push_layout_warn_collapses_past_cap_into_truncated_counter() {
+        let mut diag: Vec<LayoutWarn> = Vec::new();
+        // cap ちょうどまでは real event。
+        for _ in 0..LAYOUT_WARN_CAP {
+            push_layout_warn(
+                &mut diag,
+                LayoutWarn::NonFiniteClamped {
+                    site: "test",
+                    raw: f32::NAN,
+                    clamped: 0.0,
+                },
+            );
+        }
+        assert_eq!(diag.len(), LAYOUT_WARN_CAP);
+        assert!(
+            diag.iter()
+                .all(|w| matches!(w, LayoutWarn::NonFiniteClamped { .. })),
+            "cap 以内は real event のみのはず: {diag:?}"
+        );
+
+        // cap を超えた分は Vec を伸ばさず、末尾の Truncated counter に集約される。
+        for _ in 0..5 {
+            push_layout_warn(
+                &mut diag,
+                LayoutWarn::NonFiniteClamped {
+                    site: "test",
+                    raw: f32::INFINITY,
+                    clamped: MAX_TAFFY_MAGNITUDE,
+                },
+            );
+        }
+        assert_eq!(
+            diag.len(),
+            LAYOUT_WARN_CAP + 1,
+            "cap 超過分は Vec を伸ばさず Truncated に畳み込まれること: {diag:?}"
+        );
+        assert!(matches!(
+            diag.last(),
+            Some(LayoutWarn::Truncated { suppressed: 5 })
+        ));
+    }
+
+    /// [`LayoutWarn`] の `Display` が両 variant で人間可読な文字列を出す
+    /// ことの pin (`crate::diag::emit_warn_via` の `eprintln!` fallback が
+    /// 実際に読める行になることの保証)。
+    #[test]
+    fn layout_warn_display_is_human_readable() {
+        let clamped = LayoutWarn::NonFiniteClamped {
+            site: "font-size",
+            raw: f32::NAN,
+            clamped: 0.0,
+        };
+        assert_eq!(
+            clamped.to_string(),
+            "font-size: clamped non-finite/out-of-range value NaN to 0"
+        );
+        let truncated = LayoutWarn::Truncated { suppressed: 7 };
+        assert_eq!(
+            truncated.to_string(),
+            "7 additional layout clamp warning(s) suppressed (buffer cap reached)"
+        );
     }
 
     /// clamp 定数が **doc が主張する帯の中にある**ことの pin。
@@ -2388,10 +2777,30 @@ mod tests {
                 bottom: f32::NAN,
             },
         };
-        let s = sanitize_taffy_layout(&poisoned);
+        let mut diag = Vec::new();
+        let s = sanitize_taffy_layout(&poisoned, &mut diag);
 
         // `order` は u32 なので guard 対象外 — 素通しすること。
         assert_eq!(s.order, 7, "order は clamp 対象ではない");
+
+        // 16 field が非有限/範囲外 (下の個別 assert が数える対象と一致): location
+        // 2 + size 2 + content_size 2 + scrollbar_size 1 + border 3 + padding 3
+        // + margin 3。範囲内の 4 field (scrollbar_size.height / border.bottom /
+        // padding.bottom / margin.top) は積まれない (bd raikiri-spike-7t1t、
+        // per-node spam を避ける設計)。
+        assert_eq!(
+            diag.len(),
+            16,
+            "clamp が実際に発火した field の数だけ LayoutWarn が積まれること: {diag:?}"
+        );
+        assert!(
+            diag.iter().all(|w| matches!(
+                w,
+                LayoutWarn::NonFiniteClamped { site, .. }
+                    if site.starts_with("layout.")
+            )),
+            "sanitize_taffy_layout 由来の event は全て layout.* site label を持つこと: {diag:?}"
+        );
 
         assert_eq!(s.location.x, MAX_TAFFY_MAGNITUDE);
         assert_eq!(s.location.y, -MAX_TAFFY_MAGNITUDE);
@@ -2453,6 +2862,11 @@ mod tests {
                 bottom: 12.0,
             },
         };
-        assert_eq!(sanitize_taffy_layout(&benign), benign);
+        let mut diag = Vec::new();
+        assert_eq!(sanitize_taffy_layout(&benign, &mut diag), benign);
+        assert!(
+            diag.is_empty(),
+            "全 field が range 内なので LayoutWarn は積まれないこと: {diag:?}"
+        );
     }
 }

@@ -112,9 +112,23 @@ impl LayoutPartialTree for Document {
     /// (`layout::sanitize_taffy`) だけでは nested percentage が used value 層で
     /// 複利して非有限に戻るため閉じない — 理由と実測は
     /// `layout::sanitize_taffy_layout` の doc を参照。
+    ///
+    /// clamp が実際に発火した field は `self.layout_warnings` (owned buffer)
+    /// に積む (bd raikiri-spike-7t1t)。この trait method の signature は
+    /// `taffy` crate が固定しているため観測用の引数を追加できない —
+    /// `self` 経由で書ける owned buffer に積むことで signature を変えずに
+    /// 診断を残す。`layout_single_page` がパス終了時にこの buffer を drain
+    /// して observer-or-eprintln へ流す (詳細は
+    /// [`Document::layout_warnings`](crate::document::Document) の doc)。
+    ///
+    /// RHS を先に `sanitized` へ束縛してから LHS へ代入する — `self.nodes[..]`
+    /// (IndexMut 経由) と `self.layout_warnings` という `self` の 2 つの
+    /// disjoint field を 1 文の代入式内で同時に borrow させないための意図的な
+    /// 分割 (borrowck を通すためだけでなく、evaluation order を明示して
+    /// 読み手に依存関係を隠さない狙いもある)。
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        self.nodes[usize::from(node_id)].unrounded_layout =
-            crate::layout::sanitize_taffy_layout(layout);
+        let sanitized = crate::layout::sanitize_taffy_layout(layout, &mut self.layout_warnings);
+        self.nodes[usize::from(node_id)].unrounded_layout = sanitized;
     }
 
     fn resolve_calc_value(&self, _val: *const (), _basis: f32) -> f32 {

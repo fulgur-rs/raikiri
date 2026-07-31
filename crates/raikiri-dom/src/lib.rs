@@ -42,6 +42,7 @@
 //! 追加時に漏れる。設計仕様書:
 //! `docs/superpowers/specs/2026-07-18-flat-tree-membership-metadata-design.md`。
 
+mod diag;
 mod node;
 mod running;
 
