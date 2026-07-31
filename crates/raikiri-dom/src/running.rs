@@ -46,11 +46,11 @@
 //! (§7.3 lines 2007-2012).
 //!
 //! **Divergence from canonical shape** — same "pub(crate) local until
-//! traits reconciliation decision" convention that the pre-bsi `crate::target`
-//! module previously held (that reconciliation has since landed via
-//! raikiri-spike-bsi Option C — the TargetRegistry / TargetInfo /
-//! ResolveOutcome / PendingResolution / resolve_content_component API now
-//! lives at [`raikiri_traits::TargetRegistry`] and friends). This module
+//! traits reconciliation decision" convention that the pre-bsi
+//! `crate::target` (removed) module previously held (that reconciliation has
+//! since landed via raikiri-spike-bsi Option C — the TargetRegistry /
+//! TargetInfo / ResolveOutcome / PendingResolution / resolve_content_component
+//! API now lives at [`raikiri_traits::TargetRegistry`] and friends). This module
 //! currently writes `pub(crate)` and does NOT re-export through the crate
 //! root; a later reconciliation task will decide whether any of these types
 //! need to cross wall/traits or wall/dom-paint (bd raikiri-spike-96u.4 has

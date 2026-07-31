@@ -562,7 +562,7 @@ fn pt_to_px(v: f32) -> f32 {
 ///
 /// cascade pipeline ではこの contract を
 /// [`SpecifiedValues::finalize_as_root`] が守る (bd raikiri-spike-zls8) —
-/// end-to-end の pin は `crate::cascade` の
+/// end-to-end の pin は [`mod@crate::cascade`] の
 /// `rem_on_root_element_resolves_against_initial_font_size` /
 /// `rem_below_root_element_resolves_against_root_computed_font_size` /
 /// `rem_on_root_element_box_property_uses_own_font_size` の 3 本。
@@ -748,11 +748,11 @@ pub fn resolve_line_height(
 /// drift を生む)。
 ///
 /// page 経路 (`@page`) は `PropertyValue` の bag を運ぶが、bd raikiri-spike-sshp
-/// 以降 `crate::page::cascade_page` の phase 3 が `border-*-width` longhand を
+/// 以降 [`crate::page::cascade_page`] の phase 3 が `border-*-width` longhand を
 /// [`Border`] に組み直して**本関数へ funnel する** — `matches!(style, None |
 /// Hidden)` を page 側で書き直してはならない。longhand には color が無いので
 /// placeholder を渡すが、本関数は width の判定に color を読まない。
-/// `border-*-style` **未宣言**時の基準は `crate::specified::INITIAL_BORDER` の
+/// `border-*-style` **未宣言**時の基準は [`crate::specified::INITIAL_BORDER`] の
 /// `style` (= `none`) であり、CSS Paged Media 3 §6 "Page Properties"
 /// <https://www.w3.org/TR/css-page-3/#page-properties> の "both the page context
 /// and the margin context have a computed value for every property" が根拠。

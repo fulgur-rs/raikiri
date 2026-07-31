@@ -323,7 +323,9 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 /// root element として扱われる** (自分の subtree の `rem` 基準になる) —
 /// 「親 element を持たない element は initial values を参照する」という §6.1.1
 /// の規則を素直に適用した結果であり、意図した挙動である。
-fn resolve_inheritance<D: StyleDom>(
+///
+/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で gate が red (規約 3)。
+pub(crate) fn resolve_inheritance<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
     parent_computed: &ComputedValues,
@@ -486,7 +488,7 @@ fn resolve_inheritance<D: StyleDom>(
 /// compile error になる。arm list は 1 関数に集約されているので上の 2 経路が
 /// 同時に保証を得る。**強制されるのは arm を書くことだけ**で、残る範囲は同関数
 /// doc の「この guard が守らない範囲」節。defense-in-depth の runtime
-/// guard は `crate::rule` の `declaration_block_never_emits_shorthand_keys`
+/// guard は [`crate::rule`] の `declaration_block_never_emits_shorthand_keys`
 /// (parse 出口) と、本 module の `post_parse_*` test 群
 /// (6 本、`RuleTree` post-parse mutation 経路 — うち展開の有無を実際に区別する
 /// のは 4 本。残り 2 本は over-correction 用の弱い guard で、各 test の comment
@@ -627,7 +629,9 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// 評価させ、各 guard には **上限のみ** (`w < N`) を書く — 下限は直前 arm の
 /// 否定として暗黙に成立する。したがって **arm の順序が spec の行順と 1 対 1** で
 /// あることが正しさの条件であり、並べ替えは不可。
-fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
+///
+/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で gate が red (規約 3)。
+pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
     match specified {
         FontWeightValue::Absolute(w) => w,
         FontWeightValue::Bolder => match inherited {
@@ -707,7 +711,7 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 /// ([`padding`](PropertyValue::PaddingTop) /
 /// [`margin`](PropertyValue::MarginTop) / [`width`](PropertyValue::Width) /
 /// [`height`](PropertyValue::Height) / `border-*-width`) と `line-height` の
-/// [`Length`](crate::property::Length) `Em` / `Rem` / `Pt` は**まだ specified
+/// [`Length`] `Em` / `Rem` / `Pt` は**まだ specified
 /// 値**である。CSS Paged Media 3 §6 "Page Properties"
 /// <https://www.w3.org/TR/css-page-3/#page-properties> の "Values in units of
 /// em and ex are interpreted relative to the font associated with their
@@ -718,7 +722,7 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 ///
 /// **その解決は呼び手の責務である。** 唯一の呼び手
 /// [`crate::page::cascade_page`] は本関数の直後に **phase 3**
-/// (`crate::page::absolutize_in_page_context`) を走らせ、そこで page context の
+/// ([`crate::page::absolutize_in_page_context`]) を走らせ、そこで page context の
 /// font-size を基準に絶対化 + style gating を行う (bd raikiri-spike-sshp)。
 /// したがって
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
@@ -727,7 +731,7 @@ fn resolve_relative_weight(specified: FontWeightValue, inherited: u16) -> u16 {
 ///
 /// element 経路の対応物は [`apply_value`] → [`SpecifiedValues::finalize`] で、
 /// phase 2 (font-size 確定) → phase 3 (自 font-size 基準で残りを絶対化) が
-/// 同じ順に走る。両経路の phase 3 は `crate::resolve` の同じ関数群へ funnel する
+/// 同じ順に走る。両経路の phase 3 は [`crate::resolve`] の同じ関数群へ funnel する
 /// ので、spec 規則 (`em` / `rem` の基準、percentage の素通し、border style
 /// gating) の実装は 1 本ずつしかない。
 ///
@@ -858,7 +862,9 @@ pub(crate) fn resolve_against_inherited(
 /// 例外は `font-weight` — `bolder` / `lighter` は**継承元**の computed weight
 /// だけで解ける (自 node の他 winner に依存しない) ため、ここで絶対値に落とす。
 /// 詳細は該当 arm の comment を参照。
-fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
+///
+/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で gate が red (規約 3)。
+pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,
         // CSS Backgrounds 3 §2.2 (raikiri-spike-0vv.7)。sibling `Color` と対称的な

@@ -59,7 +59,7 @@ use crate::resolve::{
 /// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `box_sizing` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
-/// `bolder` / `lighter` は `crate::cascade::apply_value` が**この struct へ書き込む
+/// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
 /// 時点で**親の computed weight に対して解決するので、`u16` で保持される
 /// (下記「D5 invariant」節)。
 ///
@@ -73,7 +73,7 @@ use crate::resolve::{
 ///
 /// [`Self::inherit_from`] は inherited property を親の [`ComputedValues`] から
 /// seed する。これは単なる効率の話ではなく **正しさの要求**である:
-/// `crate::cascade::apply_value` の `PropertyValue::FontWeight` arm は
+/// [`crate::cascade::apply_value`] の `PropertyValue::FontWeight` arm は
 /// `apply_value` 中で唯一の read-modify-write で、書き込み前の
 /// `self.font_weight` が**親の computed font-weight である**ことに依拠して
 /// `bolder` / `lighter` を解決する。[`Self::initial`] から seed すると
@@ -315,7 +315,7 @@ impl SpecifiedValues {
     ///
     /// この非対称は `html { font-size: 20px; padding: 2rem }` で観測できる —
     /// `font-size` は 20px、`padding` は 40px (16px × 2 = 32px では**ない**)。
-    /// pin: `crate::cascade` の
+    /// pin: [`mod@crate::cascade`] の
     /// `rem_on_root_element_box_property_uses_own_font_size`。
     ///
     /// `line-height` も phase 3 側 (自 font-size 基準) で正しい — 同 §の
@@ -330,7 +330,7 @@ impl SpecifiedValues {
     /// 余地が無い。**ただしこれは「呼び出し側が本当に親を持たない node にしか
     /// 本関数を使わない」ことが前提**である — 親の computed font-size を捨てて
     /// initial に固定するのが正しいのは §6.1.1 の "if the element has no parent"
-    /// が成立するときだけ。`crate::cascade::resolve_inheritance` はその invariant
+    /// が成立するときだけ。[`crate::cascade::resolve_inheritance`] はその invariant
     /// を `debug_assert` で pin している (同関数の `None` arm の comment 参照)。
     pub fn finalize_as_root(self) -> ComputedValues {
         // phase 2: 親が無いので initial values 基準。
@@ -406,7 +406,7 @@ impl SpecifiedValues {
 /// [`resolve_border`] の gating により width が 0px に潰れる
 /// ([`ComputedValues::initial`] 参照)。
 ///
-/// `pub(crate)` なのは page 経路の phase 3 (`crate::page::cascade_page`) が
+/// `pub(crate)` なのは page 経路の phase 3 ([`crate::page::cascade_page`]) が
 /// `border-*-style` **未宣言**時の gating 基準として `.style` を読むため
 /// (bd raikiri-spike-sshp)。CSS Paged Media 3 §6 "Page Properties"
 /// <https://www.w3.org/TR/css-page-3/#page-properties> の "both the page context

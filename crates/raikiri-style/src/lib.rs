@@ -14,6 +14,14 @@
 //! is intentionally NOT promoted to `[workspace.dependencies]` — see the
 //! comment on `Cargo.toml`.
 
+// This crate's doc comments link `crate::…` pointers to crate-internal targets
+// (`apply_value`, `expand_shorthand_into`, `INITIAL_BORDER`, …), so the
+// "links to private item" lint is allowed — same convention as `raikiri-dom`
+// and `raikiri-vrt`. `rustdoc::broken_intra_doc_links` is untouched, so an
+// unresolved or ambiguous path still warns (and hard-errors under the
+// `-D warnings` this repo's doc commands pass). 規約は AGENTS.md の
+// 「`crate::…` pointer は intra-doc link で書く」節 (bd raikiri-spike-ulzv)。
+#![allow(rustdoc::private_intra_doc_links)]
 #![allow(missing_docs)] // M0 seed; docs come with M1
 
 pub mod error;
