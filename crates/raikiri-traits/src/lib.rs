@@ -20,9 +20,8 @@
 //!
 //! ## Spec authority
 //!
-//! 型定義の authoritative source は
-//! `docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md` §4 (§13.0 spec
-//! drift protocol 準拠)。narrative §5-§12 は補助資料。
+//! 型定義の authoritative source は bd raikiri-spike-m1 (Workspace Layout
+//! scope + spec drift protocol の design 由来)。
 
 pub mod config;
 pub mod dom;

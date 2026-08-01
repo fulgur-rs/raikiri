@@ -1,8 +1,7 @@
 //! raikiri-dom — DOM data model + layout engine (taffy + parley) + GCPM runtime side.
 //!
 //! M1.5 で node arena + taffy 6 trait impl + raikiri_traits::Dom co-design を
-//! 実装。詳細は `docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md`
-//! §4 raikiri-dom 参照。
+//! 実装。詳細は bd raikiri-spike-m1 (design 由来の §4 raikiri-dom scope) 参照。
 
 // Public module rustdoc cross-links some crate-private helpers (e.g.
 // `crate::layout::preshape_text`, `Document::flags_dirty`) which resolve fine
@@ -39,8 +38,7 @@
 //! Traversal が inert subtree を skip したい場合、
 //! [`Node::is_in_document`] を各 iteration で呼ぶ。string 比較 (tag_name ==
 //! "template" 等) で個別判定するのは禁止 — 概念が implicit になり、shadow DOM
-//! 追加時に漏れる。設計仕様書:
-//! `docs/superpowers/specs/2026-07-18-flat-tree-membership-metadata-design.md`。
+//! 追加時に漏れる。設計判断: bd raikiri-spike-37c。
 
 mod node;
 mod running;
