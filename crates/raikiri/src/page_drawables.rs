@@ -119,10 +119,16 @@ impl<V> TrackedMap<V> {
 /// field (paragraph_slices / synthetic_id_counter / li_lbl_ids / li_lbody_ids
 /// / root_dir_rtl 等) は raikiri では不要のため採用しない。
 ///
-/// # Sprint 22 landing scope
+/// # Sprint 22 → Sprint 24 landing scope
 ///
-/// Struct field surface のみ landing。各 Entry 型 (`BlockEntry` etc.) の
-/// 実装 body は future sprint で fulgur reference と照合しつつ populate。
+/// Sprint 22 は struct field surface のみ landing。Sprint 24
+/// (raikiri-spike-4hp1) で各 Entry 型に fulgur reference と照合した minimal
+/// field を追加し (`crate::entries` module doc参照)、
+/// [`build_page_scene`](crate::page_scene::build_page_scene) が実際に
+/// [`BlockEntry`] / [`ParagraphEntry`] を construct して `block_styles` /
+/// `paragraphs` へ insert するようになった。他 9 field はまだ常に空
+/// (対応する raikiri pipeline stage が無いため、`crate::entries` module doc
+/// 参照)。
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageDrawables {

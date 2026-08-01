@@ -32,13 +32,26 @@
 //! `raikiri_paint::paint_single_page` + `anyrender_vello_cpu` + PNG encode の
 //! byte-identical triple を verbatim reuse する。
 //!
-//! `drawables` field は Sprint 23 では empty のまま (glyph run / position 情報を
-//! 持たない Sprint 22 landed empty entries に populate すると emission order
-//! が変わり byte-identical が破れるため、advisor consult で確定した hard
-//! constraint)。M4+ で BlockEntry / ParagraphEntry に paint 情報が landing
-//! した時点で真の PageDrawables 経由 paint に切り替える。
+//! Sprint 23 では `drawables` field を empty のままにした (glyph run /
+//! position 情報を持たない Sprint 22 landed empty entries に populate すると
+//! emission order が変わり byte-identical が破れるため、advisor consult で
+//! 確定した hard constraint)。
+//!
+//! # Sprint 24 (raikiri-spike-4hp1) landing scope — narrowed (items 1-3)
+//!
+//! [`build_page_scene`] が `drawables` を実際に populate するようになった
+//! (post-layout Element node → [`crate::BlockEntry`]、post-layout Text node →
+//! [`crate::ParagraphEntry`]、`crate::entries` module doc参照)。ただし
+//! **paint pipeline は今回も `PageDrawables` を一切消費しない** —
+//! [`PageScene::rasterize`] は引き続き `dom` + `cascade` を thread して
+//! `raikiri_paint::paint_single_page` を verbatim call する (下記
+//! `rasterize` doc参照)。populate と consume が分離されているため、本
+//! sprint は byte-identical VRT に影響しない。`raikiri_paint::paint_single_page`
+//! を `PageDrawables` 消費に rework する話 (元 item 4) は crate-topology
+//! 判断待ちで bd raikiri-spike-iest に分離済み。
 
 use crate::PageDrawables;
+use crate::entries::{BlockEntry, ParagraphEntry};
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri_dom::Document;
@@ -64,6 +77,11 @@ use std::collections::BTreeMap;
 /// 再 walk する)。unit 変換 or type rename の resolution は bd raikiri-spike-v0zm
 /// (wall/umbrella)。Sprint 23 は byte-identical maintenance が primary scope の
 /// ため coordinator 判断で defer、Sprint 24+ で resolve 予定。
+///
+/// Sprint 24 (raikiri-spike-4hp1) の [`crate::entries`] 群 (`BlockEntry` の
+/// `layout_size` / `border_widths` 等) も同じ `Pt` alias を再利用し、同じ
+/// CSS-px-in-Pt debt を意図的に踏襲する (新たな別種の unit debt を作らない
+/// ための選択、`crate::entries` module doc参照)。
 pub type Pt = f32;
 
 /// Page 向きを示す enum。
@@ -173,15 +191,19 @@ impl PageScene {
     ///
     /// # なぜ snapshot が `dom` + `cascade` を param に取るのか
     ///
-    /// Sprint 23 landed の [`PageDrawables`] entries (BlockEntry / ParagraphEntry
-    /// etc.) は Sprint 22 の empty struct のままで、glyph run / position 情報を
-    /// carry しない。paint truth (shaped text lines / decoration) は post-layout
-    /// `Node.text_layout` (DOM arena) に住み、[`raikiri_paint::paint_single_page`]
-    /// が DFS で消費する。従って byte-identical output を維持するため rasterize は
-    /// `dom` + `cascade` を thread して既存 paint pipeline を verbatim reuse する。
-    /// M4+ で `PageDrawables` に paint 情報が完全 populate された時点で `dom` /
-    /// `cascade` param は drop 予定 (真の snapshot semantics に到達)。populate 追跡:
-    /// bd raikiri-spike-4hp1、param drop: bd raikiri-spike-dmoo (4hp1 に blocked-on)。
+    /// [`PageDrawables`] entries (BlockEntry / ParagraphEntry) は Sprint 24
+    /// (raikiri-spike-4hp1) で minimal field を populate されたが、paint 消費
+    /// 側はまだ切り替わっていない — glyph run 自体 (実 shape / position) は
+    /// 依然 `parley::Layout` 型そのものであり [`crate::entries`] の field type
+    /// 方針 (raikiri-style/parley 型を持たない) の対象外なので、真の paint
+    /// truth は post-layout `Node.text_layout` (DOM arena) に住んだまま
+    /// [`raikiri_paint::paint_single_page`] が DFS で消費する。従って
+    /// byte-identical output を維持するため rasterize は `dom` + `cascade` を
+    /// thread して既存 paint pipeline を verbatim reuse する。`paint_single_page`
+    /// を `PageDrawables` 消費に rework する話 (真の snapshot semantics へ
+    /// 到達し `dom` / `cascade` param を drop する) は crate-topology 判断待ちで
+    /// bd raikiri-spike-iest に分離済み (param drop 自体は bd
+    /// raikiri-spike-dmoo、iest に blocked-on)。
     ///
     /// # 内部
     /// 1. `page_box.{width,height}.ceil() as u32` で pixel buffer 寸法を得る (M1.14 と同一)
@@ -213,13 +235,16 @@ impl PageScene {
     }
 }
 
-/// Post-layout Document から metadata + fragments を抽出し [`PageScene`] を construct する。
+/// Post-layout Document から metadata + fragments + drawables を抽出し
+/// [`PageScene`] を construct する。
 ///
 /// Sprint 23 (raikiri-spike-bkkm) の internal wiring — `html_to_png_impl` から
-/// `layout_single_page` 完了後に呼ばれる。`drawables` は Sprint 22 landed の
-/// empty entries のままにする (§module doc の Sprint 23 landing scope 参照)。
-/// `_cascade` param は entries populate 時 (bd raikiri-spike-4hp1) に BlockEntry /
-/// ParagraphEntry / etc. の cascaded property lookup で live 化する forward-reservation。
+/// `layout_single_page` 完了後に呼ばれる。Sprint 24 (raikiri-spike-4hp1) で
+/// `cascade` param が live 化し (旧 `_cascade`)、DFS walk 中に Element node を
+/// [`BlockEntry`]、Text node を [`ParagraphEntry`] として `drawables` へ
+/// insert する (§module doc の Sprint 24 landing scope 参照)。他 9 Entry 型は
+/// 対応する pipeline stage が無いため insert されない (`crate::entries`
+/// module doc参照)。
 ///
 /// # NodeId identity mapping
 ///
@@ -242,7 +267,7 @@ impl PageScene {
 /// 引き出す予定 (bd raikiri-spike-pie2、raikiri-spike-m4 discovered-from)。
 pub(crate) fn build_page_scene(
     dom: &Document,
-    _cascade: &CascadeResult,
+    cascade: &CascadeResult,
     page_box: PageBox,
 ) -> PageScene {
     let page_metadata = PageMetadata {
@@ -259,10 +284,12 @@ pub(crate) fn build_page_scene(
     let body_arena_idx = find_first_element_by_tag(dom, "body");
     let body_id = body_arena_idx.map(|idx| NodeId::new(idx as u64));
 
-    // body が無い document (fragment parse) は node_ids / fragments 空で return。
-    // layout_single_page が Err を先に返すため実質 unreachable、defense-in-depth。
+    // body が無い document (fragment parse) は node_ids / fragments / drawables
+    // 空で return。layout_single_page が Err を先に返すため実質 unreachable、
+    // defense-in-depth。
     let mut node_ids: Vec<NodeId> = Vec::new();
     let mut fragments: BTreeMap<NodeId, Vec<Fragment>> = BTreeMap::new();
+    let mut drawables = PageDrawables::default();
 
     if let Some(body_idx) = body_arena_idx {
         // DFS from body、paint_document と同じ traversal 順で collect。
@@ -298,6 +325,43 @@ pub(crate) fn build_page_scene(
                 height: layout.size.height,
             });
 
+            // `crate::entries` module doc の field type 方針 (raikiri-style 型を
+            // 直接持たない) に従い、cascade の値は primitive へ変換して詰める。
+            // Element → BlockEntry / Text → ParagraphEntry の 2 型のみ populate
+            // (他 9 型は対応する pipeline stage が無い、同 module doc参照)。
+            match node.kind() {
+                NodeKind::Element => {
+                    let cv = &cascade.computed[idx];
+                    let entry = BlockEntry {
+                        background_color: (
+                            cv.background_color.r,
+                            cv.background_color.g,
+                            cv.background_color.b,
+                            cv.background_color.a,
+                        ),
+                        border_widths: (
+                            cv.border.top.width.0,
+                            cv.border.right.width.0,
+                            cv.border.bottom.width.0,
+                            cv.border.left.width.0,
+                        ),
+                        id: element_id(dom, node_id),
+                        layout_size: Some((layout.size.width, layout.size.height)),
+                        ..BlockEntry::default()
+                    };
+                    drawables.block_styles.insert(node_id, entry);
+                }
+                NodeKind::Text => {
+                    let line_count = node.text_layout().map_or(0, |l| l.lines().count());
+                    let entry = ParagraphEntry {
+                        line_count,
+                        ..ParagraphEntry::default()
+                    };
+                    drawables.paragraphs.insert(node_id, entry);
+                }
+                _ => {}
+            }
+
             if node.kind() == NodeKind::Element {
                 // reverse push で pop 時に document order — paint_document 準拠。
                 for &child in node.children.iter().rev() {
@@ -315,11 +379,27 @@ pub(crate) fn build_page_scene(
         page_metadata,
         node_ids,
         fragments,
-        drawables: PageDrawables::default(),
+        drawables,
         root_id,
         body_id,
         body_offset_pt,
     }
+}
+
+/// Element node の `id` attribute を [`raikiri_traits::Dom`] trait 経由で取得
+/// する。
+///
+/// `Document::get_node(usize) -> &raikiri_dom::Node` (本 module の DFS が使う
+/// raw arena accessor) には attribute lookup が無い
+/// (`crates/raikiri-dom/src/node.rs` 参照)。`NodeId` を経由した trait-based
+/// lookup (`Dom::node` → `Node::as_element` → `Element::id`) を別途呼ぶ
+/// (`crates/raikiri-dom/src/dom_impl.rs` 参照 — raw arena accessor と
+/// trait-based element accessor が element-attribute access で unify されて
+/// いないための second lookup path)。空文字列 `id=""` は trait 既定 contract
+/// どおり `None`。
+fn element_id(dom: &Document, node_id: NodeId) -> Option<String> {
+    use raikiri_traits::{Dom as _, Element as _, Node as _};
+    dom.node(node_id)?.as_element()?.id().map(str::to_string)
 }
 
 /// DFS から最初の `<tag>` element を返す (in-document のみ)。root_id / body_id
@@ -435,8 +515,70 @@ mod tests {
             (PageBox::A4.width, PageBox::A4.height)
         );
         assert_eq!(scene.page_metadata.orientation, Orientation::Portrait);
-        // Drawables stays empty (Sprint 23 Finding 1 constraint)
-        assert!(scene.drawables.block_styles.is_empty());
+    }
+
+    /// build_page_scene が Element node → [`BlockEntry`] / Text node →
+    /// [`ParagraphEntry`] を `drawables` へ populate する (raikiri-spike-4hp1
+    /// item 2/3 の regression pin — `TrackedMap::insert` の非-test call site が
+    /// この production path 経由で exercise されることも同時に確認する)。
+    #[test]
+    fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
+        let (dom, cascade) = hello_world_post_layout();
+        let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+
+        // Every Element NodeId in node_ids has a block_styles entry, every
+        // Text NodeId has a paragraphs entry — coverage must exactly match
+        // node_ids (fragments と同じ集合、drift させない)。
+        for id in &scene.node_ids {
+            let node = dom
+                .get_node(id.0 as usize)
+                .expect("node_ids entries resolve");
+            match node.kind() {
+                NodeKind::Element => {
+                    assert!(
+                        scene.drawables.block_styles.contains_key(id),
+                        "Element {id:?} must have a block_styles entry"
+                    );
+                }
+                NodeKind::Text => {
+                    assert!(
+                        scene.drawables.paragraphs.contains_key(id),
+                        "Text {id:?} must have a paragraphs entry"
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        // body_id resolves to an Element and must carry a BlockEntry with a
+        // real (non-placeholder) layout_size — proves the cascade/layout
+        // param is actually threaded, not just structurally accepted.
+        let body_id = scene.body_id.expect("hello-world has <body>");
+        let body_entry = scene
+            .drawables
+            .block_styles
+            .get(&body_id)
+            .expect("body must have a BlockEntry");
+        assert!(
+            body_entry.layout_size.is_some(),
+            "BlockEntry.layout_size must be populated from post-layout Node.unrounded_layout"
+        );
+        // Gap fields hold the documented CSS-initial-value placeholders
+        // (entries.rs module doc: opacity/visibility properties don't exist
+        // in ComputedValues yet).
+        assert_eq!(body_entry.opacity, 1.0);
+        assert!(body_entry.visible);
+
+        // At least one paragraph entry must have shaped lines (the "Hi" text
+        // node) — proves text_layout() is actually read, not defaulted.
+        assert!(
+            scene
+                .drawables
+                .paragraphs
+                .values()
+                .any(|p| p.line_count > 0),
+            "at least one ParagraphEntry must have line_count > 0 for shaped \"Hi\" text"
+        );
     }
 
     /// PageScene::rasterize が html_to_png と同じ PNG bytes を返す
