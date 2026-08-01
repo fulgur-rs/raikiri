@@ -64,9 +64,11 @@
 # (module doc: batch ≤5 under this script's flags vs batch ≤10 under plain
 # `cargo bench` defaults). The +22.1%/+10.7% conclusion is unaffected
 # (symmetric on both sides of the comparison), but a *threshold* is
-# meaningless without the invocation pinned alongside it — so N and every
-# criterion flag below are constants, not defaults a caller can silently
-# drift.
+# meaningless without the invocation pinned alongside it — so the criterion
+# flags below (CRITERION_FLAGS) are hardcoded, not a default a caller can
+# silently drift. N and the threshold are deliberately still overridable
+# (see Env below): unlike the criterion flags, they don't change what is
+# being measured, only how many samples and how much delta is tolerated.
 #
 # Usage: scripts/cascade-bench-compare.sh [BASE_REF]
 #
@@ -87,7 +89,11 @@
 # Exit status: 0 = every benchmark's min-of-N delta is within threshold (or
 # the bench target doesn't exist at the merge-base, in which case the
 # comparison is skipped, not failed). 1 = at least one benchmark exceeded
-# the threshold. 2 = a mechanical error (build failure, missing report).
+# the threshold, or a mechanical error occurred (a build failure surfaces
+# cargo's own exit status via `set -e`; a missing benchmark report from
+# scripts/lib/cascade_compare.py surfaces its own exit code, 1 or 2 — see
+# that file for specifics). Either way, non-zero means "do not treat this
+# as a clean comparison".
 
 set -euo pipefail
 

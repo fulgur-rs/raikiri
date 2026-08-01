@@ -83,7 +83,7 @@ def main() -> int:
         print("error: no benchmarks discovered", file=sys.stderr)
         return 2
 
-    print(f"{'benchmark':<24}{'good min (ms)':>16}{'bad min (ms)':>16}{'delta':>10}{'noise* (good)':>16}")
+    print(f"{'benchmark':<24}{'good min (ms)':>16}{'bad min (ms)':>16}{'delta':>10}{'spread (good)':>16}")
     fail = False
     for name in good_names:
         good_vals = collect_runs(args.good_dir, name, args.n)
@@ -92,19 +92,24 @@ def main() -> int:
         bad_min = min(bad_vals)
         delta_pct = (bad_min - good_min) / good_min * 100.0
         # Informational spread indicator: (max-min)/min across the N good-side
-        # runs. This is NOT the pass/fail signal (delta is) — it is context
-        # for how noisy this particular invocation was, since the module doc's
-        # own noise floor (2.0%/3.3%) was measured the same way.
-        noise_pct = (max(good_vals) - min(good_vals)) / min(good_vals) * 100.0
+        # runs' own point estimates — NOT compared against the delta or the
+        # threshold (they measure different things: this is how noisy the N
+        # good-side *runs* were, delta is min-vs-min between good and bad).
+        # Context only, since the module doc's own noise floor (2.0%/3.3%)
+        # was measured the same way.
+        spread_pct = (max(good_vals) - min(good_vals)) / min(good_vals) * 100.0
         status = "FAIL" if delta_pct > args.threshold_pct else "ok"
         if delta_pct > args.threshold_pct:
             fail = True
         print(
             f"{name:<24}{good_min / 1e6:>16.4f}{bad_min / 1e6:>16.4f}"
-            f"{delta_pct:>9.2f}%{noise_pct:>15.2f}%  {status}"
+            f"{delta_pct:>9.2f}%{spread_pct:>15.2f}%  {status}"
         )
 
     print()
+    print("spread (good) is (max-min)/min across the N good-side runs — noise")
+    print("context, not a pass/fail signal; only the delta column is compared")
+    print("against the threshold.")
     print(f"threshold: {args.threshold_pct:.1f}% (see scripts/cascade-bench-compare.sh header for justification)")
     if fail:
         print("FAIL: at least one benchmark's min-of-N delta exceeds the threshold")
