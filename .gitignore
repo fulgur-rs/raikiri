@@ -9,6 +9,9 @@
 target/
 **/*.rs.bk
 
+# Python cache from scripts/lib/*.py helpers invoked by gate scripts
+__pycache__/
+
 # Agent workflow docs (plans / retros / specs / sprints)
 # flow 情報であって stock 情報ではないため tracked にしない。
 # 規則の正典は AGENTS.md の「docs/superpowers/ は flow 情報」節を参照。
