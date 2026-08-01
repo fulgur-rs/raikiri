@@ -45,7 +45,7 @@ esac
 mkdir -p "$RAIKIRI_GATE_TMPDIR"
 # Canonicalize (collapse any `..`/`.` and resolve symlinks) so the exported
 # value is stable regardless of later `cd`s anywhere in the process tree.
-RAIKIRI_GATE_TMPDIR="$(cd "$RAIKIRI_GATE_TMPDIR" && pwd)"
+RAIKIRI_GATE_TMPDIR="$(cd "$RAIKIRI_GATE_TMPDIR" && pwd -P)"
 export TMPDIR="$RAIKIRI_GATE_TMPDIR"
 
 # Best-effort noise: warn (do not fail) if TMPDIR still resolves to a tmpfs

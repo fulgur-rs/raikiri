@@ -107,6 +107,19 @@ def comment_part(line: str) -> str | None:
     kept as a separate function (rather than deriving one from the other)
     because callers want different things: code_only() wants everything
     *except* the comment, this wants *only* the comment.
+
+    Best-effort, same caveat as code_only(): does not handle raw strings
+    (`r"..."`, `r#"..."#`) specially. A `"` inside a raw string's body can
+    be mistaken for a literal's closing quote, after which a `//` still
+    physically inside that raw string could be treated as a real comment
+    start. Practically this means a `cov:ignore:`-shaped sequence would
+    have to appear *inside* the text of a raw string for a false exemption
+    to result — considered acceptable risk for this repo's actual content
+    (no raw string in this codebase contains that exact substring, per a
+    repo-wide grep at review time) rather than implementing a full Rust
+    raw-string lexer here. Codex §8.3 review finding (bd raikiri-spike-wvch
+    consolidated gate-wave2 landing); tracked as a known limitation rather
+    than fixed in this pass.
     """
     in_str = False
     quote = ""

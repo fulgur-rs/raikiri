@@ -118,7 +118,16 @@ THRESHOLD_PCT="${RAIKIRI_CASCADE_THRESHOLD_PCT:-7}"
 # arbitrarily large regression. Fail fast, before any build work, on an
 # invalid value. cascade_compare.py validates its own `--n`/`--threshold-pct`
 # independently (it can be invoked directly, bypassing this script).
-if ! [[ "$N" =~ ^[1-9][0-9]*$ ]] || [[ "$N" -gt 50 ]]; then
+#
+# The digit count is capped directly in the regex (`[0-9]?`, i.e. at most 2
+# digits) rather than matching an unbounded run of digits and rejecting via
+# `-gt 50` afterward: bash's `[[ -gt ]]` is fixed-width arithmetic, and an
+# absurdly long digit string (still a valid match for an unbounded
+# `[0-9]*`) can overflow that arithmetic and wrap around, potentially
+# passing the `-gt 50` check it was meant to fail. Bounding the digit count
+# in the regex itself means the arithmetic comparison only ever sees a
+# value in [1, 99], where overflow cannot occur. Codex §8.3 review finding.
+if ! [[ "$N" =~ ^[1-9][0-9]?$ ]] || [[ "$N" -gt 50 ]]; then
   echo "cascade-bench-compare.sh: RAIKIRI_CASCADE_N must be a positive integer <= 50 (got: '$N')" >&2
   exit 2
 fi
