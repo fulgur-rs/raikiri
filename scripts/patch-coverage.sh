@@ -61,6 +61,20 @@ source "$SCRIPT_DIR/lib/tmpdir.sh"
 BASE_REF="${1:-main}"
 BASE_SHA="$(git merge-base "$BASE_REF" HEAD)"
 
+# cargo-llvm-cov instruments the working tree, but the line-number
+# classification below reads HEAD (`git diff <base> HEAD` for added lines,
+# `git show HEAD:<path>` for cov:ignore scoping). On a dirty tree those two
+# describe different file contents, so a coverage-vs-line mismatch would be
+# silently reported as a confident verdict against misaligned line numbers.
+# Refuse rather than guess.
+if ! git diff --quiet HEAD -- '*.rs' || ! git diff --cached --quiet HEAD -- '*.rs'; then
+  echo "patch-coverage.sh: working tree has uncommitted *.rs changes." >&2
+  echo "  cargo-llvm-cov measures the working tree while the diff and" >&2
+  echo "  cov:ignore scan read HEAD — on a dirty tree these describe" >&2
+  echo "  different file contents. Commit or stash first." >&2
+  exit 2
+fi
+
 if ! command -v cargo-llvm-cov >/dev/null 2>&1 && ! cargo llvm-cov --version >/dev/null 2>&1; then
   echo "patch-coverage.sh: cargo-llvm-cov not installed." >&2
   echo "  cargo install cargo-llvm-cov" >&2
