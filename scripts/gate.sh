@@ -75,6 +75,8 @@ echo "base ref  : $BASE_REF"
 echo "TMPDIR    : $TMPDIR"
 echo
 
+FAIL=0
+
 # ── §8.1.4 non-applicability test (mechanical) ─────────────────────────────
 #
 # gate.md §8.1.4: skip §8.1/§8.1.2/§8.1.3 iff (1) the name-only diff against
@@ -106,14 +108,54 @@ else
 fi
 echo
 
+# ── optional: cascade benchmark comparison (bd raikiri-spike-iebo) ─────────
+#
+# Deliberately gated behind --with-bench, and deliberately run *before* the
+# §8.1.4 applicability early-exit below: --with-bench is not part of §8.1
+# and the §8.1.4 predicate (a Rust-diff test) has no authority over it. A
+# caller who explicitly asks for the bench comparison must get it run (or
+# see an explicit note that it wasn't) regardless of what §8.1.4 decides —
+# an early exit that silently drops an explicitly-requested step is exactly
+# the vacuous-green shape gate.md's own §8.1(a) discussion warns about.
+#
+# This is NOT part of §8.1 proper (rules/gate.md has not been changed to
+# require it — that would need a retro → bd decision → human approve) and
+# is NOT wired into CI or any cargo profile. It exists so a coordinator/gate
+# reviewer can invoke it on demand when a diff touches
+# crates/raikiri-style/src/cascade.rs or adjacent hot-loop code.
+if [[ "$WITH_BENCH" -eq 1 ]]; then
+  if [[ -x "$SCRIPT_DIR/cascade-bench-compare.sh" ]]; then
+    echo "-- optional: cascade benchmark comparison --"
+    if ! "$SCRIPT_DIR/cascade-bench-compare.sh" "$BASE_REF"; then
+      echo "FAIL: cascade-bench-compare.sh reported a regression past threshold"
+      FAIL=1
+    fi
+  else
+    echo "-- optional: --with-bench passed but scripts/cascade-bench-compare.sh"
+    echo "   not found (bd raikiri-spike-iebo not yet landed in this tree) --"
+    FAIL=1
+  fi
+  echo
+fi
+
 if [[ "$APPLICABLE" -eq 0 ]]; then
   echo "§8.1/§8.1.2/§8.1.3 judged non-applicable by condition (1)."
   echo "Record this output plus your own condition-(2) confirmation as the"
   echo "§8.1.4 skip rationale (gate.md 記録義務)."
-  exit 0
+  if [[ "$WITH_BENCH" -eq 1 ]]; then
+    echo "note: --with-bench was requested and ran above — §8.1.4 has no"
+    echo "      authority over it, only over §8.1/§8.1.2/§8.1.3 below."
+  fi
+  echo
+  echo "== gate.sh summary =="
+  if [[ "$FAIL" -eq 0 ]]; then
+    echo "PASS"
+    exit 0
+  else
+    echo "FAIL"
+    exit 1
+  fi
 fi
-
-FAIL=0
 
 # ── §8.1(a) test execution ─────────────────────────────────────────────────
 echo "-- §8.1(a) cargo test --workspace --locked --"
@@ -243,29 +285,6 @@ else
   echo "   pass."
 fi
 echo
-
-# ── optional: cascade benchmark comparison (bd raikiri-spike-iebo) ─────────
-#
-# Deliberately gated behind --with-bench: this is NOT part of §8.1 proper
-# (rules/gate.md has not been changed to require it — that would need a
-# retro → bd decision → human approve) and is NOT wired into CI or any
-# cargo profile. It exists so a coordinator/gate reviewer can invoke it
-# on demand when a diff touches crates/raikiri-style/src/cascade.rs or
-# adjacent hot-loop code.
-if [[ "$WITH_BENCH" -eq 1 ]]; then
-  if [[ -x "$SCRIPT_DIR/cascade-bench-compare.sh" ]]; then
-    echo "-- optional: cascade benchmark comparison --"
-    if ! "$SCRIPT_DIR/cascade-bench-compare.sh" "$BASE_REF"; then
-      echo "FAIL: cascade-bench-compare.sh reported a regression past threshold"
-      FAIL=1
-    fi
-  else
-    echo "-- optional: --with-bench passed but scripts/cascade-bench-compare.sh"
-    echo "   not found (bd raikiri-spike-iebo not yet landed in this tree) --"
-    FAIL=1
-  fi
-  echo
-fi
 
 echo "== gate.sh summary =="
 if [[ "$FAIL" -eq 0 ]]; then
