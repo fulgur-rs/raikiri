@@ -11,7 +11,11 @@ report. This module owns the two pieces of logic that don't belong in shell:
 
 # The `cov:ignore` scoping rule this script implements
 
-A `cov:ignore:` marker is either:
+A `cov:ignore:` marker must be the start of an actual `//` comment (found by
+`comment_part()`, which tracks string/char literals the same way
+`code_only()` does, so a string *containing* the text `cov:ignore:` doesn't
+count) and must have a non-empty reason after the colon — `// cov:ignore:`
+with nothing following it does not match. It is either:
 
   - a trailing comment on a code line (`foo(); // cov:ignore: reason`) —
     exempts that line only, or
@@ -84,8 +88,59 @@ from dataclasses import dataclass, field
 
 COMMENT_LINE_RE = re.compile(r"^\s*//")
 ATTRIBUTE_LINE_RE = re.compile(r"^\s*#!?\[.*\]\s*$")
-COV_IGNORE_RE = re.compile(r"cov:ignore:")
+# Anchored to the start of an actual `//` comment (see comment_part() below,
+# which finds that `//` while honoring string/char literals) and requires a
+# non-empty reason after the colon. A bare substring match (the previous
+# form of this regex) would (a) fire on a string literal that merely
+# *contains* the text `cov:ignore:`, since it never checked the match was
+# inside a real comment, and (b) accept `// cov:ignore:` with nothing after
+# the colon as a valid exemption. Codex §8.3 review finding.
+COV_IGNORE_RE = re.compile(r"^//\s*cov:ignore:\s*(\S.*)$")
 HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def comment_part(line: str) -> str | None:
+    """Return the `//`-comment suffix of `line` (starting at the `//`), or
+    None if the line has no real (not-inside-a-string-or-char-literal) `//`.
+
+    Shares the same string/char-literal tracking as code_only() below —
+    kept as a separate function (rather than deriving one from the other)
+    because callers want different things: code_only() wants everything
+    *except* the comment, this wants *only* the comment.
+    """
+    in_str = False
+    quote = ""
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if in_str:
+            if c == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if c == quote:
+                in_str = False
+            i += 1
+            continue
+        if c in ('"', "'"):
+            in_str = True
+            quote = c
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and line[i + 1] == "/":
+            return line[i:]
+        i += 1
+    return None
+
+
+def cov_ignore_reason(line: str) -> str | None:
+    """Return the reason text if `line` carries a valid `cov:ignore:` marker
+    in an actual `//` comment with a non-empty reason, else None."""
+    part = comment_part(line)
+    if part is None:
+        return None
+    m = COV_IGNORE_RE.match(part)
+    return m.group(1) if m else None
 
 
 def code_only(line: str) -> str:
@@ -137,7 +192,7 @@ def compute_exempt_lines(lines: list[str]) -> set[int]:
     while i < n:
         raw = lines[i]
         if COMMENT_LINE_RE.match(raw):
-            if COV_IGNORE_RE.search(raw):
+            if cov_ignore_reason(raw) is not None:
                 pending = True
             i += 1
             continue
@@ -168,7 +223,7 @@ def compute_exempt_lines(lines: list[str]) -> set[int]:
     # Trailing same-line markers exempt just their own line, independent of
     # the block scan above (a code line can't also be "pending").
     for idx, raw in enumerate(lines):
-        if not COMMENT_LINE_RE.match(raw) and COV_IGNORE_RE.search(raw):
+        if not COMMENT_LINE_RE.match(raw) and cov_ignore_reason(raw) is not None:
             exempt.add(idx + 1)
 
     return exempt
@@ -360,7 +415,16 @@ def main() -> int:
         print()
 
     if total_uncovered == 0:
-        print("PASS: all changed lines are covered or cov:ignore-exempted.")
+        if total_unreported:
+            print(
+                "PASS: all changed lines are covered or cov:ignore-exempted, "
+                f"except {total_unreported} line(s) in tests/*.rs or "
+                "examples/*.rs files that cargo-llvm-cov does not report on "
+                "(see 'Unreported changed lines' above) — those are not "
+                "verified covered, only not counted as a failure."
+            )
+        else:
+            print("PASS: all changed lines are covered or cov:ignore-exempted.")
         return 0
 
     print("Uncovered changed lines (file:line):")

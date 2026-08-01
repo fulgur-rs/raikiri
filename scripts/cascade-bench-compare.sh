@@ -109,6 +109,31 @@ BASE_SHA="$(git merge-base "$BASE_REF" HEAD)"
 N="${RAIKIRI_CASCADE_N:-8}"
 THRESHOLD_PCT="${RAIKIRI_CASCADE_THRESHOLD_PCT:-7}"
 
+# Bounds validation (Codex §8.3 review finding): these overrides previously
+# had none. An unbounded N has no cap on runtime or disk usage proportional
+# to whatever a caller sets. An unbounded/unvalidated threshold is worse:
+# Python's `float()` happily parses "nan" and "inf", and since
+# `delta_pct > threshold` in cascade_compare.py is always False when
+# threshold is NaN or +inf, an unvalidated threshold could silently PASS an
+# arbitrarily large regression. Fail fast, before any build work, on an
+# invalid value. cascade_compare.py validates its own `--n`/`--threshold-pct`
+# independently (it can be invoked directly, bypassing this script).
+if ! [[ "$N" =~ ^[1-9][0-9]*$ ]] || [[ "$N" -gt 50 ]]; then
+  echo "cascade-bench-compare.sh: RAIKIRI_CASCADE_N must be a positive integer <= 50 (got: '$N')" >&2
+  exit 2
+fi
+if ! python3 -c "
+import math, sys
+try:
+    v = float(sys.argv[1])
+except ValueError:
+    sys.exit(1)
+sys.exit(0 if math.isfinite(v) and 0 <= v <= 100 else 1)
+" "$THRESHOLD_PCT"; then
+  echo "cascade-bench-compare.sh: RAIKIRI_CASCADE_THRESHOLD_PCT must be a finite number in [0, 100] (got: '$THRESHOLD_PCT')" >&2
+  exit 2
+fi
+
 # Pinned criterion invocation (see header: threshold is meaningless without
 # this pinned alongside it).
 CRITERION_FLAGS=(--warm-up-time 0.5 --measurement-time 1.2 --sample-size 10 --noplot)

@@ -39,8 +39,34 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
+
+# Bounds enforced independently of scripts/cascade-bench-compare.sh's own
+# validation, since this module can be invoked directly (Codex §8.3 review
+# finding: env-var overrides had no validation at all — argparse's plain
+# `type=int`/`type=float` accept e.g. "nan"/"inf" for the threshold, under
+# which `delta_pct > threshold` is always False and a real regression would
+# silently PASS; an unbounded N has no cap on run count).
+MAX_N = 50
+MAX_THRESHOLD_PCT = 100.0
+
+
+def positive_int_capped(s: str) -> int:
+    v = int(s)  # ValueError (non-integer input) is handled by argparse itself
+    if v < 1 or v > MAX_N:
+        raise argparse.ArgumentTypeError(f"must be a positive integer <= {MAX_N}, got {v}")
+    return v
+
+
+def finite_percentage(s: str) -> float:
+    v = float(s)  # ValueError is handled by argparse itself
+    if not math.isfinite(v) or v < 0 or v > MAX_THRESHOLD_PCT:
+        raise argparse.ArgumentTypeError(
+            f"must be a finite number in [0, {MAX_THRESHOLD_PCT}], got {v}"
+        )
+    return v
 
 
 def load_slope_ns(estimates_path: Path) -> float:
@@ -70,8 +96,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--good-dir", required=True, type=Path)
     ap.add_argument("--bad-dir", required=True, type=Path)
-    ap.add_argument("--n", required=True, type=int)
-    ap.add_argument("--threshold-pct", required=True, type=float)
+    ap.add_argument("--n", required=True, type=positive_int_capped)
+    ap.add_argument("--threshold-pct", required=True, type=finite_percentage)
     args = ap.parse_args()
 
     good_names = discover_bench_names(args.good_dir)
