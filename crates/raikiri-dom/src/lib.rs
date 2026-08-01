@@ -40,6 +40,7 @@
 //! "template" 等) で個別判定するのは禁止 — 概念が implicit になり、shadow DOM
 //! 追加時に漏れる。設計判断: bd raikiri-spike-37c。
 
+mod diag;
 mod node;
 mod running;
 

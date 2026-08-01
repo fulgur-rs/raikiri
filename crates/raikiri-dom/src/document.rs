@@ -28,6 +28,7 @@ use taffy::Style;
 
 use raikiri_traits::StylesheetKind;
 
+use crate::layout::LayoutWarn;
 use crate::node::{Attr, Node, NodeData};
 
 /// DOM Document (root + Vec-backed node arena)。
@@ -62,6 +63,46 @@ pub struct Document {
     /// raikiri-spike-m1.22)。lazy: parse は cascade phase で行う。
     /// 呼び出し順で同 kind 内の cascade source_order が決まる。
     stylesheets: Vec<(Cow<'static, str>, StylesheetKind)>,
+    /// Buffered [`LayoutWarn`] diagnostic events for the current (or most
+    /// recent) `layout_single_page` pass (bd raikiri-spike-7t1t, generalizing
+    /// the `fonts.rs` `FontWarn` observer pattern to this crate's other
+    /// "silent clamp" site).
+    ///
+    /// Owned (`Vec`, no borrowed observer) rather than a closure field —
+    /// deliberately, not as a simplification of convenience. `<Document as
+    /// taffy::LayoutPartialTree>::set_unrounded_layout` is the sole choke
+    /// point that writes non-finite-clamped geometry into the arena
+    /// (`crate::layout::sanitize_taffy_layout`'s doc), but its signature is
+    /// fixed by the `taffy` trait — it cannot receive an extra observer
+    /// parameter. Storing a borrowed `&mut dyn FnMut` here instead would
+    /// require adding a lifetime parameter to `Document` itself, which is a
+    /// public-shape break every consumer of this type would have to absorb
+    /// (dom→paint wall territory) for a capability nothing external can
+    /// plug into yet. An owned buffer sidesteps that: `set_unrounded_layout`
+    /// pushes through `self` with no signature change, and
+    /// `layout_single_page` drains + replays the buffer through the same
+    /// `crate::diag::emit_warn_via` mechanism the rest of this module's
+    /// diagnostics use, once per pass, after the taffy compute step returns.
+    ///
+    /// Cleared at the start of each `layout_single_page` call (re-entrance
+    /// safety, mirrors the `Node.text_layout` clear in the same function) and
+    /// drained near its end.
+    ///
+    /// # Scope boundary: only `layout_single_page` clears/drains this
+    ///
+    /// A `Document` driven through `taffy::compute_root_layout` directly
+    /// (bypassing `layout_single_page` — e.g. this crate's own `lib.rs` unit
+    /// tests) still has `set_unrounded_layout` pushing into this buffer, but
+    /// nothing clears or drains it. [`LAYOUT_WARN_CAP`]-plus-one bounds the
+    /// memory either way, so this is not a leak, but on such a `Document` the
+    /// first pathological layout pass fills the buffer and every event after
+    /// that collapses into the trailing `Truncated` counter, with nothing
+    /// ever reading it back out. Not a problem for `layout_single_page`
+    /// callers (the only production path); worth knowing if a future
+    /// consumer drives taffy directly and expects these diagnostics.
+    ///
+    /// [`LAYOUT_WARN_CAP`]: crate::layout::LAYOUT_WARN_CAP
+    pub(crate) layout_warnings: Vec<LayoutWarn>,
 }
 
 impl Document {
@@ -78,6 +119,7 @@ impl Document {
             // template も detached node も無いので dirty ではない。
             flags_dirty: false,
             stylesheets: Vec::new(),
+            layout_warnings: Vec::new(),
         }
     }
 
