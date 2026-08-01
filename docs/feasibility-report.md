@@ -4,7 +4,6 @@ status: Final
 date: 2026-07-14
 author: Mitsuru Hayasaka (@mitsuru)
 related:
-  - "設計仕様書: `docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md` §M0"
   - "beads issues: raikiri-spike-nzv.5 〜 raikiri-spike-nzv.11 (すべて closed)"
   - "後続 gate: raikiri-spike-nzv.13 m0-readiness-gate (本 doc が判定 material)"
 ---

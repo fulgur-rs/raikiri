@@ -918,16 +918,15 @@ pub(crate) fn preshape_text(
 ///   incremental (差分だけ再走) は M2+ で追加
 /// - Consumer からの PageBox 上書きは M4 per-page PageBox で対応
 /// - Fragment parse (no `<body>`) support は M2+
-/// # API 互換性 (raikiri-spike-e93, spec §6.3)
+/// # API 互換性 (raikiri-spike-e93)
 ///
 /// この signature は M1.14 の 3-arg `(document, cascade, page_box)` から
 /// 4-arg `(document, cascade, page_box, font_ctx)` に **意図的に breaking
-/// change** された (spec §6.3 の choice β)。α (dual API: 既存 3-arg +
+/// change** された (choice β)。α (dual API: 既存 3-arg +
 /// 新規 `_with_fonts`) との trade-off の末、raikiri-dom 内 caller が全て
 /// in-repo (12 箇所 = production 1 + test 11) であり、内部 DI の explicit
 /// 化と signature 統一の方が長期保守で優れると判断した。詳細:
-/// - spec `docs/superpowers/specs/2026-07-18-raikiri-spike-e93-wpt-font-pin-design.md`
-///   §6.3 (β 選択の理由), §6.4 (12 caller の内訳)
+/// - bd raikiri-spike-e93 (font pin + layout_single_page 4-arg 化の起点)
 /// - roborev finding e93 round 3 M3 で reflag、user 再確認済 (plan-mandated)
 pub fn layout_single_page(
     document: &mut Document,
@@ -2220,8 +2219,7 @@ mod tests {
     /// document を [`layout_single_page`] に通し、**各段の**
     /// `unrounded_layout` を浅い順に返す。
     ///
-    /// 起点は probe 材料の depth sweep harness
-    /// (`docs/superpowers/specs/2026-07-28-r8ew-probe-materials/probe2.rs`、
+    /// 起点は probe 材料の depth sweep harness (bd raikiri-spike-r8ew 添付、
     /// zls8 perf lens iter2) だが、**depth ごとに document を作り直さない** —
     /// depth `N` の chain は 1..=`N` の各深さの node を既に含んでおり、
     /// probe が depth ごとに払っていた `FontContext::new()`

@@ -42,10 +42,9 @@ use crate::dom::Symbol;
 /// referenced a fragment before it was walked and must be resolved on a
 /// second pass ([`TargetRegistry::flush_pending`]).
 ///
-/// Design doc: `docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md`
-/// §7.2 (shape) + §7.4 (resolve strategy). Producer / register-site walker
-/// (bd raikiri-spike-96u.4) lives in raikiri-dom; the canonical type lives
-/// here (bd raikiri-spike-bsi Option C).
+/// Producer / register-site walker (bd raikiri-spike-96u.4) lives in
+/// raikiri-dom; the canonical type (shape + resolve strategy) lives here
+/// (bd raikiri-spike-bsi Option C).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct TargetRegistry {

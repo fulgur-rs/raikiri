@@ -1132,8 +1132,8 @@ pub enum PositionValue {
 /// **透過的に継続動作** する (`&Arc<Vec<T>>` は autoderef で `&[T]` として使える)。
 /// 一方、`PropertyValue::Content(vec![...])` のように payload を **construct** する
 /// 場合は `PropertyValue::Content(Arc::new(vec![...]))` への書き換えが必要。
-/// 詳細は `docs/superpowers/specs/2026-07-20-raikiri-0.1-to-0.2-migration.md`
-/// を参照。
+/// 詳細は bd raikiri-spike-q3f (`Content`/`StringSet` の `Arc<Vec<_>>` 化 +
+/// Deref chain 透過性の wall/umbrella declare) を参照。
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyValue {
