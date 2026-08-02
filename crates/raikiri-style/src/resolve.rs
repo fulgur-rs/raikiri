@@ -573,6 +573,7 @@ fn pc_to_px(v: f32) -> f32 {
 /// 無いため常に spec の unknown-metric fallback を使う — 根拠は各 variant
 /// ([`Length::Ex`] 等) の doc、`font-size` 自身が font-* property のため
 /// **親** 基準になる理由は上記 parent-metrics 条項 (`em` と同じ扱い)。
+///
 /// # Primary sources (§ title + anchor)
 ///
 /// - CSS Values 4 §6.1.1 "Font-relative Lengths"
