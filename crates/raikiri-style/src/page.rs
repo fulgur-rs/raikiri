@@ -2609,6 +2609,20 @@ mod tests {
                 Length::Em(_) => Some("Length::Em"),
                 Length::Rem(_) => Some("Length::Rem"),
                 Length::Pt(_) => Some("Length::Pt"),
+                // bd raikiri-spike-2x8 — additional font-relative / absolute
+                // units。`Em` / `Rem` / `Pt` と同じ理由で残滓 (絶対化前は
+                // computed 層に存在しない specified-only 表現)。
+                Length::Ex(_) => Some("Length::Ex"),
+                Length::Rex(_) => Some("Length::Rex"),
+                Length::Ch(_) => Some("Length::Ch"),
+                Length::Rch(_) => Some("Length::Rch"),
+                Length::Ic(_) => Some("Length::Ic"),
+                Length::Ric(_) => Some("Length::Ric"),
+                Length::Cm(_) => Some("Length::Cm"),
+                Length::Mm(_) => Some("Length::Mm"),
+                Length::Q(_) => Some("Length::Q"),
+                Length::In(_) => Some("Length::In"),
+                Length::Pc(_) => Some("Length::Pc"),
             }
         }
         /// `%` が computed 層に**残らない** position 用 — `font-size` と
@@ -2744,6 +2758,64 @@ mod tests {
         );
     }
 
+    /// bd raikiri-spike-2x8 で追加した font-relative / absolute unit も
+    /// `Em` / `Rem` / `Pt` と同じく「絶対化前は specified 層の残滓」として
+    /// 検出される (`length()` inner helper の網羅 match — 新 variant 追加は
+    /// compile error で強制されるが、各 arm の到達は compile では保証されない
+    /// ため個別に exercise する)。
+    #[test]
+    fn additional_length_units_are_specified_layer_residue() {
+        // straight-line asserts (no loop + lazy custom message) so every
+        // comparison is unconditionally exercised under patch coverage —
+        // a `assert_eq!(.., "{l:?}")` message argument is only evaluated on
+        // failure, which would leave that formatting code permanently
+        // uncovered by an all-passing loop.
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Ex(1.0))),
+            Some("Length::Ex"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Rex(1.0))),
+            Some("Length::Rex"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Ch(1.0))),
+            Some("Length::Ch"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Rch(1.0))),
+            Some("Length::Rch"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Ic(1.0))),
+            Some("Length::Ic"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Ric(1.0))),
+            Some("Length::Ric"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Cm(1.0))),
+            Some("Length::Cm"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Mm(1.0))),
+            Some("Length::Mm"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Q(1.0))),
+            Some("Length::Q"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::In(1.0))),
+            Some("Length::In"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Pc(1.0))),
+            Some("Length::Pc"),
+        );
+    }
+
     /// `page_corpus` が全 variant を過不足なく 1 度ずつ覆うこと。
     ///
     /// 以前は `PropertyValue::key()` (variant → key の単射) を経由して
@@ -2768,6 +2840,8 @@ mod tests {
         );
         let discriminants: std::collections::HashSet<std::mem::Discriminant<PropertyValue>> =
             corpus.iter().map(std::mem::discriminant).collect();
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             discriminants.len(),
             PROPERTY_VALUE_VARIANTS,
@@ -2788,6 +2862,8 @@ mod tests {
             .iter()
             .filter(|v| v.key() == PropertyKey::FontSize)
             .count();
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             font_size_key_count, 2,
             "FontSize と FontSizeRelative の 2 entry が PropertyKey::FontSize を共有するはず",

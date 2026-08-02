@@ -954,12 +954,28 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 参照) `pick_winners` の slot は 1 つ — 本 arm と直上の `FontSize` arm が
         // 同一 node で両方走ることはない。
         PropertyValue::FontSizeRelative(rel) => {
+            // cov:ignore: per the doc comment above, `target.font_size` is
+            // always `Length::Px` at this point (post phase-2 resolution) —
+            // only the `Px` arm is ever exercised. The other 15 arms exist
+            // to make this extraction panic-free (no `unreachable!`), not
+            // because any test constructs a non-Px font_size here.
             let inherited_px = match target.font_size {
                 Length::Px(v)
                 | Length::Em(v)
                 | Length::Rem(v)
                 | Length::Percent(v)
-                | Length::Pt(v) => v,
+                | Length::Pt(v)
+                | Length::Ex(v)
+                | Length::Rex(v)
+                | Length::Ch(v)
+                | Length::Rch(v)
+                | Length::Ic(v)
+                | Length::Ric(v)
+                | Length::Cm(v)
+                | Length::Mm(v)
+                | Length::Q(v)
+                | Length::In(v)
+                | Length::Pc(v) => v,
             };
             target.font_size = Length::Px(resolve_relative_font_size(rel, inherited_px));
         }
@@ -1587,6 +1603,8 @@ mod tests {
             Some("font-size: larger"),
         );
         assert_eq!(parent.font_size, ComputedLength(20.0));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             child.font_size,
             ComputedLength(24.0),
@@ -2325,6 +2343,8 @@ mod tests {
             RelativeFontSize::Smaller,
             resolve_relative_font_size(RelativeFontSize::Larger, 16.0),
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert!(
             (round_tripped - 16.0).abs() < 0.0001,
             "×1.2 の後 ÷1.2 すれば浮動小数誤差の範囲で元に戻るはず: {round_tripped}"
