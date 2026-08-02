@@ -692,4 +692,174 @@ mod tests {
         let tn = doc.get_node(t).unwrap();
         assert_eq!(tn.kind(), NodeKind::Text);
     }
+
+    /// bd raikiri-spike-3653 point 1 — does taffy's own block layout algorithm
+    /// hang (infinite loop) when the `taffy::Style` geometry it's driven with
+    /// is non-finite?
+    ///
+    /// This bypasses cascade / `raikiri_style::resolve` / `raikiri_dom::layout`'s
+    /// bridge helpers **on the input side** — including the `sanitize_taffy` /
+    /// `sanitize_finite` guards bd raikiri-spike-2ui0 installed in those
+    /// bridge functions — by constructing the `taffy::Style` directly and
+    /// handing it to [`Document::append_element`] (the same raw-`Style`
+    /// escape hatch [`build_document`] above already uses for non-cascade
+    /// layout tests), then driving [`compute_root_layout`] straight from this
+    /// test. That characterizes **taffy's own** block layout algorithm (the
+    /// sink named in the task), independent of whether raikiri's input guard
+    /// currently prevents the input from reaching it — the same "characterize
+    /// the sink, not just the guard" approach used for the parley probe in
+    /// `crates/raikiri-dom/src/layout.rs`
+    /// (`parley_break_all_lines_hangs_on_raw_infinite_font_size_bypassing_the_guard`)
+    /// and the rasterizer probe in `crates/raikiri-paint/src/lib.rs`
+    /// (`nonfinite_rasterizer_probe`).
+    ///
+    /// **What this does *not* bypass**: bd raikiri-spike-r8ew's output-side
+    /// guard, `sanitize_taffy_layout`, called unconditionally from
+    /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
+    /// (`crates/raikiri-dom/src/taffy_impl.rs`). `compute_root_layout` invokes
+    /// that trait method itself as part of committing every node's computed
+    /// layout, regardless of how the `Style` it started from was constructed
+    /// — there is no code path through `compute_root_layout` that skips it.
+    /// So this test's `Document.nodes[..].unrounded_layout` values are
+    /// guaranteed finite by r8ew's guard even though this test's *input*
+    /// bypasses 2ui0's guard; the assertion below on the child's layout
+    /// confirms exactly that (finite, non-default output), rather than
+    /// silently relying on it.
+    ///
+    /// # Finding
+    ///
+    /// No hang: `compute_root_layout` returns well within the 10s bound for
+    /// every non-finite field this test sets (width/height `+Inf`/`NaN`,
+    /// padding/margin/border mixing `NaN`, `+Inf`, `-Inf`, and a `+Inf`
+    /// percentage) — and it isn't a silently-skipped no-op either, since the
+    /// child's `unrounded_layout` is asserted below to be both non-default
+    /// and (per r8ew's live output guard) finite. This is consistent with —
+    /// and now formalizes as an automated regression pin, rather than leaving
+    /// it as prose — the manual observation already recorded on
+    /// `MAX_FONT_SIZE_PX` in `crates/raikiri-dom/src/layout.rs`: "site 1-4 の
+    /// taffy 側 test は即座に assert 失敗する (値が壊れるだけ)". This test
+    /// does not assert anything about *which specific* values taffy produces
+    /// (bd raikiri-spike-ntxy / raikiri-spike-y3yx already track the "finite
+    /// garbage" semantic-validity concern separately); it pins the **timing**
+    /// (no livelock) and the **finiteness invariant** (r8ew's guard holds
+    /// even under directly-adversarial input, not just cascade-derived
+    /// input) — taffy's block layout is not a livelock/hang surface for
+    /// non-finite `Style` geometry, whether or not raikiri's own input guard
+    /// is in the picture.
+    #[test]
+    fn taffy_block_layout_does_not_hang_on_raw_nonfinite_style_geometry() {
+        use std::sync::mpsc::RecvTimeoutError;
+        use std::time::Duration;
+        use taffy::{LengthPercentage, LengthPercentageAuto, Rect};
+
+        /// Returns `(doc, root, first_pathological_child)` — the child id is
+        /// needed after layout to check its `unrounded_layout` (non-vacuity:
+        /// distinguishes "actually laid out" from "silently skipped
+        /// no-op", which a bare timing pass/fail cannot).
+        fn build_nonfinite_document() -> (Document, usize, usize) {
+            // Every geometry field taffy's block layout consumes gets a
+            // different non-finite flavor, so a single run exercises +Inf,
+            // -Inf, NaN, and +Inf-as-percentage together rather than needing
+            // one test per flavor (this test only cares about *timing*, so
+            // mixing them is fine — see doc comment above).
+            let pathological_style = Style {
+                size: Size {
+                    width: Dimension::length(f32::INFINITY),
+                    height: Dimension::length(f32::NAN),
+                },
+                padding: Rect {
+                    left: LengthPercentage::length(f32::NAN),
+                    right: LengthPercentage::percent(f32::INFINITY),
+                    top: LengthPercentage::length(f32::NEG_INFINITY),
+                    bottom: LengthPercentage::length(0.0),
+                },
+                margin: Rect {
+                    left: LengthPercentageAuto::length(f32::INFINITY),
+                    right: LengthPercentageAuto::length(f32::NEG_INFINITY),
+                    top: LengthPercentageAuto::length(f32::NAN),
+                    bottom: LengthPercentageAuto::length(0.0),
+                },
+                border: Rect {
+                    left: LengthPercentage::length(f32::NAN),
+                    right: LengthPercentage::length(0.0),
+                    top: LengthPercentage::length(0.0),
+                    bottom: LengthPercentage::length(0.0),
+                },
+                ..Default::default()
+            };
+            let root_style = Style {
+                display: Display::Block,
+                size: Size {
+                    width: Dimension::length(400.0),
+                    height: Dimension::auto(),
+                },
+                ..Default::default()
+            };
+            let mut doc = Document::new();
+            let root = doc.append_element(Some(0), "root", root_style, None::<&str>);
+            let a = doc.append_element(Some(root), "a", pathological_style.clone(), None::<&str>);
+            doc.append_element(Some(root), "b", pathological_style, None::<&str>);
+            (doc, root, a)
+        }
+
+        /// Layout::default()'s `size` is `(0.0, 0.0)` — a node taffy never
+        /// visited (e.g. a bug that silently no-ops instead of laying out)
+        /// would look identical to that, which is what this checks against.
+        fn layout_is_non_default_and_finite(layout: &taffy::Layout) -> bool {
+            let default_size = taffy::Layout::new().size;
+            let non_default = layout.size.width != default_size.width
+                || layout.size.height != default_size.height;
+            let finite = layout.size.width.is_finite()
+                && layout.size.height.is_finite()
+                && layout.location.x.is_finite()
+                && layout.location.y.is_finite();
+            non_default && finite
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut doc, root, a) = build_nonfinite_document();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compute_root_layout(
+                    &mut doc,
+                    taffy::NodeId::from(root),
+                    Size {
+                        width: AvailableSpace::Definite(800.0),
+                        height: AvailableSpace::Definite(600.0),
+                    },
+                );
+                layout_is_non_default_and_finite(&doc.nodes[a].unrounded_layout)
+            }));
+            let _ = tx.send(result);
+        });
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(non_vacuous)) => assert!(
+                non_vacuous,
+                "compute_root_layout completed but child 'a' (pathological, non-finite \
+                 Style) has a default-sized or non-finite unrounded_layout — either taffy \
+                 silently skipped it (this test would be vacuous re: 'no hang', since a \
+                 skipped node also 'completes' instantly) or bd raikiri-spike-r8ew's \
+                 sanitize_taffy_layout output guard (set_unrounded_layout, \
+                 crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — \
+                 re-characterize bd raikiri-spike-3653 point 1 rather than deleting this \
+                 assertion"
+            ),
+            Ok(Err(_panic_payload)) => panic!(
+                "taffy::compute_root_layout (or the post-layout assertion) panicked on \
+                 non-finite Style geometry — re-characterize bd raikiri-spike-3653 point 1 \
+                 (this test previously pinned 'completes without panic or hang')"
+            ),
+            Err(RecvTimeoutError::Timeout) => panic!(
+                "taffy::compute_root_layout did not return within 10s on non-finite \
+                 Style geometry — possible taffy block layout hang/livelock found \
+                 (bd raikiri-spike-3653 point 1); this would be a new finding, not a \
+                 regression of a previously-passing guarantee, since this test is the \
+                 first automated characterization of this input"
+            ),
+            Err(RecvTimeoutError::Disconnected) => panic!(
+                "worker thread panicked before catch_unwind could report it cleanly — \
+                 see stderr above"
+            ),
+        }
+    }
 }

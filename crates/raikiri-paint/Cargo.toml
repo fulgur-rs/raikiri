@@ -16,8 +16,23 @@ kurbo          = { workspace = true }
 parley         = { workspace = true }
 
 [dev-dependencies]
-taffy        = { workspace = true }
-raikiri-html = { workspace = true }
+taffy                = { workspace = true }
+raikiri-html         = { workspace = true }
+# bd raikiri-spike-3653 point 3 probe only (rasterizer memory/panic
+# characterization) — real CPU rasterizer backend, not used by production
+# code (production stays anyrender-backend-agnostic via the `PaintScene`
+# trait, per this crate's module doc).
+#
+# 原則 5 Pure Rust / WASM check (walls.md 壁 7): this is not a new package in
+# the dependency graph. `anyrender_vello_cpu` is already a workspace
+# dependency consumed by `raikiri-vrt`, `raikiri`, and `raikiri-wpt`
+# (`grep -rl anyrender_vello_cpu crates/*/Cargo.toml`), so adding this edge
+# adds a single line to `Cargo.lock` (`raikiri-paint`'s own `dependencies`
+# list gains one entry) and zero new `[[package]]` entries — verified via
+# `git diff main -- Cargo.lock`. Whatever Pure-Rust/WASM posture this
+# dependency already has for the existing consumers is unchanged by this dev-
+# only edge; there is no new dep to evaluate.
+anyrender_vello_cpu  = { workspace = true }
 
 [lints]
 workspace = true
