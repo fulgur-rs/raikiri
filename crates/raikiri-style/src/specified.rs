@@ -584,6 +584,23 @@ mod tests {
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
     }
 
+    /// bd raikiri-spike-2x8 で追加した `ex` も `em` と同じ parent/own 非対称を
+    /// 持つ (unknown-metric fallback `0.5em`、[`Length::Ex`] doc)。数値は
+    /// [`finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest`]
+    /// と揃える (`32px` / `32px`) — multiplier を変えて `ex` の `0.5` 係数を
+    /// 通しても同じ基準規則になることを示す。padding 側に **親** (16px) を
+    /// 誤って使うと `16 * 0.5 * 2 = 16px` になり、`32px` にならないため
+    /// parent/own の取り違えを検出できる。
+    #[test]
+    fn finalize_resolves_ex_against_parent_for_font_size_and_own_for_padding() {
+        let mut sv = SpecifiedValues::initial();
+        sv.font_size = Length::Ex(4.0); // 親 16px 基準 → 0.5 * 4 * 16 = 32px
+        sv.padding = Sides::all(Length::Ex(2.0)); // 自 (phase 2 で確定した) 32px 基準 → 0.5 * 2 * 32 = 32px
+        let cv = sv.finalize(ComputedLength(16.0), &CTX);
+        assert_eq!(cv.font_size, ComputedLength(32.0));
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
+    }
+
     /// `<percentage>` は property ごとに扱いが違う: `font-size` は length に
     /// なり、`padding` / `margin` / `width` / `height` は computed 層に
     /// percentage のまま残る (CSS Values 4 §5.5.1 + CSS Box 3 の各 propdef)。
