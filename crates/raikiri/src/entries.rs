@@ -59,7 +59,7 @@ use raikiri_traits::NodeId;
 /// `opacity_descendants`) を reference に、raikiri で実際に取得できる
 /// minimal field を選定 (raikiri-spike-4hp1)。
 ///
-/// [`build_page_scene`](crate::page_scene::build_page_scene) が post-layout
+/// `build_page_scene` (crate::page_scene) が post-layout
 /// Element node ごとに construct し `PageDrawables::block_styles` へ insert
 /// する — 本 sprint で populate される 2 型のうちの 1 つ (もう 1 つは
 /// [`ParagraphEntry`])。
@@ -136,7 +136,7 @@ impl Default for BlockEntry {
 /// Text node 自身に付く — `crates/raikiri-paint/src/walk.rs` module doc
 /// 参照) に合わせて minimal field を選定。
 ///
-/// [`build_page_scene`](crate::page_scene::build_page_scene) が post-layout
+/// `build_page_scene` (crate::page_scene) が post-layout
 /// Text node ごとに construct し `PageDrawables::paragraphs` へ insert する。
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -183,7 +183,7 @@ impl Default for ParagraphEntry {
 /// できず「populate 詐称」になるため (task の field-type conservatism 指示)。
 /// `width` / `height` / `opacity` / `visible` のみ shape を保持する。
 ///
-/// **未 populate**: [`build_page_scene`](crate::page_scene::build_page_scene)
+/// **未 populate**: `build_page_scene` (crate::page_scene)
 /// はこの型の instance を一度も construct しない (raikiri-spike-4hp1 は
 /// [`BlockEntry`] / [`ParagraphEntry`] の 2 型のみ populate、他 9 型は
 /// 「fulgur shape 由来の field 追加」のみが本 sprint scope)。
