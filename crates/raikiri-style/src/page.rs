@@ -571,6 +571,45 @@ pub struct PageCascadeResult {
     /// value for every property") describes the page context as a whole, not
     /// this map — materialising the complete bag is the downstream page-layout
     /// consumer's job, and it starts from `root_style` plus these declarations.
+    ///
+    /// # Non-finite values pass through unguarded (bd raikiri-spike-kj2s)
+    ///
+    /// The absolutization in phase 2 / phase 3 above is IEEE 754 `f32`
+    /// arithmetic over untrusted author input. CSS Values 4 §5 "Numeric Data
+    /// Types" (<https://www.w3.org/TR/css-values-4/#numeric-types>) requires
+    /// out-of-range values to be "converted to the closest value supported by
+    /// the implementation" — it does **not** require the result to be finite.
+    /// A declaration such as `html { font-size: 0px }` with
+    /// `@page { font-size: 1e40em }` overflows the literal `1e40` to
+    /// `f32::INFINITY` at parse time; phase 2's `parent_font_size.0 * v`
+    /// (`0.0 * inf`) then yields `f32::NAN` per IEEE 754. See
+    /// `page::tests::cascade_page_font_size_can_carry_nan_from_pathological_em`
+    /// for the pinned reproducer.
+    ///
+    /// **This map does not filter that out**, and neither does
+    /// [`ComputedValues`] — the element path's equivalent computed-value bag —
+    /// which documents no finiteness contract either. That is not an
+    /// oversight: `raikiri-style` applies no `is_finite` / `is_nan` check
+    /// anywhere in parsing, cascade, or resolution (grep the crate to
+    /// confirm), and the element path's guard against non-finite geometry
+    /// lives entirely outside this crate, in `raikiri-dom`'s layout module
+    /// (`sanitize_taffy`, decided by bd raikiri-spike-2ui0's PMO ruling:
+    /// **the guard belongs at the sink that consumes the computed-value bag,
+    /// not at the parse/resolve layer that produces it**). This map is the
+    /// same kind of computed-value bag, so the same precedent applies to it.
+    ///
+    /// No sink for `declarations` exists yet — the consumer that would read
+    /// this map (page-margin-box layout, mirroring `apply_computed_to_style`
+    /// for the element path) is M4+ scope, and `raikiri-style` currently has
+    /// zero consumers of this field outside this crate: grepping the type
+    /// name `PageCascadeResult` (not `.declarations`, which `PageRule` and
+    /// `StyleRule` also expose as an unrelated field/accessor name) finds
+    /// only doc-comment *mentions* elsewhere (`raikiri-dom`, and an umbrella
+    /// comment noting that `cascade_page` itself is not re-exported), never
+    /// an actual field read, as of this writing. The hazard is therefore
+    /// real but currently unreachable; **when the M4 sink is built, its
+    /// bridge must add the equivalent guard**, following the same precedent
+    /// rather than adding one here.
     pub declarations: HashMap<PropertyKey, PropertyValue>,
 }
 
@@ -1748,6 +1787,40 @@ mod tests {
         assert_eq!(page_font_size_px("2em", None), 32.0);
         assert_eq!(page_font_size_px("2rem", None), 32.0);
     }
+
+    // ── declarations may carry non-finite f32 (bd raikiri-spike-kj2s) ──────
+    //
+    // This is not guarded here — see the `# Values may be non-finite, and
+    // nothing here guards against it` section of
+    // `PageCascadeResult::declarations`'s doc for why that is intentional
+    // (sink-boundary precedent, bd raikiri-spike-2ui0) rather than an
+    // oversight. This test exists to pin that the hazard is *real*, so a
+    // future reader cannot dismiss the doc's claim as theoretical, and so a
+    // regression that added a clamp here (which would violate the
+    // precedent) has to delete this test rather than merely adjust it.
+
+    #[test]
+    fn cascade_page_font_size_can_carry_nan_from_pathological_em() {
+        // Same overflow-then-multiply mechanism as the element path's 2ui0
+        // reproducer (`crates/raikiri-dom/src/layout.rs`, "Reproducer A'"):
+        // `1e40` overflows `f32` to `+Inf` at parse time (cssparser's f64 →
+        // f32 conversion), and phase 2's `resolve_font_size`
+        // (`parent_font_size.0 * v`) computes `0.0 * inf` = `NaN` per IEEE
+        // 754 — root font-size 0 supplies the `0.0`.
+        let root = root_with_font_size(0.0);
+        let px = page_font_size_px("1e40em", Some(&root));
+        assert!(
+            px.is_nan(),
+            "expected NaN from `0.0 * inf` (root font-size 0 times an \
+             overflowed `1e40em`), got {px} — either the overflow/multiply \
+             mechanism changed (update this test and the `declarations` doc \
+             together) or a guard was added in raikiri-style (which would \
+             violate the sink-boundary precedent from bd raikiri-spike-2ui0 \
+             — see the doc's rationale before doing that)"
+        );
+    }
+
+    // ── page context inheritance: relative font-weight resolution (cont'd) ──
 
     #[test]
     fn cascade_page_font_weight_relative_without_root_style_uses_initial_400() {
