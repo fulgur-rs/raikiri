@@ -745,6 +745,65 @@ pub enum ContentTextKeyword {
     FirstLetter,
 }
 
+/// `<quote>` production の 4 keyword。
+///
+/// CSS Content 3 §2.4.2 "Inserting Quotation Marks: the *-quote keywords"
+/// <https://www.w3.org/TR/css-content-3/#quote-values> verbatim production:
+/// `<quote> = open-quote | close-quote | no-open-quote | no-close-quote`。
+///
+/// spec 原文: [`OpenQuote`](Self::OpenQuote) / [`CloseQuote`](Self::CloseQuote)
+/// は "replaced by the appropriate string from the `quotes` property" かつ
+/// nesting depth を増減する。[`NoOpenQuote`](Self::NoOpenQuote) /
+/// [`NoCloseQuote`](Self::NoCloseQuote) は "insert nothing (as in none)" だが
+/// depth 増減のみ行う。実際の `quotes` property 引き (nesting depth → 文字列)
+/// は本 crate の static-side scope 外 — 下流 (raikiri-dom) が `quotes` の
+/// computed value と併せて runtime resolve する ([`CounterStyle`] /
+/// [`StringFetchMode`] と同じ「resolve は downstream 責務」の分担)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuoteKeyword {
+    /// `open-quote` — nesting depth を increment、対応する開き引用符 string
+    /// を挿入 (実際の文字列解決は downstream)。
+    OpenQuote,
+    /// `close-quote` — nesting depth を decrement、対応する閉じ引用符 string
+    /// を挿入。
+    CloseQuote,
+    /// `no-open-quote` — 何も挿入しないが nesting depth は `open-quote` と
+    /// 同様に increment する。
+    NoOpenQuote,
+    /// `no-close-quote` — 何も挿入しないが nesting depth は `close-quote` と
+    /// 同様に decrement する。
+    NoCloseQuote,
+}
+
+/// `leader()` の引数 `<leader-type> = dotted | solid | space | <string>`。
+///
+/// CSS Content 3 §2.5.1 "The leader() function"
+/// <https://www.w3.org/TR/css-content-3/#leader-function>。
+///
+/// spec 原文: `dotted` は "equivalent to `leader(".")`"、`solid` は
+/// "equivalent to `leader("_")`"、`space` は "equivalent to `leader(" ")`"。
+/// この等価性は **keyword の意味論の説明であって spelling の正規化指示ではない**
+/// ([`counter_style_from_ident`] が `decimal` keyword を `Named("decimal")` に
+/// 畳まず [`CounterStyle::Decimal`] という別 variant で保持するのと同じ
+/// precedent) — 3 keyword を個別 variant に保持し、実際の leader glyph
+/// 文字列への解決 (`Dotted` → `"."` 等) は downstream (paint) の rendering
+/// 責務とする。[`String`](Self::String) variant の custom leader 文字列は
+/// [`SmolStr`] で保持 ([`ContentComponent::Literal`] の d9y.1 SmolStr 化
+/// precedent と同じ、短寿命 clone を bump にする)。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LeaderType {
+    /// `dotted` — spec 上 `leader(".")` と等価 (rendering 解決は downstream)。
+    Dotted,
+    /// `solid` — spec 上 `leader("_")` と等価。
+    Solid,
+    /// `space` — spec 上 `leader(" ")` と等価。
+    Space,
+    /// `<string>` — author 指定の custom leader 文字列。
+    String(SmolStr),
+}
+
 /// [`parse_content_list_items`] の list vocabulary mode selector。
 ///
 /// CSS Content 3 §2 <https://www.w3.org/TR/css-content-3/#content-values> と
@@ -760,7 +819,10 @@ enum ContentListMode {
     /// CSS Content 3 §2 broad `<content-list>` — `content` property 用。
     /// 受理: `<string>` bare literal / `counter()` / `counters()` / `string()` /
     /// `attr()` / `target-counter()` / `target-counters()` / `target-text()` /
-    /// `content()`。
+    /// `content()` / `<image>` (`url()` alternative のみ、raikiri-spike-1us) /
+    /// `contents` keyword / `<quote>` (`open-quote` 等) / `leader()`。10 alt
+    /// full set (raikiri-spike-1us で image/contents/quote/leader を追加、
+    /// m5.1 由来の under-accept を解消)。
     CssContent3,
     /// CSS GCPM 3 §1.1.1 narrow local `<content-list>` — `string-set` 用。
     /// 受理: `<string>` bare literal / `counter()` / `counters()` / `content()` /
@@ -791,6 +853,9 @@ enum ContentListMode {
 ///   <https://www.w3.org/TR/css-content-3/#target-text>
 /// - Content: CSS GCPM 3 §1.1.1.1
 ///   <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> (raikiri-spike-5ri)
+/// - Image / Contents / Quote / Leader: CSS Content 3 §2.2 / §2.3 / §2.4.2 /
+///   §2.5.1 (raikiri-spike-1us、m5.1 由来 under-accept の fix — 末尾に追加、
+///   既存 variant の並びは互換性のため保持)
 ///
 /// URL は raw `String` として保持 (raikiri-style は `url` crate に依存しない —
 /// runtime resolve 段で `url::Url` へ parse する consumer 責務)。
@@ -891,6 +956,74 @@ pub enum ContentComponent {
     /// content-list 内で受理される。keyword 省略時は spec default `Text`。
     /// runtime resolve は raikiri-dom 責務 (m5.1 wire-through pattern)。
     Content { keyword: ContentTextKeyword },
+    /// `<image>` (CSS Images 3 <https://www.w3.org/TR/css-images-3/#typedef-image>
+    /// `<image> = <url> | <gradient>`) — CSS Content 3 §2.2 "2D Images: the
+    /// `<image>` values" <https://www.w3.org/TR/css-content-3/#content-uri>。
+    /// spec 原文: "Represents an anonymous inline replaced element filled with
+    /// the specified `<image>`. If the `<image>` represents an invalid image,
+    /// this value instead represents nothing" (rendering 側の fallback は
+    /// downstream 責務)。
+    ///
+    /// **`<content-replacement>` との関係 (未反映、raikiri-spike-5hp8 送り)**:
+    /// `content` property 全体の value definition (CSS Content 3 §1
+    /// <https://www.w3.org/TR/css-content-3/#content-property>) は `normal |
+    /// none | [ <content-replacement> | <content-list> ] […]?` で、
+    /// `<content-replacement> = <image>` は `<content-list>` とは別の
+    /// top-level alternative — spec 原文 "Represents a *replaced element*"
+    /// で `::before`/`::after` 生成を抑制する等、上の list-item 版
+    /// `<image>` (anonymous inline replaced element) とは異なる semantics
+    /// を持つ。spec 原文は続けて "If the value of `<content-list>` is a
+    /// single `<image>`, it must instead be interpreted as a
+    /// `<content-replacement>`" とも述べており、本 variant の shape
+    /// (`Vec<ContentComponent>` の 1 要素が `Image` かどうか) は downstream
+    /// がこの区別を再構成するのに十分な情報を保持している — replacement
+    /// semantics 自体の実装 (pseudo-element 抑制含む) は本 crate の
+    /// static-side scope 外。
+    ///
+    /// **milestone subset (g04 category (b))**: `<url>` alternative のみ実装
+    /// (`url(...)` / `url("...")`)。`<gradient>` (`linear-gradient()` /
+    /// `repeating-linear-gradient()` / `radial-gradient()` /
+    /// `repeating-radial-gradient()`、CSS Images 3 §3.1-2) は gradient stop /
+    /// color-interpolation infra が本 crate に無く defer — raikiri-spike-1us
+    /// scope 外、追跡は follow-up task。CSS Images 4 で追加された `image()` /
+    /// `image-set()` / `element()` / `cross-fade()` / `paint()` は参照した
+    /// CSS Images **3** の `<image>` production に含まれないため g04 category
+    /// (a) spec-invalid (Level 3 準拠) — これらは function 名が
+    /// `parse_content_function` の match arm と一致せず自動的に drop される
+    /// ため追加コード不要。
+    ///
+    /// URL は raw `String` として保持 (sibling [`TargetCounter`](Self::TargetCounter)
+    /// 等と同じ convention、`url` crate 非依存)。
+    Image { url: String },
+    /// `contents` keyword — CSS Content 3 §2.3 "Elemental Content: the
+    /// `contents` keyword" <https://www.w3.org/TR/css-content-3/#element-content>。
+    /// spec 原文: "The element's descendants" — pseudo-element の生成有無や
+    /// 「既に他の pseudo-element で使用済みなら何もしない」という消費順序の
+    /// 解決は本 crate の static-side scope 外 (parse_content の docstring の
+    /// `normal`/`none` と同じ「生成判断は下流に委ねる」方針)。
+    ///
+    /// **`normal` との非対称性 (意図的)**: spec 原文 (§2.3) は "the initial
+    /// value of content is `normal` and `normal` computes to `contents` on an
+    /// element" と述べるが、[`parse_content`] は `normal` を (既存 `none` と
+    /// 同様) 空 `Vec` に畳んで保持する — computed-value 時の `normal` →
+    /// `contents` 展開は本 crate の static-side (specified 層) scope 外。した
+    /// がって author が明示的に書いた `content: contents` は `[Contents]` を
+    /// 返す一方、`content: normal` (initial value 相当) は `[]` を返す —
+    /// specified 層での「明示 vs 省略」の区別を保つための意図的非対称性で、
+    /// spec 違反ではない (computed-value 展開は downstream 責務)。
+    Contents,
+    /// `<quote>` (`open-quote` / `close-quote` / `no-open-quote` /
+    /// `no-close-quote`) — CSS Content 3 §2.4.2
+    /// <https://www.w3.org/TR/css-content-3/#quote-values>。詳細は
+    /// [`QuoteKeyword`] の doc を参照 (実際の引用符文字列解決は `quotes`
+    /// property の computed value と合わせて downstream が行う)。
+    Quote(QuoteKeyword),
+    /// `leader(<leader-type>)` — CSS Content 3 §2.5.1 "The leader() function"
+    /// <https://www.w3.org/TR/css-content-3/#leader-function>。詳細は
+    /// [`LeaderType`] の doc を参照。spec production `leader( <leader-type> )`
+    /// に `?` が無いため引数は必須 (bare `leader()` は spec-invalid → parse 失敗
+    /// = declaration drop)。
+    Leader(LeaderType),
 }
 
 /// `display` property の value。
@@ -2964,26 +3097,35 @@ fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
 
 /// `<content-list>` の items+ loop 部分。
 ///
-/// `<string>` bare literal と function token (`counter(...)` / `string(...)` /
-/// `target-*()` / `attr(...)` / `content(...)`) を順次 peel。認識できない
-/// token に当たった時点で break — 呼び出し側が leftover を検知して drop する。
+/// `<string>` bare literal、`<image>` の `<url>` alternative、bare keyword
+/// (`contents` / `<quote>`)、function token (`counter(...)` / `string(...)` /
+/// `target-*()` / `attr(...)` / `content(...)` / `leader(...)`) を順次 peel。
+/// 認識できない token に当たった時点で break — 呼び出し側が leftover を検知
+/// して drop する。
 ///
 /// `content` property (`parse_content`) と `string-set` property
 /// (`parse_string_set`) の両方から call されるが、GCPM 3 §1.1.1 は string-set
 /// 向けに CSS Content 3 §2 の broad list を narrower に再定義しているため、
-/// `mode` パラメータで受理 function 集合を分岐する:
+/// `mode` パラメータで受理 alternative 集合を分岐する:
 /// - [`ContentListMode::CssContent3`] — content property (CSS Content 3 §2
-///   <https://www.w3.org/TR/css-content-3/#content-values>)。全 8 function を受理。
+///   <https://www.w3.org/TR/css-content-3/#content-values>)。10 alt full set
+///   を受理 (raikiri-spike-1us で `<image>` / `contents` / `<quote>` /
+///   `leader()` を追加)。
 /// - [`ContentListMode::GcpmStringSet`] — string-set property (CSS GCPM 3
-///   §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>)。`string()` と
-///   `target-counter()` / `target-counters()` / `target-text()` は spec grammar
+///   §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>)。`string()` /
+///   `target-counter()` / `target-counters()` / `target-text()` / `<image>` /
+///   `contents` / `<quote>` / `leader()` は GCPM 3 §1.1.1 L82 narrow grammar
 ///   に含まれず reject (bare `<string>` literal は両 mode で受理)。
 ///
 /// bare literal 分岐は spec 上両 mode で共通 (どちらの `<content-list>` grammar
-/// も `<string>` を top-level alternative に含む) なので mode 判定なし。分岐は
-/// [`parse_content_function`] の match arm で mode guard を掛ける。
+/// も `<string>` を top-level alternative に含む) なので mode 判定なし。他の
+/// 分岐は各 branch 内で mode guard を掛ける ([`parse_content_function`] の
+/// match arm guard と同じ pattern)。`Parser::try_parse` は失敗時に読んだ token
+/// を必ず rewind するため、branch の試行順序は正しさに影響しない
+/// (どの順で並べても等価)。
 ///
-/// (raikiri-spike-m5.1 で導入、raikiri-spike-6s1 で mode-parameterize)
+/// (raikiri-spike-m5.1 で導入、raikiri-spike-6s1 で mode-parameterize、
+/// raikiri-spike-1us で `<image>` / `contents` / `<quote>` / `leader()` 追加)
 fn parse_content_list_items(
     input: &mut Parser<'_, '_>,
     mode: ContentListMode,
@@ -2995,8 +3137,33 @@ fn parse_content_list_items(
             items.push(ContentComponent::Literal(SmolStr::new(s.as_ref())));
             continue;
         }
-        // function — mode に応じて `string()` / `target-*()` を reject する
-        // 判定は `parse_content_function` の match arm side で実施。
+        // `<image>` の `<url>` alternative — CSS Images 3 <url> production
+        // (`url(...)` / `url("...")`) のみ (`<gradient>` は milestone subset
+        // defer、`ContentComponent::Image` doc 参照)。`expect_url` は bare
+        // quoted string を受理しない (`<url> = <url()> | <src()>`) ので上の
+        // literal 分岐との誤 overlap は無い。CssContent3 mode 限定
+        // (GCPM 3 §1.1.1 L82 narrow list に `<image>` は含まれない)。
+        if mode == ContentListMode::CssContent3
+            && let Ok(url) = input.try_parse(|i| i.expect_url())
+        {
+            items.push(ContentComponent::Image {
+                url: url.as_ref().to_string(),
+            });
+            continue;
+        }
+        // bare keyword alternative — `contents` / `<quote>` (function でも
+        // `<string>` でもない ident-only alternative)。CssContent3 mode 限定。
+        if mode == ContentListMode::CssContent3
+            && let Ok(c) = input.try_parse(|i| -> Result<ContentComponent, ParseError<'_, ()>> {
+                let ident = i.expect_ident()?.clone();
+                parse_content_bare_keyword(ident.as_ref()).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            items.push(c);
+            continue;
+        }
+        // function — mode に応じて `string()` / `target-*()` / `leader()` を
+        // reject する判定は `parse_content_function` の match arm side で実施。
         let parsed = input.try_parse(|i| -> Result<ContentComponent, ParseError<'_, ()>> {
             let name = i.expect_function()?.clone();
             i.parse_nested_block(|inner| {
@@ -3010,6 +3177,22 @@ fn parse_content_list_items(
         }
     }
     items
+}
+
+/// `contents` keyword と `<quote>` (`open-quote` / `close-quote` /
+/// `no-open-quote` / `no-close-quote`) の bare-ident alternative をまとめて
+/// 判定する ([`parse_content_list_items`] 専用 helper)。CSS Content 3 §2.3
+/// <https://www.w3.org/TR/css-content-3/#element-content> および §2.4.2
+/// <https://www.w3.org/TR/css-content-3/#quote-values>。
+fn parse_content_bare_keyword(ident: &str) -> Option<ContentComponent> {
+    match ident.to_ascii_lowercase().as_str() {
+        "contents" => Some(ContentComponent::Contents),
+        "open-quote" => Some(ContentComponent::Quote(QuoteKeyword::OpenQuote)),
+        "close-quote" => Some(ContentComponent::Quote(QuoteKeyword::CloseQuote)),
+        "no-open-quote" => Some(ContentComponent::Quote(QuoteKeyword::NoOpenQuote)),
+        "no-close-quote" => Some(ContentComponent::Quote(QuoteKeyword::NoCloseQuote)),
+        _ => None,
+    }
 }
 
 /// `string-set: none | [ <custom-ident> <content-list> ]#` を parse する
@@ -3094,10 +3277,15 @@ fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<Cont
 ///   では全 arm を許可。
 /// - [`ContentListMode::GcpmStringSet`] (`string-set` property, CSS GCPM 3
 ///   §1.1.1) では `string` / `target-counter` / `target-counters` /
-///   `target-text` arm を match guard で外し fall-through で `None` を返す
-///   (= declaration drop、caller の `parse_string_set` が `<content-list>` 0
-///   items → `None`)。`counter` / `counters` / `content` / `attr` は両 mode で
-///   spec grammar に含まれるため gate なし。
+///   `target-text` / `leader` arm を match guard で外し fall-through で `None`
+///   を返す (= declaration drop、caller の `parse_string_set` が
+///   `<content-list>` 0 items → `None`)。`counter` / `counters` / `content` /
+///   `attr` は両 mode で spec grammar に含まれるため gate なし。
+///
+/// `<image>` (`url()`) / `contents` / `<quote>` は function 名 dispatch では
+/// なく [`parse_content_list_items`] 側の bare-token branch で扱う (`<image>`
+/// は url token、`contents`/`<quote>` は bare ident であり `expect_function`
+/// にヒットしないため)。
 ///
 /// 各 `parse_*_fn` は自身では `expect_exhausted` を呼ばない —
 /// [`parse_content`] 側の `parse_nested_block` が内部で
@@ -3123,6 +3311,7 @@ fn parse_content_function(
             parse_target_text_fn(input)
         }
         "content" => parse_content_fn(input),
+        "leader" if matches!(mode, ContentListMode::CssContent3) => parse_leader_fn(input),
         _ => None,
     }
 }
@@ -3415,6 +3604,30 @@ fn parse_content_text_keyword(input: &mut Parser<'_, '_>) -> Option<ContentTextK
         "before" => Some(ContentTextKeyword::Before),
         "after" => Some(ContentTextKeyword::After),
         "first-letter" => Some(ContentTextKeyword::FirstLetter),
+        _ => None,
+    }
+}
+
+/// `leader(<leader-type>)`。CSS Content 3 §2.5.1 "The leader() function"
+/// <https://www.w3.org/TR/css-content-3/#leader-function>。spec production
+/// `leader( <leader-type> )` に `?` が無いため引数は必須
+/// (`parse_leader_type` 失敗 = declaration drop、`leader()` 単体は spec-invalid)。
+fn parse_leader_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let leader_type = parse_leader_type(input)?;
+    Some(ContentComponent::Leader(leader_type))
+}
+
+/// `<leader-type> = dotted | solid | space | <string>`。[`LeaderType`] の doc
+/// も参照 (keyword を正規化せず個別 variant で保持する rationale)。
+fn parse_leader_type(input: &mut Parser<'_, '_>) -> Option<LeaderType> {
+    if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
+        return Some(LeaderType::String(SmolStr::new(s.as_ref())));
+    }
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "dotted" => Some(LeaderType::Dotted),
+        "solid" => Some(LeaderType::Solid),
+        "space" => Some(LeaderType::Space),
         _ => None,
     }
 }
@@ -4581,6 +4794,216 @@ mod tests {
                 fetch: StringFetchMode::First,
             }
         );
+    }
+
+    // ── content property: image / contents / <quote> / leader() (CSS Content 3
+    // §2.2 / §2.3 / §2.4.2 / §2.5.1、raikiri-spike-1us — m5.1 由来の
+    // under-accept fix、6s1 CssContent3 mode arm) ──
+
+    #[test]
+    fn content_parse_image_url_quoted_form() {
+        // `<image>` の `<url>` alternative、`url("...")` (quoted) form。
+        let items = content_items(r#"url("cat.png")"#);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::Image {
+                url: String::from("cat.png"),
+            }
+        );
+    }
+
+    #[test]
+    fn content_parse_image_url_unquoted_form() {
+        // `<image>` の `<url>` alternative、`url(...)` (unquoted url-token) form。
+        let items = content_items("url(cat.png)");
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::Image {
+                url: String::from("cat.png"),
+            }
+        );
+    }
+
+    #[test]
+    fn content_bare_string_is_still_literal_not_image() {
+        // Regression pin: `<image>` production は `<url> | <gradient>` のみで
+        // bare `<string>` を含まない (target-* の `[<string>|<url>]` とは別
+        // grammar)。`expect_url` は quoted string 単体を受理しないため
+        // `content: "cat.png"` は Literal のまま — Image への誤変換防止。
+        let items = content_items(r#""cat.png""#);
+        assert_eq!(
+            items,
+            vec![ContentComponent::Literal(SmolStr::new("cat.png"))]
+        );
+    }
+
+    #[test]
+    fn content_parse_contents_keyword() {
+        // CSS Content 3 §2.3 "Elemental Content: the contents keyword"。
+        let items = content_items("contents");
+        assert_eq!(items, vec![ContentComponent::Contents]);
+    }
+
+    #[test]
+    fn content_contents_keyword_is_case_insensitive() {
+        let items = content_items("CoNtEnTs");
+        assert_eq!(items, vec![ContentComponent::Contents]);
+    }
+
+    #[test]
+    fn content_parse_quote_keywords() {
+        // CSS Content 3 §2.4.2 `<quote> = open-quote | close-quote |
+        // no-open-quote | no-close-quote` の 4 keyword 全数検証。
+        assert_eq!(
+            content_items("open-quote"),
+            vec![ContentComponent::Quote(QuoteKeyword::OpenQuote)]
+        );
+        assert_eq!(
+            content_items("close-quote"),
+            vec![ContentComponent::Quote(QuoteKeyword::CloseQuote)]
+        );
+        assert_eq!(
+            content_items("no-open-quote"),
+            vec![ContentComponent::Quote(QuoteKeyword::NoOpenQuote)]
+        );
+        assert_eq!(
+            content_items("no-close-quote"),
+            vec![ContentComponent::Quote(QuoteKeyword::NoCloseQuote)]
+        );
+    }
+
+    #[test]
+    fn content_quote_keyword_is_case_insensitive() {
+        let items = content_items("OPEN-QUOTE");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Quote(QuoteKeyword::OpenQuote)]
+        );
+    }
+
+    #[test]
+    fn content_parse_leader_dotted_solid_space_keywords() {
+        // CSS Content 3 §2.5.1 `<leader-type> = dotted | solid | space | <string>`。
+        assert_eq!(
+            content_items("leader(dotted)"),
+            vec![ContentComponent::Leader(LeaderType::Dotted)]
+        );
+        assert_eq!(
+            content_items("leader(solid)"),
+            vec![ContentComponent::Leader(LeaderType::Solid)]
+        );
+        assert_eq!(
+            content_items("leader(space)"),
+            vec![ContentComponent::Leader(LeaderType::Space)]
+        );
+    }
+
+    #[test]
+    fn content_parse_leader_custom_string() {
+        let items = content_items(r#"leader(".~.")"#);
+        assert_eq!(
+            items,
+            vec![ContentComponent::Leader(LeaderType::String(SmolStr::new(
+                ".~."
+            )))]
+        );
+    }
+
+    #[test]
+    fn content_leader_is_case_insensitive() {
+        let items = content_items("LEADER(DOTTED)");
+        assert_eq!(items, vec![ContentComponent::Leader(LeaderType::Dotted)]);
+    }
+
+    #[test]
+    fn content_leader_rejects_missing_argument() {
+        // spec production `leader( <leader-type> )` に `?` が無いため引数必須。
+        // bare `leader()` は spec-invalid → declaration drop。
+        assert_eq!(parse("leader()", "content"), None);
+    }
+
+    #[test]
+    fn content_leader_rejects_unknown_keyword() {
+        assert_eq!(parse("leader(bogus)", "content"), None);
+    }
+
+    #[test]
+    fn content_rejects_unknown_bare_keyword() {
+        // `parse_content_bare_keyword` の 5 keyword (`contents` / 4 `<quote>`)
+        // いずれにも一致しない ident は catch-all `_ => None` に落ちる —
+        // items 0 → declaration drop (単独 token の場合)。
+        assert_eq!(parse("bogus", "content"), None);
+    }
+
+    #[test]
+    fn content_unknown_bare_keyword_mid_list_stops_items_and_leaves_leftover() {
+        // 認識済み item (`counter(chapter)`) の後に未知 ident が来た場合、
+        // items+ loop は unknown token で break する (catch-all の break 経路)。
+        // caller (rule.rs) の `expect_exhausted` 相当は `parse` helper では
+        // 経由しないため、本 helper 経由では 1-item 到達で観測できる — leftover
+        // 自体の drop 挙動は既存 `content_rejects_unknown_function` /
+        // `string_set_accepts_missing_comma_single_leftover_entry` と同じ
+        // break-then-leftover pattern の non-regression pin。
+        let items = content_items("counter(chapter) bogus");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Counter {
+                name: SmolStr::new("chapter"),
+                style: CounterStyle::Decimal,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_parse_mixed_sequence_with_new_alternatives() {
+        // image / contents / quote / leader を既存 alternative と混在させ、
+        // 順序が保持されることを検証。
+        let items = content_items(
+            r#"open-quote "term" close-quote leader(dotted) url("icon.png") contents"#,
+        );
+        assert_eq!(
+            items,
+            vec![
+                ContentComponent::Quote(QuoteKeyword::OpenQuote),
+                ContentComponent::Literal(SmolStr::new("term")),
+                ContentComponent::Quote(QuoteKeyword::CloseQuote),
+                ContentComponent::Leader(LeaderType::Dotted),
+                ContentComponent::Image {
+                    url: String::from("icon.png"),
+                },
+                ContentComponent::Contents,
+            ]
+        );
+    }
+
+    // ── string-set narrow <content-list> gate: image / contents / quote /
+    // leader() (CSS GCPM 3 §1.1.1 L82、raikiri-spike-1us) ──
+    //
+    // GCPM 3 §1.1.1 narrow list には `<image>` / `contents` / `<quote>` /
+    // `leader()` のいずれも含まれない (既存の string_set_rejects_* group と
+    // 同じ rationale — sibling test 群と揃えて 1 declaration = 1 rejection の
+    // pin にする)。
+
+    #[test]
+    fn string_set_rejects_image_url() {
+        assert_eq!(parse(r#"title url("a.png")"#, "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_contents_keyword() {
+        assert_eq!(parse("title contents", "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_quote_keyword() {
+        assert_eq!(parse("title open-quote", "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_leader_fn() {
+        assert_eq!(parse("title leader(dotted)", "string-set"), None);
     }
 
     // ── content property edge cases (spec-derived、guard rails) ──
