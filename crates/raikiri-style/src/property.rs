@@ -2067,7 +2067,7 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// Checking and Precision for Numeric Types"
 /// <https://www.w3.org/TR/css-values-4/#numeric-types> の "it must be
 /// converted to the closest value supported by the implementation" に従い、
-/// 非有限になった場合は符号を保持しつつ `f32::MAX` へ寄せる。
+/// `±Inf` になった場合のみ、符号を保持しつつ `f32::MAX` へ寄せる。
 ///
 /// bd raikiri-spike-2ui0 の sink-guard precedent (「guard は sink 境界に
 /// 置く、parse/resolve 層には置かない」) はここには適用しない —
@@ -2075,6 +2075,17 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// (specified 層の値そのものが CSS Values 4 §5 の要求から外れている)
 /// であり、precedent とは別軸。`raikiri-dom::layout::sanitize_finite`
 /// (resolve 後の geometry に対する sink guard) は本変更後も引き続き必要。
+///
+/// **`NaN` はこの saturation の対象外**(reviewer:spec 指摘、agent
+/// a4beb897ae3457dcd, CONFIRMED medium)。`is_finite()` は `NaN` に対しても
+/// `false` を返すため、当初の実装は `NaN` も `±f32::MAX` へ saturate して
+/// いたが、それは誤り: 例えば `0e999%` は cssparser 側の `0.0 * 10^999`
+/// (`f64::powf` が `+Inf` を返す) で `NaN` になる、**真の数学的値は 0**
+/// の入力であり、"closest value" は `f32::MAX` ではなく `0.0` である。
+/// `sanitize_finite` (`raikiri-dom/src/layout.rs`) は `NaN` を既に `0.0`
+/// として扱うため、ここで saturate せず `NaN` のまま通せば sink 側の
+/// 既存契約と整合する。よって saturation の条件は `is_infinite()` に
+/// 限定し、`NaN` は無変換で通す。
 fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Option<Length> {
     match input.next().ok()? {
         Token::Dimension { value, unit, .. } => match unit.to_ascii_lowercase().as_str() {
@@ -2089,10 +2100,10 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             // authored-number 逆変換 + overflow saturation: 上の
             // "# Percentage overflow" section 参照。
             let percent = *unit_value * 100.0;
-            Some(Length::Percent(if percent.is_finite() {
-                percent
-            } else {
+            Some(Length::Percent(if percent.is_infinite() {
                 f32::MAX.copysign(percent)
+            } else {
+                percent
             }))
         }
         // CSS Values 3 §5 unitless-zero clause (doc "# Unitless zero" 参照)。
@@ -5344,13 +5355,6 @@ mod tests {
     }
 
     #[test]
-    fn zzz_reviewer_probe_nan_producing_percentage() {
-        // TEMP probe (reviewer:spec, raikiri-spike-3gee) — reverted before hand-off.
-        let r = parse_length("0e999%", true);
-        panic!("probe result: {:?}", r);
-    }
-
-    #[test]
     fn parse_length_value_extreme_percentage_saturates_to_f32_max_not_inf() {
         // bd raikiri-spike-3gee: `1e40%` は cssparser tokenizer 側で
         // `unit_value = 1e40 / 100.0 = 1e38` (f32 有限範囲 `3.4028235e38` 内)
@@ -5369,6 +5373,31 @@ mod tests {
             parse_length("-1e40%", true),
             Some(Length::Percent(-f32::MAX))
         );
+    }
+
+    #[test]
+    fn parse_length_value_nan_percentage_passes_through_unsaturated() {
+        // reviewer:spec finding (agent a4beb897ae3457dcd, CONFIRMED medium):
+        // `is_finite()` also catches NaN, a different failure class than the
+        // `1e40%` overflow above. `0e999%` triggers it: cssparser's exponent
+        // handling computes `0.0 * 10f64.powf(999.0)`, and
+        // `10f64.powf(999.0)` is `+Inf`, so the product is `NaN` per IEEE
+        // 754 — even though `0e999`'s true mathematical value is `0`, not
+        // "unrepresentable". Saturating this to `f32::MAX` would turn the
+        // sink-side geometry (`raikiri-dom::layout::sanitize_finite`, which
+        // already treats `NaN` as `0.0`) into a huge box instead of a
+        // zero-sized one, so this class must pass through unsaturated and
+        // rely on that existing `NaN -> 0.0` sink contract downstream.
+        // cov:ignore: the panic-message literals in this match's arms only
+        // execute on assertion/match failure, unreachable while this test
+        // passes.
+        match parse_length("0e999%", true) {
+            Some(Length::Percent(v)) => assert!(
+                v.is_nan(),
+                "expected NaN (0 * Inf) to pass through unsaturated, got {v}"
+            ),
+            other => panic!("expected Some(Length::Percent(NaN)), got {other:?}"),
+        }
     }
 
     #[test]
