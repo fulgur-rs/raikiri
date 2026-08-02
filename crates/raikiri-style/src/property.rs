@@ -709,6 +709,29 @@ pub enum FontWeightValue {
     Lighter,
 }
 
+/// `font-size: larger | smaller` (`<relative-size>`) の keyword。
+/// [`PropertyValue::FontSizeRelative`] の payload。
+///
+/// CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop>。
+/// 解決は [`crate::cascade::resolve_relative_font_size`] — [`FontWeightValue::Bolder`]
+/// / [`FontWeightValue::Lighter`] と同型の、親の computed font-size に対する
+/// read-modify-write。
+///
+/// [`FontWeightValue`] と異なり `raikiri` (umbrella) の `pub use` list には
+/// 追加しない ([`PropertyValue::FontSizeRelative`] doc の「`Self::FontSize`
+/// を再利用せず新 variant にした理由」節を参照)。
+///
+/// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
+/// sibling [`FontWeightValue`] と同 pattern)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelativeFontSize {
+    /// `larger` — 親の computed font-size より 1 段大きいサイズ。
+    Larger,
+    /// `smaller` — 親の computed font-size より 1 段小さいサイズ。
+    Smaller,
+}
+
 /// `line-height` property の value (Author CSS seed for m4+ inline layout)。
 ///
 /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
@@ -1327,14 +1350,15 @@ pub enum PositionValue {
 /// property name → variant mapping は `parse_value` 参照)。
 ///
 /// 認識できない property (例: `float` — 現行 milestone subset 外) や
-/// invalid value (例: `font-size: medium` — `<absolute-size>` keyword 未対応 /
-/// `margin-top: 1cm` — `cm` unit 未対応) は parser 段で `None` に
-/// 落として rule から silently 除外される。
+/// invalid value (例: `font-size: math` — MathML scaling algorithm 未実装
+/// (bd raikiri-spike-0vv.18) / `margin-top: 1cm` — `cm` unit 未対応) は
+/// parser 段で `None` に落として rule から silently 除外される。
 ///
 /// **box property は「認識できない」側ではない** — `margin` / `padding` /
 /// `border-*` / `width` / `height` はいずれも認識対象で、下記に variant を持つ
-/// (bd raikiri-spike-0vv.5 / .6 / .10 / .11 / .12)。`font-size: 1em` 等の
-/// font-relative unit も bd raikiri-spike-zls8 以降は valid である。
+/// (bd raikiri-spike-0vv.5 / .6 / .10 / .11 / .12)。`font-size: 1em` /
+/// `font-size: medium` / `font-size: larger` も bd raikiri-spike-zls8 /
+/// raikiri-spike-4rmu 以降は valid である。
 /// **例を差し替えるときは sibling の [`crate::rule`] の
 /// `drops_invalid_property_and_value` と揃えること** — 両者は同じ milestone
 /// subset を説明しており、あちらだけ更新されて本 doc が取り残される drift が
@@ -1382,8 +1406,61 @@ pub enum PropertyValue {
     BackgroundColor(CssColor),
     /// `font-family: <family-name>#` — inherited、initial: `[Atom::from("serif")]`。
     FontFamily(Vec<Atom>),
-    /// `font-size: <length>` — inherited、initial: 16px。
+    /// `font-size: <absolute-size> | <length-percentage [0,∞]>` — inherited、
+    /// initial: 16px (= `medium`)。CSS Fonts 4 §2.5
+    /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>。
+    ///
+    /// `<absolute-size>` (`xx-small` … `xxx-large`、`medium`) は親に依存しない
+    /// 固定値なので、[`parse_font_size`] が §2.5.1 の scaling-factor table
+    /// (<https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping>) を parse
+    /// 時点で `medium` (16px) 基準の `Length::Px` へ解決し尽くす
+    /// (raikiri-spike-4rmu)。`<relative-size>` (`larger` / `smaller`) は
+    /// 継承先依存のため別 variant ([`Self::FontSizeRelative`]) を持つ —
+    /// 理由は同 variant の doc を参照。`math` keyword は g04 category (b)
+    /// milestone subset (bd raikiri-spike-0vv.18、MathML scaling algorithm が
+    /// 丸ごと未実装) として `parse_font_size` が `None` に落とす。
     FontSize(Length),
+    /// `font-size: <relative-size>` (`larger` / `smaller`) — inherited、
+    /// [`Self::FontSize`] と同じ `font-size` property の一部。CSS Fonts 4 §2.5
+    /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>。
+    ///
+    /// # `Self::FontSize(Length)` を再利用せず新 variant にした理由
+    ///
+    /// `bolder` / `lighter` (`font-weight`) と同型の親依存 read-modify-write が
+    /// 必要 — 素朴には [`FontWeightValue`] 同様「`FontSize` の payload 型を
+    /// keyword を持てる enum に差し替える」設計が対称だが、`PropertyValue` は
+    /// `raikiri` (umbrella) crate が re-export しており、
+    /// `crates/raikiri/tests/build_cascaded.rs` の
+    /// `umbrella_re_exports_cover_computed_value_types_and_parse_options_fields`
+    /// が `PropertyValue::FontSize(Length::Px(12.0))` の construction を
+    /// **意図的に compile-time pin** している (umbrella re-export list の
+    /// rationale、`crates/raikiri/src/lib.rs` 該当 comment 参照)。
+    /// `FontSize` の payload 型を変えるとこの pin が割れ、
+    /// `crates/raikiri` 側の修正を要求する = wall/umbrella 相当の破壊的変更に
+    /// なる (bd raikiri-spike-q3f の `Content`/`StringSet` payload 変更が
+    /// 同種の前例)。
+    ///
+    /// `PropertyValue` は `#[non_exhaustive]` なので **新 variant の追加**は
+    /// 既存 tuple constructor 呼び出しを一切壊さない (enum-level
+    /// `#[non_exhaustive]` の doc 参照) — そのため `FontSize` の型はそのまま
+    /// 残し、`larger` / `smaller` 用に本 variant を追加する。[`RelativeFontSize`]
+    /// は [`FontWeightValue`] と異なり `raikiri` (umbrella) の `pub use` list
+    /// には**含めない** — 同 list に無い [`FontWeightValue`] と同じ非対称を
+    /// 踏襲する (raikiri-style へ直接 dep する consumer のみ名指し可能)。
+    ///
+    /// # 解決タイミング
+    ///
+    /// `bolder` / `lighter` と同じく [`crate::cascade::apply_value`] が
+    /// 親の computed font-size (staging 上は上書き前の
+    /// `SpecifiedValues::font_size`、D5 invariant により常に
+    /// `Length::Px(親の px)`) から絶対値へ解決し、結果を
+    /// [`Self::FontSize`] 形 (`Length::Px`) で `target.font_size` に格納する —
+    /// variant 自体は cascade winner の一時的な表現に留まり、
+    /// [`crate::specified::SpecifiedValues`] 以降には残らない。page 経路は
+    /// [`crate::cascade::resolve_against_inherited`] が同じ解決を行い、
+    /// [`crate::page::PageCascadeResult::declarations`] に届く時点では
+    /// 同じく [`Self::FontSize`] (`Length::Px`) に収束している。
+    FontSizeRelative(RelativeFontSize),
     /// `font-weight: <font-weight-absolute> | bolder | lighter` — inherited、
     /// initial: `Absolute(400)`。CSS Fonts 4 §2.2
     /// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop>。
@@ -1825,6 +1902,11 @@ impl PropertyValue {
             PropertyValue::BackgroundColor(_) => PropertyKey::BackgroundColor,
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
             PropertyValue::FontSize(_) => PropertyKey::FontSize,
+            // `larger` / `smaller` は `font-size` と同じ property — 同じ
+            // `PropertyKey` に落とすことで cascade winner selection が
+            // `font-size: 12px` と `font-size: larger` を正しく競合させる
+            // (別 key にすると spec 上ありえない「両方勝つ」が起きる)。
+            PropertyValue::FontSizeRelative(_) => PropertyKey::FontSize,
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
             PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
             PropertyValue::Display(_) => PropertyKey::Display,
@@ -1878,7 +1960,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // (raikiri-spike-0vv.7)
         "background-color" => parse_color(input).map(PropertyValue::BackgroundColor),
         "font-family" => parse_font_family(input).map(PropertyValue::FontFamily),
-        "font-size" => parse_font_size(input).map(PropertyValue::FontSize),
+        "font-size" => parse_font_size(input),
         "font-weight" => parse_font_weight(input).map(PropertyValue::FontWeight),
         // CSS Inline 3 §5.1 line-height (raikiri-spike-0vv.9)。
         // `normal` / `<number [0,∞]>` / `<length-percentage [0,∞]>` を受理、
@@ -2538,15 +2620,30 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
-/// `font-size: <length-percentage [0,∞]>` を parse する。
+/// `font-size: <absolute-size> | <relative-size> | <length-percentage [0,∞]> |
+/// math` を parse する。
 ///
 /// Grammar (CSS Fonts 4 §2.5 "Font size: the font-size property"
 /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>):
 /// `<absolute-size> | <relative-size> | <length-percentage [0,∞]> | math`。
-/// 本実装が受理するのは **non-negative `<length-percentage>`** のみ —
-/// `<absolute-size>` (`medium` / `large` …) / `<relative-size>`
-/// (`larger` / `smaller`) / `math` は g04 category (b) milestone subset として
-/// 未対応 (`parse_length_value` が ident token を `None` に落とす)。
+///
+/// - `<absolute-size>` (`xx-small` … `xxx-large`、`medium`) — [`parse_font_size_keyword`]
+///   が §2.5.1 の scaling-factor table を `medium` = 16px 基準で解決し、
+///   [`PropertyValue::FontSize`] (`Length::Px`) を返す。
+/// - `<relative-size>` (`larger` / `smaller`) — 継承先依存のため
+///   [`PropertyValue::FontSizeRelative`] を返し、解決は
+///   [`crate::cascade::apply_value`] / [`crate::cascade::resolve_against_inherited`]
+///   に委ねる (詳細は同 variant の doc)。
+/// - `<length-percentage [0,∞]>` — 本関数の後半、[`parse_length_value`] 経由。
+/// - `math` — g04 category (b) milestone subset (bd raikiri-spike-0vv.18、
+///   MathML scaling algorithm が丸ごと未実装) として `None` に落とす。
+///
+/// # ident 分岐を先に `try_parse` する理由
+///
+/// `<absolute-size>` / `<relative-size>` / `math` はいずれも単一 ident token。
+/// [`parse_margin_side`] の `auto` 分岐と同じ pattern — [`parse_length_value`]
+/// は内部で `input.next()` を unconditional に消費するため、ident 分岐は
+/// checkpoint 経由の rewind (`try_parse`) で先に試す必要がある。
 ///
 /// # `em` / `rem` / `%` / `pt` を受理するようになった経緯 (bd raikiri-spike-zls8)
 ///
@@ -2562,10 +2659,65 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 ///
 /// grammar の `[0,∞]` を parse-time enforce する。[`parse_padding_side`] /
 /// [`parse_width`] と同じ [`length_payload`] 経由の全 [`Length`] variant check
-/// — `-5px` だけでなく `-50%` / `-1em` も drop する。
-fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
+/// — `-5px` だけでなく `-50%` / `-1em` も drop する。`<absolute-size>` /
+/// `<relative-size>` は grammar 上そもそも符号を持たないので本 constraint の
+/// 対象外 (ident 分岐は `parse_length_value` に達する前に return する)。
+fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
+        return parse_font_size_keyword(&ident);
+    }
     let length = parse_length_value(input, true)?;
-    (length_payload(length) >= 0.0).then_some(length)
+    (length_payload(length) >= 0.0).then_some(PropertyValue::FontSize(length))
+}
+
+/// `<absolute-size>` / `<relative-size>` / `math` の ident 部分を parse する
+/// ([`parse_font_size`] の helper)。
+///
+/// # `<absolute-size>` scaling-factor table
+///
+/// CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping Table"
+/// <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> 原文の表を
+/// **そのまま**写す (`resolve_relative_weight` の "算術式で書いてはいけない"
+/// 方針と同じ理由 — 分数のまま持つことで丸め誤差の議論を spec 引用だけで
+/// 閉じられる)。`medium` は raikiri の固定基準
+/// ([`crate::computed::INITIAL_FONT_SIZE_PX`] = 16px、
+/// [`crate::specified::SpecifiedValues::initial`] doc 参照) を再利用する:
+///
+/// | keyword | xx-small | x-small | small | medium | large | x-large | xx-large | xxx-large |
+/// |---|---|---|---|---|---|---|---|---|
+/// | factor | 3/5 | 3/4 | 8/9 | 1 | 6/5 | 3/2 | 2/1 | 3/1 |
+///
+/// 同 §の "an UA applying these guidelines should nevertheless avoid creating
+/// font sizes of less than 9 device pixels per EM unit" は "should" (RFC 2119
+/// 弱勧告)。本 table の最小値は `xx-small` = `16 * 3/5 = 9.6px` で、9px の
+/// 下限を上回るため clamp は不要 (実装しない理由は「未対応」ではなく
+/// 「`medium` = 16px 基準ではこの guideline を最初から満たす」こと)。
+///
+/// # `<relative-size>`
+///
+/// [`RelativeFontSize`] doc 参照。
+///
+/// # `math`
+///
+/// bd raikiri-spike-0vv.18 (g04 category (b))。
+fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
+    const MEDIUM_PX: f32 = crate::computed::INITIAL_FONT_SIZE_PX;
+    let px = match ident.to_ascii_lowercase().as_str() {
+        "xx-small" => MEDIUM_PX * (3.0 / 5.0),
+        "x-small" => MEDIUM_PX * (3.0 / 4.0),
+        "small" => MEDIUM_PX * (8.0 / 9.0),
+        "medium" => MEDIUM_PX,
+        "large" => MEDIUM_PX * (6.0 / 5.0),
+        "x-large" => MEDIUM_PX * (3.0 / 2.0),
+        "xx-large" => MEDIUM_PX * (2.0 / 1.0),
+        "xxx-large" => MEDIUM_PX * (3.0 / 1.0),
+        "larger" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger)),
+        "smaller" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Smaller)),
+        // `math` はここに落ちる (spec-valid だが g04 (b) 未対応、bd raikiri-spike-0vv.18)。
+        // 未知 ident も同じく drop。
+        _ => return None,
+    };
+    Some(PropertyValue::FontSize(Length::Px(px)))
 }
 
 /// `padding-{top,right,bottom,left}` の single-side value を parse する。
@@ -2586,9 +2738,14 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
 ///
 /// # Sibling pattern
 ///
-/// [`parse_font_size`] と **同形** — どちらも `allow_percentage=true` で
+/// [`parse_font_size`] の `<length-percentage>` 分岐 (ident 分岐で `None` に
+/// なった後の tail) と同形 — どちらも `allow_percentage=true` で
 /// [`parse_length_value`] を呼び、[`length_payload`] で全 [`Length`] variant の
-/// payload を抽出して `>= 0.0` を post-filter する (body は現在 identical)。
+/// payload を抽出して `>= 0.0` を post-filter する (tail 部分の body は
+/// identical)。`parse_font_size` は raikiri-spike-4rmu で `<absolute-size>` /
+/// `<relative-size>` / `math` の ident 分岐 (`parse_font_size_keyword`) が
+/// 前段に付いたため関数全体としては同形ではなくなったが、この tail 部分の
+/// ロジックは identical。
 ///
 /// 両者が非対称だった時期 (font-size が `<length>` px-only milestone で、padding
 /// だけが `<length-percentage>` の 5 variant を受けていた頃) の記述は
@@ -4310,13 +4467,93 @@ mod tests {
         );
     }
 
-    /// `<absolute-size>` (`medium` 等) / `<relative-size>` (`larger` /
-    /// `smaller`) / `math` は spec-valid だが (b) milestone subset として未対応。
+    /// `math` は spec-valid だが g04 category (b) milestone subset
+    /// (bd raikiri-spike-0vv.18、MathML scaling algorithm 未実装) として drop。
+    /// `<absolute-size>` / `<relative-size>` は raikiri-spike-4rmu で受理済み —
+    /// 別 test (`font_size_accepts_absolute_size_keywords` /
+    /// `font_size_accepts_relative_size_keywords`) 参照。
     #[test]
-    fn font_size_rejects_size_keywords() {
-        assert_eq!(parse("medium", "font-size"), None);
-        assert_eq!(parse("larger", "font-size"), None);
+    fn font_size_rejects_math_keyword() {
         assert_eq!(parse("math", "font-size"), None);
+    }
+
+    /// CSS Fonts 4 §2.5.1 <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping>
+    /// の scaling-factor table 全 8 keyword。`medium` = raikiri の固定基準
+    /// (16px) そのもの、他は table の分数を掛けたもの
+    /// (`resolve_relative_weight` 前例に倣い浮動小数 literal ではなく分数式で
+    /// 期待値を書く — 丸め誤差の議論を spec 引用だけで閉じるため)。
+    #[test]
+    fn font_size_accepts_absolute_size_keywords() {
+        const MEDIUM: f32 = 16.0;
+        let cases: &[(&str, f32)] = &[
+            ("xx-small", MEDIUM * (3.0 / 5.0)),
+            ("x-small", MEDIUM * (3.0 / 4.0)),
+            ("small", MEDIUM * (8.0 / 9.0)),
+            ("medium", MEDIUM),
+            ("large", MEDIUM * (6.0 / 5.0)),
+            ("x-large", MEDIUM * (3.0 / 2.0)),
+            ("xx-large", MEDIUM * (2.0 / 1.0)),
+            ("xxx-large", MEDIUM * (3.0 / 1.0)),
+        ];
+        for (keyword, px) in cases {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                parse(keyword, "font-size"),
+                Some(PropertyValue::FontSize(Length::Px(*px))),
+                "keyword = {keyword}"
+            );
+        }
+    }
+
+    /// CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII
+    /// case-insensitive。sibling [`font_weight_keyword_case_insensitive`] と同 pattern。
+    #[test]
+    fn font_size_absolute_size_keyword_case_insensitive() {
+        assert_eq!(
+            parse("MEDIUM", "font-size"),
+            Some(PropertyValue::FontSize(Length::Px(16.0)))
+        );
+        assert_eq!(
+            parse("Large", "font-size"),
+            Some(PropertyValue::FontSize(Length::Px(16.0 * (6.0 / 5.0))))
+        );
+    }
+
+    /// `<relative-size>` (`larger` / `smaller`) は parse 段では解決せず
+    /// [`PropertyValue::FontSizeRelative`] をそのまま返す — 解決 (親の
+    /// computed font-size に対する read-modify-write) は
+    /// [`crate::cascade`] の責務 (`bolder` / `lighter` と同型、
+    /// bd raikiri-spike-4rmu)。
+    #[test]
+    fn font_size_accepts_relative_size_keywords() {
+        assert_eq!(
+            parse("larger", "font-size"),
+            Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger))
+        );
+        assert_eq!(
+            parse("smaller", "font-size"),
+            Some(PropertyValue::FontSizeRelative(RelativeFontSize::Smaller))
+        );
+        assert_eq!(
+            parse("LARGER", "font-size"),
+            Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger))
+        );
+    }
+
+    /// `font-size: 12px` と `font-size: larger` は同じ property を競合する
+    /// ([`PropertyValue::FontSizeRelative`] doc 参照) — 別 key だと両方が
+    /// cascade で「勝つ」事態が起き spec (1 property = 1 winner) と食い違う。
+    #[test]
+    fn font_size_relative_shares_property_key_with_font_size() {
+        assert_eq!(
+            PropertyValue::FontSize(Length::Px(12.0)).key(),
+            PropertyKey::FontSize
+        );
+        assert_eq!(
+            PropertyValue::FontSizeRelative(RelativeFontSize::Larger).key(),
+            PropertyKey::FontSize
+        );
     }
 
     #[test]
