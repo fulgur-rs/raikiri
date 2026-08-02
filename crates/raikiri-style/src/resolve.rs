@@ -592,10 +592,11 @@ fn pc_to_px(v: f32) -> f32 {
 /// # Caller contract
 ///
 /// **root element の `font-size` を絶対化するときは [`ResolveContext::initial`]
-/// を渡すこと。** `Rem` arm は `ctx.root_font_size` を無条件に参照するため、
-/// tree 全体で同一の `ResolveContext::new(root_font_size)` を使い回すと
-/// `html { font-size: 2rem }` が自己参照になる (CSS Values 4 §6.1.1 の
-/// parent-metrics 条項 — root には親がないので initial values 基準)。
+/// を渡すこと。** `Rem` / `Rex` / `Rch` / `Ric` arm は `ctx.root_font_size` を
+/// 無条件に参照するため、tree 全体で同一の `ResolveContext::new(root_font_size)`
+/// を使い回すと `html { font-size: 2rem }` (同様に `2rex` / `2rch` / `2ric`) が
+/// 自己参照になる (CSS Values 4 §6.1.1 の parent-metrics 条項 — root には親が
+/// ないので initial values 基準)。
 ///
 /// cascade pipeline ではこの contract を
 /// [`SpecifiedValues::finalize_as_root`] が守る (bd raikiri-spike-zls8) —
