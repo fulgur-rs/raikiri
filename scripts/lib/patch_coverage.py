@@ -56,31 +56,43 @@ this workspace's `cargo-llvm-cov 0.8.7` output rather than assumed:
     intentional, not a bug: see bd raikiri-spike-iebo's gate history for
     why a bench-file diff hitting this is expected and needs either a
     `--benches`-style follow-up or a per-diff escalation.
-  - `tests/*.rs` (and `examples/*.rs`): confirmed by direct measurement
-    (`cargo llvm-cov -p raikiri --lcov`, then `cargo llvm-cov report
-    --summary-only`) that integration-test-target source files — as
-    opposed to a `#[cfg(test)] mod tests` block *inside* a `src/*.rs`
-    file, which reports normally because it shares that file's SF record —
-    **never get their own `SF:` record**, regardless of whether their
-    tests ran and passed. `crates/raikiri/tests/external_consumer.rs` and
-    `crates/raikiri/tests/parse_html_limits.rs` both ran (visible in the
-    `cargo test` output) yet neither appears in the lcov export at all;
-    the library functions they call *do* show up, correctly attributed to
-    their own `src/*.rs` location. This is the observed *behavior*, not a
-    diagnosed mechanism — this script does not know cargo-llvm-cov's
-    internal reasoning for excluding these files from the report, only
-    that it consistently does, on this cargo-llvm-cov version, for both
-    files checked. Treat it as an empirical fact to route around, not an
-    intentional-design claim to cite further. Added lines in such a file
-    are reported as **unreported** (a distinct, non-failing category)
-    rather than uncovered — flagging every new
-    integration test as a coverage violation would be a standing false
-    positive, not a signal.
+  - Cargo `test`/`example` **targets** (auto-discovered `tests/*.rs` /
+    `examples/*.rs` integration-test and example binaries): confirmed by
+    direct measurement (`cargo llvm-cov -p raikiri --lcov`, then
+    `cargo llvm-cov report --summary-only`) that integration-test-target
+    source files — as opposed to a `#[cfg(test)] mod tests` block *inside*
+    a `src/*.rs` file, which reports normally because it shares that
+    file's SF record — **never get their own `SF:` record**, regardless
+    of whether their tests ran and passed. `crates/raikiri/tests/
+    external_consumer.rs` and `crates/raikiri/tests/parse_html_limits.rs`
+    both ran (visible in the `cargo test` output) yet neither appears in
+    the lcov export at all; the library functions they call *do* show up,
+    correctly attributed to their own `src/*.rs` location. This is the
+    observed *behavior*, not a diagnosed mechanism — this script does not
+    know cargo-llvm-cov's internal reasoning for excluding these files
+    from the report, only that it consistently does, on this
+    cargo-llvm-cov version, for both files checked. Treat it as an
+    empirical fact to route around, not an intentional-design claim to
+    cite further. Added lines in such a file are reported as
+    **unreported** (a distinct, non-failing category) rather than
+    uncovered — flagging every new integration test as a coverage
+    violation would be a standing false positive, not a signal.
+
+    Which files count as a `test`/`example` target is decided by
+    cross-referencing `cargo metadata`'s own target list (see
+    `structurally_unreported_paths()`), not by a `tests/`/`examples/`
+    path-shape guess: a path merely *containing* a directory component
+    named `tests` (e.g. an ordinary `src/tests/fixtures.rs` module,
+    `mod tests;` declared from its parent) is not a Cargo target and must
+    not be exempted — that would mask a real coverage gap in production
+    code. bd raikiri-spike-0gk8 fixed exactly this false-negative risk in
+    the prior path-regex-only implementation.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -242,15 +254,128 @@ def compute_exempt_lines(lines: list[str]) -> set[int]:
     return exempt
 
 
-STRUCTURALLY_UNREPORTED_RE = re.compile(r"(^|/)(tests|examples)/")
+class CargoMetadataError(RuntimeError):
+    """`cargo metadata` could not be run or its output could not be parsed.
+
+    Raised instead of letting a bare `subprocess`/`json` exception escape:
+    this is a gate script whose stderr is read by another agent, so the
+    failure needs to name the command and the underlying cause rather than
+    surface as a raw traceback.
+    """
 
 
-def is_structurally_unreported(path: str) -> bool:
+def load_cargo_metadata(repo_root: str) -> dict:
+    """Run `cargo metadata` once for the whole workspace and return the
+    parsed JSON.
+
+    Run with `cwd=repo_root` rather than an explicit `--manifest-path
+    <repo_root>/Cargo.toml`: `--repo-root` (from `patch-coverage.sh`) is
+    `git rev-parse --show-toplevel`, the *git* root, which today also
+    happens to hold the workspace manifest but isn't guaranteed to by
+    anything checked here. `cargo metadata` itself walks up from `cwd` to
+    find the enclosing workspace root, so `cwd=repo_root` gets the right
+    answer even if a manifest ever moved, instead of hardcoding an
+    assumption that would fail with a confusing "no such manifest" error.
+
+    `--no-deps` keeps this to workspace members (no need to resolve/print
+    metadata for every external dependency). `--locked` matches
+    `patch-coverage.sh`'s own `cargo llvm-cov --locked` invocation: a stale
+    `Cargo.lock` should fail loudly here exactly as it would there, not get
+    silently rewritten by this classification step.
+    """
+    try:
+        proc = subprocess.run(
+            ["cargo", "metadata", "--no-deps", "--format-version=1", "--locked"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        stderr = getattr(exc, "stderr", None) or ""
+        raise CargoMetadataError(
+            f"`cargo metadata` (cwd={repo_root}) failed: {exc}\n{stderr}"
+        ) from exc
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise CargoMetadataError(
+            f"`cargo metadata` (cwd={repo_root}) produced unparseable JSON: {exc}"
+        ) from exc
+
+
+def structurally_unreported_paths(metadata: dict, repo_root: str) -> set[str]:
+    """Repo-relative source paths of every Cargo `test`/`example` target's
+    *entry* file — the ones cargo-llvm-cov's report never lists an SF:
+    record for (see module docstring). Driven by `cargo metadata`'s own
+    target kinds rather than a path-shape guess, so an ordinary
+    `src/tests/fixtures.rs` *module* (not a target) is never mistaken for
+    one: only a file cargo itself built as a `"test"` or `"example"` target
+    appears here. `"bench"` is deliberately excluded — absence there means
+    "never ran", a real gap (see module docstring), not "never reported".
+
+    Known limitation, unmeasured, fail-closed by choice: this only covers
+    a target's *entry* file (the one `cargo metadata` names as
+    `src_path`). A shared helper module compiled into a test binary but
+    included from it (e.g. a hypothetical `tests/common/mod.rs` pulled in
+    via `mod common;`) is not itself a target and so is not in this set —
+    if cargo-llvm-cov also omits an SF: record for such a file, it would
+    be classified `uncovered` (gating) rather than `unreported`. No file
+    of that shape exists in this repo to measure against as of this
+    writing; revisit empirically if one is added and trips this gate.
+
+    `repo_root` (git's toplevel, uncanonicalized) and `src_path` (from
+    `cargo metadata`, canonicalized) are expected to share a literal
+    string prefix, but nothing guarantees it — a symlinked checkout or a
+    container bind-mount path could make every `src_path.startswith(prefix)`
+    fail simultaneously. If that happens the raw (unstripped) `src_path` is
+    kept rather than dropped (bd raikiri-spike-0gk8 §debt-lens fix 2:
+    silent-but-diagnosed, not silent-but-invisible), which can never match
+    a diff-relative path — every Cargo test/example target would revert to
+    gate-failing `uncovered`, repo-wide, with a confusing "add a covering
+    test" message for files that structurally can't be covered. A warning
+    is printed to stderr when this happens so the failure is at least
+    diagnosable instead of silently reappearing through the cargo-metadata
+    coupling this function adds. Not observed in this repo as of this
+    writing (verified: no symlinks between the git toplevel and the
+    workspace root, prefix matches for every real target).
+    """
+    prefix = repo_root.rstrip("/") + "/"
+    paths: set[str] = set()
+    total = 0
+    mismatched = 0
+    for package in metadata.get("packages", []):
+        for target in package.get("targets", []):
+            kinds = target.get("kind", [])
+            if "test" not in kinds and "example" not in kinds:
+                continue
+            total += 1
+            src_path = target.get("src_path", "")
+            if src_path.startswith(prefix):
+                paths.add(src_path[len(prefix):])
+            else:
+                mismatched += 1
+                paths.add(src_path)
+    if mismatched:
+        print(
+            f"patch_coverage.py: WARNING: cargo-metadata src_path prefix "
+            f"mismatch: {mismatched}/{total} Cargo test/example target "
+            f"src_path(s) did not start with repo_root prefix {prefix!r}. "
+            "These paths are kept unstripped and will not match any "
+            "diff-relative path, so the affected test/example targets will "
+            "be misclassified as gating 'uncovered' instead of "
+            "'unreported'. See structurally_unreported_paths()'s docstring.",
+            file=sys.stderr,
+        )
+    return paths
+
+
+def is_structurally_unreported(path: str, unreported_paths: set[str]) -> bool:
     """True for paths cargo-llvm-cov's report never lists an SF: record for,
     independent of whether their tests ran — see the module docstring's
-    `tests/*.rs` case. NOT true for `benches/`, where absence instead means
-    "never ran" and should fail."""
-    return bool(STRUCTURALLY_UNREPORTED_RE.search(path))
+    Cargo `test`/`example` target case. NOT true for `bench` targets,
+    where absence instead means "never ran" and should fail."""
+    return path in unreported_paths
 
 
 @dataclass
@@ -341,6 +466,13 @@ def main() -> int:
     ap.add_argument("--lcov", required=True, help="path to lcov file")
     args = ap.parse_args()
 
+    try:
+        metadata = load_cargo_metadata(args.repo_root)
+    except CargoMetadataError as exc:
+        print(f"patch_coverage.py: {exc}", file=sys.stderr)
+        return 2
+    unreported_paths = structurally_unreported_paths(metadata, args.repo_root)
+
     diff_proc = subprocess.run(
         [
             "git",
@@ -379,10 +511,11 @@ def main() -> int:
         da_map = lcov_by_file.get(path)
         if da_map is None:
             fr.no_lcov_record = True
-            if is_structurally_unreported(path):
-                # tests/*.rs, examples/*.rs: cargo-llvm-cov never lists an
-                # SF: record for these regardless of whether they ran — see
-                # module docstring. Not a coverage failure.
+            if is_structurally_unreported(path, unreported_paths):
+                # A Cargo test/example target's entry file: cargo-llvm-cov
+                # never lists an SF: record for these regardless of
+                # whether they ran — see module docstring. Not a coverage
+                # failure.
                 fr.unreported.extend(fr.added_lines)
             else:
                 # benches/*.rs (or any other file cargo-llvm-cov's target
@@ -414,14 +547,14 @@ def main() -> int:
     print(f"changed .rs files with added lines: {len(results)}")
     print(f"total added lines (diff): {total_added}")
     print(f"total cov:ignore-exempted added lines: {total_exempted}")
-    print(f"total unreported added lines (tests/examples, informational): {total_unreported}")
+    print(f"total unreported added lines (test/example targets, informational): {total_unreported}")
     print(f"total uncovered added lines (FAIL if > 0): {total_uncovered}")
     print()
 
     if total_unreported:
         print("Unreported changed lines (file:line) — cargo-llvm-cov does not")
-        print("list an SF: record for tests/*.rs or examples/*.rs regardless of")
-        print("whether the test ran; not counted toward PASS/FAIL:")
+        print("list an SF: record for a Cargo test/example target's entry file")
+        print("regardless of whether the test ran; not counted toward PASS/FAIL:")
         for r in results:
             for ln in r.unreported:
                 print(f"  {r.path}:{ln}")
@@ -431,8 +564,8 @@ def main() -> int:
         if total_unreported:
             print(
                 "PASS: all changed lines are covered or cov:ignore-exempted, "
-                f"except {total_unreported} line(s) in tests/*.rs or "
-                "examples/*.rs files that cargo-llvm-cov does not report on "
+                f"except {total_unreported} line(s) in Cargo test/example "
+                "target entry files that cargo-llvm-cov does not report on "
                 "(see 'Unreported changed lines' above) — those are not "
                 "verified covered, only not counted as a failure."
             )
