@@ -78,7 +78,7 @@ use std::collections::BTreeMap;
 /// (wall/umbrella)。Sprint 23 は byte-identical maintenance が primary scope の
 /// ため coordinator 判断で defer、Sprint 24+ で resolve 予定。
 ///
-/// Sprint 24 (raikiri-spike-4hp1) の [`crate::entries`] 群 (`BlockEntry` の
+/// Sprint 24 (raikiri-spike-4hp1) の `crate::entries` 群 (`BlockEntry` の
 /// `layout_size` / `border_widths` 等) も同じ `Pt` alias を再利用し、同じ
 /// CSS-px-in-Pt debt を意図的に踏襲する (新たな別種の unit debt を作らない
 /// ための選択、`crate::entries` module doc参照)。
@@ -194,7 +194,7 @@ impl PageScene {
     /// [`PageDrawables`] entries (BlockEntry / ParagraphEntry) は Sprint 24
     /// (raikiri-spike-4hp1) で minimal field を populate されたが、paint 消費
     /// 側はまだ切り替わっていない — glyph run 自体 (実 shape / position) は
-    /// 依然 `parley::Layout` 型そのものであり [`crate::entries`] の field type
+    /// 依然 `parley::Layout` 型そのものであり `crate::entries` の field type
     /// 方針 (raikiri-style/parley 型を持たない) の対象外なので、真の paint
     /// truth は post-layout `Node.text_layout` (DOM arena) に住んだまま
     /// [`raikiri_paint::paint_single_page`] が DFS で消費する。従って
