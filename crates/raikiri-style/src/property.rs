@@ -2136,6 +2136,38 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// `allow_percentage=false` (= `<length>` mode) の caller は
 /// [`parse_border_width_side`] のみ — CSS Backgrounds 3 §3.3 の
 /// `<line-width>` grammar が `<percentage>` を含まないため。
+///
+/// # Percentage overflow (bd raikiri-spike-3gee)
+///
+/// `Token::Percentage.unit_value` は f64→f32 変換済 (cssparser 0.37
+/// tokenizer が `value / 100.0` を emit) だが、[`Length::Percent`] は
+/// authored number (`50%` → `50.0`) を保持する設計のため、本 helper 側で
+/// `unit_value * 100.0` の逆変換を行う。`unit_value` 自体が f32 有限範囲に
+/// 収まっていても (例 `1e40%` → cssparser 側は `1e38` で有限)、この
+/// ×100.0 の逆変換それ自体が f32 overflow を起こしうる (`1e38 * 100.0` は
+/// f32 の有限範囲 `3.4028235e38` を超えて `+Inf`)。CSS Values 4 §5 "Range
+/// Checking and Precision for Numeric Types"
+/// <https://www.w3.org/TR/css-values-4/#numeric-types> の "it must be
+/// converted to the closest value supported by the implementation" に従い、
+/// `±Inf` になった場合のみ、符号を保持しつつ `f32::MAX` へ寄せる。
+///
+/// bd raikiri-spike-2ui0 の sink-guard precedent (「guard は sink 境界に
+/// 置く、parse/resolve 層には置かない」) はここには適用しない —
+/// bd raikiri-spike-3gee の判断: 本件は guard ではなく変換の正確さの問題
+/// (specified 層の値そのものが CSS Values 4 §5 の要求から外れている)
+/// であり、precedent とは別軸。`raikiri-dom::layout::sanitize_finite`
+/// (resolve 後の geometry に対する sink guard) は本変更後も引き続き必要。
+///
+/// **`NaN` はこの saturation の対象外**(reviewer:spec 指摘、agent
+/// a4beb897ae3457dcd, CONFIRMED medium)。`is_finite()` は `NaN` に対しても
+/// `false` を返すため、当初の実装は `NaN` も `±f32::MAX` へ saturate して
+/// いたが、それは誤り: 例えば `0e999%` は cssparser 側の `0.0 * 10^999`
+/// (`f64::powf` が `+Inf` を返す) で `NaN` になる、**真の数学的値は 0**
+/// の入力であり、"closest value" は `f32::MAX` ではなく `0.0` である。
+/// `sanitize_finite` (`raikiri-dom/src/layout.rs`) は `NaN` を既に `0.0`
+/// として扱うため、ここで saturate せず `NaN` のまま通せば sink 側の
+/// 既存契約と整合する。よって saturation の条件は `is_infinite()` に
+/// 限定し、`NaN` は無変換で通す。
 fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Option<Length> {
     match input.next().ok()? {
         Token::Dimension { value, unit, .. } => match unit.to_ascii_lowercase().as_str() {
@@ -2147,10 +2179,14 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             _ => None,
         },
         Token::Percentage { unit_value, .. } if allow_percentage => {
-            // cssparser 0.37 tokenizer は `50%` を `unit_value = 0.5` として emit
-            // (`value / 100.0`)、Length::Percent は authored number (50.0) を保持する
-            // ため × 100.0 で戻す。
-            Some(Length::Percent(*unit_value * 100.0))
+            // authored-number 逆変換 + overflow saturation: 上の
+            // "# Percentage overflow" section 参照。
+            let percent = *unit_value * 100.0;
+            Some(Length::Percent(if percent.is_infinite() {
+                f32::MAX.copysign(percent)
+            } else {
+                percent
+            }))
         }
         // CSS Values 3 §5 unitless-zero clause (doc "# Unitless zero" 参照)。
         Token::Number { value, .. } if *value == 0.0 => Some(Length::Px(0.0)),
@@ -5549,6 +5585,52 @@ mod tests {
         // `<length-percentage>` mode でのみ受理。cssparser `unit_value = 0.5` を
         // × 100.0 で authored `50` に戻して Length::Percent(50.0) に格納。
         assert_eq!(parse_length("50%", true), Some(Length::Percent(50.0)));
+    }
+
+    #[test]
+    fn parse_length_value_extreme_percentage_saturates_to_f32_max_not_inf() {
+        // bd raikiri-spike-3gee: `1e40%` は cssparser tokenizer 側で
+        // `unit_value = 1e40 / 100.0 = 1e38` (f32 有限範囲 `3.4028235e38` 内)
+        // になるが、authored number へ戻す本 helper の `× 100.0` 自体が
+        // f32 overflow を起こし +Inf を作っていた (fix 前)。
+        //
+        // CSS Values 4 §5 "Range Checking and Precision for Numeric Types"
+        // <https://www.w3.org/TR/css-values-4/#numeric-types>:
+        // "When a value cannot be explicitly supported due to
+        // range/precision limitations, it must be converted to the closest
+        // value supported by the implementation" — 非有限は許容されないため、
+        // 符号を保持しつつ f32::MAX に寄った有限値を pin する。
+        assert_eq!(parse_length("1e40%", true), Some(Length::Percent(f32::MAX)));
+        // 符号保持も合わせて pin (負の overflow は -f32::MAX へ)。
+        assert_eq!(
+            parse_length("-1e40%", true),
+            Some(Length::Percent(-f32::MAX))
+        );
+    }
+
+    #[test]
+    fn parse_length_value_nan_percentage_passes_through_unsaturated() {
+        // reviewer:spec finding (agent a4beb897ae3457dcd, CONFIRMED medium):
+        // `is_finite()` also catches NaN, a different failure class than the
+        // `1e40%` overflow above. `0e999%` triggers it: cssparser's exponent
+        // handling computes `0.0 * 10f64.powf(999.0)`, and
+        // `10f64.powf(999.0)` is `+Inf`, so the product is `NaN` per IEEE
+        // 754 — even though `0e999`'s true mathematical value is `0`, not
+        // "unrepresentable". Saturating this to `f32::MAX` would turn the
+        // sink-side geometry (`raikiri-dom::layout::sanitize_finite`, which
+        // already treats `NaN` as `0.0`) into a huge box instead of a
+        // zero-sized one, so this class must pass through unsaturated and
+        // rely on that existing `NaN -> 0.0` sink contract downstream.
+        // cov:ignore: the panic-message literals in this match's arms only
+        // execute on assertion/match failure, unreachable while this test
+        // passes.
+        match parse_length("0e999%", true) {
+            Some(Length::Percent(v)) => assert!(
+                v.is_nan(),
+                "expected NaN (0 * Inf) to pass through unsaturated, got {v}"
+            ),
+            other => panic!("expected Some(Length::Percent(NaN)), got {other:?}"),
+        }
     }
 
     #[test]
