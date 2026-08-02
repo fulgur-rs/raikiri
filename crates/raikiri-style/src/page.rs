@@ -77,7 +77,7 @@ use std::sync::LazyLock;
 use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 
 use crate::Atom;
-use crate::cascade::{cascade_rank, resolve_against_inherited};
+use crate::cascade::{cascade_rank, resolve_against_inherited, resolve_relative_font_size};
 use crate::computed::ComputedValues;
 use crate::property::{
     Border, BorderColor, BorderStyle, Length, LengthOrAuto, PropertyKey, PropertyValue, Sides,
@@ -974,6 +974,34 @@ pub(crate) fn absolutize_in_page_context(
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::BoxSizing(_)) => v,
+        // ── font-size: larger / smaller (raikiri-spike-4rmu) ────────────────
+        // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
+        // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
+        // through `resolve_against_inherited` before this function ever runs,
+        // and that function's `FontSizeRelative` arm always converges to
+        // `PropertyValue::FontSize(Length::Px(_))`. There is no second entry
+        // point that could skip step 3 (unlike the shorthand fall-throughs
+        // below, which *are* reachable via a direct internal call).
+        //
+        // The arm still exists — not folded into the `Color`/`FontSize`/…
+        // bucket above, and not `unreachable!` — for the same two reasons the
+        // shorthand fall-throughs keep real arms: the crate keeps the cascade
+        // panic-free (reviewer-security policy, see the `Margin` fall-through
+        // in `crate::cascade::apply_value`), and this function's `pub(crate)`
+        // visibility means test code *can* call it directly with an
+        // unresolved `FontSizeRelative`, bypassing step 3 (as
+        // `absolutize_in_page_context_font_size_relative_safety_net` does).
+        //
+        // The basis is deliberately `font_size` (this context's own,
+        // phase-2-resolved value) rather than the inheritance parent's — this
+        // function has no parent basis available, and the arm is bug-only
+        // regardless, so spec correctness here is not a design goal. What
+        // matters is: no panic, and convergence to the same `FontSize(Px(_))`
+        // shape the real (phase 2) path produces, so a caller reading
+        // `declarations` never observes an unresolved `FontSizeRelative`.
+        PropertyValue::FontSizeRelative(rel) => {
+            PropertyValue::FontSize(Length::Px(resolve_relative_font_size(rel, font_size.px())))
+        }
         // ── line-height ───────────────────────────────────────────────────
         // CSS Inline 3 §5.1 <https://www.w3.org/TR/css-inline-3/#propdef-line-height>:
         // `<percentage>` is "computed relative to 1em" of the declaring
@@ -1749,6 +1777,24 @@ mod tests {
         assert_eq!(page_font_size_px("2rem", None), 32.0);
     }
 
+    /// `<relative-size>` (`larger` / `smaller`、raikiri-spike-4rmu) in the page
+    /// context resolves against the root's computed font-size, same basis as
+    /// `em` / `rem` above (CSS Page 3 §6). Reuses `page_font_size_px`, which
+    /// already panics on an unresolved winner reaching `declarations` — a
+    /// `FontSizeRelative` leak here is the same regression class as ygl0.
+    #[test]
+    fn cascade_page_font_size_relative_resolves_against_root_computed_font_size() {
+        let root = root_with_font_size(20.0);
+        assert_eq!(page_font_size_px("larger", Some(&root)), 24.0);
+        assert_eq!(page_font_size_px("smaller", Some(&root)), 20.0 / 1.2);
+    }
+
+    #[test]
+    fn cascade_page_font_size_relative_without_root_style_uses_initial_16px() {
+        // `root_style: None` = the L3 legacy exception (initial values, 16px).
+        assert_eq!(page_font_size_px("larger", None), 19.2);
+    }
+
     #[test]
     fn cascade_page_font_weight_relative_without_root_style_uses_initial_400() {
         // `root_style: None` = the L3 legacy exception quoted above ("sets
@@ -2241,6 +2287,43 @@ mod tests {
         );
     }
 
+    /// Direct exercise of the `FontSizeRelative` "safety net" arm of
+    /// `absolutize_in_page_context` — structurally unreachable through
+    /// `cascade_page` (step 3/phase 2 always converges `FontSizeRelative` to
+    /// `FontSize(Length::Px(_))` first, see the arm's own doc), but the
+    /// `pub(crate)` function can still be driven directly with an unresolved
+    /// value, same as `absolutize_in_page_context_shorthand_fall_throughs`
+    /// above. Pins: no panic, and the result shape matches what phase 2
+    /// (`resolve_against_inherited`'s `FontSizeRelative` arm) would have
+    /// produced — `FontSize(Length::Px(_))`.
+    #[test]
+    fn absolutize_in_page_context_font_size_relative_safety_net() {
+        use crate::property::RelativeFontSize;
+
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        assert_eq!(
+            absolutize_in_page_context(
+                PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
+                fs,
+                &ctx,
+                styles,
+            ),
+            PropertyValue::FontSize(Length::Px(24.0)),
+        );
+        assert_eq!(
+            absolutize_in_page_context(
+                PropertyValue::FontSizeRelative(RelativeFontSize::Smaller),
+                fs,
+                &ctx,
+                styles,
+            ),
+            PropertyValue::FontSize(Length::Px(20.0 / 1.2)),
+        );
+    }
+
     // ── 「`declarations` は computed 値」契約の機械的 pin ────────────────────
     //
     // bd raikiri-spike-awjx。契約の canonical な記述は
@@ -2278,24 +2361,37 @@ mod tests {
     /// の `+ 3` 項。いずれも機械導出できない。
     ///
     /// ⚠️ **本定数は `page_corpus().len()` としか照合されない。** 新 variant を
-    /// 足した作者が両方を放置すれば 40 同士で整合してしまうため、「variant 追加
+    /// 足した作者が両方を放置すれば同数のまま整合してしまうため、「variant 追加
     /// が compile error になる」ことは「corpus が完全である」ことを**含意しない**
     /// (`specified_layer_residue` の tripwire は one-way)。この穴を閉じるには
     /// corpus を `PropertyKey` の網羅 match から生成する必要がある — 別 task。
-    const PROPERTY_VALUE_VARIANTS: usize = 40;
+    const PROPERTY_VALUE_VARIANTS: usize = 41;
 
     /// phase 3 (`absolutize_in_page_context`) が**素通しする** variant 数。
     const PHASE_3_PASS_THROUGH_VARIANTS: usize = 22;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
-    /// border-width (longhand 4 + `border` shorthand 1) / width + height 2。
+    /// border-width (longhand 4 + `border` shorthand 1) / width + height 2 /
+    /// font-size: larger/smaller 1 (`FontSizeRelative` — raikiri-spike-4rmu、
+    /// `absolutize_in_page_context` の structurally-unreachable な safety-net
+    /// arm。到達しないが「素通し」ではなく実際に変換する形の arm なので
+    /// `PHASE_3_PASS_THROUGH_VARIANTS` 側には数えない)。
     const PHASE_3_TRANSFORMED_VARIANTS: usize =
         PROPERTY_VALUE_VARIANTS - PHASE_3_PASS_THROUGH_VARIANTS;
 
     /// phase 2 / phase 3 を**通す前**の corpus が持つ specified 層残滓の数 =
     /// `PHASE_3_TRANSFORMED_VARIANTS` + phase 2 が解決する `font-size` /
     /// `font-weight` の 2 + どちらも解決しない `text-align: match-parent` の 1。
+    ///
+    /// `FontSizeRelative` (`larger`/`smaller`) もこの「phase 2 が解決する」
+    /// 3 種と同じ扱いに**見える**が、`+3` には数えない — phase 3
+    /// (`absolutize_in_page_context`) 側で `FontSize` / `FontWeight` /
+    /// `TextAlign::MatchParent` は「pass-through」bucket
+    /// (`PHASE_3_PASS_THROUGH_VARIANTS`) に居るのに対し、`FontSizeRelative` は
+    /// 独自の (structurally unreachable な) transform arm を持ち
+    /// `PHASE_3_TRANSFORMED_VARIANTS` 側に既に数えられているため
+    /// (二重計上を避ける、上記定数の doc 参照)。
     const RAW_CORPUS_RESIDUE_VARIANTS: usize = PHASE_3_TRANSFORMED_VARIANTS + 3;
 
     /// 全 `PropertyValue` variant を **specified 層の worst case** payload で
@@ -2304,8 +2400,10 @@ mod tests {
     /// worst case = 「phase 2 / phase 3 を通さなければ specified 層の残滓が
     /// 残る」値: length は `Em` / `Rem` / `Pt` (`Px` / `Percent` は既に computed
     /// 層なので使わない)、`font-weight` は `bolder`、`text-align` は
-    /// `match-parent`。
+    /// `match-parent`、`font-size` の relative variant は `larger`
+    /// (raikiri-spike-4rmu)。
     fn page_corpus() -> Vec<PropertyValue> {
+        use crate::property::RelativeFontSize;
         use std::sync::Arc;
 
         let literal = || vec![ContentComponent::Literal("x".into())];
@@ -2319,6 +2417,7 @@ mod tests {
             PropertyValue::BackgroundColor(BLUE),
             PropertyValue::FontFamily(vec![Atom::from("serif")]),
             PropertyValue::FontSize(Length::Em(2.0)),
+            PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
             PropertyValue::FontWeight(FontWeightValue::Bolder),
             PropertyValue::LineHeight(LineHeight::Length(Length::Em(2.0))),
             PropertyValue::Display(DisplayValue::Block),
@@ -2467,6 +2566,10 @@ mod tests {
             PropertyValue::LineHeight(lh) => line_height(*lh),
             // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
             PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),
+            // `larger` / `smaller` — `font_weight` の `Bolder`/`Lighter` と同型
+            // (raikiri-spike-4rmu): 常に未解決の残滓。`page_corpus` の worst-case
+            // payload としても使う。
+            PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
             PropertyValue::PaddingTop(l)
             | PropertyValue::PaddingRight(l)
             | PropertyValue::PaddingBottom(l)
@@ -2535,8 +2638,14 @@ mod tests {
 
     /// `page_corpus` が全 variant を過不足なく 1 度ずつ覆うこと。
     ///
-    /// `PropertyValue::key()` は variant → key の単射なので、40 entry から
-    /// 相異なる 40 key が出れば 40 variant を覆っている。
+    /// 以前は `PropertyValue::key()` (variant → key の単射) を経由して
+    /// `HashSet<PropertyKey>` の要素数で判定していたが、raikiri-spike-4rmu で
+    /// この単射性が**意図的に**崩れた — `PropertyValue::FontSizeRelative` は
+    /// `FontSize` と同じ `PropertyKey::FontSize` を共有する (cascade winner
+    /// selection で両者を正しく競合させるため、[`PropertyValue::FontSizeRelative`]
+    /// doc 参照)。したがって `key()` はもう variant 数え上げに使えない —
+    /// 代わりに `std::mem::discriminant` (payload の trait bound に依存せず
+    /// variant のみを区別する) で数える。
     ///
     /// ⚠️ これは「corpus に**重複や欠落が無い**」の pin であって「corpus が
     /// `PropertyValue` の**現在の** variant 集合を覆っている」の pin ではない —
@@ -2549,12 +2658,31 @@ mod tests {
             PROPERTY_VALUE_VARIANTS,
             "page_corpus は PropertyValue の全 variant を 1 つずつ持つこと",
         );
-        let keys: std::collections::HashSet<PropertyKey> =
-            corpus.iter().map(PropertyValue::key).collect();
+        let discriminants: std::collections::HashSet<std::mem::Discriminant<PropertyValue>> =
+            corpus.iter().map(std::mem::discriminant).collect();
         assert_eq!(
-            keys.len(),
+            discriminants.len(),
             PROPERTY_VALUE_VARIANTS,
-            "page_corpus に同じ variant が 2 度現れている (key が重複)",
+            "page_corpus に同じ variant が 2 度現れている (discriminant が重複)",
+        );
+    }
+
+    /// `FontSize` / `FontSizeRelative` が意図的に同じ `PropertyKey` を共有する
+    /// こと自体の direct pin ([`page_corpus_covers_every_property_value_variant`]
+    /// の doc が説明する単射性崩れの根拠)。property.rs 側の
+    /// `font_size_relative_shares_property_key_with_font_size` と同じ主張を
+    /// page 経路の corpus に対して確認する — corpus の 2 entry が同じ key を
+    /// 持つことは bug ではなく仕様であると明示する。
+    #[test]
+    fn page_corpus_font_size_and_font_size_relative_share_one_key() {
+        let corpus = page_corpus();
+        let font_size_key_count = corpus
+            .iter()
+            .filter(|v| v.key() == PropertyKey::FontSize)
+            .count();
+        assert_eq!(
+            font_size_key_count, 2,
+            "FontSize と FontSizeRelative の 2 entry が PropertyKey::FontSize を共有するはず",
         );
     }
 

@@ -29,7 +29,7 @@ use selectors::parser::{Selector, SelectorList};
 use crate::RaikiriSelectorImpl;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::error::CascadeError;
-use crate::property::{FontWeightValue, Length, PositionValue, PropertyValue};
+use crate::property::{FontWeightValue, Length, PositionValue, PropertyValue, RelativeFontSize};
 use crate::resolve::{ComputedLength, ResolveContext};
 use crate::rule::{expand_shorthand_into, parse_declaration_block};
 use crate::ruletree::Origin;
@@ -655,6 +655,48 @@ pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: u16
     }
 }
 
+/// `font-size` の `<relative-size>` (`larger` / `smaller`) を親の computed
+/// font-size に対して解決する。[`resolve_relative_weight`] の font-size 版
+/// (bolder/lighter と同型、raikiri-spike-4rmu)。
+///
+/// CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop> 原文:
+///
+/// > A `<relative-size>` keyword is interpreted relative to the computed
+/// > font-size of the parent element and possibly the table of font sizes.
+/// > \[…\] If the parent element has a keyword font size in the absolute size
+/// > keyword mapping table, larger may compute the font size to the next
+/// > entry in the table, and smaller may compute the font size to the
+/// > previous entry in the table. \[…\] Instead of using next and previous
+/// > items in the previous keyword table, User agents may instead use a
+/// > simple ratio to increase or decrease the font size relative to the
+/// > parent element. The specific ratio is unspecified, but should be around
+/// > 1.2–1.5.
+///
+/// # next/previous table-entry 分岐を実装しない理由
+///
+/// spec は 2 分岐を "may" (どちらも規範ではなく許容) で並べており、raikiri は
+/// simple-ratio 分岐**のみ**を実装する。`<absolute-size>` keyword は parser
+/// (`parse_font_size_keyword`) が parse 時点で `medium` 基準の `Length::Px` に
+/// 解決し尽くすため (variant 自体を保持しない)、継承された computed font-size
+/// からは「親が keyword で指定したかどうか」を区別できず、table 分岐の前提
+/// ("if the parent element has a keyword font size in the ... table") を
+/// 安全に判定できない。
+///
+/// # ratio = 1.2 の根拠
+///
+/// spec 引用の "should be around 1.2–1.5" が許容 range の下限。**この 1.2 は
+/// 同 §2.5.1 の note (CSS2 で隣接 index 間の scaling factor として 1.2 を
+/// 採用したが小さいサイズで不足だったという指摘) とは別の根拠から来ている**
+/// — 誤って note を典拠に引用しないこと (note は table 側の話で、本関数は
+/// simple-ratio 分岐の話)。
+pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px: f32) -> f32 {
+    const RATIO: f32 = 1.2;
+    match keyword {
+        RelativeFontSize::Larger => inherited_px * RATIO,
+        RelativeFontSize::Smaller => inherited_px / RATIO,
+    }
+}
+
 /// specified value を継承元の computed values に対して解決し、**`PropertyValue`
 /// 表現のまま** computed-equivalent な値を返す。
 ///
@@ -797,7 +839,8 @@ pub(crate) fn resolve_against_inherited(
         // (上の「本関数の pass-through は『解決済』ではない」節を参照)。
         // **本 arm の戻り値が常に `Length::Px` であることは load-bearing** —
         // phase 3 はその値を page context の font-size (= `em` の基準) として
-        // 読み戻す (`crate::page::page_context_font_size`)。
+        // 読み戻す (`crate::page::page_context_font_size`)。次の `FontSizeRelative`
+        // arm も同じ保証を守る (`PropertyValue::FontSize(Length::Px(_))` に収束させる)。
         PropertyValue::FontSize(len) => PropertyValue::FontSize(Length::Px(
             crate::resolve::resolve_font_size(
                 len,
@@ -805,6 +848,15 @@ pub(crate) fn resolve_against_inherited(
                 &ResolveContext::new(inherited.font_size),
             )
             .px(),
+        )),
+        // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`、
+        // raikiri-spike-4rmu): `bolder` / `lighter` と同型、継承元の computed
+        // font-size に対して解決する。`FontSize` variant に収束させる —
+        // `PropertyValue::FontSizeRelative` doc の「解決タイミング」節が説明する
+        // とおり、この variant は cascade winner の一時的な表現に留まり
+        // public な結果 (`crate::page::PageCascadeResult::declarations`) には残らない。
+        PropertyValue::FontSizeRelative(rel) => PropertyValue::FontSize(Length::Px(
+            resolve_relative_font_size(rel, inherited.font_size.px()),
         )),
         // 本関数では解決しない property — pass-through。上記 doc の「本関数の
         // pass-through は『解決済』ではない (phase 3 が要る)」節が、これらを
@@ -859,9 +911,10 @@ pub(crate) fn resolve_against_inherited(
 /// 基準となる font-size は**その node の全 winner を適用し終える**まで確定せず、
 /// 本関数は winner 1 つ分しか見ていないため)。
 ///
-/// 例外は `font-weight` — `bolder` / `lighter` は**継承元**の computed weight
-/// だけで解ける (自 node の他 winner に依存しない) ため、ここで絶対値に落とす。
-/// 詳細は該当 arm の comment を参照。
+/// 例外は `font-weight` の `bolder` / `lighter` と `font-size` の `larger` /
+/// `smaller` — どちらも**継承元**の computed 値だけで解ける (自 node の他
+/// winner に依存しない) ため、ここで絶対値に落とす。詳細は該当 arm の comment
+/// を参照。
 ///
 /// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で gate が red (規約 3)。
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
@@ -872,6 +925,44 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BackgroundColor(c) => target.background_color = c,
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
+        // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`、
+        // raikiri-spike-4rmu)。`font-weight` の `bolder` / `lighter` arm
+        // (次項) と同型の read-modify-write だが、継承値の出所は D5 invariant
+        // (`font_weight: u16`) とは少し違う形で成立する:
+        //
+        // - `target.font_size` は `SpecifiedValues::inherit_from(parent)` で
+        //   `lift_font_size(parent.font_size)` = 常に `Length::Px(親の px)`
+        //   に seed される (root では `SpecifiedValues::initial()` が同じく
+        //   `Length::Px(INITIAL_FONT_SIZE_PX)`)。したがって本 arm が
+        //   `target.font_size` を**上書きする前に読む**限り、変数の中身は
+        //   単位に関わらず「親 (または root の initial) の computed
+        //   font-size」の px 表現である。
+        // - `font_size` の他の値 (`em` / `rem` / `%`) は絶対化を
+        //   [`SpecifiedValues::finalize`] (phase 2) に **意図的に遅延**する
+        //   (decision raikiri-spike-082k、本関数冒頭の doc 参照) が、
+        //   `larger` / `smaller` は基準が「親の computed font-size」のみで
+        //   自 node の他 winner に依存しないため、`font-weight` と同じく
+        //   ここ (phase 1) で解決してよい。解決結果は `Length::Px` — 通常の
+        //   author 指定 px 値と区別が付かなくなり、phase 2 (`resolve_font_size`
+        //   の `Px` arm は identity) を通しても二重適用にならない。
+        // - 全 [`Length`] variant を OR-pattern で受ける下の抽出は
+        //   「実際には常に `Px`」を panic-free に表現したもの — reviewer-security
+        //   の panic surface 排除方針 (`Margin` shorthand fall-through arm と同じ
+        //   理由) により `unreachable!` は採らない。
+        //
+        // `FontSize` と同じ `PropertyKey` を共有するため (`PropertyValue::key()`
+        // 参照) `pick_winners` の slot は 1 つ — 本 arm と直上の `FontSize` arm が
+        // 同一 node で両方走ることはない。
+        PropertyValue::FontSizeRelative(rel) => {
+            let inherited_px = match target.font_size {
+                Length::Px(v)
+                | Length::Em(v)
+                | Length::Rem(v)
+                | Length::Percent(v)
+                | Length::Pt(v) => v,
+            };
+            target.font_size = Length::Px(resolve_relative_font_size(rel, inherited_px));
+        }
         // CSS Fonts 4 §2.2 (raikiri-spike-5iy + raikiri-spike-17s8)。specified
         // value は `FontWeightValue` (relative keyword を保持)、computed value
         // は resolve 済み `u16` — `bolder` / `lighter` はここで絶対値に落とす。
@@ -891,10 +982,13 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // する — 二重適用は 400 → 700 → 900 と複合するので観測可能)。
         // この 2 つが relative-weight resolution の正しさを支える invariant。
         //
-        // なお本 arm は `apply_value` 中で **唯一の read-modify-write** (他は
-        // すべて冪等な単純代入)。`Padding` / `Margin` / `Border` arm のような
-        // "safety net" 二重適用経路を font-weight に足すと `bolder` が
-        // 400 → 700 → 900 と複合するため、上記 2 invariant を崩す変更は不可。
+        // なお本 arm は `apply_value` 中の read-modify-write の 1 つ (raikiri-spike-4rmu
+        // で `FontSizeRelative` arm が 2 つ目に加わった。それ以外はすべて冪等な
+        // 単純代入)。`Padding` / `Margin` / `Border` arm のような "safety net"
+        // 二重適用経路を font-weight に足すと `bolder` が 400 → 700 → 900 と
+        // 複合するため、上記 2 invariant を崩す変更は不可。`FontSizeRelative` も
+        // 同じ理由で "safety net" 経路を持たない (`FontSize` と同一 `PropertyKey`
+        // を共有し slot は 1 つ、詳細は該当 arm の comment)。
         //
         // **契約 (raikiri-spike-ygl0)**: 継承元依存の解決を持つ property を新しく
         // 追加するときは、本 arm だけでなく sibling の
@@ -1473,6 +1567,66 @@ mod tests {
         assert_eq!(r.computed[a].font_weight, 700);
         assert_eq!(r.computed[b].font_weight, 900);
         assert_eq!(r.computed[c].font_weight, 900);
+    }
+
+    /// **D5 invariant** — `font-size` 版 (raikiri-spike-4rmu、`bolder` の
+    /// `bolder_resolves_against_parent_computed_weight_through_staging` と同型)。
+    ///
+    /// `larger` / `smaller` は `SpecifiedValues` の staging 上で解決されるが、
+    /// その基準は**親の computed font-size** でなければならない (CSS Fonts 4
+    /// §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop>)。
+    /// `SpecifiedValues::inherit_from` が `font_size` を親からではなく
+    /// `initial()` (16px) から seed すると 16 → 19.2 になり、この test だけが
+    /// 落ちる (compile error にはならない)。
+    #[test]
+    fn larger_resolves_against_parent_computed_font_size_through_staging() {
+        let (parent, child) = cascade_parent_child(
+            "div",
+            Some("font-size: 20px"),
+            "span",
+            Some("font-size: larger"),
+        );
+        assert_eq!(parent.font_size, ComputedLength(20.0));
+        assert_eq!(
+            child.font_size,
+            ComputedLength(24.0),
+            "larger は親の computed 20px に対して解決される (initial 16px 起点なら 19.2px になる)"
+        );
+
+        // smaller 側も同じ経路を通る (20px → 20/1.2px)。
+        let (_, smaller) = cascade_parent_child(
+            "div",
+            Some("font-size: 20px"),
+            "span",
+            Some("font-size: smaller"),
+        );
+        assert_eq!(smaller.font_size, ComputedLength(20.0 / 1.2));
+    }
+
+    /// 3 段の `larger` chain — staging を経ても compounding する
+    /// (16 → 19.2 → 23.04)。`bolder_chain_compounds_through_staging` の
+    /// font-size 版。
+    #[test]
+    fn larger_chain_compounds_through_staging() {
+        let mut doc = TestDoc::new();
+        let a = doc.push_element(0, "div", Some("font-size: larger"));
+        let b = doc.push_element(a, "div", Some("font-size: larger"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // literal (`19.2`) ではなく式 (`16.0 * 1.2`) で期待値を書く — 実装の
+        // 計算式をそのまま mirror し、f32 の最終 bit まで一致させる
+        // (`resolve_relative_font_size` の `RATIO` 定数と同じ乗算)。
+        assert_eq!(r.computed[a].font_size, ComputedLength(16.0 * 1.2));
+        assert_eq!(r.computed[b].font_size, ComputedLength(16.0 * 1.2 * 1.2));
+    }
+
+    /// root element の `font-size: larger` — 親が無いので initial (16px) 基準
+    /// ([`crate::specified::SpecifiedValues::finalize_as_root`] doc の
+    /// "if the element has no parent" 条項、SPEC-6 derivation と同じ pattern)。
+    #[test]
+    fn larger_on_root_element_resolves_against_initial_font_size() {
+        let cv = cascade_doc("", "html", Some("font-size: larger"));
+        assert_eq!(cv.font_size, ComputedLength(19.2));
     }
 
     /// `pt` は cascade 段で px に絶対化される (CSS Values 4 §6.2
@@ -2146,6 +2300,32 @@ mod tests {
         assert_eq!(
             resolve_relative_weight(FontWeightValue::Absolute(250), 900),
             250
+        );
+    }
+
+    /// [`resolve_relative_font_size`] を unit 関数として直接叩く — cascade
+    /// harness に依存せず ratio (1.2) の適用を検証する
+    /// (`font_weight_bolder_lighter_table_all_six_rows` の font-size 版、
+    /// raikiri-spike-4rmu)。
+    #[test]
+    fn resolve_relative_font_size_applies_1_2_ratio() {
+        assert_eq!(
+            resolve_relative_font_size(RelativeFontSize::Larger, 16.0),
+            19.2
+        );
+        assert_eq!(
+            resolve_relative_font_size(RelativeFontSize::Smaller, 16.0),
+            16.0 / 1.2
+        );
+        // 対称性は無い — `larger` → `smaller` は round-trip で元の値に戻らない
+        // (spec が要求する性質ではない、単に ×1.2 と ÷1.2 の合成が非自明なだけ)。
+        let round_tripped = resolve_relative_font_size(
+            RelativeFontSize::Smaller,
+            resolve_relative_font_size(RelativeFontSize::Larger, 16.0),
+        );
+        assert!(
+            (round_tripped - 16.0).abs() < 0.0001,
+            "×1.2 の後 ÷1.2 すれば浮動小数誤差の範囲で元に戻るはず: {round_tripped}"
         );
     }
 
