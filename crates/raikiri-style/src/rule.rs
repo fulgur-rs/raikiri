@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(decls[1].value, PropertyValue::FontSize(Length::Px(16.0)));
         assert_eq!(
             decls[2].value,
-            PropertyValue::FontWeight(FontWeightValue::Absolute(700))
+            PropertyValue::FontWeight(FontWeightValue::Absolute(700.0))
         );
     }
 

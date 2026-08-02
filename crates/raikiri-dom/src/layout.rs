@@ -1087,9 +1087,10 @@ pub(crate) fn preshape_text(
         let mut builder = layout_cx.ranged_builder(fonts, &text, 1.0, true);
         builder.push_default(StyleProperty::FontFamily(font_family));
         builder.push_default(StyleProperty::FontSize(font_size_px));
-        builder.push_default(StyleProperty::FontWeight(FontWeight::new(
-            cv.font_weight as f32,
-        )));
+        // `cv.font_weight` は bd raikiri-spike-e52s で `f32` に格上げ済み
+        // (旧 `u16`) — `parley::FontWeight::new` が要求する型そのものなので
+        // cast は不要 (`as f32` を残すと `clippy::unnecessary_cast` に抵触する)。
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(cv.font_weight)));
         let mut layout: Layout<()> = builder.build(&text);
         layout.break_all_lines(Some(max_advance));
         // API tuning: brief pseudo-code は `align(Some(max_advance), Alignment::Start,
