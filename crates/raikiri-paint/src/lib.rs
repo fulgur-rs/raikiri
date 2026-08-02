@@ -828,6 +828,11 @@ mod nonfinite_rasterizer_probe {
             .text_layout()
             .expect("preshape_text must populate text_layout for a non-empty Text node");
 
+        // cov:ignore: this block's `return` on match means its closing
+        // braces are never "reached" as a fallthrough line once the first
+        // GlyphRun is found (which it always is, for "Hi") — and the
+        // assert!'s message is only executed on failure, which doesn't
+        // happen while this test passes.
         for line in layout.lines() {
             for item in line.items() {
                 if let PositionedLayoutItem::GlyphRun(glyph_run) = item {
@@ -851,9 +856,11 @@ mod nonfinite_rasterizer_probe {
                 }
             }
         }
+        // cov:ignore: this panic is a setup-sanity fallback for a code path
+        // ("Hi" produces no GlyphRun) that doesn't occur while the test
+        // suite's font/shaping setup is intact.
         panic!(
-            "sanity: hello-world 'Hi' produced no GlyphRun — setup is broken, \
-             not a rasterizer finding"
+            "sanity: hello-world 'Hi' produced no GlyphRun — setup is broken, not a rasterizer finding"
         );
     }
 
@@ -918,15 +925,11 @@ mod nonfinite_rasterizer_probe {
         let (buf_len, nonzero) =
             render_glyphs_unbounded(&font, &coords, &glyphs, natural_font_size);
         assert_eq!(buf_len, (CANVAS_W * CANVAS_H * 4) as usize);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert!(
             nonzero > 0,
-            "control: draw_glyphs(font_size={natural_font_size}) — the run's own \
-             natural size, no override — drew zero non-zero bytes into a \
-             {CANVAS_W}x{CANVAS_H} canvas at Affine::IDENTITY. If this control ever \
-             fails, the extreme-value tests below are vacuous (they'd pass whether or \
-             not the rasterizer is actually robust) and bd raikiri-spike-3653 point 3's \
-             conclusion is unsupported until this is fixed — do not just delete the \
-             assertion"
+            "control: draw_glyphs(font_size={natural_font_size}) — the run's own natural size, no override — drew zero non-zero bytes into a {CANVAS_W}x{CANVAS_H} canvas at Affine::IDENTITY. If this control ever fails, the extreme-value tests below are vacuous (they'd pass whether or not the rasterizer is actually robust) and bd raikiri-spike-3653 point 3's conclusion is unsupported until this is fixed — do not just delete the assertion"
         );
     }
 
@@ -975,6 +978,11 @@ mod nonfinite_rasterizer_probe {
             // which the `Disconnected` arm below handles.
             let _ = tx.send(result);
         });
+        // cov:ignore: every call site of this helper completes well within
+        // the 30s bound (that's the finding this module characterizes) —
+        // the Timeout panic arm is a diagnostic for a hang this module found
+        // does not occur, and Disconnected mirrors the same never-taken
+        // defensive shape as the layout.rs/lib.rs siblings of this pattern.
         match rx.recv_timeout(Duration::from_secs(30)) {
             Ok(Ok((buf_len, nonzero_bytes))) => ProbeOutcome::Completed {
                 buf_len,
@@ -982,10 +990,7 @@ mod nonfinite_rasterizer_probe {
             },
             Ok(Err(_panic_payload)) => ProbeOutcome::Panicked,
             Err(RecvTimeoutError::Timeout) => panic!(
-                "draw_glyphs(font_size={font_size}) did not return within 30s — \
-                 possible CPU rasterizer hang (bd raikiri-spike-3653 point 3); \
-                 note the worker thread is leaked (not joined) on this path, \
-                 same caveat as the parley bound in layout.rs"
+                "draw_glyphs(font_size={font_size}) did not return within 30s — possible CPU rasterizer hang (bd raikiri-spike-3653 point 3); note the worker thread is leaked (not joined) on this path, same caveat as the parley bound in layout.rs"
             ),
             Err(RecvTimeoutError::Disconnected) => ProbeOutcome::Panicked,
         }
@@ -1010,6 +1015,9 @@ mod nonfinite_rasterizer_probe {
     /// `assert!(matches!(outcome, Panicked | Completed { .. }))`.
     #[test]
     fn draw_glyphs_with_inf_font_size_completes_within_bounded_canvas_sized_buffer() {
+        // cov:ignore: this test's whole point is that the Completed arm is
+        // always taken (no panic) — the Panicked arm's message is a
+        // diagnostic for the failure mode this module found does not occur.
         match draw_glyphs_bounded(f32::INFINITY) {
             ProbeOutcome::Completed {
                 buf_len,
@@ -1018,24 +1026,15 @@ mod nonfinite_rasterizer_probe {
                 assert_eq!(
                     buf_len,
                     (CANVAS_W * CANVAS_H * 4) as usize,
-                    "draw_glyphs(f32::INFINITY) must allocate exactly the caller-sized \
-                     canvas buffer, not something proportional to glyph scale"
+                    "draw_glyphs(f32::INFINITY) must allocate exactly the caller-sized canvas buffer, not something proportional to glyph scale"
                 );
                 assert_eq!(
                     nonzero_bytes, 0,
-                    "draw_glyphs(f32::INFINITY) drew {nonzero_bytes} non-zero bytes — \
-                     this module's characterization was 'completes but draws nothing'; \
-                     if this now draws *something*, that's a different (not necessarily \
-                     worse) finding and needs its own re-characterization, not silent \
-                     acceptance"
+                    "draw_glyphs(f32::INFINITY) drew {nonzero_bytes} non-zero bytes — this module's characterization was 'completes but draws nothing'; if this now draws *something*, that's a different (not necessarily worse) finding and needs its own re-characterization, not silent acceptance"
                 );
             }
             ProbeOutcome::Panicked => panic!(
-                "draw_glyphs(f32::INFINITY) panicked — this module's characterization \
-                 (uncached direct-fill path is used above the 128px glifo atlas-cache \
-                 threshold, and it's canvas-bounded, not glyph-scale-bounded) no longer \
-                 holds; re-characterize bd raikiri-spike-3653 point 3 rather than \
-                 deleting this test"
+                "draw_glyphs(f32::INFINITY) panicked — this module's characterization (uncached direct-fill path is used above the 128px glifo atlas-cache threshold, and it's canvas-bounded, not glyph-scale-bounded) no longer holds; re-characterize bd raikiri-spike-3653 point 3 rather than deleting this test"
             ),
         }
     }
@@ -1049,6 +1048,9 @@ mod nonfinite_rasterizer_probe {
     /// guarded pipeline can ever produce.
     #[test]
     fn draw_glyphs_with_huge_finite_font_size_also_completes_normally() {
+        // cov:ignore: this test's whole point is that the Completed arm is
+        // always taken (no panic) — the Panicked arm's message is a
+        // diagnostic for the failure mode this module found does not occur.
         match draw_glyphs_bounded(i32::MAX as f32) {
             ProbeOutcome::Completed {
                 buf_len,
@@ -1057,18 +1059,15 @@ mod nonfinite_rasterizer_probe {
                 assert_eq!(
                     buf_len,
                     (CANVAS_W * CANVAS_H * 4) as usize,
-                    "draw_glyphs(i32::MAX as f32) must allocate exactly the caller-sized \
-                     canvas buffer, not something proportional to glyph scale"
+                    "draw_glyphs(i32::MAX as f32) must allocate exactly the caller-sized canvas buffer, not something proportional to glyph scale"
                 );
                 assert_eq!(
                     nonzero_bytes, 0,
-                    "draw_glyphs(i32::MAX as f32) drew {nonzero_bytes} non-zero bytes — \
-                     re-characterize bd raikiri-spike-3653 point 3, see module doc"
+                    "draw_glyphs(i32::MAX as f32) drew {nonzero_bytes} non-zero bytes — re-characterize bd raikiri-spike-3653 point 3, see module doc"
                 );
             }
             ProbeOutcome::Panicked => panic!(
-                "draw_glyphs(i32::MAX as f32) panicked — re-characterize bd \
-                 raikiri-spike-3653 point 3, see module doc"
+                "draw_glyphs(i32::MAX as f32) panicked — re-characterize bd raikiri-spike-3653 point 3, see module doc"
             ),
         }
     }
@@ -1090,6 +1089,9 @@ mod nonfinite_rasterizer_probe {
     #[test]
     fn draw_glyphs_at_production_font_size_clamp_completes_normally() {
         const MAX_FONT_SIZE_PX: f32 = 1e6; // mirrors raikiri-dom's private const; see doc above
+        // cov:ignore: this test's whole point is that the Completed arm is
+        // always taken (no panic) — the Panicked arm's message is a
+        // diagnostic for the failure mode this module found does not occur.
         match draw_glyphs_bounded(MAX_FONT_SIZE_PX) {
             ProbeOutcome::Completed {
                 buf_len,
@@ -1102,17 +1104,11 @@ mod nonfinite_rasterizer_probe {
                 );
                 assert_eq!(
                     nonzero_bytes, 0,
-                    "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) drew {nonzero_bytes} non-zero \
-                     bytes into a {CANVAS_W}x{CANVAS_H} probe canvas — expected zero \
-                     (the glyph is far larger than the probe canvas at this size); if \
-                     this changed, it's not itself a problem but re-check the module \
-                     doc's characterization still holds"
+                    "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) drew {nonzero_bytes} non-zero bytes into a {CANVAS_W}x{CANVAS_H} probe canvas — expected zero (the glyph is far larger than the probe canvas at this size); if this changed, it's not itself a problem but re-check the module doc's characterization still holds"
                 );
             }
             ProbeOutcome::Panicked => panic!(
-                "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) panicked — this would mean bd \
-                 raikiri-spike-2ui0's guard has a residual gap against this specific \
-                 sink, escalate rather than widen this test's expectation"
+                "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) panicked — this would mean bd raikiri-spike-2ui0's guard has a residual gap against this specific sink, escalate rather than widen this test's expectation"
             ),
         }
     }

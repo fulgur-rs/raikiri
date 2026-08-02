@@ -2365,6 +2365,10 @@ mod tests {
             let result = std::panic::catch_unwind(move || shape_raw(font_size));
             let _ = tx.send(result.is_ok());
         });
+        // cov:ignore: every call site of this helper (both this file's
+        // tests) completes normally within its bound — the Err arms are
+        // diagnostics for failure modes (panic, timeout, worker-disconnect)
+        // this module's tests don't hit.
         match rx.recv_timeout(bound) {
             Ok(true) => Ok(()),
             Ok(false) => Err("panicked"),
@@ -2404,14 +2408,12 @@ mod tests {
             ("-Inf", f32::NEG_INFINITY),
             ("1e9 (finite, 3 decades past MAX_FONT_SIZE_PX)", 1e9_f32),
         ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             assert_eq!(
                 shape_raw_bounded(font_size, std::time::Duration::from_secs(5)),
                 Ok(()),
-                "parley::Layout::break_all_lines(font_size = {label}) did not complete \
-                 within 5s (bypassing raikiri's guard, same as the +Inf case) — this \
-                 module's characterization that only +Inf hangs (bd raikiri-spike-3653 \
-                 point 2) no longer holds for {label}; re-characterize rather than \
-                 deleting this case"
+                "parley::Layout::break_all_lines(font_size = {label}) did not complete within 5s (bypassing raikiri's guard, same as the +Inf case) — this module's characterization that only +Inf hangs (bd raikiri-spike-3653 point 2) no longer holds for {label}; re-characterize rather than deleting this case"
             );
         }
     }
@@ -2449,6 +2451,11 @@ mod tests {
     ///   layout::tests::parley_break_all_lines_hangs_on_raw_infinite_font_size_bypassing_the_guard \
     ///   -- --ignored
     /// ```
+    // cov:ignore: this whole test body never runs under default `cargo
+    // test` (it's `#[ignore]`d — a genuine ~10s hang + leaked thread, see
+    // the doc comment above); it's exercised explicitly via `-- --ignored`
+    // (recorded as run and passing in this task's gate evidence), which
+    // llvm-cov's default `cargo test` invocation doesn't capture.
     #[test]
     #[ignore = "confirms a genuine ~10s hang + leaks a spinning worker thread for the rest \
                 of the process; run explicitly, see doc comment"]

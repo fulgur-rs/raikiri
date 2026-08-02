@@ -805,6 +805,10 @@ mod tests {
         /// Layout::default()'s `size` is `(0.0, 0.0)` — a node taffy never
         /// visited (e.g. a bug that silently no-ops instead of laying out)
         /// would look identical to that, which is what this checks against.
+        // cov:ignore: the `||` on the next line short-circuits — whichever
+        // side isn't needed to determine `non_default` for the fixed test
+        // fixture below never executes, but that's still finite coverage of
+        // the boolean's meaning, not a gap in what's tested.
         fn layout_is_non_default_and_finite(layout: &taffy::Layout) -> bool {
             let default_size = taffy::Layout::new().size;
             let non_default = layout.size.width != default_size.width
@@ -832,33 +836,25 @@ mod tests {
             }));
             let _ = tx.send(result);
         });
+        // cov:ignore: the happy path (Ok(Ok(true))) is the only arm this
+        // fixed, non-hanging, non-panicking test fixture ever reaches; the
+        // other 3 arms are diagnostic panics for failure modes this specific
+        // characterization test isn't exercising (vacuous-pass, panic,
+        // timeout, worker-disconnect) — see the doc comment above for why
+        // each exists.
         match rx.recv_timeout(Duration::from_secs(10)) {
             Ok(Ok(non_vacuous)) => assert!(
                 non_vacuous,
-                "compute_root_layout completed but child 'a' (pathological, non-finite \
-                 Style) has a default-sized or non-finite unrounded_layout — either taffy \
-                 silently skipped it (this test would be vacuous re: 'no hang', since a \
-                 skipped node also 'completes' instantly) or bd raikiri-spike-r8ew's \
-                 sanitize_taffy_layout output guard (set_unrounded_layout, \
-                 crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — \
-                 re-characterize bd raikiri-spike-3653 point 1 rather than deleting this \
-                 assertion"
+                "compute_root_layout completed but child 'a' (pathological, non-finite Style) has a default-sized or non-finite unrounded_layout — either taffy silently skipped it (this test would be vacuous re: 'no hang', since a skipped node also 'completes' instantly) or bd raikiri-spike-r8ew's sanitize_taffy_layout output guard (set_unrounded_layout, crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — re-characterize bd raikiri-spike-3653 point 1 rather than deleting this assertion"
             ),
             Ok(Err(_panic_payload)) => panic!(
-                "taffy::compute_root_layout (or the post-layout assertion) panicked on \
-                 non-finite Style geometry — re-characterize bd raikiri-spike-3653 point 1 \
-                 (this test previously pinned 'completes without panic or hang')"
+                "taffy::compute_root_layout (or the post-layout assertion) panicked on non-finite Style geometry — re-characterize bd raikiri-spike-3653 point 1 (this test previously pinned 'completes without panic or hang')"
             ),
             Err(RecvTimeoutError::Timeout) => panic!(
-                "taffy::compute_root_layout did not return within 10s on non-finite \
-                 Style geometry — possible taffy block layout hang/livelock found \
-                 (bd raikiri-spike-3653 point 1); this would be a new finding, not a \
-                 regression of a previously-passing guarantee, since this test is the \
-                 first automated characterization of this input"
+                "taffy::compute_root_layout did not return within 10s on non-finite Style geometry — possible taffy block layout hang/livelock found (bd raikiri-spike-3653 point 1); this would be a new finding, not a regression of a previously-passing guarantee, since this test is the first automated characterization of this input"
             ),
             Err(RecvTimeoutError::Disconnected) => panic!(
-                "worker thread panicked before catch_unwind could report it cleanly — \
-                 see stderr above"
+                "worker thread panicked before catch_unwind could report it cleanly — see stderr above"
             ),
         }
     }

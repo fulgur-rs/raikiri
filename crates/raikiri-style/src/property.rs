@@ -216,9 +216,23 @@ fn expand_hex_nibble(n: u8) -> u8 {
 /// を揃える運用は既に 2 度 drift した (bd raikiri-spike-awjx)。
 ///
 /// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
-/// 変数追加が既存 pattern-match を break しない forward-compat 契約)。既存 sibling
-/// site: `crates/raikiri-dom/src/layout.rs:143` `preshape_text` が M1.4 時点から
-/// `_ => Err(LayoutError::Internal { ... })` の defensive wildcard を持つ。
+/// 変数追加が既存 pattern-match を break しない forward-compat 契約)。
+///
+/// **訂正 (bd raikiri-spike-2x8)**: 本節は以前 `crates/raikiri-dom/src/
+/// layout.rs:143` の `preshape_text` を「wildcard arm を持つ既存 sibling」と
+/// して挙げていたが、これは bd raikiri-spike-zls8 の Option A 層分離
+/// (`crate::resolve` 参照) で崩れた — `preshape_text` が消費する
+/// `cv.font_size` は現在 [`crate::resolve::ComputedLength`] (px scalar) で
+/// あり、`Length` を直接 match しないため wildcard arm ごと削除済
+/// (`layout.rs` の `preshape_text` doc "失敗しない" 節に経緯あり)。
+/// 実際 `crates/raikiri-dom` / `raikiri-paint` / `raikiri-html` /
+/// `raikiri-traits` は現状どこも `Length` を直接 match しない — 層分離後は
+/// すべて `crate::resolve` の `Computed*` 型 (`ComputedLength` /
+/// `ComputedLengthPercentage` / `ComputedLengthPercentageOrAuto` /
+/// `ComputedBorder`) を経由するため。上記の wildcard-arm 契約は
+/// **`Length` を直接 match する将来の downstream code に対して有効**であり、
+/// 現時点でこの契約を exercise している既存 site は無い (bd raikiri-spike-2x8
+/// で `crates/` 全体を再 grep して確認)。
 ///
 /// # Primary sources (§ title + anchor)
 ///
@@ -264,6 +278,95 @@ pub enum Length {
     /// Spec: CSS Values 4 §6.2 Absolute Lengths
     /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>).
     Pt(f32),
+    /// Font-relative length: `ex` — 使用要素の font の x-height に対する倍率。
+    /// `1ex` → `Ex(1.0)`。
+    ///
+    /// raikiri-style は style 層で実 font metrics を持たない (font shaping は
+    /// downstream) ため、spec の unknown-metric fallback が常に適用される —
+    /// CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#ex>) 原文: "In the cases where
+    /// it is impossible or impractical to determine the x-height, [...] a
+    /// value of 0.5em must be assumed." Resolve は `0.5 * font-size`
+    /// (bd raikiri-spike-2x8)。
+    Ex(f32),
+    /// Font-relative length: `rex` — root element の `ex` (root font の
+    /// x-height fallback) に対する倍率。`1rex` → `Rex(1.0)`。
+    ///
+    /// Spec: CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#rex>) — "Equal to the value of
+    /// the ex unit on the root element." [`Length::Ex`] と同じ fallback
+    /// (`0.5em`) を root font-size 基準で適用する。
+    Rex(f32),
+    /// Font-relative length: `ch` — 使用要素の font の "0" (U+0030) glyph の
+    /// advance measure に対する倍率。`1ch` → `Ch(1.0)`。
+    ///
+    /// CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#ch>) 原文: "In the cases where
+    /// it is impossible or impractical to determine the measure of the '0'
+    /// glyph, it must be assumed to be 0.5em wide by 1em tall. Thus, the ch
+    /// unit falls back to 0.5em in the general case, and to 1em when it
+    /// would be typeset upright (i.e. writing-mode is vertical-rl or
+    /// vertical-lr and text-orientation is upright)." raikiri-style は
+    /// `writing-mode` / `text-orientation` を未実装 (horizontal-tb 前提のみ)
+    /// なので upright 分岐は到達不能 — resolve は常に `0.5 * font-size`。
+    /// `writing-mode` 実装時に本判断の見直しが要る (bd raikiri-spike-2x8)。
+    Ch(f32),
+    /// Font-relative length: `rch` — root element の `ch` に対する倍率。
+    /// `1rch` → `Rch(1.0)`。
+    ///
+    /// Spec: CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#rch>) — "Equal to the value of
+    /// the ch unit on the root element." [`Length::Ch`] と同じ fallback
+    /// (`0.5em`、upright 分岐は同様に到達不能) を root font-size 基準で適用する。
+    Rch(f32),
+    /// Font-relative length: `ic` — 使用要素の font の CJK water ideograph
+    /// (U+6C34) glyph の advance measure に対する倍率。`1ic` → `Ic(1.0)`。
+    ///
+    /// CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#ic>) 原文: "In the cases where
+    /// it is impossible or impractical to determine the measure of the CJK
+    /// water ideograph glyph, the ic unit must fall back to 1em." resolve は
+    /// `1.0 * font-size` (real metrics 同様の理由で常に fallback、
+    /// [`Length::Ex`] doc 参照)。
+    Ic(f32),
+    /// Font-relative length: `ric` — root element の `ic` に対する倍率。
+    /// `1ric` → `Ric(1.0)`。
+    ///
+    /// Spec: CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#ric>) — "Equal to the value of
+    /// the ic unit on the root element." [`Length::Ic`] と同じ fallback
+    /// (`1em`) を root font-size 基準で適用する。
+    Ric(f32),
+    /// Absolute length: `cm` — centimeter。`1cm` → `Cm(1.0)`。
+    ///
+    /// Spec: CSS Values 4 §6.2 Absolute Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>) 換算表
+    /// verbatim: "1cm = 96px/2.54"。
+    Cm(f32),
+    /// Absolute length: `mm` — millimeter。`1mm` → `Mm(1.0)`。
+    ///
+    /// Spec: CSS Values 4 §6.2 Absolute Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>) 換算表
+    /// verbatim: "1mm = 1/10th of 1cm"。
+    Mm(f32),
+    /// Absolute length: `Q` — quarter-millimeter。`1Q` → `Q(1.0)`。
+    ///
+    /// Spec: CSS Values 4 §6.2 Absolute Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>) 換算表
+    /// verbatim: "1Q = 1/40th of 1cm"。
+    Q(f32),
+    /// Absolute length: `in` — inch。`1in` → `In(1.0)`、`96px` 相当。
+    ///
+    /// Spec: CSS Values 4 §6.2 Absolute Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>) 換算表
+    /// verbatim: "1in = 2.54cm = 96px"。
+    In(f32),
+    /// Absolute length: `pc` — pica。`1pc` → `Pc(1.0)`、`16px` 相当。
+    ///
+    /// Spec: CSS Values 4 §6.2 Absolute Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>) 換算表
+    /// verbatim: "1pc = 1/6th of 1in"。
+    Pc(f32),
 }
 
 /// `<length-percentage> | auto` — margin / width で共有される Author CSS seed
@@ -606,6 +709,29 @@ pub enum FontWeightValue {
     Lighter,
 }
 
+/// `font-size: larger | smaller` (`<relative-size>`) の keyword。
+/// [`PropertyValue::FontSizeRelative`] の payload。
+///
+/// CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop>。
+/// 解決は [`crate::cascade::resolve_relative_font_size`] — [`FontWeightValue::Bolder`]
+/// / [`FontWeightValue::Lighter`] と同型の、親の computed font-size に対する
+/// read-modify-write。
+///
+/// [`FontWeightValue`] と異なり `raikiri` (umbrella) の `pub use` list には
+/// 追加しない ([`PropertyValue::FontSizeRelative`] doc の「`Self::FontSize`
+/// を再利用せず新 variant にした理由」節を参照)。
+///
+/// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
+/// sibling [`FontWeightValue`] と同 pattern)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelativeFontSize {
+    /// `larger` — 親の computed font-size より 1 段大きいサイズ。
+    Larger,
+    /// `smaller` — 親の computed font-size より 1 段小さいサイズ。
+    Smaller,
+}
+
 /// `line-height` property の value (Author CSS seed for m4+ inline layout)。
 ///
 /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
@@ -745,6 +871,65 @@ pub enum ContentTextKeyword {
     FirstLetter,
 }
 
+/// `<quote>` production の 4 keyword。
+///
+/// CSS Content 3 §2.4.2 "Inserting Quotation Marks: the *-quote keywords"
+/// <https://www.w3.org/TR/css-content-3/#quote-values> verbatim production:
+/// `<quote> = open-quote | close-quote | no-open-quote | no-close-quote`。
+///
+/// spec 原文: [`OpenQuote`](Self::OpenQuote) / [`CloseQuote`](Self::CloseQuote)
+/// は "replaced by the appropriate string from the `quotes` property" かつ
+/// nesting depth を増減する。[`NoOpenQuote`](Self::NoOpenQuote) /
+/// [`NoCloseQuote`](Self::NoCloseQuote) は "insert nothing (as in none)" だが
+/// depth 増減のみ行う。実際の `quotes` property 引き (nesting depth → 文字列)
+/// は本 crate の static-side scope 外 — 下流 (raikiri-dom) が `quotes` の
+/// computed value と併せて runtime resolve する ([`CounterStyle`] /
+/// [`StringFetchMode`] と同じ「resolve は downstream 責務」の分担)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuoteKeyword {
+    /// `open-quote` — nesting depth を increment、対応する開き引用符 string
+    /// を挿入 (実際の文字列解決は downstream)。
+    OpenQuote,
+    /// `close-quote` — nesting depth を decrement、対応する閉じ引用符 string
+    /// を挿入。
+    CloseQuote,
+    /// `no-open-quote` — 何も挿入しないが nesting depth は `open-quote` と
+    /// 同様に increment する。
+    NoOpenQuote,
+    /// `no-close-quote` — 何も挿入しないが nesting depth は `close-quote` と
+    /// 同様に decrement する。
+    NoCloseQuote,
+}
+
+/// `leader()` の引数 `<leader-type> = dotted | solid | space | <string>`。
+///
+/// CSS Content 3 §2.5.1 "The leader() function"
+/// <https://www.w3.org/TR/css-content-3/#leader-function>。
+///
+/// spec 原文: `dotted` は "equivalent to `leader(".")`"、`solid` は
+/// "equivalent to `leader("_")`"、`space` は "equivalent to `leader(" ")`"。
+/// この等価性は **keyword の意味論の説明であって spelling の正規化指示ではない**
+/// ([`counter_style_from_ident`] が `decimal` keyword を `Named("decimal")` に
+/// 畳まず [`CounterStyle::Decimal`] という別 variant で保持するのと同じ
+/// precedent) — 3 keyword を個別 variant に保持し、実際の leader glyph
+/// 文字列への解決 (`Dotted` → `"."` 等) は downstream (paint) の rendering
+/// 責務とする。[`String`](Self::String) variant の custom leader 文字列は
+/// [`SmolStr`] で保持 ([`ContentComponent::Literal`] の d9y.1 SmolStr 化
+/// precedent と同じ、短寿命 clone を bump にする)。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LeaderType {
+    /// `dotted` — spec 上 `leader(".")` と等価 (rendering 解決は downstream)。
+    Dotted,
+    /// `solid` — spec 上 `leader("_")` と等価。
+    Solid,
+    /// `space` — spec 上 `leader(" ")` と等価。
+    Space,
+    /// `<string>` — author 指定の custom leader 文字列。
+    String(SmolStr),
+}
+
 /// [`parse_content_list_items`] の list vocabulary mode selector。
 ///
 /// CSS Content 3 §2 <https://www.w3.org/TR/css-content-3/#content-values> と
@@ -760,7 +945,10 @@ enum ContentListMode {
     /// CSS Content 3 §2 broad `<content-list>` — `content` property 用。
     /// 受理: `<string>` bare literal / `counter()` / `counters()` / `string()` /
     /// `attr()` / `target-counter()` / `target-counters()` / `target-text()` /
-    /// `content()`。
+    /// `content()` / `<image>` (`url()` alternative のみ、raikiri-spike-1us) /
+    /// `contents` keyword / `<quote>` (`open-quote` 等) / `leader()`。10 alt
+    /// full set (raikiri-spike-1us で image/contents/quote/leader を追加、
+    /// m5.1 由来の under-accept を解消)。
     CssContent3,
     /// CSS GCPM 3 §1.1.1 narrow local `<content-list>` — `string-set` 用。
     /// 受理: `<string>` bare literal / `counter()` / `counters()` / `content()` /
@@ -791,6 +979,9 @@ enum ContentListMode {
 ///   <https://www.w3.org/TR/css-content-3/#target-text>
 /// - Content: CSS GCPM 3 §1.1.1.1
 ///   <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> (raikiri-spike-5ri)
+/// - Image / Contents / Quote / Leader: CSS Content 3 §2.2 / §2.3 / §2.4.2 /
+///   §2.5.1 (raikiri-spike-1us、m5.1 由来 under-accept の fix — 末尾に追加、
+///   既存 variant の並びは互換性のため保持)
 ///
 /// URL は raw `String` として保持 (raikiri-style は `url` crate に依存しない —
 /// runtime resolve 段で `url::Url` へ parse する consumer 責務)。
@@ -891,6 +1082,74 @@ pub enum ContentComponent {
     /// content-list 内で受理される。keyword 省略時は spec default `Text`。
     /// runtime resolve は raikiri-dom 責務 (m5.1 wire-through pattern)。
     Content { keyword: ContentTextKeyword },
+    /// `<image>` (CSS Images 3 <https://www.w3.org/TR/css-images-3/#typedef-image>
+    /// `<image> = <url> | <gradient>`) — CSS Content 3 §2.2 "2D Images: the
+    /// `<image>` values" <https://www.w3.org/TR/css-content-3/#content-uri>。
+    /// spec 原文: "Represents an anonymous inline replaced element filled with
+    /// the specified `<image>`. If the `<image>` represents an invalid image,
+    /// this value instead represents nothing" (rendering 側の fallback は
+    /// downstream 責務)。
+    ///
+    /// **`<content-replacement>` との関係 (未反映、raikiri-spike-5hp8 送り)**:
+    /// `content` property 全体の value definition (CSS Content 3 §1
+    /// <https://www.w3.org/TR/css-content-3/#content-property>) は `normal |
+    /// none | [ <content-replacement> | <content-list> ] […]?` で、
+    /// `<content-replacement> = <image>` は `<content-list>` とは別の
+    /// top-level alternative — spec 原文 "Represents a *replaced element*"
+    /// で `::before`/`::after` 生成を抑制する等、上の list-item 版
+    /// `<image>` (anonymous inline replaced element) とは異なる semantics
+    /// を持つ。spec 原文は続けて "If the value of `<content-list>` is a
+    /// single `<image>`, it must instead be interpreted as a
+    /// `<content-replacement>`" とも述べており、本 variant の shape
+    /// (`Vec<ContentComponent>` の 1 要素が `Image` かどうか) は downstream
+    /// がこの区別を再構成するのに十分な情報を保持している — replacement
+    /// semantics 自体の実装 (pseudo-element 抑制含む) は本 crate の
+    /// static-side scope 外。
+    ///
+    /// **milestone subset (g04 category (b))**: `<url>` alternative のみ実装
+    /// (`url(...)` / `url("...")`)。`<gradient>` (`linear-gradient()` /
+    /// `repeating-linear-gradient()` / `radial-gradient()` /
+    /// `repeating-radial-gradient()`、CSS Images 3 §3.1-2) は gradient stop /
+    /// color-interpolation infra が本 crate に無く defer — raikiri-spike-1us
+    /// scope 外、追跡は follow-up task。CSS Images 4 で追加された `image()` /
+    /// `image-set()` / `element()` / `cross-fade()` / `paint()` は参照した
+    /// CSS Images **3** の `<image>` production に含まれないため g04 category
+    /// (a) spec-invalid (Level 3 準拠) — これらは function 名が
+    /// `parse_content_function` の match arm と一致せず自動的に drop される
+    /// ため追加コード不要。
+    ///
+    /// URL は raw `String` として保持 (sibling [`TargetCounter`](Self::TargetCounter)
+    /// 等と同じ convention、`url` crate 非依存)。
+    Image { url: String },
+    /// `contents` keyword — CSS Content 3 §2.3 "Elemental Content: the
+    /// `contents` keyword" <https://www.w3.org/TR/css-content-3/#element-content>。
+    /// spec 原文: "The element's descendants" — pseudo-element の生成有無や
+    /// 「既に他の pseudo-element で使用済みなら何もしない」という消費順序の
+    /// 解決は本 crate の static-side scope 外 (parse_content の docstring の
+    /// `normal`/`none` と同じ「生成判断は下流に委ねる」方針)。
+    ///
+    /// **`normal` との非対称性 (意図的)**: spec 原文 (§2.3) は "the initial
+    /// value of content is `normal` and `normal` computes to `contents` on an
+    /// element" と述べるが、[`parse_content`] は `normal` を (既存 `none` と
+    /// 同様) 空 `Vec` に畳んで保持する — computed-value 時の `normal` →
+    /// `contents` 展開は本 crate の static-side (specified 層) scope 外。した
+    /// がって author が明示的に書いた `content: contents` は `[Contents]` を
+    /// 返す一方、`content: normal` (initial value 相当) は `[]` を返す —
+    /// specified 層での「明示 vs 省略」の区別を保つための意図的非対称性で、
+    /// spec 違反ではない (computed-value 展開は downstream 責務)。
+    Contents,
+    /// `<quote>` (`open-quote` / `close-quote` / `no-open-quote` /
+    /// `no-close-quote`) — CSS Content 3 §2.4.2
+    /// <https://www.w3.org/TR/css-content-3/#quote-values>。詳細は
+    /// [`QuoteKeyword`] の doc を参照 (実際の引用符文字列解決は `quotes`
+    /// property の computed value と合わせて downstream が行う)。
+    Quote(QuoteKeyword),
+    /// `leader(<leader-type>)` — CSS Content 3 §2.5.1 "The leader() function"
+    /// <https://www.w3.org/TR/css-content-3/#leader-function>。詳細は
+    /// [`LeaderType`] の doc を参照。spec production `leader( <leader-type> )`
+    /// に `?` が無いため引数は必須 (bare `leader()` は spec-invalid → parse 失敗
+    /// = declaration drop)。
+    Leader(LeaderType),
 }
 
 /// `display` property の value。
@@ -1091,14 +1350,15 @@ pub enum PositionValue {
 /// property name → variant mapping は `parse_value` 参照)。
 ///
 /// 認識できない property (例: `float` — 現行 milestone subset 外) や
-/// invalid value (例: `font-size: medium` — `<absolute-size>` keyword 未対応 /
-/// `margin-top: 1cm` — `cm` unit 未対応) は parser 段で `None` に
-/// 落として rule から silently 除外される。
+/// invalid value (例: `font-size: math` — MathML scaling algorithm 未実装
+/// (bd raikiri-spike-0vv.18) / `margin-top: 1cm` — `cm` unit 未対応) は
+/// parser 段で `None` に落として rule から silently 除外される。
 ///
 /// **box property は「認識できない」側ではない** — `margin` / `padding` /
 /// `border-*` / `width` / `height` はいずれも認識対象で、下記に variant を持つ
-/// (bd raikiri-spike-0vv.5 / .6 / .10 / .11 / .12)。`font-size: 1em` 等の
-/// font-relative unit も bd raikiri-spike-zls8 以降は valid である。
+/// (bd raikiri-spike-0vv.5 / .6 / .10 / .11 / .12)。`font-size: 1em` /
+/// `font-size: medium` / `font-size: larger` も bd raikiri-spike-zls8 /
+/// raikiri-spike-4rmu 以降は valid である。
 /// **例を差し替えるときは sibling の [`crate::rule`] の
 /// `drops_invalid_property_and_value` と揃えること** — 両者は同じ milestone
 /// subset を説明しており、あちらだけ更新されて本 doc が取り残される drift が
@@ -1146,8 +1406,61 @@ pub enum PropertyValue {
     BackgroundColor(CssColor),
     /// `font-family: <family-name>#` — inherited、initial: `[Atom::from("serif")]`。
     FontFamily(Vec<Atom>),
-    /// `font-size: <length>` — inherited、initial: 16px。
+    /// `font-size: <absolute-size> | <length-percentage [0,∞]>` — inherited、
+    /// initial: 16px (= `medium`)。CSS Fonts 4 §2.5
+    /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>。
+    ///
+    /// `<absolute-size>` (`xx-small` … `xxx-large`、`medium`) は親に依存しない
+    /// 固定値なので、[`parse_font_size`] が §2.5.1 の scaling-factor table
+    /// (<https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping>) を parse
+    /// 時点で `medium` (16px) 基準の `Length::Px` へ解決し尽くす
+    /// (raikiri-spike-4rmu)。`<relative-size>` (`larger` / `smaller`) は
+    /// 継承先依存のため別 variant ([`Self::FontSizeRelative`]) を持つ —
+    /// 理由は同 variant の doc を参照。`math` keyword は g04 category (b)
+    /// milestone subset (bd raikiri-spike-0vv.18、MathML scaling algorithm が
+    /// 丸ごと未実装) として `parse_font_size` が `None` に落とす。
     FontSize(Length),
+    /// `font-size: <relative-size>` (`larger` / `smaller`) — inherited、
+    /// [`Self::FontSize`] と同じ `font-size` property の一部。CSS Fonts 4 §2.5
+    /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>。
+    ///
+    /// # `Self::FontSize(Length)` を再利用せず新 variant にした理由
+    ///
+    /// `bolder` / `lighter` (`font-weight`) と同型の親依存 read-modify-write が
+    /// 必要 — 素朴には [`FontWeightValue`] 同様「`FontSize` の payload 型を
+    /// keyword を持てる enum に差し替える」設計が対称だが、`PropertyValue` は
+    /// `raikiri` (umbrella) crate が re-export しており、
+    /// `crates/raikiri/tests/build_cascaded.rs` の
+    /// `umbrella_re_exports_cover_computed_value_types_and_parse_options_fields`
+    /// が `PropertyValue::FontSize(Length::Px(12.0))` の construction を
+    /// **意図的に compile-time pin** している (umbrella re-export list の
+    /// rationale、`crates/raikiri/src/lib.rs` 該当 comment 参照)。
+    /// `FontSize` の payload 型を変えるとこの pin が割れ、
+    /// `crates/raikiri` 側の修正を要求する = wall/umbrella 相当の破壊的変更に
+    /// なる (bd raikiri-spike-q3f の `Content`/`StringSet` payload 変更が
+    /// 同種の前例)。
+    ///
+    /// `PropertyValue` は `#[non_exhaustive]` なので **新 variant の追加**は
+    /// 既存 tuple constructor 呼び出しを一切壊さない (enum-level
+    /// `#[non_exhaustive]` の doc 参照) — そのため `FontSize` の型はそのまま
+    /// 残し、`larger` / `smaller` 用に本 variant を追加する。[`RelativeFontSize`]
+    /// は [`FontWeightValue`] と異なり `raikiri` (umbrella) の `pub use` list
+    /// には**含めない** — 同 list に無い [`FontWeightValue`] と同じ非対称を
+    /// 踏襲する (raikiri-style へ直接 dep する consumer のみ名指し可能)。
+    ///
+    /// # 解決タイミング
+    ///
+    /// `bolder` / `lighter` と同じく [`crate::cascade::apply_value`] が
+    /// 親の computed font-size (staging 上は上書き前の
+    /// `SpecifiedValues::font_size`、D5 invariant により常に
+    /// `Length::Px(親の px)`) から絶対値へ解決し、結果を
+    /// [`Self::FontSize`] 形 (`Length::Px`) で `target.font_size` に格納する —
+    /// variant 自体は cascade winner の一時的な表現に留まり、
+    /// [`crate::specified::SpecifiedValues`] 以降には残らない。page 経路は
+    /// [`crate::cascade::resolve_against_inherited`] が同じ解決を行い、
+    /// [`crate::page::PageCascadeResult::declarations`] に届く時点では
+    /// 同じく [`Self::FontSize`] (`Length::Px`) に収束している。
+    FontSizeRelative(RelativeFontSize),
     /// `font-weight: <font-weight-absolute> | bolder | lighter` — inherited、
     /// initial: `Absolute(400)`。CSS Fonts 4 §2.2
     /// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop>。
@@ -1589,6 +1902,11 @@ impl PropertyValue {
             PropertyValue::BackgroundColor(_) => PropertyKey::BackgroundColor,
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
             PropertyValue::FontSize(_) => PropertyKey::FontSize,
+            // `larger` / `smaller` は `font-size` と同じ property — 同じ
+            // `PropertyKey` に落とすことで cascade winner selection が
+            // `font-size: 12px` と `font-size: larger` を正しく競合させる
+            // (別 key にすると spec 上ありえない「両方勝つ」が起きる)。
+            PropertyValue::FontSizeRelative(_) => PropertyKey::FontSize,
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
             PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
             PropertyValue::Display(_) => PropertyKey::Display,
@@ -1642,7 +1960,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // (raikiri-spike-0vv.7)
         "background-color" => parse_color(input).map(PropertyValue::BackgroundColor),
         "font-family" => parse_font_family(input).map(PropertyValue::FontFamily),
-        "font-size" => parse_font_size(input).map(PropertyValue::FontSize),
+        "font-size" => parse_font_size(input),
         "font-weight" => parse_font_weight(input).map(PropertyValue::FontWeight),
         // CSS Inline 3 §5.1 line-height (raikiri-spike-0vv.9)。
         // `normal` / `<number [0,∞]>` / `<length-percentage [0,∞]>` を受理、
@@ -2093,7 +2411,30 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             "em" => Some(Length::Em(*value)),
             "rem" => Some(Length::Rem(*value)),
             "pt" => Some(Length::Pt(*value)),
-            // (b) milestone subset — 他 CSS Values 4 unit は未対応、silent drop。
+            // Additional font-relative units (CSS Values 4 §6.1.1) —
+            // bd raikiri-spike-2x8. `ex`/`ch`/`ic` の real-metric variant は
+            // style 層に font metrics が無いため常に spec fallback を使う
+            // ([`Length::Ex`] / [`Length::Ch`] / [`Length::Ic`] の doc 参照)。
+            "ex" => Some(Length::Ex(*value)),
+            "rex" => Some(Length::Rex(*value)),
+            "ch" => Some(Length::Ch(*value)),
+            "rch" => Some(Length::Rch(*value)),
+            "ic" => Some(Length::Ic(*value)),
+            "ric" => Some(Length::Ric(*value)),
+            // Additional absolute units (CSS Values 4 §6.2) —
+            // bd raikiri-spike-2x8. `unit` は `to_ascii_lowercase()` 済 —
+            // `Q` トークンも `"q"` として届く。
+            "cm" => Some(Length::Cm(*value)),
+            "mm" => Some(Length::Mm(*value)),
+            "q" => Some(Length::Q(*value)),
+            "in" => Some(Length::In(*value)),
+            "pc" => Some(Length::Pc(*value)),
+            // (b) milestone subset — viewport-relative unit (`vw`/`vh`/…) と
+            // `cap`/`rcap`/`lh`/`rlh` は未対応、silent drop。両者とも specified
+            // 層だけでは正しく resolve できない (viewport size / font ascent /
+            // 「line-height: normal を絶対長化する font metrics」が style 層に
+            // 存在しない) ため follow-up bd issue へ spinout 済 (bd
+            // raikiri-spike-vxha、raikiri-spike-2x8 discovered-from)。
             _ => None,
         },
         Token::Percentage { unit_value, .. } if allow_percentage => {
@@ -2109,6 +2450,47 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
         // CSS Values 3 §5 unitless-zero clause (doc "# Unitless zero" 参照)。
         Token::Number { value, .. } if *value == 0.0 => Some(Length::Px(0.0)),
         _ => None,
+    }
+}
+
+/// [`Length`] の authored payload (`f32`) を variant によらず取り出す。
+///
+/// `parse_width` / `parse_font_size` / `parse_padding_side` /
+/// `parse_border_width_side` / `parse_height` / `parse_line_height` は grammar
+/// の `[0,∞]` non-negative constraint を "全 variant の payload を取り出して
+/// `>= 0.0` を確認" という同一 pattern で parse-time enforce する
+/// (`parse_length_value` 自体は sign check しない仕様 — 同関数の "Sign / range"
+/// doc 参照)。
+///
+/// 本 helper 導入前は 6 call site それぞれが `Length::Px(v) | Length::Em(v) |
+/// … => v` の OR-pattern を個別に持っていた。bd raikiri-spike-2x8 で
+/// [`Length`] が 5 → 16 variant に増える際、6 site 全てを手で拡張すると
+/// 1 か所でも変数を書き漏らした variant が非負チェックを素通りする
+/// (実際 2 site — `parse_border_width_side` / `parse_line_height` — は
+/// `_ => None` catch-all を持っていたため、拡張漏れは compile error にならず
+/// 黙って新 unit を reject し続ける fail-quiet になっていた)。本 helper は
+/// **exhaustive match を 1 か所に集約**することで、新 variant 追加時に
+/// compile error で全 call site の見直しを強制する — bd raikiri-spike-ier4
+/// §4.5 が指摘した「拡張のたびに N site 分の負債が乗る」パターンをこの関数の
+/// 内側だけに閉じ込める。
+fn length_payload(length: Length) -> f32 {
+    match length {
+        Length::Px(v)
+        | Length::Em(v)
+        | Length::Rem(v)
+        | Length::Percent(v)
+        | Length::Pt(v)
+        | Length::Ex(v)
+        | Length::Rex(v)
+        | Length::Ch(v)
+        | Length::Rch(v)
+        | Length::Ic(v)
+        | Length::Ric(v)
+        | Length::Cm(v)
+        | Length::Mm(v)
+        | Length::Q(v)
+        | Length::In(v)
+        | Length::Pc(v) => v,
     }
 }
 
@@ -2233,23 +2615,35 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     }
     let length = parse_length_value(input, true)?;
     // spec §3.1.1 grammar `<length-percentage [0,∞]>` の non-negative constraint
-    // (padding と同 pattern の全 variant OR-pattern check、raikiri-spike-0vv.6
+    // (padding と同 pattern、[`length_payload`] 経由、raikiri-spike-0vv.6
     // precedent)。
-    let v = match length {
-        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
-    };
-    (v >= 0.0).then_some(LengthOrAuto::Length(length))
+    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
-/// `font-size: <length-percentage [0,∞]>` を parse する。
+/// `font-size: <absolute-size> | <relative-size> | <length-percentage [0,∞]> |
+/// math` を parse する。
 ///
 /// Grammar (CSS Fonts 4 §2.5 "Font size: the font-size property"
 /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>):
 /// `<absolute-size> | <relative-size> | <length-percentage [0,∞]> | math`。
-/// 本実装が受理するのは **non-negative `<length-percentage>`** のみ —
-/// `<absolute-size>` (`medium` / `large` …) / `<relative-size>`
-/// (`larger` / `smaller`) / `math` は g04 category (b) milestone subset として
-/// 未対応 (`parse_length_value` が ident token を `None` に落とす)。
+///
+/// - `<absolute-size>` (`xx-small` … `xxx-large`、`medium`) — [`parse_font_size_keyword`]
+///   が §2.5.1 の scaling-factor table を `medium` = 16px 基準で解決し、
+///   [`PropertyValue::FontSize`] (`Length::Px`) を返す。
+/// - `<relative-size>` (`larger` / `smaller`) — 継承先依存のため
+///   [`PropertyValue::FontSizeRelative`] を返し、解決は
+///   [`crate::cascade::apply_value`] / [`crate::cascade::resolve_against_inherited`]
+///   に委ねる (詳細は同 variant の doc)。
+/// - `<length-percentage [0,∞]>` — 本関数の後半、[`parse_length_value`] 経由。
+/// - `math` — g04 category (b) milestone subset (bd raikiri-spike-0vv.18、
+///   MathML scaling algorithm が丸ごと未実装) として `None` に落とす。
+///
+/// # ident 分岐を先に `try_parse` する理由
+///
+/// `<absolute-size>` / `<relative-size>` / `math` はいずれも単一 ident token。
+/// [`parse_margin_side`] の `auto` 分岐と同じ pattern — [`parse_length_value`]
+/// は内部で `input.next()` を unconditional に消費するため、ident 分岐は
+/// checkpoint 経由の rewind (`try_parse`) で先に試す必要がある。
 ///
 /// # `em` / `rem` / `%` / `pt` を受理するようになった経緯 (bd raikiri-spike-zls8)
 ///
@@ -2264,14 +2658,66 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// # Non-negative constraint
 ///
 /// grammar の `[0,∞]` を parse-time enforce する。[`parse_padding_side`] /
-/// [`parse_width`] と同じ全 [`Length`] variant OR-pattern check — `-5px` だけで
-/// なく `-50%` / `-1em` も drop する。
-fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
+/// [`parse_width`] と同じ [`length_payload`] 経由の全 [`Length`] variant check
+/// — `-5px` だけでなく `-50%` / `-1em` も drop する。`<absolute-size>` /
+/// `<relative-size>` は grammar 上そもそも符号を持たないので本 constraint の
+/// 対象外 (ident 分岐は `parse_length_value` に達する前に return する)。
+fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
+        return parse_font_size_keyword(&ident);
+    }
     let length = parse_length_value(input, true)?;
-    let v = match length {
-        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
+    (length_payload(length) >= 0.0).then_some(PropertyValue::FontSize(length))
+}
+
+/// `<absolute-size>` / `<relative-size>` / `math` の ident 部分を parse する
+/// ([`parse_font_size`] の helper)。
+///
+/// # `<absolute-size>` scaling-factor table
+///
+/// CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping Table"
+/// <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> 原文の表を
+/// **そのまま**写す (`resolve_relative_weight` の "算術式で書いてはいけない"
+/// 方針と同じ理由 — 分数のまま持つことで丸め誤差の議論を spec 引用だけで
+/// 閉じられる)。`medium` は raikiri の固定基準
+/// ([`crate::computed::INITIAL_FONT_SIZE_PX`] = 16px、
+/// [`crate::specified::SpecifiedValues::initial`] doc 参照) を再利用する:
+///
+/// | keyword | xx-small | x-small | small | medium | large | x-large | xx-large | xxx-large |
+/// |---|---|---|---|---|---|---|---|---|
+/// | factor | 3/5 | 3/4 | 8/9 | 1 | 6/5 | 3/2 | 2/1 | 3/1 |
+///
+/// 同 §の "an UA applying these guidelines should nevertheless avoid creating
+/// font sizes of less than 9 device pixels per EM unit" は "should" (RFC 2119
+/// 弱勧告)。本 table の最小値は `xx-small` = `16 * 3/5 = 9.6px` で、9px の
+/// 下限を上回るため clamp は不要 (実装しない理由は「未対応」ではなく
+/// 「`medium` = 16px 基準ではこの guideline を最初から満たす」こと)。
+///
+/// # `<relative-size>`
+///
+/// [`RelativeFontSize`] doc 参照。
+///
+/// # `math`
+///
+/// bd raikiri-spike-0vv.18 (g04 category (b))。
+fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
+    const MEDIUM_PX: f32 = crate::computed::INITIAL_FONT_SIZE_PX;
+    let px = match ident.to_ascii_lowercase().as_str() {
+        "xx-small" => MEDIUM_PX * (3.0 / 5.0),
+        "x-small" => MEDIUM_PX * (3.0 / 4.0),
+        "small" => MEDIUM_PX * (8.0 / 9.0),
+        "medium" => MEDIUM_PX,
+        "large" => MEDIUM_PX * (6.0 / 5.0),
+        "x-large" => MEDIUM_PX * (3.0 / 2.0),
+        "xx-large" => MEDIUM_PX * (2.0 / 1.0),
+        "xxx-large" => MEDIUM_PX * (3.0 / 1.0),
+        "larger" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger)),
+        "smaller" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Smaller)),
+        // `math` はここに落ちる (spec-valid だが g04 (b) 未対応、bd raikiri-spike-0vv.18)。
+        // 未知 ident も同じく drop。
+        _ => return None,
     };
-    (v >= 0.0).then_some(length)
+    Some(PropertyValue::FontSize(Length::Px(px)))
 }
 
 /// `padding-{top,right,bottom,left}` の single-side value を parse する。
@@ -2286,15 +2732,20 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
 /// 1. [`parse_length_value`] を `allow_percentage=true` で呼ぶ (grammar が
 ///    `<length-percentage>`)。dimension 未対応 unit / `auto` keyword / non-numeric
 ///    token は同 helper が `None` に落とす (font-size 経路と同 pattern)。
-/// 2. 全 [`Length`] variant (`Px` / `Em` / `Rem` / `Percent` / `Pt`) の payload
-///    に対し `>= 0.0` を確認、負値は `None` 返し (`Percent(-10.0)` = `-10%`
-///    も含む — Verification #5 で pin)。
+/// 2. 全 [`Length`] variant の payload ([`length_payload`] 経由) に対し
+///    `>= 0.0` を確認、負値は `None` 返し (`Percent(-10.0)` = `-10%` も含む —
+///    Verification #5 で pin)。
 ///
 /// # Sibling pattern
 ///
-/// [`parse_font_size`] と **同形** — どちらも `allow_percentage=true` で
-/// [`parse_length_value`] を呼び、全 [`Length`] variant の payload を OR-pattern で
-/// 抽出して `>= 0.0` を post-filter する (body は現在 identical)。
+/// [`parse_font_size`] の `<length-percentage>` 分岐 (ident 分岐で `None` に
+/// なった後の tail) と同形 — どちらも `allow_percentage=true` で
+/// [`parse_length_value`] を呼び、[`length_payload`] で全 [`Length`] variant の
+/// payload を抽出して `>= 0.0` を post-filter する (tail 部分の body は
+/// identical)。`parse_font_size` は raikiri-spike-4rmu で `<absolute-size>` /
+/// `<relative-size>` / `math` の ident 分岐 (`parse_font_size_keyword`) が
+/// 前段に付いたため関数全体としては同形ではなくなったが、この tail 部分の
+/// ロジックは identical。
 ///
 /// 両者が非対称だった時期 (font-size が `<length>` px-only milestone で、padding
 /// だけが `<length-percentage>` の 5 variant を受けていた頃) の記述は
@@ -2302,11 +2753,7 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
 fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
     // spec (CSS Box 3) §4.1: "Negative values for padding properties are invalid."。
-    // 全 variant の payload を OR-pattern で抽出し `>= 0.0` を確認、負値 → drop。
-    let v = match length {
-        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
-    };
-    (v >= 0.0).then_some(length)
+    (length_payload(length) >= 0.0).then_some(length)
 }
 
 /// `padding: <'padding-top'>{1,4}` shorthand を [`Sides<Length>`] に expand する。
@@ -2423,14 +2870,12 @@ fn parse_border_width_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     // 2. `<length [0,∞]>` — allow_percentage=false で `<length>` mode
     //    (Percentage token は reject される、`<percentage>` は grammar 外)。
     let length = parse_length_value(input, false)?;
-    // spec `<length [0,∞]>` の non-negative constraint — 全 unit-bearing variant
-    // (Px / Em / Rem / Pt) の inner f32 を check。Percent は `allow_percentage=false`
-    // により到達し得ないため OR-pattern から除外 (defensive `_ => None` fallback
-    // を残しても実質 dead-arm、直接 4 variant を列挙して意図を明示)。
-    match length {
-        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Pt(v) if v >= 0.0 => Some(length),
-        _ => None,
-    }
+    // spec `<length [0,∞]>` の non-negative constraint — [`length_payload`] は
+    // `Percent` も含む全 variant に対して定義されているが、`Percent` は
+    // `allow_percentage=false` により本関数へは到達し得ない (unreachable、
+    // dead value であって dead code ではない — helper 自体は border-width
+    // 専用ではないため分岐を割ることはしない)。
+    (length_payload(length) >= 0.0).then_some(length)
 }
 
 /// [`parse_border_width_side`] の `Result` 版 — `try_parse` は closure 内で
@@ -2642,8 +3087,8 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
 ///
 /// # Non-negative filter (sibling: [`parse_padding_side`])
 ///
-/// spec `<length-percentage [0,∞]>` (§3.1.1) の非負制約は全 [`Length`] variant
-/// (`Px` / `Em` / `Rem` / `Percent` / `Pt`) の payload に対し `>= 0.0` を確認 —
+/// spec `<length-percentage [0,∞]>` (§3.1.1) の非負制約は [`length_payload`]
+/// 経由で全 [`Length`] variant の payload に対し `>= 0.0` を確認 —
 /// [`parse_padding_side`] の同名 pattern を踏襲 (`<length-percentage [0,∞]>`
 /// grammar と非負フィルタが対応する 37n sibling)。`Percent(-10.0)` = `-10%` も
 /// 含めて全 variant 経由で reject する。
@@ -2652,12 +3097,9 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         return Some(LengthOrAuto::Auto);
     }
     let length = parse_length_value(input, true)?;
-    // spec §3.1.1: <length-percentage [0,∞]>。全 variant の payload を OR-pattern
-    // で抽出し `>= 0.0` を確認、負値 → drop (parse_padding_side の同 pattern)。
-    let v = match length {
-        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v) => v,
-    };
-    (v >= 0.0).then_some(LengthOrAuto::Length(length))
+    // spec §3.1.1: <length-percentage [0,∞]>。負値 → drop (parse_padding_side
+    // の同 pattern)。
+    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
 /// `line-height: normal | <number> | <length-percentage>` を parse する。
@@ -2724,19 +3166,12 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
         // spec `<number [0,∞]>` 違反 → declaration drop (Length branch へ落とさない)。
         return (n >= 0.0).then_some(LineHeight::Number(n));
     }
-    // 3. `<length-percentage [0,∞]>` — helper で 5 unit + `%` を受理、
+    // 3. `<length-percentage [0,∞]>` — helper で全 unit + `%` を受理、
     //    negative は post-filter で drop (helper 自体は sign check しない仕様、
     //    parse_length_value doc "Sign / range" 参照)。
     let l = parse_length_value(input, true)?;
-    match l {
-        Length::Px(v) | Length::Em(v) | Length::Rem(v) | Length::Percent(v) | Length::Pt(v)
-            if v >= 0.0 =>
-        {
-            Some(LineHeight::Length(l))
-        }
-        // spec `[0,∞]`: 負値は grammar 違反 → declaration drop。
-        _ => None,
-    }
+    // spec `[0,∞]`: 負値は grammar 違反 → declaration drop。
+    (length_payload(l) >= 0.0).then_some(LineHeight::Length(l))
 }
 
 /// `font-weight: <font-weight-absolute> | bolder | lighter` を parse する。
@@ -3000,26 +3435,35 @@ fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
 
 /// `<content-list>` の items+ loop 部分。
 ///
-/// `<string>` bare literal と function token (`counter(...)` / `string(...)` /
-/// `target-*()` / `attr(...)` / `content(...)`) を順次 peel。認識できない
-/// token に当たった時点で break — 呼び出し側が leftover を検知して drop する。
+/// `<string>` bare literal、`<image>` の `<url>` alternative、bare keyword
+/// (`contents` / `<quote>`)、function token (`counter(...)` / `string(...)` /
+/// `target-*()` / `attr(...)` / `content(...)` / `leader(...)`) を順次 peel。
+/// 認識できない token に当たった時点で break — 呼び出し側が leftover を検知
+/// して drop する。
 ///
 /// `content` property (`parse_content`) と `string-set` property
 /// (`parse_string_set`) の両方から call されるが、GCPM 3 §1.1.1 は string-set
 /// 向けに CSS Content 3 §2 の broad list を narrower に再定義しているため、
-/// `mode` パラメータで受理 function 集合を分岐する:
+/// `mode` パラメータで受理 alternative 集合を分岐する:
 /// - [`ContentListMode::CssContent3`] — content property (CSS Content 3 §2
-///   <https://www.w3.org/TR/css-content-3/#content-values>)。全 8 function を受理。
+///   <https://www.w3.org/TR/css-content-3/#content-values>)。10 alt full set
+///   を受理 (raikiri-spike-1us で `<image>` / `contents` / `<quote>` /
+///   `leader()` を追加)。
 /// - [`ContentListMode::GcpmStringSet`] — string-set property (CSS GCPM 3
-///   §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>)。`string()` と
-///   `target-counter()` / `target-counters()` / `target-text()` は spec grammar
+///   §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>)。`string()` /
+///   `target-counter()` / `target-counters()` / `target-text()` / `<image>` /
+///   `contents` / `<quote>` / `leader()` は GCPM 3 §1.1.1 L82 narrow grammar
 ///   に含まれず reject (bare `<string>` literal は両 mode で受理)。
 ///
 /// bare literal 分岐は spec 上両 mode で共通 (どちらの `<content-list>` grammar
-/// も `<string>` を top-level alternative に含む) なので mode 判定なし。分岐は
-/// [`parse_content_function`] の match arm で mode guard を掛ける。
+/// も `<string>` を top-level alternative に含む) なので mode 判定なし。他の
+/// 分岐は各 branch 内で mode guard を掛ける ([`parse_content_function`] の
+/// match arm guard と同じ pattern)。`Parser::try_parse` は失敗時に読んだ token
+/// を必ず rewind するため、branch の試行順序は正しさに影響しない
+/// (どの順で並べても等価)。
 ///
-/// (raikiri-spike-m5.1 で導入、raikiri-spike-6s1 で mode-parameterize)
+/// (raikiri-spike-m5.1 で導入、raikiri-spike-6s1 で mode-parameterize、
+/// raikiri-spike-1us で `<image>` / `contents` / `<quote>` / `leader()` 追加)
 fn parse_content_list_items(
     input: &mut Parser<'_, '_>,
     mode: ContentListMode,
@@ -3031,8 +3475,33 @@ fn parse_content_list_items(
             items.push(ContentComponent::Literal(SmolStr::new(s.as_ref())));
             continue;
         }
-        // function — mode に応じて `string()` / `target-*()` を reject する
-        // 判定は `parse_content_function` の match arm side で実施。
+        // `<image>` の `<url>` alternative — CSS Images 3 <url> production
+        // (`url(...)` / `url("...")`) のみ (`<gradient>` は milestone subset
+        // defer、`ContentComponent::Image` doc 参照)。`expect_url` は bare
+        // quoted string を受理しない (`<url> = <url()> | <src()>`) ので上の
+        // literal 分岐との誤 overlap は無い。CssContent3 mode 限定
+        // (GCPM 3 §1.1.1 L82 narrow list に `<image>` は含まれない)。
+        if mode == ContentListMode::CssContent3
+            && let Ok(url) = input.try_parse(|i| i.expect_url())
+        {
+            items.push(ContentComponent::Image {
+                url: url.as_ref().to_string(),
+            });
+            continue;
+        }
+        // bare keyword alternative — `contents` / `<quote>` (function でも
+        // `<string>` でもない ident-only alternative)。CssContent3 mode 限定。
+        if mode == ContentListMode::CssContent3
+            && let Ok(c) = input.try_parse(|i| -> Result<ContentComponent, ParseError<'_, ()>> {
+                let ident = i.expect_ident()?.clone();
+                parse_content_bare_keyword(ident.as_ref()).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            items.push(c);
+            continue;
+        }
+        // function — mode に応じて `string()` / `target-*()` / `leader()` を
+        // reject する判定は `parse_content_function` の match arm side で実施。
         let parsed = input.try_parse(|i| -> Result<ContentComponent, ParseError<'_, ()>> {
             let name = i.expect_function()?.clone();
             i.parse_nested_block(|inner| {
@@ -3046,6 +3515,22 @@ fn parse_content_list_items(
         }
     }
     items
+}
+
+/// `contents` keyword と `<quote>` (`open-quote` / `close-quote` /
+/// `no-open-quote` / `no-close-quote`) の bare-ident alternative をまとめて
+/// 判定する ([`parse_content_list_items`] 専用 helper)。CSS Content 3 §2.3
+/// <https://www.w3.org/TR/css-content-3/#element-content> および §2.4.2
+/// <https://www.w3.org/TR/css-content-3/#quote-values>。
+fn parse_content_bare_keyword(ident: &str) -> Option<ContentComponent> {
+    match ident.to_ascii_lowercase().as_str() {
+        "contents" => Some(ContentComponent::Contents),
+        "open-quote" => Some(ContentComponent::Quote(QuoteKeyword::OpenQuote)),
+        "close-quote" => Some(ContentComponent::Quote(QuoteKeyword::CloseQuote)),
+        "no-open-quote" => Some(ContentComponent::Quote(QuoteKeyword::NoOpenQuote)),
+        "no-close-quote" => Some(ContentComponent::Quote(QuoteKeyword::NoCloseQuote)),
+        _ => None,
+    }
 }
 
 /// `string-set: none | [ <custom-ident> <content-list> ]#` を parse する
@@ -3130,10 +3615,15 @@ fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<Cont
 ///   では全 arm を許可。
 /// - [`ContentListMode::GcpmStringSet`] (`string-set` property, CSS GCPM 3
 ///   §1.1.1) では `string` / `target-counter` / `target-counters` /
-///   `target-text` arm を match guard で外し fall-through で `None` を返す
-///   (= declaration drop、caller の `parse_string_set` が `<content-list>` 0
-///   items → `None`)。`counter` / `counters` / `content` / `attr` は両 mode で
-///   spec grammar に含まれるため gate なし。
+///   `target-text` / `leader` arm を match guard で外し fall-through で `None`
+///   を返す (= declaration drop、caller の `parse_string_set` が
+///   `<content-list>` 0 items → `None`)。`counter` / `counters` / `content` /
+///   `attr` は両 mode で spec grammar に含まれるため gate なし。
+///
+/// `<image>` (`url()`) / `contents` / `<quote>` は function 名 dispatch では
+/// なく [`parse_content_list_items`] 側の bare-token branch で扱う (`<image>`
+/// は url token、`contents`/`<quote>` は bare ident であり `expect_function`
+/// にヒットしないため)。
 ///
 /// 各 `parse_*_fn` は自身では `expect_exhausted` を呼ばない —
 /// [`parse_content`] 側の `parse_nested_block` が内部で
@@ -3159,6 +3649,7 @@ fn parse_content_function(
             parse_target_text_fn(input)
         }
         "content" => parse_content_fn(input),
+        "leader" if matches!(mode, ContentListMode::CssContent3) => parse_leader_fn(input),
         _ => None,
     }
 }
@@ -3451,6 +3942,30 @@ fn parse_content_text_keyword(input: &mut Parser<'_, '_>) -> Option<ContentTextK
         "before" => Some(ContentTextKeyword::Before),
         "after" => Some(ContentTextKeyword::After),
         "first-letter" => Some(ContentTextKeyword::FirstLetter),
+        _ => None,
+    }
+}
+
+/// `leader(<leader-type>)`。CSS Content 3 §2.5.1 "The leader() function"
+/// <https://www.w3.org/TR/css-content-3/#leader-function>。spec production
+/// `leader( <leader-type> )` に `?` が無いため引数は必須
+/// (`parse_leader_type` 失敗 = declaration drop、`leader()` 単体は spec-invalid)。
+fn parse_leader_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    let leader_type = parse_leader_type(input)?;
+    Some(ContentComponent::Leader(leader_type))
+}
+
+/// `<leader-type> = dotted | solid | space | <string>`。[`LeaderType`] の doc
+/// も参照 (keyword を正規化せず個別 variant で保持する rationale)。
+fn parse_leader_type(input: &mut Parser<'_, '_>) -> Option<LeaderType> {
+    if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
+        return Some(LeaderType::String(SmolStr::new(s.as_ref())));
+    }
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "dotted" => Some(LeaderType::Dotted),
+        "solid" => Some(LeaderType::Solid),
+        "space" => Some(LeaderType::Space),
         _ => None,
     }
 }
@@ -3952,13 +4467,93 @@ mod tests {
         );
     }
 
-    /// `<absolute-size>` (`medium` 等) / `<relative-size>` (`larger` /
-    /// `smaller`) / `math` は spec-valid だが (b) milestone subset として未対応。
+    /// `math` は spec-valid だが g04 category (b) milestone subset
+    /// (bd raikiri-spike-0vv.18、MathML scaling algorithm 未実装) として drop。
+    /// `<absolute-size>` / `<relative-size>` は raikiri-spike-4rmu で受理済み —
+    /// 別 test (`font_size_accepts_absolute_size_keywords` /
+    /// `font_size_accepts_relative_size_keywords`) 参照。
     #[test]
-    fn font_size_rejects_size_keywords() {
-        assert_eq!(parse("medium", "font-size"), None);
-        assert_eq!(parse("larger", "font-size"), None);
+    fn font_size_rejects_math_keyword() {
         assert_eq!(parse("math", "font-size"), None);
+    }
+
+    /// CSS Fonts 4 §2.5.1 <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping>
+    /// の scaling-factor table 全 8 keyword。`medium` = raikiri の固定基準
+    /// (16px) そのもの、他は table の分数を掛けたもの
+    /// (`resolve_relative_weight` 前例に倣い浮動小数 literal ではなく分数式で
+    /// 期待値を書く — 丸め誤差の議論を spec 引用だけで閉じるため)。
+    #[test]
+    fn font_size_accepts_absolute_size_keywords() {
+        const MEDIUM: f32 = 16.0;
+        let cases: &[(&str, f32)] = &[
+            ("xx-small", MEDIUM * (3.0 / 5.0)),
+            ("x-small", MEDIUM * (3.0 / 4.0)),
+            ("small", MEDIUM * (8.0 / 9.0)),
+            ("medium", MEDIUM),
+            ("large", MEDIUM * (6.0 / 5.0)),
+            ("x-large", MEDIUM * (3.0 / 2.0)),
+            ("xx-large", MEDIUM * (2.0 / 1.0)),
+            ("xxx-large", MEDIUM * (3.0 / 1.0)),
+        ];
+        for (keyword, px) in cases {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                parse(keyword, "font-size"),
+                Some(PropertyValue::FontSize(Length::Px(*px))),
+                "keyword = {keyword}"
+            );
+        }
+    }
+
+    /// CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII
+    /// case-insensitive。sibling [`font_weight_keyword_case_insensitive`] と同 pattern。
+    #[test]
+    fn font_size_absolute_size_keyword_case_insensitive() {
+        assert_eq!(
+            parse("MEDIUM", "font-size"),
+            Some(PropertyValue::FontSize(Length::Px(16.0)))
+        );
+        assert_eq!(
+            parse("Large", "font-size"),
+            Some(PropertyValue::FontSize(Length::Px(16.0 * (6.0 / 5.0))))
+        );
+    }
+
+    /// `<relative-size>` (`larger` / `smaller`) は parse 段では解決せず
+    /// [`PropertyValue::FontSizeRelative`] をそのまま返す — 解決 (親の
+    /// computed font-size に対する read-modify-write) は
+    /// [`crate::cascade`] の責務 (`bolder` / `lighter` と同型、
+    /// bd raikiri-spike-4rmu)。
+    #[test]
+    fn font_size_accepts_relative_size_keywords() {
+        assert_eq!(
+            parse("larger", "font-size"),
+            Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger))
+        );
+        assert_eq!(
+            parse("smaller", "font-size"),
+            Some(PropertyValue::FontSizeRelative(RelativeFontSize::Smaller))
+        );
+        assert_eq!(
+            parse("LARGER", "font-size"),
+            Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger))
+        );
+    }
+
+    /// `font-size: 12px` と `font-size: larger` は同じ property を競合する
+    /// ([`PropertyValue::FontSizeRelative`] doc 参照) — 別 key だと両方が
+    /// cascade で「勝つ」事態が起き spec (1 property = 1 winner) と食い違う。
+    #[test]
+    fn font_size_relative_shares_property_key_with_font_size() {
+        assert_eq!(
+            PropertyValue::FontSize(Length::Px(12.0)).key(),
+            PropertyKey::FontSize
+        );
+        assert_eq!(
+            PropertyValue::FontSizeRelative(RelativeFontSize::Larger).key(),
+            PropertyKey::FontSize
+        );
     }
 
     #[test]
@@ -3970,6 +4565,25 @@ mod tests {
         assert_eq!(parse("-2rem", "font-size"), None);
         assert_eq!(parse("-12pt", "font-size"), None);
         assert_eq!(parse("-50%", "font-size"), None);
+        // bd raikiri-spike-2x8 で追加した unit も `length_payload` 経由で同じ
+        // non-negative check を通ることを pin。
+        assert_eq!(parse("-1ex", "font-size"), None);
+        assert_eq!(parse("-1cm", "font-size"), None);
+    }
+
+    #[test]
+    fn font_size_accepts_additional_units() {
+        // CSS Fonts 4 §2.5 `<length-percentage [0,∞]>` — bd raikiri-spike-2x8 で
+        // 追加した font-relative / absolute unit も `font-size` 上で受理される
+        // (`parse_length_value` の dispatch に mode 差は無い)。
+        assert_eq!(
+            parse("2ex", "font-size"),
+            Some(PropertyValue::FontSize(Length::Ex(2.0)))
+        );
+        assert_eq!(
+            parse("1cm", "font-size"),
+            Some(PropertyValue::FontSize(Length::Cm(1.0)))
+        );
     }
 
     #[test]
@@ -4617,6 +5231,216 @@ mod tests {
                 fetch: StringFetchMode::First,
             }
         );
+    }
+
+    // ── content property: image / contents / <quote> / leader() (CSS Content 3
+    // §2.2 / §2.3 / §2.4.2 / §2.5.1、raikiri-spike-1us — m5.1 由来の
+    // under-accept fix、6s1 CssContent3 mode arm) ──
+
+    #[test]
+    fn content_parse_image_url_quoted_form() {
+        // `<image>` の `<url>` alternative、`url("...")` (quoted) form。
+        let items = content_items(r#"url("cat.png")"#);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::Image {
+                url: String::from("cat.png"),
+            }
+        );
+    }
+
+    #[test]
+    fn content_parse_image_url_unquoted_form() {
+        // `<image>` の `<url>` alternative、`url(...)` (unquoted url-token) form。
+        let items = content_items("url(cat.png)");
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ContentComponent::Image {
+                url: String::from("cat.png"),
+            }
+        );
+    }
+
+    #[test]
+    fn content_bare_string_is_still_literal_not_image() {
+        // Regression pin: `<image>` production は `<url> | <gradient>` のみで
+        // bare `<string>` を含まない (target-* の `[<string>|<url>]` とは別
+        // grammar)。`expect_url` は quoted string 単体を受理しないため
+        // `content: "cat.png"` は Literal のまま — Image への誤変換防止。
+        let items = content_items(r#""cat.png""#);
+        assert_eq!(
+            items,
+            vec![ContentComponent::Literal(SmolStr::new("cat.png"))]
+        );
+    }
+
+    #[test]
+    fn content_parse_contents_keyword() {
+        // CSS Content 3 §2.3 "Elemental Content: the contents keyword"。
+        let items = content_items("contents");
+        assert_eq!(items, vec![ContentComponent::Contents]);
+    }
+
+    #[test]
+    fn content_contents_keyword_is_case_insensitive() {
+        let items = content_items("CoNtEnTs");
+        assert_eq!(items, vec![ContentComponent::Contents]);
+    }
+
+    #[test]
+    fn content_parse_quote_keywords() {
+        // CSS Content 3 §2.4.2 `<quote> = open-quote | close-quote |
+        // no-open-quote | no-close-quote` の 4 keyword 全数検証。
+        assert_eq!(
+            content_items("open-quote"),
+            vec![ContentComponent::Quote(QuoteKeyword::OpenQuote)]
+        );
+        assert_eq!(
+            content_items("close-quote"),
+            vec![ContentComponent::Quote(QuoteKeyword::CloseQuote)]
+        );
+        assert_eq!(
+            content_items("no-open-quote"),
+            vec![ContentComponent::Quote(QuoteKeyword::NoOpenQuote)]
+        );
+        assert_eq!(
+            content_items("no-close-quote"),
+            vec![ContentComponent::Quote(QuoteKeyword::NoCloseQuote)]
+        );
+    }
+
+    #[test]
+    fn content_quote_keyword_is_case_insensitive() {
+        let items = content_items("OPEN-QUOTE");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Quote(QuoteKeyword::OpenQuote)]
+        );
+    }
+
+    #[test]
+    fn content_parse_leader_dotted_solid_space_keywords() {
+        // CSS Content 3 §2.5.1 `<leader-type> = dotted | solid | space | <string>`。
+        assert_eq!(
+            content_items("leader(dotted)"),
+            vec![ContentComponent::Leader(LeaderType::Dotted)]
+        );
+        assert_eq!(
+            content_items("leader(solid)"),
+            vec![ContentComponent::Leader(LeaderType::Solid)]
+        );
+        assert_eq!(
+            content_items("leader(space)"),
+            vec![ContentComponent::Leader(LeaderType::Space)]
+        );
+    }
+
+    #[test]
+    fn content_parse_leader_custom_string() {
+        let items = content_items(r#"leader(".~.")"#);
+        assert_eq!(
+            items,
+            vec![ContentComponent::Leader(LeaderType::String(SmolStr::new(
+                ".~."
+            )))]
+        );
+    }
+
+    #[test]
+    fn content_leader_is_case_insensitive() {
+        let items = content_items("LEADER(DOTTED)");
+        assert_eq!(items, vec![ContentComponent::Leader(LeaderType::Dotted)]);
+    }
+
+    #[test]
+    fn content_leader_rejects_missing_argument() {
+        // spec production `leader( <leader-type> )` に `?` が無いため引数必須。
+        // bare `leader()` は spec-invalid → declaration drop。
+        assert_eq!(parse("leader()", "content"), None);
+    }
+
+    #[test]
+    fn content_leader_rejects_unknown_keyword() {
+        assert_eq!(parse("leader(bogus)", "content"), None);
+    }
+
+    #[test]
+    fn content_rejects_unknown_bare_keyword() {
+        // `parse_content_bare_keyword` の 5 keyword (`contents` / 4 `<quote>`)
+        // いずれにも一致しない ident は catch-all `_ => None` に落ちる —
+        // items 0 → declaration drop (単独 token の場合)。
+        assert_eq!(parse("bogus", "content"), None);
+    }
+
+    #[test]
+    fn content_unknown_bare_keyword_mid_list_stops_items_and_leaves_leftover() {
+        // 認識済み item (`counter(chapter)`) の後に未知 ident が来た場合、
+        // items+ loop は unknown token で break する (catch-all の break 経路)。
+        // caller (rule.rs) の `expect_exhausted` 相当は `parse` helper では
+        // 経由しないため、本 helper 経由では 1-item 到達で観測できる — leftover
+        // 自体の drop 挙動は既存 `content_rejects_unknown_function` /
+        // `string_set_accepts_missing_comma_single_leftover_entry` と同じ
+        // break-then-leftover pattern の non-regression pin。
+        let items = content_items("counter(chapter) bogus");
+        assert_eq!(
+            items,
+            vec![ContentComponent::Counter {
+                name: SmolStr::new("chapter"),
+                style: CounterStyle::Decimal,
+            }]
+        );
+    }
+
+    #[test]
+    fn content_parse_mixed_sequence_with_new_alternatives() {
+        // image / contents / quote / leader を既存 alternative と混在させ、
+        // 順序が保持されることを検証。
+        let items = content_items(
+            r#"open-quote "term" close-quote leader(dotted) url("icon.png") contents"#,
+        );
+        assert_eq!(
+            items,
+            vec![
+                ContentComponent::Quote(QuoteKeyword::OpenQuote),
+                ContentComponent::Literal(SmolStr::new("term")),
+                ContentComponent::Quote(QuoteKeyword::CloseQuote),
+                ContentComponent::Leader(LeaderType::Dotted),
+                ContentComponent::Image {
+                    url: String::from("icon.png"),
+                },
+                ContentComponent::Contents,
+            ]
+        );
+    }
+
+    // ── string-set narrow <content-list> gate: image / contents / quote /
+    // leader() (CSS GCPM 3 §1.1.1 L82、raikiri-spike-1us) ──
+    //
+    // GCPM 3 §1.1.1 narrow list には `<image>` / `contents` / `<quote>` /
+    // `leader()` のいずれも含まれない (既存の string_set_rejects_* group と
+    // 同じ rationale — sibling test 群と揃えて 1 declaration = 1 rejection の
+    // pin にする)。
+
+    #[test]
+    fn string_set_rejects_image_url() {
+        assert_eq!(parse(r#"title url("a.png")"#, "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_contents_keyword() {
+        assert_eq!(parse("title contents", "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_quote_keyword() {
+        assert_eq!(parse("title open-quote", "string-set"), None);
+    }
+
+    #[test]
+    fn string_set_rejects_leader_fn() {
+        assert_eq!(parse("title leader(dotted)", "string-set"), None);
     }
 
     // ── content property edge cases (spec-derived、guard rails) ──
@@ -5408,10 +6232,80 @@ mod tests {
 
     #[test]
     fn parse_length_value_rejects_unsupported_unit() {
-        // (b) milestone subset: `vw` / `ch` / `cm` / `in` / `Q` 等は本 helper で silent drop。
+        // (b) milestone subset — bd raikiri-spike-2x8 の spinout follow-up
+        // (viewport-relative unit / `cap` / `rcap` / `lh` / `rlh`) は本 helper
+        // で引き続き silent drop。`ch` / `in` は本 task で受理側へ移った
+        // (下記 `parse_length_value_accepts_*` 群を参照)。
         assert_eq!(parse_length("10vw", false), None);
-        assert_eq!(parse_length("10ch", true), None);
-        assert_eq!(parse_length("1in", false), None);
+        assert_eq!(parse_length("1cap", true), None);
+        assert_eq!(parse_length("1lh", true), None);
+    }
+
+    // ── 追加 font-relative unit (CSS Values 4 §6.1.1、bd raikiri-spike-2x8) ──
+
+    #[test]
+    fn parse_length_value_accepts_ex() {
+        // https://www.w3.org/TR/css-values-4/#ex — authored value をそのまま保持。
+        assert_eq!(parse_length("2ex", false), Some(Length::Ex(2.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_rex() {
+        // https://www.w3.org/TR/css-values-4/#rex
+        assert_eq!(parse_length("2rex", false), Some(Length::Rex(2.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_ch() {
+        // https://www.w3.org/TR/css-values-4/#ch
+        assert_eq!(parse_length("3ch", false), Some(Length::Ch(3.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_rch() {
+        // https://www.w3.org/TR/css-values-4/#rch
+        assert_eq!(parse_length("3rch", false), Some(Length::Rch(3.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_ic() {
+        // https://www.w3.org/TR/css-values-4/#ic
+        assert_eq!(parse_length("1.5ic", false), Some(Length::Ic(1.5)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_ric() {
+        // https://www.w3.org/TR/css-values-4/#ric
+        assert_eq!(parse_length("1.5ric", false), Some(Length::Ric(1.5)));
+    }
+
+    // ── 追加 absolute unit (CSS Values 4 §6.2、bd raikiri-spike-2x8) ──
+
+    #[test]
+    fn parse_length_value_accepts_cm() {
+        assert_eq!(parse_length("2cm", false), Some(Length::Cm(2.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_mm() {
+        assert_eq!(parse_length("5mm", false), Some(Length::Mm(5.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_q() {
+        // `Q` — unit token は `to_ascii_lowercase()` を経て `"q"` として dispatch
+        // される。case-insensitivity test でも uppercase `Q` を確認する。
+        assert_eq!(parse_length("40Q", false), Some(Length::Q(40.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_in() {
+        assert_eq!(parse_length("1in", false), Some(Length::In(1.0)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_pc() {
+        assert_eq!(parse_length("6pc", false), Some(Length::Pc(6.0)));
     }
 
     #[test]
@@ -5450,6 +6344,15 @@ mod tests {
         assert_eq!(parse_length("1.5EM", false), Some(Length::Em(1.5)));
         assert_eq!(parse_length("2Rem", false), Some(Length::Rem(2.0)));
         assert_eq!(parse_length("14Pt", false), Some(Length::Pt(14.0)));
+        // `unit.to_ascii_lowercase()` の dispatch key はすべて lowercase
+        // (`"q"` / `"in"` 等) — uppercase 単位が正しく畳み込まれることを
+        // 個別に確認する (bd raikiri-spike-2x8、`Q` は特に取り違えやすい)。
+        assert_eq!(parse_length("10IN", false), Some(Length::In(10.0)));
+        assert_eq!(parse_length("40Q", false), Some(Length::Q(40.0)));
+        assert_eq!(parse_length("2CM", false), Some(Length::Cm(2.0)));
+        assert_eq!(parse_length("2EX", false), Some(Length::Ex(2.0)));
+        assert_eq!(parse_length("2CH", false), Some(Length::Ch(2.0)));
+        assert_eq!(parse_length("2IC", false), Some(Length::Ic(2.0)));
     }
 
     // ── padding (CSS Box 3 §4.1 physical + §4.2 shorthand、raikiri-spike-0vv.6) ──
@@ -5675,13 +6578,76 @@ mod tests {
         );
     }
 
-    // Verification #6 — spec grammar 外 unit の drop (vw / ch 等 milestone subset)。
+    // Verification #6 — spec grammar 外 unit の drop (vw / lh 等 milestone subset)。
     #[test]
     fn padding_top_rejects_unsupported_unit() {
-        // (b) milestone subset — vw / ch 等は spec-valid だが Sprint 12 未対応、
-        // parse_length_value 側で drop、`None` propagate → declaration drop。
+        // (b) milestone subset — vw / lh 等は spec-valid だが bd raikiri-spike-2x8
+        // の spinout follow-up で未対応、parse_length_value 側で drop、`None`
+        // propagate → declaration drop。`ch` は本 task で受理側へ移った
+        // (`padding_top_accepts_ch` 参照)。
         assert_eq!(parse("10vw", "padding-top"), None);
-        assert_eq!(parse("5ch", "padding-top"), None);
+        assert_eq!(parse("5lh", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_top_accepts_ch() {
+        assert_eq!(
+            parse("2ch", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Ch(2.0)))
+        );
+    }
+
+    #[test]
+    fn padding_top_accepts_cm() {
+        assert_eq!(
+            parse("2cm", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Cm(2.0)))
+        );
+    }
+
+    #[test]
+    fn padding_top_rejects_negative_cm() {
+        // 全 Length variant 経路の non-negative check pin (cm、新規 absolute unit)。
+        assert_eq!(parse("-1cm", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_top_rejects_negative_ex() {
+        // 全 Length variant 経路の non-negative check pin (ex、新規 font-relative unit)。
+        assert_eq!(parse("-1ex", "padding-top"), None);
+    }
+
+    /// bd raikiri-spike-2x8 で追加した残り unit (`rex` / `rch` / `ic` / `ric` /
+    /// `mm` / `Q`) を `length_payload` 経由で直接 exercise する — 他 call site
+    /// (font-size / width / height / margin / border-width / line-height) の
+    /// テストは Ex / Ch / Cm / In / Pc しか通さないため、`length_payload` の
+    /// OR-pattern 全 arm の patch coverage には本 test が要る。
+    #[test]
+    fn padding_top_accepts_remaining_additional_units() {
+        assert_eq!(
+            parse("1rex", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Rex(1.0)))
+        );
+        assert_eq!(
+            parse("1rch", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Rch(1.0)))
+        );
+        assert_eq!(
+            parse("1ic", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Ic(1.0)))
+        );
+        assert_eq!(
+            parse("1ric", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Ric(1.0)))
+        );
+        assert_eq!(
+            parse("1mm", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Mm(1.0)))
+        );
+        assert_eq!(
+            parse("40Q", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Q(40.0)))
+        );
     }
 
     // Verification — Sides::all constructor + PropertyKey mapping smoke。
@@ -5914,10 +6880,22 @@ mod tests {
 
     #[test]
     fn line_height_rejects_unsupported_unit() {
-        // parse_length_value が silent drop する unit (`vw` / `ch` 等) は
-        // helper 側で `None` → line-height parse も declaration drop。
+        // parse_length_value が silent drop する unit (`vw` / `lh` 等、
+        // bd raikiri-spike-2x8 の spinout follow-up) は helper 側で `None` →
+        // line-height parse も declaration drop。`ch` は本 task で受理側へ
+        // 移った (`line_height_accepts_ch` 参照)。
         assert_eq!(parse("10vw", "line-height"), None);
-        assert_eq!(parse("10ch", "line-height"), None);
+        assert_eq!(parse("10lh", "line-height"), None);
+    }
+
+    #[test]
+    fn line_height_accepts_ch() {
+        assert_eq!(
+            parse("2ch", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Length(Length::Ch(
+                2.0
+            ))))
+        );
     }
 
     #[test]
@@ -6165,10 +7143,20 @@ mod tests {
 
     #[test]
     fn margin_side_rejects_unsupported_unit() {
-        // `cm` (§6.2 absolute lengths) は現行 milestone subset に含まれない
-        // (parse_length_value 側で drop、bd raikiri-spike-2x8 で追加 unit の
-        // expansion が tracked)。margin-side helper に非依存で波及ドロップを pin。
-        assert_eq!(parse("1cm", "margin-top"), None);
+        // `lh` (§6.1.1 font-relative lengths) は bd raikiri-spike-2x8 の
+        // spinout follow-up で未対応 (parse_length_value 側で drop)。`cm` は
+        // 本 task で受理側へ移った — margin-side helper に非依存で波及ドロップを pin。
+        assert_eq!(parse("1lh", "margin-top"), None);
+    }
+
+    #[test]
+    fn margin_side_accepts_absolute_unit() {
+        assert_eq!(
+            parse("1cm", "margin-top"),
+            Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Cm(
+                1.0
+            ))))
+        );
     }
 
     #[test]
@@ -6502,6 +7490,23 @@ mod tests {
     }
 
     #[test]
+    fn border_width_accepts_absolute_unit() {
+        // `<line-width>` の `<length [0,∞]>` half は `<percentage>` を含まないが
+        // 他 absolute unit は含む — bd raikiri-spike-2x8 で追加した `pc` を
+        // border-width 経路 (`allow_percentage=false`) でも pin する。
+        assert_eq!(
+            parse("1pc", "border-top-width"),
+            Some(PropertyValue::BorderTopWidth(Length::Pc(1.0)))
+        );
+    }
+
+    #[test]
+    fn border_width_rejects_negative_absolute_unit() {
+        // 全 unit-bearing variant の non-negative check pin (cm、新規 absolute unit)。
+        assert_eq!(parse("-1cm", "border-top-width"), None);
+    }
+
+    #[test]
     fn border_top_style_parse_solid() {
         // Verification #3: parse("solid", "border-top-style") =
         // Some(PropertyValue::BorderTopStyle(BorderStyle::Solid))。
@@ -6637,10 +7642,22 @@ mod tests {
 
     #[test]
     fn width_rejects_unsupported_unit() {
-        // (b) milestone subset — vw / ch 等は spec-valid だが Sprint 17 未対応、
-        // parse_length_value 側で drop、None propagate。
+        // (b) milestone subset — vw / lh 等は spec-valid だが bd raikiri-spike-2x8
+        // の spinout follow-up で未対応、parse_length_value 側で drop、None
+        // propagate。`ch` は本 task で受理側へ移った (`width_accepts_absolute_unit`
+        // 参照)。
         assert_eq!(parse("10vw", "width"), None);
-        assert_eq!(parse("5ch", "width"), None);
+        assert_eq!(parse("5lh", "width"), None);
+    }
+
+    #[test]
+    fn width_accepts_absolute_unit() {
+        // `1in` = 96px 相当 (specified 層は authored unit をそのまま保持、
+        // 絶対化は resolve.rs の責務 — pin: `resolve::tests::length_additional_absolute_units_convert_per_spec_table`)。
+        assert_eq!(
+            parse("1in", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Length(Length::In(1.0))))
+        );
     }
 
     #[test]
@@ -7057,11 +8074,25 @@ mod tests {
 
     #[test]
     fn height_rejects_unsupported_unit() {
-        // `cm` (§6.2 absolute lengths) は現行 milestone subset に含まれない
-        // (parse_length_value 側で drop、bd raikiri-spike-2x8 で追加 unit の
-        // expansion が tracked)。sibling `margin_side_rejects_unsupported_unit`
-        // と同 pattern。
-        assert_eq!(parse("1cm", "height"), None);
+        // `lh` (§6.1.1 font-relative lengths) は bd raikiri-spike-2x8 の
+        // spinout follow-up で未対応 (parse_length_value 側で drop)。`cm` は
+        // 本 task で受理側へ移った (`height_accepts_absolute_unit` 参照)。
+        // sibling `margin_side_rejects_unsupported_unit` と同 pattern。
+        assert_eq!(parse("1lh", "height"), None);
+    }
+
+    #[test]
+    fn height_accepts_absolute_unit() {
+        // CSS Values 4 §6.2 absolute lengths — bd raikiri-spike-2x8。
+        assert_eq!(
+            parse("1cm", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(Length::Cm(1.0))))
+        );
+    }
+
+    #[test]
+    fn height_rejects_negative_absolute_unit() {
+        assert_eq!(parse("-1cm", "height"), None);
     }
 
     #[test]
