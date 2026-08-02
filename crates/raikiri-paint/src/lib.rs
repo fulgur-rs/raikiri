@@ -741,7 +741,7 @@ mod tests {
 /// (Separately, even glyphs that *do* stay under the 128px cache threshold
 /// can't reach the `i32` overflow above through a realistic font: for a
 /// typical 1000..2048-upem font, a scaled bbox only approaches `i32::MAX`
-/// around `font_size` ~1e9, three orders of magnitude past the point where
+/// around `font_size` ~1e9, many orders of magnitude past the point where
 /// `max_cached_font_size` has already routed the glyph to the uncached path.
 /// The overflow looks structurally unreachable via `draw_glyphs`, though this
 /// module does not exhaustively prove that for every font/transform
