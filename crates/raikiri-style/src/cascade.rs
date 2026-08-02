@@ -2317,8 +2317,10 @@ mod tests {
             resolve_relative_font_size(RelativeFontSize::Smaller, 16.0),
             16.0 / 1.2
         );
-        // 対称性は無い — `larger` → `smaller` は round-trip で元の値に戻らない
-        // (spec が要求する性質ではない、単に ×1.2 と ÷1.2 の合成が非自明なだけ)。
+        // `×1.2` の後 `÷1.2` は f32 の丸めにより **bit 一致はしない** —
+        // spec が round-trip を要求しているわけではなく、単に実装が table
+        // lookup ではなく単純 ratio の合成であることの pin。浮動小数誤差の
+        // 範囲 (`< 0.0001`) では元の値に戻ることを確認する。
         let round_tripped = resolve_relative_font_size(
             RelativeFontSize::Smaller,
             resolve_relative_font_size(RelativeFontSize::Larger, 16.0),

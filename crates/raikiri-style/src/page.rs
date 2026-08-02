@@ -495,7 +495,11 @@ pub struct PageCascadeResult {
     ///   element's computed font-size, so the value is always
     ///   [`Length::Px`]. §6 verbatim: "When used on
     ///   the font-size property in the page context, they are relative to the
-    ///   font-size of the root element." (raikiri-spike-zls8).
+    ///   font-size of the root element." (raikiri-spike-zls8). `larger` /
+    ///   `smaller` (`<relative-size>`) are resolved the same way against the
+    ///   root element's computed font-size, so **no relative font-size
+    ///   sentinel** reaches the consumer either — same guarantee as the
+    ///   `font-weight` bullet above (raikiri-spike-4rmu).
     ///
     /// **Phase 3** — absolutization against the page context's *own*
     /// `font-size` (`absolutize_in_page_context`, raikiri-spike-sshp):
