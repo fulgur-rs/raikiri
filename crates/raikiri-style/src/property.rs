@@ -2054,6 +2054,27 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// `allow_percentage=false` (= `<length>` mode) の caller は
 /// [`parse_border_width_side`] のみ — CSS Backgrounds 3 §3.3 の
 /// `<line-width>` grammar が `<percentage>` を含まないため。
+///
+/// # Percentage overflow (bd raikiri-spike-3gee)
+///
+/// `Token::Percentage.unit_value` は f64→f32 変換済 (cssparser 0.37
+/// tokenizer が `value / 100.0` を emit) だが、[`Length::Percent`] は
+/// authored number (`50%` → `50.0`) を保持する設計のため、本 helper 側で
+/// `unit_value * 100.0` の逆変換を行う。`unit_value` 自体が f32 有限範囲に
+/// 収まっていても (例 `1e40%` → cssparser 側は `1e38` で有限)、この
+/// ×100.0 の逆変換それ自体が f32 overflow を起こしうる (`1e38 * 100.0` は
+/// f32 の有限範囲 `3.4028235e38` を超えて `+Inf`)。CSS Values 4 §5 "Range
+/// Checking and Precision for Numeric Types"
+/// <https://www.w3.org/TR/css-values-4/#numeric-types> の "it must be
+/// converted to the closest value supported by the implementation" に従い、
+/// 非有限になった場合は符号を保持しつつ `f32::MAX` へ寄せる。
+///
+/// bd raikiri-spike-2ui0 の sink-guard precedent (「guard は sink 境界に
+/// 置く、parse/resolve 層には置かない」) はここには適用しない —
+/// bd raikiri-spike-3gee の判断: 本件は guard ではなく変換の正確さの問題
+/// (specified 層の値そのものが CSS Values 4 §5 の要求から外れている)
+/// であり、precedent とは別軸。`raikiri-dom::layout::sanitize_finite`
+/// (resolve 後の geometry に対する sink guard) は本変更後も引き続き必要。
 fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Option<Length> {
     match input.next().ok()? {
         Token::Dimension { value, unit, .. } => match unit.to_ascii_lowercase().as_str() {
@@ -2065,10 +2086,14 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             _ => None,
         },
         Token::Percentage { unit_value, .. } if allow_percentage => {
-            // cssparser 0.37 tokenizer は `50%` を `unit_value = 0.5` として emit
-            // (`value / 100.0`)、Length::Percent は authored number (50.0) を保持する
-            // ため × 100.0 で戻す。
-            Some(Length::Percent(*unit_value * 100.0))
+            // authored-number 逆変換 + overflow saturation: 上の
+            // "# Percentage overflow" section 参照。
+            let percent = *unit_value * 100.0;
+            Some(Length::Percent(if percent.is_finite() {
+                percent
+            } else {
+                f32::MAX.copysign(percent)
+            }))
         }
         // CSS Values 3 §5 unitless-zero clause (doc "# Unitless zero" 参照)。
         Token::Number { value, .. } if *value == 0.0 => Some(Length::Px(0.0)),
@@ -5316,6 +5341,34 @@ mod tests {
         // `<length-percentage>` mode でのみ受理。cssparser `unit_value = 0.5` を
         // × 100.0 で authored `50` に戻して Length::Percent(50.0) に格納。
         assert_eq!(parse_length("50%", true), Some(Length::Percent(50.0)));
+    }
+
+    #[test]
+    fn zzz_reviewer_probe_nan_producing_percentage() {
+        // TEMP probe (reviewer:spec, raikiri-spike-3gee) — reverted before hand-off.
+        let r = parse_length("0e999%", true);
+        panic!("probe result: {:?}", r);
+    }
+
+    #[test]
+    fn parse_length_value_extreme_percentage_saturates_to_f32_max_not_inf() {
+        // bd raikiri-spike-3gee: `1e40%` は cssparser tokenizer 側で
+        // `unit_value = 1e40 / 100.0 = 1e38` (f32 有限範囲 `3.4028235e38` 内)
+        // になるが、authored number へ戻す本 helper の `× 100.0` 自体が
+        // f32 overflow を起こし +Inf を作っていた (fix 前)。
+        //
+        // CSS Values 4 §5 "Range Checking and Precision for Numeric Types"
+        // <https://www.w3.org/TR/css-values-4/#numeric-types>:
+        // "When a value cannot be explicitly supported due to
+        // range/precision limitations, it must be converted to the closest
+        // value supported by the implementation" — 非有限は許容されないため、
+        // 符号を保持しつつ f32::MAX に寄った有限値を pin する。
+        assert_eq!(parse_length("1e40%", true), Some(Length::Percent(f32::MAX)));
+        // 符号保持も合わせて pin (負の overflow は -f32::MAX へ)。
+        assert_eq!(
+            parse_length("-1e40%", true),
+            Some(Length::Percent(-f32::MAX))
+        );
     }
 
     #[test]
