@@ -205,6 +205,12 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<
 /// [`ComputedValues`] なので直接の影響は無いが、将来 page-margin box の layout を
 /// 本 bridge に通す場合も **gate を再実装せず** 上流の値を信頼すること。
 ///
+/// ⚠️ 上記は **border-style gating に限った話**。`PageCascadeResult::declarations`
+/// は非有限 `f32` (+Inf / NaN) について本段落とは別の未対応 hazard を抱えている
+/// (bd raikiri-spike-kj2s — contract は `raikiri_style::page::PageCascadeResult::declarations`
+/// の doc が canonical)。将来 page-margin box の layout を本 bridge に通す際は
+/// gating の再確認だけでなくそちらも再確認すること。
+///
 /// 4-side は **field 名 mapping** で write (positional constructor は使わない —
 /// [`bridge_margin`] と同じ `Sides` vs `Rect` field 順不一致の silent transpose
 /// 防止)。
