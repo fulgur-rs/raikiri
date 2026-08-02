@@ -215,6 +215,24 @@ bd raikiri-spike-8yj6 が持つ。
   `rust-toolchain.toml` の pin (1.89.0) では出ない unresolved link が新しい toolchain では
   出る実例があるため、toolchain bump 時は本節の command を再走させること。
 
+## 使い捨て worktree は `$HOME` 配下に作る (`/tmp` に作らない)
+
+一時的な目的 (baseline 比較、使い捨て実験など) で切る throwaway/scratch な
+`git worktree` で `cargo build` / `cargo test` / `cargo bench` を走らせる場合、
+その worktree は **`$HOME` 配下に作る。`/tmp` の下に作らない**。
+
+本 repo の `/tmp` は小さな tmpfs で、**動作中の全 session が同時に共有する**
+(worktree-per-task 運用のため、session 数は並行 task 数に比例して増える)。
+枯渇の被害は gate の false-FAIL (bd raikiri-spike-weky) だけではない —
+**Bash tool 自体が無反応になり、診断可能な error が一切出ない**状態になりうる
+(bd raikiri-spike-weky への 2026-08-01 03:12 コメント記録、dz8t 実装 agent の副次的発見、
+sprint/coord/7 = global Sprint 38)。
+
+`scripts/lib/tmpdir.sh` の `TMPDIR` pin (bd raikiri-spike-weky) は
+**gate script の呼び出しに限定した、既に landing 済みのより狭い緩和策**である。
+本節はそれとは別に、gate 由来かどうかに関わらず **あらゆる scratch worktree に
+適用される repo 全体の規約**。
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 
