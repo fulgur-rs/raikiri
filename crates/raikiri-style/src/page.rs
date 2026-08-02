@@ -586,6 +586,19 @@ pub struct PageCascadeResult {
     /// `page::tests::cascade_page_font_size_can_carry_nan_from_pathological_em`
     /// for the pinned reproducer.
     ///
+    /// That `1e40em` example's *parse-time* overflow-to-`f32::INFINITY` step
+    /// is itself disputed: bd raikiri-spike-9mbo (open, `blocked/human`)
+    /// argues that CSS Values 4 §5's "closest value" wording may require
+    /// saturating to `f32::MAX` instead, which is a question about
+    /// cssparser's `f64`→`f32` cast, not about this crate. The hazard this
+    /// section documents does not depend on how that resolves: two already
+    /// finite operands can still overflow to infinity on the `*` in phase 2
+    /// alone (e.g. a `1e30px` root font-size times a `1e20em` page
+    /// declaration), with no contested cast anywhere in the chain. See
+    /// `page::tests::cascade_page_font_size_can_carry_infinity_from_finite_operand_multiply`
+    /// for that arithmetic-only reproducer, which stays valid regardless of
+    /// how 9mbo is resolved.
+    ///
     /// **This map does not filter that out**, and neither does
     /// [`ComputedValues`] — the element path's equivalent computed-value bag —
     /// which documents no finiteness contract either. That is not an
@@ -1790,8 +1803,8 @@ mod tests {
 
     // ── declarations may carry non-finite f32 (bd raikiri-spike-kj2s) ──────
     //
-    // This is not guarded here — see the `# Values may be non-finite, and
-    // nothing here guards against it` section of
+    // This is not guarded here — see the `# Non-finite values pass through
+    // unguarded` section of
     // `PageCascadeResult::declarations`'s doc for why that is intentional
     // (sink-boundary precedent, bd raikiri-spike-2ui0) rather than an
     // oversight. This test exists to pin that the hazard is *real*, so a
@@ -1809,14 +1822,32 @@ mod tests {
         // 754 — root font-size 0 supplies the `0.0`.
         let root = root_with_font_size(0.0);
         let px = page_font_size_px("1e40em", Some(&root));
+        // cov:ignore: the panic-message literal below is only executed if
+        // the assertion fails, which it doesn't while this test passes.
         assert!(
             px.is_nan(),
-            "expected NaN from `0.0 * inf` (root font-size 0 times an \
-             overflowed `1e40em`), got {px} — either the overflow/multiply \
-             mechanism changed (update this test and the `declarations` doc \
-             together) or a guard was added in raikiri-style (which would \
-             violate the sink-boundary precedent from bd raikiri-spike-2ui0 \
-             — see the doc's rationale before doing that)"
+            "expected NaN from `0.0 * inf` (root font-size 0 times an overflowed `1e40em`), got {px} — either the overflow/multiply mechanism changed (update this test and the `declarations` doc together) or a guard was added in raikiri-style (which would violate the sink-boundary precedent from bd raikiri-spike-2ui0 — see the doc's rationale before doing that)"
+        );
+    }
+
+    #[test]
+    fn cascade_page_font_size_can_carry_infinity_from_finite_operand_multiply() {
+        // Arithmetic-only counterpart to the test above: both operands are
+        // already finite `f32` values (no contested f64→f32 cast involved,
+        // unlike the `1e40em` reproducer — see bd
+        // raikiri-spike-9mbo). `1e30` (root font-size) and `1e20` (page
+        // em multiplier) are each well within f32's finite range on their
+        // own; their product, `1e50`, overflows f32 (max ~3.4e38) to
+        // `+Infinity` per IEEE 754. This pins that the non-finite hazard
+        // documented on `PageCascadeResult::declarations` holds
+        // independently of how 9mbo's parse-time question is resolved.
+        let root = root_with_font_size(1e30);
+        let px = page_font_size_px("1e20em", Some(&root));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            px.is_infinite() && px.is_sign_positive(),
+            "expected +Infinity from `1e30 * 1e20` overflowing f32, got {px}"
         );
     }
 
