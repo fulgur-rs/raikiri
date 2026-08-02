@@ -18,7 +18,9 @@
 //! **本節は要約に留め、規則の中身をここに書き足さないこと** — 以前ここには
 //! 「書き換えるときは必ずあちらと揃えること」と書いてあったが、その手運用は
 //! 実際に 2 度 drift した (bd raikiri-spike-awjx)。現在は `page::tests` の
-//! `page_declarations_carry_exactly_one_specified_layer_residue` が保証内容を
+//! `page_declarations_carry_no_specified_layer_residue` (raikiri-spike-l3wg
+//! 以前は `page_declarations_carry_exactly_one_specified_layer_residue`、
+//! `text-align: match-parent` が唯一の specified 層残滓だった) が保証内容を
 //! 機械的に pin している。
 //!
 //! bd decision raikiri-spike-082k (Option A) / bd task raikiri-spike-i5bs

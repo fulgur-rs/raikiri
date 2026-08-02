@@ -29,7 +29,9 @@ use selectors::parser::{Selector, SelectorList};
 use crate::RaikiriSelectorImpl;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::error::CascadeError;
-use crate::property::{FontWeightValue, Length, PositionValue, PropertyValue};
+use crate::property::{
+    FontWeightValue, Length, PositionValue, PropertyValue, resolve_text_align_match_parent,
+};
 use crate::resolve::{ComputedLength, ResolveContext};
 use crate::rule::{expand_shorthand_into, parse_declaration_block};
 use crate::ruletree::Origin;
@@ -375,7 +377,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // 基準が phase 2 / phase 3 で異なるため専用 entry point を通す
         // ([`SpecifiedValues::finalize_as_root`] の doc に spec verbatim)。
         let computed = match &rem_ctx {
-            Some(ctx) => specified.finalize(parent_computed.font_size, ctx),
+            Some(ctx) => specified.finalize(&parent_computed, ctx),
             None => {
                 // `finalize_as_root` は phase 2 の基準を initial value に固定する
                 // (§6.1.1 の "if the element has no parent")。それが正しいのは
@@ -689,8 +691,10 @@ pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: u16
 ///    増えても `PropertyValue::TextAlign(_)` を素通りする。これは `bolder` /
 ///    `lighter` と**同型**の解決を要するので、実装時は本関数の arm で payload を
 ///    destructure して guard を payload 層に降ろすこと (`FontSize` は
-///    bd raikiri-spike-zls8 でそれを済ませた — payload を destructure して
-///    `resolve_font_size` に渡している)。**page 経路の、かつ payload 型が
+///    bd raikiri-spike-zls8、`TextAlign` は bd raikiri-spike-l3wg でそれを
+///    済ませた — 前者は payload を destructure して `resolve_font_size` に、
+///    後者は [`crate::property::resolve_text_align_match_parent`] に渡している)。
+///    **page 経路の、かつ payload 型が
 ///    `Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
 ///    `TextAlign` の 5 つに限れば**、この形の漏れは `page::tests` の
 ///    `specified_layer_residue` が網羅 match しているので test compile 段で
@@ -735,18 +739,33 @@ pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: u16
 /// ので、spec 規則 (`em` / `rem` の基準、percentage の素通し、border style
 /// gating) の実装は 1 本ずつしかない。
 ///
-/// # 本関数が解けない唯一の値
+/// # `TextAlign::MatchParent` は本関数が解決する (raikiri-spike-l3wg)
 ///
-/// [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) は
-/// **原理的には `inherited` だけで解ける** (= 本関数の担当) **が** raikiri は
-/// `direction` を computed 層に持たないため未実装 (bd raikiri-spike-l3wg、
-/// [`TextAlign`](crate::property::TextAlign) doc の (b) milestone subset
-/// carve-out と同じ gap)。spec citation と「public な結果に残る例外はこれ 1 つ」
-/// の宣言は
+/// [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) は `inherited`
+/// だけで解ける — CSS Text 3 §6.1 `#valdef-text-align-match-parent` の
+/// 「実の親を持つ」半分 (root element の "computes to start" は対象外、下記注記)
+/// — ので本関数の `TextAlign` arm が
+/// [`crate::property::resolve_text_align_match_parent`] へ `inherited.text_align` +
+/// `inherited.direction` を渡して解決する。以前 (raikiri-spike-l3wg 着手前) は raikiri
+/// が `direction` を computed 層に持たなかったため未実装だった (origin:
+/// raikiri-spike-ygl0 §8.2 spec lens F1)。
+///
+/// ⚠️ **trap**: CSS Paged Media 3 §6 の "The page context inherits from the
+/// root element" は「page context に親が無い」ことを意味**しない** —
+/// `inherited` 引数は常に「実の親 (または L3 legacy exception の initial
+/// values)」であり、[`TextAlign`](crate::property::TextAlign) doc が引用する
+/// "Computes to start when specified on the root element" の特別扱いは
+/// **本関数の対象外**。page context がその特別扱いを受けることは無い —
+/// page context 自身が root element になるわけではないため。element 経路で
+/// この特別扱いを担うのは [`SpecifiedValues::finalize_as_root`]。
+///
+/// 公開契約は
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
-/// が canonical で、`page::tests` の
-/// `page_declarations_carry_exactly_one_specified_layer_residue` が pin する。
-///
+/// が canonical。以前あった「public な結果に残る例外はこれ 1 つ」は
+/// raikiri-spike-l3wg で解消され、`page::tests` の
+/// `page_declarations_carry_no_specified_layer_residue` (旧
+/// `page_declarations_carry_exactly_one_specified_layer_residue`) が
+/// pin する。
 /// なお `Percent` は「未解決」ではない — box property の computed value は
 /// percentage のままである (CSS Paged Media 3 §6 の "Percentage values on the
 /// margin and padding properties are relative to the dimensions of the
@@ -806,9 +825,24 @@ pub(crate) fn resolve_against_inherited(
             )
             .px(),
         )),
+        // CSS Text 3 §6.1 `#valdef-text-align-match-parent` (raikiri-spike-l3wg)。
+        // `inherited` は page context の inheritance parent (root element、
+        // または L3 legacy exception の initial values) — 常に「実の親」扱いで
+        // 解決する (上記 doc の trap 注記: page context 自身が root element の
+        // "computes to start" 特別扱いを受けることは無い)。他 keyword は
+        // no-op (関数 doc参照)。
+        PropertyValue::TextAlign(t) => PropertyValue::TextAlign(resolve_text_align_match_parent(
+            t,
+            inherited.text_align,
+            inherited.direction,
+        )),
         // 本関数では解決しない property — pass-through。上記 doc の「本関数の
         // pass-through は『解決済』ではない (phase 3 が要る)」節が、これらを
         // 呼び手の phase 3 が絶対化することを説明している。`_` に潰さないこと。
+        //
+        // `Direction` はここに属する — computed value = specified value
+        // (相対解決なし、[`crate::property::Direction`] doc 参照)、`Color` /
+        // `FontFamily` と同型 (raikiri-spike-l3wg)。
         v @ (PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
@@ -820,7 +854,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Content(_)
         | PropertyValue::StringSet(_)
         | PropertyValue::Position(_)
-        | PropertyValue::TextAlign(_)
+        | PropertyValue::Direction(_)
         | PropertyValue::PaddingTop(_)
         | PropertyValue::PaddingRight(_)
         | PropertyValue::PaddingBottom(_)
@@ -903,6 +937,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // [`crate::page::cascade_page`] (`apply_value` を通らない第 2 の public
         // entry point) が使う。両者とも wildcard 無しの exhaustive match なので
         // variant 追加時は compiler が 2 経路を数え上げさせる。
+        //
+        // **例外 (raikiri-spike-l3wg)**: `text-align: match-parent` は
+        // `resolve_against_inherited` に arm があるが、**本 arm (`apply_value`)
+        // には無い** — 下の `TextAlign` arm のコメント参照。この property の
+        // 解決は `self.font_weight` のような自 field の read-modify-write では
+        // 済まない (**他 property `direction` の親の値**を要する) ため、
+        // 「本 arm と sibling の 2 経路だけ数え上げればよい」という上記契約の
+        // 前提が破れる — 実際には 3 箇所目 (`crate::specified::SpecifiedValues::
+        // finalize` / `finalize_as_root`) が element 経路の解決を担う。
         PropertyValue::FontWeight(fw) => {
             let inherited = target.font_weight;
             target.font_weight = resolve_relative_weight(fw, inherited);
@@ -943,7 +986,24 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherited property のため cascade winner が無い child は inherit_from で
         // 親値を引き継ぐ (color / font_family / font_size / font_weight と同じ
         // handling)。TextAlign は Copy、by-value 代入で十分。
+        //
+        // **`match-parent` はここでは解決しない** (raikiri-spike-l3wg) — この
+        // 単純代入は他 arm と同じく素朴なコピーのままにしてある。解決は
+        // [`crate::specified::SpecifiedValues::finalize`] /
+        // `finalize_as_root` が全 winner 適用**後**に、明示的な親
+        // [`ComputedValues`] を受け取って行う。理由: 本 arm の中で
+        // `target.direction` (= 親から継承した direction) を読んで解決しようと
+        // すると、**同一 node が `direction` winner も持つ場合**にその適用順序
+        // ([`crate::property::PropertyKey`] の宣言順) 次第で親ではなく
+        // **自分の** direction を読んでしまう —
+        // `resolve_inheritance` が保証する「winner の適用順に依存しない」
+        // invariant への違反になる。詳細は
+        // [`crate::property::resolve_text_align_match_parent`] の doc。
         PropertyValue::TextAlign(t) => target.text_align = t,
+        // direction は CSS Writing Modes 4 §2.1 (raikiri-spike-l3wg)。
+        // inherited property、computed value = specified value (相対解決なし) —
+        // text-align と同じく単純代入で十分。
+        PropertyValue::Direction(d) => target.direction = d,
         // CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>
         // padding physical longhand (raikiri-spike-0vv.6)。
         // 4 side を独立に上書き。shorthand `PropertyValue::Padding` は
@@ -2004,6 +2064,167 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].text_align, TextAlign::Center);
         assert_eq!(r.computed[span].text_align, TextAlign::Left);
+    }
+
+    // ── direction wire-through (CSS Writing Modes 4 §2.1、raikiri-spike-l3wg) ──
+
+    #[test]
+    fn direction_wired_through_cascade_from_inline_style() {
+        use crate::property::Direction;
+        let cv = cascade_doc("", "p", Some("direction: rtl"));
+        assert_eq!(cv.direction, Direction::Rtl);
+    }
+
+    #[test]
+    fn direction_inherits_from_parent_element() {
+        // CSS Writing Modes 4 §2.1: direction は **inherited**.
+        use crate::property::Direction;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("direction: rtl"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].direction, Direction::Rtl);
+        assert_eq!(
+            r.computed[span].direction,
+            Direction::Rtl,
+            "child should inherit direction from parent (CSS Writing Modes 4 §2.1 Inherited: yes)"
+        );
+    }
+
+    #[test]
+    fn direction_child_own_value_wins_over_inherited() {
+        use crate::property::Direction;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("direction: rtl"));
+        let span = doc.push_element(p, "span", Some("direction: ltr"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].direction, Direction::Rtl);
+        assert_eq!(r.computed[span].direction, Direction::Ltr);
+    }
+
+    // ── text-align: match-parent (CSS Text 3 §6.1、raikiri-spike-l3wg) ──
+    //
+    // origin: raikiri-spike-ygl0 §8.2 spec lens F1 → raikiri-spike-l3wg. Before
+    // this, `TextAlign::MatchParent` reached `ComputedValues.text_align`
+    // unresolved (raikiri had no `direction` in the computed layer). These
+    // tests exercise the *full* `cascade()` pipeline end-to-end, complementing
+    // the `SpecifiedValues::finalize` unit tests in `specified.rs`.
+
+    #[test]
+    fn text_align_match_parent_resolves_start_against_ltr_parent_to_left() {
+        use crate::property::TextAlign;
+        let mut doc = TestDoc::new();
+        // Parent: `text-align: start` explicit, `direction` defaults to `ltr`.
+        let p = doc.push_element(0, "p", Some("text-align: start"));
+        let span = doc.push_element(p, "span", Some("text-align: match-parent"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[span].text_align,
+            TextAlign::Left,
+            "start + ltr → left (CSS Text 3 §6.1 match-parent table)"
+        );
+    }
+
+    /// **The end-to-end pin for the whole `direction` + `text-align:
+    /// match-parent` design.** The child declares *both* `direction: rtl`
+    /// and `text-align: match-parent` on itself. Per CSS Text 3 §6.1
+    /// `#valdef-text-align-match-parent` ("interpreted against **the
+    /// parent's** direction value"), the resolution must use the parent's
+    /// `ltr`, not the child's own `rtl`. This is the same invariant
+    /// `specified::tests::finalize_match_parent_uses_parent_direction_not_own_direction_winner`
+    /// pins at the `SpecifiedValues` unit level; this test additionally
+    /// proves the wiring through `PropertyKey` winner selection and
+    /// `apply_winners`' declaration-order walk, so a regression that
+    /// resurfaces the same-node winner-order hazard through a different path
+    /// (not just `SpecifiedValues::finalize`) would be caught here too.
+    #[test]
+    fn text_align_match_parent_uses_parent_direction_not_own_declared_direction() {
+        use crate::property::{Direction, TextAlign};
+        let mut doc = TestDoc::new();
+        // Parent: direction defaults to ltr, text-align defaults to start.
+        let p = doc.push_element(0, "p", None);
+        // Child: declares its own (conflicting) direction *and* match-parent.
+        let span = doc.push_element(p, "span", Some("direction: rtl; text-align: match-parent"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].direction, Direction::Ltr);
+        assert_eq!(r.computed[p].text_align, TextAlign::Start);
+        // Own `direction: rtl` still applies to the child normally — it's a
+        // separate property, unaffected by the match-parent resolution.
+        assert_eq!(r.computed[span].direction, Direction::Rtl);
+        // But `text-align: match-parent` must resolve against the *parent's*
+        // ltr (→ left), not the child's own rtl (which would give right).
+        assert_eq!(
+            r.computed[span].text_align,
+            TextAlign::Left,
+            "match-parent must use the parent's direction, not the node's own \
+             direction winner (CSS Text 3 §6.1 verbatim: \"the parent's \
+             direction value\")"
+        );
+    }
+
+    #[test]
+    fn text_align_match_parent_resolves_end_against_rtl_parent_to_left() {
+        use crate::property::TextAlign;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("direction: rtl; text-align: end"));
+        let span = doc.push_element(p, "span", Some("text-align: match-parent"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[span].text_align,
+            TextAlign::Left,
+            "end + rtl → left (CSS Text 3 §6.1 match-parent table)"
+        );
+    }
+
+    #[test]
+    fn text_align_match_parent_copies_center_parent_verbatim() {
+        use crate::property::TextAlign;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-align: center"));
+        let span = doc.push_element(p, "span", Some("text-align: match-parent"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[span].text_align, TextAlign::Center);
+    }
+
+    /// CSS Text 3 §6.1 verbatim: "Computes to start when specified on the
+    /// root element." This is **not** the same rule as the parent-direction
+    /// table — a root element declaring `direction: rtl` on itself must not
+    /// affect its own `match-parent` resolution (there is no parent to
+    /// consult at all).
+    #[test]
+    fn text_align_match_parent_on_root_element_resolves_to_start() {
+        use crate::property::TextAlign;
+        let cv = cascade_doc("", "html", Some("direction: rtl; text-align: match-parent"));
+        assert_eq!(cv.text_align, TextAlign::Start);
+    }
+
+    /// Three-level chain: pins the induction that a computed `text_align` is
+    /// never observed as `MatchParent` — the grandchild resolves against the
+    /// *child's* already-resolved computed value (`Left`), not against
+    /// `MatchParent` itself.
+    #[test]
+    fn text_align_match_parent_resolves_against_already_resolved_parent() {
+        use crate::property::TextAlign;
+        let mut doc = TestDoc::new();
+        let a = doc.push_element(0, "a", Some("text-align: start")); // ltr default → resolves nowhere (not match-parent itself)
+        let b = doc.push_element(a, "b", Some("text-align: match-parent")); // start+ltr → left
+        let c = doc.push_element(b, "c", Some("text-align: match-parent")); // inherits `left` verbatim
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[a].text_align, TextAlign::Start);
+        assert_eq!(r.computed[b].text_align, TextAlign::Left);
+        assert_eq!(
+            r.computed[c].text_align,
+            TextAlign::Left,
+            "grandchild's match-parent must copy the child's *resolved* Left, \
+             not re-interpret MatchParent"
+        );
     }
 
     // ── box-sizing wire-through (CSS Sizing 3 §3.3、raikiri-spike-0vv.13) ──
