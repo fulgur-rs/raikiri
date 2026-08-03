@@ -3163,6 +3163,46 @@ mod tests {
         );
     }
 
+    /// Page-path analogue of `cascade::tests::
+    /// text_align_match_parent_uses_parent_direction_not_own_direction_winner`
+    /// (that test's doc calls itself "the end-to-end pin for the whole
+    /// `direction` + `text-align: match-parent` design" — this is the same
+    /// pin for the *second, independent* resolution site,
+    /// `resolve_against_inherited`'s `TextAlign` arm, which the element-path
+    /// test cannot exercise).
+    ///
+    /// `@page` here declares its own (conflicting) `direction: rtl` on the
+    /// page context itself. Per CSS Text 3 §6.1
+    /// `#valdef-text-align-match-parent` ("interpreted against **the
+    /// parent's** direction value"), resolution must use the *root element's*
+    /// `ltr`, not the page context's own `rtl`. Without this test, a
+    /// regression that made `resolve_against_inherited` read the page
+    /// context's own `direction` winner instead of `inherited.direction`
+    /// would flip `Left` → `Right` here while every other test in this
+    /// module — including the residue-count pins — stayed green (none of
+    /// them cross own-direction with match-parent on the page path).
+    #[test]
+    fn cascade_page_text_align_match_parent_ignores_page_context_own_direction() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { direction: rtl; text-align: match-parent }",
+            Origin::Author,
+        );
+        // Root: text-align = start, direction = ltr (defaults).
+        let root = ComputedValues::initial();
+        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
+        assert_eq!(
+            result.declarations.get(&PropertyKey::TextAlign),
+            Some(&PropertyValue::TextAlign(TextAlign::Left)),
+        );
+        // The page context's own `direction: rtl` winner is unaffected — it
+        // is a separate property, unrelated to the match-parent resolution.
+        assert_eq!(
+            result.declarations.get(&PropertyKey::Direction),
+            Some(&PropertyValue::Direction(Direction::Rtl)),
+        );
+    }
+
     #[test]
     fn cascade_page_text_align_match_parent_copies_non_start_end_root_value() {
         let mut tree = RuleTree::empty();
