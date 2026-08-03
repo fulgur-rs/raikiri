@@ -684,3 +684,432 @@ mod tests {
         );
     }
 }
+
+/// bd raikiri-spike-3653 point 3 — empirical + source-verified characterization of
+/// what the CPU rasterizer (`anyrender_vello_cpu` → `vello_cpu` → `glifo`, all
+/// third-party, none of them Stylo) does when an extreme (`+Inf` or far beyond
+/// the production clamp) glyph scale reaches
+/// [`anyrender::PaintScene::draw_glyphs`].
+///
+/// # Why this bypasses `raikiri-dom`'s own guard
+///
+/// `font_size` here is passed to `draw_glyphs` directly, **bypassing**
+/// `raikiri_dom::layout`'s `MAX_FONT_SIZE_PX` clamp (installed at the
+/// `preshape_text` boundary by bd raikiri-spike-2ui0's site 5). Production
+/// code always shapes through that guard first, so today this input is not
+/// reachable via `raikiri_paint::paint_single_page`. The probe exists to
+/// characterize the **rasterizer's own** robustness independent of whether an
+/// upstream guard currently prevents the input — bd raikiri-spike-2ui0's own
+/// framing was that "an input guard exists" is not the same claim as "every
+/// downstream sink is safe if that guard is ever bypassed, loosened, or a new
+/// call path is added that skips it".
+///
+/// # Finding: no hang, no panic, no OOM — measured, not assumed
+///
+/// The first hypothesis written for this module (before running it) was
+/// wrong, and is worth recording as a caution against trusting source-reading
+/// alone: `glifo-0.1.1/src/renderer.rs:591`'s `calculate_raster_metrics` does
+/// contain an `i32` overflow (`bounds.x1.ceil() as i32 + 1`, which panics
+/// under `overflow-checks = true` — Cargo's `dev`/`test` default, and this
+/// workspace has no `[profile]` override) when a glyph's *scaled* bounding
+/// box exceeds `i32::MAX`. Reading that function in isolation predicts a
+/// panic for `f32::INFINITY`. **Running the probe below refutes that**: all
+/// three font sizes below (the production clamp `1e6`, `i32::MAX as f32`, and
+/// literal `f32::INFINITY`) complete normally, in well under the 30s bound,
+/// every time.
+///
+/// The reason, traced after the empirical result forced a second look:
+/// `glifo`'s glyph-atlas *caching* path (the one containing the overflowing
+/// arithmetic) is gated by `GlyphCacheConfig::max_cached_font_size`, which
+/// defaults to **128.0px** (`glifo-0.1.1/src/atlas/cache.rs:69`,
+/// `glifo-0.1.1/src/glyph.rs:385`:
+/// `draw_props.font_size <= config.max_cached_font_size`). Any `font_size`
+/// above that — which includes the production clamp (`1e6`) and, a fortiori,
+/// every value this probe tries — is *never* eligible for atlas caching in
+/// the first place, so `calculate_raster_metrics` is never called for it.
+/// Large glyphs instead take `glifo`'s uncached direct-fill path
+/// (`fill_uncached_outline_glyph`, `glifo-0.1.1/src/renderer.rs:205-217`),
+/// which does `renderer.set_transform(outline_transform.pre_scale(scale));
+/// renderer.fill_path(path)` — i.e. it fills the glyph's `BezPath` straight
+/// into the caller-sized destination canvas via `vello_cpu`'s tile/scanline
+/// rasterizer, which only ever touches pixels inside that destination
+/// surface. No intermediate buffer sized to the glyph's (possibly huge or
+/// infinite) *scaled* extent is ever allocated on this path — allocation is
+/// bounded by the caller-chosen canvas size (`CANVAS_W * CANVAS_H * 4` here),
+/// not by `font_size`.
+///
+/// (Separately, even glyphs that *do* stay under the 128px cache threshold
+/// can't reach the `i32` overflow above through a realistic font: for a
+/// typical 1000..2048-upem font, a scaled bbox only approaches `i32::MAX`
+/// around `font_size` ~1e9, many orders of magnitude past the point where
+/// `max_cached_font_size` has already routed the glyph to the uncached path.
+/// The overflow looks structurally unreachable via `draw_glyphs`, though this
+/// module does not exhaustively prove that for every font/transform
+/// combination — see the residual-risk note below.)
+///
+/// **Net conclusion**: no OOM, hang, or panic path was found in the CPU
+/// rasterizer for an extreme/`+Inf` scale reaching `draw_glyphs`, for the
+/// translate-only-transform / no-`glyph_transform` calling convention
+/// `raikiri_paint::text::draw_text_node` actually uses (this probe matches it
+/// exactly). This is a *stronger* result than bd raikiri-spike-2ui0's
+/// "PLAUSIBLE, uncharacterized" framing assumed was likely — the "glyph bbox
+/// 比例の scanline buffer" failure shape that motivated point 3 does not
+/// exist in this backend. Every extreme-`font_size` case also draws **zero**
+/// visible ink into the probe canvas, which by itself would be uninformative
+/// (indistinguishable from "this call never reaches rasterization at all")
+/// were it not for
+/// [`nonfinite_rasterizer_probe::draw_glyphs_at_natural_font_size_is_a_non_vacuous_control`]
+/// pinning that the identical font/glyphs/canvas/transform *does* draw when
+/// `font_size` is ordinary — isolating `font_size` as the one variable that
+/// silences the output, rather than the harness being unable to draw at all.
+///
+/// # Residual risk (not this module's job to close)
+///
+/// This probe exercises exactly one glyph, one font, one transform shape, and
+/// one backend (`anyrender_vello_cpu`/CPU). It does not prove every backend
+/// (`anyrender_vello`/GPU, `anyrender_vello_hybrid`) or every transform shape
+/// (rotation/skew, which *would* route through a different `glifo` code path
+/// per `supports_atlas_caching`'s skew check) is equally safe — raikiri does
+/// not use those today (`paint_single_page`'s doc lists "CSS transform" as
+/// M4+ non-goal, and the VRT/production backend is CPU-only per
+/// `raikiri::html_to_png`), so they're out of this probe's scope, not
+/// asserted safe.
+#[cfg(test)]
+mod nonfinite_rasterizer_probe {
+    use std::panic::AssertUnwindSafe;
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::time::Duration;
+
+    use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
+    use anyrender_vello_cpu::VelloCpuImageRenderer;
+    use kurbo::{Affine, Vec2};
+    use parley::{FontContext, PositionedLayoutItem};
+    use peniko::{Color, Fill, FontData};
+    use raikiri_dom::{Document, layout_single_page};
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+    use taffy::Style;
+
+    /// Deliberately tiny (`"Hi"` at the CSS-initial 16px comfortably fits and
+    /// inks it — see
+    /// [`draw_glyphs_at_natural_font_size_is_a_non_vacuous_control`], which
+    /// pins that this canvas size is not itself the reason later tests draw
+    /// nothing) — every extreme-`font_size` case is expected to leave it
+    /// blank (a glyph many orders of magnitude larger than 16px does not
+    /// happen to place any of its ink inside a 16x16 window at this
+    /// position), which this module treats as an informative finding, not a
+    /// probe defect, precisely because the control above proves the harness
+    /// can draw when the input is ordinary.
+    const CANVAS_W: u32 = 16;
+    const CANVAS_H: u32 = 16;
+
+    /// Shapes a real "Hi" paragraph through the normal (guarded)
+    /// `layout_single_page` pipeline and extracts the resulting `GlyphRun`'s
+    /// real `FontData` + `normalized_coords` + positioned glyphs (real glyph
+    /// ids with non-degenerate bounding boxes — a synthetic all-zero glyph
+    /// would turn `+Inf * 0` into `NaN`, which saturates to `0` on
+    /// `as i32` and would *not* reproduce the overflow this probe measures)
+    /// — plus the run's own natural `font_size` (the CSS initial `16px`,
+    /// unclamped since nothing overrode it here), returned so the control
+    /// test below can draw at the size the glyphs were actually shaped for.
+    fn real_glyph_run_parts() -> (FontData, Vec<i16>, Vec<AnyrenderGlyph>, f32) {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let text_id = doc.append_text(p, "Hi");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let layout = doc
+            .get_node(text_id)
+            .expect("text node must exist (just appended it)")
+            .text_layout()
+            .expect("preshape_text must populate text_layout for a non-empty Text node");
+
+        // cov:ignore: this block's `return` on match means its closing
+        // braces are never "reached" as a fallthrough line once the first
+        // GlyphRun is found (which it always is, for "Hi") — and the
+        // assert!'s message is only executed on failure, which doesn't
+        // happen while this test passes.
+        for line in layout.lines() {
+            for item in line.items() {
+                if let PositionedLayoutItem::GlyphRun(glyph_run) = item {
+                    let run = glyph_run.run();
+                    let font = run.font().clone();
+                    let natural_font_size = run.font_size();
+                    let coords = run.normalized_coords().to_vec();
+                    let glyphs: Vec<AnyrenderGlyph> = glyph_run
+                        .positioned_glyphs()
+                        .map(|g| AnyrenderGlyph {
+                            id: g.id,
+                            x: g.x,
+                            y: g.y,
+                        })
+                        .collect();
+                    assert!(
+                        !glyphs.is_empty(),
+                        "sanity: hello-world 'Hi' must shape to >= 1 glyph"
+                    );
+                    return (font, coords, glyphs, natural_font_size);
+                }
+            }
+        }
+        // cov:ignore: this panic is a setup-sanity fallback for a code path
+        // ("Hi" produces no GlyphRun) that doesn't occur while the test
+        // suite's font/shaping setup is intact.
+        panic!(
+            "sanity: hello-world 'Hi' produced no GlyphRun — setup is broken, not a rasterizer finding"
+        );
+    }
+
+    /// Runs `draw_glyphs` against a fresh `VelloCpuImageRenderer` canvas and
+    /// reports both the raw buffer length and how many bytes in it are
+    /// non-zero (i.e. whether anything was actually drawn). Shared by the
+    /// control test and the bounded extreme-value probe below so both use
+    /// the exact same canvas geometry / transform — the only variable
+    /// between them is `font_size`.
+    fn render_glyphs_unbounded(
+        font: &FontData,
+        coords: &[i16],
+        glyphs: &[AnyrenderGlyph],
+        font_size: f32,
+    ) -> (usize, usize) {
+        let buf = anyrender::render_to_buffer::<VelloCpuImageRenderer, _>(
+            |scene| {
+                scene.draw_glyphs(
+                    font,
+                    font_size,
+                    true, // hint
+                    coords,
+                    Vec2::ZERO, // embolden
+                    Fill::NonZero,
+                    Color::BLACK,
+                    1.0,              // brush_alpha
+                    Affine::IDENTITY, // == Affine::translate((0.0, 0.0)); parley's
+                    // `positioned_glyphs()` already bakes line offset + baseline into
+                    // `g.x`/`g.y` relative to a top-left (0,0) origin (see
+                    // `crates/raikiri-paint/src/text.rs` module doc), same convention
+                    // `draw_text_node` uses for its own `base_transform`.
+                    None, // glyph_transform
+                    glyphs.iter().copied(),
+                );
+            },
+            CANVAS_W,
+            CANVAS_H,
+        );
+        let nonzero = buf.iter().filter(|&&b| b != 0).count();
+        (buf.len(), nonzero)
+    }
+
+    /// Non-vacuity control: **without any extreme input**, does this exact
+    /// harness (font, glyphs, `CANVAS_W`×`CANVAS_H` canvas, `Affine::IDENTITY`
+    /// transform) actually put visible ink on the canvas? Drawn at the run's
+    /// own natural (unmodified, un-overridden) font-size — i.e. this is the
+    /// one call in this module that does not touch `font_size` at all.
+    ///
+    /// This exists because a probe that draws nothing at *every* input
+    /// (including a normal one) cannot distinguish "the rasterizer is robust
+    /// to extreme scale" from "this call configuration never reaches the
+    /// rasterization code path in the first place" — the three extreme-value
+    /// tests below all report zero non-zero bytes, and without this control
+    /// that would be uninformative rather than a finding. With it: the exact
+    /// same font/glyphs/canvas/transform genuinely draws (this test), and
+    /// then genuinely stops drawing once `font_size` crosses into extreme
+    /// territory (the other tests) — isolating `font_size` as the one
+    /// variable that changed.
+    #[test]
+    fn draw_glyphs_at_natural_font_size_is_a_non_vacuous_control() {
+        let (font, coords, glyphs, natural_font_size) = real_glyph_run_parts();
+        let (buf_len, nonzero) =
+            render_glyphs_unbounded(&font, &coords, &glyphs, natural_font_size);
+        assert_eq!(buf_len, (CANVAS_W * CANVAS_H * 4) as usize);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            nonzero > 0,
+            "control: draw_glyphs(font_size={natural_font_size}) — the run's own natural size, no override — drew zero non-zero bytes into a {CANVAS_W}x{CANVAS_H} canvas at Affine::IDENTITY. If this control ever fails, the extreme-value tests below are vacuous (they'd pass whether or not the rasterizer is actually robust) and bd raikiri-spike-3653 point 3's conclusion is unsupported until this is fixed — do not just delete the assertion"
+        );
+    }
+
+    /// Outcome of a bounded `draw_glyphs` probe call.
+    enum ProbeOutcome {
+        /// Rasterization returned a buffer (whether or not the glyph was
+        /// actually drawn into it — `buf_len` is the raw byte count, always
+        /// `CANVAS_W * CANVAS_H * 4` regardless of whether the atlas rejected
+        /// the glyph, since `render_to_buffer` always allocates the *canvas*
+        /// up front; `nonzero_bytes` is how many of those bytes are non-zero,
+        /// i.e. whether anything was actually drawn — see
+        /// [`draw_glyphs_at_natural_font_size_is_a_non_vacuous_control`] for
+        /// why this field matters, not just `buf_len`).
+        Completed {
+            buf_len: usize,
+            nonzero_bytes: usize,
+        },
+        /// The worker thread panicked (`catch_unwind` caught it directly, or
+        /// the channel disconnected because the panic unwound past the
+        /// `tx.send` — both are reported the same way since either means
+        /// "did not complete normally", the distinction the caller cares
+        /// about is panic vs. hang, not which detection path fired).
+        Panicked,
+    }
+
+    /// worker thread + `recv_timeout` — the same bounding pattern
+    /// `crates/raikiri-dom/src/layout.rs`'s
+    /// `nonfinite_font_size_is_clamped_before_parley` (bd raikiri-spike-2ui0
+    /// site 5) uses for parley. Necessary here for the same reason: if the
+    /// rasterizer *did* hang, an un-bounded `cargo test` run would eat the
+    /// CI job timeout and take the rest of the test binary's results with it
+    /// (indistinguishable from infra flake). A caught panic is fine to run
+    /// un-bounded (it returns immediately) but is routed through the same
+    /// worker so one probe function handles both failure shapes.
+    fn draw_glyphs_bounded(font_size: f32) -> ProbeOutcome {
+        let (font, coords, glyphs, _natural_font_size) = real_glyph_run_parts();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                render_glyphs_unbounded(&font, &coords, &glyphs, font_size)
+            }));
+            // Send unconditionally when we get here at all — if `catch_unwind`
+            // itself failed to catch (shouldn't happen; the closure has no
+            // `extern "C"` boundary or `panic = "abort"` in this workspace's
+            // profile) the thread would already be gone and `tx` dropped,
+            // which the `Disconnected` arm below handles.
+            let _ = tx.send(result);
+        });
+        // cov:ignore: every call site of this helper completes well within
+        // the 30s bound (that's the finding this module characterizes) —
+        // the Timeout panic arm is a diagnostic for a hang this module found
+        // does not occur, and Disconnected mirrors the same never-taken
+        // defensive shape as the layout.rs/lib.rs siblings of this pattern.
+        match rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(Ok((buf_len, nonzero_bytes))) => ProbeOutcome::Completed {
+                buf_len,
+                nonzero_bytes,
+            },
+            Ok(Err(_panic_payload)) => ProbeOutcome::Panicked,
+            Err(RecvTimeoutError::Timeout) => panic!(
+                "draw_glyphs(font_size={font_size}) did not return within 30s — possible CPU rasterizer hang (bd raikiri-spike-3653 point 3); note the worker thread is leaked (not joined) on this path, same caveat as the parley bound in layout.rs"
+            ),
+            Err(RecvTimeoutError::Disconnected) => ProbeOutcome::Panicked,
+        }
+    }
+
+    /// The headline finding: literal `+Inf` font-size reaching `draw_glyphs`
+    /// completes normally — no panic, no hang, the returned buffer is
+    /// exactly the caller-requested canvas size (not something proportional
+    /// to the infinite glyph scale), and — unlike the vacuous first draft of
+    /// this test — it draws **zero** visible ink, in contrast to
+    /// [`draw_glyphs_at_natural_font_size_is_a_non_vacuous_control`] drawing
+    /// non-zero ink through the identical canvas/transform/font/glyphs. See
+    /// this module's doc comment for the full mechanism (the
+    /// `max_cached_font_size` gate) and source citations.
+    ///
+    /// This is the module's load-bearing regression pin: if a future
+    /// `glifo`/`vello_cpu` upgrade changes this dispatch (e.g. raises/removes
+    /// the atlas-caching font-size gate, or the uncached fill path stops
+    /// being canvas-bounded), this test flips to `Panicked` or a timeout and
+    /// must be re-characterized rather than silently left describing stale
+    /// behavior — do not weaken this to
+    /// `assert!(matches!(outcome, Panicked | Completed { .. }))`.
+    #[test]
+    fn draw_glyphs_with_inf_font_size_completes_within_bounded_canvas_sized_buffer() {
+        // cov:ignore: this test's whole point is that the Completed arm is
+        // always taken (no panic) — the Panicked arm's message is a
+        // diagnostic for the failure mode this module found does not occur.
+        match draw_glyphs_bounded(f32::INFINITY) {
+            ProbeOutcome::Completed {
+                buf_len,
+                nonzero_bytes,
+            } => {
+                assert_eq!(
+                    buf_len,
+                    (CANVAS_W * CANVAS_H * 4) as usize,
+                    "draw_glyphs(f32::INFINITY) must allocate exactly the caller-sized canvas buffer, not something proportional to glyph scale"
+                );
+                assert_eq!(
+                    nonzero_bytes, 0,
+                    "draw_glyphs(f32::INFINITY) drew {nonzero_bytes} non-zero bytes — this module's characterization was 'completes but draws nothing'; if this now draws *something*, that's a different (not necessarily worse) finding and needs its own re-characterization, not silent acceptance"
+                );
+            }
+            ProbeOutcome::Panicked => panic!(
+                "draw_glyphs(f32::INFINITY) panicked — this module's characterization (uncached direct-fill path is used above the 128px glifo atlas-cache threshold, and it's canvas-bounded, not glyph-scale-bounded) no longer holds; re-characterize bd raikiri-spike-3653 point 3 rather than deleting this test"
+            ),
+        }
+    }
+
+    /// Same probe, but with a merely-huge *finite* font-size
+    /// (`i32::MAX as f32`, ~2.1e9) rather than literal `+Inf` — confirms the
+    /// no-crash result isn't an IEEE-infinity special case somewhere in the
+    /// stack; ordinary huge finite values take the same safe path. Still
+    /// ~2100x above the production clamp (`MAX_FONT_SIZE_PX = 1e6`,
+    /// `crates/raikiri-dom/src/layout.rs`), i.e. still outside what the
+    /// guarded pipeline can ever produce.
+    #[test]
+    fn draw_glyphs_with_huge_finite_font_size_also_completes_normally() {
+        // cov:ignore: this test's whole point is that the Completed arm is
+        // always taken (no panic) — the Panicked arm's message is a
+        // diagnostic for the failure mode this module found does not occur.
+        match draw_glyphs_bounded(i32::MAX as f32) {
+            ProbeOutcome::Completed {
+                buf_len,
+                nonzero_bytes,
+            } => {
+                assert_eq!(
+                    buf_len,
+                    (CANVAS_W * CANVAS_H * 4) as usize,
+                    "draw_glyphs(i32::MAX as f32) must allocate exactly the caller-sized canvas buffer, not something proportional to glyph scale"
+                );
+                assert_eq!(
+                    nonzero_bytes, 0,
+                    "draw_glyphs(i32::MAX as f32) drew {nonzero_bytes} non-zero bytes — re-characterize bd raikiri-spike-3653 point 3, see module doc"
+                );
+            }
+            ProbeOutcome::Panicked => panic!(
+                "draw_glyphs(i32::MAX as f32) panicked — re-characterize bd raikiri-spike-3653 point 3, see module doc"
+            ),
+        }
+    }
+
+    /// Sanity / headroom check at the production clamp boundary itself
+    /// (`MAX_FONT_SIZE_PX = 1e6`, `crates/raikiri-dom/src/layout.rs`) — this
+    /// value must also complete normally (no panic, no timeout), confirming
+    /// the existing bd raikiri-spike-2ui0 guard's chosen bound lands
+    /// comfortably inside the region this module found safe (in fact, `1e6`
+    /// is already ~7800x past `glifo`'s own 128px atlas-cache-eligibility
+    /// cutoff, so production text has *never* exercised that caching path
+    /// for any remotely large heading/display font-size — not just for
+    /// pathological input). Not a new guard — a pin that the current guard's
+    /// chosen bound is also safe for this previously-uncharacterized sink.
+    /// Like the two tests above (and unlike the natural-size control), a
+    /// production-clamp-sized glyph is *also* far too large to put visible
+    /// ink on a `CANVAS_W`×`CANVAS_H` probe canvas, so this asserts
+    /// `nonzero_bytes == 0` too — that's expected here, not a regression.
+    #[test]
+    fn draw_glyphs_at_production_font_size_clamp_completes_normally() {
+        const MAX_FONT_SIZE_PX: f32 = 1e6; // mirrors raikiri-dom's private const; see doc above
+        // cov:ignore: this test's whole point is that the Completed arm is
+        // always taken (no panic) — the Panicked arm's message is a
+        // diagnostic for the failure mode this module found does not occur.
+        match draw_glyphs_bounded(MAX_FONT_SIZE_PX) {
+            ProbeOutcome::Completed {
+                buf_len,
+                nonzero_bytes,
+            } => {
+                assert_eq!(
+                    buf_len,
+                    (CANVAS_W * CANVAS_H * 4) as usize,
+                    "render_to_buffer must return exactly width*height*4 bytes"
+                );
+                assert_eq!(
+                    nonzero_bytes, 0,
+                    "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) drew {nonzero_bytes} non-zero bytes into a {CANVAS_W}x{CANVAS_H} probe canvas — expected zero (the glyph is far larger than the probe canvas at this size); if this changed, it's not itself a problem but re-check the module doc's characterization still holds"
+                );
+            }
+            ProbeOutcome::Panicked => panic!(
+                "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) panicked — this would mean bd raikiri-spike-2ui0's guard has a residual gap against this specific sink, escalate rather than widen this test's expectation"
+            ),
+        }
+    }
+}

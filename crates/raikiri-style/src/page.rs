@@ -77,7 +77,7 @@ use std::sync::LazyLock;
 use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 
 use crate::Atom;
-use crate::cascade::{cascade_rank, resolve_against_inherited};
+use crate::cascade::{cascade_rank, resolve_against_inherited, resolve_relative_font_size};
 use crate::computed::ComputedValues;
 use crate::property::{
     Border, BorderColor, BorderStyle, Length, LengthOrAuto, PropertyKey, PropertyValue, Sides,
@@ -495,7 +495,11 @@ pub struct PageCascadeResult {
     ///   element's computed font-size, so the value is always
     ///   [`Length::Px`]. §6 verbatim: "When used on
     ///   the font-size property in the page context, they are relative to the
-    ///   font-size of the root element." (raikiri-spike-zls8).
+    ///   font-size of the root element." (raikiri-spike-zls8). `larger` /
+    ///   `smaller` (`<relative-size>`) are resolved the same way against the
+    ///   root element's computed font-size, so **no relative font-size
+    ///   sentinel** reaches the consumer either — same guarantee as the
+    ///   `font-weight` bullet above (raikiri-spike-4rmu).
     ///
     /// **Phase 3** — absolutization against the page context's *own*
     /// `font-size` (`absolutize_in_page_context`, raikiri-spike-sshp):
@@ -571,6 +575,58 @@ pub struct PageCascadeResult {
     /// value for every property") describes the page context as a whole, not
     /// this map — materialising the complete bag is the downstream page-layout
     /// consumer's job, and it starts from `root_style` plus these declarations.
+    ///
+    /// # Non-finite values pass through unguarded (bd raikiri-spike-kj2s)
+    ///
+    /// The absolutization in phase 2 / phase 3 above is IEEE 754 `f32`
+    /// arithmetic over untrusted author input. CSS Values 4 §5 "Numeric Data
+    /// Types" (<https://www.w3.org/TR/css-values-4/#numeric-types>) requires
+    /// out-of-range values to be "converted to the closest value supported by
+    /// the implementation" — it does **not** require the result to be finite.
+    /// A declaration such as `html { font-size: 0px }` with
+    /// `@page { font-size: 1e40em }` overflows the literal `1e40` to
+    /// `f32::INFINITY` at parse time; phase 2's `parent_font_size.0 * v`
+    /// (`0.0 * inf`) then yields `f32::NAN` per IEEE 754. See
+    /// `page::tests::cascade_page_font_size_can_carry_nan_from_pathological_em`
+    /// for the pinned reproducer.
+    ///
+    /// That `1e40em` example's *parse-time* overflow-to-`f32::INFINITY` step
+    /// is itself disputed: bd raikiri-spike-9mbo (open, `blocked/human`)
+    /// argues that CSS Values 4 §5's "closest value" wording may require
+    /// saturating to `f32::MAX` instead, which is a question about
+    /// cssparser's `f64`→`f32` cast, not about this crate. The hazard this
+    /// section documents does not depend on how that resolves: two already
+    /// finite operands can still overflow to infinity on the `*` in phase 2
+    /// alone (e.g. a `1e30px` root font-size times a `1e20em` page
+    /// declaration), with no contested cast anywhere in the chain. See
+    /// `page::tests::cascade_page_font_size_can_carry_infinity_from_finite_operand_multiply`
+    /// for that arithmetic-only reproducer, which stays valid regardless of
+    /// how 9mbo is resolved.
+    ///
+    /// **This map does not filter that out**, and neither does
+    /// [`ComputedValues`] — the element path's equivalent computed-value bag —
+    /// which documents no finiteness contract either. That is not an
+    /// oversight: `raikiri-style` applies no `is_finite` / `is_nan` check
+    /// anywhere in parsing, cascade, or resolution (grep the crate to
+    /// confirm), and the element path's guard against non-finite geometry
+    /// lives entirely outside this crate, in `raikiri-dom`'s layout module
+    /// (`sanitize_taffy`, decided by bd raikiri-spike-2ui0's PMO ruling:
+    /// **the guard belongs at the sink that consumes the computed-value bag,
+    /// not at the parse/resolve layer that produces it**). This map is the
+    /// same kind of computed-value bag, so the same precedent applies to it.
+    ///
+    /// No sink for `declarations` exists yet — the consumer that would read
+    /// this map (page-margin-box layout, mirroring `apply_computed_to_style`
+    /// for the element path) is M4+ scope, and `raikiri-style` currently has
+    /// zero consumers of this field outside this crate: grepping the type
+    /// name `PageCascadeResult` (not `.declarations`, which `PageRule` and
+    /// `StyleRule` also expose as an unrelated field/accessor name) finds
+    /// only doc-comment *mentions* elsewhere (`raikiri-dom`, and an umbrella
+    /// comment noting that `cascade_page` itself is not re-exported), never
+    /// an actual field read, as of this writing. The hazard is therefore
+    /// real but currently unreachable; **when the M4 sink is built, its
+    /// bridge must add the equivalent guard**, following the same precedent
+    /// rather than adding one here.
     pub declarations: HashMap<PropertyKey, PropertyValue>,
 }
 
@@ -974,6 +1030,34 @@ pub(crate) fn absolutize_in_page_context(
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::BoxSizing(_)) => v,
+        // ── font-size: larger / smaller (raikiri-spike-4rmu) ────────────────
+        // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
+        // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
+        // through `resolve_against_inherited` before this function ever runs,
+        // and that function's `FontSizeRelative` arm always converges to
+        // `PropertyValue::FontSize(Length::Px(_))`. There is no second entry
+        // point that could skip step 3 (unlike the shorthand fall-throughs
+        // below, which *are* reachable via a direct internal call).
+        //
+        // The arm still exists — not folded into the `Color`/`FontSize`/…
+        // bucket above, and not `unreachable!` — for the same two reasons the
+        // shorthand fall-throughs keep real arms: the crate keeps the cascade
+        // panic-free (reviewer-security policy, see the `Margin` fall-through
+        // in `crate::cascade::apply_value`), and this function's `pub(crate)`
+        // visibility means test code *can* call it directly with an
+        // unresolved `FontSizeRelative`, bypassing step 3 (as
+        // `absolutize_in_page_context_font_size_relative_safety_net` does).
+        //
+        // The basis is deliberately `font_size` (this context's own,
+        // phase-2-resolved value) rather than the inheritance parent's — this
+        // function has no parent basis available, and the arm is bug-only
+        // regardless, so spec correctness here is not a design goal. What
+        // matters is: no panic, and convergence to the same `FontSize(Px(_))`
+        // shape the real (phase 2) path produces, so a caller reading
+        // `declarations` never observes an unresolved `FontSizeRelative`.
+        PropertyValue::FontSizeRelative(rel) => {
+            PropertyValue::FontSize(Length::Px(resolve_relative_font_size(rel, font_size.px())))
+        }
         // ── line-height ───────────────────────────────────────────────────
         // CSS Inline 3 §5.1 <https://www.w3.org/TR/css-inline-3/#propdef-line-height>:
         // `<percentage>` is "computed relative to 1em" of the declaring
@@ -1749,6 +1833,76 @@ mod tests {
         assert_eq!(page_font_size_px("2rem", None), 32.0);
     }
 
+    /// `<relative-size>` (`larger` / `smaller`、raikiri-spike-4rmu) in the page
+    /// context resolves against the root's computed font-size, same basis as
+    /// `em` / `rem` above (CSS Page 3 §6). Reuses `page_font_size_px`, which
+    /// already panics on an unresolved winner reaching `declarations` — a
+    /// `FontSizeRelative` leak here is the same regression class as ygl0.
+    #[test]
+    fn cascade_page_font_size_relative_resolves_against_root_computed_font_size() {
+        let root = root_with_font_size(20.0);
+        assert_eq!(page_font_size_px("larger", Some(&root)), 24.0);
+        assert_eq!(page_font_size_px("smaller", Some(&root)), 20.0 / 1.2);
+    }
+
+    #[test]
+    fn cascade_page_font_size_relative_without_root_style_uses_initial_16px() {
+        // `root_style: None` = the L3 legacy exception (initial values, 16px).
+        assert_eq!(page_font_size_px("larger", None), 19.2);
+    }
+
+    // ── declarations may carry non-finite f32 (bd raikiri-spike-kj2s) ──────
+    //
+    // This is not guarded here — see the `# Non-finite values pass through
+    // unguarded` section of
+    // `PageCascadeResult::declarations`'s doc for why that is intentional
+    // (sink-boundary precedent, bd raikiri-spike-2ui0) rather than an
+    // oversight. This test exists to pin that the hazard is *real*, so a
+    // future reader cannot dismiss the doc's claim as theoretical, and so a
+    // regression that added a clamp here (which would violate the
+    // precedent) has to delete this test rather than merely adjust it.
+
+    #[test]
+    fn cascade_page_font_size_can_carry_nan_from_pathological_em() {
+        // Same overflow-then-multiply mechanism as the element path's 2ui0
+        // reproducer (`crates/raikiri-dom/src/layout.rs`, "Reproducer A'"):
+        // `1e40` overflows `f32` to `+Inf` at parse time (cssparser's f64 →
+        // f32 conversion), and phase 2's `resolve_font_size`
+        // (`parent_font_size.0 * v`) computes `0.0 * inf` = `NaN` per IEEE
+        // 754 — root font-size 0 supplies the `0.0`.
+        let root = root_with_font_size(0.0);
+        let px = page_font_size_px("1e40em", Some(&root));
+        // cov:ignore: the panic-message literal below is only executed if
+        // the assertion fails, which it doesn't while this test passes.
+        assert!(
+            px.is_nan(),
+            "expected NaN from `0.0 * inf` (root font-size 0 times an overflowed `1e40em`), got {px} — either the overflow/multiply mechanism changed (update this test and the `declarations` doc together) or a guard was added in raikiri-style (which would violate the sink-boundary precedent from bd raikiri-spike-2ui0 — see the doc's rationale before doing that)"
+        );
+    }
+
+    #[test]
+    fn cascade_page_font_size_can_carry_infinity_from_finite_operand_multiply() {
+        // Arithmetic-only counterpart to the test above: both operands are
+        // already finite `f32` values (no contested f64→f32 cast involved,
+        // unlike the `1e40em` reproducer — see bd
+        // raikiri-spike-9mbo). `1e30` (root font-size) and `1e20` (page
+        // em multiplier) are each well within f32's finite range on their
+        // own; their product, `1e50`, overflows f32 (max ~3.4e38) to
+        // `+Infinity` per IEEE 754. This pins that the non-finite hazard
+        // documented on `PageCascadeResult::declarations` holds
+        // independently of how 9mbo's parse-time question is resolved.
+        let root = root_with_font_size(1e30);
+        let px = page_font_size_px("1e20em", Some(&root));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            px.is_infinite() && px.is_sign_positive(),
+            "expected +Infinity from `1e30 * 1e20` overflowing f32, got {px}"
+        );
+    }
+
+    // ── page context inheritance: relative font-weight resolution (cont'd) ──
+
     #[test]
     fn cascade_page_font_weight_relative_without_root_style_uses_initial_400() {
         // `root_style: None` = the L3 legacy exception quoted above ("sets
@@ -2241,6 +2395,43 @@ mod tests {
         );
     }
 
+    /// Direct exercise of the `FontSizeRelative` "safety net" arm of
+    /// `absolutize_in_page_context` — structurally unreachable through
+    /// `cascade_page` (step 3/phase 2 always converges `FontSizeRelative` to
+    /// `FontSize(Length::Px(_))` first, see the arm's own doc), but the
+    /// `pub(crate)` function can still be driven directly with an unresolved
+    /// value, same as `absolutize_in_page_context_shorthand_fall_throughs`
+    /// above. Pins: no panic, and the result shape matches what phase 2
+    /// (`resolve_against_inherited`'s `FontSizeRelative` arm) would have
+    /// produced — `FontSize(Length::Px(_))`.
+    #[test]
+    fn absolutize_in_page_context_font_size_relative_safety_net() {
+        use crate::property::RelativeFontSize;
+
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        assert_eq!(
+            absolutize_in_page_context(
+                PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
+                fs,
+                &ctx,
+                styles,
+            ),
+            PropertyValue::FontSize(Length::Px(24.0)),
+        );
+        assert_eq!(
+            absolutize_in_page_context(
+                PropertyValue::FontSizeRelative(RelativeFontSize::Smaller),
+                fs,
+                &ctx,
+                styles,
+            ),
+            PropertyValue::FontSize(Length::Px(20.0 / 1.2)),
+        );
+    }
+
     // ── 「`declarations` は computed 値」契約の機械的 pin ────────────────────
     //
     // bd raikiri-spike-awjx。契約の canonical な記述は
@@ -2278,24 +2469,37 @@ mod tests {
     /// の `+ 3` 項。いずれも機械導出できない。
     ///
     /// ⚠️ **本定数は `page_corpus().len()` としか照合されない。** 新 variant を
-    /// 足した作者が両方を放置すれば 40 同士で整合してしまうため、「variant 追加
+    /// 足した作者が両方を放置すれば同数のまま整合してしまうため、「variant 追加
     /// が compile error になる」ことは「corpus が完全である」ことを**含意しない**
     /// (`specified_layer_residue` の tripwire は one-way)。この穴を閉じるには
     /// corpus を `PropertyKey` の網羅 match から生成する必要がある — 別 task。
-    const PROPERTY_VALUE_VARIANTS: usize = 40;
+    const PROPERTY_VALUE_VARIANTS: usize = 41;
 
     /// phase 3 (`absolutize_in_page_context`) が**素通しする** variant 数。
     const PHASE_3_PASS_THROUGH_VARIANTS: usize = 22;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
-    /// border-width (longhand 4 + `border` shorthand 1) / width + height 2。
+    /// border-width (longhand 4 + `border` shorthand 1) / width + height 2 /
+    /// font-size: larger/smaller 1 (`FontSizeRelative` — raikiri-spike-4rmu、
+    /// `absolutize_in_page_context` の structurally-unreachable な safety-net
+    /// arm。到達しないが「素通し」ではなく実際に変換する形の arm なので
+    /// `PHASE_3_PASS_THROUGH_VARIANTS` 側には数えない)。
     const PHASE_3_TRANSFORMED_VARIANTS: usize =
         PROPERTY_VALUE_VARIANTS - PHASE_3_PASS_THROUGH_VARIANTS;
 
     /// phase 2 / phase 3 を**通す前**の corpus が持つ specified 層残滓の数 =
     /// `PHASE_3_TRANSFORMED_VARIANTS` + phase 2 が解決する `font-size` /
     /// `font-weight` の 2 + どちらも解決しない `text-align: match-parent` の 1。
+    ///
+    /// `FontSizeRelative` (`larger`/`smaller`) もこの「phase 2 が解決する」
+    /// 3 種と同じ扱いに**見える**が、`+3` には数えない — phase 3
+    /// (`absolutize_in_page_context`) 側で `FontSize` / `FontWeight` /
+    /// `TextAlign::MatchParent` は「pass-through」bucket
+    /// (`PHASE_3_PASS_THROUGH_VARIANTS`) に居るのに対し、`FontSizeRelative` は
+    /// 独自の (structurally unreachable な) transform arm を持ち
+    /// `PHASE_3_TRANSFORMED_VARIANTS` 側に既に数えられているため
+    /// (二重計上を避ける、上記定数の doc 参照)。
     const RAW_CORPUS_RESIDUE_VARIANTS: usize = PHASE_3_TRANSFORMED_VARIANTS + 3;
 
     /// 全 `PropertyValue` variant を **specified 層の worst case** payload で
@@ -2304,8 +2508,10 @@ mod tests {
     /// worst case = 「phase 2 / phase 3 を通さなければ specified 層の残滓が
     /// 残る」値: length は `Em` / `Rem` / `Pt` (`Px` / `Percent` は既に computed
     /// 層なので使わない)、`font-weight` は `bolder`、`text-align` は
-    /// `match-parent`。
+    /// `match-parent`、`font-size` の relative variant は `larger`
+    /// (raikiri-spike-4rmu)。
     fn page_corpus() -> Vec<PropertyValue> {
+        use crate::property::RelativeFontSize;
         use std::sync::Arc;
 
         let literal = || vec![ContentComponent::Literal("x".into())];
@@ -2319,6 +2525,7 @@ mod tests {
             PropertyValue::BackgroundColor(BLUE),
             PropertyValue::FontFamily(vec![Atom::from("serif")]),
             PropertyValue::FontSize(Length::Em(2.0)),
+            PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
             PropertyValue::FontWeight(FontWeightValue::Bolder),
             PropertyValue::LineHeight(LineHeight::Length(Length::Em(2.0))),
             PropertyValue::Display(DisplayValue::Block),
@@ -2402,6 +2609,20 @@ mod tests {
                 Length::Em(_) => Some("Length::Em"),
                 Length::Rem(_) => Some("Length::Rem"),
                 Length::Pt(_) => Some("Length::Pt"),
+                // bd raikiri-spike-2x8 — additional font-relative / absolute
+                // units。`Em` / `Rem` / `Pt` と同じ理由で残滓 (絶対化前は
+                // computed 層に存在しない specified-only 表現)。
+                Length::Ex(_) => Some("Length::Ex"),
+                Length::Rex(_) => Some("Length::Rex"),
+                Length::Ch(_) => Some("Length::Ch"),
+                Length::Rch(_) => Some("Length::Rch"),
+                Length::Ic(_) => Some("Length::Ic"),
+                Length::Ric(_) => Some("Length::Ric"),
+                Length::Cm(_) => Some("Length::Cm"),
+                Length::Mm(_) => Some("Length::Mm"),
+                Length::Q(_) => Some("Length::Q"),
+                Length::In(_) => Some("Length::In"),
+                Length::Pc(_) => Some("Length::Pc"),
             }
         }
         /// `%` が computed 層に**残らない** position 用 — `font-size` と
@@ -2467,6 +2688,10 @@ mod tests {
             PropertyValue::LineHeight(lh) => line_height(*lh),
             // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
             PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),
+            // `larger` / `smaller` — `font_weight` の `Bolder`/`Lighter` と同型
+            // (raikiri-spike-4rmu): 常に未解決の残滓。`page_corpus` の worst-case
+            // payload としても使う。
+            PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
             PropertyValue::PaddingTop(l)
             | PropertyValue::PaddingRight(l)
             | PropertyValue::PaddingBottom(l)
@@ -2533,10 +2758,74 @@ mod tests {
         );
     }
 
+    /// bd raikiri-spike-2x8 で追加した font-relative / absolute unit も
+    /// `Em` / `Rem` / `Pt` と同じく「絶対化前は specified 層の残滓」として
+    /// 検出される (`length()` inner helper の網羅 match — 新 variant 追加は
+    /// compile error で強制されるが、各 arm の到達は compile では保証されない
+    /// ため個別に exercise する)。
+    #[test]
+    fn additional_length_units_are_specified_layer_residue() {
+        // straight-line asserts (no loop + lazy custom message) so every
+        // comparison is unconditionally exercised under patch coverage —
+        // a `assert_eq!(.., "{l:?}")` message argument is only evaluated on
+        // failure, which would leave that formatting code permanently
+        // uncovered by an all-passing loop.
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Ex(1.0))),
+            Some("Length::Ex"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Rex(1.0))),
+            Some("Length::Rex"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Ch(1.0))),
+            Some("Length::Ch"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Rch(1.0))),
+            Some("Length::Rch"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Ic(1.0))),
+            Some("Length::Ic"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Ric(1.0))),
+            Some("Length::Ric"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Cm(1.0))),
+            Some("Length::Cm"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Mm(1.0))),
+            Some("Length::Mm"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Q(1.0))),
+            Some("Length::Q"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::In(1.0))),
+            Some("Length::In"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Pc(1.0))),
+            Some("Length::Pc"),
+        );
+    }
+
     /// `page_corpus` が全 variant を過不足なく 1 度ずつ覆うこと。
     ///
-    /// `PropertyValue::key()` は variant → key の単射なので、40 entry から
-    /// 相異なる 40 key が出れば 40 variant を覆っている。
+    /// 以前は `PropertyValue::key()` (variant → key の単射) を経由して
+    /// `HashSet<PropertyKey>` の要素数で判定していたが、raikiri-spike-4rmu で
+    /// この単射性が**意図的に**崩れた — `PropertyValue::FontSizeRelative` は
+    /// `FontSize` と同じ `PropertyKey::FontSize` を共有する (cascade winner
+    /// selection で両者を正しく競合させるため、[`PropertyValue::FontSizeRelative`]
+    /// doc 参照)。したがって `key()` はもう variant 数え上げに使えない —
+    /// 代わりに `std::mem::discriminant` (payload の trait bound に依存せず
+    /// variant のみを区別する) で数える。
     ///
     /// ⚠️ これは「corpus に**重複や欠落が無い**」の pin であって「corpus が
     /// `PropertyValue` の**現在の** variant 集合を覆っている」の pin ではない —
@@ -2549,12 +2838,35 @@ mod tests {
             PROPERTY_VALUE_VARIANTS,
             "page_corpus は PropertyValue の全 variant を 1 つずつ持つこと",
         );
-        let keys: std::collections::HashSet<PropertyKey> =
-            corpus.iter().map(PropertyValue::key).collect();
+        let discriminants: std::collections::HashSet<std::mem::Discriminant<PropertyValue>> =
+            corpus.iter().map(std::mem::discriminant).collect();
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
-            keys.len(),
+            discriminants.len(),
             PROPERTY_VALUE_VARIANTS,
-            "page_corpus に同じ variant が 2 度現れている (key が重複)",
+            "page_corpus に同じ variant が 2 度現れている (discriminant が重複)",
+        );
+    }
+
+    /// `FontSize` / `FontSizeRelative` が意図的に同じ `PropertyKey` を共有する
+    /// こと自体の direct pin ([`page_corpus_covers_every_property_value_variant`]
+    /// の doc が説明する単射性崩れの根拠)。property.rs 側の
+    /// `font_size_relative_shares_property_key_with_font_size` と同じ主張を
+    /// page 経路の corpus に対して確認する — corpus の 2 entry が同じ key を
+    /// 持つことは bug ではなく仕様であると明示する。
+    #[test]
+    fn page_corpus_font_size_and_font_size_relative_share_one_key() {
+        let corpus = page_corpus();
+        let font_size_key_count = corpus
+            .iter()
+            .filter(|v| v.key() == PropertyKey::FontSize)
+            .count();
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            font_size_key_count, 2,
+            "FontSize と FontSizeRelative の 2 entry が PropertyKey::FontSize を共有するはず",
         );
     }
 
