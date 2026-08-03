@@ -638,6 +638,32 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// 比較するため行選択は spec §2.2.1 のとおり正確に決まる — 旧 `u16` 実装は
 /// parse 段の丸めで `349.5` が `350` に化けてから本関数に渡り、`350 <= w < 550`
 /// 行を誤って踏んでいた (詳細: [`crate::property::parse_font_weight`] doc)。
+///
+/// # 非有限 `inherited` (`NaN` / `±Inf`) — 本関数は guard しない
+///
+/// `u16` だった頃は非有限が型で構造的に排除されていたが、`f32` 化 (bd
+/// raikiri-spike-e52s) で finiteness は「型で保証」から「呼び出し元の値
+/// 検証で保証」に変わった。通常の cascade 経路は
+/// [`crate::property::parse_font_weight`] の `[1, 1000]` range guard により
+/// 常に finite だが、`ComputedValues` の field は全て `pub` で
+/// [`crate::page::cascade_page`] も呼び出し側提供の `Option<&ComputedValues>`
+/// を継承元 root として受け取るため、cascade を経由しない直接構築
+/// (`ComputedValues { font_weight: f32::NAN, .. }`) 経由で理論上到達しうる。
+///
+/// 両 arm とも `<` 比較は NaN に対し常に false になるが、catch-all arm の
+/// 位置が異なるため結果は非対称: `Bolder` の catch-all は `w => w` (`900 <=
+/// w` 行の no-change) なので `NaN` / `+Inf` は**そのまま伝播**する
+/// (`-Inf` は最初の `w < 100.0` guard に一致し 400.0 に解決される)。
+/// `Lighter` の catch-all は `_ => 700.0` なので `NaN` / `+Inf` は**700.0 に
+/// 丸められる** (`-Inf` は同じく最初の guard に一致しそのまま伝播する)。
+///
+/// 出力側の runtime guard は追加しない — 本 issue (bd raikiri-spike-e52s)
+/// の scope は型格上げであり、guard 追加は behavior 変更で scope 外。bd
+/// raikiri-spike-3653 は非有限 f32 の下流 sink (parley 経由の `font_size`)
+/// を characterize したが `font_weight` はその scope に含まれていない
+/// (2ui0 の 5 clamp site も `font_weight` を対象にしていない) — 本節は
+/// その gap を doc として埋める characterize であり、対応する挙動変更は
+/// 伴わない。
 pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: f32) -> f32 {
     match specified {
         FontWeightValue::Absolute(w) => w,
@@ -2479,22 +2505,22 @@ mod tests {
         //
         // payload / `ComputedValues.font_weight` を `f32` に格上げしたことで
         // 丸め自体が無くなり、以下は spec どおりの行に解決される。
-        // cov:ignore: panic-message literals only executed on assertion
-        // failure, which doesn't happen while these assertions pass.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             relative_weight_through_cascade("font-weight: 349.5", "font-weight: bolder"),
             400.0,
             "349.5 is in the `100 <= w < 350` row, not `350 <= w < 550`"
         );
         // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this assertion passes.
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             relative_weight_through_cascade("font-weight: 549.5", "font-weight: bolder"),
             700.0,
             "549.5 is in the `350 <= w < 550` row, not `550 <= w < 750`"
         );
         // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this assertion passes.
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             relative_weight_through_cascade("font-weight: 749.5", "font-weight: lighter"),
             400.0,
