@@ -130,6 +130,20 @@ pub struct ComputedValues {
     ///
     /// `raikiri-dom` の layout はこの field を直接 `parley::FontWeight::new(f32)`
     /// に渡す (キャスト不要、raikiri-spike-5iy + 17s8 + e52s)。
+    ///
+    /// # `[1, 1000]` / finite は caller が維持する contract (guard なし)
+    ///
+    /// 本 struct の field は全て `pub` であり、cascade を経由せず直接
+    /// `ComputedValues { font_weight: ..., .. }` を構築することを妨げない
+    /// (例: [`crate::page::cascade_page`] の継承元 root 引数)。`u16` だった頃は
+    /// 非有限値がそもそも型で構成不可能だったが、`f32` 化 (bd raikiri-spike-e52s)
+    /// でこの保証は「型」から「呼び出し元の値検証」に変わった — cascade を
+    /// 経由する通常経路は `parse_font_weight` (private、
+    /// [`crate::property::FontWeightValue`] の doc 参照) の `[1, 1000]` range
+    /// guard により常に finite だが、直接構築はその guard を経ない。
+    /// `NaN` / `±Inf` が渡った場合の [`crate::cascade::resolve_relative_weight`]
+    /// (`bolder`/`lighter` 解決) の挙動は同関数の doc で characterize 済み
+    /// (guard は追加していない — 本 field は runtime で値を検証しない)。
     pub font_weight: f32,
     /// `line-height`。**inherited**、initial: [`ComputedLineHeight::Normal`]。
     /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
