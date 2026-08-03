@@ -133,8 +133,9 @@ pub struct SpecifiedValues {
     /// **親の** computed font-size を基準に絶対化される。
     pub font_size: Length,
     /// [`ComputedValues::font_weight`] の staging。**既に computed-equivalent**
-    /// — 上記 D5 invariant を参照。
-    pub font_weight: u16,
+    /// — 上記 D5 invariant を参照。型は `f32` (bd raikiri-spike-e52s で `u16`
+    /// から格上げ、fractional weight を保持する)。
+    pub font_weight: f32,
     /// `line-height` の **specified** value。phase 3 ([`resolve_line_height`]) で
     /// 自 node の computed font-size を基準に絶対化される。
     pub line_height: LineHeight,
@@ -194,7 +195,7 @@ impl SpecifiedValues {
             font_family: vec![Atom::from("serif")],
             // CSS Fonts 4 §2.5: initial は `medium` (本実装では 16px)。
             font_size: Length::Px(crate::computed::INITIAL_FONT_SIZE_PX),
-            font_weight: 400,
+            font_weight: 400.0,
             line_height: LineHeight::Normal,
             display: DisplayValue::Inline,
             counter_reset: empty_counter_entries(),
@@ -613,7 +614,7 @@ mod tests {
             },
             font_family: vec![Atom::from("sans-serif")],
             font_size: ComputedLength(24.0),
-            font_weight: 700,
+            font_weight: 700.0,
             line_height: ComputedLineHeight::Number(1.5),
             display: DisplayValue::Block,
             counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
@@ -645,7 +646,7 @@ mod tests {
         let child = SpecifiedValues::inherit_from(&parent);
         assert_eq!(child.color, parent.color);
         assert_eq!(child.font_family, parent.font_family);
-        assert_eq!(child.font_weight, 700);
+        assert_eq!(child.font_weight, 700.0);
         // CSS Text 3 §6.1: text-align は inherited。
         assert_eq!(child.text_align, TextAlign::Center);
         // CSS Writing Modes 4 §2.1: direction は inherited (raikiri-spike-l3wg)。

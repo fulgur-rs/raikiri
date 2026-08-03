@@ -106,7 +106,7 @@ pub struct ComputedValues {
     /// (親基準) / `pt` は cascade の phase 2
     /// ([`crate::resolve::resolve_font_size`]) で px へ絶対化済み。
     pub font_size: ComputedLength,
-    /// `font-weight`。inherited、initial: 400 (normal)。
+    /// `font-weight`。inherited、initial: 400.0 (normal)。
     ///
     /// **常に resolve 済みの absolute weight** (`[1, 1000]`)。specified value 側の
     /// `bolder` / `lighter` sentinel ([`crate::property::FontWeightValue`]) は
@@ -120,13 +120,31 @@ pub struct ComputedValues {
     /// value" と規定している
     /// (<https://www.w3.org/TR/css-fonts-4/#relative-weights>)。
     ///
-    /// なお `u16` 表現のため **computed value の fractional 精度は保持されない**
-    /// (spec §2.2.2 は fractional weight を valid とする)。既知 divergence、
-    /// 追跡: bd raikiri-spike-e52s。
+    /// 型は `f32` (旧 `u16`、bd raikiri-spike-e52s で格上げ) — §2.2.2 "Missing
+    /// weights" <https://www.w3.org/TR/css-fonts-4/#missing-weights> "Fractional
+    /// weights are valid" どおり computed value の fractional 精度を保持する。
+    /// `u16` だった当時は整数化のため round-half-away-from-zero を要し、その丸めが
+    /// §2.2.1 relative-weight table の行選択を変える 2 次被害を伴う既知
+    /// divergence だった (旧 tracking: bd raikiri-spike-e52s、本 field の
+    /// 型変更で解消)。
     ///
-    /// 型を `u16` のまま保つことは下流契約でもある: `raikiri-dom` の layout が
-    /// `cv.font_weight as f32` で読み戻す (raikiri-spike-5iy + 17s8)。
-    pub font_weight: u16,
+    /// `raikiri-dom` の layout はこの field を直接 `parley::FontWeight::new(f32)`
+    /// に渡す (キャスト不要、raikiri-spike-5iy + 17s8 + e52s)。
+    ///
+    /// # `[1, 1000]` / finite は caller が維持する contract (guard なし)
+    ///
+    /// 本 struct の field は全て `pub` であり、cascade を経由せず直接
+    /// `ComputedValues { font_weight: ..., .. }` を構築することを妨げない
+    /// (例: [`crate::page::cascade_page`] の継承元 root 引数)。`u16` だった頃は
+    /// 非有限値がそもそも型で構成不可能だったが、`f32` 化 (bd raikiri-spike-e52s)
+    /// でこの保証は「型」から「呼び出し元の値検証」に変わった — cascade を
+    /// 経由する通常経路は `parse_font_weight` (private、
+    /// [`crate::property::FontWeightValue`] の doc 参照) の `[1, 1000]` range
+    /// guard により常に finite だが、直接構築はその guard を経ない。
+    /// `NaN` / `±Inf` が渡った場合の [`crate::cascade::resolve_relative_weight`]
+    /// (`bolder`/`lighter` 解決) の挙動は同関数の doc で characterize 済み
+    /// (guard は追加していない — 本 field は runtime で値を検証しない)。
+    pub font_weight: f32,
     /// `line-height`。**inherited**、initial: [`ComputedLineHeight::Normal`]。
     /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
     /// <https://www.w3.org/TR/css-inline-3/#line-height-property>。
@@ -441,7 +459,7 @@ impl ComputedValues {
             background_color: CssColor::TRANSPARENT,
             font_family: vec![Atom::from("serif")],
             font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
-            font_weight: 400,
+            font_weight: 400.0,
             // CSS Inline 3 §5.1: line-height initial は `normal` (font metrics
             // ascent+descent 相当を paint 側で resolve、raikiri-spike-0vv.9)。
             line_height: ComputedLineHeight::Normal,
@@ -585,7 +603,7 @@ mod tests {
         // 書き換えると同 const の誤編集を検出できなくなる (bd raikiri-spike-jaww、
         // 同 const の doc も参照)。
         assert_eq!(cv.font_size, ComputedLength(16.0));
-        assert_eq!(cv.font_weight, 400);
+        assert_eq!(cv.font_weight, 400.0);
         // CSS Inline 3 §5.1: line-height initial は `normal` (raikiri-spike-0vv.9)
         assert_eq!(cv.line_height, ComputedLineHeight::Normal);
         assert_eq!(cv.display, DisplayValue::Inline);
@@ -682,7 +700,7 @@ mod tests {
             },
             font_family: vec![Atom::from("sans-serif")],
             font_size: ComputedLength(24.0),
-            font_weight: 700,
+            font_weight: 700.0,
             line_height: ComputedLineHeight::Length(ComputedLength(30.0)),
             display: DisplayValue::Block,
             counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),

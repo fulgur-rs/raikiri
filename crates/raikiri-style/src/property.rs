@@ -673,7 +673,7 @@ pub struct Border {
 ///
 /// - **specified side** ([`FontWeightValue`]、本型) — `bolder` / `lighter` を
 ///   sentinel variant として保持する。
-/// - **computed side** ([`crate::computed::ComputedValues::font_weight`]、`u16`)
+/// - **computed side** ([`crate::computed::ComputedValues::font_weight`]、`f32`)
 ///   — resolution 済みの absolute weight のみ。`bolder` / `lighter` は
 ///   [`crate::cascade::apply_value`] で解決されてから格納される。
 ///
@@ -695,12 +695,22 @@ pub struct Border {
 /// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
 /// variant 追加が既存 pattern-match を break しない forward-compat 契約、sibling
 /// [`LineHeight`] / [`DisplayValue`] と同 pattern)。
+///
+/// # `Eq` を derive しない (bd raikiri-spike-e52s)
+///
+/// [`Absolute`](Self::Absolute) の payload が `f32` になった (旧 `u16`) ため
+/// `Eq` は derive できない (`f32: !Eq`、NaN が反射性を満たさないため)。比較は
+/// `PartialEq` (`==`) のみで足りる — `[1, 1000]` 範囲外に reject 済みで NaN /
+/// ±inf は本 variant に到達しないので、実用上の比較は常に well-defined。
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FontWeightValue {
     /// `<font-weight-absolute>` — `normal` (400) / `bold` (700) /
-    /// `<number [1,1000]>` を単一の絶対 weight に畳んだもの。
-    Absolute(u16),
+    /// `<number [1,1000]>` を単一の絶対 weight に畳んだもの。CSS Fonts 4 §2.2.2
+    /// "Missing weights" (<https://www.w3.org/TR/css-fonts-4/#missing-weights>)
+    /// "Fractional weights are valid" どおり fraction を保持する `f32` (旧
+    /// `u16`、bd raikiri-spike-e52s で格上げ — 詳細は [`parse_font_weight`] doc)。
+    Absolute(f32),
     /// `bolder` — 継承値より 1 段太い weight。cascade 時に
     /// [`crate::cascade::resolve_relative_weight`] が spec §2.2.1 table で
     /// 絶対値に解決する。
@@ -1602,13 +1612,13 @@ pub enum PropertyValue {
     /// 同じく [`Self::FontSize`] (`Length::Px`) に収束している。
     FontSizeRelative(RelativeFontSize),
     /// `font-weight: <font-weight-absolute> | bolder | lighter` — inherited、
-    /// initial: `Absolute(400)`。CSS Fonts 4 §2.2
+    /// initial: `Absolute(400.0)`。CSS Fonts 4 §2.2
     /// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop>。
     ///
     /// payload は **specified value** ([`FontWeightValue`])。`bolder` /
     /// `lighter` は継承値依存の relative weight なので parse 段では解けず、
     /// [`crate::cascade::apply_value`] が親の computed weight から絶対値に
-    /// 解決して [`crate::computed::ComputedValues::font_weight`] (`u16`) に
+    /// 解決して [`crate::computed::ComputedValues::font_weight`] (`f32`) に
     /// 格納する (raikiri-spike-17s8)。
     ///
     /// **page context 側も解決される** (raikiri-spike-ygl0)。
@@ -3372,7 +3382,7 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
 /// "values" は author が書いた `<number>` を指すため、`0.6` や `1000.4` は
 /// 丸めれば範囲内になるが invalid)。
 ///
-/// # Fractional の丸め (g04 category (b) — spec-valid だが本 milestone 未実装、bd 追跡)
+/// # Fractional weight は丸めずそのまま保持する (bd raikiri-spike-e52s で解消)
 ///
 /// **spec は fraction を落としてよいとは述べていない。** §2.2 の property table
 /// は `Computed value: a number, see below` と規定し、§2.2.2 "Missing weights"
@@ -3381,38 +3391,34 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
 /// の `test_computed_value('font-weight', '150.25')` (2-arg 形 = computed ==
 /// specified) がこれを直接 pin している。
 ///
-/// raikiri は computed side を `u16`
-/// ([`crate::computed::ComputedValues::font_weight`]) で持つため整数化が必要で、
-/// **round-half-away-from-zero** (`f32::round`) を採用する。これは spec 沈黙点の
-/// 選択ではなく、**表現上の制約による既知 divergence**。追跡: bd
-/// raikiri-spike-e52s。
-///
-/// **影響は ±0.5 では済まない** — 丸めは §2.2.1 relative-weight table の
-/// *行選択* を変える。親 `font-weight: 349.5` + 子 `bolder` は spec では
-/// `100 <= w < 350` 行 → 400 だが、本実装は 350 に丸めてから `350 <= w < 550`
-/// 行 → 700 になる (`549.5` + `bolder`、`749.5` + `lighter` も同型)。
-///
-/// 丸め方向として round-half-away-from-zero を選ぶ理由 (整数化する前提の下で):
-/// (1) 最近傍への丸めが `100.4` → 100 / `100.5` → 101 と author の直感に最も
-/// 近い、(2) truncate は `399.9` → 399 のように `normal` 相当の指定を 1 段ずらす。
-/// 解消には payload と `ComputedValues.font_weight` を `f32` に格上げする必要が
-/// あり、`raikiri-dom` (`layout.rs` の `cv.font_weight as f32`) へ波及する。
+/// payload ([`FontWeightValue::Absolute`]) と
+/// [`crate::computed::ComputedValues::font_weight`] は共に `f32` (bd
+/// raikiri-spike-e52s で `u16` から格上げ) なので、parse 時に整数化する必要が
+/// ない — `<number>` の `value` をそのまま保持する。旧実装は computed side が
+/// `u16` だったため round-half-away-from-zero で整数化しており、その丸めが
+/// §2.2.1 "Relative Weights" relative-weight table の*行選択*を変える 2 次被害
+/// があった (親 `font-weight: 349.5` + 子 `bolder` が旧実装では 350 への丸め後
+/// `350 <= w < 550` 行 → 700 に化け、spec の `100 <= w < 350` 行 → 400
+/// と食い違う。`549.5` + `bolder`、`749.5` + `lighter` も同型 — pin:
+/// [`crate::cascade::tests::bolder_lighter_resolve_against_unrounded_fractional_parent_weight`])。
+/// `f32` 格上げにより丸めそのものが不要になったため、この 2 次被害も解消される。
 fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
     match input.next().ok()? {
         // `<number [1,1000]>`。`value` field (f32) を見るので `1e3` のような
         // scientific notation や fractional もそのまま受理される (どちらも
-        // CSS Values 3 の `<number>` production として spec-valid)。
+        // CSS Values 3 の `<number>` production として spec-valid)。fraction は
+        // 丸めずそのまま computed value まで運ぶ (上記 doc 参照)。
         // NaN は両比較が false、±inf は片方のみ false — いずれも guard が成立
         // しないため reject される (`1e400` → None、§2.2 "all other values are
         // invalid" と一致)。
         Token::Number { value, .. } if *value >= 1.0 && *value <= 1000.0 => {
-            Some(FontWeightValue::Absolute(value.round() as u16))
+            Some(FontWeightValue::Absolute(*value))
         }
         Token::Ident(name) if name.eq_ignore_ascii_case("normal") => {
-            Some(FontWeightValue::Absolute(400))
+            Some(FontWeightValue::Absolute(400.0))
         }
         Token::Ident(name) if name.eq_ignore_ascii_case("bold") => {
-            Some(FontWeightValue::Absolute(700))
+            Some(FontWeightValue::Absolute(700.0))
         }
         Token::Ident(name) if name.eq_ignore_ascii_case("bolder") => Some(FontWeightValue::Bolder),
         Token::Ident(name) if name.eq_ignore_ascii_case("lighter") => {
@@ -4813,34 +4819,34 @@ mod tests {
     }
 
     /// `font-weight` の parse 期待値を組み立てる test-local helper。
-    fn fw(w: u16) -> Option<PropertyValue> {
+    fn fw(w: f32) -> Option<PropertyValue> {
         Some(PropertyValue::FontWeight(FontWeightValue::Absolute(w)))
     }
 
     #[test]
     fn font_weight_parse_integer() {
-        assert_eq!(parse("400", "font-weight"), fw(400));
-        assert_eq!(parse("700", "font-weight"), fw(700));
+        assert_eq!(parse("400", "font-weight"), fw(400.0));
+        assert_eq!(parse("700", "font-weight"), fw(700.0));
     }
 
     #[test]
     fn font_weight_parse_keyword_normal() {
         // CSS Fonts 4 §2.2: normal = 400。
-        assert_eq!(parse("normal", "font-weight"), fw(400));
+        assert_eq!(parse("normal", "font-weight"), fw(400.0));
     }
 
     #[test]
     fn font_weight_parse_keyword_bold() {
         // CSS Fonts 4 §2.2: bold = 700。
-        assert_eq!(parse("bold", "font-weight"), fw(700));
+        assert_eq!(parse("bold", "font-weight"), fw(700.0));
     }
 
     #[test]
     fn font_weight_keyword_case_insensitive() {
         // CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII
         // case-insensitive で照合する。
-        assert_eq!(parse("NORMAL", "font-weight"), fw(400));
-        assert_eq!(parse("Bold", "font-weight"), fw(700));
+        assert_eq!(parse("NORMAL", "font-weight"), fw(400.0));
+        assert_eq!(parse("Bold", "font-weight"), fw(700.0));
     }
 
     #[test]
@@ -4848,12 +4854,12 @@ mod tests {
         // CSS Fonts 4 §2.2 `<font-weight-absolute> = [ normal | bold |
         // <number [1,1000]> ]`。旧実装は [100, 900] に絞っていたが spec は
         // [1, 1000] (raikiri-spike-5iy)。bd Verification #1 / #2 / #3。
-        assert_eq!(parse("1", "font-weight"), fw(1));
-        assert_eq!(parse("1000", "font-weight"), fw(1000));
-        assert_eq!(parse("50", "font-weight"), fw(50));
+        assert_eq!(parse("1", "font-weight"), fw(1.0));
+        assert_eq!(parse("1000", "font-weight"), fw(1000.0));
+        assert_eq!(parse("50", "font-weight"), fw(50.0));
         // 旧 range の両端も当然 valid のまま (regression guard)。
-        assert_eq!(parse("100", "font-weight"), fw(100));
-        assert_eq!(parse("900", "font-weight"), fw(900));
+        assert_eq!(parse("100", "font-weight"), fw(100.0));
+        assert_eq!(parse("900", "font-weight"), fw(900.0));
     }
 
     #[test]
@@ -4880,20 +4886,34 @@ mod tests {
     }
 
     #[test]
-    fn font_weight_fractional_rounds_half_away_from_zero() {
-        // **spec 準拠 pin ではない。** §2.2 の computed value は "a number" で
-        // あり、§2.2.2 は "Fractional weights are valid"。WPT
-        // font-weight-computed.html の `test_computed_value('font-weight',
-        // '150.25')` は computed == specified を pin しており、spec 上 fraction は
-        // computed 層に残る。本 test は computed side が u16 であることに起因する
-        // **既知 divergence の現状固定** (g04 category (b)、bd raikiri-spike-e52s
-        // で追跡)。丸め方向は round-half-away-from-zero (`f32::round`)
-        // — 詳細と影響範囲は `parse_font_weight` doc 参照。bd Verification #4。
-        assert_eq!(parse("100.5", "font-weight"), fw(101));
-        assert_eq!(parse("100.4", "font-weight"), fw(100));
-        assert_eq!(parse("399.5", "font-weight"), fw(400));
-        // 丸め後も u16 に収まる (上端は spec range で 1000 に抑えられている)。
-        assert_eq!(parse("999.5", "font-weight"), fw(1000));
+    fn font_weight_computed_preserves_fractional_precision() {
+        // **spec 準拠 pin。** §2.2 の computed value は "a number" であり、
+        // §2.2.2 "Missing weights" <https://www.w3.org/TR/css-fonts-4/#missing-weights>
+        // は "Fractional weights are valid" と明言する。旧実装 (computed side が
+        // `u16`) は parse 時に round-half-away-from-zero で整数化しており、
+        // これは spec 沈黙点の選択ではなく表現上の制約による既知 divergence
+        // だった (bd raikiri-spike-e52s)。payload / `ComputedValues.font_weight`
+        // を `f32` に格上げしたことで丸め自体が不要になり、本 test はその
+        // 解消を pin する — もはや丸めていないことの regression guard。
+        // 全て 2 進数で厳密表現可能な小数 (`.5` / `.25`) — parse 側と期待値の
+        // 独立な文字列→f32 変換が bit-for-bit 一致することを保証でき、
+        // 丸め誤差を懸念せず `assert_eq!` で直接比較できる。
+        assert_eq!(parse("100.5", "font-weight"), fw(100.5));
+        assert_eq!(parse("250.75", "font-weight"), fw(250.75));
+        assert_eq!(parse("399.5", "font-weight"), fw(399.5));
+        assert_eq!(parse("999.5", "font-weight"), fw(999.5));
+    }
+
+    #[test]
+    fn font_weight_wpt_font_weight_computed_150_25() {
+        // WPT css/css-fonts/parsing/font-weight-computed.html:
+        // `test_computed_value('font-weight', '150.25')` — 2-arg 形は
+        // computed === specified を pin する。parse 結果 (specified-equivalent
+        // な `PropertyValue`) がそのまま `150.25` を保持することを確認する。
+        // cascade を経由した computed 側の同値 pin は
+        // `crate::cascade::tests::font_weight_wpt_font_weight_computed_150_25`
+        // (bd raikiri-spike-e52s)。
+        assert_eq!(parse("150.25", "font-weight"), fw(150.25));
     }
 
     #[test]
@@ -4901,7 +4921,7 @@ mod tests {
         // `int_value` matcher から `value` (f32) 参照に変えた副次効果。
         // `1e3` は CSS Values 3 の `<number>` production として spec-valid
         // なので受理が正しい (g04 category (a))。
-        assert_eq!(parse("1e3", "font-weight"), fw(1000));
+        assert_eq!(parse("1e3", "font-weight"), fw(1000.0));
     }
 
     #[test]

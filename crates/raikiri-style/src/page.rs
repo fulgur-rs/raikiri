@@ -1686,7 +1686,7 @@ mod tests {
         assert_eq!(color_of(&result), Some(RED));
         assert_eq!(
             result.declarations.get(&PropertyKey::FontWeight),
-            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(700)))
+            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(700.0)))
         );
     }
 
@@ -1712,7 +1712,7 @@ mod tests {
     // `declarations` map).
 
     /// Root [`ComputedValues`] with `font-weight: w`, everything else initial.
-    fn root_with_weight(w: u16) -> ComputedValues {
+    fn root_with_weight(w: f32) -> ComputedValues {
         ComputedValues {
             font_weight: w,
             ..ComputedValues::initial()
@@ -1726,7 +1726,7 @@ mod tests {
     ///
     /// Panics unless the winner is an already-resolved `Absolute` — a relative
     /// keyword surviving into the public map is exactly the ygl0 regression.
-    fn page_font_weight(decl: &str, root: Option<&ComputedValues>) -> u16 {
+    fn page_font_weight(decl: &str, root: Option<&ComputedValues>) -> f32 {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(&format!("@page {{ font-weight: {decl} }}"), Origin::Author);
         let result = cascade_page(&tree, &PageContextQuery::default(), root);
@@ -1752,14 +1752,14 @@ mod tests {
         // *root element's* computed weight (the page context's inheritance
         // parent per CSS Page 3 §6).
         let bolder = |root_w| page_font_weight("bolder", Some(&root_with_weight(root_w)));
-        assert_eq!(bolder(50), 400, "w < 100 row");
-        assert_eq!(bolder(100), 400, "100 <= w < 350 row");
-        assert_eq!(bolder(400), 700, "350 <= w < 550 row");
-        assert_eq!(bolder(700), 900, "550 <= w < 750 row");
-        assert_eq!(bolder(800), 900, "750 <= w < 900 row");
+        assert_eq!(bolder(50.0), 400.0, "w < 100 row");
+        assert_eq!(bolder(100.0), 400.0, "100 <= w < 350 row");
+        assert_eq!(bolder(400.0), 700.0, "350 <= w < 550 row");
+        assert_eq!(bolder(700.0), 900.0, "550 <= w < 750 row");
+        assert_eq!(bolder(800.0), 900.0, "750 <= w < 900 row");
         assert_eq!(
-            bolder(1000),
-            1000,
+            bolder(1000.0),
+            1000.0,
             "900 <= w row is no-change: must stay 1000, not clamp to 900"
         );
     }
@@ -1769,15 +1769,15 @@ mod tests {
         // Same six rows, `lighter` column.
         let lighter = |root_w| page_font_weight("lighter", Some(&root_with_weight(root_w)));
         assert_eq!(
-            lighter(50),
-            50,
+            lighter(50.0),
+            50.0,
             "w < 100 row is no-change: must stay 50, not rise to 100"
         );
-        assert_eq!(lighter(100), 100, "100 <= w < 350 row");
-        assert_eq!(lighter(400), 100, "350 <= w < 550 row");
-        assert_eq!(lighter(700), 400, "550 <= w < 750 row");
-        assert_eq!(lighter(800), 700, "750 <= w < 900 row");
-        assert_eq!(lighter(1000), 700, "900 <= w row");
+        assert_eq!(lighter(100.0), 100.0, "100 <= w < 350 row");
+        assert_eq!(lighter(400.0), 100.0, "350 <= w < 550 row");
+        assert_eq!(lighter(700.0), 400.0, "550 <= w < 750 row");
+        assert_eq!(lighter(800.0), 700.0, "750 <= w < 900 row");
+        assert_eq!(lighter(1000.0), 700.0, "900 <= w row");
     }
 
     // ── font-size in the page context (bd raikiri-spike-zls8) ──────────────
@@ -1923,8 +1923,8 @@ mod tests {
         // inherited properties in the page context to their initial values").
         // `font-weight` initial is 400, so bolder(400) = 700 and
         // lighter(400) = 100.
-        assert_eq!(page_font_weight("bolder", None), 700);
-        assert_eq!(page_font_weight("lighter", None), 100);
+        assert_eq!(page_font_weight("bolder", None), 700.0);
+        assert_eq!(page_font_weight("lighter", None), 100.0);
     }
 
     #[test]
@@ -1932,10 +1932,10 @@ mod tests {
         // Absolute weights are not inherited-value dependent: the root weight
         // must not perturb them (round-trip through `resolve_against_inherited`
         // is lossless).
-        let root = root_with_weight(900);
-        assert_eq!(page_font_weight("250", Some(&root)), 250);
-        assert_eq!(page_font_weight("bold", Some(&root)), 700);
-        assert_eq!(page_font_weight("normal", Some(&root)), 400);
+        let root = root_with_weight(900.0);
+        assert_eq!(page_font_weight("250", Some(&root)), 250.0);
+        assert_eq!(page_font_weight("bold", Some(&root)), 700.0);
+        assert_eq!(page_font_weight("normal", Some(&root)), 400.0);
     }
 
     #[test]
@@ -1950,11 +1950,11 @@ mod tests {
             "@page { font-weight: 100 } @page { font-weight: bolder }",
             Origin::Author,
         );
-        let root = root_with_weight(700);
+        let root = root_with_weight(700.0);
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
         assert_eq!(
             result.declarations.get(&PropertyKey::FontWeight),
-            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900))),
+            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900.0))),
             "later `bolder` wins and resolves off root 700 → 900, not off the \
              losing declaration's 100 → 400"
         );
@@ -1986,7 +1986,7 @@ mod tests {
         // the root element"), i.e. the initial 16px here → 32px.
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { margin-top: 2em }", Origin::Author);
-        let root = root_with_weight(700);
+        let root = root_with_weight(700.0);
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
         assert_eq!(
             result.declarations.get(&PropertyKey::MarginTop),
@@ -3080,7 +3080,7 @@ mod tests {
     /// test drives the same rule end-to-end through `cascade_page`.
     #[test]
     fn cascade_page_computed_equivalent_values_pass_phase_3_unchanged() {
-        let root = root_with_weight(700);
+        let root = root_with_weight(700.0);
         let result = page(
             "@page { color: red; font-weight: bolder; display: block; \
              box-sizing: border-box; border-top-color: red; text-align: center; \
@@ -3090,7 +3090,7 @@ mod tests {
         assert_eq!(color_of(&result), Some(RED));
         assert_eq!(
             result.declarations.get(&PropertyKey::FontWeight),
-            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900))),
+            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900.0))),
         );
         assert_eq!(
             result.declarations.get(&PropertyKey::BoxSizing),
@@ -3122,7 +3122,7 @@ mod tests {
 
         // Default root (`ComputedValues::initial()`): text-align = start,
         // direction = ltr → left.
-        let ltr_root = root_with_weight(700);
+        let ltr_root = root_with_weight(700.0);
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&ltr_root));
         assert_eq!(
             result.declarations.get(&PropertyKey::TextAlign),
