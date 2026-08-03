@@ -211,9 +211,10 @@ fn expand_hex_nibble(n: u8) -> u8 {
 /// 例外は何か) は
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
 /// の doc が canonical であり、その内容は `page::tests` の
-/// `page_declarations_carry_exactly_one_specified_layer_residue` が機械的に
-/// pin している。**ここに保証の中身を書き足して重複させないこと** — 手で 2 site
-/// を揃える運用は既に 2 度 drift した (bd raikiri-spike-awjx)。
+/// `page_declarations_carry_no_specified_layer_residue` (raikiri-spike-l3wg
+/// 以前の名前は `page_declarations_carry_exactly_one_specified_layer_residue`)
+/// が機械的に pin している。**ここに保証の中身を書き足して重複させないこと**
+/// — 手で 2 site を揃える運用は既に 2 度 drift した (bd raikiri-spike-awjx)。
 ///
 /// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
 /// 変数追加が既存 pattern-match を break しない forward-compat 契約)。
@@ -1260,16 +1261,26 @@ pub enum BoxSizing {
 ///   future task (Epic 5 or Epic 7 相当) で拡張。
 /// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` / `unset` /
 ///   `revert` / `revert-layer`) は Epic 7、silent drop。
-/// - **(b) milestone subset**: `match-parent` の **computed-value 時解決**
-///   (spec §6.1 `#valdef-text-align-match-parent`: "computes to its parent's
-///   computed value except that an inherited value of start or end is interpreted
-///   against the parent's direction value and results in a computed value of
-///   either left or right"、root element では "computes to start") は
-///   Sprint 12 seed scope 外。現状 [`MatchParent`](Self::MatchParent) は
-///   specified value のまま [`crate::computed::ComputedValues::text_align`] に
-///   格納され、direction-aware resolve は future task で追加 (`direction`
-///   property + text-align-all computed-value semantics を伴う paint scope の
-///   consumer 実装タイミング — Epic 5/7 相当)。
+/// - **実装済み** (raikiri-spike-l3wg): `match-parent` の **computed-value 時解決**
+///   (spec §6.1 `#valdef-text-align-match-parent` verbatim: "This value behaves
+///   the same as inherit (computes to its parent's computed value) except that
+///   an inherited value of start or end is interpreted against the parent's
+///   direction value and results in a computed value of either left or right.
+///   Computes to start when specified on the root element.")。[`MatchParent`](Self::MatchParent)
+///   は cascade winner としては specified value のまま
+///   [`SpecifiedValues::text_align`](crate::specified::SpecifiedValues::text_align)
+///   を経由するが、**computed 層に届く前に解決される** — element 経路は
+///   [`crate::specified::SpecifiedValues::finalize`] /
+///   [`crate::specified::SpecifiedValues::finalize_as_root`]、page 経路は
+///   [`crate::cascade::resolve_against_inherited`] が、どちらも
+///   [`resolve_text_align_match_parent`] へ funnel する。解決には親要素の
+///   computed `direction` ([`Direction`]、CSS Writing Modes 4 §2.1) を要する
+///   — この 2 property の組がなぜ resolve 出来なかったかは
+///   raikiri-spike-l3wg の origin (raikiri-spike-ygl0 §8.2 spec lens F1) 参照。
+///   [`crate::computed::ComputedValues::text_align`] に残る値は常に解決済 —
+///   `MatchParent` が computed 値として観測されることは無い (bd
+///   raikiri-spike-l3wg 以降の invariant、`resolve_text_align_match_parent`
+///   の debug_assert が pin する)。
 /// - **(a) spec-invalid**: CSS Text 3 §6.1 grammar は上記 8 keyword のみ。それ以外
 ///   の ident (`middle`, `baseline` 等、および CSS Text 4 draft 相当の `<string>`
 ///   character alignment は本 crate が引用する CSS Text 3 では未定義) は silent
@@ -1316,6 +1327,135 @@ pub enum TextAlign {
     /// `justify-all` — text-align-all と text-align-last の両方を justify に set、
     /// 末行にも justify を強制する (§6.1 spec verbatim)。
     JustifyAll,
+}
+
+/// `direction` property の value。
+///
+/// CSS Writing Modes 4 §2.1 "Specifying Directionality: the direction property"
+/// <https://www.w3.org/TR/css-writing-modes-4/#direction>。
+///
+/// propdef (spec verbatim): Value: `ltr | rtl`、Initial: `ltr`、Applies to:
+/// all elements、Inherited: **yes**、Computed value: specified value (= keyword
+/// をそのまま保持、他 property に対する相対解決は無い)。
+///
+/// # なぜこの property が要るか (raikiri-spike-l3wg)
+///
+/// 本 crate は raikiri-spike-ygl0 まで `direction` を computed 層に持たなかった
+/// (`ComputedValues` に field が無い)。CSS Text 3 §6.1
+/// `#valdef-text-align-match-parent` の `text-align: match-parent` 解決 — "an
+/// inherited value of start or end is interpreted against the parent's
+/// direction value" — がこの property を要求するため追加した。用途は
+/// [`TextAlign::MatchParent`] の解決に留まらない — CSS Paged Media 3 Appendix A
+/// "CSS 2.1 Properties that apply within the page context"
+/// <https://www.w3.org/TR/css-page-3/#page-property-list> の list 先頭に
+/// `direction` 自体が挙げられている (verbatim 確認済) ので、`@page { direction:
+/// rtl }` 単体でも page context の computed value として意味を持つ。
+///
+/// # Scope carving (g04 3-category)
+///
+/// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` /
+///   `unset` / `revert` / `revert-layer`) は Epic 7、silent drop (37n sibling
+///   [`TextAlign`] と同 convention)。
+/// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
+///   spec には旧 draft 相当の `auto` 値は無い (現行 §2.1 grammar は 2 keyword のみ)。
+/// - **Non-goal**: HTML `dir` attribute → UA-level `direction` mapping
+///   (spec が "we recommend HTML authors to use the HTML dir attribute" と述べる
+///   presentational hint) は本 crate の parse/cascade scope に無い — UA CSS
+///   default 値の持ち込みは cleanroom 対象外の別 task。
+///
+/// [`DisplayValue`] / [`TextAlign`] と同じ convention で `Default` を derive
+/// しない — 初期化側 [`crate::computed::ComputedValues::initial`] が
+/// [`Direction::Ltr`] を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// `ltr` — left-to-right。spec initial value。
+    Ltr,
+    /// `rtl` — right-to-left。
+    Rtl,
+}
+
+/// `text-align: match-parent` の解決 (CSS Text 3 §6.1
+/// `#valdef-text-align-match-parent`
+/// <https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent> verbatim):
+///
+/// > This value behaves the same as inherit (computes to its parent's computed
+/// > value) except that an inherited value of start or end is interpreted
+/// > against the parent's direction value and results in a computed value of
+/// > either left or right. Computes to start when specified on the root
+/// > element.
+///
+/// 本関数が扱うのは前半 (**実の親を持つ場合**) だけ — `specified` が
+/// [`TextAlign::MatchParent`] でなければ no-op (他 keyword は解決不要、
+/// computed value = specified value)。`parent_text_align` / `parent_direction`
+/// は実の親要素 (または `@page` の場合は inheritance parent = root_style) の
+/// computed 値。
+///
+/// **後半 ("Computes to start when specified on the root element") はこの
+/// 関数の対象外** — root element (親を持たない element) の特別扱いは呼び出し側
+/// ([`crate::specified::SpecifiedValues::finalize_as_root`]) が別途行う。
+/// `@page` の "The page context inherits from the root element" は「親を持た
+/// ない」ケースでは**ない** — page context が root element そのものになるわけ
+/// ではないので、page 経路は常に本関数 (親あり分岐) を通る
+/// ([`crate::page::PageCascadeResult::declarations`] doc の trap 注記参照)。
+///
+/// # 呼び出し元 (raikiri-spike-l3wg、resolve_relative_weight と同型の contract)
+///
+/// - Element 経路: [`crate::specified::SpecifiedValues::finalize`] /
+///   [`crate::specified::SpecifiedValues::finalize_as_root`]。
+/// - Page 経路: [`crate::cascade::resolve_against_inherited`]。
+///
+/// 両経路とも本関数へ funnel するので、"start/end を親の direction で
+/// left/right に解決する" table の実装は 1 箇所にしか無い (CSS Fonts 4
+/// bolder/lighter table を `resolve_relative_weight` 1 箇所に集約した
+/// raikiri-spike-ygl0 の precedent を踏襲)。
+///
+/// **なぜ element 経路の呼び手が `apply_value` ではないか**: `apply_value`
+/// は同一 node 上の他 winner (`direction` 自身を含む) が [`PropertyKey`]
+/// 宣言順に順次 [`crate::specified::SpecifiedValues`] へ書き込まれる場所であり、
+/// この関数が要る「**親の** direction」は自 node の `direction` winner の
+/// 適用順序に左右されてはならない (適用順に依存しないことが
+/// [`crate::cascade::resolve_inheritance`] の invariant)。`finalize` /
+/// `finalize_as_root` は全 winner 適用後に**明示的に親の [`ComputedValues`]
+/// を受け取って**呼ばれるため、この罠を構造的に避けられる。
+///
+/// `pub(crate)` は `specified` / `cascade` の 2 module から呼ぶため。
+pub(crate) fn resolve_text_align_match_parent(
+    specified: TextAlign,
+    parent_text_align: TextAlign,
+    parent_direction: Direction,
+) -> TextAlign {
+    match specified {
+        TextAlign::MatchParent => {
+            // cov:ignore: defensive invariant guard — the message literal is
+            // only formatted if a caller passes an unresolved parent value,
+            // which doesn't happen from either call site (specified.rs /
+            // cascade.rs both pass an already-resolved parent).
+            debug_assert_ne!(
+                parent_text_align,
+                TextAlign::MatchParent,
+                "invariant violated: 親の computed text-align が MatchParent のまま — 親側の解決が漏れている (raikiri-spike-l3wg invariant)"
+            );
+            match parent_text_align {
+                TextAlign::Start => match parent_direction {
+                    Direction::Ltr => TextAlign::Left,
+                    Direction::Rtl => TextAlign::Right,
+                },
+                TextAlign::End => match parent_direction {
+                    Direction::Ltr => TextAlign::Right,
+                    Direction::Rtl => TextAlign::Left,
+                },
+                // `left` / `right` / `center` / `justify` / `justify-all` — 親の
+                // 解決済み値をそのまま継承 (spec の「behaves the same as
+                // inherit」)。防御的に `MatchParent` もここへ落ちるが、上の
+                // debug_assert が release では消えるため fallback として
+                // そのまま伝播する (パニックしない crate policy)。
+                other => other,
+            }
+        }
+        // match-parent 以外は spec 上 "as specified" — 解決不要。
+        other => other,
+    }
 }
 
 /// `position` property の value — M5 static-side scope では `static` (default) と
@@ -1779,6 +1919,17 @@ pub enum PropertyValue {
     /// property" <https://www.w3.org/TR/css-sizing-3/#box-sizing>)。
     /// (raikiri-spike-0vv.13)
     BoxSizing(BoxSizing),
+    /// `direction: ltr | rtl` — **inherited**、initial: [`Direction::Ltr`]
+    /// (CSS Writing Modes 4 §2.1 "Specifying Directionality: the direction
+    /// property" <https://www.w3.org/TR/css-writing-modes-4/#direction>)。
+    /// computed value = specified value (相対解決なし、[`Direction`] doc 参照)。
+    /// 唯一の consumer は [`resolve_text_align_match_parent`] だが、property
+    /// 自体は CSS Paged Media 3 Appendix A page-property-list にも独立に
+    /// 現れる ([`Direction`] doc の verbatim 確認済み引用参照)。
+    /// (raikiri-spike-l3wg、末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照)
+    Direction(Direction),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -1818,6 +1969,15 @@ pub enum PropertyValue {
 /// 新しい variant を足すときは、それが既存 variant と同じ `SpecifiedValues`
 /// field に書くかどうかを確認すること。書かないなら (= 1:1 disjoint なら)
 /// 位置は自由でよい。
+///
+/// [`Direction`] / [`TextAlign`] は 1:1 disjoint (`SpecifiedValues::direction`
+/// / `SpecifiedValues::text_align` の別 field) — `text-align: match-parent`
+/// が `direction` の**親**の computed 値を要する件 (raikiri-spike-l3wg) は
+/// この `PropertyKey` の並び順とは**無関係**。その解決は
+/// [`crate::property::resolve_text_align_match_parent`] の呼び手
+/// ([`crate::specified::SpecifiedValues::finalize`]) が全 winner 適用後に
+/// 明示的な親 [`crate::computed::ComputedValues`] を受け取って行うため、
+/// `apply_winners` の slot 走査順 (= 本 enum の宣言順) には触れない。
 ///
 /// [`PageCascadeResult`]: crate::page::PageCascadeResult
 #[non_exhaustive]
@@ -1889,6 +2049,11 @@ pub enum PropertyKey {
     // matching PropertyValue::BoxSizing variant; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
     BoxSizing,
+    // direction — raikiri-spike-l3wg (CSS Writing Modes 4 §2.1、semantics on
+    // the matching PropertyValue::Direction variant; sibling PropertyKey
+    // variants carry no per-variant docs per crate convention). 末尾配置の
+    // 理由は PropertyValue::Direction の doc 参照。
+    Direction,
 }
 
 impl PropertyValue {
@@ -1943,6 +2108,7 @@ impl PropertyValue {
             PropertyValue::Width(_) => PropertyKey::Width,
             PropertyValue::Height(_) => PropertyKey::Height,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
+            PropertyValue::Direction(_) => PropertyKey::Direction,
         }
     }
 }
@@ -2102,6 +2268,10 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // value grammar `content-box | border-box`、initial `content-box`、
         // not inherited、computed value = specified keyword。
         "box-sizing" => parse_box_sizing(input).map(PropertyValue::BoxSizing),
+        // CSS Writing Modes 4 §2.1 direction (raikiri-spike-l3wg)。
+        // value grammar `ltr | rtl`、initial `ltr`、inherited、
+        // computed value = specified keyword ([`Direction`] doc 参照)。
+        "direction" => parse_direction(input).map(PropertyValue::Direction),
         _ => None,
     }
 }
@@ -3331,6 +3501,26 @@ fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
         "justify" => Some(TextAlign::Justify),
         "match-parent" => Some(TextAlign::MatchParent),
         "justify-all" => Some(TextAlign::JustifyAll),
+        _ => None,
+    }
+}
+
+/// `direction: <ident>` を parse する
+/// (CSS Writing Modes 4 §2.1 <https://www.w3.org/TR/css-writing-modes-4/#direction>)。
+///
+/// Spec value grammar (§2.1): `ltr | rtl`。ASCII case-insensitive で ident を
+/// 比較する (37n sibling [`parse_text_align`] と同 flavor)。
+///
+/// # Scope carving (g04 3-category、[`Direction`] doc-comment に詳述)
+///
+/// - **(b) milestone subset**: CSS-wide keyword (`inherit` 等) は Epic 7、
+///   silent drop。
+/// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
+fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "ltr" => Some(Direction::Ltr),
+        "rtl" => Some(Direction::Rtl),
         _ => None,
     }
 }
@@ -7046,6 +7236,157 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::TextAlign);
         let v = PropertyValue::TextAlign(TextAlign::Center);
         assert_eq!(v.key(), PropertyKey::TextAlign);
+    }
+
+    // ── direction (CSS Writing Modes 4 §2.1、raikiri-spike-l3wg) ──
+    //
+    // Value grammar (§2.1 spec verbatim): ltr | rtl
+    // Initial: ltr / Inherited: yes / Computed value: specified value。
+
+    #[test]
+    fn direction_parse_both_keywords() {
+        assert_eq!(
+            parse("ltr", "direction"),
+            Some(PropertyValue::Direction(Direction::Ltr))
+        );
+        assert_eq!(
+            parse("rtl", "direction"),
+            Some(PropertyValue::Direction(Direction::Rtl))
+        );
+    }
+
+    #[test]
+    fn direction_is_case_insensitive() {
+        assert_eq!(
+            parse("LTR", "direction"),
+            Some(PropertyValue::Direction(Direction::Ltr))
+        );
+        assert_eq!(
+            parse("Rtl", "direction"),
+            Some(PropertyValue::Direction(Direction::Rtl))
+        );
+    }
+
+    #[test]
+    fn direction_rejects_unknown_keyword() {
+        // 旧 draft 相当の `auto` は現行 §2.1 grammar に無い — 実 spec-invalid。
+        assert_eq!(parse("auto", "direction"), None);
+        assert_eq!(parse("horizontal-tb", "direction"), None);
+    }
+
+    #[test]
+    fn direction_rejects_css_wide_keyword() {
+        // g04 (b) milestone subset: CSS-wide keyword は Epic 7、silent drop。
+        assert_eq!(parse("inherit", "direction"), None);
+        assert_eq!(parse("initial", "direction"), None);
+        assert_eq!(parse("unset", "direction"), None);
+        assert_eq!(parse("revert", "direction"), None);
+        assert_eq!(parse("revert-layer", "direction"), None);
+    }
+
+    #[test]
+    fn direction_rejects_non_ident() {
+        assert_eq!(parse("16px", "direction"), None);
+        assert_eq!(parse(r#""ltr""#, "direction"), None);
+    }
+
+    #[test]
+    fn direction_key_maps_to_direction_property_key() {
+        let v = PropertyValue::Direction(Direction::Ltr);
+        assert_eq!(v.key(), PropertyKey::Direction);
+        let v = PropertyValue::Direction(Direction::Rtl);
+        assert_eq!(v.key(), PropertyKey::Direction);
+    }
+
+    // ── resolve_text_align_match_parent (CSS Text 3 §6.1
+    // `#valdef-text-align-match-parent`、raikiri-spike-l3wg) ──
+    //
+    // This is the shared resolver both `SpecifiedValues::finalize` (element
+    // path) and `cascade::resolve_against_inherited` (page path) funnel into
+    // — see the function doc for why `apply_value` itself is deliberately
+    // *not* a caller (the same-node winner-order hazard between `direction`
+    // and `text-align`).
+
+    #[test]
+    fn match_parent_resolves_start_against_ltr_parent_to_left() {
+        assert_eq!(
+            resolve_text_align_match_parent(
+                TextAlign::MatchParent,
+                TextAlign::Start,
+                Direction::Ltr
+            ),
+            TextAlign::Left
+        );
+    }
+
+    #[test]
+    fn match_parent_resolves_start_against_rtl_parent_to_right() {
+        assert_eq!(
+            resolve_text_align_match_parent(
+                TextAlign::MatchParent,
+                TextAlign::Start,
+                Direction::Rtl
+            ),
+            TextAlign::Right
+        );
+    }
+
+    #[test]
+    fn match_parent_resolves_end_against_ltr_parent_to_right() {
+        assert_eq!(
+            resolve_text_align_match_parent(TextAlign::MatchParent, TextAlign::End, Direction::Ltr),
+            TextAlign::Right
+        );
+    }
+
+    #[test]
+    fn match_parent_resolves_end_against_rtl_parent_to_left() {
+        assert_eq!(
+            resolve_text_align_match_parent(TextAlign::MatchParent, TextAlign::End, Direction::Rtl),
+            TextAlign::Left
+        );
+    }
+
+    #[test]
+    fn match_parent_copies_non_start_end_parent_value_verbatim() {
+        // "behaves the same as inherit" for the non-start/end half — direction
+        // plays no role.
+        for parent in [
+            TextAlign::Left,
+            TextAlign::Right,
+            TextAlign::Center,
+            TextAlign::Justify,
+            TextAlign::JustifyAll,
+        ] {
+            assert_eq!(
+                resolve_text_align_match_parent(TextAlign::MatchParent, parent, Direction::Ltr),
+                parent
+            );
+            assert_eq!(
+                resolve_text_align_match_parent(TextAlign::MatchParent, parent, Direction::Rtl),
+                parent
+            );
+        }
+    }
+
+    #[test]
+    fn non_match_parent_specified_values_pass_through_unchanged() {
+        // Every other keyword's computed value is "as specified" — the parent
+        // args must be ignored entirely.
+        for specified in [
+            TextAlign::Start,
+            TextAlign::End,
+            TextAlign::Left,
+            TextAlign::Right,
+            TextAlign::Center,
+            TextAlign::Justify,
+            TextAlign::JustifyAll,
+        ] {
+            assert_eq!(
+                resolve_text_align_match_parent(specified, TextAlign::Center, Direction::Rtl),
+                specified
+            );
+        }
     }
 
     // ── margin longhand + shorthand (CSS Box 3 §3.1/§3.2、raikiri-spike-0vv.5) ──

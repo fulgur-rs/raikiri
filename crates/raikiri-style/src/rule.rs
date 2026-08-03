@@ -331,7 +331,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::Width(_)
         | PropertyValue::Height(_)
-        | PropertyValue::BoxSizing(_) => expand_none(d, push),
+        | PropertyValue::BoxSizing(_)
+        | PropertyValue::Direction(_) => expand_none(d, push),
     }
 }
 

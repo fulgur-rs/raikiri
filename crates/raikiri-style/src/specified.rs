@@ -31,9 +31,9 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
-    Border, BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, DisplayValue, Length,
-    LengthOrAuto, LineHeight, Sides, TextAlign, empty_content_list, empty_counter_entries,
-    empty_string_set_entries,
+    Border, BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction,
+    DisplayValue, Length, LengthOrAuto, LineHeight, Sides, TextAlign, empty_content_list,
+    empty_counter_entries, empty_string_set_entries, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ResolveContext, lift_font_size, lift_line_height, resolve_border,
@@ -56,7 +56,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `box_sizing` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -100,6 +100,22 @@ use crate::resolve::{
 /// [`Self::initial`] から seed する実装に変えると `larger` が常に
 /// `INITIAL_FONT_SIZE_PX` (16px) 起点になり、`bolder` と同じ壊れ方をする。
 ///
+/// # `text_align: match-parent` は D5 と**同型ではない** (raikiri-spike-l3wg)
+///
+/// `text-align: match-parent` も継承元依存の解決を要する点は `bolder` /
+/// `lighter` と同じだが、D5 の read-before-write パターンは**使わない**。
+/// D5 が安全なのは `apply_value` の `FontWeight` arm が自 field
+/// (`self.font_weight`) だけを読み書きするからである。`match-parent` の解決は
+/// **他 property (`direction`) の親の値**を要するため、同じ trick を使うと
+/// 「自 node が `direction` winner を持つ場合、その適用順序次第で親ではなく
+/// **自分の** direction を読んでしまう」レースが生まれる
+/// ([`crate::cascade::resolve_inheritance`] の「winner の適用順に依存しない」
+/// invariant への違反)。したがって本 struct の `text_align` field は D5 と
+/// 同じく素朴に親からコピーするだけ ([`Self::inherit_from`] 参照) —
+/// `match-parent` の解決は [`Self::finalize`] / [`Self::finalize_as_root`] が
+/// 全 winner 適用**後**に、明示的に親の [`ComputedValues`] を受け取って行う
+/// ([`crate::property::resolve_text_align_match_parent`] のドキュメント参照)。
+///
 /// # `#[non_exhaustive]`
 ///
 /// [`ComputedValues`] と同じ判断 — future property の追加を source 互換にする。
@@ -137,7 +153,12 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::running_templates`] の staging。層は computed-equivalent。
     pub running_templates: Vec<RunningTemplate>,
     /// [`ComputedValues::text_align`] の staging。層は computed-equivalent。
+    /// `match-parent` はここでは**解決されない** — [`Self`] doc の
+    /// "`text_align: match-parent` は D5 と同型ではない" 節参照。
     pub text_align: TextAlign,
+    /// [`ComputedValues::direction`] の staging。層は computed-equivalent
+    /// (raikiri-spike-l3wg)。
+    pub direction: Direction,
     /// `padding` の **specified** value。phase 3
     /// ([`resolve_length_percentage`]) で絶対化される (percentage は素通し)。
     pub padding: Sides<Length>,
@@ -183,6 +204,8 @@ impl SpecifiedValues {
             string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
             text_align: TextAlign::Start,
+            // CSS Writing Modes 4 §2.1: direction initial は `ltr` (raikiri-spike-l3wg)。
+            direction: Direction::Ltr,
             padding: Sides::all(Length::Px(0.0)),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             // CSS Backgrounds 3 §3.3 / §3.2 / §3.1: width=medium (3px) /
@@ -240,7 +263,12 @@ impl SpecifiedValues {
             // D5: `bolder` / `lighter` はこの値を基準に解決される。
             font_weight: parent.font_weight,
             line_height: lift_line_height(parent.line_height),
+            // `match-parent` はここでは解決しない (素朴なコピー) — 解決は
+            // `finalize` / `finalize_as_root` が全 winner 適用後に親の
+            // `ComputedValues` を明示的に受け取って行う ([`Self`] doc の
+            // "D5 と同型ではない" 節、raikiri-spike-l3wg)。
             text_align: parent.text_align,
+            direction: parent.direction,
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
             display: DisplayValue::Inline,
@@ -262,9 +290,33 @@ impl SpecifiedValues {
     /// **親を持つ** node を絶対化して [`ComputedValues`] にする
     /// (**phase 2 → phase 3**)。
     ///
-    /// `parent_font_size` は親要素の computed font-size、`ctx.root_font_size` は
+    /// `parent` は親要素の [`ComputedValues`] (font-size は phase 2 の基準、
+    /// `text_align` + `direction` は `match-parent` 解決の基準 —
+    /// raikiri-spike-l3wg で `parent_font_size: ComputedLength` から `&ComputedValues`
+    /// に広げた、下記「引数を広げた理由」節参照)。`ctx.root_font_size` は
     /// root element の computed font-size。root element 自身には
-    /// [`Self::finalize_as_root`] を使うこと (`rem` の基準が違う)。
+    /// [`Self::finalize_as_root`] を使うこと (`rem` の基準が違う上、
+    /// `match-parent` も "computes to start" の別ルールになる)。
+    ///
+    /// # 引数を `&ComputedValues` に広げた理由 (raikiri-spike-l3wg)
+    ///
+    /// 当初 `parent_font_size: ComputedLength` だけを受け取っていたが、
+    /// `text-align: match-parent` の解決 (CSS Text 3 §6.1) が親の
+    /// `text_align` + `direction` も要求するようになった。3 つの scalar
+    /// 引数に分割する案 (`parent_font_size, parent_text_align,
+    /// parent_direction`) も検討したが、将来また別の inherited property が
+    /// 「親の computed 値」を要求するたびに引数が増える形になるため、
+    /// [`crate::cascade::resolve_against_inherited`] が既に取っている
+    /// `inherited: &ComputedValues` の shape に揃えた —呼び手 (`cascade.rs` の
+    /// `resolve_inheritance`) は `parent_computed` をそのまま渡すだけになる。
+    ///
+    /// この形は同一 node の winner 適用順序に関する懸念を持ち込まない —
+    /// `parent` は呼び手が**この node の staging (`self`) とは別に**保持して
+    /// いる、既に確定済みの親の [`ComputedValues`] であり、`self` (自 node の
+    /// staging、`direction` winner が上書き済みかもしれない) とは無関係な
+    /// 参照である。[`crate::property::resolve_text_align_match_parent`] の
+    /// doc が説明する「なぜ `apply_value` ではなく `finalize` か」の根拠は
+    /// まさにこの分離にある。
     ///
     /// # phase 順序の担保 (bd raikiri-spike-i5bs §8.2 quality lens F2 への回答)
     ///
@@ -272,38 +324,45 @@ impl SpecifiedValues {
     /// にもかかわらず両方 [`ComputedLength`] なので、型検査だけでは取り違えを
     /// 防げない。本実装が実際に担保するのは次の 3 点であり、それ以上ではない:
     ///
-    /// 1. **phase 3 の本体は `parent_font_size` を名前として持たない** — 後半は
+    /// 1. **phase 3 の本体は `parent` を名前として持たない** — 後半は
     ///    private な `Self::absolutize_with` に閉じており、その signature に
-    ///    `parent_font_size` が無いので、**その body の中では**取り違えが書けない。
+    ///    `parent` が無いので、**その body の中では**取り違えが書けない。
     ///
-    ///    **本関数の body については同じことが言えない** — `parent_font_size` と
+    ///    **本関数の body については同じことが言えない** — `parent.font_size` と
     ///    `font_size` はどちらも [`ComputedLength`] として同一 scope に居るので
-    ///    `self.absolutize_with(parent_font_size, ctx)` は compile する。
-    ///    「取り違えは書けない」という capability claim は本関数には成り立たない
-    ///    (bd raikiri-spike-zls8 §8.2 quality lens Q6 で訂正。前例は
-    ///    bd raikiri-spike-i5bs の F2)。
+    ///    `self.absolutize_with(parent.font_size, ..., ctx)` のような取り違えは
+    ///    compile する。「取り違えは書けない」という capability claim は本関数には
+    ///    成り立たない (bd raikiri-spike-zls8 §8.2 quality lens Q6 で訂正。前例は
+    ///    bd raikiri-spike-i5bs の F2)。`text_align` 解決も同型の risk を持つ —
+    ///    `resolve_text_align_match_parent(self.text_align, parent.text_align,
+    ///    parent.direction)` の 2 番目と 3 番目の引数は異なる型
+    ///    (`TextAlign` / `Direction`) なので取り違えれば compile error になるが、
+    ///    `self.text_align` と `parent.text_align` はどちらも `TextAlign` なので
+    ///    その 2 つの取り違えは compile する。
     /// 2. **cascade pipeline から見た絶対化の入口は本関数と
     ///    [`Self::finalize_as_root`] の 2 つだけ** なので、phase 2 → phase 3 の
     ///    順序と基準の受け渡しは各 2 行に局所化されている。
     ///    **call site を実際に守っているのはこの局所性であって claim 1 ではない。**
     /// 3. **root / 非 root の `rem` 基準の違いが entry point の名前になっている**
-    ///    ので、呼び出し側は `ResolveContext` を組み立てる判断をしない。
+    ///    ので、呼び出し側は `ResolveContext` を組み立てる判断をしない。同様に
+    ///    `match-parent` の「親あり」/「親なし (root)」分岐も entry point の
+    ///    選択そのもの (`finalize` vs `finalize_as_root`) に埋め込まれている。
     ///
     /// 逆に担保**していない**こと: [`crate::resolve`] の絶対化関数群は個別に
     /// public なので、本関数を経由せず誤った基準で呼ぶ code は依然として書ける。
     /// `OwnFontSize` / `ParentFontSize` newtype による型 level の enforcement は
     /// 採らなかった — 守る距離が各関数の 2 行しかない一方、public 関数 8 本と
     /// その doctest の signature churn を伴うため。
-    pub fn finalize(
-        self,
-        parent_font_size: ComputedLength,
-        ctx: &ResolveContext,
-    ) -> ComputedValues {
+    pub fn finalize(self, parent: &ComputedValues, ctx: &ResolveContext) -> ComputedValues {
         // phase 2: font-size を **親基準** で絶対化する (CSS Values 4 §6.1.1
         // parent-metrics 条項)。
-        let font_size = resolve_font_size(self.font_size, parent_font_size, ctx);
+        let font_size = resolve_font_size(self.font_size, parent.font_size, ctx);
+        // text-align: match-parent の解決 (CSS Text 3 §6.1)。親を持つ node の
+        // 分岐 — root element の "computes to start" は `finalize_as_root` 側。
+        let text_align =
+            resolve_text_align_match_parent(self.text_align, parent.text_align, parent.direction);
         // phase 3: 残りを **自 node の** font-size 基準で絶対化する。
-        self.absolutize_with(font_size, ctx)
+        self.absolutize_with(font_size, text_align, ctx)
     }
 
     /// **親を持たない** node (root element) を絶対化する。
@@ -343,6 +402,18 @@ impl SpecifiedValues {
     /// metrics 側に倒れるのは `lh` / `rlh` だけで、両 unit は未実装
     /// (bd raikiri-spike-2x8)。
     ///
+    /// # `text-align: match-parent` on the root element (raikiri-spike-l3wg)
+    ///
+    /// CSS Text 3 §6.1 `#valdef-text-align-match-parent` verbatim continues
+    /// past the parent-direction clause with: "Computes to start when
+    /// specified on the root element." This is a **different** rule from the
+    /// [`Self::finalize`] branch — it does not consult any parent's
+    /// `text_align` / `direction` at all, because there is no parent to
+    /// consult. [`crate::property::resolve_text_align_match_parent`] only
+    /// implements the has-a-parent half; this function implements the
+    /// no-parent half locally, matching the same "which entry point runs"
+    /// split the `rem` basis already uses below.
+    ///
     /// # 引数を取らない理由と、その前提
     ///
     /// 両 phase の基準がいずれも本関数の中で決まるので、呼び出し側が渡し間違える
@@ -351,6 +422,11 @@ impl SpecifiedValues {
     /// initial に固定するのが正しいのは §6.1.1 の "if the element has no parent"
     /// が成立するときだけ。[`crate::cascade::resolve_inheritance`] はその invariant
     /// を `debug_assert` で pin している (同関数の `None` arm の comment 参照)。
+    /// 同じ「親を持たない」前提が `text-align: match-parent` → `start` にも
+    /// 適用される — raikiri のモデルでは「element 祖先が無い」ことを
+    /// `rem_ctx == None` で判定しており (合成 DOM では複数 element が
+    /// 各々この意味で「root」になり得る、`resolve_inheritance` の doc 参照)、
+    /// それがそのまま「match-parent の親が無い」の判定基準でもある。
     pub fn finalize_as_root(self) -> ComputedValues {
         // phase 2: 親が無いので initial values 基準。
         //
@@ -371,15 +447,31 @@ impl SpecifiedValues {
             ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
             &ResolveContext::initial(),
         );
+        // CSS Text 3 §6.1: "Computes to start when specified on the root
+        // element." — 親の text_align / direction を一切参照しない、この
+        // 関数に閉じた特別扱い (上記 doc 節参照)。
+        let text_align = match self.text_align {
+            TextAlign::MatchParent => TextAlign::Start,
+            other => other,
+        };
         // phase 3: `rem` の基準は「root element の computed font-size」= 自分。
-        self.absolutize_with(font_size, &ResolveContext::new(font_size))
+        self.absolutize_with(font_size, text_align, &ResolveContext::new(font_size))
     }
 
     /// phase 3 — 自 node の確定済 computed `font-size` を基準に残りを絶対化する。
     ///
-    /// `parent_font_size` を **意図的に受け取らない** ([`Self::finalize`] doc の
-    /// 担保 1)。
-    fn absolutize_with(self, font_size: ComputedLength, ctx: &ResolveContext) -> ComputedValues {
+    /// `parent` を **意図的に受け取らない** ([`Self::finalize`] doc の担保 1)。
+    /// `text_align` は呼び手 ([`Self::finalize`] / [`Self::finalize_as_root`])
+    /// が既に `match-parent` を解決した後の値 — 本関数はそれを素通しするだけで、
+    /// 自身は解決ロジックを持たない (両呼び手の分岐が異なるため、本関数に
+    /// 共通化すると root 判定を関数内に持ち込むことになり、上記「引数を取らない
+    /// 理由」の局所性が崩れる)。
+    fn absolutize_with(
+        self,
+        font_size: ComputedLength,
+        text_align: TextAlign,
+        ctx: &ResolveContext,
+    ) -> ComputedValues {
         ComputedValues {
             color: self.color,
             background_color: self.background_color,
@@ -394,7 +486,11 @@ impl SpecifiedValues {
             content: self.content,
             string_set: self.string_set,
             running_templates: self.running_templates,
-            text_align: self.text_align,
+            // 呼び手が既に match-parent を解決した後の値 (関数 doc 参照)。
+            text_align,
+            // computed value = specified value、相対解決なし ([`Direction`] doc
+            // 参照) — 自 node の winner 適用結果をそのまま素通し。
+            direction: self.direction,
             padding: self
                 .padding
                 .map(|l| resolve_length_percentage(l, font_size, ctx)),
@@ -454,7 +550,16 @@ mod tests {
         root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
     };
 
-    const PARENT_FS: ComputedLength = ComputedLength(INITIAL_FONT_SIZE_PX);
+    /// `finalize` の `parent: &ComputedValues` として渡す、font-size だけ
+    /// 差し替えた fixture (raikiri-spike-l3wg — 旧 `PARENT_FS: ComputedLength`
+    /// の後継)。`text_align` / `direction` は本 module の phase 2/3 length 系
+    /// test では無関係なので initial (`Start` / `Ltr`) のまま。
+    fn parent_with_font_size(px: f32) -> ComputedValues {
+        ComputedValues {
+            font_size: ComputedLength(px),
+            ..ComputedValues::initial()
+        }
+    }
 
     // -----------------------------------------------------------------
     // initial の 2 表現が一致する (drift 検出)
@@ -469,7 +574,8 @@ mod tests {
     #[test]
     fn initial_specified_finalizes_to_initial_computed() {
         assert_eq!(
-            SpecifiedValues::initial().finalize(PARENT_FS, &ResolveContext::initial()),
+            SpecifiedValues::initial()
+                .finalize(&ComputedValues::initial(), &ResolveContext::initial()),
             ComputedValues::initial(),
         );
     }
@@ -519,6 +625,7 @@ mod tests {
                 name: SmolStr::new("hdr"),
             }],
             text_align: TextAlign::Center,
+            direction: Direction::Rtl,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
             border: Sides::all(ComputedBorder {
@@ -541,6 +648,8 @@ mod tests {
         assert_eq!(child.font_weight, 700);
         // CSS Text 3 §6.1: text-align は inherited。
         assert_eq!(child.text_align, TextAlign::Center);
+        // CSS Writing Modes 4 §2.1: direction は inherited (raikiri-spike-l3wg)。
+        assert_eq!(child.direction, Direction::Rtl);
         // computed → specified の lift (px 表現)。
         assert_eq!(child.font_size, Length::Px(24.0));
         assert_eq!(child.line_height, LineHeight::Number(1.5));
@@ -579,7 +688,7 @@ mod tests {
         let child = SpecifiedValues::inherit_from(&parent);
         assert_eq!(child.line_height, LineHeight::Length(Length::Px(30.0)));
         // 子の font-size が 10px でも 15px にはならない。
-        let computed = child.finalize(ComputedLength(10.0), &CTX);
+        let computed = child.finalize(&parent_with_font_size(10.0), &CTX);
         assert_eq!(
             computed.line_height,
             ComputedLineHeight::Length(ComputedLength(30.0))
@@ -598,7 +707,7 @@ mod tests {
         let mut sv = SpecifiedValues::initial();
         sv.font_size = Length::Em(2.0); // 親 16px → 32px
         sv.padding = Sides::all(Length::Em(1.0)); // 自 32px → 32px
-        let cv = sv.finalize(ComputedLength(16.0), &CTX);
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
         assert_eq!(cv.font_size, ComputedLength(32.0));
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
     }
@@ -615,7 +724,7 @@ mod tests {
         let mut sv = SpecifiedValues::initial();
         sv.font_size = Length::Ex(4.0); // 親 16px 基準 → 0.5 * 4 * 16 = 32px
         sv.padding = Sides::all(Length::Ex(2.0)); // 自 (phase 2 で確定した) 32px 基準 → 0.5 * 2 * 32 = 32px
-        let cv = sv.finalize(ComputedLength(16.0), &CTX);
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
         assert_eq!(cv.font_size, ComputedLength(32.0));
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
     }
@@ -630,7 +739,7 @@ mod tests {
         sv.padding = Sides::all(Length::Percent(25.0));
         sv.margin = Sides::all(LengthOrAuto::Length(Length::Percent(10.0)));
         sv.width = LengthOrAuto::Length(Length::Percent(50.0));
-        let cv = sv.finalize(ComputedLength(16.0), &CTX);
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
         assert_eq!(cv.font_size, ComputedLength(24.0));
         assert_eq!(cv.padding.left, ComputedLengthPercentage::Percent(25.0));
         assert_eq!(
@@ -648,9 +757,121 @@ mod tests {
         let mut sv = SpecifiedValues::initial();
         sv.font_size = Length::Rem(2.0);
         sv.margin = Sides::all(LengthOrAuto::Length(Length::Rem(0.5)));
-        let cv = sv.finalize(ComputedLength(64.0), &ctx);
+        let cv = sv.finalize(&parent_with_font_size(64.0), &ctx);
         assert_eq!(cv.font_size, ComputedLength(40.0));
         assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(10.0));
+    }
+
+    // -----------------------------------------------------------------
+    // finalize — text-align: match-parent (CSS Text 3 §6.1、raikiri-spike-l3wg)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn finalize_resolves_match_parent_against_parent_text_align_and_direction() {
+        let mut sv = SpecifiedValues::initial();
+        sv.text_align = TextAlign::MatchParent;
+        let parent = ComputedValues {
+            text_align: TextAlign::Start,
+            direction: Direction::Rtl,
+            ..ComputedValues::initial()
+        };
+        let cv = sv.finalize(&parent, &CTX);
+        // Start + Rtl → Right (CSS Text 3 §6.1 verbatim table).
+        assert_eq!(cv.text_align, TextAlign::Right);
+    }
+
+    /// **The test that pins the whole design of this module's `match-parent`
+    /// handling**: a node that declares *both* `direction: rtl` and
+    /// `text-align: match-parent` must still resolve against the *parent's*
+    /// direction, not its own. If `finalize` (or a future refactor) ever
+    /// starts reading `self.direction` instead of `parent.direction` for this
+    /// resolution, this is the test that catches it — every other test in
+    /// this module has `self.direction == parent.direction` and would stay
+    /// green.
+    ///
+    /// Spec citation: CSS Text 3 §6.1 `#valdef-text-align-match-parent`
+    /// says "interpreted against **the parent's** direction value" — not the
+    /// element's own. See [`crate::property::resolve_text_align_match_parent`]
+    /// doc for why this can't be resolved in `cascade::apply_value` (the
+    /// same-node winner-order hazard between the `direction` and `text-align`
+    /// `PropertyKey` slots).
+    #[test]
+    fn finalize_match_parent_uses_parent_direction_not_own_direction_winner() {
+        let mut sv = SpecifiedValues::initial();
+        sv.text_align = TextAlign::MatchParent;
+        // Own winner for `direction` already applied to the staging value —
+        // simulates `direction: rtl` being cascaded on *this* node.
+        sv.direction = Direction::Rtl;
+
+        // Parent disagrees: Ltr.
+        let parent = ComputedValues {
+            text_align: TextAlign::Start,
+            direction: Direction::Ltr,
+            ..ComputedValues::initial()
+        };
+        let cv = sv.finalize(&parent, &CTX);
+        // Must resolve against the *parent's* Ltr (→ Left), not the node's
+        // own Rtl (which would give Right).
+        assert_eq!(cv.text_align, TextAlign::Left);
+        // The node's own `direction` winner is unaffected — it is a wholly
+        // separate property and still flows through to the child's computed
+        // value normally.
+        assert_eq!(cv.direction, Direction::Rtl);
+    }
+
+    #[test]
+    fn finalize_copies_non_start_end_parent_text_align_verbatim() {
+        let mut sv = SpecifiedValues::initial();
+        sv.text_align = TextAlign::MatchParent;
+        let parent = ComputedValues {
+            text_align: TextAlign::Center,
+            ..ComputedValues::initial()
+        };
+        let cv = sv.finalize(&parent, &CTX);
+        assert_eq!(cv.text_align, TextAlign::Center);
+    }
+
+    #[test]
+    fn finalize_leaves_non_match_parent_text_align_untouched() {
+        let mut sv = SpecifiedValues::initial();
+        sv.text_align = TextAlign::Center;
+        let parent = ComputedValues {
+            text_align: TextAlign::Start,
+            direction: Direction::Rtl,
+            ..ComputedValues::initial()
+        };
+        let cv = sv.finalize(&parent, &CTX);
+        assert_eq!(cv.text_align, TextAlign::Center);
+    }
+
+    /// CSS Text 3 §6.1 verbatim: "Computes to start when specified on the
+    /// root element." — the parent-direction table does **not** apply here,
+    /// even if the node itself declares a `direction`.
+    #[test]
+    fn finalize_as_root_resolves_match_parent_to_start() {
+        let mut sv = SpecifiedValues::initial();
+        sv.text_align = TextAlign::MatchParent;
+        sv.direction = Direction::Rtl;
+        assert_eq!(sv.finalize_as_root().text_align, TextAlign::Start);
+    }
+
+    #[test]
+    fn finalize_as_root_leaves_non_match_parent_text_align_untouched() {
+        let mut sv = SpecifiedValues::initial();
+        sv.text_align = TextAlign::Right;
+        assert_eq!(sv.finalize_as_root().text_align, TextAlign::Right);
+    }
+
+    /// `direction` itself is a plain inherited pass-through — no
+    /// `match-parent`-style resolution, symmetric with [`TextAlign::Center`]
+    /// et al.
+    #[test]
+    fn finalize_passes_direction_through_unchanged() {
+        let mut sv = SpecifiedValues::initial();
+        sv.direction = Direction::Rtl;
+        let cv = sv.clone().finalize(&ComputedValues::initial(), &CTX);
+        assert_eq!(cv.direction, Direction::Rtl);
+        assert_eq!(sv.finalize_as_root().direction, Direction::Rtl);
     }
 
     /// root element では `rem` の基準が phase 2 と phase 3 で異なる
@@ -692,7 +913,7 @@ mod tests {
             bottom: Length::Pt(3.0),
             left: Length::Percent(5.0),
         };
-        let cv = sv.finalize(ComputedLength(16.0), &CTX);
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(1.0));
         assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(16.0));
         assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(4.0));

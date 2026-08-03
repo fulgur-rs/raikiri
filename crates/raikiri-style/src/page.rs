@@ -447,9 +447,11 @@ pub struct PageCascadeResult {
     ///
     /// # What is pinned mechanically, and what is not
     ///
-    /// The **"exactly one specified-layer residue"** claim below is pinned by
-    /// `page::tests`'
-    /// `page_declarations_carry_exactly_one_specified_layer_residue`,
+    /// The **"no specified-layer residue"** claim below is pinned by
+    /// `page::tests`' `page_declarations_carry_no_specified_layer_residue`
+    /// (raikiri-spike-l3wg; before that, `text-align: match-parent` was the
+    /// one documented exception and the same test was named
+    /// `page_declarations_carry_exactly_one_specified_layer_residue`),
     /// `cascade_page_output_carries_no_specified_layer_residue` and
     /// `phase_3_variant_classification_matches_the_documented_counts`
     /// (bd raikiri-spike-awjx). The **individual phase-table rows** below (the
@@ -478,8 +480,9 @@ pub struct PageCascadeResult {
     ///   nothing then forces the author to extend `page_corpus`, so a new
     ///   variant can sit outside the corpus with every test green.
     ///
-    /// **These are computed values**, with the single documented exception at
-    /// the end of this list. CSS Paged Media 3 §6 "Page Properties"
+    /// **These are computed values, with no documented exception** (as of
+    /// raikiri-spike-l3wg — see the phase 2 bullet below for the property
+    /// that used to be the one exception). CSS Paged Media 3 §6 "Page Properties"
     /// (<https://www.w3.org/TR/css-page-3/#page-properties>) states that "both
     /// the page context and the margin context have a computed value for every
     /// property" and that "The page context inherits from the root element";
@@ -500,6 +503,30 @@ pub struct PageCascadeResult {
     ///   root element's computed font-size, so **no relative font-size
     ///   sentinel** reaches the consumer either — same guarantee as the
     ///   `font-weight` bullet above (raikiri-spike-4rmu).
+    /// - `text-align` — [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent)
+    ///   is resolved against the inheritance parent's computed `text-align`
+    ///   **and** `direction` (raikiri-spike-l3wg; origin: raikiri-spike-ygl0
+    ///   §8.2 spec lens F1). CSS Text 3 §6.1
+    ///   `#valdef-text-align-match-parent`
+    ///   (<https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent>)
+    ///   verbatim: "This value behaves the same as inherit (computes to its
+    ///   parent's computed value) except that an inherited value of start or
+    ///   end is interpreted against the parent's direction value and results
+    ///   in a computed value of either left or right." Implementation:
+    ///   [`crate::property::resolve_text_align_match_parent`], shared with the
+    ///   element path's [`crate::specified::SpecifiedValues::finalize`].
+    ///
+    ///   ⚠️ **Trap avoided here, stated for anyone touching this arm again**:
+    ///   the same value definition's second sentence — "Computes to `start`
+    ///   when specified on the root element" — does **not** apply to the page
+    ///   context. §6 says "The page context *inherits from* the root
+    ///   element" — inheriting from the root element does not make the page
+    ///   context *be* the root element, so `@page { text-align: match-parent }`
+    ///   is always resolved via the parent-direction table, never
+    ///   short-circuited to `start`. (The element path's analogous
+    ///   short-circuit lives in
+    ///   [`crate::specified::SpecifiedValues::finalize_as_root`], which is a
+    ///   different entry point entirely — `cascade_page` never calls it.)
     ///
     /// **Phase 3** — absolutization against the page context's *own*
     /// `font-size` (`absolutize_in_page_context`, raikiri-spike-sshp):
@@ -541,29 +568,6 @@ pub struct PageCascadeResult {
     ///   <https://www.w3.org/TR/css-inline-3/#line-height-property> gives
     ///   `line-height` "Percentages: computed relative to 1em"). They are
     ///   handled by phase 2 and phase 3 respectively.
-    ///
-    /// **The one value that is still a specified value**:
-    ///
-    /// - [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) —
-    ///   CSS Text 3 §6.1
-    ///   (<https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent>)
-    ///   computes it to the parent's computed `text-align`, "except that an
-    ///   inherited value of `start` or `end` is interpreted against the
-    ///   parent's `direction` value". **The `direction` dependency is therefore
-    ///   conditional**: an inherited `left` / `right` / `center` / `justify`
-    ///   would resolve without it. raikiri leaves *all* cases unresolved
-    ///   because it models no `direction` property and has not implemented the
-    ///   unconditional half either (see the (b) milestone-subset carve-out on
-    ///   [`TextAlign`](crate::property::TextAlign); bd raikiri-spike-l3wg) —
-    ///   that is an implementation subset, not something the spec forces.
-    ///
-    ///   ⚠️ A trap for whoever implements it here: the same value definition's
-    ///   "Computes to `start` when specified on the root element" **does not
-    ///   apply to the page context**. §6 says "The page context *inherits
-    ///   from* the root element" — inheriting from the root element does not
-    ///   make the page context *be* the root element. Applying that clause
-    ///   would make `@page { text-align: match-parent }` always compute to
-    ///   `start`.
     ///
     /// See [`crate::cascade::resolve_against_inherited`] and
     /// [`absolutize_in_page_context`] for the exact per-phase contracts.
@@ -918,15 +922,24 @@ fn page_context_border_styles(
 /// per rule; only the plumbing differs, because the page path carries a
 /// `PropertyValue` bag instead of a typed struct.
 ///
-/// # What stays unresolved on purpose
+/// # What this function does not resolve, and why that is fine
 ///
-/// `<percentage>` on the box properties, and
-/// [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent). The
-/// spec citations and the "exactly one exception" claim live in
-/// [`PageCascadeResult::declarations`] (canonical); what is local to *this*
-/// function is only that neither is a phase-3 concern —
-/// `<percentage>` is a used-value-layer input, and `match-parent` is
-/// inherited-value dependent (phase 2's shape), so both pass through here.
+/// `<percentage>` on the box properties stays a percentage — it is a
+/// used-value-layer input (CSS Values 4 §5.5.1), not a phase-3 concern. The
+/// spec citation lives in [`PageCascadeResult::declarations`] (canonical).
+///
+/// `text-align: match-parent` is **not** handled here either, but for a
+/// different reason than it used to be (raikiri-spike-l3wg): it is now fully
+/// resolved by **phase 2**
+/// ([`crate::cascade::resolve_against_inherited`], which runs before this
+/// function) — inherited-value dependence is phase 2's shape, not phase 3's,
+/// so by the time a value reaches this function `TextAlign::MatchParent`
+/// should never appear. It stays in the pass-through arm below (alongside
+/// `Color` / `Display` / …) simply because, once resolved, `text-align`'s
+/// computed value carries no length for phase 3 to touch — same as before,
+/// just for a different underlying reason. `direction` joins the same arm as
+/// a new, ordinary computed-equivalent keyword (CSS Writing Modes 4 §2.1,
+/// computed value = specified value, no phase-2 or phase-3 work at all).
 ///
 /// # No wildcard arm
 ///
@@ -1021,6 +1034,7 @@ pub(crate) fn absolutize_in_page_context(
         | PropertyValue::StringSet(_)
         | PropertyValue::Position(_)
         | PropertyValue::TextAlign(_)
+        | PropertyValue::Direction(_)
         | PropertyValue::BorderTopStyle(_)
         | PropertyValue::BorderRightStyle(_)
         | PropertyValue::BorderBottomStyle(_)
@@ -1259,8 +1273,8 @@ mod tests {
 
     use super::*;
     use crate::property::{
-        BoxSizing, ContentComponent, CssColor, DisplayValue, FontWeightValue, Length, LengthOrAuto,
-        LineHeight, PositionValue, TextAlign,
+        BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontWeightValue, Length,
+        LengthOrAuto, LineHeight, PositionValue, TextAlign,
     };
     use crate::resolve::ComputedLength;
 
@@ -2456,10 +2470,25 @@ mod tests {
     // - `absolutize_in_page_context` の arm 分類を動かす →
     //   `phase_3_variant_classification_matches_the_documented_counts` が落ちる。
     // - phase 2 / phase 3 を素通りする値が `declarations` に届くようになる →
-    //   `page_declarations_carry_exactly_one_specified_layer_residue` /
+    //   `page_declarations_carry_no_specified_layer_residue` /
     //   `cascade_page_output_carries_no_specified_layer_residue` が落ちる。
-    // - `text-align: match-parent` が解決可能になる (bd raikiri-spike-l3wg) →
-    //   同 test が落ち、doc の「例外は 1 つ」を直させる。
+    //
+    // raikiri-spike-l3wg で実際に踏んだ改修: `text-align: match-parent` が
+    // 解決可能になったことで上記 2 test の期待値は「例外 1 つ」から「例外 0」
+    // (空 vec) に変わった (旧 test 名
+    // `page_declarations_carry_exactly_one_specified_layer_residue` は
+    // `page_declarations_carry_no_specified_layer_residue` に改名)。
+    // `specified_layer_residue` の `TextAlign::MatchParent` arm 自体は
+    // **削除しなかった** — `resolve_against_inherited` を経由し損ねる将来の
+    // regression (bd raikiri-spike-7m33 gap (b) 相当) に対する tripwire として
+    // 残してある。同じ「今後別の inherited-value-dependent keyword を足す」
+    // ケースへの一般化: 新しい `PropertyValue` variant / payload が **phase 2
+    // で解決される**ようになったら、本節 3 つの定数 (`PROPERTY_VALUE_VARIANTS`
+    // / `PHASE_3_PASS_THROUGH_VARIANTS` / `RAW_CORPUS_RESIDUE_VARIANTS` の
+    // `+ 3` 項の内訳コメント) と `page_corpus` の worst-case payload、および
+    // `page_declarations_carry_no_specified_layer_residue` /
+    // `cascade_page_output_carries_no_specified_layer_residue` の期待値を
+    // 同時に見直すこと。
 
     /// `PropertyValue` の variant 総数。
     ///
@@ -2473,10 +2502,16 @@ mod tests {
     /// が compile error になる」ことは「corpus が完全である」ことを**含意しない**
     /// (`specified_layer_residue` の tripwire は one-way)。この穴を閉じるには
     /// corpus を `PropertyKey` の網羅 match から生成する必要がある — 別 task。
-    const PROPERTY_VALUE_VARIANTS: usize = 41;
+    ///
+    /// 40 → 41 (raikiri-spike-4rmu、`PropertyValue::FontSizeRelative` 追加) →
+    /// 42 (raikiri-spike-l3wg、`PropertyValue::Direction` 追加)。
+    const PROPERTY_VALUE_VARIANTS: usize = 42;
 
     /// phase 3 (`absolutize_in_page_context`) が**素通しする** variant 数。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 22;
+    ///
+    /// 22 → 23 (raikiri-spike-l3wg、`Direction` は phase 3 で変換する length を
+    /// 持たないため pass-through 側に加わる — `TextAlign` 自身は元々こちら側)。
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 23;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -2490,7 +2525,15 @@ mod tests {
 
     /// phase 2 / phase 3 を**通す前**の corpus が持つ specified 層残滓の数 =
     /// `PHASE_3_TRANSFORMED_VARIANTS` + phase 2 が解決する `font-size` /
-    /// `font-weight` の 2 + どちらも解決しない `text-align: match-parent` の 1。
+    /// `font-weight` / `text-align: match-parent` の 3。
+    ///
+    /// 数自体 (3) は raikiri-spike-l3wg 前後で**変わらない** — 変わったのは
+    /// 3 番目の意味: 以前は「phase 2 でも phase 3 でも解決しない孤立した残滓」
+    /// (`text-align: match-parent`) だったが、今は他 2 つ (`font-size` /
+    /// `font-weight`) と同じ「phase 2 が解決する」側に合流した。この定数は
+    /// **raw corpus** (どちらの phase も通していない) に対する残滓数を数えて
+    /// いるので、resolve 先が phase 2 か「resolve 不能」かに関わらず raw 値
+    /// そのものが `specified_layer_residue` に引っかかる限り数は同じになる。
     ///
     /// `FontSizeRelative` (`larger`/`smaller`) もこの「phase 2 が解決する」
     /// 3 種と同じ扱いに**見える**が、`+3` には数えない — phase 3
@@ -2562,6 +2605,9 @@ mod tests {
             PropertyValue::Width(LengthOrAuto::Length(Length::Em(3.0))),
             PropertyValue::Height(LengthOrAuto::Length(Length::Em(4.0))),
             PropertyValue::BoxSizing(BoxSizing::BorderBox),
+            // No specified/computed distinction for `direction` (computed
+            // value = specified value) — any value is "worst case".
+            PropertyValue::Direction(Direction::Rtl),
         ]
     }
 
@@ -2671,7 +2717,16 @@ mod tests {
                 | TextAlign::Center
                 | TextAlign::Justify
                 | TextAlign::JustifyAll => None,
-                // 唯一の文書化された例外 (bd raikiri-spike-l3wg)。
+                // raikiri-spike-l3wg 以降、`resolve_against_inherited` の
+                // phase 2 が必ず解決するため、この arm に**到達すること自体が
+                // bug** (かつての「唯一の文書化された例外」ではない —
+                // `PageCascadeResult::declarations` の doc も参照)。`Some`
+                // のまま残してあるのは意図的な tripwire: 新しい entry point が
+                // phase 2 を経由し損ねた場合 (bd raikiri-spike-7m33 gap (b) 相当)
+                // に本検出器が拾えるようにするため。raw corpus
+                // (`specified_layer_residue_detector_is_not_vacuous`) はまさに
+                // この「未解決の raw 値」を検査しているので、`None` に変えると
+                // その negative control が意味を失う。
                 TextAlign::MatchParent => Some("text-align: match-parent"),
             }
         }
@@ -2720,6 +2775,7 @@ mod tests {
             | PropertyValue::Content(_)
             | PropertyValue::StringSet(_)
             | PropertyValue::Position(_)
+            | PropertyValue::Direction(_)
             | PropertyValue::BorderTopStyle(_)
             | PropertyValue::BorderRightStyle(_)
             | PropertyValue::BorderBottomStyle(_)
@@ -2911,13 +2967,17 @@ mod tests {
     }
 
     /// **本節の中心 pin** — phase 2 → phase 3 を通した後、`declarations` に
-    /// 届く値の specified 層残滓は `text-align: match-parent` **ただ 1 つ**。
+    /// 届く値に specified 層残滓は**一切残らない**。
     ///
     /// `PageCascadeResult::declarations` の doc が consumer に宣言している
-    /// 「These are computed values, with the single documented exception」
-    /// そのもの。例外が増減したらここで落ち、doc を直させる。
+    /// 「These are computed values, with no documented exception」そのもの。
+    /// raikiri-spike-l3wg 以前は `text-align: match-parent` が唯一の例外
+    /// だった (旧 test 名
+    /// `page_declarations_carry_exactly_one_specified_layer_residue`) — 本
+    /// task がそれを解消したので期待値を空 `vec![]` に変えた。例外が復活したら
+    /// ここで落ち、doc を直させる。
     #[test]
-    fn page_declarations_carry_exactly_one_specified_layer_residue() {
+    fn page_declarations_carry_no_specified_layer_residue() {
         let root = root_with_font_size(16.0);
         let font_size = ComputedLength(20.0);
         let ctx = ResolveContext::new(root.font_size);
@@ -2930,10 +2990,12 @@ mod tests {
             .filter_map(|v| specified_layer_residue(&v).map(|r| (v.key(), r)))
             .collect();
 
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             residues,
-            vec![(PropertyKey::TextAlign, "text-align: match-parent")],
-            "PageCascadeResult::declarations の doc が宣言する例外は 1 つだけ",
+            Vec::<(PropertyKey, &'static str)>::new(),
+            "PageCascadeResult::declarations に specified 層残滓が残ってはならない (raikiri-spike-l3wg 以降、documented exception は無い)",
         );
     }
 
@@ -2951,7 +3013,7 @@ mod tests {
         let result = page(
             "@page { font-size: 2em; font-weight: bolder; line-height: 1.5em; \
              padding: 2em; margin: 3rem; border: 12pt solid red; \
-             width: 4em; height: 5em; text-align: match-parent }",
+             width: 4em; height: 5em; text-align: match-parent; direction: rtl }",
             &root,
         );
         // vacuity guard — stylesheet が黙って落ちていないこと。
@@ -2960,13 +3022,13 @@ mod tests {
         // 丸ごと落ちる parse regression が起きても残りで閾値を超えてしまい、
         // かつ落ちた分は residue も 0 なので本 pin が素通りする。
         //
-        // 26 = font-size / font-weight / line-height / text-align / width /
-        // height の 6 + padding 4 + margin 4 + `border` shorthand の展開 12
-        // (4 side × width / style / color)。`@page` の shorthand 展開が変わったら
-        // ここが先に落ちる。
+        // 27 = font-size / font-weight / line-height / text-align / width /
+        // height / direction の 7 + padding 4 + margin 4 + `border` shorthand
+        // の展開 12 (4 side × width / style / color)。`@page` の shorthand 展開が
+        // 変わったらここが先に落ちる。
         assert_eq!(
             result.declarations.len(),
-            26,
+            27,
             "corpus stylesheet が期待通り parse / 展開されていない: {}",
             result.declarations.len(),
         );
@@ -2978,18 +3040,24 @@ mod tests {
             .filter_map(|v| specified_layer_residue(v).map(|r| format!("{:?}: {r}", v.key())))
             .collect();
         residues.sort();
+        // raikiri-spike-l3wg 以前はここに `TextAlign: text-align: match-parent`
+        // が 1 件残っていた (関数名が予告していた「no residue」と実際の
+        // assertion が食い違っていた quirk) — 今は名前どおり空になる。
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             residues,
-            vec!["TextAlign: text-align: match-parent".to_string()],
-            "cascade_page の出力に documented exception 以外の specified 層 \
-             残滓が居る",
+            Vec::<String>::new(),
+            "cascade_page の出力に specified 層残滓が居る",
         );
     }
 
-    /// `page_declarations_carry_exactly_one_specified_layer_residue` と
+    /// `page_declarations_carry_no_specified_layer_residue` と
     /// `cascade_page_output_carries_no_specified_layer_residue` が vacuous で
     /// ないこと (negative control) — 検出器は phase 2 / phase 3 を通していない
-    /// 値に対しては実際に発火する。
+    /// **raw** 値に対しては実際に発火する (`text-align: match-parent` を含む —
+    /// raikiri-spike-l3wg 以降も raw corpus はまだ resolve 前なので、この
+    /// negative control 自体は変わらない)。
     #[test]
     fn specified_layer_residue_detector_is_not_vacuous() {
         let raw = page_corpus()
@@ -3015,7 +3083,8 @@ mod tests {
         let root = root_with_weight(700);
         let result = page(
             "@page { color: red; font-weight: bolder; display: block; \
-             box-sizing: border-box; border-top-color: red; text-align: center }",
+             box-sizing: border-box; border-top-color: red; text-align: center; \
+             direction: rtl }",
             &root,
         );
         assert_eq!(color_of(&result), Some(RED));
@@ -3033,24 +3102,119 @@ mod tests {
             result.declarations.get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Center)),
         );
+        assert_eq!(
+            result.declarations.get(&PropertyKey::Direction),
+            Some(&PropertyValue::Direction(Direction::Rtl)),
+        );
     }
 
+    /// `@page { text-align: match-parent }` now resolves against the root
+    /// element's computed `text-align` + `direction` (raikiri-spike-l3wg) —
+    /// this used to be the crate's one documented specified-layer exception
+    /// (`cascade_page_text_align_match_parent_passes_through_as_specified_value`,
+    /// asserting `TextAlign::MatchParent` survived unresolved). CSS Text 3
+    /// §6.1 `#valdef-text-align-match-parent` verbatim: "an inherited value
+    /// of start or end is interpreted against the parent's direction value".
     #[test]
-    fn cascade_page_text_align_match_parent_passes_through_as_specified_value() {
-        // Second pass-through pin, on the other value the public doc calls out.
-        // CSS Text 3 §6.1
-        // <https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent>
-        // computes `match-parent` to the parent's computed `text-align`
-        // interpreted against the parent's `direction`; raikiri has no
-        // `direction` in the computed layer, so the keyword ships as-is.
+    fn cascade_page_text_align_match_parent_resolves_against_root_direction() {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { text-align: match-parent }", Origin::Author);
-        let root = root_with_weight(700);
+
+        // Default root (`ComputedValues::initial()`): text-align = start,
+        // direction = ltr → left.
+        let ltr_root = root_with_weight(700);
+        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&ltr_root));
+        assert_eq!(
+            result.declarations.get(&PropertyKey::TextAlign),
+            Some(&PropertyValue::TextAlign(TextAlign::Left)),
+        );
+
+        // Root with `direction: rtl` (text-align still start) → right.
+        let rtl_root = ComputedValues {
+            direction: Direction::Rtl,
+            ..ComputedValues::initial()
+        };
+        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&rtl_root));
+        assert_eq!(
+            result.declarations.get(&PropertyKey::TextAlign),
+            Some(&PropertyValue::TextAlign(TextAlign::Right)),
+        );
+    }
+
+    /// The trap the doc warns about: unlike the element path's root element
+    /// (CSS Text 3 §6.1's "computes to start"), the page context's
+    /// `root_style == None` L3 legacy exception is **not** a "no parent"
+    /// case — it substitutes `ComputedValues::initial()` as an ordinary
+    /// inheritance parent (text-align = start, direction = ltr) and goes
+    /// through the same parent-direction table, landing on `left` rather
+    /// than being short-circuited to `start`.
+    #[test]
+    fn cascade_page_text_align_match_parent_with_no_root_style_uses_initial_values_not_start_shortcut()
+     {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { text-align: match-parent }", Origin::Author);
+        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            result.declarations.get(&PropertyKey::TextAlign),
+            Some(&PropertyValue::TextAlign(TextAlign::Left)),
+            "the L3 legacy-exception initial-values parent must still go through the parent-direction table, not the root-element \"computes to start\" shortcut"
+        );
+    }
+
+    /// Page-path analogue of `cascade::tests::
+    /// text_align_match_parent_uses_parent_direction_not_own_direction_winner`
+    /// (that test's doc calls itself "the end-to-end pin for the whole
+    /// `direction` + `text-align: match-parent` design" — this is the same
+    /// pin for the *second, independent* resolution site,
+    /// `resolve_against_inherited`'s `TextAlign` arm, which the element-path
+    /// test cannot exercise).
+    ///
+    /// `@page` here declares its own (conflicting) `direction: rtl` on the
+    /// page context itself. Per CSS Text 3 §6.1
+    /// `#valdef-text-align-match-parent` ("interpreted against **the
+    /// parent's** direction value"), resolution must use the *root element's*
+    /// `ltr`, not the page context's own `rtl`. Without this test, a
+    /// regression that made `resolve_against_inherited` read the page
+    /// context's own `direction` winner instead of `inherited.direction`
+    /// would flip `Left` → `Right` here while every other test in this
+    /// module — including the residue-count pins — stayed green (none of
+    /// them cross own-direction with match-parent on the page path).
+    #[test]
+    fn cascade_page_text_align_match_parent_ignores_page_context_own_direction() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { direction: rtl; text-align: match-parent }",
+            Origin::Author,
+        );
+        // Root: text-align = start, direction = ltr (defaults).
+        let root = ComputedValues::initial();
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
         assert_eq!(
             result.declarations.get(&PropertyKey::TextAlign),
-            Some(&PropertyValue::TextAlign(TextAlign::MatchParent)),
-            "match-parent is documented as an unresolved pass-through, not resolved"
+            Some(&PropertyValue::TextAlign(TextAlign::Left)),
+        );
+        // The page context's own `direction: rtl` winner is unaffected — it
+        // is a separate property, unrelated to the match-parent resolution.
+        assert_eq!(
+            result.declarations.get(&PropertyKey::Direction),
+            Some(&PropertyValue::Direction(Direction::Rtl)),
+        );
+    }
+
+    #[test]
+    fn cascade_page_text_align_match_parent_copies_non_start_end_root_value() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { text-align: match-parent }", Origin::Author);
+        let root = ComputedValues {
+            text_align: TextAlign::Center,
+            ..ComputedValues::initial()
+        };
+        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
+        assert_eq!(
+            result.declarations.get(&PropertyKey::TextAlign),
+            Some(&PropertyValue::TextAlign(TextAlign::Center)),
         );
     }
 

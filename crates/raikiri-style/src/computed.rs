@@ -12,8 +12,8 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, DisplayValue, Sides,
-    TextAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
+    Sides, TextAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
 };
 use crate::resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -62,7 +62,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / line_height、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing)。
 ///
@@ -244,7 +244,33 @@ pub struct ComputedValues {
     /// **inherited** 系 — `inherit_from` の inherited block に配置し親から by-value
     /// copy (`TextAlign` は `Copy`)。
     /// (raikiri-spike-0vv.8)
+    ///
+    /// **`MatchParent` が本 field の値として観測されることは無い** —
+    /// cascade winner が `match-parent` でも、computed 層に届く前に
+    /// [`crate::property::resolve_text_align_match_parent`] が親の
+    /// [`Self::text_align`] + [`Self::direction`] を使って `Left` / `Right` /
+    /// (親値のコピー) に解決する (raikiri-spike-l3wg、origin:
+    /// raikiri-spike-ygl0 §8.2 spec lens F1)。解決は 2 箇所 — element 経路
+    /// ([`crate::specified::SpecifiedValues::finalize`] /
+    /// `finalize_as_root`) と page 経路
+    /// ([`crate::cascade::resolve_against_inherited`]) — から同じ関数へ
+    /// funnel する。
     pub text_align: TextAlign,
+    /// `direction`。**inherited**、initial: [`Direction::Ltr`]
+    /// (CSS Writing Modes 4 §2.1 "Specifying Directionality: the direction
+    /// property" <https://www.w3.org/TR/css-writing-modes-4/#direction>)。
+    /// Computed value = specified value (相対解決なし、[`Direction`] doc 参照)。
+    ///
+    /// 37n sibling: [`text_align`](Self::text_align) と同じ **inherited** 系 —
+    /// `inherit_from` の inherited block に配置し親から by-value copy
+    /// (`Direction` は `Copy`)。
+    ///
+    /// 追加理由 (raikiri-spike-l3wg): [`text_align`](Self::text_align) の
+    /// `match-parent` 解決 (CSS Text 3 §6.1) が親の computed `direction` を
+    /// 要求する。property 自体は CSS Paged Media 3 Appendix A
+    /// page-property-list <https://www.w3.org/TR/css-page-3/#page-property-list>
+    /// にも独立に載っており、`@page` context でも意味を持つ。
+    pub direction: Direction,
     /// `padding` — 4-side box-model padding。**non-inherited**、initial:
     /// `Sides::all(ComputedLengthPercentage::Px(0.0))` — CSS Box 3 §4.1
     /// <https://www.w3.org/TR/css-box-3/#padding-physical> initial "0"。
@@ -441,6 +467,8 @@ impl ComputedValues {
             running_templates: Vec::new(),
             // CSS Text 3 §6.1: text-align initial is `start` (raikiri-spike-0vv.8)
             text_align: TextAlign::Start,
+            // CSS Writing Modes 4 §2.1: direction initial is `ltr` (raikiri-spike-l3wg)。
+            direction: Direction::Ltr,
             // CSS Box 3 §4.1: padding initial = 0 (all 4 sides、raikiri-spike-0vv.6)。
             padding: Sides::all(ComputedLengthPercentage::Px(0.0)),
             // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
@@ -483,7 +511,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / line_height、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing)。
     ///
@@ -515,12 +543,25 @@ impl ComputedValues {
     /// style gating により 0px に潰れる」変換を経るが、これは
     /// [`Self::initial`] の `border` と同じ値であり non-inherited の要求どおり。
     ///
+    /// `finalize` は `parent` (raikiri-spike-l3wg 以降 `&Self` 全体) から
+    /// `text_align` / `direction` も読んで `text-align: match-parent` を解決
+    /// するが、こちらも恒等である —
+    /// [`SpecifiedValues::inherit_from`] が `text_align` を親からそのまま
+    /// コピーする
+    /// ([`SpecifiedValues::text_align`](crate::specified::SpecifiedValues::text_align)
+    /// の doc 参照) ので、渡される
+    /// `self.text_align` は常に `parent.text_align` と等しく、`MatchParent`
+    /// では**あり得ない** (computed 値が `MatchParent` を取らない invariant、
+    /// [`crate::property::resolve_text_align_match_parent`] の debug_assert が
+    /// pin する)。よって解決関数は常に "as specified" の pass-through 分岐を
+    /// 通り、`child.text_align == parent.text_align` になる。
+    ///
     /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
     /// [`SpecifiedValues::inherit_from`]: crate::specified::SpecifiedValues::inherit_from
     /// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
     pub fn inherit_from(parent: &Self) -> Self {
         crate::specified::SpecifiedValues::inherit_from(parent).finalize(
-            parent.font_size,
+            parent,
             &crate::resolve::ResolveContext::new(parent.font_size),
         )
     }
@@ -563,6 +604,8 @@ mod tests {
         assert!(cv.running_templates.is_empty());
         // CSS Text 3 §6.1 (raikiri-spike-0vv.8): text-align initial は `start`。
         assert_eq!(cv.text_align, TextAlign::Start);
+        // CSS Writing Modes 4 §2.1 (raikiri-spike-l3wg): direction initial は `ltr`。
+        assert_eq!(cv.direction, Direction::Ltr);
         // CSS Box 3 §4.1 (raikiri-spike-0vv.6): padding initial = 0 (all 4 sides)。
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
         // CSS Box 3 §3.1 (raikiri-spike-0vv.5): margin initial は 0 on each side。
@@ -651,6 +694,9 @@ mod tests {
                 name: SmolStr::new("hdr"),
             }],
             text_align: TextAlign::Center,
+            // CSS Writing Modes 4 §2.1: `Rtl` — initial (`Ltr`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            direction: Direction::Rtl,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
             border: Sides::all(ComputedBorder {
@@ -667,7 +713,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 20 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 21 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -683,6 +729,8 @@ mod tests {
         assert_eq!(child.font_size, parent.font_size);
         assert_eq!(child.font_weight, parent.font_weight);
         assert_eq!(child.text_align, parent.text_align);
+        // CSS Writing Modes 4 §2.1 (raikiri-spike-l3wg): direction は inherited。
+        assert_eq!(child.direction, parent.direction);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);
@@ -728,7 +776,7 @@ mod tests {
             ComputedLength(999.0),
         ] {
             let via_staging = SpecifiedValues::inherit_from(&parent)
-                .finalize(parent.font_size, &ResolveContext::new(root_font_size));
+                .finalize(&parent, &ResolveContext::new(root_font_size));
             assert_eq!(
                 via_staging, expected,
                 "inherit_from must not depend on the rem basis ({root_font_size:?})"
