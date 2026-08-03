@@ -298,6 +298,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)
+        | PropertyValue::FontSizeRelative(_)
         | PropertyValue::FontWeight(_)
         | PropertyValue::LineHeight(_)
         | PropertyValue::Display(_)
@@ -587,11 +588,14 @@ mod tests {
         // float: 未対応 property → drop (0vv.5 以前は `margin`、0vv.10 直前は
         // `width` を dropped 例に使っていたが、それぞれ 0vv.5 / 0vv.10 で認識
         // 対象になったため差し替え。`float` は現行 milestone subset 外)。
-        // font-size: medium → `<absolute-size>` keyword 未対応 → drop
-        // (raikiri-spike-zls8 以前は `1em` を dropped 例に使っていたが、
-        // 同 task で font-relative unit が認識対象になったため差し替え)。
+        // font-size: math → g04 (b) milestone subset (MathML scaling algorithm
+        // 未実装、bd raikiri-spike-0vv.18) → drop (raikiri-spike-4rmu 以前は
+        // `medium` を dropped 例に使っていたが、同 task で `<absolute-size>` /
+        // `<relative-size>` keyword が認識対象になったため差し替え —
+        // property.rs `PropertyValue` doc の「例を差し替えるときは…揃えること」
+        // 節参照)。
         // color: red → 残す
-        let decls = parse_block("float: left; font-size: medium; color: red;");
+        let decls = parse_block("float: left; font-size: math; color: red;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
             decls[0].value,

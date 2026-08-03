@@ -1786,6 +1786,7 @@ name = "raikiri-paint"
 version = "0.1.0"
 dependencies = [
  "anyrender",
+ "anyrender_vello_cpu",
  "kurbo",
  "parley",
  "peniko",

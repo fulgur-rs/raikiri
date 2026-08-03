@@ -63,6 +63,13 @@ use crate::resolve::{
 /// 時点で**親の computed weight に対して解決するので、`u16` で保持される
 /// (下記「D5 invariant」節)。
 ///
+/// `font_size` は「specified 層のまま」に留まるが、`larger` / `smaller`
+/// (`<relative-size>`、raikiri-spike-4rmu) は同じ D5 invariant を使って
+/// **同じ書き込み時点**で親基準の絶対値に解決される — 結果は `Length::Px`
+/// (specified 層の型としては通常の author px 指定と区別できない値) になるので
+/// 表の分類は変わらない。詳細は下記「D5 invariant」節と
+/// [`crate::cascade::apply_value`] の `FontSizeRelative` arm を参照。
+///
 /// page 経路には本 struct に相当する staging 型が無い —
 /// [`crate::page::cascade_page`] は同じ 2 phase を `PropertyValue` の bag の上で
 /// 直接走らせるので、中間状態は関数 local に閉じており public には出ない
@@ -74,12 +81,24 @@ use crate::resolve::{
 /// [`Self::inherit_from`] は inherited property を親の [`ComputedValues`] から
 /// seed する。これは単なる効率の話ではなく **正しさの要求**である:
 /// [`crate::cascade::apply_value`] の `PropertyValue::FontWeight` arm は
-/// `apply_value` 中で唯一の read-modify-write で、書き込み前の
+/// `apply_value` 中の read-modify-write で、書き込み前の
 /// `self.font_weight` が**親の computed font-weight である**ことに依拠して
 /// `bolder` / `lighter` を解決する。[`Self::initial`] から seed すると
 /// `bolder` が常に 400 起点になり、**compile error にも既存 test の失敗にも
 /// ならずに**壊れる (bd raikiri-spike-i5bs §8.2 debt lens D5)。
 /// pin: `bolder_resolves_against_parent_computed_weight_through_staging`。
+///
+/// `font_size` も同じ invariant に依拠する (raikiri-spike-4rmu で
+/// `FontSizeRelative` arm が加わった) — [`Self::inherit_from`] は
+/// `font_size` を [`crate::resolve::lift_font_size`] 経由で seed し、この
+/// 関数は常に `Length::Px` を返す (`Px` は絶対化の不動点、同関数 doc 参照)。
+/// [`Self::initial`] も `font_size: Length::Px(INITIAL_FONT_SIZE_PX)` で
+/// 同じく `Px`。したがって `apply_value` の `FontSizeRelative` arm が
+/// 書き込み前に読む `self.font_size` は**必ず「親 (または root では initial)
+/// の computed font-size」の `Length::Px` 表現である** — `font_weight`
+/// (`u16`、単位を持たない) とは表現型が違うが保証の形は同じ。
+/// [`Self::initial`] から seed する実装に変えると `larger` が常に
+/// `INITIAL_FONT_SIZE_PX` (16px) 起点になり、`bolder` と同じ壊れ方をする。
 ///
 /// # `text_align: match-parent` は D5 と**同型ではない** (raikiri-spike-l3wg)
 ///
@@ -688,6 +707,23 @@ mod tests {
         let mut sv = SpecifiedValues::initial();
         sv.font_size = Length::Em(2.0); // 親 16px → 32px
         sv.padding = Sides::all(Length::Em(1.0)); // 自 32px → 32px
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(cv.font_size, ComputedLength(32.0));
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
+    }
+
+    /// bd raikiri-spike-2x8 で追加した `ex` も `em` と同じ parent/own 非対称を
+    /// 持つ (unknown-metric fallback `0.5em`、[`Length::Ex`] doc)。数値は
+    /// [`finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest`]
+    /// と揃える (`32px` / `32px`) — multiplier を変えて `ex` の `0.5` 係数を
+    /// 通しても同じ基準規則になることを示す。padding 側に **親** (16px) を
+    /// 誤って使うと `16 * 0.5 * 2 = 16px` になり、`32px` にならないため
+    /// parent/own の取り違えを検出できる。
+    #[test]
+    fn finalize_resolves_ex_against_parent_for_font_size_and_own_for_padding() {
+        let mut sv = SpecifiedValues::initial();
+        sv.font_size = Length::Ex(4.0); // 親 16px 基準 → 0.5 * 4 * 16 = 32px
+        sv.padding = Sides::all(Length::Ex(2.0)); // 自 (phase 2 で確定した) 32px 基準 → 0.5 * 2 * 32 = 32px
         let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
         assert_eq!(cv.font_size, ComputedLength(32.0));
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));

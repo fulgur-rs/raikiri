@@ -523,6 +523,37 @@ fn pt_to_px(v: f32) -> f32 {
     v * 4.0 / 3.0
 }
 
+/// `in` → px。CSS Values 4 §6.2 "Absolute Lengths"
+/// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>) 換算表 verbatim:
+/// "1in = 2.54cm = 96px"。
+fn in_to_px(v: f32) -> f32 {
+    v * 96.0
+}
+
+/// `cm` → px。CSS Values 4 §6.2 換算表 verbatim: "1cm = 96px/2.54"。
+fn cm_to_px(v: f32) -> f32 {
+    v * 96.0 / 2.54
+}
+
+/// `mm` → px。CSS Values 4 §6.2 換算表 verbatim: "1mm = 1/10th of 1cm"。
+/// spec の連鎖定義どおり [`cm_to_px`] を経由する (`px` と直接の等価式が
+/// spec に無いため — spec が与えるのは `cm` / `in` 起点の比のみ)。
+fn mm_to_px(v: f32) -> f32 {
+    cm_to_px(v) / 10.0
+}
+
+/// `Q` (quarter-millimeter) → px。CSS Values 4 §6.2 換算表 verbatim:
+/// "1Q = 1/40th of 1cm"。[`mm_to_px`] と同じ理由で [`cm_to_px`] を経由する。
+fn q_to_px(v: f32) -> f32 {
+    cm_to_px(v) / 40.0
+}
+
+/// `pc` (pica) → px。CSS Values 4 §6.2 換算表 verbatim: "1pc = 1/6th of 1in"。
+/// [`mm_to_px`] / [`q_to_px`] と同じ理由で [`in_to_px`] を経由する。
+fn pc_to_px(v: f32) -> f32 {
+    in_to_px(v) / 6.0
+}
+
 /// `font-size` の specified value を絶対化する (**phase 2** — 親基準)。
 ///
 /// `parent_font_size` は**親要素の** computed font-size。親がない (root element)
@@ -534,10 +565,16 @@ fn pt_to_px(v: f32) -> f32 {
 /// | specified | computed | 根拠 |
 /// |---|---|---|
 /// | `Npx` | `N` px | identity |
-/// | `Npt` | `N * 4/3` px | CSS Values 4 §6.2 <https://www.w3.org/TR/css-values-4/#absolute-lengths> |
-/// | `Nem` | `parent_font_size * N` | 下記 parent-metrics 条項 |
-/// | `Nrem` | `ctx.root_font_size * N` | CSS Values 4 §6.1.1 `rem` <https://www.w3.org/TR/css-values-4/#rem> |
+/// | `Npt` / `Ncm` / `Nmm` / `NQ` / `Nin` / `Npc` | 換算表どおり | CSS Values 4 §6.2 <https://www.w3.org/TR/css-values-4/#absolute-lengths> |
+/// | `Nem` / `Nex` / `Nch` | `parent_font_size * N` (`ex`/`ch` は `* 0.5` 追加) | 下記 parent-metrics 条項 + [`Length::Ex`] / [`Length::Ch`] doc の fallback |
+/// | `Nic` | `parent_font_size * N` | 下記 parent-metrics 条項 + [`Length::Ic`] doc の fallback |
+/// | `Nrem` / `Nrex` / `Nrch` / `Nric` | `ctx.root_font_size * N` (`rex`/`rch` は `* 0.5` 追加) | CSS Values 4 §6.1.1 `rem` <https://www.w3.org/TR/css-values-4/#rem> |
 /// | `N%` | `parent_font_size * N / 100` | CSS Fonts 4 `font-size` propdef "Percentages: refer to parent element's font size" <https://www.w3.org/TR/css-fonts-4/#propdef-font-size> |
+///
+/// `ex` / `rex` / `ch` / `rch` / `ic` / `ric` は style 層に実 font metrics が
+/// 無いため常に spec の unknown-metric fallback を使う — 根拠は各 variant
+/// ([`Length::Ex`] 等) の doc、`font-size` 自身が font-* property のため
+/// **親** 基準になる理由は上記 parent-metrics 条項 (`em` と同じ扱い)。
 ///
 /// # Primary sources (§ title + anchor)
 ///
@@ -557,10 +594,11 @@ fn pt_to_px(v: f32) -> f32 {
 /// # Caller contract
 ///
 /// **root element の `font-size` を絶対化するときは [`ResolveContext::initial`]
-/// を渡すこと。** `Rem` arm は `ctx.root_font_size` を無条件に参照するため、
-/// tree 全体で同一の `ResolveContext::new(root_font_size)` を使い回すと
-/// `html { font-size: 2rem }` が自己参照になる (CSS Values 4 §6.1.1 の
-/// parent-metrics 条項 — root には親がないので initial values 基準)。
+/// を渡すこと。** `Rem` / `Rex` / `Rch` / `Ric` arm は `ctx.root_font_size` を
+/// 無条件に参照するため、tree 全体で同一の `ResolveContext::new(root_font_size)`
+/// を使い回すと `html { font-size: 2rem }` (同様に `2rex` / `2rch` / `2ric`) が
+/// 自己参照になる (CSS Values 4 §6.1.1 の parent-metrics 条項 — root には親が
+/// ないので initial values 基準)。
 ///
 /// cascade pipeline ではこの contract を
 /// [`SpecifiedValues::finalize_as_root`] が守る (bd raikiri-spike-zls8) —
@@ -592,8 +630,22 @@ pub fn resolve_font_size(
     match specified {
         Length::Px(v) => ComputedLength(v),
         Length::Pt(v) => ComputedLength(pt_to_px(v)),
+        Length::Cm(v) => ComputedLength(cm_to_px(v)),
+        Length::Mm(v) => ComputedLength(mm_to_px(v)),
+        Length::Q(v) => ComputedLength(q_to_px(v)),
+        Length::In(v) => ComputedLength(in_to_px(v)),
+        Length::Pc(v) => ComputedLength(pc_to_px(v)),
         Length::Em(v) => ComputedLength(parent_font_size.0 * v),
         Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
+        // ex / ch: unknown-metric fallback = 0.5em ([`Length::Ex`] /
+        // [`Length::Ch`] doc)。font-size 自身の値なので基準は親
+        // (上記 parent-metrics 条項、`em` と同じ)。
+        Length::Ex(v) | Length::Ch(v) => ComputedLength(parent_font_size.0 * v * 0.5),
+        // ic: unknown-metric fallback = 1em ([`Length::Ic`] doc)。
+        Length::Ic(v) => ComputedLength(parent_font_size.0 * v),
+        // rex / rch: root 版の同じ fallback、基準は root_font_size (`rem` と同じ)。
+        Length::Rex(v) | Length::Rch(v) => ComputedLength(ctx.root_font_size.0 * v * 0.5),
+        Length::Ric(v) => ComputedLength(ctx.root_font_size.0 * v),
         // CSS Fonts 4 `font-size` propdef: "Percentages: refer to parent
         // element's font size" — font-size は §5.5.1 の「percentage は
         // percentage のまま computed される」原則の明示的な例外。
@@ -646,8 +698,19 @@ pub(crate) fn resolve_length(
     match specified {
         Length::Px(v) => ComputedLength(v),
         Length::Pt(v) => ComputedLength(pt_to_px(v)),
+        Length::Cm(v) => ComputedLength(cm_to_px(v)),
+        Length::Mm(v) => ComputedLength(mm_to_px(v)),
+        Length::Q(v) => ComputedLength(q_to_px(v)),
+        Length::In(v) => ComputedLength(in_to_px(v)),
+        Length::Pc(v) => ComputedLength(pc_to_px(v)),
         Length::Em(v) => ComputedLength(font_size.0 * v),
         Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
+        // ex / ch / ic: 自要素基準の unknown-metric fallback
+        // ([`resolve_font_size`] の同 arm と同じ 0.5em / 1em、基準のみ自要素)。
+        Length::Ex(v) | Length::Ch(v) => ComputedLength(font_size.0 * v * 0.5),
+        Length::Ic(v) => ComputedLength(font_size.0 * v),
+        Length::Rex(v) | Length::Rch(v) => ComputedLength(ctx.root_font_size.0 * v * 0.5),
+        Length::Ric(v) => ComputedLength(ctx.root_font_size.0 * v),
         Length::Percent(_) => ComputedLength::ZERO,
     }
 }
@@ -668,8 +731,20 @@ pub fn resolve_length_percentage(
     match specified {
         Length::Px(v) => ComputedLengthPercentage::Px(v),
         Length::Pt(v) => ComputedLengthPercentage::Px(pt_to_px(v)),
+        Length::Cm(v) => ComputedLengthPercentage::Px(cm_to_px(v)),
+        Length::Mm(v) => ComputedLengthPercentage::Px(mm_to_px(v)),
+        Length::Q(v) => ComputedLengthPercentage::Px(q_to_px(v)),
+        Length::In(v) => ComputedLengthPercentage::Px(in_to_px(v)),
+        Length::Pc(v) => ComputedLengthPercentage::Px(pc_to_px(v)),
         Length::Em(v) => ComputedLengthPercentage::Px(font_size.0 * v),
         Length::Rem(v) => ComputedLengthPercentage::Px(ctx.root_font_size.0 * v),
+        // ex / ch / ic: [`resolve_length`] と同じ fallback ratio。
+        Length::Ex(v) | Length::Ch(v) => ComputedLengthPercentage::Px(font_size.0 * v * 0.5),
+        Length::Ic(v) => ComputedLengthPercentage::Px(font_size.0 * v),
+        Length::Rex(v) | Length::Rch(v) => {
+            ComputedLengthPercentage::Px(ctx.root_font_size.0 * v * 0.5)
+        }
+        Length::Ric(v) => ComputedLengthPercentage::Px(ctx.root_font_size.0 * v),
         Length::Percent(p) => ComputedLengthPercentage::Percent(p),
     }
 }
@@ -977,6 +1052,80 @@ mod tests {
         );
     }
 
+    /// `ex` / `ch` は style 層に real font metrics が無いため常に spec の
+    /// unknown-metric fallback (`0.5em`) を使う ([`Length::Ex`] / [`Length::Ch`]
+    /// doc)。`font-size` 上では他 font-relative unit と同じく **親** 基準
+    /// (self-reference avoidance、bd raikiri-spike-2x8)。
+    #[test]
+    fn font_size_ex_and_ch_resolve_against_parent_font_size_with_half_em_fallback() {
+        assert_eq!(
+            resolve_font_size(Length::Ex(2.0), ComputedLength(16.0), &CTX),
+            ComputedLength(16.0), // 2 * 0.5 * 16
+        );
+        assert_eq!(
+            resolve_font_size(Length::Ch(2.0), ComputedLength(16.0), &CTX),
+            ComputedLength(16.0),
+        );
+    }
+
+    /// `ic` の unknown-metric fallback は `1em` ([`Length::Ic`] doc)。
+    #[test]
+    fn font_size_ic_resolves_against_parent_font_size_with_one_em_fallback() {
+        assert_eq!(
+            resolve_font_size(Length::Ic(1.5), ComputedLength(16.0), &CTX),
+            ComputedLength(24.0),
+        );
+    }
+
+    /// `rex` / `rch` / `ric` は root element 基準 (`rem` と同じ、親の font-size
+    /// には依存しない)。
+    #[test]
+    fn font_size_r_prefixed_font_relative_units_resolve_against_root_font_size() {
+        let ctx = ResolveContext::new(ComputedLength(20.0));
+        assert_eq!(
+            resolve_font_size(Length::Rex(2.0), ComputedLength(64.0), &ctx),
+            ComputedLength(20.0), // 2 * 0.5 * 20 (親 64px は無視)
+        );
+        assert_eq!(
+            resolve_font_size(Length::Rch(2.0), ComputedLength(64.0), &ctx),
+            ComputedLength(20.0),
+        );
+        assert_eq!(
+            resolve_font_size(Length::Ric(2.0), ComputedLength(64.0), &ctx),
+            ComputedLength(40.0),
+        );
+    }
+
+    /// CSS Values 4 §6.2 "Absolute Lengths" 換算表 verbatim: `1in = 96px` /
+    /// `1cm = 96px/2.54` / `1mm = 1/10th of 1cm` / `1Q = 1/40th of 1cm` /
+    /// `1pc = 1/6th of 1in`。expected 側は decimal literal ではなく spec と同じ
+    /// 式で書く — `96.0/2.54` に正確な 10 進表現は無いため、実装の評価順
+    /// (`cm_to_px` / `pc_to_px` 経由の連鎖) と揃えて f32 rounding を bit 単位で
+    /// 一致させる。
+    #[test]
+    fn font_size_additional_absolute_units_convert_per_spec_table() {
+        assert_eq!(
+            resolve_font_size(Length::In(1.0), ComputedLength(16.0), &CTX),
+            ComputedLength(96.0),
+        );
+        assert_eq!(
+            resolve_font_size(Length::Cm(1.0), ComputedLength(16.0), &CTX),
+            ComputedLength(96.0 / 2.54),
+        );
+        assert_eq!(
+            resolve_font_size(Length::Mm(1.0), ComputedLength(16.0), &CTX),
+            ComputedLength(96.0 / 2.54 / 10.0),
+        );
+        assert_eq!(
+            resolve_font_size(Length::Q(1.0), ComputedLength(16.0), &CTX),
+            ComputedLength(96.0 / 2.54 / 40.0),
+        );
+        assert_eq!(
+            resolve_font_size(Length::Pc(1.0), ComputedLength(16.0), &CTX),
+            ComputedLength(96.0 / 6.0),
+        );
+    }
+
     // -----------------------------------------------------------------
     // phase 3: `<length>` (border-width) の絶対化 (自 node 基準)
     // -----------------------------------------------------------------
@@ -1022,6 +1171,67 @@ mod tests {
         );
     }
 
+    /// `font-size` 以外 (= `resolve_length` の呼び出し先である `border-*-width`
+    /// や `line-height` の `<length>` 成分) では `ex` / `ch` / `ic` は
+    /// **自要素** の computed font-size 基準になる — `resolve_font_size` の
+    /// 同 unit テスト (親基準) との非対称を pin する
+    /// ([`Length::Ex`] doc の parent-metrics 条項)。
+    #[test]
+    fn length_ex_ch_ic_resolve_against_own_font_size() {
+        assert_eq!(
+            resolve_length(Length::Ex(2.0), ComputedLength(20.0), &CTX),
+            ComputedLength(20.0), // 2 * 0.5 * 20
+        );
+        assert_eq!(
+            resolve_length(Length::Ch(2.0), ComputedLength(20.0), &CTX),
+            ComputedLength(20.0),
+        );
+        assert_eq!(
+            resolve_length(Length::Ic(2.0), ComputedLength(20.0), &CTX),
+            ComputedLength(40.0),
+        );
+    }
+
+    #[test]
+    fn length_r_prefixed_font_relative_units_resolve_against_root_font_size() {
+        let ctx = ResolveContext::new(ComputedLength(10.0));
+        assert_eq!(
+            resolve_length(Length::Rex(2.5), ComputedLength(64.0), &ctx),
+            ComputedLength(12.5), // 2.5 * 0.5 * 10 (自 font-size 64px は無視)
+        );
+        assert_eq!(
+            resolve_length(Length::Ric(2.5), ComputedLength(64.0), &ctx),
+            ComputedLength(25.0),
+        );
+    }
+
+    /// CSS Values 4 §6.2 換算表 — `border-*-width` 経由 (`resolve_length`) でも
+    /// `resolve_font_size` と同じ変換になることを pin
+    /// (`width: 1in` → 96px、issue 本文の verification 対象)。
+    #[test]
+    fn length_additional_absolute_units_convert_per_spec_table() {
+        assert_eq!(
+            resolve_length(Length::In(1.0), ComputedLength(20.0), &CTX),
+            ComputedLength(96.0),
+        );
+        assert_eq!(
+            resolve_length(Length::Pc(1.0), ComputedLength(20.0), &CTX),
+            ComputedLength(96.0 / 6.0),
+        );
+        assert_eq!(
+            resolve_length(Length::Mm(1.0), ComputedLength(20.0), &CTX),
+            ComputedLength(96.0 / 2.54 / 10.0),
+        );
+        assert_eq!(
+            resolve_length(Length::Q(1.0), ComputedLength(20.0), &CTX),
+            ComputedLength(96.0 / 2.54 / 40.0),
+        );
+        assert_eq!(
+            resolve_length(Length::Cm(1.0), ComputedLength(20.0), &CTX),
+            ComputedLength(96.0 / 2.54),
+        );
+    }
+
     // -----------------------------------------------------------------
     // phase 3: `<length-percentage>` (padding) の絶対化
     // -----------------------------------------------------------------
@@ -1044,6 +1254,61 @@ mod tests {
         assert_eq!(
             resolve_length_percentage(Length::Rem(0.5), fs, &CTX),
             ComputedLengthPercentage::Px(8.0),
+        );
+    }
+
+    /// [`resolve_length_percentage`] (`padding-*` の絶対化関数) 側でも
+    /// bd raikiri-spike-2x8 で追加した全 unit を直接 exercise する
+    /// (`resolve_font_size` / `resolve_length` の同 unit test とは別 site —
+    /// 3 関数それぞれが独立した match を持つため、patch coverage は
+    /// 関数単位で見る)。
+    #[test]
+    fn length_percentage_absolutizes_additional_units() {
+        let fs = ComputedLength(20.0);
+        assert_eq!(
+            resolve_length_percentage(Length::Ex(2.0), fs, &CTX),
+            ComputedLengthPercentage::Px(20.0), // 2 * 0.5 * 20
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::Ch(2.0), fs, &CTX),
+            ComputedLengthPercentage::Px(20.0),
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::Ic(1.5), fs, &CTX),
+            ComputedLengthPercentage::Px(30.0),
+        );
+        let ctx = ResolveContext::new(ComputedLength(10.0));
+        assert_eq!(
+            resolve_length_percentage(Length::Rex(2.0), fs, &ctx),
+            ComputedLengthPercentage::Px(10.0), // 2 * 0.5 * 10 (自 20px は無視)
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::Rch(2.0), fs, &ctx),
+            ComputedLengthPercentage::Px(10.0),
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::Ric(2.0), fs, &ctx),
+            ComputedLengthPercentage::Px(20.0),
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::Cm(1.0), fs, &CTX),
+            ComputedLengthPercentage::Px(96.0 / 2.54),
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::Mm(1.0), fs, &CTX),
+            ComputedLengthPercentage::Px(96.0 / 2.54 / 10.0),
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::Q(1.0), fs, &CTX),
+            ComputedLengthPercentage::Px(96.0 / 2.54 / 40.0),
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::In(1.0), fs, &CTX),
+            ComputedLengthPercentage::Px(96.0),
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::Pc(1.0), fs, &CTX),
+            ComputedLengthPercentage::Px(96.0 / 6.0),
         );
     }
 
@@ -1189,6 +1454,28 @@ mod tests {
         specified.style = BorderStyle::Solid;
         let computed = resolve_border(specified, ComputedLength(20.0), &CTX);
         assert_eq!(computed.width, ComputedLength(10.0));
+    }
+
+    /// bd raikiri-spike-2x8 で追加した absolute unit (`pc`) も
+    /// `border-*-width` の style gating (この module doc / [`resolve_border`]
+    /// doc の "spec tension" 節) と組み合わさって正しく解決する — `1pc = 16px`
+    /// (CSS Values 4 §6.2)。`style: none` では新 unit も他 unit と同じく 0px に
+    /// gate される (regression pin: この gate は絶対化の**後**に効くため、
+    /// unit を増やしても gate 自体の網羅性は変わらない)。
+    #[test]
+    fn border_pc_width_is_absolutized_and_still_gated_by_style() {
+        let mut specified = SpecifiedValues::initial().border.top;
+        specified.width = Length::Pc(1.0);
+        specified.style = BorderStyle::Solid;
+        assert_eq!(
+            resolve_border(specified, ComputedLength(20.0), &CTX).width,
+            ComputedLength(16.0),
+        );
+        specified.style = BorderStyle::None;
+        assert_eq!(
+            resolve_border(specified, ComputedLength(20.0), &CTX).width,
+            ComputedLength::ZERO,
+        );
     }
 
     // -----------------------------------------------------------------
