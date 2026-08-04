@@ -525,6 +525,36 @@ const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 /// 後続 test の結果もまとめて失われるため。
 const MAX_FONT_SIZE_PX: f32 = 1e6;
 
+/// parley に渡す `font-weight` の妥当域下限 (bd raikiri-spike-sxd7)。
+///
+/// CSS Fonts 4 §2.2 "Font weight: the font-weight property"
+/// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop> の grammar は
+/// `<number [1,1000]>` — target context は [`MAX_TAFFY_MAGNITUDE`] /
+/// [`MAX_FONT_SIZE_PX`] とは別の sink (`parley::FontWeight`) なので、bd
+/// raikiri-spike-kfl7 precedent (「上限は sink ごとに変える」) に従い spec
+/// 由来の妥当域をそのまま採る — skrifa / CSSWG issue のような engineering
+/// measurement を要しない、数少ない site。
+const MIN_FONT_WEIGHT: f32 = 1.0;
+
+/// parley に渡す `font-weight` の妥当域上限 (同上、CSS Fonts 4 §2.2)。
+const MAX_FONT_WEIGHT: f32 = 1000.0;
+
+/// 非有限 `font-weight` (`NaN`) の fallback 値。
+///
+/// CSS Fonts 4 §2.2 "Font weight: the font-weight property"
+/// <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> の
+/// `normal` keyword の computed value (`ComputedValues::initial().
+/// font_weight` の値と一致、`crates/raikiri-style/src/computed.rs` 参照)。
+///
+/// [`sanitize_finite`] が length 系 site で NaN を `0.0` に落とすのは、
+/// padding/margin の spec initial が幾何 `0` である、あるいは `0 * inf =
+/// NaN` という無限精度評価が実際に `0` になるケースだから (同関数 doc
+/// 参照) — font-weight にはどちらの根拠も対応しない。`0.0` は
+/// `[MIN_FONT_WEIGHT, MAX_FONT_WEIGHT]` の外なので、それをそのまま NaN の
+/// 代わりに使うと sanitize 後の値が sink の妥当域を割ってしまう。よって
+/// font-weight は独自の fallback を持つ。
+const FALLBACK_FONT_WEIGHT: f32 = 400.0;
+
 /// 非有限 f32 を `[min, max]` の有限値に落とす。
 ///
 /// - **NaN → 0.0**。`f32::clamp` は NaN を **NaN のまま**返す (`NaN.clamp(a, b)`
@@ -671,8 +701,74 @@ fn sanitize_taffy(v: f32, site: &'static str, diag: &mut Vec<LayoutWarn>) -> f32
     sanitize_finite(v, -MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE, site, diag)
 }
 
+/// 非有限 (`NaN` / `±Inf`) または `[MIN_FONT_WEIGHT, MAX_FONT_WEIGHT]`
+/// 範囲外の `font-weight` を `parley::FontWeight::new` へ渡す直前で
+/// sanitize する (bd raikiri-spike-sxd7)。
+///
+/// # なぜここに置くか (bd raikiri-spike-kfl7 precedent の踏襲)
+///
+/// bd raikiri-spike-kfl7 (precedent ledger、承認済み) は「非有限 / 範囲外
+/// f32 の guard は値が実際に使われる sink 境界 (target context) に置く。
+/// parse-time (specified 層) にも resolve 層 (computed 層) にも置かない」
+/// と規定する。`crate::page::cascade_page` (raikiri-style)
+/// の継承元 root 引数や `ComputedValues` の直接構築は raikiri-style 側の
+/// resolve/computed 層であり、`raikiri_style::cascade::resolve_relative_weight`
+/// も同じ層に属する — kfl7 はそのどちらへの guard 追加も明示的に禁じる
+/// (carve-out 2: "public な computed 層 surface は sanitize しない")。
+///
+/// 本関数は [`preshape_text`] — `parley::FontWeight::new` を呼ぶ唯一の call
+/// site — に置くことで、bd raikiri-spike-2ui0 の 5 site (taffy bridge
+/// helper 4 本 + font-size 用 `preshape_text` 呼び出し) と同じ「sink 直前」
+/// 構造に揃える (site 6)。
+///
+/// # NaN fallback が `0.0` ではなく [`FALLBACK_FONT_WEIGHT`] (`400.0`) な理由
+///
+/// [`sanitize_finite`] を直接再利用しない。理由は 2 つ:
+///
+/// 1. **NaN fallback がそもそも違う** — [`sanitize_finite`] は NaN を
+///    無条件で `0.0` に落とすが、その根拠 (同関数 doc 参照) は font-weight
+///    に対応しない。`0.0` は妥当域の外なので、そのまま使うと sanitize
+///    後の値が sink の妥当域を割る。CSS Fonts 4 §2.2
+///    "Font weight: the font-weight property"
+///    <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> の
+///    `normal` の computed value である `400.0` を採る方が、kfl7 の
+///    「fallback / 上限は sink ごとに変える」に忠実。
+/// 2. **signature 変更の波及範囲** — `nan_fallback` 引数を足せば理屈上
+///    1 関数に統合できるが、それは既存の length 系 4 call site
+///    (`sanitize_taffy` 経由の 4 本 + font-size 直接呼び出し 1 本) と、
+///    それらを検証する既存 test 全部に本 task の scope
+///    (font-weight 1 sink) と無関係な引数を波及させる。独立した小関数として
+///    持つ方が diff が scope に対して釣り合う。
+///
+/// # 出力側 (`resolve_relative_weight`) は変えない
+///
+/// `resolve_relative_weight` の非対称処理 (`Bolder`/`Lighter`/`-Inf` の
+/// 扱いが異なる、同関数 doc 参照) は本関数の追加で修正しない —
+/// resolve 層の挙動変更は kfl7 の禁止対象であり、本 sink guard は
+/// 「resolve 層が何を出しても最終的に有限 + 妥当域内にする」ことだけを
+/// 保証する。
+fn sanitize_font_weight(v: f32, diag: &mut Vec<LayoutWarn>) -> f32 {
+    let clamped = if v.is_nan() {
+        FALLBACK_FONT_WEIGHT
+    } else {
+        v.clamp(MIN_FONT_WEIGHT, MAX_FONT_WEIGHT)
+    };
+    if clamped != v {
+        push_layout_warn(
+            diag,
+            LayoutWarn::NonFiniteClamped {
+                site: "font-weight",
+                raw: v,
+                clamped,
+            },
+        );
+    }
+    clamped
+}
+
 /// Structured warn event for this module's non-finite-clamp diagnostic sites
-/// (`sanitize_finite` / `sanitize_taffy` / `sanitize_taffy_layout`). Sibling
+/// (`sanitize_finite` / `sanitize_taffy` / `sanitize_taffy_layout` /
+/// `sanitize_font_weight`). Sibling
 /// of [`crate::fonts::FontWarn`] (bd raikiri-spike-1uq), generalized via the
 /// shared [`crate::diag::emit_warn_via`] mechanism (bd raikiri-spike-7t1t) so
 /// the "silent clamp" residual risk documented on [`sanitize_finite`] gets
@@ -692,11 +788,14 @@ fn sanitize_taffy(v: f32, site: &'static str, diag: &mut Vec<LayoutWarn>) -> f32
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum LayoutWarn {
     /// A non-finite (NaN / +-Inf) or out-of-range `f32` was clamped to a
-    /// finite in-range value before being written into `taffy::Style` or the
-    /// `Node.unrounded_layout` arena field. Only emitted when clamping
-    /// actually changed the value (not on every call) so ordinary in-range
-    /// layouts stay silent — the "warn+skip" shape `FontWarn` uses, not a
-    /// per-node trace.
+    /// finite in-range value before being handed to one of this module's
+    /// sink boundaries: `taffy::Style` or the `Node.unrounded_layout` arena
+    /// field (sites 1-5, `sanitize_finite` / `sanitize_taffy` /
+    /// `sanitize_taffy_layout`, bd raikiri-spike-2ui0 / raikiri-spike-r8ew),
+    /// or `parley::FontWeight::new` (site 6, `sanitize_font_weight`, bd
+    /// raikiri-spike-sxd7). Only emitted when clamping actually changed the
+    /// value (not on every call) so ordinary in-range layouts stay silent —
+    /// the "warn+skip" shape `FontWarn` uses, not a per-node trace.
     NonFiniteClamped {
         /// Call-site label (e.g. `"font-size"`, `"margin"`,
         /// `"layout.size"`) — a human-readable category, not a stable
@@ -1096,7 +1195,12 @@ pub(crate) fn preshape_text(
         // `cv.font_weight` は bd raikiri-spike-e52s で `f32` に格上げ済み
         // (旧 `u16`) — `parley::FontWeight::new` が要求する型そのものなので
         // cast は不要 (`as f32` を残すと `clippy::unnecessary_cast` に抵触する)。
-        builder.push_default(StyleProperty::FontWeight(FontWeight::new(cv.font_weight)));
+        //
+        // site 6 (bd raikiri-spike-sxd7、2ui0 の 5 site に続く 6 本目): 値は
+        // 非有限になり得るので (`ComputedValues` は全 field が `pub` — 詳細は
+        // [`sanitize_font_weight`] の doc) parley に渡す直前で有限化する。
+        let font_weight = sanitize_font_weight(cv.font_weight, &mut doc.layout_warnings);
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
         let mut layout: Layout<()> = builder.build(&text);
         layout.break_all_lines(Some(max_advance));
         // API tuning: brief pseudo-code は `align(Some(max_advance), Alignment::Start,
@@ -2564,6 +2668,198 @@ mod tests {
             diag.is_empty(),
             "in-range value must not push a LayoutWarn: {diag:?}"
         );
+    }
+
+    // ── site 6 (bd raikiri-spike-sxd7): sanitize_font_weight ─────────────
+    //
+    // sanitize_finite / sanitize_taffy と同型の unit test。`ComputedValues`
+    // が全 field `pub` であることに由来する非有限 font_weight (bd
+    // raikiri-spike-e52s の f32 格上げで型による排除ができなくなった) が
+    // `parley::FontWeight::new` の直前で有限 + `[1,1000]` に収まることを
+    // 直接検証する。
+
+    #[test]
+    fn sanitize_font_weight_maps_nan_to_normal_fallback() {
+        // `f32::clamp` は NaN を NaN のまま返すので、この分岐が無いと NaN が
+        // 素通りする。fallback は `0.0` ではなく `FALLBACK_FONT_WEIGHT`
+        // (400.0、CSS Fonts 4 §2.2 "Font weight: the font-weight property"
+        // <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> の
+        // `normal` の computed value) — `sanitize_finite` の length 系 site
+        // とは異なる fallback を選ぶ理由は `sanitize_font_weight` の doc 参照。
+        let mut diag = Vec::new();
+        assert_eq!(
+            sanitize_font_weight(f32::NAN, &mut diag),
+            FALLBACK_FONT_WEIGHT
+        );
+        assert_eq!(diag.len(), 1, "clamp が発火したので 1 event 積まれること");
+        match diag[0] {
+            LayoutWarn::NonFiniteClamped { site, raw, clamped } => {
+                assert_eq!(site, "font-weight");
+                assert!(raw.is_nan());
+                assert_eq!(clamped, FALLBACK_FONT_WEIGHT);
+            }
+            other => panic!("unexpected LayoutWarn variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sanitize_font_weight_clamps_infinities_to_bounds() {
+        let mut diag = Vec::new();
+        assert_eq!(
+            sanitize_font_weight(f32::INFINITY, &mut diag),
+            MAX_FONT_WEIGHT
+        );
+        assert_eq!(
+            sanitize_font_weight(f32::NEG_INFINITY, &mut diag),
+            MIN_FONT_WEIGHT
+        );
+        assert_eq!(diag.len(), 2, "+Inf / -Inf とも clamp が発火する");
+    }
+
+    #[test]
+    fn sanitize_font_weight_clamps_out_of_range_finite_values() {
+        // 有限でも範囲外なら寄せる (「有限化するだけ」ではない) —
+        // `sanitize_taffy_clamps_out_of_range_finite_values` の font-weight 版。
+        let mut diag = Vec::new();
+        assert_eq!(sanitize_font_weight(1e30, &mut diag), MAX_FONT_WEIGHT);
+        assert_eq!(sanitize_font_weight(-1e30, &mut diag), MIN_FONT_WEIGHT);
+        // `0.0` は length 系 site では有効な値だが font-weight の妥当域
+        // `[1, 1000]` の外 — MIN_FONT_WEIGHT に寄る。
+        assert_eq!(sanitize_font_weight(0.0, &mut diag), MIN_FONT_WEIGHT);
+        assert_eq!(diag.len(), 3);
+    }
+
+    #[test]
+    fn sanitize_font_weight_passes_through_in_range_values() {
+        // 通常値 (fractional weight 含む、bd raikiri-spike-e52s) は
+        // bit-identical に素通しする。
+        let mut diag = Vec::new();
+        for v in [
+            MIN_FONT_WEIGHT,
+            1.0,
+            100.0,
+            349.5,
+            400.0,
+            700.0,
+            MAX_FONT_WEIGHT,
+        ] {
+            assert_eq!(
+                sanitize_font_weight(v, &mut diag),
+                v,
+                "in-range value must pass through: {v}"
+            );
+        }
+        assert!(
+            diag.is_empty(),
+            "in-range value must not push a LayoutWarn: {diag:?}"
+        );
+    }
+
+    #[test]
+    fn preshape_text_sanitizes_non_finite_font_weight_bypassing_cascade() {
+        // `ComputedValues` は全 field が `pub` なので、cascade を経由しない
+        // 直接構築 (ここでは cascade() 後に該当 node の font_weight だけを
+        // 上書きする形で再現) から非有限値が来る経路がある。この経路が
+        // `preshape_text` を panic させないこと — sink 直前で
+        // `sanitize_font_weight` が有限化すること — を確認する。
+        //
+        // `CascadeResult` / `ComputedValues` はどちらも `#[non_exhaustive]`
+        // なので、raikiri-dom (外部 crate) からは struct literal で直接
+        // construct できない。正当な `cascade()` 呼び出しで得た
+        // `CascadeResult` の `pub computed: Vec<ComputedValues>` を後から
+        // 上書きすることで、「cascade を経由しない値」を再現する — これは
+        // `ComputedValues::font_weight` の doc が挙げる
+        // `crate::page::cascade_page` の継承元 root 引数と同じ攻撃面
+        // (呼び出し元が任意の `ComputedValues` を用意して渡せる) の縮図。
+        //
+        // `text_layout().is_some()` だけでは「panic しなかった」ことしか
+        // 検証できない — 将来誰かが `preshape_text` から
+        // `sanitize_font_weight` の呼び出しを誤って外しても (parley が
+        // 非有限値を panic せず黒箱処理する場合)、それは検知できない。
+        // そこで `doc.layout_warnings` (`sanitize_font_weight` が実際に
+        // clamp した時だけ push する `LayoutWarn::NonFiniteClamped`
+        // の蓄積先) を直接検査し、sink 直前に渡った raw 値と、そこから
+        // 実際に有限化された値の両方を assert する — 配線が外れれば
+        // site `"font-weight"` の event が一切積まれなくなるので、
+        // その断線をここで検知できる。
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        for (label, weight) in [
+            ("NaN", f32::NAN),
+            ("+Inf", f32::INFINITY),
+            ("-Inf", f32::NEG_INFINITY),
+            ("out-of-range finite (1e30)", 1e30_f32),
+        ] {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+            let text = doc.append_text(p, "Hi");
+
+            let rules = build_rule_tree(&doc);
+            let mut cr = cascade(&doc, &rules).expect("cascade Ok");
+            cr.computed[p].font_weight = weight;
+            cr.computed[text].font_weight = weight;
+
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+
+            assert!(
+                doc.nodes[text].text_layout().is_some(),
+                "{label}: preshape_text must not panic and must still populate \
+                 text_layout despite a non-finite font_weight bypassing cascade"
+            );
+
+            // 配線検証: font-size はこの test では触っていないので clamp は
+            // 発火せず、"font-weight" site の event だけが (毎 case とも
+            // clamp が実際に効くので) ちょうど 1 件積まれるはず。
+            let font_weight_events: Vec<LayoutWarn> = doc
+                .layout_warnings
+                .iter()
+                .copied()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        LayoutWarn::NonFiniteClamped {
+                            site: "font-weight",
+                            ..
+                        }
+                    )
+                })
+                .collect();
+            assert_eq!(
+                font_weight_events.len(),
+                1,
+                "{label}: expected exactly one \"font-weight\" NonFiniteClamped \
+                 event (only pushed when sanitize_font_weight actually ran and \
+                 clamped) — 0 events means the sanitize_font_weight call was \
+                 removed from preshape_text without this test noticing; \
+                 all events: {:?}",
+                doc.layout_warnings
+            );
+            let LayoutWarn::NonFiniteClamped { raw, clamped, .. } = font_weight_events[0] else {
+                unreachable!("filtered for this variant above");
+            };
+            assert!(
+                raw.is_nan() == weight.is_nan() && (raw.is_nan() || raw == weight),
+                "{label}: the raw value sanitize_font_weight saw ({raw}) must be \
+                 the exact font_weight this test set ({weight}), proving \
+                 sanitize_font_weight is wired to cv.font_weight and not some \
+                 unrelated value"
+            );
+            assert!(
+                clamped.is_finite(),
+                "{label}: the value handed to parley::FontWeight::new must be \
+                 finite, got {clamped}"
+            );
+            assert!(
+                (MIN_FONT_WEIGHT..=MAX_FONT_WEIGHT).contains(&clamped),
+                "{label}: the value handed to parley::FontWeight::new must be \
+                 within [{MIN_FONT_WEIGHT}, {MAX_FONT_WEIGHT}], got {clamped}"
+            );
+        }
     }
 
     // ── crate::diag 経由の generalized 診断 channel (bd raikiri-spike-7t1t) ──

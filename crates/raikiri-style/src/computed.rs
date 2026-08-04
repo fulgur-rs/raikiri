@@ -129,9 +129,11 @@ pub struct ComputedValues {
     /// 型変更で解消)。
     ///
     /// `raikiri-dom` の layout はこの field を直接 `parley::FontWeight::new(f32)`
-    /// に渡す (キャスト不要、raikiri-spike-5iy + 17s8 + e52s)。
+    /// に渡す (キャスト不要、raikiri-spike-5iy + 17s8 + e52s) —
+    /// **渡す直前** に `sanitize_font_weight` (`crates/raikiri-dom/src/
+    /// layout.rs`、bd raikiri-spike-sxd7) が sink 境界 guard を掛ける。
     ///
-    /// # `[1, 1000]` / finite は caller が維持する contract (guard なし)
+    /// # `[1, 1000]` / finite は caller が維持する contract (本 field 自体に guard なし)
     ///
     /// 本 struct の field は全て `pub` であり、cascade を経由せず直接
     /// `ComputedValues { font_weight: ..., .. }` を構築することを妨げない
@@ -142,8 +144,15 @@ pub struct ComputedValues {
     /// [`crate::property::FontWeightValue`] の doc 参照) の `[1, 1000]` range
     /// guard により常に finite だが、直接構築はその guard を経ない。
     /// `NaN` / `±Inf` が渡った場合の [`crate::cascade::resolve_relative_weight`]
-    /// (`bolder`/`lighter` 解決) の挙動は同関数の doc で characterize 済み
-    /// (guard は追加していない — 本 field は runtime で値を検証しない)。
+    /// (`bolder`/`lighter` 解決) の挙動は同関数の doc で characterize 済み。
+    ///
+    /// **本 field / `resolve_relative_weight` のどちらにも guard は追加しない**
+    /// (bd raikiri-spike-kfl7 precedent: guard は sink 境界に置く、resolve/
+    /// computed 層の public surface は sanitize しない — carve-out 2)。
+    /// この field を直接読む他の consumer (raikiri-dom 以外、例:
+    /// umbrella 経由の外部 consumer) は自分の sink 境界で同様の guard を
+    /// 持つ責務を負う (kfl7 carve-out 2 と同じ理屈、bd raikiri-spike-3ea3
+    /// が fulgur consumer 境界の guard 方針を追跡)。
     pub font_weight: f32,
     /// `line-height`。**inherited**、initial: [`ComputedLineHeight::Normal`]。
     /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
