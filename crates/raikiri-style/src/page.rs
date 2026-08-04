@@ -77,7 +77,9 @@ use std::sync::LazyLock;
 use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
 
 use crate::Atom;
-use crate::cascade::{cascade_rank, resolve_against_inherited, resolve_relative_font_size};
+use crate::cascade::{
+    ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_relative_font_size,
+};
 use crate::computed::ComputedValues;
 use crate::property::{
     Border, BorderColor, BorderStyle, Length, LengthOrAuto, PropertyKey, PropertyValue, Sides,
@@ -478,10 +480,11 @@ impl PageCascadeResult {
     ///   *this* entry point's output is a computed-value bag; they cannot
     ///   assert it for an entry point that does not exist yet. CSS Paged
     ///   Media 3 §6's page-margin-box cascade ("page-margin boxes inherit from
-    ///   the page context") would be a third path, and nothing here or in the
-    ///   type system forces it to run phase 3 (bd raikiri-spike-7m33 gap (b);
-    ///   [`crate::cascade::resolve_against_inherited`] doc states the same limit
-    ///   from its side).
+    ///   the page context") would be a third path. Since bd raikiri-spike-7m33,
+    ///   [`absolutize_in_page_context`]'s parameter type forces any caller that
+    ///   reuses phase 3 to have gone through phase 2 first; see
+    ///   [`crate::cascade::ResolvedAgainstInherited`] for exactly what that
+    ///   does and does not close (bd raikiri-spike-m4.2 tracks the remainder).
     /// - The residue detector classifies five payload types exhaustively
     ///   (`Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
     ///   `TextAlign`); a new payload case in any *other* type is not caught.
@@ -876,7 +879,7 @@ pub fn cascade_page(
     // `empty_counter_entries` と同じ前例)。
     static INITIAL_PAGE_PARENT: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
     let inherited = root_style.unwrap_or(&INITIAL_PAGE_PARENT);
-    let resolved: HashMap<PropertyKey, PropertyValue> = best
+    let resolved: HashMap<PropertyKey, ResolvedAgainstInherited> = best
         .into_iter()
         .map(|(k, (_, _, _, v))| (k, resolve_against_inherited(v, inherited)))
         .collect();
@@ -920,19 +923,25 @@ pub fn cascade_page(
 /// value for every property").
 ///
 /// `declarations` must already have been through phase 2
-/// ([`crate::cascade::resolve_against_inherited`]), whose `FontSize` arm always
-/// wraps its result in [`Length::Px`]. **That invariant is what makes the read
-/// below total**: any other `Length` variant under `PropertyKey::FontSize` is
-/// unreachable, and the catch-all falls back to the inherited value rather than
-/// panicking (crate policy: no panic surface in the cascade — see the
-/// `PropertyValue::Margin` fall-through arm in [`crate::cascade::apply_value`]).
-/// If that arm ever stops normalising to `Px`, this function silently starts
-/// using the wrong basis, so the two must be changed together.
+/// ([`crate::cascade::resolve_against_inherited`]) — since bd raikiri-spike-7m33
+/// this is enforced by the parameter type itself, not merely documented; see
+/// [`crate::cascade::ResolvedAgainstInherited`] for the exact scope of that
+/// guarantee. Its `FontSize` arm always wraps its result in [`Length::Px`].
+/// **That invariant is what makes the read below total**: any other `Length` variant under
+/// `PropertyKey::FontSize` is unreachable, and the catch-all falls back to the
+/// inherited value rather than panicking (crate policy: no panic surface in
+/// the cascade — see the `PropertyValue::Margin` fall-through arm in
+/// [`crate::cascade::apply_value`]). If that arm ever stops normalising to
+/// `Px`, this function silently starts using the wrong basis, so the two must
+/// be changed together.
 fn page_context_font_size(
-    declarations: &HashMap<PropertyKey, PropertyValue>,
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
     inherited: &ComputedValues,
 ) -> ComputedLength {
-    match declarations.get(&PropertyKey::FontSize) {
+    match declarations
+        .get(&PropertyKey::FontSize)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
         Some(PropertyValue::FontSize(Length::Px(px))) => ComputedLength(*px),
         other => {
             // cov:ignore: the `Some(non-`Px`)` half is unreachable — phase 2's
@@ -970,7 +979,7 @@ fn page_context_font_size(
 /// declares no `border-style` (pin:
 /// `specified::tests::initial_border_width_is_gated_to_zero_at_computed_layer`).
 fn page_context_border_styles(
-    declarations: &HashMap<PropertyKey, PropertyValue>,
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
 ) -> Sides<BorderStyle> {
     // **Dispatch on the variant, never on the key.** A `PropertyKey` lookup
     // followed by a payload match would make correctness depend on the map's
@@ -991,7 +1000,7 @@ fn page_context_border_styles(
     // function.
     let mut sides = Sides::all(INITIAL_BORDER.style);
     for value in declarations.values() {
-        match value {
+        match value.as_property_value() {
             PropertyValue::BorderTopStyle(s) => sides.top = *s,
             PropertyValue::BorderRightStyle(s) => sides.right = *s,
             PropertyValue::BorderBottomStyle(s) => sides.bottom = *s,
@@ -1039,16 +1048,23 @@ fn page_context_border_styles(
 /// here explicitly; a catch-all would let it reach the public `declarations`
 /// map as a specified value — the exact regression shape of bd
 /// raikiri-spike-ygl0. (What this guard does *not* catch is a new **payload**
-/// case inside an existing variant, or a new entry point that skips this
-/// function — bd raikiri-spike-7m33.)
+/// case inside an existing variant — bd raikiri-spike-7m33 gap (a).)
+///
+/// # The `value` parameter is phase-2 output, enforced by its type
+///
+/// Since bd raikiri-spike-7m33, `value` is a
+/// [`ResolvedAgainstInherited`](crate::cascade::ResolvedAgainstInherited)
+/// rather than a raw [`PropertyValue`] — see that type's doc for what this
+/// does and does not guarantee ("narrowed, not closed").
 ///
 /// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で補助 doc build が red (規約 3)。
 pub(crate) fn absolutize_in_page_context(
-    value: PropertyValue,
+    value: ResolvedAgainstInherited,
     font_size: ComputedLength,
     ctx: &ResolveContext,
     border_styles: Sides<BorderStyle>,
 ) -> PropertyValue {
+    let value = value.into_property_value();
     /// `<length-percentage>` → computed, mapped back into the specified-layer
     /// `Length` shape that `PropertyValue` carries (`Px` / `Percent` only —
     /// `Em` / `Rem` / `Pt` are gone after this).
@@ -2454,6 +2470,13 @@ mod tests {
     /// (behaviour pinned instead of `unreachable!` — the crate keeps the
     /// cascade panic-free, and the exhaustive expansion `match` does not
     /// enforce everything; see its doc, bd raikiri-spike-ez7b).
+    ///
+    /// Since bd raikiri-spike-7m33 `absolutize_in_page_context` takes a
+    /// [`ResolvedAgainstInherited`], whose constructor is private outside
+    /// `crate::cascade` — `ResolvedAgainstInherited::for_test` is the
+    /// `#[cfg(test)]`-only escape hatch that lets this test keep driving the
+    /// function directly with a hand-picked payload (see that type's doc,
+    /// "test 用の裏口").
     #[test]
     fn absolutize_in_page_context_shorthand_fall_throughs() {
         let fs = ComputedLength(20.0);
@@ -2462,7 +2485,9 @@ mod tests {
 
         assert_eq!(
             absolutize_in_page_context(
-                PropertyValue::Padding(Sides::all(Length::Em(2.0))),
+                ResolvedAgainstInherited::for_test(PropertyValue::Padding(Sides::all(Length::Em(
+                    2.0
+                )))),
                 fs,
                 &ctx,
                 styles,
@@ -2471,7 +2496,9 @@ mod tests {
         );
         assert_eq!(
             absolutize_in_page_context(
-                PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Rem(2.0)))),
+                ResolvedAgainstInherited::for_test(PropertyValue::Margin(Sides::all(
+                    LengthOrAuto::Length(Length::Rem(2.0))
+                ))),
                 fs,
                 &ctx,
                 styles,
@@ -2482,11 +2509,11 @@ mod tests {
         // itself, not on `border_styles` (which describes the longhands).
         assert_eq!(
             absolutize_in_page_context(
-                PropertyValue::Border(Sides::all(Border {
+                ResolvedAgainstInherited::for_test(PropertyValue::Border(Sides::all(Border {
                     width: Length::Em(1.0),
                     style: BorderStyle::Solid,
                     color: BorderColor::CurrentColor,
-                })),
+                }))),
                 fs,
                 &ctx,
                 styles,
@@ -2505,7 +2532,10 @@ mod tests {
     /// `FontSize(Length::Px(_))` first, see the arm's own doc), but the
     /// `pub(crate)` function can still be driven directly with an unresolved
     /// value, same as `absolutize_in_page_context_shorthand_fall_throughs`
-    /// above. Pins: no panic, and the result shape matches what phase 2
+    /// above — via `ResolvedAgainstInherited::for_test`, the `#[cfg(test)]`
+    /// escape hatch bd raikiri-spike-7m33 added once the function's parameter
+    /// stopped being a raw `PropertyValue` (see that type's doc, "test 用の
+    /// 裏口"). Pins: no panic, and the result shape matches what phase 2
     /// (`resolve_against_inherited`'s `FontSizeRelative` arm) would have
     /// produced — `FontSize(Length::Px(_))`.
     #[test]
@@ -2518,7 +2548,9 @@ mod tests {
 
         assert_eq!(
             absolutize_in_page_context(
-                PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
+                ResolvedAgainstInherited::for_test(PropertyValue::FontSizeRelative(
+                    RelativeFontSize::Larger
+                )),
                 fs,
                 &ctx,
                 styles,
@@ -2527,7 +2559,9 @@ mod tests {
         );
         assert_eq!(
             absolutize_in_page_context(
-                PropertyValue::FontSizeRelative(RelativeFontSize::Smaller),
+                ResolvedAgainstInherited::for_test(PropertyValue::FontSizeRelative(
+                    RelativeFontSize::Smaller
+                )),
                 fs,
                 &ctx,
                 styles,
@@ -3029,6 +3063,13 @@ mod tests {
     /// (gate は `cascade_page_border_width_*` の 4 本が持つ)。同様に `%` /
     /// `auto` / `line-height: <number>` の挙動も本 test の射程外で、それぞれ
     /// 専用の acceptance test がある。
+    ///
+    /// `page_corpus()` は phase 2 を通していない raw payload を含む
+    /// (`FontWeight::Bolder` / `TextAlign::MatchParent` 等) — 本 test はそれを
+    /// **意図的に** phase 3 へ直接投入して分類する。bd raikiri-spike-7m33 で
+    /// `absolutize_in_page_context` の引数が `ResolvedAgainstInherited` に
+    /// なったため、`ResolvedAgainstInherited::for_test` (`#[cfg(test)]` 限定)
+    /// を経由してこの raw payload を包む。
     #[test]
     fn phase_3_variant_classification_matches_the_documented_counts() {
         let font_size = ComputedLength(20.0);
@@ -3039,7 +3080,12 @@ mod tests {
 
         let (mut unchanged, mut changed) = (0usize, 0usize);
         for value in page_corpus() {
-            let out = absolutize_in_page_context(value.clone(), font_size, &ctx, styles);
+            let out = absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(value.clone()),
+                font_size,
+                &ctx,
+                styles,
+            );
             if out == value {
                 unchanged += 1;
             } else {
@@ -3094,9 +3140,12 @@ mod tests {
     /// 上の test は phase 2 ∘ phase 3 を直接合成しているので、`cascade_page`
     /// が phase 3 を呼ばなくなっても落ちない。契約が書かれているのは
     /// `PageCascadeResult::declarations` = `cascade_page` の戻り値なので、
-    /// 主語を合わせた pin をもう 1 本置く (bd raikiri-spike-7m33 が言う
-    /// 「本関数を呼ばない entry point」を型で数え上げられない以上、既存経路の
-    /// wiring だけでも押さえておく)。
+    /// 主語を合わせた pin をもう 1 本置く。bd raikiri-spike-7m33 で
+    /// `resolve_against_inherited` → `absolutize_in_page_context` の合成順序
+    /// 自体は `ResolvedAgainstInherited` 型で強制されるようになったが、
+    /// 「本関数群を一切呼ばない新しい entry point」までは型で数え上げられない
+    /// (7m33 は narrow しただけで close していない) ので、既存経路
+    /// (`cascade_page`) の wiring だけでも押さえておく。
     #[test]
     fn cascade_page_output_carries_no_specified_layer_residue() {
         let root = root_with_font_size(16.0);
