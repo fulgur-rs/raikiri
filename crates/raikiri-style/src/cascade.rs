@@ -652,8 +652,9 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// 検証で保証」に変わった。通常の cascade 経路は
 /// [`crate::property::parse_font_weight`] の `[1, 1000]` range guard により
 /// 常に finite だが、`ComputedValues` の field は全て `pub` で
-/// [`crate::page::cascade_page`] も呼び出し側提供の `Option<&ComputedValues>`
-/// を継承元 root として受け取るため、cascade を経由しない直接構築
+/// [`crate::page::cascade_page`] も呼び出し側提供の
+/// [`crate::page::PageInheritance`]`::FromRoot` を継承元 root として受け取るため、
+/// cascade を経由しない直接構築
 /// (`ComputedValues { font_weight: f32::NAN, .. }`) 経由で理論上到達しうる。
 ///
 /// 両 arm とも `<` 比較は NaN に対し常に false になるが、catch-all arm の
@@ -891,7 +892,8 @@ pub(crate) fn resolve_against_inherited(
         //   "When used on the font-size property in the page context, they are
         //   relative to the font-size of the root element."
         //   `cascade_page` の `inherited` は root element の `ComputedValues`
-        //   そのもの (無い場合は initial) なので、これが §6 の言う基準である。
+        //   そのもの (`PageInheritance::LegacyInitialValues` なら initial) な
+        //   ので、これが §6 の言う基準である。
         // - `rem`: CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>
         //   "Equal to the computed value of the em unit on the root element." —
         //   同じく `inherited.font_size`。
