@@ -16,6 +16,21 @@ use taffy::Style;
 
 use crate::types::UncascadedDocument;
 
+/// `parse_error` が保持する [`RenderWarning`] 件数の上限 (Codex Security
+/// finding raikiri-spike-g9vr、SEC HIGH)。
+///
+/// html5ever は malformed input の小さな token 1 個あたり概ね 1 個の
+/// parse_error を報告しうるため、cap が無いと attacker が任意個数の owned
+/// `String` 持ち `RenderWarning` を積ませて memory を枯渇させられる (PoC:
+/// 100,000 個の `</x>` で 100,001 warnings、RSS 線形増加を実測)。
+/// `raikiri_traits::RenderLimits::max_input_bytes` (bd raikiri-spike-4kw) は
+/// 別軸の入力 byte 数 cap であり、この per-token 増幅は防がない。
+///
+/// Option B stopgap (bd raikiri-spike-d9y.3 の parse_html DoS fix と同じ
+/// pattern): `raikiri-html` crate 内で完結する local const。`RenderLimits`
+/// へ昇格する Option A は follow-up task に defer (raikiri-spike-4kw 参照)。
+pub(crate) const MAX_HTML_PARSE_WARNINGS: usize = 1024;
+
 /// html5ever `TreeSink` の raikiri 実装。Handle は raikiri-dom arena の
 /// index (`usize`)、Output は [`UncascadedDocument`]。QualName / Attribute
 /// の side-table を RefCell 内 FxHashMap で保持し、raikiri-dom::Node に
@@ -133,13 +148,35 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn parse_error(&self, msg: Cow<'static, str>) {
-        self.warnings.borrow_mut().push(RenderWarning {
-            kind: WarningKind::HtmlParseError {
-                message: msg.into_owned(),
-            },
-            node_id: None,
-            details: String::new(),
-        });
+        // 最後の 1 slot は「以降 suppress した」ことを示す synthetic entry
+        // 専用に予約する (silent drop だと 1024 件と 8,000,000 件を consumer
+        // が区別できない)。よって実際の parse error は MAX-1 件まで記録する。
+        const LAST_REAL_SLOT: usize = MAX_HTML_PARSE_WARNINGS - 1;
+
+        let mut warnings = self.warnings.borrow_mut();
+        match warnings.len().cmp(&LAST_REAL_SLOT) {
+            std::cmp::Ordering::Less => {
+                warnings.push(RenderWarning {
+                    kind: WarningKind::HtmlParseError {
+                        message: msg.into_owned(),
+                    },
+                    node_id: None,
+                    details: String::new(),
+                });
+            }
+            std::cmp::Ordering::Equal => {
+                warnings.push(RenderWarning {
+                    kind: WarningKind::HtmlParseError {
+                        message: format!(
+                            "further parse errors suppressed after reaching the {MAX_HTML_PARSE_WARNINGS}-warning cap"
+                        ),
+                    },
+                    node_id: None,
+                    details: String::new(),
+                });
+            }
+            std::cmp::Ordering::Greater => {}
+        }
     }
 
     fn get_document(&self) -> usize {
