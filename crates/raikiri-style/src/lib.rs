@@ -40,8 +40,8 @@ pub use rule::{Declaration, StyleRule};
 
 pub mod page;
 pub use page::{
-    PageCascadeResult, PageContextQuery, PagePseudo, PageRule, PageSelector, PageSelectorEntry,
-    cascade_page,
+    PageCascadeResult, PageContextQuery, PageInheritance, PagePseudo, PageRule, PageSelector,
+    PageSelectorEntry, cascade_page,
 };
 
 pub mod ruletree;

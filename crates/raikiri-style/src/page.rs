@@ -496,7 +496,8 @@ impl PageCascadeResult {
     /// (<https://www.w3.org/TR/css-page-3/#page-properties>) states that "both
     /// the page context and the margin context have a computed value for every
     /// property" and that "The page context inherits from the root element";
-    /// the inheritance parent is the `root_style` argument of [`cascade_page`].
+    /// the inheritance parent is the [`PageInheritance`] argument of
+    /// [`cascade_page`].
     ///
     /// **Phase 2** — resolution against the inheritance parent
     /// ([`crate::cascade::resolve_against_inherited`]):
@@ -588,7 +589,8 @@ impl PageCascadeResult {
     /// initial value are **absent**. The spec sentence quoted above ("a computed
     /// value for every property") describes the page context as a whole, not
     /// this map — materialising the complete bag is the downstream page-layout
-    /// consumer's job, and it starts from `root_style` plus these declarations.
+    /// consumer's job, and it starts from the resolved [`PageInheritance`]
+    /// plus these declarations.
     ///
     /// # Non-finite values pass through unguarded (bd raikiri-spike-kj2s)
     ///
@@ -700,12 +702,17 @@ impl PageCascadeResult {
     ///
     /// ```
     /// use raikiri_style::{
-    ///     CssColor, Origin, PageContextQuery, PropertyKey, PropertyValue, RuleTree, cascade_page,
+    ///     CssColor, Origin, PageContextQuery, PageInheritance, PropertyKey, PropertyValue,
+    ///     RuleTree, cascade_page,
     /// };
     ///
     /// let mut tree = RuleTree::empty();
     /// tree.add_stylesheet("@page { color: red }", Origin::Author);
-    /// let result = cascade_page(&tree, &PageContextQuery::default(), None);
+    /// let result = cascade_page(
+    ///     &tree,
+    ///     &PageContextQuery::default(),
+    ///     PageInheritance::LegacyInitialValues,
+    /// );
     /// assert_eq!(
     ///     result.declarations().get(&PropertyKey::Color),
     ///     Some(&PropertyValue::Color(CssColor {
@@ -722,6 +729,66 @@ impl PageCascadeResult {
     pub fn declarations(&self) -> &HashMap<PropertyKey, PropertyValue> {
         &self.declarations
     }
+}
+
+/// Selects the page context's inheritance parent for [`cascade_page`] — CSS
+/// Paged Media 3 §6 "Page Properties"
+/// (<https://www.w3.org/TR/css-page-3/#page-properties>) states: "As with
+/// elements in the document, both the page context and the margin context have
+/// a computed value for every property … The normal rules for CSS properties
+/// apply with the following exceptions: page-margin boxes inherit from the page
+/// context. The page context inherits from the root element."
+///
+/// Before bd raikiri-spike-mnvr this argument was `Option<&ComputedValues>`,
+/// and `None` was accepted with no compile error, warning, or lint marking
+/// the choice — bd raikiri-spike-ygl0 §8.2 debt lens D3 (CONFIRMED, latent)
+/// found 27 of the 29 call sites existing at that time reached the L3 legacy
+/// exception this way, by omission rather than by a deliberate choice, which
+/// silently resolves inherited properties against the initial values instead
+/// of the root element. Replacing the `Option` with this named 2-variant enum
+/// makes that choice a call-site-visible decision instead of something
+/// reachable by omission.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+pub enum PageInheritance<'a> {
+    /// Resolve against the root element's own [`ComputedValues`] — the §6
+    /// rule quoted above. **Prefer this variant** wherever a root style is
+    /// available:
+    ///
+    /// ```ignore
+    /// // ignore: `dom` / `rule_tree` / `query` are the caller's real values,
+    /// // not constructible in a doc-test in isolation; shape only, see
+    /// // `cascade_page`'s own doc-tests for a version that actually runs.
+    /// let cascaded = cascade(dom, rule_tree)?;
+    /// let result = cascade_page(
+    ///     rule_tree,
+    ///     &query,
+    ///     PageInheritance::FromRoot(&cascaded.computed[dom.root_id().0 as usize]),
+    /// );
+    /// ```
+    FromRoot(&'a ComputedValues),
+    /// The L3 *legacy exception* the same §6 paragraph grants: "since the
+    /// previous revision of CSS Paged Media Level 3 did not specify this
+    /// point, an implementation that sets inherited properties in the page
+    /// context to their initial values (as for the root element) is also
+    /// conformant to CSS Paged Media Level 3." Resolves against
+    /// [`ComputedValues::initial()`] — for `font-weight` that is `400`, not
+    /// the root element's computed weight.
+    ///
+    /// The spec states this exception will be removed in Level 4. Choosing
+    /// this variant where a root style could have been supplied instead
+    /// silently resolves `bolder` / `lighter` against `400` instead of the
+    /// root's weight. Since bd raikiri-spike-sshp wired phase 3 through the
+    /// same `font-size` basis, it also affects `em` / `rem` lengths in the
+    /// page box (`padding` / `margin` / `width` / `height` /
+    /// `border-*-width` / `line-height`) — but not uniformly: the `rem`
+    /// basis is always the initial `16px` under this variant, and so is the
+    /// `em` basis *only when the page context declares no `font-size` of its
+    /// own* ([`page_context_font_size`]). An explicit
+    /// `@page { font-size: … }` still determines the `em` basis regardless
+    /// of this variant (`cascade_page_padding_em_uses_own_font_size_over_inherited`
+    /// pins this).
+    LegacyInitialValues,
 }
 
 /// Cascade all `@page` rules in `rule_tree` against `query` and return the
@@ -743,7 +810,7 @@ impl PageCascadeResult {
 ///    UA < Author; Important: reversed — UA `!important` beats Author
 ///    `!important`).
 /// 3. **Phase 2** — resolve each winner against the page context's inheritance
-///    parent (`root_style`) through the crate-internal
+///    parent ([`PageInheritance`]) through the crate-internal
 ///    [`crate::cascade::resolve_against_inherited`], the sibling of
 ///    [`crate::cascade::apply_value`] that
 ///    keeps the `PropertyValue` shape. This covers the two properties that are
@@ -762,32 +829,35 @@ impl PageCascadeResult {
 /// [`PageCascadeResult::declarations`] documents the one remaining exception
 /// (`text-align: match-parent`) and the per-phase citations.
 ///
-/// # The inheritance parent (`root_style`)
+/// # The inheritance parent
 ///
-/// CSS Paged Media 3 §6 "Page Properties"
-/// (<https://www.w3.org/TR/css-page-3/#page-properties>) states: "As with
-/// elements in the document, both the page context and the margin context have
-/// a computed value for every property … The normal rules for CSS properties
-/// apply with the following exceptions: page-margin boxes inherit from the page
-/// context. The page context inherits from the root element."
+/// See [`PageInheritance`] for the two named choices, their spec basis, and
+/// which one to prefer — that is what step 3 above resolves winners against.
 ///
-/// `root_style` is therefore the root element's [`ComputedValues`]:
+/// # Compile-fail pin (bd raikiri-spike-mnvr)
 ///
-/// ```ignore
-/// let cascaded = cascade(dom, rule_tree)?;
-/// let result = cascade_page(rule_tree, &query,
-///                           Some(&cascaded.computed[dom.root_id().0 as usize]));
+/// Before bd raikiri-spike-mnvr the third parameter was
+/// `Option<&ComputedValues>` and a bare `None` literal compiled silently —
+/// see [`PageInheritance`]'s doc for the history. The parameter's type is now
+/// [`PageInheritance`] itself (not `impl Into<PageInheritance>`, which would
+/// let `None` convert implicitly if a `From<Option<_>>` impl existed) and
+/// [`PageInheritance`] has no `Default` impl, so there is no value `None`
+/// could coerce or default into — this is a type error, not a silent
+/// default:
+///
+/// ```compile_fail
+/// use raikiri_style::{Origin, PageContextQuery, RuleTree, cascade_page};
+///
+/// let mut tree = RuleTree::empty();
+/// tree.add_stylesheet("@page { color: red }", Origin::Author);
+/// let _ = cascade_page(&tree, &PageContextQuery::default(), None);
 /// ```
 ///
-/// `None` selects the *legacy exception* the very same paragraph grants: "since
-/// the previous revision of CSS Paged Media Level 3 did not specify this point,
-/// an implementation that sets inherited properties in the page context to
-/// their initial values (as for the root element) is also conformant to CSS
-/// Paged Media Level 3." `None` is thus resolved against
-/// [`ComputedValues::initial()`] — for `font-weight` that is `400`. The spec
-/// states that exception will be removed in Level 4, so **prefer `Some`** —
-/// passing `None` where a root style is available silently resolves `bolder` /
-/// `lighter` against 400 instead of the root's weight.
+/// Non-vacuous control: swapping `None` above for
+/// [`PageInheritance::LegacyInitialValues`] is exactly
+/// [`PageCascadeResult::declarations`]'s own doctest, which compiles and
+/// passes — confirming the failure above is caused by the removed implicit
+/// `None` path and not by an unrelated mistake in the fence.
 ///
 /// # Ties on equal `(rank, specificity, source_order)`
 ///
@@ -800,22 +870,21 @@ impl PageCascadeResult {
 /// # Example
 ///
 /// ```ignore
-/// use raikiri_style::{Origin, PageContextQuery, RuleTree, cascade_page};
+/// use raikiri_style::{Origin, PageContextQuery, PageInheritance, RuleTree, cascade_page};
 ///
 /// let mut tree = RuleTree::empty();
 /// tree.add_stylesheet("@page :first { color: red }", Origin::Author);
 /// let query = PageContextQuery { is_first: true, ..Default::default() };
-/// // Real callers pass `Some(root_style)` — see "The inheritance parent" above
-/// // for the copy-pasteable form. `None` appears here only because this
-/// // snippet has no document to cascade, and it selects the L3 legacy
-/// // exception (resolution against the initial values).
-/// let result = cascade_page(&tree, &query, None);
+/// // Real callers pass `PageInheritance::FromRoot(root_style)` — see
+/// // `PageInheritance`'s doc for the copy-pasteable form. The legacy variant
+/// // appears here only because this snippet has no document to cascade.
+/// let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
 /// // result.declarations() contains one entry: PropertyKey::Color -> red
 /// ```
 pub fn cascade_page(
     rule_tree: &RuleTree,
     query: &PageContextQuery,
-    root_style: Option<&ComputedValues>,
+    inheritance: PageInheritance<'_>,
 ) -> PageCascadeResult {
     // Candidate: (value, important, origin, specificity, source_order).
     // Shape mirrors `cascade::CascadedDecl` per sibling convention (37n), with
@@ -868,14 +937,17 @@ pub fn cascade_page(
         }
     }
     // Step 3 (phase 2): resolve winners against the page context's inheritance
-    // parent. `root_style == None` falls back to the initial values, which the
-    // L3 legacy exception in CSS Paged Media 3 §6 "Page Properties" permits
-    // explicitly (see the `root_style` section of this function's doc). Shared
+    // parent. `PageInheritance::LegacyInitialValues` falls back to the initial
+    // values, which the L3 legacy exception in CSS Paged Media 3 §6 "Page
+    // Properties" permits explicitly (see `PageInheritance`'s doc). Shared
     // static: the fallback is immutable and `initial()` costs a heap allocation,
-    // which the `None` path would otherwise take on every call (`property.rs` の
-    // `empty_counter_entries` と同じ前例)。
+    // which the `LegacyInitialValues` path would otherwise take on every call
+    // (`property.rs` の `empty_counter_entries` と同じ前例)。
     static INITIAL_PAGE_PARENT: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
-    let inherited = root_style.unwrap_or(&INITIAL_PAGE_PARENT);
+    let inherited: &ComputedValues = match inheritance {
+        PageInheritance::FromRoot(root) => root,
+        PageInheritance::LegacyInitialValues => &INITIAL_PAGE_PARENT,
+    };
     let resolved: HashMap<PropertyKey, PropertyValue> = best
         .into_iter()
         .map(|(k, (_, _, _, v))| (k, resolve_against_inherited(v, inherited)))
@@ -1397,7 +1469,11 @@ mod tests {
     #[test]
     fn cascade_page_empty_rule_tree_returns_empty() {
         let tree = RuleTree::empty();
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert!(result.declarations().is_empty());
     }
 
@@ -1406,7 +1482,11 @@ mod tests {
         // `@page { color: red }` has an empty prelude → matches every page.
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { color: red }", Origin::Author);
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert_eq!(color_of(&result), Some(RED));
     }
 
@@ -1418,7 +1498,7 @@ mod tests {
             page_name: None,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert!(color_of(&result).is_none());
     }
 
@@ -1431,7 +1511,11 @@ mod tests {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { color: red }", Origin::UserAgent);
         tree.add_stylesheet("@page { color: blue }", Origin::Author);
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1442,7 +1526,11 @@ mod tests {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { color: blue }", Origin::Author);
         tree.add_stylesheet("@page { color: red }", Origin::UserAgent);
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1455,7 +1543,11 @@ mod tests {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { color: red !important }", Origin::UserAgent);
         tree.add_stylesheet("@page { color: blue !important }", Origin::Author);
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert_eq!(color_of(&result), Some(RED));
     }
 
@@ -1466,7 +1558,11 @@ mod tests {
         tree.add_stylesheet("@page { color: green }", Origin::UserAgent);
         tree.add_stylesheet("@page { color: blue }", Origin::Author);
         tree.add_stylesheet("@page { color: red !important }", Origin::Author);
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert_eq!(color_of(&result), Some(RED));
     }
 
@@ -1487,7 +1583,7 @@ mod tests {
             is_left: true,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1505,7 +1601,7 @@ mod tests {
             is_left: true,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1523,7 +1619,7 @@ mod tests {
             page_name: Some(Atom::from("cover")),
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1541,7 +1637,7 @@ mod tests {
             page_name: Some(Atom::from("cover")),
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(RED));
     }
 
@@ -1564,7 +1660,7 @@ mod tests {
             page_name: Some(Atom::from("auto")),
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(RED));
     }
 
@@ -1585,7 +1681,7 @@ mod tests {
             page_name: Some(Atom::from("Auto")),
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(RED));
     }
 
@@ -1616,7 +1712,7 @@ mod tests {
             is_first: true,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1632,7 +1728,7 @@ mod tests {
             is_left: true,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1647,7 +1743,7 @@ mod tests {
             is_left: false,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert!(color_of(&result).is_none());
     }
 
@@ -1661,7 +1757,7 @@ mod tests {
             is_left: true,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1679,7 +1775,7 @@ mod tests {
             is_first: true,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1689,7 +1785,11 @@ mod tests {
         // within a single rule, later declarations of the same property win.
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { color: red; color: blue }", Origin::Author);
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1715,7 +1815,7 @@ mod tests {
             is_left: true,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1733,7 +1833,7 @@ mod tests {
             is_blank: true,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(BLUE));
     }
 
@@ -1746,7 +1846,7 @@ mod tests {
             is_right: true,
             ..Default::default()
         };
-        let result = cascade_page(&tree, &query, None);
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         assert_eq!(color_of(&result), Some(RED));
     }
 
@@ -1772,7 +1872,11 @@ mod tests {
             "@page { color: red } @page { font-weight: 700 }",
             Origin::Author,
         );
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert_eq!(color_of(&result), Some(RED));
         assert_eq!(
             result.declarations().get(&PropertyKey::FontWeight),
@@ -1796,10 +1900,50 @@ mod tests {
     // <https://www.w3.org/TR/css-fonts-4/#relative-weights>; the table itself is
     // pinned exhaustively by `cascade::tests::
     // font_weight_bolder_lighter_table_all_six_rows`. What these tests pin is the
-    // **wiring**: that `cascade_page` resolves against `root_style` at all, and
-    // which weight it uses as the inherited value (raikiri-spike-ygl0 — before
+    // **wiring**: that `cascade_page` resolves against its `PageInheritance`
+    // argument at all, and which weight it uses as the inherited value
+    // (raikiri-spike-ygl0 — before
     // this, `FontWeightValue::Bolder` parked unresolved in the public
     // `declarations` map).
+
+    /// Direct, single-site pin that [`PageInheritance::FromRoot`] and
+    /// [`PageInheritance::LegacyInitialValues`] are a real discrimination, not
+    /// two names for the same behaviour. The per-property tests elsewhere in
+    /// this module each show one side of this split across two *separate*
+    /// tests (e.g. `cascade_page_font_weight_bolder_resolves_against_root_computed_weight`
+    /// vs. `cascade_page_font_weight_relative_with_legacy_initial_values_uses_initial_400`);
+    /// this asserts both sides against the same rule tree in one place,
+    /// following the "non-vacuous control" convention used elsewhere in this
+    /// crate (see `specified_layer_residue_detector_is_not_vacuous`).
+    #[test]
+    fn cascade_page_from_root_and_legacy_initial_values_diverge_for_relative_font_weight() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { font-weight: bolder }", Origin::Author);
+        let root = root_with_weight(700.0);
+
+        let from_root = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&root),
+        );
+        let legacy = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+
+        assert_eq!(
+            from_root.declarations().get(&PropertyKey::FontWeight),
+            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900.0))),
+            "`FromRoot(700)` must resolve `bolder` against the supplied root weight"
+        );
+        assert_eq!(
+            legacy.declarations().get(&PropertyKey::FontWeight),
+            Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(700.0))),
+            "`LegacyInitialValues` must resolve `bolder` against the initial \
+             weight (400), not the root's 700"
+        );
+    }
 
     /// Root [`ComputedValues`] with `font-weight: w`, everything else initial.
     fn root_with_weight(w: f32) -> ComputedValues {
@@ -1809,17 +1953,18 @@ mod tests {
         }
     }
 
-    /// Cascade `@page { font-weight: <decl> }` with `root` as the page context's
-    /// inheritance parent and return the resolved absolute weight from
-    /// `declarations`. `root: None` selects the L3 legacy exception (resolution
-    /// against the initial values — see [`cascade_page`]).
+    /// Cascade `@page { font-weight: <decl> }` with `inheritance` as the page
+    /// context's inheritance parent and return the resolved absolute weight
+    /// from `declarations`. `PageInheritance::LegacyInitialValues` selects the
+    /// L3 legacy exception (resolution against the initial values — see
+    /// [`PageInheritance`]).
     ///
     /// Panics unless the winner is an already-resolved `Absolute` — a relative
     /// keyword surviving into the public map is exactly the ygl0 regression.
-    fn page_font_weight(decl: &str, root: Option<&ComputedValues>) -> f32 {
+    fn page_font_weight(decl: &str, inheritance: PageInheritance<'_>) -> f32 {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(&format!("@page {{ font-weight: {decl} }}"), Origin::Author);
-        let result = cascade_page(&tree, &PageContextQuery::default(), root);
+        let result = cascade_page(&tree, &PageContextQuery::default(), inheritance);
         match result.declarations().get(&PropertyKey::FontWeight) {
             Some(PropertyValue::FontWeight(FontWeightValue::Absolute(w))) => *w,
             Some(other) => panic!(
@@ -1841,7 +1986,12 @@ mod tests {
         // All six `bolder` rows of the CSS Fonts 4 §2.2.1 table, selected by the
         // *root element's* computed weight (the page context's inheritance
         // parent per CSS Page 3 §6).
-        let bolder = |root_w| page_font_weight("bolder", Some(&root_with_weight(root_w)));
+        let bolder = |root_w| {
+            page_font_weight(
+                "bolder",
+                PageInheritance::FromRoot(&root_with_weight(root_w)),
+            )
+        };
         assert_eq!(bolder(50.0), 400.0, "w < 100 row");
         assert_eq!(bolder(100.0), 400.0, "100 <= w < 350 row");
         assert_eq!(bolder(400.0), 700.0, "350 <= w < 550 row");
@@ -1857,7 +2007,12 @@ mod tests {
     #[test]
     fn cascade_page_font_weight_lighter_resolves_against_root_computed_weight() {
         // Same six rows, `lighter` column.
-        let lighter = |root_w| page_font_weight("lighter", Some(&root_with_weight(root_w)));
+        let lighter = |root_w| {
+            page_font_weight(
+                "lighter",
+                PageInheritance::FromRoot(&root_with_weight(root_w)),
+            )
+        };
         assert_eq!(
             lighter(50.0),
             50.0,
@@ -1879,14 +2034,16 @@ mod tests {
     // so the public `declarations` map carries an absolute `Length::Px`.
 
     /// Cascade `@page { font-size: <decl> }` and return the resolved px value.
+    /// `PageInheritance::LegacyInitialValues` selects the L3 legacy exception
+    /// (resolution against the initial values — see [`PageInheritance`]).
     ///
     /// Panics unless the winner is an already-absolutized `Length::Px` — a
     /// font-relative unit surviving into the public map is the same class of
     /// regression as ygl0's `FontWeightValue::Bolder`.
-    fn page_font_size_px(decl: &str, root: Option<&ComputedValues>) -> f32 {
+    fn page_font_size_px(decl: &str, inheritance: PageInheritance<'_>) -> f32 {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(&format!("@page {{ font-size: {decl} }}"), Origin::Author);
-        let result = cascade_page(&tree, &PageContextQuery::default(), root);
+        let result = cascade_page(&tree, &PageContextQuery::default(), inheritance);
         match result.declarations().get(&PropertyKey::FontSize) {
             Some(PropertyValue::FontSize(Length::Px(v))) => *v,
             Some(other) => panic!(
@@ -1914,27 +2071,49 @@ mod tests {
         let root = root_with_font_size(20.0);
         // §6: em on font-size in the page context is relative to the root
         // element's font-size.
-        assert_eq!(page_font_size_px("2em", Some(&root)), 40.0);
+        assert_eq!(
+            page_font_size_px("2em", PageInheritance::FromRoot(&root)),
+            40.0
+        );
         // CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>: rem is
         // the computed font-size of the root element — the same basis here.
-        assert_eq!(page_font_size_px("1.5rem", Some(&root)), 30.0);
+        assert_eq!(
+            page_font_size_px("1.5rem", PageInheritance::FromRoot(&root)),
+            30.0
+        );
         // Derived (not stated by §6): CSS Fonts 4 §2.5 "Percentages: refer to
         // parent element's font size" + §6 "The page context inherits from the
         // root element."
-        assert_eq!(page_font_size_px("150%", Some(&root)), 30.0);
+        assert_eq!(
+            page_font_size_px("150%", PageInheritance::FromRoot(&root)),
+            30.0
+        );
         // Absolute units are context-independent.
-        assert_eq!(page_font_size_px("18px", Some(&root)), 18.0);
-        assert_eq!(page_font_size_px("12pt", Some(&root)), 16.0);
+        assert_eq!(
+            page_font_size_px("18px", PageInheritance::FromRoot(&root)),
+            18.0
+        );
+        assert_eq!(
+            page_font_size_px("12pt", PageInheritance::FromRoot(&root)),
+            16.0
+        );
     }
 
     #[test]
-    fn cascade_page_font_size_without_root_style_uses_initial_16px() {
-        // `root_style: None` = the L3 legacy exception (initial values). §6 also
+    fn cascade_page_font_size_with_legacy_initial_values_uses_initial_16px() {
+        // `PageInheritance::LegacyInitialValues` = the L3 legacy exception
+        // (initial values). §6 also
         // records the matching conformance exception for em/ex on font-size:
         // "an implementation that treats em and ex on font-size as relative to
         // the initial value is also conformant".
-        assert_eq!(page_font_size_px("2em", None), 32.0);
-        assert_eq!(page_font_size_px("2rem", None), 32.0);
+        assert_eq!(
+            page_font_size_px("2em", PageInheritance::LegacyInitialValues),
+            32.0
+        );
+        assert_eq!(
+            page_font_size_px("2rem", PageInheritance::LegacyInitialValues),
+            32.0
+        );
     }
 
     /// `<relative-size>` (`larger` / `smaller`、raikiri-spike-4rmu) in the page
@@ -1945,14 +2124,24 @@ mod tests {
     #[test]
     fn cascade_page_font_size_relative_resolves_against_root_computed_font_size() {
         let root = root_with_font_size(20.0);
-        assert_eq!(page_font_size_px("larger", Some(&root)), 24.0);
-        assert_eq!(page_font_size_px("smaller", Some(&root)), 20.0 / 1.2);
+        assert_eq!(
+            page_font_size_px("larger", PageInheritance::FromRoot(&root)),
+            24.0
+        );
+        assert_eq!(
+            page_font_size_px("smaller", PageInheritance::FromRoot(&root)),
+            20.0 / 1.2
+        );
     }
 
     #[test]
-    fn cascade_page_font_size_relative_without_root_style_uses_initial_16px() {
-        // `root_style: None` = the L3 legacy exception (initial values, 16px).
-        assert_eq!(page_font_size_px("larger", None), 19.2);
+    fn cascade_page_font_size_relative_with_legacy_initial_values_uses_initial_16px() {
+        // `PageInheritance::LegacyInitialValues` = the L3 legacy exception
+        // (initial values, 16px).
+        assert_eq!(
+            page_font_size_px("larger", PageInheritance::LegacyInitialValues),
+            19.2
+        );
     }
 
     // ── declarations may carry non-finite f32 (bd raikiri-spike-kj2s) ──────
@@ -1975,7 +2164,7 @@ mod tests {
         // (`parent_font_size.0 * v`) computes `0.0 * inf` = `NaN` per IEEE
         // 754 — root font-size 0 supplies the `0.0`.
         let root = root_with_font_size(0.0);
-        let px = page_font_size_px("1e40em", Some(&root));
+        let px = page_font_size_px("1e40em", PageInheritance::FromRoot(&root));
         // cov:ignore: the panic-message literal below is only executed if
         // the assertion fails, which it doesn't while this test passes.
         assert!(
@@ -1996,7 +2185,7 @@ mod tests {
         // documented on `PageCascadeResult::declarations` holds
         // independently of how 9mbo's parse-time question is resolved.
         let root = root_with_font_size(1e30);
-        let px = page_font_size_px("1e20em", Some(&root));
+        let px = page_font_size_px("1e20em", PageInheritance::FromRoot(&root));
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert!(
@@ -2008,13 +2197,20 @@ mod tests {
     // ── page context inheritance: relative font-weight resolution (cont'd) ──
 
     #[test]
-    fn cascade_page_font_weight_relative_without_root_style_uses_initial_400() {
-        // `root_style: None` = the L3 legacy exception quoted above ("sets
-        // inherited properties in the page context to their initial values").
+    fn cascade_page_font_weight_relative_with_legacy_initial_values_uses_initial_400() {
+        // `PageInheritance::LegacyInitialValues` = the L3 legacy exception
+        // quoted above ("sets inherited properties in the page context to
+        // their initial values").
         // `font-weight` initial is 400, so bolder(400) = 700 and
         // lighter(400) = 100.
-        assert_eq!(page_font_weight("bolder", None), 700.0);
-        assert_eq!(page_font_weight("lighter", None), 100.0);
+        assert_eq!(
+            page_font_weight("bolder", PageInheritance::LegacyInitialValues),
+            700.0
+        );
+        assert_eq!(
+            page_font_weight("lighter", PageInheritance::LegacyInitialValues),
+            100.0
+        );
     }
 
     #[test]
@@ -2023,9 +2219,18 @@ mod tests {
         // must not perturb them (round-trip through `resolve_against_inherited`
         // is lossless).
         let root = root_with_weight(900.0);
-        assert_eq!(page_font_weight("250", Some(&root)), 250.0);
-        assert_eq!(page_font_weight("bold", Some(&root)), 700.0);
-        assert_eq!(page_font_weight("normal", Some(&root)), 400.0);
+        assert_eq!(
+            page_font_weight("250", PageInheritance::FromRoot(&root)),
+            250.0
+        );
+        assert_eq!(
+            page_font_weight("bold", PageInheritance::FromRoot(&root)),
+            700.0
+        );
+        assert_eq!(
+            page_font_weight("normal", PageInheritance::FromRoot(&root)),
+            400.0
+        );
     }
 
     #[test]
@@ -2041,7 +2246,11 @@ mod tests {
             Origin::Author,
         );
         let root = root_with_weight(700.0);
-        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&root),
+        );
         assert_eq!(
             result.declarations().get(&PropertyKey::FontWeight),
             Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900.0))),
@@ -2061,7 +2270,11 @@ mod tests {
             color: BLUE,
             ..ComputedValues::initial()
         };
-        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&root),
+        );
         assert_eq!(color_of(&result), Some(RED));
     }
 
@@ -2077,7 +2290,11 @@ mod tests {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { margin-top: 2em }", Origin::Author);
         let root = root_with_weight(700.0);
-        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&root),
+        );
         assert_eq!(
             result.declarations().get(&PropertyKey::MarginTop),
             Some(&PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
@@ -2110,7 +2327,11 @@ mod tests {
     fn page(css: &str, root: &ComputedValues) -> PageCascadeResult {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(css, Origin::Author);
-        cascade_page(&tree, &PageContextQuery::default(), Some(root))
+        cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(root),
+        )
     }
 
     /// `@page { padding: 2em }` — the `em` basis is the page context's own
@@ -2392,14 +2613,18 @@ mod tests {
         );
     }
 
-    /// The `None` (L3 legacy exception) path also runs phase 3, against the
-    /// initial values. Guards against the absolutization being wired only into
-    /// the `Some` branch.
+    /// The [`PageInheritance::LegacyInitialValues`] path also runs phase 3,
+    /// against the initial values. Guards against the absolutization being
+    /// wired only into the `FromRoot` branch.
     #[test]
-    fn cascade_page_phase_3_runs_on_the_legacy_none_path() {
+    fn cascade_page_phase_3_runs_on_the_legacy_initial_values_path() {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { padding: 2em }", Origin::Author);
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert_eq!(padding_top_of(&result), Some(Length::Px(32.0)));
     }
 
@@ -3214,7 +3439,11 @@ mod tests {
         // Default root (`ComputedValues::initial()`): text-align = start,
         // direction = ltr → left.
         let ltr_root = root_with_weight(700.0);
-        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&ltr_root));
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&ltr_root),
+        );
         assert_eq!(
             result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Left)),
@@ -3225,7 +3454,11 @@ mod tests {
             direction: Direction::Rtl,
             ..ComputedValues::initial()
         };
-        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&rtl_root));
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&rtl_root),
+        );
         assert_eq!(
             result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Right)),
@@ -3234,17 +3467,20 @@ mod tests {
 
     /// The trap the doc warns about: unlike the element path's root element
     /// (CSS Text 3 §6.1's "computes to start"), the page context's
-    /// `root_style == None` L3 legacy exception is **not** a "no parent"
-    /// case — it substitutes `ComputedValues::initial()` as an ordinary
-    /// inheritance parent (text-align = start, direction = ltr) and goes
-    /// through the same parent-direction table, landing on `left` rather
+    /// [`PageInheritance::LegacyInitialValues`] L3 legacy exception is **not**
+    /// a "no parent" case — it substitutes `ComputedValues::initial()` as an
+    /// ordinary inheritance parent (text-align = start, direction = ltr) and
+    /// goes through the same parent-direction table, landing on `left` rather
     /// than being short-circuited to `start`.
     #[test]
-    fn cascade_page_text_align_match_parent_with_no_root_style_uses_initial_values_not_start_shortcut()
-     {
+    fn cascade_page_text_align_match_parent_legacy_initial_values_not_start_shortcut() {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { text-align: match-parent }", Origin::Author);
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
@@ -3281,7 +3517,11 @@ mod tests {
         );
         // Root: text-align = start, direction = ltr (defaults).
         let root = ComputedValues::initial();
-        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&root),
+        );
         assert_eq!(
             result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Left)),
@@ -3302,7 +3542,11 @@ mod tests {
             text_align: TextAlign::Center,
             ..ComputedValues::initial()
         };
-        let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&root),
+        );
         assert_eq!(
             result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Center)),
@@ -3320,7 +3564,11 @@ mod tests {
              @page cover { color: blue }",
             Origin::Author,
         );
-        let result = cascade_page(&tree, &PageContextQuery::default(), None);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
         assert_eq!(color_of(&result), Some(GREEN));
     }
 
@@ -3396,7 +3644,7 @@ mod tests {
     ///    を作っているのが
     ///    `post_parse_page_important_longhand_survives_later_normal_shorthand`。
     ///
-    /// `root_style` は `None` = L3 legacy exception (initial values に解決)。
+    /// `PageInheritance::LegacyInitialValues` = L3 legacy exception (initial values に解決)。
     /// 本節の fixture は全て `px` なので phase 2 / phase 3 は恒等写像になる。
     fn page_with_post_parse_injection(
         css: &str,
@@ -3406,7 +3654,11 @@ mod tests {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(css, Origin::Author);
         tree.page_rules[0].declarations[idx].value = injected;
-        cascade_page(&tree, &PageContextQuery::default(), None)
+        cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        )
     }
 
     /// 4 side が全て互いに異なり、かつ initial (0) とも異なる margin fixture。
@@ -3698,9 +3950,9 @@ mod tests {
             is_first: true,
             ..Default::default()
         };
-        let baseline = cascade_page(&tree, &query, None);
+        let baseline = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
         for _ in 0..9 {
-            let run = cascade_page(&tree, &query, None);
+            let run = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
             assert_eq!(
                 run.declarations().get(&PropertyKey::Color),
                 baseline.declarations().get(&PropertyKey::Color),
