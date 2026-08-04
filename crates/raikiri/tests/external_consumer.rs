@@ -150,8 +150,16 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
 /// (bd raikiri-spike-qzn3、PMO 判断 (B) 可視性を絞る)。
 ///
 /// ⚠️ 本 test が pin するのは **read 経路が届くこと**だけである。「write 経路が
-/// 無い」ことは compile する code では表現できないので pin されていない
-/// (compile-fail harness = bd raikiri-spike-ejia)。
+/// 無い」ことは compile する code では表現できないので pin されていない —
+/// そちらは compile-fail doctest (bd raikiri-spike-ejia) が別途 pin する:
+/// `raikiri_style::rule::Declaration` の struct doc (struct literal /
+/// functional-update / clone 後の field 代入、計 3 fence)、
+/// `raikiri_style::rule::StyleRule::declarations` の doc (1 fence)、
+/// `raikiri_style::ruletree::RuleTree::style_rules` の doc (1 fence)。
+/// `Declaration` / `StyleRule` は umbrella `raikiri` から re-export されて
+/// いないため、この pin は umbrella 経由ではなく raikiri-style 自身の
+/// doctest として存在する (pub(crate) の境界は raikiri-style crate に対して
+/// 定義されるものなので、それが自然な置き場所)。
 #[test]
 fn external_consumer_reads_rule_tree_through_readonly_accessors() {
     let mut tree = RuleTree::empty();

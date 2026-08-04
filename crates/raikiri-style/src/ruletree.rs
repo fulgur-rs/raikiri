@@ -51,6 +51,22 @@ impl RuleTree {
     /// **qualified style rules に関しては**書き込み経路が
     /// [`RuleTree::add_stylesheet`] のみになった (bd raikiri-spike-qzn3)。
     /// `page_rules` 側は approved scope 外で `pub` のまま — 同 field の doc 参照。
+    ///
+    /// # `style_rules` field 自体への到達不能性 (bd raikiri-spike-ejia)
+    ///
+    /// `style_rules` field は `pub(crate)` — external crate から届くのは
+    /// この accessor だけである。`RuleTree` は `#[non_exhaustive]` かつ
+    /// `Clone` を derive していないので、struct literal / functional-update
+    /// による構築も、所有値としての複製も external crate からはできない。
+    /// 以下は field 名そのものが private であることの compile-fail pin —
+    /// `pub` に戻れば compile が通るようになる:
+    ///
+    /// ```compile_fail
+    /// use raikiri_style::RuleTree;
+    ///
+    /// let tree = RuleTree::empty();
+    /// let _ = &tree.style_rules;
+    /// ```
     pub fn style_rules(&self) -> &[StyleRule] {
         &self.style_rules
     }
