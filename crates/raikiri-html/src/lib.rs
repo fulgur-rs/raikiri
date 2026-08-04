@@ -130,6 +130,40 @@ mod tests {
     }
 
     #[test]
+    fn parse_caps_html_parse_warnings_and_does_not_grow_past_cap() {
+        // Codex Security finding raikiri-spike-g9vr: html5ever は malformed
+        // input の 1 token あたり概ね 1 parse_error を報告するため、cap が
+        // 無いと attacker-controlled 個数の RenderWarning (owned String 持ち)
+        // が積み上がる (DoS)。100,000 個の `</x>` で 100,001 warnings /
+        // RSS 線形増加を実測済み。
+        let opts = empty_options();
+
+        let small = b"</x>".repeat(2_000);
+        let small_count = parse(small.as_slice(), &opts)
+            .expect("parse recovers")
+            .warnings
+            .len();
+
+        assert!(
+            small_count <= crate::sink::MAX_HTML_PARSE_WARNINGS,
+            "parse warnings must be capped, got {small_count}"
+        );
+
+        // 8x more malformed input must not produce more warnings than the cap
+        // (proves the bound holds, not just a coincidental small-input count).
+        let large = b"</x>".repeat(16_000);
+        let large_count = parse(large.as_slice(), &opts)
+            .expect("parse recovers")
+            .warnings
+            .len();
+
+        assert_eq!(
+            small_count, large_count,
+            "warning count must plateau at the cap regardless of input size"
+        );
+    }
+
+    #[test]
     fn parse_returns_encoding_error_on_invalid_utf8() {
         use raikiri_traits::ParseError;
 
