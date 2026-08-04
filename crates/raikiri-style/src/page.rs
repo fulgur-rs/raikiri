@@ -430,6 +430,16 @@ pub struct PageContextQuery {
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageCascadeResult {
+    // Private so the "resolved against the inheritance parent" contract
+    // documented on `declarations()` is enforced by construction: only
+    // `cascade_page` can populate this map (raikiri-spike-ygl0). Read-only
+    // access is public API — see the `declarations()` accessor below, in
+    // particular its "Why this is a method, not a field" section
+    // (raikiri-spike-dyxj).
+    declarations: HashMap<PropertyKey, PropertyValue>,
+}
+
+impl PageCascadeResult {
     /// Winning `(key, value)` per property, after the two resolution passes
     /// described below.
     ///
@@ -631,7 +641,87 @@ pub struct PageCascadeResult {
     /// real but currently unreachable; **when the M4 sink is built, its
     /// bridge must add the equivalent guard**, following the same precedent
     /// rather than adding one here.
-    pub declarations: HashMap<PropertyKey, PropertyValue>,
+    ///
+    /// # Why this is a method, not a field (bd raikiri-spike-dyxj)
+    ///
+    /// Before raikiri-spike-dyxj, `declarations` was a `pub` field. The
+    /// `#[non_exhaustive]` on this type already blocked external struct-literal
+    /// construction, but a `pub` field leaves one hole open regardless:
+    /// `let mut r = PageCascadeResult::default(); r.declarations.insert(key,
+    /// raw_specified_value)` — parking an unresolved specified-layer value in
+    /// the map without going through [`cascade_page`] at all. That is the same
+    /// *class* of defect as the raikiri-spike-ygl0 regression this whole doc
+    /// pins against, just reached by direct field-write instead of a cascade
+    /// bug, so the field is now private and this accessor is the only read
+    /// path — the "resolved against the inheritance parent" contract is
+    /// enforced by construction (only `cascade_page`, in this module, can
+    /// populate the field) rather than by convention.
+    ///
+    /// ## Compile-fail pin (bd raikiri-spike-ejia precedent)
+    ///
+    /// "The field is private" is a claim about what does *not* compile, which
+    /// no ordinary (must-pass) doctest can pin — the same gap
+    /// bd raikiri-spike-ejia closed for `Declaration::value` /
+    /// `StyleRule::declarations` / `RuleTree::style_rules` on the same day.
+    /// `PageCascadeResult::default()` returns an owned, mutable value (the
+    /// type derives [`Default`]), so unlike `Declaration::value` (reached only
+    /// through a `&Declaration` behind an accessor) this needs no `.clone()`
+    /// detour to discriminate the field's own visibility — direct field
+    /// access on an owned binding is exactly what `pub`/private gates, with no
+    /// second field's visibility able to confound the result:
+    ///
+    /// ```compile_fail
+    /// use raikiri_style::{CssColor, PageCascadeResult, PropertyKey, PropertyValue};
+    ///
+    /// let mut r = PageCascadeResult::default();
+    /// r.declarations.insert(PropertyKey::Color, PropertyValue::Color(CssColor::BLACK));
+    /// ```
+    ///
+    /// Verified non-vacuous the same way as the ejia precedent: temporarily
+    /// restoring `pub` on the field makes the fence above compile (and thus
+    /// makes `cargo test --doc` fail on it), confirming the fence fails
+    /// *because* the field is private and not for some unrelated reason.
+    ///
+    /// ### Non-vacuous control
+    ///
+    /// (Same vocabulary as `raikiri-paint`'s
+    /// `draw_glyphs_at_natural_font_size_is_a_non_vacuous_control` and this
+    /// crate's `page::tests::specified_layer_residue_detector_is_not_vacuous`.)
+    ///
+    /// The fence above depends on ingredients that have nothing to do with
+    /// `declarations`'s visibility — `PropertyValue::Color`'s payload shape
+    /// and `CssColor::BLACK` staying valid names — plus the legitimate read
+    /// path, `declarations()`, actually returning what [`cascade_page`]
+    /// produced. If any of those drift (rename, shape change), the fence
+    /// above would keep compile-failing for the wrong reason and the pin
+    /// would go silently vacuous. This ordinary (must-compile-and-pass)
+    /// doctest exercises the same ingredients through the accessor, so a
+    /// drift breaks it first, not the fence:
+    ///
+    /// ```
+    /// use raikiri_style::{
+    ///     CssColor, Origin, PageContextQuery, PropertyKey, PropertyValue, RuleTree, cascade_page,
+    /// };
+    ///
+    /// let mut tree = RuleTree::empty();
+    /// tree.add_stylesheet("@page { color: red }", Origin::Author);
+    /// let result = cascade_page(&tree, &PageContextQuery::default(), None);
+    /// assert_eq!(
+    ///     result.declarations().get(&PropertyKey::Color),
+    ///     Some(&PropertyValue::Color(CssColor {
+    ///         r: 255,
+    ///         g: 0,
+    ///         b: 0,
+    ///         a: 255
+    ///     })),
+    /// );
+    /// // Ingredient used by the compile_fail fence above, confirmed still
+    /// // valid here.
+    /// let _ = PropertyValue::Color(CssColor::BLACK);
+    /// ```
+    pub fn declarations(&self) -> &HashMap<PropertyKey, PropertyValue> {
+        &self.declarations
+    }
 }
 
 /// Cascade all `@page` rules in `rule_tree` against `query` and return the
@@ -720,7 +810,7 @@ pub struct PageCascadeResult {
 /// // snippet has no document to cascade, and it selects the L3 legacy
 /// // exception (resolution against the initial values).
 /// let result = cascade_page(&tree, &query, None);
-/// // result.declarations contains one entry: PropertyKey::Color -> red
+/// // result.declarations() contains one entry: PropertyKey::Color -> red
 /// ```
 pub fn cascade_page(
     rule_tree: &RuleTree,
@@ -1298,7 +1388,7 @@ mod tests {
     };
 
     fn color_of(result: &PageCascadeResult) -> Option<CssColor> {
-        match result.declarations.get(&PropertyKey::Color) {
+        match result.declarations().get(&PropertyKey::Color) {
             Some(PropertyValue::Color(c)) => Some(*c),
             _ => None,
         }
@@ -1308,7 +1398,7 @@ mod tests {
     fn cascade_page_empty_rule_tree_returns_empty() {
         let tree = RuleTree::empty();
         let result = cascade_page(&tree, &PageContextQuery::default(), None);
-        assert!(result.declarations.is_empty());
+        assert!(result.declarations().is_empty());
     }
 
     #[test]
@@ -1685,7 +1775,7 @@ mod tests {
         let result = cascade_page(&tree, &PageContextQuery::default(), None);
         assert_eq!(color_of(&result), Some(RED));
         assert_eq!(
-            result.declarations.get(&PropertyKey::FontWeight),
+            result.declarations().get(&PropertyKey::FontWeight),
             Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(700.0)))
         );
     }
@@ -1730,7 +1820,7 @@ mod tests {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(&format!("@page {{ font-weight: {decl} }}"), Origin::Author);
         let result = cascade_page(&tree, &PageContextQuery::default(), root);
-        match result.declarations.get(&PropertyKey::FontWeight) {
+        match result.declarations().get(&PropertyKey::FontWeight) {
             Some(PropertyValue::FontWeight(FontWeightValue::Absolute(w))) => *w,
             Some(other) => panic!(
                 "raikiri-spike-ygl0 regression: an unresolved font-weight value \
@@ -1797,7 +1887,7 @@ mod tests {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(&format!("@page {{ font-size: {decl} }}"), Origin::Author);
         let result = cascade_page(&tree, &PageContextQuery::default(), root);
-        match result.declarations.get(&PropertyKey::FontSize) {
+        match result.declarations().get(&PropertyKey::FontSize) {
             Some(PropertyValue::FontSize(Length::Px(v))) => *v,
             Some(other) => panic!(
                 "an unresolved font-size value reached the public \
@@ -1953,7 +2043,7 @@ mod tests {
         let root = root_with_weight(700.0);
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
         assert_eq!(
-            result.declarations.get(&PropertyKey::FontWeight),
+            result.declarations().get(&PropertyKey::FontWeight),
             Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900.0))),
             "later `bolder` wins and resolves off root 700 → 900, not off the \
              losing declaration's 100 → 400"
@@ -1989,7 +2079,7 @@ mod tests {
         let root = root_with_weight(700.0);
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
         assert_eq!(
-            result.declarations.get(&PropertyKey::MarginTop),
+            result.declarations().get(&PropertyKey::MarginTop),
             Some(&PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
                 32.0
             )))),
@@ -2011,7 +2101,7 @@ mod tests {
     // the assertions below cannot pass by accident off the 16px initial.
 
     fn padding_top_of(result: &PageCascadeResult) -> Option<Length> {
-        match result.declarations.get(&PropertyKey::PaddingTop) {
+        match result.declarations().get(&PropertyKey::PaddingTop) {
             Some(PropertyValue::PaddingTop(l)) => Some(*l),
             _ => None,
         }
@@ -2062,7 +2152,7 @@ mod tests {
         let root = ComputedValues::initial(); // 16px
         let result = page("@page { font-size: 2em; padding: 1rem }", &root);
         assert_eq!(
-            result.declarations.get(&PropertyKey::FontSize),
+            result.declarations().get(&PropertyKey::FontSize),
             Some(&PropertyValue::FontSize(Length::Px(32.0))),
         );
         assert_eq!(
@@ -2086,13 +2176,13 @@ mod tests {
         // `<length-percentage>` one above — both must pass the percentage
         // through.
         assert_eq!(
-            result.declarations.get(&PropertyKey::MarginTop),
+            result.declarations().get(&PropertyKey::MarginTop),
             Some(&PropertyValue::MarginTop(LengthOrAuto::Length(
                 Length::Percent(10.0)
             ))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::Width),
+            result.declarations().get(&PropertyKey::Width),
             Some(&PropertyValue::Width(LengthOrAuto::Length(
                 Length::Percent(50.0)
             ))),
@@ -2120,7 +2210,7 @@ mod tests {
             &root,
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderTopWidth),
+            result.declarations().get(&PropertyKey::BorderTopWidth),
             Some(&PropertyValue::BorderTopWidth(Length::Px(0.0))),
         );
     }
@@ -2134,7 +2224,7 @@ mod tests {
             &root,
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderTopWidth),
+            result.declarations().get(&PropertyKey::BorderTopWidth),
             Some(&PropertyValue::BorderTopWidth(Length::Px(0.0))),
         );
     }
@@ -2149,7 +2239,7 @@ mod tests {
         let root = ComputedValues::initial();
         let result = page("@page { border-top-width: 5px }", &root);
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderTopWidth),
+            result.declarations().get(&PropertyKey::BorderTopWidth),
             Some(&PropertyValue::BorderTopWidth(Length::Px(0.0))),
         );
         assert_eq!(
@@ -2170,7 +2260,7 @@ mod tests {
             &root,
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderTopWidth),
+            result.declarations().get(&PropertyKey::BorderTopWidth),
             Some(&PropertyValue::BorderTopWidth(Length::Px(10.0))),
         );
     }
@@ -2198,19 +2288,19 @@ mod tests {
             &root,
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderTopWidth),
+            result.declarations().get(&PropertyKey::BorderTopWidth),
             Some(&PropertyValue::BorderTopWidth(Length::Px(0.0))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderRightWidth),
+            result.declarations().get(&PropertyKey::BorderRightWidth),
             Some(&PropertyValue::BorderRightWidth(Length::Px(6.0))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderBottomWidth),
+            result.declarations().get(&PropertyKey::BorderBottomWidth),
             Some(&PropertyValue::BorderBottomWidth(Length::Px(0.0))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderLeftWidth),
+            result.declarations().get(&PropertyKey::BorderLeftWidth),
             Some(&PropertyValue::BorderLeftWidth(Length::Px(8.0))),
         );
     }
@@ -2224,7 +2314,7 @@ mod tests {
         let root = ComputedValues::initial();
         let result = page("@page { font-size: 20px; line-height: 150% }", &root);
         assert_eq!(
-            result.declarations.get(&PropertyKey::LineHeight),
+            result.declarations().get(&PropertyKey::LineHeight),
             Some(&PropertyValue::LineHeight(LineHeight::Length(Length::Px(
                 30.0
             )))),
@@ -2240,13 +2330,13 @@ mod tests {
         let root = ComputedValues::initial();
         assert_eq!(
             page("@page { line-height: 1.5 }", &root)
-                .declarations
+                .declarations()
                 .get(&PropertyKey::LineHeight),
             Some(&PropertyValue::LineHeight(LineHeight::Number(1.5))),
         );
         assert_eq!(
             page("@page { line-height: normal }", &root)
-                .declarations
+                .declarations()
                 .get(&PropertyKey::LineHeight),
             Some(&PropertyValue::LineHeight(LineHeight::Normal)),
         );
@@ -2259,11 +2349,11 @@ mod tests {
         let root = ComputedValues::initial();
         let result = page("@page { margin-top: auto; width: auto }", &root);
         assert_eq!(
-            result.declarations.get(&PropertyKey::MarginTop),
+            result.declarations().get(&PropertyKey::MarginTop),
             Some(&PropertyValue::MarginTop(LengthOrAuto::Auto)),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::Width),
+            result.declarations().get(&PropertyKey::Width),
             Some(&PropertyValue::Width(LengthOrAuto::Auto)),
         );
     }
@@ -2279,23 +2369,23 @@ mod tests {
             &root,
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::PaddingRight),
+            result.declarations().get(&PropertyKey::PaddingRight),
             Some(&PropertyValue::PaddingRight(Length::Px(16.0))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::MarginBottom),
+            result.declarations().get(&PropertyKey::MarginBottom),
             Some(&PropertyValue::MarginBottom(LengthOrAuto::Length(
                 Length::Px(16.0)
             ))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::Width),
+            result.declarations().get(&PropertyKey::Width),
             Some(&PropertyValue::Width(LengthOrAuto::Length(Length::Px(
                 16.0
             )))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::Height),
+            result.declarations().get(&PropertyKey::Height),
             Some(&PropertyValue::Height(LengthOrAuto::Length(Length::Px(
                 16.0
             )))),
@@ -2322,7 +2412,7 @@ mod tests {
         let root = root_with_font_size(20.0);
         let result = page("@page { font-size: 2em }", &root);
         assert_eq!(
-            result.declarations.get(&PropertyKey::FontSize),
+            result.declarations().get(&PropertyKey::FontSize),
             Some(&PropertyValue::FontSize(Length::Px(40.0))),
         );
     }
@@ -3025,17 +3115,18 @@ mod tests {
         // 27 = font-size / font-weight / line-height / text-align / width /
         // height / direction の 7 + padding 4 + margin 4 + `border` shorthand
         // の展開 12 (4 side × width / style / color)。`@page` の shorthand 展開が
-        // 変わったらここが先に落ちる。
-        assert_eq!(
-            result.declarations.len(),
-            27,
-            "corpus stylesheet が期待通り parse / 展開されていない: {}",
-            result.declarations.len(),
-        );
+        // 変わったらここが先に落ちる — 失敗時の意味: corpus stylesheet が
+        // 期待通り parse / 展開されていない。
+        //
+        // 診断文言は (custom message ではなく) この comment 側に置く:
+        // `assert_eq!` の custom message 引数は assertion 失敗時のみ評価され
+        // る cold path なので、test が pass する限り gate §8.1.1 patch
+        // coverage 上 uncovered 扱いになる (bd raikiri-spike-sxd7 と同型)。
+        assert_eq!(result.declarations().len(), 27);
 
         // `declarations` は HashMap-random 順なので sort して比較する。
         let mut residues: Vec<String> = result
-            .declarations
+            .declarations()
             .values()
             .filter_map(|v| specified_layer_residue(v).map(|r| format!("{:?}: {r}", v.key())))
             .collect();
@@ -3089,21 +3180,21 @@ mod tests {
         );
         assert_eq!(color_of(&result), Some(RED));
         assert_eq!(
-            result.declarations.get(&PropertyKey::FontWeight),
+            result.declarations().get(&PropertyKey::FontWeight),
             Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900.0))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BoxSizing),
+            result.declarations().get(&PropertyKey::BoxSizing),
             Some(&PropertyValue::BoxSizing(
                 crate::property::BoxSizing::BorderBox
             )),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::TextAlign),
+            result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Center)),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::Direction),
+            result.declarations().get(&PropertyKey::Direction),
             Some(&PropertyValue::Direction(Direction::Rtl)),
         );
     }
@@ -3125,7 +3216,7 @@ mod tests {
         let ltr_root = root_with_weight(700.0);
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&ltr_root));
         assert_eq!(
-            result.declarations.get(&PropertyKey::TextAlign),
+            result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Left)),
         );
 
@@ -3136,7 +3227,7 @@ mod tests {
         };
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&rtl_root));
         assert_eq!(
-            result.declarations.get(&PropertyKey::TextAlign),
+            result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Right)),
         );
     }
@@ -3157,7 +3248,7 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            result.declarations.get(&PropertyKey::TextAlign),
+            result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Left)),
             "the L3 legacy-exception initial-values parent must still go through the parent-direction table, not the root-element \"computes to start\" shortcut"
         );
@@ -3192,13 +3283,13 @@ mod tests {
         let root = ComputedValues::initial();
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
         assert_eq!(
-            result.declarations.get(&PropertyKey::TextAlign),
+            result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Left)),
         );
         // The page context's own `direction: rtl` winner is unaffected — it
         // is a separate property, unrelated to the match-parent resolution.
         assert_eq!(
-            result.declarations.get(&PropertyKey::Direction),
+            result.declarations().get(&PropertyKey::Direction),
             Some(&PropertyValue::Direction(Direction::Rtl)),
         );
     }
@@ -3213,7 +3304,7 @@ mod tests {
         };
         let result = cascade_page(&tree, &PageContextQuery::default(), Some(&root));
         assert_eq!(
-            result.declarations.get(&PropertyKey::TextAlign),
+            result.declarations().get(&PropertyKey::TextAlign),
             Some(&PropertyValue::TextAlign(TextAlign::Center)),
         );
     }
@@ -3238,7 +3329,7 @@ mod tests {
         // `PageCascadeResult::default()` is the empty result (no rules
         // matched) — used by consumers that need a placeholder.
         let r = PageCascadeResult::default();
-        assert!(r.declarations.is_empty());
+        assert!(r.declarations().is_empty());
     }
 
     #[test]
@@ -3340,7 +3431,7 @@ mod tests {
     /// border 側に同型 helper を置かず explicit assert にしてあるのは、3
     /// sub-property family ぶんの helper が要るのに対し assert が 12 個で済むため。
     fn margin_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {
-        match result.declarations.get(&key) {
+        match result.declarations().get(&key) {
             Some(
                 PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(v)))
                 | PropertyValue::MarginRight(LengthOrAuto::Length(Length::Px(v)))
@@ -3353,7 +3444,7 @@ mod tests {
 
     /// `margin_px` の padding 版 (or-pattern の是非は同 doc を参照)。
     fn padding_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {
-        match result.declarations.get(&key) {
+        match result.declarations().get(&key) {
             Some(
                 PropertyValue::PaddingTop(Length::Px(v))
                 | PropertyValue::PaddingRight(Length::Px(v))
@@ -3390,7 +3481,7 @@ mod tests {
         assert_eq!(margin_px(&result, PropertyKey::MarginBottom), Some(3.0));
         assert_eq!(margin_px(&result, PropertyKey::MarginLeft), Some(4.0));
         assert!(
-            !result.declarations.contains_key(&PropertyKey::Margin),
+            !result.declarations().contains_key(&PropertyKey::Margin),
             "shorthand key が独立 slot に park してはならない (silent drop の直接 pin)"
         );
     }
@@ -3416,7 +3507,7 @@ mod tests {
         assert_eq!(margin_px(&result, PropertyKey::MarginRight), Some(2.0));
         assert_eq!(margin_px(&result, PropertyKey::MarginBottom), Some(3.0));
         assert_eq!(margin_px(&result, PropertyKey::MarginLeft), Some(4.0));
-        assert!(!result.declarations.contains_key(&PropertyKey::Margin));
+        assert!(!result.declarations().contains_key(&PropertyKey::Margin));
     }
 
     #[test]
@@ -3438,7 +3529,7 @@ mod tests {
         assert_eq!(padding_px(&result, PropertyKey::PaddingRight), Some(2.0));
         assert_eq!(padding_px(&result, PropertyKey::PaddingBottom), Some(3.0));
         assert_eq!(padding_px(&result, PropertyKey::PaddingLeft), Some(4.0));
-        assert!(!result.declarations.contains_key(&PropertyKey::Padding));
+        assert!(!result.declarations().contains_key(&PropertyKey::Padding));
     }
 
     #[test]
@@ -3479,57 +3570,57 @@ mod tests {
         );
         // top.width だけ後方 longhand が勝つ。
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderTopWidth),
+            result.declarations().get(&PropertyKey::BorderTopWidth),
             Some(&PropertyValue::BorderTopWidth(Length::Px(10.0))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderRightWidth),
+            result.declarations().get(&PropertyKey::BorderRightWidth),
             Some(&PropertyValue::BorderRightWidth(Length::Px(2.0))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderBottomWidth),
+            result.declarations().get(&PropertyKey::BorderBottomWidth),
             Some(&PropertyValue::BorderBottomWidth(Length::Px(3.0))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderLeftWidth),
+            result.declarations().get(&PropertyKey::BorderLeftWidth),
             Some(&PropertyValue::BorderLeftWidth(Length::Px(4.0))),
         );
         // style / color は shorthand 由来のまま per-side に残る。
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderTopStyle),
+            result.declarations().get(&PropertyKey::BorderTopStyle),
             Some(&PropertyValue::BorderTopStyle(BorderStyle::Solid)),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderRightStyle),
+            result.declarations().get(&PropertyKey::BorderRightStyle),
             Some(&PropertyValue::BorderRightStyle(BorderStyle::Dashed)),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderBottomStyle),
+            result.declarations().get(&PropertyKey::BorderBottomStyle),
             Some(&PropertyValue::BorderBottomStyle(BorderStyle::Dotted)),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderLeftStyle),
+            result.declarations().get(&PropertyKey::BorderLeftStyle),
             Some(&PropertyValue::BorderLeftStyle(BorderStyle::Double)),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderTopColor),
+            result.declarations().get(&PropertyKey::BorderTopColor),
             Some(&PropertyValue::BorderTopColor(BorderColor::Resolved(RED))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderRightColor),
+            result.declarations().get(&PropertyKey::BorderRightColor),
             Some(&PropertyValue::BorderRightColor(BorderColor::Resolved(
                 BLUE
             ))),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderBottomColor),
+            result.declarations().get(&PropertyKey::BorderBottomColor),
             Some(&PropertyValue::BorderBottomColor(BorderColor::CurrentColor)),
         );
         assert_eq!(
-            result.declarations.get(&PropertyKey::BorderLeftColor),
+            result.declarations().get(&PropertyKey::BorderLeftColor),
             Some(&PropertyValue::BorderLeftColor(BorderColor::Resolved(RED))),
         );
-        assert!(!result.declarations.contains_key(&PropertyKey::Border));
+        assert!(!result.declarations().contains_key(&PropertyKey::Border));
     }
 
     #[test]
@@ -3555,7 +3646,7 @@ mod tests {
         assert_eq!(margin_px(&result, PropertyKey::MarginRight), Some(2.0));
         assert_eq!(margin_px(&result, PropertyKey::MarginBottom), Some(3.0));
         assert_eq!(margin_px(&result, PropertyKey::MarginLeft), Some(4.0));
-        assert!(!result.declarations.contains_key(&PropertyKey::Margin));
+        assert!(!result.declarations().contains_key(&PropertyKey::Margin));
     }
 
     #[test]
@@ -3589,7 +3680,7 @@ mod tests {
         assert_eq!(margin_px(&result, PropertyKey::MarginRight), Some(2.0));
         assert_eq!(margin_px(&result, PropertyKey::MarginBottom), Some(3.0));
         assert_eq!(margin_px(&result, PropertyKey::MarginLeft), Some(4.0));
-        assert!(!result.declarations.contains_key(&PropertyKey::Margin));
+        assert!(!result.declarations().contains_key(&PropertyKey::Margin));
     }
 
     #[test]
@@ -3611,8 +3702,8 @@ mod tests {
         for _ in 0..9 {
             let run = cascade_page(&tree, &query, None);
             assert_eq!(
-                run.declarations.get(&PropertyKey::Color),
-                baseline.declarations.get(&PropertyKey::Color),
+                run.declarations().get(&PropertyKey::Color),
+                baseline.declarations().get(&PropertyKey::Color),
             );
         }
     }
