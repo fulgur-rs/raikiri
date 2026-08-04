@@ -876,7 +876,7 @@ fn page_context_font_size(
 ///
 /// The consequence is load-bearing and matches the element path: `@page {
 /// border-top-width: 5px }` **on its own** computes to `0px`, exactly as
-/// `ComputedValues::initial().border.top.width` is `0px` for an element that
+/// `ComputedValues::initial().border.top.width()` is `0px` for an element that
 /// declares no `border-style` (pin:
 /// `specified::tests::initial_border_width_is_gated_to_zero_at_computed_layer`).
 fn page_context_border_styles(

@@ -226,10 +226,10 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<
 fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let b = cv.border;
     style.border = Rect {
-        top: computed_length_to_taffy_length_percentage(b.top.width, diag),
-        right: computed_length_to_taffy_length_percentage(b.right.width, diag),
-        bottom: computed_length_to_taffy_length_percentage(b.bottom.width, diag),
-        left: computed_length_to_taffy_length_percentage(b.left.width, diag),
+        top: computed_length_to_taffy_length_percentage(b.top.width(), diag),
+        right: computed_length_to_taffy_length_percentage(b.right.width(), diag),
+        bottom: computed_length_to_taffy_length_percentage(b.bottom.width(), diag),
+        left: computed_length_to_taffy_length_percentage(b.left.width(), diag),
     };
 }
 
@@ -1790,6 +1790,68 @@ mod tests {
             border_for("border-top-width: medium; border-top-style: solid"),
             Rect {
                 top: LengthPercentage::length(3.0),
+                right: LengthPercentage::length(0.0),
+                bottom: LengthPercentage::length(0.0),
+                left: LengthPercentage::length(0.0),
+            }
+        );
+    }
+
+    /// bd raikiri-spike-9jmt: `ComputedBorder::width` / `::style` を `pub`
+    /// field から `pub(crate)` + read-only accessor へ narrow した動機になった
+    /// invariant の end-to-end pin。
+    ///
+    /// `border-top-width` だけを宣言し `border-top-style` を宣言しない
+    /// (= 未宣言側の computed style は initial `none`、CSS Backgrounds 3
+    /// §3.2) 素朴な入力で、declared width が bridge を通って taffy に **0** と
+    /// して届くことを確認する。narrowing 前はこの gate を consumer が
+    /// `ComputedValues::initial()` 等で得た `ComputedBorder` の
+    /// `.style = BorderStyle::None` 直接書き換えで迂回でき、`.width` が非 0 の
+    /// まま taffy に leak し得た (`used_border_width` bridge 削除後、bd
+    /// raikiri-spike-zls8)。narrowing は `width` / `style` に限り crate 外
+    /// からのその書き換え経路を塞ぐ — `color` は pub のまま、
+    /// `cv.border.top = cv.border.left` のような side 単位の丸ごと代入も
+    /// 引き続き可能で、いずれも本 invariant を破らない。
+    ///
+    /// **本 test は「narrowing 前の値で確認できる 1 入力が正しく gate される」
+    /// ことの pin であり、「crate 外からこの invariant を破る経路が存在しない」
+    /// ことを本 test 自身が総当たりで示すものではない。** ただし後者自体は
+    /// 現状すでに **型の visibility 境界で構造的に防がれている** — `width` /
+    /// `style` は `pub(crate)`、公開 API は値渡し read-only accessor (`width()` /
+    /// `style()`) のみで setter / builder / ctor が無いため、crate 外の
+    /// safe code がこの 2 field を書き換える経路はコンパイル時に存在しない。
+    ///
+    /// **未解決なのは別の軸 — regression 検知**: 将来誰かが `width` /
+    /// `style` を `pub(crate)` から `pub` に戻す (= 上記の型保証そのものを
+    /// 撤回する) 変更をしても、それを検知して落ちる test が現状無い。
+    /// qzn3 の 3 field (`Declaration::value` 等) には同じ形の regression を
+    /// 検知する compile-fail harness が bd raikiri-spike-ejia で追加され
+    /// 既に main に merge 済みだが、`ComputedBorder::width` / `::style` への
+    /// 横展開はまだ行われていない。
+    #[test]
+    fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use taffy::{LengthPercentage, Rect};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            // `border-style` は一切宣言しない — 4 side とも computed style は
+            // initial `none` (CSS Backgrounds 3 §3.2 "Inherited: no")。
+            Some("border-top-width: 5px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        // border-style unset (initial `none`) must gate width to 0 all the way to taffy.
+        assert_eq!(
+            doc.nodes[body].style.border,
+            Rect {
+                top: LengthPercentage::length(0.0),
                 right: LengthPercentage::length(0.0),
                 bottom: LengthPercentage::length(0.0),
                 left: LengthPercentage::length(0.0),

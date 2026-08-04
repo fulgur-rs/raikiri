@@ -328,9 +328,11 @@ pub struct ComputedValues {
     /// raikiri-spike-0vv.5。
     pub margin: Sides<ComputedLengthPercentageOrAuto>,
     /// `border` — 4-side box-model border (width / style / color × 4 side)。
-    /// **non-inherited**、initial: 各 side `ComputedBorder { width:
-    /// ComputedLength::ZERO, style: BorderStyle::None, color:
-    /// BorderColor::CurrentColor }`。
+    /// **non-inherited**、initial: 各 side が `width` =
+    /// [`ComputedLength::ZERO`] / `style` = [`BorderStyle::None`] / `color` =
+    /// [`BorderColor::CurrentColor`] (`width` / `style` は crate 内部 field、
+    /// consumer からは [`ComputedBorder::width`] / [`ComputedBorder::style`]
+    /// accessor 経由で読む、bd raikiri-spike-9jmt)。
     ///
     /// specified の initial は width = `medium` (= 3px) だが、**computed 層では
     /// 0px** になる — CSS Backgrounds 3 §3.3

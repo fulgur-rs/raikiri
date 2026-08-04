@@ -130,7 +130,7 @@ pub use raikiri_dom::Document;
 // `Computed*` 5 型を追加した。これが `ComputedValues` の field を型付きで受ける
 // ために必要な surface のすべてである:
 //
-// - `ComputedLength`                  — `font_size` / `ComputedBorder::width`
+// - `ComputedLength`                  — `font_size` / `ComputedBorder::width()`
 // - `ComputedLengthPercentage`        — `padding` の各 side
 // - `ComputedLengthPercentageOrAuto`  — `margin` の各 side / `width` / `height`
 // - `ComputedLineHeight`              — `line_height`
