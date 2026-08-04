@@ -368,6 +368,70 @@ pub enum Length {
     /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>) 換算表
     /// verbatim: "1pc = 1/6th of 1in"。
     Pc(f32),
+    /// Font-relative length: `lh` — 使用要素の computed `line-height` に対する
+    /// 倍率。`1lh` → `Lh(1.0)`。
+    ///
+    /// CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#lh>) 原文: "Equal to the computed
+    /// value of the line-height property of the element on which it is used,
+    /// converting normal to an absolute length by using only the metrics of
+    /// the first available font."
+    ///
+    /// # `normal` の resolve — `cap`/`rcap` と同じ wall (bd raikiri-spike-vxha)
+    ///
+    /// `normal` は `line-height` の **initial value** なので、この
+    /// unknown-metric branch は edge case ではなく common case — real font
+    /// instance が要る点は [`crate::resolve::used_line_height_length`] doc
+    /// (cap/rcap と同じ wall) を参照。`ex`/`ch`/`ic` と違い spec は
+    /// font-size 比のフォールバックを与えない (根拠なく比率を捏造しない、
+    /// cleanroom 方針) ため、resolve 側は「解決不能 → 消費 property の
+    /// initial 相当」という per-property fallback を取る
+    /// ([`crate::resolve`] の各 `resolve_*` 関数 doc 参照)。
+    ///
+    /// # 自己参照 (`line-height` 自身の値として使われる場合)
+    ///
+    /// `line-height: 1lh` は自己参照 (`lh` の素の定義 "the element on which
+    /// it is used" が常に使用要素自身を指すため、**あらゆる要素**で自己参照
+    /// になる) — spec 原文と `rlh` との非対称の判断根拠は
+    /// [`crate::resolve::resolve_line_height`] doc が canonical
+    /// (roborev-refine iter 1 quality lens 1、bd raikiri-spike-awjx の
+    /// drift 前例により、本節では要約に留め全文を再掲しない)。
+    /// `font-size: 1lh` も同条項の対象だが、この crate の phase 順序
+    /// (font-size は phase 2、line-height は phase 2.5 — font-size 確定後)
+    /// では font-size 解決時に line-height がまだ存在しないため実装コストが
+    /// 非対称に大きく、本 issue では対象外 — `parse_font_size` が parse-time
+    /// に drop する ([`Length::Rlh`] doc 参照)。
+    Lh(f32),
+    /// Font-relative length: `rlh` — root element の `lh` に対する倍率。
+    /// `1rlh` → `Rlh(1.0)`。
+    ///
+    /// Spec: CSS Values 4 §6.1.1 Font-relative Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#rlh>) — "Equal to the value of
+    /// the lh unit on the root element."
+    ///
+    /// # `normal` wall — [`Length::Lh`] と共通
+    ///
+    /// root element の computed line-height が `normal` で解決不能なら
+    /// `rlh` も解決不能になる — [`Length::Lh`] doc の「`normal` の resolve」
+    /// 節と同じ wall (`cap`/`rcap` と同じ、real font instance が要る)。
+    ///
+    /// # `Length::Lh` と非対称 — 自己参照として扱わない (bd raikiri-spike-vxha)
+    ///
+    /// `rlh` の素の定義は宣言要素の位置に依存しない tree-global な定数
+    /// (root element の値を常に指す) であり、**`lh` と違って自己参照には
+    /// ならない** — 循環が起こり得るのは宣言要素自身が root element の
+    /// ときだけ ([`crate::specified::SpecifiedValues::finalize_as_root`] が
+    /// カバーする「親が居ない」ケース、spec の "if the element has no
+    /// parent" 節どおり initial values (`line-height: normal`) 基準になり
+    /// 常に unresolved になる)。root **ではない**要素の `line-height: 1rlh`
+    /// は既に確定済みの別 node (root) の値を参照するだけで自己参照では
+    /// ないため、他の box property 上の `rlh` と同じ tree-global 基準
+    /// (`ResolveContext::root_line_height`) を使う — 判断根拠の全文は
+    /// [`crate::resolve::resolve_line_height`] doc 参照。
+    ///
+    /// `font-size: 1rlh` は [`Length::Lh`] doc の同節により対象外
+    /// (`parse_font_size` が parse-time に drop)。
+    Rlh(f32),
 }
 
 /// `<length-percentage> | auto` — margin / width で共有される Author CSS seed
@@ -2609,12 +2673,17 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             "q" => Some(Length::Q(*value)),
             "in" => Some(Length::In(*value)),
             "pc" => Some(Length::Pc(*value)),
+            // `lh` / `rlh` (CSS Values 4 §6.1.1) — bd raikiri-spike-vxha.
+            // Accepted generally here; `parse_font_size` post-filters them out
+            // (self-reference wall, [`Length::Lh`] doc "自己参照" 節参照) —
+            // every other consumer (`line-height` 自身を含む) accepts them.
+            "lh" => Some(Length::Lh(*value)),
+            "rlh" => Some(Length::Rlh(*value)),
             // (b) milestone subset — viewport-relative unit (`vw`/`vh`/…) と
-            // `cap`/`rcap`/`lh`/`rlh` は未対応、silent drop。両者とも specified
-            // 層だけでは正しく resolve できない (viewport size / font ascent /
-            // 「line-height: normal を絶対長化する font metrics」が style 層に
-            // 存在しない) ため follow-up bd issue へ spinout 済 (bd
-            // raikiri-spike-vxha、raikiri-spike-2x8 discovered-from)。
+            // `cap`/`rcap` は未対応、silent drop。両者とも specified 層だけ
+            // では正しく resolve できない (viewport size / font ascent が
+            // style 層に存在しない) ため follow-up bd issue へ spinout 済
+            // (bd raikiri-spike-wnpb、raikiri-spike-2x8 discovered-from)。
             _ => None,
         },
         Token::Percentage { unit_value, .. } if allow_percentage => {
@@ -2670,7 +2739,9 @@ fn length_payload(length: Length) -> f32 {
         | Length::Mm(v)
         | Length::Q(v)
         | Length::In(v)
-        | Length::Pc(v) => v,
+        | Length::Pc(v)
+        | Length::Lh(v)
+        | Length::Rlh(v) => v,
     }
 }
 
@@ -2842,11 +2913,31 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// — `-5px` だけでなく `-50%` / `-1em` も drop する。`<absolute-size>` /
 /// `<relative-size>` は grammar 上そもそも符号を持たないので本 constraint の
 /// 対象外 (ident 分岐は `parse_length_value` に達する前に return する)。
+///
+/// # `lh` / `rlh` は drop する (bd raikiri-spike-vxha)
+///
+/// [`Length::Lh`] doc の「自己参照」節: CSS Values 4 §6.1.1 は `lh`/`rlh` が
+/// `line-height` **または font-\* property** の値として、それが指す要素自身に
+/// 使われたときは親 (または「親が無ければ initial values」) の line-height /
+/// font metrics を基準にする、と規定する。`font-size` はまさにその
+/// font-\* property であり、この crate の phase 順序 (font-size = phase 2、
+/// line-height = phase 2.5、padding 等の phase 3 は line-height 確定後) では
+/// font-size 解決の時点で「親の computed line-height」を求めるための
+/// 追加の基準受け渡しが必要になる — [`line-height`](parse_line_height) 側
+/// (`finalize`/`finalize_as_root` が既に持つ `parent: &ComputedValues` を
+/// そのまま使える) と違い、font-size の絶対化 ([`crate::resolve::resolve_font_size`])
+/// は現状 `parent_font_size` だけしか受け取らない。この差分を埋める設計変更は
+/// 本 issue の scope 外と判断し (bd raikiri-spike-vxha 完了報告参照)、
+/// `font-size: 1lh` / `font-size: 1rlh` は declaration ごと drop する
+/// (`line-height` 含む他の全 consumer は受理する — 本関数だけの特別扱い)。
 fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
         return parse_font_size_keyword(&ident);
     }
     let length = parse_length_value(input, true)?;
+    if matches!(length, Length::Lh(_) | Length::Rlh(_)) {
+        return None;
+    }
     (length_payload(length) >= 0.0).then_some(PropertyValue::FontSize(length))
 }
 
@@ -4783,6 +4874,18 @@ mod tests {
     }
 
     #[test]
+    fn font_size_rejects_lh_and_rlh() {
+        // bd raikiri-spike-vxha: `lh`/`rlh` are `parse_length_value`-accepted
+        // in general (`line-height` and the box properties consume them) but
+        // `parse_font_size` post-filters them out — the self-reference wall
+        // documented on `parse_font_size` (CSS Values 4 §6.1.1's "or font-*
+        // properties on the element they refer to" clause), which this issue
+        // scopes out rather than half-implements.
+        assert_eq!(parse("1lh", "font-size"), None);
+        assert_eq!(parse("1rlh", "font-size"), None);
+    }
+
+    #[test]
     fn font_size_accepts_zero() {
         // spec `[0,∞]` の閉区間下端。`0px` は Dimension arm、bare `0` は
         // CSS Values 3 §5 unitless-zero clause の Number arm を通し (raikiri-spike-fnqx)、
@@ -6442,13 +6545,24 @@ mod tests {
 
     #[test]
     fn parse_length_value_rejects_unsupported_unit() {
-        // (b) milestone subset — bd raikiri-spike-2x8 の spinout follow-up
-        // (viewport-relative unit / `cap` / `rcap` / `lh` / `rlh`) は本 helper
-        // で引き続き silent drop。`ch` / `in` は本 task で受理側へ移った
-        // (下記 `parse_length_value_accepts_*` 群を参照)。
+        // (b) milestone subset — bd raikiri-spike-wnpb の spinout
+        // (viewport-relative unit / `cap` / `rcap`) は本 helper で引き続き
+        // silent drop。`lh` / `rlh` は bd raikiri-spike-vxha で受理側へ移った
+        // (下記 `parse_length_value_accepts_lh` / `_rlh` を参照)。
         assert_eq!(parse_length("10vw", false), None);
         assert_eq!(parse_length("1cap", true), None);
-        assert_eq!(parse_length("1lh", true), None);
+    }
+
+    #[test]
+    fn parse_length_value_accepts_lh() {
+        // https://www.w3.org/TR/css-values-4/#lh — authored value をそのまま保持。
+        assert_eq!(parse_length("1.5lh", false), Some(Length::Lh(1.5)));
+    }
+
+    #[test]
+    fn parse_length_value_accepts_rlh() {
+        // https://www.w3.org/TR/css-values-4/#rlh
+        assert_eq!(parse_length("2rlh", false), Some(Length::Rlh(2.0)));
     }
 
     // ── 追加 font-relative unit (CSS Values 4 §6.1.1、bd raikiri-spike-2x8) ──
@@ -6788,15 +6902,29 @@ mod tests {
         );
     }
 
-    // Verification #6 — spec grammar 外 unit の drop (vw / lh 等 milestone subset)。
+    // Verification #6 — spec grammar 外 unit の drop (vw / cap 等 milestone subset)。
     #[test]
     fn padding_top_rejects_unsupported_unit() {
-        // (b) milestone subset — vw / lh 等は spec-valid だが bd raikiri-spike-2x8
+        // (b) milestone subset — vw / cap 等は spec-valid だが bd raikiri-spike-wnpb
         // の spinout follow-up で未対応、parse_length_value 側で drop、`None`
-        // propagate → declaration drop。`ch` は本 task で受理側へ移った
-        // (`padding_top_accepts_ch` 参照)。
+        // propagate → declaration drop。`ch` は bd raikiri-spike-2x8 で、
+        // `lh`/`rlh` は bd raikiri-spike-vxha でそれぞれ受理側へ移った
+        // (`padding_top_accepts_ch` / `padding_top_accepts_lh` 参照)。
         assert_eq!(parse("10vw", "padding-top"), None);
-        assert_eq!(parse("5lh", "padding-top"), None);
+        assert_eq!(parse("5cap", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_top_accepts_lh() {
+        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。
+        assert_eq!(
+            parse("5lh", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Lh(5.0)))
+        );
+        assert_eq!(
+            parse("1rlh", "padding-top"),
+            Some(PropertyValue::PaddingTop(Length::Rlh(1.0)))
+        );
     }
 
     #[test]
@@ -6825,6 +6953,15 @@ mod tests {
     fn padding_top_rejects_negative_ex() {
         // 全 Length variant 経路の non-negative check pin (ex、新規 font-relative unit)。
         assert_eq!(parse("-1ex", "padding-top"), None);
+    }
+
+    #[test]
+    fn padding_top_rejects_negative_lh() {
+        // 全 Length variant 経路の non-negative check pin (`lh`/`rlh`、
+        // bd raikiri-spike-vxha — `length_payload` の OR-pattern に `Lh`/`Rlh`
+        // を足し忘れていないことの直接 pin)。
+        assert_eq!(parse("-1lh", "padding-top"), None);
+        assert_eq!(parse("-1rlh", "padding-top"), None);
     }
 
     /// bd raikiri-spike-2x8 で追加した残り unit (`rex` / `rch` / `ic` / `ric` /
@@ -7090,12 +7227,34 @@ mod tests {
 
     #[test]
     fn line_height_rejects_unsupported_unit() {
-        // parse_length_value が silent drop する unit (`vw` / `lh` 等、
-        // bd raikiri-spike-2x8 の spinout follow-up) は helper 側で `None` →
-        // line-height parse も declaration drop。`ch` は本 task で受理側へ
-        // 移った (`line_height_accepts_ch` 参照)。
+        // parse_length_value が silent drop する unit (`vw` / `cap` 等、
+        // bd raikiri-spike-wnpb の spinout follow-up) は helper 側で `None` →
+        // line-height parse も declaration drop。`ch` は bd raikiri-spike-2x8
+        // で、`lh`/`rlh` は bd raikiri-spike-vxha でそれぞれ受理側へ移った
+        // (`line_height_accepts_ch` / `line_height_accepts_lh` 参照)。
         assert_eq!(parse("10vw", "line-height"), None);
-        assert_eq!(parse("10lh", "line-height"), None);
+        assert_eq!(parse("10cap", "line-height"), None);
+    }
+
+    #[test]
+    fn line_height_accepts_lh() {
+        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha.
+        // `line-height` itself is a valid context for `lh`/`rlh` at parse
+        // time (unlike `font-size`, which `parse_font_size` post-filters —
+        // see that function's doc for why) — the self-reference resolve
+        // basis is handled downstream in `crate::resolve::resolve_line_height`.
+        assert_eq!(
+            parse("10lh", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Length(Length::Lh(
+                10.0
+            ))))
+        );
+        assert_eq!(
+            parse("1rlh", "line-height"),
+            Some(PropertyValue::LineHeight(LineHeight::Length(Length::Rlh(
+                1.0
+            ))))
+        );
     }
 
     #[test]
@@ -7504,10 +7663,28 @@ mod tests {
 
     #[test]
     fn margin_side_rejects_unsupported_unit() {
-        // `lh` (§6.1.1 font-relative lengths) は bd raikiri-spike-2x8 の
+        // `cap` (§6.1.1 font-relative lengths) は bd raikiri-spike-wnpb の
         // spinout follow-up で未対応 (parse_length_value 側で drop)。`cm` は
-        // 本 task で受理側へ移った — margin-side helper に非依存で波及ドロップを pin。
-        assert_eq!(parse("1lh", "margin-top"), None);
+        // bd raikiri-spike-2x8 で、`lh`/`rlh` は bd raikiri-spike-vxha で
+        // それぞれ受理側へ移った — margin-side helper に非依存で波及ドロップを pin。
+        assert_eq!(parse("1cap", "margin-top"), None);
+    }
+
+    #[test]
+    fn margin_side_accepts_lh() {
+        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。
+        assert_eq!(
+            parse("1lh", "margin-top"),
+            Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Lh(
+                1.0
+            ))))
+        );
+        assert_eq!(
+            parse("2rlh", "margin-top"),
+            Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Rlh(
+                2.0
+            ))))
+        );
     }
 
     #[test]
@@ -7868,6 +8045,22 @@ mod tests {
     }
 
     #[test]
+    fn border_width_accepts_lh() {
+        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。`<line-width>`
+        // grammar (`<length [0,∞]> | thin | medium | thick`) has no
+        // self-reference concern the way `font-size` / `line-height` do
+        // ([`Length::Lh`] doc), so `border-*-width` accepts them unfiltered.
+        assert_eq!(
+            parse("2lh", "border-top-width"),
+            Some(PropertyValue::BorderTopWidth(Length::Lh(2.0)))
+        );
+        assert_eq!(
+            parse("1rlh", "border-top-width"),
+            Some(PropertyValue::BorderTopWidth(Length::Rlh(1.0)))
+        );
+    }
+
+    #[test]
     fn border_top_style_parse_solid() {
         // Verification #3: parse("solid", "border-top-style") =
         // Some(PropertyValue::BorderTopStyle(BorderStyle::Solid))。
@@ -8003,12 +8196,26 @@ mod tests {
 
     #[test]
     fn width_rejects_unsupported_unit() {
-        // (b) milestone subset — vw / lh 等は spec-valid だが bd raikiri-spike-2x8
+        // (b) milestone subset — vw / cap 等は spec-valid だが bd raikiri-spike-wnpb
         // の spinout follow-up で未対応、parse_length_value 側で drop、None
-        // propagate。`ch` は本 task で受理側へ移った (`width_accepts_absolute_unit`
-        // 参照)。
+        // propagate。`ch` は bd raikiri-spike-2x8 で、`lh`/`rlh` は
+        // bd raikiri-spike-vxha でそれぞれ受理側へ移った
+        // (`width_accepts_absolute_unit` / `width_accepts_lh` 参照)。
         assert_eq!(parse("10vw", "width"), None);
-        assert_eq!(parse("5lh", "width"), None);
+        assert_eq!(parse("5cap", "width"), None);
+    }
+
+    #[test]
+    fn width_accepts_lh() {
+        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。
+        assert_eq!(
+            parse("5lh", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Length(Length::Lh(5.0))))
+        );
+        assert_eq!(
+            parse("1rlh", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Length(Length::Rlh(1.0))))
+        );
     }
 
     #[test]
@@ -8435,11 +8642,28 @@ mod tests {
 
     #[test]
     fn height_rejects_unsupported_unit() {
-        // `lh` (§6.1.1 font-relative lengths) は bd raikiri-spike-2x8 の
+        // `cap` (§6.1.1 font-relative lengths) は bd raikiri-spike-wnpb の
         // spinout follow-up で未対応 (parse_length_value 側で drop)。`cm` は
-        // 本 task で受理側へ移った (`height_accepts_absolute_unit` 参照)。
-        // sibling `margin_side_rejects_unsupported_unit` と同 pattern。
-        assert_eq!(parse("1lh", "height"), None);
+        // bd raikiri-spike-2x8 で、`lh`/`rlh` は bd raikiri-spike-vxha で
+        // それぞれ受理側へ移った (`height_accepts_absolute_unit` /
+        // `height_accepts_lh` 参照)。sibling
+        // `margin_side_rejects_unsupported_unit` と同 pattern。
+        assert_eq!(parse("1cap", "height"), None);
+    }
+
+    #[test]
+    fn height_accepts_lh() {
+        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。
+        assert_eq!(
+            parse("1.5lh", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(Length::Lh(1.5))))
+        );
+        assert_eq!(
+            parse("2rlh", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(Length::Rlh(
+                2.0
+            ))))
+        );
     }
 
     #[test]

@@ -55,7 +55,7 @@ pub use resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
     ComputedLineHeight, ResolveContext, lift_font_size, lift_line_height, resolve_border,
     resolve_font_size, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_line_height,
+    resolve_line_height, resolve_margin_length_or_auto, used_line_height_length,
 };
 
 pub mod specified;

@@ -64,30 +64,49 @@
 //! [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
 //! [`SpecifiedValues::finalize_as_root`]: crate::specified::SpecifiedValues::finalize_as_root
 //!
-//! # 想定される 3 phase の呼び出し順序
+//! # 想定される 4 段階 (phase 1 / 2 / 2.5 / 3) の呼び出し順序
+//!
+//! phase 2.5 (line-height の絶対化) は bd raikiri-spike-vxha で追加された —
+//! `padding: 2lh` のような box property が `1lh` を使うには、自 node の
+//! line-height が **先に**確定していなければならない (font-size が phase 2 で
+//! 先に確定するのと同じ理由、decision raikiri-spike-082k)。
 //!
 //! ```
 //! use raikiri_style::{
-//!     ComputedLength, ComputedLengthPercentage, ResolveContext, resolve_font_size,
-//!     resolve_length_percentage,
+//!     ComputedLength, ComputedLengthPercentage, ComputedLineHeight, ResolveContext,
+//!     resolve_font_size, resolve_length_percentage, resolve_line_height,
+//!     used_line_height_length,
 //! };
-//! use raikiri_style::property::Length;
+//! use raikiri_style::property::{Length, LineHeight};
 //!
-//! // 親の computed font-size (inheritance が運んできた computed value)。
+//! // 親の computed font-size / line-height (inheritance が運んできた computed value)。
 //! let parent_font_size = ComputedLength(16.0);
+//! let parent_line_height = ComputedLineHeight::Normal;
 //! let ctx = ResolveContext::new(ComputedLength(16.0));
 //!
 //! // phase 1: cascade winner を specified 表現のまま staging する (順不同)。
 //! let specified_font_size = Length::Em(1.5);
-//! let specified_padding_top = Length::Em(2.0);
+//! let specified_line_height = LineHeight::Number(1.5);
+//! let specified_padding_top = Length::Lh(2.0);
 //!
 //! // phase 2: font-size を **親基準** で絶対化する。
 //! let font_size = resolve_font_size(specified_font_size, parent_font_size, &ctx);
 //! assert_eq!(font_size, ComputedLength(24.0));
 //!
-//! // phase 3: 残りを **自 node の確定済 font-size** 基準で絶対化する。
-//! let padding_top = resolve_length_percentage(specified_padding_top, font_size, &ctx);
-//! assert_eq!(padding_top, ComputedLengthPercentage::Px(48.0));
+//! // phase 2.5: line-height を絶対化する。`<number>` は自 node の (今確定した)
+//! // font-size 基準、`lh`/`rlh` の自己参照基準は親の line-height
+//! // (`resolve_line_height` doc 参照) — ここでは `<number>` なので後者は未使用。
+//! let parent_line_height_basis = used_line_height_length(parent_line_height, parent_font_size);
+//! let line_height =
+//!     resolve_line_height(specified_line_height, font_size, parent_line_height_basis, &ctx);
+//! assert_eq!(line_height, ComputedLineHeight::Number(1.5));
+//!
+//! // phase 3: 残りを **自 node の確定済 font-size / line-height** 基準で絶対化する。
+//! // `padding: 2lh` の基準は phase 2.5 が確定した own line-height (1.5 * 24px = 36px)。
+//! let own_line_height = used_line_height_length(line_height, font_size);
+//! let padding_top =
+//!     resolve_length_percentage(specified_padding_top, font_size, own_line_height, &ctx);
+//! assert_eq!(padding_top, ComputedLengthPercentage::Px(72.0)); // 2 * 36
 //! ```
 //!
 //! # `#[non_exhaustive]` の方針 — 本 module の computed 型群に限る判断
@@ -242,7 +261,7 @@ impl ComputedLength {
 /// let font_size = ComputedLength(20.0);
 ///
 /// // percentage は絶対化せず素通し (参照値は used value 層で決まる)。
-/// let p = resolve_length_percentage(Length::Percent(50.0), font_size, &ctx);
+/// let p = resolve_length_percentage(Length::Percent(50.0), font_size, None, &ctx);
 /// assert_eq!(p, ComputedLengthPercentage::Percent(50.0));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -291,6 +310,7 @@ pub enum ComputedLengthPercentage {
 /// let auto = resolve_length_percentage_or_auto(
 ///     LengthOrAuto::Auto,
 ///     ComputedLength(16.0),
+///     None,
 ///     &ctx,
 /// );
 /// assert_eq!(auto, ComputedLengthPercentageOrAuto::Auto);
@@ -341,11 +361,11 @@ pub enum ComputedLengthPercentageOrAuto {
 /// let font_size = ComputedLength(20.0);
 ///
 /// // `<percentage>` は自要素の computed font-size に対して絶対化される。
-/// let lh = resolve_line_height(LineHeight::Length(Length::Percent(150.0)), font_size, &ctx);
+/// let lh = resolve_line_height(LineHeight::Length(Length::Percent(150.0)), font_size, None, &ctx);
 /// assert_eq!(lh, ComputedLineHeight::Length(ComputedLength(30.0)));
 ///
 /// // `<number>` は素通し (子が自分の font-size に掛ける)。
-/// let n = resolve_line_height(LineHeight::Number(1.5), font_size, &ctx);
+/// let n = resolve_line_height(LineHeight::Number(1.5), font_size, None, &ctx);
 /// assert_eq!(n, ComputedLineHeight::Number(1.5));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -399,14 +419,14 @@ pub enum ComputedLineHeight {
 /// // の別 keyword)。
 /// // ただし initial の border-style は `none` なので computed value は 0px。
 /// assert_eq!(
-///     resolve_border(initial, ComputedLength(20.0), &ctx).width(),
+///     resolve_border(initial, ComputedLength(20.0), None, &ctx).width(),
 ///     ComputedLength::ZERO,
 /// );
 ///
 /// // style が visible なら specified width がそのまま絶対化される。
 /// let mut specified = initial;
 /// specified.style = BorderStyle::Solid;
-/// let computed = resolve_border(specified, ComputedLength(20.0), &ctx);
+/// let computed = resolve_border(specified, ComputedLength(20.0), None, &ctx);
 /// assert_eq!(computed.width(), ComputedLength(3.0));
 /// // style / color は specified keyword をそのまま運ぶ。
 /// assert_eq!(computed.style(), specified.style);
@@ -456,23 +476,30 @@ impl ComputedBorder {
 
 /// 絶対化に必要な document-global の参照値。
 ///
-/// 現状は `rem` の参照値 (root element の computed font-size) のみ。
+/// `rem` の参照値 (root element の computed font-size) と、`rlh` の参照値
+/// (root element の computed line-height を [`used_line_height_length`] で
+/// 絶対長に変換した値、`normal` で解決不能なら `None`) の 2 つ
+/// (bd raikiri-spike-vxha で後者を追加)。
 ///
 /// # Primary source (§ title + anchor)
 ///
 /// CSS Values 4 §6.1.1 "Font-relative Lengths"
 /// (<https://www.w3.org/TR/css-values-4/#rem>): `rem` — "Equal to the computed
-/// value of the em unit on the root element."
+/// value of the em unit on the root element." /
+/// (<https://www.w3.org/TR/css-values-4/#rlh>): `rlh` — "Equal to the value of
+/// the lh unit on the root element."
 ///
 /// `#[non_exhaustive]` (module doc 参照) — struct 自体は future field を source
-/// 互換で追加できる。下流からの struct literal 構築は
-/// [`ResolveContext::new`] を使う。
+/// 互換で追加できる。下流からの struct literal 構築は [`ResolveContext::new`] /
+/// [`ResolveContext::with_root_line_height`] を使う。
 ///
 /// **ただし `new` は positional なので `#[non_exhaustive]` の source 互換は
-/// constructor まで及ばない** — viewport-relative unit (`vw` / `vh`、
-/// bd raikiri-spike-2x8) の viewport size を足す時点で、`new` の signature 変更
-/// (breaking) か第 2 constructor (`with_viewport()` 等) / builder のいずれかが
-/// 強制される。field 追加を本当に非破壊にしたいなら後者を採ること。
+/// constructor まで及ばない。** `root_line_height` の追加 (bd raikiri-spike-vxha)
+/// はこの trade-off の実例 — `new` の signature を破壊せず、`root_line_height`
+/// を明示したい呼び手のためだけに [`ResolveContext::with_root_line_height`] を
+/// 第 2 constructor として追加した (`new` は `root_line_height: None` 固定の
+/// 薄い wrapper のまま)。将来また field が増える場合も同じ判断 (breaking な
+/// `new` signature 変更ではなく第 2 constructor / builder) を踏襲すること。
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ResolveContext};
@@ -484,6 +511,14 @@ impl ComputedBorder {
 ///     ResolveContext::new(ComputedLength(20.0)).root_font_size,
 ///     ComputedLength(20.0),
 /// );
+/// // `new` は `root_line_height` を明示しない既存呼び手向けの薄い wrapper —
+/// // `rlh` の参照値は常に「未確定」(`None`) になる。
+/// assert_eq!(ResolveContext::new(ComputedLength(20.0)).root_line_height, None);
+/// assert_eq!(
+///     ResolveContext::with_root_line_height(ComputedLength(20.0), Some(ComputedLength(24.0)))
+///         .root_line_height,
+///     Some(ComputedLength(24.0)),
+/// );
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -493,18 +528,57 @@ pub struct ResolveContext {
     /// 型は [`ComputedLength`] — 本 field が保持するのは**絶対化済の computed
     /// `<length>`** であり、[`resolve_font_size`] の戻り値をそのまま格納できる。
     pub root_font_size: ComputedLength,
+    /// root element の `lh` 値 — `rlh` の参照値 (bd raikiri-spike-vxha)。
+    ///
+    /// [`used_line_height_length`] が root element の
+    /// (computed line-height, computed font-size) から導く**絶対化済の
+    /// px 長**、または `normal` で解決不能なら `None`。`None` は
+    /// [`ComputedLineHeight::Normal`] と同じ「font metrics が style 層に無い」
+    /// wall を表す (`cap`/`rcap` と同じ、[`Length::Lh`] doc 参照) — `0` や
+    /// 他の数値で代用しない (cleanroom: 根拠のない比率を捏造しない)。
+    ///
+    /// [`Length::Lh`]: crate::property::Length::Lh
+    pub root_line_height: Option<ComputedLength>,
 }
 
 impl ResolveContext {
     /// root element の computed font-size を指定して構築する。
+    ///
+    /// `root_line_height` は `None` (未確定) — `rlh` を要する呼び手は
+    /// [`Self::with_root_line_height`] を使うこと。既存呼び手 (`rlh` を扱わない
+    /// tree) の non-breaking な移行のためにこの thin wrapper を残す
+    /// (struct doc の `#[non_exhaustive]` trade-off節 参照)。
     pub fn new(root_font_size: ComputedLength) -> Self {
-        Self { root_font_size }
+        Self {
+            root_font_size,
+            root_line_height: None,
+        }
+    }
+
+    /// root element の computed font-size **と** `rlh` の参照値を指定して
+    /// 構築する (bd raikiri-spike-vxha)。
+    ///
+    /// `root_line_height` は呼び手が [`used_line_height_length`] で
+    /// あらかじめ絶対化した値 (root element の computed line-height が
+    /// `normal` で解決不能なら `None`) を渡す。
+    pub fn with_root_line_height(
+        root_font_size: ComputedLength,
+        root_line_height: Option<ComputedLength>,
+    ) -> Self {
+        Self {
+            root_font_size,
+            root_line_height,
+        }
     }
 
     /// root element の computed font-size が未確定な段階で使う initial context。
     ///
     /// `root_font_size` は `font-size` の initial value (16px) —
     /// [`crate::computed::ComputedValues::initial`] の `font_size` と同一値。
+    /// `root_line_height` も同様に未確定 (`None`) — root element の line-height
+    /// も同じ「親が無い」条項に従い initial value (`normal`) 基準になるため、
+    /// 本 context の下では `rlh` は常に解決不能 (下記 doc および
+    /// [`SpecifiedValues::finalize_as_root`] 参照)。
     ///
     /// root element 自身の **`font-size: Nrem`** もこの値を参照する: CSS Values 4
     /// §6.1.1 "Font-relative Lengths"
@@ -513,19 +587,28 @@ impl ResolveContext {
     /// to, the font-relative lengths resolve against the computed metrics of the
     /// parent element—or against the computed metrics corresponding to the
     /// initial values of the font and line-height properties, if the element has
-    /// no parent." により、root element では initial value 基準になる。
+    /// no parent." により、root element では initial value 基準になる。同 §は
+    /// `lh`/`rlh` にも同条項の類似規定を及ぼすが、両者の非対称
+    /// (`lh` は自己参照として扱う、`rlh` は tree-global 定数として扱う) の
+    /// 判断根拠は [`resolve_line_height`] doc が canonical
+    /// (roborev-refine iter 1 quality lens 1、bd raikiri-spike-awjx の
+    /// drift 前例により要約に留める) — 結論だけ述べると、root element の
+    /// `line-height: 1lh` / `1rlh` はどちらも「initial line-height
+    /// (`normal`)」基準に帰着し、常に unresolved になる。
     ///
     /// **root element の box property (`padding` 等) は対象外** — 上記条項は
-    /// "any font-* property" に限定されており、`padding: 2rem` の `rem` は素の
-    /// 定義どおり root element の computed font-size を参照する。すなわち root
-    /// element でも phase 3 では本 context ではなく
-    /// `ResolveContext::new(自 font-size)` を使う
+    /// "any font-* property" / "the line-height property" に限定されており、
+    /// `padding: 2rem` の `rem` や `padding: 1rlh` の `rlh` は素の定義どおり
+    /// root element の computed font-size / line-height を参照する。すなわち
+    /// root element でも phase 3 では本 context ではなく
+    /// `ResolveContext::with_root_line_height(自 font-size, 自 rlh 基準)` を使う
     /// ([`SpecifiedValues::finalize_as_root`] が実装している)。
     ///
     /// [`SpecifiedValues::finalize_as_root`]: crate::specified::SpecifiedValues::finalize_as_root
     pub fn initial() -> Self {
         Self {
             root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
+            root_line_height: None,
         }
     }
 }
@@ -578,6 +661,75 @@ fn q_to_px(v: f32) -> f32 {
 /// [`mm_to_px`] / [`q_to_px`] と同じ理由で [`in_to_px`] を経由する。
 fn pc_to_px(v: f32) -> f32 {
     in_to_px(v) / 6.0
+}
+
+/// すでに絶対化済みの [`ComputedLineHeight`] (自要素の、または root element の)
+/// を、`lh` / `rlh` 単位の乗数として使える**絶対長**に変換する
+/// (bd raikiri-spike-vxha)。
+///
+/// # Primary source (§ title + anchor)
+///
+/// CSS Values 4 §6.1.1 "Font-relative Lengths" [`lh`](https://www.w3.org/TR/css-values-4/#lh)
+/// 原文: "Equal to the computed value of the line-height property of the
+/// element on which it is used, converting normal to an absolute length by
+/// using only the metrics of the first available font."
+///
+/// - [`ComputedLineHeight::Length`] — 既に絶対長なのでそのまま返す。
+/// - [`ComputedLineHeight::Number`] — `<number>` の used value は「この
+///   要素自身の font-size に掛けたもの」(CSS Inline 3 §5.1
+///   <https://www.w3.org/TR/css-inline-3/#propdef-line-height> の unitless
+///   multiplier semantics — line box の高さ計算がまさにこの積を使う)。
+/// - [`ComputedLineHeight::Normal`] — **`None`**。`normal` を絶対長化するには
+///   "the metrics of the first available font" (real font ascent/descent) が
+///   要るが、`raikiri-style` は style 層に font instance を持たない — `cap`/
+///   `rcap` が同じ理由で spin out された wall と同じもの
+///   ([`crate::property::Length::Lh`] doc 参照)。spec はここに font-size 比の
+///   fallback を与えていないため、`ex`/`ch`/`ic` のような比率を捏造しては
+///   ならない (cleanroom)。呼び手が消費 property ごとの fallback を選ぶ
+///   ([`resolve_length_percentage`] 等の doc 参照)。
+///
+/// `normal` は `line-height` の **initial value** — この関数が `None` を返す
+/// のは edge case ではなく、`lh`/`rlh` を使う要素の**大半**で起こる common
+/// case である。
+///
+/// ```
+/// use raikiri_style::{ComputedLength, ComputedLineHeight, used_line_height_length};
+///
+/// let font_size = ComputedLength(20.0);
+///
+/// // <length> はそのまま。
+/// assert_eq!(
+///     used_line_height_length(ComputedLineHeight::Length(ComputedLength(30.0)), font_size),
+///     Some(ComputedLength(30.0)),
+/// );
+/// // <number> は自要素の font-size に掛ける。
+/// assert_eq!(
+///     used_line_height_length(ComputedLineHeight::Number(1.5), font_size),
+///     Some(ComputedLength(30.0)),
+/// );
+/// // `normal` — font metrics が無いので解決不能。
+/// assert_eq!(
+///     used_line_height_length(ComputedLineHeight::Normal, font_size),
+///     None,
+/// );
+/// ```
+pub fn used_line_height_length(
+    line_height: ComputedLineHeight,
+    font_size: ComputedLength,
+) -> Option<ComputedLength> {
+    match line_height {
+        ComputedLineHeight::Normal => None,
+        ComputedLineHeight::Number(n) => Some(ComputedLength(font_size.0 * n)),
+        ComputedLineHeight::Length(l) => Some(l),
+    }
+}
+
+/// `lh` / `rlh` の authored multiplier に、[`used_line_height_length`] が
+/// 返した基準を掛ける共通 helper。基準が `None` (`normal` で解決不能) なら
+/// `None` を素通しし、各 `resolve_*` 関数が自分の consumer property に
+/// 応じた fallback (`0px` / `Auto` / `normal`) を選ぶ。
+fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<ComputedLength> {
+    basis.map(|b| ComputedLength(b.0 * v))
 }
 
 /// `font-size` の specified value を絶対化する (**phase 2** — 親基準)。
@@ -676,6 +828,14 @@ pub fn resolve_font_size(
         // element's font size" — font-size は §5.5.1 の「percentage は
         // percentage のまま computed される」原則の明示的な例外。
         Length::Percent(p) => ComputedLength(parent_font_size.0 * p / 100.0),
+        // `lh` / `rlh` は `parse_font_size` が parse-time に drop する
+        // ([`Length::Lh`] doc の「自己参照」節 — font-size は lh/rlh が
+        // 明示的に対象とする font-* property であり、この crate の phase
+        // 順序では対応コストが非対称に大きいため font-size だけ対象外にした)。
+        // よってこの arm は **到達不能** — `resolve_length` の
+        // grammar-unreachable `Percent` arm と同じ convention で、意味を
+        // 持たない安全な値 (`0px`) に倒す。
+        Length::Lh(_) | Length::Rlh(_) => ComputedLength::ZERO,
     }
 }
 
@@ -716,9 +876,53 @@ pub fn resolve_font_size(
 /// match して `Em` / `Rem` という **spec-valid な入力**を黙って 0px に潰す
 /// (= fail-quiet)。本 arm は **specified 層の [`Length`]** に対するもので、
 /// 潰れる入力が grammar 上存在しない。
+///
+/// # `Length::Lh` / `Length::Rlh` (bd raikiri-spike-vxha)
+///
+/// `own_line_height` は**呼び手が [`used_line_height_length`] であらかじめ
+/// 絶対化した**、この関数が絶対化中の property を持つ要素**自身**の
+/// line-height 基準 (`border-*-width` の呼び手 [`resolve_border`] がそう渡す)。
+/// `rlh` は tree-global な `ctx.root_line_height` を参照する — [`Length::Lh`]
+/// doc の「自己参照」節が対象とするのは `line-height` 自身の値としての
+/// lh/rlh のみで、本関数は `line-height` の `<length>` 成分を delegate されて
+/// も (`resolve_line_height` 参照) その delegation 自体が **すでに `Length::Lh`
+/// / `Length::Rlh` を除外した後**なので、本関数の Lh/Rlh arm が「自己参照」
+/// 問題を踏むことはない。
+///
+/// # `border-*-width: 1lh` の `0px` fallback — 未解決の設計妥協 (roborev-refine iter 1 Finding B)
+///
+/// 基準が `None` (`normal` で解決不能、cap/rcap と同じ wall) のときは `0px` に
+/// 倒す。**これは上記の `Percent` arm ("grammar 上ありえない入力") と同じ
+/// 理由ではない** — `Length::Lh` / `Length::Rlh` は `border-*-width` の
+/// grammar 上ふつうに到達しうる入力であり、"到達しない" という全域性の
+/// 話ではなく、実際に踏まれうる値が `0px` に落ちるという意味のある挙動である。
+///
+/// CSS Backgrounds 3 §3.3 "Line Thickness: the border-width properties"
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の border-width
+/// 自身の spec initial は `medium` (= 3px、本 crate では
+/// [`crate::specified::INITIAL_BORDER`] が既に扱う) であり、`0` は
+/// `border-style` が `none`/`hidden` のときの gated 結果 (`resolve_border`
+/// が別途処理する) であって、`lh` の解決可能性とは無関係。すなわち
+/// `border-top-style: solid; border-top-width: 1lh` を `line-height: normal`
+/// 下で書くと、意図しない**不可視**の border (`0px`) になる —
+/// `resolve_length_percentage` の `Px(0.0)` fallback (`padding` の真の spec
+/// initial と一致する) と違い、こちらの `0px` は border-width の spec
+/// initial とも一致しない、単なる「他に選びようがなかった値」である。
+///
+/// この不整合は認識した上で **今回は直さない** — root 原因は
+/// [`used_line_height_length`] doc の "normal" wall そのもの (real font
+/// metrics が style 層に無い) であり、根本修正 (`ComputedLength` に
+/// "unresolved" を表す手段を持たせる等) は bd raikiri-spike-k05m が追う
+/// 範囲の一部として扱う。border-width 固有の「`medium` 相当へ倒す」代替案
+/// (style gate 済みの `resolve_border` が既に持つ判定ロジックを再利用できる
+/// 見込みはある) も k05m 側で検討することとし、本関数では `Percent` arm と
+/// 同じコードパスに相乗りしない独立した設計判断として `0px` を明示的に
+/// 選んでいる — 比率を捏造しない (cleanroom) という一線だけは守るが、
+/// この `0px` 自体が border-width の正しい fallback だと主張するものではない。
 pub(crate) fn resolve_length(
     specified: Length,
     font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedLength {
     match specified {
@@ -738,6 +942,10 @@ pub(crate) fn resolve_length(
         Length::Rex(v) | Length::Rch(v) => ComputedLength(ctx.root_font_size.0 * v * 0.5),
         Length::Ric(v) => ComputedLength(ctx.root_font_size.0 * v),
         Length::Percent(_) => ComputedLength::ZERO,
+        Length::Lh(v) => resolve_lh_multiplier(v, own_line_height).unwrap_or(ComputedLength::ZERO),
+        Length::Rlh(v) => {
+            resolve_lh_multiplier(v, ctx.root_line_height).unwrap_or(ComputedLength::ZERO)
+        }
     }
 }
 
@@ -749,9 +957,23 @@ pub(crate) fn resolve_length(
 /// "the computed value of a percentage is the specified percentage" のとおり、
 /// containing block width への解決は used value 層 (CSS Cascade 5 §4.5
 /// <https://www.w3.org/TR/css-cascade-5/#used>、raikiri では taffy) の責務。
+///
+/// # `Length::Lh` / `Length::Rlh` (bd raikiri-spike-vxha)
+///
+/// `own_line_height` は[`resolve_length`]の同名引数と同じ契約 — 呼び手が
+/// [`used_line_height_length`] であらかじめ絶対化した、この property を持つ
+/// 要素自身の line-height 基準。基準が `None` (`normal` で解決不能) のときは
+/// `padding` の spec initial value である **`0`** に倒す (CSS Box 3 §4
+/// <https://www.w3.org/TR/css-box-3/#padding-physical> "Initial: 0") —
+/// これは font-metrics の比率を捏造した値ではなく、「この crate の style 層
+/// では解決できない宣言を、宣言されなかったのと同じ値に倒す」という
+/// per-property fallback である。**cascade の正式な declaration-drop
+/// (次点候補への fall-through) とは異なる** — winner 選択は既に完了して
+/// おり、本関数はその 1 件だけを initial 相当に倒す。
 pub fn resolve_length_percentage(
     specified: Length,
     font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedLengthPercentage {
     match specified {
@@ -772,29 +994,120 @@ pub fn resolve_length_percentage(
         }
         Length::Ric(v) => ComputedLengthPercentage::Px(ctx.root_font_size.0 * v),
         Length::Percent(p) => ComputedLengthPercentage::Percent(p),
+        Length::Lh(v) => ComputedLengthPercentage::Px(
+            resolve_lh_multiplier(v, own_line_height)
+                .map(ComputedLength::px)
+                .unwrap_or(0.0),
+        ),
+        Length::Rlh(v) => ComputedLengthPercentage::Px(
+            resolve_lh_multiplier(v, ctx.root_line_height)
+                .map(ComputedLength::px)
+                .unwrap_or(0.0),
+        ),
     }
 }
 
-/// `<length-percentage> | auto` を取る property (`margin-*` / `width` /
-/// `height`) の specified value を絶対化する (**phase 3** — 自 node 基準)。
+/// `<length-percentage> | auto` を取る property (**`width` / `height`
+/// のみ** — `margin-*` は [`resolve_margin_length_or_auto`] を使うこと、下記
+/// "roborev-refine iter 1 Finding A" 節参照) の specified value を絶対化する
+/// (**phase 3** — 自 node 基準)。
 ///
 /// `Auto` は computed 層でも keyword のまま。`Percent` の扱いは
 /// [`resolve_length_percentage`] と同じ (素通し、used value 層で解決)。
+///
+/// # `Length::Lh` / `Length::Rlh` の解決不能 fallback は `Auto` (bd raikiri-spike-vxha)
+///
+/// [`resolve_length_percentage`] へ丸ごと delegate**しない** — 基準
+/// (`own_line_height` / `ctx.root_line_height`) が `None` (`normal` で解決
+/// 不能) のとき、[`resolve_length_percentage`] は `Px(0.0)` を返すが、`width`/
+/// `height` の spec initial は `auto` であって `0` ではない (CSS Sizing 3
+/// §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
+/// `Px(0.0)` を返すと spec に反するため、本関数は `Lh`/`Rlh` を intercept して
+/// 解決不能な場合 `Auto` を返す — 「解決できない宣言は、宣言されなかったのと
+/// 同じ値に倒す」という [`resolve_length_percentage`] と同じ設計方針を、
+/// `width`/`height` にとって真の spec initial である `Auto` に合わせて
+/// 適用したもの。
+///
+/// # roborev-refine iter 1 Finding A — `margin-*` は本関数を使わない
+///
+/// 当初 `margin-*` もこの関数の consumer に含めていたが (bd raikiri-spike-vxha
+/// 初版)、roborev-refine iter 1 の spec lens 指摘により訂正した:
+/// margin の spec initial (CSS Box 3 §3.1
+/// <https://www.w3.org/TR/css-box-3/#margin-physical> "Initial: 0") は
+/// **definite length `0`** であって `auto` ではない — `width`/`height` とは
+/// 逆に `Px(0.0)` こそが margin の真の spec initial である。加えて `auto` は
+/// margin では「available space を分配する」という**実際のレイアウト動作**
+/// (taffy の auto-margin centering、`raikiri-dom/src/layout.rs` の
+/// `length_percentage_auto_to_taffy` 参照) を引き起こす spec keyword であり、
+/// 単なる「無指定を表す中立値」ではない。本関数の `Auto` fallback を margin
+/// にも適用すると、`line-height: normal` という common case
+/// (`<div style="line-height: normal; margin-top: 1lh">`) で spec に無い
+/// 具体的なレイアウト挙動を勝手に発火させてしまう。
 pub fn resolve_length_percentage_or_auto(
     specified: LengthOrAuto,
     font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedLengthPercentageOrAuto {
     match specified {
         LengthOrAuto::Auto => ComputedLengthPercentageOrAuto::Auto,
-        LengthOrAuto::Length(len) => match resolve_length_percentage(len, font_size, ctx) {
-            ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrAuto::Px(v),
-            ComputedLengthPercentage::Percent(p) => ComputedLengthPercentageOrAuto::Percent(p),
+        LengthOrAuto::Length(Length::Lh(v)) => match resolve_lh_multiplier(v, own_line_height) {
+            Some(c) => ComputedLengthPercentageOrAuto::Px(c.px()),
+            None => ComputedLengthPercentageOrAuto::Auto,
         },
+        LengthOrAuto::Length(Length::Rlh(v)) => {
+            match resolve_lh_multiplier(v, ctx.root_line_height) {
+                Some(c) => ComputedLengthPercentageOrAuto::Px(c.px()),
+                None => ComputedLengthPercentageOrAuto::Auto,
+            }
+        }
+        LengthOrAuto::Length(len) => {
+            match resolve_length_percentage(len, font_size, own_line_height, ctx) {
+                ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrAuto::Px(v),
+                ComputedLengthPercentage::Percent(p) => ComputedLengthPercentageOrAuto::Percent(p),
+            }
+        }
     }
 }
 
-/// `line-height` の specified value を絶対化する (**phase 3** — 自 node 基準)。
+/// `<length-percentage> | auto` を取る **`margin-*`専用** の absolutization
+/// (roborev-refine iter 1 Finding A、bd raikiri-spike-vxha)。
+///
+/// [`resolve_length_percentage_or_auto`] と shape は同じ (`Auto` keyword は
+/// そのまま、`<length-percentage>` は [`resolve_length_percentage`] に
+/// delegate) だが、**`Lh`/`Rlh` 専用の intercept を持たない** — その結果、
+/// 解決不能 (`normal`) なときの fallback は [`resolve_length_percentage`]
+/// がそのまま返す `Px(0.0)` になる。これは margin の spec initial (CSS Box 3
+/// §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical> "Initial: 0")
+/// そのものであり、`resolve_length_percentage_or_auto` が `width`/`height`
+/// のために返す `Auto` (margin にとっては spec 上根拠のない値かつ、taffy の
+/// auto-margin centering という実際のレイアウト動作を誘発する) とは意図的に
+/// 異なる。共有関数 [`resolve_length_percentage_or_auto`] 自体の fallback は
+/// 変えない — 外部から見える public API の挙動を、根拠の無い margin 側の
+/// 都合で `width`/`height` の呼び手ごと変えるのは影響範囲が広すぎる
+/// (この関数は pub なので margin/width/height 以外の将来の呼び手が居ても
+/// 安全なよう、変更は margin 専用の本関数に閉じる)。
+pub fn resolve_margin_length_or_auto(
+    specified: LengthOrAuto,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthPercentageOrAuto {
+    match specified {
+        LengthOrAuto::Auto => ComputedLengthPercentageOrAuto::Auto,
+        LengthOrAuto::Length(len) => {
+            match resolve_length_percentage(len, font_size, own_line_height, ctx) {
+                ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrAuto::Px(v),
+                ComputedLengthPercentage::Percent(p) => ComputedLengthPercentageOrAuto::Percent(p),
+            }
+        }
+    }
+}
+
+/// `line-height` の specified value を絶対化する (**phase 3 / phase 2.5** —
+/// 自 node 基準。呼び手の doc "phase 2.5" 節参照 —
+/// [`crate::specified::SpecifiedValues::finalize`] /
+/// [`crate::specified::SpecifiedValues::finalize_as_root`])。
 ///
 /// - `normal` / `<number>` は素通し。`<number>` を computed 層に残すのは spec 上
 ///   load-bearing な distinction (子は number を inherit して**自分の**
@@ -804,22 +1117,78 @@ pub fn resolve_length_percentage_or_auto(
 ///   "Percentages: computed relative to 1em" + CSS Values 4 §6.1.1 `em`
 ///   (<https://www.w3.org/TR/css-values-4/#em>) "Equal to the computed value of
 ///   the font-size property of the element on which it is used."
-/// - `<length>` は `resolve_length` と同じ規則で絶対化する。
+/// - `<length>` (`Lh` / `Rlh` を除く) は [`resolve_length`] と同じ規則で
+///   絶対化する。
+///
+/// # `Length::Lh` — 自己参照 (bd raikiri-spike-vxha)
+///
+/// `line-height: 1lh` は「自分の computed line-height」を自分の値として
+/// 使う自己参照になる — `lh` の素の定義 ("the element on which it is used")
+/// は常に「使用要素自身」を指すため、この自己参照は**あらゆる要素**で起こる。
+/// CSS Values 4 §6.1.1 "Font-relative Lengths"
+/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) 原文:
+/// "Similarly, when lh or rlh units are used in the value of the line-height
+/// property or font-\* properties on the element they refer to, they resolve
+/// against the computed line-height and font metrics of the parent
+/// element—or the computed metrics corresponding to the initial values of
+/// the font and line-height properties, if the element has no parent."
+///
+/// `self_reference_basis` は呼び手があらかじめ [`used_line_height_length`]
+/// で絶対化した**親の** line-height (親が無い root element では `None` —
+/// 「initial values」= `line-height: normal` は解決不能なので `None` が
+/// そのまま正しい基準になる、[`ResolveContext::initial`] doc 参照)。基準が
+/// `None` のときは `line-height` 自身の spec initial value である
+/// **`normal`** ([`ComputedLineHeight::Normal`]) に倒す —
+/// [`resolve_length_percentage`] の `0px` fallback と同じ「解決できない
+/// 宣言を宣言前の状態に倒す」方針を、`line-height` にとって最も自然な
+/// 「無指定」状態に適用したもの。
+///
+/// # `Length::Rlh` — 自己参照ではなく tree-global 定数 (`Lh` と非対称)
+///
+/// 上記引用は "lh or rlh" と両方を並べているが、**`rlh` はこの crate では
+/// 自己参照として扱わない** — `rlh` の素の定義 ("Equal to the value of the
+/// lh unit **on the root element**") は宣言要素の位置に依存しない tree-global
+/// な定数であり、循環参照が起こり得るのは宣言要素自身が root element の
+/// ときだけ ([`crate::specified::SpecifiedValues::finalize_as_root`] が
+/// その一点をカバーする — root では `ctx` に
+/// [`ResolveContext::initial`] を渡すため `ctx.root_line_height` は
+/// 必然的に `None`)。root **ではない**要素の `line-height: 1rlh` は
+/// 既に確定済みの別 node (root) の値を参照するだけで自己参照ではないため、
+/// 他の box property 上の `rlh` と同じく `ctx.root_line_height` を直接
+/// 使う — `self_reference_basis` (**親**の line-height) を使うと `rlh` の
+/// 素の定義に反する誤った基準 (親の line-height) を使ってしまう。
+/// 引用文の "Similarly" は「自己参照が起こり得る場面では同じ fallback 構造を
+/// 使う」ことを述べているに過ぎず、`rlh` について「循環しない場面でも親を
+/// 参照せよ」と読むのは `rlh` 自身の定義と矛盾するため採らない
+/// (bd raikiri-spike-vxha 完了報告の「ambiguity 節」に経緯を残す)。
 pub fn resolve_line_height(
     specified: LineHeight,
     font_size: ComputedLength,
+    self_reference_basis: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedLineHeight {
     match specified {
         LineHeight::Normal => ComputedLineHeight::Normal,
         LineHeight::Number(n) => ComputedLineHeight::Number(n),
+        LineHeight::Length(Length::Lh(v)) => match resolve_lh_multiplier(v, self_reference_basis) {
+            Some(c) => ComputedLineHeight::Length(c),
+            None => ComputedLineHeight::Normal,
+        },
+        LineHeight::Length(Length::Rlh(v)) => {
+            match resolve_lh_multiplier(v, ctx.root_line_height) {
+                Some(c) => ComputedLineHeight::Length(c),
+                None => ComputedLineHeight::Normal,
+            }
+        }
         LineHeight::Length(len) => ComputedLineHeight::Length(match len {
             // CSS Inline 3 §5.1 "Percentages: computed relative to 1em" —
             // percentage は宣言要素の computed font-size で絶対化される
             // (`resolve_length` の grammar-unreachable な 0px arm には
             // 落とさない)。
             Length::Percent(p) => ComputedLength(font_size.0 * p / 100.0),
-            other => resolve_length(other, font_size, ctx),
+            // `Lh` / `Rlh` は上の arm で既に払い出し済み — ここに来る `other`
+            // が Lh/Rlh になることはない (`own_line_height: None` は死に引数)。
+            other => resolve_length(other, font_size, None, ctx),
         }),
     }
 }
@@ -870,9 +1239,15 @@ pub fn resolve_line_height(
 /// 例外を作らない)。`border-image-*` は Epic 未着手
 /// (`ComputedValues::border` doc の Non-goals) なので現状 gate 位置の再検討は
 /// 不要だが、着手時には両 section を読み直すこと。
+/// `own_line_height` (bd raikiri-spike-vxha) — 呼び手が [`used_line_height_length`]
+/// であらかじめ絶対化した、この border を持つ要素自身の line-height 基準。
+/// `border-*-width: 1lh` の resolve に使う ([`resolve_length`] の同名引数と
+/// 同じ契約)。`None` (`normal` で解決不能) のときは `resolve_length` が
+/// `0px` に倒す。
 pub fn resolve_border(
     specified: Border,
     font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedBorder {
     // `matches!` + else 枝: 未知の future `BorderStyle` variant は「visible な
@@ -882,7 +1257,7 @@ pub fn resolve_border(
     let width = if matches!(specified.style, BorderStyle::None | BorderStyle::Hidden) {
         ComputedLength::ZERO
     } else {
-        resolve_length(specified.width, font_size, ctx)
+        resolve_length(specified.width, font_size, own_line_height, ctx)
     };
     ComputedBorder {
         width,
@@ -954,12 +1329,13 @@ pub fn lift_font_size(computed: ComputedLength) -> Length {
 /// let declared = resolve_line_height(
 ///     LineHeight::Length(Length::Percent(150.0)),
 ///     ComputedLength(20.0),
+///     None,
 ///     &ctx,
 /// );
 /// assert_eq!(declared, ComputedLineHeight::Length(ComputedLength(30.0)));
 ///
 /// // 子 (font-size 10px) は 30px を **そのまま** 継承する (15px ではない)。
-/// let child = resolve_line_height(lift_line_height(declared), ComputedLength(10.0), &ctx);
+/// let child = resolve_line_height(lift_line_height(declared), ComputedLength(10.0), None, &ctx);
 /// assert_eq!(child, ComputedLineHeight::Length(ComputedLength(30.0)));
 /// ```
 pub fn lift_line_height(computed: ComputedLineHeight) -> LineHeight {
@@ -981,6 +1357,7 @@ mod tests {
     /// 自 node / 親の font-size は各 test が引数で個別に渡す。
     const CTX: ResolveContext = ResolveContext {
         root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
+        root_line_height: None,
     };
 
     // -----------------------------------------------------------------
@@ -1122,6 +1499,26 @@ mod tests {
         );
     }
 
+    /// `font-size: 1lh` / `1rlh` are grammar-unreachable in practice
+    /// (`parse_font_size` drops them at parse time, bd raikiri-spike-vxha —
+    /// see that function's doc for the self-reference wall this issue chose
+    /// not to solve for `font-size`), but `resolve_font_size`'s `match` must
+    /// still be exhaustive. Pins the `0px` fallback directly, same
+    /// "pub(crate)/pub visibility lets tests drive an unreachable-via-parsing
+    /// arm directly" precedent as
+    /// `length_percent_is_grammar_unreachable_and_falls_to_zero` below.
+    #[test]
+    fn font_size_lh_and_rlh_are_grammar_unreachable_and_fall_to_zero() {
+        assert_eq!(
+            resolve_font_size(Length::Lh(2.0), ComputedLength(20.0), &CTX),
+            ComputedLength::ZERO,
+        );
+        assert_eq!(
+            resolve_font_size(Length::Rlh(2.0), ComputedLength(20.0), &CTX),
+            ComputedLength::ZERO,
+        );
+    }
+
     /// CSS Values 4 §6.2 "Absolute Lengths" 換算表 verbatim: `1in = 96px` /
     /// `1cm = 96px/2.54` / `1mm = 1/10th of 1cm` / `1Q = 1/40th of 1cm` /
     /// `1pc = 1/6th of 1in`。expected 側は decimal literal ではなく spec と同じ
@@ -1159,11 +1556,11 @@ mod tests {
     #[test]
     fn length_px_and_pt_are_absolute() {
         assert_eq!(
-            resolve_length(Length::Px(3.0), ComputedLength(16.0), &CTX),
+            resolve_length(Length::Px(3.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(3.0),
         );
         assert_eq!(
-            resolve_length(Length::Pt(9.0), ComputedLength(16.0), &CTX),
+            resolve_length(Length::Pt(9.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(12.0),
         );
     }
@@ -1173,7 +1570,7 @@ mod tests {
     #[test]
     fn length_em_resolves_against_own_font_size() {
         assert_eq!(
-            resolve_length(Length::Em(2.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::Em(2.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(40.0),
         );
     }
@@ -1182,7 +1579,7 @@ mod tests {
     fn length_rem_resolves_against_root_font_size() {
         let ctx = ResolveContext::new(ComputedLength(10.0));
         assert_eq!(
-            resolve_length(Length::Rem(2.5), ComputedLength(64.0), &ctx),
+            resolve_length(Length::Rem(2.5), ComputedLength(64.0), None, &ctx),
             ComputedLength(25.0),
         );
     }
@@ -1192,7 +1589,7 @@ mod tests {
     #[test]
     fn length_percent_is_grammar_unreachable_and_falls_to_zero() {
         assert_eq!(
-            resolve_length(Length::Percent(50.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::Percent(50.0), ComputedLength(20.0), None, &CTX),
             ComputedLength::ZERO,
         );
     }
@@ -1205,15 +1602,15 @@ mod tests {
     #[test]
     fn length_ex_ch_ic_resolve_against_own_font_size() {
         assert_eq!(
-            resolve_length(Length::Ex(2.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::Ex(2.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(20.0), // 2 * 0.5 * 20
         );
         assert_eq!(
-            resolve_length(Length::Ch(2.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::Ch(2.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(20.0),
         );
         assert_eq!(
-            resolve_length(Length::Ic(2.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::Ic(2.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(40.0),
         );
     }
@@ -1222,11 +1619,11 @@ mod tests {
     fn length_r_prefixed_font_relative_units_resolve_against_root_font_size() {
         let ctx = ResolveContext::new(ComputedLength(10.0));
         assert_eq!(
-            resolve_length(Length::Rex(2.5), ComputedLength(64.0), &ctx),
+            resolve_length(Length::Rex(2.5), ComputedLength(64.0), None, &ctx),
             ComputedLength(12.5), // 2.5 * 0.5 * 10 (自 font-size 64px は無視)
         );
         assert_eq!(
-            resolve_length(Length::Ric(2.5), ComputedLength(64.0), &ctx),
+            resolve_length(Length::Ric(2.5), ComputedLength(64.0), None, &ctx),
             ComputedLength(25.0),
         );
     }
@@ -1237,23 +1634,23 @@ mod tests {
     #[test]
     fn length_additional_absolute_units_convert_per_spec_table() {
         assert_eq!(
-            resolve_length(Length::In(1.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::In(1.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(96.0),
         );
         assert_eq!(
-            resolve_length(Length::Pc(1.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::Pc(1.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(96.0 / 6.0),
         );
         assert_eq!(
-            resolve_length(Length::Mm(1.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::Mm(1.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(96.0 / 2.54 / 10.0),
         );
         assert_eq!(
-            resolve_length(Length::Q(1.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::Q(1.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(96.0 / 2.54 / 40.0),
         );
         assert_eq!(
-            resolve_length(Length::Cm(1.0), ComputedLength(20.0), &CTX),
+            resolve_length(Length::Cm(1.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(96.0 / 2.54),
         );
     }
@@ -1266,19 +1663,19 @@ mod tests {
     fn length_percentage_absolutizes_lengths() {
         let fs = ComputedLength(20.0);
         assert_eq!(
-            resolve_length_percentage(Length::Px(10.0), fs, &CTX),
+            resolve_length_percentage(Length::Px(10.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(10.0),
         );
         assert_eq!(
-            resolve_length_percentage(Length::Pt(6.0), fs, &CTX),
+            resolve_length_percentage(Length::Pt(6.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(8.0),
         );
         assert_eq!(
-            resolve_length_percentage(Length::Em(2.0), fs, &CTX),
+            resolve_length_percentage(Length::Em(2.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(40.0),
         );
         assert_eq!(
-            resolve_length_percentage(Length::Rem(0.5), fs, &CTX),
+            resolve_length_percentage(Length::Rem(0.5), fs, None, &CTX),
             ComputedLengthPercentage::Px(8.0),
         );
     }
@@ -1292,49 +1689,87 @@ mod tests {
     fn length_percentage_absolutizes_additional_units() {
         let fs = ComputedLength(20.0);
         assert_eq!(
-            resolve_length_percentage(Length::Ex(2.0), fs, &CTX),
+            resolve_length_percentage(Length::Ex(2.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(20.0), // 2 * 0.5 * 20
         );
         assert_eq!(
-            resolve_length_percentage(Length::Ch(2.0), fs, &CTX),
+            resolve_length_percentage(Length::Ch(2.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(20.0),
         );
         assert_eq!(
-            resolve_length_percentage(Length::Ic(1.5), fs, &CTX),
+            resolve_length_percentage(Length::Ic(1.5), fs, None, &CTX),
             ComputedLengthPercentage::Px(30.0),
         );
         let ctx = ResolveContext::new(ComputedLength(10.0));
         assert_eq!(
-            resolve_length_percentage(Length::Rex(2.0), fs, &ctx),
+            resolve_length_percentage(Length::Rex(2.0), fs, None, &ctx),
             ComputedLengthPercentage::Px(10.0), // 2 * 0.5 * 10 (自 20px は無視)
         );
         assert_eq!(
-            resolve_length_percentage(Length::Rch(2.0), fs, &ctx),
+            resolve_length_percentage(Length::Rch(2.0), fs, None, &ctx),
             ComputedLengthPercentage::Px(10.0),
         );
         assert_eq!(
-            resolve_length_percentage(Length::Ric(2.0), fs, &ctx),
+            resolve_length_percentage(Length::Ric(2.0), fs, None, &ctx),
             ComputedLengthPercentage::Px(20.0),
         );
         assert_eq!(
-            resolve_length_percentage(Length::Cm(1.0), fs, &CTX),
+            resolve_length_percentage(Length::Cm(1.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(96.0 / 2.54),
         );
         assert_eq!(
-            resolve_length_percentage(Length::Mm(1.0), fs, &CTX),
+            resolve_length_percentage(Length::Mm(1.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(96.0 / 2.54 / 10.0),
         );
         assert_eq!(
-            resolve_length_percentage(Length::Q(1.0), fs, &CTX),
+            resolve_length_percentage(Length::Q(1.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(96.0 / 2.54 / 40.0),
         );
         assert_eq!(
-            resolve_length_percentage(Length::In(1.0), fs, &CTX),
+            resolve_length_percentage(Length::In(1.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(96.0),
         );
         assert_eq!(
-            resolve_length_percentage(Length::Pc(1.0), fs, &CTX),
+            resolve_length_percentage(Length::Pc(1.0), fs, None, &CTX),
             ComputedLengthPercentage::Px(96.0 / 6.0),
+        );
+    }
+
+    /// `padding: 1lh` — own line-height が解決済 (`Some`) なら乗数として使う
+    /// (bd raikiri-spike-vxha)。
+    #[test]
+    fn length_percentage_lh_multiplies_own_line_height_basis() {
+        let fs = ComputedLength(20.0);
+        assert_eq!(
+            resolve_length_percentage(Length::Lh(1.5), fs, Some(ComputedLength(24.0)), &CTX),
+            ComputedLengthPercentage::Px(36.0), // 1.5 * 24
+        );
+    }
+
+    /// `padding: 1lh` — own line-height が `normal` で解決不能 (`None`) の
+    /// ときは padding の spec initial value `0` に倒す (cleanroom: 比率を
+    /// 捏造しない、[`resolve_length_percentage`] doc 参照)。
+    #[test]
+    fn length_percentage_lh_falls_back_to_zero_when_unresolvable() {
+        let fs = ComputedLength(20.0);
+        assert_eq!(
+            resolve_length_percentage(Length::Lh(1.5), fs, None, &CTX),
+            ComputedLengthPercentage::Px(0.0),
+        );
+    }
+
+    /// `padding: 1rlh` — tree-global な `ctx.root_line_height` を基準にする
+    /// (own line-height ではない)。
+    #[test]
+    fn length_percentage_rlh_multiplies_root_line_height_basis() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::with_root_line_height(
+            ComputedLength(16.0),
+            Some(ComputedLength(19.2)), // root: line-height: normal 相当ではなく既知の px
+        );
+        assert_eq!(
+            resolve_length_percentage(Length::Rlh(2.0), fs, Some(ComputedLength(999.0)), &ctx),
+            ComputedLengthPercentage::Px(38.4), // own_line_height (999) は無視、root だけ使う
         );
     }
 
@@ -1345,7 +1780,7 @@ mod tests {
     #[test]
     fn length_percentage_percent_passes_through_unchanged() {
         assert_eq!(
-            resolve_length_percentage(Length::Percent(50.0), ComputedLength(20.0), &CTX),
+            resolve_length_percentage(Length::Percent(50.0), ComputedLength(20.0), None, &CTX),
             ComputedLengthPercentage::Percent(50.0),
         );
     }
@@ -1357,7 +1792,7 @@ mod tests {
     #[test]
     fn length_percentage_or_auto_keeps_auto() {
         assert_eq!(
-            resolve_length_percentage_or_auto(LengthOrAuto::Auto, ComputedLength(16.0), &CTX),
+            resolve_length_percentage_or_auto(LengthOrAuto::Auto, ComputedLength(16.0), None, &CTX),
             ComputedLengthPercentageOrAuto::Auto,
         );
     }
@@ -1366,16 +1801,142 @@ mod tests {
     fn length_percentage_or_auto_absolutizes_and_passes_percent() {
         let fs = ComputedLength(20.0);
         assert_eq!(
-            resolve_length_percentage_or_auto(LengthOrAuto::Length(Length::Em(1.5)), fs, &CTX),
+            resolve_length_percentage_or_auto(
+                LengthOrAuto::Length(Length::Em(1.5)),
+                fs,
+                None,
+                &CTX
+            ),
             ComputedLengthPercentageOrAuto::Px(30.0),
         );
         assert_eq!(
             resolve_length_percentage_or_auto(
                 LengthOrAuto::Length(Length::Percent(25.0)),
                 fs,
+                None,
                 &CTX
             ),
             ComputedLengthPercentageOrAuto::Percent(25.0),
+        );
+    }
+
+    /// `width: 1lh` (`resolve_length_percentage_or_auto` — `width`/`height`
+    /// only since roborev-refine iter 1 Finding A, bd raikiri-spike-vxha) —
+    /// resolvable な own line-height なら乗数として使う。
+    /// [`resolve_length_percentage_or_auto`] は `Lh`/`Rlh` を
+    /// [`resolve_length_percentage`] へ delegate**しない** (fallback が違う、
+    /// 次のテスト参照) が、resolvable な場合の数値は一致する。
+    #[test]
+    fn length_percentage_or_auto_lh_multiplies_own_line_height_basis() {
+        let fs = ComputedLength(20.0);
+        assert_eq!(
+            resolve_length_percentage_or_auto(
+                LengthOrAuto::Length(Length::Lh(1.5)),
+                fs,
+                Some(ComputedLength(24.0)),
+                &CTX,
+            ),
+            ComputedLengthPercentageOrAuto::Px(36.0),
+        );
+    }
+
+    /// `width: 1lh` — own line-height が `normal` で解決不能なら **`Auto`**
+    /// に倒す (`width`/`height`'s spec initial, CSS Sizing 3 §3.1.1) —
+    /// [`resolve_length_percentage`]'s `0px` fallback とは異なる。**margin
+    /// はもう本関数を通らない** (roborev-refine iter 1 Finding A) —
+    /// margin の同型テストは `resolve_margin_length_or_auto_lh_falls_back_to_zero_when_unresolvable`
+    /// を参照。
+    #[test]
+    fn length_percentage_or_auto_lh_falls_back_to_auto_when_unresolvable() {
+        let fs = ComputedLength(20.0);
+        assert_eq!(
+            resolve_length_percentage_or_auto(
+                LengthOrAuto::Length(Length::Lh(1.5)),
+                fs,
+                None,
+                &CTX
+            ),
+            ComputedLengthPercentageOrAuto::Auto,
+        );
+        let ctx_no_root_lh = ResolveContext::new(ComputedLength(16.0));
+        assert_eq!(
+            resolve_length_percentage_or_auto(
+                LengthOrAuto::Length(Length::Rlh(1.0)),
+                fs,
+                Some(ComputedLength(999.0)), // own line-height は rlh に無関係
+                &ctx_no_root_lh,
+            ),
+            ComputedLengthPercentageOrAuto::Auto,
+        );
+    }
+
+    /// `margin-top: 1lh` (roborev-refine iter 1 Finding A, bd raikiri-spike-vxha)
+    /// — resolvable な own line-height なら乗数として使う。Numerically
+    /// identical to `resolve_length_percentage_or_auto`'s answer when
+    /// resolvable — only the unresolvable fallback differs (next test).
+    #[test]
+    fn resolve_margin_length_or_auto_lh_multiplies_own_line_height_basis() {
+        let fs = ComputedLength(20.0);
+        assert_eq!(
+            resolve_margin_length_or_auto(
+                LengthOrAuto::Length(Length::Lh(1.5)),
+                fs,
+                Some(ComputedLength(24.0)),
+                &CTX,
+            ),
+            ComputedLengthPercentageOrAuto::Px(36.0),
+        );
+    }
+
+    /// The Finding A regression pin: `margin-top: 1lh` / `1rlh` under
+    /// `line-height: normal` (unresolvable) must compute to **`Px(0.0)`**
+    /// — margin's actual spec initial (CSS Box 3 §3.1) — not `Auto`
+    /// (`resolve_length_percentage_or_auto`'s fallback, which is correct
+    /// for `width`/`height` but was wrongly shared with `margin` before this
+    /// fix; `Auto` triggers real taffy auto-margin layout, not a neutral
+    /// "unspecified" value, per `resolve_margin_length_or_auto`'s doc).
+    #[test]
+    fn resolve_margin_length_or_auto_lh_falls_back_to_zero_when_unresolvable() {
+        let fs = ComputedLength(20.0);
+        assert_eq!(
+            resolve_margin_length_or_auto(LengthOrAuto::Length(Length::Lh(1.5)), fs, None, &CTX),
+            ComputedLengthPercentageOrAuto::Px(0.0),
+        );
+        let ctx_no_root_lh = ResolveContext::new(ComputedLength(16.0));
+        assert_eq!(
+            resolve_margin_length_or_auto(
+                LengthOrAuto::Length(Length::Rlh(1.0)),
+                fs,
+                Some(ComputedLength(999.0)), // own line-height は rlh に無関係
+                &ctx_no_root_lh,
+            ),
+            ComputedLengthPercentageOrAuto::Px(0.0),
+        );
+    }
+
+    /// `margin: auto` itself must still pass through as `Auto` —
+    /// `resolve_margin_length_or_auto` only changes the `Lh`/`Rlh`
+    /// unresolvable fallback, not the literal `auto` keyword's own meaning.
+    #[test]
+    fn resolve_margin_length_or_auto_keeps_auto_keyword() {
+        assert_eq!(
+            resolve_margin_length_or_auto(LengthOrAuto::Auto, ComputedLength(16.0), None, &CTX),
+            ComputedLengthPercentageOrAuto::Auto,
+        );
+    }
+
+    /// `margin-top: 50%` — percentage still passes through un-absolutized,
+    /// same as `resolve_length_percentage_or_auto` (used-value layer input).
+    #[test]
+    fn resolve_margin_length_or_auto_keeps_percent() {
+        assert_eq!(
+            resolve_margin_length_or_auto(
+                LengthOrAuto::Length(Length::Percent(50.0)),
+                ComputedLength(16.0),
+                None,
+                &CTX,
+            ),
+            ComputedLengthPercentageOrAuto::Percent(50.0),
         );
     }
 
@@ -1386,7 +1947,7 @@ mod tests {
     #[test]
     fn line_height_normal_passes_through() {
         assert_eq!(
-            resolve_line_height(LineHeight::Normal, ComputedLength(20.0), &CTX),
+            resolve_line_height(LineHeight::Normal, ComputedLength(20.0), None, &CTX),
             ComputedLineHeight::Normal,
         );
     }
@@ -1397,7 +1958,7 @@ mod tests {
     #[test]
     fn line_height_number_passes_through() {
         assert_eq!(
-            resolve_line_height(LineHeight::Number(1.5), ComputedLength(20.0), &CTX),
+            resolve_line_height(LineHeight::Number(1.5), ComputedLength(20.0), None, &CTX),
             ComputedLineHeight::Number(1.5),
         );
     }
@@ -1411,6 +1972,7 @@ mod tests {
             resolve_line_height(
                 LineHeight::Length(Length::Percent(150.0)),
                 ComputedLength(20.0),
+                None,
                 &CTX
             ),
             ComputedLineHeight::Length(ComputedLength(30.0)),
@@ -1423,6 +1985,7 @@ mod tests {
             resolve_line_height(
                 LineHeight::Length(Length::Em(1.2)),
                 ComputedLength(20.0),
+                None,
                 &CTX
             ),
             ComputedLineHeight::Length(ComputedLength(24.0)),
@@ -1431,9 +1994,105 @@ mod tests {
             resolve_line_height(
                 LineHeight::Length(Length::Px(24.0)),
                 ComputedLength(20.0),
+                None,
                 &CTX
             ),
             ComputedLineHeight::Length(ComputedLength(24.0)),
+        );
+    }
+
+    /// `line-height: 1lh` is self-referential (CSS Values 4 §6.1.1, spec
+    /// quote + `lh`/`rlh` asymmetry rationale canonically documented on
+    /// [`resolve_line_height`] — bd raikiri-spike-vxha). When the parent's
+    /// own line-height is resolvable, `lh` multiplies by it — `own
+    /// font_size` (the 2nd arg) and `ctx.root_line_height` are **not**
+    /// consulted at all for this case, only `self_reference_basis` is.
+    #[test]
+    fn line_height_lh_resolves_against_parent_self_reference_basis() {
+        let parent_basis = Some(ComputedLength(24.0)); // parent's used line-height
+        let ctx_with_unrelated_root = ResolveContext::with_root_line_height(
+            ComputedLength(16.0),
+            Some(ComputedLength(999.0)), // must not leak into `lh`'s answer
+        );
+        assert_eq!(
+            resolve_line_height(
+                LineHeight::Length(Length::Lh(1.5)),
+                ComputedLength(999.0), // own font-size, irrelevant here
+                parent_basis,
+                &ctx_with_unrelated_root,
+            ),
+            ComputedLineHeight::Length(ComputedLength(36.0)),
+        );
+    }
+
+    /// `rlh`, unlike `lh`, is **not** treated as self-referential in this
+    /// crate — its own definition ("the lh unit on the root element") is a
+    /// tree-global constant, not something that depends on the declaring
+    /// element (see [`resolve_line_height`]'s doc, "`Length::Rlh` — 自己参照
+    /// ではなく tree-global 定数" section, for why the literal "Similarly,
+    /// lh or rlh" spec wording is not followed for `rlh` on non-root
+    /// elements). So `line-height: 1rlh` on a *non-root* element reads
+    /// `ctx.root_line_height`, **not** `self_reference_basis` (the parent's
+    /// line-height) — this is the discriminating test: parent and root
+    /// bases are deliberately different values.
+    #[test]
+    fn line_height_rlh_resolves_against_root_not_parent_self_reference_basis() {
+        let parent_basis = Some(ComputedLength(999.0)); // must not leak into `rlh`'s answer
+        let ctx = ResolveContext::with_root_line_height(
+            ComputedLength(16.0),
+            Some(ComputedLength(24.0)), // root's used line-height
+        );
+        assert_eq!(
+            resolve_line_height(
+                LineHeight::Length(Length::Rlh(0.5)),
+                ComputedLength(999.0),
+                parent_basis,
+                &ctx,
+            ),
+            ComputedLineHeight::Length(ComputedLength(12.0)), // 0.5 * 24 (root), not 0.5 * 999
+        );
+    }
+
+    /// When the parent's own line-height is `normal` (unresolvable — no font
+    /// metrics in the style layer, same wall as `cap`/`rcap`) or there is no
+    /// parent (`self_reference_basis: None`, root element case — CSS Values
+    /// 4 §6.1.1's "if the element has no parent" clause reduces to `normal`
+    /// there too, see `SpecifiedValues::finalize_as_root` doc), `1lh` falls
+    /// back to `line-height`'s own spec initial value `normal` rather than
+    /// inventing a length (bd raikiri-spike-vxha — this is the per-property
+    /// fallback chosen for the "normal" wall, distinct from
+    /// `resolve_length_percentage`'s `0px` / `resolve_length_percentage_or_auto`'s
+    /// `Auto`, because `normal` is what "unspecified" actually means for
+    /// this property).
+    #[test]
+    fn line_height_lh_falls_back_to_normal_when_self_reference_basis_unresolvable() {
+        assert_eq!(
+            resolve_line_height(
+                LineHeight::Length(Length::Lh(1.5)),
+                ComputedLength(20.0),
+                None,
+                &CTX,
+            ),
+            ComputedLineHeight::Normal,
+        );
+    }
+
+    /// Same fallback for `rlh`, but keyed off `ctx.root_line_height` instead
+    /// of `self_reference_basis` — this is what makes root's own
+    /// self-referential `1rlh` (`self_reference_basis` irrelevant there,
+    /// `finalize_as_root` never passes it) *and* a normal-rooted document's
+    /// descendants both land on `normal` without special-casing which node
+    /// is which.
+    #[test]
+    fn line_height_rlh_falls_back_to_normal_when_root_line_height_unresolvable() {
+        assert_eq!(
+            resolve_line_height(
+                LineHeight::Length(Length::Rlh(1.5)),
+                ComputedLength(20.0),
+                Some(ComputedLength(999.0)), // parent basis must not rescue rlh
+                &CTX,                        // CTX.root_line_height == None
+            ),
+            ComputedLineHeight::Normal,
         );
     }
 
@@ -1445,12 +2104,53 @@ mod tests {
     fn border_absolutizes_width_and_carries_style_and_color() {
         let mut specified = SpecifiedValues::initial().border.top;
         specified.style = BorderStyle::Solid;
-        let computed = resolve_border(specified, ComputedLength(20.0), &CTX);
+        let computed = resolve_border(specified, ComputedLength(20.0), None, &CTX);
         // specified `medium` = 3px (CSS Backgrounds 3 §3.3: thin/medium/thick は
         // 1px/3px/5px に**規範的に**等価)。
         assert_eq!(computed.width, ComputedLength(3.0));
         assert_eq!(computed.style, specified.style);
         assert_eq!(computed.color, specified.color);
+    }
+
+    /// `border-*-width: 1lh` / `1rlh` (bd raikiri-spike-vxha) — resolvable な
+    /// 基準なら乗数、`None` (`normal` で解決不能) なら `resolve_length` の
+    /// grammar-unreachable `Percent` arm と同じ `0px` に倒す。
+    #[test]
+    fn border_width_resolves_lh_and_rlh() {
+        let mut specified = SpecifiedValues::initial().border.top;
+        specified.style = BorderStyle::Solid;
+        specified.width = Length::Lh(2.0);
+        assert_eq!(
+            resolve_border(
+                specified,
+                ComputedLength(20.0),
+                Some(ComputedLength(10.0)),
+                &CTX
+            )
+            .width,
+            ComputedLength(20.0), // 2 * 10
+        );
+        // `own_line_height: None` (normal で解決不能) → 0px。
+        assert_eq!(
+            resolve_border(specified, ComputedLength(20.0), None, &CTX).width,
+            ComputedLength::ZERO,
+        );
+
+        let mut rlh_specified = specified;
+        rlh_specified.width = Length::Rlh(1.5);
+        let ctx =
+            ResolveContext::with_root_line_height(ComputedLength(16.0), Some(ComputedLength(20.0)));
+        assert_eq!(
+            // own_line_height (999) は `rlh` に無関係 — `ctx.root_line_height` だけ使う。
+            resolve_border(
+                rlh_specified,
+                ComputedLength(20.0),
+                Some(ComputedLength(999.0)),
+                &ctx
+            )
+            .width,
+            ComputedLength(30.0), // 1.5 * 20
+        );
     }
 
     /// `ComputedBorder::width()` / `::style()` accessor 本体を実行する pin
@@ -1464,7 +2164,7 @@ mod tests {
     fn computed_border_accessors_read_the_gated_fields() {
         let mut specified = SpecifiedValues::initial().border.top;
         specified.style = BorderStyle::Solid;
-        let computed = resolve_border(specified, ComputedLength(20.0), &CTX);
+        let computed = resolve_border(specified, ComputedLength(20.0), None, &CTX);
         assert_eq!(computed.width(), ComputedLength(3.0));
         assert_eq!(computed.style(), BorderStyle::Solid);
     }
@@ -1478,13 +2178,13 @@ mod tests {
         for style in [BorderStyle::None, BorderStyle::Hidden] {
             b.style = style;
             assert_eq!(
-                resolve_border(b, ComputedLength(20.0), &CTX).width,
+                resolve_border(b, ComputedLength(20.0), None, &CTX).width,
                 ComputedLength::ZERO,
             );
         }
         b.style = BorderStyle::Solid;
         assert_eq!(
-            resolve_border(b, ComputedLength(20.0), &CTX).width,
+            resolve_border(b, ComputedLength(20.0), None, &CTX).width,
             ComputedLength(5.0),
         );
     }
@@ -1494,7 +2194,7 @@ mod tests {
         let mut specified = SpecifiedValues::initial().border.top;
         specified.width = Length::Em(0.5);
         specified.style = BorderStyle::Solid;
-        let computed = resolve_border(specified, ComputedLength(20.0), &CTX);
+        let computed = resolve_border(specified, ComputedLength(20.0), None, &CTX);
         assert_eq!(computed.width, ComputedLength(10.0));
     }
 
@@ -1510,12 +2210,12 @@ mod tests {
         specified.width = Length::Pc(1.0);
         specified.style = BorderStyle::Solid;
         assert_eq!(
-            resolve_border(specified, ComputedLength(20.0), &CTX).width,
+            resolve_border(specified, ComputedLength(20.0), None, &CTX).width,
             ComputedLength(16.0),
         );
         specified.style = BorderStyle::None;
         assert_eq!(
-            resolve_border(specified, ComputedLength(20.0), &CTX).width,
+            resolve_border(specified, ComputedLength(20.0), None, &CTX).width,
             ComputedLength::ZERO,
         );
     }
@@ -1555,6 +2255,7 @@ mod tests {
         let declared = resolve_line_height(
             LineHeight::Length(Length::Percent(150.0)),
             ComputedLength(20.0),
+            None,
             &CTX,
         );
         assert_eq!(declared, ComputedLineHeight::Length(ComputedLength(30.0)));
@@ -1563,7 +2264,7 @@ mod tests {
         assert_eq!(lifted, LineHeight::Length(Length::Px(30.0)));
 
         // 子の font-size が 10px でも 15px にはならない。
-        let child = resolve_line_height(lifted, ComputedLength(10.0), &CTX);
+        let child = resolve_line_height(lifted, ComputedLength(10.0), None, &CTX);
         assert_eq!(child, ComputedLineHeight::Length(ComputedLength(30.0)));
     }
 
@@ -1583,6 +2284,7 @@ mod tests {
             resolve_line_height(
                 lift_line_height(ComputedLineHeight::Number(1.5)),
                 ComputedLength(10.0),
+                None,
                 &CTX
             ),
             ComputedLineHeight::Number(1.5),
@@ -1608,19 +2310,19 @@ mod tests {
 
         assert_eq!(initial.padding, Sides::all(Length::Px(0.0)));
         assert_eq!(
-            resolve_length_percentage(initial.padding.top, fs, &CTX),
+            resolve_length_percentage(initial.padding.top, fs, None, &CTX),
             ComputedLengthPercentage::Px(0.0),
         );
         assert_eq!(
-            resolve_length_percentage_or_auto(initial.margin.top, fs, &CTX),
+            resolve_length_percentage_or_auto(initial.margin.top, fs, None, &CTX),
             ComputedLengthPercentageOrAuto::Px(0.0),
         );
         assert_eq!(
-            resolve_length_percentage_or_auto(initial.width, fs, &CTX),
+            resolve_length_percentage_or_auto(initial.width, fs, None, &CTX),
             ComputedLengthPercentageOrAuto::Auto,
         );
         assert_eq!(
-            resolve_length_percentage_or_auto(initial.height, fs, &CTX),
+            resolve_length_percentage_or_auto(initial.height, fs, None, &CTX),
             ComputedLengthPercentageOrAuto::Auto,
         );
         // CSS Backgrounds 3 §3.3 "Computed value: … zero if the border style is
@@ -1628,11 +2330,11 @@ mod tests {
         // (specified の `medium` = 3px は style gating で潰れる)。
         assert_eq!(initial.border.left.width, Length::Px(3.0));
         assert_eq!(
-            resolve_border(initial.border.left, fs, &CTX).width,
+            resolve_border(initial.border.left, fs, None, &CTX).width,
             ComputedLength::ZERO,
         );
         assert_eq!(
-            resolve_line_height(initial.line_height, fs, &CTX),
+            resolve_line_height(initial.line_height, fs, None, &CTX),
             ComputedLineHeight::Normal,
         );
         assert_eq!(

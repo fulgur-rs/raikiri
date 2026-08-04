@@ -6,17 +6,23 @@
 //! 2. inheritance walk — top-down DFS で親の computed value を継承 + 自 node の
 //!    cascaded value で override
 //!
-//! # inheritance walk 内部の 3 phase (bd decision raikiri-spike-082k)
+//! # inheritance walk 内部の 4 段階 (bd decision raikiri-spike-082k、
+//! # phase 2.5 は bd raikiri-spike-vxha で追加)
 //!
-//! 上記 phase 2 の per-node 処理は、さらに 3 段に分かれる:
+//! 上記 phase 2 の per-node 処理は、さらに 4 段に分かれる (順に phase 1 /
+//! 2 / 2.5 / 3 と呼ぶ):
 //!
-//! 1. **winner の staging** — 親の [`ComputedValues`] から
-//!    [`SpecifiedValues`] を seed し、その node の全 winner を `apply_value` で
-//!    適用する。この段では length は specified 表現のまま。
-//! 2. **font-size の絶対化** — **親の** computed font-size 基準。
-//! 3. **残り全 length の絶対化** — **自 node の** computed font-size 基準。
+//! - **phase 1: winner の staging** — 親の [`ComputedValues`] から
+//!   [`SpecifiedValues`] を seed し、その node の全 winner を `apply_value` で
+//!   適用する。この段では length は specified 表現のまま。
+//! - **phase 2: font-size の絶対化** — **親の** computed font-size 基準。
+//! - **phase 2.5: line-height の絶対化** — 自 node の (今確定した) font-size
+//!   基準。`lh`/`rlh` の自己参照基準の非対称は
+//!   [`crate::resolve::resolve_line_height`] doc が canonical。
+//! - **phase 3: 残り全 length の絶対化** — **自 node の** computed font-size /
+//!   line-height 基準。
 //!
-//! 2 / 3 は [`SpecifiedValues::finalize`] に閉じている。分離が必要な理由は
+//! 2 / 2.5 / 3 は [`SpecifiedValues::finalize`] に閉じている。分離が必要な理由は
 //! [`crate::specified`] の module doc を参照 (`padding: 2em` の基準となる
 //! `font-size` はその node の**全** winner を適用し終えるまで確定しないため、
 //! winner 適用の途中で絶対化することはできない)。
@@ -33,7 +39,7 @@ use crate::property::{
     FontWeightValue, Length, PositionValue, PropertyValue, RelativeFontSize,
     resolve_text_align_match_parent,
 };
-use crate::resolve::{ComputedLength, ResolveContext};
+use crate::resolve::{ComputedLength, ResolveContext, used_line_height_length};
 use crate::rule::{expand_shorthand_into, parse_declaration_block};
 use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
@@ -315,7 +321,9 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 ///   **`html { font-size: 2rem }` が自己参照になる誤実装 (tree 全体に単一
 ///   context を配る) を塞ぐのはここ。**
 /// - `Some(ctx)` — element 祖先が居る。その最上位 element (= root element) の
-///   computed font-size が `ctx.root_font_size`。
+///   computed font-size が `ctx.root_font_size`、`lh` の値 (`rlh` の参照値、
+///   `used_line_height_length` で絶対長化したもの。`normal` で解決不能なら
+///   `None`) が `ctx.root_line_height` (bd raikiri-spike-vxha)。
 ///
 /// [`StyleDom::root_id`] は Document node であって root element ではない
 /// ([`crate::style_dom`] の Contract 節) ため、Document / Comment / Text の
@@ -344,7 +352,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     // 育ち、以降は 0 alloc。fill と drain は `apply_winners` に閉じており、
     // walk loop 側は「使い回す入れ物を貸す」以上の責務を持たない。
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
-    while let Some((id, parent_computed, rem_ctx)) = stack.pop() {
+    while let Some((id, parent_computed, root_ctx)) = stack.pop() {
         // raikiri-spike-37c roborev job 294 M2 finding: is_in_document()==false
         // の node は subtree ごと早期 continue する。
         //
@@ -377,29 +385,29 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // phase 2 + phase 3: 絶対化。root element (element 祖先なし) は `rem` の
         // 基準が phase 2 / phase 3 で異なるため専用 entry point を通す
         // ([`SpecifiedValues::finalize_as_root`] の doc に spec verbatim)。
-        let computed = match &rem_ctx {
+        let computed = match &root_ctx {
             Some(ctx) => specified.finalize(&parent_computed, ctx),
             None => {
                 // `finalize_as_root` は phase 2 の基準を initial value に固定する
                 // (§6.1.1 の "if the element has no parent")。それが正しいのは
-                // **`rem_ctx == None` ならこの node に element 親が居ない**からで
+                // **`root_ctx == None` ならこの node に element 親が居ない**からで
                 // あり、その caller-side invariant を pin しておく:
                 //
                 // - `cascade()` は必ず `dom.root_id()` (= Document node) から
                 //   walk を開始し、そこに `ComputedValues::initial()` を渡す。
                 // - `collect_cascaded` は Element にしか winner を作らないので
                 //   Document node の computed は initial のまま。
-                // - `rem_ctx` が `None` のままなのは Document 自身とその直接の子
+                // - `root_ctx` が `None` のままなのは Document 自身とその直接の子
                 //   だけ (element を 1 つ通れば `Some` になる)。
                 //
                 // したがって subtree の途中から `resolve_inheritance` を呼ぶ
                 // entry point (incremental restyle 等) を将来足すなら、
-                // `rem_ctx` を呼び出し側から供給しなければならない。この assert が
+                // `root_ctx` を呼び出し側から供給しなければならない。この assert が
                 // その見落としを debug build で捕まえる。
                 debug_assert_eq!(
                     parent_computed.font_size,
                     ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
-                    "rem_ctx == None は element 親が居ないことを意味するので、\
+                    "root_ctx == None は element 親が居ないことを意味するので、\
                      親の computed font-size は initial でなければならない \
                      (subtree の途中から walk を開始していないか?)"
                 );
@@ -407,11 +415,19 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
             }
         };
 
-        // 子へ渡す rem context。root element の phase 2 が終わった時点で
-        // `root_font_size` が確定するので、ここで初めて `Some` になる。
-        let child_ctx = match rem_ctx {
+        // 子へ渡す rem/rlh context。root element の phase 2 + 2.5 が終わった
+        // 時点で `root_font_size` / `root_line_height` が確定するので、ここで
+        // 初めて `Some` になる (bd raikiri-spike-vxha で `root_line_height`
+        // を追加)。`used_line_height_length` は
+        // [`crate::specified::SpecifiedValues::finalize_as_root`] が自分の
+        // `ctx` を組み立てるのに使う導出と同一 — 両者の一致は
+        // `rlh_on_root_element_matches_child_root_line_height_basis` が pin する。
+        let child_ctx = match root_ctx {
             Some(ctx) => Some(ctx),
-            None if is_element => Some(ResolveContext::new(computed.font_size)),
+            None if is_element => Some(ResolveContext::with_root_line_height(
+                computed.font_size,
+                used_line_height_length(computed.line_height, computed.font_size),
+            )),
             None => None,
         };
 
@@ -1045,7 +1061,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 | Length::Mm(v)
                 | Length::Q(v)
                 | Length::In(v)
-                | Length::Pc(v) => v,
+                | Length::Pc(v)
+                // `Lh` / `Rlh` は `parse_font_size` が parse-time に drop する
+                // (bd raikiri-spike-vxha、[`Length::Lh`] doc の「自己参照」節)
+                // ので、このように `target.font_size` に residual した `Lh`/
+                // `Rlh` は到達不能 — 他の 16 arm と同じ panic-free extraction
+                // に含めるだけ。
+                | Length::Lh(v)
+                | Length::Rlh(v) => v,
             };
             target.font_size = Length::Px(resolve_relative_font_size(rel, inherited_px));
         }
@@ -1590,6 +1613,185 @@ mod tests {
         let cv = cascade_doc("", "html", Some("font-size: 20px; padding: 2rem"));
         assert_eq!(cv.font_size, ComputedLength(20.0));
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(40.0)));
+    }
+
+    // ── `lh` / `rlh` (CSS Values 4 §6.1.1, bd raikiri-spike-vxha) ──────────
+
+    /// `padding: 1lh` は **自 node の** used line-height (own font-size ×
+    /// `<number>`) を基準にする — CSS Values 4 §6.1.1 `lh`。
+    #[test]
+    fn lh_resolves_against_own_computed_line_height() {
+        // font-size は initial 16px、line-height: 2 (Number) → used = 32px。
+        let cv = cascade_doc("", "div", Some("line-height: 2; padding: 1.5lh"));
+        assert_eq!(
+            cv.line_height,
+            ComputedLineHeight::Number(2.0),
+            "line-height 自身は Number のまま computed 層に残る (spec 上 load-bearing)"
+        );
+        assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(48.0))); // 1.5 * 32
+    }
+
+    /// `line-height: normal` (initial value) の下で `1lh` を使うのは common
+    /// case — real font metrics が無いので padding の spec initial `0` に
+    /// 倒す ([`crate::resolve::resolve_length_percentage`] doc、cleanroom:
+    /// 比率を捏造しない)。
+    #[test]
+    fn lh_falls_back_to_zero_when_own_line_height_is_normal() {
+        let cv = cascade_doc("", "div", Some("padding: 1lh"));
+        assert_eq!(cv.line_height, ComputedLineHeight::Normal);
+        assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
+    }
+
+    /// roborev-refine iter 1 Finding A regression pin: `margin-top: 1lh`
+    /// under the extremely common `line-height: normal` configuration must
+    /// compute to `Px(0.0)` — margin's true spec initial (CSS Box 3 §3.1) —
+    /// **not** `Auto`. `Auto` would silently trigger real taffy auto-margin
+    /// layout (space distribution / centering) with no spec basis, which is
+    /// the concrete failure mode the fix (`resolve_margin_length_or_auto`,
+    /// bd raikiri-spike-vxha) closes.
+    #[test]
+    fn margin_lh_falls_back_to_zero_not_auto_when_line_height_normal() {
+        let cv = cascade_doc("", "div", Some("margin-top: 1lh"));
+        assert_eq!(cv.line_height, ComputedLineHeight::Normal);
+        assert_eq!(
+            cv.margin.top,
+            ComputedLengthPercentageOrAuto::Px(0.0),
+            "margin-top: 1lh under line-height: normal must be Px(0.0), not Auto \
+             (Auto would trigger real auto-margin layout with no spec basis)"
+        );
+    }
+
+    /// `rlh` = "the value of the lh unit on the root element" (CSS Values 4
+    /// §6.1.1) — a **tree-global** constant, unaffected by the consuming
+    /// node's own font-size / line-height. The root element's own `1rlh`
+    /// usage and a descendant's must agree on the same basis; this is the
+    /// `root_line_height` / `used_line_height_length` derivation this issue
+    /// added `ResolveContext::with_root_line_height` for (mirrors
+    /// `rem_on_root_element_box_property_uses_own_font_size`'s `rem` pin).
+    #[test]
+    fn rlh_on_root_element_matches_child_root_line_height_basis() {
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(
+            0,
+            "html",
+            Some("font-size: 20px; line-height: 2; padding: 1rlh"),
+        );
+        // Deliberately different own font-size/line-height, to prove `rlh`
+        // does not read the child's own metrics.
+        let p = doc.push_element(
+            html,
+            "p",
+            Some("font-size: 100px; line-height: 5; padding: 1rlh"),
+        );
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        // root's own used line-height: 2 * 20px = 40px.
+        assert_eq!(
+            r.computed[html].line_height,
+            ComputedLineHeight::Number(2.0)
+        );
+        assert_eq!(
+            r.computed[html].padding,
+            Sides::all(ComputedLengthPercentage::Px(40.0)),
+        );
+        // child's `1rlh` uses the *same* 40px basis, not its own (100px,
+        // Number(5) → 500px) line-height.
+        assert_eq!(
+            r.computed[p].padding,
+            Sides::all(ComputedLengthPercentage::Px(40.0)),
+            "rlh must be the same tree-global constant on the root and on a descendant"
+        );
+    }
+
+    /// The default (initial) `line-height: normal` on the root propagates the
+    /// same "no font metrics" wall through `rlh` to every descendant.
+    #[test]
+    fn rlh_falls_back_to_zero_when_root_line_height_is_normal() {
+        let (root, child) = cascade_parent_child("html", None, "p", Some("padding: 1rlh"));
+        assert_eq!(root.line_height, ComputedLineHeight::Normal);
+        assert_eq!(child.padding, Sides::all(ComputedLengthPercentage::Px(0.0)),);
+    }
+
+    /// `line-height: 1lh` is self-referential (CSS Values 4 §6.1.1, spec
+    /// quote canonically documented on
+    /// `crate::resolve::resolve_line_height`) — it must use the **parent's**
+    /// used line-height, not the declaring element's own font-size. The
+    /// child's own font-size (50px) is deliberately different from the
+    /// parent's (16px, initial) so a bug that leaks the child's own metrics
+    /// in would be caught.
+    #[test]
+    fn line_height_lh_self_reference_uses_parent_not_own_metrics() {
+        let (parent, child) = cascade_parent_child(
+            "div",
+            Some("line-height: 2"), // own font-size 16px (initial) → used 32px
+            "span",
+            Some("font-size: 50px; line-height: 1lh"),
+        );
+        assert_eq!(parent.line_height, ComputedLineHeight::Number(2.0));
+        assert_eq!(
+            child.line_height,
+            ComputedLineHeight::Length(ComputedLength(32.0)),
+            "1lh on line-height itself must resolve against the parent's used \
+             line-height (32px), not the child's own font-size (50px)"
+        );
+    }
+
+    /// When the parent's own line-height is unresolvable (`normal`), a
+    /// child's self-referential `line-height: 1lh` falls back to
+    /// `line-height`'s own initial value `normal` — not a fabricated length.
+    #[test]
+    fn line_height_lh_self_reference_falls_back_to_normal_when_parent_is_normal() {
+        let (parent, child) = cascade_parent_child("div", None, "span", Some("line-height: 1lh"));
+        assert_eq!(parent.line_height, ComputedLineHeight::Normal);
+        assert_eq!(child.line_height, ComputedLineHeight::Normal);
+    }
+
+    /// `line-height: 1rlh`, unlike `1lh` above, is **not** self-referential
+    /// in this crate (bd raikiri-spike-vxha — `rlh`'s own definition, "the
+    /// lh unit on the root element", is a tree-global constant that does not
+    /// depend on the declaring element's position; see
+    /// `crate::resolve::resolve_line_height`'s doc for why the literal
+    /// "Similarly, lh or rlh" spec wording is not followed for `rlh` on
+    /// non-root elements). Three levels (root / middle / leaf) with
+    /// **different** line-heights at the root and the immediate parent
+    /// discriminate this: if `rlh` were (wrongly) treated as
+    /// self-referential like `lh`, the leaf would pick up the *middle*
+    /// element's used line-height (48px) instead of the root's (40px).
+    #[test]
+    fn line_height_rlh_in_line_height_uses_root_not_immediate_parent() {
+        let mut doc = TestDoc::new();
+        let root = doc.push_element(0, "html", Some("font-size: 20px; line-height: 2")); // root used = 40px
+        let middle = doc.push_element(root, "div", Some("font-size: 12px; line-height: 4")); // middle used = 48px
+        let leaf = doc.push_element(middle, "span", Some("line-height: 1rlh"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        assert_eq!(
+            r.computed[root].line_height,
+            ComputedLineHeight::Number(2.0)
+        );
+        assert_eq!(
+            r.computed[middle].line_height,
+            ComputedLineHeight::Number(4.0)
+        );
+        assert_eq!(
+            r.computed[leaf].line_height,
+            ComputedLineHeight::Length(ComputedLength(40.0)),
+            "1rlh on line-height itself must use the root's used line-height \
+             (40px), not the immediate parent's (48px) — rlh is not self-referential"
+        );
+    }
+
+    /// The root element has no parent, so CSS Values 4 §6.1.1's "if the
+    /// element has no parent" clause applies: the self-reference basis is
+    /// the *initial* line-height, which is `normal` — always unresolvable.
+    /// Mirrors `rem_on_root_element_resolves_against_initial_font_size` for
+    /// `em`/`rem` on `font-size`.
+    #[test]
+    fn line_height_lh_self_reference_on_root_element_is_always_normal() {
+        let cv = cascade_doc("", "html", Some("line-height: 1lh"));
+        assert_eq!(cv.line_height, ComputedLineHeight::Normal);
     }
 
     /// Document 直下の **非 element** node は rem context を確定させない

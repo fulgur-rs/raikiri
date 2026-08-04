@@ -1,5 +1,6 @@
 //! Cascade winner の **staging 表現** ([`SpecifiedValues`]) と、そこから
-//! [`ComputedValues`] への絶対化 (phase 2 + phase 3)。
+//! [`ComputedValues`] への絶対化 (phase 2 + phase 2.5 + phase 3 —
+//! phase 2.5 は line-height の絶対化、bd raikiri-spike-vxha で追加)。
 //!
 //! bd decision raikiri-spike-082k (Option A) / bd task raikiri-spike-zls8
 //! (Phase 2 = atomic swap)。
@@ -36,9 +37,10 @@ use crate::property::{
     empty_counter_entries, empty_string_set_entries, resolve_text_align_match_parent,
 };
 use crate::resolve::{
-    ComputedLength, ResolveContext, lift_font_size, lift_line_height, resolve_border,
-    resolve_font_size, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_line_height,
+    ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_line_height,
+    resolve_border, resolve_font_size, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_line_height, resolve_margin_length_or_auto,
+    used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -164,7 +166,7 @@ pub struct SpecifiedValues {
     /// ([`resolve_length_percentage`]) で絶対化される (percentage は素通し)。
     pub padding: Sides<Length>,
     /// `margin` の **specified** value。phase 3
-    /// ([`resolve_length_percentage_or_auto`]) で絶対化される。
+    /// ([`resolve_margin_length_or_auto`]) で絶対化される。
     pub margin: Sides<LengthOrAuto>,
     /// `border` の **specified** value。phase 3 ([`resolve_border`]) で
     /// width が絶対化され、`none` / `hidden` の style gating も適用される。
@@ -362,8 +364,19 @@ impl SpecifiedValues {
         // 分岐 — root element の "computes to start" は `finalize_as_root` 側。
         let text_align =
             resolve_text_align_match_parent(self.text_align, parent.text_align, parent.direction);
-        // phase 3: 残りを **自 node の** font-size 基準で絶対化する。
-        self.absolutize_with(font_size, text_align, ctx)
+        // phase 2.5 (bd raikiri-spike-vxha): line-height を絶対化する。
+        // `lh` (自己参照、親基準) / `rlh` (tree-global、`ctx.root_line_height`
+        // 基準) の判断根拠は `resolve_line_height` doc が canonical
+        // (roborev-refine iter 1 quality lens 1)。この基準は自 node の
+        // padding 等 (phase 3) には使わない — それらは `absolutize_with` 内で
+        // 改めて**自 node の**基準 (`used_line_height_length(line_height,
+        // font_size)`) を求める。
+        let parent_line_height_basis =
+            used_line_height_length(parent.line_height, parent.font_size);
+        let line_height =
+            resolve_line_height(self.line_height, font_size, parent_line_height_basis, ctx);
+        // phase 3: 残りを **自 node の** font-size / line-height 基準で絶対化する。
+        self.absolutize_with(font_size, line_height, text_align, ctx)
     }
 
     /// **親を持たない** node (root element) を絶対化する。
@@ -397,11 +410,25 @@ impl SpecifiedValues {
     /// pin: [`mod@crate::cascade`] の
     /// `rem_on_root_element_box_property_uses_own_font_size`。
     ///
-    /// `line-height` も phase 3 側 (自 font-size 基準) で正しい — 同 §の
-    /// "The other font-relative lengths continue to resolve against the
-    /// element's own metrics when used in line-height." に一致する。parent
-    /// metrics 側に倒れるのは `lh` / `rlh` だけで、両 unit は未実装
-    /// (bd raikiri-spike-2x8)。
+    /// `line-height` **自身の値**に現れる font-relative unit も同じ非対称を
+    /// 持つ — 同 §の "The other font-relative lengths continue to resolve
+    /// against the element's own metrics when used in line-height." により
+    /// `em` 等は自 font-size 基準のまま (phase 2.5、`finalize` 側と同じ)。
+    /// **`lh` / `rlh` だけが例外** — spec 原文と両者の非対称の判断根拠は
+    /// [`resolve_line_height`] doc が canonical (roborev-refine iter 1
+    /// quality lens 1、bd raikiri-spike-awjx の drift 前例により要約に留める)。
+    /// 結論だけ述べると、root element には親が無いので `line-height: 1lh`
+    /// / `1rlh` は常に「initial values」(`line-height: normal`) 基準に
+    /// 帰着し、`normal` は font metrics が無い限り絶対長化できない
+    /// (`cap`/`rcap` と同じ wall) — root element 上のこの自己参照は常に
+    /// unresolved になる。
+    ///
+    /// root element の **box property** (`padding: 1rlh` 等) は上記の
+    /// 自己参照条項の対象外 — こちらは phase 3 の話で、`rlh` の素の定義
+    /// (「root element の `lh`」) どおり **自分の**確定済 line-height を
+    /// 参照してよい。本関数はそのために phase 2.5 で自分の line-height を
+    /// 確定させてから [`ResolveContext::with_root_line_height`] を組み立てる
+    /// (下記 body 参照)。
     ///
     /// # `text-align: match-parent` on the root element (raikiri-spike-l3wg)
     ///
@@ -425,7 +452,7 @@ impl SpecifiedValues {
     /// を `debug_assert` で pin している (同関数の `None` arm の comment 参照)。
     /// 同じ「親を持たない」前提が `text-align: match-parent` → `start` にも
     /// 適用される — raikiri のモデルでは「element 祖先が無い」ことを
-    /// `rem_ctx == None` で判定しており (合成 DOM では複数 element が
+    /// `root_ctx == None` で判定しており (合成 DOM では複数 element が
     /// 各々この意味で「root」になり得る、`resolve_inheritance` の doc 参照)、
     /// それがそのまま「match-parent の親が無い」の判定基準でもある。
     pub fn finalize_as_root(self) -> ComputedValues {
@@ -455,11 +482,31 @@ impl SpecifiedValues {
             TextAlign::MatchParent => TextAlign::Start,
             other => other,
         };
-        // phase 3: `rem` の基準は「root element の computed font-size」= 自分。
-        self.absolutize_with(font_size, text_align, &ResolveContext::new(font_size))
+        // phase 2.5 (bd raikiri-spike-vxha): root element には親が無いので
+        // `line-height` 自身の値に現れる `lh`/`rlh` の自己参照基準は常に
+        // `None` (= "initial values" = `normal`、上記 doc 節)。それ以外の
+        // font-relative unit (`em` 等) は自 font-size 基準のまま (`finalize`
+        // と同じ `resolve_line_height` 呼び出し形)。
+        let line_height = resolve_line_height(
+            self.line_height,
+            font_size,
+            None,
+            &ResolveContext::initial(),
+        );
+        // phase 3 の `ctx`: `rem` の基準は「root element の computed
+        // font-size」= 自分、`rlh` の基準も同様「root element の確定済
+        // line-height」= 自分 (box property は自己参照条項の対象外、上記
+        // doc 節)。`used_line_height_length` は
+        // [`crate::cascade::resolve_inheritance`] が子へ配る `child_ctx` と
+        // 同じ導出 — 両者の一致は `mod@crate::cascade` の
+        // `rlh_on_root_element_matches_child_root_line_height_basis` が pin する。
+        let own_line_height = used_line_height_length(line_height, font_size);
+        let ctx = ResolveContext::with_root_line_height(font_size, own_line_height);
+        self.absolutize_with(font_size, line_height, text_align, &ctx)
     }
 
-    /// phase 3 — 自 node の確定済 computed `font-size` を基準に残りを絶対化する。
+    /// phase 3 — 自 node の確定済 computed `font-size` / `line-height` を基準に
+    /// 残りを絶対化する。
     ///
     /// `parent` を **意図的に受け取らない** ([`Self::finalize`] doc の担保 1)。
     /// `text_align` は呼び手 ([`Self::finalize`] / [`Self::finalize_as_root`])
@@ -467,19 +514,35 @@ impl SpecifiedValues {
     /// 自身は解決ロジックを持たない (両呼び手の分岐が異なるため、本関数に
     /// 共通化すると root 判定を関数内に持ち込むことになり、上記「引数を取らない
     /// 理由」の局所性が崩れる)。
+    ///
+    /// `line_height` も同様に呼び手が phase 2.5 で確定させた**自 node の**
+    /// [`ComputedLineHeight`] — 本関数は
+    /// それを [`used_line_height_length`] で絶対長へ変換し、
+    /// `padding`/`margin`/`border`/`width`/`height` の `lh` 解決基準
+    /// (`own_line_height`) として使う (bd raikiri-spike-vxha)。呼び手が
+    /// `line_height` を自分で計算する (本関数の内部で
+    /// `resolve_line_height` を呼ばない) のは、`padding: 1lh` 等が
+    /// **既に確定した**自 node の line-height を必要とし、`font_size` と
+    /// 同じく「先に確定させて引数で渡す」形にしないと参照順序を守れない
+    /// ためである。
     fn absolutize_with(
         self,
         font_size: ComputedLength,
+        line_height: ComputedLineHeight,
         text_align: TextAlign,
         ctx: &ResolveContext,
     ) -> ComputedValues {
+        // `padding`/`margin`/`border`/`width`/`height` の `1lh` 解決基準
+        // (bd raikiri-spike-vxha) — `rlh` は `ctx.root_line_height` (tree-global)
+        // を使うので、本 local はここでしか要らない。
+        let own_line_height = used_line_height_length(line_height, font_size);
         ComputedValues {
             color: self.color,
             background_color: self.background_color,
             font_family: self.font_family,
             font_size,
             font_weight: self.font_weight,
-            line_height: resolve_line_height(self.line_height, font_size, ctx),
+            line_height,
             display: self.display,
             counter_reset: self.counter_reset,
             counter_increment: self.counter_increment,
@@ -494,13 +557,18 @@ impl SpecifiedValues {
             direction: self.direction,
             padding: self
                 .padding
-                .map(|l| resolve_length_percentage(l, font_size, ctx)),
+                .map(|l| resolve_length_percentage(l, font_size, own_line_height, ctx)),
+            // `margin` は `width`/`height` と型を共有するが、`Lh`/`Rlh`
+            // 解決不能時の fallback は違う (`resolve_margin_length_or_auto`
+            // doc 参照 — roborev-refine iter 1 Finding A)。
             margin: self
                 .margin
-                .map(|l| resolve_length_percentage_or_auto(l, font_size, ctx)),
-            border: self.border.map(|b| resolve_border(b, font_size, ctx)),
-            width: resolve_length_percentage_or_auto(self.width, font_size, ctx),
-            height: resolve_length_percentage_or_auto(self.height, font_size, ctx),
+                .map(|l| resolve_margin_length_or_auto(l, font_size, own_line_height, ctx)),
+            border: self
+                .border
+                .map(|b| resolve_border(b, font_size, own_line_height, ctx)),
+            width: resolve_length_percentage_or_auto(self.width, font_size, own_line_height, ctx),
+            height: resolve_length_percentage_or_auto(self.height, font_size, own_line_height, ctx),
             box_sizing: self.box_sizing,
         }
     }
@@ -549,6 +617,7 @@ mod tests {
     /// `root_font_size` = 16px の共通 context。
     const CTX: ResolveContext = ResolveContext {
         root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
+        root_line_height: None,
     };
 
     /// `finalize` の `parent: &ComputedValues` として渡す、font-size だけ
@@ -730,6 +799,34 @@ mod tests {
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
     }
 
+    /// `padding: 1lh` needs the **already-resolved own** line-height as its
+    /// basis (bd raikiri-spike-vxha) — this is exactly the phase-3 reordering
+    /// the issue's §1 describes: `absolutize_with` must capture `line_height`
+    /// into a local *before* resolving `padding`/`margin`/`border`/`width`/
+    /// `height`, or this would be unable to read it at all.
+    #[test]
+    fn finalize_resolves_lh_against_own_line_height_for_padding() {
+        let mut sv = SpecifiedValues::initial();
+        sv.line_height = LineHeight::Number(2.0); // 自 font-size (16px, inherited) 基準 → used 32px
+        sv.padding = Sides::all(Length::Lh(1.5)); // 1.5 * 32 = 48px
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(cv.line_height, ComputedLineHeight::Number(2.0));
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(48.0));
+    }
+
+    /// When the own line-height is unresolvable (`normal`, the initial value
+    /// — the common case, not an edge case), `1lh` falls back to padding's
+    /// own spec initial `0` rather than a fabricated length (cleanroom: see
+    /// `crate::resolve::resolve_length_percentage` doc for why).
+    #[test]
+    fn finalize_resolves_lh_falls_back_to_zero_when_line_height_normal() {
+        let mut sv = SpecifiedValues::initial(); // line_height stays `normal`
+        sv.padding = Sides::all(Length::Lh(1.5));
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(cv.line_height, ComputedLineHeight::Normal);
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(0.0));
+    }
+
     /// `<percentage>` は property ごとに扱いが違う: `font-size` は length に
     /// なり、`padding` / `margin` / `width` / `height` は computed 層に
     /// percentage のまま残る (CSS Values 4 §5.5.1 + CSS Box 3 の各 propdef)。
@@ -902,6 +999,47 @@ mod tests {
         let mut sv = SpecifiedValues::initial();
         sv.font_size = Length::Em(1.5);
         assert_eq!(sv.finalize_as_root().font_size, ComputedLength(24.0));
+    }
+
+    /// root element の **box property** の `1rlh` は自分の確定済 line-height
+    /// を基準にする (bd raikiri-spike-vxha — `rem_on_root_element_box_property_uses_own_font_size`
+    /// の `rem` と同じ非対称の `rlh` 版。self-reference 条項の対象は
+    /// `line-height` 自身の値だけで、`padding` はその対象外)。
+    /// `finalize_as_root` は own line-height を phase 2.5 で確定させてから
+    /// `ResolveContext::with_root_line_height` を組み立てる — この test は
+    /// その配線がここまで届くことを直接 pin する。
+    #[test]
+    fn finalize_as_root_resolves_rlh_using_own_line_height_basis() {
+        let mut sv = SpecifiedValues::initial();
+        sv.font_size = Length::Px(20.0);
+        sv.line_height = LineHeight::Number(2.0); // own font-size 20px → used 40px
+        sv.padding = Sides::all(Length::Rlh(1.5)); // 1.5 * 40 = 60px
+        let cv = sv.finalize_as_root();
+        assert_eq!(cv.line_height, ComputedLineHeight::Number(2.0));
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(60.0));
+    }
+
+    /// root element には親が無いので、`line-height` 自身の値としての
+    /// `1lh`/`1rlh` (自己参照) は常に「initial values」= `normal` 基準に
+    /// 帰着し、常に unresolved になる (CSS Values 4 §6.1.1 "if the element
+    /// has no parent" — `finalize_as_root` doc 参照)。上の test と対で、
+    /// 「box property の rlh は自分の line-height を使う」「line-height 自身の
+    /// lh/rlh は self-reference で常に normal」の 2 つの非対称を区別する。
+    #[test]
+    fn finalize_as_root_line_height_self_reference_is_always_normal() {
+        let mut sv = SpecifiedValues::initial();
+        sv.line_height = LineHeight::Length(Length::Lh(1.0));
+        assert_eq!(
+            sv.finalize_as_root().line_height,
+            ComputedLineHeight::Normal
+        );
+
+        let mut sv_rlh = SpecifiedValues::initial();
+        sv_rlh.line_height = LineHeight::Length(Length::Rlh(1.0));
+        assert_eq!(
+            sv_rlh.finalize_as_root().line_height,
+            ComputedLineHeight::Normal
+        );
     }
 
     /// 全 4 side が独立に絶対化される (`Sides::map` が side を取り違えない)。
