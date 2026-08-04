@@ -788,11 +788,14 @@ fn sanitize_font_weight(v: f32, diag: &mut Vec<LayoutWarn>) -> f32 {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum LayoutWarn {
     /// A non-finite (NaN / +-Inf) or out-of-range `f32` was clamped to a
-    /// finite in-range value before being written into `taffy::Style` or the
-    /// `Node.unrounded_layout` arena field. Only emitted when clamping
-    /// actually changed the value (not on every call) so ordinary in-range
-    /// layouts stay silent — the "warn+skip" shape `FontWarn` uses, not a
-    /// per-node trace.
+    /// finite in-range value before being handed to one of this module's
+    /// sink boundaries: `taffy::Style` or the `Node.unrounded_layout` arena
+    /// field (sites 1-5, `sanitize_finite` / `sanitize_taffy` /
+    /// `sanitize_taffy_layout`, bd raikiri-spike-2ui0 / raikiri-spike-r8ew),
+    /// or `parley::FontWeight::new` (site 6, `sanitize_font_weight`, bd
+    /// raikiri-spike-sxd7). Only emitted when clamping actually changed the
+    /// value (not on every call) so ordinary in-range layouts stay silent —
+    /// the "warn+skip" shape `FontWarn` uses, not a per-node trace.
     NonFiniteClamped {
         /// Call-site label (e.g. `"font-size"`, `"margin"`,
         /// `"layout.size"`) — a human-readable category, not a stable
@@ -2768,6 +2771,17 @@ mod tests {
         // `ComputedValues::font_weight` の doc が挙げる
         // `crate::page::cascade_page` の継承元 root 引数と同じ攻撃面
         // (呼び出し元が任意の `ComputedValues` を用意して渡せる) の縮図。
+        //
+        // `text_layout().is_some()` だけでは「panic しなかった」ことしか
+        // 検証できない — 将来誰かが `preshape_text` から
+        // `sanitize_font_weight` の呼び出しを誤って外しても (parley が
+        // 非有限値を panic せず黒箱処理する場合)、それは検知できない。
+        // そこで `doc.layout_warnings` (`sanitize_font_weight` が実際に
+        // clamp した時だけ push する `LayoutWarn::NonFiniteClamped`
+        // の蓄積先) を直接検査し、sink 直前に渡った raw 値と、そこから
+        // 実際に有限化された値の両方を assert する — 配線が外れれば
+        // site `"font-weight"` の event が一切積まれなくなるので、
+        // その断線をここで検知できる。
         use parley::{FontContext, LayoutContext};
         use raikiri_style::{build_rule_tree, cascade};
 
@@ -2796,6 +2810,54 @@ mod tests {
                 doc.nodes[text].text_layout().is_some(),
                 "{label}: preshape_text must not panic and must still populate \
                  text_layout despite a non-finite font_weight bypassing cascade"
+            );
+
+            // 配線検証: font-size はこの test では触っていないので clamp は
+            // 発火せず、"font-weight" site の event だけが (毎 case とも
+            // clamp が実際に効くので) ちょうど 1 件積まれるはず。
+            let font_weight_events: Vec<LayoutWarn> = doc
+                .layout_warnings
+                .iter()
+                .copied()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        LayoutWarn::NonFiniteClamped {
+                            site: "font-weight",
+                            ..
+                        }
+                    )
+                })
+                .collect();
+            assert_eq!(
+                font_weight_events.len(),
+                1,
+                "{label}: expected exactly one \"font-weight\" NonFiniteClamped \
+                 event (only pushed when sanitize_font_weight actually ran and \
+                 clamped) — 0 events means the sanitize_font_weight call was \
+                 removed from preshape_text without this test noticing; \
+                 all events: {:?}",
+                doc.layout_warnings
+            );
+            let LayoutWarn::NonFiniteClamped { raw, clamped, .. } = font_weight_events[0] else {
+                unreachable!("filtered for this variant above");
+            };
+            assert!(
+                raw.is_nan() == weight.is_nan() && (raw.is_nan() || raw == weight),
+                "{label}: the raw value sanitize_font_weight saw ({raw}) must be \
+                 the exact font_weight this test set ({weight}), proving \
+                 sanitize_font_weight is wired to cv.font_weight and not some \
+                 unrelated value"
+            );
+            assert!(
+                clamped.is_finite(),
+                "{label}: the value handed to parley::FontWeight::new must be \
+                 finite, got {clamped}"
+            );
+            assert!(
+                (MIN_FONT_WEIGHT..=MAX_FONT_WEIGHT).contains(&clamped),
+                "{label}: the value handed to parley::FontWeight::new must be \
+                 within [{MIN_FONT_WEIGHT}, {MAX_FONT_WEIGHT}], got {clamped}"
             );
         }
     }
