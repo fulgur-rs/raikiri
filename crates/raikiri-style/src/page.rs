@@ -87,7 +87,7 @@ use crate::property::{
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
     lift_line_height, resolve_border, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_line_height,
+    resolve_line_height, resolve_margin_length_or_auto, used_line_height_length,
 };
 use crate::rule::{Declaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
@@ -968,15 +968,29 @@ pub fn cascade_page(
     // context is *not* the root element, so this stays the inheritance parent's
     // font-size even after `font_size` above diverges from it — the element-path
     // sibling is `SpecifiedValues::finalize`, not `finalize_as_root`.
-    let ctx = ResolveContext::new(inherited.font_size);
+    //
+    // `rlh` (bd raikiri-spike-vxha) is the same story: it always refers to the
+    // *root element's* own `lh`, never the page context's — CSS Paged Media 3
+    // §6 "The page context inherits from the root element", so `inherited`
+    // (the root element's `ComputedValues`, or the L3 legacy initial-values
+    // fallback) is the right source, unconditionally, regardless of what the
+    // page context's own `line-height` declares.
+    let ctx = ResolveContext::with_root_line_height(
+        inherited.font_size,
+        used_line_height_length(inherited.line_height, inherited.font_size),
+    );
     let border_styles = page_context_border_styles(&resolved);
+    // The page context's own `lh` basis (bd raikiri-spike-vxha) — mirrors
+    // `font_size` above: `1lh` in `padding`/`margin`/`border-*-width` needs
+    // the page context's *own* resolved line-height, not the root's.
+    let own_line_height = page_context_line_height_basis(&resolved, inherited, font_size, &ctx);
     PageCascadeResult {
         declarations: resolved
             .into_iter()
             .map(|(k, v)| {
                 (
                     k,
-                    absolutize_in_page_context(v, font_size, &ctx, border_styles),
+                    absolutize_in_page_context(v, font_size, own_line_height, &ctx, border_styles),
                 )
             })
             .collect(),
@@ -1033,6 +1047,57 @@ fn page_context_font_size(
             inherited.font_size
         }
     }
+}
+
+/// The page context's own `lh` basis — the resolve basis for `1lh` used in
+/// `padding`/`margin`/`border-*-width` in phase 3 (bd raikiri-spike-vxha).
+///
+/// Mirrors [`page_context_font_size`]'s shape: an undeclared `line-height`
+/// falls back to `inherited.line_height` (CSS Paged Media 3 §6 "The page
+/// context inherits from the root element", plus "both the page context and
+/// the margin context have a computed value for every property" — line-height
+/// is an inherited property so the fallback is the inheritance parent's
+/// computed value, not the property's own initial `normal`). A declared
+/// `line-height` is resolved through [`resolve_line_height`], passing the
+/// root element as the page context's self-reference "parent" (`self_reference_parent`
+/// local below — CSS Values 4 §6.1.1's self-reference clause, canonically
+/// documented on [`resolve_line_height`]; only its `Length::Lh` arm actually
+/// reads this argument, `Length::Rlh` reads `ctx.root_line_height` directly
+/// regardless of what is passed here, so the two happen to coincide for the
+/// page context specifically).
+///
+/// # Which font-size does an inherited `<number>` multiply by?
+///
+/// Both branches — declared and undeclared — convert the resulting
+/// [`ComputedLineHeight`] with **this call's own `font_size` argument**
+/// (the page context's own, from [`page_context_font_size`]), never the
+/// root's — ordinary CSS inheritance semantics for the unitless multiplier
+/// ([`ComputedLineHeight`] doc, "子は number を inherit して自分の font-size
+/// に掛ける"), not a page-context-specific carve-out — pinned by
+/// `cascade_page_padding_lh_uses_page_context_own_font_size_for_inherited_number`.
+///
+/// The result is then converted to an absolute length via
+/// [`used_line_height_length`], returning `None` when unresolvable (`normal`
+/// with no font metrics — the same wall as `cap`/`rcap`).
+fn page_context_line_height_basis(
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
+    inherited: &ComputedValues,
+    font_size: ComputedLength,
+    ctx: &ResolveContext,
+) -> Option<ComputedLength> {
+    // CSS Paged Media 3 §6: the page context's self-reference "parent" (CSS
+    // Values 4 §6.1.1) is the root element.
+    let self_reference_parent = ctx.root_line_height;
+    let line_height = match declarations
+        .get(&PropertyKey::LineHeight)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::LineHeight(lh)) => {
+            resolve_line_height(*lh, font_size, self_reference_parent, ctx)
+        }
+        _ => inherited.line_height,
+    };
+    used_line_height_length(line_height, font_size)
 }
 
 /// The page context's computed `border-*-style` per side — the gate input for
@@ -1130,9 +1195,18 @@ fn page_context_border_styles(
 /// does and does not guarantee ("narrowed, not closed").
 ///
 /// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で補助 doc build が red (規約 3)。
+///
+/// # `own_line_height` (bd raikiri-spike-vxha)
+///
+/// The page context's own `lh` basis — [`page_context_line_height_basis`]'s
+/// output, threaded alongside `font_size` for the same reason: `1lh` in
+/// `padding`/`margin`/`border-*-width` needs this context's *own* resolved
+/// line-height (not the root's — that is `ctx.root_line_height`, used only
+/// for `rlh`).
 pub(crate) fn absolutize_in_page_context(
     value: ResolvedAgainstInherited,
     font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
     border_styles: Sides<BorderStyle>,
 ) -> PropertyValue {
@@ -1140,8 +1214,13 @@ pub(crate) fn absolutize_in_page_context(
     /// `<length-percentage>` → computed, mapped back into the specified-layer
     /// `Length` shape that `PropertyValue` carries (`Px` / `Percent` only —
     /// `Em` / `Rem` / `Pt` are gone after this).
-    fn lp(specified: Length, font_size: ComputedLength, ctx: &ResolveContext) -> Length {
-        match resolve_length_percentage(specified, font_size, ctx) {
+    fn lp(
+        specified: Length,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> Length {
+        match resolve_length_percentage(specified, font_size, own_line_height, ctx) {
             ComputedLengthPercentage::Px(v) => Length::Px(v),
             ComputedLengthPercentage::Percent(p) => Length::Percent(p),
         }
@@ -1150,9 +1229,28 @@ pub(crate) fn absolutize_in_page_context(
     fn lpa(
         specified: LengthOrAuto,
         font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
         ctx: &ResolveContext,
     ) -> LengthOrAuto {
-        match resolve_length_percentage_or_auto(specified, font_size, ctx) {
+        match resolve_length_percentage_or_auto(specified, font_size, own_line_height, ctx) {
+            ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+            ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
+            ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
+        }
+    }
+    /// `<length-percentage> | auto` for `margin-*` specifically (roborev-refine
+    /// iter 1 Finding A, bd raikiri-spike-vxha) — same mapping as [`lpa`] but
+    /// routed through [`resolve_margin_length_or_auto`], whose unresolvable-`lh`/
+    /// `rlh` fallback is `Px(0.0)` (margin's true spec initial), not `Auto`
+    /// (which is `width`/`height`'s initial, and which would trigger real
+    /// auto-margin layout behaviour if used here — see that function's doc).
+    fn margin_lpa(
+        specified: LengthOrAuto,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> LengthOrAuto {
+        match resolve_margin_length_or_auto(specified, font_size, own_line_height, ctx) {
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
             ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
@@ -1163,8 +1261,13 @@ pub(crate) fn absolutize_in_page_context(
     /// Routed through [`resolve_border`] rather than re-testing
     /// `none` / `hidden` locally — that function's doc calls itself the single
     /// source of the gate and forbids re-implementing the rule elsewhere.
-    fn border(specified: Border, font_size: ComputedLength, ctx: &ResolveContext) -> Border {
-        let computed = resolve_border(specified, font_size, ctx);
+    fn border(
+        specified: Border,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> Border {
+        let computed = resolve_border(specified, font_size, own_line_height, ctx);
         Border {
             width: Length::Px(computed.width.px()),
             style: computed.style,
@@ -1180,6 +1283,7 @@ pub(crate) fn absolutize_in_page_context(
         width: Length,
         style: BorderStyle,
         font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
         ctx: &ResolveContext,
     ) -> Length {
         border(
@@ -1189,6 +1293,7 @@ pub(crate) fn absolutize_in_page_context(
                 color: BorderColor::CurrentColor,
             },
             font_size,
+            own_line_height,
             ctx,
         )
         .width
@@ -1254,14 +1359,28 @@ pub(crate) fn absolutize_in_page_context(
         // CSS Inline 3 §5.1 <https://www.w3.org/TR/css-inline-3/#propdef-line-height>:
         // `<percentage>` is "computed relative to 1em" of the declaring
         // context. `normal` / `<number>` survive as keywords by spec.
-        PropertyValue::LineHeight(lh) => {
-            PropertyValue::LineHeight(lift_line_height(resolve_line_height(lh, font_size, ctx)))
-        }
+        //
+        // `lh`/`rlh` used *within* this declaration's own value (self-reference,
+        // bd raikiri-spike-vxha) use `ctx.root_line_height` — the page context's
+        // CSS Values 4 §6.1.1 self-reference "parent" is the root element
+        // (`page_context_line_height_basis` doc), the same source
+        // `ctx.root_line_height` already carries.
+        PropertyValue::LineHeight(lh) => PropertyValue::LineHeight(lift_line_height(
+            resolve_line_height(lh, font_size, ctx.root_line_height, ctx),
+        )),
         // ── padding ───────────────────────────────────────────────────────
-        PropertyValue::PaddingTop(v) => PropertyValue::PaddingTop(lp(v, font_size, ctx)),
-        PropertyValue::PaddingRight(v) => PropertyValue::PaddingRight(lp(v, font_size, ctx)),
-        PropertyValue::PaddingBottom(v) => PropertyValue::PaddingBottom(lp(v, font_size, ctx)),
-        PropertyValue::PaddingLeft(v) => PropertyValue::PaddingLeft(lp(v, font_size, ctx)),
+        PropertyValue::PaddingTop(v) => {
+            PropertyValue::PaddingTop(lp(v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::PaddingRight(v) => {
+            PropertyValue::PaddingRight(lp(v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::PaddingBottom(v) => {
+            PropertyValue::PaddingBottom(lp(v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::PaddingLeft(v) => {
+            PropertyValue::PaddingLeft(lp(v, font_size, own_line_height, ctx))
+        }
         // Shorthand fall-through — **unreachable through `cascade_page`**.
         // `crate::rule::expand_shorthand_into` runs at both boundaries that feed
         // this function: the parse exit (`crate::rule::parse_declaration_block`,
@@ -1288,39 +1407,63 @@ pub(crate) fn absolutize_in_page_context(
         // is pinned directly
         // by `tests::absolutize_in_page_context_shorthand_fall_throughs`.
         PropertyValue::Padding(sides) => {
-            PropertyValue::Padding(sides.map(|l| lp(l, font_size, ctx)))
+            PropertyValue::Padding(sides.map(|l| lp(l, font_size, own_line_height, ctx)))
         }
         // ── margin ────────────────────────────────────────────────────────
-        PropertyValue::MarginTop(v) => PropertyValue::MarginTop(lpa(v, font_size, ctx)),
-        PropertyValue::MarginRight(v) => PropertyValue::MarginRight(lpa(v, font_size, ctx)),
-        PropertyValue::MarginBottom(v) => PropertyValue::MarginBottom(lpa(v, font_size, ctx)),
-        PropertyValue::MarginLeft(v) => PropertyValue::MarginLeft(lpa(v, font_size, ctx)),
+        PropertyValue::MarginTop(v) => {
+            PropertyValue::MarginTop(margin_lpa(v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::MarginRight(v) => {
+            PropertyValue::MarginRight(margin_lpa(v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::MarginBottom(v) => {
+            PropertyValue::MarginBottom(margin_lpa(v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::MarginLeft(v) => {
+            PropertyValue::MarginLeft(margin_lpa(v, font_size, own_line_height, ctx))
+        }
         // Shorthand fall-through (see `Padding` above).
         PropertyValue::Margin(sides) => {
-            PropertyValue::Margin(sides.map(|l| lpa(l, font_size, ctx)))
+            PropertyValue::Margin(sides.map(|l| margin_lpa(l, font_size, own_line_height, ctx)))
         }
         // ── border-*-width (absolutized **and** style-gated) ──────────────
-        PropertyValue::BorderTopWidth(w) => {
-            PropertyValue::BorderTopWidth(border_width(w, border_styles.top, font_size, ctx))
-        }
-        PropertyValue::BorderRightWidth(w) => {
-            PropertyValue::BorderRightWidth(border_width(w, border_styles.right, font_size, ctx))
-        }
-        PropertyValue::BorderBottomWidth(w) => {
-            PropertyValue::BorderBottomWidth(border_width(w, border_styles.bottom, font_size, ctx))
-        }
-        PropertyValue::BorderLeftWidth(w) => {
-            PropertyValue::BorderLeftWidth(border_width(w, border_styles.left, font_size, ctx))
-        }
+        PropertyValue::BorderTopWidth(w) => PropertyValue::BorderTopWidth(border_width(
+            w,
+            border_styles.top,
+            font_size,
+            own_line_height,
+            ctx,
+        )),
+        PropertyValue::BorderRightWidth(w) => PropertyValue::BorderRightWidth(border_width(
+            w,
+            border_styles.right,
+            font_size,
+            own_line_height,
+            ctx,
+        )),
+        PropertyValue::BorderBottomWidth(w) => PropertyValue::BorderBottomWidth(border_width(
+            w,
+            border_styles.bottom,
+            font_size,
+            own_line_height,
+            ctx,
+        )),
+        PropertyValue::BorderLeftWidth(w) => PropertyValue::BorderLeftWidth(border_width(
+            w,
+            border_styles.left,
+            font_size,
+            own_line_height,
+            ctx,
+        )),
         // Shorthand fall-through (see `Padding` above). Each side gates on the
         // style it carries itself, which is where a `border` shorthand's style
         // lives.
         PropertyValue::Border(sides) => {
-            PropertyValue::Border(sides.map(|b| border(b, font_size, ctx)))
+            PropertyValue::Border(sides.map(|b| border(b, font_size, own_line_height, ctx)))
         }
         // ── width / height ────────────────────────────────────────────────
-        PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, ctx)),
-        PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, ctx)),
+        PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
     }
 }
 
@@ -1454,7 +1597,7 @@ mod tests {
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontWeightValue, Length,
         LengthOrAuto, LineHeight, PositionValue, TextAlign,
     };
-    use crate::resolve::ComputedLength;
+    use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
 
     const RED: CssColor = CssColor {
@@ -2400,6 +2543,139 @@ mod tests {
         );
     }
 
+    // ── `lh` / `rlh` in the page context (CSS Values 4 §6.1.1, bd raikiri-spike-vxha) ──
+
+    /// `@page { line-height: 2; padding: 1.5lh }` — `1lh` uses the page
+    /// context's **own** used line-height (its own font-size × the declared
+    /// `<number>`), the same "own basis" story as `em`/`rem` above.
+    #[test]
+    fn cascade_page_padding_lh_uses_own_page_context_line_height() {
+        let root = root_with_font_size(20.0); // page context's own font-size, undeclared here
+        let result = page("@page { line-height: 2; padding: 1.5lh }", &root);
+        // own used line-height = 2 * 20px = 40px; 1.5lh = 60px.
+        assert_eq!(padding_top_of(&result), Some(Length::Px(60.0)));
+    }
+
+    /// `rlh` always refers to the **root element's** `lh`, regardless of what
+    /// the page context itself declares for `line-height` — CSS Values 4
+    /// §6.1.1 `rlh` + CSS Paged Media 3 §6 "The page context inherits from
+    /// the root element" (the page context is not the root element, same
+    /// distinction `cascade_page_rem_resolves_against_root_element_not_page_context`
+    /// pins for `rem`).
+    #[test]
+    fn cascade_page_padding_rlh_uses_root_line_height_not_own() {
+        let root = ComputedValues {
+            font_size: ComputedLength(20.0),
+            line_height: ComputedLineHeight::Number(3.0), // root used = 60px
+            ..ComputedValues::initial()
+        };
+        // Page context declares its own (different) line-height — must not
+        // affect `rlh`.
+        let result = page("@page { line-height: 1; padding: 1rlh }", &root);
+        assert_eq!(
+            padding_top_of(&result),
+            Some(Length::Px(60.0)),
+            "rlh must use the root element's used line-height (60px), not the \
+             page context's own (20px)"
+        );
+    }
+
+    /// The common case: no font metrics available for `normal` — falls back
+    /// to padding's own initial value `0`, same policy as the element path
+    /// ([`crate::resolve::resolve_length_percentage`] doc).
+    #[test]
+    fn cascade_page_padding_lh_falls_back_to_zero_when_line_height_normal() {
+        let root = root_with_font_size(20.0); // line-height stays `normal` (initial)
+        let result = page("@page { padding: 1lh }", &root);
+        assert_eq!(padding_top_of(&result), Some(Length::Px(0.0)));
+    }
+
+    /// roborev-refine iter 1 Finding A regression pin, `@page` path:
+    /// `margin-top: 1lh` under (the initial, unresolvable) `line-height: normal`
+    /// must compute to `Px(0.0)` — margin's true spec initial (CSS Box 3
+    /// §3.1) — **not** `Auto` (`resolve_margin_length_or_auto`, bd
+    /// raikiri-spike-vxha — element-path sibling is
+    /// `margin_lh_falls_back_to_zero_not_auto_when_line_height_normal` in
+    /// `crate::cascade`).
+    #[test]
+    fn cascade_page_margin_lh_falls_back_to_zero_not_auto_when_line_height_normal() {
+        let root = root_with_font_size(20.0); // line-height stays `normal` (initial)
+        let result = page("@page { margin-top: 1lh }", &root);
+        assert_eq!(
+            result.declarations().get(&PropertyKey::MarginTop),
+            Some(&PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+                0.0
+            )))),
+            "margin-top: 1lh under line-height: normal must be Px(0.0), not Auto"
+        );
+    }
+
+    /// `@page { line-height: 1lh }` is self-referential — CSS Values 4
+    /// §6.1.1, spec quote canonically documented on
+    /// `crate::resolve::resolve_line_height`. The page context's "parent"
+    /// for this purpose is the root element (CSS Paged Media 3 §6), which
+    /// is exactly what `ctx.root_line_height` already carries.
+    #[test]
+    fn cascade_page_line_height_self_reference_uses_root_as_parent() {
+        let root = ComputedValues {
+            font_size: ComputedLength(20.0),
+            line_height: ComputedLineHeight::Number(2.0), // root used = 40px
+            ..ComputedValues::initial()
+        };
+        let result = page("@page { line-height: 1lh }", &root);
+        assert_eq!(
+            result.declarations().get(&PropertyKey::LineHeight),
+            Some(&PropertyValue::LineHeight(LineHeight::Length(Length::Px(
+                40.0
+            )))),
+        );
+    }
+
+    /// `@page { line-height: 1rlh }` — unlike `1lh` above, `rlh` is **not**
+    /// treated as self-referential (`resolve_line_height`'s `Length::Rlh`
+    /// arm ignores the `self_reference_basis` argument entirely and reads
+    /// `ctx.root_line_height` directly). This test happens to land on the
+    /// same numeric answer as `cascade_page_line_height_self_reference_uses_root_as_parent`
+    /// because the page context's "parent" *is* the root — the point is
+    /// this is not a coincidence of implementation wiring but `rlh`'s own
+    /// plain definition ("the lh unit on the root element").
+    #[test]
+    fn cascade_page_line_height_rlh_is_not_self_referential() {
+        let root = ComputedValues {
+            font_size: ComputedLength(20.0),
+            line_height: ComputedLineHeight::Number(2.0), // root used = 40px
+            ..ComputedValues::initial()
+        };
+        let result = page("@page { line-height: 1rlh }", &root);
+        assert_eq!(
+            result.declarations().get(&PropertyKey::LineHeight),
+            Some(&PropertyValue::LineHeight(LineHeight::Length(Length::Px(
+                40.0
+            )))),
+        );
+    }
+
+    /// `page_context_line_height_basis`'s undeclared-`line-height` branch
+    /// inherits [`ComputedLineHeight::Number`] from the root and multiplies
+    /// it by the **page context's own** font-size — ordinary CSS inheritance
+    /// semantics for the unitless multiplier (CSS Inline 3 §5.1), not a
+    /// page-context special case. Root font-size (16px, unused for this)
+    /// deliberately differs from the page context's declared font-size
+    /// (40px) so a bug that used the root's font-size instead would be
+    /// caught.
+    #[test]
+    fn cascade_page_padding_lh_uses_page_context_own_font_size_for_inherited_number() {
+        let root = ComputedValues {
+            line_height: ComputedLineHeight::Number(1.5), // inherited by the page context
+            ..ComputedValues::initial()                   // root font-size stays 16px
+        };
+        let result = page("@page { font-size: 40px; padding: 1lh }", &root);
+        assert_eq!(
+            padding_top_of(&result),
+            Some(Length::Px(60.0)), // 1.5 * 40 (page's own), not 1.5 * 16 (root's)
+        );
+    }
+
     /// `<percentage>` on `padding` is **not** absolutized — §6: "Percentage
     /// values on the margin and padding properties are relative to the
     /// dimensions of the containing block", i.e. a used-value input. The
@@ -2715,6 +2991,7 @@ mod tests {
                     2.0
                 )))),
                 fs,
+                None,
                 &ctx,
                 styles,
             ),
@@ -2726,6 +3003,7 @@ mod tests {
                     LengthOrAuto::Length(Length::Rem(2.0))
                 ))),
                 fs,
+                None,
                 &ctx,
                 styles,
             ),
@@ -2741,6 +3019,7 @@ mod tests {
                     color: BorderColor::CurrentColor,
                 }))),
                 fs,
+                None,
                 &ctx,
                 styles,
             ),
@@ -2778,6 +3057,7 @@ mod tests {
                     RelativeFontSize::Larger
                 )),
                 fs,
+                None,
                 &ctx,
                 styles,
             ),
@@ -2789,6 +3069,7 @@ mod tests {
                     RelativeFontSize::Smaller
                 )),
                 fs,
+                None,
                 &ctx,
                 styles,
             ),
@@ -3121,6 +3402,11 @@ mod tests {
                 Length::Q(_) => Some("Length::Q"),
                 Length::In(_) => Some("Length::In"),
                 Length::Pc(_) => Some("Length::Pc"),
+                // bd raikiri-spike-vxha — same reasoning as the `Em`/`Rem`/`Pt`
+                // arms above: pre-absolutization these units don't exist in
+                // the computed layer.
+                Length::Lh(_) => Some("Length::Lh"),
+                Length::Rlh(_) => Some("Length::Rlh"),
             }
         }
         /// `%` が computed 層に**残らない** position 用 — `font-size` と
@@ -3321,6 +3607,15 @@ mod tests {
             specified_layer_residue(&PropertyValue::PaddingTop(Length::Pc(1.0))),
             Some("Length::Pc"),
         );
+        // bd raikiri-spike-vxha.
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Lh(1.0))),
+            Some("Length::Lh"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::PaddingTop(Length::Rlh(1.0))),
+            Some("Length::Rlh"),
+        );
     }
 
     /// `page_corpus` に重複 variant が無く、`sample_for` の各 arm が自分の
@@ -3434,6 +3729,7 @@ mod tests {
                 absolutize_in_page_context(
                     ResolvedAgainstInherited::for_test(value.clone()),
                     font_size,
+                    None,
                     &ctx,
                     styles,
                 ) == *value
@@ -3465,7 +3761,7 @@ mod tests {
         let residues: Vec<(PropertyKey, &'static str)> = page_corpus()
             .into_iter()
             .map(|v| resolve_against_inherited(v, &root))
-            .map(|v| absolutize_in_page_context(v, font_size, &ctx, styles))
+            .map(|v| absolutize_in_page_context(v, font_size, None, &ctx, styles))
             .filter_map(|v| specified_layer_residue(&v).map(|r| (v.key(), r)))
             .collect();
 
