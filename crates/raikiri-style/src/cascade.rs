@@ -22,6 +22,7 @@
 //! winner 適用の途中で絶対化することはできない)。
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use cssparser::{Parser, ParserInput};
 use selectors::parser::{Selector, SelectorList};
@@ -76,7 +77,7 @@ pub struct CascadeResult {
 /// # }
 /// ```
 pub fn cascade<D: StyleDom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResult, CascadeError> {
-    let mut cascaded: HashMap<StyleNodeId, Vec<CascadedDecl>> = HashMap::new();
+    let mut cascaded = CascadedArena::new();
 
     // Phase 1: per-node cascaded values を収集
     collect_cascaded(dom, dom.root_id(), rule_tree, &mut cascaded);
@@ -122,6 +123,71 @@ const INLINE_SOURCE_ORDER: u32 = u32::MAX;
 /// `collect_cascaded` が populate、`pick_winners` が rank 化して winner を選ぶ
 /// (raikiri-spike-m1.22 で `Origin` を追加、clippy::type_complexity 回避のため alias 化)。
 type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
+
+/// [`collect_cascaded`] の出力 — 全 node 分の candidate を単一 flat `Vec` に
+/// 積み、node ごとの部分区間を [`Range`] で引く (bd raikiri-spike-gerj、
+/// raikiri-spike-8kn8 の follow-up)。
+///
+/// # 何を置換したか
+///
+/// 旧実装は `HashMap<StyleNodeId, Vec<CascadedDecl>>` — per-node に `Vec` を
+/// 1 本ずつ確保していた。n=1000 node の cascade で **collect_cascaded 単体
+/// 4,030 allocs / 2,439,940 bytes** (bd raikiri-spike-gerj 実測、着手時
+/// 再計測。8kn8 起票時の「collect_cascaded 他 rest」バケツは
+/// `resolve_inheritance` の clone chain と合算されていたため、それとは別数値)。
+/// ただしこの 4,030 のうち **1,020 allocs / 64,744 bytes は本 struct が
+/// 触れていない `dom.child_ids(id).collect()` 行**に由来する (同じ doc で
+/// その行だけを単独実行して確認、bd raikiri-spike-75ch の管轄で本 task の
+/// 対象外)。per-node `Vec` の growth chain 自体が担っていたのは残り
+/// **3,010 allocs / 2,375,196 bytes** — push のたび geometric に再確保する
+/// その growth chain が丸ごと allocation cost だった。単一 arena にすると
+/// growth chain は文書全体で 1 本になり (n=1000 で 23 allocs まで低下、
+/// -99.2%)、chain 長は `O(log 総 candidate 数)` に潰れる。
+///
+/// # なぜ struct で wrap するか (bare `(Vec<_>, HashMap<_, Range<usize>>)` にしないか)
+///
+/// [`pick_winners`] の `winner.idx` は「渡された **その** slice 内の位置」で
+/// あり、bd raikiri-spike-8kn8 のドキュメントが警告する通り **範囲外にならず
+/// 静かに別 node の宣言を読む** 経路がある。arena 化で新たに生まれる同型の
+/// 危険は「[`candidates`](Self::candidates) を経由せず、`decls` 全体や
+/// `decls[range.start..]` のような**部分的に間違ったスライス**を
+/// [`apply_winners`] に渡してしまう」こと — この場合も範囲外にはならず、
+/// 別 node の候補を静かに拾う。fields を private にして
+/// [`candidates`](Self::candidates) だけを公開することで、呼び出し側は
+/// 「この node 自身の区間ちょうど」以外のスライスを **作れない**。
+///
+/// `pub(crate)` は [`resolve_inheritance`] 自身が `pub(crate)` (他 module の
+/// doc からの intra-doc link のため) であることに追随するだけで、他 module
+/// から構築/操作されることは想定していない — 構築は [`cascade`] が行い、
+/// 内容の書き込みは [`collect_cascaded`] に閉じている (いずれも本 module)。
+pub(crate) struct CascadedArena {
+    /// 全 node の candidate を document 内 visit 順で連結した flat 領域。
+    decls: Vec<CascadedDecl>,
+    /// node ごとの `decls` 内部分区間。空 (no candidate) の node はここに
+    /// entry を持たない — 旧実装の `if !per_node.is_empty() { out.insert(..) }`
+    /// と同じ「無ければ握らない」契約。
+    ranges: HashMap<StyleNodeId, Range<usize>>,
+}
+
+impl CascadedArena {
+    fn new() -> Self {
+        Self {
+            decls: Vec::new(),
+            ranges: HashMap::new(),
+        }
+    }
+
+    /// `id` 自身の candidate 一覧 — [`pick_winners`] にそのまま渡せる
+    /// **自 node 専用**のスライス。
+    ///
+    /// 返す slice は常に `&self.decls[range]` で `range` は `id` のために
+    /// `collect_cascaded` が積んだ区間ちょうど — 呼び出し側がこれ以外の形の
+    /// slice (全体、あるいは `range.start` だけずらしたもの) を組み立てる経路は
+    /// 本 struct に存在しない。
+    fn candidates(&self, id: StyleNodeId) -> Option<&[CascadedDecl]> {
+        self.ranges.get(&id).map(|range| &self.decls[range.clone()])
+    }
+}
 
 /// [`pick_winners`] の scratch slot — 1 property key の暫定勝者。
 ///
@@ -177,25 +243,38 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
 /// `collect_cascaded` は本来 DFS で node を訪れるが、per-node の処理は他の
 /// node の状態に依存しないため訪問順は無関係。overflow 回避のため explicit
 /// `Vec` stack で iterative に書き換え (roborev job 199)。
+///
+/// # flat arena への書き込み (bd raikiri-spike-gerj)
+///
+/// 1 node 分の candidate は `out.decls` に**連続して**積まれる —
+/// stylesheet rule matching (rule/declaration の source order) → inline
+/// style の順に push し、両方終わったところで `start..out.decls.len()` を
+/// その node の区間として登録する。次の node の処理が始まるまで他の push が
+/// 割り込まないことが「区間が連続」の根拠であり、
+/// [`CascadedArena::candidates`] が返す slice の index が
+/// [`pick_winners`]/[`apply_winners`] にとって**その node 自身の**
+/// `candidates` 内 index であり続ける前提そのもの (raikiri-spike-8kn8 の
+/// 「global index space を渡すと壊れる」警告を参照)。
 fn collect_cascaded<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
     rule_tree: &RuleTree,
-    out: &mut HashMap<StyleNodeId, Vec<CascadedDecl>>,
+    out: &mut CascadedArena,
 ) {
     let mut stack: Vec<StyleNodeId> = vec![id];
     while let Some(id) = stack.pop() {
         if let Some(node) = dom.node(id) {
             // raikiri-spike-37c: <template> 子孫 + 将来の inert subtree を統一 skip。
             // silent bug fix: 従来 template 内 element にも rule matching が走り
-            // Vec<CascadedDecl> が waste で膨らんでいた。
+            // arena (旧実装では per-node Vec<CascadedDecl>) が waste で膨らんで
+            // いた。
             if !node.is_in_document() {
                 continue;
             }
             if node.kind() == StyleNodeKind::Element
                 && let Some(elem) = node.as_element()
             {
-                let mut per_node = Vec::new();
+                let start = out.decls.len();
                 // stylesheet rule matching
                 let tag = elem.tag_name();
                 for rule in &rule_tree.style_rules {
@@ -207,7 +286,7 @@ fn collect_cascaded<D: StyleDom>(
                             // bd raikiri-spike-nqkj)。rationale は
                             // `crate::rule::expand_shorthand_into` doc に集約。
                             expand_shorthand_into(decl, |d| {
-                                per_node.push((
+                                out.decls.push((
                                     d.value,
                                     d.important,
                                     rule.origin,
@@ -223,7 +302,7 @@ fn collect_cascaded<D: StyleDom>(
                     let mut input = ParserInput::new(source);
                     let mut parser = Parser::new(&mut input);
                     for decl in parse_declaration_block(&mut parser) {
-                        per_node.push((
+                        out.decls.push((
                             decl.value,
                             decl.important,
                             Origin::Author,
@@ -232,8 +311,9 @@ fn collect_cascaded<D: StyleDom>(
                         ));
                     }
                 }
-                if !per_node.is_empty() {
-                    out.insert(id, per_node);
+                let end = out.decls.len();
+                if end > start {
+                    out.ranges.insert(id, start..end);
                 }
             }
             // stack は LIFO なので document order で push するため reverse。
@@ -332,7 +412,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
     parent_computed: &ComputedValues,
-    cascaded: &HashMap<StyleNodeId, Vec<CascadedDecl>>,
+    cascaded: &CascadedArena,
     out: &mut Vec<ComputedValues>,
 ) {
     let mut stack: Vec<(StyleNodeId, ComputedValues, Option<ResolveContext>)> =
@@ -370,7 +450,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // 適用対象は staging 表現なので winner の適用順に依存しない
         // (spec §M1.4a、raikiri-spike-m1.22 / raikiri-spike-082k)。
         let mut specified = SpecifiedValues::inherit_from(&parent_computed);
-        if let Some(candidates) = cascaded.get(&id) {
+        if let Some(candidates) = cascaded.candidates(id) {
             apply_winners(candidates, &mut winners, &mut specified);
         }
 
@@ -510,6 +590,16 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// `winner_does_not_leak_into_next_sibling` が捕まえるのも panic ではなく
 /// in-bounds の二重適用である。leak に対する実効的な net は [`pick_winners`]
 /// 冒頭の debug_assert (**release build では消える**) と同 test の 2 つ。
+///
+/// # `candidates` の出所 (bd raikiri-spike-gerj — flat arena 化後)
+///
+/// 唯一の呼び出し元 [`resolve_inheritance`] は `candidates` を
+/// [`CascadedArena::candidates`] からしか受け取らない。同メソッドは常に
+/// 「その node 自身の区間ちょうど」の slice を返す設計になっており (fields
+/// が private で他の切り出し方を作れない)、`winner.idx` が
+/// **別 node の宣言を指す**という上記の危険が「slot leak (drain し損ね)」
+/// 以外の経路 — 例えば `candidates` 自体が呼び出し側のミスで global index
+/// space の slice になる — からは発生し得ない。
 ///
 /// [`PropertyKey`]: crate::property::PropertyKey
 fn apply_winners(
@@ -1399,6 +1489,116 @@ mod tests {
         assert_eq!(
             r.computed[span].font_weight, 700.0,
             "font-weight: bolder が 2 回適用された (slot leak による二重 drain)"
+        );
+    }
+
+    /// bd raikiri-spike-gerj: `collect_cascaded` の出力が per-node
+    /// `HashMap<StyleNodeId, Vec<CascadedDecl>>` から flat arena +
+    /// `HashMap<StyleNodeId, Range<usize>>` (`CascadedArena`) に変わったあと、
+    /// per-node grouping / 内部順序 / 「候補 0 件なら entry 無し」の 3 つが
+    /// 旧実装と不変であることを直接 pin する。
+    ///
+    /// 3 兄弟 `<p>` を作り、うち 2 つ (`p1`/`p3`) には inline style も足す —
+    /// 「stylesheet 2 rule → inline 1 件」の混在順序 (旧実装のまま:
+    /// stylesheet 由来が先、inline が最後) を見るため。`<hr>` は
+    /// マッチする rule も inline style も持たない — 旧実装の
+    /// `if !per_node.is_empty() { out.insert(..) }` と同じ「候補が無ければ
+    /// map に entry を作らない」契約を CascadedArena も引き継いでいることを
+    /// 確認する。
+    ///
+    /// ranges の非重複性は flat arena 特有の新しい不変条件 — 個別 `Vec` には
+    /// 存在しなかった「他 node の区間と重なってはいけない」という要求で、
+    /// [`CascadedArena::candidates`] が正しい slice を返す前提そのもの
+    /// (raikiri-spike-8kn8 が警告する「global index space を渡すと壊れる」
+    /// ハザードの、arena 版の再発防止)。2 つの assertion で役割が分かれる:
+    /// `windows(2)` が三者間の pairwise overlap を検査し、末尾の
+    /// `assert_eq!` (arena 全長 == 3 区間長の和) が「どの named range にも
+    /// 属さない迷子 slot」の有無を検査する — 前者だけでは後者は捕まらない。
+    #[test]
+    fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p { color: red } p { background-color: blue }");
+
+        let p1 = doc.push_element(0, "p", Some("display: block"));
+        let p2 = doc.push_element(0, "p", None);
+        let empty = doc.push_element(0, "hr", None);
+        let p3 = doc.push_element(0, "p", Some("display: inline"));
+
+        let tree = build_rule_tree(&doc);
+        let mut arena = CascadedArena::new();
+        collect_cascaded(&doc, doc.root_id(), &tree, &mut arena);
+
+        let id = |i: usize| StyleNodeId::new(i as u64);
+
+        // `hr` matches no rule and has no inline style — old code's
+        // `if !per_node.is_empty()` guard meant no map entry at all; the
+        // arena must not create a zero-length range for it either.
+        assert!(
+            arena.candidates(id(empty)).is_none(),
+            "element with zero candidate declarations must get no arena entry"
+        );
+
+        // p2: 2 stylesheet decls, no inline — order = rule/source order.
+        let p2c = arena.candidates(id(p2)).expect("p2 has 2 stylesheet decls");
+        assert_eq!(p2c.len(), 2);
+        assert_eq!(p2c[0].0, PropertyValue::Color(RED));
+        assert_eq!(p2c[1].0, PropertyValue::BackgroundColor(BLUE));
+        assert_eq!(p2c[0].4, 0, "first rule keeps its source_order");
+        assert_eq!(p2c[1].4, 1, "second rule keeps its source_order");
+
+        // p1 / p3: same 2 stylesheet decls, PLUS inline style appended last
+        // (collect_cascaded pushes stylesheet rules before inline style).
+        let p1c = arena.candidates(id(p1)).expect("p1 has decls");
+        assert_eq!(p1c.len(), 3, "2 stylesheet decls + 1 inline, inline last");
+        assert_eq!(p1c[0].0, PropertyValue::Color(RED));
+        assert_eq!(p1c[1].0, PropertyValue::BackgroundColor(BLUE));
+        assert_eq!(p1c[2].0, PropertyValue::Display(DisplayValue::Block));
+        assert_eq!(p1c[2].3, INLINE_SPECIFICITY);
+        assert_eq!(p1c[2].4, INLINE_SOURCE_ORDER);
+
+        let p3c = arena.candidates(id(p3)).expect("p3 has decls");
+        assert_eq!(p3c.len(), 3);
+        assert_eq!(p3c[2].0, PropertyValue::Display(DisplayValue::Inline));
+
+        // Stylesheet-only decls (p1/p2/p3 all matched the same 2 `p` rules)
+        // carry identical specificity to each other — cross-node consistency
+        // the old shared-selector-per-rule code guaranteed too.
+        assert_eq!(p1c[0].3, p2c[0].3);
+        assert_eq!(p2c[0].3, p3c[0].3);
+
+        // Ranges must not overlap — a flat arena has to hold this invariant
+        // that per-node `Vec`s never needed to: if two nodes' ranges ever
+        // overlapped, `candidates(id)` would silently hand `pick_winners` a
+        // slice containing another node's declarations too
+        // (raikiri-spike-8kn8's "global index space" hazard, arena-shaped).
+        //
+        // The `windows(2)` loop below only checks pairwise overlap among the
+        // three explicitly-named nodes (p1/p2/p3) — it would miss a stray
+        // arena slot that belongs to no range, or one double-counted across
+        // two ranges. The load-bearing check for "no slot unaccounted for"
+        // is the trailing `assert_eq!` after the loop: it compares the
+        // arena's total length against the sum of every named range's
+        // length, so any leaked/duplicated/orphaned slot shows up as a
+        // length mismatch even if no two of the three named ranges overlap
+        // each other directly.
+        let mut ranges: Vec<_> = [p1, p2, p3]
+            .iter()
+            .map(|&n| arena.ranges.get(&id(n)).unwrap().clone())
+            .collect();
+        ranges.sort_by_key(|r| r.start);
+        for w in ranges.windows(2) {
+            assert!(
+                w[0].end <= w[1].start,
+                "per-node ranges must not overlap: {:?} vs {:?}",
+                w[0],
+                w[1]
+            );
+        }
+        assert_eq!(
+            arena.decls.len(),
+            ranges.iter().map(|r| r.len()).sum::<usize>(),
+            "every arena slot belongs to exactly one node's range"
         );
     }
 
