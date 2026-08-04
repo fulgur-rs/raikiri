@@ -33,7 +33,8 @@ use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     Border, BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction,
     DisplayValue, Length, LengthOrAuto, LineHeight, Sides, TextAlign, empty_content_list,
-    empty_counter_entries, empty_string_set_entries, resolve_text_align_match_parent,
+    empty_counter_entries, empty_string_set_entries, initial_font_family,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ResolveContext, lift_font_size, lift_line_height, resolve_border,
@@ -128,7 +129,7 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::background_color`] の staging。層は computed-equivalent。
     pub background_color: CssColor,
     /// [`ComputedValues::font_family`] の staging。層は computed-equivalent。
-    pub font_family: Vec<Atom>,
+    pub font_family: Arc<Vec<Atom>>,
     /// `font-size` の **specified** value。phase 2 ([`resolve_font_size`]) で
     /// **親の** computed font-size を基準に絶対化される。
     pub font_size: Length,
@@ -192,7 +193,9 @@ impl SpecifiedValues {
         Self {
             color: CssColor::BLACK,
             background_color: CssColor::TRANSPARENT,
-            font_family: vec![Atom::from("serif")],
+            // d9y.1/d9y.2 pattern踏襲 (raikiri-spike-no7b): shared Arc slot —
+            // per-node allocation 回避 (`initial_font_family` doc 参照)。
+            font_family: initial_font_family(),
             // CSS Fonts 4 §2.5: initial は `medium` (本実装では 16px)。
             font_size: Length::Px(crate::computed::INITIAL_FONT_SIZE_PX),
             font_weight: 400.0,
@@ -251,7 +254,12 @@ impl SpecifiedValues {
         // 「簡約」すると `font_family` の `Vec` を 1 度 allocate → drop してから
         // parent から clone し直すことになり無駄 (roborev job 217 medium 対応。
         // 本 comment は `ComputedValues::inherit_from` から bd raikiri-spike-zls8
-        // で移設したもの)。
+        // で移設したもの)。raikiri-spike-no7b で `font_family` は
+        // `Arc<Vec<Atom>>` 化されたため、この特定の malloc→drop は解消済み
+        // (`initial_font_family()` は shared slot の bump のみ) —
+        // ただし本 directive (下記) はそれとは独立に立つ (per-field 網羅列挙が
+        // 新規 property 追加時の audit friendliness を担う、将来 field が同種の
+        // 生 heap payload を持てば再発しうる)。
         //
         // 本関数は per-node で走るので、この無駄は O(N) の alloc regression に
         // なる。**15 行削れるからと `..Self::initial()` に書き換えてはならない。**
@@ -612,7 +620,7 @@ mod tests {
                 b: 30,
                 a: 255,
             },
-            font_family: vec![Atom::from("sans-serif")],
+            font_family: Arc::new(vec![Atom::from("sans-serif")]),
             font_size: ComputedLength(24.0),
             font_weight: 700.0,
             line_height: ComputedLineHeight::Number(1.5),
@@ -646,6 +654,11 @@ mod tests {
         let child = SpecifiedValues::inherit_from(&parent);
         assert_eq!(child.color, parent.color);
         assert_eq!(child.font_family, parent.font_family);
+        // raikiri-spike-no7b (d9y.1/d9y.2 pattern踏襲): `inherit_from` の
+        // `parent.font_family.clone()` は Arc bump — deep-clone regression
+        // なら ptr_eq が false になる (d9y.1 `Arc::ptr_eq` behavioral-proxy
+        // methodology、`mod@crate::cascade` test 群と同型)。
+        assert!(Arc::ptr_eq(&child.font_family, &parent.font_family));
         assert_eq!(child.font_weight, 700.0);
         // CSS Text 3 §6.1: text-align は inherited。
         assert_eq!(child.text_align, TextAlign::Center);

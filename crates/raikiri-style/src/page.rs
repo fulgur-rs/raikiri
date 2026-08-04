@@ -2690,7 +2690,7 @@ mod tests {
         vec![
             PropertyValue::Color(RED),
             PropertyValue::BackgroundColor(BLUE),
-            PropertyValue::FontFamily(vec![Atom::from("serif")]),
+            PropertyValue::FontFamily(Arc::new(vec![Atom::from("serif")])),
             PropertyValue::FontSize(Length::Em(2.0)),
             PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
             PropertyValue::FontWeight(FontWeightValue::Bolder),

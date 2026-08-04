@@ -14,6 +14,7 @@ use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
     Sides, TextAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    initial_font_family,
 };
 use crate::resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -95,8 +96,25 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>。
     /// (raikiri-spike-0vv.7)
     pub background_color: CssColor,
-    /// `font-family` — 優先順位順。inherited、initial: `[Atom::from("serif")]`。
-    pub font_family: Vec<Atom>,
+    /// `font-family` — 優先順位順。inherited。CSS Fonts 4 §2.1
+    /// <https://www.w3.org/TR/css-fonts-4/#font-family-prop> の spec 上の
+    /// initial は "depends on user agent" — spec は具体的な family name を
+    /// 規定しない ([`crate::property::initial_font_family`] doc 参照)。
+    /// 本実装は `[Atom::from("serif")]` を採る。
+    ///
+    /// [`Arc<Vec<..>>`] wrap: inheritance walk clone
+    /// (`SpecifiedValues::inherit_from` の `parent.font_family.clone()`、
+    /// `resolve_inheritance` の stack push + `out[idx] = computed.clone()`) が
+    /// **shallow (Arc bump)** になる。`font-family` は inherited property なので、
+    /// [`Self::counter_reset`] 等 (non-inherited) とはコストの形が異なる —
+    /// 「毎 node で initial にリセットする」コストではなく「inheritance walk が
+    /// 毎 node で値を運ぶ」コストで、N-node document あたり O(N) の 1-element
+    /// `Vec` malloc になっていた (raikiri-spike-no7b、d9y.1/d9y.2 pattern の踏襲、
+    /// origin: raikiri-spike-zpui §8.2 perf lens、out-of-diff pre-existing)。
+    /// `Arc<Vec<T>>: Deref<Target = Vec<T>>` により downstream の `.iter()` /
+    /// `.len()` / `.is_empty()` は既存 pattern そのままで通る (dom/paint consumer
+    /// 波及 0)。
+    pub font_family: Arc<Vec<Atom>>,
     /// `font-size`。**inherited**、initial: 16px (spec は `medium`、実 px は
     /// UA 依存)。CSS Fonts 4 §2.5 "Font size: the font-size property"
     /// <https://www.w3.org/TR/css-fonts-4/#propdef-font-size> は
@@ -468,7 +486,9 @@ impl ComputedValues {
             // CSS Backgrounds 3 §2.2: background-color initial は `transparent`
             // (raikiri-spike-0vv.7)。
             background_color: CssColor::TRANSPARENT,
-            font_family: vec![Atom::from("serif")],
+            // d9y.1/d9y.2 pattern踏襲 (raikiri-spike-no7b): shared Arc slot —
+            // per-node allocation 回避 (`initial_font_family` doc 参照)。
+            font_family: initial_font_family(),
             font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
             font_weight: 400.0,
             // CSS Inline 3 §5.1: line-height initial は `normal` (font metrics
@@ -607,7 +627,11 @@ mod tests {
         // CSS Backgrounds 3 §2.2: background-color initial は `transparent`
         // (= rgba(0, 0, 0, 0)、raikiri-spike-0vv.7)
         assert_eq!(cv.background_color, CssColor::TRANSPARENT);
-        assert_eq!(cv.font_family, vec![Atom::from("serif")]);
+        // literal を保持する (bd raikiri-spike-jaww の `INITIAL_FONT_SIZE_PX` pin
+        // と同じ理由 — `initial_font_family()` 参照に書き換えると自己参照になり
+        // 同 helper の誤編集を検出できなくなる)。`*cv.font_family` で
+        // `Arc<Vec<Atom>>` を `Vec<Atom>` に deref してから比較する。
+        assert_eq!(*cv.font_family, vec![Atom::from("serif")]);
         // CSS Fonts 4 §2.5: font-size initial は `medium` = 本実装では 16px
         // (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>)。
         // **この 16.0 は意図的な literal** — `INITIAL_FONT_SIZE_PX` 参照に
@@ -709,7 +733,7 @@ mod tests {
                 b: 30,
                 a: 255,
             },
-            font_family: vec![Atom::from("sans-serif")],
+            font_family: Arc::new(vec![Atom::from("sans-serif")]),
             font_size: ComputedLength(24.0),
             font_weight: 700.0,
             line_height: ComputedLineHeight::Length(ComputedLength(30.0)),
