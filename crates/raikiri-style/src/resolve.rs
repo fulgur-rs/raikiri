@@ -399,7 +399,7 @@ pub enum ComputedLineHeight {
 /// // の別 keyword)。
 /// // ただし initial の border-style は `none` なので computed value は 0px。
 /// assert_eq!(
-///     resolve_border(initial, ComputedLength(20.0), &ctx).width,
+///     resolve_border(initial, ComputedLength(20.0), &ctx).width(),
 ///     ComputedLength::ZERO,
 /// );
 ///
@@ -407,21 +407,47 @@ pub enum ComputedLineHeight {
 /// let mut specified = initial;
 /// specified.style = BorderStyle::Solid;
 /// let computed = resolve_border(specified, ComputedLength(20.0), &ctx);
-/// assert_eq!(computed.width, ComputedLength(3.0));
+/// assert_eq!(computed.width(), ComputedLength(3.0));
 /// // style / color は specified keyword をそのまま運ぶ。
-/// assert_eq!(computed.style, specified.style);
+/// assert_eq!(computed.style(), specified.style);
 /// assert_eq!(computed.color, specified.color);
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBorder {
     /// 絶対化済みの border width。
-    pub width: ComputedLength,
+    ///
+    /// `style` が [`BorderStyle::None`] / [`BorderStyle::Hidden`] のとき
+    /// [`resolve_border`] は本 field を必ず `ComputedLength::ZERO` にする
+    /// (上記 propdef の gating)。crate 外からの直接書き換えでこの対応関係を
+    /// 崩せないよう `pub(crate)` に絞り、read-only accessor [`Self::width`]
+    /// のみを公開する (bd raikiri-spike-9jmt)。
+    pub(crate) width: ComputedLength,
     /// `border-*-style` — computed 層でも specified keyword。
-    pub style: BorderStyle,
+    ///
+    /// `width` と対で `pub(crate)` に絞り、read-only accessor
+    /// [`Self::style`] のみを公開する (bd raikiri-spike-9jmt)。
+    pub(crate) style: BorderStyle,
     /// `border-*-color` — `currentcolor` keyword を保持したまま computed 層に
     /// 残る (used-value 解決は paint 責務)。
     pub color: BorderColor,
+}
+
+impl ComputedBorder {
+    /// 絶対化済みの border width への read-only accessor。
+    ///
+    /// [`Self::style`] が [`BorderStyle::None`] / [`BorderStyle::Hidden`] の
+    /// ときは必ず `ComputedLength::ZERO` — [`resolve_border`] が gate する
+    /// (bd raikiri-spike-9jmt)。
+    pub fn width(&self) -> ComputedLength {
+        self.width
+    }
+
+    /// `border-*-style` の computed value への read-only accessor
+    /// (bd raikiri-spike-9jmt)。
+    pub fn style(&self) -> BorderStyle {
+        self.style
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1425,6 +1451,22 @@ mod tests {
         assert_eq!(computed.width, ComputedLength(3.0));
         assert_eq!(computed.style, specified.style);
         assert_eq!(computed.color, specified.color);
+    }
+
+    /// `ComputedBorder::width()` / `::style()` accessor 本体を実行する pin
+    /// (bd raikiri-spike-9jmt)。上の test は同一モジュール内なので
+    /// `pub(crate)` field に直接アクセスし、accessor 関数本体そのものは
+    /// 経由しない。crate 外視点から accessor を叩く doctest ([`ComputedBorder`]
+    /// 型 doc 内) はあるが、この repo の toolchain (stable 固定、
+    /// `cargo llvm-cov` に `--doctests` 未指定) では doctest はカバレッジ計測
+    /// 対象に入らないため、本 test が accessor 本体を計測対象として実行する。
+    #[test]
+    fn computed_border_accessors_read_the_gated_fields() {
+        let mut specified = SpecifiedValues::initial().border.top;
+        specified.style = BorderStyle::Solid;
+        let computed = resolve_border(specified, ComputedLength(20.0), &CTX);
+        assert_eq!(computed.width(), ComputedLength(3.0));
+        assert_eq!(computed.style(), BorderStyle::Solid);
     }
 
     /// CSS Backgrounds 3 §3.3 "Computed value: … zero if the border style is
