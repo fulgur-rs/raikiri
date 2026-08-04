@@ -15,6 +15,124 @@ use crate::property::{Border, Length, LengthOrAuto, PropertyValue, Sides, parse_
 ///
 /// `value` が私有なので、crate 外からは struct literal / functional-update
 /// のいずれでも構築できない (bd raikiri-spike-qzn3)。
+///
+/// # write 経路が無いことの compile-fail pin (bd raikiri-spike-ejia)
+///
+/// qzn3 は `value` を `pub(crate)` に絞ったが、そのことは prose の主張のまま
+/// だった — read 経路 (`value()`) が届くことは
+/// `crates/raikiri/tests/external_consumer.rs` の実行時 test が pin するが、
+/// 「write 経路が無い」ことは compile する code では表現できないので、それだけ
+/// では pin されない。以下は struct literal 構築が external crate から reject
+/// されることの compile-fail pin:
+///
+/// ```compile_fail
+/// use raikiri_style::{CssColor, Declaration, PropertyValue};
+///
+/// let _ = Declaration {
+///     value: PropertyValue::Color(CssColor::BLACK),
+///     important: false,
+/// };
+/// ```
+///
+/// functional-update (`..base`) 経由の構築も同じ理由 (`value` が private) で
+/// reject される。
+///
+/// ⚠️ **上 2 fence (struct literal / functional-update) は `value` 単独の
+/// visibility を独立には discriminate できない** — reviewer:quality が実測で
+/// 指摘 (bd raikiri-spike-ejia gate finding)。今 `Declaration` に
+/// `#[non_exhaustive]` が付いておらず `important` が `pub` だから、この 2
+/// fence の失敗理由はたまたま「`value` が private」だけになっている。だが
+/// 将来 (a) `Declaration` に `#[non_exhaustive]` が付く、または (b)
+/// `important` が narrowing されると、この 2 fence は **`value` が `pub` に
+/// 戻っても** (a) は non_exhaustive 由来の `E0639` で、(b) は `important` 由来
+/// の `E0451` で、compile-fail し**続ける** — つまりその時点で `value` を
+/// 保護する力を失っているのに「compile fail ... ok」のまま気付けない。
+/// この 2 fence だけを見て `#[non_exhaustive]` 追加や `important`
+/// narrowing の影響を判断しないこと。この risk の drift 検知は下の
+/// non-vacuous control の `decl.important` 行が担う (`important` が
+/// narrowing されればそちらが先に落ちる — ただし `#[non_exhaustive]` 追加の
+/// 影響までは non-vacuous control も検知しない、追加時は本 doc を
+/// 書き直すこと)。
+///
+/// `value` の visibility だけを独立に discriminate するのは下の 3 番目の
+/// fence (`.clone()` 後の field 代入) だけである:
+///
+/// ```compile_fail
+/// use raikiri_style::{CssColor, Declaration, Origin, PropertyValue, RuleTree};
+///
+/// let mut tree = RuleTree::empty();
+/// tree.add_stylesheet("p { color: red; }", Origin::Author);
+/// let base = tree.style_rules()[0].declarations()[0].clone();
+///
+/// let _ = Declaration {
+///     value: PropertyValue::Color(CssColor::BLACK),
+///     ..base
+/// };
+/// ```
+///
+/// 最後に、`Declaration` は `Clone` を derive しているので、external crate は
+/// `declarations()` 経由で得た `&Declaration` を `.clone()` して**所有権のある
+/// 可変値**を手に入れられる — このとき `value` への代入が reject されることが
+/// 唯一の実効的な write-pin である (issue が挙げた
+/// `tree.style_rules()[0].declarations()[0].value = ...;` は `style_rules()` /
+/// `declarations()` が両方とも `&[_]` を返す ので、`value` の visibility に
+/// 関係なく常に `E0594` (immutable な参照への代入) で reject される — つまり
+/// これは「常に compile-fail」であり `value` の可視性が将来 `pub` に戻っても
+/// 検出できない vacuous な pin になってしまう。下は `.clone()` を挟むことで
+/// `value` の visibility だけを discriminate する版):
+///
+/// ```compile_fail
+/// use raikiri_style::{CssColor, Origin, PropertyValue, RuleTree};
+///
+/// let mut tree = RuleTree::empty();
+/// tree.add_stylesheet("p { color: red; }", Origin::Author);
+/// let mut decl = tree.style_rules()[0].declarations()[0].clone();
+/// decl.value = PropertyValue::Color(CssColor::BLACK);
+/// ```
+///
+/// # 上の 3 fence の non-visibility 部分の non-vacuous control
+///
+/// (`raikiri-paint`
+/// の `draw_glyphs_at_natural_font_size_is_a_non_vacuous_control` /
+/// `crate::page` の `specified_layer_residue_detector_is_not_vacuous` と同じ
+/// 語彙 — 「非 vacuous であることを示す control」。)
+///
+/// 上 3 fence はいずれも `.clone()` / `CssColor::BLACK` / `PropertyValue::Color`
+/// の payload 形といった、可視性とは無関係な ingredient に依存している。
+/// これらが将来 drift (rename / shape 変更) すると、fence は「意図した理由」
+/// ではなく「単に construct できない」で compile-fail し続け、`value` の
+/// 可視性が緩んでも検出できない silent vacuity になる。以下は同じ
+/// ingredient を使い**かつ compile が通る**ことを assert するので、drift が
+/// 起きれば真っ先にここが (compile_fail ではなく) 通常の doctest として
+/// 落ちる。
+///
+/// `decl.important` の直接 field 読み出しも含める — 上 2 fence
+/// (struct literal / functional-update) が `value` の visibility を独立に
+/// discriminate できているという前提は「`important` が今 `pub` であること」
+/// に依存している (上の ⚠️ 節)。`important` が narrowing されれば真っ先に
+/// このassertが (compile_fail ではなく通常の doctest として) 壊れるので、
+/// 上 2 fence の前提が崩れたことをここで検知する:
+///
+/// ```
+/// use raikiri_style::{CssColor, Origin, PropertyValue, RuleTree};
+///
+/// let mut tree = RuleTree::empty();
+/// tree.add_stylesheet("p { color: red; }", Origin::Author);
+/// let decl = tree.style_rules()[0].declarations()[0].clone();
+/// assert_eq!(
+///     decl.value(),
+///     &PropertyValue::Color(CssColor {
+///         r: 255,
+///         g: 0,
+///         b: 0,
+///         a: 255
+///     })
+/// );
+/// // `important` field への直接アクセス (今 `pub`) — narrowing されれば
+/// // ここが真っ先に壊れる (上の ⚠️ 節参照)。
+/// assert!(!decl.important, "`color: red` に `!important` は付かない");
+/// let _ = PropertyValue::Color(CssColor::BLACK);
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct Declaration {
     /// resolved property value。
@@ -53,6 +171,29 @@ pub struct StyleRule {
 impl StyleRule {
     /// このルールの declaration list への read-only accessor
     /// (invalid は含まない、bd raikiri-spike-qzn3)。
+    ///
+    /// # `declarations` field 自体への到達不能性 (bd raikiri-spike-ejia)
+    ///
+    /// `declarations` field は `pub(crate)` — external crate から届くのは
+    /// この accessor だけである。`StyleRule` は `Clone` を derive していない
+    /// ので、external crate は `.clone()` で所有値の `StyleRule` を得る経路が
+    /// そもそも無い。加えて `#[non_exhaustive]` が struct literal /
+    /// functional-update による新規構築も塞いでいる — この 2 つは独立な
+    /// gate であり、`StyleRule` を external crate が所有値として保持する
+    /// 経路はどちらの意味でも存在しない。触れられるのはこの accessor が返す
+    /// `&[Declaration]` だけである。したがって「write 経路」を意味のある形で
+    /// discriminate する pin は存在しない (どんな可視性でも `&StyleRule` から
+    /// は書けない) が、
+    /// `declarations` という field 名そのものが private であることは以下で
+    /// 直接 pin できる — `pub` に戻れば以下は compile が通るようになる:
+    ///
+    /// ```compile_fail
+    /// use raikiri_style::{Origin, RuleTree};
+    ///
+    /// let mut tree = RuleTree::empty();
+    /// tree.add_stylesheet("p { color: red; }", Origin::Author);
+    /// let _ = &tree.style_rules()[0].declarations;
+    /// ```
     pub fn declarations(&self) -> &[Declaration] {
         &self.declarations
     }
