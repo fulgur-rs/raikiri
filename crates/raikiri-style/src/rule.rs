@@ -421,11 +421,16 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// ## 未計測の trade-off
 ///
 /// call site 1 (parse) の non-shorthand path は owned move から `d.clone()` に
-/// 変わったので、declaration あたり `PropertyValue::clone()` が 1 回増える
-/// (`FontFamily(Vec<Atom>)` 等では実 heap alloc)。parse は stylesheet あたり
-/// 1 回 = `O(declaration 数)`、cascade は毎回
+/// 変わったので、declaration あたり `PropertyValue::clone()` が 1 回増える。
+/// 本 comment 執筆時点では `FontFamily(Vec<Atom>)` がここでの実 heap alloc の
+/// 具体例だったが、raikiri-spike-no7b (d9y.1/d9y.2 pattern踏襲) で
+/// `Arc<Vec<Atom>>` 化されたため、現時点で `PropertyValue` に生 `Vec` payload
+/// を持つ variant は残っていない (`Arc::clone` は bump のみ)。parse は
+/// stylesheet あたり 1 回 = `O(declaration 数)`、cascade は毎回
 /// `O(element × match した rule × declaration)` なので trade は cascade 側に
-/// 倒すのが正しいが、**parse 側の delta 自体は計測していない**。
+/// 倒すのが正しいという分析自体は不変 (将来 variant が生 heap payload を
+/// 持てば同じ trade-off が再発しうる) だが、**parse 側の delta 自体は
+/// 計測していない**。
 #[inline]
 pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaration)) {
     match d.value {
@@ -638,6 +643,8 @@ impl<'i> RuleBodyItemParser<'i, Declaration, ()> for DeclParser {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::property::{
         BorderColor, BorderStyle, CssColor, FontWeightValue, Length, LengthOrAuto,
@@ -798,7 +805,7 @@ mod tests {
         assert_eq!(decls.len(), 1);
         assert_eq!(
             decls[0].value,
-            PropertyValue::FontFamily(vec![crate::Atom::from("Arial")])
+            PropertyValue::FontFamily(Arc::new(vec![crate::Atom::from("Arial")]))
         );
         assert!(decls[0].important);
     }

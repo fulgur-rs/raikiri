@@ -62,6 +62,40 @@ pub(crate) fn empty_counter_entries() -> Arc<Vec<(SmolStr, i32)>> {
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
+/// `font-family` の initial value を表す shared Arc — [`empty_content_list`]
+/// 等と同じ `OnceLock` 保持の shared-slot pattern (raikiri-spike-no7b、d9y.1 /
+/// d9y.2 pattern の踏襲)。
+///
+/// CSS Fonts 4 §2.1 "Font Family: the font-family property"
+/// (<https://www.w3.org/TR/css-fonts-4/#font-family-prop>) の spec 上の
+/// initial は "depends on user agent" — spec は具体的な family name を規定
+/// しない (`font-size` の initial `medium` の実 px が UA 依存であるのと同型、
+/// [`crate::computed::INITIAL_FONT_SIZE_PX`] の doc 参照)。本実装は browser
+/// default の `[Atom::from("serif")]` を採る。
+///
+/// `font-family` は **inherited** property であり、非 inherited な counter-* /
+/// content / string-set と違って initial 値は空 list ではなく本実装が選んだ
+/// `[Atom::from("serif")]` である。したがって本 helper は [`empty_content_list`]
+/// のような「空 `Vec` を共有する」ものではなく、「initial 値そのものを共有する」
+/// もの — root node の `SpecifiedValues::initial()` / `ComputedValues::initial()`
+/// がこの単一 heap slot を bump-share する。
+///
+/// per-node cost の形は他 5 field (counter_reset 等) とは異なる —
+/// あちらは「non-inherited property が毎 node で initial にリセットされる」
+/// コストだったが、`font-family` は inherited なので「inheritance walk が
+/// 毎 node で親の値を運ぶ」コスト
+/// ([`crate::specified::SpecifiedValues::inherit_from`] の
+/// `parent.font_family.clone()`) が主。値が initial の `serif` であろうと author
+/// 指定の任意 list であろうと、`Arc` 化により `.clone()` は既存 Arc の bump に
+/// なる — 本 helper は「initial 値を作る 1 箇所」を shared にするための slot
+/// であって、inherit chain 上の非 initial 値までこの slot に強制する訳ではない。
+pub(crate) fn initial_font_family() -> Arc<Vec<Atom>> {
+    static INITIAL: OnceLock<Arc<Vec<Atom>>> = OnceLock::new();
+    INITIAL
+        .get_or_init(|| Arc::new(vec![Atom::from("serif")]))
+        .clone()
+}
+
 /// RGBA color (0-255 per channel、`a` は 255 = fully opaque)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CssColor {
@@ -1536,6 +1570,13 @@ pub enum PositionValue {
 /// - [`CounterReset`](Self::CounterReset) / [`CounterIncrement`](Self::CounterIncrement) /
 ///   [`CounterSet`](Self::CounterSet): `Vec<(SmolStr, i32)>` → `Arc<Vec<(SmolStr, i32)>>`
 ///
+/// Sprint 18 hardening (bd raikiri-spike-no7b、d9y.1/d9y.2 pattern の踏襲 — perf
+/// lens、out-of-diff pre-existing finding、SEC 分類ではない) は同 pattern を
+/// 最後の non-Arc `Vec` payload に適用する:
+///
+/// - [`FontFamily`](Self::FontFamily): `FontFamily(Vec<Atom>)` →
+///   `FontFamily(Arc<Vec<Atom>>)`
+///
 /// Pattern-match で payload を **読む** consumer は `Arc<Vec<T>>` の
 /// `Deref<Target = Vec<T>>` → `Deref<Target = [T]>` chain により、`match` arm
 /// で `PropertyValue::Content(components) => components.iter()` のような使い方が
@@ -1554,8 +1595,24 @@ pub enum PropertyValue {
     /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>。
     /// (raikiri-spike-0vv.7)
     BackgroundColor(CssColor),
-    /// `font-family: <family-name>#` — inherited、initial: `[Atom::from("serif")]`。
-    FontFamily(Vec<Atom>),
+    /// `font-family: <family-name>#` — inherited。CSS Fonts 4 §2.1
+    /// <https://www.w3.org/TR/css-fonts-4/#font-family-prop> の spec 上の
+    /// initial は "depends on user agent"。本実装は `[Atom::from("serif")]`
+    /// を採る ([`crate::property::initial_font_family`] doc 参照)。
+    ///
+    /// [`Arc<Vec<..>>`] wrap (raikiri-spike-no7b、d9y.1/d9y.2 pattern踏襲):
+    /// cascade winner move (`apply_value`) と inheritance walk clone
+    /// (`SpecifiedValues::inherit_from` の `parent.font_family.clone()`) が
+    /// **shallow (Arc bump)** になる。`font-family` は inherited property なので
+    /// non-inherited な counter-* / content / string-set とはコストの形が違う —
+    /// 「毎 node で initial にリセットする」コストではなく「inheritance walk が
+    /// 毎 node で親の値を運ぶ」コストで、N-node document あたり O(N) の
+    /// 1-element `Vec` malloc になっていた (origin: raikiri-spike-zpui §8.2
+    /// perf lens、out-of-diff pre-existing)。`Arc<Vec<T>>: Deref<Target = Vec<T>>`
+    /// により downstream の `.iter()` / `.len()` / `.is_empty()` は既存 pattern
+    /// そのままで通る (dom/paint consumer 波及 0、`crates/raikiri-dom/src/layout.rs`
+    /// の `cv.font_family.iter()` 含む)。
+    FontFamily(Arc<Vec<Atom>>),
     /// `font-size: <absolute-size> | <length-percentage [0,∞]>` — inherited、
     /// initial: 16px (= `medium`)。CSS Fonts 4 §2.5
     /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>。
@@ -2135,7 +2192,12 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // 直上 sibling `color` arm と同じ parse_color reuse pattern。
         // (raikiri-spike-0vv.7)
         "background-color" => parse_color(input).map(PropertyValue::BackgroundColor),
-        "font-family" => parse_font_family(input).map(PropertyValue::FontFamily),
+        // Arc wrap は raikiri-spike-no7b の cascade memory 削減 (d9y.1/d9y.2
+        // pattern の踏襲、SEC 分類ではない perf lens)。`parse_font_family` は
+        // grammar 上 empty Vec を返さない (`<family-name>#` は 1 要素以上必須、
+        // 同関数の `if families.is_empty() { None }` 参照) ため、counter-* /
+        // content / string-set と異なり shared-empty-slot 分岐は不要。
+        "font-family" => parse_font_family(input).map(|v| PropertyValue::FontFamily(Arc::new(v))),
         "font-size" => parse_font_size(input),
         "font-weight" => parse_font_weight(input).map(PropertyValue::FontWeight),
         // CSS Inline 3 §5.1 line-height (raikiri-spike-0vv.9)。
@@ -4800,11 +4862,11 @@ mod tests {
     #[test]
     fn font_family_parse_comma_list() {
         let got = parse(r#"Arial, "Times New Roman", serif"#, "font-family");
-        let expected = Some(PropertyValue::FontFamily(vec![
+        let expected = Some(PropertyValue::FontFamily(Arc::new(vec![
             Atom::from("Arial"),
             Atom::from("Times New Roman"),
             Atom::from("serif"),
-        ]));
+        ])));
         assert_eq!(got, expected);
     }
 
@@ -4812,10 +4874,30 @@ mod tests {
     fn font_family_unquoted_multi_word_single_family() {
         // CSS4: unquoted multi-word family name = ident sequence joined by space。
         let got = parse("Times New Roman", "font-family");
-        let expected = Some(PropertyValue::FontFamily(vec![Atom::from(
+        let expected = Some(PropertyValue::FontFamily(Arc::new(vec![Atom::from(
             "Times New Roman",
-        )]));
+        )])));
         assert_eq!(got, expected);
+    }
+
+    /// `initial_font_family()` は呼び出しごとに独立した call site でも
+    /// **同一** underlying `Vec` allocation を指す (`Arc::ptr_eq` = true) —
+    /// `OnceLock` 経由の shared slot であることの直接 pin (raikiri-spike-no7b)。
+    ///
+    /// この pin は cascade level の test (`mod@crate::cascade` の
+    /// `initial_font_family_shares_arc_slot_across_independent_cascade_runs`
+    /// 等) では**代替できない** — `font-family` は inherited なので、単一
+    /// document 内の兄弟 element は `SpecifiedValues::inherit_from` の
+    /// 「親の Arc を bump」経路で共有される。これは同 document 内で
+    /// `initial_font_family()` が実質 1 回しか呼ばれないことを意味し、
+    /// ここで `OnceLock` を外して per-call `Arc::new(..)` に戻す regression を
+    /// 混入させても、その cascade level test は green のままになる
+    /// (実際に perturbation で確認済み — bd raikiri-spike-no7b 実装ログ)。
+    /// 本 test は `initial_font_family()` を直接 2 回呼ぶことで、この
+    /// inheritance-sharing の死角を回避する。
+    #[test]
+    fn initial_font_family_shares_arc_slot_across_calls() {
+        assert!(Arc::ptr_eq(&initial_font_family(), &initial_font_family()));
     }
 
     /// `font-weight` の parse 期待値を組み立てる test-local helper。

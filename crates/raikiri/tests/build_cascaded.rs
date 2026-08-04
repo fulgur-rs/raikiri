@@ -202,6 +202,11 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     // specified 層の `Length` は `PropertyValue` の payload 型として引き続き
     // Consumer から名指しできる必要がある (umbrella re-export list の rationale)。
     let _specified_font_size: PropertyValue = PropertyValue::FontSize(Length::Px(12.0));
+    // raikiri-spike-no7b (d9y.1/d9y.2 pattern踏襲) 以降、実 field 型は
+    // `Arc<Vec<Atom>>` — 下記 binding は `Arc<Vec<T>>: Deref<Target = Vec<T>>`
+    // による deref coercion 経由で通る (Content/StringSet 等 sibling field と
+    // 同じ「read-side consumer は無改修で継続動作」設計、
+    // `PropertyValue::FontFamily` doc 参照)。
     let font_family: &Vec<Atom> = &computed.font_family;
     // 実 assertion — initial font-family は Atom("serif") (raikiri-style::ComputedValues::initial)。
     assert!(

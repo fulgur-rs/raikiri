@@ -3036,6 +3036,108 @@ mod tests {
         );
     }
 
+    // ── font-family per-node malloc regression (raikiri-spike-no7b) ──
+    //
+    // reviewer:perf finding (origin: raikiri-spike-zpui §8.2、out-of-diff
+    // pre-existing): `ComputedValues.font_family` は本 crate で最後に
+    // Arc-share されていなかった `Vec` payload (d9y.1 が Content/StringSet、
+    // d9y.2 が counter-* を対応済み)。あちら (non-inherited) と違い
+    // `font-family` は **inherited** なので、支配的な per-node cost は
+    // 「毎 node で initial にリセットする」コストではなく inheritance walk
+    // (`SpecifiedValues::inherit_from` の `parent.font_family.clone()`) の
+    // コスト — 同じ `Arc` fix でもコストの形が違う。d9y.1/d9y.2 と同じ
+    // behavioral-proxy methodology: `heap` 計測は allocator hook 依存なので、
+    // `Arc::ptr_eq` を deep-clone regression の canary として使う。
+
+    /// **独立した** 2 回の `cascade()` 呼び出し (別々の `TestDoc`、共有する
+    /// inheritance 祖先なし) でも、root の computed value は**同一**の
+    /// `initial_font_family()` Arc slot を指さなければならない。
+    ///
+    /// この test は「同一 document 内の 2 sibling element」ではなく
+    /// **document をまたぐ** 形でなければならない — 単一 document 内では
+    /// `font-family` が **inherited** なので、rule 無しの sibling 2 つは
+    /// `SpecifiedValues::inherit_from` の「親の Arc をコピーする」経路で
+    /// 既に font_family Arc を共有してしまい、`initial_font_family()` 自体は
+    /// その walk を seed するために `cascade()` 1 回あたり高々 1 回しか
+    /// 呼ばれない。そのため同一 document 版の test では、
+    /// `initial_font_family()` 内の `OnceLock` を削除しても green のまま
+    /// になってしまう (raikiri-spike-no7b 実装時に perturbation で確認済み —
+    /// 同一 document 形は下記
+    /// `resolve_inheritance_shares_font_family_arc_from_parent_when_child_has_no_declaration`
+    /// を再度 test しているだけで、shared slot 自体は pin していない)。
+    /// 単一 call site での直接 pin は
+    /// `property::tests::initial_font_family_shares_arc_slot_across_calls`
+    /// を参照。本 test はそれに加えて、slot が別々の `cascade()` 実行間
+    /// (例: 1 process 内での複数 page rendering) をまたいで生存することを
+    /// 確認する — 意図は `initial_empty_content_and_string_set_share_arc_slot`
+    /// と同じだが、対象は非空の initial 値 (`[Atom::from("serif")]`) であり、
+    /// この field の inherited 性質に合わせて adapt してある。
+    #[test]
+    fn initial_font_family_shares_arc_slot_across_independent_cascade_runs() {
+        let mut doc_a = TestDoc::new();
+        let a = doc_a.push_element(0, "p", None);
+        let tree_a = build_rule_tree(&doc_a);
+        let r_a = cascade(&doc_a, &tree_a).expect("cascade Ok");
+
+        let mut doc_b = TestDoc::new();
+        let b = doc_b.push_element(0, "p", None);
+        let tree_b = build_rule_tree(&doc_b);
+        let r_b = cascade(&doc_b, &tree_b).expect("cascade Ok");
+
+        assert_eq!(r_a.computed[a].font_family.len(), 1);
+        assert_eq!(r_b.computed[b].font_family.len(), 1);
+        assert!(
+            std::sync::Arc::ptr_eq(&r_a.computed[a].font_family, &r_b.computed[b].font_family),
+            "initial font_family must reuse the shared `initial_font_family()` Arc \
+             slot across independent cascade() runs (raikiri-spike-no7b)"
+        );
+    }
+
+    /// `* { font-family: ... }` × N element で、matching 全 element の
+    /// `Vec` は勝者 declaration の Arc を共有しなければならない — mirrors
+    /// `cascade_shares_content_arc_across_universal_selector_matches` (d9y.1)。
+    #[test]
+    fn cascade_shares_font_family_arc_across_universal_selector_matches() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "* { font-family: Arial, sans-serif }");
+        let p1 = doc.push_element(0, "p", None);
+        let p2 = doc.push_element(0, "p", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p1].font_family.len(), 2);
+        assert_eq!(r.computed[p2].font_family.len(), 2);
+        assert!(
+            std::sync::Arc::ptr_eq(&r.computed[p1].font_family, &r.computed[p2].font_family),
+            "cascade must Arc-share font_family across universal-selector matches \
+             (raikiri-spike-no7b)"
+        );
+    }
+
+    /// `font-family` declaration を持たない child は、親と**同一**の Arc を
+    /// (`Arc::ptr_eq`) 継承しなければならない — 中身を再 clone したものでは
+    /// ならない。これは bd issue がこの (inherited) field の支配的コストと
+    /// 名指しした inheritance-walk cost そのものであり、d9y.2 の
+    /// non-inherited「shared empty slot にリセットする」形とは異なる。
+    #[test]
+    fn resolve_inheritance_shares_font_family_arc_from_parent_when_child_has_no_declaration() {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "parent", Some("font-family: Georgia, serif"));
+        let child = doc.push_element(parent, "child", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[parent].font_family.len(), 2);
+        assert_eq!(r.computed[child].font_family.len(), 2);
+        assert!(
+            std::sync::Arc::ptr_eq(
+                &r.computed[parent].font_family,
+                &r.computed[child].font_family
+            ),
+            "child with no font-family declaration must inherit the parent's \
+             Arc by identity, not a re-cloned Vec (raikiri-spike-no7b)"
+        );
+    }
+
     // ── padding wire-through (CSS Box 3 §4.1 + §4.2、raikiri-spike-0vv.6) ──
     //
     // Verification #7 (cascade wire-through + non-inheritance):
