@@ -736,7 +736,8 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 }
 
 /// specified value を継承元の computed values に対して解決し、**`PropertyValue`
-/// 表現のまま** computed-equivalent な値を返す。
+/// 表現のまま** ([`ResolvedAgainstInherited`] に包んで) computed-equivalent な
+/// 値を返す。
 ///
 /// # なぜ [`apply_value`] と別に必要か
 ///
@@ -785,6 +786,13 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    だった (`cascade_page` が `apply_value` を通らなかった)。CSS Paged Media 3
 ///    §6 の margin-box cascade は page context を継承元とする第 3 の経路になる。
 ///    exhaustive match は「経路の数え上げ」を強制しない。
+///
+///    bd raikiri-spike-7m33 でこの穴を **型で狭めた** (完全には塞いでいない)
+///    — 本関数の戻り値は生の [`PropertyValue`] ではなく
+///    [`ResolvedAgainstInherited`]。その型の doc「narrowed, not closed」節が
+///    canonical な記述 (何を防ぎ、何を防がないか、残余が
+///    bd raikiri-spike-m4.2 に切り出されていること) を持つので、ここでは
+///    繰り返さない。
 ///
 /// # 本関数の pass-through は「解決済」ではない (phase 3 が要る)
 ///
@@ -849,11 +857,17 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// margin and padding properties are relative to the dimensions of the
 /// containing block" = used 層の入力。引用は canonical 側)。element 経路の
 /// [`crate::resolve::resolve_length_percentage`] と同じ扱い。
+///
+/// # 戻り値が生の [`PropertyValue`] ではなく [`ResolvedAgainstInherited`] な理由
+///
+/// bd raikiri-spike-7m33 — 上記「この guard が守らない範囲」§2
+/// (本関数を呼ばない新しい entry point) を型で狭めるため。詳細は
+/// [`ResolvedAgainstInherited`] の doc を参照。
 pub(crate) fn resolve_against_inherited(
     value: PropertyValue,
     inherited: &ComputedValues,
-) -> PropertyValue {
-    match value {
+) -> ResolvedAgainstInherited {
+    ResolvedAgainstInherited(match value {
         // CSS Fonts 4 §2.2.1 "Relative Weights"
         // <https://www.w3.org/TR/css-fonts-4/#relative-weights>: `bolder` /
         // `lighter` は継承元の computed weight に対して解決される。ここで
@@ -969,6 +983,66 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Width(_)
         | PropertyValue::Height(_)
         | PropertyValue::BoxSizing(_)) => v,
+    })
+}
+
+/// [`resolve_against_inherited`] (phase 2) を通過済であることを **型で**示す
+/// wrapper。tuple field は本 module (`cascade`) に private — 他 module は
+/// [`resolve_against_inherited`] を呼ぶ以外にこの型の値を作れない
+/// (bd raikiri-spike-7m33)。
+///
+/// [`crate::page::absolutize_in_page_context`] (phase 3) は引数にこの型を
+/// 要求するので、page 経路で phase 3 を再利用する限り、呼び手がどの module に
+/// 書かれていても [`resolve_against_inherited`] を経由せざるを得ない —
+/// `page` module 自身も、本型が `cascade` module 定義である以上、tuple field
+/// に対しては他の module と同じ「foreign」な立場になる (`page` は単に
+/// `cascade` と別の module であり、それ以上の特別扱いは無い)。
+///
+/// # narrowed, not closed
+///
+/// 本 module (`cascade.rs`) 自身に新しい経路が追加された場合はこの限りでは
+/// ない (tuple field は定義 module 内では直接見える) し、margin-box cascade
+/// が phase 3 を再利用せず独自の絶対化ロジックを書けばこの型は何も強制しない
+/// — 残る「経路の数え上げ」不能性は bd raikiri-spike-m4.2 (margin-box cascade
+/// 実装 task の acceptance criteria) に切り出した。[`resolve_against_inherited`]
+/// の doc「この guard が守らない範囲」§2 も参照。
+///
+/// # test 用の裏口 ([`Self::for_test`])
+///
+/// `page::tests` には phase 3 を意図的に phase 2 抜きで直接駆動する既存 test
+/// 群がある (`phase_3_variant_classification_matches_the_documented_counts` /
+/// `absolutize_in_page_context_shorthand_fall_throughs` /
+/// `absolutize_in_page_context_font_size_relative_safety_net` —
+/// いずれも「structurally unreachable だが `pub(crate)` 関数は直接駆動できる」
+/// という既存の defense-in-depth 方針、bd raikiri-spike-ez7b / raikiri-spike-4rmu
+/// 系列の precedent)。これらが本型導入後も raw payload を直接検査できるよう、
+/// `#[cfg(test)]` 限定の直接 constructor を用意する。production build には
+/// 存在しないので、上記の「他 module は本関数を呼ぶ以外に値を作れない」
+/// production guarantee は弱めない。
+#[derive(Debug)]
+pub(crate) struct ResolvedAgainstInherited(PropertyValue);
+
+impl ResolvedAgainstInherited {
+    /// Phase 2 を通過済の値を取り出す (所有権ごと)。
+    pub(crate) fn into_property_value(self) -> PropertyValue {
+        self.0
+    }
+
+    /// Phase 2 を通過済の値を覗き見る (所有権を取らない版)。`crate::page` の
+    /// `page_context_font_size` / `page_context_border_styles` が、phase 3 に
+    /// 渡す前の `font-size` / `border-*-style` を読むために使う。
+    pub(crate) fn as_property_value(&self) -> &PropertyValue {
+        &self.0
+    }
+
+    /// **test 専用の直接 constructor。** 上記型 doc「test 用の裏口」参照 —
+    /// production では存在しない (`#[cfg(test)]`)。**この `#[cfg(test)]` を
+    /// 外したくなったら、それは「この型が防ぐはずの bypass」を作ろうとして
+    /// いる signal である** — 代わりに [`resolve_against_inherited`] を経由
+    /// すること。
+    #[cfg(test)]
+    pub(crate) fn for_test(value: PropertyValue) -> Self {
+        Self(value)
     }
 }
 
@@ -2662,6 +2736,42 @@ mod tests {
         assert!(
             (round_tripped - 16.0).abs() < 0.0001,
             "×1.2 の後 ÷1.2 すれば浮動小数誤差の範囲で元に戻るはず: {round_tripped}"
+        );
+    }
+
+    /// [`resolve_against_inherited`] の戻り値 [`ResolvedAgainstInherited`] が
+    /// 中身を無損失で運ぶこと — 型を足したことで解決結果そのものが変わって
+    /// いないことの pin (bd raikiri-spike-7m33)。`as_property_value` (覗き見)
+    /// と `into_property_value` (消費) の両方を、resolve 対象・pass-through
+    /// 対象の 2 パターンで確認する。
+    #[test]
+    fn resolved_against_inherited_carries_the_value_without_loss() {
+        let inherited = ComputedValues::initial();
+
+        // 解決される側 (payload が変わる) — `bolder` は継承元 400 に対して
+        // 700 に解決される。
+        let resolved = resolve_against_inherited(
+            PropertyValue::FontWeight(FontWeightValue::Bolder),
+            &inherited,
+        );
+        assert_eq!(
+            resolved.as_property_value(),
+            &PropertyValue::FontWeight(FontWeightValue::Absolute(700.0)),
+            "as_property_value は所有権を取らずに中身を覗けること",
+        );
+        assert_eq!(
+            resolved.into_property_value(),
+            PropertyValue::FontWeight(FontWeightValue::Absolute(700.0)),
+            "into_property_value は同じ値を消費して取り出せること",
+        );
+
+        // pass-through 側 (payload は変わらない) — `Color` はこの関数の対象外
+        // なので `v` がそのまま返る。
+        let passthrough =
+            resolve_against_inherited(PropertyValue::Color(CssColor::BLACK), &inherited);
+        assert_eq!(
+            passthrough.into_property_value(),
+            PropertyValue::Color(CssColor::BLACK),
         );
     }
 
