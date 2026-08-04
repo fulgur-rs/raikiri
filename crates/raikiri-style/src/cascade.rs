@@ -660,13 +660,15 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// `Lighter` の catch-all は `_ => 700.0` なので `NaN` / `+Inf` は**700.0 に
 /// 丸められる** (`-Inf` は同じく最初の guard に一致しそのまま伝播する)。
 ///
-/// 出力側の runtime guard は追加しない — 本 issue (bd raikiri-spike-e52s)
-/// の scope は型格上げであり、guard 追加は behavior 変更で scope 外。bd
-/// raikiri-spike-3653 は非有限 f32 の下流 sink (parley 経由の `font_size`)
-/// を characterize したが `font_weight` はその scope に含まれていない
-/// (2ui0 の 5 clamp site も `font_weight` を対象にしていない) — 本節は
-/// その gap を doc として埋める characterize であり、対応する挙動変更は
-/// 伴わない。
+/// **本関数自体には runtime guard を追加しない** (bd raikiri-spike-sxd7、
+/// bd raikiri-spike-kfl7 precedent の「非有限 / 範囲外 f32 の guard は sink
+/// 境界に置く、resolve 層には置かない」を踏襲)。上記の非対称処理は
+/// `resolve_relative_weight_non_finite_inherited_is_asymmetric` test で
+/// 現状の挙動として pin 済み。値が実際に `parley::FontWeight::new` へ渡る
+/// sink 側の guard は `crates/raikiri-dom/src/layout.rs` の
+/// `sanitize_font_weight` (`preshape_text` 内、site 6) にある —
+/// `resolve_relative_weight` が何を返しても最終的に `[1, 1000]` の有限値に
+/// 収める。
 pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: f32) -> f32 {
     match specified {
         FontWeightValue::Absolute(w) => w,
@@ -2582,6 +2584,55 @@ mod tests {
             resolve_relative_weight(FontWeightValue::Absolute(250.0), 900.0),
             250.0
         );
+    }
+
+    /// `resolve_relative_weight` の doc 「非有限 `inherited` — 本関数は
+    /// guard しない」節が記述する非対称処理を pin する (bd
+    /// raikiri-spike-sxd7)。
+    ///
+    /// bd raikiri-spike-kfl7 precedent (「guard は sink 境界に置く、resolve
+    /// 層には置かない」) に従い、**本関数自体は変更しない** — 非対称は
+    /// バグとして修正されるものではなく、非有限 `inherited` (通常経路では
+    /// 型/parse guard により到達しないが `ComputedValues` の直接構築からは
+    /// 到達しうる) に対する現状の table 分岐の帰結として、以降の regression
+    /// で挙動が変わらないことを保証するために pin する。sink 側の guard は
+    /// `crates/raikiri-dom/src/layout.rs` の `sanitize_font_weight`
+    /// (`preshape_text` が `parley::FontWeight::new` に渡す直前) に別途ある。
+    #[test]
+    fn resolve_relative_weight_non_finite_inherited_is_asymmetric() {
+        let bolder = |w| resolve_relative_weight(FontWeightValue::Bolder, w);
+        let lighter = |w| resolve_relative_weight(FontWeightValue::Lighter, w);
+
+        // NaN: `<` 比較は常に false なので両 arm とも catch-all に落ちる。
+        // catch-all の中身が違うので結果も違う —
+        // `Bolder` の catch-all は `w => w` (900 <= w 行の "no change") な
+        // ので NaN がそのまま伝播する。
+        // Bolder(NaN) must propagate NaN as-is (catch-all is `w => w`).
+        assert!(bolder(f32::NAN).is_nan());
+        // `Lighter` の catch-all は `_ => 700.0` なので NaN は 700.0 に丸め
+        // られる。
+        // Lighter(NaN) must round to 700.0 (catch-all is `_ => 700.0`, not `w => w`).
+        assert_eq!(lighter(f32::NAN), 700.0);
+
+        // +Inf: `<` 比較は NaN と同じく常に false なので、同じ catch-all
+        // 経路 (NaN と同型の非対称)。
+        // Bolder(+Inf) must propagate +Inf as-is.
+        assert_eq!(bolder(f32::INFINITY), f32::INFINITY);
+        // Lighter(+Inf) must round to 700.0.
+        assert_eq!(lighter(f32::INFINITY), 700.0);
+
+        // -Inf: `w < 100.0` の最初の guard に一致するので、Bolder/Lighter
+        // どちらも catch-all を経ない唯一の非有限入力 — ただし row 1 に
+        // ヒットした後の結果は arm ごとに違う。`Bolder` の row 1 は `w if w <
+        // 100.0 => 400.0` なので、有限の `w < 100` と同じく 400.0 に解決
+        // される (正常な値)。`Lighter` の row 1 は "no change" arm (`w if w <
+        // 100.0 => w`) なので `-Inf` はそのまま伝播する — row にヒットする
+        // ことと結果が正常な有限値になることは同じではない。
+        // Bolder(-Inf) hits row 1 (w < 100) like any finite w < 100 and
+        // resolves to 400.0.
+        assert_eq!(bolder(f32::NEG_INFINITY), 400.0);
+        // Lighter(-Inf) hits row 1's no-change arm (`w if w < 100.0 => w`) and propagates -Inf.
+        assert_eq!(lighter(f32::NEG_INFINITY), f32::NEG_INFINITY);
     }
 
     /// [`resolve_relative_font_size`] を unit 関数として直接叩く — cascade
