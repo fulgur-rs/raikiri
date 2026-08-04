@@ -113,7 +113,10 @@ type Specificity = u32;
 /// selector." (`(1, 0, 0, 0)` は CSS 2.1 §6.4.3 の旧表現であり L4 の規定ではない)。
 /// selectors crate は 32-bit packed で `id << 20 | class << 10 | element` を使う。
 /// `1 << 30` はその packed 空間のどの selector 由来 specificity よりも大きいので、
-/// 上記 "higher than any selector" を満たす。
+/// 上記 "higher than any selector" を満たす。**この margin はちょうど 1** であり
+/// upstream が packing 幅を広げると反転しうる不変条件 — pin は
+/// `tests::inline_specificity_exceeds_max_reachable_packed_specificity` を参照
+/// (bd raikiri-spike-nvhy)。
 const INLINE_SPECIFICITY: Specificity = 1 << 30;
 /// inline style の source_order — 全 stylesheet rule より後 (最終出現扱い)。
 const INLINE_SOURCE_ORDER: u32 = u32::MAX;
@@ -1377,6 +1380,102 @@ mod tests {
     fn inline_style_beats_type_selector() {
         let cv = cascade_doc("p { color: red }", "p", Some("color: blue"));
         assert_eq!(cv.color, BLUE);
+    }
+
+    /// `INLINE_SPECIFICITY` (cascade.rs doc, CSS Cascading L4 §6.1
+    /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort>: "declarations that
+    /// do not belong to a style rule ... are considered to have a specificity
+    /// higher than any selector") pin — bd raikiri-spike-nvhy.
+    ///
+    /// # なぜ hardcoded 算術 assert ではなく実 parse なのか
+    ///
+    /// upstream `selectors` crate (v0.39) は `id_selectors << 20 |
+    /// class_like_selectors << 10 | element_selectors` の 32-bit packed
+    /// specificity を持ち、各 field は `cmp::min(field, MAX_10BIT)` で
+    /// **10-bit に飽和** する
+    /// (`selectors-0.39.0/builder.rs` の `MAX_10BIT` / `impl From<Specificity>
+    /// for u32` — 挙動理解のための参照であり、raikiri-style 側の実装判断は
+    /// この private 定数からではなく selectors の**公開 API** から導いている)。
+    /// `MAX_10BIT` はモジュール private (`pub(crate)` にすらなっていない) で
+    /// 外部 crate から import できないため、`MAX_PACKED_SPECIFICITY` を
+    /// upstream の型から直接 const-derive することは**そもそも不可能**
+    /// (許可/禁止の問題ではなく、単に import できる定数が存在しない)。
+    ///
+    /// 代わりに `Selector::specificity()` を使って現実に到達可能な最大値を
+    /// 実測する: 現行の 10-bit 飽和点 (1023) を大きく超える数の ID / class
+    /// selector を含む compound selector を構築し、飽和後の実値を読み戻す。
+    /// こうすれば upstream が将来 field 幅を広げても (例: issue 本文が挙げる
+    /// 11-bit 化)、本 test は**その時点の upstream 実装が実際に返す値**を
+    /// 再測定し続けるので、`INLINE_SPECIFICITY` を超えた瞬間に fail する —
+    /// 「今の幅を前提にした算術の pin」より頑丈 (bd raikiri-spike-nvhy 提案の
+    /// うち、hardcoded const assert ではなく実測 test を採る方の案)。
+    ///
+    /// # 未 cover: cascade 経由の end-to-end pin (M1.4 では実装不可)
+    ///
+    /// bd issue が挙げるもう 1 案 (`<p id class>` に対する高 specificity
+    /// selector と inline style を実際に cascade させ、inline が勝つことを
+    /// 見る e2e test) は **M1.4 では構築できない**: `ruletree.rs`
+    /// `is_type_or_universal_only` が id/class を含む selector を rule tree
+    /// 構築時点で drop し、`match_by_tag` も type/universal 以外の
+    /// component を持つ selector を一致させない (M1.4 は type + universal
+    /// selector のみ対応)。したがって本 test は「numeric な不変条件そのもの」
+    /// を [`crate::parse_selector_list`] 経由で直接 pin するに留め、id/class
+    /// selector matching が M1.4 以降で実装された時点で改めて e2e 版を追加する
+    /// — フォローアップは bd raikiri-spike-7ejc として起票済 (本 issue の
+    /// scope 外)。
+    ///
+    /// selector 内の class / pseudo-class 数も併せて増やし
+    /// (class_like_selectors field)、id field 単独ではなく複数 field が
+    /// 同時に飽和する構成にしている。element_selectors field (type selector /
+    /// pseudo-element 由来) は 1 compound selector につき type selector を
+    /// 1 つしか持てないが、descendant combinator で compound を連結すれば
+    /// compound ごとに `Component::LocalName` が積み上がるため、この field も
+    /// 公開 API 経由で飽和させられる (`RaikiriSelectorParser` は
+    /// pseudo-element 未サポート — [`crate::PseudoElem`] は uninhabited —
+    /// だが combinator 連結には無関係)。3 field 全てを飽和させると理論上の
+    /// packed 最大値 `0x3FFF_FFFF` (margin 1、実測値) に一致する — これは
+    /// 本 const 直上の doc の「margin はちょうど 1」と整合する。
+    #[test]
+    fn inline_specificity_exceeds_max_reachable_packed_specificity() {
+        // 現行 10-bit 飽和点 (1023) を十分に超える数。id field は 4096 個、
+        // element field は type-chain 1201 個 (下記) で現行 field を確実に
+        // 飽和させる。この余裕はあくまで「現行 10-bit field を確実に飽和
+        // させる」ためのものであり、upstream が将来 field 幅を広げた場合に
+        // **その新しい幅でも飽和し続ける**ことまでは保証しない (例えば
+        // 12-bit = 4095 まで広がれば、この個数では飽和しきらない)。
+        // それでも `measured_specificity` は selectors crate の公開 API から
+        // 都度実測する値なので、幅が変わって挙動が変化したこと自体は
+        // 検知できる — 「理論上の最大値と一致し続ける」のではなく
+        // 「upstream の実装変化を都度観測する」ことが本 test の pin 機構。
+        const FIELD_REPEAT: usize = 4096;
+        // element_selectors field は 1 compound selector につき type
+        // selector を 1 つしか持てないが、descendant combinator で compound
+        // を連結すれば compound ごとに LocalName 分が積み上がる。
+        // `"div "` (末尾 space = descendant combinator) を 1200 回連結した
+        // 直後に最終 compound `div#a#a...#a.b.b...:hover:active` を置き、
+        // id / class / element の 3 field を同時に飽和させる。
+        const TYPE_CHAIN_REPEAT: usize = 1200;
+        let type_chain: String = "div ".repeat(TYPE_CHAIN_REPEAT);
+        let ids: String = "#a".repeat(FIELD_REPEAT);
+        let classes: String = ".b".repeat(FIELD_REPEAT);
+        let selector_str = format!("{type_chain}div{ids}{classes}:hover:active");
+        let list = crate::parse_selector_list(&selector_str).expect("maximal selector must parse");
+        let measured_specificity: Specificity = list
+            .slice()
+            .iter()
+            .map(|s| s.specificity())
+            .max()
+            .expect("selector list is non-empty");
+
+        assert!(
+            INLINE_SPECIFICITY > measured_specificity,
+            "INLINE_SPECIFICITY ({INLINE_SPECIFICITY:#x}) は selectors crate の \
+             公開 API (Selector::specificity) で実測した到達可能最大値 \
+             ({measured_specificity:#x}) を上回らなければならない — CSS Cascading L4 \
+             §6.1 の 'higher than any selector' 要件。selectors crate の \
+             packed-specificity field 幅が変わった signal (bd raikiri-spike-nvhy \
+             参照、cascade.rs INLINE_SPECIFICITY doc)。"
+        );
     }
 
     #[test]
