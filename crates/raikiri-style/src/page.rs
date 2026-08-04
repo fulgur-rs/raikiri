@@ -1455,6 +1455,7 @@ mod tests {
         LengthOrAuto, LineHeight, PositionValue, TextAlign,
     };
     use crate::resolve::ComputedLength;
+    use std::sync::Arc;
 
     const RED: CssColor = CssColor {
         r: 255,
@@ -2807,15 +2808,50 @@ mod tests {
     // 本節が壊れる条件:
     //
     // - `PropertyValue` に variant を足す → `specified_layer_residue` の網羅
-    //   match が **compile error**。ただし分類を書いた後、`page_corpus` /
-    //   `PROPERTY_VALUE_VARIANTS` の更新を強制するものは無い — 両者が 40 で
-    //   整合したまま新 variant が corpus 外に残る case は**全 test green に
-    //   なる** (bd raikiri-spike-awjx §8.2 debt lens が `PropertyValue::Orphan`
-    //   を足して実測: 網羅 match 5 site を素直に分類しただけで 561 passed /
-    //   0 failed、新 variant は 3 本の pin のどれにも通らなかった)。
-    //   guard は「作者を本 module へ連れてくる」までの **one-way** であり、
-    //   corpus の完全性は保証しない。手順は compile error の出る
-    //   `specified_layer_residue` の doc 側に置いてある。
+    //   match が **compile error**。raikiri-spike-a754 以前は、分類を書いた
+    //   後に `page_corpus` / `PROPERTY_VALUE_VARIANTS` (手で持つ数)
+    //   の更新を強制するものが無かった — 両者が 40 で整合したまま新 variant
+    //   が corpus 外に残る case は**全 test green になる** (bd
+    //   raikiri-spike-awjx §8.2 debt lens が `PropertyValue::Orphan` を足して
+    //   実測、raikiri-spike-a754 で当時の crate 状態 (58343de) に対し
+    //   再実証: 6 箇所の網羅 match [`property::PropertyValue::key`,
+    //   `rule::expand_shorthand_into`, `absolutize_in_page_context`,
+    //   `specified_layer_residue`, `cascade::resolve_against_inherited`,
+    //   `cascade::apply_value`] を素直に分類しただけで 674 passed / 0
+    //   failed、新 variant は corpus 側 3 本の pin のどれにも通らなかった —
+    //   awjx 時点の記録は 5 site だったが、`rule::expand_shorthand_into` が
+    //   その後の landing で網羅 match になっており今は 6 site)。
+    //   raikiri-spike-a754 は `PROPERTY_VALUE_VARIANTS` を廃止し、
+    //   `page_corpus` を `sample_for` (`PropertyKey` に対する網羅 match、
+    //   `property_key_samples!` マクロ生成) 駆動に変えた — 新しい
+    //   `PropertyKey` variant を伴う通常の property 追加は、上と同じ手順
+    //   (新 variant + 6 site の素直な分類) を fix 後の code に対して
+    //   再実行して確認済み: `sample_for` の compile error が発生し、
+    //   `property_key_samples!` 自体を書き換えない限り、それを直す方法は
+    //   呼び出しへの 1 行追加 (`ALL_PROPERTY_KEYS` と `sample_for` を同時に
+    //   拡張する) だけなので、「compile error は直したが corpus は更新し
+    //   忘れた」という中間状態が自然には起きない — この経路では
+    //   674 passed / 0 failed が **2 failed**
+    //   (`phase_3_variant_classification_matches_the_documented_counts`
+    //   / `specified_layer_residue_detector_is_not_vacuous` — どちらも
+    //   `PHASE_3_PASS_THROUGH_VARIANTS` 系の別定数側が動かないことで発火する、
+    //   詳細は該当 test の doc) に変わることを確認した。
+    //
+    //   **ただし guard は依然 one-way** (bd raikiri-spike-c0z9 として追跡) —
+    //   新 variant が既存の `PropertyKey` を再利用する場合 (`FontSizeRelative`
+    //   と同型) は `PropertyKey` の variant 集合が増えないため `sample_for`
+    //   も compile error にならない (`key_sharing_extras` へ手で足す必要が
+    //   ある)。これは検証していない (raikiri-spike-awjx の M4 mutation も
+    //   今回の再現も「新しい key を伴う variant 追加」だけを exercise して
+    //   おり、この経路は理論的な残存ギャップとして記録するに留まる。真の
+    //   automatic closure には `PropertyValue`/`PropertyKey` 自体への
+    //   macro/derive が要り、それは walls.md 壁 5 (umbrella re-export) の
+    //   再判定を要する out-of-scope な変更)。
+    //
+    //   ⚠️ 本節がこの一連の経緯・機構・残存ギャップの canonical な記述
+    //   (raikiri-spike-a754) — `property_key_samples!` / `sample_for` /
+    //   `specified_layer_residue` / 下の corpus 整合性 test の doc は
+    //   ここへの pointer のみを持ち、繰り返さない。
     // - `absolutize_in_page_context` の arm 分類を動かす →
     //   `phase_3_variant_classification_matches_the_documented_counts` が落ちる。
     // - phase 2 / phase 3 を素通りする値が `declarations` に届くようになる →
@@ -2832,34 +2868,23 @@ mod tests {
     // regression (bd raikiri-spike-7m33 gap (b) 相当) に対する tripwire として
     // 残してある。同じ「今後別の inherited-value-dependent keyword を足す」
     // ケースへの一般化: 新しい `PropertyValue` variant / payload が **phase 2
-    // で解決される**ようになったら、本節 3 つの定数 (`PROPERTY_VALUE_VARIANTS`
-    // / `PHASE_3_PASS_THROUGH_VARIANTS` / `RAW_CORPUS_RESIDUE_VARIANTS` の
-    // `+ 3` 項の内訳コメント) と `page_corpus` の worst-case payload、および
-    // `page_declarations_carry_no_specified_layer_residue` /
+    // で解決される**ようになったら、本節に残る手で持つ数
+    // (`PHASE_3_PASS_THROUGH_VARIANTS` / `raw_corpus_residue_variants` の
+    // `+ 3` 項の内訳コメント — raikiri-spike-a754 でこの 2 つは対象外、
+    // 別途判断が要ることが確定している) と `page_corpus` の worst-case
+    // payload、および `page_declarations_carry_no_specified_layer_residue` /
     // `cascade_page_output_carries_no_specified_layer_residue` の期待値を
     // 同時に見直すこと。
-
-    /// `PropertyValue` の variant 総数。
-    ///
-    /// stable Rust に variant 数を数える手段が無い (`mem::variant_count` は
-    /// unstable) ため手で持つ。本節の hand-maintained な数は**これを含めて 3 つ**
-    /// — 他は `PHASE_3_PASS_THROUGH_VARIANTS` と `RAW_CORPUS_RESIDUE_VARIANTS`
-    /// の `+ 3` 項。いずれも機械導出できない。
-    ///
-    /// ⚠️ **本定数は `page_corpus().len()` としか照合されない。** 新 variant を
-    /// 足した作者が両方を放置すれば同数のまま整合してしまうため、「variant 追加
-    /// が compile error になる」ことは「corpus が完全である」ことを**含意しない**
-    /// (`specified_layer_residue` の tripwire は one-way)。この穴を閉じるには
-    /// corpus を `PropertyKey` の網羅 match から生成する必要がある — 別 task。
-    ///
-    /// 40 → 41 (raikiri-spike-4rmu、`PropertyValue::FontSizeRelative` 追加) →
-    /// 42 (raikiri-spike-l3wg、`PropertyValue::Direction` 追加)。
-    const PROPERTY_VALUE_VARIANTS: usize = 42;
 
     /// phase 3 (`absolutize_in_page_context`) が**素通しする** variant 数。
     ///
     /// 22 → 23 (raikiri-spike-l3wg、`Direction` は phase 3 で変換する length を
     /// 持たないため pass-through 側に加わる — `TextAlign` 自身は元々こちら側)。
+    ///
+    /// raikiri-spike-a754 の対象外 — 本定数と下の `raw_corpus_residue_variants`
+    /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
+    /// であり、bd raikiri-spike-a754 が明示的に別途判断としている
+    /// (origin bd raikiri-spike-awjx §8.2 quality lens F1 の「残り 2 つ」)。
     const PHASE_3_PASS_THROUGH_VARIANTS: usize = 23;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
@@ -2869,17 +2894,29 @@ mod tests {
     /// `absolutize_in_page_context` の structurally-unreachable な safety-net
     /// arm。到達しないが「素通し」ではなく実際に変換する形の arm なので
     /// `PHASE_3_PASS_THROUGH_VARIANTS` 側には数えない)。
-    const PHASE_3_TRANSFORMED_VARIANTS: usize =
-        PROPERTY_VALUE_VARIANTS - PHASE_3_PASS_THROUGH_VARIANTS;
+    ///
+    /// raikiri-spike-a754 以前は `PROPERTY_VALUE_VARIANTS -
+    /// PHASE_3_PASS_THROUGH_VARIANTS` という `const` 式だった。
+    /// `PROPERTY_VALUE_VARIANTS` を廃止した (`page_corpus` の doc 参照) ので
+    /// `page_corpus().len()` (`Vec` を allocate するため const 文脈で呼べない)
+    /// を使う `fn` に変えてある。**この値の基準は `page_corpus().len()` —
+    /// corpus が `PropertyValue` の全 variant を実際に覆っている間だけ
+    /// 「変換する variant 数」を表す。** corpus の完全性自体はもう独立には
+    /// 検査されていない (`page_corpus` 手前の section comment、bd
+    /// raikiri-spike-c0z9 参照) ので、旧 `const` 式と数値的に同じ結果を返す
+    /// ことと「意味が同じ」ことは別の主張である。
+    fn phase_3_transformed_variants() -> usize {
+        page_corpus().len() - PHASE_3_PASS_THROUGH_VARIANTS
+    }
 
     /// phase 2 / phase 3 を**通す前**の corpus が持つ specified 層残滓の数 =
-    /// `PHASE_3_TRANSFORMED_VARIANTS` + phase 2 が解決する `font-size` /
+    /// `phase_3_transformed_variants()` + phase 2 が解決する `font-size` /
     /// `font-weight` / `text-align: match-parent` の 3。
     ///
     /// 数自体 (3) は raikiri-spike-l3wg 前後で**変わらない** — 変わったのは
     /// 3 番目の意味: 以前は「phase 2 でも phase 3 でも解決しない孤立した残滓」
     /// (`text-align: match-parent`) だったが、今は他 2 つ (`font-size` /
-    /// `font-weight`) と同じ「phase 2 が解決する」側に合流した。この定数は
+    /// `font-weight`) と同じ「phase 2 が解決する」側に合流した。この値は
     /// **raw corpus** (どちらの phase も通していない) に対する残滓数を数えて
     /// いるので、resolve 先が phase 2 か「resolve 不能」かに関わらず raw 値
     /// そのものが `specified_layer_residue` に引っかかる限り数は同じになる。
@@ -2890,74 +2927,140 @@ mod tests {
     /// `TextAlign::MatchParent` は「pass-through」bucket
     /// (`PHASE_3_PASS_THROUGH_VARIANTS`) に居るのに対し、`FontSizeRelative` は
     /// 独自の (structurally unreachable な) transform arm を持ち
-    /// `PHASE_3_TRANSFORMED_VARIANTS` 側に既に数えられているため
-    /// (二重計上を避ける、上記定数の doc 参照)。
-    const RAW_CORPUS_RESIDUE_VARIANTS: usize = PHASE_3_TRANSFORMED_VARIANTS + 3;
+    /// `phase_3_transformed_variants()` 側に既に数えられているため
+    /// (二重計上を避ける、上記関数の doc 参照)。
+    fn raw_corpus_residue_variants() -> usize {
+        phase_3_transformed_variants() + 3
+    }
+
+    /// `sample_for` / `ALL_PROPERTY_KEYS` を **1 つの token 列**から生成する
+    /// (raikiri-spike-a754)。`key => value` の対を 1 度書けば
+    /// `ALL_PROPERTY_KEYS` (列挙) と `sample_for` (網羅 match) の**両方**に
+    /// そのまま展開される。
+    ///
+    /// 本 macro が何を置き換え、何を塞ぎ何を塞がないかの canonical な記述は
+    /// `page_corpus` 手前の section comment (「`declarations` は computed 値」
+    /// 契約の機械的 pin 節) にある — 繰り返さない。
+    macro_rules! property_key_samples {
+        ($($key:ident => $value:expr),+ $(,)?) => {
+            /// `PropertyValue::key()` を経由して 1:1 対応する `PropertyKey`
+            /// 全件、`property_key_samples!` 呼び出しでの記述順
+            /// (= `PropertyKey` 自身の宣言順、`property.rs`)。key を複数
+            /// `PropertyValue` variant で共有するもの (`FontSize` /
+            /// `FontSizeRelative`) はここには 1 度しか現れない —
+            /// 共有側は `key_sharing_extras` が別途持つ。
+            const ALL_PROPERTY_KEYS: &[PropertyKey] = &[$(PropertyKey::$key),+];
+
+            /// 与えられた `PropertyKey` に対する **specified 層の worst
+            /// case** `PropertyValue` サンプルを 1 つ返す。
+            ///
+            /// **wildcard arm を置かない** (`property_key_samples!` の
+            /// 展開そのものが持たない) — `PropertyKey` に variant を足すと
+            /// ここで **compile error** になる。この compile error が何を
+            /// 強制し (通常の新 property 追加)、何を強制しないか
+            /// (`FontSizeRelative` 型の key 共有 variant、bd
+            /// raikiri-spike-c0z9) の canonical な記述は `page_corpus` 手前の
+            /// section comment にある。
+            fn sample_for(key: PropertyKey) -> PropertyValue {
+                match key {
+                    $(PropertyKey::$key => $value,)+
+                }
+            }
+        };
+    }
+
+    property_key_samples! {
+        Color => PropertyValue::Color(RED),
+        BackgroundColor => PropertyValue::BackgroundColor(BLUE),
+        FontFamily => PropertyValue::FontFamily(Arc::new(vec![Atom::from("serif")])),
+        FontSize => PropertyValue::FontSize(Length::Em(2.0)),
+        FontWeight => PropertyValue::FontWeight(FontWeightValue::Bolder),
+        LineHeight => PropertyValue::LineHeight(LineHeight::Length(Length::Em(2.0))),
+        Display => PropertyValue::Display(DisplayValue::Block),
+        CounterReset => PropertyValue::CounterReset(Arc::new(vec![("c".into(), 0)])),
+        CounterIncrement => PropertyValue::CounterIncrement(Arc::new(vec![("c".into(), 1)])),
+        CounterSet => PropertyValue::CounterSet(Arc::new(vec![("c".into(), 2)])),
+        Content =>
+            PropertyValue::Content(Arc::new(vec![ContentComponent::Literal("x".into())])),
+        StringSet => PropertyValue::StringSet(Arc::new(vec![(
+            "s".into(),
+            vec![ContentComponent::Literal("x".into())],
+        )])),
+        Position => PropertyValue::Position(PositionValue::Static),
+        TextAlign => PropertyValue::TextAlign(TextAlign::MatchParent),
+        PaddingTop => PropertyValue::PaddingTop(Length::Em(2.0)),
+        PaddingRight => PropertyValue::PaddingRight(Length::Em(2.0)),
+        PaddingBottom => PropertyValue::PaddingBottom(Length::Em(2.0)),
+        PaddingLeft => PropertyValue::PaddingLeft(Length::Em(2.0)),
+        Padding => PropertyValue::Padding(Sides::all(Length::Em(2.0))),
+        MarginTop => PropertyValue::MarginTop(LengthOrAuto::Length(Length::Rem(2.0))),
+        MarginRight => PropertyValue::MarginRight(LengthOrAuto::Length(Length::Rem(2.0))),
+        MarginBottom => PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Rem(2.0))),
+        MarginLeft => PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Rem(2.0))),
+        Margin => PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Rem(2.0)))),
+        BorderTopWidth => PropertyValue::BorderTopWidth(Length::Pt(12.0)),
+        BorderRightWidth => PropertyValue::BorderRightWidth(Length::Pt(12.0)),
+        BorderBottomWidth => PropertyValue::BorderBottomWidth(Length::Pt(12.0)),
+        BorderLeftWidth => PropertyValue::BorderLeftWidth(Length::Pt(12.0)),
+        BorderTopStyle => PropertyValue::BorderTopStyle(BorderStyle::Solid),
+        BorderRightStyle => PropertyValue::BorderRightStyle(BorderStyle::Solid),
+        BorderBottomStyle => PropertyValue::BorderBottomStyle(BorderStyle::Solid),
+        BorderLeftStyle => PropertyValue::BorderLeftStyle(BorderStyle::Solid),
+        BorderTopColor => PropertyValue::BorderTopColor(BorderColor::CurrentColor),
+        BorderRightColor => PropertyValue::BorderRightColor(BorderColor::CurrentColor),
+        BorderBottomColor => PropertyValue::BorderBottomColor(BorderColor::CurrentColor),
+        BorderLeftColor => PropertyValue::BorderLeftColor(BorderColor::CurrentColor),
+        Border => PropertyValue::Border(Sides::all(Border {
+            width: Length::Em(1.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::CurrentColor,
+        })),
+        Width => PropertyValue::Width(LengthOrAuto::Length(Length::Em(3.0))),
+        Height => PropertyValue::Height(LengthOrAuto::Length(Length::Em(4.0))),
+        BoxSizing => PropertyValue::BoxSizing(BoxSizing::BorderBox),
+        // No specified/computed distinction for `direction` (computed
+        // value = specified value) — any value is "worst case".
+        Direction => PropertyValue::Direction(Direction::Rtl),
+    }
+
+    /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
+    /// **乗らない** `PropertyValue` variant — 他の variant と `PropertyKey`
+    /// を意図的に共有するもの。今日時点でこれに該当するのは
+    /// [`PropertyValue::FontSizeRelative`] (`PropertyKey::FontSize` を
+    /// `PropertyValue::FontSize` と共有 — cascade winner selection のための
+    /// 設計、同 variant の doc 参照) だけ。
+    ///
+    /// `page_corpus` へは**この関数の戻り値をそのまま追加**する — 「+1」の
+    /// ような長さの算術に畳まない。2 つ目の key 共有 variant が現れたら
+    /// ここに `vec!` の要素をもう 1 つ足すだけで済み、この comment を
+    /// 読み解いて magic number を計算し直す必要が無い。
+    ///
+    /// 沿革: raikiri-spike-4rmu 以前は空 (共有 pattern 自体が無かった)、
+    /// 4rmu で `FontSizeRelative` により 1 要素になって以来変わっていない。
+    fn key_sharing_extras() -> Vec<PropertyValue> {
+        use crate::property::RelativeFontSize;
+        vec![PropertyValue::FontSizeRelative(RelativeFontSize::Larger)]
+    }
 
     /// 全 `PropertyValue` variant を **specified 層の worst case** payload で
-    /// 1 つずつ並べたもの。並び順は `PropertyValue` の宣言順。
+    /// 1 つずつ並べたもの — `sample_for` (`ALL_PROPERTY_KEYS` を経由) と
+    /// `key_sharing_extras` から生成する (raikiri-spike-a754)。並び順は
+    /// `PropertyKey` の宣言順 + 末尾に key 共有 variant。本 module のどの
+    /// test も corpus の順序には依存しない (`HashSet` / `filter` / 走査で
+    /// 完結する) ので、`PropertyValue` 自身の宣言順 (旧来の順序) との違いは
+    /// 挙動に影響しない。
     ///
     /// worst case = 「phase 2 / phase 3 を通さなければ specified 層の残滓が
     /// 残る」値: length は `Em` / `Rem` / `Pt` (`Px` / `Percent` は既に computed
     /// 層なので使わない)、`font-weight` は `bolder`、`text-align` は
     /// `match-parent`、`font-size` の relative variant は `larger`
-    /// (raikiri-spike-4rmu)。
+    /// (raikiri-spike-4rmu)。個々の選定根拠は `sample_for` / `key_sharing_extras`
+    /// の呼び出し箇所を参照。
     fn page_corpus() -> Vec<PropertyValue> {
-        use crate::property::RelativeFontSize;
-        use std::sync::Arc;
-
-        let literal = || vec![ContentComponent::Literal("x".into())];
-        let solid_border = Border {
-            width: Length::Em(1.0),
-            style: BorderStyle::Solid,
-            color: BorderColor::CurrentColor,
-        };
-        vec![
-            PropertyValue::Color(RED),
-            PropertyValue::BackgroundColor(BLUE),
-            PropertyValue::FontFamily(Arc::new(vec![Atom::from("serif")])),
-            PropertyValue::FontSize(Length::Em(2.0)),
-            PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
-            PropertyValue::FontWeight(FontWeightValue::Bolder),
-            PropertyValue::LineHeight(LineHeight::Length(Length::Em(2.0))),
-            PropertyValue::Display(DisplayValue::Block),
-            PropertyValue::CounterReset(Arc::new(vec![("c".into(), 0)])),
-            PropertyValue::CounterIncrement(Arc::new(vec![("c".into(), 1)])),
-            PropertyValue::CounterSet(Arc::new(vec![("c".into(), 2)])),
-            PropertyValue::Content(Arc::new(literal())),
-            PropertyValue::StringSet(Arc::new(vec![("s".into(), literal())])),
-            PropertyValue::Position(PositionValue::Static),
-            PropertyValue::TextAlign(TextAlign::MatchParent),
-            PropertyValue::PaddingTop(Length::Em(2.0)),
-            PropertyValue::PaddingRight(Length::Em(2.0)),
-            PropertyValue::PaddingBottom(Length::Em(2.0)),
-            PropertyValue::PaddingLeft(Length::Em(2.0)),
-            PropertyValue::Padding(Sides::all(Length::Em(2.0))),
-            PropertyValue::MarginTop(LengthOrAuto::Length(Length::Rem(2.0))),
-            PropertyValue::MarginRight(LengthOrAuto::Length(Length::Rem(2.0))),
-            PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Rem(2.0))),
-            PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Rem(2.0))),
-            PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Rem(2.0)))),
-            PropertyValue::BorderTopWidth(Length::Pt(12.0)),
-            PropertyValue::BorderRightWidth(Length::Pt(12.0)),
-            PropertyValue::BorderBottomWidth(Length::Pt(12.0)),
-            PropertyValue::BorderLeftWidth(Length::Pt(12.0)),
-            PropertyValue::BorderTopStyle(BorderStyle::Solid),
-            PropertyValue::BorderRightStyle(BorderStyle::Solid),
-            PropertyValue::BorderBottomStyle(BorderStyle::Solid),
-            PropertyValue::BorderLeftStyle(BorderStyle::Solid),
-            PropertyValue::BorderTopColor(BorderColor::CurrentColor),
-            PropertyValue::BorderRightColor(BorderColor::CurrentColor),
-            PropertyValue::BorderBottomColor(BorderColor::CurrentColor),
-            PropertyValue::BorderLeftColor(BorderColor::CurrentColor),
-            PropertyValue::Border(Sides::all(solid_border)),
-            PropertyValue::Width(LengthOrAuto::Length(Length::Em(3.0))),
-            PropertyValue::Height(LengthOrAuto::Length(Length::Em(4.0))),
-            PropertyValue::BoxSizing(BoxSizing::BorderBox),
-            // No specified/computed distinction for `direction` (computed
-            // value = specified value) — any value is "worst case".
-            PropertyValue::Direction(Direction::Rtl),
-        ]
+        let mut corpus: Vec<PropertyValue> =
+            ALL_PROPERTY_KEYS.iter().copied().map(sample_for).collect();
+        corpus.extend(key_sharing_extras());
+        corpus
     }
 
     /// `value` が **specified 層でしか意味を持たない表現**を残しているか。
@@ -2967,10 +3070,10 @@ mod tests {
     /// した」を意味する。
     ///
     /// **wildcard arm を置かない** — `PropertyValue` に variant を足すとここで
-    /// compile error になる。**その場で `PROPERTY_VALUE_VARIANTS` を +1 し、
-    /// `page_corpus` に worst-case payload の sample を足すこと** — この 2 つは
-    /// 機械的に強制されない。忘れると `corpus.len()` も定数も 40 のまま揃って
-    /// しまい、本節の pin 3 本が黙って通る。
+    /// compile error になる。この compile error と `page_corpus`
+    /// (`sample_for`) 側の更新がどう連動する (しない) かの canonical な
+    /// 記述は `page_corpus` 手前の section comment (raikiri-spike-a754) に
+    /// ある。
     ///
     /// # 網羅 match が及ぶ payload 型は 5 つだけ
     ///
@@ -3139,11 +3242,10 @@ mod tests {
 
     /// `%` が computed 層に残らない 2 つの position を検出器が取りこぼさないこと。
     ///
-    /// `page_corpus` は variant あたり payload を 1 つしか持てない
-    /// (`page_corpus_covers_every_property_value_variant` が 40 entry / 40 key を
-    /// 要求する) ので、この 2 payload は corpus ではなく検出器を直接叩く。
-    /// corpus 側の `Em` payload は据え置きなので raw residue の数え上げにも
-    /// 影響しない。
+    /// `page_corpus` は `PropertyKey` あたり payload を 1 つしか持てない
+    /// (`sample_for` が 1 key → 1 value の関数のため) ので、この 2 payload は
+    /// corpus ではなく検出器を直接叩く。corpus 側の `Em` payload は据え置き
+    /// なので raw residue の数え上げにも影響しない。
     #[test]
     fn percentage_is_specified_layer_residue_on_font_size_and_line_height() {
         assert_eq!(
@@ -3221,41 +3323,57 @@ mod tests {
         );
     }
 
-    /// `page_corpus` が全 variant を過不足なく 1 度ずつ覆うこと。
+    /// `page_corpus` に重複 variant が無く、`sample_for` の各 arm が自分の
+    /// key と一致する `PropertyValue` を返すこと (raikiri-spike-a754)。
     ///
-    /// 以前は `PropertyValue::key()` (variant → key の単射) を経由して
-    /// `HashSet<PropertyKey>` の要素数で判定していたが、raikiri-spike-4rmu で
-    /// この単射性が**意図的に**崩れた — `PropertyValue::FontSizeRelative` は
-    /// `FontSize` と同じ `PropertyKey::FontSize` を共有する (cascade winner
-    /// selection で両者を正しく競合させるため、[`PropertyValue::FontSizeRelative`]
-    /// doc 参照)。したがって `key()` はもう variant 数え上げに使えない —
-    /// 代わりに `std::mem::discriminant` (payload の trait bound に依存せず
-    /// variant のみを区別する) で数える。
+    /// 以前の本 test は手で持つ `PROPERTY_VALUE_VARIANTS` (単なる数) と
+    /// `corpus.len()` を比較していたが、両者は互いにしか照合されておらず
+    /// (bd raikiri-spike-awjx §8.2 debt lens M4 が `PropertyValue::Orphan` で
+    /// 実証)、新 variant が両方同じ数のまま corpus 外に残るケースを検出
+    /// できなかった。raikiri-spike-a754 で `PROPERTY_VALUE_VARIANTS` を廃止し
+    /// `page_corpus` を `sample_for` 駆動に変えたので、その旧チェックは
+    /// **常に真になる同語反復** (`corpus.len()` は `ALL_PROPERTY_KEYS.len() +
+    /// key_sharing_extras().len()` の定義から出てくる) になり、削除した。
     ///
-    /// ⚠️ これは「corpus に**重複や欠落が無い**」の pin であって「corpus が
-    /// `PropertyValue` の**現在の** variant 集合を覆っている」の pin ではない —
-    /// 照合相手が `PROPERTY_VALUE_VARIANTS` (手で持つ数) だからである。
+    /// 本 test が「corpus 完全性」自体は保証しない件の canonical な記述は
+    /// `page_corpus` 手前の section comment にある。本 test 自身が見ている
+    /// のは 2 つの**内部整合性**だけ:
+    ///
+    /// - discriminant の重複が無いこと (`std::mem::discriminant` — payload の
+    ///   trait bound に依存せず variant のみを区別する)。`PropertyValue::key()`
+    ///   はもう使えない — raikiri-spike-4rmu で `FontSizeRelative` /
+    ///   `FontSize` が意図的に `PropertyKey::FontSize` を共有し単射性が崩れた
+    ///   ため。
+    /// - `sample_for(key).key() == key` — arm の中身が自分の key と食い違って
+    ///   いないこと (コピペミス class の検出。`property_key_samples!` マクロ
+    ///   はこの一貫性まで保証しない — マクロは token 列を lhs/rhs にそのまま
+    ///   展開するだけで、rhs の式が lhs の `PropertyKey` に対応する variant を
+    ///   実際に construct しているかは見ていない)。
     #[test]
-    fn page_corpus_covers_every_property_value_variant() {
+    fn page_corpus_has_no_duplicate_or_mismatched_samples() {
         let corpus = page_corpus();
-        assert_eq!(
-            corpus.len(),
-            PROPERTY_VALUE_VARIANTS,
-            "page_corpus は PropertyValue の全 variant を 1 つずつ持つこと",
-        );
         let discriminants: std::collections::HashSet<std::mem::Discriminant<PropertyValue>> =
             corpus.iter().map(std::mem::discriminant).collect();
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             discriminants.len(),
-            PROPERTY_VALUE_VARIANTS,
+            corpus.len(),
             "page_corpus に同じ variant が 2 度現れている (discriminant が重複)",
         );
+        for key in ALL_PROPERTY_KEYS.iter().copied() {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                sample_for(key).key(),
+                key,
+                "sample_for({key:?}) が別の PropertyKey の value を返している",
+            );
+        }
     }
 
     /// `FontSize` / `FontSizeRelative` が意図的に同じ `PropertyKey` を共有する
-    /// こと自体の direct pin ([`page_corpus_covers_every_property_value_variant`]
+    /// こと自体の direct pin ([`page_corpus_has_no_duplicate_or_mismatched_samples`]
     /// の doc が説明する単射性崩れの根拠)。property.rs 側の
     /// `font_size_relative_shares_property_key_with_font_size` と同じ主張を
     /// page 経路の corpus に対して確認する — corpus の 2 entry が同じ key を
@@ -3275,15 +3393,14 @@ mod tests {
         );
     }
 
-    /// phase 3 の「素通し / 変換」分類が doc の数え上げと一致すること。
+    /// phase 3 の「素通し」分類が doc の数え上げと一致すること。
     ///
     /// bd raikiri-spike-sshp が doc に書いた「21」が実測 22 だった drift の
     /// 再発 pin。分類 (どの arm にどの variant を置くか) を動かすと落ちる。
     ///
     /// ⚠️ **射程**: 判定は `out == value` なので、pin しているのは arm の所属
-    /// ではなく「`page_corpus` の payload に対する挙動」である。local 名を
-    /// `unchanged` / `changed` にしてあるのはそのため。corpus が payload を
-    /// variant あたり 1 つしか持たない以上、`border_styles` を
+    /// ではなく「`page_corpus` の payload に対する挙動」である。corpus が
+    /// payload を variant あたり 1 つしか持たない以上、`border_styles` を
     /// `Sides::all(Solid)` に固定した本 test は **style gate 自体を pin しない**
     /// (gate は `cascade_page_border_width_*` の 4 本が持つ)。同様に `%` /
     /// `auto` / `line-height: <number>` の挙動も本 test の射程外で、それぞれ
@@ -3295,6 +3412,14 @@ mod tests {
     /// `absolutize_in_page_context` の引数が `ResolvedAgainstInherited` に
     /// なったため、`ResolvedAgainstInherited::for_test` (`#[cfg(test)]` 限定)
     /// を経由してこの raw payload を包む。
+    ///
+    /// 「変換」側の数 (`phase_3_transformed_variants()`) は独立には assert
+    /// しない (raikiri-spike-a754 debt lens) — `unchanged + 変換された数 ==
+    /// page_corpus().len()` の恒等式と `phase_3_transformed_variants() ==
+    /// page_corpus().len() - PHASE_3_PASS_THROUGH_VARIANTS` の定義から、下の
+    /// `unchanged` の assert が通った時点で自動的に真になる算術的同語反復
+    /// になるため。`phase_3_transformed_variants()` 自体は
+    /// `raw_corpus_residue_variants()` から引き続き参照される。
     #[test]
     fn phase_3_variant_classification_matches_the_documented_counts() {
         let font_size = ComputedLength(20.0);
@@ -3303,27 +3428,20 @@ mod tests {
         // 潰れ、「変換された」判定が gate 由来か絶対化由来か区別できない。
         let styles = Sides::all(BorderStyle::Solid);
 
-        let (mut unchanged, mut changed) = (0usize, 0usize);
-        for value in page_corpus() {
-            let out = absolutize_in_page_context(
-                ResolvedAgainstInherited::for_test(value.clone()),
-                font_size,
-                &ctx,
-                styles,
-            );
-            if out == value {
-                unchanged += 1;
-            } else {
-                changed += 1;
-            }
-        }
+        let unchanged = page_corpus()
+            .into_iter()
+            .filter(|value| {
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(value.clone()),
+                    font_size,
+                    &ctx,
+                    styles,
+                ) == *value
+            })
+            .count();
         assert_eq!(
             unchanged, PHASE_3_PASS_THROUGH_VARIANTS,
             "phase 3 の pass-through arm が覆う variant 数が doc とずれた",
-        );
-        assert_eq!(
-            changed, PHASE_3_TRANSFORMED_VARIANTS,
-            "phase 3 が変換する variant 数が doc とずれた",
         );
     }
 
@@ -3430,18 +3548,23 @@ mod tests {
             .filter(|v| specified_layer_residue(v).is_some())
             .count();
         assert_eq!(
-            raw, RAW_CORPUS_RESIDUE_VARIANTS,
+            raw,
+            raw_corpus_residue_variants(),
             "corpus の worst-case payload が specified 層残滓として検出されない \
              — 検出器か corpus のどちらかが骨抜きになっている",
         );
     }
 
     /// Phase 3 must leave every computed-equivalent value untouched — the
-    /// pass-through arm covers `PHASE_3_PASS_THROUGH_VARIANTS` of the
-    /// `PROPERTY_VALUE_VARIANTS` `PropertyValue` variants (the rest are
-    /// transformed) and a wrong classification there would corrupt a value
-    /// rather than merely leave it unresolved. The counts themselves are pinned
-    /// by `phase_3_variant_classification_matches_the_documented_counts`; this
+    /// pass-through arm covers `PHASE_3_PASS_THROUGH_VARIANTS` of
+    /// `page_corpus`'s entries (the rest are transformed) and a wrong
+    /// classification there would corrupt a value rather than merely leave it
+    /// unresolved. That count is only a stand-in for "of the `PropertyValue`
+    /// variants" while `page_corpus` stays complete — completeness is no
+    /// longer independently checked (see the section comment above
+    /// `page_corpus`; tracked at bd raikiri-spike-c0z9). The counts
+    /// themselves are pinned by
+    /// `phase_3_variant_classification_matches_the_documented_counts`; this
     /// test drives the same rule end-to-end through `cascade_page`.
     #[test]
     fn cascade_page_computed_equivalent_values_pass_phase_3_unchanged() {
