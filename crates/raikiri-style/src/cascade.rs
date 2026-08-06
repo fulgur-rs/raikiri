@@ -145,9 +145,15 @@ type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
 /// 再計測。8kn8 起票時の「collect_cascaded 他 rest」バケツは
 /// `resolve_inheritance` の clone chain と合算されていたため、それとは別数値)。
 /// ただしこの 4,030 のうち **1,020 allocs / 64,744 bytes は本 struct が
-/// 触れていない `dom.child_ids(id).collect()` 行**に由来する (同じ doc で
-/// その行だけを単独実行して確認、bd raikiri-spike-75ch の管轄で本 task の
-/// 対象外)。per-node `Vec` の growth chain 自体が担っていたのは残り
+/// 触れていない `dom.child_ids(id).collect()` 行**に由来していた (同じ doc で
+/// その行だけを単独実行して確認、gerj 当時は bd raikiri-spike-75ch の管轄で
+/// 本 struct の対象外)。この残差は 75ch が [`collect_cascaded`] /
+/// [`resolve_inheritance`] 双方の呼び出し箇所を「捨て `Vec` へ `collect` して
+/// `rev()`」から「`stack` へ直接 `extend` してから追加分だけ in-place
+/// `reverse()`」に書き換えて解消済み — 中間 allocation はもう存在しない
+/// (同じ形の第 3 の call site が `crates/raikiri-style/src/ruletree.rs` の
+/// `walk_style_elements` に残っており、bd raikiri-spike-o53w で追跡中、本
+/// module の対象外)。per-node `Vec` の growth chain 自体が担っていたのは残り
 /// **3,010 allocs / 2,375,196 bytes** — push のたび geometric に再確保する
 /// その growth chain が丸ごと allocation cost だった。単一 arena にすると
 /// growth chain は文書全体で 1 本になり (n=1000 で 23 allocs まで低下、
@@ -326,10 +332,22 @@ fn collect_cascaded<D: StyleDom>(
                 }
             }
             // stack は LIFO なので document order で push するため reverse。
-            let children: Vec<_> = dom.child_ids(id).collect();
-            for child_id in children.into_iter().rev() {
-                stack.push(child_id);
-            }
+            // `child_ids` イテレータを直接 `stack` へ `extend` し、今回追加した
+            // 末尾スライスだけを in-place `reverse()` する — 都度捨てる中間
+            // `Vec` を経由しない (bd raikiri-spike-75ch)。`stack` 自体の
+            // capacity growth は元の `for .. { stack.push(..) }` と同じ
+            // amortized pattern のままで、ここで削れるのは「今回だけの捨て
+            // Vec」1 本分のみ。
+            //
+            // なぜ document order を保つか: 本関数冒頭のコメント (上記
+            // 「per-node の処理は他の node の状態に依存しないため訪問順は
+            // 無関係」) の通り、collect_cascaded 自体の正しさは訪問順に依存
+            // しない。ここで document order を維持しているのは純粋に
+            // refactor 前との**挙動の完全一致**のためで、新たな正しさ上の
+            // 要請ではない。
+            let start = stack.len();
+            stack.extend(dom.child_ids(id));
+            stack[start..].reverse();
         }
     }
 }
@@ -526,10 +544,26 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 
         // 子を stack に push (own computed value を parent_computed として渡す)。
         // stack は LIFO なので document order で push するため reverse。
-        let children: Vec<_> = dom.child_ids(id).collect();
-        for child_id in children.into_iter().rev() {
-            stack.push((child_id, computed.clone(), child_ctx));
-        }
+        // `child_ids` イテレータを直接 `stack` へ `extend` し、今回追加した
+        // 末尾スライスだけを in-place `reverse()` する — 都度捨てる中間
+        // `Vec` を経由しない (bd raikiri-spike-75ch)。`child_ctx` は `Copy`
+        // ([`ResolveContext`] の derive) なので closure 内で複数回使い回せる。
+        //
+        // なぜ document order を保つか: resolve_inheritance 自体の正しさも
+        // 訪問順には依存しない — 各 node の computed 値は push 時点で既に
+        // 確定している parent_computed / child_ctx だけから決まり、`winners`
+        // scratch buffer は各 node の処理前後で完全に drain される (8kn8) の
+        // で兄弟の処理順に左右されない。ここで document order を維持して
+        // いるのは refactor 前との**挙動の完全一致**のためであり、加えて
+        // `winner_does_not_leak_into_next_sibling` 自身の doc comment が
+        // 明記する「document order で先行する `<p>` → 後続 `<span>` の向き」
+        // という leak 検出方向を、この traversal 順が引き続き満たすため。
+        let start = stack.len();
+        stack.extend(
+            dom.child_ids(id)
+                .map(|child_id| (child_id, computed.clone(), child_ctx)),
+        );
+        stack[start..].reverse();
     }
 }
 
