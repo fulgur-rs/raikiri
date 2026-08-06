@@ -427,7 +427,11 @@ impl RunningTemplateStore {
 /// [`raikiri_style::property::ContentComponent`] variants and flips the
 /// corresponding flag; multiple content lists (e.g. one per node in the
 /// subtree) are folded via repeated calls with [`DynamicFlags::default`] as
-/// the seed and OR-composing (see the fold in unit tests).
+/// the seed and OR-composing. No unit test exercises that multi-call fold
+/// today — `detect_dynamic_flags_composes_multiple_axes` only composes
+/// several axes within a *single* call's content list — a multi-call
+/// OR-fold test is expected to land alongside the register-site walker
+/// producer.
 ///
 /// **`#[non_exhaustive]` handling**: [`ContentComponent`] is
 /// `#[non_exhaustive]`; the future `ContentComponent::Element { name }`
@@ -437,6 +441,40 @@ impl RunningTemplateStore {
 /// arm therefore adds no flag. A downstream variant that would legitimately
 /// flip a flag should be handled explicitly here — reviewer:spec should
 /// challenge silent catch-all coverage of new variants.
+///
+/// **`Image` / `Contents` / `Quote` / `Leader`** (raikiri-spike-1us,
+/// CSS Content 3 §2.2 / §2.3 / §2.4.2 / §2.5.1): each now has an explicit
+/// no-op arm (parallel to `Literal`/`Attr`) rather than falling through the
+/// catch-all — `<image>`'s `url` is fixed per declaration, quote nesting
+/// depth is document-structural, and a `leader()` glyph/string is fixed;
+/// none read per-page runtime state the way `counter()` / `string()` /
+/// `target-*` do.
+///
+/// `Contents` (`content: contents`) deserves a sharper argument than
+/// "page-independent" alone, because it superficially resembles
+/// `content(before|after)` (which DOES flip `has_content_variant`, see
+/// below) — both "reach into" other content. The difference is *how* that
+/// other content enters the fold: `content(before|after)` reads a
+/// **pseudo-element's** content-list, which is not itself a subtree node
+/// this function (or its caller's per-node walk) ever visits, so any
+/// page-dependent bits inside it would otherwise go uncounted — hence the
+/// explicit flag. `contents` instead inlines the element's own **DOM
+/// descendants**, which per the fold contract above ("multiple content
+/// lists — one per node in the subtree — are folded via repeated calls")
+/// will be separate arena nodes the register-site walker is contracted to
+/// visit and OR-fold independently; their dynamism is meant to be captured
+/// directly, not through this arm. So `Contents` genuinely parallels
+/// `Literal`/`Attr`, not `Content { keyword: Before | After }`.
+///
+/// `Leader`'s rendered fill length does vary with available inline space,
+/// but that's a layout-geometry input, not a content-dynamism axis — the
+/// post-M8 cache key is `(template_id, effective margin-box geometry)`
+/// (see the [`DynamicFlags`] type-level note), so geometry variance is
+/// already covered by the cache key and doesn't need a flag here.
+///
+/// **reviewer:spec sign-off pending** on this "no dynamic flag" call (bd
+/// raikiri-spike-5hp8) — the semantic read above is the implementer's, not
+/// yet a spec-lens-confirmed classification.
 #[allow(
     dead_code,
     reason = "Producer path is the register-site walker (bd \
@@ -488,6 +526,21 @@ pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags
             },
             ContentComponent::Literal(_) | ContentComponent::Attr { .. } => {
                 // Static — contribute no flag.
+            }
+            ContentComponent::Image { .. }
+            | ContentComponent::Contents
+            | ContentComponent::Quote(_)
+            | ContentComponent::Leader(_) => {
+                // Static — page-independent per raikiri-spike-1us's semantic
+                // read (image url() / quote nesting depth / leader glyph
+                // resolve without per-page runtime state; `Contents`' own
+                // descendants will be separately-walked arena nodes the
+                // register-site walker is contracted to OR-fold on their
+                // own account once that producer lands — see the type-level
+                // doc note above for why this does NOT parallel the earlier
+                // `Content { keyword: Before | After }` arm). reviewer:spec
+                // sign-off pending on this classification (bd
+                // raikiri-spike-5hp8).
             }
             // Non-exhaustive catch-all: reviewer:spec must challenge any new
             // ContentComponent variant that shouldn't fall through here.
@@ -591,7 +644,9 @@ pub(crate) fn layout_running_template(
 mod tests {
     use super::*;
 
-    use raikiri_style::property::{ContentPart, ContentTextKeyword, CounterStyle, StringFetchMode};
+    use raikiri_style::property::{
+        ContentPart, ContentTextKeyword, CounterStyle, LeaderType, QuoteKeyword, StringFetchMode,
+    };
     use smol_str::SmolStr;
 
     // ── Canonical-shape pins (design §7.3) ─────────────────────────
@@ -1058,6 +1113,34 @@ mod tests {
                 "content({kw:?}) alone leaves template static"
             );
         }
+    }
+
+    #[test]
+    fn detect_dynamic_flags_image_contents_quote_leader_are_static() {
+        // raikiri-spike-1us's 4 new variants (CSS Content 3 §2.2 / §2.3 /
+        // §2.4.2 / §2.5.1) each get an explicit no-op arm now — pin that none
+        // of them flip a dynamic flag. reviewer:spec sign-off pending on this
+        // "no dynamic flag" classification (bd raikiri-spike-5hp8); this test
+        // pins current behavior, not a spec-confirmed final answer.
+        let cs = vec![
+            ContentComponent::Image {
+                url: "cover.png".to_owned(),
+            },
+            ContentComponent::Contents,
+            ContentComponent::Quote(QuoteKeyword::OpenQuote),
+            ContentComponent::Quote(QuoteKeyword::CloseQuote),
+            ContentComponent::Quote(QuoteKeyword::NoOpenQuote),
+            ContentComponent::Quote(QuoteKeyword::NoCloseQuote),
+            ContentComponent::Leader(LeaderType::Dotted),
+            ContentComponent::Leader(LeaderType::Solid),
+            ContentComponent::Leader(LeaderType::Space),
+            ContentComponent::Leader(LeaderType::String(SmolStr::new("~"))),
+        ];
+        let f = detect_dynamic_flags(&cs);
+        assert!(
+            f.is_fully_static(),
+            "Image/Contents/Quote/Leader must not flip any dynamic flag"
+        );
     }
 
     #[test]
