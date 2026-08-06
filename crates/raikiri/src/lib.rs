@@ -127,14 +127,22 @@ pub use raikiri_dom::Document;
 //
 // bd raikiri-spike-zls8 (decision raikiri-spike-082k Phase 2) で
 // `ComputedValues` の length 系 field が **computed value 層**の型になったため、
-// `Computed*` 5 型を追加した。これが `ComputedValues` の field を型付きで受ける
-// ために必要な surface のすべてである:
+// `Computed*` 5 型を追加した。これらは computed 層の leaf 型である
+// (`ComputedBorder` のみ width/style/color の 3-field struct で scalar ではない):
 //
 // - `ComputedLength`                  — `font_size` / `ComputedBorder::width()`
-// - `ComputedLengthPercentage`        — `padding` の各 side
-// - `ComputedLengthPercentageOrAuto`  — `margin` の各 side / `width` / `height`
+// - `ComputedLengthPercentage`        — `padding` の各 side の leaf 型
+// - `ComputedLengthPercentageOrAuto`  — `margin` の各 side / `width` / `height` の leaf 型
 // - `ComputedLineHeight`              — `line_height`
-// - `ComputedBorder`                  — `border` の各 side
+// - `ComputedBorder`                  — `border` の各 side の leaf 型
+//
+// **訂正 (bd raikiri-spike-eow8)**: 上記 5 型は leaf 型に過ぎず、`padding` /
+// `margin` / `border` の実 field 型は `Sides<ComputedLengthPercentage>` 等の
+// 4-side container だった。zls8 時点では `Sides<T>` 自体が re-export されて
+// いなかったため、この 3 field は leaf 型を揃えても依然として型付きで名指し
+// できていなかった — zls8 はこれを承知の上で `Sides` を approved surface の
+// 外と判定し、意図的に見送っている (debt lens 追認済み)。eow8 で `Sides` を
+// 追加し、この gap を閉じた (下記)。
 //
 // `Length` (specified 層) は**残す** — `ComputedValues` の field 型ではなくなった
 // が、同じく re-export している `PropertyValue` は variant payload に `Length` を
@@ -159,14 +167,47 @@ pub use raikiri_dom::Document;
 //   (`cascade_page` 自体は umbrella が re-export していないので、この経路に
 //   届く Consumer は raikiri-style へ直接 dep している場合のみ。)
 //
-// `Sides<T>` (padding / margin / border の 4-side container) は **追加しない** —
-// 従来から re-export していない既存の gap であり、本 task の approved surface
-// (「`ComputedValues` の field 型が名指す computed 層の型」) に含まれない。
+// `Sides<T>` / `LengthOrAuto` / `LineHeight` / `Border` — bd raikiri-spike-eow8
+// (2026-08-07 PMO approve、wall/umbrella add 方向) で追加。**この 4 型追加が
+// 上の「zls8 時点では見送った」判断を上書きする** — 旧文面をそのまま残すと
+// 「追加しない」という嘘が残るため書き換えた。役割:
+//
+// - `Sides<T>` — layer-agnostic な 4-side container (padding / margin /
+//   border の top/right/bottom/left)。specified 層
+//   (`PropertyValue::Padding(Sides<Length>)` 等) と computed 層
+//   (`ComputedValues.padding: Sides<ComputedLengthPercentage>` 等) の両方で
+//   型パラメータ化されて使われる — 他 3 型と違い「specified 層の型」ではない。
+//   上段で訂正した「leaf 型はあるが container が無い」gap を本追加が閉じる。
+// - `LengthOrAuto` — specified 層。`PropertyValue::MarginTop(LengthOrAuto)` 等
+//   の payload。computed 層対応は `ComputedLengthPercentageOrAuto` (上に既出)。
+// - `LineHeight` — specified 層。`PropertyValue::LineHeight(LineHeight)` の
+//   payload。computed 層対応は `ComputedLineHeight` (上に既出)。
+// - `Border` — specified 層。`PropertyValue::Border(Sides<Border>)` の
+//   payload。computed 層対応は `ComputedBorder` (上に既出)。`raikiri_style`
+//   crate root では re-export されておらず `raikiri_style::property::Border`
+//   経由でのみ public なため、下の一括 `pub use` block には含めず、直後の別
+//   `pub use` 文でその path から明示 import する (`LineHeight` も同じ理由で同居)。
+//   また `Border` 自体が `#[non_exhaustive]` struct なので raikiri crate から
+//   struct-literal 構築はできない (E0639)。保持/生成の public な経路は現状
+//   存在しない — `Sides::all` は既存の `Border` 値を 4 面に複製するだけで、
+//   その入力自体 (`Border` 値そのもの) を得る手段ではない。
+//
+// `Border` は `width: Length` field のみ Consumer が型付きに読める。
+// `style: BorderStyle` / `color: BorderColor` (どちらも `raikiri_style::property`
+// では public、`raikiri_style::property::Border` と同じ経路で到達可能) は本
+// task の approved scope (eow8 PMO 承認は Sides/LengthOrAuto/LineHeight/Border
+// の 4 型に限定) 外のため未 re-export — 追加するには別の wall/umbrella add
+// 方向 escalation が要る。follow-up: bd raikiri-spike-x0dq (`Border` 自体、
+// shorthand 展開により実 CSS からは値が得られない事情も含めて記録)。
 pub use raikiri_style::{
     Atom, CascadeResult, ComputedBorder, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues, CssColor, DisplayValue,
-    Length, Origin, PropertyValue, RuleTree,
+    Length, LengthOrAuto, Origin, PropertyValue, RuleTree, Sides,
 };
+// `Border` / `LineHeight` は raikiri-style crate root では re-export されておらず
+// (`raikiri_style::property::{Border, LineHeight}` 経由でのみ public)、上の一括
+// block には含められない (理由は上のコメント参照)。
+pub use raikiri_style::property::{Border, LineHeight};
 
 // ── url: `ParseOptions.base_url: Option<Url>` の実体型 ─────────────────
 pub use url::Url;
