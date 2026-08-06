@@ -100,6 +100,12 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
 ///
 /// 対象は umbrella `raikiri` から re-export される全 `#[non_exhaustive]` pub
 /// struct with `impl Default` (下記 new()-pin test と同じ coverage set)。
+///
+/// 対象外 (意図的): `raikiri_style::property::Border` (bd raikiri-spike-eow8
+/// で re-export 追加) は `impl Default` を持たないため対象外 — `Default`
+/// どころか `new()` も public constructor も一切無く、struct-literal も
+/// E0639 で塞がれている (raikiri crate から `Border` 値を得る経路が現状無い)。
+/// follow-up: bd raikiri-spike-x0dq。
 #[test]
 fn external_consumer_can_construct_all_non_exhaustive_types() {
     // struct via Default — configs
@@ -228,6 +234,10 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
 /// - `HtmlDocument` は private field で opaque、`parse_html` 経由でのみ construct
 /// - `ResolvedIntrinsic` は `#[non_exhaustive]` でないため construction 契約が
 ///   `struct literal` 経由で crate 外から直接可能、この test の対象外
+/// - `raikiri_style::property::Border` (bd raikiri-spike-eow8 で re-export
+///   追加) は `new()` を持たない。`Default` も struct-literal (E0639) も
+///   無いため、raikiri crate から `Border` 値を得る経路が現状存在しない
+///   (follow-up: bd raikiri-spike-x0dq)。
 #[test]
 fn external_consumer_can_use_new_constructor_on_all_types() {
     // paged model (raikiri-traits::page)

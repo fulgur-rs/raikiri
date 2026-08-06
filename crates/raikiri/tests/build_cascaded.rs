@@ -216,6 +216,65 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
 }
 
 #[test]
+fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
+    // bd raikiri-spike-eow8: `PropertyValue` の Sides<T> 系 payload
+    // (Padding/Margin/Border) と LineHeight を umbrella から型付きで名指し
+    // できることを compile-time で証明する。zls8 が
+    // `PropertyValue::FontSize(Length::Px(12.0))` で入れた「実際に construct
+    // して確認する」形と同じ shape を、直接 construct できる 3 variant
+    // (Padding/Margin/LineHeight) には踏襲する。
+    use raikiri::{Border, Length, LengthOrAuto, LineHeight, PropertyValue, Sides};
+
+    // `Padding(Sides<Length>)` — `Sides<T>` / `Length` はどちらも re-export 済みで
+    // struct-literal 制約なく直接 construct できる。
+    let _specified_padding: PropertyValue = PropertyValue::Padding(Sides::all(Length::Px(4.0)));
+
+    // `Margin(Sides<LengthOrAuto>)` — `LengthOrAuto` も同様に直接 construct 可能。
+    let _specified_margin: PropertyValue =
+        PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Px(8.0))));
+
+    // `LineHeight(LineHeight)` — `LineHeight` enum は `#[non_exhaustive]` だが、
+    // 既存 variant の construct 自体は (`Length` 同様) 外部 crate から可能。
+    let _specified_line_height: PropertyValue = PropertyValue::LineHeight(LineHeight::Normal);
+
+    // `Border(Sides<Border>)` — `Border` は struct 自体が `#[non_exhaustive]` の
+    // ため、raikiri crate から `Border { .. }` struct-literal 構築は
+    // コンパイルエラーになる (E0639、struct-literal 経路は raikiri-style crate
+    // 内に限定される)。FontSize 同様の値 construct はできないので、tuple-variant
+    // constructor を fn pointer に coerce する形で `Sides<Border>` payload 型を
+    // 名指しする — `Border` 値そのものは要らず、型のみを pin できる。
+    let _border_ctor: fn(Sides<Border>) -> PropertyValue = PropertyValue::Border;
+}
+
+#[test]
+fn umbrella_re_exports_cover_computed_sides_container_fields() {
+    // bd raikiri-spike-eow8: zls8 が re-export した Computed* 5 型は leaf 型に
+    // 過ぎず、`ComputedValues.padding` / `.margin` / `.border` の実 field 型
+    // `Sides<Computed*>` は `Sides<T>` 自体が re-export されていなかったため
+    // 名指しできなかった (zls8 以前からの gap、`crates/raikiri-style/src/
+    // computed.rs` の field 定義で実測)。eow8 の `Sides` 追加でこの 3 field も
+    // 型付きで受けられることを、実際の cascade 出力を使って verify する。
+    use raikiri::{
+        ComputedBorder, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ParseOptions,
+        Sides, build_cascaded, parse,
+    };
+
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let doc = parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
+    let result = build_cascaded(&doc);
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+    let computed = &result.computed[p_id.0 as usize];
+
+    let _padding: Sides<ComputedLengthPercentage> = computed.padding;
+    let _margin: Sides<ComputedLengthPercentageOrAuto> = computed.margin;
+    let _border: Sides<ComputedBorder> = computed.border;
+}
+
+#[test]
 fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
     // NetworkProvider trait を implement する downstream consumer が
     // sub-crate direct dep なしで完結できることを compile-time で verify。
