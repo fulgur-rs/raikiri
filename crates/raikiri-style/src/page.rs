@@ -951,9 +951,30 @@ pub fn cascade_page(
         PageInheritance::FromRoot(root) => root,
         PageInheritance::LegacyInitialValues => &INITIAL_PAGE_PARENT,
     };
+    // `ctx` carries `inherited`'s used line-height as `root_line_height` (bd
+    // raikiri-spike-yh3w) — needed by *both* step 3 below (`resolve_against_inherited`'s
+    // `FontSize` arm, for `font-size: 1lh`/`1rlh`'s self-reference basis) and
+    // step 4 (phase 3, for `padding: 1lh` etc.'s basis via `own_line_height`).
+    // Built once here rather than separately in each step: `inherited` is
+    // immutable for the whole function, so the two steps would otherwise
+    // compute the exact same value twice.
+    //
+    // `rlh` (bd raikiri-spike-vxha) always refers to the *root element's* own
+    // `lh`, never the page context's — CSS Paged Media 3 §6 "The page context
+    // inherits from the root element", so `inherited` (the root element's
+    // `ComputedValues`, or the L3 legacy initial-values fallback) is the right
+    // source, unconditionally, regardless of what the page context's own
+    // `line-height` declares. `resolve_against_inherited`'s `FontSize` arm
+    // relies on the same fact for `font-size: 1lh`'s self-reference basis —
+    // for the page context specifically, "parent" and "root" coincide (both
+    // are `inherited`), so the one `ctx.root_line_height` serves both.
+    let ctx = ResolveContext::with_root_line_height(
+        inherited.font_size,
+        used_line_height_length(inherited.line_height, inherited.font_size),
+    );
     let resolved: HashMap<PropertyKey, ResolvedAgainstInherited> = best
         .into_iter()
-        .map(|(k, (_, _, _, v))| (k, resolve_against_inherited(v, inherited)))
+        .map(|(k, (_, _, _, v))| (k, resolve_against_inherited(v, inherited, &ctx)))
         .collect();
 
     // Step 4 (phase 3): absolutize the remaining lengths against the page
@@ -967,18 +988,8 @@ pub fn cascade_page(
     // (CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>). The page
     // context is *not* the root element, so this stays the inheritance parent's
     // font-size even after `font_size` above diverges from it — the element-path
-    // sibling is `SpecifiedValues::finalize`, not `finalize_as_root`.
-    //
-    // `rlh` (bd raikiri-spike-vxha) is the same story: it always refers to the
-    // *root element's* own `lh`, never the page context's — CSS Paged Media 3
-    // §6 "The page context inherits from the root element", so `inherited`
-    // (the root element's `ComputedValues`, or the L3 legacy initial-values
-    // fallback) is the right source, unconditionally, regardless of what the
-    // page context's own `line-height` declares.
-    let ctx = ResolveContext::with_root_line_height(
-        inherited.font_size,
-        used_line_height_length(inherited.line_height, inherited.font_size),
-    );
+    // sibling is `SpecifiedValues::finalize`, not `finalize_as_root`. `ctx`
+    // (built above, before step 3) already carries this basis.
     let border_styles = page_context_border_styles(&resolved);
     // The page context's own `lh` basis (bd raikiri-spike-vxha) — mirrors
     // `font_size` above: `1lh` in `padding`/`margin`/`border-*-width` needs
@@ -1593,6 +1604,7 @@ mod tests {
     //! Implementation follows the spec; this test asserts UA `!important` wins.
 
     use super::*;
+    use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontWeightValue, Length,
         LengthOrAuto, LineHeight, PositionValue, TextAlign,
@@ -2652,6 +2664,75 @@ mod tests {
             Some(&PropertyValue::LineHeight(LineHeight::Length(Length::Px(
                 40.0
             )))),
+        );
+    }
+
+    // ── `font-size: 1lh` / `1rlh` in the page context (bd raikiri-spike-yh3w) ──
+    //
+    // §6 does not mention `lh`/`rlh` explicitly (only `em`/`ex`, verified against
+    // the primary source at implementation time) — this is the same kind of
+    // *derivation* the `%`/`rem` cases above already rely on: "the page context
+    // inherits from the root element" (§6) + CSS Values 4 §6.1.1's self-reference
+    // clause for font-* properties. It mirrors `page_context_line_height_basis`'s
+    // treatment of `line-height` itself in this same context (`self_reference_parent
+    // = ctx.root_line_height` there) — for the page context specifically, "parent"
+    // and "root" are the same node (`inherited`), so `lh` and `rlh` on `font-size`
+    // coincide here (same note as `cascade_page_line_height_rlh_is_not_self_referential`).
+
+    /// `@page { font-size: 1.5lh }` is self-referential (same clause as
+    /// `cascade_page_line_height_self_reference_uses_root_as_parent` above) —
+    /// its basis is the root element's used line-height, **not** any
+    /// `line-height` the same `@page` block declares (that would be the page
+    /// context's *own* line-height, which is irrelevant here — `font-size` and
+    /// `line-height` self-reference against the same "parent" independently).
+    #[test]
+    fn cascade_page_font_size_lh_self_reference_uses_root_as_parent() {
+        let root = ComputedValues {
+            font_size: ComputedLength(20.0),
+            line_height: ComputedLineHeight::Number(2.0), // root used = 40px
+            ..ComputedValues::initial()
+        };
+        // Page context declares a different own line-height — must not leak in.
+        let result = page("@page { line-height: 1; font-size: 1.5lh }", &root);
+        assert_eq!(
+            result.declarations().get(&PropertyKey::FontSize),
+            Some(&PropertyValue::FontSize(Length::Px(60.0))), // 1.5 * 40
+        );
+    }
+
+    /// `@page { font-size: 1.5rlh }` lands on the same answer as `1lh` above —
+    /// not a coincidence of implementation wiring, but because the page
+    /// context's "parent" *is* the root element (CSS Paged Media 3 §6),
+    /// exactly like `cascade_page_line_height_rlh_is_not_self_referential`.
+    #[test]
+    fn cascade_page_font_size_rlh_matches_lh_because_parent_is_root() {
+        let root = ComputedValues {
+            font_size: ComputedLength(20.0),
+            line_height: ComputedLineHeight::Number(2.0), // root used = 40px
+            ..ComputedValues::initial()
+        };
+        let result = page("@page { line-height: 1; font-size: 1.5rlh }", &root);
+        assert_eq!(
+            result.declarations().get(&PropertyKey::FontSize),
+            Some(&PropertyValue::FontSize(Length::Px(60.0))), // 1.5 * 40
+        );
+    }
+
+    /// The common case: root's `line-height: normal` (initial, no font
+    /// metrics) — `font-size: 1lh` falls back to `font-size`'s own spec
+    /// initial (`medium` = 16px), same "no real font metrics in the style
+    /// layer" wall as the element path
+    /// (`font_size_lh_falls_back_to_initial_when_parent_line_height_is_normal`
+    /// in `crate::cascade`). Deliberately **not** `root_with_font_size`'s
+    /// 20px — the fallback is `font-size`'s spec initial, unconditionally,
+    /// not whatever font-size the root happens to declare.
+    #[test]
+    fn cascade_page_font_size_lh_falls_back_to_initial_when_root_line_height_normal() {
+        let root = root_with_font_size(20.0); // line-height stays `normal` (initial)
+        let result = page("@page { font-size: 1lh }", &root);
+        assert_eq!(
+            result.declarations().get(&PropertyKey::FontSize),
+            Some(&PropertyValue::FontSize(Length::Px(INITIAL_FONT_SIZE_PX))),
         );
     }
 
@@ -3760,7 +3841,7 @@ mod tests {
 
         let residues: Vec<(PropertyKey, &'static str)> = page_corpus()
             .into_iter()
-            .map(|v| resolve_against_inherited(v, &root))
+            .map(|v| resolve_against_inherited(v, &root, &ctx))
             .map(|v| absolutize_in_page_context(v, font_size, None, &ctx, styles))
             .filter_map(|v| specified_layer_residue(&v).map(|r| (v.key(), r)))
             .collect();

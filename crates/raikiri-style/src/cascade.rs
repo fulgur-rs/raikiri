@@ -973,9 +973,20 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// bd raikiri-spike-7m33 — 上記「この guard が守らない範囲」§2
 /// (本関数を呼ばない新しい entry point) を型で狭めるため。詳細は
 /// [`ResolvedAgainstInherited`] の doc を参照。
+///
+/// # `ctx` の caller contract (bd raikiri-spike-yh3w)
+///
+/// `ctx.root_line_height` は `inherited` から導出したもの
+/// (`used_line_height_length(inherited.line_height, inherited.font_size)`)
+/// を渡すこと — `FontSize` arm の `lh`/`rlh` 解決 (下記 arm 参照) がこの
+/// 一致を前提にしている。唯一の呼び手 [`crate::page::cascade_page`] はこれを
+/// 一度だけ構築し、本関数と phase 3 ([`crate::page::absolutize_in_page_context`])
+/// の両方に使い回す (`inherited` は関数全体で不変なので、二重に計算しても
+/// 同じ値になる — 呼び手の doc 参照)。
 pub(crate) fn resolve_against_inherited(
     value: PropertyValue,
     inherited: &ComputedValues,
+    ctx: &ResolveContext,
 ) -> ResolvedAgainstInherited {
     ResolvedAgainstInherited(match value {
         // CSS Fonts 4 §2.2.1 "Relative Weights"
@@ -1010,6 +1021,18 @@ pub(crate) fn resolve_against_inherited(
         //   基準は root element の font-size になる、という**導出**であって
         //   §6 の明文ではない。
         // - `px` / `pt`: 絶対単位なので context 非依存。
+        // - `lh` / `rlh` (bd raikiri-spike-yh3w): §6 は `lh`/`rlh` を規定して
+        //   いない。上記 `%` と同型の**導出** — 「the page context inherits
+        //   from the root element」+ CSS Values 4 §6.1.1 の自己参照条項を
+        //   合わせると、page context の self-reference basis (`lh` の基準)
+        //   は root element の used line-height になる。`rlh` は page context
+        //   にとって「root」と「parent」が同じ node (= `inherited`) なので
+        //   両者は一致する — `crate::page::page_context_line_height_basis`
+        //   の doc が `line-height` 自身の同じ状況について既に説明している
+        //   のと同じ判断 (「両者が一致するのはこの page context に限った話」
+        //   という同 doc の注記もそのまま当てはまる)。この一致のおかげで、
+        //   `lh` の自己参照基準にも `ctx.root_line_height` をそのまま渡せる
+        //   (上記「`ctx` の caller contract」節 — 呼び手が保証する)。
         //
         // 本 arm が `font-size` に限る理由: box property
         // (`padding` / `margin` / `width` / `height` / `border-*-width`) の
@@ -1022,12 +1045,8 @@ pub(crate) fn resolve_against_inherited(
         // 読み戻す (`crate::page::page_context_font_size`)。次の `FontSizeRelative`
         // arm も同じ保証を守る (`PropertyValue::FontSize(Length::Px(_))` に収束させる)。
         PropertyValue::FontSize(len) => PropertyValue::FontSize(Length::Px(
-            crate::resolve::resolve_font_size(
-                len,
-                inherited.font_size,
-                &ResolveContext::new(inherited.font_size),
-            )
-            .px(),
+            crate::resolve::resolve_font_size(len, inherited.font_size, ctx.root_line_height, ctx)
+                .px(),
         )),
         // CSS Text 3 §6.1 `#valdef-text-align-match-parent` (raikiri-spike-l3wg)。
         // `inherited` は page context の inheritance parent (root element、
@@ -1214,6 +1233,25 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             // only the `Px` arm is ever exercised. The other 15 arms exist
             // to make this extraction panic-free (no `unreachable!`), not
             // because any test constructs a non-Px font_size here.
+            //
+            // Re-examined for bd raikiri-spike-yh3w (which made `font-size:
+            // 1lh` / `1rlh` parse-accepted, removing the *previous* reason
+            // this was unreachable — that `parse_font_size` dropped them at
+            // parse time). The `Lh`/`Rlh` arms remain unreachable, but for a
+            // different, still-true reason: `FontSize` and `FontSizeRelative`
+            // share one `PropertyKey::FontSize` slot per node
+            // (`PropertyValue::key()`), so at most one of them is the winner
+            // applied to any given node. Whenever *this* arm runs for a
+            // node, the `FontSize` arm (above) did *not* also run for that
+            // same node — so `target.font_size` was never overwritten by
+            // this node's own declaration and still holds the seed from
+            // `SpecifiedValues::inherit_from`, which is always
+            // `lift_font_size(parent.font_size) == Length::Px(_)`
+            // (`lift_font_size` always returns `Px`, regardless of what unit
+            // the parent's own font-size declaration used, since the parent
+            // has already been absolutized to a `ComputedLength` by the time
+            // this node inherits from it). This invariant does not depend on
+            // which `Length` units `parse_font_size` accepts.
             let inherited_px = match target.font_size {
                 Length::Px(v)
                 | Length::Em(v)
@@ -1231,11 +1269,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 | Length::Q(v)
                 | Length::In(v)
                 | Length::Pc(v)
-                // `Lh` / `Rlh` は `parse_font_size` が parse-time に drop する
-                // (bd raikiri-spike-vxha、[`Length::Lh`] doc の「自己参照」節)
-                // ので、このように `target.font_size` に residual した `Lh`/
-                // `Rlh` は到達不能 — 他の 16 arm と同じ panic-free extraction
-                // に含めるだけ。
                 | Length::Lh(v)
                 | Length::Rlh(v) => v,
             };
@@ -1441,6 +1474,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::CssColor;
     use crate::property::DisplayValue;
     use crate::property::{Border, BorderColor, BorderStyle, Length, LengthOrAuto, Sides};
@@ -2167,6 +2201,147 @@ mod tests {
     fn line_height_lh_self_reference_on_root_element_is_always_normal() {
         let cv = cascade_doc("", "html", Some("line-height: 1lh"));
         assert_eq!(cv.line_height, ComputedLineHeight::Normal);
+    }
+
+    // ── `font-size: 1lh` / `1rlh` (CSS Values 4 §6.1.1, bd raikiri-spike-yh3w) ──
+
+    /// **The core bug this issue tracks.** Before the fix, `parse_font_size`
+    /// dropped `font-size: 1lh` at *parse* time — not merely computing it
+    /// wrong, but making the declaration invisible to cascade winner
+    /// selection. `p { font-size: 1lh }` (specificity 0,0,1) must beat
+    /// `* { font-size: 12px }` (specificity 0,0,0) under ordinary CSS
+    /// cascade rules; before the fix, the `1lh` declaration was silently
+    /// discarded and the lower-specificity `12px` declaration won by
+    /// default (there being no competing candidate left).
+    #[test]
+    fn font_size_lh_declaration_is_no_longer_parse_dropped_and_can_win_cascade() {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(style, "* { font-size: 12px } p { font-size: 1lh }");
+        // `* { font-size: 12px }` also matches `html`, but the inline
+        // declaration below beats it (inline specificity exceeds any
+        // selector's). html: font-size 20px, line-height: 2 → used
+        // line-height 40px.
+        let html = doc.push_element(0, "html", Some("font-size: 20px; line-height: 2"));
+        let p = doc.push_element(html, "p", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].font_size,
+            ComputedLength(40.0), // 1 * parent's (html's) used line-height (2 * 20px)
+            "p's own `font-size: 1lh` (specificity 0,0,1) must win over \
+             `* {{ font-size: 12px }}` (specificity 0,0,0); before the fix, \
+             1lh was parse-dropped, silently leaving only the universal-selector \
+             declaration as a cascade candidate"
+        );
+    }
+
+    /// `font-size: 1lh` is self-referential (CSS Values 4 §6.1.1, "or font-*
+    /// properties on the element they refer to") — it resolves against the
+    /// **parent's** used line-height, mirroring `line-height: 1lh`'s own
+    /// self-reference (`line_height_lh_self_reference_uses_parent_not_own_metrics`
+    /// above).
+    #[test]
+    fn font_size_lh_resolves_against_parent_used_line_height() {
+        let (parent, child) = cascade_parent_child(
+            "div",
+            Some("line-height: 2"), // own font-size 16px (initial) → used 32px
+            "span",
+            Some("font-size: 1.5lh"),
+        );
+        assert_eq!(parent.line_height, ComputedLineHeight::Number(2.0));
+        assert_eq!(child.font_size, ComputedLength(48.0)); // 1.5 * 32
+    }
+
+    /// When the parent's own line-height is unresolvable (`normal`), a
+    /// child's self-referential `font-size: 1lh` falls back to `font-size`'s
+    /// own spec initial (`medium` = 16px) — not a fabricated ratio
+    /// (cleanroom), and not `0px` either: unlike `border-width: 1lh` /
+    /// `padding: 1lh` under `line-height: normal`
+    /// (`lh_falls_back_to_zero_when_own_line_height_is_normal` above, which
+    /// share a *generic* resolver with a known `0px` compromise tracked by
+    /// bd raikiri-spike-k05m), `resolve_font_size` is a dedicated
+    /// single-property resolver and falls back to its own true initial
+    /// directly (`resolve_font_size` doc, "`lh` / `rlh` の自己参照" section).
+    #[test]
+    fn font_size_lh_falls_back_to_initial_when_parent_line_height_is_normal() {
+        let (parent, child) = cascade_parent_child("div", None, "span", Some("font-size: 1lh"));
+        assert_eq!(parent.line_height, ComputedLineHeight::Normal);
+        assert_eq!(child.font_size, ComputedLength(INITIAL_FONT_SIZE_PX));
+    }
+
+    /// The root element has no parent, so `font-size: 1lh` on the root
+    /// itself is always unresolvable (CSS Values 4 §6.1.1 "if the element
+    /// has no parent" → initial values → `line-height: normal`). Mirrors
+    /// `line_height_lh_self_reference_on_root_element_is_always_normal`.
+    /// Falls back to `font-size`'s own spec initial, same as the non-root
+    /// case above.
+    #[test]
+    fn font_size_lh_on_root_element_falls_back_to_initial() {
+        let cv = cascade_doc("", "html", Some("font-size: 1lh"));
+        assert_eq!(cv.font_size, ComputedLength(INITIAL_FONT_SIZE_PX));
+    }
+
+    /// `font-size: 1rlh`, unlike `1lh` above, is **not** self-referential
+    /// for a non-root element (same asymmetry as `line-height: 1rlh`,
+    /// `line_height_rlh_in_line_height_uses_root_not_immediate_parent`
+    /// above) — `rlh` always refers to the tree-global root line-height, not
+    /// the immediate parent's. Three levels with **different** line-heights
+    /// at the root and the immediate parent discriminate this: if `rlh`
+    /// were (wrongly) treated as self-referential like `lh`, the leaf would
+    /// pick up the *middle* element's used line-height (48px) instead of
+    /// the root's (40px).
+    #[test]
+    fn font_size_rlh_uses_root_not_immediate_parent() {
+        let mut doc = TestDoc::new();
+        let root = doc.push_element(0, "html", Some("font-size: 20px; line-height: 2")); // root used = 40px
+        let middle = doc.push_element(root, "div", Some("font-size: 12px; line-height: 4")); // middle used = 48px
+        let leaf = doc.push_element(middle, "span", Some("font-size: 1rlh"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        assert_eq!(
+            r.computed[root].line_height,
+            ComputedLineHeight::Number(2.0)
+        );
+        assert_eq!(
+            r.computed[middle].line_height,
+            ComputedLineHeight::Number(4.0)
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[leaf].font_size,
+            ComputedLength(40.0),
+            "font-size: 1rlh must use the root's used line-height (40px), not \
+             the immediate parent's (48px) — rlh is not self-referential"
+        );
+    }
+
+    /// Same 3-level tree as [`font_size_rlh_uses_root_not_immediate_parent`],
+    /// but with `1lh` on the leaf instead of `1rlh` — the two tests together
+    /// discriminate a `Lh`/`Rlh` basis swap in `resolve_font_size` (48px vs
+    /// 40px, the two possible wrong answers for each other's unit).
+    #[test]
+    fn font_size_lh_uses_immediate_parent_not_root() {
+        let mut doc = TestDoc::new();
+        let root = doc.push_element(0, "html", Some("font-size: 20px; line-height: 2")); // root used = 40px
+        let middle = doc.push_element(root, "div", Some("font-size: 12px; line-height: 4")); // middle used = 48px
+        let leaf = doc.push_element(middle, "span", Some("font-size: 1lh"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[leaf].font_size,
+            ComputedLength(48.0),
+            "font-size: 1lh must use the *immediate parent's* used line-height \
+             (48px), not the root's (40px) — lh is self-referential, unlike rlh"
+        );
     }
 
     /// Document 直下の **非 element** node は rem context を確定させない
@@ -3250,12 +3425,14 @@ mod tests {
     #[test]
     fn resolved_against_inherited_carries_the_value_without_loss() {
         let inherited = ComputedValues::initial();
+        let ctx = ResolveContext::new(inherited.font_size);
 
         // 解決される側 (payload が変わる) — `bolder` は継承元 400 に対して
         // 700 に解決される。
         let resolved = resolve_against_inherited(
             PropertyValue::FontWeight(FontWeightValue::Bolder),
             &inherited,
+            &ctx,
         );
         assert_eq!(
             resolved.as_property_value(),
@@ -3271,7 +3448,7 @@ mod tests {
         // pass-through 側 (payload は変わらない) — `Color` はこの関数の対象外
         // なので `v` がそのまま返る。
         let passthrough =
-            resolve_against_inherited(PropertyValue::Color(CssColor::BLACK), &inherited);
+            resolve_against_inherited(PropertyValue::Color(CssColor::BLACK), &inherited, &ctx);
         assert_eq!(
             passthrough.into_property_value(),
             PropertyValue::Color(CssColor::BLACK),

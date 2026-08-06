@@ -430,11 +430,10 @@ pub enum Length {
     /// [`crate::resolve::resolve_line_height`] doc が canonical
     /// (roborev-refine iter 1 quality lens 1、bd raikiri-spike-awjx の
     /// drift 前例により、本節では要約に留め全文を再掲しない)。
-    /// `font-size: 1lh` も同条項の対象だが、この crate の phase 順序
-    /// (font-size は phase 2、line-height は phase 2.5 — font-size 確定後)
-    /// では font-size 解決時に line-height がまだ存在しないため実装コストが
-    /// 非対称に大きく、本 issue では対象外 — `parse_font_size` が parse-time
-    /// に drop する ([`Length::Rlh`] doc 参照)。
+    /// `font-size: 1lh` も同条項の対象で自己参照になる (font-size は
+    /// font-\* property) — 親の used line-height を基準に解決する
+    /// (bd raikiri-spike-yh3w、[`crate::resolve::resolve_font_size`] doc の
+    /// 「`lh` / `rlh` の自己参照」節が canonical)。
     Lh(f32),
     /// Font-relative length: `rlh` — root element の `lh` に対する倍率。
     /// `1rlh` → `Rlh(1.0)`。
@@ -463,8 +462,11 @@ pub enum Length {
     /// (`ResolveContext::root_line_height`) を使う — 判断根拠の全文は
     /// [`crate::resolve::resolve_line_height`] doc 参照。
     ///
-    /// `font-size: 1rlh` は [`Length::Lh`] doc の同節により対象外
-    /// (`parse_font_size` が parse-time に drop)。
+    /// `font-size: 1rlh` も [`Length::Lh`] doc の同節の対象だが、`rlh` は
+    /// 上記の非対称により `font-size` 上でも自己参照として扱わない —
+    /// 宣言要素が root element のとき以外は tree-global な
+    /// `ResolveContext::root_line_height` を直接使う
+    /// (bd raikiri-spike-yh3w、[`crate::resolve::resolve_font_size`] doc 参照)。
     Rlh(f32),
 }
 
@@ -2736,9 +2738,10 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             "in" => Some(Length::In(*value)),
             "pc" => Some(Length::Pc(*value)),
             // `lh` / `rlh` (CSS Values 4 §6.1.1) — bd raikiri-spike-vxha.
-            // Accepted generally here; `parse_font_size` post-filters them out
-            // (self-reference wall, [`Length::Lh`] doc "自己参照" 節参照) —
-            // every other consumer (`line-height` 自身を含む) accepts them.
+            // Accepted generally here for every consumer, `font-size` included
+            // (bd raikiri-spike-yh3w lifted `parse_font_size`'s former
+            // post-filter — see that function's doc "`lh` / `rlh` は受理し、
+            // 親基準で解決する" section for the self-reference resolution).
             "lh" => Some(Length::Lh(*value)),
             "rlh" => Some(Length::Rlh(*value)),
             // (b) milestone subset — viewport-relative unit (`vw`/`vh`/…) と
@@ -2976,30 +2979,32 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// `<relative-size>` は grammar 上そもそも符号を持たないので本 constraint の
 /// 対象外 (ident 分岐は `parse_length_value` に達する前に return する)。
 ///
-/// # `lh` / `rlh` は drop する (bd raikiri-spike-vxha)
+/// # `lh` / `rlh` は受理し、親基準で解決する (bd raikiri-spike-yh3w)
 ///
 /// [`Length::Lh`] doc の「自己参照」節: CSS Values 4 §6.1.1 は `lh`/`rlh` が
 /// `line-height` **または font-\* property** の値として、それが指す要素自身に
 /// 使われたときは親 (または「親が無ければ initial values」) の line-height /
 /// font metrics を基準にする、と規定する。`font-size` はまさにその
-/// font-\* property であり、この crate の phase 順序 (font-size = phase 2、
-/// line-height = phase 2.5、padding 等の phase 3 は line-height 確定後) では
-/// font-size 解決の時点で「親の computed line-height」を求めるための
-/// 追加の基準受け渡しが必要になる — [`line-height`](parse_line_height) 側
+/// font-\* property であり、grammar 上 `lh`/`rlh` を排除する根拠は無い
+/// (CSS Fonts 4 の `font-size` grammar `<absolute-size> | <relative-size> |
+/// <length-percentage [0,∞]>` の `<length-percentage>` は `<length>` を含み、
+/// CSS Values 4 §6.1.1 の `<length>` production は `lh`/`rlh` を除外しない)。
+///
+/// bd raikiri-spike-vxha の時点では、この解決 (「親の computed line-height」を
+/// font-size 解決の基準として渡す) が `line-height`
 /// (`finalize`/`finalize_as_root` が既に持つ `parent: &ComputedValues` を
-/// そのまま使える) と違い、font-size の絶対化 ([`crate::resolve::resolve_font_size`])
-/// は現状 `parent_font_size` だけしか受け取らない。この差分を埋める設計変更は
-/// 本 issue の scope 外と判断し (bd raikiri-spike-vxha 完了報告参照)、
-/// `font-size: 1lh` / `font-size: 1rlh` は declaration ごと drop する
-/// (`line-height` 含む他の全 consumer は受理する — 本関数だけの特別扱い)。
+/// そのまま使える) より高コストに見えたため drop していたが、実際に実装した
+/// ところコストは局所的だった — [`crate::resolve::resolve_font_size`] の
+/// `self_reference_basis` 引数、および [`crate::specified::SpecifiedValues::finalize`]
+/// 内の 2, 3 行の並べ替えで足りる (`parent` は本関数の呼び出しに入る前に
+/// tree walk で既に確定済みのため、cross-node な phase 順序の変更は不要 —
+/// [`mod@crate::resolve`] module doc の「想定される 4 段階」節、
+/// bd raikiri-spike-yh3w 完了報告参照)。
 fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
         return parse_font_size_keyword(&ident);
     }
     let length = parse_length_value(input, true)?;
-    if matches!(length, Length::Lh(_) | Length::Rlh(_)) {
-        return None;
-    }
     (length_payload(length) >= 0.0).then_some(PropertyValue::FontSize(length))
 }
 
@@ -4936,15 +4941,37 @@ mod tests {
     }
 
     #[test]
-    fn font_size_rejects_lh_and_rlh() {
-        // bd raikiri-spike-vxha: `lh`/`rlh` are `parse_length_value`-accepted
-        // in general (`line-height` and the box properties consume them) but
-        // `parse_font_size` post-filters them out — the self-reference wall
-        // documented on `parse_font_size` (CSS Values 4 §6.1.1's "or font-*
-        // properties on the element they refer to" clause), which this issue
-        // scopes out rather than half-implements.
-        assert_eq!(parse("1lh", "font-size"), None);
-        assert_eq!(parse("1rlh", "font-size"), None);
+    fn font_size_accepts_lh_and_rlh() {
+        // bd raikiri-spike-yh3w: CSS Fonts 4's `font-size` grammar
+        // (`<absolute-size> | <relative-size> | <length-percentage [0,∞]>`)
+        // has no carve-out excluding `lh`/`rlh` from `<length-percentage>`'s
+        // `<length>` component (CSS Values 4 §6.1.1) — `font-size: 1lh` /
+        // `font-size: 1rlh` are spec-valid and must survive parsing so the
+        // cascade can pick them as a winner (dropping at parse time, as this
+        // crate previously did per bd raikiri-spike-vxha, can change *which
+        // declaration wins* the cascade — a stronger effect than an
+        // incorrectly-resolved value). Resolution against the parent's used
+        // line-height is [`crate::resolve::resolve_font_size`]'s concern, not
+        // this parser's — pinned by that module's tests, not here.
+        assert_eq!(
+            parse("1lh", "font-size"),
+            Some(PropertyValue::FontSize(Length::Lh(1.0)))
+        );
+        assert_eq!(
+            parse("1rlh", "font-size"),
+            Some(PropertyValue::FontSize(Length::Rlh(1.0)))
+        );
+    }
+
+    #[test]
+    fn font_size_rejects_negative_lh_and_rlh() {
+        // The grammar's `[0,∞]` non-negative constraint ([`parse_font_size`]
+        // doc "Non-negative constraint" 節) applies to `lh`/`rlh` the same as
+        // every other `Length` variant — `length_payload` reads their inner
+        // `f32` generically, so this falls out of the existing post-filter
+        // without a dedicated branch.
+        assert_eq!(parse("-1lh", "font-size"), None);
+        assert_eq!(parse("-1rlh", "font-size"), None);
     }
 
     #[test]
