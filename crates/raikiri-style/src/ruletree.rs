@@ -156,9 +156,11 @@ pub fn walk_style_elements<D: StyleDom, F: FnMut(&str)>(dom: &D, mut on_style_te
 }
 
 /// DOM walk 本体。深いネストで stack overflow しないよう explicit `Vec` stack
-/// で iterative DFS (roborev job 199 対応)。訪問順は sibling 間で recursion 版
-/// と異なり得るが、`<style>` は独立に text を emit するだけで他 node の状態に
-/// 依存しないため source_order (呼び出し側で採番) は不変。
+/// で iterative DFS (roborev job 199 対応)。children を reverse push してから
+/// LIFO で pop するため (下記 stack push 箇所参照)、sibling 間の訪問順は素朴な
+/// recursion 版と一致する — document order の保持は単なる互換目的ではなく、
+/// [`RuleTree::add_stylesheet`] が呼び出し順で `source_order` を単調採番する
+/// (`build_rule_tree` がこの walk の callback から呼ぶ) ため正しさ上の要請。
 fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_style_text: &mut F) {
     let mut stack: Vec<StyleNodeId> = vec![id];
     while let Some(id) = stack.pop() {
@@ -203,11 +205,27 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
                 }
             }
             // 全 kind で children を stack に push。stack は LIFO なので document
-            // order (source_order 割り当てに影響) を保つため reverse push。
-            let children: Vec<_> = dom.child_ids(id).collect();
-            for child_id in children.into_iter().rev() {
-                stack.push(child_id);
-            }
+            // order を保つため reverse push。`child_ids` イテレータを直接
+            // `stack` へ `extend` し、今回追加した末尾スライスだけを in-place
+            // `reverse()` する — 都度捨てる中間 `Vec` を経由しない (bd
+            // raikiri-spike-o53w、cascade.rs 側の bd raikiri-spike-75ch と同型
+            // の技法)。`stack` 自体の capacity growth は元の
+            // `for .. { stack.push(..) }` と同じ amortized pattern のままで、
+            // ここで削れるのは「今回だけの捨て Vec」1 本分のみ。
+            //
+            // なぜここでは document order 保持が正しさ上の要請か: 本関数冒頭
+            // のコメントの通り `RuleTree::add_stylesheet` は呼び出し順で
+            // source_order を単調採番する。`build_rule_tree` はこの walk の
+            // callback から `<style>` element 訪問順にそれを呼ぶため、訪問順
+            // がそのまま source_order — ひいては cascade tie-break — に反映
+            // される。cascade.rs の同型 2 箇所 (collect_cascaded /
+            // resolve_inheritance) は訪問順に依存しない挙動保持のみが目的
+            // だったのと対照的。
+            // `walk_style_elements_pub_visits_all_style_texts_in_document_order`
+            // test が兄弟 `<style>` 2 個の text を visit 順で固定している。
+            let start = stack.len();
+            stack.extend(dom.child_ids(id));
+            stack[start..].reverse();
         }
     }
 }
