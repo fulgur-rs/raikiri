@@ -452,7 +452,74 @@ pub enum ComputedLineHeight {
 /// // style / color は specified keyword をそのまま運ぶ。
 /// assert_eq!(computed.style(), specified.style);
 /// assert_eq!(computed.color, specified.color);
+/// // `computed.style()` 呼び出しと `computed.color` 直接読み出しは、下記
+/// // write-path pin (`# write 経路が無いことの compile-fail pin` 節) の
+/// // non-vacuous control を兼ねる。
 /// ```
+///
+/// # write 経路が無いことの compile-fail pin (bd raikiri-spike-smqp)
+///
+/// `width` / `style` はいずれも `pub(crate)` に絞ってある (各 field doc
+/// 参照)。この narrowing が保たれ続けることは prose の主張のままだと将来の
+/// regression (rename 時の見落とし等) で静かに崩れうる。bd
+/// raikiri-spike-ejia が [`crate::rule::Declaration`] の `value` field で
+/// 確立した技法 (同型の doc comment 参照) をここに転用する。
+///
+/// `ComputedBorder` にはすでに `#[non_exhaustive]` が付いているため、struct
+/// literal 構築や `..base` functional-update による fence は width / style
+/// 単独の visibility を discriminate **できない** — 発生するエラーは常に
+/// non_exhaustive 由来の `E0639` であり、両 field が将来 `pub` に戻っても
+/// compile-fail し続けてしまう (`Declaration` で ejia が fence 1/2 について
+/// 指摘した vacuous pin と同種。ただしあちらは「将来 non_exhaustive が付いたら」
+/// という risk だったのに対し、こちらは non_exhaustive が既に付いている現在
+/// の事実であり、非 struct-literal 系 fence を最初から作らない理由になる)。
+///
+/// そのため struct literal fence は作らず、[`resolve_border`] が返す
+/// **所有権のある**値への直接 field 代入だけを使う。`resolve_border` が
+/// 参照ではなく値そのものを返すため (上の主 doctest 参照)、ejia が
+/// `Declaration` で踏んだ confound (`declarations()` が `&[_]` を返すので
+/// `.clone()` を挟まないと代入が常に `E0594` (immutable な参照への代入) で
+/// vacuous-compile-fail する) は **そもそも発生しない** — 借用を経由しない
+/// ので、代入の成否は各 field 自身の visibility だけで決まる:
+///
+/// ```compile_fail
+/// use raikiri_style::{ComputedLength, ResolveContext, SpecifiedValues, resolve_border};
+///
+/// let ctx = ResolveContext::initial();
+/// let specified = SpecifiedValues::initial().border.top;
+/// let mut computed = resolve_border(specified, ComputedLength(20.0), None, &ctx);
+/// computed.width = ComputedLength(999.0);
+/// ```
+///
+/// ```compile_fail
+/// use raikiri_style::property::BorderStyle;
+/// use raikiri_style::{ComputedLength, ResolveContext, SpecifiedValues, resolve_border};
+///
+/// let ctx = ResolveContext::initial();
+/// let specified = SpecifiedValues::initial().border.top;
+/// let mut computed = resolve_border(specified, ComputedLength(20.0), None, &ctx);
+/// computed.style = BorderStyle::Solid;
+/// ```
+///
+/// # 上 2 fence の non-visibility 部分の non-vacuous control
+///
+/// 新しい control doctest はここには追加しない — 上の主 doctest (本 struct
+/// doc 冒頭) がすでに同じ ingredient (`resolve_border` /
+/// `SpecifiedValues::initial` / `ComputedLength` / `BorderStyle`) を使い、
+/// `.width()` / `.style()` accessor 呼び出しに加えて `color` field
+/// (`computed.color` / `specified.color` の比較、今 `pub`)
+/// への直接読み出しまで行った上で compile が通ることを assert している。
+/// ingredient が drift (rename / shape 変更) すれば、まずそちらが
+/// (compile_fail ではなく通常の doctest として) 落ちるので、上 2 fence が
+/// 「意図した理由」で compile-fail し続けているかどうかの drift 検知は
+/// そちらに委ねる。
+///
+/// ただし、この control は `resolve_border` が値ではなく参照を返すよう
+/// 変わった場合の drift を検知しない (`.width()` / `.color` はどちらの
+/// 戻り値型でも同じく compile が通るため) — その変更が width/style の
+/// 可視性緩和と同時に起きると 2 fence は `E0594` で compile-fail し続け、
+/// vacuous 化に気付けない。`resolve_border` の戻り値型を変える際は本 doc
+/// を書き直すこと。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBorder {
