@@ -365,9 +365,28 @@ impl SpecifiedValues {
     /// 採らなかった — 守る距離が各関数の 2 行しかない一方、public 関数 8 本と
     /// その doctest の signature churn を伴うため。
     pub fn finalize(self, parent: &ComputedValues, ctx: &ResolveContext) -> ComputedValues {
+        // `parent` の line-height 基準 (CSS Values 4 §6.1.1 の自己参照条項、
+        // bd raikiri-spike-yh3w で font-size (phase 2) の `lh` にも要るように
+        // なった — line-height (phase 2.5) の `lh` と**同じ**基準を使い回す)。
+        // `parent` はこの `finalize` 呼び出しに入る**前**に (tree walk の親→子
+        // 順で) 既に確定済みなので、font-size (phase 2) より先に求めても
+        // phase 2 → 2.5 の順序は崩れない — 崩れるとしたら「自 node の」
+        // font-size 確定前に「自 node の」line-height を求めるケースだけで、
+        // これは親の値の話であり無関係 ([`mod@crate::resolve`] の module doc
+        // 「想定される 4 段階」節参照)。
+        let parent_line_height_basis =
+            used_line_height_length(parent.line_height, parent.font_size);
         // phase 2: font-size を **親基準** で絶対化する (CSS Values 4 §6.1.1
-        // parent-metrics 条項)。
-        let font_size = resolve_font_size(self.font_size, parent.font_size, ctx);
+        // parent-metrics 条項)。`lh` は上記 `parent_line_height_basis`、`rlh`
+        // は tree-global な `ctx.root_line_height` を参照する
+        // ([`resolve_font_size`] doc の「`lh` / `rlh` の自己参照」節が
+        // canonical)。
+        let font_size = resolve_font_size(
+            self.font_size,
+            parent.font_size,
+            parent_line_height_basis,
+            ctx,
+        );
         // text-align: match-parent の解決 (CSS Text 3 §6.1)。親を持つ node の
         // 分岐 — root element の "computes to start" は `finalize_as_root` 側。
         let text_align =
@@ -379,8 +398,6 @@ impl SpecifiedValues {
         // padding 等 (phase 3) には使わない — それらは `absolutize_with` 内で
         // 改めて**自 node の**基準 (`used_line_height_length(line_height,
         // font_size)`) を求める。
-        let parent_line_height_basis =
-            used_line_height_length(parent.line_height, parent.font_size);
         let line_height =
             resolve_line_height(self.line_height, font_size, parent_line_height_basis, ctx);
         // phase 3: 残りを **自 node の** font-size / line-height 基準で絶対化する。
@@ -478,9 +495,19 @@ impl SpecifiedValues {
         // の `FontSize` arm comment に同じ区別で書いてある)。
         //
         // 結果として 3 unit すべて 16px 基準になる。
+        //
+        // `lh` (bd raikiri-spike-yh3w): root element には親が無いので
+        // self-reference basis は常に `None` (= "initial values" =
+        // `line-height: normal` = 解決不能、下記 phase 2.5 の `lh`/`rlh` と
+        // 同じ判断)。`rlh` は `ResolveContext::initial()` の
+        // `root_line_height: None` がそのまま同じ結果になる — root 自身の
+        // `font-size: 1rlh` も自己参照 (`rlh` の素の定義上「自分自身」を
+        // 参照するのは宣言要素が root のときだけ、[`resolve_font_size`] doc
+        // 参照)。
         let font_size = resolve_font_size(
             self.font_size,
             ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
+            None,
             &ResolveContext::initial(),
         );
         // CSS Text 3 §6.1: "Computes to start when specified on the root

@@ -71,6 +71,17 @@
 //! line-height が **先に**確定していなければならない (font-size が phase 2 で
 //! 先に確定するのと同じ理由、decision raikiri-spike-082k)。
 //!
+//! `parent_line_height_basis` (**親要素の**確定済み used line-height) は
+//! bd raikiri-spike-yh3w で phase 2 (`font-size` の `lh` 自己参照、
+//! [`resolve_font_size`] doc 参照) にも必要になった。**これは phase 2 → 2.5 の
+//! 順序を逆転させるものではない** — `parent_line_height_basis` が指すのは
+//! **自 node の** phase 2.5 の結果ではなく、**親 node** の (別の再帰呼び出しで
+//! 既に確定済みの) phase 2.5 の結果である。tree walk は親を子より先に処理する
+//! ため、この値は自 node の phase 2 に入る**前**から手元にある。したがって
+//! 呼び手は単に「`parent_line_height_basis` を求める式を、自 node の phase 2
+//! 呼び出しより前に書く」だけでよい (下記例、[`SpecifiedValues::finalize`] の
+//! 実装も同形)。
+//!
 //! ```
 //! use raikiri_style::{
 //!     ComputedLength, ComputedLengthPercentage, ComputedLineHeight, ResolveContext,
@@ -79,10 +90,16 @@
 //! };
 //! use raikiri_style::property::{Length, LineHeight};
 //!
-//! // 親の computed font-size / line-height (inheritance が運んできた computed value)。
+//! // 親の computed font-size / line-height (inheritance が運んできた computed
+//! // value — 親 node は既に処理済みなので、この 2 つは自 node の処理に入る
+//! // 前から確定している)。
 //! let parent_font_size = ComputedLength(16.0);
 //! let parent_line_height = ComputedLineHeight::Normal;
 //! let ctx = ResolveContext::new(ComputedLength(16.0));
+//!
+//! // 親の line-height 基準 (`lh` の自己参照、`font-size` と `line-height` の
+//! // 両方が使う) — 親が既に確定済みなので、自 node の phase 2 より前に求まる。
+//! let parent_line_height_basis = used_line_height_length(parent_line_height, parent_font_size);
 //!
 //! // phase 1: cascade winner を specified 表現のまま staging する (順不同)。
 //! let specified_font_size = Length::Em(1.5);
@@ -90,13 +107,17 @@
 //! let specified_padding_top = Length::Lh(2.0);
 //!
 //! // phase 2: font-size を **親基準** で絶対化する。
-//! let font_size = resolve_font_size(specified_font_size, parent_font_size, &ctx);
+//! let font_size = resolve_font_size(
+//!     specified_font_size,
+//!     parent_font_size,
+//!     parent_line_height_basis,
+//!     &ctx,
+//! );
 //! assert_eq!(font_size, ComputedLength(24.0));
 //!
 //! // phase 2.5: line-height を絶対化する。`<number>` は自 node の (今確定した)
 //! // font-size 基準、`lh`/`rlh` の自己参照基準は親の line-height
 //! // (`resolve_line_height` doc 参照) — ここでは `<number>` なので後者は未使用。
-//! let parent_line_height_basis = used_line_height_length(parent_line_height, parent_font_size);
 //! let line_height =
 //!     resolve_line_height(specified_line_height, font_size, parent_line_height_basis, &ctx);
 //! assert_eq!(line_height, ComputedLineHeight::Number(1.5));
@@ -738,6 +759,16 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// 場合は `font-size` の initial value (16px、
 /// [`ComputedLength`]`(16.0)`) を渡す。
 ///
+/// `self_reference_basis` は**親要素の** used line-height ([`Length::Lh`]
+/// の解決に使う — 下記 `Nlh` 行、bd raikiri-spike-yh3w)。呼び手が
+/// [`used_line_height_length`]`(parent.line_height, parent.font_size)` で
+/// あらかじめ絶対長化したもの。`normal` で解決不能、または親がない (root
+/// element) 場合は `None`。命名は [`resolve_line_height`] の同名引数と揃えた
+/// — 両者とも「自己参照 (`lh`) を解決するための親基準」という同じ役割を持つ
+/// (呼び手側のローカル変数名は `parent_line_height_basis` のままで構わない —
+/// 呼び手が計算したものを指す名前と、この関数が受け取る引数の名前は別の命名
+/// 領域であり、揃えるべきは後者と sibling 関数の対応する引数)。
+///
 /// # 単位ごとの解決
 ///
 /// | specified | computed | 根拠 |
@@ -748,11 +779,64 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// | `Nic` | `parent_font_size * N` | 下記 parent-metrics 条項 + [`Length::Ic`] doc の fallback |
 /// | `Nrem` / `Nrex` / `Nrch` / `Nric` | `ctx.root_font_size * N` (`rex`/`rch` は `* 0.5` 追加) | CSS Values 4 §6.1.1 `rem` <https://www.w3.org/TR/css-values-4/#rem> |
 /// | `N%` | `parent_font_size * N / 100` | CSS Fonts 4 `font-size` propdef "Percentages: refer to parent element's font size" <https://www.w3.org/TR/css-fonts-4/#propdef-font-size> |
+/// | `Nlh` | `self_reference_basis * N`、基準が `None` なら [`INITIAL_FONT_SIZE_PX`] | 下記「`lh` / `rlh` の自己参照」節 |
+/// | `Nrlh` | `ctx.root_line_height * N`、基準が `None` なら [`INITIAL_FONT_SIZE_PX`] | 同上 |
 ///
 /// `ex` / `rex` / `ch` / `rch` / `ic` / `ric` は style 層に実 font metrics が
 /// 無いため常に spec の unknown-metric fallback を使う — 根拠は各 variant
 /// ([`Length::Ex`] 等) の doc、`font-size` 自身が font-* property のため
 /// **親** 基準になる理由は上記 parent-metrics 条項 (`em` と同じ扱い)。
+///
+/// [`INITIAL_FONT_SIZE_PX`]: crate::computed::INITIAL_FONT_SIZE_PX
+///
+/// # `lh` / `rlh` の自己参照 (bd raikiri-spike-yh3w)
+///
+/// CSS Values 4 §6.1.1 "Font-relative Lengths"
+/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) 原文:
+/// "Similarly, when lh or rlh units are used in the value of the line-height
+/// property or font-\* properties on the element they refer to, they resolve
+/// against the computed line-height and font metrics of the parent
+/// element—or the computed metrics corresponding to the initial values of
+/// the font and line-height properties, if the element has no parent."
+/// `font-size` はまさにこの font-\* property であり、この条項が発火する。
+///
+/// [`resolve_line_height`] doc の「`Length::Lh` — 自己参照」/「`Length::Rlh`
+/// — 自己参照ではなく tree-global 定数」節と**同じ判断**をここでも採る
+/// (spec 引用が両者を "lh or rlh" と並べて一箇所に述べているため、`line-height`
+/// 自身の自己参照解決とここで判断を変える理由がない — 一貫性を優先する):
+///
+/// - `lh` の素の定義 ("the element on which it is used") は使用要素自身を
+///   常に指すため、`font-size` に使われた `lh` は常に自己参照になる。
+///   fallback 基準は引用のとおり **親** — `self_reference_basis` 引数。
+/// - `rlh` の素の定義 ("the lh unit on the root element") は宣言要素の位置に
+///   依存しない tree-global 定数であり、自己参照になるのは宣言要素自身が
+///   root element のときだけ ([`crate::specified::SpecifiedValues::finalize_as_root`]
+///   が `ctx` に [`ResolveContext::initial`] を渡すことで `ctx.root_line_height`
+///   を必然的に `None` にし、この一点をカバーする)。root **ではない**要素の
+///   `font-size: 1rlh` は既に確定済みの別 node (root) の値を参照するだけで
+///   自己参照ではないため、他の box property 上の `rlh` ([`resolve_length`] 等)
+///   と同じく `ctx.root_line_height` を直接使う — `self_reference_basis`
+///   ではなく `ctx.root_line_height` を読むのはこのため。
+///
+/// 基準が `None` (`normal` で解決不能、または root element で親が無い) の
+/// ときは **`font-size` 自身の spec initial** (`medium` = [`INITIAL_FONT_SIZE_PX`]、
+/// CSS Fonts 4 `font-size` propdef "Initial: medium") に倒す —
+/// [`resolve_line_height`] の `Length::Lh` arm が解決不能なとき `line-height`
+/// 自身の spec initial `normal` ([`ComputedLineHeight::Normal`]) に倒すのと
+/// 同じ「解決できない宣言を、宣言されなかったのと同じ値に倒す」方針。
+/// 本関数のような**単一 property 専用の** resolver は、汎用 resolver
+/// ([`resolve_length`] / [`resolve_length_percentage`] — `border-*-width` /
+/// `padding` など**複数** property で共有される) と違い、fallback 先として
+/// 自分の consumer property の真の spec initial を直接返せる立場にある —
+/// [`resolve_length_percentage_or_auto`] が `width`/`height` の fallback を
+/// 汎用な `resolve_length_percentage` の `0px` に丸めず `Auto` (両者の真の
+/// spec initial) に intercept するのと同じ判断。汎用 resolver 側が一律 `0px`
+/// に倒すのは border-width の spec initial (`medium` = 3px) と一致しない
+/// **既知の compromise** ([`resolve_length`] doc の「border-width: 1lh の
+/// 0px fallback — 未解決の設計妥協」節、bd raikiri-spike-k05m が追う) であって
+/// 「単一 property 専用 resolver でも 0px に倒すべき」という一般原則ではない
+/// — `resolve_font_size` はこの関数が `font-size` の唯一の consumer なので、
+/// その compromise を持ち込む理由がない。
 ///
 /// # Primary sources (§ title + anchor)
 ///
@@ -776,7 +860,9 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// 無条件に参照するため、tree 全体で同一の `ResolveContext::new(root_font_size)`
 /// を使い回すと `html { font-size: 2rem }` (同様に `2rex` / `2rch` / `2ric`) が
 /// 自己参照になる (CSS Values 4 §6.1.1 の parent-metrics 条項 — root には親が
-/// ないので initial values 基準)。
+/// ないので initial values 基準)。**同じ理由で `self_reference_basis` にも
+/// `None` を渡すこと** (root には親が無いので self-reference basis は
+/// 「initial values」= `line-height: normal` = 解決不能)。
 ///
 /// cascade pipeline ではこの contract を
 /// [`SpecifiedValues::finalize_as_root`] が守る (bd raikiri-spike-zls8) —
@@ -795,14 +881,23 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// let ctx = ResolveContext::initial();
 ///
 /// // em compounding: 16px → 1.5em → 1.5em = 24px → 36px
-/// let child = resolve_font_size(Length::Em(1.5), ComputedLength(16.0), &ctx);
+/// let child = resolve_font_size(Length::Em(1.5), ComputedLength(16.0), None, &ctx);
 /// assert_eq!(child, ComputedLength(24.0));
-/// let grandchild = resolve_font_size(Length::Em(1.5), child, &ctx);
+/// let grandchild = resolve_font_size(Length::Em(1.5), child, None, &ctx);
 /// assert_eq!(grandchild, ComputedLength(36.0));
+///
+/// // `1lh` resolves against the *parent's* used line-height (bd raikiri-spike-yh3w)
+/// // — not the declaring element's own font-size. Parent: font-size 16px,
+/// // `line-height: 1.5` (unitless) → used line-height 24px.
+/// let self_reference_basis = Some(ComputedLength(24.0));
+/// let font_size =
+///     resolve_font_size(Length::Lh(2.0), ComputedLength(16.0), self_reference_basis, &ctx);
+/// assert_eq!(font_size, ComputedLength(48.0));
 /// ```
 pub fn resolve_font_size(
     specified: Length,
     parent_font_size: ComputedLength,
+    self_reference_basis: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedLength {
     match specified {
@@ -828,14 +923,15 @@ pub fn resolve_font_size(
         // element's font size" — font-size は §5.5.1 の「percentage は
         // percentage のまま computed される」原則の明示的な例外。
         Length::Percent(p) => ComputedLength(parent_font_size.0 * p / 100.0),
-        // `lh` / `rlh` は `parse_font_size` が parse-time に drop する
-        // ([`Length::Lh`] doc の「自己参照」節 — font-size は lh/rlh が
-        // 明示的に対象とする font-* property であり、この crate の phase
-        // 順序では対応コストが非対称に大きいため font-size だけ対象外にした)。
-        // よってこの arm は **到達不能** — `resolve_length` の
-        // grammar-unreachable `Percent` arm と同じ convention で、意味を
-        // 持たない安全な値 (`0px`) に倒す。
-        Length::Lh(_) | Length::Rlh(_) => ComputedLength::ZERO,
+        // `lh` / `rlh` (bd raikiri-spike-yh3w) — 上記「`lh` / `rlh` の自己参照」
+        // 節。基準が `None` のときの fallback は `font-size` 自身の spec
+        // initial (`INITIAL_FONT_SIZE_PX`) — `resolve_length` /
+        // `resolve_length_percentage` の汎用 `0px` fallback とは**意図的に
+        // 異なる** (同節参照)。
+        Length::Lh(v) => resolve_lh_multiplier(v, self_reference_basis)
+            .unwrap_or(ComputedLength(INITIAL_FONT_SIZE_PX)),
+        Length::Rlh(v) => resolve_lh_multiplier(v, ctx.root_line_height)
+            .unwrap_or(ComputedLength(INITIAL_FONT_SIZE_PX)),
     }
 }
 
@@ -1293,7 +1389,7 @@ pub fn resolve_border(
 ///
 /// // lift → 絶対化 の round trip は恒等 (Px が不動点)。
 /// let lifted = lift_font_size(inherited);
-/// assert_eq!(resolve_font_size(lifted, ComputedLength(16.0), &ctx), inherited);
+/// assert_eq!(resolve_font_size(lifted, ComputedLength(16.0), None, &ctx), inherited);
 /// ```
 pub fn lift_font_size(computed: ComputedLength) -> Length {
     Length::Px(computed.0)
@@ -1385,7 +1481,7 @@ mod tests {
     #[test]
     fn font_size_px_is_identity() {
         assert_eq!(
-            resolve_font_size(Length::Px(18.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Px(18.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(18.0),
         );
     }
@@ -1395,7 +1491,7 @@ mod tests {
     #[test]
     fn font_size_pt_converts_at_96px_per_inch() {
         assert_eq!(
-            resolve_font_size(Length::Pt(12.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Pt(12.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(16.0),
         );
     }
@@ -1405,7 +1501,7 @@ mod tests {
     #[test]
     fn font_size_em_resolves_against_parent_font_size() {
         assert_eq!(
-            resolve_font_size(Length::Em(1.5), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Em(1.5), ComputedLength(16.0), None, &CTX),
             ComputedLength(24.0),
         );
     }
@@ -1414,8 +1510,8 @@ mod tests {
     /// (decision raikiri-spike-082k Rationale 1 (i))。
     #[test]
     fn font_size_em_compounds_across_two_levels() {
-        let child = resolve_font_size(Length::Em(1.5), ComputedLength(16.0), &CTX);
-        let grandchild = resolve_font_size(Length::Em(1.5), child, &CTX);
+        let child = resolve_font_size(Length::Em(1.5), ComputedLength(16.0), None, &CTX);
+        let grandchild = resolve_font_size(Length::Em(1.5), child, None, &CTX);
         assert_eq!(child, ComputedLength(24.0));
         assert_eq!(grandchild, ComputedLength(36.0));
     }
@@ -1427,7 +1523,7 @@ mod tests {
     fn font_size_rem_resolves_against_root_font_size() {
         let ctx = ResolveContext::new(ComputedLength(20.0));
         assert_eq!(
-            resolve_font_size(Length::Rem(2.0), ComputedLength(64.0), &ctx),
+            resolve_font_size(Length::Rem(2.0), ComputedLength(64.0), None, &ctx),
             ComputedLength(40.0),
         );
     }
@@ -1439,7 +1535,12 @@ mod tests {
     fn font_size_rem_on_root_element_uses_initial_font_size() {
         let ctx = ResolveContext::initial();
         assert_eq!(
-            resolve_font_size(Length::Rem(2.0), ComputedLength(INITIAL_FONT_SIZE_PX), &ctx),
+            resolve_font_size(
+                Length::Rem(2.0),
+                ComputedLength(INITIAL_FONT_SIZE_PX),
+                None,
+                &ctx
+            ),
             ComputedLength(32.0),
         );
     }
@@ -1450,7 +1551,7 @@ mod tests {
     #[test]
     fn font_size_percent_resolves_against_parent_font_size() {
         assert_eq!(
-            resolve_font_size(Length::Percent(150.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Percent(150.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(24.0),
         );
     }
@@ -1462,11 +1563,11 @@ mod tests {
     #[test]
     fn font_size_ex_and_ch_resolve_against_parent_font_size_with_half_em_fallback() {
         assert_eq!(
-            resolve_font_size(Length::Ex(2.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Ex(2.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(16.0), // 2 * 0.5 * 16
         );
         assert_eq!(
-            resolve_font_size(Length::Ch(2.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Ch(2.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(16.0),
         );
     }
@@ -1475,7 +1576,7 @@ mod tests {
     #[test]
     fn font_size_ic_resolves_against_parent_font_size_with_one_em_fallback() {
         assert_eq!(
-            resolve_font_size(Length::Ic(1.5), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Ic(1.5), ComputedLength(16.0), None, &CTX),
             ComputedLength(24.0),
         );
     }
@@ -1486,36 +1587,80 @@ mod tests {
     fn font_size_r_prefixed_font_relative_units_resolve_against_root_font_size() {
         let ctx = ResolveContext::new(ComputedLength(20.0));
         assert_eq!(
-            resolve_font_size(Length::Rex(2.0), ComputedLength(64.0), &ctx),
+            resolve_font_size(Length::Rex(2.0), ComputedLength(64.0), None, &ctx),
             ComputedLength(20.0), // 2 * 0.5 * 20 (親 64px は無視)
         );
         assert_eq!(
-            resolve_font_size(Length::Rch(2.0), ComputedLength(64.0), &ctx),
+            resolve_font_size(Length::Rch(2.0), ComputedLength(64.0), None, &ctx),
             ComputedLength(20.0),
         );
         assert_eq!(
-            resolve_font_size(Length::Ric(2.0), ComputedLength(64.0), &ctx),
+            resolve_font_size(Length::Ric(2.0), ComputedLength(64.0), None, &ctx),
             ComputedLength(40.0),
         );
     }
 
-    /// `font-size: 1lh` / `1rlh` are grammar-unreachable in practice
-    /// (`parse_font_size` drops them at parse time, bd raikiri-spike-vxha —
-    /// see that function's doc for the self-reference wall this issue chose
-    /// not to solve for `font-size`), but `resolve_font_size`'s `match` must
-    /// still be exhaustive. Pins the `0px` fallback directly, same
-    /// "pub(crate)/pub visibility lets tests drive an unreachable-via-parsing
-    /// arm directly" precedent as
-    /// `length_percent_is_grammar_unreachable_and_falls_to_zero` below.
+    /// `font-size: 1lh` resolves against the **parent's** used line-height
+    /// (bd raikiri-spike-yh3w — CSS Values 4 §6.1.1's self-reference clause,
+    /// same判断 as [`resolve_line_height`]'s `Length::Lh` arm). The `parent`
+    /// argument to `resolve_font_size` (16px, unrelated) is deliberately
+    /// different from `parent_line_height_basis` (30px) so a bug that
+    /// conflates "parent's font-size" with "parent's line-height" would be
+    /// caught.
     #[test]
-    fn font_size_lh_and_rlh_are_grammar_unreachable_and_fall_to_zero() {
+    fn font_size_lh_resolves_against_parent_line_height_basis() {
         assert_eq!(
-            resolve_font_size(Length::Lh(2.0), ComputedLength(20.0), &CTX),
-            ComputedLength::ZERO,
+            resolve_font_size(
+                Length::Lh(2.0),
+                ComputedLength(16.0),
+                Some(ComputedLength(30.0)),
+                &CTX,
+            ),
+            ComputedLength(60.0), // 2 * 30
+        );
+    }
+
+    /// `font-size: 1rlh` resolves against `ctx.root_line_height` — a
+    /// tree-global constant, **not** `parent_line_height_basis` (bd
+    /// raikiri-spike-yh3w — mirrors [`resolve_line_height`]'s `Length::Rlh`
+    /// arm and its "not self-referential for non-root elements" rationale).
+    /// `parent_line_height_basis` is deliberately set to a different value
+    /// (30px) than `ctx.root_line_height` (50px) so a bug that swaps the two
+    /// bases would be caught.
+    #[test]
+    fn font_size_rlh_resolves_against_root_line_height_not_parent() {
+        let ctx =
+            ResolveContext::with_root_line_height(ComputedLength(16.0), Some(ComputedLength(50.0)));
+        assert_eq!(
+            resolve_font_size(
+                Length::Rlh(2.0),
+                ComputedLength(16.0),
+                Some(ComputedLength(30.0)), // must NOT be read by the `Rlh` arm
+                &ctx,
+            ),
+            ComputedLength(100.0), // 2 * 50, not 2 * 30
+        );
+    }
+
+    /// `font-size: 1lh` / `1rlh` fall back to `font-size`'s own spec initial
+    /// (`medium` = [`INITIAL_FONT_SIZE_PX`]) when their basis is unresolvable
+    /// (`normal` with no font metrics — the same wall as `cap`/`rcap`, or a
+    /// root element with no parent) — **not** `0px`. Unlike the generic,
+    /// multi-property `resolve_length`/`resolve_length_percentage` (whose
+    /// flat `0px` fallback is a known compromise for `border-width`, tracked
+    /// separately by bd raikiri-spike-k05m), `resolve_font_size` is a
+    /// dedicated single-property resolver and can fall back to its own true
+    /// initial directly — same convention as `resolve_line_height`'s `Lh`
+    /// arm falling back to `line-height`'s own initial `normal`.
+    #[test]
+    fn font_size_lh_and_rlh_fall_back_to_initial_when_basis_is_unresolved() {
+        assert_eq!(
+            resolve_font_size(Length::Lh(2.0), ComputedLength(20.0), None, &CTX),
+            ComputedLength(INITIAL_FONT_SIZE_PX),
         );
         assert_eq!(
-            resolve_font_size(Length::Rlh(2.0), ComputedLength(20.0), &CTX),
-            ComputedLength::ZERO,
+            resolve_font_size(Length::Rlh(2.0), ComputedLength(20.0), None, &CTX),
+            ComputedLength(INITIAL_FONT_SIZE_PX),
         );
     }
 
@@ -1528,23 +1673,23 @@ mod tests {
     #[test]
     fn font_size_additional_absolute_units_convert_per_spec_table() {
         assert_eq!(
-            resolve_font_size(Length::In(1.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::In(1.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(96.0),
         );
         assert_eq!(
-            resolve_font_size(Length::Cm(1.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Cm(1.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(96.0 / 2.54),
         );
         assert_eq!(
-            resolve_font_size(Length::Mm(1.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Mm(1.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(96.0 / 2.54 / 10.0),
         );
         assert_eq!(
-            resolve_font_size(Length::Q(1.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Q(1.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(96.0 / 2.54 / 40.0),
         );
         assert_eq!(
-            resolve_font_size(Length::Pc(1.0), ComputedLength(16.0), &CTX),
+            resolve_font_size(Length::Pc(1.0), ComputedLength(16.0), None, &CTX),
             ComputedLength(96.0 / 6.0),
         );
     }
@@ -2232,7 +2377,7 @@ mod tests {
         let lifted = lift_font_size(inherited);
         assert_eq!(lifted, Length::Px(24.0));
         assert_eq!(
-            resolve_font_size(lifted, ComputedLength(16.0), &CTX),
+            resolve_font_size(lifted, ComputedLength(16.0), None, &CTX),
             inherited,
         );
         // 基準を変えても不変 (= 二重適用が起きない)。
@@ -2240,6 +2385,7 @@ mod tests {
             resolve_font_size(
                 lifted,
                 ComputedLength(100.0),
+                None,
                 &ResolveContext::new(ComputedLength(100.0)),
             ),
             inherited,
@@ -2338,7 +2484,7 @@ mod tests {
             ComputedLineHeight::Normal,
         );
         assert_eq!(
-            resolve_font_size(initial.font_size, fs, &CTX),
+            resolve_font_size(initial.font_size, fs, None, &CTX),
             ComputedLength(INITIAL_FONT_SIZE_PX),
         );
     }
