@@ -151,8 +151,8 @@ type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
 /// [`resolve_inheritance`] 双方の呼び出し箇所を「捨て `Vec` へ `collect` して
 /// `rev()`」から「`stack` へ直接 `extend` してから追加分だけ in-place
 /// `reverse()`」に書き換えて解消済み — 中間 allocation はもう存在しない
-/// (同じ形の第 3 の call site が `crates/raikiri-style/src/ruletree.rs` の
-/// `walk_style_elements` に残っており、bd raikiri-spike-o53w で追跡中、本
+/// (同じ形の第 3 の call site だった `crates/raikiri-style/src/ruletree.rs` の
+/// `walk_style_elements` も bd raikiri-spike-o53w が同じ技法で解消済み、本
 /// module の対象外)。per-node `Vec` の growth chain 自体が担っていたのは残り
 /// **3,010 allocs / 2,375,196 bytes** — push のたび geometric に再確保する
 /// その growth chain が丸ごと allocation cost だった。単一 arena にすると
