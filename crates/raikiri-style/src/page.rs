@@ -3118,19 +3118,41 @@ mod tests {
     //   `PHASE_3_PASS_THROUGH_VARIANTS` 系の別定数側が動かないことで発火する、
     //   詳細は該当 test の doc) に変わることを確認した。
     //
-    //   **ただし guard は依然 one-way** (bd raikiri-spike-c0z9 として追跡) —
-    //   新 variant が既存の `PropertyKey` を再利用する場合 (`FontSizeRelative`
-    //   と同型) は `PropertyKey` の variant 集合が増えないため `sample_for`
-    //   も compile error にならない (`key_sharing_extras` へ手で足す必要が
-    //   ある)。これは検証していない (raikiri-spike-awjx の M4 mutation も
-    //   今回の再現も「新しい key を伴う variant 追加」だけを exercise して
-    //   おり、この経路は理論的な残存ギャップとして記録するに留まる。真の
-    //   automatic closure には `PropertyValue`/`PropertyKey` 自体への
-    //   macro/derive が要り、それは walls.md 壁 5 (umbrella re-export) の
-    //   再判定を要する out-of-scope な変更)。
+    //   **guard は当初 one-way だった** (bd raikiri-spike-a754 が
+    //   bd raikiri-spike-c0z9 として追跡開始) — 新 variant が既存の
+    //   `PropertyKey` を再利用する場合 (`FontSizeRelative` と同型) は
+    //   `PropertyKey` の variant 集合が増えないため `sample_for` も compile
+    //   error にならず、`key_sharing_extras` への追加は手作業のままだった。
+    //   raikiri-spike-c0z9 起票時点の記録は「真の automatic closure には
+    //   `PropertyValue`/`PropertyKey` 自体への macro/derive が要り、それは
+    //   walls.md 壁 5 (umbrella re-export) の再判定を要する out-of-scope な
+    //   変更」だった — この結論は「型の variant を安全に列挙する手段が
+    //   stable Rust に無い (`mem::variant_count` は unstable、外部 derive
+    //   crate は cleanroom 方針外)」という前提に基づいていたが、
+    //   **reflection による列挙**と**網羅 match による forcing**を区別して
+    //   いなかった。bd raikiri-spike-c0z9 の実装は後者を選んだ:
+    //   `property_value_variant_registry!` (`key_sharing_extras` の直後) が
+    //   `PropertyKey` ではなく `PropertyValue` **自身**に対して網羅的な
+    //   match を生成する — `property_key_samples!` が `PropertyKey` に
+    //   対してやっていることをそのまま一般化しただけで、`PropertyValue`/
+    //   `PropertyKey` の定義自体には触れない (`#[non_exhaustive]` は
+    //   downstream crate にのみ効くため、定義と同じ crate 内のここでの
+    //   網羅性には影響しない — wall/umbrella crossing ではない)。
+    //
+    //   ⚠️ **これで閉じるのは「compile error になるかどうか」までであり
+    //   「corpus への反映を忘れないこと」自体を compile error にはしない**
+    //   — 網羅 match は「型に variant が増えたこと」しか検出できず、増えた
+    //   variant を `sample_for` / `key_sharing_extras` 側へ反映し忘れる
+    //   ことまでは compile-time には防げない。その反映漏れは
+    //   `page_corpus_covers_every_registered_property_value_variant` (test、
+    //   `property_value_variant_registry!` の直後) が runtime で検出する —
+    //   `PROPERTY_VALUE_VARIANT_COUNT` (登録側、網羅 match 経由で正しく
+    //   増える) と `page_corpus().len()` (corpus 側、反映漏れがあれば
+    //   増えない) の不一致が test failure として現れる。
     //
     //   ⚠️ 本節がこの一連の経緯・機構・残存ギャップの canonical な記述
-    //   (raikiri-spike-a754) — `property_key_samples!` / `sample_for` /
+    //   (raikiri-spike-a754、raikiri-spike-c0z9) — `property_key_samples!` /
+    //   `sample_for` / `property_value_variant_registry!` /
     //   `specified_layer_residue` / 下の corpus 整合性 test の doc は
     //   ここへの pointer のみを持ち、繰り返さない。
     // - `absolutize_in_page_context` の arm 分類を動かす →
@@ -3182,10 +3204,15 @@ mod tests {
     /// `page_corpus().len()` (`Vec` を allocate するため const 文脈で呼べない)
     /// を使う `fn` に変えてある。**この値の基準は `page_corpus().len()` —
     /// corpus が `PropertyValue` の全 variant を実際に覆っている間だけ
-    /// 「変換する variant 数」を表す。** corpus の完全性自体はもう独立には
-    /// 検査されていない (`page_corpus` 手前の section comment、bd
-    /// raikiri-spike-c0z9 参照) ので、旧 `const` 式と数値的に同じ結果を返す
-    /// ことと「意味が同じ」ことは別の主張である。
+    /// 「変換する variant 数」を表す。** corpus の完全性自体は
+    /// raikiri-spike-a754 時点では独立には検査されていなかった (旧 `const`
+    /// 式と数値的に同じ結果を返すことと「意味が同じ」ことは別の主張
+    /// だった) — bd raikiri-spike-c0z9 (`page_corpus` 手前の section
+    /// comment 参照) がこのギャップを埋め、`property_value_variant_registry!`
+    /// (`PropertyValue` 自身の variant 集合に対する網羅 match、`page_corpus`
+    /// 直後) と `page_corpus_covers_every_registered_property_value_variant`
+    /// (test、同じ並び) 経由で corpus 完全性の独立検査を復活させた。「基準
+    /// として妥当」は再び test で担保されている。
     fn phase_3_transformed_variants() -> usize {
         page_corpus().len() - PHASE_3_PASS_THROUGH_VARIANTS
     }
@@ -3318,6 +3345,14 @@ mod tests {
     ///
     /// 沿革: raikiri-spike-4rmu 以前は空 (共有 pattern 自体が無かった)、
     /// 4rmu で `FontSizeRelative` により 1 要素になって以来変わっていない。
+    ///
+    /// 2 つ目の key 共有 variant を足す義務は、以前は comment 頼みだった
+    /// (compile error による forcing が無かった — bd raikiri-spike-c0z9)。
+    /// 今は `property_value_variant_registry!` (下) が `PropertyValue` 自身に
+    /// 対して網羅的な match を生成しており、新 variant を足すとまずそちらが
+    /// compile error になる。その状態で本関数への追加を忘れても
+    /// `page_corpus_covers_every_registered_property_value_variant` (test、
+    /// 下) が red になるので、ここへの追加漏れは最終的に検出される。
     fn key_sharing_extras() -> Vec<PropertyValue> {
         use crate::property::RelativeFontSize;
         vec![PropertyValue::FontSizeRelative(RelativeFontSize::Larger)]
@@ -3337,11 +3372,153 @@ mod tests {
     /// `match-parent`、`font-size` の relative variant は `larger`
     /// (raikiri-spike-4rmu)。個々の選定根拠は `sample_for` / `key_sharing_extras`
     /// の呼び出し箇所を参照。
+    ///
+    /// この関数**自体**の完全性 (「`PropertyValue` の全 variant を実際に
+    /// 覆っているか」) は `ALL_PROPERTY_KEYS` / `sample_for` の網羅性からは
+    /// 出てこない (`sample_for` は `PropertyKey` に対して網羅的であり、
+    /// `PropertyValue` に対してではない — bd raikiri-spike-c0z9)。その完全性は
+    /// `property_value_variant_registry!` + `page_corpus_covers_every_registered_property_value_variant`
+    /// (共に下) が別途保証する。
     fn page_corpus() -> Vec<PropertyValue> {
         let mut corpus: Vec<PropertyValue> =
             ALL_PROPERTY_KEYS.iter().copied().map(sample_for).collect();
         corpus.extend(key_sharing_extras());
         corpus
+    }
+
+    /// `PropertyValue` **自身**に対して網羅的な match を 1 つの token 列から
+    /// 生成する (`property_key_samples!` の姉妹 macro、bd raikiri-spike-c0z9)。
+    ///
+    /// `property_key_samples!` は `PropertyKey` に対して網羅的なので、新しい
+    /// `PropertyKey` を伴う通常の property 追加は forced だが、**既存の**
+    /// `PropertyKey` を再利用する新 variant (`FontSizeRelative` が
+    /// `PropertyKey::FontSize` を再利用するのと同型) は `PropertyKey` の
+    /// variant 集合を増やさないため、その網羅 match は compile error に
+    /// ならない (`page_corpus` 手前の section comment の「一方向性」節、
+    /// raikiri-spike-a754 が残した bd raikiri-spike-c0z9 として追跡していた
+    /// ギャップ)。
+    ///
+    /// 本 macro はこの穴を埋める — `PropertyValue` 自身の variant 集合に
+    /// 対して網羅的なので、key を再利用する variant も含め **どんな新
+    /// variant でも** compile error になる。`stable Rust` に variant を
+    /// 安全に列挙する手段 (`mem::variant_count` は unstable、外部 derive
+    /// crate は cleanroom 方針外) が無いという前提は変わっていないが、
+    /// 「型に対する reflection」ではなく「型に対する網羅 match」で同じ
+    /// forcing を得られる — これは `property_key_samples!` が `PropertyKey`
+    /// に対して既にやっていることを `PropertyValue` に一般化しただけであり、
+    /// `PropertyValue`/`PropertyKey` の定義自体には一切触れない
+    /// (`#[non_exhaustive]` は downstream crate にのみ効くため、定義側と
+    /// 同じ crate 内の本 match には影響しない)。
+    ///
+    /// 生成するもの:
+    /// - `PROPERTY_VALUE_VARIANT_COUNT`: token 列の要素数 = 現在の
+    ///   `PropertyValue` variant 総数。
+    /// - `property_value_variant_name`: 上記の網羅 match。戻り値
+    ///   (variant 名の文字列) 自体に意味は無い — exhaustiveness を
+    ///   compile-time に強制することだけが目的。
+    ///
+    /// この 2 つを組み合わせても、`key_sharing_extras()` / `sample_for` への
+    /// 追加漏れそのものを**この macro だけでは**検出しない — 網羅 match は
+    /// 「型に新しい variant が増えた」ことだけを compile error にする。
+    /// 「増えた variant を corpus (`page_corpus`) 側へ反映し忘れた」ことは
+    /// `page_corpus_covers_every_registered_property_value_variant` (test、
+    /// 下) が runtime で検出する: `PROPERTY_VALUE_VARIANT_COUNT` は compile
+    /// error 経由で正しく増えるが `page_corpus().len()` は反映漏れがあれば
+    /// 増えないので、両者の不一致が test failure として現れる。
+    macro_rules! property_value_variant_registry {
+        ($($variant:ident),+ $(,)?) => {
+            const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+].len();
+
+            fn property_value_variant_name(value: &PropertyValue) -> &'static str {
+                match value {
+                    $(PropertyValue::$variant(_) => stringify!($variant),)+
+                }
+            }
+        };
+    }
+
+    // `property.rs` の `PropertyValue` 宣言順と同じ順に列挙 (機械的な追従を
+    // 楽にするための慣習 — 順序自体に意味は無い、`property_key_samples!` の
+    // 呼び出しと同様)。
+    property_value_variant_registry! {
+        Color,
+        BackgroundColor,
+        FontFamily,
+        FontSize,
+        FontSizeRelative,
+        FontWeight,
+        LineHeight,
+        Display,
+        CounterReset,
+        CounterIncrement,
+        CounterSet,
+        Content,
+        StringSet,
+        Position,
+        TextAlign,
+        PaddingTop,
+        PaddingRight,
+        PaddingBottom,
+        PaddingLeft,
+        Padding,
+        MarginTop,
+        MarginRight,
+        MarginBottom,
+        MarginLeft,
+        Margin,
+        BorderTopWidth,
+        BorderRightWidth,
+        BorderBottomWidth,
+        BorderLeftWidth,
+        BorderTopStyle,
+        BorderRightStyle,
+        BorderBottomStyle,
+        BorderLeftStyle,
+        BorderTopColor,
+        BorderRightColor,
+        BorderBottomColor,
+        BorderLeftColor,
+        Border,
+        Width,
+        Height,
+        BoxSizing,
+        Direction,
+    }
+
+    /// `page_corpus()` が `property_value_variant_registry!` に登録された
+    /// **全ての** `PropertyValue` variant を実際に覆っていること —
+    /// bd raikiri-spike-c0z9 の一方向性 gap のクローズ。
+    ///
+    /// 新しい variant が `property_value_variant_registry!` の呼び出しに
+    /// 追加されないままだと `property_value_variant_name` の網羅 match が
+    /// compile error になる (この test 以前の問題)。本 test はその一歩先 —
+    /// **compile は通ったが corpus への反映を忘れた**中間状態 (`sample_for`
+    /// への新 `PropertyKey` arm 追加、または `key_sharing_extras()` への
+    /// 要素追加のどちらかを忘れた場合) を runtime で検出する。
+    #[test]
+    fn page_corpus_covers_every_registered_property_value_variant() {
+        let corpus = page_corpus();
+        // `property_value_variant_name` を実際の corpus 値に対して呼ぶ ---
+        // この match が持つ exhaustiveness 自体は型レベルで compile-time に
+        // 強制されている (呼び出し有無に関わらず) ので、ここでの呼び出しは
+        // 主に「dead code にしない」ための実利用と、match 本体が実際の
+        // payload shape に対して panic しないことの smoke check。
+        for value in &corpus {
+            property_value_variant_name(value);
+        }
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            corpus.len(),
+            PROPERTY_VALUE_VARIANT_COUNT,
+            "page_corpus() has {} entries but property_value_variant_registry! \
+             lists {} PropertyValue variants -- a variant was added to the \
+             registry without a matching sample_for (new PropertyKey) or \
+             key_sharing_extras() (reused PropertyKey) entry, or vice versa. \
+             See bd raikiri-spike-c0z9.",
+            corpus.len(),
+            PROPERTY_VALUE_VARIANT_COUNT,
+        );
     }
 
     /// `value` が **specified 層でしか意味を持たない表現**を残しているか。
