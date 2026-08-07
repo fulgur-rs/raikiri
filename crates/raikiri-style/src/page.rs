@@ -1215,8 +1215,6 @@ fn page_context_border_styles(
 /// rather than a raw [`PropertyValue`] — see that type's doc for what this
 /// does and does not guarantee ("narrowed, not closed").
 ///
-/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で補助 doc build が red (規約 3)。
-///
 /// # `own_line_height` (bd raikiri-spike-vxha)
 ///
 /// The page context's own `lh` basis — [`page_context_line_height_basis`]'s
@@ -1224,7 +1222,7 @@ fn page_context_border_styles(
 /// `padding`/`margin`/`border-*-width` needs this context's *own* resolved
 /// line-height (not the root's — that is `ctx.root_line_height`, used only
 /// for `rlh`).
-pub(crate) fn absolutize_in_page_context(
+fn absolutize_in_page_context(
     value: ResolvedAgainstInherited,
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
@@ -1507,10 +1505,8 @@ pub(crate) fn absolutize_in_page_context(
 ///
 /// A `u32` per component is more than enough — `f` is bounded to 1 by the
 /// grammar, and `g` / `h` in practice count `Vec<PagePseudo>` entries.
-///
-/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で補助 doc build が red (規約 3)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct PageSpecificity {
+struct PageSpecificity {
     f: u32,
     g: u32,
     h: u32,
