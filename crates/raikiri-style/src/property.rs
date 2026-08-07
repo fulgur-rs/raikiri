@@ -4281,20 +4281,31 @@ fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
     }
 }
 
-/// `content([ text | before | after | first-letter ]?)`。
-/// CSS GCPM 3 §1.1.1.1 <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>。
+/// `content([ text | before | after | first-letter ]?)` (`?` は raikiri の
+/// 受理済み記法であり、GCPM 3 の grammar 自体には無い formal optional
+/// marker ではない)。CSS GCPM 3 §1.1.1.1
+/// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>。**この grammar 出典は
+/// string-set 側 (narrow `<content-list>`) に限定した記述** — content
+/// property 側 (broad `<content-list>`、CSS Content 3 §2) の content() は
+/// CSS Content 3 §2.7.3 <https://www.w3.org/TR/css-content-3/#funcdef-content>
+/// が別途 `?` 付き 5 keyword (`marker` 含む) で定義しており、この関数が
+/// content property 側でどちらの grammar に従うべきかは未解決
+/// (bd raikiri-spike-9dsh で PMO 判断待ち)。
 ///
-/// bare `content()` (spec 例 `h2 { string-set: heading content() }`) では
-/// [`ContentTextKeyword::Text`] をフォールバック値として使う (根拠は spec の
-/// "default" 宣言ではない — 詳細は [`ContentTextKeyword`] の doc comment
-/// 参照、bd raikiri-spike-x8i6 / raikiri-spike-83r2)。target-text() の
-/// 第 2 引数と違い、keyword は paren 直下に置かれる (comma を先行させない)。
+/// bare `content()` (spec 例 `h2 { string-set: heading content() }`、
+/// string-set/GCPM3 側の文脈) では [`ContentTextKeyword::Text`] を
+/// フォールバック値として使う (根拠は GCPM 3 側の spec "default" 宣言では
+/// ない — 詳細は [`ContentTextKeyword`] の doc comment 参照、bd
+/// raikiri-spike-x8i6 / raikiri-spike-83r2)。target-text() の第 2 引数と
+/// 違い、keyword は paren 直下に置かれる (comma を先行させない)。
 ///
 /// GCPM 3 §1.1.1 の narrow `<content-list>` (string-set 側) と CSS Content 3
-/// §2 の broad `<content-list>` (content property 側) の **両方** に含まれる
-/// 5 alt の 1 つのため、[`ContentListMode`] mode gate なし = 両 property 共通で
-/// 受理される (raikiri-spike-6s1 で mode dispatch を導入した後もこの arm は
-/// unconditional のまま)。
+/// §2 の broad `<content-list>` (content property 側) の **両方** に対し
+/// unconditional に受理される ([`ContentListMode`] mode gate なし、
+/// raikiri-spike-6s1 で mode dispatch を導入した後もこの arm は両 mode で
+/// unconditional のまま) — ただし content property 側を governor する
+/// grammar が GCPM 3 か CSS Content 3 §2.7.3 かは上記の通り未確定
+/// (bd raikiri-spike-9dsh)。
 fn parse_content_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let keyword = if input.is_exhausted() {
         ContentTextKeyword::default()
@@ -6308,16 +6319,21 @@ mod tests {
 
     // ── content() function (CSS GCPM 3 §1.1.1.1、raikiri-spike-5ri) ──
     //
-    // grammar (spec verbatim, line 758 of TR/css-gcpm-3/):
+    // grammar (spec verbatim, line 758 of TR/css-gcpm-3/, string-set/GCPM3側の
+    // grammar — content property側は下記の通り別spec相反あり):
     //   content() = content([text | before | after | first-letter])
     // 4 keyword。keyword 省略時は `text` をフォールバック値として使う (根拠は
-    // spec の "default" 宣言ではない — grammar に `?` が無く、"default をどう
-    // 定義するか" 自体が未解決の WG issue として残っている。bd raikiri-spike-x8i6
-    // / raikiri-spike-83r2)。GCPM 3 §1.1.1 の narrow `<content-list>` と
-    // CSS Content 3 §2 の broad `<content-list>` の両方に含まれるため、string-set
-    // および content property 双方の content-list 内で受理される
-    // (raikiri-spike-6s1 で `ContentListMode` mode dispatch を導入した後も
-    // `content()` arm は両 mode で unconditional accept)。
+    // GCPM 3 側の spec "default" 宣言ではない — grammar に `?` が無く、"default
+    // をどう定義するか" 自体が未解決の WG issue として残っている。bd
+    // raikiri-spike-x8i6 / raikiri-spike-83r2)。GCPM 3 §1.1.1 の narrow
+    // `<content-list>` と CSS Content 3 §2 の broad `<content-list>` の両方に
+    // 対し unconditional に受理されるため、string-set および content property
+    // 双方の content-list 内で受理される (raikiri-spike-6s1 で
+    // `ContentListMode` mode dispatch を導入した後も `content()` arm は両
+    // mode で unconditional accept) — ただし CSS Content 3 §2.7.3 は
+    // content() を `?` 付き 5 keyword (`marker` 含む) で別途定義しており、
+    // content property 側がどちらの grammar に従うべきかは未解決
+    // (bd raikiri-spike-9dsh で PMO 判断待ち)。
     //
     // pre-fix reproduction: `string-set: title content(text)` は m5.1/m5.3 で
     // silent drop していた (parse_content_function match arm 欠如 →
@@ -6343,7 +6359,7 @@ mod tests {
     #[test]
     fn content_content_fn_explicit_text_keyword() {
         // §1.1.1.1: `content(text)` は element の string value (bare `content()`
-        // 省略時のフォールバック値と同じ keyword だが、明示的 keyword 保持で
+        // のフォールバック値と同じ keyword だが、明示的 keyword 保持で
         // downstream の分岐余地を残す)。
         let items = content_items("content(text)");
         assert_eq!(
@@ -6356,9 +6372,11 @@ mod tests {
 
     #[test]
     fn content_content_fn_default_keyword_on_empty_parens() {
-        // §1.1.1.1 の spec 例 `h2 { string-set: heading content() }` — bare
-        // `content()` は `text` をフォールバック値として使う (根拠は spec の
-        // "default" 宣言ではない。bd raikiri-spike-x8i6 / raikiri-spike-83r2)。
+        // §1.1.1.1 の spec 例 `h2 { string-set: heading content() }` (string-set
+        // /GCPM3側の文脈) — bare `content()` は `text` をフォールバック値として
+        // 使う (根拠は GCPM 3 側の spec "default" 宣言ではない。bd
+        // raikiri-spike-x8i6 / raikiri-spike-83r2 / raikiri-spike-9dsh —
+        // content property側でのgrammar相反は9dsh参照)。
         let items = content_items("content()");
         assert_eq!(
             items,
@@ -6405,11 +6423,16 @@ mod tests {
 
     #[test]
     fn content_content_fn_rejects_unknown_keyword() {
-        // §1.1.1.1 の grammar は `[text | before | after | first-letter]` の 4
-        // alternative のみ。それ以外の ident (spec 上存在しない `marker` 等) は
+        // GCPM 3 §1.1.1.1 の grammar は `[text | before | after | first-letter]`
+        // の 4 alternative のみ (string-set/GCPM3側の文脈)。それ以外の ident は
         // parse_content_text_keyword が None を返し、上位伝播で
-        // parse_content_list_items が break、declaration drop = None。
-        // (`marker` は list-item pseudo に関する別 concept、content() には出現しない)
+        // parse_content_list_items が break、declaration drop = None。`marker`
+        // はこの GCPM3 grammar には無いが、CSS Content 3 §2.7.3 は独自に
+        // content() を `marker` 含む 5 keyword で定義しており、content
+        // property 側でこの実装が `marker` を reject し続けるべきかは未解決
+        // (bd raikiri-spike-9dsh)。本 test は現状の GCPM3-scoped 実装の挙動を
+        // pin するものであり、`marker` が spec に一切存在しないという主張では
+        // ない。
         assert_eq!(parse("content(marker)", "content"), None);
         assert_eq!(parse("content(bogus)", "content"), None);
     }
