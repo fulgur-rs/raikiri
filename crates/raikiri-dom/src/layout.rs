@@ -1365,8 +1365,9 @@ fn computed_length_percentage_to_taffy_length_percentage(
 /// [`ComputedLengthPercentageOrAuto`] → [`taffy::Dimension`] bridge
 /// (width / height 用)。
 ///
-/// 網羅 match / Percent policy / 非有限 guard は
-/// [`computed_length_percentage_to_taffy_length_percentage`] と同じ (3 arm、catch-all なし)。
+/// 網羅 match (`Px` / `Percent`) の分岐ロジック・Percent policy・非有限 guard は
+/// [`computed_length_percentage_to_taffy_length_percentage`] と同じ (参照先は
+/// 2 arm)。本関数はそれに `Auto` arm が加わり合計 3 arm (catch-all なし)。
 /// `Auto` → `Dimension::auto()` (f32 を持たないので guard 対象外)。
 ///
 /// [`bridge_size`] から width (raikiri-spike-ggig Wave 2) / height
@@ -1932,8 +1933,10 @@ mod tests {
         //   (bd raikiri-spike-zls8)。bridge に届く時点で既に px。本 case は
         //   end-to-end の値を pin する。
         //   f32 bit-identical assert のため右辺を expression のまま書く
-        //   (`13.333` literal は round-trip で drift する。上流も同じ
-        //   `v * 4.0 / 3.0` の評価順を使う — `resolve::pt_to_px` の doc 参照)。
+        //   (`13.333` literal は round-trip で drift する。この式は
+        //   `resolve::pt_to_px` 本体と同じ `v * 4.0 / 3.0` の評価順を使う —
+        //   f32 は結合則を満たさないため簡約すると bit が変わる。詳細は
+        //   `resolve::pt_to_px` の doc 参照)。
         assert_eq!(
             margin_for("margin-top: 10pt"),
             Rect {
