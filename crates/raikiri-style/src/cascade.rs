@@ -783,14 +783,14 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// fractional weight (`349.5` 等) を保持したまま渡ってくる。丸めずに直接
 /// 比較するため行選択は spec §2.2.1 のとおり正確に決まる — 旧 `u16` 実装は
 /// parse 段の丸めで `349.5` が `350` に化けてから本関数に渡り、`350 <= w < 550`
-/// 行を誤って踏んでいた (詳細: [`crate::property::parse_font_weight`] doc)。
+/// 行を誤って踏んでいた (詳細: `crate::property::parse_font_weight` doc)。
 ///
 /// # 非有限 `inherited` (`NaN` / `±Inf`) — 本関数は guard しない
 ///
 /// `u16` だった頃は非有限が型で構造的に排除されていたが、`f32` 化 (bd
 /// raikiri-spike-e52s) で finiteness は「型で保証」から「呼び出し元の値
 /// 検証で保証」に変わった。通常の cascade 経路は
-/// [`crate::property::parse_font_weight`] の `[1, 1000]` range guard により
+/// `crate::property::parse_font_weight` の `[1, 1000]` range guard により
 /// 常に finite だが、`ComputedValues` の field は全て `pub` で
 /// [`crate::page::cascade_page`] も呼び出し側提供の
 /// [`crate::page::PageInheritance`]`::FromRoot` を継承元 root として受け取るため、
@@ -841,7 +841,7 @@ pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: f32
 /// font-size に対して解決する。[`resolve_relative_weight`] の font-size 版
 /// (bolder/lighter と同型、raikiri-spike-4rmu)。
 ///
-/// CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop> 原文:
+/// CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop> verbatim:
 ///
 /// > A `<relative-size>` keyword is interpreted relative to the computed
 /// > font-size of the parent element and possibly the table of font sizes.
@@ -1171,7 +1171,7 @@ pub(crate) fn resolve_against_inherited(
 /// 実装 task の acceptance criteria) に切り出した。[`resolve_against_inherited`]
 /// の doc「この guard が守らない範囲」§2 も参照。
 ///
-/// # test 用の裏口 ([`Self::for_test`])
+/// # test 用の裏口 (`Self::for_test`)
 ///
 /// `page::tests` には phase 3 を意図的に phase 2 抜きで直接駆動する既存 test
 /// 群がある (`phase_3_variant_classification_matches_the_documented_counts` /
@@ -1330,10 +1330,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //
         // なお本 arm は `apply_value` 中の read-modify-write の 1 つ (raikiri-spike-4rmu
         // で `FontSizeRelative` arm が 2 つ目に加わった。それ以外はすべて冪等な
-        // 単純代入)。`Padding` / `Margin` / `Border` arm のような "safety net"
-        // 二重適用経路を font-weight に足すと `bolder` が 400 → 700 → 900 と
-        // 複合するため、上記 2 invariant を崩す変更は不可。`FontSizeRelative` も
-        // 同じ理由で "safety net" 経路を持たない (`FontSize` と同一 `PropertyKey`
+        // 単純代入)。`Padding` / `Margin` / `Border` shorthand fall-through arm
+        // のような二重適用経路を font-weight に足すと `bolder` が 400 → 700 → 900
+        // と複合するため、上記 2 invariant を崩す変更は不可。`FontSizeRelative` も
+        // 同じ理由で二重適用経路を持たない (`FontSize` と同一 `PropertyKey`
         // を共有し slot は 1 つ、詳細は該当 arm の comment)。
         //
         // **契約 (raikiri-spike-ygl0)**: 継承元依存の解決を持つ property を新しく
@@ -1458,7 +1458,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 書き忘れ」は同関数の exhaustive match で compile-time に排除されている
         // (bd raikiri-spike-ez7b。残る範囲は同関数 doc の
         // 「この guard が守らない範囲」節)。振る舞い自体は
-        // `apply_value_direct_margin_shorthand_safety_net` test が直接叩いて pin。
+        // `apply_value_direct_margin_shorthand_fall_through` test が直接叩いて pin。
         PropertyValue::Margin(sides) => target.margin = sides,
         // CSS Backgrounds 3 §3.3/§3.2/§3.1 border physical longhand
         // (raikiri-spike-0vv.12)。4 side × 3 sub-property の 12 arm。shorthand
@@ -4253,11 +4253,13 @@ mod tests {
     }
 
     #[test]
-    fn apply_value_direct_margin_shorthand_safety_net() {
+    fn apply_value_direct_margin_shorthand_fall_through() {
         // `apply_value` の `PropertyValue::Margin(sides)` arm は cascade 経路
-        // では unreachable (`collect_cascaded` が 4 longhand に展開する) だが、
-        // regression / bypass 経路の safety net として `target.margin = sides` の
-        // atomic 上書きを持つ。本 test は arm を直接叩いて `unreachable!` 化 or
+        // では unreachable (`collect_cascaded` が 4 longhand に展開する)。**これは
+        // safety net ではない** (bd raikiri-spike-8kn8 で framing 訂正) — 万一
+        // regression / bypass 経路で到達すると `target.margin = sides` の
+        // atomic 上書きが 4 longhand winner を必ず破壊する。到達した時点で
+        // 既に bug であり、本 test は arm を直接叩いて `unreachable!` 化 or
         // 空 arm regression を捕捉する canary。
         let mut cv = SpecifiedValues::initial();
         let sides = Sides {
@@ -4371,15 +4373,17 @@ mod tests {
     }
 
     #[test]
-    fn apply_value_direct_border_shorthand_safety_net() {
+    fn apply_value_direct_border_shorthand_fall_through() {
         // `apply_value` の `PropertyValue::Border(sides)` arm は cascade 経路
-        // では unreachable (`collect_cascaded` が 12 longhand に展開する) だが、
-        // regression / bypass 経路の safety net として `target.border = sides` の
-        // atomic 上書きを持つ。本 test は arm を直接叩いて `unreachable!` 化 or
-        // 空 arm regression を捕捉する canary (margin safety net と対称)。
+        // では unreachable (`collect_cascaded` が 12 longhand に展開する)。**これは
+        // safety net ではない** (bd raikiri-spike-8kn8 で framing 訂正、margin
+        // fall-through と対称) — 万一 regression / bypass 経路で到達すると
+        // `target.border = sides` の atomic 上書きが 12 longhand winner を必ず
+        // 破壊する。到達した時点で既に bug であり、本 test は arm を直接叩いて
+        // `unreachable!` 化 or 空 arm regression を捕捉する canary。
         let mut cv = SpecifiedValues::initial();
         // raikiri-spike-0vv.17: `BorderColor::CurrentColor` を明示 fixture 化
-        // (safety net arm は payload の shape を保持することを pin する)。
+        // (fall-through arm は payload の shape を保持することを pin する)。
         let sides = Sides {
             top: Border {
                 width: Length::Px(1.0),

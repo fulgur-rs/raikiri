@@ -766,7 +766,7 @@ fn pc_to_px(v: f32) -> f32 {
 /// # Primary source (§ title + anchor)
 ///
 /// CSS Values 4 §6.1.1 "Font-relative Lengths" [`lh`](https://www.w3.org/TR/css-values-4/#lh)
-/// 原文: "Equal to the computed value of the line-height property of the
+/// verbatim: "Equal to the computed value of the line-height property of the
 /// element on which it is used, converting normal to an absolute length by
 /// using only the metrics of the first available font."
 ///
@@ -867,7 +867,7 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// # `lh` / `rlh` の自己参照 (bd raikiri-spike-yh3w)
 ///
 /// CSS Values 4 §6.1.1 "Font-relative Lengths"
-/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) 原文:
+/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) verbatim:
 /// "Similarly, when lh or rlh units are used in the value of the line-height
 /// property or font-\* properties on the element they refer to, they resolve
 /// against the computed line-height and font metrics of the parent
@@ -1297,7 +1297,7 @@ pub fn resolve_margin_length_or_auto(
 /// 使う自己参照になる — `lh` の素の定義 ("the element on which it is used")
 /// は常に「使用要素自身」を指すため、この自己参照は**あらゆる要素**で起こる。
 /// CSS Values 4 §6.1.1 "Font-relative Lengths"
-/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) 原文:
+/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) verbatim:
 /// "Similarly, when lh or rlh units are used in the value of the line-height
 /// property or font-\* properties on the element they refer to, they resolve
 /// against the computed line-height and font metrics of the parent
@@ -1376,12 +1376,32 @@ pub fn resolve_line_height(
 /// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の propdef table が
 /// "Computed value: absolute length, snapped as a border width; zero if the
 /// border style is `none` or `hidden`" と規定するとおり、これは used 層ではなく
-/// **computed 層**の要求である。
+/// **computed 層**の要求である (**TR 版**; version marker は下記の
+/// "version marker" 節参照)。
 ///
 /// **spec tension (silently 解決しない)**: 同 §3.3 の非規範 Note は "Although the
 /// initial width is medium, the initial style is none; therefore the used initial
 /// width is 0." と **used** 層で述べる一方、規範な propdef table は **computed**
 /// 層を指定している。Note は非規範なので propdef table が governs。
+///
+/// **version marker (bd raikiri-spike-8dfv)**: 上記は TR
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の記述。ED
+/// (<https://drafts.csswg.org/css-backgrounds-3/#border-width>) は CSSWG
+/// [Issue 11494](https://github.com/w3c/csswg-drafts/issues/11494) により
+/// この gate を **computed → resolved/used 層へ移動**する規定変更を経ている
+/// (2026-08-08 時点で curl -sL 実測して現存を再確認 — computed value 行から
+/// "zero if the border style is `none` or `hidden`" 節が消え、代わりに
+/// "The resolved value for the border-width properties is the used value.
+/// If the border-style corresponding to a given border-width is none or
+/// hidden, then the used width is 0." が本文に追加されている)。**本関数の
+/// gate 位置は TR に従っており、ED には未追随** — TR が現行 Recommendation-
+/// track の版であり、ED 追随は W3C process 上いつになるか不明なため
+/// (緊急度は低いと判断済: 現行の paged-media path では resolved value は
+/// 両版とも 0 になるため observable な差は無く、animation の
+/// "by computed value" 補間の起点のみが異なる)。TR に追随する既定の gate 位置
+/// (computed 層、本関数) が変わる場合は raikiri-dom 側の `used_border_width`
+/// 相当を復活させる判断が要る — used 層に戻すのはこの issue の対象外であり、
+/// 決定なしに変更しないこと。
 ///
 /// **本関数は gate の単一 source である (element 経路 / page 経路の両方)** —
 /// `raikiri-dom` の `layout.rs` は Sprint 18 まで同じ gating を used 層

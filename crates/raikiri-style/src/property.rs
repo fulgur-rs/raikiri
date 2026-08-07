@@ -218,8 +218,9 @@ fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
 }
 
 /// 4-bit nibble `n` (`0..=15`) を 8-bit channel `nn` に展開する。
-/// `(n << 4) | n = n * 17` — CSS Color 4 §5.2 の「"duplicating" all of the
-/// digits」を実装した short-form 展開 helper (`#f` → `0xff`, `#8` → `0x88`)。
+/// `(n << 4) | n = n * 17` — CSS Color 4 §5.2 の "duplicating" all of the
+/// digits を実装した short-form 展開 helper (`#f` → `0xff`, `#8` → `0x88`、
+/// verbatim 引用は [`CssColor::from_hex`] doc の 2 件を参照)。
 fn expand_hex_nibble(n: u8) -> u8 {
     (n << 4) | n
 }
@@ -319,8 +320,8 @@ pub enum Length {
     /// raikiri-style は style 層で実 font metrics を持たない (font shaping は
     /// downstream) ため、spec の unknown-metric fallback が常に適用される —
     /// CSS Values 4 §6.1.1 Font-relative Lengths
-    /// (<https://www.w3.org/TR/css-values-4/#ex>) 原文: "In the cases where
-    /// it is impossible or impractical to determine the x-height, [...] a
+    /// (<https://www.w3.org/TR/css-values-4/#ex>) verbatim: "In the cases
+    /// where it is impossible or impractical to determine the x-height, a
     /// value of 0.5em must be assumed." Resolve は `0.5 * font-size`
     /// (bd raikiri-spike-2x8)。
     Ex(f32),
@@ -336,9 +337,9 @@ pub enum Length {
     /// advance measure に対する倍率。`1ch` → `Ch(1.0)`。
     ///
     /// CSS Values 4 §6.1.1 Font-relative Lengths
-    /// (<https://www.w3.org/TR/css-values-4/#ch>) 原文: "In the cases where
-    /// it is impossible or impractical to determine the measure of the '0'
-    /// glyph, it must be assumed to be 0.5em wide by 1em tall. Thus, the ch
+    /// (<https://www.w3.org/TR/css-values-4/#ch>) verbatim: "In the cases
+    /// where it is impossible or impractical to determine the measure of the
+    /// '0' glyph, it must be assumed to be 0.5em wide by 1em tall. Thus, the ch
     /// unit falls back to 0.5em in the general case, and to 1em when it
     /// would be typeset upright (i.e. writing-mode is vertical-rl or
     /// vertical-lr and text-orientation is upright)." raikiri-style は
@@ -358,9 +359,9 @@ pub enum Length {
     /// (U+6C34) glyph の advance measure に対する倍率。`1ic` → `Ic(1.0)`。
     ///
     /// CSS Values 4 §6.1.1 Font-relative Lengths
-    /// (<https://www.w3.org/TR/css-values-4/#ic>) 原文: "In the cases where
-    /// it is impossible or impractical to determine the measure of the CJK
-    /// water ideograph glyph, the ic unit must fall back to 1em." resolve は
+    /// (<https://www.w3.org/TR/css-values-4/#ic>) verbatim: "In the cases
+    /// where it is impossible or impractical to determine the ideographic
+    /// advance measure, it must be assumed to be 1em." resolve は
     /// `1.0 * font-size` (real metrics 同様の理由で常に fallback、
     /// [`Length::Ex`] doc 参照)。
     Ic(f32),
@@ -406,10 +407,10 @@ pub enum Length {
     /// 倍率。`1lh` → `Lh(1.0)`。
     ///
     /// CSS Values 4 §6.1.1 Font-relative Lengths
-    /// (<https://www.w3.org/TR/css-values-4/#lh>) 原文: "Equal to the computed
-    /// value of the line-height property of the element on which it is used,
-    /// converting normal to an absolute length by using only the metrics of
-    /// the first available font."
+    /// (<https://www.w3.org/TR/css-values-4/#lh>) verbatim: "Equal to the
+    /// computed value of the line-height property of the element on which it
+    /// is used, converting normal to an absolute length by using only the
+    /// metrics of the first available font."
     ///
     /// # `normal` の resolve — `cap`/`rcap` と同じ wall (bd raikiri-spike-vxha)
     ///
@@ -711,7 +712,7 @@ pub enum BorderColor {
 ///
 /// spec §3.3 "Line Thickness: the border-width properties" は
 /// `<line-width> = <length [0,∞]> | thin | medium | thick`。thin=1px、
-/// medium=3px、thick=5px は spec 規定値 (verbatim "are equivalent to 1px,
+/// medium=3px、thick=5px は spec 規定値 (verbatim: "are equivalent to 1px,
 /// 3px, and 5px, respectively")。詳細は `parse_border_width_side` doc 参照。
 ///
 /// # `#[non_exhaustive]`
@@ -726,8 +727,8 @@ pub enum BorderColor {
 /// `Sides<LengthOrAuto>` / padding `Sides<Length>` と同じ再利用先)。cascade は
 /// per-side longhand を direct-write するため apply 順に依存せず、shorthand
 /// `border: ...` は parse-time で 12 longhand (4 side × 3 sub-property) に
-/// 展開される (spec CSS Cascading L5 §"Shorthand Properties"
-/// <https://www.w3.org/TR/css-cascade-5/#shorthand> 準拠、raikiri-spike-0vv.5
+/// 展開される (spec CSS Cascading L4 §3 "Shorthand Properties"
+/// <https://www.w3.org/TR/css-cascade-4/#shorthand> 準拠、raikiri-spike-0vv.5
 /// margin precedent の踏襲)。
 ///
 /// (raikiri-spike-0vv.12)
@@ -1013,10 +1014,10 @@ pub enum ContentTextKeyword {
 /// <https://www.w3.org/TR/css-content-3/#quote-values> verbatim production:
 /// `<quote> = open-quote | close-quote | no-open-quote | no-close-quote`。
 ///
-/// spec 原文: [`OpenQuote`](Self::OpenQuote) / [`CloseQuote`](Self::CloseQuote)
-/// は "replaced by the appropriate string from the `quotes` property" かつ
-/// nesting depth を増減する。[`NoOpenQuote`](Self::NoOpenQuote) /
-/// [`NoCloseQuote`](Self::NoCloseQuote) は "insert nothing (as in none)" だが
+/// verbatim: [`OpenQuote`](Self::OpenQuote) / [`CloseQuote`](Self::CloseQuote)
+/// は "replaced by the appropriate string as defined by the `quotes`
+/// property" かつ nesting depth を増減する。[`NoOpenQuote`](Self::NoOpenQuote) /
+/// [`NoCloseQuote`](Self::NoCloseQuote) は "Inserts nothing (as in none)" だが
 /// depth 増減のみ行う。実際の `quotes` property 引き (nesting depth → 文字列)
 /// は本 crate の static-side scope 外 — 下流 (raikiri-dom) が `quotes` の
 /// computed value と併せて runtime resolve する ([`CounterStyle`] /
@@ -1043,7 +1044,7 @@ pub enum QuoteKeyword {
 /// CSS Content 3 §2.5.1 "The leader() function"
 /// <https://www.w3.org/TR/css-content-3/#leader-function>。
 ///
-/// spec 原文: `dotted` は "equivalent to `leader(".")`"、`solid` は
+/// spec verbatim: `dotted` は "equivalent to `leader(".")`"、`solid` は
 /// "equivalent to `leader("_")`"、`space` は "equivalent to `leader(" ")`"。
 /// この等価性は **keyword の意味論の説明であって spelling の正規化指示ではない**
 /// ([`counter_style_from_ident`] が `decimal` keyword を `Named("decimal")` に
@@ -1175,7 +1176,7 @@ pub enum ContentComponent {
     /// `target-counter([<string>|<url>], <custom-ident>, <counter-style>?)`。
     /// CSS Content 3 §2.6.1 <https://www.w3.org/TR/css-content-3/#target-counter>。
     ///
-    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec 原文
+    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec verbatim
     /// (§2.6.1 の value definition):
     ///
     /// ```text
@@ -1193,7 +1194,7 @@ pub enum ContentComponent {
     /// `target-counters([<string>|<url>], <custom-ident>, <string>, <counter-style>?)`。
     /// CSS Content 3 §2.6.2 <https://www.w3.org/TR/css-content-3/#target-counters>。
     ///
-    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec 原文
+    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec verbatim
     /// (§2.6.2 の value definition):
     ///
     /// ```text
@@ -1225,20 +1226,21 @@ pub enum ContentComponent {
     /// `<image>` (CSS Images 3 <https://www.w3.org/TR/css-images-3/#typedef-image>
     /// `<image> = <url> | <gradient>`) — CSS Content 3 §2.2 "2D Images: the
     /// `<image>` values" <https://www.w3.org/TR/css-content-3/#content-uri>。
-    /// spec 原文: "Represents an anonymous inline replaced element filled with
-    /// the specified `<image>`. If the `<image>` represents an invalid image,
-    /// this value instead represents nothing" (rendering 側の fallback は
-    /// downstream 責務)。
+    /// spec verbatim: "Represents an anonymous inline replaced element filled
+    /// with the specified `<image>`. If the `<image>` represents an invalid
+    /// image, this value instead represents nothing" (rendering 側の
+    /// fallback は downstream 責務)。
     ///
     /// **`<content-replacement>` との関係 (未反映、raikiri-spike-5hp8 送り)**:
     /// `content` property 全体の value definition (CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>) は `normal |
     /// none | [ <content-replacement> | <content-list> ] […]?` で、
     /// `<content-replacement> = <image>` は `<content-list>` とは別の
-    /// top-level alternative — spec 原文 "Represents a *replaced element*"
-    /// で `::before`/`::after` 生成を抑制する等、上の list-item 版
+    /// top-level alternative — spec verbatim: "Makes the element or
+    /// pseudo-element a replaced element, filled with the specified
+    /// `<image>`" で `::before`/`::after` 生成を抑制する等、上の list-item 版
     /// `<image>` (anonymous inline replaced element) とは異なる semantics
-    /// を持つ。spec 原文は続けて "If the value of `<content-list>` is a
+    /// を持つ。spec verbatim は続けて "If the value of `<content-list>` is a
     /// single `<image>`, it must instead be interpreted as a
     /// `<content-replacement>`" とも述べており、本 variant の shape
     /// (`Vec<ContentComponent>` の 1 要素が `Image` かどうか) は downstream
@@ -1263,12 +1265,12 @@ pub enum ContentComponent {
     Image { url: String },
     /// `contents` keyword — CSS Content 3 §2.3 "Elemental Content: the
     /// `contents` keyword" <https://www.w3.org/TR/css-content-3/#element-content>。
-    /// spec 原文: "The element's descendants" — pseudo-element の生成有無や
+    /// spec verbatim: "The element's descendants" — pseudo-element の生成有無や
     /// 「既に他の pseudo-element で使用済みなら何もしない」という消費順序の
     /// 解決は本 crate の static-side scope 外 (parse_content の docstring の
     /// `normal`/`none` と同じ「生成判断は下流に委ねる」方針)。
     ///
-    /// **`normal` との非対称性 (意図的)**: spec 原文 (§2.3) は "the initial
+    /// **`normal` との非対称性 (意図的)**: spec verbatim (§2.3) は "the initial
     /// value of content is `normal` and `normal` computes to `contents` on an
     /// element" と述べるが、[`parse_content`] は `normal` を (既存 `none` と
     /// 同様) 空 `Vec` に畳んで保持する — computed-value 時の `normal` →
@@ -1555,8 +1557,9 @@ pub enum Direction {
 /// この関数が要る「**親の** direction」は自 node の `direction` winner の
 /// 適用順序に左右されてはならない (適用順に依存しないことが
 /// [`crate::cascade::resolve_inheritance`] の invariant)。`finalize` /
-/// `finalize_as_root` は全 winner 適用後に**明示的に親の [`ComputedValues`]
-/// を受け取って**呼ばれるため、この罠を構造的に避けられる。
+/// `finalize_as_root` は全 winner 適用後に**明示的に親の
+/// [`crate::computed::ComputedValues`] を受け取って**呼ばれるため、この罠を
+/// 構造的に避けられる。
 ///
 /// `pub(crate)` は `specified` / `cascade` の 2 module から呼ぶため。
 pub(crate) fn resolve_text_align_match_parent(
@@ -1900,7 +1903,8 @@ pub enum PropertyValue {
     /// `Sides::all(Length::Px(0.0))`。CSS Box 3 §4.2
     /// <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
     ///
-    /// 1-4 value expansion (spec-verbatim):
+    /// 1-4 value expansion (CSS Box 3 §4.2 の規定どおり — 逐語引用ではないため
+    /// `verbatim` 表記は使わない):
     /// - 1 value: 全 4 side
     /// - 2 values: top/bottom = first, left/right = second
     /// - 3 values: top = first, left/right = second, bottom = third
@@ -1912,13 +1916,17 @@ pub enum PropertyValue {
     /// ([`mod@crate::cascade`] の `collect_cascaded`) の両方で 4 longhand variant
     /// ([`PaddingTop`](Self::PaddingTop) / [`PaddingRight`](Self::PaddingRight) /
     /// [`PaddingBottom`](Self::PaddingBottom) / [`PaddingLeft`](Self::PaddingLeft))
-    /// に展開するため (1/2/3/4 expansion + CSS Cascading L5
-    /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-5/#shorthand>
-    /// verbatim "A shorthand property sets all of its longhand sub-properties,
+    /// に展開するため (1/2/3/4 expansion + CSS Cascading L4 §3
+    /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
+    /// verbatim: "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
-    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
-    /// は本 variant を受けたときも `ComputedValues.padding` field 全 4 side を
-    /// 上書きする実装を持つ (regression 時 panic 回避)。
+    /// 成立する)。到達経路が無いのは上記の展開保証によるものであり、万一到達
+    /// した場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
+    /// (bd raikiri-spike-8kn8 で framing 訂正) — `ComputedValues.padding` field
+    /// 全 4 side を無条件に上書きし、4 longhand winner を必ず破壊する。到達した
+    /// 時点で既に bug であり、穏当に degrade はしない (canonical な記述は
+    /// [`crate::cascade::apply_value`] の `Margin`/`Border` arm doc、および
+    /// [`crate::rule::expand_shorthand_into`] doc 参照)。
     /// raikiri-spike-5nc (margin 0vv.5 の parse-time expansion model に migrate)。
     Padding(Sides<Length>),
     /// `margin-top: <length-percentage> | auto` — non-inherited、initial: 0
@@ -1948,11 +1956,15 @@ pub enum PropertyValue {
     /// [`MarginBottom`](Self::MarginBottom) / [`MarginLeft`](Self::MarginLeft))
     /// に展開するため (spec §3.2 の 1/2/3/4 expansion + CSS Cascading L4 §3
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
-    /// verbatim "A shorthand property sets all of its longhand sub-properties,
+    /// verbatim: "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
-    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
-    /// は本 variant を受けたときも `ComputedValues.margin` field 全 4 side を
-    /// 上書きする実装を持つ (regression 時 panic 回避)。
+    /// 成立する)。到達経路が無いのは上記の展開保証によるものであり、万一到達
+    /// した場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
+    /// (bd raikiri-spike-8kn8 で framing 訂正) — `ComputedValues.margin` field
+    /// 全 4 side を無条件に上書きし、4 longhand winner を必ず破壊する。到達した
+    /// 時点で既に bug であり、穏当に degrade はしない (canonical な記述は
+    /// [`crate::cascade::apply_value`] の `Margin` arm doc、および
+    /// [`crate::rule::expand_shorthand_into`] doc 参照)。
     /// raikiri-spike-0vv.5。
     Margin(Sides<LengthOrAuto>),
     /// `border-top-width: <line-width>` — non-inherited、initial: `medium`
@@ -2022,14 +2034,18 @@ pub enum PropertyValue {
     /// (`parse_declaration_block`) と element cascade 入口
     /// ([`mod@crate::cascade`] の `collect_cascaded`) の両方で 12 longhand variant
     /// (4 side × 3 sub-property)
-    /// に展開するため (spec CSS Cascading L5 §"Shorthand Properties"
-    /// <https://www.w3.org/TR/css-cascade-5/#shorthand> verbatim "A shorthand
+    /// に展開するため (spec CSS Cascading L4 §3 "Shorthand Properties"
+    /// <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim: "A shorthand
     /// property sets all of its longhand sub-properties, exactly as if expanded
     /// in place." 準拠、cascade の per-side / per-sub-property 勝ち抜けが自然に
-    /// 成立する — margin / padding shorthand precedent 踏襲)。expansion 経路の
-    /// safety net として [`crate::cascade::apply_value`] は本 variant を受けたときも
-    /// `ComputedValues.border` field 全 4 side × 3 sub-property を上書きする
-    /// 実装を持つ (regression 時 panic 回避)。
+    /// 成立する — margin / padding shorthand precedent 踏襲)。到達経路が無いのは
+    /// 上記の展開保証によるものであり、万一到達した場合の
+    /// [`crate::cascade::apply_value`] の挙動は **safety net ではない** (bd
+    /// raikiri-spike-8kn8 で framing 訂正) — `ComputedValues.border` field 全
+    /// 4 side × 3 sub-property を無条件に上書きし、12 longhand winner を必ず
+    /// 破壊する。到達した時点で既に bug であり、穏当に degrade はしない
+    /// (canonical な記述は [`crate::cascade::apply_value`] の `Border` arm doc、
+    /// および [`crate::rule::expand_shorthand_into`] doc 参照)。
     ///
     /// ⚠️ spec の "all of its longhand sub-properties" には reset-only の
     /// `border-image-*` (5 本) も含まれる (CSS Backgrounds 3 §3.4: the `border`
@@ -2676,8 +2692,8 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// # Unitless zero
 ///
 /// CSS Values 3 §5 "Distance Units: the `<length>` type"
-/// <https://www.w3.org/TR/css-values-3/#lengths> 原文: "For zero lengths the
-/// unit identifier is optional (i.e. can be syntactically represented as the
+/// <https://www.w3.org/TR/css-values-3/#lengths> verbatim: "For zero lengths
+/// the unit identifier is optional (i.e. can be syntactically represented as the
 /// `<number>` 0)." — bare `0` (Token::Number, value == 0.0) を [`Length::Px`]
 /// `(0.0)` として受理する (mode 非依存: `<length>` / `<length-percentage>` 両方)。
 /// 非零 unitless number (`5`, `-1` etc.) は grammar 上 `<length>` にならないため
@@ -3043,8 +3059,8 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
 /// # `<absolute-size>` scaling-factor table
 ///
 /// CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping Table"
-/// <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> 原文の表を
-/// **そのまま**写す (`resolve_relative_weight` の "算術式で書いてはいけない"
+/// <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> の表をそのまま
+/// 写す (`resolve_relative_weight` の "算術式で書いてはいけない"
 /// 方針と同じ理由 — 分数のまま持つことで丸め誤差の議論を spec 引用だけで
 /// 閉じられる)。`medium` は raikiri の固定基準
 /// ([`crate::computed::INITIAL_FONT_SIZE_PX`] = 16px、
@@ -3090,7 +3106,7 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
 /// `padding-{top,right,bottom,left}` の single-side value を parse する。
 ///
 /// grammar: `<length-percentage [0,∞]>` (CSS Box 3 §4.1
-/// <https://www.w3.org/TR/css-box-3/#padding-physical>)。spec 原文:
+/// <https://www.w3.org/TR/css-box-3/#padding-physical>)。spec verbatim:
 /// "Negative values for padding properties are invalid." — 負値は grammar 違反
 /// として declaration ごと drop する。
 ///
@@ -3125,8 +3141,8 @@ fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
 
 /// `padding: <'padding-top'>{1,4}` shorthand を [`Sides<Length>`] に expand する。
 ///
-/// CSS Box 3 §4.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand>: spec-verbatim
-/// 1-4 value expansion:
+/// CSS Box 3 §4.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand> の
+/// 1-4 value expansion (逐語引用ではないので `verbatim` 表記は使わない):
 ///
 /// - 1 value: all 4 sides = value
 /// - 2 values: top/bottom = 1st, left/right = 2nd
@@ -3151,7 +3167,7 @@ fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> 
     let v2 = input.try_parse(parse_padding_side_res).ok();
     let v3 = input.try_parse(parse_padding_side_res).ok();
     let v4 = input.try_parse(parse_padding_side_res).ok();
-    // spec (CSS Box 3) §4.2 1-4 value expansion (verbatim):
+    // spec (CSS Box 3) §4.2 1-4 value expansion (code, not a spec quote):
     let sides = match (v2, v3, v4) {
         (None, _, _) => Sides::all(v1),
         (Some(h), None, _) => Sides {
@@ -3182,6 +3198,42 @@ fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, Pars
     parse_padding_side(input).ok_or_else(|| input.new_custom_error(()))
 }
 
+/// `border-width` の `medium` keyword (= spec 上の initial value) に対応する
+/// px 値。
+///
+/// CSS Backgrounds 3 §3.3 "Line Thickness: the border-width properties"
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) 本文 verbatim:
+/// "The thin, medium, and thick keywords are equivalent to 1px, 3px, and 5px,
+/// respectively." — `font-size` の `medium` (UA 裁量、
+/// [`crate::computed::INITIAL_FONT_SIZE_PX`] 参照) とは異なり、こちらは
+/// **spec が規範的に定める厳密値**であり、raikiri の選択ではない。
+///
+/// **非 test code で `3.0` (border-width `medium`) を書く単一 source**
+/// (bd raikiri-spike-fy89、[`INITIAL_FONT_SIZE_PX`](crate::computed::INITIAL_FONT_SIZE_PX)
+/// と同じ pattern) — [`parse_border_width_side`] の `medium` keyword 分岐と、
+/// [`parse_border_shorthand`] の width 省略成分デフォルトが参照する。
+/// [`crate::specified::INITIAL_BORDER`] の `width` field も本 const を参照する
+/// (property → specified の既存依存方向 — `specified` は既に
+/// `use crate::property::{..}` で本 module の型を import している。逆方向の
+/// edge を作らないこと、raikiri-spike-jaww §8.2 iter 1 の教訓)。
+///
+/// 一方「initial の border-width が **3px そのものである**」ことの pin は
+/// test 側が literal で持つ。**これらを「一貫性のため」本 const への参照に
+/// 書き換えてはならない** — 全体が自己参照になり、const の誤編集を何も
+/// 検出できなくなる ([`INITIAL_FONT_SIZE_PX`](crate::computed::INITIAL_FONT_SIZE_PX)
+/// doc と同じ理由)。該当 test は本 const を `5.0` 等に摂動すれば列挙できる
+/// (lib test が fail-fast して doctest section まで到達しないので、
+/// `cargo test -p raikiri-style` と `--doc` を別々に走らせること)。
+///
+/// **`thin` (1px) / `thick` (5px) は const 化しない** — 同じ規範文の 3 keyword
+/// の残り 2 つだが、[`parse_border_width_side`] の keyword match 内 1 箇所ずつ
+/// にしか現れず (border shorthand の省略成分デフォルトは spec 上も `medium`
+/// のみが initial value)、複数 site 間の drift 余地がない。const 化するのは
+/// 独立 literal が 2 箇所以上に分散している `medium` のみで十分
+/// (bd raikiri-spike-fy89 の scope: `medium` の重複、thin/thick への一般化は
+/// non-goal)。
+pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
+
 /// `border-{top,right,bottom,left}-width` の single-side value を parse する。
 ///
 /// Grammar: `<line-width>` = `<length [0,∞]> | thin | medium | thick`
@@ -3191,9 +3243,9 @@ fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, Pars
 ///
 /// # Keyword mapping (spec 規定値)
 ///
-/// spec §3.3 は 3 keyword を normative に規定する — verbatim "The thin,
+/// spec §3.3 は 3 keyword を normative に規定する — verbatim: "The thin,
 /// medium, and thick keywords are equivalent to 1px, 3px, and 5px,
-/// respectively":
+/// respectively." 対応表:
 /// - `thin`   → `Length::Px(1.0)`
 /// - `medium` → `Length::Px(3.0)` (initial value)
 /// - `thick`  → `Length::Px(5.0)`
@@ -3226,7 +3278,7 @@ fn parse_border_width_side(input: &mut Parser<'_, '_>) -> Option<Length> {
         let ident = i.expect_ident()?.clone();
         match ident.to_ascii_lowercase().as_str() {
             "thin" => Ok(Length::Px(1.0)),
-            "medium" => Ok(Length::Px(3.0)),
+            "medium" => Ok(Length::Px(BORDER_WIDTH_MEDIUM_PX)),
             "thick" => Ok(Length::Px(5.0)),
             _ => Err(i.new_custom_error(())),
         }
@@ -3312,7 +3364,8 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 ///
 /// # Initial value fill (省略成分)
 ///
-/// spec §3.4 verbatim "Omitted values are set to their initial values":
+/// spec §3.4 verbatim: "Omitted values are set to their initial values."
+/// 各成分の initial:
 /// - width 省略 → `Length::Px(3.0)` (medium initial)
 /// - style 省略 → `BorderStyle::None` (initial、spec §3.2)
 /// - color 省略 → [`BorderColor::CurrentColor`] (spec §3.1 initial、used-value
@@ -3321,7 +3374,7 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 /// # Non-goals (spec deviation 明示)
 ///
 /// spec §3.4 では border shorthand が **border-image-* も reset** する (spec
-/// verbatim "The border shorthand also resets border-image to its initial
+/// verbatim: "The border shorthand also resets border-image to its initial
 /// value.") が、本 crate は border-image を milestone defer で実装しないため
 /// reset side effect を省略。
 /// bd raikiri-spike-0vv (Epic) の border-image longhand 実装時に統合する。
@@ -3406,7 +3459,7 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
 
     // 省略成分は spec §3.4 の initial value で埋める。
     let border = Border {
-        width: width.unwrap_or(Length::Px(3.0)), // medium
+        width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)), // medium
         style: style.unwrap_or(BorderStyle::None),
         // §3.1 initial "currentcolor" — used-value resolution は paint scope
         // 責務 (bd raikiri-spike-q7qf、raikiri-spike-0vv.17)。
@@ -3587,7 +3640,7 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
 /// があった (親 `font-weight: 349.5` + 子 `bolder` が旧実装では 350 への丸め後
 /// `350 <= w < 550` 行 → 700 に化け、spec の `100 <= w < 350` 行 → 400
 /// と食い違う。`549.5` + `bolder`、`749.5` + `lighter` も同型 — pin:
-/// [`crate::cascade::tests::bolder_lighter_resolve_against_unrounded_fractional_parent_weight`])。
+/// `crate::cascade::tests::bolder_lighter_resolve_against_unrounded_fractional_parent_weight`)。
 /// `f32` 格上げにより丸めそのものが不要になったため、この 2 次被害も解消される。
 fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
     match input.next().ok()? {
@@ -4041,11 +4094,12 @@ fn parse_content_function(
 /// <https://www.w3.org/TR/css-values-4/#custom-idents>): CSS-wide keyword と
 /// `default` を除いた任意 ident。case-preserving、smol str で保持。
 ///
-/// `none` はここでは除外しない。spec 原文が "Specifications using `<custom-ident>`
-/// must specify clearly what other keywords are excluded from `<custom-ident>`,
-/// if any…" と述べるとおり、より狭い grammar (`<counter-name>` 等) の追加除外は
-/// 個別の predicate (例 [`is_reserved_counter_name`]) 側の責務。
-/// [`is_reserved_custom_ident`] の docstring も参照。
+/// `none` はここでは除外しない。spec verbatim: "Specifications using
+/// `<custom-ident>` must specify clearly what other keywords are excluded
+/// from `<custom-ident>`, if any…" と述べるとおり、より狭い grammar
+/// (`<counter-name>` 等) の追加除外は個別の predicate (例
+/// [`is_reserved_counter_name`]) 側の責務。[`is_reserved_custom_ident`] の
+/// docstring も参照。
 ///
 /// **呼び出し元は当初 3 箇所**: `string()` の name 引数 ([`parse_string_fn`])、
 /// `target-counter()` / `target-counters()` の第 2 引数
@@ -4120,8 +4174,8 @@ fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
 /// `<counter-name>` (CSS Lists 3 §4
 /// <https://www.w3.org/TR/css-lists-3/#typedef-counter-name>):
 /// `<custom-ident>` から `none` を追加除外した production。
-/// spec 原文: "A `<counter-name>` name cannot match the keyword `none`; such an
-/// identifier is invalid as a `<counter-name>`"。
+/// spec verbatim: "A `<counter-name>` name cannot match the keyword `none`;
+/// such an identifier is invalid as a `<counter-name>`"。
 ///
 /// counter() / counters() (§4.7) の first argument、および
 /// counter-reset / counter-increment / counter-set property
@@ -8576,6 +8630,49 @@ mod tests {
         assert_eq!(
             parse("solid", "border"),
             Some(PropertyValue::Border(Sides::all(with_only_style)))
+        );
+    }
+
+    #[test]
+    fn border_width_medium_is_consistent_across_its_independent_call_sites() {
+        // bd raikiri-spike-fy89: before this fix, `medium` = 3px was written
+        // as 3 independent `Length::Px(3.0)` literals — the `medium` keyword
+        // branch in `parse_border_width_side`, the border shorthand's
+        // omitted-width default in `parse_border_shorthand`, and
+        // `crate::specified::INITIAL_BORDER`'s `width` field — with no test
+        // tying them together, so they could silently drift apart. All 3 now
+        // derive from `BORDER_WIDTH_MEDIUM_PX`; this test exercises all 3
+        // through real behavior (not literal-vs-literal) and pins that they
+        // still agree with each other and with the const, so a future edit
+        // that touches only one of them fails loudly here instead of
+        // drifting silently. The sibling tests
+        // `border_top_width_parse_medium_keyword` and
+        // `border_shorthand_omitted_components_use_initial` independently
+        // pin the *absolute* value (`3.0`) as a literal — do not fold those
+        // into a reference to the const, or nothing catches an accidental
+        // edit to the const itself (see the const's doc).
+        let via_keyword = parse("medium", "border-top-width");
+        assert_eq!(
+            via_keyword,
+            Some(PropertyValue::BorderTopWidth(Length::Px(
+                BORDER_WIDTH_MEDIUM_PX
+            )))
+        );
+
+        let via_shorthand_omission = parse("solid", "border");
+        // cov:ignore: this let-else panic branch is unreached as long as the
+        // test passes — `parse("solid", "border")` always matches
+        // `Some(PropertyValue::Border(_))`, so llvm-cov marks the panic-message
+        // literal "uncovered" the same way it does for any other panic-only
+        // branch (same false-positive class as r7r1).
+        let Some(PropertyValue::Border(sides)) = via_shorthand_omission else {
+            panic!("expected `border: solid` to parse to a Border shorthand value");
+        };
+        assert_eq!(sides.top.width, Length::Px(BORDER_WIDTH_MEDIUM_PX));
+
+        assert_eq!(
+            crate::specified::INITIAL_BORDER.width,
+            Length::Px(BORDER_WIDTH_MEDIUM_PX)
         );
     }
 

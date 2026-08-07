@@ -559,8 +559,16 @@ impl PageCascadeResult {
     ///   part of the *computed* value ("Computed value: absolute length, snapped
     ///   as a border width; zero if the border style is `none` or `hidden`").
     ///   An **undeclared** `border-*-style` counts as its initial value `none`
-    ///   per the §6 sentence quoted above, so `@page { border-top-width: 5px }`
-    ///   alone computes to `0px`, matching the element path.
+    ///   — CSS Backgrounds 3 §3.2
+    ///   <https://www.w3.org/TR/css-backgrounds-3/#border-style> propdef gives
+    ///   `border-*-style`'s `Initial: none`, and §6 (a *different* sentence
+    ///   from the ones quoted above for `font-size` and `em`) is why that
+    ///   initial value is there to begin with even though the property
+    ///   is undeclared — verbatim: "both the page context and the margin
+    ///   context have a computed value for every property, even if that
+    ///   property does not apply to the page or page-margin box." So
+    ///   `@page { border-top-width: 5px }` alone computes to `0px`, matching
+    ///   the element path.
     /// - `<percentage>` on `padding` / `margin` / `width` / `height` **stays**
     ///   [`Length::Percent`]. The governing rule is the general one — CSS
     ///   Values 4 §5.5.1 "Computation and Combination of `<percentage>`"
@@ -866,9 +874,10 @@ pub enum PageInheritance<'a> {
 ///
 /// The spec text at the anchor says @page cascade follows normal cascade
 /// tie-breaking. Within a single rule, later declarations of the same
-/// property win per CSS Cascading §"Order of appearance"; the `>=` in the
-/// crate-internal `page_beats` mirrors the style-rule sibling's tie-break
-/// (`cascade::beats` uses `>=` on the same triple).
+/// property win per CSS Cascading L4 §6.1
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> "Order of Appearance";
+/// the `>=` in the crate-internal `page_beats` mirrors the style-rule
+/// sibling's tie-break (`cascade::beats` uses `>=` on the same triple).
 ///
 /// # Example
 ///
@@ -1080,11 +1089,12 @@ fn page_context_font_size(
 /// # Which font-size does an inherited `<number>` multiply by?
 ///
 /// Both branches — declared and undeclared — convert the resulting
-/// [`ComputedLineHeight`] with **this call's own `font_size` argument**
-/// (the page context's own, from [`page_context_font_size`]), never the
-/// root's — ordinary CSS inheritance semantics for the unitless multiplier
-/// ([`ComputedLineHeight`] doc, "子は number を inherit して自分の font-size
-/// に掛ける"), not a page-context-specific carve-out — pinned by
+/// [`crate::resolve::ComputedLineHeight`] with **this call's own `font_size`
+/// argument** (the page context's own, from [`page_context_font_size`]),
+/// never the root's — ordinary CSS inheritance semantics for the unitless
+/// multiplier ([`crate::resolve::ComputedLineHeight`] doc, "子は number を
+/// inherit して自分の font-size に掛ける"), not a page-context-specific
+/// carve-out — pinned by
 /// `cascade_page_padding_lh_uses_page_context_own_font_size_for_inherited_number`.
 ///
 /// The result is then converted to an absolute length via
@@ -1201,7 +1211,7 @@ fn page_context_border_styles(
 /// # The `value` parameter is phase-2 output, enforced by its type
 ///
 /// Since bd raikiri-spike-7m33, `value` is a
-/// [`ResolvedAgainstInherited`](crate::cascade::ResolvedAgainstInherited)
+/// [`crate::cascade::ResolvedAgainstInherited`]
 /// rather than a raw [`PropertyValue`] — see that type's doc for what this
 /// does and does not guarantee ("narrowed, not closed").
 ///
@@ -1572,7 +1582,8 @@ fn match_page_entry(
 ///
 /// Sibling arm to `cascade::beats`. The `>=` is intentional and mirrors the
 /// style-rule tie-break: within a single `@page` rule, later declarations of
-/// the same property beat earlier ones (CSS Cascading §"Order of appearance");
+/// the same property beat earlier ones (CSS Cascading L4 §6.1
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> "Order of Appearance");
 /// across rules, `source_order` is monotonically increasing so `>` and `>=`
 /// coincide.
 fn page_beats(
@@ -1936,7 +1947,9 @@ mod tests {
     #[test]
     fn cascade_page_source_order_tiebreak_later_wins() {
         // Two rules of equal (rank, specificity) — later source_order wins
-        // per CSS Cascading §"Order of appearance", sibling of style-rule
+        // per CSS Cascading L4 §6.1
+        // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> "Order of
+        // Appearance", sibling of style-rule
         // `cascade::tests::source_order_tiebreak_later_wins`.
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
@@ -3049,7 +3062,7 @@ mod tests {
     /// `post_parse_page_*` tests in this module pin.
     ///
     /// They are therefore driven directly here, for the same reason
-    /// `cascade::tests::apply_value_direct_margin_shorthand_safety_net` exists
+    /// `cascade::tests::apply_value_direct_margin_shorthand_fall_through` exists
     /// (behaviour pinned instead of `unreachable!` — the crate keeps the
     /// cascade panic-free, and the exhaustive expansion `match` does not
     /// enforce everything; see its doc, bd raikiri-spike-ez7b).

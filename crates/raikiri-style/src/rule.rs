@@ -881,7 +881,7 @@ mod tests {
         );
     }
 
-    // ── padding shorthand expansion (CSS Cascading L5、raikiri-spike-5nc) ──
+    // ── padding shorthand expansion (CSS Cascading L4 §3、raikiri-spike-5nc) ──
 
     #[test]
     fn padding_shorthand_expands_into_four_longhand_declarations() {
@@ -903,7 +903,7 @@ mod tests {
 
     #[test]
     fn padding_shorthand_important_flag_propagates_to_all_longhand() {
-        // spec CSS Cascading L5 §3: shorthand の `!important` は全 longhand に
+        // spec CSS Cascading L4 §3: shorthand の `!important` は全 longhand に
         // copy される (margin important 拡張と同じ)。
         let decls = parse_block("padding: 5px !important;");
         assert_eq!(decls.len(), 4);
@@ -920,7 +920,7 @@ mod tests {
         assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
     }
 
-    // ── border shorthand expansion (CSS Cascading L5、raikiri-spike-0vv.12) ──
+    // ── border shorthand expansion (CSS Cascading L4 §3、raikiri-spike-0vv.12) ──
     //
     // `parse_declaration_block` は shorthand `border` を 12 longhand
     // (4 side × 3 sub-property: width / style / color) に展開する。
@@ -991,7 +991,7 @@ mod tests {
 
     #[test]
     fn border_shorthand_important_flag_propagates_to_all_longhand() {
-        // spec CSS Cascading L5 §3: shorthand `!important` は全 longhand に copy
+        // spec CSS Cascading L4 §3: shorthand `!important` は全 longhand に copy
         // される (margin / padding important 拡張と同 pattern、12 longhand 全て
         // 検証)。
         let decls = parse_block("border: 5px dashed blue !important;");
