@@ -1711,7 +1711,7 @@ mod tests {
     /// 漏れた slot は「次 node の candidate list を誤った index で読む」形で
     /// 顕在化する。ここでは `<span>` の `candidates[0]` が `font-weight:
     /// bolder` なので、`<p>` の残した slot 1 と自分の slot 4 が**同じ
-    /// declaration を 2 回**適用する。`bolder` は [`apply_value`] 中で唯一の
+    /// declaration を 2 回**適用する。`bolder` は `apply_value` 中で唯一の
     /// read-modify-write arm であるため 400 → 700 → **900** と複合し、
     /// 期待値 700 とずれる。単純代入 property を選ぶと二重適用が冪等になって
     /// leak を素通ししてしまう (実際 `padding` で書いた初版は、drain の
@@ -1726,7 +1726,7 @@ mod tests {
     /// - leak の**向き**は traversal 順に依存するので、検出できるのは
     ///   document order で先行する `<p>` → 後続 `<span>` の向きだけ。
     /// - `cargo test` は debug build なので、実際に leak すると
-    ///   [`pick_winners`] 冒頭の debug_assert が先に落ちる。`bolder` の二重適用
+    ///   `pick_winners` 冒頭の debug_assert が先に落ちる。`bolder` の二重適用
     ///   機構が単独で load-bearing になるのは **release build** (debug_assert が
     ///   消える) のみ。逆に言えば本 test の価値は release build での検出可能性と、
     ///   失敗時の診断 message の明示性にある。
@@ -1774,7 +1774,7 @@ mod tests {
     ///
     /// ranges の非重複性は flat arena 特有の新しい不変条件 — 個別 `Vec` には
     /// 存在しなかった「他 node の区間と重なってはいけない」という要求で、
-    /// [`CascadedArena::candidates`] が正しい slice を返す前提そのもの
+    /// `CascadedArena::candidates` が正しい slice を返す前提そのもの
     /// (raikiri-spike-8kn8 が警告する「global index space を渡すと壊れる」
     /// ハザードの、arena 版の再発防止)。2 つの assertion で役割が分かれる:
     /// `windows(2)` が三者間の pairwise overlap を検査し、末尾の
@@ -2355,7 +2355,7 @@ mod tests {
         );
     }
 
-    /// Same 3-level tree as [`font_size_rlh_uses_root_not_immediate_parent`],
+    /// Same 3-level tree as `font_size_rlh_uses_root_not_immediate_parent`,
     /// but with `1lh` on the leaf instead of `1rlh` — the two tests together
     /// discriminate a `Lh`/`Rlh` basis swap in `resolve_font_size` (48px vs
     /// 40px, the two possible wrong answers for each other's unit).
@@ -2381,7 +2381,7 @@ mod tests {
     /// Document 直下の **非 element** node は rem context を確定させない
     /// (`resolve_inheritance` の `child_ctx` の `None => None` arm)。
     ///
-    /// [`StyleDom::root_id`] は Document node であって root element ではないので、
+    /// `StyleDom::root_id` は Document node であって root element ではないので、
     /// element を 1 つも通っていない経路では `rem` の参照値が未確定のままで
     /// なければならない。Text / Comment node が誤って「root element」扱いされると
     /// 兄弟 element より先に walk された場合に rem 基準が汚染される。
@@ -3421,7 +3421,7 @@ mod tests {
         assert_eq!(lighter(f32::NEG_INFINITY), f32::NEG_INFINITY);
     }
 
-    /// [`resolve_relative_font_size`] を unit 関数として直接叩く — cascade
+    /// `resolve_relative_font_size` を unit 関数として直接叩く — cascade
     /// harness に依存せず ratio (1.2) の適用を検証する
     /// (`font_weight_bolder_lighter_table_all_six_rows` の font-size 版、
     /// raikiri-spike-4rmu)。
@@ -3451,7 +3451,7 @@ mod tests {
         );
     }
 
-    /// [`resolve_against_inherited`] の戻り値 [`ResolvedAgainstInherited`] が
+    /// `resolve_against_inherited` の戻り値 `ResolvedAgainstInherited` が
     /// 中身を無損失で運ぶこと — 型を足したことで解決結果そのものが変わって
     /// いないことの pin (bd raikiri-spike-7m33)。`as_property_value` (覗き見)
     /// と `into_property_value` (消費) の両方を、resolve 対象・pass-through

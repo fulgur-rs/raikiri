@@ -4972,7 +4972,7 @@ mod tests {
     }
 
     /// CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII
-    /// case-insensitive。sibling [`font_weight_keyword_case_insensitive`] と同 pattern。
+    /// case-insensitive。sibling `font_weight_keyword_case_insensitive` と同 pattern。
     #[test]
     fn font_size_absolute_size_keyword_case_insensitive() {
         assert_eq!(
@@ -4986,7 +4986,7 @@ mod tests {
     }
 
     /// `<relative-size>` (`larger` / `smaller`) は parse 段では解決せず
-    /// [`PropertyValue::FontSizeRelative`] をそのまま返す — 解決 (親の
+    /// `PropertyValue::FontSizeRelative` をそのまま返す — 解決 (親の
     /// computed font-size に対する read-modify-write) は
     /// [`crate::cascade`] の責務 (`bolder` / `lighter` と同型、
     /// bd raikiri-spike-4rmu)。
@@ -5007,7 +5007,7 @@ mod tests {
     }
 
     /// `font-size: 12px` と `font-size: larger` は同じ property を競合する
-    /// ([`PropertyValue::FontSizeRelative`] doc 参照) — 別 key だと両方が
+    /// (`PropertyValue::FontSizeRelative` doc 参照) — 別 key だと両方が
     /// cascade で「勝つ」事態が起き spec (1 property = 1 winner) と食い違う。
     #[test]
     fn font_size_relative_shares_property_key_with_font_size() {

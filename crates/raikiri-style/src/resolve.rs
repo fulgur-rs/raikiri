@@ -1652,7 +1652,7 @@ mod tests {
     }
 
     /// `ex` / `ch` は style 層に real font metrics が無いため常に spec の
-    /// unknown-metric fallback (`0.5em`) を使う ([`Length::Ex`] / [`Length::Ch`]
+    /// unknown-metric fallback (`0.5em`) を使う (`Length::Ex` / `Length::Ch`
     /// doc)。`font-size` 上では他 font-relative unit と同じく **親** 基準
     /// (self-reference avoidance、bd raikiri-spike-2x8)。
     #[test]
@@ -1667,7 +1667,7 @@ mod tests {
         );
     }
 
-    /// `ic` の unknown-metric fallback は `1em` ([`Length::Ic`] doc)。
+    /// `ic` の unknown-metric fallback は `1em` (`Length::Ic` doc)。
     #[test]
     fn font_size_ic_resolves_against_parent_font_size_with_one_em_fallback() {
         assert_eq!(
@@ -1697,7 +1697,7 @@ mod tests {
 
     /// `font-size: 1lh` resolves against the **parent's** used line-height
     /// (bd raikiri-spike-yh3w — CSS Values 4 §6.1.1's self-reference clause,
-    /// same判断 as [`resolve_line_height`]'s `Length::Lh` arm). The `parent`
+    /// same判断 as `resolve_line_height`'s `Length::Lh` arm). The `parent`
     /// argument to `resolve_font_size` (16px, unrelated) is deliberately
     /// different from `parent_line_height_basis` (30px) so a bug that
     /// conflates "parent's font-size" with "parent's line-height" would be
@@ -1717,7 +1717,7 @@ mod tests {
 
     /// `font-size: 1rlh` resolves against `ctx.root_line_height` — a
     /// tree-global constant, **not** `parent_line_height_basis` (bd
-    /// raikiri-spike-yh3w — mirrors [`resolve_line_height`]'s `Length::Rlh`
+    /// raikiri-spike-yh3w — mirrors `resolve_line_height`'s `Length::Rlh`
     /// arm and its "not self-referential for non-root elements" rationale).
     /// `parent_line_height_basis` is deliberately set to a different value
     /// (30px) than `ctx.root_line_height` (50px) so a bug that swaps the two
@@ -1738,7 +1738,7 @@ mod tests {
     }
 
     /// `font-size: 1lh` / `1rlh` fall back to `font-size`'s own spec initial
-    /// (`medium` = [`INITIAL_FONT_SIZE_PX`]) when their basis is unresolvable
+    /// (`medium` = `INITIAL_FONT_SIZE_PX`) when their basis is unresolvable
     /// (`normal` with no font metrics — the same wall as `cap`/`rcap`, or a
     /// root element with no parent) — **not** `0px`. Unlike the generic,
     /// multi-property `resolve_length`/`resolve_length_percentage` (whose
@@ -1838,7 +1838,7 @@ mod tests {
     /// や `line-height` の `<length>` 成分) では `ex` / `ch` / `ic` は
     /// **自要素** の computed font-size 基準になる — `resolve_font_size` の
     /// 同 unit テスト (親基準) との非対称を pin する
-    /// ([`Length::Ex`] doc の parent-metrics 条項)。
+    /// (`Length::Ex` doc の parent-metrics 条項)。
     #[test]
     fn length_ex_ch_ic_resolve_against_own_font_size() {
         assert_eq!(
@@ -1920,7 +1920,7 @@ mod tests {
         );
     }
 
-    /// [`resolve_length_percentage`] (`padding-*` の絶対化関数) 側でも
+    /// `resolve_length_percentage` (`padding-*` の絶対化関数) 側でも
     /// bd raikiri-spike-2x8 で追加した全 unit を直接 exercise する
     /// (`resolve_font_size` / `resolve_length` の同 unit test とは別 site —
     /// 3 関数それぞれが独立した match を持つため、patch coverage は
@@ -1988,7 +1988,7 @@ mod tests {
 
     /// `padding: 1lh` — own line-height が `normal` で解決不能 (`None`) の
     /// ときは padding の spec initial value `0` に倒す (cleanroom: 比率を
-    /// 捏造しない、[`resolve_length_percentage`] doc 参照)。
+    /// 捏造しない、`resolve_length_percentage` doc 参照)。
     #[test]
     fn length_percentage_lh_falls_back_to_zero_when_unresolvable() {
         let fs = ComputedLength(20.0);
@@ -2063,8 +2063,8 @@ mod tests {
     /// `width: 1lh` (`resolve_length_percentage_or_auto` — `width`/`height`
     /// only since roborev-refine iter 1 Finding A, bd raikiri-spike-vxha) —
     /// resolvable な own line-height なら乗数として使う。
-    /// [`resolve_length_percentage_or_auto`] は `Lh`/`Rlh` を
-    /// [`resolve_length_percentage`] へ delegate**しない** (fallback が違う、
+    /// `resolve_length_percentage_or_auto` は `Lh`/`Rlh` を
+    /// `resolve_length_percentage` へ delegate**しない** (fallback が違う、
     /// 次のテスト参照) が、resolvable な場合の数値は一致する。
     #[test]
     fn length_percentage_or_auto_lh_multiplies_own_line_height_basis() {
@@ -2082,7 +2082,7 @@ mod tests {
 
     /// `width: 1lh` — own line-height が `normal` で解決不能なら **`Auto`**
     /// に倒す (`width`/`height`'s spec initial, CSS Sizing 3 §3.1.1) —
-    /// [`resolve_length_percentage`]'s `0px` fallback とは異なる。**margin
+    /// `resolve_length_percentage`'s `0px` fallback とは異なる。**margin
     /// はもう本関数を通らない** (roborev-refine iter 1 Finding A) —
     /// margin の同型テストは `resolve_margin_length_or_auto_lh_falls_back_to_zero_when_unresolvable`
     /// を参照。
@@ -2243,7 +2243,7 @@ mod tests {
 
     /// `line-height: 1lh` is self-referential (CSS Values 4 §6.1.1, spec
     /// quote + `lh`/`rlh` asymmetry rationale canonically documented on
-    /// [`resolve_line_height`] — bd raikiri-spike-vxha). When the parent's
+    /// `resolve_line_height` — bd raikiri-spike-vxha). When the parent's
     /// own line-height is resolvable, `lh` multiplies by it — `own
     /// font_size` (the 2nd arg) and `ctx.root_line_height` are **not**
     /// consulted at all for this case, only `self_reference_basis` is.
@@ -2268,7 +2268,7 @@ mod tests {
     /// `rlh`, unlike `lh`, is **not** treated as self-referential in this
     /// crate — its own definition ("the lh unit on the root element") is a
     /// tree-global constant, not something that depends on the declaring
-    /// element (see [`resolve_line_height`]'s doc, "`Length::Rlh` — 自己参照
+    /// element (see `resolve_line_height`'s doc, "`Length::Rlh` — 自己参照
     /// ではなく tree-global 定数" section, for why the literal "Similarly,
     /// lh or rlh" spec wording is not followed for `rlh` on non-root
     /// elements). So `line-height: 1rlh` on a *non-root* element reads
@@ -2396,7 +2396,7 @@ mod tests {
     /// `ComputedBorder::width()` / `::style()` accessor 本体を実行する pin
     /// (bd raikiri-spike-9jmt)。上の test は同一モジュール内なので
     /// `pub(crate)` field に直接アクセスし、accessor 関数本体そのものは
-    /// 経由しない。crate 外視点から accessor を叩く doctest ([`ComputedBorder`]
+    /// 経由しない。crate 外視点から accessor を叩く doctest (`ComputedBorder`
     /// 型 doc 内) はあるが、この repo の toolchain (stable 固定、
     /// `cargo llvm-cov` に `--doctests` 未指定) では doctest はカバレッジ計測
     /// 対象に入らないため、本 test が accessor 本体を計測対象として実行する。
@@ -2439,7 +2439,7 @@ mod tests {
     }
 
     /// bd raikiri-spike-2x8 で追加した absolute unit (`pc`) も
-    /// `border-*-width` の style gating (この module doc / [`resolve_border`]
+    /// `border-*-width` の style gating (この module doc / `resolve_border`
     /// doc の "spec tension" 節) と組み合わさって正しく解決する — `1pc = 16px`
     /// (CSS Values 4 §6.2)。`style: none` では新 unit も他 unit と同じく 0px に
     /// gate される (regression pin: この gate は絶対化の**後**に効くため、

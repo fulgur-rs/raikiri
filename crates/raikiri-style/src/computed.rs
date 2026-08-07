@@ -811,7 +811,7 @@ mod tests {
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
     ///
-    /// [`ComputedValues::inherit_from`] の doc が主張する invariant の pin —
+    /// `ComputedValues::inherit_from` の doc が主張する invariant の pin —
     /// `SpecifiedValues::inherit_from` の出力に font-relative な値が 1 つも
     /// 含まれないので、`finalize` は `rem` arm を踏まず context を参照しない。
     /// 将来 lift 側が `Px` 以外を返すようになったら (= 不動点性が壊れたら)

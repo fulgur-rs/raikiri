@@ -825,8 +825,8 @@ mod tests {
     }
 
     /// bd raikiri-spike-2x8 で追加した `ex` も `em` と同じ parent/own 非対称を
-    /// 持つ (unknown-metric fallback `0.5em`、[`Length::Ex`] doc)。数値は
-    /// [`finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest`]
+    /// 持つ (unknown-metric fallback `0.5em`、`Length::Ex` doc)。数値は
+    /// `finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest`
     /// と揃える (`32px` / `32px`) — multiplier を変えて `ex` の `0.5` 係数を
     /// 通しても同じ基準規則になることを示す。padding 側に **親** (16px) を
     /// 誤って使うと `16 * 0.5 * 2 = 16px` になり、`32px` にならないため
@@ -1003,7 +1003,7 @@ mod tests {
     }
 
     /// `direction` itself is a plain inherited pass-through — no
-    /// `match-parent`-style resolution, symmetric with [`TextAlign::Center`]
+    /// `match-parent`-style resolution, symmetric with `TextAlign::Center`
     /// et al.
     #[test]
     fn finalize_passes_direction_through_unchanged() {
@@ -1015,7 +1015,7 @@ mod tests {
     }
 
     /// root element では `rem` の基準が phase 2 と phase 3 で異なる
-    /// ([`SpecifiedValues::finalize_as_root`] の doc に spec verbatim)。
+    /// (`SpecifiedValues::finalize_as_root` の doc に spec verbatim)。
     ///
     /// - `font-size: 2rem` → **32px** (initial 16px 基準 — font-\* property 上の
     ///   自己参照 unit なので parent-metrics 条項が発火する)

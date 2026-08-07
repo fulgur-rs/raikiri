@@ -2087,8 +2087,8 @@ mod tests {
     // this, `FontWeightValue::Bolder` parked unresolved in the public
     // `declarations` map).
 
-    /// Direct, single-site pin that [`PageInheritance::FromRoot`] and
-    /// [`PageInheritance::LegacyInitialValues`] are a real discrimination, not
+    /// Direct, single-site pin that `PageInheritance::FromRoot` and
+    /// `PageInheritance::LegacyInitialValues` are a real discrimination, not
     /// two names for the same behaviour. The per-property tests elsewhere in
     /// this module each show one side of this split across two *separate*
     /// tests (e.g. `cascade_page_font_weight_bolder_resolves_against_root_computed_weight`
@@ -2746,7 +2746,7 @@ mod tests {
     }
 
     /// `page_context_line_height_basis`'s undeclared-`line-height` branch
-    /// inherits [`ComputedLineHeight::Number`] from the root and multiplies
+    /// inherits `ComputedLineHeight::Number` from the root and multiplies
     /// it by the **page context's own** font-size — ordinary CSS inheritance
     /// semantics for the unitless multiplier (CSS Inline 3 §5.1), not a
     /// page-context special case. Root font-size (16px, unused for this)
@@ -2996,7 +2996,7 @@ mod tests {
         );
     }
 
-    /// The [`PageInheritance::LegacyInitialValues`] path also runs phase 3,
+    /// The `PageInheritance::LegacyInitialValues` path also runs phase 3,
     /// against the initial values. Guards against the absolutization being
     /// wired only into the `FromRoot` branch.
     #[test]
@@ -3064,7 +3064,7 @@ mod tests {
     /// enforce everything; see its doc, bd raikiri-spike-ez7b).
     ///
     /// Since bd raikiri-spike-7m33 `absolutize_in_page_context` takes a
-    /// [`ResolvedAgainstInherited`], whose constructor is private outside
+    /// `ResolvedAgainstInherited`, whose constructor is private outside
     /// `crate::cascade` — `ResolvedAgainstInherited::for_test` is the
     /// `#[cfg(test)]`-only escape hatch that lets this test keep driving the
     /// function directly with a hand-picked payload (see that type's doc,
@@ -3935,7 +3935,7 @@ mod tests {
     }
 
     /// `FontSize` / `FontSizeRelative` が意図的に同じ `PropertyKey` を共有する
-    /// こと自体の direct pin ([`page_corpus_has_no_duplicate_or_mismatched_samples`]
+    /// こと自体の direct pin (`page_corpus_has_no_duplicate_or_mismatched_samples`
     /// の doc が説明する単射性崩れの根拠)。property.rs 側の
     /// `font_size_relative_shares_property_key_with_font_size` と同じ主張を
     /// page 経路の corpus に対して確認する — corpus の 2 entry が同じ key を
@@ -4202,7 +4202,7 @@ mod tests {
 
     /// The trap the doc warns about: unlike the element path's root element
     /// (CSS Text 3 §6.1's "computes to start"), the page context's
-    /// [`PageInheritance::LegacyInitialValues`] L3 legacy exception is **not**
+    /// `PageInheritance::LegacyInitialValues` L3 legacy exception is **not**
     /// a "no parent" case — it substitutes `ComputedValues::initial()` as an
     /// ordinary inheritance parent (text-align = start, direction = ltr) and
     /// goes through the same parent-direction table, landing on `left` rather
