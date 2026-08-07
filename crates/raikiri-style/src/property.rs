@@ -218,8 +218,9 @@ fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
 }
 
 /// 4-bit nibble `n` (`0..=15`) を 8-bit channel `nn` に展開する。
-/// `(n << 4) | n = n * 17` — CSS Color 4 §5.2 の「"duplicating" all of the
-/// digits」を実装した short-form 展開 helper (`#f` → `0xff`, `#8` → `0x88`)。
+/// `(n << 4) | n = n * 17` — CSS Color 4 §5.2 の "duplicating" all of the
+/// digits を実装した short-form 展開 helper (`#f` → `0xff`, `#8` → `0x88`、
+/// 逐語引用は [`CssColor::from_hex`] doc の verbatim 引用 2 件を参照)。
 fn expand_hex_nibble(n: u8) -> u8 {
     (n << 4) | n
 }
@@ -319,8 +320,8 @@ pub enum Length {
     /// raikiri-style は style 層で実 font metrics を持たない (font shaping は
     /// downstream) ため、spec の unknown-metric fallback が常に適用される —
     /// CSS Values 4 §6.1.1 Font-relative Lengths
-    /// (<https://www.w3.org/TR/css-values-4/#ex>) 原文: "In the cases where
-    /// it is impossible or impractical to determine the x-height, [...] a
+    /// (<https://www.w3.org/TR/css-values-4/#ex>) verbatim: "In the cases
+    /// where it is impossible or impractical to determine the x-height, a
     /// value of 0.5em must be assumed." Resolve は `0.5 * font-size`
     /// (bd raikiri-spike-2x8)。
     Ex(f32),
@@ -336,9 +337,9 @@ pub enum Length {
     /// advance measure に対する倍率。`1ch` → `Ch(1.0)`。
     ///
     /// CSS Values 4 §6.1.1 Font-relative Lengths
-    /// (<https://www.w3.org/TR/css-values-4/#ch>) 原文: "In the cases where
-    /// it is impossible or impractical to determine the measure of the '0'
-    /// glyph, it must be assumed to be 0.5em wide by 1em tall. Thus, the ch
+    /// (<https://www.w3.org/TR/css-values-4/#ch>) verbatim: "In the cases
+    /// where it is impossible or impractical to determine the measure of the
+    /// '0' glyph, it must be assumed to be 0.5em wide by 1em tall. Thus, the ch
     /// unit falls back to 0.5em in the general case, and to 1em when it
     /// would be typeset upright (i.e. writing-mode is vertical-rl or
     /// vertical-lr and text-orientation is upright)." raikiri-style は
@@ -358,9 +359,9 @@ pub enum Length {
     /// (U+6C34) glyph の advance measure に対する倍率。`1ic` → `Ic(1.0)`。
     ///
     /// CSS Values 4 §6.1.1 Font-relative Lengths
-    /// (<https://www.w3.org/TR/css-values-4/#ic>) 原文: "In the cases where
-    /// it is impossible or impractical to determine the measure of the CJK
-    /// water ideograph glyph, the ic unit must fall back to 1em." resolve は
+    /// (<https://www.w3.org/TR/css-values-4/#ic>) verbatim: "In the cases
+    /// where it is impossible or impractical to determine the ideographic
+    /// advance measure, it must be assumed to be 1em." resolve は
     /// `1.0 * font-size` (real metrics 同様の理由で常に fallback、
     /// [`Length::Ex`] doc 参照)。
     Ic(f32),
@@ -406,10 +407,10 @@ pub enum Length {
     /// 倍率。`1lh` → `Lh(1.0)`。
     ///
     /// CSS Values 4 §6.1.1 Font-relative Lengths
-    /// (<https://www.w3.org/TR/css-values-4/#lh>) 原文: "Equal to the computed
-    /// value of the line-height property of the element on which it is used,
-    /// converting normal to an absolute length by using only the metrics of
-    /// the first available font."
+    /// (<https://www.w3.org/TR/css-values-4/#lh>) verbatim: "Equal to the
+    /// computed value of the line-height property of the element on which it
+    /// is used, converting normal to an absolute length by using only the
+    /// metrics of the first available font."
     ///
     /// # `normal` の resolve — `cap`/`rcap` と同じ wall (bd raikiri-spike-vxha)
     ///
@@ -997,10 +998,10 @@ pub enum ContentTextKeyword {
 /// <https://www.w3.org/TR/css-content-3/#quote-values> verbatim production:
 /// `<quote> = open-quote | close-quote | no-open-quote | no-close-quote`。
 ///
-/// spec 原文: [`OpenQuote`](Self::OpenQuote) / [`CloseQuote`](Self::CloseQuote)
-/// は "replaced by the appropriate string from the `quotes` property" かつ
-/// nesting depth を増減する。[`NoOpenQuote`](Self::NoOpenQuote) /
-/// [`NoCloseQuote`](Self::NoCloseQuote) は "insert nothing (as in none)" だが
+/// verbatim: [`OpenQuote`](Self::OpenQuote) / [`CloseQuote`](Self::CloseQuote)
+/// は "replaced by the appropriate string as defined by the `quotes`
+/// property" かつ nesting depth を増減する。[`NoOpenQuote`](Self::NoOpenQuote) /
+/// [`NoCloseQuote`](Self::NoCloseQuote) は "Inserts nothing (as in none)" だが
 /// depth 増減のみ行う。実際の `quotes` property 引き (nesting depth → 文字列)
 /// は本 crate の static-side scope 外 — 下流 (raikiri-dom) が `quotes` の
 /// computed value と併せて runtime resolve する ([`CounterStyle`] /
@@ -1027,7 +1028,7 @@ pub enum QuoteKeyword {
 /// CSS Content 3 §2.5.1 "The leader() function"
 /// <https://www.w3.org/TR/css-content-3/#leader-function>。
 ///
-/// spec 原文: `dotted` は "equivalent to `leader(".")`"、`solid` は
+/// spec verbatim: `dotted` は "equivalent to `leader(".")`"、`solid` は
 /// "equivalent to `leader("_")`"、`space` は "equivalent to `leader(" ")`"。
 /// この等価性は **keyword の意味論の説明であって spelling の正規化指示ではない**
 /// ([`counter_style_from_ident`] が `decimal` keyword を `Named("decimal")` に
@@ -1159,7 +1160,7 @@ pub enum ContentComponent {
     /// `target-counter([<string>|<url>], <custom-ident>, <counter-style>?)`。
     /// CSS Content 3 §2.6.1 <https://www.w3.org/TR/css-content-3/#target-counter>。
     ///
-    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec 原文
+    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec verbatim
     /// (§2.6.1 の value definition):
     ///
     /// ```text
@@ -1177,7 +1178,7 @@ pub enum ContentComponent {
     /// `target-counters([<string>|<url>], <custom-ident>, <string>, <counter-style>?)`。
     /// CSS Content 3 §2.6.2 <https://www.w3.org/TR/css-content-3/#target-counters>。
     ///
-    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec 原文
+    /// 第 2 引数は `<counter-name>` ではなく `<custom-ident>` — spec verbatim
     /// (§2.6.2 の value definition):
     ///
     /// ```text
@@ -1209,20 +1210,21 @@ pub enum ContentComponent {
     /// `<image>` (CSS Images 3 <https://www.w3.org/TR/css-images-3/#typedef-image>
     /// `<image> = <url> | <gradient>`) — CSS Content 3 §2.2 "2D Images: the
     /// `<image>` values" <https://www.w3.org/TR/css-content-3/#content-uri>。
-    /// spec 原文: "Represents an anonymous inline replaced element filled with
-    /// the specified `<image>`. If the `<image>` represents an invalid image,
-    /// this value instead represents nothing" (rendering 側の fallback は
-    /// downstream 責務)。
+    /// spec verbatim: "Represents an anonymous inline replaced element filled
+    /// with the specified `<image>`. If the `<image>` represents an invalid
+    /// image, this value instead represents nothing" (rendering 側の
+    /// fallback は downstream 責務)。
     ///
     /// **`<content-replacement>` との関係 (未反映、raikiri-spike-5hp8 送り)**:
     /// `content` property 全体の value definition (CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>) は `normal |
     /// none | [ <content-replacement> | <content-list> ] […]?` で、
     /// `<content-replacement> = <image>` は `<content-list>` とは別の
-    /// top-level alternative — spec 原文 "Represents a *replaced element*"
-    /// で `::before`/`::after` 生成を抑制する等、上の list-item 版
+    /// top-level alternative — spec verbatim "Makes the element or
+    /// pseudo-element a replaced element, filled with the specified
+    /// `<image>`" で `::before`/`::after` 生成を抑制する等、上の list-item 版
     /// `<image>` (anonymous inline replaced element) とは異なる semantics
-    /// を持つ。spec 原文は続けて "If the value of `<content-list>` is a
+    /// を持つ。spec verbatim は続けて "If the value of `<content-list>` is a
     /// single `<image>`, it must instead be interpreted as a
     /// `<content-replacement>`" とも述べており、本 variant の shape
     /// (`Vec<ContentComponent>` の 1 要素が `Image` かどうか) は downstream
@@ -1247,12 +1249,12 @@ pub enum ContentComponent {
     Image { url: String },
     /// `contents` keyword — CSS Content 3 §2.3 "Elemental Content: the
     /// `contents` keyword" <https://www.w3.org/TR/css-content-3/#element-content>。
-    /// spec 原文: "The element's descendants" — pseudo-element の生成有無や
+    /// spec verbatim: "The element's descendants" — pseudo-element の生成有無や
     /// 「既に他の pseudo-element で使用済みなら何もしない」という消費順序の
     /// 解決は本 crate の static-side scope 外 (parse_content の docstring の
     /// `normal`/`none` と同じ「生成判断は下流に委ねる」方針)。
     ///
-    /// **`normal` との非対称性 (意図的)**: spec 原文 (§2.3) は "the initial
+    /// **`normal` との非対称性 (意図的)**: spec verbatim (§2.3) は "the initial
     /// value of content is `normal` and `normal` computes to `contents` on an
     /// element" と述べるが、[`parse_content`] は `normal` を (既存 `none` と
     /// 同様) 空 `Vec` に畳んで保持する — computed-value 時の `normal` →
@@ -2660,8 +2662,8 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// # Unitless zero
 ///
 /// CSS Values 3 §5 "Distance Units: the `<length>` type"
-/// <https://www.w3.org/TR/css-values-3/#lengths> 原文: "For zero lengths the
-/// unit identifier is optional (i.e. can be syntactically represented as the
+/// <https://www.w3.org/TR/css-values-3/#lengths> verbatim: "For zero lengths
+/// the unit identifier is optional (i.e. can be syntactically represented as the
 /// `<number>` 0)." — bare `0` (Token::Number, value == 0.0) を [`Length::Px`]
 /// `(0.0)` として受理する (mode 非依存: `<length>` / `<length-percentage>` 両方)。
 /// 非零 unitless number (`5`, `-1` etc.) は grammar 上 `<length>` にならないため
@@ -3074,7 +3076,7 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
 /// `padding-{top,right,bottom,left}` の single-side value を parse する。
 ///
 /// grammar: `<length-percentage [0,∞]>` (CSS Box 3 §4.1
-/// <https://www.w3.org/TR/css-box-3/#padding-physical>)。spec 原文:
+/// <https://www.w3.org/TR/css-box-3/#padding-physical>)。spec verbatim:
 /// "Negative values for padding properties are invalid." — 負値は grammar 違反
 /// として declaration ごと drop する。
 ///
@@ -4090,8 +4092,8 @@ fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
 /// `<counter-name>` (CSS Lists 3 §4
 /// <https://www.w3.org/TR/css-lists-3/#typedef-counter-name>):
 /// `<custom-ident>` から `none` を追加除外した production。
-/// spec 原文: "A `<counter-name>` name cannot match the keyword `none`; such an
-/// identifier is invalid as a `<counter-name>`"。
+/// spec verbatim: "A `<counter-name>` name cannot match the keyword `none`;
+/// such an identifier is invalid as a `<counter-name>`"。
 ///
 /// counter() / counters() (§4.7) の first argument、および
 /// counter-reset / counter-increment / counter-set property

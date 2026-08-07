@@ -766,7 +766,7 @@ fn pc_to_px(v: f32) -> f32 {
 /// # Primary source (§ title + anchor)
 ///
 /// CSS Values 4 §6.1.1 "Font-relative Lengths" [`lh`](https://www.w3.org/TR/css-values-4/#lh)
-/// 原文: "Equal to the computed value of the line-height property of the
+/// verbatim: "Equal to the computed value of the line-height property of the
 /// element on which it is used, converting normal to an absolute length by
 /// using only the metrics of the first available font."
 ///
@@ -867,7 +867,7 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// # `lh` / `rlh` の自己参照 (bd raikiri-spike-yh3w)
 ///
 /// CSS Values 4 §6.1.1 "Font-relative Lengths"
-/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) 原文:
+/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) verbatim:
 /// "Similarly, when lh or rlh units are used in the value of the line-height
 /// property or font-\* properties on the element they refer to, they resolve
 /// against the computed line-height and font metrics of the parent
@@ -1297,7 +1297,7 @@ pub fn resolve_margin_length_or_auto(
 /// 使う自己参照になる — `lh` の素の定義 ("the element on which it is used")
 /// は常に「使用要素自身」を指すため、この自己参照は**あらゆる要素**で起こる。
 /// CSS Values 4 §6.1.1 "Font-relative Lengths"
-/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) 原文:
+/// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) verbatim:
 /// "Similarly, when lh or rlh units are used in the value of the line-height
 /// property or font-\* properties on the element they refer to, they resolve
 /// against the computed line-height and font metrics of the parent

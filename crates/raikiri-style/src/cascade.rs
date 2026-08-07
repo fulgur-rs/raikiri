@@ -841,7 +841,7 @@ pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: f32
 /// font-size に対して解決する。[`resolve_relative_weight`] の font-size 版
 /// (bolder/lighter と同型、raikiri-spike-4rmu)。
 ///
-/// CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop> 原文:
+/// CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop> verbatim:
 ///
 /// > A `<relative-size>` keyword is interpreted relative to the computed
 /// > font-size of the parent element and possibly the table of font sizes.
