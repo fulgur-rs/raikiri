@@ -1171,7 +1171,7 @@ mod attach_child_fragment_tests {
         let (frag, c0, c1) = make_fragment_with_two_children(&mut doc);
         doc.attach_child(parent, frag);
 
-        // (a): parent.children == [pre_existing, c0, c1] (append at tail, source order)。
+        // (a): parent.children == `[pre_existing, c0, c1]` (append at tail, source order)。
         assert_eq!(
             doc.nodes[parent].children,
             vec![pre_existing, c0, c1],
@@ -1304,7 +1304,7 @@ mod insert_child_before_fragment_tests {
         let mut doc = Document::new();
         let root = doc.root_index();
         let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
-        // parent には既に 2 個 sibling がある: [first, last]。
+        // parent には既に 2 個 sibling がある: `[first, last]`。
         let first = doc.append_element(Some(parent), "h1", Style::default(), None::<&str>);
         let last = doc.append_element(Some(parent), "footer", Style::default(), None::<&str>);
 

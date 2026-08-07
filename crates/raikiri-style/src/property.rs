@@ -2372,7 +2372,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // (g04 (b) milestone subset、`TextAlign` doc-comment 参照)。
         "text-align" => parse_text_align(input).map(PropertyValue::TextAlign),
         // CSS Box 3 §4.1 padding physical longhand (raikiri-spike-0vv.6)。
-        // grammar: <length-percentage [0,∞]> — non-negative constraint は
+        // grammar: <length-percentage `[0,∞]`> — non-negative constraint は
         // parse_padding_side が enforce (parse-time drop、spec-invalid → None)。
         // `auto` keyword は spec grammar に含まれず parse_length_value の Dimension /
         // Percentage arm fall-through で自然 reject。
@@ -3518,7 +3518,7 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         return Some(LengthOrAuto::Auto);
     }
     let length = parse_length_value(input, true)?;
-    // spec §3.1.1: <length-percentage [0,∞]>。負値 → drop (parse_padding_side
+    // spec §3.1.1: <length-percentage `[0,∞]`>。負値 → drop (parse_padding_side
     // の同 pattern)。
     (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
@@ -5175,8 +5175,8 @@ mod tests {
     #[test]
     fn font_weight_accepts_full_spec_range() {
         // CSS Fonts 4 §2.2 `<font-weight-absolute> = [ normal | bold |
-        // <number [1,1000]> ]`。旧実装は [100, 900] に絞っていたが spec は
-        // [1, 1000] (raikiri-spike-5iy)。bd Verification #1 / #2 / #3。
+        // <number [1,1000]> ]`。旧実装は `[100, 900]` に絞っていたが spec は
+        // `[1, 1000]` (raikiri-spike-5iy)。bd Verification #1 / #2 / #3。
         assert_eq!(parse("1", "font-weight"), fw(1.0));
         assert_eq!(parse("1000", "font-weight"), fw(1000.0));
         assert_eq!(parse("50", "font-weight"), fw(50.0));
@@ -5404,7 +5404,7 @@ mod tests {
     fn box_sizing_rejects_unknown_ident() {
         // spec-invalid (category (a) → drop):
         // - `padding-box` は CSS-UI 3 draft 相当だが css-sizing-3 では削除済み
-        //   (spec note "supersedes the one in [CSS-UI-3]")、
+        //   (spec note "supersedes the one in `[CSS-UI-3]`")、
         // - `margin-box` は grammar 外の任意 ident。
         assert_eq!(parse("padding-box", "box-sizing"), None);
         assert_eq!(parse("margin-box", "box-sizing"), None);
@@ -6176,7 +6176,7 @@ mod tests {
     #[test]
     fn string_set_single_entry_with_literal() {
         // Verification 1: string-set: my_str "hello"
-        // → [(SmolStr("my_str"), [Literal("hello")])]
+        // → `[(SmolStr("my_str"), [Literal("hello")])]`
         let entries = string_set_entries(r#"my_str "hello""#);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, SmolStr::new("my_str"));
@@ -6304,7 +6304,7 @@ mod tests {
     #[test]
     fn string_set_rejects_trailing_comma_single_entry() {
         // `string-set: a "x",` → trailing comma → declaration drop。
-        // pre-fix は Some([(a, [Literal("x")])]) を silently 返していた。
+        // pre-fix は Some(`[(a, [Literal("x")])]`) を silently 返していた。
         assert_eq!(parse(r#"a "x","#, "string-set"), None);
     }
 
@@ -6332,7 +6332,7 @@ mod tests {
     #[test]
     fn string_set_accepts_missing_comma_single_leftover_entry() {
         // `string-set: a "x" b "y"` は separator comma 欠如。iter 1 で
-        // (a, ["x"]) push 後、bottom expect_comma fail → break、leftover
+        // (a, `["x"]`) push 後、bottom expect_comma fail → break、leftover
         // `b "y"` は本 helper (parse_value 直呼び、caller expect_exhausted
         // 経由なし) では drop されず 1 entry の Some として観測される。
         // 実 caller (rule.rs) は expect_exhausted で declaration drop する
@@ -6406,7 +6406,7 @@ mod tests {
     //
     // grammar (spec verbatim, line 758 of TR/css-gcpm-3/, string-set/GCPM3側の
     // grammar — content property側は下記の通り別spec相反あり):
-    //   content() = content([text | before | after | first-letter])
+    //   content() = content(`[text | before | after | first-letter]`)
     // 4 keyword。keyword 省略時は `text` をフォールバック値として使う (根拠は
     // GCPM 3 側の spec "default" 宣言ではない — grammar に `?` が無く、"default
     // をどう定義するか" 自体が未解決の WG issue として残っている。bd
@@ -6429,7 +6429,7 @@ mod tests {
     fn string_set_content_text_reproduces_pre_fix_drop() {
         // bd raikiri-spike-5ri description の主要 repro case:
         // pre-fix では declaration drop = None、post-fix では
-        // (title, [Content{keyword: Text}]) を含む Some を返す。
+        // (title, `[Content{keyword: Text}]`) を含む Some を返す。
         let entries = string_set_entries("title content(text)");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, SmolStr::new("title"));
@@ -6566,7 +6566,7 @@ mod tests {
     fn string_set_content_fn_mixed_with_other_items() {
         // §1.1.1.1 の spec 例:
         //   h1 { string-set: header content(before) ':' content(text); }
-        // → (header, [Content{Before}, Literal(":"), Content{Text}]) 3 items。
+        // → (header, `[Content{Before}, Literal(":"), Content{Text}]`) 3 items。
         let entries = string_set_entries(r#"header content(before) ":" content(text)"#);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, SmolStr::new("header"));

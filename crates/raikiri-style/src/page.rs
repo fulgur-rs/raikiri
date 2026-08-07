@@ -4445,8 +4445,8 @@ mod tests {
     #[test]
     fn post_parse_page_margin_shorthand_before_longhand_lets_longhand_win() {
         // 注入後の declaration 列 (= `margin: 1px 2px 3px 4px; margin-top: 10px`):
-        //   [0] Margin(1,2,3,4)   ← 注入
-        //   [1] MarginTop(10px)
+        //   `[0]` Margin(1,2,3,4)   ← 注入
+        //   `[1]` MarginTop(10px)
         // spec §3 + §6.1 → top=10 (後方 longhand)、right/bottom/left=2/3/4。
         //
         // **展開の有無を区別する**: 展開しない実装では `PropertyKey::Margin` が
@@ -4476,8 +4476,8 @@ mod tests {
     #[test]
     fn post_parse_page_margin_shorthand_after_longhand_lets_shorthand_win() {
         // 鏡像方向 (`margin-top: 10px; margin: 1px 2px 3px 4px`):
-        //   [0] MarginTop(10px)
-        //   [1] Margin(1,2,3,4)   ← 注入
+        //   `[0]` MarginTop(10px)
+        //   `[1]` Margin(1,2,3,4)   ← 注入
         // spec §6.1 → 全 side が shorthand 由来 = 1/2/3/4。
         //
         // **展開の有無を区別する** — element 経路の同名 test
@@ -4640,8 +4640,8 @@ mod tests {
     fn post_parse_page_important_longhand_survives_later_normal_shorthand() {
         // 注入後の declaration 列
         // (= `margin-top: 10px !important; margin: 1px 2px 3px 4px`):
-        //   [0] MarginTop(10px) !important
-        //   [1] Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
+        //   `[0]` MarginTop(10px) !important
+        //   `[1]` Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
         //
         // CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
         // の cascade sort は Origin and Importance を Order of Appearance

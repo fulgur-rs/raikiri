@@ -2172,7 +2172,7 @@ mod tests {
         // raikiri-spike-jbu0 (Sprint 18 dom-4 Wave 2): bridge_padding が
         // Sides<ComputedLengthPercentage> を taffy::Rect<LengthPercentage> に
         // translate することを確認する regression pin。padding は margin と違い
-        // `auto` を持たない (<length-percentage [0,∞]>) ため bridge は **2 arm**
+        // `auto` を持たない (<length-percentage `[0,∞]`>) ため bridge は **2 arm**
         // (Px / Percent) で網羅する。
         //
         // bd raikiri-spike-zls8: Case 3 の `pt` は **bridge の分岐ではなくなった**
@@ -3960,7 +3960,7 @@ mod tests {
 
         // size.width (10.0) より padding.left+right (40.0) の方が大きい ⇒
         // content_box_width() = 10.0 - 40.0 = -30.0 < 0.0。size / padding
-        // どちらも個別には [-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE] 内
+        // どちらも個別には `[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]` 内
         // なので `sanitize_taffy_layout` の field 単位 clamp はこれを止めない
         // — bd raikiri-spike-r8ew §8.2 spec lens finding F5 の直接再現。
         doc.nodes[parent].unrounded_layout = TaffyLayout {

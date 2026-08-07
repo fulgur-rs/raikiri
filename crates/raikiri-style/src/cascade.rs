@@ -2820,7 +2820,7 @@ mod tests {
     #[test]
     fn counter_reset_wired_through_cascade_from_inline_style() {
         // <div style="counter-reset: chapter"> → ComputedValues.counter_reset
-        // に [("chapter", 0)] が届く。parser → PropertyValue → apply_value →
+        // に `[("chapter", 0)]` が届く。parser → PropertyValue → apply_value →
         // ComputedValues の end-to-end 疎通 smoke。
         // d9y.2: counter_reset は Arc<Vec<..>>、`*cv.counter_reset` で deref-compare。
         let cv = cascade_doc("", "div", Some("counter-reset: chapter"));
@@ -2835,7 +2835,7 @@ mod tests {
     #[test]
     fn content_wired_through_cascade_from_inline_style() {
         // <p style='content: "hello"'> → ComputedValues.content に
-        // [Literal("hello")] が届く。parser → PropertyValue::Content →
+        // `[Literal("hello")]` が届く。parser → PropertyValue::Content →
         // apply_value → ComputedValues の end-to-end 疎通 smoke。
         // s85 counter-* wire-through pattern を踏襲。
         // d9y.1: content は Arc<Vec<..>>、`*cv.content` で deref-compare。
@@ -2854,7 +2854,7 @@ mod tests {
     #[test]
     fn string_set_wired_through_cascade_from_inline_style() {
         // <p style='string-set: chapter_title "hello"'> → ComputedValues.string_set
-        // に [(chapter_title, [Literal("hello")])] が届く。
+        // に `[(chapter_title, [Literal("hello")])]` が届く。
         // parser → PropertyValue::StringSet → apply_value → ComputedValues の
         // end-to-end 疎通 smoke。s85 / m5.1 wire-through pattern を踏襲。
         // d9y.1: string_set は Arc<Vec<..>>、Literal は SmolStr。indexing +
@@ -2916,7 +2916,7 @@ mod tests {
     #[test]
     fn running_template_wired_through_cascade_from_inline_style() {
         // <div style="position: running(header)"> → ComputedValues.running_templates
-        // に [RunningTemplate{name:"header"}] が届く。parser → PropertyValue::Position
+        // に `[RunningTemplate{name:"header"}]` が届く。parser → PropertyValue::Position
         // → apply_value → ComputedValues の end-to-end 疎通 smoke。
         // s85 / m5.1 / m5.3 wire-through pattern を踏襲。
         use crate::computed::RunningTemplate;
@@ -3349,7 +3349,7 @@ mod tests {
     fn font_weight_table_no_change_rows_are_not_clamps() {
         // 表の両端 2 行は "no change" であって clamp ではない。算術近似
         // (`min(w + 300, 900)` / `max(w - 300, 100)`) を書くとここが壊れる。
-        // この 2 行は raikiri-spike-5iy が range を [1,1000] に広げて初めて
+        // この 2 行は raikiri-spike-5iy が range を `[1,1000]` に広げて初めて
         // author から到達可能になったため、bundle 固有の regression guard。
         assert_eq!(
             resolve_relative_weight(FontWeightValue::Bolder, 1000.0),
@@ -3564,7 +3564,7 @@ mod tests {
 
     #[test]
     fn font_weight_full_range_wired_through_cascade() {
-        // raikiri-spike-5iy: spec range [1,1000] の両端が cascade まで届く。
+        // raikiri-spike-5iy: spec range `[1,1000]` の両端が cascade まで届く。
         assert_eq!(
             cascade_doc("", "p", Some("font-weight: 1")).font_weight,
             1.0
@@ -4563,8 +4563,8 @@ mod tests {
     #[test]
     fn post_parse_margin_shorthand_before_longhand_lets_longhand_win() {
         // 注入後の declaration 列 (= `margin: 1px 2px 3px 4px; margin-top: 10px`):
-        //   [0] Margin(1,2,3,4)   ← 注入
-        //   [1] MarginTop(10px)
+        //   `[0]` Margin(1,2,3,4)   ← 注入
+        //   `[1]` MarginTop(10px)
         // spec §3 + §6.1 → top=10 (後方 longhand)、right/bottom/left=2/3/4。
         //
         // これが nqkj の報告する spec 違反方向。展開しない実装では
@@ -4591,8 +4591,8 @@ mod tests {
     #[test]
     fn post_parse_margin_shorthand_after_longhand_lets_shorthand_win() {
         // 鏡像方向 (`margin-top: 10px; margin: 1px 2px 3px 4px`):
-        //   [0] MarginTop(10px)
-        //   [1] Margin(1,2,3,4)   ← 注入
+        //   `[0]` MarginTop(10px)
+        //   `[1]` Margin(1,2,3,4)   ← 注入
         // spec §6.1 → 全 side が shorthand 由来 = 1/2/3/4。
         //
         // 本方向は展開しない実装でも偶然一致するが、fix が「shorthand を
@@ -4684,7 +4684,7 @@ mod tests {
         // to be !important is equivalent to declaring all of its sub-properties
         // to be !important.") が cascade 入口の展開でも保たれること。
         //
-        // 注入した shorthand は `!important` を継承する ([0] は `!important`
+        // 注入した shorthand は `!important` を継承する (`[0]` は `!important`
         // 付きで parse される) ので、後方の normal longhand には**負けない**。
         //
         // ⚠️ **本 test は展開の有無を区別しない** (§8.2 spec lens が hunk revert
@@ -4714,8 +4714,8 @@ mod tests {
     fn post_parse_important_longhand_survives_later_normal_shorthand() {
         // 注入後の declaration 列
         // (= `margin-top: 10px !important; margin: 1px 2px 3px 4px`):
-        //   [0] MarginTop(10px) !important
-        //   [1] Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
+        //   `[0]` MarginTop(10px) !important
+        //   `[1]` Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
         //
         // CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
         // の cascade sort は Origin and Importance を Order of Appearance

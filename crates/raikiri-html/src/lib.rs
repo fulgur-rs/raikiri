@@ -363,7 +363,7 @@ mod tests {
 
         // (d) Comment は tree 内に persist している (body の children に含まれる)。
         //     旧挙動: strip 済で detach されていたため、body の直接子は <p> のみ
-        //     だった。新挙動: body の children = [Comment, <p>] (source order)。
+        //     だった。新挙動: body の children = `[Comment, <p>]` (source order)。
         //     NB: `Dom::child_ids` と `TraversePartialTree::child_ids` の
         //     inherent-method ambiguity 回避のため UFCS で trait を明示する。
         //     raw arena children を見たいので Dom (unfiltered) を選択、次段の

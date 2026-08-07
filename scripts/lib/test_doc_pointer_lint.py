@@ -91,6 +91,46 @@ class Role1PlainBracketTests(unittest.TestCase):
         result = census_file("f.rs", text)
         self.assertEqual(len(result.plain_bracket_violations), 2)
 
+    def test_bracket_with_spaces_is_flagged(self) -> None:
+        # §8.3 Codex final review (GATE FAIL, non-trivial): an earlier
+        # version of _BARE_BRACKET_RE only matched identifier/path-shaped
+        # content and silently let this through with 0 violations —
+        # contradicting AGENTS.md's unconditional "一切書かない" for plain
+        # `//` comments. This is the exact negative-to-positive regression
+        # test for that finding.
+        text = "// see [two words] for details\n"
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.plain_bracket_violations), 1)
+        self.assertEqual(result.plain_bracket_violations[0].span, "two words")
+
+    def test_bracket_with_hyphen_is_flagged(self) -> None:
+        # Same finding, second reported shape: a hyphen also broke the old
+        # identifier-only character class.
+        text = "// see [foo-bar] for details\n"
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.plain_bracket_violations), 1)
+        self.assertEqual(result.plain_bracket_violations[0].span, "foo-bar")
+
+    def test_bracket_of_digits_only_is_flagged(self) -> None:
+        # A footnote-shaped `[1]` is deliberately NOT exempted — a
+        # content-shape exemption is exactly the class of gap the space/
+        # hyphen finding came from. The remedy is the same as any other
+        # non-link bracket use: wrap it in backticks.
+        text = "// see [1] for details\n"
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.plain_bracket_violations), 1)
+        self.assertEqual(result.plain_bracket_violations[0].span, "1")
+
+    def test_markdown_inline_link_with_url_not_flagged(self) -> None:
+        # `[text](url)` is a genuine Markdown link to an explicit URL, a
+        # different (and legitimate) construct from an intra-doc-link
+        # look-alike — excluded via a negative lookahead on `(`, added
+        # alongside the content-shape broadening since shape alone can no
+        # longer rule this out either.
+        text = "// see [the spec](https://example.com/spec) for details\n"
+        result = census_file("f.rs", text)
+        self.assertEqual(result.plain_bracket_violations, [])
+
     def test_bare_backtick_in_plain_comment_not_a_violation(self) -> None:
         # The correct/compliant form for a plain comment is a bare code
         # span, not a bracket — must NOT be flagged.
@@ -111,10 +151,127 @@ class Role1PlainBracketTests(unittest.TestCase):
         result = census_file("f.rs", text)
         self.assertEqual(result.plain_bracket_violations, [])
 
+    def test_attribute_with_args_not_a_false_positive(self) -> None:
+        # Content-shape broadening matters more here than before: the old
+        # identifier-only pattern would never have matched
+        # "derive(Debug, Clone)" (parens/comma/space) even without the `#`
+        # exclusion. The new any-content pattern would, so the `(?<!#)`
+        # lookbehind is now load-bearing for this case, not just a
+        # redundant safety net.
+        text = "// add #[derive(Debug, Clone)] here later\n"
+        result = census_file("f.rs", text)
+        self.assertEqual(result.plain_bracket_violations, [])
+
+    def test_slice_type_with_punctuation_inside_backticks_not_a_false_positive(self) -> None:
+        text = "// returns `&[the raw elements]` sorted by source order\n"
+        result = census_file("f.rs", text)
+        self.assertEqual(result.plain_bracket_violations, [])
+
     def test_doc_comment_bracket_not_counted_toward_role1(self) -> None:
         text = "/// see [`crate::foo::Bar`] for details\n"
         result = census_file("f.rs", text)
         self.assertEqual(result.plain_bracket_violations, [])
+
+
+class MultiLineBacktickSpanTests(unittest.TestCase):
+    """A backtick code span word-wrapped across consecutive `//`/`///`
+    lines must protect a bracket inside it from role 1/2, the same way a
+    single-line backtick span does. This whole class exists because an
+    earlier version of the §8.3 Codex broadening fix got this wrong: it
+    correctly widened _BARE_BRACKET_RE's content match (see
+    Role1PlainBracketTests), but analyze_line()/census_file() were still
+    line-scoped, so a bracket that's actually safely inside a still-open
+    multi-line span (real, pre-existing shape in
+    crates/raikiri-style/src/property.rs's CSS-grammar-citation comments,
+    e.g. `` `<length [0,∞]> | thin | medium | thick` `` word-wrapped
+    across two lines) got a false positive — and an early, automated pass
+    of the corresponding fix script "fixed" it by adding a second, nested,
+    syntactically-broken backtick layer on top of the (already-correct)
+    original text, rather than recognizing it needed no fix at all."""
+
+    def test_bracket_protected_by_span_closing_on_a_later_line(self) -> None:
+        # The "carry-in" direction: `` `<length [0,∞]> `` opens on line 1
+        # and the bracket appears within the still-open span on that same
+        # line; the span doesn't close until "thick`" on line 2.
+        text = (
+            "        // grammar: `<line-width>` = `<length [0,∞]> |\n"
+            "        // thin | medium | thick`。\n"
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(result.plain_bracket_violations, [])
+
+    def test_bracket_protected_across_a_closing_line(self) -> None:
+        # The "carry-out then carry-in" direction: the span opens on line
+        # 1 ("`normal |"), and BOTH brackets on line 2 are inside it,
+        # closing only at the very end of line 2.
+        text = (
+            "    // grammar `normal |\n"
+            "    // <number [0,∞]> | <length-percentage [0,∞]>` — 4 branches\n"
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(result.plain_bracket_violations, [])
+
+    def test_bracket_after_span_still_flagged(self) -> None:
+        # Once the multi-line span actually closes, a bracket *after* the
+        # close on the same line is genuinely outside it and must still be
+        # flagged — the carry-over logic must not become a blanket
+        # exemption for the rest of the line. The opening line matters
+        # here (this is the real crates/raikiri-style/src/property.rs
+        # shape): without it, the lone backtick on line 2 has no carried
+        # `in_backtick` context and would itself be (correctly, given no
+        # more information) treated as a *new* opener extending to EOL —
+        # this test's own preceding line is what establishes that it is
+        # instead the *closer* of a span opened even earlier.
+        text = (
+            "    // CSS Fonts 4 §2.2 `<font-weight-absolute> = [ normal | bold |\n"
+            "    // <number [1,1000]> ]`。旧実装は [100, 900] に絞っていたが spec は\n"
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.plain_bracket_violations), 1)
+        self.assertEqual(result.plain_bracket_violations[0].span, "100, 900")
+
+    def test_span_reset_across_a_code_line(self) -> None:
+        # A code line ends any comment run outright — an unterminated
+        # backtick on the last comment line before a code line must NOT
+        # leak "in_backtick" state into a later, unrelated comment run.
+        text = (
+            "    // opens a span here `never closes\n"
+            "    let x = 1;\n"
+            "    // [PropertyKey] must still be flagged\n"
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.plain_bracket_violations), 1)
+        self.assertEqual(result.plain_bracket_violations[0].span, "PropertyKey")
+
+    def test_span_reset_across_doc_plain_boundary(self) -> None:
+        # A `doc` -> `plain` (or vice versa) transition is never observed
+        # to happen mid-span in this codebase's authoring style; carried
+        # state must not leak across that boundary either.
+        text = (
+            "    /// opens a span here `never closes\n"
+            "    // [PropertyKey] must still be flagged\n"
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.plain_bracket_violations), 1)
+        self.assertEqual(result.plain_bracket_violations[0].span, "PropertyKey")
+
+    def test_nested_bracket_only_outer_flagged(self) -> None:
+        # A pre-existing real shape (crates/raikiri-style/src/cascade.rs):
+        # an un-backtick-quoted nested bracket structure where an earlier
+        # fix pass already wrapped just the *inner* bracket in backticks.
+        # _BARE_BRACKET_RE's content class explicitly excludes further
+        # `[`/`]`, so it cannot match the outer bracket *and* see through
+        # to the inner one in a single pass — but once the inner backtick
+        # span is stripped (Step C), the outer bracket's interior is just
+        # blanks-and-punctuation, which the outer match correctly still
+        # catches. This documents that behavior rather than asserting a
+        # single "correct" span count (the real fix, done by hand for the
+        # actual sites, was to wrap the *whole* nested expression as one
+        # backtick span instead of leaving a partial inner wrap).
+        text = "// に [(chapter_title, `[Literal(\"hello\")]`)] が届く。\n"
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.plain_bracket_violations), 1)
+        self.assertIn("chapter_title", result.plain_bracket_violations[0].span)
 
 
 class Role2DocBarePointerTests(unittest.TestCase):

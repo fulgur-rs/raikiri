@@ -374,7 +374,7 @@ mod tests {
         else {
             unreachable!()
         };
-        // Affine の translation 成分は as_coeffs() の [4, 5] (2 次元 identity +
+        // Affine の translation 成分は as_coeffs() の `[4, 5]` (2 次元 identity +
         // translation)。kurbo::Affine には translation() getter が無いため
         // as_coeffs() で decode する。
         let coeffs = glyph_cmd.transform.as_coeffs();

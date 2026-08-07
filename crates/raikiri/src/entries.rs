@@ -359,7 +359,7 @@ pub struct TransformEntry {
 impl Default for TransformEntry {
     fn default() -> Self {
         // `#[derive(Default)]` の全 0 matrix は非可逆な退化 affine になる
-        // ため、identity ([1,0,0,1,0,0]) を明示する手書き Default。
+        // ため、identity (`[1,0,0,1,0,0]`) を明示する手書き Default。
         Self {
             matrix: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
             origin: (0.0, 0.0),
