@@ -1376,7 +1376,8 @@ pub fn resolve_line_height(
 /// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の propdef table が
 /// "Computed value: absolute length, snapped as a border width; zero if the
 /// border style is `none` or `hidden`" と規定するとおり、これは used 層ではなく
-/// **computed 層**の要求である (**TR 版**; version marker は次段落参照)。
+/// **computed 層**の要求である (**TR 版**; version marker は下記の
+/// "version marker" 節参照)。
 ///
 /// **spec tension (silently 解決しない)**: 同 §3.3 の非規範 Note は "Although the
 /// initial width is medium, the initial style is none; therefore the used initial

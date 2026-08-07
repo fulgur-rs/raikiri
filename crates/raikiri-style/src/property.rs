@@ -3207,6 +3207,14 @@ fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, Pars
 /// doc と同じ理由)。該当 test は本 const を `5.0` 等に摂動すれば列挙できる
 /// (lib test が fail-fast して doctest section まで到達しないので、
 /// `cargo test -p raikiri-style` と `--doc` を別々に走らせること)。
+///
+/// **`thin` (1px) / `thick` (5px) は const 化しない** — 同じ規範文の 3 keyword
+/// の残り 2 つだが、[`parse_border_width_side`] の keyword match 内 1 箇所ずつ
+/// にしか現れず (border shorthand の省略成分デフォルトは spec 上も `medium`
+/// のみが initial value)、複数 site 間の drift 余地がない。const 化するのは
+/// 独立 literal が 2 箇所以上に分散している `medium` のみで十分
+/// (bd raikiri-spike-fy89 の scope: `medium` の重複、thin/thick への一般化は
+/// non-goal)。
 pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
 
 /// `border-{top,right,bottom,left}-width` の single-side value を parse する。
@@ -4070,7 +4078,8 @@ fn parse_content_function(
 ///
 /// `none` はここでは除外しない。spec verbatim: "Specifications using
 /// `<custom-ident>` must specify clearly what other keywords are excluded
-/// from `<custom-ident>`, if any…" とおり、より狭い grammar (`<counter-name>` 等) の追加除外は
+/// from `<custom-ident>`, if any…" と述べるとおり、より狭い grammar
+/// (`<counter-name>` 等) の追加除外は
 /// 個別の predicate (例 [`is_reserved_counter_name`]) 側の責務。
 /// [`is_reserved_custom_ident`] の docstring も参照。
 ///
