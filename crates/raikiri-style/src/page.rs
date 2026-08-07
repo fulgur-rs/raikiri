@@ -874,9 +874,10 @@ pub enum PageInheritance<'a> {
 ///
 /// The spec text at the anchor says @page cascade follows normal cascade
 /// tie-breaking. Within a single rule, later declarations of the same
-/// property win per CSS Cascading §"Order of appearance"; the `>=` in the
-/// crate-internal `page_beats` mirrors the style-rule sibling's tie-break
-/// (`cascade::beats` uses `>=` on the same triple).
+/// property win per CSS Cascading L4 §6.1
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> "Order of Appearance";
+/// the `>=` in the crate-internal `page_beats` mirrors the style-rule
+/// sibling's tie-break (`cascade::beats` uses `>=` on the same triple).
 ///
 /// # Example
 ///
@@ -1580,7 +1581,8 @@ fn match_page_entry(
 ///
 /// Sibling arm to `cascade::beats`. The `>=` is intentional and mirrors the
 /// style-rule tie-break: within a single `@page` rule, later declarations of
-/// the same property beat earlier ones (CSS Cascading §"Order of appearance");
+/// the same property beat earlier ones (CSS Cascading L4 §6.1
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> "Order of Appearance");
 /// across rules, `source_order` is monotonically increasing so `>` and `>=`
 /// coincide.
 fn page_beats(
@@ -1944,7 +1946,9 @@ mod tests {
     #[test]
     fn cascade_page_source_order_tiebreak_later_wins() {
         // Two rules of equal (rank, specificity) — later source_order wins
-        // per CSS Cascading §"Order of appearance", sibling of style-rule
+        // per CSS Cascading L4 §6.1
+        // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> "Order of
+        // Appearance", sibling of style-rule
         // `cascade::tests::source_order_tiebreak_later_wins`.
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
