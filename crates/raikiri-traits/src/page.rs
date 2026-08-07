@@ -405,8 +405,11 @@ pub enum ContentValueItem {
         name: Symbol,
     },
     /// `content(part?)` (CSS GCPM 3 §1.1.1.1
-    /// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>)。keyword 省略時は
-    /// [`ContentPart::Content`] (spec default)。
+    /// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>) (`?` は raikiri の
+    /// 受理済み記法であり spec の grammar 自体の表記ではない)。keyword 省略時は
+    /// [`ContentPart::Content`] をフォールバック値として使う (根拠は spec の
+    /// "default" 宣言ではない — 詳細は [`ContentTextKeyword`] の doc comment
+    /// 参照、bd raikiri-spike-x8i6 / raikiri-spike-83r2)。
     Content {
         /// Element の string value のどの部分を挿入するか。
         part: ContentPart,
