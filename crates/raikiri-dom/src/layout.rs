@@ -159,7 +159,7 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 /// [`ComputedValues::padding`] (`Sides<ComputedLengthPercentage>`) → [`taffy::Style::padding`]
 /// (`Rect<LengthPercentage>`) bridge。
 ///
-/// CSS Box 3 §6.1 <https://www.w3.org/TR/css-box-3/#padding-physical> の
+/// CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical> の
 /// physical padding 4 side (top / right / bottom / left) を taffy `Rect` に
 /// **field 名 mapping** で write する (positional constructor は使わない —
 /// `Sides` の field 順 `top,right,bottom,left` と `Rect` の field 順
