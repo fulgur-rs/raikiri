@@ -1153,8 +1153,9 @@ pub(crate) fn preshape_text(
         // で確認済。
         let cv = &cascade.computed[idx];
 
-        // font-family: Vec<Atom> → parley::FontFamily。Atom は SmolStr newtype
-        // なので as_str() で &str に落として parley に食わせる。
+        // font-family: Arc<Vec<Atom>> → parley::FontFamily。Atom は SmolStr
+        // newtype なので as_str() で &str に落として parley に食わせる
+        // (`cv.font_family.iter()` は Arc の Deref 経由でそのまま動く)。
         //
         // API tuning: brief pseudo-code は `parley::FontStack` を想定していたが
         // parley 0.10 実 API には FontStack 型が存在せず、代わりに
