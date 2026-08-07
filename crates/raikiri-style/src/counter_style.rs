@@ -214,6 +214,7 @@ fn system_uses_negative_sign(system: &CounterStyleSystem) -> bool {
 /// value grammar `<symbol> <symbol>?`, initial `"-"` / no suffix). "The first
 /// `<symbol>` … is prepended to the representation when the counter value is
 /// negative. The second `<symbol>`, if specified, is appended."
+#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NegativeDescriptor {
     pub prefix: CounterSymbol,
@@ -243,6 +244,7 @@ fn parse_negative(input: &mut Parser<'_, '_>) -> Option<NegativeDescriptor> {
 /// <https://www.w3.org/TR/css-counter-styles-3/#counter-style-pad>, value
 /// grammar `<integer [0,∞]> && <symbol>` — `&&` means both components are
 /// required, in **either** order — initial `0 ""`).
+#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PadDescriptor {
     pub min_length: u32,
@@ -385,6 +387,7 @@ fn parse_fallback(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
 /// <https://www.w3.org/TR/css-counter-styles-3/#counter-style-range>: "If
 /// `infinite` is used as the first value, it represents negative infinity;
 /// if used as the second value, it represents positive infinity."
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RangeLimit {
     Infinite,
@@ -395,6 +398,7 @@ pub enum RangeLimit {
 /// comma-separated list — CSS Counter Styles L3 §3.5 (anchor above): "the
 /// first value is the lower bound and the second value is the upper bound.
 /// This range is inclusive — it contains both bounds."
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RangeEntry {
     pub lower: RangeLimit,
@@ -417,6 +421,7 @@ impl RangeEntry {
 
 /// `range` descriptor value (CSS Counter Styles L3 §3.5, anchor above; value
 /// grammar `[[<integer> | infinite]{2}]# | auto`, initial `auto`).
+#[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum CounterRange {
     #[default]
