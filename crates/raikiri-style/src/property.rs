@@ -8595,6 +8595,11 @@ mod tests {
         );
 
         let via_shorthand_omission = parse("solid", "border");
+        // cov:ignore: this let-else panic branch is unreached as long as the
+        // test passes — `parse("solid", "border")` always matches
+        // `Some(PropertyValue::Border(_))`, so llvm-cov marks the panic-message
+        // literal "uncovered" the same way it does for any other panic-only
+        // branch (same false-positive class as r7r1).
         let Some(PropertyValue::Border(sides)) = via_shorthand_omission else {
             panic!("expected `border: solid` to parse to a Border shorthand value");
         };
