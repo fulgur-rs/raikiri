@@ -20,7 +20,8 @@ pub use target::{
 
 use crate::dom::{NodeId, Symbol};
 use raikiri_style::property::{
-    ContentComponent, ContentPart, ContentTextKeyword, CounterStyle, StringFetchMode,
+    ContentComponent, ContentPart, ContentTextKeyword, CounterStyle, LeaderType, QuoteKeyword,
+    StringFetchMode,
 };
 #[cfg(test)]
 use smol_str::SmolStr;
@@ -354,7 +355,15 @@ pub enum GcpmDirective {
 /// producer が直接 construct する。6z0 land 後に bridge arm を追加。
 ///
 /// (raikiri-spike-96u.4 populate; wall/traits — M1.1〜M5 の uninhabited placeholder
-/// を design doc §7.1 line 1926-1937 の canonical 10 variant に置き換え。)
+/// を design doc §7.1 line 1926-1937 の canonical 10 variant に置き換え。
+///
+/// [`Image`](Self::Image) / [`Contents`](Self::Contents) / [`Quote`](Self::Quote) /
+/// [`Leader`](Self::Leader) の 4 variant は design doc §7.1 の canonical 10 には
+/// **含まれない** — raikiri-style 側で `ContentComponent` に同 4 variant が
+/// 追加されたこと (bd raikiri-spike-1us、CSS Content 3 §2.2/§2.3/§2.4.2/§2.5.1)
+/// を受けた 1:1 mirror 追加 (bd raikiri-spike-5hp8.1、PMO 承認: 2026-08-07 コメント —
+/// [`QuoteKeyword`] / [`LeaderType`] は raikiri-style の型を直接 reuse、
+/// sibling [`Counter`](Self::Counter) の `style: CounterStyle` 直接 reuse 慣行と同じ)。)
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContentValueItem {
@@ -440,6 +449,39 @@ pub enum ContentValueItem {
         /// どの部分を挿入するか (spec default `content`)。
         part: ContentPart,
     },
+    /// `<image>` (`url()` alternative) — CSS Content 3 §2.2
+    /// <https://www.w3.org/TR/css-content-3/#content-uri>。
+    /// [`ContentComponent::Image`] の 1:1 mirror (bd raikiri-spike-5hp8.1)。
+    ///
+    /// **`<content-replacement>` 未実装 (bd raikiri-spike-mn99)**:
+    /// [`raikiri_style::property::ContentComponent::Image`] の docstring と同じ
+    /// 注意点がここにも及ぶ — 単一 `Image` item の `content-list` を
+    /// `<content-replacement>` (pseudo-element 抑制 + 全要素置換) として扱う
+    /// semantics は raikiri-dom Phase B / paint-time 責務で未実装。shape
+    /// (`Vec<ContentValueItem>` の単一 `Image` 要素) 自体はこの区別を
+    /// downstream が再構成するのに十分。
+    Image {
+        /// Image URL (bridge 側で [`Url::parse`] 済、sibling
+        /// [`TargetCounter`](Self::TargetCounter) と同じ convention)。
+        url: Url,
+    },
+    /// `contents` keyword — CSS Content 3 §2.3
+    /// <https://www.w3.org/TR/css-content-3/#element-content>。
+    /// [`ContentComponent::Contents`] の 1:1 mirror (bd raikiri-spike-5hp8.1)。
+    Contents,
+    /// `<quote>` (`open-quote` / `close-quote` / `no-open-quote` /
+    /// `no-close-quote`) — CSS Content 3 §2.4.2
+    /// <https://www.w3.org/TR/css-content-3/#quote-values>。
+    /// [`ContentComponent::Quote`] の 1:1 mirror (bd raikiri-spike-5hp8.1) —
+    /// payload は [`raikiri_style::property::QuoteKeyword`] を直接 reuse
+    /// (traits-side 複製なし、PMO 承認: 2026-08-07 コメント)。
+    Quote(QuoteKeyword),
+    /// `leader(<leader-type>)` — CSS Content 3 §2.5.1
+    /// <https://www.w3.org/TR/css-content-3/#leader-function>。
+    /// [`ContentComponent::Leader`] の 1:1 mirror (bd raikiri-spike-5hp8.1) —
+    /// payload は [`raikiri_style::property::LeaderType`] を直接 reuse
+    /// (traits-side 複製なし、PMO 承認: 2026-08-07 コメント)。
+    Leader(LeaderType),
 }
 
 /// [`TryFrom<ContentComponent> for ContentValueItem`] の failure taxonomy。
@@ -521,7 +563,7 @@ impl TryFrom<ContentComponent> for ContentValueItem {
     /// [`raikiri_style::property::ContentComponent`] → [`ContentValueItem`]
     /// canonical taxonomy 変換 (raikiri-spike-376 amended)。
     ///
-    /// 変換対象 9 variant (Element は raikiri-style 側未実装、bd raikiri-spike-6z0
+    /// 変換対象 13 variant (Element は raikiri-style 側未実装、bd raikiri-spike-6z0
     /// で raikiri-style 側に生えたら arm 追加):
     ///
     /// - [`ContentComponent::Literal`] → [`ContentValueItem::Literal`] (`String` に変換)
@@ -537,6 +579,15 @@ impl TryFrom<ContentComponent> for ContentValueItem {
     /// - [`ContentComponent::TargetText`] → [`ContentValueItem::TargetText`]
     /// - [`ContentComponent::Content`] → [`ContentValueItem::Content`]
     ///   ([`ContentTextKeyword`] → [`ContentPart`] mapping)
+    /// - [`ContentComponent::Image`] → [`ContentValueItem::Image`]
+    ///   (URL は [`Url::parse`]、失敗時 [`ContentValueConvertError::InvalidUrl`]、
+    ///   bd raikiri-spike-5hp8.1)
+    /// - [`ContentComponent::Contents`] → [`ContentValueItem::Contents`]
+    ///   (unit variant 1:1、bd raikiri-spike-5hp8.1)
+    /// - [`ContentComponent::Quote`] → [`ContentValueItem::Quote`]
+    ///   (payload [`QuoteKeyword`] straight passthrough、bd raikiri-spike-5hp8.1)
+    /// - [`ContentComponent::Leader`] → [`ContentValueItem::Leader`]
+    ///   (payload [`LeaderType`] straight passthrough、bd raikiri-spike-5hp8.1)
     fn try_from(cc: ContentComponent) -> Result<Self, Self::Error> {
         Ok(match cc {
             ContentComponent::Literal(s) => Self::Literal(s.into()),
@@ -583,6 +634,12 @@ impl TryFrom<ContentComponent> for ContentValueItem {
             ContentComponent::Content { keyword } => Self::Content {
                 part: content_text_keyword_to_content_part(keyword)?,
             },
+            ContentComponent::Image { url } => Self::Image {
+                url: Url::parse(&url)?,
+            },
+            ContentComponent::Contents => Self::Contents,
+            ContentComponent::Quote(kw) => Self::Quote(kw),
+            ContentComponent::Leader(lt) => Self::Leader(lt),
             // cov:ignore: cross-crate `#[non_exhaustive]` catch-all — stable
             // Rust requires the `_` arm for exhaustive matching on
             // ContentComponent defined in raikiri-style; unreachable until
@@ -771,9 +828,12 @@ mod gcpm_directive_populate_tests {
 
 #[cfg(test)]
 mod content_value_item_populate_tests {
-    //! ContentValueItem canonical 10 variant construction pins (raikiri-spike-96u.4)。
+    //! ContentValueItem canonical 10 variant construction pins (raikiri-spike-96u.4)
+    //! と、Image/Contents/Quote/Leader 4 variant construction pins
+    //! (raikiri-spike-5hp8.1、design doc §7.1 canonical 10 の外、raikiri-style
+    //! `ContentComponent` 1:1 mirror)。
     //!
-    //! design doc §7.1 line 1926-1937 verbatim shape。
+    //! design doc §7.1 line 1926-1937 verbatim shape (canonical 10 分)。
 
     use super::*;
 
@@ -943,15 +1003,73 @@ mod content_value_item_populate_tests {
             other => panic!("expected TargetText, got {other:?}"),
         }
     }
+
+    #[test]
+    fn image_url_payload() {
+        let url = Url::parse("https://example.com/logo.png").expect("valid URL");
+        let c = ContentValueItem::Image { url: url.clone() };
+        match c {
+            ContentValueItem::Image { url: u } => {
+                assert_eq!(u, url);
+            }
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            other => panic!("expected Image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn contents_unit_variant_construct() {
+        let c = ContentValueItem::Contents;
+        assert!(matches!(c, ContentValueItem::Contents));
+    }
+
+    #[test]
+    fn quote_payload_covers_all_keywords() {
+        for kw in [
+            QuoteKeyword::OpenQuote,
+            QuoteKeyword::CloseQuote,
+            QuoteKeyword::NoOpenQuote,
+            QuoteKeyword::NoCloseQuote,
+        ] {
+            let c = ContentValueItem::Quote(kw);
+            match c {
+                ContentValueItem::Quote(payload) => assert_eq!(payload, kw),
+                // cov:ignore: panic-message literal only executed on
+                // assertion failure, which doesn't happen while this test
+                // passes.
+                other => panic!("expected Quote, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn leader_payload_covers_all_types() {
+        for lt in [
+            LeaderType::Dotted,
+            LeaderType::Solid,
+            LeaderType::Space,
+            LeaderType::String(SmolStr::new("~")),
+        ] {
+            let c = ContentValueItem::Leader(lt.clone());
+            match c {
+                ContentValueItem::Leader(payload) => assert_eq!(payload, lt),
+                // cov:ignore: panic-message literal only executed on
+                // assertion failure, which doesn't happen while this test
+                // passes.
+                other => panic!("expected Leader, got {other:?}"),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod content_component_bridge_tests {
     //! [`TryFrom<ContentComponent> for ContentValueItem`] roundtrip pins
     //! (raikiri-spike-96u.4、canonical taxonomy conversion per raikiri-spike-376
-    //! amended)。
+    //! amended; Image/Contents/Quote/Leader arms added raikiri-spike-5hp8.1)。
     //!
-    //! Coverage: 9 of 10 [`ContentValueItem`] variants — [`Element`] は
+    //! Coverage: 13 of 14 [`ContentValueItem`] variants — [`Element`] は
     //! [`ContentComponent::Element`] 未実装 (bd raikiri-spike-6z0) のため
     //! bridge 経路では現在到達不能。variant 追加時に arm を extend する。
 
@@ -1124,6 +1242,70 @@ mod content_component_bridge_tests {
                 "keyword {kw:?} should map to part {expected:?}"
             );
         }
+    }
+
+    #[test]
+    fn image_bridge_parses_url() {
+        let cc = ContentComponent::Image {
+            url: String::from("https://example.com/logo.png"),
+        };
+        let cvi = ContentValueItem::try_from(cc).expect("valid URL");
+        let expected_url = Url::parse("https://example.com/logo.png").expect("URL literal parses");
+        assert_eq!(cvi, ContentValueItem::Image { url: expected_url });
+    }
+
+    #[test]
+    fn contents_bridge_maps_to_unit_variant() {
+        let cvi = ContentValueItem::try_from(ContentComponent::Contents)
+            .expect("infallible for Contents");
+        assert_eq!(cvi, ContentValueItem::Contents);
+    }
+
+    #[test]
+    fn quote_bridge_passes_keyword_through() {
+        for kw in [
+            QuoteKeyword::OpenQuote,
+            QuoteKeyword::CloseQuote,
+            QuoteKeyword::NoOpenQuote,
+            QuoteKeyword::NoCloseQuote,
+        ] {
+            let cvi = ContentValueItem::try_from(ContentComponent::Quote(kw))
+                .expect("infallible for Quote");
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(cvi, ContentValueItem::Quote(kw), "keyword {kw:?} roundtrip");
+        }
+    }
+
+    #[test]
+    fn leader_bridge_passes_type_through() {
+        for lt in [
+            LeaderType::Dotted,
+            LeaderType::Solid,
+            LeaderType::Space,
+            LeaderType::String(SmolStr::new("~")),
+        ] {
+            let cvi = ContentValueItem::try_from(ContentComponent::Leader(lt.clone()))
+                .expect("infallible for Leader");
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                cvi,
+                ContentValueItem::Leader(lt.clone()),
+                "leader type {lt:?} roundtrip"
+            );
+        }
+    }
+
+    #[test]
+    fn image_bridge_returns_invalid_url_error() {
+        // Invalid URL (relative URL に base 無し) は InvalidUrl error
+        // (sibling target_counter_bridge_returns_invalid_url_error と同じ pattern)。
+        let cc = ContentComponent::Image {
+            url: String::from("not a url"),
+        };
+        let err = ContentValueItem::try_from(cc).expect_err("relative URL fails without base");
+        assert!(matches!(err, ContentValueConvertError::InvalidUrl(_)));
     }
 
     #[test]
