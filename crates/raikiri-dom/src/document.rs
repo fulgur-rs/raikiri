@@ -1222,7 +1222,7 @@ mod attach_child_fragment_tests {
 
     #[test]
     fn attach_child_with_empty_fragment_is_noop_on_parent_children() {
-        // Edge case: empty fragment attach は parent の children を変えない。
+        // (d): empty fragment attach は parent の children を変えない。
         // security lens (raw-arena-index footgun): empty fragment で
         // drain().collect() が空 Vec を返し extend が何もしないことを pin。
         let mut doc = Document::new();
@@ -1245,7 +1245,7 @@ mod attach_child_fragment_tests {
 
     #[test]
     fn attach_child_non_fragment_keeps_existing_push_semantics() {
-        // Regression pin: fragment 以外 (Element / Text / Comment / PI /
+        // (e): fragment 以外 (Element / Text / Comment / PI /
         // Document) は旧 挙動 (単純 push) 継続、fragment 分岐が collateral damage
         // を出さないことを pin。
         let mut doc = Document::new();
@@ -1365,7 +1365,7 @@ mod insert_child_before_fragment_tests {
 
     #[test]
     fn insert_child_before_with_empty_fragment_is_noop_on_parent_children() {
-        // Edge case: empty fragment splice は parent の children を変えない。
+        // (d): empty fragment splice は parent の children を変えない。
         // splice(pos..pos, empty_vec) が何もしないことを pin (attach_child edge
         // pin の positional 対応)。
         let mut doc = Document::new();
@@ -1389,7 +1389,7 @@ mod insert_child_before_fragment_tests {
 
     #[test]
     fn insert_child_before_non_fragment_keeps_existing_insert_semantics() {
-        // Regression pin (acceptance 4): fragment 以外 (Element / Text / Comment
+        // (e) (acceptance 4): fragment 以外 (Element / Text / Comment
         // / PI / Document) は旧挙動 (単純 insert at `before` position) 継続、
         // fragment 分岐が collateral damage を出さないことを pin。
         let mut doc = Document::new();
