@@ -396,7 +396,7 @@ pub enum ContentValueItem {
         name: Symbol,
     },
     /// `content(part?)` (CSS GCPM 3 §1.1.1.1
-    /// <https://www.w3.org/TR/css-gcpm-3/#content-list>)。keyword 省略時は
+    /// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>)。keyword 省略時は
     /// [`ContentPart::Content`] (spec default)。
     Content {
         /// Element の string value のどの部分を挿入するか。
