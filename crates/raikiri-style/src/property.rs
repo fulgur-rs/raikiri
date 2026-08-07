@@ -727,8 +727,8 @@ pub enum BorderColor {
 /// `Sides<LengthOrAuto>` / padding `Sides<Length>` と同じ再利用先)。cascade は
 /// per-side longhand を direct-write するため apply 順に依存せず、shorthand
 /// `border: ...` は parse-time で 12 longhand (4 side × 3 sub-property) に
-/// 展開される (spec CSS Cascading L5 §"Shorthand Properties"
-/// <https://www.w3.org/TR/css-cascade-5/#shorthand> 準拠、raikiri-spike-0vv.5
+/// 展開される (spec CSS Cascading L4 §3 "Shorthand Properties"
+/// <https://www.w3.org/TR/css-cascade-4/#shorthand> 準拠、raikiri-spike-0vv.5
 /// margin precedent の踏襲)。
 ///
 /// (raikiri-spike-0vv.12)
@@ -1898,8 +1898,8 @@ pub enum PropertyValue {
     /// ([`mod@crate::cascade`] の `collect_cascaded`) の両方で 4 longhand variant
     /// ([`PaddingTop`](Self::PaddingTop) / [`PaddingRight`](Self::PaddingRight) /
     /// [`PaddingBottom`](Self::PaddingBottom) / [`PaddingLeft`](Self::PaddingLeft))
-    /// に展開するため (1/2/3/4 expansion + CSS Cascading L5
-    /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-5/#shorthand>
+    /// に展開するため (1/2/3/4 expansion + CSS Cascading L4 §3
+    /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
     /// verbatim "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
     /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
@@ -2008,8 +2008,8 @@ pub enum PropertyValue {
     /// (`parse_declaration_block`) と element cascade 入口
     /// ([`mod@crate::cascade`] の `collect_cascaded`) の両方で 12 longhand variant
     /// (4 side × 3 sub-property)
-    /// に展開するため (spec CSS Cascading L5 §"Shorthand Properties"
-    /// <https://www.w3.org/TR/css-cascade-5/#shorthand> verbatim "A shorthand
+    /// に展開するため (spec CSS Cascading L4 §3 "Shorthand Properties"
+    /// <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim "A shorthand
     /// property sets all of its longhand sub-properties, exactly as if expanded
     /// in place." 準拠、cascade の per-side / per-sub-property 勝ち抜けが自然に
     /// 成立する — margin / padding shorthand precedent 踏襲)。expansion 経路の
