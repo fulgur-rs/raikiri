@@ -3181,6 +3181,34 @@ fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, Pars
     parse_padding_side(input).ok_or_else(|| input.new_custom_error(()))
 }
 
+/// `border-width` の `medium` keyword (= spec 上の initial value) に対応する
+/// px 値。
+///
+/// CSS Backgrounds 3 §3.3 "Line Thickness: the border-width properties"
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) 本文 verbatim:
+/// "The thin, medium, and thick keywords are equivalent to 1px, 3px, and 5px,
+/// respectively." — `font-size` の `medium` (UA 裁量、
+/// [`crate::computed::INITIAL_FONT_SIZE_PX`] 参照) とは異なり、こちらは
+/// **spec が規範的に定める厳密値**であり、raikiri の選択ではない。
+///
+/// **非 test code で `3.0` (border-width `medium`) を書く単一 source**
+/// (bd raikiri-spike-fy89、[`INITIAL_FONT_SIZE_PX`](crate::computed::INITIAL_FONT_SIZE_PX)
+/// と同じ pattern) — [`parse_border_width_side`] の `medium` keyword 分岐と、
+/// [`parse_border_shorthand`] の width 省略成分デフォルトが参照する。
+/// [`crate::specified::INITIAL_BORDER`] の `width` field も本 const を参照する
+/// (property → specified の既存依存方向 — `specified` は既に
+/// `use crate::property::{..}` で本 module の型を import している。逆方向の
+/// edge を作らないこと、raikiri-spike-jaww §8.2 iter 1 の教訓)。
+///
+/// 一方「initial の border-width が **3px そのものである**」ことの pin は
+/// test 側が literal で持つ。**これらを「一貫性のため」本 const への参照に
+/// 書き換えてはならない** — 全体が自己参照になり、const の誤編集を何も
+/// 検出できなくなる ([`INITIAL_FONT_SIZE_PX`](crate::computed::INITIAL_FONT_SIZE_PX)
+/// doc と同じ理由)。該当 test は本 const を `5.0` 等に摂動すれば列挙できる
+/// (lib test が fail-fast して doctest section まで到達しないので、
+/// `cargo test -p raikiri-style` と `--doc` を別々に走らせること)。
+pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
+
 /// `border-{top,right,bottom,left}-width` の single-side value を parse する。
 ///
 /// Grammar: `<line-width>` = `<length [0,∞]> | thin | medium | thick`
@@ -3225,7 +3253,7 @@ fn parse_border_width_side(input: &mut Parser<'_, '_>) -> Option<Length> {
         let ident = i.expect_ident()?.clone();
         match ident.to_ascii_lowercase().as_str() {
             "thin" => Ok(Length::Px(1.0)),
-            "medium" => Ok(Length::Px(3.0)),
+            "medium" => Ok(Length::Px(BORDER_WIDTH_MEDIUM_PX)),
             "thick" => Ok(Length::Px(5.0)),
             _ => Err(i.new_custom_error(())),
         }
@@ -3405,7 +3433,7 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
 
     // 省略成分は spec §3.4 の initial value で埋める。
     let border = Border {
-        width: width.unwrap_or(Length::Px(3.0)), // medium
+        width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)), // medium
         style: style.unwrap_or(BorderStyle::None),
         // §3.1 initial "currentcolor" — used-value resolution は paint scope
         // 責務 (bd raikiri-spike-q7qf、raikiri-spike-0vv.17)。
@@ -8528,6 +8556,44 @@ mod tests {
         assert_eq!(
             parse("solid", "border"),
             Some(PropertyValue::Border(Sides::all(with_only_style)))
+        );
+    }
+
+    #[test]
+    fn border_width_medium_is_consistent_across_its_independent_call_sites() {
+        // bd raikiri-spike-fy89: before this fix, `medium` = 3px was written
+        // as 3 independent `Length::Px(3.0)` literals — the `medium` keyword
+        // branch in `parse_border_width_side`, the border shorthand's
+        // omitted-width default in `parse_border_shorthand`, and
+        // `crate::specified::INITIAL_BORDER`'s `width` field — with no test
+        // tying them together, so they could silently drift apart. All 3 now
+        // derive from `BORDER_WIDTH_MEDIUM_PX`; this test exercises all 3
+        // through real behavior (not literal-vs-literal) and pins that they
+        // still agree with each other and with the const, so a future edit
+        // that touches only one of them fails loudly here instead of
+        // drifting silently. The sibling tests
+        // `border_top_width_parse_medium_keyword` and
+        // `border_shorthand_omitted_components_use_initial` independently
+        // pin the *absolute* value (`3.0`) as a literal — do not fold those
+        // into a reference to the const, or nothing catches an accidental
+        // edit to the const itself (see the const's doc).
+        let via_keyword = parse("medium", "border-top-width");
+        assert_eq!(
+            via_keyword,
+            Some(PropertyValue::BorderTopWidth(Length::Px(
+                BORDER_WIDTH_MEDIUM_PX
+            )))
+        );
+
+        let via_shorthand_omission = parse("solid", "border");
+        let Some(PropertyValue::Border(sides)) = via_shorthand_omission else {
+            panic!("expected `border: solid` to parse to a Border shorthand value");
+        };
+        assert_eq!(sides.top.width, Length::Px(BORDER_WIDTH_MEDIUM_PX));
+
+        assert_eq!(
+            crate::specified::INITIAL_BORDER.width,
+            Length::Px(BORDER_WIDTH_MEDIUM_PX)
         );
     }
 

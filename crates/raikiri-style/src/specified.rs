@@ -32,9 +32,9 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
-    Border, BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction,
-    DisplayValue, Length, LengthOrAuto, LineHeight, Sides, TextAlign, empty_content_list,
-    empty_counter_entries, empty_string_set_entries, initial_font_family,
+    BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
+    CssColor, Direction, DisplayValue, Length, LengthOrAuto, LineHeight, Sides, TextAlign,
+    empty_content_list, empty_counter_entries, empty_string_set_entries, initial_font_family,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
@@ -633,9 +633,11 @@ impl SpecifiedValues {
 /// 未宣言 property の computed value は initial 値であり、`border-*-style` は
 /// non-inherited なので継承値ではなくここが唯一の source になる。
 /// **「initial の border-style は `none`」を page.rs 側で literal 再掲しない**
-/// ための共有である。
+/// ための共有である。width の `3.0` は独立 literal ではなく
+/// [`crate::property::BORDER_WIDTH_MEDIUM_PX`] を参照する — 単一 source の
+/// 詳細は同 const の doc 参照 (bd raikiri-spike-fy89)。
 pub(crate) const INITIAL_BORDER: Border = Border {
-    width: Length::Px(3.0),
+    width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
     style: BorderStyle::None,
     color: BorderColor::CurrentColor,
 };
