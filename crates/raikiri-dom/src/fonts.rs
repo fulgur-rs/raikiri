@@ -183,8 +183,9 @@ enum FontReadReject {
     /// Unlike [`FontReadReject::PathEscape`] (pre-open, path-based, and
     /// itself TOCTOU-vulnerable to a second swap before `safe_open` runs),
     /// this variant is derived from the fd `safe_open` actually returned —
-    /// on Linux via `/proc/self/fd/<fd>` — so firing here means the
-    /// intermediate-directory swap happened inside the pre-open
+    /// on Linux via `/proc/self/fd/<fd>`, on Apple platforms via
+    /// `fcntl(fd, F_GETPATH, ..)` (bd raikiri-spike-0nww) — so firing here
+    /// means the intermediate-directory swap happened inside the pre-open
     /// canonicalize→safe_open re-resolution window itself (the exact gap
     /// fe1/61l Codex §8.3 flagged as surviving zr8+f4j). Split by
     /// pre-open-vs-post-open callsite for the same reason
@@ -317,18 +318,32 @@ fn check_open_handle_regular(file: &std::fs::File) -> Result<(), FontReadReject>
 ///
 /// # Portability
 ///
-/// Implemented for `target_os = "linux"` only, using `std::fs::read_link`
-/// (pure Rust, no `unsafe`, no new dependency — `libc` is already a crate
-/// dependency but this path deliberately avoids adding new raw FFI calls
-/// per autonomy.md 原則 5). macOS/BSD have an analogous race-free
-/// primitive (`fcntl(fd, F_GETPATH, ..)`), but it requires a raw libc
-/// syscall wrapper this task's Pure-Rust-first scope defers; the residual
-/// gap on non-Linux unix is a no-op fallback (below) that leaves the
-/// pre-open canonicalize check as the only containment gate there — no
-/// worse than before this change. Follow-up tracked in bd
-/// raikiri-spike-7cz5 (mirrors the shape of raikiri-spike-akk, which
-/// tracks the *separate* Windows `O_NOFOLLOW`-at-open gap — not this
-/// containment gap).
+/// Two platform families have an active fd-to-path primitive; a third
+/// (everything else, including non-Apple BSDs and Windows) has none wired
+/// up and falls back to a no-op.
+///
+/// - **Linux** (this impl): `std::fs::read_link` on `/proc/self/fd/<fd>`
+///   (pure Rust, no `unsafe`, no new dependency — `libc` is already a
+///   crate dependency but this path deliberately avoids adding new raw
+///   FFI calls per autonomy.md 原則 5).
+/// - **Apple platforms** (macOS/iOS/tvOS/watchOS/visionOS, see the
+///   `#[cfg(any(target_os = "macos", ...))]` impl below): `fcntl(fd,
+///   F_GETPATH, ..)` via [`rustix::fs::getpath`], a safe wrapper — added
+///   as a direct dependency in bd raikiri-spike-0nww per PMO decision
+///   (2026-08-07 17:37): Pure Rust, already transitively vetted in this
+///   dependency tree (`Cargo.lock` carried rustix v1.1.4 via `tempfile`
+///   before this change), keeps raikiri-dom's own `unsafe` surface at
+///   zero for this fix. `F_GETPATH` is a Darwin/XNU-specific `fcntl`
+///   command — it is not a generic BSD primitive; FreeBSD/OpenBSD/NetBSD/
+///   DragonFly have no equivalent, and `rustix::fs::getpath` itself is
+///   `#[cfg(apple)]`-gated internally (see rustix's own `build.rs`) to
+///   exactly this platform set, so this fix covers Apple platforms only.
+/// - **Everything else** (non-Apple BSDs, Windows, ...): no-op fallback
+///   (below) that leaves the pre-open canonicalize check as the only
+///   containment gate there — no worse than before bd raikiri-spike-1ef.
+///   Non-Apple BSDs remain an untracked residual as of this change.
+///   Windows' *separate* `O_NOFOLLOW`-at-open gap is tracked in bd
+///   raikiri-spike-akk.
 ///
 /// bd raikiri-spike-1ef, closes 61l Codex §8.3 residual on zr8/f4j.
 #[cfg(target_os = "linux")]
@@ -348,14 +363,93 @@ fn check_open_handle_containment(
     Ok(())
 }
 
-/// Non-Linux fallback: no portable Pure-Rust fd-to-path primitive is
-/// wired up yet (see the Portability section on the `target_os = "linux"`
-/// impl; follow-up tracked in bd raikiri-spike-7cz5 for macOS/BSD). No-op
-/// so behavior on these platforms is unchanged by this task — the
-/// pre-open `canonicalize` + `starts_with` gate in `read_bounded_font_file`
-/// remains the only containment check, exactly as it was before bd
-/// raikiri-spike-1ef.
-#[cfg(not(target_os = "linux"))]
+/// Apple-platform implementation: derives the post-open containment path
+/// from the same fd `safe_open` returned, via `fcntl(fd, F_GETPATH, ..)`
+/// through [`rustix::fs::getpath`] — the Darwin/XNU analogue of the Linux
+/// arm's `/proc/self/fd/<fd>` readlink above. Same race-freedom argument
+/// applies: `F_GETPATH` asks the kernel for the path bound to *this*
+/// vnode via *this* descriptor, not a fresh pathname lookup of `path`, so
+/// there is no second attacker-steerable resolution to race against.
+/// (Caveat mirroring the Linux arm's: the kernel reconstructs the
+/// *reported path string* from the vnode's cached name cache entry, which
+/// can still change if an ancestor directory is renamed, or go stale
+/// after the last hard link to the file is unlinked; what cannot happen
+/// is a second, attacker-steerable *pathname lookup* of `path` — the
+/// class of swap this task closes.)
+///
+/// A `getpath` failure is mapped through `From<rustix::io::Errno> for
+/// std::io::Error` into `FontReadReject::Io`, taking the same fail-closed
+/// hard-abort path as the Linux arm's `read_link` failure (see the
+/// "deliberate fail-closed (autonomy.md 原則3)" paragraph above): a
+/// filesystem that cannot support the authoritative containment check is
+/// a hard error, not a silent fallback to the weaker pre-open-only
+/// guarantee. Note the failure *shape* differs from Linux: a live fd's
+/// `/proc/self/fd/<fd>` entry effectively cannot fail to `readlink`, while
+/// `F_GETPATH` reconstructs its answer from the vnode's name cache and has
+/// a genuine (if rare) failure path even for a live, still-open
+/// descriptor — the fail-closed mapping above treats that the same as any
+/// other containment-check failure.
+///
+/// # Untested in CI
+///
+/// No CI target for any Apple platform exists in this repo as of
+/// 2026-08-08. The unit tests mirroring
+/// `check_open_handle_containment_accepts_file_within_root` /
+/// `_rejects_file_outside_root` are compiled and pinned under this same
+/// `cfg` below but have never executed against a real toolchain. Accepted
+/// per PMO decision on bd raikiri-spike-0nww (2026-08-07 17:37): document
+/// untested-status rather than block on standing up Apple CI. If a future
+/// Apple CI run fails these tests, the first suspect should be
+/// `F_GETPATH`'s path *form* rather than the containment logic — Darwin
+/// resolves several common temp-dir prefixes to a different canonical
+/// form than the path used to reach them (`/tmp` → `/private/tmp`,
+/// `/var` → `/private/var`), and `tempfile::tempdir()` on macOS lands
+/// under `/var/folders/...`, i.e. exactly such a prefix. This function
+/// itself does not care (`canonical_root` is derived the same way, from
+/// `std::fs::canonicalize` on the same temp dir, so both sides of the
+/// `starts_with` comparison would resolve consistently), but a mismatch
+/// here is the first thing to check before suspecting the containment
+/// check proper.
+///
+/// bd raikiri-spike-0nww, follow-up to raikiri-spike-1ef / raikiri-spike-7cz5.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos",
+    target_os = "visionos"
+))]
+fn check_open_handle_containment(
+    file: &std::fs::File,
+    canonical_root: &Path,
+) -> Result<(), FontReadReject> {
+    use std::os::unix::ffi::OsStringExt;
+    let path_cstr = rustix::fs::getpath(file)
+        .map_err(|errno| FontReadReject::Io(std::io::Error::from(errno)))?;
+    let canonical = PathBuf::from(std::ffi::OsString::from_vec(path_cstr.into_bytes()));
+    if !canonical.starts_with(canonical_root) {
+        return Err(FontReadReject::PathEscapePostOpen {
+            canonical,
+            root: canonical_root.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
+/// Fallback for every other platform (non-Apple BSDs, Windows, ...): no
+/// portable primitive is wired up (see the Portability section on the
+/// `target_os = "linux"` impl above). No-op so behavior on these
+/// platforms is unchanged by this task — the pre-open `canonicalize` +
+/// `starts_with` gate in `read_bounded_font_file` remains the only
+/// containment check, exactly as it was before bd raikiri-spike-1ef.
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos",
+    target_os = "visionos"
+)))]
 fn check_open_handle_containment(
     _file: &std::fs::File,
     _canonical_root: &Path,
@@ -370,10 +464,11 @@ fn check_open_handle_containment(
 /// post-open fd-based rechecks — [`check_open_handle_regular`] (rejects
 /// non-regular kinds bound to the descriptor) and
 /// [`check_open_handle_containment`] (rejects an fd resolving outside
-/// `canonical_root`, on Linux via `/proc/self/fd/<fd>`) — both race-free
-/// against a pre-open→open path-swap because they consult the fd
-/// `safe_open` actually returned rather than re-resolving `path`, and a
-/// `+1-probe` bounded read.
+/// `canonical_root`, on Linux via `/proc/self/fd/<fd>`, on Apple
+/// platforms via `fcntl(fd, F_GETPATH, ..)`) — both race-free against a
+/// pre-open→open path-swap because they consult the fd `safe_open`
+/// actually returned rather than re-resolving `path`, and a `+1-probe`
+/// bounded read.
 ///
 /// Callsite-local variant of `raikiri_traits::io::read_bounded_regular_file`.
 /// The traits helper's `File::open` follows symlinks, leaving a leaf-swap
@@ -521,13 +616,15 @@ fn read_bounded_font_file(
     check_open_handle_regular(&file)?;
     // Post-open fd-bound containment recheck: verify the descriptor
     // `safe_open` bound still resolves under `canonical_root`, derived from
-    // the fd itself (Linux: `/proc/self/fd/<fd>` readlink) rather than a
-    // fresh path-based `canonicalize`. Closes the intermediate-dir-swap
-    // TOCTOU window between the pre-open `canonicalize` above and
-    // `safe_open`'s own pathname re-resolution — the residual fe1/61l
-    // Codex §8.3 flagged as surviving zr8+f4j. See
-    // `check_open_handle_containment` doc for the full rationale and the
-    // non-Linux no-op fallback. bd raikiri-spike-1ef.
+    // the fd itself (Linux: `/proc/self/fd/<fd>` readlink; Apple platforms:
+    // `fcntl(fd, F_GETPATH, ..)`) rather than a fresh path-based
+    // `canonicalize`. Closes the intermediate-dir-swap TOCTOU window
+    // between the pre-open `canonicalize` above and `safe_open`'s own
+    // pathname re-resolution — the residual fe1/61l Codex §8.3 flagged as
+    // surviving zr8+f4j. See `check_open_handle_containment` doc for the
+    // full rationale and the remaining no-op fallback for platforms
+    // without a wired-up primitive. bd raikiri-spike-1ef, Apple-platform
+    // arm added in raikiri-spike-0nww.
     check_open_handle_containment(&file, canonical_root)?;
     // Preallocate against the known-good `metadata.len()` upper bound (mirrors
     // raikiri_traits::io helper's happy-path allocation to avoid log2(N)
@@ -681,10 +778,11 @@ pub enum FontWarn<'a> {
     /// re-resolves the pathname a second time (independently of
     /// `safe_open`'s own resolution), leaving a window for an
     /// intermediate-directory swap between the two lookups; this fd-bound
-    /// recheck (Linux: `/proc/self/fd/<fd>` readlink) is derived from the
-    /// fd `safe_open` actually returned, so firing here means the swap
-    /// happened inside that canonicalize→safe_open window itself. bd
-    /// raikiri-spike-1ef, closes 61l Codex §8.3 residual on zr8/f4j.
+    /// recheck (Linux: `/proc/self/fd/<fd>` readlink; Apple platforms:
+    /// `fcntl(fd, F_GETPATH, ..)`) is derived from the fd `safe_open`
+    /// actually returned, so firing here means the swap happened inside
+    /// that canonicalize→safe_open window itself. bd raikiri-spike-1ef,
+    /// closes 61l Codex §8.3 residual on zr8/f4j.
     ReadRejectedPathEscapePostOpen {
         /// Walker-observed candidate path (pre-canonicalization).
         path: &'a Path,
@@ -1008,10 +1106,10 @@ pub fn build_wpt_font_ctx_with_observer(
         //   the intermediate directory again between that check and
         //   `safe_open`'s own pathname re-resolution.  The fd-bound
         //   `check_open_handle_containment` recheck (Linux: `/proc/self/fd/
-        //   <fd>` readlink) is derived from the fd `safe_open` actually
-        //   returned, so it is race-free against that second swap by
-        //   construction.  bd raikiri-spike-1ef, closes 61l Codex §8.3
-        //   residual on zr8/f4j.
+        //   <fd>` readlink; Apple platforms: `fcntl(fd, F_GETPATH, ..)`) is
+        //   derived from the fd `safe_open` actually returned, so it is
+        //   race-free against that second swap by construction.  bd
+        //   raikiri-spike-1ef, closes 61l Codex §8.3 residual on zr8/f4j.
         //
         // Trade-offs recorded:
         // - The walker's symlink_metadata / is_symlink / is_file /
@@ -2076,6 +2174,90 @@ mod tests {
     /// pre-open `canonicalize` above) resolved inside it. bd
     /// raikiri-spike-1ef, closes 61l Codex §8.3 residual on zr8/f4j.
     #[cfg(target_os = "linux")]
+    #[test]
+    fn check_open_handle_containment_rejects_file_outside_root() {
+        let fonts_tmp = tempfile::tempdir().unwrap();
+        let outside_tmp = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(fonts_tmp.path()).unwrap();
+        let canonical_outside = std::fs::canonicalize(outside_tmp.path()).unwrap();
+
+        let outside_leaf = canonical_outside.join("font.ttf");
+        std::fs::File::create(&outside_leaf)
+            .unwrap()
+            .write_all(b"outside content")
+            .unwrap();
+
+        let file = safe_open(&outside_leaf).expect("safe_open should succeed on regular file");
+        match check_open_handle_containment(&file, &canonical_root) {
+            Err(FontReadReject::PathEscapePostOpen { canonical, root }) => {
+                assert_eq!(canonical, outside_leaf);
+                assert_eq!(root, canonical_root);
+            }
+            other => panic!(
+                "expected PathEscapePostOpen for fd resolving outside canonical_root, got {other:?}"
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Apple-platform post-open fd-bound containment tests (bd
+    // raikiri-spike-0nww — Apple-platform arm of the same defense the
+    // Linux tests above pin, via `fcntl(fd, F_GETPATH, ..)` instead of
+    // `/proc/self/fd/<fd>` readlink).
+    // ------------------------------------------------------------------
+    //
+    // These mirror `check_open_handle_containment_accepts_file_within_root`
+    // / `_rejects_file_outside_root` above structurally (same setup, same
+    // assertions) — only the underlying platform primitive differs. They
+    // do not run in this repo's Linux CI and have never executed against
+    // a real Apple toolchain (no Apple CI target exists here as of
+    // 2026-08-08; see the "Untested in CI" section on the
+    // `check_open_handle_containment` Apple-platform impl above for the
+    // accepted-risk rationale and the `F_GETPATH` path-form caveat to
+    // check first if either of these ever fails on real Apple CI).
+
+    /// `check_open_handle_containment` (Apple-platform arm) accepts a file
+    /// whose fd resolves under the given `canonical_root` — the happy-path
+    /// regression pin that `fcntl(fd, F_GETPATH, ..)` does not spuriously
+    /// reject files that are, in fact, inside the root. bd
+    /// raikiri-spike-0nww.
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "visionos"
+    ))]
+    #[test]
+    fn check_open_handle_containment_accepts_file_within_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
+        let path = canonical_root.join("inside.ttf");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"inside content")
+            .unwrap();
+
+        let file = safe_open(&path).expect("safe_open should succeed on regular file");
+        check_open_handle_containment(&file, &canonical_root)
+            .expect("fd resolving inside canonical_root must pass containment recheck");
+    }
+
+    /// `check_open_handle_containment` (Apple-platform arm) rejects a file
+    /// whose fd resolves outside the given `canonical_root`. Mirrors the
+    /// Linux primitive-level pin: even though `safe_open` opened the file
+    /// successfully (it is a perfectly regular file, just not under the
+    /// expected root), the fd-derived `F_GETPATH` path fails
+    /// `starts_with(canonical_root)` and the recheck rejects — proving the
+    /// check does not trust a path string, only the fd's own resolved
+    /// target. bd raikiri-spike-0nww.
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "visionos"
+    ))]
     #[test]
     fn check_open_handle_containment_rejects_file_outside_root() {
         let fonts_tmp = tempfile::tempdir().unwrap();
