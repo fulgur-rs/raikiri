@@ -435,21 +435,195 @@ fn parse_fragment(url: &str) -> Option<&str> {
 
 /// Format one counter value.
 ///
-/// Minimal formatter for the current resolve pass: every [`CounterStyle`]
-/// variant currently renders as decimal. Full CSS Counter Styles Level 3
-/// formatting (roman, alpha, and `@counter-style` at-rule resolution for
-/// `CounterStyle::Named(...)`) is tracked as **bd raikiri-spike-og2** (P4,
-/// scope/dom, discovered-from:96u.2). The raikiri-style docstring for
-/// `CounterStyle` explicitly places named-style interpretation downstream
-/// in the "runtime resolve" layer, so `og2` will land it here. Partial
-/// roman/alpha would be a spec-divergence flag, so this pass intentionally
-/// does not half-implement them.
+/// Implements the CSS Counter Styles Level 3 "generate a counter
+/// representation" algorithm
+/// <https://www.w3.org/TR/css-counter-styles-3/#generate-a-counter> for
+/// [`CounterStyle::Decimal`] and the registry-free subset of CSS Counter
+/// Styles L3 §6 "Simple Predefined Counter Styles"
+/// <https://www.w3.org/TR/css-counter-styles-3/#predefined-counters>
+/// enumerated on **bd raikiri-spike-og2** (P4, scope/dom,
+/// discovered-from:96u.2) — `decimal-leading-zero`, `lower-roman` /
+/// `upper-roman`, `lower-alpha` / `upper-alpha` (+ the `lower-latin` /
+/// `upper-latin` aliases §6 defines with identical symbol tables),
+/// `disc` / `circle` / `square`.
+///
+/// `CounterStyle::Named` beyond that set falls back to `decimal` for three
+/// distinct reasons, and only the first is actually generate-a-counter step
+/// 1 ("If the counter style is unknown, ... generate a counter
+/// representation using the decimal style"):
+///
+/// 1. **Genuinely unknown name** — not a CSS Counter Styles L3 keyword at
+///    all. Step 1 applies verbatim; decimal is spec-correct here.
+/// 2. **A custom `@counter-style` rule** — a valid `<custom-ident>` per
+///    spec, but *unreachable* today: raikiri-style has no `@counter-style`
+///    parser/registry to resolve it against (og2 comment 2026-07-27 scope
+///    (b); follow-up bd raikiri-spike-r7r1).
+/// 3. **A §6/§7 predefined style this file hasn't implemented yet** — e.g.
+///    `armenian`, `georgian`, `hebrew`, `lower-greek`, `cjk-decimal`,
+///    `disclosure-open` / `disclosure-closed`. These are *not* unknown to
+///    the spec — §6's lead paragraph is normative ("This stylesheet is
+///    normative—UAs must include it in their UA stylesheet") — and none
+///    of them need a registry. Landing on decimal here is an intentional
+///    current scope limit, not the generate-a-counter step-1 path; tracked
+///    as bd raikiri-spike-nu9z.
 fn format_counter(value: i32, style: &CounterStyle) -> String {
-    // Future (bd raikiri-spike-og2): dispatch on Named(...) to registered
-    // @counter-style rules; Decimal / all currently-known variants fall
-    // through to decimal.
-    let _ = style;
+    match style {
+        CounterStyle::Decimal => format_decimal(value),
+        CounterStyle::Named(name) => format_named_counter(value, name),
+        // `CounterStyle` is `#[non_exhaustive]` (raikiri-style may add
+        // variants later) — an unrecognized future variant is exactly the
+        // generate-a-counter step 1 "unknown style" case, so it gets the
+        // same decimal fallback as an unrecognized `Named` string.
+        // cov:ignore: unreachable today — `CounterStyle` currently only
+        // constructs `Decimal` / `Named` (raikiri-style
+        // property.rs:counter_style_from_ident), so this arm has no live
+        // input until a third variant lands upstream; required only to
+        // satisfy the non_exhaustive match-exhaustiveness check.
+        _ => format_decimal(value),
+    }
+}
+
+/// Bare decimal representation — CSS Counter Styles L3 `numeric` system with
+/// the `decimal` `symbols` table (digits `0`-`9`) and default `negative:
+/// "-"` prefix <https://www.w3.org/TR/css-counter-styles-3/#simple-numeric>.
+/// Rust's integer `Display` already produces exactly this (base-10 digits,
+/// `-` prefix for negative, no separate sign for zero).
+fn format_decimal(value: i32) -> String {
     format!("{value}")
+}
+
+/// Dispatch the registry-free predefined [`CounterStyle::Named`] styles
+/// (see [`format_counter`] doc for the enumerated set, the §6 anchor, and
+/// the three distinct reasons an unmatched name falls back to `decimal`).
+/// Matching is ASCII case-insensitive, consistent with how
+/// `raikiri_style::property`'s parser already treats the `decimal` keyword
+/// case-insensitively — CSS keyword idents are case-insensitive generally,
+/// this file just extends the same rule to the rest of §6.
+fn format_named_counter(value: i32, name: &str) -> String {
+    if name.eq_ignore_ascii_case("decimal-leading-zero") {
+        format_decimal_leading_zero(value)
+    } else if name.eq_ignore_ascii_case("lower-roman") {
+        format_roman(value, false).unwrap_or_else(|| format_decimal(value))
+    } else if name.eq_ignore_ascii_case("upper-roman") {
+        format_roman(value, true).unwrap_or_else(|| format_decimal(value))
+    } else if name.eq_ignore_ascii_case("lower-alpha") || name.eq_ignore_ascii_case("lower-latin") {
+        format_alphabetic(value, b'a').unwrap_or_else(|| format_decimal(value))
+    } else if name.eq_ignore_ascii_case("upper-alpha") || name.eq_ignore_ascii_case("upper-latin") {
+        format_alphabetic(value, b'A').unwrap_or_else(|| format_decimal(value))
+    } else if name.eq_ignore_ascii_case("disc") {
+        // `system: cyclic; symbols: \2022` — a single-symbol cyclic system
+        // always renders the same glyph regardless of value (range
+        // -infinity..infinity, no fallback path). `suffix: " "` in the
+        // §6.3 (#simple-symbolic) block is deliberately not reproduced
+        // here: generate-a-counter's prefix/suffix are for the ::marker
+        // box, not for the string `counter()`/`counters()` (and by
+        // extension `target-counter()`/`target-counters()`) return.
+        "\u{2022}".to_string()
+    } else if name.eq_ignore_ascii_case("circle") {
+        "\u{25E6}".to_string()
+    } else if name.eq_ignore_ascii_case("square") {
+        "\u{25AA}".to_string()
+    } else {
+        // Unmatched named style — decimal fallback for one of the three
+        // reasons enumerated in the [`format_counter`] doc (genuinely
+        // unknown / unreachable custom @counter-style / not-yet-implemented
+        // §6-§7 predefined style).
+        format_decimal(value)
+    }
+}
+
+/// `decimal-leading-zero` — `system: extends decimal; pad: 2 "0"`
+/// <https://www.w3.org/TR/css-counter-styles-3/#simple-numeric>,
+/// <https://www.w3.org/TR/css-counter-styles-3/#counter-style-pad>.
+/// generate-a-counter builds the initial representation from the *absolute*
+/// value (step 3), pads it to width 2 with `'0'` (step 4), then applies the
+/// negative sign outside the padding (step 5) — so `-1` is `"-01"`, not
+/// `"0-1"`.
+fn format_decimal_leading_zero(value: i32) -> String {
+    let magnitude = format!("{:02}", value.unsigned_abs());
+    if value < 0 {
+        format!("-{magnitude}")
+    } else {
+        magnitude
+    }
+}
+
+/// `additive` system weight/symbol table shared by `lower-roman` /
+/// `upper-roman`
+/// <https://www.w3.org/TR/css-counter-styles-3/#simple-numeric>. Symbols are
+/// authored lower-case; `upper-roman` upper-cases the composed result
+/// (pure-ASCII letters, so this is equivalent to the spec's separate
+/// upper-case `additive-symbols` table).
+const ROMAN_ADDITIVE: [(i32, &str); 13] = [
+    (1000, "m"),
+    (900, "cm"),
+    (500, "d"),
+    (400, "cd"),
+    (100, "c"),
+    (90, "xc"),
+    (50, "l"),
+    (40, "xl"),
+    (10, "x"),
+    (9, "ix"),
+    (5, "v"),
+    (4, "iv"),
+    (1, "i"),
+];
+
+/// `additive` system algorithm
+/// <https://www.w3.org/TR/css-counter-styles-3/#additive-system>, specialized
+/// to [`ROMAN_ADDITIVE`] and the `range: 1 3999` descriptor shared by
+/// `lower-roman` / `upper-roman`
+/// <https://www.w3.org/TR/css-counter-styles-3/#simple-numeric>. Returns
+/// `None` when `value` is outside that range, signalling the caller to fall
+/// back to `decimal` per `#counter-style-range` /
+/// `#generate-a-counter` step 2 (range check uses the *original* signed
+/// value, before any absolute-value substitution).
+fn format_roman(value: i32, upper: bool) -> Option<String> {
+    if !(1..=3999).contains(&value) {
+        return None;
+    }
+    let mut remaining = value;
+    let mut out = String::new();
+    for &(weight, symbol) in &ROMAN_ADDITIVE {
+        if weight > remaining {
+            continue;
+        }
+        let reps = remaining / weight;
+        for _ in 0..reps {
+            out.push_str(symbol);
+        }
+        remaining -= weight * reps;
+        if remaining == 0 {
+            break;
+        }
+    }
+    Some(if upper { out.to_ascii_uppercase() } else { out })
+}
+
+/// `alphabetic` system algorithm (bijective base-26)
+/// <https://www.w3.org/TR/css-counter-styles-3/#alphabetic-system>,
+/// specialized to the 26-letter Latin `symbols` table shared by
+/// `lower-alpha` / `upper-alpha` (and the `lower-latin` / `upper-latin`
+/// aliases) <https://www.w3.org/TR/css-counter-styles-3/#simple-alphabetic>.
+/// `first_symbol` is `b'a'` or `b'A'`. The system's implicit range is
+/// strictly-positive integers (`#counter-style-range` default for
+/// `alphabetic`); returns `None` outside that range so the caller falls
+/// back to `decimal`.
+fn format_alphabetic(value: i32, first_symbol: u8) -> Option<String> {
+    if value < 1 {
+        return None;
+    }
+    let mut remaining = value;
+    let mut digits = Vec::new();
+    while remaining != 0 {
+        remaining -= 1;
+        let digit = (remaining % 26) as u8;
+        digits.push((first_symbol + digit) as char);
+        remaining /= 26;
+    }
+    digits.reverse();
+    Some(digits.into_iter().collect())
 }
 
 /// Join a nested counter stack with `separator`, formatting each level via
@@ -536,12 +710,113 @@ mod tests {
     }
 
     #[test]
-    fn format_counter_named_falls_back_to_decimal() {
-        // Documented fallback (see format_counter docstring): named
-        // counter-styles all render as decimal until the full CSS Counter
-        // Styles L3 formatter lands.
-        let style = CounterStyle::Named(SmolStr::new("upper-roman"));
+    fn format_counter_named_unknown_falls_back_to_decimal() {
+        // generate-a-counter step 1 <https://www.w3.org/TR/css-counter-styles-3/#generate-a-counter>:
+        // "If the counter style is unknown, ... generate a counter
+        // representation using the decimal style." Also covers the
+        // registry-dependent path (custom @counter-style names — og2
+        // comment 2026-07-27 scope (b), unreachable until raikiri-style
+        // grows a registry): both an unrecognized keyword and a
+        // hypothetical custom name land here identically.
+        let style = CounterStyle::Named(SmolStr::new("my-custom-style"));
         assert_eq!(format_counter(4, &style), "4");
+    }
+
+    #[test]
+    fn format_counter_decimal_leading_zero() {
+        let style = CounterStyle::Named(SmolStr::new("decimal-leading-zero"));
+        assert_eq!(format_counter(0, &style), "00");
+        assert_eq!(format_counter(5, &style), "05");
+        assert_eq!(format_counter(15, &style), "15");
+        assert_eq!(format_counter(-5, &style), "-05");
+        assert_eq!(format_counter(-100, &style), "-100");
+    }
+
+    #[test]
+    fn format_counter_lower_roman() {
+        let style = CounterStyle::Named(SmolStr::new("lower-roman"));
+        assert_eq!(format_counter(1, &style), "i");
+        assert_eq!(format_counter(4, &style), "iv"); // additive `continue` path (skips `v`)
+        assert_eq!(format_counter(1000, &style), "m"); // single-tuple exact `break` path
+        assert_eq!(format_counter(3000, &style), "mmm"); // same-weight multi-rep
+        assert_eq!(format_counter(3999, &style), "mmmcmxcix"); // full additive-symbols sweep
+    }
+
+    #[test]
+    fn format_counter_upper_roman() {
+        let style = CounterStyle::Named(SmolStr::new("upper-roman"));
+        assert_eq!(format_counter(4, &style), "IV");
+        assert_eq!(format_counter(3999, &style), "MMMCMXCIX");
+    }
+
+    #[test]
+    fn format_counter_roman_out_of_range_falls_back_to_decimal() {
+        // `range: 1 3999` <https://www.w3.org/TR/css-counter-styles-3/#simple-numeric>:
+        // 0, negative, and >3999 are all out of range — fallback renders the
+        // *original* signed value as decimal (generate-a-counter step 2
+        // uses "the same counter value", not the absolute value).
+        let style = CounterStyle::Named(SmolStr::new("lower-roman"));
+        assert_eq!(format_counter(0, &style), "0");
+        assert_eq!(format_counter(-1, &style), "-1");
+        assert_eq!(format_counter(4000, &style), "4000");
+    }
+
+    #[test]
+    fn format_counter_roman_is_case_insensitive() {
+        let style = CounterStyle::Named(SmolStr::new("UPPER-ROMAN"));
+        assert_eq!(format_counter(4, &style), "IV");
+    }
+
+    #[test]
+    fn format_counter_lower_alpha() {
+        let style = CounterStyle::Named(SmolStr::new("lower-alpha"));
+        assert_eq!(format_counter(1, &style), "a");
+        assert_eq!(format_counter(26, &style), "z");
+        assert_eq!(format_counter(27, &style), "aa"); // bijective-base-26 wrap
+        assert_eq!(format_counter(52, &style), "az");
+    }
+
+    #[test]
+    fn format_counter_upper_alpha() {
+        let style = CounterStyle::Named(SmolStr::new("upper-alpha"));
+        assert_eq!(format_counter(1, &style), "A");
+        assert_eq!(format_counter(28, &style), "AB");
+    }
+
+    #[test]
+    fn format_counter_alpha_out_of_range_falls_back_to_decimal() {
+        // Alphabetic system range defaults to strictly-positive integers
+        // <https://www.w3.org/TR/css-counter-styles-3/#counter-style-range>.
+        let style = CounterStyle::Named(SmolStr::new("lower-alpha"));
+        assert_eq!(format_counter(0, &style), "0");
+        assert_eq!(format_counter(-1, &style), "-1");
+    }
+
+    #[test]
+    fn format_counter_latin_aliases_match_alpha() {
+        // §6.2 defines lower-latin / upper-latin with symbol tables
+        // identical to lower-alpha / upper-alpha
+        // <https://www.w3.org/TR/css-counter-styles-3/#simple-alphabetic>.
+        let lower = CounterStyle::Named(SmolStr::new("lower-latin"));
+        let upper = CounterStyle::Named(SmolStr::new("upper-latin"));
+        assert_eq!(format_counter(27, &lower), "aa");
+        assert_eq!(format_counter(27, &upper), "AA");
+    }
+
+    #[test]
+    fn format_counter_disc_circle_square_are_value_independent() {
+        // `system: cyclic` with a single symbol always renders that symbol,
+        // for any value (range -infinity..infinity, no fallback path) —
+        // and never the `suffix: " "` from the §6.3 block (see
+        // format_named_counter doc: prefix/suffix are a ::marker concern,
+        // not part of the counter()/target-counter() string).
+        let disc = CounterStyle::Named(SmolStr::new("disc"));
+        let circle = CounterStyle::Named(SmolStr::new("circle"));
+        let square = CounterStyle::Named(SmolStr::new("square"));
+        assert_eq!(format_counter(1, &disc), "\u{2022}");
+        assert_eq!(format_counter(-7, &disc), "\u{2022}");
+        assert_eq!(format_counter(1, &circle), "\u{25E6}");
+        assert_eq!(format_counter(1, &square), "\u{25AA}");
     }
 
     #[test]
@@ -552,6 +827,16 @@ mod tests {
         );
         assert_eq!(join_counter_stack(&[5], ".", &CounterStyle::Decimal), "5");
         assert_eq!(join_counter_stack(&[], ".", &CounterStyle::Decimal), "");
+    }
+
+    #[test]
+    fn join_counter_stack_non_decimal_style() {
+        // target-counters() path (TargetRequest::Counters) threads `style`
+        // through join_counter_stack the same as the single-value path —
+        // pin that a non-decimal style formats every level, not just the
+        // leaf.
+        let style = CounterStyle::Named(SmolStr::new("lower-alpha"));
+        assert_eq!(join_counter_stack(&[1, 2, 3], ".", &style), "a.b.c");
     }
 
     // ── target-counter resolve (immediate path) ─────────────────────
