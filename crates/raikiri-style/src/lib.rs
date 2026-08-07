@@ -38,6 +38,13 @@ pub use property::{
 pub mod rule;
 pub use rule::{Declaration, StyleRule};
 
+pub mod counter_style;
+pub use counter_style::{
+    CounterRange, CounterStyleRegistry, CounterStyleRule, CounterStyleSystem, CounterSymbol,
+    NegativeDescriptor, PadDescriptor, RangeEntry, RangeLimit, parse_counter_style_rules,
+    resolve_custom_counter,
+};
+
 pub mod page;
 pub use page::{
     PageCascadeResult, PageContextQuery, PageInheritance, PagePseudo, PageRule, PageSelector,
