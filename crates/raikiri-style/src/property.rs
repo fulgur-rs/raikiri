@@ -955,13 +955,21 @@ pub enum ContentPart {
     FirstLetter,
 }
 
-/// `content()` function の引数 `[ text | before | after | first-letter ]?`。
+/// `content()` function の引数 `[ text | before | after | first-letter ]?`
+/// (`?` は raikiri の受理済み記法 — spec 自身の bare `content()` 例
+/// `h2 { string-set: heading content() }` に対応する省略可能性の注記であり、
+/// GCPM 3 の grammar 自体の formal optional marker ではない)。
 ///
 /// CSS GCPM 3 §1.1.1.1 "The content() function"
 /// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> の verbatim production:
-/// `content() = content([text | before | after | first-letter])`。
-/// spec default = `text` (per §1.1.1.1 の `text` dt/dd: "This is the default
-/// value"、および `h2 { string-set: heading content() }` の bare 例)。
+/// `content() = content([text | before | after | first-letter])`。keyword
+/// 省略時に [`Text`](Self::Text) を採用する根拠は spec の "default" 宣言には
+/// 依らない — 同 section の grammar には `?` が無く (content() の唯一の
+/// 引数が構文上 optional でない)、`text` dt/dd は "This is the default
+/// value" と述べるものの、同じ section に "default をどう定義するか" 自体が
+/// 未解決の WG issue として残っており、TR 上安定した根拠ではない (bd
+/// raikiri-spike-x8i6 で発見された同一 overclaim class、bd
+/// raikiri-spike-83r2 で本 site を訂正)。
 ///
 /// NB: sibling [`ContentPart`] (target-text() 用) と keyword 集合が重なるが、
 /// `text` vs `content` の spec spelling divergence があるため型を分ける
@@ -970,8 +978,9 @@ pub enum ContentPart {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ContentTextKeyword {
-    /// `text` — spec default (element の string value、`white-space: normal`
-    /// 相当で決定)。
+    /// `text` — 要素の string value 全体 (`white-space: normal` 相当で決定)。
+    /// keyword 省略時のフォールバック値だが、根拠は spec の "default" 宣言
+    /// ではない (type-level doc 参照)。
     #[default]
     Text,
     /// `before` — `::before` pseudo-element の string value。
@@ -1187,11 +1196,15 @@ pub enum ContentComponent {
     /// `target-text([<string>|<url>], [ content | before | after | first-letter ]?)`。
     TargetText { url: String, part: ContentPart },
     /// `content([ text | before | after | first-letter ]?)` — GCPM 3 §1.1.1.1
-    /// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>。
+    /// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> (`?` は raikiri の
+    /// 受理済み記法であり spec の grammar 自体の表記ではない)。
     /// 現要素 (または擬似要素) の string value を named string に挿入する用途で、
     /// `<content-list>` の一員として `string-set` および `content` property の
-    /// content-list 内で受理される。keyword 省略時は spec default `Text`。
-    /// runtime resolve は raikiri-dom 責務 (m5.1 wire-through pattern)。
+    /// content-list 内で受理される。keyword 省略時は [`ContentTextKeyword::Text`]
+    /// をフォールバック値として使う (根拠は spec の "default" 宣言ではない —
+    /// [`ContentTextKeyword`] の doc comment 参照、bd raikiri-spike-x8i6 /
+    /// raikiri-spike-83r2)。runtime resolve は raikiri-dom 責務 (m5.1
+    /// wire-through pattern)。
     Content { keyword: ContentTextKeyword },
     /// `<image>` (CSS Images 3 <https://www.w3.org/TR/css-images-3/#typedef-image>
     /// `<image> = <url> | <gradient>`) — CSS Content 3 §2.2 "2D Images: the
