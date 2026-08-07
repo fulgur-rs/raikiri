@@ -31,6 +31,22 @@ retiring):
      comment 2026-07-28: scoping this to `crate::` only closes 3/21 sites;
      the danger is unrelated to the `crate::` prefix). Must be 0.
 
+     Role 1 has **no ignore-marker escape hatch** — unlike role 2, a
+     flagged occurrence cannot be exempted with
+     `doc-pointer-lint:ignore:`. AGENTS.md's decided rule for plain `//`
+     comments is unconditional ("一切書かない"), so the only remedy is to
+     rewrite the line as a bare code span. This was checked for false
+     positives at authoring time: `_BARE_BRACKET_RE`'s shape would also
+     match a Markdown *inline* link `[text](url)`, which is a different
+     (and legitimate) construct rustdoc also doesn't touch outside a doc
+     comment — a repo-wide grep for that shape in `crates/*/src` plain
+     comments found 0 occurrences, and block comments (`/* */`) — which
+     this script does not scan at all — were independently confirmed to
+     hold 0 `crate::` references (bd raikiri-spike-vyse's original
+     census). If either shape is ever introduced, `_BARE_BRACKET_RE`
+     would misfire on the former; re-check before trusting role 1's
+     output blindly on a codebase that has grown either construct.
+
   2. **luxp ratchet (drift prevention)**: bare (non-linked) `crate::…`
      pointers in `doc` (`///` / `//!`) comment lines — i.e. occurrences of
      the exact violation AGENTS.md's "`crate::…` pointer は intra-doc link

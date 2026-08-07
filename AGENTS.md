@@ -254,7 +254,10 @@ bd raikiri-spike-8yj6 が持つ。
   bracket も同様に禁止 — 危険性は crate:: の有無と無関係 (rustdoc がその位置を
   1 byte も読まないという事実は pointer の中身に依らない)。
   `scripts/doc-pointer-lint.sh` がこの blanket rule を hard-zero check
-  として強制する (bd raikiri-spike-luxp、次の bullet参照)。
+  として強制する (bd raikiri-spike-luxp、次の bullet参照)。**強制の範囲は
+  `crates/*/src/**/*.rs` のみ** (issue 記載のscopeに合わせた)。`crates/*/
+  tests/` `benches/` `examples/` は checker の対象外 — 2026-08-08 時点で
+  手動 census では 0 件だが、continuously enforced ではない。
 - **既存の `#[test]` item doc に残っていた短縮 link** (``[`expand_shorthand_into`]``
   等) は opt-out 3 の位置なので未検証だった。bd raikiri-spike-acsw が
   raikiri-style 全体 (cascade / computed / page / property / resolve / rule /
@@ -272,7 +275,9 @@ bd raikiri-spike-8yj6 が持つ。
     (`scripts/lib/doc_pointer_lint_baseline.txt`、本 commit 時点で **36**)
     を超えないことを ratchet で強制。baseline は「今日値まで許容し、
     それ以上増やさない」ための pin であり、0 への一括削減は本 checker の
-    scope 外 (follow-up task として別途 bd issue 化すること)。
+    scope 外。**そのための follow-up task に着手する場合は、着手時に
+    bd issue として起票すること** (2026-08-08 時点でまだ起票されていない —
+    本 bullet はその義務を課すもので、既存 issue を指してはいない)。
 
   **実行方法**: `scripts/doc-pointer-lint.sh` (追加で `-v` で全 occurrence を
   列挙、`--print-count` で ratchet 対象件数だけを出力してbaseline再生成に使う)。

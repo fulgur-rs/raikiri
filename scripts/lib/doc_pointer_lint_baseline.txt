@@ -21,4 +21,13 @@
 # の一括変換は... 別途 follow-up task"). Do not raise it to make a
 # regression pass; fix the regression or mark it, per the roles this
 # script prints.
+#
+# This branch's own count can drift out from under you: this repo runs
+# many parallel worktree-per-task sessions, and a foreign merge landing on
+# the base branch after this baseline was pinned can add bare `crate::…`
+# doc pointers this branch never touched. If a rebase/merge onto a newer
+# base makes role 2 fail, re-run --print-count first — if the new count's
+# excess traces to lines this branch didn't author, fix or
+# `doc-pointer-lint:ignore:` those specific lines (or escalate) rather
+# than raising this number to make the failure disappear.
 36
