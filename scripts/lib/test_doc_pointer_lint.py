@@ -12,9 +12,23 @@ dependency, so these run fast and don't need a real crate tree.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
-from doc_pointer_lint import census_file, classify_line
+from doc_pointer_lint import (
+    CensusResult,
+    Occurrence,
+    census_file,
+    classify_line,
+    evaluate_gate,
+    load_baseline,
+    main,
+)
 
 
 class ClassifyLineTests(unittest.TestCase):
@@ -149,6 +163,210 @@ class Role2DocBarePointerTests(unittest.TestCase):
         text = "    /// [`#[test]` item doc] `crate::foo::Bar`\n"
         result = census_file("f.rs", text)
         self.assertEqual(len(result.doc_bare_crate_ratchet), 1)
+
+    def test_ignore_marker_requires_a_nested_double_slash(self) -> None:
+        # §8.2 roborev-refine iter1 quality lens (optional item): the
+        # marker must be anchored to an actual `//`-introduced fragment,
+        # the same way scripts/lib/patch_coverage.py's cov:ignore: is
+        # anchored via comment_part() rather than matched as a bare
+        # substring anywhere on the line. Without the anchor, prose that
+        # merely *mentions* the marker text (no nested `//` of its own)
+        # would falsely exempt an unrelated occurrence.
+        text = (
+            "/// see `crate::foo::Bar`. Note: writing "
+            "doc-pointer-lint:ignore: reason without a leading // does "
+            "not count as the marker.\n"
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.doc_bare_crate_ratchet), 1)
+        self.assertEqual(result.doc_bare_crate_excluded, [])
+
+
+class LoadBaselineTests(unittest.TestCase):
+    """§8.2 roborev-refine iter1 quality lens Fix 1: load_baseline() had no
+    direct test — the real baseline file has 32 comment lines before its
+    integer, so a regression there would silently change what the gate
+    compares against."""
+
+    def _write(self, tmp_dir: str, content: str) -> str:
+        path = Path(tmp_dir) / "baseline.txt"
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def test_leading_comment_block_then_integer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            content = "\n".join(f"# comment line {i}" for i in range(32)) + "\n\n36\n"
+            path = self._write(tmp_dir, content)
+            self.assertEqual(load_baseline(path), 36)
+
+    def test_blank_lines_between_comments_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = self._write(tmp_dir, "# a\n\n# b\n\n\n7\n")
+            self.assertEqual(load_baseline(path), 7)
+
+    def test_bare_integer_no_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = self._write(tmp_dir, "0\n")
+            self.assertEqual(load_baseline(path), 0)
+
+    def test_missing_file_raises_os_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            missing = str(Path(tmp_dir) / "does-not-exist.txt")
+            with self.assertRaises(OSError):
+                load_baseline(missing)
+
+    def test_comment_only_file_raises_value_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = self._write(tmp_dir, "# only comments\n# more comments\n")
+            with self.assertRaises(ValueError):
+                load_baseline(path)
+
+    def test_empty_file_raises_value_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = self._write(tmp_dir, "")
+            with self.assertRaises(ValueError):
+                load_baseline(path)
+
+
+def _occ(n: int = 1) -> list[Occurrence]:
+    return [Occurrence("f.rs", i + 1, "crate::foo::Bar", "/// x") for i in range(n)]
+
+
+class EvaluateGateTests(unittest.TestCase):
+    """§8.2 roborev-refine iter1 quality lens Fix 1: the gate's PASS/FAIL
+    decision, extracted from main() into evaluate_gate() specifically so
+    it's testable without argparse/print/sys.exit."""
+
+    def test_both_pass(self) -> None:
+        result = CensusResult(doc_bare_crate_ratchet=_occ(3))
+        self.assertEqual(evaluate_gate(result, baseline=3), (True, True))
+
+    def test_role1_fails_role2_passes(self) -> None:
+        result = CensusResult(
+            plain_bracket_violations=_occ(1), doc_bare_crate_ratchet=_occ(2)
+        )
+        self.assertEqual(evaluate_gate(result, baseline=5), (False, True))
+
+    def test_role2_fails_role1_passes(self) -> None:
+        result = CensusResult(doc_bare_crate_ratchet=_occ(5))
+        self.assertEqual(evaluate_gate(result, baseline=4), (True, False))
+
+    def test_both_fail(self) -> None:
+        result = CensusResult(
+            plain_bracket_violations=_occ(1), doc_bare_crate_ratchet=_occ(5)
+        )
+        self.assertEqual(evaluate_gate(result, baseline=4), (False, False))
+
+    def test_ratchet_equal_to_baseline_passes(self) -> None:
+        # Boundary: role 2 uses <=, not <.
+        result = CensusResult(doc_bare_crate_ratchet=_occ(4))
+        self.assertEqual(evaluate_gate(result, baseline=4), (True, True))
+
+
+class MainExitCodeTests(unittest.TestCase):
+    """§8.2 roborev-refine iter1 quality lens Fix 1: drive main()'s actual
+    PASS/FAIL/exit-code contract (0/1/2) end-to-end against a throwaway
+    repo tree, not just the CensusResult-level evaluate_gate() logic —
+    catches a wiring bug (e.g. main() ignoring evaluate_gate()'s verdict)
+    that a pure evaluate_gate() test can't."""
+
+    def _write_crate_file(self, repo_root: str, crate: str, rel: str, content: str) -> None:
+        path = Path(repo_root, "crates", crate, "src", rel)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    def _run_main(self, argv: list[str]) -> tuple[int, str]:
+        buf = io.StringIO()
+        with mock.patch.object(sys, "argv", ["doc_pointer_lint.py", *argv]):
+            with contextlib.redirect_stdout(buf):
+                code = main()
+        return code, buf.getvalue()
+
+    def test_exit_0_when_both_roles_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # One bare doc-comment crate:: pointer, no plain-comment brackets.
+            self._write_crate_file(
+                tmp_dir, "fakecrate", "lib.rs", "/// see `crate::foo::Bar`\nfn f() {}\n"
+            )
+            baseline_path = Path(tmp_dir, "baseline.txt")
+            baseline_path.write_text("1\n", encoding="utf-8")
+            code, out = self._run_main(
+                [
+                    "--repo-root",
+                    tmp_dir,
+                    "--baseline-file",
+                    str(baseline_path),
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("PASS: both roles satisfied.", out)
+
+    def test_exit_1_when_ratchet_exceeds_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._write_crate_file(
+                tmp_dir, "fakecrate", "lib.rs", "/// see `crate::foo::Bar`\nfn f() {}\n"
+            )
+            baseline_path = Path(tmp_dir, "baseline.txt")
+            baseline_path.write_text("0\n", encoding="utf-8")
+            code, out = self._run_main(
+                [
+                    "--repo-root",
+                    tmp_dir,
+                    "--baseline-file",
+                    str(baseline_path),
+                ]
+            )
+            self.assertEqual(code, 1)
+            self.assertIn("FAIL: 1 > baseline 0", out)
+            self.assertNotIn("PASS: both roles satisfied.", out)
+
+    def test_exit_1_when_plain_comment_bracket_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._write_crate_file(
+                tmp_dir, "fakecrate", "lib.rs", "// see [`crate::foo::Bar`]\nfn f() {}\n"
+            )
+            baseline_path = Path(tmp_dir, "baseline.txt")
+            baseline_path.write_text("99\n", encoding="utf-8")
+            code, out = self._run_main(
+                [
+                    "--repo-root",
+                    tmp_dir,
+                    "--baseline-file",
+                    str(baseline_path),
+                ]
+            )
+            self.assertEqual(code, 1)
+            self.assertIn("FAIL: 1 occurrence(s)", out)
+
+    def test_exit_2_when_baseline_file_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._write_crate_file(tmp_dir, "fakecrate", "lib.rs", "fn f() {}\n")
+            code, out = self._run_main(
+                [
+                    "--repo-root",
+                    tmp_dir,
+                    "--baseline-file",
+                    str(Path(tmp_dir, "does-not-exist.txt")),
+                ]
+            )
+            self.assertEqual(code, 2)
+
+    def test_print_count_bypasses_baseline_and_exits_0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._write_crate_file(
+                tmp_dir, "fakecrate", "lib.rs", "/// see `crate::foo::Bar`\nfn f() {}\n"
+            )
+            code, out = self._run_main(
+                [
+                    "--repo-root",
+                    tmp_dir,
+                    "--baseline-file",
+                    str(Path(tmp_dir, "does-not-exist.txt")),
+                    "--print-count",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(out.strip(), "1")
 
 
 if __name__ == "__main__":

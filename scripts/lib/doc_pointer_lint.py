@@ -126,7 +126,16 @@ _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 # `&` (slice type written without backticks, `&[T]`).
 _BARE_BRACKET_RE = re.compile(r"(?<![#&])\[([A-Za-z_][A-Za-z0-9_:<>]*(?:\(\))?)\]")
 
-_IGNORE_MARKER_RE = re.compile(r"doc-pointer-lint:ignore:\s*(\S.*)$")
+# Anchored to an actual `//`-introduced marker (mirrors
+# scripts/lib/patch_coverage.py's comment_part()-anchored COV_IGNORE_RE),
+# not a bare substring search — every line this runs against is already a
+# `doc`/`plain` comment line in its own right, so the marker is written as
+# a second, nested `//` fragment on that line (e.g. `` /// `crate::foo::Bar`
+# // doc-pointer-lint:ignore: reason ``), the same way `cov:ignore:` reads
+# as a trailing comment on a code line. Without this anchor, the marker
+# text appearing anywhere on the line (e.g. inside prose *describing* the
+# marker itself) would falsely exempt an unrelated occurrence.
+_IGNORE_MARKER_RE = re.compile(r"//\s*doc-pointer-lint:ignore:\s*(\S.*)$")
 
 
 @dataclass
@@ -263,21 +272,50 @@ def discover_files(repo_root: str) -> list[str]:
     return [str(Path(p).relative_to(root)) for p in paths]
 
 
-def run_census(repo_root: str) -> CensusResult:
+def run_census(repo_root: str, files: list[str] | None = None) -> CensusResult:
+    """Census `files` (repo-relative paths), or `discover_files(repo_root)`
+    if `files` is omitted. Accepting a pre-computed file list lets a caller
+    that also wants the file *count* (main(), for the summary line) reuse a
+    single `discover_files()` call instead of running the glob twice."""
+    if files is None:
+        files = discover_files(repo_root)
     results = []
-    for rel_path in discover_files(repo_root):
+    for rel_path in files:
         text = Path(repo_root, rel_path).read_text(encoding="utf-8")
         results.append(census_file(rel_path, text))
     return merge(results)
 
 
 def load_baseline(baseline_file: str) -> int:
+    """Read the pinned ratchet baseline: the first non-blank, non-`#`-comment
+    line, parsed as an int. Raises `FileNotFoundError` (an `OSError`
+    subclass) if `baseline_file` doesn't exist, and `ValueError` if it
+    exists but contains no such line (or that line isn't a valid int) —
+    both are caught by main() and reported as a tooling error (exit 2),
+    not a gate failure."""
     for line in Path(baseline_file).read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         return int(line)
     raise ValueError(f"{baseline_file}: no non-comment integer line found")
+
+
+def evaluate_gate(result: CensusResult, baseline: int) -> tuple[bool, bool]:
+    """The gate's PASS/FAIL decision, isolated from argument parsing and
+    printing so it's directly unit-testable. Returns `(role1_ok, role2_ok)`:
+
+      - role1_ok: True iff there are 0 plain-comment bracket-link
+        violations (vyse's hard-zero rule — no baseline involved).
+      - role2_ok: True iff the ratchet-relevant doc-comment bare `crate::…`
+        pointer count is at or below `baseline` (luxp's ratchet).
+
+    `main()`'s overall exit code is 0 iff both are True, else 1 — see its
+    body for the exact mapping (this function does not decide exit codes
+    itself, to keep it free of any print/argparse/sys dependency)."""
+    role1_ok = not result.plain_bracket_violations
+    role2_ok = len(result.doc_bare_crate_ratchet) <= baseline
+    return role1_ok, role2_ok
 
 
 def main() -> int:
@@ -307,7 +345,8 @@ def main() -> int:
         Path(__file__).resolve().parent / "doc_pointer_lint_baseline.txt"
     )
 
-    result = run_census(args.repo_root)
+    files = discover_files(args.repo_root)
+    result = run_census(args.repo_root, files=files)
 
     if args.print_count:
         print(len(result.doc_bare_crate_ratchet))
@@ -321,15 +360,21 @@ def main() -> int:
 
     ratchet_count = len(result.doc_bare_crate_ratchet)
 
+    summary_rows = [
+        ("files scanned", len(files)),
+        ("doc-comment linked crate:: pointers (info)", result.doc_linked_crate_count),
+        ("doc-comment bare crate:: pointers (total)", len(result.doc_bare_crate_all)),
+        ("  excluded by opt-out/marker", len(result.doc_bare_crate_excluded)),
+        ("  ratchet-relevant (role 2)", ratchet_count),
+        ("  pinned baseline", baseline),
+        ("plain-comment bare crate:: pointers (info)", result.plain_bare_crate_count),
+        ("plain-comment bracket-link violations (role 1)", len(result.plain_bracket_violations)),
+    ]
+    label_width = max(len(label) for label, _ in summary_rows)
+
     print("== scripts/doc-pointer-lint.sh census ==")
-    print(f"files scanned                              : {len(discover_files(args.repo_root))}")
-    print(f"doc-comment linked crate:: pointers (info)  : {result.doc_linked_crate_count}")
-    print(f"doc-comment bare crate:: pointers (total)   : {len(result.doc_bare_crate_all)}")
-    print(f"  excluded by opt-out/marker                : {len(result.doc_bare_crate_excluded)}")
-    print(f"  ratchet-relevant (role 2)                  : {ratchet_count}")
-    print(f"  pinned baseline                            : {baseline}")
-    print(f"plain-comment bare crate:: pointers (info)  : {result.plain_bare_crate_count}")
-    print(f"plain-comment bracket-link violations (role 1): {len(result.plain_bracket_violations)}")
+    for label, value in summary_rows:
+        print(f"{label.ljust(label_width)} : {value}")
     print()
 
     if args.verbose and result.doc_bare_crate_excluded:
@@ -338,11 +383,10 @@ def main() -> int:
             print(f"  {occ.path}:{occ.line}  [{reason}]  `{occ.span}`")
         print()
 
-    ok = True
+    role1_ok, role2_ok = evaluate_gate(result, baseline)
 
     print("-- role 1 (vyse): plain `//` comment bracket-link, must be 0 --")
-    if result.plain_bracket_violations:
-        ok = False
+    if not role1_ok:
         print(f"FAIL: {len(result.plain_bracket_violations)} occurrence(s):")
         for occ in result.plain_bracket_violations:
             print(f"  {occ.path}:{occ.line}  `{occ.span}`")
@@ -351,10 +395,23 @@ def main() -> int:
     print()
 
     print("-- role 2 (luxp): doc-comment bare crate:: pointers, ratchet vs baseline --")
-    if ratchet_count > baseline:
-        ok = False
+    if not role2_ok:
         print(f"FAIL: {ratchet_count} > baseline {baseline} (+{ratchet_count - baseline}).")
-        print("New (or newly-unmarked) occurrences:")
+        # NOT a new-vs-baseline diff: the baseline is a plain integer, not a
+        # line set, so this script has no record of *which* occurrences it
+        # was measured against — it structurally cannot tell "new since the
+        # baseline was pinned" apart from "was already there but happens to
+        # push the total over." This lists every current ratchet-relevant
+        # occurrence; per scripts/lib/doc_pointer_lint_baseline.txt's own
+        # guidance (a foreign merge can move this count without this
+        # branch's own commits touching a single one of these lines),
+        # isolate what actually changed by diffing this same command's
+        # output against a run at the baseline-pinning commit.
+        print(
+            "All ratchet-relevant occurrences (not a new-vs-baseline diff — "
+            "compare against a run at the baseline-pinning commit to "
+            "isolate what changed):"
+        )
         if args.verbose:
             for occ in result.doc_bare_crate_ratchet:
                 print(f"  {occ.path}:{occ.line}  `{occ.span}`")
@@ -375,7 +432,7 @@ def main() -> int:
                 print(f"  {occ.path}:{occ.line}  `{occ.span}`")
     print()
 
-    if ok:
+    if role1_ok and role2_ok:
         print("PASS: both roles satisfied.")
         return 0
     return 1
