@@ -712,7 +712,7 @@ pub enum BorderColor {
 ///
 /// spec §3.3 "Line Thickness: the border-width properties" は
 /// `<line-width> = <length [0,∞]> | thin | medium | thick`。thin=1px、
-/// medium=3px、thick=5px は spec 規定値 (verbatim "are equivalent to 1px,
+/// medium=3px、thick=5px は spec 規定値 (verbatim: "are equivalent to 1px,
 /// 3px, and 5px, respectively")。詳細は `parse_border_width_side` doc 参照。
 ///
 /// # `#[non_exhaustive]`
@@ -1220,7 +1220,7 @@ pub enum ContentComponent {
     /// <https://www.w3.org/TR/css-content-3/#content-property>) は `normal |
     /// none | [ <content-replacement> | <content-list> ] […]?` で、
     /// `<content-replacement> = <image>` は `<content-list>` とは別の
-    /// top-level alternative — spec verbatim "Makes the element or
+    /// top-level alternative — spec verbatim: "Makes the element or
     /// pseudo-element a replaced element, filled with the specified
     /// `<image>`" で `::before`/`::after` 生成を抑制する等、上の list-item 版
     /// `<image>` (anonymous inline replaced element) とは異なる semantics
@@ -1887,7 +1887,8 @@ pub enum PropertyValue {
     /// `Sides::all(Length::Px(0.0))`。CSS Box 3 §4.2
     /// <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
     ///
-    /// 1-4 value expansion (spec-verbatim):
+    /// 1-4 value expansion (CSS Box 3 §4.2 の規定どおり — 逐語引用ではないため
+    /// `verbatim` 表記は使わない):
     /// - 1 value: 全 4 side
     /// - 2 values: top/bottom = first, left/right = second
     /// - 3 values: top = first, left/right = second, bottom = third
@@ -1901,7 +1902,7 @@ pub enum PropertyValue {
     /// [`PaddingBottom`](Self::PaddingBottom) / [`PaddingLeft`](Self::PaddingLeft))
     /// に展開するため (1/2/3/4 expansion + CSS Cascading L4 §3
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
-    /// verbatim "A shorthand property sets all of its longhand sub-properties,
+    /// verbatim: "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
     /// 成立する)。到達経路が無いのは上記の展開保証によるものであり、万一到達
     /// した場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
@@ -1939,7 +1940,7 @@ pub enum PropertyValue {
     /// [`MarginBottom`](Self::MarginBottom) / [`MarginLeft`](Self::MarginLeft))
     /// に展開するため (spec §3.2 の 1/2/3/4 expansion + CSS Cascading L4 §3
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
-    /// verbatim "A shorthand property sets all of its longhand sub-properties,
+    /// verbatim: "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
     /// 成立する)。到達経路が無いのは上記の展開保証によるものであり、万一到達
     /// した場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
@@ -2018,7 +2019,7 @@ pub enum PropertyValue {
     /// ([`mod@crate::cascade`] の `collect_cascaded`) の両方で 12 longhand variant
     /// (4 side × 3 sub-property)
     /// に展開するため (spec CSS Cascading L4 §3 "Shorthand Properties"
-    /// <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim "A shorthand
+    /// <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim: "A shorthand
     /// property sets all of its longhand sub-properties, exactly as if expanded
     /// in place." 準拠、cascade の per-side / per-sub-property 勝ち抜けが自然に
     /// 成立する — margin / padding shorthand precedent 踏襲)。到達経路が無いのは
@@ -3124,8 +3125,8 @@ fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
 
 /// `padding: <'padding-top'>{1,4}` shorthand を [`Sides<Length>`] に expand する。
 ///
-/// CSS Box 3 §4.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand>: spec-verbatim
-/// 1-4 value expansion:
+/// CSS Box 3 §4.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand> の
+/// 1-4 value expansion (逐語引用ではないので `verbatim` 表記は使わない):
 ///
 /// - 1 value: all 4 sides = value
 /// - 2 values: top/bottom = 1st, left/right = 2nd
@@ -3150,7 +3151,7 @@ fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> 
     let v2 = input.try_parse(parse_padding_side_res).ok();
     let v3 = input.try_parse(parse_padding_side_res).ok();
     let v4 = input.try_parse(parse_padding_side_res).ok();
-    // spec (CSS Box 3) §4.2 1-4 value expansion (verbatim):
+    // spec (CSS Box 3) §4.2 1-4 value expansion (code, not a spec quote):
     let sides = match (v2, v3, v4) {
         (None, _, _) => Sides::all(v1),
         (Some(h), None, _) => Sides {
@@ -3226,9 +3227,9 @@ pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
 ///
 /// # Keyword mapping (spec 規定値)
 ///
-/// spec §3.3 は 3 keyword を normative に規定する — verbatim "The thin,
+/// spec §3.3 は 3 keyword を normative に規定する — verbatim: "The thin,
 /// medium, and thick keywords are equivalent to 1px, 3px, and 5px,
-/// respectively":
+/// respectively." 対応表:
 /// - `thin`   → `Length::Px(1.0)`
 /// - `medium` → `Length::Px(3.0)` (initial value)
 /// - `thick`  → `Length::Px(5.0)`
@@ -3347,7 +3348,8 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 ///
 /// # Initial value fill (省略成分)
 ///
-/// spec §3.4 verbatim "Omitted values are set to their initial values":
+/// spec §3.4 verbatim: "Omitted values are set to their initial values."
+/// 各成分の initial:
 /// - width 省略 → `Length::Px(3.0)` (medium initial)
 /// - style 省略 → `BorderStyle::None` (initial、spec §3.2)
 /// - color 省略 → [`BorderColor::CurrentColor`] (spec §3.1 initial、used-value
@@ -3356,7 +3358,7 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 /// # Non-goals (spec deviation 明示)
 ///
 /// spec §3.4 では border shorthand が **border-image-* も reset** する (spec
-/// verbatim "The border shorthand also resets border-image to its initial
+/// verbatim: "The border shorthand also resets border-image to its initial
 /// value.") が、本 crate は border-image を milestone defer で実装しないため
 /// reset side effect を省略。
 /// bd raikiri-spike-0vv (Epic) の border-image longhand 実装時に統合する。
