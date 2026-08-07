@@ -1902,9 +1902,13 @@ pub enum PropertyValue {
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
     /// verbatim "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
-    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
-    /// は本 variant を受けたときも `ComputedValues.padding` field 全 4 side を
-    /// 上書きする実装を持つ (regression 時 panic 回避)。
+    /// 成立する)。到達経路が無いのは上記の展開保証によるものであり、万一到達
+    /// した場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
+    /// (bd raikiri-spike-8kn8 で framing 訂正) — `ComputedValues.padding` field
+    /// 全 4 side を無条件に上書きし、4 longhand winner を必ず破壊する。到達した
+    /// 時点で既に bug であり、穏当に degrade はしない (canonical な記述は
+    /// [`crate::cascade::apply_value`] の `Margin`/`Border` arm doc、および
+    /// [`crate::rule::expand_shorthand_into`] doc 参照)。
     /// raikiri-spike-5nc (margin 0vv.5 の parse-time expansion model に migrate)。
     Padding(Sides<Length>),
     /// `margin-top: <length-percentage> | auto` — non-inherited、initial: 0
@@ -1936,9 +1940,13 @@ pub enum PropertyValue {
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>
     /// verbatim "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
-    /// 成立する)。expansion 経路の safety net として [`crate::cascade::apply_value`]
-    /// は本 variant を受けたときも `ComputedValues.margin` field 全 4 side を
-    /// 上書きする実装を持つ (regression 時 panic 回避)。
+    /// 成立する)。到達経路が無いのは上記の展開保証によるものであり、万一到達
+    /// した場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
+    /// (bd raikiri-spike-8kn8 で framing 訂正) — `ComputedValues.margin` field
+    /// 全 4 side を無条件に上書きし、4 longhand winner を必ず破壊する。到達した
+    /// 時点で既に bug であり、穏当に degrade はしない (canonical な記述は
+    /// [`crate::cascade::apply_value`] の `Margin` arm doc、および
+    /// [`crate::rule::expand_shorthand_into`] doc 参照)。
     /// raikiri-spike-0vv.5。
     Margin(Sides<LengthOrAuto>),
     /// `border-top-width: <line-width>` — non-inherited、initial: `medium`
@@ -2012,10 +2020,14 @@ pub enum PropertyValue {
     /// <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim "A shorthand
     /// property sets all of its longhand sub-properties, exactly as if expanded
     /// in place." 準拠、cascade の per-side / per-sub-property 勝ち抜けが自然に
-    /// 成立する — margin / padding shorthand precedent 踏襲)。expansion 経路の
-    /// safety net として [`crate::cascade::apply_value`] は本 variant を受けたときも
-    /// `ComputedValues.border` field 全 4 side × 3 sub-property を上書きする
-    /// 実装を持つ (regression 時 panic 回避)。
+    /// 成立する — margin / padding shorthand precedent 踏襲)。到達経路が無いのは
+    /// 上記の展開保証によるものであり、万一到達した場合の
+    /// [`crate::cascade::apply_value`] の挙動は **safety net ではない** (bd
+    /// raikiri-spike-8kn8 で framing 訂正) — `ComputedValues.border` field 全
+    /// 4 side × 3 sub-property を無条件に上書きし、12 longhand winner を必ず
+    /// 破壊する。到達した時点で既に bug であり、穏当に degrade はしない
+    /// (canonical な記述は [`crate::cascade::apply_value`] の `Border` arm doc、
+    /// および [`crate::rule::expand_shorthand_into`] doc 参照)。
     ///
     /// ⚠️ spec の "all of its longhand sub-properties" には reset-only の
     /// `border-image-*` (5 本) も含まれる (CSS Backgrounds 3 §3.4: the `border`
