@@ -4284,9 +4284,11 @@ fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
 /// `content([ text | before | after | first-letter ]?)`。
 /// CSS GCPM 3 §1.1.1.1 <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>。
 ///
-/// bare `content()` (spec 例 `h2 { string-set: heading content() }`) は
-/// spec default `text` を意味する。target-text() の第 2 引数と違い、keyword は
-/// paren 直下に置かれる (comma を先行させない)。
+/// bare `content()` (spec 例 `h2 { string-set: heading content() }`) では
+/// [`ContentTextKeyword::Text`] をフォールバック値として使う (根拠は spec の
+/// "default" 宣言ではない — 詳細は [`ContentTextKeyword`] の doc comment
+/// 参照、bd raikiri-spike-x8i6 / raikiri-spike-83r2)。target-text() の
+/// 第 2 引数と違い、keyword は paren 直下に置かれる (comma を先行させない)。
 ///
 /// GCPM 3 §1.1.1 の narrow `<content-list>` (string-set 側) と CSS Content 3
 /// §2 の broad `<content-list>` (content property 側) の **両方** に含まれる
@@ -5914,7 +5916,10 @@ mod tests {
 
     #[test]
     fn content_target_text_default_part_is_content() {
-        // spec §2.6.3: 第 2 引数省略時 default は `content`。
+        // target-text() の第 2 引数省略時、raikiri は ContentPart::Content を
+        // フォールバック値として使う (根拠は spec の "default" 宣言ではない —
+        // CSS Content 3 §2.6.3 は第 2 引数省略時の値を規定していない。bd
+        // raikiri-spike-x8i6 / raikiri-spike-83r2)。
         let items = content_items(r##"target-text(url("#a"))"##);
         assert_eq!(
             items,
@@ -6305,7 +6310,10 @@ mod tests {
     //
     // grammar (spec verbatim, line 758 of TR/css-gcpm-3/):
     //   content() = content([text | before | after | first-letter])
-    // 4 keyword、default `text`。GCPM 3 §1.1.1 の narrow `<content-list>` と
+    // 4 keyword。keyword 省略時は `text` をフォールバック値として使う (根拠は
+    // spec の "default" 宣言ではない — grammar に `?` が無く、"default をどう
+    // 定義するか" 自体が未解決の WG issue として残っている。bd raikiri-spike-x8i6
+    // / raikiri-spike-83r2)。GCPM 3 §1.1.1 の narrow `<content-list>` と
     // CSS Content 3 §2 の broad `<content-list>` の両方に含まれるため、string-set
     // および content property 双方の content-list 内で受理される
     // (raikiri-spike-6s1 で `ContentListMode` mode dispatch を導入した後も
@@ -6334,8 +6342,9 @@ mod tests {
 
     #[test]
     fn content_content_fn_explicit_text_keyword() {
-        // §1.1.1.1: `content(text)` は element の string value (default と同義だが
-        // 明示的 keyword 保持で downstream の分岐余地を残す)。
+        // §1.1.1.1: `content(text)` は element の string value (bare `content()`
+        // 省略時のフォールバック値と同じ keyword だが、明示的 keyword 保持で
+        // downstream の分岐余地を残す)。
         let items = content_items("content(text)");
         assert_eq!(
             items,
@@ -6348,7 +6357,8 @@ mod tests {
     #[test]
     fn content_content_fn_default_keyword_on_empty_parens() {
         // §1.1.1.1 の spec 例 `h2 { string-set: heading content() }` — bare
-        // `content()` は default `text` を意味する。
+        // `content()` は `text` をフォールバック値として使う (根拠は spec の
+        // "default" 宣言ではない。bd raikiri-spike-x8i6 / raikiri-spike-83r2)。
         let items = content_items("content()");
         assert_eq!(
             items,
