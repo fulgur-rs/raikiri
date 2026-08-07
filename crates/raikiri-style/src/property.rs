@@ -939,12 +939,28 @@ pub enum StringFetchMode {
 /// `target-text()` の第 2 引数 `[ content | before | after | first-letter ]?`。
 ///
 /// CSS Content 3 §2.6.3 "The target-text() function"
-/// <https://www.w3.org/TR/css-content-3/#target-text>。
-/// spec default = `content` (per §2.6.3 "The default value is `content`").
+/// <https://www.w3.org/TR/css-content-3/#target-text> の verbatim production:
+/// `target-text() = target-text( [ <string> | <url> ] , [ content | before |
+/// after | first-letter ]? )`。第 2 引数には `?` があり (GCPM 3 §1.1.1.1 の
+/// `content()` とは異なり、構文上そのものが optional)。keyword の意味を
+/// 述べる prose はこの 2 文のみ: "The target-text() function retrieves the
+/// text value of the element referred to by the URL. An optional second
+/// argument specifies what content is retrieved, using the same values as
+/// the string-set property above." — 第 2 引数の keyword に対する dt/dd や "if
+/// omitted" 文は存在しない (string() 関数の keyword 定義とは違う)。ただし
+/// 第 1 文が述べる base behavior ("the text value of the element") は
+/// [`Content`](Self::Content) の意味 (対象要素自身の string value) と一致
+/// する。keyword 省略時に [`Content`](Self::Content) を採用する根拠はこの
+/// semantic correspondence であり、spec が "default" と明言した文の
+/// verbatim quote ではない (bd raikiri-spike-x8i6 で発見された同一
+/// overclaim class、bd raikiri-spike-nncs で本 site を訂正)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ContentPart {
-    /// `content` — spec default (element の string value)。
+    /// `content` — 対象要素自身の string value。target-text() の prose が
+    /// base behavior として述べる "the text value of the element" と対応
+    /// する keyword (type-level doc 参照)。keyword 省略時のフォールバック値
+    /// だが、根拠は spec の "default" 宣言ではない。
     #[default]
     Content,
     /// `before` — `::before` pseudo-element の string value。
