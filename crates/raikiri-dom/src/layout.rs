@@ -1058,9 +1058,9 @@ pub(crate) fn sanitize_taffy_layout(
 ///    はない** — この invariant を無条件で検査しても legitimate な layout
 ///    を誤検出しない。
 /// 2. **child の border box の原点 (`location`) が parent の border box に
-///    収まる** (`child.location.x >= 0`, `child.location.y >= 0`,
-///    `child.location.x <= parent.size.width`, `child.location.y <=
-///    parent.size.height` — taffy の座標系は「parent border box 原点からの
+///    収まる** — 飽和した axis が **正**なら `0 <= child.location <=
+///    parent.size`、**負**なら無条件で ok (bd raikiri-spike-epkj、詳細は
+///    後述の符号別の節) — taffy の座標系は「parent border box 原点からの
 ///    相対位置」、`taffy-0.12.1/src/tree/layout.rs` の
 ///    `Layout::content_box_x/y` の doc参照)。**`child.size` は見ない** —
 ///    issue 本文もこの invariant を「child の **location** が parent の
@@ -1121,6 +1121,47 @@ pub(crate) fn sanitize_taffy_layout(
 ///    飽和かつ収まっている fixture に差し替えた経緯は同 test の doc参照。
 ///    `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 ///    は `y` 軸の検出力が保たれていることの pin として残している)。
+///
+///    **bd raikiri-spike-epkj (ntxy が残余リスクとして自己申告、本 issue で
+///    解決)**: axis 単位の gate まで閉じた上でも、飽和した axis 自身が
+///    **負**の場合に固有の false positive が残っていた。ntxy が導入した版の
+///    再検査式 `child.location >= 0.0 && child.location <= parent.size` は、
+///    `child.location` が負である間は **恒等的に false** — `>= 0.0` を満たす
+///    負数は存在しないので、負方向についてこの式は「containment を
+///    re-validate する」のではなく「飽和かつ負なら無条件 reset する」式と
+///    数学的に同値だった。CSS Box 3 §3.1 (前掲、`margin` の負値は
+///    「implementation-specific limits」の範囲で無制限に許される) の下で、
+///    [`MAX_TAFFY_MAGNITUDE`] はまさにその「implementation-specific limit」
+///    自身であり、そこに達したこと自体は──合法な負方向の関係が本実装の
+///    上限を超えて近似され始めた、というだけで──破綻の証拠にならない。
+///    これは同じ関数がすでに無条件で信頼している「飽和していない負値」
+///    (`legitimate_negative_margin_overflow_is_not_reset` の `-30` や、深い
+///    nest で `-30`,`-60`,…と単調に増大する中間段)と対称であり、境界
+///    (`±MAX_TAFFY_MAGNITUDE` にちょうど達する瞬間) だけ扱いが不連続に
+///    反転する理由が無い。
+///
+///    したがって現在の定義は **符号で分岐する**: 飽和した axis が負なら
+///    無条件に ok (負のまま存在しうる正当な CSS 関係の上限到達として扱う)、
+///    正なら従来通り `<= parent.size` を再検査する。正方向を緩めない理由は
+///    2 つ — (a) `padding` / `border` / `width` は parse 時点で非負が
+///    enforce されるため、正方向の巨大な `location` を「CSS が無制限に
+///    許す」と正当化する spec 上の対称な根拠が (margin とは違って) 無い、
+///    (b) 正方向の再検査は実際に両方の分岐を持つ (`<=` が真になる
+///    `saturated_but_contained_layout_is_not_reset`、偽になる
+///    `saturated_child_outside_parent_resets_subtree_to_zero_layout`) ので
+///    緩めると既存の検出力を実際に失う——のに対し、負方向の旧式は上述の
+///    とおり「常に false」だったため、緩めても失われる検出力は元々存在
+///    しなかった。
+///
+///    **別案として検討し却下したもの**: 「`parent.size` 自身も同じ axis で
+///    飽和していれば (符号を見ずに) re-validate をスキップする」という
+///    parent 飽和ゲート案は、
+///    `saturated_negative_margin_percentage_child_is_not_reset`
+///    (単一の `margin-left: -1e9%` 宣言、nest 無し、parent は
+///    `width: 100px` で飽和していない) を誤って reset したまま説明できない
+///    ——「parent が飽和しているかどうか」ではなく「child 自身の符号」が
+///    正しい判別軸である証拠として、この test を上の nested chain test と
+///    独立に残している。
 ///
 /// NaN → `0.0` (`sanitize_finite` の doc参照) は飽和境界 (`±MAX_TAFFY_
 /// MAGNITUDE`) に一致しないため invariant 2 の gate をすり抜けるが、実害は
@@ -1254,6 +1295,9 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// の中にあるかどうか。**axis 単位**で判定する — 各 axis は、その axis の
 /// `child.location` 自身が [`MAX_TAFFY_MAGNITUDE`] の飽和境界にちょうど
 /// 達している場合**だけ**検査し、達していなければ無条件に「ok」とみなす。
+/// 飽和している場合はさらに**符号で**分岐する — 負なら無条件 ok、正なら
+/// `parent.size` との `<=` を再検査する (詳細は下の「符号で分岐する理由」節、
+/// bd raikiri-spike-epkj)。
 ///
 /// # `child.size` を見ない理由 (issue 本文の記述に忠実)
 ///
@@ -1308,12 +1352,62 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// を pin する。真に壊れているケース
 /// (`saturated_child_outside_parent_resets_subtree_to_zero_layout`) は
 /// 飽和した axis 自身が違反しているので引き続き検出される。
+///
+/// # 飽和した axis の中でさらに符号で分岐する理由 (bd raikiri-spike-epkj)
+///
+/// axis 単位まで絞った直後の版でもなお、**飽和した axis 自身が負**の
+/// ケースに固有の false positive が残っていた。再検査式
+/// `child.location >= 0.0 && child.location <= parent.size` は、
+/// `child.location` が負である限り `>= 0.0` を満たしようがないので
+/// **恒等的に false** — つまり負方向についてこの式は「containment を
+/// 検査する」のではなく「飽和かつ負なら無条件に reset する」ことと同値
+/// だった。CSS Box 3 §3.1 (`sanitize_taffy` の doc参照、margin の負値は
+/// 「implementation-specific limits」の範囲で無制限に許される) の下では、
+/// [`MAX_TAFFY_MAGNITUDE`] こそがその limit そのものであり、そこに達した
+/// こと自体は合法な負方向の関係が本実装の上限を超えて近似され始めた、
+/// というだけで破綻の証拠にはならない — 同じ関数がすでに無条件で信頼
+/// している「飽和していない負値」(`legitimate_negative_margin_overflow_
+/// is_not_reset` の `-30`) と対称であり、`±MAX_TAFFY_MAGNITUDE` の境界を
+/// 跨いだ瞬間だけ扱いを不連続に反転させる理由が無い。
+///
+/// 正方向は緩めない。(a) `padding` / `border` / `width` は parse
+/// 時点で非負が enforce されるため、正方向の巨大な `location` を
+/// margin と同じ「CSS が無制限に許す」根拠では正当化できない。
+/// (b) 正方向の再検査は実際に pass/fail 両方の分岐を持ち
+/// (`saturated_but_contained_layout_is_not_reset` が pass、
+/// `saturated_child_outside_parent_resets_subtree_to_zero_layout` が
+/// fail)、緩めると現に存在する検出力を失う — 負方向はそもそも pass する
+/// 経路が存在しなかったので、失われる検出力は無い。
+///
+/// `saturated_negative_margin_percentage_child_is_not_reset` (単一の
+/// `margin-left: -1e9%` 宣言、nest 無し) と
+/// `deep_nested_negative_percentage_margin_saturating_location_is_not_reset`
+/// (`width: 200%; margin-left: -100%` の深い nest chain、
+/// `nested_percentage_wide_child_chain_is_not_reset` の負方向対) が
+/// 実際の CSS パイプライン経由でこれを pin する。前者は特に、「`parent.size`
+/// 自身も同じ axis で飽和していれば符号を見ずに re-validate をスキップ
+/// する」という検討したが却下した別案を反証する最小 fixture でもある —
+/// この fixture は `parent.size.width` が飽和していない (`100.0` のまま)
+/// ので、判別軸は「parent も飽和しているか」ではなく「child 自身の符号」
+/// でなければならないことを示す。`saturated_negative_location_is_not_reset`
+/// は同じ conjunction を直接構築した最小 synthetic case で孤立させて
+/// 検査する (`saturated_but_contained_layout_is_not_reset` と対になる、
+/// 正方向 pass ケースの負方向対)。
 fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> bool {
-    let x_ok = !taffy_magnitude_is_saturated(child.location.x)
-        || (child.location.x >= 0.0 && child.location.x <= parent.size.width);
-    let y_ok = !taffy_magnitude_is_saturated(child.location.y)
-        || (child.location.y >= 0.0 && child.location.y <= parent.size.height);
-    x_ok && y_ok
+    /// 1 axis 分の containment 判定。`location` はその axis の
+    /// `child.location.{x,y}`、`parent_size` は対応する
+    /// `parent.size.{width,height}` (この doc block が「extent」の語を
+    /// `location + size` の rejected containment 案専用に使っているのと
+    /// 紛れないよう、あえて `extent` を避けた命名)。
+    fn axis_ok(location: f32, parent_size: f32) -> bool {
+        if !taffy_magnitude_is_saturated(location) {
+            return true;
+        }
+        // 飽和かつ負 → 無条件 ok。飽和かつ正 (0.0 は `taffy_magnitude_is_
+        // saturated` を満たさないのでここには来ない) → 従来通り再検査。
+        location < 0.0 || location <= parent_size
+    }
+    axis_ok(child.location.x, parent.size.width) && axis_ok(child.location.y, parent.size.height)
 }
 
 /// [`ComputedLengthPercentage`] → [`taffy::LengthPercentage`] bridge
@@ -4332,6 +4426,213 @@ mod tests {
                  survive `enforce_layout_invariants` even past the depth \
                  where `size` saturates, since the child's `location` never \
                  leaves the parent's border box: {l:?}",
+                i + 1
+            );
+        }
+    }
+
+    /// bd raikiri-spike-epkj — minimal synthetic pin for the new negative-
+    /// saturation branch of [`child_within_parent_border_box`], isolated
+    /// from any real CSS pipeline (mirrors how
+    /// [`saturated_but_contained_layout_is_not_reset`] pins the positive-
+    /// saturation pass path). `child.location.x` is placed exactly at
+    /// `-MAX_TAFFY_MAGNITUDE` against an ordinary, unsaturated
+    /// `parent.size` — under the pre-fix predicate
+    /// (`child.location >= 0.0 && child.location <= parent.size`) this is
+    /// **unreachable as a pass**: no negative value ever satisfies `>= 0.0`,
+    /// so the old code reset this unconditionally regardless of
+    /// `parent.size`. This test pins that the new sign-based branch (see
+    /// [`child_within_parent_border_box`]'s doc, "飽和した axis の中でさらに
+    /// 符号で分岐する理由") treats saturated-negative as unconditionally ok,
+    /// the same way unsaturated-negative already was.
+    #[test]
+    fn saturated_negative_location_is_not_reset() {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+
+        doc.nodes[parent].unrounded_layout = TaffyLayout {
+            order: 0,
+            location: Point::ZERO,
+            size: Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+        // child.location.x はちょうど飽和境界の**負**側 — parent.size は
+        // 飽和していない通常値 (100.0)。旧式 (`>= 0.0 && <= parent.size`) は
+        // 負の値に対しては恒等的に false だったので、この fixture は
+        // 旧実装では必ず reset される (`>= 0.0` を満たす負数は存在しない)。
+        doc.nodes[child].unrounded_layout = TaffyLayout {
+            order: 1,
+            location: Point {
+                x: -MAX_TAFFY_MAGNITUDE,
+                y: 0.0,
+            },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+
+        let child_before = doc.nodes[child].unrounded_layout;
+        enforce_layout_invariants(&mut doc, parent);
+
+        // これ以降の assert メッセージはあえて 1 物理行で書く (この file の
+        // 他 test の慣習である backslash 継続の複数行ではない) —
+        // `scripts/lib/patch_coverage.py` の `code_only()` は行ごとに
+        // string 状態をリセットするため、backslash 継続行の途中に (地の文
+        // としての) `)`/`]`/`}` があると `cov:ignore` の block scope 計算が
+        // そこで途切れ、後続行が exempt されず patch coverage が誤って
+        // FAIL する (bd raikiri-spike-epkj で実際に踏んだ)。1 行に畳むのは
+        // その回避策であり、単なる style の揺れではない。
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[child].unrounded_layout, child_before,
+            "child.location.x が飽和境界にちょうど達していても、負である限り MAX_TAFFY_MAGNITUDE の doc が言う implementation-specific limit に達しただけで破綻の証拠にはならない (bd raikiri-spike-epkj) — reset されないこと"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            doc.layout_warnings
+                .iter()
+                .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
+            "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// bd raikiri-spike-epkj — real CSS pipeline regression pin, and the
+    /// **discriminating fixture** between the sign-based fix and a
+    /// considered-and-rejected alternative ("skip re-validation whenever
+    /// `parent.size` on that axis is also saturated, regardless of sign").
+    ///
+    /// A *single* `margin-left: -1e9%` declaration (no nesting) on a child
+    /// of a plain `width: 100px` parent is enough: `sanitize_taffy` clamps
+    /// the *fraction* (`-1e9%` → `-1e7` after `/100.0`), taffy then resolves
+    /// that fraction against the parent's 100px containing block
+    /// (`-1e7 * 100 = -1e9`), and `sanitize_taffy_layout` clamps the
+    /// resulting raw `location.x` to exactly `-MAX_TAFFY_MAGNITUDE` on
+    /// write. `parent.size.width` stays `100.0` — nowhere near saturated.
+    ///
+    /// The rejected "parent-also-saturated" alternative would still reset
+    /// this case (parent isn't saturated on this axis), so it does not
+    /// close the gap this issue investigated. Only a rule keyed on the
+    /// *child's own sign* (this fix) accepts it, which is why this test is
+    /// pinned independently of
+    /// [`deep_nested_negative_percentage_margin_saturating_location_is_not_reset`]
+    /// below (that one's parent *does* happen to be saturated too, so on
+    /// its own it could not rule out the rejected alternative).
+    #[test]
+    fn saturated_negative_margin_percentage_child_is_not_reset() {
+        use raikiri_style::{build_rule_tree, cascade};
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width: 100px; height: 100px;"),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("width: 10px; height: 10px; margin-left: -1e9%;"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let parent_layout = doc.nodes[parent].unrounded_layout;
+        let child_layout = doc.nodes[child].unrounded_layout;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            parent_layout.size,
+            Size {
+                width: 100.0,
+                height: 100.0
+            },
+            "this test's premise (parent stays unsaturated) no longer holds — re-verify before trusting the rest of this test"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            taffy_magnitude_is_saturated(child_layout.location.x) && child_layout.location.x < 0.0,
+            "this test's premise (margin-left: -1e9% saturates child.location.x negative) no longer holds — re-verify against MAX_TAFFY_MAGNITUDE's doc before trusting the rest of this test: {child_layout:?}"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_ne!(
+            child_layout,
+            TaffyLayout::with_order(child_layout.order),
+            "a single extreme-but-spec-valid negative percentage margin (no nesting needed) must not reset the subtree merely because it saturates the location — the parent here is not saturated, so a 'skip when parent is also saturated' rule would not have fixed this: {child_layout:?}"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            doc.layout_warnings
+                .iter()
+                .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
+            "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// bd raikiri-spike-epkj — negative-direction analog of
+    /// [`nested_percentage_wide_child_chain_is_not_reset`]. `width: 200%`
+    /// alone never moves the child's origin off `(0, 0)` (that test's own
+    /// premise), so it can't exercise invariant 2's location check at all.
+    /// Adding `margin-left: -100%` at every depth does: since each level's
+    /// own width is `2x` its containing block, and `margin-left: -100%`
+    /// resolves against that same (growing) containing block, the relation
+    /// `child.location.x == -parent.size.width` holds at *every* depth —
+    /// legitimate, consistent, and unrelated to corruption — yet it pushes
+    /// `location.x` negative fast enough to saturate several levels before
+    /// `size.width` does (verified empirically: depth 15 saturates
+    /// `location.x` here, one level after `size.width` alone saturates at
+    /// depth 14 for plain `width: 200%`). Before this fix, every depth past
+    /// the first saturated one collapsed to a zero layout.
+    #[test]
+    fn deep_nested_negative_percentage_margin_saturating_location_is_not_reset() {
+        const DEPTH: usize = 45;
+        let layouts = nested_decl_layouts("width: 200%; margin-left: -100%", DEPTH);
+        assert_eq!(layouts.len(), DEPTH);
+
+        let saturated_negative_count = layouts
+            .iter()
+            .filter(|l| taffy_magnitude_is_saturated(l.location.x) && l.location.x < 0.0)
+            .count();
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            saturated_negative_count > 0,
+            "this test's premise (some depth saturates location.x negative in this sweep range) no longer holds — re-verify against MAX_TAFFY_MAGNITUDE's doc before trusting the rest of this test: {layouts:?}"
+        );
+        for (i, l) in layouts.iter().enumerate() {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_ne!(
+                *l,
+                TaffyLayout::with_order(l.order),
+                "nest depth {} was reset to a zero layout — a legitimate \
+                 \"child sits exactly one containing-block-width to the \
+                 left of its parent at every depth\" declaration must \
+                 survive `enforce_layout_invariants` even past the depth \
+                 where `location.x` saturates negative: {l:?}",
                 i + 1
             );
         }
