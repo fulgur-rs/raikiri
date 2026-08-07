@@ -2898,7 +2898,8 @@ fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 ///
 /// 5+ value (`margin: 10px 20px 30px 40px 50px`) は本 helper では 4 value 消費
 /// して残り 1 token を unconsumed で return する。caller の
-/// [`crate::rule::DeclParser`] の [`cssparser::DeclarationParser::parse_value`]
+/// [`mod@crate::rule`] の `DeclParser` の
+/// [`cssparser::DeclarationParser::parse_value`]
 /// impl が `expect_exhausted` で余剰 token を
 /// 検知して declaration ごと drop する (既存 [`parse_font_family`] 系と同じ
 /// 責務分担、`rejects_extra_length_after_font_size` 系 test で pattern を pin)。

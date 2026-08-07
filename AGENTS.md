@@ -133,7 +133,37 @@ bd raikiri-spike-nqkj では lens が提案した ``` `crate::computed::Computed
    解決しない** — 迷ったら下の「わざと壊して確かめる」で決めること。
    `pub(crate)` へ広げるのは他 module の doc から item 自体を指す必要がある場合に限り、
    **広げた item の doc に理由を 1 行書く** (例: `crates/raikiri-style/src/cascade.rs` の
-   `apply_value`)。**この hatch の閾値はまだ無い** — 整備は bd raikiri-spike-uy4g。
+   `apply_value`)。
+
+   **hatch の閾値 (bd raikiri-spike-uy4g で確定)**: 「widening が gate で enforce
+   されるなら可、補助 command (`--document-private-items`) でしか enforce されないなら
+   本項の `mod@` 代替に倒す」。判定 command は上の「わざと壊して確かめる」手順そのまま
+   (対象 item を 1 つだけ private に戻し、gate command で red になるかを見る) —
+   追加の道具は要らない。理由は bd raikiri-spike-8yj6 の PMO decision
+   (2026-08-07): gate §8.1 の doc build には `--document-private-items` を足さないため、
+   補助 command でしか検証されない widening は **検証利得ゼロで visibility 拡大だけが
+   残る** ことが確定した。
+
+   **適用結果 (bd raikiri-spike-ulzv が昇格した 6 件、rustc 1.89.0 で実測)**:
+   - **gate-enforced (pub(crate) を維持)**: `crates/raikiri-style/src/cascade.rs` の
+     `apply_value` / `resolve_relative_weight` / `resolve_inheritance` — 対象を private
+     に戻すと gate (`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace`) が
+     unresolved link で red になる (gate が実際にこの doc link を検証している)。
+   - **mod@ へ降格 (private に戻した)**: `crates/raikiri-style/src/page.rs` の
+     `absolutize_in_page_context` / `PageSpecificity`、`crates/raikiri-style/src/rule.rs`
+     の `DeclParser` — 対象を private に戻しても gate は green のまま
+     (補助 command でしか red にならない)。referrer 側の doc link は次の形に書き換えた:
+     - `page.rs` の 2 件は module/item の同名衝突が無いため、既存の
+       ``[`crate::page::PageSpecificity`]`` 形の full path link で gate 上は足り、
+       書き換え不要 (`crates/raikiri-style/src/cascade.rs` / `rule.rs` の referrer 3 箇所)。
+       ただし補助 command では引き続き unresolved (private item への full path link は
+       `--document-private-items` 下でも解決しない) — これは想定内で、gate が
+       enforce しない以上ここに追加コストは掛けない。
+     - `rule.rs` の `DeclParser` は trait full path (規約 5) と組み合わさっており
+       naive な demotion では文が崩れるため、``[`mod@crate::rule`] の `DeclParser` ``
+       + trait 側 link の形に書き換えた (`crates/raikiri-style/src/property.rs`,
+       `crates/raikiri-style/src/counter_style.rs`)。この形は補助 command でも
+       clean に解決する (module 自身が link 元から見えるため)。
 4. **同じ scope に同名の item がある module は `mod@` を付ける。** `raikiri-style` では
    `pub mod cascade` と `pub use cascade::{…, cascade}` が module と関数を同名で crate root
    に置くため ``[`mod@crate::cascade`]`` と書く。無印は ambiguous link になる。

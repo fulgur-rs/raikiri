@@ -592,9 +592,7 @@ fn expand_border(sides: Sides<Border>, important: bool, mut push: impl FnMut(Dec
 }
 
 /// Per-declaration parser for cssparser::RuleBodyParser。
-///
-/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で補助 doc build が red (規約 3)。
-pub(crate) struct DeclParser;
+struct DeclParser;
 
 impl<'i> DeclarationParser<'i> for DeclParser {
     type Declaration = Declaration;

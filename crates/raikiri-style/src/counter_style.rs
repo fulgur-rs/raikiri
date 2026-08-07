@@ -727,7 +727,7 @@ fn parse_descriptor_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Pars
 }
 
 /// Per-declaration parser for the `@counter-style` block's `<declaration-list>`
-/// — mirrors [`crate::rule::DeclParser`]'s shape exactly (same
+/// — mirrors [`mod@crate::rule`]'s `DeclParser` shape exactly (same
 /// `RuleBodyItemParser` wiring, same "unsupported name / invalid value →
 /// `Err` → whole declaration silently dropped by `RuleBodyParser`'s error
 /// recovery" behavior), specialized to counter-style descriptor names
