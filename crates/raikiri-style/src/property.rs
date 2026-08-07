@@ -4031,17 +4031,26 @@ fn parse_content_function(
 /// 個別の predicate (例 [`is_reserved_counter_name`]) 側の責務。
 /// [`is_reserved_custom_ident`] の docstring も参照。
 ///
-/// **呼び出し元は 3 箇所のみ**: `string()` の name 引数 ([`parse_string_fn`])、
+/// **呼び出し元は当初 3 箇所**: `string()` の name 引数 ([`parse_string_fn`])、
 /// `target-counter()` / `target-counters()` の第 2 引数
 /// ([`parse_target_counter_fn`] / [`parse_target_counters_fn`])。いずれも spec 上
 /// `<custom-ident>` を取り `none` は valid。
+///
+/// bd raikiri-spike-r7r1 で `pub(crate)` に広げ、`counter_style` module が
+/// `<counter-style-name>` (CSS Counter Styles L3 §3
+/// <https://www.w3.org/TR/css-counter-styles-3/#typedef-counter-style-name> —
+/// `<custom-ident>` に `none` 追加除外を足した production、`<symbol>` の
+/// `<custom-ident>` alternative 等) の base として同じ CSS-wide keyword 除外
+/// list を再利用する 4 箇所目の呼び出し元になった (`is_reserved_custom_ident`
+/// の list を二重管理しないため — 本 crate の drift 回避規約、
+/// [`crate::page::PageCascadeResult::declarations`] doc 同旨)。
 ///
 /// `<counter-name>` を取る `counter()` / `counters()` および counter-* property は
 /// **本関数を経由しない** — [`parse_counter_name`] / [`parse_counter_property`] が
 /// [`is_reserved_counter_name`] で `none` を追加除外する。したがって本関数に
 /// `none` 除外を足してはならない (足すと `target-counter(url(#a), none)` と
 /// `string(none)` を spec に反して reject する)。
-fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
+pub(crate) fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
     let ident = input.expect_ident().ok()?.clone();
     if is_reserved_custom_ident(&ident) {
         None
@@ -4057,7 +4066,12 @@ fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
 /// `revert-layer`) と `default` のみを弾く。`none` はここでは除外せず、
 /// より狭い grammar (`<counter-name>` 等) の追加除外は個別の predicate
 /// (例 [`is_reserved_counter_name`]) で行う。case-insensitive 比較。
-fn is_reserved_custom_ident(ident: &str) -> bool {
+///
+/// `pub(crate)`: bd raikiri-spike-r7r1 の `counter_style` module が
+/// `<counter-style-name>` 系 production (rule name / `fallback` / `system:
+/// extends`) の除外 predicate を組み立てる際にこの base list を再利用する
+/// ([`parse_custom_ident`] の doc 参照)。
+pub(crate) fn is_reserved_custom_ident(ident: &str) -> bool {
     matches!(
         ident.to_ascii_lowercase().as_str(),
         "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default"
