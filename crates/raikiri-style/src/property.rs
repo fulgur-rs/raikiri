@@ -2369,7 +2369,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "position" => parse_position(input).map(PropertyValue::Position),
         // CSS Text 3 §6.1 text-align (raikiri-spike-0vv.8、Sprint 12 seed)。
         // spec 上 shorthand (text-align-all + text-align-last) だが単一 field で保持
-        // (g04 (b) milestone subset、[`TextAlign`] doc-comment 参照)。
+        // (g04 (b) milestone subset、`TextAlign` doc-comment 参照)。
         "text-align" => parse_text_align(input).map(PropertyValue::TextAlign),
         // CSS Box 3 §4.1 padding physical longhand (raikiri-spike-0vv.6)。
         // grammar: <length-percentage [0,∞]> — non-negative constraint は
@@ -2453,7 +2453,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "box-sizing" => parse_box_sizing(input).map(PropertyValue::BoxSizing),
         // CSS Writing Modes 4 §2.1 direction (raikiri-spike-l3wg)。
         // value grammar `ltr | rtl`、initial `ltr`、inherited、
-        // computed value = specified keyword ([`Direction`] doc 参照)。
+        // computed value = specified keyword (`Direction` doc 参照)。
         "direction" => parse_direction(input).map(PropertyValue::Direction),
         _ => None,
     }
@@ -2767,7 +2767,7 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             // Additional font-relative units (CSS Values 4 §6.1.1) —
             // bd raikiri-spike-2x8. `ex`/`ch`/`ic` の real-metric variant は
             // style 層に font metrics が無いため常に spec fallback を使う
-            // ([`Length::Ex`] / [`Length::Ch`] / [`Length::Ic`] の doc 参照)。
+            // (`Length::Ex` / `Length::Ch` / `Length::Ic` の doc 参照)。
             "ex" => Some(Length::Ex(*value)),
             "rex" => Some(Length::Rex(*value)),
             "ch" => Some(Length::Ch(*value)),
@@ -2977,7 +2977,7 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     }
     let length = parse_length_value(input, true)?;
     // spec §3.1.1 grammar `<length-percentage [0,∞]>` の non-negative constraint
-    // (padding と同 pattern、[`length_payload`] 経由、raikiri-spike-0vv.6
+    // (padding と同 pattern、`length_payload` 経由、raikiri-spike-0vv.6
     // precedent)。
     (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
@@ -3290,7 +3290,7 @@ fn parse_border_width_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     // 2. `<length [0,∞]>` — allow_percentage=false で `<length>` mode
     //    (Percentage token は reject される、`<percentage>` は grammar 外)。
     let length = parse_length_value(input, false)?;
-    // spec `<length [0,∞]>` の non-negative constraint — [`length_payload`] は
+    // spec `<length [0,∞]>` の non-negative constraint — `length_payload` は
     // `Percent` も含む全 variant に対して定義されているが、`Percent` は
     // `allow_percentage=false` により本関数へは到達し得ない (unreachable、
     // dead value であって dead code ではない — helper 自体は border-width
@@ -3431,7 +3431,7 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
             continue;
         }
 
-        // color slot — [`parse_border_color`] を reuse。hex / named / rgb(a) /
+        // color slot — `parse_border_color` を reuse。hex / named / rgb(a) /
         // transparent の全 alternative + `currentcolor` keyword (CSS Color 3
         // §4.4) を受理。4 longhand parse site (border-{top,right,bottom,left}-color)
         // と同じ helper を経由することで 37n sibling convention consistency を
@@ -5062,7 +5062,7 @@ mod tests {
         // crate previously did per bd raikiri-spike-vxha, can change *which
         // declaration wins* the cascade — a stronger effect than an
         // incorrectly-resolved value). Resolution against the parent's used
-        // line-height is [`crate::resolve::resolve_font_size`]'s concern, not
+        // line-height is `crate::resolve::resolve_font_size`'s concern, not
         // this parser's — pinned by that module's tests, not here.
         assert_eq!(
             parse("1lh", "font-size"),
@@ -5076,7 +5076,7 @@ mod tests {
 
     #[test]
     fn font_size_rejects_negative_lh_and_rlh() {
-        // The grammar's `[0,∞]` non-negative constraint ([`parse_font_size`]
+        // The grammar's `[0,∞]` non-negative constraint (`parse_font_size`
         // doc "Non-negative constraint" 節) applies to `lh`/`rlh` the same as
         // every other `Length` variant — `length_payload` reads their inner
         // `f32` generically, so this falls out of the existing post-filter
@@ -8240,7 +8240,7 @@ mod tests {
         // parse_border_shorthand の width slot が parse_border_width_side_res 経由で
         // parse_length_value Number arm を通して Length::Px(0.0) を取り、
         // style slot は Solid、color slot は省略で spec initial =
-        // [`BorderColor::CurrentColor`] (CSS Backgrounds 3 §3.1、raikiri-spike-0vv.17)。
+        // `BorderColor::CurrentColor` (CSS Backgrounds 3 §3.1、raikiri-spike-0vv.17)。
         let border = Border {
             width: Length::Px(0.0),
             style: BorderStyle::Solid,
@@ -8289,7 +8289,7 @@ mod tests {
         // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。`<line-width>`
         // grammar (`<length [0,∞]> | thin | medium | thick`) has no
         // self-reference concern the way `font-size` / `line-height` do
-        // ([`Length::Lh`] doc), so `border-*-width` accepts them unfiltered.
+        // (`Length::Lh` doc), so `border-*-width` accepts them unfiltered.
         assert_eq!(
             parse("2lh", "border-top-width"),
             Some(PropertyValue::BorderTopWidth(Length::Lh(2.0)))
@@ -8482,7 +8482,7 @@ mod tests {
     fn border_top_color_parse_hex() {
         // border-*-color の hex form は `parse_color` (background-color と同じ
         // helper) が hex/named/rgb(a)/transparent を受理し、`parse_border_color`
-        // が [`BorderColor::Resolved`] で wrap して cascade static side に届く
+        // が `BorderColor::Resolved` で wrap して cascade static side に届く
         // (raikiri-spike-0vv.17)。
         assert_eq!(
             parse("#ff0000", "border-top-color"),
@@ -8536,7 +8536,7 @@ mod tests {
     fn border_top_color_parse_currentcolor() {
         // CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
         // "Initial: currentcolor" — author 明示 `border-*-color: currentcolor` が
-        // [`BorderColor::CurrentColor`] variant として保持されることを pin する
+        // `BorderColor::CurrentColor` variant として保持されることを pin する
         // (0vv.17 hazard case 1 の cascade-side coverage、used-value resolution は
         // bd raikiri-spike-q7qf の paint scope 責務)。
         assert_eq!(
@@ -8605,7 +8605,7 @@ mod tests {
     fn border_shorthand_omitted_components_use_initial() {
         // spec §3.4 "Omitted values are set to their initial values" —
         // width 省略 → medium (3px)、style 省略 → None、color 省略 →
-        // `currentcolor` keyword ([`BorderColor::CurrentColor`]、spec §3.1
+        // `currentcolor` keyword (`BorderColor::CurrentColor`、spec §3.1
         // initial、raikiri-spike-0vv.17)。
         // 1 component only (color) — width と style は initial:
         let with_only_color = Border {
@@ -8680,7 +8680,7 @@ mod tests {
     #[test]
     fn border_shorthand_color_slot_accepts_currentcolor() {
         // 37n sibling: border shorthand の color slot は 4 longhand と同じ
-        // [`parse_border_color`] を経由するため、`currentcolor` keyword も
+        // `parse_border_color` を経由するため、`currentcolor` keyword も
         // shorthand から受理される (0vv.17)。
         let expected = Border {
             width: Length::Px(1.0),
@@ -8822,7 +8822,7 @@ mod tests {
     // (parse_height doc の g04 3-category 参照)。
     //
     // 37n sibling: sibling `width` (0vv.10) と同 shape の非負 `<length-percentage>` +
-    // `auto` grammar、payload 型は共通 [`LengthOrAuto`]。
+    // `auto` grammar、payload 型は共通 `LengthOrAuto`。
 
     #[test]
     fn height_parse_auto() {

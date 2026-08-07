@@ -985,11 +985,11 @@ pub fn resolve_font_size(
         Length::Pc(v) => ComputedLength(pc_to_px(v)),
         Length::Em(v) => ComputedLength(parent_font_size.0 * v),
         Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
-        // ex / ch: unknown-metric fallback = 0.5em ([`Length::Ex`] /
-        // [`Length::Ch`] doc)。font-size 自身の値なので基準は親
+        // ex / ch: unknown-metric fallback = 0.5em (`Length::Ex` /
+        // `Length::Ch` doc)。font-size 自身の値なので基準は親
         // (上記 parent-metrics 条項、`em` と同じ)。
         Length::Ex(v) | Length::Ch(v) => ComputedLength(parent_font_size.0 * v * 0.5),
-        // ic: unknown-metric fallback = 1em ([`Length::Ic`] doc)。
+        // ic: unknown-metric fallback = 1em (`Length::Ic` doc)。
         Length::Ic(v) => ComputedLength(parent_font_size.0 * v),
         // rex / rch: root 版の同じ fallback、基準は root_font_size (`rem` と同じ)。
         Length::Rex(v) | Length::Rch(v) => ComputedLength(ctx.root_font_size.0 * v * 0.5),
@@ -1107,7 +1107,7 @@ pub(crate) fn resolve_length(
         Length::Em(v) => ComputedLength(font_size.0 * v),
         Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
         // ex / ch / ic: 自要素基準の unknown-metric fallback
-        // ([`resolve_font_size`] の同 arm と同じ 0.5em / 1em、基準のみ自要素)。
+        // (`resolve_font_size` の同 arm と同じ 0.5em / 1em、基準のみ自要素)。
         Length::Ex(v) | Length::Ch(v) => ComputedLength(font_size.0 * v * 0.5),
         Length::Ic(v) => ComputedLength(font_size.0 * v),
         Length::Rex(v) | Length::Rch(v) => ComputedLength(ctx.root_font_size.0 * v * 0.5),
@@ -1157,7 +1157,7 @@ pub fn resolve_length_percentage(
         Length::Pc(v) => ComputedLengthPercentage::Px(pc_to_px(v)),
         Length::Em(v) => ComputedLengthPercentage::Px(font_size.0 * v),
         Length::Rem(v) => ComputedLengthPercentage::Px(ctx.root_font_size.0 * v),
-        // ex / ch / ic: [`resolve_length`] と同じ fallback ratio。
+        // ex / ch / ic: `resolve_length` と同じ fallback ratio。
         Length::Ex(v) | Length::Ch(v) => ComputedLengthPercentage::Px(font_size.0 * v * 0.5),
         Length::Ic(v) => ComputedLengthPercentage::Px(font_size.0 * v),
         Length::Rex(v) | Length::Rch(v) => {

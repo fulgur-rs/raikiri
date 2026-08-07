@@ -34,7 +34,7 @@ pub use html_to_png::{html_to_png, html_to_png_with_fonts};
 // ── M2 kickoff seed: PageScene + PageDrawables consumer surface ────────
 // raikiri-spike-os52 (Sprint 22)。実装 body は placeholder (empty struct + Default)、
 // consumer facade の pub type surface のみを landing する。
-// `NodeId` は既存 [`raikiri_traits::NodeId`] (m1.23 landed re-export) を再利用し
+// `NodeId` は既存 `raikiri_traits::NodeId` (m1.23 landed re-export) を再利用し
 // PageScene と Document 間で node identity を統一する (coord Option A on
 // raikiri-spike-os52、bd comment 参照)。
 mod page_scene;

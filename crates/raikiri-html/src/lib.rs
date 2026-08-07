@@ -822,7 +822,7 @@ mod tests {
         let inner_p_id = inner_p_id.expect("<p id=inner> should exist inside template");
 
         // Index into cascade.computed for both nodes must not panic (proves
-        // out[idx] was still written for the inert node despite the gate).
+        // out`idx` was still written for the inert node despite the gate).
         let outer_cv = &cascade.computed[outer_p_id];
         let inner_cv = &cascade.computed[inner_p_id];
 

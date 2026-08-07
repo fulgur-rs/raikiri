@@ -358,12 +358,12 @@ fn parse_and_push_pseudo<'i>(
 // # Sibling arm convention (raikiri-spike-37n)
 //
 // Follows the sibling convention established by
-// [`crate::cascade::collect_cascaded`] + [`crate::cascade::pick_winners`]:
+// `crate::cascade::collect_cascaded` + `crate::cascade::pick_winners`:
 // per-candidate `(value, important, origin, specificity, source_order)` tuple,
-// group by [`PropertyKey`], pick winner by `(rank, specificity, source_order)`
-// where higher tuples beat lower. `rank` reuses [`cascade_rank`] verbatim —
+// group by `PropertyKey`, pick winner by `(rank, specificity, source_order)`
+// where higher tuples beat lower. `rank` reuses `cascade_rank` verbatim —
 // `@page` rules and style rules share the same origin ordering (spec §6.2).
-// The only diverging element is the specificity type: [`PageSpecificity`] is a
+// The only diverging element is the specificity type: `PageSpecificity` is a
 // derived-`Ord` `(f, g, h)` triple per L3 §"Cascading and page context",
 // whereas style rules use the `selectors` crate's 32-bit packed specificity.
 // ---------------------------------------------------------------------------

@@ -276,7 +276,7 @@ impl SpecifiedValues {
             line_height: lift_line_height(parent.line_height),
             // `match-parent` はここでは解決しない (素朴なコピー) — 解決は
             // `finalize` / `finalize_as_root` が全 winner 適用後に親の
-            // `ComputedValues` を明示的に受け取って行う ([`Self`] doc の
+            // `ComputedValues` を明示的に受け取って行う (`Self` doc の
             // "D5 と同型ではない" 節、raikiri-spike-l3wg)。
             text_align: parent.text_align,
             direction: parent.direction,
@@ -372,14 +372,14 @@ impl SpecifiedValues {
         // 順で) 既に確定済みなので、font-size (phase 2) より先に求めても
         // phase 2 → 2.5 の順序は崩れない — 崩れるとしたら「自 node の」
         // font-size 確定前に「自 node の」line-height を求めるケースだけで、
-        // これは親の値の話であり無関係 ([`mod@crate::resolve`] の module doc
+        // これは親の値の話であり無関係 (`mod@crate::resolve` の module doc
         // 「想定される 4 段階」節参照)。
         let parent_line_height_basis =
             used_line_height_length(parent.line_height, parent.font_size);
         // phase 2: font-size を **親基準** で絶対化する (CSS Values 4 §6.1.1
         // parent-metrics 条項)。`lh` は上記 `parent_line_height_basis`、`rlh`
         // は tree-global な `ctx.root_line_height` を参照する
-        // ([`resolve_font_size`] doc の「`lh` / `rlh` の自己参照」節が
+        // (`resolve_font_size` doc の「`lh` / `rlh` の自己参照」節が
         // canonical)。
         let font_size = resolve_font_size(
             self.font_size,
@@ -502,7 +502,7 @@ impl SpecifiedValues {
         // 同じ判断)。`rlh` は `ResolveContext::initial()` の
         // `root_line_height: None` がそのまま同じ結果になる — root 自身の
         // `font-size: 1rlh` も自己参照 (`rlh` の素の定義上「自分自身」を
-        // 参照するのは宣言要素が root のときだけ、[`resolve_font_size`] doc
+        // 参照するのは宣言要素が root のときだけ、`resolve_font_size` doc
         // 参照)。
         let font_size = resolve_font_size(
             self.font_size,
@@ -532,7 +532,7 @@ impl SpecifiedValues {
         // font-size」= 自分、`rlh` の基準も同様「root element の確定済
         // line-height」= 自分 (box property は自己参照条項の対象外、上記
         // doc 節)。`used_line_height_length` は
-        // [`crate::cascade::resolve_inheritance`] が子へ配る `child_ctx` と
+        // `crate::cascade::resolve_inheritance` が子へ配る `child_ctx` と
         // 同じ導出 — 両者の一致は `mod@crate::cascade` の
         // `rlh_on_root_element_matches_child_root_line_height_basis` が pin する。
         let own_line_height = used_line_height_length(line_height, font_size);
@@ -587,7 +587,7 @@ impl SpecifiedValues {
             running_templates: self.running_templates,
             // 呼び手が既に match-parent を解決した後の値 (関数 doc 参照)。
             text_align,
-            // computed value = specified value、相対解決なし ([`Direction`] doc
+            // computed value = specified value、相対解決なし (`Direction` doc
             // 参照) — 自 node の winner 適用結果をそのまま素通し。
             direction: self.direction,
             padding: self

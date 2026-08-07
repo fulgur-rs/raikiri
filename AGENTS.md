@@ -242,8 +242,19 @@ bd raikiri-spike-8yj6 が持つ。
 
 ### 既知の限界
 
-- **plain `//` comment には rustdoc が届かない。** link 化しても検証されない
-  (bracket を書くと「検証済みに見えるのに実は未検証」でかえって危険)。→ bd raikiri-spike-vyse
+- **plain `//` comment には rustdoc が届かない。link 化という remedy が原理的に
+  適用できない。** rustdoc は `///` / `//!` しか読まない。plain `//` comment に
+  intra-doc link (bracket 記法) を書いても `RUSTDOCFLAGS="-D warnings" cargo doc`
+  はその byte を 1 つも見ないので、path が誤っていても永遠に検出されない —
+  bracket は「検証済みに見えるのに実は未検証」でかえって bare code span より危険
+  (bd raikiri-spike-vyse、2026-08-08 決定)。**したがって plain `//` comment
+  内では、`crate::` 接頭辞の有無にかかわらず bracket link 構文
+  (`[...]` / `` [`...`] ``) を一切書かない。** 既存の `crate::…` pointer を
+  含め、bare code span (`` `crate::foo::Bar` ``) に統一する。crate:: を含まない
+  bracket も同様に禁止 — 危険性は crate:: の有無と無関係 (rustdoc がその位置を
+  1 byte も読まないという事実は pointer の中身に依らない)。
+  `scripts/doc-pointer-lint.sh` がこの blanket rule を hard-zero check
+  として強制する (bd raikiri-spike-luxp、次の bullet参照)。
 - **既存の `#[test]` item doc に残る短縮 link** (``[`expand_shorthand_into`]`` 等) は
   opt-out 3 の位置なので未検証。既存分の一括変換は bd raikiri-spike-acsw。
   **新規に書く doc では opt-out 3 に従い code span にすること。**

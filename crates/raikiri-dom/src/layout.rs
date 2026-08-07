@@ -1753,7 +1753,7 @@ pub(crate) fn preshape_text(
         //
         // site 6 (bd raikiri-spike-sxd7、2ui0 の 5 site に続く 6 本目): 値は
         // 非有限になり得るので (`ComputedValues` は全 field が `pub` — 詳細は
-        // [`sanitize_font_weight`] の doc) parley に渡す直前で有限化する。
+        // `sanitize_font_weight` の doc) parley に渡す直前で有限化する。
         let font_weight = sanitize_font_weight(cv.font_weight, &mut doc.layout_warnings);
         builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
         let mut layout: Layout<()> = builder.build(&text);
@@ -2423,7 +2423,7 @@ mod tests {
         //   shorthand → computed width = 0。直接の根拠は §3.3 propdef (TR 版) が
         //   `none` と並べて `hidden` を名指ししていること。§3.2 の `hidden` は
         //   "Same as none, but has different behavior in the border conflict
-        //   resolution rules for border-collapsed tables [CSS2]." であり、`none`
+        //   resolution rules for border-collapsed tables `CSS2`." であり、`none`
         //   との差は border-collapsed table の conflict resolution だけ。
         assert_eq!(
             border_for("border: 5px hidden red"),
@@ -3939,9 +3939,9 @@ mod tests {
     // ── 意味的 invariant fallback (bd raikiri-spike-ntxy) ─────────────────
     //
     // 上の `sanitize_taffy_layout_*` test 群は「全 field が有限」までしか
-    // 見ない (r8ew の scope)。以下は [`enforce_layout_invariants`] が扱う
+    // 見ない (r8ew の scope)。以下は `enforce_layout_invariants` が扱う
     // 「field は有限だが親子関係が意味的に壊れている」層の pin。
-    // [`enforce_layout_invariants`] の doc の 2 つの probe (border-box
+    // `enforce_layout_invariants` の doc の 2 つの probe (border-box
     // padding overflow / 負 margin overflow) の数値もここで正式な
     // assertion に昇格させている。
 

@@ -485,7 +485,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 
         // phase 2 + phase 3: 絶対化。root element (element 祖先なし) は `rem` の
         // 基準が phase 2 / phase 3 で異なるため専用 entry point を通す
-        // ([`SpecifiedValues::finalize_as_root`] の doc に spec verbatim)。
+        // (`SpecifiedValues::finalize_as_root` の doc に spec verbatim)。
         let computed = match &root_ctx {
             Some(ctx) => specified.finalize(&parent_computed, ctx),
             None => {
@@ -520,7 +520,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // 時点で `root_font_size` / `root_line_height` が確定するので、ここで
         // 初めて `Some` になる (bd raikiri-spike-vxha で `root_line_height`
         // を追加)。`used_line_height_length` は
-        // [`crate::specified::SpecifiedValues::finalize_as_root`] が自分の
+        // `crate::specified::SpecifiedValues::finalize_as_root` が自分の
         // `ctx` を組み立てるのに使う導出と同一 — 両者の一致は
         // `rlh_on_root_element_matches_child_root_line_height_basis` が pin する。
         let child_ctx = match root_ctx {
@@ -547,7 +547,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // `child_ids` イテレータを直接 `stack` へ `extend` し、今回追加した
         // 末尾スライスだけを in-place `reverse()` する — 都度捨てる中間
         // `Vec` を経由しない (bd raikiri-spike-75ch)。`child_ctx` は `Copy`
-        // ([`ResolveContext`] の derive) なので closure 内で複数回使い回せる。
+        // (`ResolveContext` の derive) なので closure 内で複数回使い回せる。
         //
         // なぜ document order を保つか: resolve_inheritance 自体の正しさも
         // 訪問順には依存しない — 各 node の computed 値は push 時点で既に
@@ -1107,7 +1107,7 @@ pub(crate) fn resolve_against_inherited(
         // 呼び手の phase 3 が絶対化することを説明している。`_` に潰さないこと。
         //
         // `Direction` はここに属する — computed value = specified value
-        // (相対解決なし、[`crate::property::Direction`] doc 参照)、`Color` /
+        // (相対解決なし、`crate::property::Direction` doc 参照)、`Color` /
         // `FontFamily` と同型 (raikiri-spike-l3wg)。
         v @ (PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)
@@ -1246,14 +1246,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //   単位に関わらず「親 (または root の initial) の computed
         //   font-size」の px 表現である。
         // - `font_size` の他の値 (`em` / `rem` / `%`) は絶対化を
-        //   [`SpecifiedValues::finalize`] (phase 2) に **意図的に遅延**する
+        //   `SpecifiedValues::finalize` (phase 2) に **意図的に遅延**する
         //   (decision raikiri-spike-082k、本関数冒頭の doc 参照) が、
         //   `larger` / `smaller` は基準が「親の computed font-size」のみで
         //   自 node の他 winner に依存しないため、`font-weight` と同じく
         //   ここ (phase 1) で解決してよい。解決結果は `Length::Px` — 通常の
         //   author 指定 px 値と区別が付かなくなり、phase 2 (`resolve_font_size`
         //   の `Px` arm は identity) を通しても二重適用にならない。
-        // - 全 [`Length`] variant を OR-pattern で受ける下の抽出は
+        // - 全 `Length` variant を OR-pattern で受ける下の抽出は
         //   「実際には常に `Px`」を panic-free に表現したもの — reviewer-security
         //   の panic surface 排除方針 (`Margin` shorthand fall-through arm と同じ
         //   理由) により `unreachable!` は採らない。
@@ -1338,9 +1338,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //
         // **契約 (raikiri-spike-ygl0)**: 継承元依存の解決を持つ property を新しく
         // 追加するときは、本 arm だけでなく sibling の
-        // [`resolve_against_inherited`] にも arm を足すこと — そちらは
+        // `resolve_against_inherited` にも arm を足すこと — そちらは
         // `PropertyValue` を返す形で同じ解決を提供し、
-        // [`crate::page::cascade_page`] (`apply_value` を通らない第 2 の public
+        // `crate::page::cascade_page` (`apply_value` を通らない第 2 の public
         // entry point) が使う。両者とも wildcard 無しの exhaustive match なので
         // variant 追加時は compiler が 2 経路を数え上げさせる。
         //
@@ -1395,16 +1395,16 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //
         // **`match-parent` はここでは解決しない** (raikiri-spike-l3wg) — この
         // 単純代入は他 arm と同じく素朴なコピーのままにしてある。解決は
-        // [`crate::specified::SpecifiedValues::finalize`] /
+        // `crate::specified::SpecifiedValues::finalize` /
         // `finalize_as_root` が全 winner 適用**後**に、明示的な親
-        // [`ComputedValues`] を受け取って行う。理由: 本 arm の中で
+        // `ComputedValues` を受け取って行う。理由: 本 arm の中で
         // `target.direction` (= 親から継承した direction) を読んで解決しようと
         // すると、**同一 node が `direction` winner も持つ場合**にその適用順序
-        // ([`crate::property::PropertyKey`] の宣言順) 次第で親ではなく
+        // (`crate::property::PropertyKey` の宣言順) 次第で親ではなく
         // **自分の** direction を読んでしまう —
         // `resolve_inheritance` が保証する「winner の適用順に依存しない」
         // invariant への違反になる。詳細は
-        // [`crate::property::resolve_text_align_match_parent`] の doc。
+        // `crate::property::resolve_text_align_match_parent` の doc。
         PropertyValue::TextAlign(t) => target.text_align = t,
         // direction は CSS Writing Modes 4 §2.1 (raikiri-spike-l3wg)。
         // inherited property、computed value = specified value (相対解決なし) —

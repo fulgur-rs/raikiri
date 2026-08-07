@@ -625,7 +625,7 @@ fn format_named_counter(value: i32, name: &str) -> String {
         format_ethiopic_numeric(value).unwrap_or_else(|| format_decimal(value))
     } else {
         // Unmatched named style — decimal fallback for one of the three
-        // reasons enumerated in the [`format_counter`] doc (genuinely
+        // reasons enumerated in the `format_counter` doc (genuinely
         // unknown / unreachable custom @counter-style /
         // disclosure-open/-closed's undefined-codepoint deferral).
         format_decimal(value)
