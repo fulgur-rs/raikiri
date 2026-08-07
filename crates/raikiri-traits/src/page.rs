@@ -437,7 +437,8 @@ pub enum ContentValueItem {
     TargetText {
         /// Target URL (bridge 側で [`Url::parse`] 済)。
         url: Url,
-        /// どの部分を挿入するか (spec default `content`)。
+        /// どの部分を挿入するか (`content` は要素の string value 全体を指す
+        /// keyword)。
         part: ContentPart,
     },
 }
@@ -490,11 +491,17 @@ impl From<url::ParseError> for ContentValueConvertError {
 
 /// [`ContentTextKeyword`] → [`ContentPart`] mapping (`content(keyword)` の
 /// keyword を bridge)。keyword 集合は spec spelling が異なる: GCPM 3 §1.1.1.1
-/// の `content()` は `text` を default に持ち、CSS Content 3 §2.6.3 の
-/// `target-text()` は `content` を default に持つ (`text` vs `content` の
-/// divergence)。両者を [`ContentPart`] 側の value 集合に集約するときは
-/// spec default 同士を対応させる:
-/// - [`ContentTextKeyword::Text`] → [`ContentPart::Content`] (both default)
+/// の `content()` と CSS Content 3 §2.6.3 の `target-text()` は同じ概念に
+/// 異なる keyword spelling を当てている (`text` vs `content`)。両者を
+/// [`ContentPart`] 側の value 集合に集約するときは意味の対応で紐付ける
+/// (spec の "default" 宣言には依らない — CSS Content 3 §2.6.3 は
+/// `target-text()` の第 2 引数省略時の値を規定していない。GCPM 3 §1.1.1.1
+/// は `text` を "the default value" と述べているが、同 section は grammar に
+/// `?` が無く [第 2 引数が構文上 optional でない]、かつ "default をどう
+/// 定義するか" 自体が未解決の WG issue として残っており、TR 上安定した根拠
+/// ではない):
+/// - [`ContentTextKeyword::Text`] → [`ContentPart::Content`] (どちらも
+///   「要素の string value 全体」を指す)
 /// - [`ContentTextKeyword::Before`] → [`ContentPart::Before`]
 /// - [`ContentTextKeyword::After`] → [`ContentPart::After`]
 /// - [`ContentTextKeyword::FirstLetter`] → [`ContentPart::FirstLetter`]
@@ -1093,9 +1100,11 @@ mod content_component_bridge_tests {
 
     #[test]
     fn content_bridge_maps_text_keyword_to_content_part() {
-        // ContentTextKeyword::Text (§1.1.1.1 spec default) →
-        // ContentPart::Content (§2.6.3 spec default): 両者 default 同士を
-        // 対応させる canonical mapping。
+        // ContentTextKeyword::Text (GCPM 3 §1.1.1.1) →
+        // ContentPart::Content (CSS Content 3 §2.6.3): 両者とも「要素の
+        // string value 全体」を指す同一概念への canonical mapping
+        // (spec の "default" 宣言には依らない — 詳細は
+        // content_text_keyword_to_content_part の doc comment 参照)。
         let cc = ContentComponent::Content {
             keyword: ContentTextKeyword::Text,
         };
