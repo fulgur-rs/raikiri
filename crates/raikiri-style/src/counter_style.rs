@@ -453,6 +453,16 @@ fn parse_range(input: &mut Parser<'_, '_>) -> Option<CounterRange> {
             Ok(RangeEntry { lower, upper })
         })
         .ok()?;
+    // cov:ignore: structurally unreachable, not merely untested. cssparser
+    // 0.37.0's `parse_comma_separated` (the non-`_ignoring_errors` variant
+    // used above) either returns `Err` — propagated by the `.ok()?` right
+    // above, already exercised by this crate's malformed-range tests — or
+    // an `Ok` `Vec` that its own source comment guarantees is non-empty:
+    // "we always push at least one item if parsing succeeds" (`cssparser-
+    // 0.37.0/src/parser.rs`, `parse_comma_separated_internal`: on the first
+    // segment's `Err` it returns `Err` immediately rather than continuing,
+    // so `Ok` is only ever reached after at least one successful push).
+    // There is no CSS input that reaches this branch with `Ok(vec![])`.
     if entries.is_empty() {
         return None;
     }
@@ -572,6 +582,9 @@ fn parse_weight_symbol_pair<'i>(
 fn parse_additive_symbols(input: &mut Parser<'_, '_>) -> Option<Vec<(i32, CounterSymbol)>> {
     let tuples: Vec<(i32, CounterSymbol)> =
         input.parse_comma_separated(parse_weight_symbol_pair).ok()?;
+    // cov:ignore: structurally unreachable — same cssparser
+    // `parse_comma_separated` non-empty-on-`Ok` guarantee cited in
+    // `parse_range`'s identical guard, which this one mirrors.
     if tuples.is_empty() {
         return None;
     }
@@ -882,14 +895,27 @@ impl<'i> QualifiedRuleParser<'i> for CounterStyleSheetParser {
         Err(input.new_custom_error(()))
     }
 
+    // `parse_prelude` above always returns `Err`, so cssparser's
+    // qualified-rule dispatch never reaches this method in practice — it
+    // exists only because `QualifiedRuleParser` requires an implementation.
+    // Rather than annotate it `cov:ignore:` (multi-line blocks whose first
+    // or last line contains a single, unpaired lifetime apostrophe — as
+    // both this signature's `<'t>` and its `Parser<'i, 't>` /
+    // `ParseError<'i, ...>` lines do — defeat `scripts/lib/
+    // patch_coverage.py`'s brace-depth scanner: `code_only()`'s naive
+    // string/char-literal tracker treats an unpaired `'` as opening an
+    // unterminated char literal and silently drops every following
+    // character, including the very brace that should close the block),
+    // `qualified_rule_parse_block_stub_returns_err_without_panicking` below
+    // calls this method directly, making its "trivially safe, no panic"
+    // claim an actually-exercised test rather than a `cov:ignore`d
+    // assertion.
     fn parse_block<'t>(
         &mut self,
         _prelude: Self::Prelude,
         _start: &ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, ParseError<'i, Self::Error>> {
-        // Unreachable: `parse_prelude` above always errors, so cssparser
-        // never calls this. Kept trivially safe (no panic) regardless.
         Err(input.new_custom_error(()))
     }
 }
@@ -1307,6 +1333,12 @@ mod tests {
             "DECIMAL",
         ] {
             let src = format!(r#"@counter-style {name} {{ system: cyclic; symbols: "*"; }}"#);
+            // cov:ignore: the failure-message branch of this `assert!` only
+            // executes when the assertion fails; every iteration here
+            // passes, so llvm-cov reports the macro's condition-false region
+            // as an uncovered added line (attributed to the `assert!(`
+            // line) even though the assertion itself runs, and does its
+            // job, on every iteration.
             assert!(
                 parse_counter_style_rules(&src).is_empty(),
                 "expected {name:?} to be rejected as a rule name"
@@ -1337,6 +1369,32 @@ mod tests {
         );
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].name.as_str(), "thumbs");
+    }
+
+    #[test]
+    fn qualified_rule_parse_block_stub_returns_err_without_panicking() {
+        // `CounterStyleSheetParser`'s `QualifiedRuleParser::parse_block` is
+        // unreachable via cssparser's normal top-level dispatch (its sibling
+        // `parse_prelude` always returns `Err`, so cssparser's error
+        // recovery never calls `parse_block` for a qualified/style rule —
+        // see the doc comment on that impl). Calling it directly here does
+        // what the doc comment otherwise only asserts in prose: proves the
+        // stub returns `Err` and does not panic, exercised via an actual
+        // code path instead of a `cov:ignore` annotation (see that doc
+        // comment for why a `cov:ignore` block scan doesn't work cleanly
+        // here — the signature's lifetime syntax defeats the coverage
+        // tool's brace-depth scanner).
+        let mut sheet_parser = CounterStyleSheetParser;
+        let mut input = ParserInput::new("");
+        let mut parser = Parser::new(&mut input);
+        let state = parser.state();
+        // Fully-qualified call: `CounterStyleSheetParser` implements both
+        // `AtRuleParser` and `QualifiedRuleParser`, each with their own
+        // `parse_block` method, so a plain `.parse_block(...)` is
+        // ambiguous — this disambiguates to the `QualifiedRuleParser` one
+        // under test.
+        let result = QualifiedRuleParser::parse_block(&mut sheet_parser, (), &state, &mut parser);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1378,6 +1436,20 @@ mod tests {
                 first_symbol_value: 5
             }
         );
+    }
+
+    #[test]
+    fn system_unknown_keyword_drops_declaration_system_stays_default() {
+        // `bogus` matches none of the 7 `system` keywords -> `parse_system`
+        // returns `None` -> the whole `system` declaration is dropped (this
+        // crate's usual invalid-declaration handling), leaving `system` at
+        // its spec-initial value `symbolic`. `symbols: "*"` (1 entry) is
+        // enough for `symbolic`'s own validity minimum, so the rest of the
+        // rule still parses.
+        let rules =
+            parse_counter_style_rules(r#"@counter-style foo { system: bogus; symbols: "*"; }"#);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].system, CounterStyleSystem::Symbolic);
     }
 
     #[test]
@@ -1468,6 +1540,17 @@ mod tests {
     }
 
     #[test]
+    fn pad_negative_integer_is_rejected_in_symbol_first_order_too() {
+        // Sibling of `pad_negative_integer_is_rejected` above, but for the
+        // *other* `&&` order (`<symbol> <integer>` instead of `<integer>
+        // <symbol>`) — `parse_nonneg_int_and_symbol`'s second branch.
+        let rules =
+            parse_counter_style_rules(r#"@counter-style foo { symbols: "*"; pad: "0" -1; }"#);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pad, PadDescriptor::default());
+    }
+
+    #[test]
     fn range_single_pair() {
         let rules =
             parse_counter_style_rules(r#"@counter-style foo { symbols: "*"; range: 1 5; }"#);
@@ -1527,6 +1610,20 @@ mod tests {
             r#"@counter-style foo { symbols: "*"; fallback: my-other-style; }"#,
         );
         assert_eq!(rules[0].fallback.as_str(), "my-other-style");
+    }
+
+    #[test]
+    fn fallback_none_is_rejected_declaration_dropped() {
+        // `<counter-style-name>` (`parse_counter_style_name_ref`) excludes
+        // `none` even in *reference* position (unlike the 6 predefined-style
+        // keywords, which are valid references — see
+        // `reserved_names_are_still_valid_as_fallback_references` above).
+        // The whole `fallback` declaration is dropped, leaving `fallback` at
+        // its spec-initial value `decimal`.
+        let rules =
+            parse_counter_style_rules(r#"@counter-style foo { symbols: "*"; fallback: none; }"#);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].fallback.as_str(), "decimal");
     }
 
     #[test]
@@ -1627,6 +1724,21 @@ mod tests {
             r#"@counter-style foo { prefix: "a"; prefix: "b"; symbols: "*"; }"#,
         );
         assert_eq!(rules[0].prefix, CounterSymbol(SmolStr::new("b")));
+    }
+
+    #[test]
+    fn trailing_garbage_after_descriptor_value_drops_declaration() {
+        // `pad`'s grammar is exactly `<integer> && <symbol>` (no
+        // repetition), so a 3rd token after both components is genuine
+        // leftover — `CounterStyleDeclParser::parse_value`'s
+        // `expect_exhausted()` call rejects the whole declaration rather
+        // than silently accepting the `3 "0"` prefix. `pad` stays at its
+        // default; the rest of the rule survives.
+        let rules = parse_counter_style_rules(
+            r#"@counter-style foo { symbols: "*"; pad: 3 "0" garbage; }"#,
+        );
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pad, PadDescriptor::default());
     }
 
     // ── Registry ───────────────────────────────────────────────────────
