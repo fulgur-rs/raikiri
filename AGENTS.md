@@ -214,6 +214,26 @@ bd raikiri-spike-8yj6 が持つ。
 - **toolchain 依存がある。** intra-doc link の解決は rustc version で変わる。
   `rust-toolchain.toml` の pin (1.89.0) では出ない unresolved link が新しい toolchain では
   出る実例があるため、toolchain bump 時は本節の command を再走させること。
+- **gate §8.1 の doc build は private / pub(crate) item の doc link を検証しない。**
+  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace` (gate §8.1 が走らせる
+  既定 command) は `--document-private-items` を付けないため、public item の doc comment
+  内の link しか解決しない。`crates/raikiri-style/src/*.rs` の bracket link 114 occurrence
+  実測 (bd raikiri-spike-ulzv、commit 889fad5 時点) では、うち 47 occurrence
+  (pub(crate) 25 + private 22) が既定 gate command では未検証。
+  **PMO decision (2026-08-07、bd raikiri-spike-8yj6)**: `--document-private-items` は
+  gate に **足さない**。根拠は doc build 時間の増加と missing_docs 相当の露出面拡大
+  (raikiri-style 以外の crate は未確認) というコストが、47 occurrence の未検証リスクに
+  見合わないという判断。**既知の未修正 dangling として以下 3 件が raikiri-dom 側に残っている**
+  (本 decision では修正しない、gate red 化の前提条件にはならないが実 dangling である):
+  - `crates/raikiri-dom/src/running.rs:529` — `[MarginBoxFragment]` (no item named
+    MarginBoxFragment in scope)
+  - `crates/raikiri-dom/src/fonts.rs:616` — `` [`FontWarn::ReadRejected*`] `` (enum
+    `FontWarn` に該当 variant 無し。末尾 `*` は glob のつもりだが intra-doc link に
+    glob 記法は無い)
+  - `crates/raikiri-dom/src/layout.rs:96` — `` [`raikiri_style::BoxSizing`] `` (no item
+    named BoxSizing in module raikiri_style)
+  詳細な実測 (`--cfg test` option の E0432 blocker、5 つの反転変数、blind zone の全体像)
+  は bd raikiri-spike-8yj6 の comment 履歴を参照。
 
 ## 使い捨て worktree は `$HOME` 配下に作る (`/tmp` に作らない)
 
