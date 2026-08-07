@@ -291,6 +291,29 @@ pub enum FixtureError {
         /// Path of the rejected non-regular entry.
         path: PathBuf,
     },
+    /// Post-open, fd-based fstat (`check_open_handle_regular`) found the
+    /// descriptor `safe_open` returned does not resolve to a regular file.
+    /// Race-free complement to [`FixtureError::NotRegularFile`]: the
+    /// pre-open path-based `symlink_metadata` check can observe a regular
+    /// file that gets swapped for a FIFO/device before `safe_open` runs;
+    /// this check instead consults the inode already bound to the opened
+    /// descriptor, so no second path lookup can be raced. Mirrors
+    /// `raikiri_dom::fonts::FontReadReject::NotRegularFilePostOpen` (bd
+    /// raikiri-spike-f4j, ported here via bd raikiri-spike-y92o).
+    ///
+    /// Shape divergence from the fonts.rs original, intentional: fonts.rs's
+    /// `FontReadReject::NotRegularFilePostOpen` is a bare unit variant
+    /// because `FontReadReject` defers attaching `path` to the caller
+    /// (`FontWarn`/`FontError` add it later). This crate's `FixtureError`
+    /// has no such deferred layer — every existing variant already
+    /// self-carries its `path` — so this variant does too, and
+    /// `check_open_handle_regular`/`check_open_handle_containment` both
+    /// take an extra `path: &Path` parameter (absent from the fonts.rs
+    /// originals) purely to construct it.
+    NotRegularFilePostOpen {
+        /// Path whose opened fd resolved to a non-regular kind.
+        path: PathBuf,
+    },
     /// A fixture-tree file's size exceeds [`FIXTURE_SIZE_CAP`].  Either the
     /// up-front `metadata.len()` check tripped, or the file grew between the
     /// metadata check and the bounded read (TOCTOU-grow, caught by the
@@ -310,6 +333,24 @@ pub enum FixtureError {
     /// makes that safe.
     PathEscape {
         /// Canonicalized target path that fell outside the root.
+        canonical: PathBuf,
+        /// Canonicalized fixture root that the target should have stayed under.
+        root: PathBuf,
+    },
+    /// Post-open, fd-bound containment recheck (`check_open_handle_containment`)
+    /// found the already-opened descriptor resolves outside `canonical_root`.
+    /// Unlike [`FixtureError::PathEscape`] (pre-open, path-based, and itself
+    /// TOCTOU-vulnerable to a second swap before `safe_open` runs), this
+    /// variant is derived from the fd `safe_open` actually returned — on
+    /// Linux via `/proc/self/fd/<fd>` — so firing here means an
+    /// intermediate-directory swap happened inside the pre-open
+    /// canonicalize→safe_open re-resolution window itself. Mirrors
+    /// `raikiri_dom::fonts::FontReadReject::PathEscapePostOpen` (bd
+    /// raikiri-spike-1ef, source of this pattern; ported here via bd
+    /// raikiri-spike-y92o — 1ef's close reason named this file as the
+    /// same-shape follow-up).
+    PathEscapePostOpen {
+        /// fd-derived canonical path (post-open) that fell outside the root.
         canonical: PathBuf,
         /// Canonicalized fixture root that the target should have stayed under.
         root: PathBuf,
@@ -369,6 +410,13 @@ impl fmt::Display for FixtureError {
                     path.display()
                 )
             }
+            Self::NotRegularFilePostOpen { path } => {
+                write!(
+                    f,
+                    "fixture entry {} opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open)",
+                    path.display()
+                )
+            }
             Self::OversizedFixture { path, size, cap } => {
                 write!(
                     f,
@@ -380,6 +428,14 @@ impl fmt::Display for FixtureError {
                 write!(
                     f,
                     "fixture entry canonicalizes to {} which escapes fixture root {}",
+                    canonical.display(),
+                    root.display()
+                )
+            }
+            Self::PathEscapePostOpen { canonical, root } => {
+                write!(
+                    f,
+                    "fixture entry's opened fd resolves to {} which escapes fixture root {} (TOCTOU-swap between pre-open canonicalize and safe_open)",
                     canonical.display(),
                     root.display()
                 )
@@ -506,16 +562,188 @@ pub fn compare_png(
     })
 }
 
+/// Post-open fd-based fstat: verify the handle `safe_open` returned still
+/// resolves to a regular file. Load-bearing supplement to the pre-open
+/// path-based `symlink_metadata` + `is_file()` gate in
+/// [`read_bounded_fixture_file`].
+///
+/// The pre-open path-based check is race-vulnerable — a regular file can be
+/// swapped for a FIFO / character device / block device between the
+/// pre-open metadata call and the subsequent `safe_open`. `O_NOFOLLOW` does
+/// not filter file kind (a FIFO is not a symlink), so the swapped-in kind
+/// slips through `safe_open`. Calling `File::metadata()` on the returned fd
+/// consults the inode already bound to the descriptor, so no path lookup
+/// re-runs and the race window is closed by construction — for the *kind*
+/// check.
+///
+/// Unlike `raikiri_dom::fonts::check_open_handle_regular`'s pairing, this
+/// crate's [`safe_open`] does not set `O_NONBLOCK`: opening a swapped-in
+/// writer-less FIFO can still block at the `open()` syscall itself, before
+/// this fstat is ever reached. That half of the defense is a pre-existing,
+/// separate gap — bd raikiri-spike-f4j's own description (its `## Refs`
+/// section) names this crate ("bd raikiri-spike-8yu (raikiri-vrt sibling;
+/// also has this preexisting gap, not covered by d9y.6)") as carrying the
+/// same residual, now tracked by bd raikiri-spike-z719. This function
+/// still closes the *kind*-detection half for the swap classes that don't
+/// hang `open()`: character devices and block devices (which, unlike a
+/// writer-less FIFO, return immediately from `open()` under plain
+/// `O_RDONLY`). The writer-less-FIFO swap class remains unreachable
+/// through this function until bd raikiri-spike-z719's `O_NONBLOCK`
+/// closes the open-time-block half above.
+///
+/// Mirrors `raikiri_dom::fonts::check_open_handle_regular` (bd
+/// raikiri-spike-f4j, source of this pattern; ported here via bd
+/// raikiri-spike-y92o).
+fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), FixtureError> {
+    // cov:ignore: fstat on a descriptor this function's caller just opened
+    // failing (e.g. underlying storage unmounted mid-call) is an
+    // environment fault, not a state a deterministic unit test can force.
+    // `raikiri_dom::fonts`'s sibling check treats the equivalent as
+    // fail-closed `Io`; preserved here as `FixtureError::IoError`.
+    let metadata = file.metadata().map_err(|source| FixtureError::IoError {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(FixtureError::NotRegularFilePostOpen {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
+/// Post-open fd-bound containment recheck: verify the descriptor
+/// `safe_open` returned still resolves under `canonical_root`, using a
+/// path derived **from the fd itself** rather than a fresh path-based
+/// `canonicalize` call.
+///
+/// # Why this closes the intermediate-dir-swap TOCTOU
+///
+/// [`read_bounded_fixture_file`]'s pre-open gate canonicalizes `path` and
+/// checks `starts_with(canonical_root)` *before* calling `safe_open`. Both
+/// calls independently re-resolve the same pathname, so they are two
+/// separate lookups of a mutable filesystem tree, not one atomic operation
+/// on one object: an attacker who swaps an intermediate directory component
+/// between the two calls can make the pre-open `canonicalize` observe a
+/// path inside `canonical_root` while `safe_open`'s own pathname
+/// resolution — running microseconds later — binds the fd to a different,
+/// outside-root object. The leaf is still a regular file either way, so
+/// neither `check_open_handle_regular` (kind only) nor the pre-open gate
+/// (already-passed, stale) catches the swap.
+///
+/// The fix is to derive the containment check from the **same fd** that
+/// will be read, so there is no second pathname resolution after the check
+/// to race against. On Linux, `/proc/self/fd/<fd>` is a magic symlink the
+/// kernel keeps pointing at the dentry the fd is actually bound to;
+/// `readlink`-ing it costs one syscall and does not walk `path` again, so
+/// the check is bound to the fd `safe_open` returned rather than to an
+/// independent re-resolution of `path`. (Precisely: the kernel reconstructs
+/// the *reported path string* from the dentry chain at readlink time, so a
+/// rename of an ancestor directory between `safe_open` and this call can
+/// still change what `readlink` reports; what cannot happen is a second,
+/// attacker-steerable *pathname lookup* of `path` — the class of swap this
+/// check closes.)
+///
+/// # Fail-closed on procfs-unavailable
+///
+/// If `/proc` is unavailable (e.g. a container/chroot without procfs
+/// mounted), `read_link` returns `Err` and this function propagates it via
+/// `FixtureError::IoError`. At the [`read_bounded_fixture_file`] callsite
+/// that error is **not** skipped — every `FixtureError` this crate produces
+/// is `?`-propagated or explicitly returned (never silently dropped and
+/// continued past), so there is no warn+skip path anywhere in this crate
+/// that could fall back to the weaker pre-open-only guarantee. This is
+/// deliberate fail-closed (autonomy.md 原則3): a filesystem that cannot
+/// support the authoritative containment check is treated as a hard error.
+/// Concretely, on a Linux host without procfs mounted this recheck now
+/// hard-fails VRT fixture loading that previously succeeded under the
+/// pre-y92o pre-open-only containment check — this environment has
+/// `/proc/self/fd/` available (verified while implementing this task), but
+/// future readers deploying this crate's tests inside a minimal
+/// container/chroot should expect that dependency.
+///
+/// # Portability
+///
+/// Implemented for `target_os = "linux"` only, using `std::fs::read_link`
+/// (pure Rust, no `unsafe`, no new dependency). macOS/BSD have an analogous
+/// race-free primitive (`fcntl(fd, F_GETPATH, ..)`), but it requires a raw
+/// libc syscall wrapper outside this task's Pure-Rust-first scope
+/// (autonomy.md 原則 5); the residual gap on non-Linux unix is a no-op
+/// fallback (below) that leaves the pre-open canonicalize check as the only
+/// containment gate there — no worse than before this change.
+/// `raikiri_dom::fonts`'s analogous non-Linux gap was researched in bd
+/// raikiri-spike-7cz5 (closed, research-only, decomposed per a wall/build
+/// PMO-decision escalation) and is now tracked in its child bd
+/// raikiri-spike-0nww — which a coordinator comment (2026-08-08) confirms
+/// covers this file's residual too, not only the `fonts.rs` one 0nww's
+/// own Scope section names.
+///
+/// Mirrors `raikiri_dom::fonts::check_open_handle_containment` (bd
+/// raikiri-spike-1ef, source of this pattern; ported here via bd
+/// raikiri-spike-y92o — 1ef's close reason named this file as the
+/// same-shape follow-up).
+#[cfg(target_os = "linux")]
+fn check_open_handle_containment(
+    file: &std::fs::File,
+    path: &Path,
+    canonical_root: &Path,
+) -> Result<(), FixtureError> {
+    use std::os::unix::io::AsRawFd;
+    let fd_link = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+    // cov:ignore: readlink on `/proc/self/fd/<fd>` for a descriptor this
+    // function's caller just opened failing (procfs unmounted, fd-table
+    // race) is an environment fault, not deterministically unit-testable.
+    // Mirrors `raikiri_dom::fonts`'s fail-closed `Io` treatment of the
+    // equivalent `read_link` call.
+    let canonical = std::fs::read_link(&fd_link).map_err(|source| FixtureError::IoError {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !canonical.starts_with(canonical_root) {
+        return Err(FixtureError::PathEscapePostOpen {
+            canonical,
+            root: canonical_root.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
+/// Non-Linux fallback: no portable Pure-Rust fd-to-path primitive is wired
+/// up yet (see the Portability section on the `target_os = "linux"` impl).
+/// No-op so behavior on these platforms is unchanged by this task — the
+/// pre-open `canonicalize` + `starts_with` gate in
+/// [`read_bounded_fixture_file`] remains the only containment check,
+/// exactly as it was before bd raikiri-spike-y92o.
+#[cfg(not(target_os = "linux"))]
+fn check_open_handle_containment(
+    _file: &std::fs::File,
+    _path: &Path,
+    _canonical_root: &Path,
+) -> Result<(), FixtureError> {
+    Ok(())
+}
+
 /// Read a single fixture-tree file with the full defense stack:
 /// leaf-symlink reject (pre-open metadata + open-time O_NOFOLLOW on unix),
 /// `!is_file()` reject, up-front size cap,
-/// canonicalize-and-`starts_with(canonical_root)` containment check, and a
-/// bounded `take(cap + 1)` read that also catches TOCTOU-grow.
+/// canonicalize-and-`starts_with(canonical_root)` containment check,
+/// `safe_open` at open time, two post-open fd-based rechecks —
+/// [`check_open_handle_regular`] (rejects non-regular kinds bound to the
+/// descriptor) and [`check_open_handle_containment`] (rejects an fd
+/// resolving outside `canonical_root`, on Linux via `/proc/self/fd/<fd>`) —
+/// both race-free against a pre-open→open path-swap because they consult
+/// the fd `safe_open` actually returned rather than re-resolving `path`,
+/// and a bounded `take(cap + 1)` read that also catches TOCTOU-grow.
 ///
 /// The open-time O_NOFOLLOW closes the leaf-swap race between the pre-open
 /// `symlink_metadata` check and `File::open` on unix (raikiri-spike-8yu).
 /// Non-unix retains follow-at-open semantics; tracked in
 /// raikiri-spike-akk.
+///
+/// The two post-open rechecks port `raikiri_dom::fonts::read_bounded_font_file`'s
+/// equivalent stack (bd raikiri-spike-f4j / raikiri-spike-1ef) to this
+/// crate via bd raikiri-spike-y92o — 1ef's close reason named this
+/// function as the same-shape follow-up that had not yet received them.
 ///
 /// See [`FIXTURE_SIZE_CAP`] for the threat model these layers cover.
 fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u8>, FixtureError> {
@@ -598,6 +826,25 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
             });
         }
     };
+    // Post-open fd-based fstat: reject if the descriptor `safe_open` bound
+    // does not resolve to a regular file. Closes the *kind*-detection half
+    // of the FIFO/device swap TOCTOU window that the pre-open path-based
+    // `symlink_metadata` + `is_file()` gate above cannot cover. See
+    // `check_open_handle_regular`'s doc for why this crate's `safe_open`
+    // (no `O_NONBLOCK`) leaves the open-time-block half of that window
+    // open as a separate, pre-existing gap. bd raikiri-spike-f4j (source
+    // pattern), raikiri-spike-y92o (this port).
+    check_open_handle_regular(&file, path)?;
+    // Post-open fd-bound containment recheck: verify the descriptor
+    // `safe_open` bound still resolves under `canonical_root`, derived from
+    // the fd itself (Linux: `/proc/self/fd/<fd>` readlink) rather than a
+    // fresh path-based `canonicalize`. Closes the intermediate-dir-swap
+    // TOCTOU window between the pre-open `canonicalize` above and
+    // `safe_open`'s own pathname re-resolution. See
+    // `check_open_handle_containment`'s doc for the full rationale and the
+    // non-Linux no-op fallback. bd raikiri-spike-1ef (source pattern),
+    // raikiri-spike-y92o (this port).
+    check_open_handle_containment(&file, path, canonical_root)?;
     read_bounded_from_open_file(&mut file, path, FIXTURE_SIZE_CAP)
 }
 
@@ -1070,6 +1317,32 @@ mod type_tests {
     fn fixture_error_is_error_trait() {
         fn assert_error<E: std::error::Error>() {}
         assert_error::<FixtureError>();
+    }
+
+    /// `Display` for the two post-open recheck variants added by bd
+    /// raikiri-spike-y92o. Constructed directly (no filesystem I/O) since
+    /// these are pure formatting checks — the variants' actual construction
+    /// sites are pinned by `defense_tests`'s `check_open_handle_regular_*`
+    /// / `check_open_handle_containment_*` tests.
+    #[test]
+    fn fixture_error_not_regular_file_post_open_display_contains_path() {
+        let err = FixtureError::NotRegularFilePostOpen {
+            path: PathBuf::from("/tmp/evil.bin"),
+        };
+        let s = err.to_string();
+        assert!(s.contains("/tmp/evil.bin"), "missing path: {s}");
+        assert!(s.contains("non-regular"), "missing kind description: {s}");
+    }
+
+    #[test]
+    fn fixture_error_path_escape_post_open_display_contains_paths() {
+        let err = FixtureError::PathEscapePostOpen {
+            canonical: PathBuf::from("/outside/leaf.bin"),
+            root: PathBuf::from("/fixture/root"),
+        };
+        let s = err.to_string();
+        assert!(s.contains("/outside/leaf.bin"), "missing canonical: {s}");
+        assert!(s.contains("/fixture/root"), "missing root: {s}");
     }
 }
 
@@ -1704,6 +1977,140 @@ mod defense_tests {
         let bytes = read_bounded_fixture_file(&file_path, &canonical_root)
             .expect("regular file should be accepted");
         assert_eq!(bytes, b"regular content");
+    }
+
+    // ------------------------------------------------------------------
+    // Post-open fd-based fstat + fd-bound containment tests (bd
+    // raikiri-spike-y92o, porting raikiri_dom::fonts's check_open_handle_regular
+    // / check_open_handle_containment — bd raikiri-spike-f4j /
+    // raikiri-spike-1ef — to this crate's read_bounded_fixture_file)
+    // ------------------------------------------------------------------
+    //
+    // As with the fonts.rs sibling, the actual TOCTOU swap windows these
+    // helpers close (regular-file → FIFO/device between pre-open metadata
+    // and safe_open; intermediate-dir swap between pre-open canonicalize
+    // and safe_open's own pathname re-resolution) are not deterministically
+    // reachable through the composed `read_bounded_fixture_file` — they
+    // require a second attacker action landing in a microseconds-wide
+    // window between two syscalls on the same thread. The defense is
+    // instead exercised at the primitive level: `check_open_handle_regular`
+    // / `check_open_handle_containment` called directly against a `File`
+    // handle that already represents the "swapped" state.
+    //
+    // Unlike fonts.rs, this crate's `safe_open` does not set `O_NONBLOCK`
+    // (see `check_open_handle_regular`'s doc), so a FIFO test analogous to
+    // fonts.rs's `check_open_handle_regular_rejects_fifo` would hang at
+    // `safe_open`'s `open()` call on a writer-less FIFO — that shape is
+    // deliberately not ported here. The `/dev/null` char-device test below
+    // exercises the identical `!metadata.file_type().is_file()` branch
+    // without needing a non-blocking open.
+
+    /// `check_open_handle_regular` accepts a regular file opened via
+    /// `safe_open` — the primitive-level happy-path regression pin. bd
+    /// raikiri-spike-y92o.
+    #[test]
+    fn check_open_handle_regular_accepts_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("regular.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"regular content")
+            .unwrap();
+
+        let file = safe_open(&path).expect("safe_open should succeed on regular file");
+        check_open_handle_regular(&file, &path).expect("regular file must pass post-open fstat");
+    }
+
+    /// `safe_open` + `check_open_handle_regular` rejects `/dev/null`
+    /// (character device). `/dev/null` opens immediately under plain
+    /// `O_RDONLY | O_NOFOLLOW` (no writer-attachment blocking like a FIFO),
+    /// so this exercises the fd-based fstat's non-regular-kind rejection
+    /// without needing `O_NONBLOCK`. Mirrors
+    /// `raikiri_dom::fonts::check_open_handle_regular_rejects_char_device`.
+    /// bd raikiri-spike-y92o.
+    #[cfg(unix)]
+    #[test]
+    fn check_open_handle_regular_rejects_char_device() {
+        let path = Path::new("/dev/null");
+        let file = safe_open(path).expect(
+            "safe_open on /dev/null should succeed (regular open semantics on char device)",
+        );
+        match check_open_handle_regular(&file, path) {
+            Err(FixtureError::NotRegularFilePostOpen { path: rejected }) => {
+                assert_eq!(rejected, path);
+            }
+            // cov:ignore: diagnostic-only fallthrough — the expected `Err`
+            // arm immediately above is what this test asserts and is
+            // pinned by the same test run; this arm exists only to turn an
+            // implementation regression into a readable panic message
+            // instead of falling through silently.
+            other => panic!(
+                "expected NotRegularFilePostOpen for /dev/null post-open fstat, got {other:?}"
+            ),
+        }
+    }
+
+    /// `check_open_handle_containment` accepts a file whose fd resolves
+    /// under the given `canonical_root` — the happy-path regression pin
+    /// that the `/proc/self/fd/<fd>` readlink does not spuriously reject
+    /// files that are, in fact, inside the root. Mirrors
+    /// `raikiri_dom::fonts::check_open_handle_containment_accepts_file_within_root`.
+    /// bd raikiri-spike-y92o.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn check_open_handle_containment_accepts_file_within_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(dir.path()).unwrap();
+        let path = canonical_root.join("inside.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"inside content")
+            .unwrap();
+
+        let file = safe_open(&path).expect("safe_open should succeed on regular file");
+        check_open_handle_containment(&file, &path, &canonical_root)
+            .expect("fd resolving inside canonical_root must pass containment recheck");
+    }
+
+    /// `check_open_handle_containment` rejects a file whose fd resolves
+    /// outside the given `canonical_root`. This is the primitive-level pin
+    /// of the actual defense: even though `safe_open` opened the file
+    /// successfully (it is a perfectly regular file, just not under the
+    /// expected root), the fd-derived `/proc/self/fd/<fd>` path fails
+    /// `starts_with(canonical_root)` and the recheck rejects — proving the
+    /// check does not trust a path string, only the fd's own resolved
+    /// target. Mirrors
+    /// `raikiri_dom::fonts::check_open_handle_containment_rejects_file_outside_root`.
+    /// bd raikiri-spike-y92o.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn check_open_handle_containment_rejects_file_outside_root() {
+        let fixture_tmp = tempfile::tempdir().unwrap();
+        let outside_tmp = tempfile::tempdir().unwrap();
+        let canonical_root = std::fs::canonicalize(fixture_tmp.path()).unwrap();
+        let canonical_outside = std::fs::canonicalize(outside_tmp.path()).unwrap();
+
+        let outside_leaf = canonical_outside.join("outside.bin");
+        std::fs::File::create(&outside_leaf)
+            .unwrap()
+            .write_all(b"outside content")
+            .unwrap();
+
+        let file = safe_open(&outside_leaf).expect("safe_open should succeed on regular file");
+        match check_open_handle_containment(&file, &outside_leaf, &canonical_root) {
+            Err(FixtureError::PathEscapePostOpen { canonical, root }) => {
+                assert_eq!(canonical, outside_leaf);
+                assert_eq!(root, canonical_root);
+            }
+            // cov:ignore: diagnostic-only fallthrough — the expected `Err`
+            // arm immediately above is what this test asserts and is
+            // pinned by the same test run; this arm exists only to turn an
+            // implementation regression into a readable panic message
+            // instead of falling through silently.
+            other => panic!(
+                "expected PathEscapePostOpen for fd resolving outside canonical_root, got {other:?}"
+            ),
+        }
     }
 
     /// **Race regression** (raikiri-spike-51n, follow-up to raikiri-spike-8yu):
