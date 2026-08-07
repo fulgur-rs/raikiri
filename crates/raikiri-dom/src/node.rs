@@ -208,6 +208,47 @@ pub struct Node {
     /// Taffy layout cache (per-node)。
     pub(crate) cache: Cache,
     /// Taffy layout 結果 (compute_root_layout が populate)。
+    ///
+    /// # 値域契約: 全 `f32` field は有限・`[-1e7, 1e7]` に飽和 (bd
+    /// raikiri-spike-y3yx、親: raikiri-spike-2ui0 / raikiri-spike-r8ew)
+    ///
+    /// `location.{x,y}` / `size.{width,height}` / `content_size.{width,height}`
+    /// / `scrollbar_size.{width,height}` / `border.{left,right,top,bottom}` /
+    /// `padding.{left,right,top,bottom}` / `margin.{left,right,top,bottom}` は
+    /// 常に **有限**であり、`[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]` (=
+    /// `[-1e7, 1e7]`、`raikiri_dom::layout` module-private 定数
+    /// `MAX_TAFFY_MAGNITUDE`) に対称飽和している。生成過程で `NaN` になった
+    /// 値は `0.0` に fallback 済み。`±Inf` を
+    /// 含む taffy の生出力がこの field に書き込まれることはない。`order`
+    /// (`u32`) はこの契約の対象外 (非有限になり得ない型)。
+    ///
+    /// 保証するのは finiteness と magnitude 上限のみで、box model の包含関係
+    /// (CSS Box 3 の content ⊆ padding ⊆ border) は保存しない — field ごとに
+    /// 独立に clamp するため、`size.width` と `padding.{left,right}` が
+    /// 同時に飽和すると `size.width - padding.left - padding.right` が負に
+    /// なりうる。
+    ///
+    /// この契約は [`crate::layout::sanitize_taffy_layout`] が
+    /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
+    /// (`taffy_impl.rs`) という taffy → arena 書き込みの唯一の choke point
+    /// で強制する構造的 invariant であり、呼び忘れで破れることがない
+    /// (詳細・証拠は [`crate::layout::sanitize_taffy_layout`] の doc)。
+    /// この field 自体は `pub` だが、`Node` を外部から `&mut` で得る公開
+    /// API は存在しない (`Document::nodes` は `pub(crate)`、[`Node::new_document`]
+    /// 等の constructor もすべて `pub(crate)`、[`crate::Document::get_node`]
+    /// は `&Node` のみ返す) ため、crate 外からこの choke point を経由せず
+    /// 直接書き込む経路は無い。
+    ///
+    /// この field は `pub` であり [`crate::Document::get_node`] 経由で crate
+    /// 外からも直接観測できる。raikiri-paint の walker
+    /// (`crates/raikiri-paint/src/walk.rs`、`location.x`/`y` を直接積算) と
+    /// raikiri crate の page-scene 抽出 (`crates/raikiri/src/page_scene.rs`、
+    /// `location.{x,y}` / `size.{width,height}` を直接 `Fragment` へ写す) の
+    /// 両方が、この field を再検証せず直接読む — 本契約が dom → paint 境界で
+    /// 非有限幾何から consumer を守る唯一の防壁である。type / field shape /
+    /// access pattern はこの契約と無関係で不変 — 本 doc は dom → paint
+    /// 境界の **観測可能な値の集合**を定める behavioral contract を明文化
+    /// するのみ。
     pub unrounded_layout: Layout,
     /// Per-node metadata bits (IS_IN_DOCUMENT etc.)。crate-private mutation。
     pub(crate) flags: NodeFlags,
