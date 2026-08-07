@@ -1541,8 +1541,9 @@ pub enum Direction {
 /// この関数が要る「**親の** direction」は自 node の `direction` winner の
 /// 適用順序に左右されてはならない (適用順に依存しないことが
 /// [`crate::cascade::resolve_inheritance`] の invariant)。`finalize` /
-/// `finalize_as_root` は全 winner 適用後に**明示的に親の [`ComputedValues`]
-/// を受け取って**呼ばれるため、この罠を構造的に避けられる。
+/// `finalize_as_root` は全 winner 適用後に**明示的に親の
+/// [`crate::computed::ComputedValues`] を受け取って**呼ばれるため、この罠を
+/// 構造的に避けられる。
 ///
 /// `pub(crate)` は `specified` / `cascade` の 2 module から呼ぶため。
 pub(crate) fn resolve_text_align_match_parent(
@@ -3585,7 +3586,7 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
 /// があった (親 `font-weight: 349.5` + 子 `bolder` が旧実装では 350 への丸め後
 /// `350 <= w < 550` 行 → 700 に化け、spec の `100 <= w < 350` 行 → 400
 /// と食い違う。`549.5` + `bolder`、`749.5` + `lighter` も同型 — pin:
-/// [`crate::cascade::tests::bolder_lighter_resolve_against_unrounded_fractional_parent_weight`])。
+/// `crate::cascade::tests::bolder_lighter_resolve_against_unrounded_fractional_parent_weight`)。
 /// `f32` 格上げにより丸めそのものが不要になったため、この 2 次被害も解消される。
 fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
     match input.next().ok()? {

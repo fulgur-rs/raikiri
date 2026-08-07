@@ -1089,11 +1089,12 @@ fn page_context_font_size(
 /// # Which font-size does an inherited `<number>` multiply by?
 ///
 /// Both branches — declared and undeclared — convert the resulting
-/// [`ComputedLineHeight`] with **this call's own `font_size` argument**
-/// (the page context's own, from [`page_context_font_size`]), never the
-/// root's — ordinary CSS inheritance semantics for the unitless multiplier
-/// ([`ComputedLineHeight`] doc, "子は number を inherit して自分の font-size
-/// に掛ける"), not a page-context-specific carve-out — pinned by
+/// [`crate::resolve::ComputedLineHeight`] with **this call's own `font_size`
+/// argument** (the page context's own, from [`page_context_font_size`]),
+/// never the root's — ordinary CSS inheritance semantics for the unitless
+/// multiplier ([`crate::resolve::ComputedLineHeight`] doc, "子は number を
+/// inherit して自分の font-size に掛ける"), not a page-context-specific
+/// carve-out — pinned by
 /// `cascade_page_padding_lh_uses_page_context_own_font_size_for_inherited_number`.
 ///
 /// The result is then converted to an absolute length via
@@ -1210,7 +1211,7 @@ fn page_context_border_styles(
 /// # The `value` parameter is phase-2 output, enforced by its type
 ///
 /// Since bd raikiri-spike-7m33, `value` is a
-/// [`ResolvedAgainstInherited`](crate::cascade::ResolvedAgainstInherited)
+/// [`crate::cascade::ResolvedAgainstInherited`]
 /// rather than a raw [`PropertyValue`] — see that type's doc for what this
 /// does and does not guarantee ("narrowed, not closed").
 ///

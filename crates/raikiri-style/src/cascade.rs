@@ -783,14 +783,14 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// fractional weight (`349.5` 等) を保持したまま渡ってくる。丸めずに直接
 /// 比較するため行選択は spec §2.2.1 のとおり正確に決まる — 旧 `u16` 実装は
 /// parse 段の丸めで `349.5` が `350` に化けてから本関数に渡り、`350 <= w < 550`
-/// 行を誤って踏んでいた (詳細: [`crate::property::parse_font_weight`] doc)。
+/// 行を誤って踏んでいた (詳細: `crate::property::parse_font_weight` doc)。
 ///
 /// # 非有限 `inherited` (`NaN` / `±Inf`) — 本関数は guard しない
 ///
 /// `u16` だった頃は非有限が型で構造的に排除されていたが、`f32` 化 (bd
 /// raikiri-spike-e52s) で finiteness は「型で保証」から「呼び出し元の値
 /// 検証で保証」に変わった。通常の cascade 経路は
-/// [`crate::property::parse_font_weight`] の `[1, 1000]` range guard により
+/// `crate::property::parse_font_weight` の `[1, 1000]` range guard により
 /// 常に finite だが、`ComputedValues` の field は全て `pub` で
 /// [`crate::page::cascade_page`] も呼び出し側提供の
 /// [`crate::page::PageInheritance`]`::FromRoot` を継承元 root として受け取るため、
@@ -1171,7 +1171,7 @@ pub(crate) fn resolve_against_inherited(
 /// 実装 task の acceptance criteria) に切り出した。[`resolve_against_inherited`]
 /// の doc「この guard が守らない範囲」§2 も参照。
 ///
-/// # test 用の裏口 ([`Self::for_test`])
+/// # test 用の裏口 (`Self::for_test`)
 ///
 /// `page::tests` には phase 3 を意図的に phase 2 抜きで直接駆動する既存 test
 /// 群がある (`phase_3_variant_classification_matches_the_documented_counts` /
