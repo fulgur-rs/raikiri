@@ -625,7 +625,7 @@ fn format_named_counter(value: i32, name: &str) -> String {
         format_ethiopic_numeric(value).unwrap_or_else(|| format_decimal(value))
     } else {
         // Unmatched named style — decimal fallback for one of the three
-        // reasons enumerated in the [`format_counter`] doc (genuinely
+        // reasons enumerated in the `format_counter` doc (genuinely
         // unknown / unreachable custom @counter-style /
         // disclosure-open/-closed's undefined-codepoint deferral).
         format_decimal(value)
@@ -2637,7 +2637,7 @@ mod tests {
         // asymmetry (an even, non-zero index group with value 0 still
         // emits a bare ፼ with no preceding digit — group 2 here), verified
         // in-range by hand-tracing the algorithm: groups (LSB-first)
-        // [92, 0, 0, 10]; group 3 (msb, odd, value 10) → ፲፻; group 2
+        // `[92, 0, 0, 10]`; group 3 (msb, odd, value 10) → ፲፻; group 2
         // (even, index != 0, value 0) → suppressed digit, but it still
         // gets a bare ፼; group 1 (odd, value 0) → fully suppressed
         // (exception applies to ፻ only); group 0 → ፺፪.
@@ -2745,7 +2745,7 @@ mod tests {
     fn resolve_target_counters_absent_counter_yields_zero() {
         // CSS Content 3 §2.6.2: an undefined counter has value 0;
         // `counters(name, sep)` renders that as the single formatted "0"
-        // (join-with-sep of a one-element [0]) — NOT the empty string.
+        // (join-with-sep of a one-element `[0]`) — NOT the empty string.
         // Regression pin against a prior implementation that used
         // `.unwrap_or_default()` on the joined output.
         let mut reg = TargetRegistry::default();

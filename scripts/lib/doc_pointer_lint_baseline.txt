@@ -1,0 +1,33 @@
+# scripts/lib/doc_pointer_lint_baseline.txt — pinned ratchet baseline for
+# scripts/doc-pointer-lint.sh (bd raikiri-spike-luxp).
+#
+# Count = doc-comment (`///` / `//!`) bare (non-intra-doc-link) `crate::…`
+# pointer occurrences across crates/*/src/**/*.rs, AFTER excluding:
+#   - opt-out 1: `(removed)` marker on the same line
+#   - opt-out 2: pointer path contains a `tests::` segment
+#   - an explicit `doc-pointer-lint:ignore: <reason>` marker
+# This is the exact set scripts/lib/doc_pointer_lint.py calls
+# `doc_bare_crate_ratchet`. New occurrences must not push the count above
+# this baseline (drift-prevention, not a target to reach — see AGENTS.md's
+# `crate::…` pointer 節 and bd raikiri-spike-luxp for why "何もしない" was
+# rejected: this exact count grew from 11 (bd raikiri-spike-ulzv's landing
+# commit f1cb197) to 36 across the ~2 weeks/dozens of merges before this
+# baseline was pinned).
+#
+# Regenerate the current value with:
+#   python3 scripts/lib/doc_pointer_lint.py --repo-root "$(git rev-parse --show-toplevel)" --print-count
+# Only lower this file's value as a deliberate baseline-lowering sweep
+# (file a bd issue for that work — see bd raikiri-spike-luxp's "existing分
+# の一括変換は... 別途 follow-up task"). Do not raise it to make a
+# regression pass; fix the regression or mark it, per the roles this
+# script prints.
+#
+# This branch's own count can drift out from under you: this repo runs
+# many parallel worktree-per-task sessions, and a foreign merge landing on
+# the base branch after this baseline was pinned can add bare `crate::…`
+# doc pointers this branch never touched. If a rebase/merge onto a newer
+# base makes role 2 fail, re-run --print-count first — if the new count's
+# excess traces to lines this branch didn't author, fix or
+# `doc-pointer-lint:ignore:` those specific lines (or escalate) rather
+# than raising this number to make the failure disappear.
+36

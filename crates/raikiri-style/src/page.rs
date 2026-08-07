@@ -358,12 +358,12 @@ fn parse_and_push_pseudo<'i>(
 // # Sibling arm convention (raikiri-spike-37n)
 //
 // Follows the sibling convention established by
-// [`crate::cascade::collect_cascaded`] + [`crate::cascade::pick_winners`]:
+// `crate::cascade::collect_cascaded` + `crate::cascade::pick_winners`:
 // per-candidate `(value, important, origin, specificity, source_order)` tuple,
-// group by [`PropertyKey`], pick winner by `(rank, specificity, source_order)`
-// where higher tuples beat lower. `rank` reuses [`cascade_rank`] verbatim —
+// group by `PropertyKey`, pick winner by `(rank, specificity, source_order)`
+// where higher tuples beat lower. `rank` reuses `cascade_rank` verbatim —
 // `@page` rules and style rules share the same origin ordering (spec §6.2).
-// The only diverging element is the specificity type: [`PageSpecificity`] is a
+// The only diverging element is the specificity type: `PageSpecificity` is a
 // derived-`Ord` `(f, g, h)` triple per L3 §"Cascading and page context",
 // whereas style rules use the `selectors` crate's 32-bit packed specificity.
 // ---------------------------------------------------------------------------
@@ -2087,8 +2087,8 @@ mod tests {
     // this, `FontWeightValue::Bolder` parked unresolved in the public
     // `declarations` map).
 
-    /// Direct, single-site pin that [`PageInheritance::FromRoot`] and
-    /// [`PageInheritance::LegacyInitialValues`] are a real discrimination, not
+    /// Direct, single-site pin that `PageInheritance::FromRoot` and
+    /// `PageInheritance::LegacyInitialValues` are a real discrimination, not
     /// two names for the same behaviour. The per-property tests elsewhere in
     /// this module each show one side of this split across two *separate*
     /// tests (e.g. `cascade_page_font_weight_bolder_resolves_against_root_computed_weight`
@@ -2746,7 +2746,7 @@ mod tests {
     }
 
     /// `page_context_line_height_basis`'s undeclared-`line-height` branch
-    /// inherits [`ComputedLineHeight::Number`] from the root and multiplies
+    /// inherits `ComputedLineHeight::Number` from the root and multiplies
     /// it by the **page context's own** font-size — ordinary CSS inheritance
     /// semantics for the unitless multiplier (CSS Inline 3 §5.1), not a
     /// page-context special case. Root font-size (16px, unused for this)
@@ -2996,7 +2996,7 @@ mod tests {
         );
     }
 
-    /// The [`PageInheritance::LegacyInitialValues`] path also runs phase 3,
+    /// The `PageInheritance::LegacyInitialValues` path also runs phase 3,
     /// against the initial values. Guards against the absolutization being
     /// wired only into the `FromRoot` branch.
     #[test]
@@ -3064,7 +3064,7 @@ mod tests {
     /// enforce everything; see its doc, bd raikiri-spike-ez7b).
     ///
     /// Since bd raikiri-spike-7m33 `absolutize_in_page_context` takes a
-    /// [`ResolvedAgainstInherited`], whose constructor is private outside
+    /// `ResolvedAgainstInherited`, whose constructor is private outside
     /// `crate::cascade` — `ResolvedAgainstInherited::for_test` is the
     /// `#[cfg(test)]`-only escape hatch that lets this test keep driving the
     /// function directly with a hand-picked payload (see that type's doc,
@@ -3935,7 +3935,7 @@ mod tests {
     }
 
     /// `FontSize` / `FontSizeRelative` が意図的に同じ `PropertyKey` を共有する
-    /// こと自体の direct pin ([`page_corpus_has_no_duplicate_or_mismatched_samples`]
+    /// こと自体の direct pin (`page_corpus_has_no_duplicate_or_mismatched_samples`
     /// の doc が説明する単射性崩れの根拠)。property.rs 側の
     /// `font_size_relative_shares_property_key_with_font_size` と同じ主張を
     /// page 経路の corpus に対して確認する — corpus の 2 entry が同じ key を
@@ -4202,7 +4202,7 @@ mod tests {
 
     /// The trap the doc warns about: unlike the element path's root element
     /// (CSS Text 3 §6.1's "computes to start"), the page context's
-    /// [`PageInheritance::LegacyInitialValues`] L3 legacy exception is **not**
+    /// `PageInheritance::LegacyInitialValues` L3 legacy exception is **not**
     /// a "no parent" case — it substitutes `ComputedValues::initial()` as an
     /// ordinary inheritance parent (text-align = start, direction = ltr) and
     /// goes through the same parent-direction table, landing on `left` rather
@@ -4445,8 +4445,8 @@ mod tests {
     #[test]
     fn post_parse_page_margin_shorthand_before_longhand_lets_longhand_win() {
         // 注入後の declaration 列 (= `margin: 1px 2px 3px 4px; margin-top: 10px`):
-        //   [0] Margin(1,2,3,4)   ← 注入
-        //   [1] MarginTop(10px)
+        //   `[0]` Margin(1,2,3,4)   ← 注入
+        //   `[1]` MarginTop(10px)
         // spec §3 + §6.1 → top=10 (後方 longhand)、right/bottom/left=2/3/4。
         //
         // **展開の有無を区別する**: 展開しない実装では `PropertyKey::Margin` が
@@ -4476,8 +4476,8 @@ mod tests {
     #[test]
     fn post_parse_page_margin_shorthand_after_longhand_lets_shorthand_win() {
         // 鏡像方向 (`margin-top: 10px; margin: 1px 2px 3px 4px`):
-        //   [0] MarginTop(10px)
-        //   [1] Margin(1,2,3,4)   ← 注入
+        //   `[0]` MarginTop(10px)
+        //   `[1]` Margin(1,2,3,4)   ← 注入
         // spec §6.1 → 全 side が shorthand 由来 = 1/2/3/4。
         //
         // **展開の有無を区別する** — element 経路の同名 test
@@ -4640,8 +4640,8 @@ mod tests {
     fn post_parse_page_important_longhand_survives_later_normal_shorthand() {
         // 注入後の declaration 列
         // (= `margin-top: 10px !important; margin: 1px 2px 3px 4px`):
-        //   [0] MarginTop(10px) !important
-        //   [1] Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
+        //   `[0]` MarginTop(10px) !important
+        //   `[1]` Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
         //
         // CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
         // の cascade sort は Origin and Importance を Order of Appearance

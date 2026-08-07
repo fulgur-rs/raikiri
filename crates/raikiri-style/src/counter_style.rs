@@ -471,7 +471,7 @@ fn parse_range(input: &mut Parser<'_, '_>) -> Option<CounterRange> {
     // i.e. the whole `range` descriptor (not just one entry) reverts to its
     // initial value `auto`. Modeled here by returning `None`, which
     // `CounterStyleDeclParser::parse_value` (below) treats as "drop this
-    // declaration", leaving [`CounterStyleRule::range`] at its
+    // declaration", leaving `CounterStyleRule::range` at its
     // `#[derive(Default)]` value `Auto`.
     for entry in &entries {
         if let (RangeLimit::Finite(l), RangeLimit::Finite(u)) = (entry.lower, entry.upper)

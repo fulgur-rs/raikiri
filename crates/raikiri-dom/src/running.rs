@@ -126,9 +126,9 @@ use std::sync::Arc;
 use raikiri_style::property::{ContentComponent, ContentTextKeyword};
 use raikiri_traits::{GcpmDirective, NodeId, RunningTemplateId, Symbol};
 
-// [`RunningTemplateId`] is the shared identifier from raikiri-traits
+// `RunningTemplateId` is the shared identifier from raikiri-traits
 // (design §7.0 line 1904 "shared types → raikiri-traits"). Landed by bd
-// raikiri-spike-96u.4 together with the [`GcpmDirective`] populate — the
+// raikiri-spike-96u.4 together with the `GcpmDirective` populate — the
 // `RegisterRunning` variant references it (§7.1 line 1918). Previously this
 // module carried a `pub(crate)` local mirror; that mirror is dropped now that
 // the traits-side canonical location exists.

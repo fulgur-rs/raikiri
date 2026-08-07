@@ -655,20 +655,20 @@ mod tests {
         parse_declaration_block(&mut parser)
     }
 
-    /// [`parse_declaration_block`] の出口に shorthand key が 1 つも残らないこと。
+    /// `parse_declaration_block` の出口に shorthand key が 1 つも残らないこと。
     ///
     /// この不変は cascade 段の正しさに load-bearing である
     /// (`crate::cascade` の `apply_winners` doc): shorthand key が cascade に
     /// 届くと `PropertyKey` 宣言順で longhand より後に適用され、declaration の
     /// 並び方によっては longhand winner を潰して spec と食い違う。
     ///
-    /// 「展開 arm の書き忘れ」形の壊れ方は [`expand_shorthand_into`] の
+    /// 「展開 arm の書き忘れ」形の壊れ方は `expand_shorthand_into` の
     /// **exhaustive match** が compile error にするので、本 test が走るより前に
     /// 落ちる (bd raikiri-spike-ez7b)。本 test は一次 guard ではなく
     /// defense-in-depth である — 同関数 doc の「この guard が守らない範囲」節を
     /// 参照。
     ///
-    /// ⚠️ 本 test が見るのは [`expand_shorthand_into`] の **call site 1 (parse
+    /// ⚠️ 本 test が見るのは `expand_shorthand_into` の **call site 1 (parse
     /// 出口) だけ**である。post-parse mutation 経路 (bd raikiri-spike-qzn3 以降は
     /// crate 内からのみ到達可能) は本 test を素通りする
     /// (bd raikiri-spike-nqkj)。call site 2 (element cascade 入口) の guard は

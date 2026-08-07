@@ -1038,7 +1038,7 @@ pub fn build_wpt_font_ctx_with_observer(
     //
     // File read failure は **hard error として propagate**する
     // (roborev Medium finding e93 round 3): 従来の eprintln! warn skip では、
-    // Ahem.ttf (PREFERRED_FIRST[0]) が read failed 時に silently 次候補
+    // Ahem.ttf (PREFERRED_FIRST`[0]`) が read failed 時に silently 次候補
     // (CSSTest 等) が register され、cascade "serif" が想定外の font に解決
     // されてしまう。walker が返した path は既に存在確認済 (read_dir で
     // 列挙された) なので、read 段階で失敗するのは permission 変更や symlink
@@ -1170,7 +1170,7 @@ pub fn build_wpt_font_ctx_with_observer(
     }
 
     // Backstop: PREFERRED_FIRST が空である将来 (現在は unreachable path、
-    // PREFERRED_FIRST=["Ahem.ttf"] の invariant check が先に fire する)
+    // PREFERRED_FIRST=`["Ahem.ttf"]` の invariant check が先に fire する)
     // に備えた defensive check。cascade "serif" が空の family_ids に対して
     // 何にも解決されない状態を Err で surface する。
     if family_ids.is_empty() {
@@ -1509,7 +1509,7 @@ mod tests {
             .iter()
             .map(|p| p.file_name().and_then(|f| f.to_str()).unwrap().to_string())
             .collect();
-        // Ahem (PREFERRED_FIRST[0]) が alphabetically 先頭の
+        // Ahem (PREFERRED_FIRST`[0]`) が alphabetically 先頭の
         // AAA-non-preferred.ttf を override → 残りは path sort
         // (AAA-non-preferred, CSSTest, Lato-Bold)
         assert_eq!(

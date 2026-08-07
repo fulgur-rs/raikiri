@@ -136,7 +136,7 @@ mod tests {
             H,
         );
 
-        // Pixel (75, 75) is outside blue rect [0..50, 0..50] — must be
+        // Pixel (75, 75) is outside blue rect `[0..50, 0..50]` — must be
         // transparent-black. A non-transparent value would indicate the renderer
         // started from a non-empty state.
         let idx_outside = (75 * (W as usize) + 75) * 4;

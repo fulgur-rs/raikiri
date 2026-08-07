@@ -525,7 +525,7 @@ impl ComputedValues {
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(0.0)),
             // CSS Backgrounds 3 §3.3/§3.2/§3.1: border initial は各 side で
             // style=none、color=`currentcolor` keyword
-            // ([`BorderColor::CurrentColor`]、raikiri-spike-0vv.12 seed +
+            // (`BorderColor::CurrentColor`、raikiri-spike-0vv.12 seed +
             // raikiri-spike-0vv.17 で `CssColor::BLACK` placeholder から
             // enum variant へ格上げ、CSS Backgrounds 3 §3.1 initial 契約
             // fidelity — 上の margin 行の CSS Box 3 §3.1 とは別 spec の同番号
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn initial_display_is_inline() {
         // CSS Display 3 §2: display initial は `inline`
-        // (anchor は [`ComputedValues::display`] field doc 側)。
+        // (anchor は `ComputedValues::display` field doc 側)。
         assert_eq!(ComputedValues::initial().display, DisplayValue::Inline);
     }
 
@@ -811,7 +811,7 @@ mod tests {
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
     ///
-    /// [`ComputedValues::inherit_from`] の doc が主張する invariant の pin —
+    /// `ComputedValues::inherit_from` の doc が主張する invariant の pin —
     /// `SpecifiedValues::inherit_from` の出力に font-relative な値が 1 つも
     /// 含まれないので、`finalize` は `rem` arm を踏まず context を参照しない。
     /// 将来 lift 側が `Px` 以外を返すようになったら (= 不動点性が壊れたら)

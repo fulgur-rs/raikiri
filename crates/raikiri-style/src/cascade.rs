@@ -485,7 +485,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 
         // phase 2 + phase 3: 絶対化。root element (element 祖先なし) は `rem` の
         // 基準が phase 2 / phase 3 で異なるため専用 entry point を通す
-        // ([`SpecifiedValues::finalize_as_root`] の doc に spec verbatim)。
+        // (`SpecifiedValues::finalize_as_root` の doc に spec verbatim)。
         let computed = match &root_ctx {
             Some(ctx) => specified.finalize(&parent_computed, ctx),
             None => {
@@ -520,7 +520,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // 時点で `root_font_size` / `root_line_height` が確定するので、ここで
         // 初めて `Some` になる (bd raikiri-spike-vxha で `root_line_height`
         // を追加)。`used_line_height_length` は
-        // [`crate::specified::SpecifiedValues::finalize_as_root`] が自分の
+        // `crate::specified::SpecifiedValues::finalize_as_root` が自分の
         // `ctx` を組み立てるのに使う導出と同一 — 両者の一致は
         // `rlh_on_root_element_matches_child_root_line_height_basis` が pin する。
         let child_ctx = match root_ctx {
@@ -547,7 +547,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // `child_ids` イテレータを直接 `stack` へ `extend` し、今回追加した
         // 末尾スライスだけを in-place `reverse()` する — 都度捨てる中間
         // `Vec` を経由しない (bd raikiri-spike-75ch)。`child_ctx` は `Copy`
-        // ([`ResolveContext`] の derive) なので closure 内で複数回使い回せる。
+        // (`ResolveContext` の derive) なので closure 内で複数回使い回せる。
         //
         // なぜ document order を保つか: resolve_inheritance 自体の正しさも
         // 訪問順には依存しない — 各 node の computed 値は push 時点で既に
@@ -1107,7 +1107,7 @@ pub(crate) fn resolve_against_inherited(
         // 呼び手の phase 3 が絶対化することを説明している。`_` に潰さないこと。
         //
         // `Direction` はここに属する — computed value = specified value
-        // (相対解決なし、[`crate::property::Direction`] doc 参照)、`Color` /
+        // (相対解決なし、`crate::property::Direction` doc 参照)、`Color` /
         // `FontFamily` と同型 (raikiri-spike-l3wg)。
         v @ (PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)
@@ -1246,14 +1246,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //   単位に関わらず「親 (または root の initial) の computed
         //   font-size」の px 表現である。
         // - `font_size` の他の値 (`em` / `rem` / `%`) は絶対化を
-        //   [`SpecifiedValues::finalize`] (phase 2) に **意図的に遅延**する
+        //   `SpecifiedValues::finalize` (phase 2) に **意図的に遅延**する
         //   (decision raikiri-spike-082k、本関数冒頭の doc 参照) が、
         //   `larger` / `smaller` は基準が「親の computed font-size」のみで
         //   自 node の他 winner に依存しないため、`font-weight` と同じく
         //   ここ (phase 1) で解決してよい。解決結果は `Length::Px` — 通常の
         //   author 指定 px 値と区別が付かなくなり、phase 2 (`resolve_font_size`
         //   の `Px` arm は identity) を通しても二重適用にならない。
-        // - 全 [`Length`] variant を OR-pattern で受ける下の抽出は
+        // - 全 `Length` variant を OR-pattern で受ける下の抽出は
         //   「実際には常に `Px`」を panic-free に表現したもの — reviewer-security
         //   の panic surface 排除方針 (`Margin` shorthand fall-through arm と同じ
         //   理由) により `unreachable!` は採らない。
@@ -1338,9 +1338,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //
         // **契約 (raikiri-spike-ygl0)**: 継承元依存の解決を持つ property を新しく
         // 追加するときは、本 arm だけでなく sibling の
-        // [`resolve_against_inherited`] にも arm を足すこと — そちらは
+        // `resolve_against_inherited` にも arm を足すこと — そちらは
         // `PropertyValue` を返す形で同じ解決を提供し、
-        // [`crate::page::cascade_page`] (`apply_value` を通らない第 2 の public
+        // `crate::page::cascade_page` (`apply_value` を通らない第 2 の public
         // entry point) が使う。両者とも wildcard 無しの exhaustive match なので
         // variant 追加時は compiler が 2 経路を数え上げさせる。
         //
@@ -1395,16 +1395,16 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //
         // **`match-parent` はここでは解決しない** (raikiri-spike-l3wg) — この
         // 単純代入は他 arm と同じく素朴なコピーのままにしてある。解決は
-        // [`crate::specified::SpecifiedValues::finalize`] /
+        // `crate::specified::SpecifiedValues::finalize` /
         // `finalize_as_root` が全 winner 適用**後**に、明示的な親
-        // [`ComputedValues`] を受け取って行う。理由: 本 arm の中で
+        // `ComputedValues` を受け取って行う。理由: 本 arm の中で
         // `target.direction` (= 親から継承した direction) を読んで解決しようと
         // すると、**同一 node が `direction` winner も持つ場合**にその適用順序
-        // ([`crate::property::PropertyKey`] の宣言順) 次第で親ではなく
+        // (`crate::property::PropertyKey` の宣言順) 次第で親ではなく
         // **自分の** direction を読んでしまう —
         // `resolve_inheritance` が保証する「winner の適用順に依存しない」
         // invariant への違反になる。詳細は
-        // [`crate::property::resolve_text_align_match_parent`] の doc。
+        // `crate::property::resolve_text_align_match_parent` の doc。
         PropertyValue::TextAlign(t) => target.text_align = t,
         // direction は CSS Writing Modes 4 §2.1 (raikiri-spike-l3wg)。
         // inherited property、computed value = specified value (相対解決なし) —
@@ -1711,7 +1711,7 @@ mod tests {
     /// 漏れた slot は「次 node の candidate list を誤った index で読む」形で
     /// 顕在化する。ここでは `<span>` の `candidates[0]` が `font-weight:
     /// bolder` なので、`<p>` の残した slot 1 と自分の slot 4 が**同じ
-    /// declaration を 2 回**適用する。`bolder` は [`apply_value`] 中で唯一の
+    /// declaration を 2 回**適用する。`bolder` は `apply_value` 中で唯一の
     /// read-modify-write arm であるため 400 → 700 → **900** と複合し、
     /// 期待値 700 とずれる。単純代入 property を選ぶと二重適用が冪等になって
     /// leak を素通ししてしまう (実際 `padding` で書いた初版は、drain の
@@ -1726,7 +1726,7 @@ mod tests {
     /// - leak の**向き**は traversal 順に依存するので、検出できるのは
     ///   document order で先行する `<p>` → 後続 `<span>` の向きだけ。
     /// - `cargo test` は debug build なので、実際に leak すると
-    ///   [`pick_winners`] 冒頭の debug_assert が先に落ちる。`bolder` の二重適用
+    ///   `pick_winners` 冒頭の debug_assert が先に落ちる。`bolder` の二重適用
     ///   機構が単独で load-bearing になるのは **release build** (debug_assert が
     ///   消える) のみ。逆に言えば本 test の価値は release build での検出可能性と、
     ///   失敗時の診断 message の明示性にある。
@@ -1774,7 +1774,7 @@ mod tests {
     ///
     /// ranges の非重複性は flat arena 特有の新しい不変条件 — 個別 `Vec` には
     /// 存在しなかった「他 node の区間と重なってはいけない」という要求で、
-    /// [`CascadedArena::candidates`] が正しい slice を返す前提そのもの
+    /// `CascadedArena::candidates` が正しい slice を返す前提そのもの
     /// (raikiri-spike-8kn8 が警告する「global index space を渡すと壊れる」
     /// ハザードの、arena 版の再発防止)。2 つの assertion で役割が分かれる:
     /// `windows(2)` が三者間の pairwise overlap を検査し、末尾の
@@ -2355,7 +2355,7 @@ mod tests {
         );
     }
 
-    /// Same 3-level tree as [`font_size_rlh_uses_root_not_immediate_parent`],
+    /// Same 3-level tree as `font_size_rlh_uses_root_not_immediate_parent`,
     /// but with `1lh` on the leaf instead of `1rlh` — the two tests together
     /// discriminate a `Lh`/`Rlh` basis swap in `resolve_font_size` (48px vs
     /// 40px, the two possible wrong answers for each other's unit).
@@ -2381,7 +2381,7 @@ mod tests {
     /// Document 直下の **非 element** node は rem context を確定させない
     /// (`resolve_inheritance` の `child_ctx` の `None => None` arm)。
     ///
-    /// [`StyleDom::root_id`] は Document node であって root element ではないので、
+    /// `StyleDom::root_id` は Document node であって root element ではないので、
     /// element を 1 つも通っていない経路では `rem` の参照値が未確定のままで
     /// なければならない。Text / Comment node が誤って「root element」扱いされると
     /// 兄弟 element より先に walk された場合に rem 基準が汚染される。
@@ -2820,7 +2820,7 @@ mod tests {
     #[test]
     fn counter_reset_wired_through_cascade_from_inline_style() {
         // <div style="counter-reset: chapter"> → ComputedValues.counter_reset
-        // に [("chapter", 0)] が届く。parser → PropertyValue → apply_value →
+        // に `[("chapter", 0)]` が届く。parser → PropertyValue → apply_value →
         // ComputedValues の end-to-end 疎通 smoke。
         // d9y.2: counter_reset は Arc<Vec<..>>、`*cv.counter_reset` で deref-compare。
         let cv = cascade_doc("", "div", Some("counter-reset: chapter"));
@@ -2835,7 +2835,7 @@ mod tests {
     #[test]
     fn content_wired_through_cascade_from_inline_style() {
         // <p style='content: "hello"'> → ComputedValues.content に
-        // [Literal("hello")] が届く。parser → PropertyValue::Content →
+        // `[Literal("hello")]` が届く。parser → PropertyValue::Content →
         // apply_value → ComputedValues の end-to-end 疎通 smoke。
         // s85 counter-* wire-through pattern を踏襲。
         // d9y.1: content は Arc<Vec<..>>、`*cv.content` で deref-compare。
@@ -2854,7 +2854,7 @@ mod tests {
     #[test]
     fn string_set_wired_through_cascade_from_inline_style() {
         // <p style='string-set: chapter_title "hello"'> → ComputedValues.string_set
-        // に [(chapter_title, [Literal("hello")])] が届く。
+        // に `[(chapter_title, [Literal("hello")])]` が届く。
         // parser → PropertyValue::StringSet → apply_value → ComputedValues の
         // end-to-end 疎通 smoke。s85 / m5.1 wire-through pattern を踏襲。
         // d9y.1: string_set は Arc<Vec<..>>、Literal は SmolStr。indexing +
@@ -2916,7 +2916,7 @@ mod tests {
     #[test]
     fn running_template_wired_through_cascade_from_inline_style() {
         // <div style="position: running(header)"> → ComputedValues.running_templates
-        // に [RunningTemplate{name:"header"}] が届く。parser → PropertyValue::Position
+        // に `[RunningTemplate{name:"header"}]` が届く。parser → PropertyValue::Position
         // → apply_value → ComputedValues の end-to-end 疎通 smoke。
         // s85 / m5.1 / m5.3 wire-through pattern を踏襲。
         use crate::computed::RunningTemplate;
@@ -3349,7 +3349,7 @@ mod tests {
     fn font_weight_table_no_change_rows_are_not_clamps() {
         // 表の両端 2 行は "no change" であって clamp ではない。算術近似
         // (`min(w + 300, 900)` / `max(w - 300, 100)`) を書くとここが壊れる。
-        // この 2 行は raikiri-spike-5iy が range を [1,1000] に広げて初めて
+        // この 2 行は raikiri-spike-5iy が range を `[1,1000]` に広げて初めて
         // author から到達可能になったため、bundle 固有の regression guard。
         assert_eq!(
             resolve_relative_weight(FontWeightValue::Bolder, 1000.0),
@@ -3421,7 +3421,7 @@ mod tests {
         assert_eq!(lighter(f32::NEG_INFINITY), f32::NEG_INFINITY);
     }
 
-    /// [`resolve_relative_font_size`] を unit 関数として直接叩く — cascade
+    /// `resolve_relative_font_size` を unit 関数として直接叩く — cascade
     /// harness に依存せず ratio (1.2) の適用を検証する
     /// (`font_weight_bolder_lighter_table_all_six_rows` の font-size 版、
     /// raikiri-spike-4rmu)。
@@ -3451,7 +3451,7 @@ mod tests {
         );
     }
 
-    /// [`resolve_against_inherited`] の戻り値 [`ResolvedAgainstInherited`] が
+    /// `resolve_against_inherited` の戻り値 `ResolvedAgainstInherited` が
     /// 中身を無損失で運ぶこと — 型を足したことで解決結果そのものが変わって
     /// いないことの pin (bd raikiri-spike-7m33)。`as_property_value` (覗き見)
     /// と `into_property_value` (消費) の両方を、resolve 対象・pass-through
@@ -3564,7 +3564,7 @@ mod tests {
 
     #[test]
     fn font_weight_full_range_wired_through_cascade() {
-        // raikiri-spike-5iy: spec range [1,1000] の両端が cascade まで届く。
+        // raikiri-spike-5iy: spec range `[1,1000]` の両端が cascade まで届く。
         assert_eq!(
             cascade_doc("", "p", Some("font-weight: 1")).font_weight,
             1.0
@@ -4563,8 +4563,8 @@ mod tests {
     #[test]
     fn post_parse_margin_shorthand_before_longhand_lets_longhand_win() {
         // 注入後の declaration 列 (= `margin: 1px 2px 3px 4px; margin-top: 10px`):
-        //   [0] Margin(1,2,3,4)   ← 注入
-        //   [1] MarginTop(10px)
+        //   `[0]` Margin(1,2,3,4)   ← 注入
+        //   `[1]` MarginTop(10px)
         // spec §3 + §6.1 → top=10 (後方 longhand)、right/bottom/left=2/3/4。
         //
         // これが nqkj の報告する spec 違反方向。展開しない実装では
@@ -4591,8 +4591,8 @@ mod tests {
     #[test]
     fn post_parse_margin_shorthand_after_longhand_lets_shorthand_win() {
         // 鏡像方向 (`margin-top: 10px; margin: 1px 2px 3px 4px`):
-        //   [0] MarginTop(10px)
-        //   [1] Margin(1,2,3,4)   ← 注入
+        //   `[0]` MarginTop(10px)
+        //   `[1]` Margin(1,2,3,4)   ← 注入
         // spec §6.1 → 全 side が shorthand 由来 = 1/2/3/4。
         //
         // 本方向は展開しない実装でも偶然一致するが、fix が「shorthand を
@@ -4684,7 +4684,7 @@ mod tests {
         // to be !important is equivalent to declaring all of its sub-properties
         // to be !important.") が cascade 入口の展開でも保たれること。
         //
-        // 注入した shorthand は `!important` を継承する ([0] は `!important`
+        // 注入した shorthand は `!important` を継承する (`[0]` は `!important`
         // 付きで parse される) ので、後方の normal longhand には**負けない**。
         //
         // ⚠️ **本 test は展開の有無を区別しない** (§8.2 spec lens が hunk revert
@@ -4714,8 +4714,8 @@ mod tests {
     fn post_parse_important_longhand_survives_later_normal_shorthand() {
         // 注入後の declaration 列
         // (= `margin-top: 10px !important; margin: 1px 2px 3px 4px`):
-        //   [0] MarginTop(10px) !important
-        //   [1] Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
+        //   `[0]` MarginTop(10px) !important
+        //   `[1]` Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
         //
         // CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
         // の cascade sort は Origin and Importance を Order of Appearance

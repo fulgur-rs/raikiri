@@ -242,13 +242,57 @@ bd raikiri-spike-8yj6 が持つ。
 
 ### 既知の限界
 
-- **plain `//` comment には rustdoc が届かない。** link 化しても検証されない
-  (bracket を書くと「検証済みに見えるのに実は未検証」でかえって危険)。→ bd raikiri-spike-vyse
-- **既存の `#[test]` item doc に残る短縮 link** (``[`expand_shorthand_into`]`` 等) は
-  opt-out 3 の位置なので未検証。既存分の一括変換は bd raikiri-spike-acsw。
-  **新規に書く doc では opt-out 3 に従い code span にすること。**
-- **本規約には enforcement が無い。** 規約に従わない新規記述は何も止めない
-  (実測: 規約 landing 前の 3 merge が bare pointer を 7 site 追加した)。→ bd raikiri-spike-luxp
+- **plain `//` comment には rustdoc が届かない。link 化という remedy が原理的に
+  適用できない。** rustdoc は `///` / `//!` しか読まない。plain `//` comment に
+  intra-doc link (bracket 記法) を書いても `RUSTDOCFLAGS="-D warnings" cargo doc`
+  はその byte を 1 つも見ないので、path が誤っていても永遠に検出されない —
+  bracket は「検証済みに見えるのに実は未検証」でかえって bare code span より危険
+  (bd raikiri-spike-vyse、2026-08-08 決定)。**したがって plain `//` comment
+  内では、`crate::` 接頭辞の有無にかかわらず bracket link 構文
+  (`[...]` / `` [`...`] ``) を一切書かない。** 既存の `crate::…` pointer を
+  含め、bare code span (`` `crate::foo::Bar` ``) に統一する。crate:: を含まない
+  bracket も同様に禁止 — 危険性は crate:: の有無と無関係 (rustdoc がその位置を
+  1 byte も読まないという事実は pointer の中身に依らない)。
+  `scripts/doc-pointer-lint.sh` がこの blanket rule を hard-zero check
+  として強制する (bd raikiri-spike-luxp、次の bullet参照)。**強制の範囲は
+  `crates/*/src/**/*.rs` のみ** (issue 記載のscopeに合わせた)。`crates/*/
+  tests/` `benches/` `examples/` は checker の対象外 — 2026-08-08 時点で
+  手動 census では 0 件だが、continuously enforced ではない。
+- **既存の `#[test]` item doc に残っていた短縮 link** (``[`expand_shorthand_into`]``
+  等) は opt-out 3 の位置なので未検証だった。bd raikiri-spike-acsw が
+  raikiri-style 全体 (cascade / computed / page / property / resolve / rule /
+  specified の 7 file) で 42 occurrence を plain code span に一括変換済み
+  (2026-08-08)。**新規に書く doc では opt-out 3 に従い code span にすること
+  — この位置に新しく bracket を書いても `scripts/doc-pointer-lint.sh` は
+  検知しない** (short-form / non-`crate::` pointer はこの checker の
+  ratchet 対象外。opt-out 3 の再発防止は本 checker の scope 外)。
+- **本規約には enforcement 機構が今も一部無い。** 規約に従わない新規記述の一部は
+  何も止めない (実測: 規約 landing 前の 3 merge が bare pointer を 7 site
+  追加した)。bd raikiri-spike-luxp が `scripts/doc-pointer-lint.sh` を追加し、
+  以下の 2 点は自動 enforcement 下に入った:
+  - plain `//` comment の bracket link (上のbulletの blanket rule) — hard-zero。
+  - doc comment の bare `crate::…` pointer — pinned baseline
+    (`scripts/lib/doc_pointer_lint_baseline.txt`、本 commit 時点で **36**)
+    を超えないことを ratchet で強制。baseline は「今日値まで許容し、
+    それ以上増やさない」ための pin であり、0 への一括削減は本 checker の
+    scope 外。**そのための follow-up task に着手する場合は、着手時に
+    bd issue として起票すること** (2026-08-08 時点でまだ起票されていない —
+    本 bullet はその義務を課すもので、既存 issue を指してはいない)。
+
+  **実行方法**: `scripts/doc-pointer-lint.sh` (追加で `-v` で全 occurrence を
+  列挙、`--print-count` で ratchet 対象件数だけを出力してbaseline再生成に使う)。
+  exit 0 = 両 role とも pass、1 = いずれか fail、2 = baseline file が
+  読めない等の tooling error。**gate §8.1 / `scripts/gate.sh` への統合はしていない**
+  — 本 checker は standalone (統合するかどうかは別途判断、たとえば retro)。
+
+  **opt-out 3 (rustdoc に拾われない位置) は本 checker では静的判定できない**
+  (issue 自身が明記する既知の限界)。判定できない位置は既定で ratchet 対象に
+  **含める** (fail-closed)。個別に除外したい場合のみ、`scripts/lib/
+  patch_coverage.py` の `cov:ignore:` と同じ「暗黙の免除を作らない」思想で、
+  対象行に `// doc-pointer-lint:ignore: <reason>` marker を書く
+  (`cov:ignore:` と異なり同一行のみ有効 — block scoping は無い)。
+  `(removed)` marker (opt-out 1) と `tests::` を含む path (opt-out 2) は
+  この checker が自動で除外する。
 - **toolchain 依存がある。** intra-doc link の解決は rustc version で変わる。
   `rust-toolchain.toml` の pin (1.89.0) では出ない unresolved link が新しい toolchain では
   出る実例があるため、toolchain bump 時は本節の command を再走させること。

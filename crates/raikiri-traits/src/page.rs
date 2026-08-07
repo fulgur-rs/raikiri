@@ -64,7 +64,7 @@ pub struct PageBox {
     pub height: f32,
     // M4 で populate:
     //   pub margins: Margins,
-    //   pub margin_boxes: [Option<MarginBox>; 16],
+    //   pub margin_boxes: `[Option<MarginBox>; 16]`,
 }
 
 impl PageBox {

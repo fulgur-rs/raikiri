@@ -363,7 +363,7 @@ mod tests {
 
         // (d) Comment は tree 内に persist している (body の children に含まれる)。
         //     旧挙動: strip 済で detach されていたため、body の直接子は <p> のみ
-        //     だった。新挙動: body の children = [Comment, <p>] (source order)。
+        //     だった。新挙動: body の children = `[Comment, <p>]` (source order)。
         //     NB: `Dom::child_ids` と `TraversePartialTree::child_ids` の
         //     inherent-method ambiguity 回避のため UFCS で trait を明示する。
         //     raw arena children を見たいので Dom (unfiltered) を選択、次段の
@@ -822,7 +822,7 @@ mod tests {
         let inner_p_id = inner_p_id.expect("<p id=inner> should exist inside template");
 
         // Index into cascade.computed for both nodes must not panic (proves
-        // out[idx] was still written for the inert node despite the gate).
+        // out`idx` was still written for the inert node despite the gate).
         let outer_cv = &cascade.computed[outer_p_id];
         let inner_cv = &cascade.computed[inner_p_id];
 
