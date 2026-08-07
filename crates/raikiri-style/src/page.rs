@@ -559,8 +559,16 @@ impl PageCascadeResult {
     ///   part of the *computed* value ("Computed value: absolute length, snapped
     ///   as a border width; zero if the border style is `none` or `hidden`").
     ///   An **undeclared** `border-*-style` counts as its initial value `none`
-    ///   per the §6 sentence quoted above, so `@page { border-top-width: 5px }`
-    ///   alone computes to `0px`, matching the element path.
+    ///   — CSS Backgrounds 3 §3.2
+    ///   <https://www.w3.org/TR/css-backgrounds-3/#border-style> propdef gives
+    ///   `border-*-style`'s `Initial: none`, and §6 (a *different* sentence
+    ///   from the `em`/`ex` one quoted above) is why that initial value is
+    ///   there to begin with even though the property is undeclared —
+    ///   verbatim: "both the page context and the margin context have a
+    ///   computed value for every property, even if that property does not
+    ///   apply to the page or page-margin box." So
+    ///   `@page { border-top-width: 5px }` alone computes to `0px`, matching
+    ///   the element path.
     /// - `<percentage>` on `padding` / `margin` / `width` / `height` **stays**
     ///   [`Length::Percent`]. The governing rule is the general one — CSS
     ///   Values 4 §5.5.1 "Computation and Combination of `<percentage>`"
