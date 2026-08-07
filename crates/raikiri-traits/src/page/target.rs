@@ -438,14 +438,19 @@ fn parse_fragment(url: &str) -> Option<&str> {
 /// Implements the CSS Counter Styles Level 3 "generate a counter
 /// representation" algorithm
 /// <https://www.w3.org/TR/css-counter-styles-3/#generate-a-counter> for
-/// [`CounterStyle::Decimal`] and the registry-free subset of CSS Counter
-/// Styles L3 §6 "Simple Predefined Counter Styles"
+/// [`CounterStyle::Decimal`] and the subset of CSS Counter Styles L3 §6
+/// "Simple Predefined Counter Styles"
 /// <https://www.w3.org/TR/css-counter-styles-3/#predefined-counters>
-/// enumerated on **bd raikiri-spike-og2** (P4, scope/dom,
-/// discovered-from:96u.2) — `decimal-leading-zero`, `lower-roman` /
-/// `upper-roman`, `lower-alpha` / `upper-alpha` (+ the `lower-latin` /
-/// `upper-latin` aliases §6 defines with identical symbol tables),
-/// `disc` / `circle` / `square`.
+/// implemented here so far (enumerated on **bd raikiri-spike-og2**, P4,
+/// scope/dom, discovered-from:96u.2) — `decimal-leading-zero`,
+/// `lower-roman` / `upper-roman`, `lower-alpha` / `upper-alpha` (+ the
+/// `lower-latin` / `upper-latin` aliases §6 defines with identical symbol
+/// tables), `disc` / `circle` / `square`. ("Subset" here means
+/// implementation coverage, not a registry boundary: every §6/§7
+/// predefined style is a UA-stylesheet rule, not an author
+/// `@counter-style` registration, so none of them need a registry —
+/// implemented or not. Cf. reason 2 below, which scopes the registry
+/// dependency to author-defined custom idents.)
 ///
 /// `CounterStyle::Named` beyond that set falls back to `decimal` for three
 /// distinct reasons, and only the first is actually generate-a-counter step
@@ -462,10 +467,12 @@ fn parse_fragment(url: &str) -> Option<&str> {
 ///    `armenian`, `georgian`, `hebrew`, `lower-greek`, `cjk-decimal`,
 ///    `disclosure-open` / `disclosure-closed`. These are *not* unknown to
 ///    the spec — §6's lead paragraph is normative ("This stylesheet is
-///    normative—UAs must include it in their UA stylesheet") — and none
-///    of them need a registry. Landing on decimal here is an intentional
-///    current scope limit, not the generate-a-counter step-1 path; tracked
-///    as bd raikiri-spike-nu9z.
+///    normative—UAs must include it in their UA stylesheet"), and §7 is
+///    likewise a normative section (no informative-section marker
+///    applies to it) — and none of them need a registry. Landing on
+///    decimal here is an intentional current scope limit, not the
+///    generate-a-counter step-1 path; tracked as bd raikiri-spike-ce3k
+///    (discovered-from bd raikiri-spike-nu9z).
 fn format_counter(value: i32, style: &CounterStyle) -> String {
     match style {
         CounterStyle::Decimal => format_decimal(value),
@@ -492,9 +499,10 @@ fn format_decimal(value: i32) -> String {
     format!("{value}")
 }
 
-/// Dispatch the registry-free predefined [`CounterStyle::Named`] styles
-/// (see [`format_counter`] doc for the enumerated set, the §6 anchor, and
-/// the three distinct reasons an unmatched name falls back to `decimal`).
+/// Dispatch the predefined [`CounterStyle::Named`] styles implemented here
+/// (see [`format_counter`] doc for the full implemented set, the §6
+/// anchor, and the three distinct reasons an unmatched name falls back to
+/// `decimal`).
 /// Matching is ASCII case-insensitive, consistent with how
 /// `raikiri_style::property`'s parser already treats the `decimal` keyword
 /// case-insensitively — CSS keyword idents are case-insensitive generally,
