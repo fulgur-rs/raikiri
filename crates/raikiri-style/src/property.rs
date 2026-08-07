@@ -3029,8 +3029,8 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
 /// # `<absolute-size>` scaling-factor table
 ///
 /// CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping Table"
-/// <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> 原文の表を
-/// **そのまま**写す (`resolve_relative_weight` の "算術式で書いてはいけない"
+/// <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> の表を
+/// **verbatim** にそのまま写す (`resolve_relative_weight` の "算術式で書いてはいけない"
 /// 方針と同じ理由 — 分数のまま持つことで丸め誤差の議論を spec 引用だけで
 /// 閉じられる)。`medium` は raikiri の固定基準
 /// ([`crate::computed::INITIAL_FONT_SIZE_PX`] = 16px、
@@ -4027,9 +4027,9 @@ fn parse_content_function(
 /// <https://www.w3.org/TR/css-values-4/#custom-idents>): CSS-wide keyword と
 /// `default` を除いた任意 ident。case-preserving、smol str で保持。
 ///
-/// `none` はここでは除外しない。spec 原文が "Specifications using `<custom-ident>`
-/// must specify clearly what other keywords are excluded from `<custom-ident>`,
-/// if any…" と述べるとおり、より狭い grammar (`<counter-name>` 等) の追加除外は
+/// `none` はここでは除外しない。spec verbatim: "Specifications using
+/// `<custom-ident>` must specify clearly what other keywords are excluded
+/// from `<custom-ident>`, if any…" とおり、より狭い grammar (`<counter-name>` 等) の追加除外は
 /// 個別の predicate (例 [`is_reserved_counter_name`]) 側の責務。
 /// [`is_reserved_custom_ident`] の docstring も参照。
 ///

@@ -562,11 +562,11 @@ impl PageCascadeResult {
     ///   — CSS Backgrounds 3 §3.2
     ///   <https://www.w3.org/TR/css-backgrounds-3/#border-style> propdef gives
     ///   `border-*-style`'s `Initial: none`, and §6 (a *different* sentence
-    ///   from the `em`/`ex` one quoted above) is why that initial value is
-    ///   there to begin with even though the property is undeclared —
-    ///   verbatim: "both the page context and the margin context have a
-    ///   computed value for every property, even if that property does not
-    ///   apply to the page or page-margin box." So
+    ///   from the ones quoted above for `font-size` and `em`/`ex`) is why
+    ///   that initial value is there to begin with even though the property
+    ///   is undeclared — verbatim: "both the page context and the margin
+    ///   context have a computed value for every property, even if that
+    ///   property does not apply to the page or page-margin box." So
     ///   `@page { border-top-width: 5px }` alone computes to `0px`, matching
     ///   the element path.
     /// - `<percentage>` on `padding` / `margin` / `width` / `height` **stays**
