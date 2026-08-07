@@ -220,7 +220,7 @@ fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
 /// 4-bit nibble `n` (`0..=15`) を 8-bit channel `nn` に展開する。
 /// `(n << 4) | n = n * 17` — CSS Color 4 §5.2 の "duplicating" all of the
 /// digits を実装した short-form 展開 helper (`#f` → `0xff`, `#8` → `0x88`、
-/// 逐語引用は [`CssColor::from_hex`] doc の verbatim 引用 2 件を参照)。
+/// verbatim 引用は [`CssColor::from_hex`] doc の 2 件を参照)。
 fn expand_hex_nibble(n: u8) -> u8 {
     (n << 4) | n
 }
@@ -3042,8 +3042,8 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
 /// # `<absolute-size>` scaling-factor table
 ///
 /// CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping Table"
-/// <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> の表を
-/// **verbatim** にそのまま写す (`resolve_relative_weight` の "算術式で書いてはいけない"
+/// <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> の表をそのまま
+/// 写す (`resolve_relative_weight` の "算術式で書いてはいけない"
 /// 方針と同じ理由 — 分数のまま持つことで丸め誤差の議論を spec 引用だけで
 /// 閉じられる)。`medium` は raikiri の固定基準
 /// ([`crate::computed::INITIAL_FONT_SIZE_PX`] = 16px、
@@ -4079,9 +4079,9 @@ fn parse_content_function(
 /// `none` はここでは除外しない。spec verbatim: "Specifications using
 /// `<custom-ident>` must specify clearly what other keywords are excluded
 /// from `<custom-ident>`, if any…" と述べるとおり、より狭い grammar
-/// (`<counter-name>` 等) の追加除外は
-/// 個別の predicate (例 [`is_reserved_counter_name`]) 側の責務。
-/// [`is_reserved_custom_ident`] の docstring も参照。
+/// (`<counter-name>` 等) の追加除外は個別の predicate (例
+/// [`is_reserved_counter_name`]) 側の責務。[`is_reserved_custom_ident`] の
+/// docstring も参照。
 ///
 /// **呼び出し元は 3 箇所のみ**: `string()` の name 引数 ([`parse_string_fn`])、
 /// `target-counter()` / `target-counters()` の第 2 引数

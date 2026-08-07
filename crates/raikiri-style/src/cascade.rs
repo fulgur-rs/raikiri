@@ -1330,10 +1330,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //
         // なお本 arm は `apply_value` 中の read-modify-write の 1 つ (raikiri-spike-4rmu
         // で `FontSizeRelative` arm が 2 つ目に加わった。それ以外はすべて冪等な
-        // 単純代入)。`Padding` / `Margin` / `Border` arm のような "safety net"
-        // 二重適用経路を font-weight に足すと `bolder` が 400 → 700 → 900 と
-        // 複合するため、上記 2 invariant を崩す変更は不可。`FontSizeRelative` も
-        // 同じ理由で "safety net" 経路を持たない (`FontSize` と同一 `PropertyKey`
+        // 単純代入)。`Padding` / `Margin` / `Border` shorthand fall-through arm
+        // のような二重適用経路を font-weight に足すと `bolder` が 400 → 700 → 900
+        // と複合するため、上記 2 invariant を崩す変更は不可。`FontSizeRelative` も
+        // 同じ理由で二重適用経路を持たない (`FontSize` と同一 `PropertyKey`
         // を共有し slot は 1 つ、詳細は該当 arm の comment)。
         //
         // **契約 (raikiri-spike-ygl0)**: 継承元依存の解決を持つ property を新しく
