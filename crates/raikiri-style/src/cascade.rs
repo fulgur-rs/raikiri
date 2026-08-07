@@ -1458,7 +1458,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 書き忘れ」は同関数の exhaustive match で compile-time に排除されている
         // (bd raikiri-spike-ez7b。残る範囲は同関数 doc の
         // 「この guard が守らない範囲」節)。振る舞い自体は
-        // `apply_value_direct_margin_shorthand_safety_net` test が直接叩いて pin。
+        // `apply_value_direct_margin_shorthand_fall_through` test が直接叩いて pin。
         PropertyValue::Margin(sides) => target.margin = sides,
         // CSS Backgrounds 3 §3.3/§3.2/§3.1 border physical longhand
         // (raikiri-spike-0vv.12)。4 side × 3 sub-property の 12 arm。shorthand
@@ -4253,11 +4253,13 @@ mod tests {
     }
 
     #[test]
-    fn apply_value_direct_margin_shorthand_safety_net() {
+    fn apply_value_direct_margin_shorthand_fall_through() {
         // `apply_value` の `PropertyValue::Margin(sides)` arm は cascade 経路
-        // では unreachable (`collect_cascaded` が 4 longhand に展開する) だが、
-        // regression / bypass 経路の safety net として `target.margin = sides` の
-        // atomic 上書きを持つ。本 test は arm を直接叩いて `unreachable!` 化 or
+        // では unreachable (`collect_cascaded` が 4 longhand に展開する)。**これは
+        // safety net ではない** (bd raikiri-spike-8kn8 で framing 訂正) — 万一
+        // regression / bypass 経路で到達すると `target.margin = sides` の
+        // atomic 上書きが 4 longhand winner を必ず破壊する。到達した時点で
+        // 既に bug であり、本 test は arm を直接叩いて `unreachable!` 化 or
         // 空 arm regression を捕捉する canary。
         let mut cv = SpecifiedValues::initial();
         let sides = Sides {
@@ -4371,15 +4373,17 @@ mod tests {
     }
 
     #[test]
-    fn apply_value_direct_border_shorthand_safety_net() {
+    fn apply_value_direct_border_shorthand_fall_through() {
         // `apply_value` の `PropertyValue::Border(sides)` arm は cascade 経路
-        // では unreachable (`collect_cascaded` が 12 longhand に展開する) だが、
-        // regression / bypass 経路の safety net として `target.border = sides` の
-        // atomic 上書きを持つ。本 test は arm を直接叩いて `unreachable!` 化 or
-        // 空 arm regression を捕捉する canary (margin safety net と対称)。
+        // では unreachable (`collect_cascaded` が 12 longhand に展開する)。**これは
+        // safety net ではない** (bd raikiri-spike-8kn8 で framing 訂正、margin
+        // fall-through と対称) — 万一 regression / bypass 経路で到達すると
+        // `target.border = sides` の atomic 上書きが 12 longhand winner を必ず
+        // 破壊する。到達した時点で既に bug であり、本 test は arm を直接叩いて
+        // `unreachable!` 化 or 空 arm regression を捕捉する canary。
         let mut cv = SpecifiedValues::initial();
         // raikiri-spike-0vv.17: `BorderColor::CurrentColor` を明示 fixture 化
-        // (safety net arm は payload の shape を保持することを pin する)。
+        // (fall-through arm は payload の shape を保持することを pin する)。
         let sides = Sides {
             top: Border {
                 width: Length::Px(1.0),

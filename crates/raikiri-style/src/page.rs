@@ -3061,7 +3061,7 @@ mod tests {
     /// `post_parse_page_*` tests in this module pin.
     ///
     /// They are therefore driven directly here, for the same reason
-    /// `cascade::tests::apply_value_direct_margin_shorthand_safety_net` exists
+    /// `cascade::tests::apply_value_direct_margin_shorthand_fall_through` exists
     /// (behaviour pinned instead of `unreachable!` — the crate keeps the
     /// cascade panic-free, and the exhaustive expansion `match` does not
     /// enforce everything; see its doc, bd raikiri-spike-ez7b).
