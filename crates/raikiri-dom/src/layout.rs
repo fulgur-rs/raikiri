@@ -843,6 +843,17 @@ pub(crate) enum LayoutWarn {
         /// [`enforce_layout_invariants`]'s doc). Like `NonFiniteClamped`'s
         /// `site`, a human-readable category, not a stable
         /// machine-parseable identifier.
+        ///
+        /// **bd raikiri-spike-ckv0**: the `"child_within_parent_border_box"`
+        /// value can no longer actually occur — [`child_within_parent_border_box`]
+        /// (the predicate) now always returns `true`, so
+        /// [`enforce_layout_invariants`]'s containment branch that would
+        /// produce this event is unreachable for any input. It remains
+        /// listed here (and the branch remains in the code) because whether
+        /// to remove the dead invariant check entirely is a separate,
+        /// explicitly deferred decision (see ckv0 issue). Do not treat this
+        /// value's continued presence in this doc as evidence the check is
+        /// still live.
         invariant: &'static str,
         /// Number of distinct subtree roots this invariant caused
         /// [`enforce_layout_invariants`] to reset in this pass (not a count
@@ -1058,10 +1069,11 @@ pub(crate) fn sanitize_taffy_layout(
 ///    はない** — この invariant を無条件で検査しても legitimate な layout
 ///    を誤検出しない。
 /// 2. **child の border box の原点 (`location`) が parent の border box に
-///    収まる** — 飽和した axis が **正**なら `0 <= child.location <=
-///    parent.size`、**負**なら無条件で ok (bd raikiri-spike-epkj、詳細は
-///    後述の符号別の節) — taffy の座標系は「parent border box 原点からの
-///    相対位置」、`taffy-0.12.1/src/tree/layout.rs` の
+///    収まる** — もともとは containment を検査する invariant として設計
+///    されたが、**bd raikiri-spike-ckv0 の時点で、飽和した axis は符号を
+///    問わず無条件に ok** (詳細は後述の符号別の節) — つまり本 invariant は
+///    もはや実際には何も検査しない (taffy の座標系は「parent border box
+///    原点からの相対位置」、`taffy-0.12.1/src/tree/layout.rs` の
 ///    `Layout::content_box_x/y` の doc参照)。**`child.size` は見ない** —
 ///    issue 本文もこの invariant を「child の **location** が parent の
 ///    border box 内」とだけ書いており、child 自身の大きさは対象にしていない
@@ -1069,7 +1081,9 @@ pub(crate) fn sanitize_taffy_layout(
 ///    節、実装時に extent (`location + size`) 版で `width: 200%` の
 ///    legitimate nest を誤検出することが判明した経緯を記録している)。
 ///
-///    **こちらは無条件では検査しない**、かつ **axis 単位で**検査する。CSS は
+///    **以下は ckv0 以前の設計とその根拠の記録** — 上述のとおり ckv0 以降、
+///    本 invariant は実際には何も検査しない無条件 accept になっている。
+///    なぜ元々こちらを無条件検査にしなかったか: CSS は
 ///    子が親の border box をはみ出すことを普通に許す (`overflow: visible`
 ///    が initial 値、負 margin、固定して小さい container + 大きい content、
 ///    `width: 200%` のような「子が親より意図的に大きい」宣言) — raikiri は
@@ -1085,14 +1099,21 @@ pub(crate) fn sanitize_taffy_layout(
 ///    ([`child_within_parent_border_box`] の実装参照 — `parent.size` や
 ///    `child.size` が飽和しているかどうかはこの gate に関与しない)。
 ///    飽和が起きたということは、その field の「actual value」(近似後の値)
-///    が taffy 内部の「used value」(実際の計算結果) と乖離しており、
-///    以後この field を根拠にした関係式はもう taffy の生の計算結果を表さ
-///    ない — だからこそ改めて明示的に整合性を検査し、破れていれば決定的な
-///    値に倒す。gate が真でも実際に収まっていれば fallback しない — 「actual
-///    value が近似されている」こと自体は r8ew が明示的に許容した範囲内の
-///    動作であり、収まっている限り本関数が扱う対象ではない
-///    (`saturated_but_contained_layout_is_not_reset` が gate 単独ではなく
-///    「gate かつ containment 違反」という conjunction を pin する)。
+///    が taffy 内部の「used value」(実際の計算結果) と乖離している —
+///    ntxy / epkj 時点ではこれを根拠に「だからこそ改めて明示的に整合性を
+///    検査し、破れていれば決定的な値に倒す」という設計だった。**bd
+///    raikiri-spike-ckv0 でこの設計は覆った**: 「actual value が近似
+///    されている」こと自体は仕様上許容された範囲内の動作であり、収まって
+///    いようといまいと本関数が reset の理由にすることはない、という結論に
+///    符号を問わず統一された (詳細は後述の符号別の節)。
+///    `saturated_but_contained_layout_is_not_reset` は元々「gate かつ
+///    containment 違反」という conjunction を pin する目的の test だった
+///    が、ckv0 以降は assert 自体は変わらず通る (この test の fixture が
+///    たまたま「収まっている」ケースなので) ものの、conjunction の主張は
+///    もう成立しない — 同 test の doc および対の regression pin
+///    ([`saturated_child_outside_parent_is_not_reset`]、`ckv0` で
+///    「明らかに収まっていない」fixture でも reset されないことを直接示す
+///    ために追加/改名) を参照。
 ///
 ///    **実装時の実測 (`width: 200%` を 45 段 nest、単一 chain)**: 当初は
 ///    extent (`location + size <= parent.size`) を検査していたが、この
@@ -1119,8 +1140,11 @@ pub(crate) fn sanitize_taffy_layout(
 ///    が直接 pin する — 「`y` 軸だけでも reset の説明がつく」fixture では
 ///    新旧実装を区別できないと Codex re-review が指摘したため、`y` 軸が
 ///    飽和かつ収まっている fixture に差し替えた経緯は同 test の doc参照。
-///    `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-///    は `y` 軸の検出力が保たれていることの pin として残している)。
+///    `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
+///    は bd raikiri-spike-ckv0 以前は `y` 軸の検出力が保たれていることの
+///    pin だったが、ckv0 でその検出力自体が失われたため、現在は同 test の
+///    doc が記録するとおり別の主張 (どちらの axis も reset の理由に
+///    ならない) の pin になっている)。
 ///
 ///    **bd raikiri-spike-epkj (ntxy が残余リスクとして自己申告、本 issue で
 ///    解決)**: axis 単位の gate まで閉じた上でも、飽和した axis 自身が
@@ -1140,18 +1164,53 @@ pub(crate) fn sanitize_taffy_layout(
 ///    (`±MAX_TAFFY_MAGNITUDE` にちょうど達する瞬間) だけ扱いが不連続に
 ///    反転する理由が無い。
 ///
-///    したがって現在の定義は **符号で分岐する**: 飽和した axis が負なら
-///    無条件に ok (負のまま存在しうる正当な CSS 関係の上限到達として扱う)、
-///    正なら従来通り `<= parent.size` を再検査する。正方向を緩めない理由は
-///    2 つ — (a) `padding` / `border` / `width` は parse 時点で非負が
-///    enforce されるため、正方向の巨大な `location` を「CSS が無制限に
-///    許す」と正当化する spec 上の対称な根拠が (margin とは違って) 無い、
-///    (b) 正方向の再検査は実際に両方の分岐を持つ (`<=` が真になる
-///    `saturated_but_contained_layout_is_not_reset`、偽になる
+///    epkj の時点ではここから「したがって現在の定義は符号で分岐する:
+///    飽和した axis が負なら無条件に ok、正なら従来通り `<= parent.size`
+///    を再検査する」という結論を導いていた。根拠は 2 つ — (a) `padding` /
+///    `border` / `width` は parse 時点で非負が enforce されるため、正方向の
+///    巨大な `location` を「CSS が無制限に許す」と正当化する spec 上の
+///    対称な根拠が (margin とは違って) 無い、(b) 正方向の再検査は実際に
+///    両方の分岐を持つ (`<=` が真になる `saturated_but_contained_layout_is_
+///    not_reset`、偽になる旧
 ///    `saturated_child_outside_parent_resets_subtree_to_zero_layout`) ので
-///    緩めると既存の検出力を実際に失う——のに対し、負方向の旧式は上述の
-///    とおり「常に false」だったため、緩めても失われる検出力は元々存在
-///    しなかった。
+///    緩めると既存の検出力を実際に失う——というものだった。
+///
+///    **bd raikiri-spike-ckv0 (2026-08-08 PMO 承認) でこの根拠 (a) は覆った**:
+///    margin は symmetric — CSS Box 3 §3.1
+///    (<https://www.w3.org/TR/css-box-3/#margin-physical>、"Negative values
+///    for margin properties are allowed, but there may be
+///    implementation-specific limits") は**負値**を明示的に許容している
+///    だけで、正の margin をそれより厳しく縛る根拠にはなっていない —
+///    `margin-left` の grammar (`<length-percentage> | auto`) は正負どちらの
+///    巨大な値も等しく spec-legal であり、[`MAX_TAFFY_MAGNITUDE`] という
+///    「implementation-specific limit」に達すること自体は、epkj が負方向で
+///    確立したのと同じ理由で、正方向でも破綻の証拠にはならない。実際
+///    `margin-left: 1e9%` (100px container 内) は `location.x` を正方向に
+///    飽和させ、旧実装はこれを誤って reset していた — 実測は
+///    [`saturated_negative_margin_percentage_child_is_not_reset`] の正方向対
+///    である CSS パイプライン経由の regression test を参照。
+///
+///    根拠 (b) (「正方向の再検査には現に検出力がある」) は ckv0 でも
+///    **反証されてはいない** — 反証されたのは (a) だけで、(b) の
+///    「検出力を失う」という指摘自体は正しかった。PMO はその損失を
+///    **承知の上で受け入れた** — 既存 test は TaffyLayout を直接構築する
+///    のみで実 CSS パイプライン経由の検出力を一度も示しておらず、一方で
+///    今回の data loss (legitimate content の完全消失) は実 CSS 経由で
+///    実証済みだったため。**結果として `axis_ok` は符号を問わず「飽和して
+///    いれば無条件 accept」に統一され、[`child_within_parent_border_box`]
+///    は常に `true` を返す** — containment を再検査する経路は
+///    もう存在しない (`axis_ok` の実装、および doc「符号を問わず無条件
+///    accept になった理由」節参照)。「この invariant 自体を維持すべきか」
+///    は ckv0 issue 自身が明示的に deferred とした別の decision であり、
+///    本 doc のこの時点では未解決。
+///
+///    ckv0 で挙動が反転した regression pin: 旧
+///    `saturated_child_outside_parent_resets_subtree_to_zero_layout` は
+///    [`saturated_child_outside_parent_is_not_reset`] に改名・反転し、旧
+///    `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
+///    は
+///    [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+///    に改名・反転した — 詳細はそれぞれの doc を参照。
 ///
 ///    **別案として検討し却下したもの**: 「`parent.size` 自身も同じ axis で
 ///    飽和していれば (符号を見ずに) re-validate をスキップする」という
@@ -1215,6 +1274,14 @@ pub(crate) fn sanitize_taffy_layout(
 /// doc参照)。
 pub(crate) fn enforce_layout_invariants(document: &mut Document, root_idx: usize) {
     let mut content_box_violations = 0usize;
+    // bd raikiri-spike-ckv0: `child_within_parent_border_box` now always
+    // returns `true` (see its doc), so the `if` below that increments this
+    // is unreachable for any input — `containment_violations` can never
+    // exceed 0, and the `LayoutWarn::GeometryInvariantViolated { invariant:
+    // "child_within_parent_border_box", .. }` warning below can never be
+    // emitted. Kept (not deleted) because removing the dead branch is part
+    // of the deferred "should this invariant check exist at all" follow-up,
+    // out of scope for ckv0.
     let mut containment_violations = 0usize;
     let mut stack = vec![root_idx];
     while let Some(idx) = stack.pop() {
@@ -1292,12 +1359,14 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 
 /// `child` の border box の**原点** (`location`、`child.size` は見ない) が
 /// `parent` の border box (parent 座標系の原点 `(0,0)` から `parent.size`)
-/// の中にあるかどうか。**axis 単位**で判定する — 各 axis は、その axis の
-/// `child.location` 自身が [`MAX_TAFFY_MAGNITUDE`] の飽和境界にちょうど
-/// 達している場合**だけ**検査し、達していなければ無条件に「ok」とみなす。
-/// 飽和している場合はさらに**符号で**分岐する — 負なら無条件 ok、正なら
-/// `parent.size` との `<=` を再検査する (詳細は下の「符号で分岐する理由」節、
-/// bd raikiri-spike-epkj)。
+/// の中にあるかどうかを検査する述語として設計された。**ただし bd
+/// raikiri-spike-ckv0 の時点で、本関数は常に `true` を返す** — 飽和して
+/// いない axis は元から無条件に「ok」、飽和している axis も**符号を問わず**
+/// 無条件に「ok」になったため (詳細は下の「符号を問わず無条件 accept に
+/// なった理由」節、bd raikiri-spike-epkj / bd raikiri-spike-ckv0)、
+/// containment を実際に再検査する経路はもう存在しない。「この invariant
+/// check 自体を維持すべきか」は ckv0 issue が明示的に deferred とした
+/// 別の decision であり、この doc の時点では未解決 (下記参照)。
 ///
 /// # `child.size` を見ない理由 (issue 本文の記述に忠実)
 ///
@@ -1332,52 +1401,94 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 ///    形のままだと、飽和していない側の axis に legitimate な負 margin が
 ///    あると同じ理由で誤検出しうる。
 ///
-/// 現在の定義はどちらも閉じる — 検査対象になる (= 「収まっているか」を
-/// 問われる) のは、その **axis 自身の `child.location` が実際に飽和して
-/// いる**場合に限る。飽和していない axis の値は、たとえ負であっても
-/// (legitimate な負 margin) 常に「ok」として扱う。飽和した field だけが
-/// 「actual value が taffy の生の計算結果から乖離している」ため検査対象に
-/// なる、という本関数群の一貫した設計原則 (本 module doc「なぜ
-/// `sanitize_taffy_layout` だけでは閉じないか」節) をそのまま axis 粒度まで
-/// 徹底した形。
+/// axis 単位に絞った版 (§8.3 時点) はどちらも閉じていた — field 単位で
+/// 「検査対象にする/しない」を区別する gate 自体は **axis 自身の
+/// `child.location` が実際に飽和しているかどうか**に限っていたため、
+/// legitimate な負 margin (通常範囲、飽和していない) を持つ axis が
+/// 誤って巻き込まれることはなかった。飽和した field だけが「actual value
+/// が taffy の生の計算結果から乖離している」ため区別対象になる、という
+/// 本関数群の一貫した設計原則 (本 module doc「なぜ `sanitize_taffy_layout`
+/// だけでは閉じないか」節) を axis 粒度まで徹底した形、という説明はこの
+/// 時点では正確だった。**bd raikiri-spike-ckv0 以降は、飽和した axis も
+/// 無条件 accept になったため、この gate は「どの axis が検査対象になるか」
+/// ではなく「どの axis も検査されない」という結果に収束している** — 下の
+/// 「符号を問わず無条件 accept になった理由」節参照。
 ///
 /// `saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-/// がこの conjunction (「飽和した axis だけ検査、他 axis は無条件 ok」) を
-/// 直接 pin する — 飽和している axis 自身は実際には収まっているようにし、
-/// もう一方の (飽和していない) axis に legitimate な負 margin を与えることで、
-/// 「`y` 軸だけでも reset の説明がつく」fixture では新旧実装を区別できない
-/// という Codex re-review の指摘 (2 回目の GATE FAIL) を踏まえた設計。
+/// は §8.3 時点では「飽和した axis だけ検査、他 axis は無条件 ok」という
+/// conjunction を直接 pin していた — 飽和している axis 自身は実際には
+/// 収まっているようにし、もう一方の (飽和していない) axis に legitimate な
+/// 負 margin を与えることで、「`y` 軸だけでも reset の説明がつく」fixture
+/// では新旧実装を区別できないという Codex re-review の指摘 (2 回目の
+/// GATE FAIL) を踏まえた設計だった。ckv0 以降はこの test の assert 自体は
+/// 変わらず通るが (fixture がたまたま「収まっている」ケースなので)、
+/// 主張の中身は「どちらの axis も reset の理由にならない」に変わっている
+/// (同 test の doc 参照)。旧
 /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-/// は同じ組み合わせで飽和した axis が真に違反しているケース (`y` 軸の検出力)
-/// を pin する。真に壊れているケース
-/// (`saturated_child_outside_parent_resets_subtree_to_zero_layout`) は
-/// 飽和した axis 自身が違反しているので引き続き検出される。
+/// (現
+/// [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`])
+/// は §8.3 時点では「`y` 軸の検出力」の pin だったが、ckv0 でその検出力
+/// 自体が失われたため reset されなくなった。旧
+/// `saturated_child_outside_parent_resets_subtree_to_zero_layout`
+/// (現 [`saturated_child_outside_parent_is_not_reset`]) も同様 — 飽和した
+/// axis 自身が (かつては) 違反していても、ckv0 以降はもう検出されない。
 ///
-/// # 飽和した axis の中でさらに符号で分岐する理由 (bd raikiri-spike-epkj)
+/// # 符号を問わず無条件 accept になった理由 (bd raikiri-spike-epkj → bd raikiri-spike-ckv0)
 ///
-/// axis 単位まで絞った直後の版でもなお、**飽和した axis 自身が負**の
-/// ケースに固有の false positive が残っていた。再検査式
-/// `child.location >= 0.0 && child.location <= parent.size` は、
-/// `child.location` が負である限り `>= 0.0` を満たしようがないので
-/// **恒等的に false** — つまり負方向についてこの式は「containment を
-/// 検査する」のではなく「飽和かつ負なら無条件に reset する」ことと同値
-/// だった。CSS Box 3 §3.1 (`sanitize_taffy` の doc参照、margin の負値は
-/// 「implementation-specific limits」の範囲で無制限に許される) の下では、
-/// [`MAX_TAFFY_MAGNITUDE`] こそがその limit そのものであり、そこに達した
-/// こと自体は合法な負方向の関係が本実装の上限を超えて近似され始めた、
-/// というだけで破綻の証拠にはならない — 同じ関数がすでに無条件で信頼
-/// している「飽和していない負値」(`legitimate_negative_margin_overflow_
-/// is_not_reset` の `-30`) と対称であり、`±MAX_TAFFY_MAGNITUDE` の境界を
-/// 跨いだ瞬間だけ扱いを不連続に反転させる理由が無い。
+/// **負方向 (bd raikiri-spike-epkj)**: axis 単位まで絞った直後の版でも
+/// なお、**飽和した axis 自身が負**のケースに固有の false positive が
+/// 残っていた。再検査式 `child.location >= 0.0 && child.location <=
+/// parent.size` は、`child.location` が負である限り `>= 0.0` を
+/// 満たしようがないので**恒等的に false** — つまり負方向についてこの式は
+/// 「containment を検査する」のではなく「飽和かつ負なら無条件に reset
+/// する」ことと同値だった。CSS Box 3 §3.1 (`sanitize_taffy` の doc参照、
+/// margin の負値は「implementation-specific limits」の範囲で無制限に
+/// 許される) の下では、[`MAX_TAFFY_MAGNITUDE`] こそがその limit そのもので
+/// あり、そこに達したこと自体は合法な負方向の関係が本実装の上限を超えて
+/// 近似され始めた、というだけで破綻の証拠にはならない — 同じ関数が
+/// すでに無条件で信頼している「飽和していない負値」
+/// (`legitimate_negative_margin_overflow_is_not_reset` の `-30`) と対称
+/// であり、`±MAX_TAFFY_MAGNITUDE` の境界を跨いだ瞬間だけ扱いを不連続に
+/// 反転させる理由が無い。
 ///
-/// 正方向は緩めない。(a) `padding` / `border` / `width` は parse
-/// 時点で非負が enforce されるため、正方向の巨大な `location` を
-/// margin と同じ「CSS が無制限に許す」根拠では正当化できない。
-/// (b) 正方向の再検査は実際に pass/fail 両方の分岐を持ち
-/// (`saturated_but_contained_layout_is_not_reset` が pass、
-/// `saturated_child_outside_parent_resets_subtree_to_zero_layout` が
-/// fail)、緩めると現に存在する検出力を失う — 負方向はそもそも pass する
-/// 経路が存在しなかったので、失われる検出力は無い。
+/// epkj の時点ではここで「正方向は緩めない」と結論していた。根拠は 2 つ —
+/// (a) `padding` / `border` / `width` は parse 時点で非負が enforce
+/// されるため、正方向の巨大な `location` を margin と同じ「CSS が無制限に
+/// 許す」根拠では正当化できない、(b) 正方向の再検査は実際に pass/fail
+/// 両方の分岐を持ち (`saturated_but_contained_layout_is_not_reset` が
+/// pass、旧 `saturated_child_outside_parent_resets_subtree_to_zero_layout`
+/// が fail)、緩めると現に存在する検出力を失う — 負方向はそもそも pass
+/// する経路が存在しなかったので、失われる検出力は無い、というものだった。
+///
+/// **正方向 (bd raikiri-spike-ckv0、2026-08-08 PMO 承認)**: 根拠 (a) は
+/// 覆った — margin は symmetric。CSS Box 3 §3.1
+/// (<https://www.w3.org/TR/css-box-3/#margin-physical>、"Negative values
+/// for margin properties are allowed, but there may be
+/// implementation-specific limits") は**負値**を明示的に許容している
+/// だけで、正の margin をそれより厳しく縛る spec 上の対称な根拠にはなって
+/// いない。`margin-left: 1e9%` (`width: 100px` container 内) は
+/// `location.x` を正方向に飽和させ、旧実装はこれを誤って reset していた —
+/// [`saturated_positive_margin_percentage_child_is_not_reset`] が実際の
+/// CSS パイプライン経由でこれを pin する (`saturated_negative_margin_
+/// percentage_child_is_not_reset` の正方向対)。根拠 (b) (「検出力を失う」)
+/// は反証されていない — PMO はその損失を承知の上で受け入れた: 既存 test
+/// (`saturated_but_contained_layout_is_not_reset`、旧
+/// `saturated_child_outside_parent_resets_subtree_to_zero_layout`) は
+/// TaffyLayout を直接構築するのみで実 CSS パイプライン経由の検出力を
+/// 一度も示していなかった一方、今回の data loss (legitimate content の
+/// 完全消失) は実 CSS 経由で実証済みだったため。
+///
+/// **結果**: `axis_ok` は符号を問わず「飽和していれば無条件 accept」に
+/// 統一され、本関数は常に `true` を返す — containment を再検査
+/// する経路はもう存在しない。旧
+/// `saturated_child_outside_parent_resets_subtree_to_zero_layout` は
+/// [`saturated_child_outside_parent_is_not_reset`] に、旧
+/// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
+/// は
+/// [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+/// に、それぞれ改名・反転した (詳細は各 test の doc参照)。「この
+/// invariant check 自体を維持すべきか」は ckv0 issue が明示的に deferred
+/// とした別の decision であり、この doc の時点では未解決。
 ///
 /// `saturated_negative_margin_percentage_child_is_not_reset` (単一の
 /// `margin-left: -1e9%` 宣言、nest 無し) と
@@ -1389,23 +1500,37 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// する」という検討したが却下した別案を反証する最小 fixture でもある —
 /// この fixture は `parent.size.width` が飽和していない (`100.0` のまま)
 /// ので、判別軸は「parent も飽和しているか」ではなく「child 自身の符号」
-/// でなければならないことを示す。`saturated_negative_location_is_not_reset`
-/// は同じ conjunction を直接構築した最小 synthetic case で孤立させて
-/// 検査する (`saturated_but_contained_layout_is_not_reset` と対になる、
-/// 正方向 pass ケースの負方向対)。
+/// でなければならないことを示す (ckv0 以降、この判別軸自体は意味を失った
+/// が、fixture と regression pin としての価値は変わらない)。
+/// `saturated_negative_location_is_not_reset` は同じ組み合わせを直接構築
+/// した最小 synthetic case で孤立させて検査する
+/// (`saturated_but_contained_layout_is_not_reset` と対になる、正方向
+/// ケースの負方向対 — ckv0 以降はどちらも「飽和していれば無条件 accept」
+/// という同じ結論の pin)。
 fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> bool {
-    /// 1 axis 分の containment 判定。`location` はその axis の
-    /// `child.location.{x,y}`、`parent_size` は対応する
-    /// `parent.size.{width,height}` (この doc block が「extent」の語を
-    /// `location + size` の rejected containment 案専用に使っているのと
-    /// 紛れないよう、あえて `extent` を避けた命名)。
-    fn axis_ok(location: f32, parent_size: f32) -> bool {
+    /// 1 axis 分の判定。`location` はその axis の `child.location.{x,y}`
+    /// (`parent_size` は本体の式ではもう一切使わない — dead parameter。
+    /// 削除せず「対応する `parent.size.{width,height}` を渡す」という
+    /// 呼び出し規約の見た目だけ残しているのは、この関数・`axis_ok` 自体を
+    /// 削除するかどうかを含めて「この invariant check を維持すべきか」が
+    /// ckv0 issue の明示的な deferred follow-up だから — 将来その follow-up
+    /// で `axis_ok` ごと削除される可能性があることを見越して、今
+    /// signature を先回りして変える判断はしていない。詳細は上の doc
+    /// 「符号を問わず無条件 accept になった理由」節。同じ理由で、直下の
+    /// `if !taffy_magnitude_is_saturated(location) { return true; }` 分岐
+    /// も実質的には常に `true` を返す既定文と等価な dead branch になって
+    /// いる — こちらも `axis_ok` ごと削除されうる同じ deferred follow-up
+    /// まで、あえて `true` 一本に畳んでいない)。
+    fn axis_ok(location: f32, _parent_size: f32) -> bool {
         if !taffy_magnitude_is_saturated(location) {
             return true;
         }
-        // 飽和かつ負 → 無条件 ok。飽和かつ正 (0.0 は `taffy_magnitude_is_
-        // saturated` を満たさないのでここには来ない) → 従来通り再検査。
-        location < 0.0 || location <= parent_size
+        // bd raikiri-spike-ckv0: 飽和していれば符号を問わず無条件 accept。
+        // 負方向は bd raikiri-spike-epkj が先に確立していた — 本 decision は
+        // その前例を正方向にも対称に拡張し、旧 `location <= parent_size`
+        // 再検査 (正方向限定) を撤去した。containment を再検査する経路は
+        // もう存在しない。
+        true
     }
     axis_ok(child.location.x, parent.size.width) && axis_ok(child.location.y, parent.size.height)
 }
@@ -3898,12 +4023,24 @@ mod tests {
         );
     }
 
-    /// invariant 2 (child は parent の border box に収まる) の直接 pin。
+    /// **bd raikiri-spike-ckv0 で挙動が反転した直接 pin (旧名
+    /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`)**。
     /// [`child_within_parent_border_box`] の gate (「その axis 自身の
-    /// `child.location` が飽和している」) を満たしつつ、containment が
-    /// 破れている値を直接構築する。
+    /// `child.location` が飽和している」) を満たし、かつ旧実装なら
+    /// containment 違反として reset されていたはずの、直接構築した
+    /// maximally-非-contained な値 (`location.x == MAX_TAFFY_MAGNITUDE`
+    /// に対し `parent.size.width == 100.0`) を使う。ckv0 で `axis_ok` が
+    /// 符号を問わず無条件 `true` になったため、この fixture は — 実際には
+    /// 明らかに parent border box の外にあるにもかかわらず — もう reset
+    /// されない。「fixture を直接構築しても、もはやこの invariant を
+    /// 破らせることはできない」ことを示す regression pin として残す
+    /// (`child_within_parent_border_box` の doc「符号を問わず無条件
+    /// accept になった理由」節、および将来「この check 自体を維持すべきか」
+    /// を判断する follow-up (ckv0 issue が明示的に deferred とした問題)
+    /// が「現在の関数は実際に何をするか」を確認する材料として使うことを
+    /// 想定している)。
     #[test]
-    fn saturated_child_outside_parent_resets_subtree_to_zero_layout() {
+    fn saturated_child_outside_parent_is_not_reset() {
         let mut doc = Document::new();
         let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
         let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
@@ -3924,7 +4061,8 @@ mod tests {
             margin: Rect::zero(),
         };
         // child.location.x がちょうど飽和境界 (MAX_TAFFY_MAGNITUDE) —
-        // parent (100x100) には到底収まらない。
+        // parent (100x100) には到底収まらない。bd raikiri-spike-ckv0 以降、
+        // この「明らかに収まっていない」事実はもう reset の理由にならない。
         doc.nodes[child].unrounded_layout = TaffyLayout {
             order: 2,
             location: Point {
@@ -3941,8 +4079,8 @@ mod tests {
             padding: Rect::zero(),
             margin: Rect::zero(),
         };
-        // grandchild は child を基準にした normal な値 — subtree 全体が
-        // ゼロ化されることを確認する材料 (上の test と同じ理由)。
+        // grandchild は child を基準にした normal な値 — reset されて
+        // いないことを subtree 全体で確認する材料 (下記 assert 参照)。
         doc.nodes[grandchild].unrounded_layout = TaffyLayout {
             order: 5,
             location: Point { x: 1.0, y: 1.0 },
@@ -3957,8 +4095,12 @@ mod tests {
             margin: Rect::zero(),
         };
 
+        let child_before = doc.nodes[child].unrounded_layout;
+        let grandchild_before = doc.nodes[grandchild].unrounded_layout;
         enforce_layout_invariants(&mut doc, parent);
 
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             doc.nodes[parent].unrounded_layout.size,
             Size {
@@ -3967,25 +4109,25 @@ mod tests {
             },
             "parent 自身は invariant を破っていないので手を付けないこと"
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
-            doc.nodes[child].unrounded_layout,
-            TaffyLayout::with_order(2),
-            "飽和 + containment 違反の child は (order だけ残して) ゼロ化されること"
+            doc.nodes[child].unrounded_layout, child_before,
+            "child.location.x が飽和境界にちょうど達し、かつ実際に parent border box の外にあっても、bd raikiri-spike-ckv0 以降は符号を問わず無条件 accept なので reset されないこと"
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
-            doc.nodes[grandchild].unrounded_layout,
-            TaffyLayout::with_order(5),
-            "ゼロ化された child の下の grandchild も subtree として一緒にゼロ化されること"
+            doc.nodes[grandchild].unrounded_layout, grandchild_before,
+            "child が reset されていない以上、その下の grandchild も一切変更されないこと"
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert!(
-            doc.layout_warnings.iter().any(|w| matches!(
-                w,
-                LayoutWarn::GeometryInvariantViolated {
-                    invariant: "child_within_parent_border_box",
-                    subtree_count: 1,
-                }
-            )),
-            "containment invariant 違反が LayoutWarn として記録されること: {:?}",
+            doc.layout_warnings
+                .iter()
+                .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
+            "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
             doc.layout_warnings
         );
     }
@@ -4055,16 +4197,24 @@ mod tests {
         );
     }
 
-    /// gate (`child.location` 自身が飽和) と containment (収まっているか)
-    /// の**両方**が effective であることの pin — 飽和「している」が
-    /// containment は破れていない (境界ちょうど) ケースでは fallback しない
-    /// こと。
+    /// gate (`child.location` 自身が飽和) が真でも child が実際には parent
+    /// に収まっている (境界ちょうど) ケースでは fallback しないことの pin。
     ///
-    /// [`saturated_child_outside_parent_resets_subtree_to_zero_layout`]
-    /// (飽和 かつ containment 違反 → reset) と対にして初めて、gate 単独では
-    /// なく「gate かつ containment 違反」という conjunction を検査している
-    /// ことになる。直接構築した最小ケースで conjunction の論理だけを孤立させて
-    /// 検査する — 実際の nested percentage chain を使った同種の pin は
+    /// **bd raikiri-spike-ckv0 以前の history**: この test はもともと旧
+    /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`
+    /// (飽和 かつ containment 違反 → reset、ckv0 で
+    /// [`saturated_child_outside_parent_is_not_reset`] に改名・反転) と
+    /// 対にして、「gate 単独ではなく『gate かつ containment 違反』という
+    /// conjunction を検査している」ことを示す pin だった。ckv0 で
+    /// `axis_ok` が符号を問わず無条件 `true` になったため、この
+    /// conjunction はもう成立しない — containment が実際にどうであっても
+    /// (境界ちょうどで収まっていても、明らかに外れていても) reset は
+    /// 起きない。本 test の assert 自体は (この fixture がたまたま
+    /// 「収まっている」ケースだったため) 引き続き通るが、それは
+    /// 「containment を検査して pass した」からではなく「そもそも
+    /// containment を見ていない」から — その事実を示す対の regression pin
+    /// は [`saturated_child_outside_parent_is_not_reset`] を参照。
+    /// 実際の nested percentage chain を使った同種の pin は
     /// [`nested_percentage_wide_child_chain_is_not_reset`] を参照
     /// (extent ではなく origin だけを見る現行の [`child_within_parent_border_box`]
     /// を選んだ直接の理由になった regression)。
@@ -4123,9 +4273,9 @@ mod tests {
         );
         assert_eq!(
             doc.nodes[child].unrounded_layout, child_before,
-            "gate (child.location 自身の飽和) が真でも containment が実際には \
-             保たれている (境界ちょうど) child はゼロ化されないこと — gate \
-             単独ではなく conjunction であることの pin"
+            "gate (child.location 自身の飽和) が真の child はゼロ化されないこと \
+             — bd raikiri-spike-ckv0 以降、この fixture がたまたま境界ちょうど \
+             で収まっているかどうかは無関係 (containment はもう見ていない)"
         );
         assert!(
             doc.layout_warnings
@@ -4136,27 +4286,27 @@ mod tests {
         );
     }
 
-    /// `y` 軸の**検出力**が保たれていることの pin (§8.3 Codex final review、
-    /// GATE FAIL 修正の一部)。`child_within_parent_border_box` の doc「gate
-    /// を axis 単位・`child.location` 自身に限定する理由」節。
+    /// **bd raikiri-spike-ckv0 で挙動が反転した pin (旧名
+    /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`,
+    /// 旧主張「`y` 軸の検出力が保たれていること」)**。
     ///
-    /// 同じ subtree のどこかで実際に飽和が起きている状況 (ここでは child の
-    /// `y` 軸、かつ実際に parent に収まっていない = 真の violation) と、
-    /// その**同じ child** が legitimate な負 margin (`x` 軸、通常範囲の
-    /// 負値、飽和していない) を持つ状況が重なっても、`y` 軸の真の violation
-    /// は見逃されず reset されること — を確認する。
+    /// ckv0 以前は、この fixture (`y` 軸が飽和かつ実際に parent に
+    /// 収まっていない = 真の violation、`x` 軸は飽和していない legitimate
+    /// な負 margin `-30`) は `y` 軸の検出力を示す pin として意味があった —
+    /// `y` 軸の再検査だけで reset の理由が説明でき、`x` 軸の legitimate な
+    /// 負値は無視されることを示せた。ckv0 で `axis_ok` が符号を問わず
+    /// 無条件 `true` になったため、`y` 軸は飽和しているだけでもう
+    /// containment を再検査しない —「収まっていない」という事実自体が
+    /// reset の理由になり得なくなった。
     ///
-    /// **注意 (§8.3 Codex re-review、2 回目の GATE FAIL の理由)**: この
-    /// test 単体は「`x` 軸の legitimate な負 margin が reset の原因に
-    /// 寄与していないこと」の**証明にはならない** — `y` 軸だけで reset は
-    /// 説明がつくため、`x` 軸を (誤って) 検査する旧 axis-mixing 実装でも
-    /// 検査しない新実装でも結果は同じ (reset) になり、区別できない。その
-    /// 区別を直接証明するのは
-    /// [`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
-    /// — 本 test とペアで初めて「`y` 軸の検出力は保たれている」かつ「`x` 軸の
-    /// legitimate な負 margin は独立して無視される」の両方が言える。
+    /// 本 test は現在、[`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+    /// とほぼ同じ主張 (どちらの axis も reset の理由にならない) の近縁 pin
+    /// になっている。唯一の違いは `y` 軸の値 — こちらは `y` が **実際には
+    /// parent に収まっていない** (`MAX_TAFFY_MAGNITUDE > 100.0`) のに対し、
+    /// あちらは境界ちょうどで収まっている。両方とも reset されないことで、
+    /// 「収まっているかどうか」が結果に一切影響しなくなったことを示す。
     #[test]
-    fn saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset() {
+    fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset() {
         let mut doc = Document::new();
         let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
         let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
@@ -4174,10 +4324,10 @@ mod tests {
             padding: Rect::zero(),
             margin: Rect::zero(),
         };
-        // y 軸: child.location.y がちょうど飽和境界 — 別の (無関係な) 経路で
-        // 実際に破綻している、真に検出すべき軸。x 軸: 通常の負 margin
-        // (`-30`) による legitimate overflow — 飽和していないので gate が
-        // 対象にしてはいけない軸。
+        // y 軸: child.location.y がちょうど飽和境界かつ実際に parent
+        // (height=100.0) に収まっていない。x 軸: 通常の負 margin (`-30`)
+        // による legitimate overflow — 飽和していない。bd raikiri-spike-ckv0
+        // 以降、どちらの軸も reset の理由にならない。
         doc.nodes[child].unrounded_layout = TaffyLayout {
             order: 1,
             location: Point {
@@ -4195,63 +4345,59 @@ mod tests {
             margin: Rect::zero(),
         };
 
+        let child_before = doc.nodes[child].unrounded_layout;
         enforce_layout_invariants(&mut doc, parent);
 
-        // y 軸は真に飽和 + 収まっていない (MAX_TAFFY_MAGNITUDE > parent の
-        // 100.0) ので reset されるのが正しい —
-        // `saturated_child_outside_parent_resets_subtree_to_zero_layout` と
-        // 同じ理由。この test の主張は「x 軸の legitimate な負 margin が
-        // reset の"理由"にならない」ことであって、「一切 reset されない」
-        // ことではない (もし y 軸が飽和していなければそもそも reset
-        // されない — それは `legitimate_negative_margin_overflow_is_not_reset`
-        // が既に pin している別のケース)。
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
-            doc.nodes[child].unrounded_layout,
-            TaffyLayout::with_order(1),
-            "y 軸が真に飽和 + parent に収まっていないので reset は正しい — \
-             ただしその理由が x 軸の負 margin であってはならない (本 test の \
-             主眼)"
+            doc.nodes[child].unrounded_layout, child_before,
+            "y 軸 (飽和かつ実際には parent に収まっていない) も x 軸 (legitimate な負 margin、飽和していない) もどちらも bd raikiri-spike-ckv0 以降は reset の理由にならないので、child は一切変更されないこと"
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert!(
-            doc.layout_warnings.iter().any(|w| matches!(
-                w,
-                LayoutWarn::GeometryInvariantViolated {
-                    invariant: "child_within_parent_border_box",
-                    subtree_count: 1,
-                }
-            )),
-            "y 軸の真の violation は引き続き記録されること: {:?}",
+            doc.layout_warnings
+                .iter()
+                .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
+            "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
             doc.layout_warnings
         );
     }
 
     /// **§8.3 Codex re-review finding、2 回目の GATE FAIL の直接回帰 pin**
     /// — 直前の
-    /// [`saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
-    /// は「`y` 軸だけでも reset の説明がつく」ため、`x` 軸を実装が正しく
+    /// [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+    /// (bd raikiri-spike-ckv0 以前の旧名
+    /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`)
+    /// は当時「`y` 軸だけでも reset の説明がつく」ため、`x` 軸を実装が正しく
     /// 無視しているかどうかを実際には区別できない、と Codex が指摘した
-    /// (旧 axis-mixing 実装でも新実装でも同じ「reset される」という結果に
-    /// なってしまうため)。
+    /// (旧 axis-mixing 実装でも当時の axis 単位実装でも同じ「reset される」
+    /// という結果になってしまうため)。
     ///
     /// 本 test は区別できる fixture を使う: `y` 軸を「飽和境界にちょうど
     /// 達しているが、それでも parent に収まっている」(= 真の violation では
     /// ない) 値にし、`x` 軸には legitimate な負 margin (`-30`、飽和して
     /// いない) を与える。
     ///
-    /// - **新実装 (axis 単位、`child.location` 自身が飽和した axis だけ
-    ///   検査)**: `x` 軸は飽和していないので無条件 ok。`y` 軸は飽和して
-    ///   いるので検査するが、実際に parent に収まっているので ok。
-    ///   → **reset されない**。
+    /// - **現行実装 (bd raikiri-spike-ckv0、符号を問わず無条件 accept)**:
+    ///   `x` 軸は飽和していないので無条件 ok。`y` 軸は飽和しているが、
+    ///   containment を再検査せずやはり無条件 ok。→ **reset されない**。
+    /// - **ckv0 直前の実装 (axis 単位・符号で分岐、正方向だけ `<=` を
+    ///   再検査)**: `x` 軸は無条件 ok、`y` 軸は飽和かつ正なので再検査するが
+    ///   実際に parent に収まっているので ok。→ 同じく reset されない
+    ///   (この test は ckv0 の前後で結果が変わらない — 変わったのは
+    ///   [`saturated_child_outside_parent_is_not_reset`] や
+    ///   [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+    ///   のように実際に containment が破れているケース)。
     /// - **旧 axis-mixing 実装 (`parent.size` / `child.size` /
     ///   `child.location` のいずれかが飽和していれば `x` / `y` 両方を
     ///   無条件チェック)**: `y` の飽和で gate が開き、`x >= 0.0` の
     ///   チェックに `-30.0` が失敗する → **誤って reset される**。
     ///
     /// すなわち本 test が pass することは「`x` 軸の legitimate な負 margin
-    /// が reset の原因になっていない」ことの直接証拠であり、旧実装への
-    /// 退行があれば本 test 単体で fail する。直前の test (`y` 軸の検出力の
-    /// pin) とペアで、「`y` 軸の検出力は保たれている」かつ「`x` 軸の
-    /// legitimate な負 margin は独立して無視される」の両方を証明する。
+    /// が reset の原因になっていない」ことの直接証拠であり、旧 axis-mixing
+    /// 実装への退行があれば本 test 単体で fail する。
     #[test]
     fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset() {
         let mut doc = Document::new();
@@ -4393,13 +4539,14 @@ mod tests {
     /// through [`zero_layout_subtree`] and silently collapsed most of a
     /// legitimate deep chain to zero-size boxes.
     ///
-    /// [`saturated_but_contained_layout_is_not_reset`] pins the same
-    /// gate-plus-containment conjunction on a minimal synthetic case; this
-    /// test pins it against the exact real-world shape that first
-    /// surfaced the bug, so a future edit that reintroduces an extent-based
-    /// check (or anything else that treats "child bigger than parent" as
-    /// evidence of corruption) fails loudly here rather than only in the
-    /// synthetic test.
+    /// [`saturated_but_contained_layout_is_not_reset`] pins the equivalent
+    /// minimal synthetic case (its doc records how bd raikiri-spike-ckv0
+    /// changed what that pin actually demonstrates); this test pins the
+    /// same "not reset" outcome against the exact real-world shape that
+    /// first surfaced the bug, so a future edit that reintroduces an
+    /// extent-based check (or anything else that treats "child bigger than
+    /// parent" as evidence of corruption) fails loudly here rather than
+    /// only in the synthetic test.
     #[test]
     fn nested_percentage_wide_child_chain_is_not_reset() {
         const DEPTH: usize = 45;
@@ -4441,10 +4588,12 @@ mod tests {
     /// (`child.location >= 0.0 && child.location <= parent.size`) this is
     /// **unreachable as a pass**: no negative value ever satisfies `>= 0.0`,
     /// so the old code reset this unconditionally regardless of
-    /// `parent.size`. This test pins that the new sign-based branch (see
-    /// [`child_within_parent_border_box`]'s doc, "飽和した axis の中でさらに
-    /// 符号で分岐する理由") treats saturated-negative as unconditionally ok,
-    /// the same way unsaturated-negative already was.
+    /// `parent.size`. This test pins that the sign-based branch introduced
+    /// by bd raikiri-spike-epkj (see [`child_within_parent_border_box`]'s
+    /// doc, "符号を問わず無条件 accept になった理由") treats
+    /// saturated-negative as unconditionally ok, the same way
+    /// unsaturated-negative already was — and, since bd raikiri-spike-ckv0,
+    /// the same way saturated-positive now is too.
     #[test]
     fn saturated_negative_location_is_not_reset() {
         let mut doc = Document::new();
@@ -4580,6 +4729,88 @@ mod tests {
             child_layout,
             TaffyLayout::with_order(child_layout.order),
             "a single extreme-but-spec-valid negative percentage margin (no nesting needed) must not reset the subtree merely because it saturates the location — the parent here is not saturated, so a 'skip when parent is also saturated' rule would not have fixed this: {child_layout:?}"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            doc.layout_warnings
+                .iter()
+                .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
+            "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// **bd raikiri-spike-ckv0 — positive-direction analog of
+    /// [`saturated_negative_margin_percentage_child_is_not_reset`]**, real
+    /// CSS pipeline regression pin for the PMO-approved decision to extend
+    /// epkj's negative-side unconditional-accept treatment symmetrically to
+    /// the positive side.
+    ///
+    /// A *single* `margin-left: 1e9%` declaration (no nesting) on a child of
+    /// a plain `width: 100px` parent is enough: `sanitize_taffy` clamps the
+    /// *fraction* (`1e9%` → `1e7` after `/100.0`), taffy then resolves that
+    /// fraction against the parent's 100px containing block
+    /// (`1e7 * 100 = 1e9`), and `sanitize_taffy_layout` clamps the resulting
+    /// raw `location.x` to exactly `MAX_TAFFY_MAGNITUDE` on write.
+    /// `parent.size.width` stays `100.0` — nowhere near saturated. Before
+    /// bd raikiri-spike-ckv0, `axis_ok` re-checked `location.x <=
+    /// parent.size.width` for saturated positive locations
+    /// (`1e7 <= 100.0` → false) and reset the whole child subtree to a zero
+    /// layout, discarding spec-legal content — this is the exact repro the
+    /// ckv0 issue's PMO-approval comment records (independently reproduced
+    /// in a throwaway worktree before the decision was recorded). This test
+    /// pins that the fix actually closes the gap through the real
+    /// cascade+taffy pipeline, not just at the unit level
+    /// ([`saturated_but_contained_layout_is_not_reset`] and
+    /// [`saturated_child_outside_parent_is_not_reset`] build `TaffyLayout`
+    /// literals directly and don't exercise cascade/taffy at all).
+    #[test]
+    fn saturated_positive_margin_percentage_child_is_not_reset() {
+        use raikiri_style::{build_rule_tree, cascade};
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width: 100px; height: 100px;"),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("width: 10px; height: 10px; margin-left: 1e9%;"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let parent_layout = doc.nodes[parent].unrounded_layout;
+        let child_layout = doc.nodes[child].unrounded_layout;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            parent_layout.size,
+            Size {
+                width: 100.0,
+                height: 100.0
+            },
+            "this test's premise (parent stays unsaturated) no longer holds — re-verify before trusting the rest of this test"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            taffy_magnitude_is_saturated(child_layout.location.x) && child_layout.location.x > 0.0,
+            "this test's premise (margin-left: 1e9% saturates child.location.x positive) no longer holds — re-verify against MAX_TAFFY_MAGNITUDE's doc before trusting the rest of this test: {child_layout:?}"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_ne!(
+            child_layout,
+            TaffyLayout::with_order(child_layout.order),
+            "a single extreme-but-spec-valid positive percentage margin (no nesting needed) must not reset the subtree merely because it saturates the location — bd raikiri-spike-ckv0 extends epkj's negative-side unconditional-accept treatment symmetrically to this positive case: {child_layout:?}"
         );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
