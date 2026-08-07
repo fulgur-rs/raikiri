@@ -1,13 +1,26 @@
 #!/usr/bin/env python3
 """scripts/lib/test_doc_pointer_lint.py — unit tests for doc_pointer_lint.py.
 
+Covers the three checker roles (bd raikiri-spike-acsw / raikiri-spike-vyse /
+raikiri-spike-luxp). No class here invokes `cargo` or depends on this
+repo's actual crate tree.
+
+ClassifyLineTests / Role1PlainBracketTests / Role2DocBarePointerTests /
+EvaluateGateTests exercise `census_file()` / `classify_line()` /
+`evaluate_gate()` purely in-memory (string/dataclass in, dataclass/tuple
+out) — no filesystem dependency at all.
+
+LoadBaselineTests and MainExitCodeTests *do* touch the filesystem: both
+use `tempfile.TemporaryDirectory()`, and `MainExitCodeTests` additionally
+writes a small throwaway `crates/*/src/*.rs` tree to disk (to drive
+`main()`'s `--repo-root`/`discover_files()` path end-to-end, not just
+`evaluate_gate()`'s pure logic) — see `MainExitCodeTests`'s own docstring
+for why that's deliberate. All of it is temp-dir-scoped and still fast
+(38 cases in ~0.006s as of this writing).
+
 Run with:
 
     python3 -m unittest discover -s scripts/lib -p 'test_*.py' -v
-
-Covers the three checker roles (bd raikiri-spike-acsw / raikiri-spike-vyse /
-raikiri-spike-luxp) at the `census_file()` level — no filesystem or `cargo`
-dependency, so these run fast and don't need a real crate tree.
 """
 
 from __future__ import annotations
