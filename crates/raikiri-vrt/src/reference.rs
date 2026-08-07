@@ -682,10 +682,11 @@ fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), Fi
 /// containment gate there — no worse than before this change.
 /// `raikiri_dom::fonts`'s analogous non-Linux gap was researched in bd
 /// raikiri-spike-7cz5 (closed, research-only, decomposed per a wall/build
-/// PMO-decision escalation) and is now tracked in its child bd
-/// raikiri-spike-0nww — which a coordinator comment (2026-08-08) confirms
-/// covers this file's residual too, not only the `fonts.rs` one 0nww's
-/// own Scope section names.
+/// PMO-decision escalation) and was closed by its child bd
+/// raikiri-spike-0nww — but 0nww's landed scope covers only the
+/// `fonts.rs` arm (Apple platforms, via `rustix::fs::getpath`); this
+/// file's residual gap is untouched by that change and is tracked
+/// separately in bd raikiri-spike-895r.
 ///
 /// Mirrors `raikiri_dom::fonts::check_open_handle_containment` (bd
 /// raikiri-spike-1ef, source of this pattern; ported here via bd
