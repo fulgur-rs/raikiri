@@ -956,7 +956,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///
 /// **その解決は呼び手の責務である。** 唯一の呼び手
 /// [`crate::page::cascade_page`] は本関数の直後に **phase 3**
-/// ([`crate::page::absolutize_in_page_context`]) を走らせ、そこで page context の
+/// ([`crate::page`] の `absolutize_in_page_context`) を走らせ、そこで page context の
 /// font-size を基準に絶対化 + style gating を行う (bd raikiri-spike-sshp)。
 /// したがって
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
@@ -1014,7 +1014,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// (`used_line_height_length(inherited.line_height, inherited.font_size)`)
 /// を渡すこと — `FontSize` arm の `lh`/`rlh` 解決 (下記 arm 参照) がこの
 /// 一致を前提にしている。唯一の呼び手 [`crate::page::cascade_page`] はこれを
-/// 一度だけ構築し、本関数と phase 3 ([`crate::page::absolutize_in_page_context`])
+/// 一度だけ構築し、本関数と phase 3 ([`crate::page`] の `absolutize_in_page_context`)
 /// の両方に使い回す (`inherited` は関数全体で不変なので、二重に計算しても
 /// 同じ値になる — 呼び手の doc 参照)。
 pub(crate) fn resolve_against_inherited(
@@ -1155,7 +1155,7 @@ pub(crate) fn resolve_against_inherited(
 /// [`resolve_against_inherited`] を呼ぶ以外にこの型の値を作れない
 /// (bd raikiri-spike-7m33)。
 ///
-/// [`crate::page::absolutize_in_page_context`] (phase 3) は引数にこの型を
+/// [`crate::page`] の `absolutize_in_page_context` (phase 3) は引数にこの型を
 /// 要求するので、page 経路で phase 3 を再利用する限り、呼び手がどの module に
 /// 書かれていても [`resolve_against_inherited`] を経由せざるを得ない —
 /// `page` module 自身も、本型が `cascade` module 定義である以上、tuple field

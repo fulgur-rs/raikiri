@@ -152,18 +152,26 @@ bd raikiri-spike-nqkj では lens が提案した ``` `crate::computed::Computed
    - **mod@ へ降格 (private に戻した)**: `crates/raikiri-style/src/page.rs` の
      `absolutize_in_page_context` / `PageSpecificity`、`crates/raikiri-style/src/rule.rs`
      の `DeclParser` — 対象を private に戻しても gate は green のまま
-     (補助 command でしか red にならない)。referrer 側の doc link は次の形に書き換えた:
-     - `page.rs` の 2 件は module/item の同名衝突が無いため、既存の
-       ``[`crate::page::PageSpecificity`]`` 形の full path link で gate 上は足り、
-       書き換え不要 (`crates/raikiri-style/src/cascade.rs` / `rule.rs` の referrer 3 箇所)。
-       ただし補助 command では引き続き unresolved (private item への full path link は
-       `--document-private-items` 下でも解決しない) — これは想定内で、gate が
-       enforce しない以上ここに追加コストは掛けない。
+     (補助 command でしか red にならない)。referrer 側の doc link は本項の module-link
+     + plain-code-span 形に書き換えた。**full path item link
+     (``[`crate::page::PageSpecificity`]``) のまま残すのは誤り** — gate は
+     green のままでも補助 command では unresolved になり、AGENTS.md
+     既述の baseline-diff 原則 (「`error` 行が 1 件も増えていないことを確認する」) に
+     反する。実際に書き換えた形:
+     - `page.rs` の 2 件は module/item の同名衝突が無いため `mod@` 前置は不要
+       (規約 4)。``[`crate::page`] の `PageSpecificity` ``
+       / ``[`crate::page`] の `absolutize_in_page_context` `` の形にした
+       (`crates/raikiri-style/src/cascade.rs` / `rule.rs` の referrer 4 箇所)。
+       この形は既に `crates/raikiri-style/src/rule.rs` の `page_beats` 参照
+       (``[`crate::page`] の `page_beats` ``) で使われていた既存 idiom で、
+       gate・補助 command 双方で clean に解決する。
      - `rule.rs` の `DeclParser` は trait full path (規約 5) と組み合わさっており
        naive な demotion では文が崩れるため、``[`mod@crate::rule`] の `DeclParser` ``
        + trait 側 link の形に書き換えた (`crates/raikiri-style/src/property.rs`,
-       `crates/raikiri-style/src/counter_style.rs`)。この形は補助 command でも
-       clean に解決する (module 自身が link 元から見えるため)。
+       `crates/raikiri-style/src/counter_style.rs`)。`rule` 自体は `page` 同様
+       同名衝突は無いので `mod@` 前置は必須ではない可能性があるが、
+       元 item 名を code span で保持する構造をそのまま踏襲した。
+       この形も補助 command で clean に解決する。
 4. **同じ scope に同名の item がある module は `mod@` を付ける。** `raikiri-style` では
    `pub mod cascade` と `pub use cascade::{…, cascade}` が module と関数を同名で crate root
    に置くため ``[`mod@crate::cascade`]`` と書く。無印は ambiguous link になる。

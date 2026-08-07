@@ -297,7 +297,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///
 /// sink を取る形にしてあるのは call site 2 / 3 の受け皿が
 /// `Vec<(PropertyValue, bool, Origin, _, u32)>` (2 は `selectors` crate の
-/// `Specificity`、3 は [`crate::page::PageSpecificity`]) であって
+/// `Specificity`、3 は [`crate::page`] の `PageSpecificity`) であって
 /// `Vec<Declaration>` ではないためで、`Vec` 返しにすると declaration ごとの
 /// 一時 alloc か scratch buffer の状態管理を強いられる。call site 1 は
 /// `Vec` へ push するだけの closure を渡す。sink 化そのものは alloc 中立〜改善
