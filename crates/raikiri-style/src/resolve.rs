@@ -711,11 +711,19 @@ impl ResolveContext {
 /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>): "All of the
 /// absolute length units are compatible, and px is their canonical unit."
 ///
-/// 式は `v * 4.0 / 3.0` の形 (乗算を先) で書く — `raikiri-dom` の `layout.rs` の
-/// 既存 bridge (`computed_length_percentage_to_taffy_length_percentage` 他) と
-/// **同一の評価順**にし、同じ authored value に対して両者が bit 単位で同じ f32
-/// を返すことを保つため。
-/// f32 は結合則を満たさないので `v * (4.0 / 3.0)` に「簡約」してはならない。
+/// 式は `v * 4.0 / 3.0` の形 (乗算を先) で書く — f32 は結合則を満たさないため
+/// `v * (4.0 / 3.0)` に「簡約」すると異なる bit パターンの f32 になる。
+/// **この式の形を変えてはならない。**
+///
+/// (bd raikiri-spike-zls8 以前は `raikiri-dom` の `layout.rs` bridge helper
+/// 群 (padding / width-height / margin の3関数) にも同じ変換 (`Length::Pt(v)`
+/// を受けて `v * 4.0 / 3.0` する arm、返り値の wrapper 型は関数ごとに
+/// `LengthPercentage` / `Dimension` / `LengthPercentageAuto` と異なる) が
+/// 存在し、それらと bit 単位で一致させることもこの評価順を選ぶ理由の
+/// 一つだった。zls8 が bridge の引数を computed 層の型に切り替えた際に
+/// その arm は3関数とも削除され — pt は cascade phase 3 で既に px に
+/// 絶対化済みのため bridge に届かない — cross-check 対象は今は存在しない。
+/// f32 非結合性という理由だけでこの式の形は独立に正しい。)
 fn pt_to_px(v: f32) -> f32 {
     v * 4.0 / 3.0
 }
