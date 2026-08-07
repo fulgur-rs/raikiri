@@ -23,20 +23,36 @@ use std::path::{Path, PathBuf};
 
 /// Open a regular file with the leaf-swap TOCTOU defense stack.
 ///
-/// The unix impl passes `O_NOFOLLOW` to `File::open` so a symlink swapped
-/// in between the pre-open `symlink_metadata` check and this open call
-/// cannot cause the resolver to follow a fresh target. POSIX mandates
-/// `ELOOP` for `open(O_NOFOLLOW)` on a symlink (Linux, macOS, and modern
-/// FreeBSD comply); legacy BSDs (NetBSD, OpenBSD, FreeBSD <10) may return
-/// `EMLINK` or `EFTYPE` instead. Callers that need to distinguish this
-/// case from other I/O errors should check the errno match against
-/// `libc::ELOOP` AND fall back to a `symlink_metadata` recheck (see
-/// `read_bounded_fixture_file` for the portable pattern).
+/// The unix impl passes `O_NOFOLLOW | O_NONBLOCK` to `File::open`:
+///
+/// - `O_NOFOLLOW`: a symlink swapped in between the pre-open
+///   `symlink_metadata` check and this open call cannot cause the resolver
+///   to follow a fresh target. POSIX mandates `ELOOP` for
+///   `open(O_NOFOLLOW)` on a symlink (Linux, macOS, and modern FreeBSD
+///   comply); legacy BSDs (NetBSD, OpenBSD, FreeBSD <10) may return
+///   `EMLINK` or `EFTYPE` instead. Callers that need to distinguish this
+///   case from other I/O errors should check the errno match against
+///   `libc::ELOOP` AND fall back to a `symlink_metadata` recheck (see
+///   `read_bounded_fixture_file` for the portable pattern).
+/// - `O_NONBLOCK`: **load-bearing time-DoS defense** paired with the
+///   post-open fstat check in [`check_open_handle_regular`]. If a regular
+///   file is swapped for a **writer-less FIFO** between the pre-open
+///   `symlink_metadata` check and this `open()`, the bare
+///   `open(O_RDONLY | O_NOFOLLOW)` call would block indefinitely at the
+///   `open()` syscall itself — `O_NOFOLLOW` does not fire (a FIFO is not a
+///   symlink), so the post-open fstat is never reached. `O_NONBLOCK` makes
+///   FIFO opens return immediately (POSIX: read-side `O_RDONLY | O_NONBLOCK`
+///   on a FIFO succeeds even with no writer), letting the post-open fstat
+///   inspect the fd and reject non-regular kinds. Regular file semantics
+///   are unaffected: POSIX specifies `O_NONBLOCK` has no effect on regular
+///   files, and Linux/macOS both honor that. bd raikiri-spike-z719 (ports
+///   `raikiri_dom::fonts::safe_open`'s O_NONBLOCK, added there by bd
+///   raikiri-spike-f4j — 61l Codex §8.3 finding #2).
 ///
 /// The non-unix fallback keeps the current default `File::open` semantics.
 /// Windows equivalent tracked in raikiri-spike-akk.
 ///
-/// bd raikiri-spike-8yu.
+/// bd raikiri-spike-8yu (O_NOFOLLOW), raikiri-spike-z719 (O_NONBLOCK).
 // Callsite-local defense: sharing this stack with raikiri-dom is deferred to
 // raikiri-spike-7xw for walls.md §2 crate-list PMO judgment. Do not lift
 // into raikiri-traits::io without that judgment.
@@ -45,7 +61,7 @@ fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
 }
 
@@ -576,24 +592,17 @@ pub fn compare_png(
 /// re-runs and the race window is closed by construction — for the *kind*
 /// check.
 ///
-/// Unlike `raikiri_dom::fonts::check_open_handle_regular`'s pairing, this
-/// crate's [`safe_open`] does not set `O_NONBLOCK`: opening a swapped-in
-/// writer-less FIFO can still block at the `open()` syscall itself, before
-/// this fstat is ever reached. That half of the defense is a pre-existing,
-/// separate gap — bd raikiri-spike-f4j's own description (its `## Refs`
-/// section) names this crate ("bd raikiri-spike-8yu (raikiri-vrt sibling;
-/// also has this preexisting gap, not covered by d9y.6)") as carrying the
-/// same residual, now tracked by bd raikiri-spike-z719. This function
-/// still closes the *kind*-detection half for the swap classes that don't
-/// hang `open()`: character devices and block devices (which, unlike a
-/// writer-less FIFO, return immediately from `open()` under plain
-/// `O_RDONLY`). The writer-less-FIFO swap class remains unreachable
-/// through this function until bd raikiri-spike-z719's `O_NONBLOCK`
-/// closes the open-time-block half above.
+/// This crate's [`safe_open`] pairs `O_NOFOLLOW` with `O_NONBLOCK` — the
+/// same pairing `raikiri_dom::fonts::safe_open` carries (bd
+/// raikiri-spike-f4j) — so a swapped-in writer-less FIFO returns
+/// immediately from `open()` instead of blocking before this fstat is
+/// reached. This function closes the *kind*-detection half for all swap
+/// classes reachable via `safe_open` — FIFOs, character devices, and block
+/// devices alike.
 ///
 /// Mirrors `raikiri_dom::fonts::check_open_handle_regular` (bd
 /// raikiri-spike-f4j, source of this pattern; ported here via bd
-/// raikiri-spike-y92o).
+/// raikiri-spike-y92o; `O_NONBLOCK` pairing added via bd raikiri-spike-z719).
 fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), FixtureError> {
     // cov:ignore: fstat on a descriptor this function's caller just opened
     // failing (e.g. underlying storage unmounted mid-call) is an
@@ -829,11 +838,12 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // Post-open fd-based fstat: reject if the descriptor `safe_open` bound
     // does not resolve to a regular file. Closes the *kind*-detection half
     // of the FIFO/device swap TOCTOU window that the pre-open path-based
-    // `symlink_metadata` + `is_file()` gate above cannot cover. See
-    // `check_open_handle_regular`'s doc for why this crate's `safe_open`
-    // (no `O_NONBLOCK`) leaves the open-time-block half of that window
-    // open as a separate, pre-existing gap. bd raikiri-spike-f4j (source
-    // pattern), raikiri-spike-y92o (this port).
+    // `symlink_metadata` + `is_file()` gate above cannot cover; `safe_open`'s
+    // `O_NONBLOCK` (bd raikiri-spike-z719) closes the open-time-block half,
+    // so a writer-less FIFO swapped into this window cannot hang `open()`
+    // before this fstat runs. See `check_open_handle_regular`'s doc for the
+    // full rationale. bd raikiri-spike-f4j (source pattern), raikiri-spike-y92o
+    // (this port), raikiri-spike-z719 (O_NONBLOCK closing the residual gap).
     check_open_handle_regular(&file, path)?;
     // Post-open fd-bound containment recheck: verify the descriptor
     // `safe_open` bound still resolves under `canonical_root`, derived from
@@ -1997,13 +2007,12 @@ mod defense_tests {
     // / `check_open_handle_containment` called directly against a `File`
     // handle that already represents the "swapped" state.
     //
-    // Unlike fonts.rs, this crate's `safe_open` does not set `O_NONBLOCK`
-    // (see `check_open_handle_regular`'s doc), so a FIFO test analogous to
-    // fonts.rs's `check_open_handle_regular_rejects_fifo` would hang at
-    // `safe_open`'s `open()` call on a writer-less FIFO — that shape is
-    // deliberately not ported here. The `/dev/null` char-device test below
-    // exercises the identical `!metadata.file_type().is_file()` branch
-    // without needing a non-blocking open.
+    // `safe_open` sets `O_NONBLOCK` (mirroring fonts.rs, see `safe_open`'s
+    // doc), so a FIFO test analogous to fonts.rs's
+    // `check_open_handle_regular_rejects_fifo` exists below — see
+    // `check_open_handle_regular_rejects_fifo`. The `/dev/null` char-device
+    // test exercises the identical `!metadata.file_type().is_file()` branch
+    // on a kind that opens immediately even without `O_NONBLOCK`.
 
     /// `check_open_handle_regular` accepts a regular file opened via
     /// `safe_open` — the primitive-level happy-path regression pin. bd
@@ -2022,10 +2031,10 @@ mod defense_tests {
     }
 
     /// `safe_open` + `check_open_handle_regular` rejects `/dev/null`
-    /// (character device). `/dev/null` opens immediately under plain
-    /// `O_RDONLY | O_NOFOLLOW` (no writer-attachment blocking like a FIFO),
-    /// so this exercises the fd-based fstat's non-regular-kind rejection
-    /// without needing `O_NONBLOCK`. Mirrors
+    /// (character device). `/dev/null` opens immediately even without
+    /// `O_NONBLOCK` (no writer-attachment blocking like a FIFO), so this
+    /// exercises the fd-based fstat's non-regular-kind rejection without
+    /// needing `O_NONBLOCK`. Mirrors
     /// `raikiri_dom::fonts::check_open_handle_regular_rejects_char_device`.
     /// bd raikiri-spike-y92o.
     #[cfg(unix)]
@@ -2047,6 +2056,65 @@ mod defense_tests {
             other => panic!(
                 "expected NotRegularFilePostOpen for /dev/null post-open fstat, got {other:?}"
             ),
+        }
+    }
+
+    /// `safe_open` + `check_open_handle_regular` rejects a FIFO. Two
+    /// asserts pin the composite defense:
+    ///
+    /// 1. `safe_open` returns `Ok` (without hanging) — proves the
+    ///    `O_NONBLOCK` addition (bd raikiri-spike-z719) prevents `open()`
+    ///    from blocking on a writer-less FIFO. Without `O_NONBLOCK`,
+    ///    `open(O_RDONLY)` on a writer-less FIFO blocks indefinitely at the
+    ///    syscall itself and the test would deadlock (never reach the
+    ///    fstat).
+    /// 2. `check_open_handle_regular` returns
+    ///    `Err(FixtureError::NotRegularFilePostOpen)` — proves the fd-based
+    ///    `File::metadata()` fstat correctly identifies the FIFO kind and
+    ///    would reject before any read from the pipe.
+    ///
+    /// This crate's pre-open gate in `read_bounded_fixture_file` already
+    /// rejects a FIFO placed directly at `input.html` or
+    /// `expected/page-*.png` (see `fifo_as_input_html_is_rejected_not_blocked`
+    /// / `fifo_at_expected_png_is_rejected_not_blocked`) without ever
+    /// calling `safe_open`, so this test calls `safe_open` directly — the
+    /// same isolation fonts.rs's sibling test uses — to exercise the
+    /// post-open detection path that only fires on a real TOCTOU race in
+    /// the composed pipeline. Mirrors
+    /// `raikiri_dom::fonts::check_open_handle_regular_rejects_fifo`. bd
+    /// raikiri-spike-z719.
+    #[cfg(unix)]
+    #[test]
+    fn check_open_handle_regular_rejects_fifo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fifo = tmp.path().join("evil.bin");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo(1) should be available on unix hosts");
+        assert!(status.success(), "mkfifo failed for {}", fifo.display());
+
+        // safe_open must return Ok(fd) without blocking — O_NONBLOCK
+        // regression guard. A test process reaching this assertion proves
+        // `open()` did not hang on the writer-less FIFO.
+        let file = safe_open(&fifo).expect(
+            "safe_open on writer-less FIFO should return Ok immediately via O_NONBLOCK, \
+             not block or Err — if this fails the O_NONBLOCK flag was dropped or the \
+             open path regressed",
+        );
+
+        match check_open_handle_regular(&file, &fifo) {
+            Err(FixtureError::NotRegularFilePostOpen { path }) => {
+                assert_eq!(path, fifo);
+            }
+            // cov:ignore: diagnostic-only fallthrough — the expected `Err`
+            // arm immediately above is what this test asserts and is
+            // pinned by the same test run; this arm exists only to turn an
+            // implementation regression into a readable panic message
+            // instead of falling through silently.
+            other => {
+                panic!("expected NotRegularFilePostOpen for FIFO post-open fstat, got {other:?}")
+            }
         }
     }
 
