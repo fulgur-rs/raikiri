@@ -817,6 +817,40 @@ pub(crate) enum LayoutWarn {
         /// cap was reached.
         suppressed: usize,
     },
+    /// One or more subtrees had a broken **parent/child geometry invariant**
+    /// (bd raikiri-spike-ntxy) and were reset to a deterministic zero
+    /// [`taffy::Layout`] by [`enforce_layout_invariants`]. This is a
+    /// different failure class than [`LayoutWarn::NonFiniteClamped`]: that
+    /// variant fires when a single `f32` field was out of range, this one
+    /// fires when every individual field of the (already per-field-clamped)
+    /// `Layout`s involved was in range, but the *relationship* between two
+    /// or more fields — possibly on different nodes — was not (e.g. a
+    /// node's own content box went negative, or a child's border box did
+    /// not fit inside its parent's once one of the two had its actual value
+    /// approximated by [`sanitize_taffy_layout`]). See
+    /// [`enforce_layout_invariants`]'s doc for exactly which two invariants
+    /// are checked and why unconditionally checking cross-node containment
+    /// would be spec-incorrect.
+    ///
+    /// Aggregated per invariant (at most one event per invariant kind per
+    /// `layout_single_page` pass, each counting every subtree it reset)
+    /// rather than one event per reset subtree, so a pathological input
+    /// that trips the same invariant on many nodes cannot reintroduce the
+    /// per-node spam [`LAYOUT_WARN_CAP`] exists to bound.
+    GeometryInvariantViolated {
+        /// Which invariant was violated — `"content_box_non_negative"` or
+        /// `"child_within_parent_border_box"` (see
+        /// [`enforce_layout_invariants`]'s doc). Like `NonFiniteClamped`'s
+        /// `site`, a human-readable category, not a stable
+        /// machine-parseable identifier.
+        invariant: &'static str,
+        /// Number of distinct subtree roots this invariant caused
+        /// [`enforce_layout_invariants`] to reset in this pass (not a count
+        /// of individual arena nodes touched — a reset subtree may contain
+        /// further descendants that also got zeroed as part of the same
+        /// reset).
+        subtree_count: usize,
+    },
 }
 
 impl std::fmt::Display for LayoutWarn {
@@ -829,6 +863,13 @@ impl std::fmt::Display for LayoutWarn {
             LayoutWarn::Truncated { suppressed } => write!(
                 f,
                 "{suppressed} additional layout clamp warning(s) suppressed (buffer cap reached)"
+            ),
+            LayoutWarn::GeometryInvariantViolated {
+                invariant,
+                subtree_count,
+            } => write!(
+                f,
+                "{invariant}: {subtree_count} subtree(s) had a broken parent/child geometry invariant and were reset to a zero layout"
             ),
         }
     }
@@ -980,6 +1021,299 @@ pub(crate) fn sanitize_taffy_layout(
         padding: rect(layout.padding, "layout.padding", diag),
         margin: rect(layout.margin, "layout.margin", diag),
     }
+}
+
+/// [`sanitize_taffy_layout`] が保証する **finiteness** の一段上のレイヤー —
+/// 親子 geometry の**意味的** invariant を検査し、破れている subtree を
+/// 決定的な既定 geometry (ゼロ) に置き換える (bd raikiri-spike-ntxy、r8ew の
+/// §8.3 Codex final review 非軽微 finding 1 への対応)。
+///
+/// # なぜ `sanitize_taffy_layout` だけでは閉じないか
+///
+/// `sanitize_taffy_layout` (bd raikiri-spike-r8ew) の doc が明言する通り、
+/// その guard は **field ごとに独立に** clamp するため、box model の包含
+/// 関係 (CSS Box 3 の content ⊆ padding ⊆ border) は保存しない —
+/// `size.width` と `padding.{left,right}` が同時に飽和すると
+/// `content_box_width()` が負になりうる (bd raikiri-spike-r8ew の §8.2
+/// spec lens finding F5)。また taffy 内部の演算 chain は `LayoutOutput`
+/// 経由で **clamp 前の生値** を子から親へ返す (`taffy-0.12.1` の
+/// `compute/block.rs:947,973,981,1072`、`set_unrounded_layout` が呼ばれる
+/// のはその**後**であり、かつ子の `Layout` を書くのは子自身ではなく
+/// **親の algorithm**) ため、ある node の位置が「別の (クランプ済) node」を
+/// 基準に計算されていても、各 node は「自分の field が有限」であることしか
+/// 保証されない。本関数はその 2 つの隙間 — 単一 node 内の box model 包含
+/// 関係、および親子間の位置関係 — を埋める。
+///
+/// # 検査する 2 つの invariant
+///
+/// 1. **content box 非負** — `Layout::content_box_width()` /
+///    `content_box_height()` が両方 `>= 0.0`。**全 node に無条件で**適用する。
+///    実装時に実測した (probe: `<div style="width: 10px; padding: 50px;
+///    box-sizing: border-box;">` を通常経路 (`layout_single_page`) で
+///    layout): taffy 自身が border box を `size.width == padding_left +
+///    padding_right` (= `100.0`) まで自動的に stretch し、content box を
+///    ちょうど `0.0` に floor する (`taffy-0.12.1/src/compute/mod.rs` の
+///    `maybe_max(padding_border_size)` と同型の内部ロジック)。すなわち
+///    **非有限 clamp が絡まない通常の CSS では content box が負になること
+///    はない** — この invariant を無条件で検査しても legitimate な layout
+///    を誤検出しない。
+/// 2. **child の border box の原点 (`location`) が parent の border box に
+///    収まる** (`child.location.x >= 0`, `child.location.y >= 0`,
+///    `child.location.x <= parent.size.width`, `child.location.y <=
+///    parent.size.height` — taffy の座標系は「parent border box 原点からの
+///    相対位置」、`taffy-0.12.1/src/tree/layout.rs` の
+///    `Layout::content_box_x/y` の doc参照)。**`child.size` は見ない** —
+///    issue 本文もこの invariant を「child の **location** が parent の
+///    border box 内」とだけ書いており、child 自身の大きさは対象にしていない
+///    ([`child_within_parent_border_box`] の doc「`child.size` を見ない理由」
+///    節、実装時に extent (`location + size`) 版で `width: 200%` の
+///    legitimate nest を誤検出することが判明した経緯を記録している)。
+///
+///    **こちらは無条件では検査しない**、かつ **axis 単位で**検査する。CSS は
+///    子が親の border box をはみ出すことを普通に許す (`overflow: visible`
+///    が initial 値、負 margin、固定して小さい container + 大きい content、
+///    `width: 200%` のような「子が親より意図的に大きい」宣言) — raikiri は
+///    今 `position: absolute` を未実装だが、それだけで十分再現する。実装時に
+///    実測した (probe: parent `<div style="width: 50px; height: 50px;">` の
+///    子に `<div style="width: 200px; height: 200px; margin-left:
+///    -30px;">`) では parent `size=(50,50)` に対し child `location=(-30,0)`
+///    — 原点自体が parent の左端 (`x=0`) より外に出ているが、これは**正しい
+///    layout であって bug ではない**。無条件で検査すると legitimate な
+///    layout を誤って fallback してしまうため、`child.location.x` /
+///    `child.location.y` の**その axis 自身**が [`MAX_TAFFY_MAGNITUDE`] の
+///    飽和境界にちょうど達している場合**だけ**、その axis を検査する
+///    ([`child_within_parent_border_box`] の実装参照 — `parent.size` や
+///    `child.size` が飽和しているかどうかはこの gate に関与しない)。
+///    飽和が起きたということは、その field の「actual value」(近似後の値)
+///    が taffy 内部の「used value」(実際の計算結果) と乖離しており、
+///    以後この field を根拠にした関係式はもう taffy の生の計算結果を表さ
+///    ない — だからこそ改めて明示的に整合性を検査し、破れていれば決定的な
+///    値に倒す。gate が真でも実際に収まっていれば fallback しない — 「actual
+///    value が近似されている」こと自体は r8ew が明示的に許容した範囲内の
+///    動作であり、収まっている限り本関数が扱う対象ではない
+///    (`saturated_but_contained_layout_is_not_reset` が gate 単独ではなく
+///    「gate かつ containment 違反」という conjunction を pin する)。
+///
+///    **実装時の実測 (`width: 200%` を 45 段 nest、単一 chain)**: 当初は
+///    extent (`location + size <= parent.size`) を検査していたが、この
+///    legitimate な (どの深さでも「child は parent の 2 倍」という一貫した
+///    関係を表す) declaration が深い段で誤って reset されることが判明した —
+///    child の origin は常に `(0, 0)` のままなので、origin だけを見る現行の
+///    定義では reset されない
+///    (`nested_percentage_wide_child_chain_is_not_reset` が pin)。
+///
+///    **§8.3 Codex final review finding (GATE FAIL、修正済み)**: origin
+///    だけを見るようにした直後の版は、なお gate を「`parent.size` /
+///    `child.size` / `child.location` のいずれか 1 つでも飽和していれば
+///    axis 区別なく両 axis を検査する」という条件にしていた。この形では
+///    **child 自身の location が飽和していなくても** — 例えば同じ subtree の
+///    どこか別の node の `parent.size` が (無関係な原因で) 飽和していた
+///    だけで — legitimate な負 margin (`location.x` が通常範囲の負値、
+///    例: `-30`) を持つ child が `>= 0.0` に落ちて誤って reset されうる、と
+///    Codex final review (§8.3) が非軽微 finding として指摘した。現在の
+///    axis 単位 gate (`child.location.x` / `.y` 自身が飽和している場合だけ、
+///    その axis だけを検査する) はこれを構造的に閉じる — 検査対象になる
+///    field は必ず「それ自身が近似された」field に限られるため、legitimate
+///    な小さい負値がこの gate を通ることはない
+///    (`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
+///    が直接 pin する — 「`y` 軸だけでも reset の説明がつく」fixture では
+///    新旧実装を区別できないと Codex re-review が指摘したため、`y` 軸が
+///    飽和かつ収まっている fixture に差し替えた経緯は同 test の doc参照。
+///    `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
+///    は `y` 軸の検出力が保たれていることの pin として残している)。
+///
+/// NaN → `0.0` (`sanitize_finite` の doc参照) は飽和境界 (`±MAX_TAFFY_
+/// MAGNITUDE`) に一致しないため invariant 2 の gate をすり抜けるが、実害は
+/// 無い — `location=(0,0)` `size=(0,0)` は非負サイズの任意の parent に
+/// 対して常に「収まっている」ので、invariant 2 が検査対象から漏れても
+/// そもそも違反として検出すべき状態にならない。padding/border が巻き込
+/// まれて NaN → 0 になり content box が負に振れるケースは invariant 1 が
+/// 無条件に (gate なしで) 拾う。
+///
+/// # 決定的 fallback: subtree をゼロ化 (`zero_layout_subtree`)
+///
+/// 「入力制限」「途中 saturation」「layout abort」を採らず「決定的
+/// fallback」を採る設計判断は coordinator 決定 (bd raikiri-spike-ntxy、
+/// 2026-08-07 comment) 済み。fallback 値は issue 本文が挙げる 2 案
+/// (「0 サイズ」「直近の有限な親サイズ」) のうち **0 サイズ**を採る —
+/// [`taffy::Layout::with_order`] (`order` だけ保持、他は全 zero) は
+/// (a) 自明に invariant 1 (`0 - 0 - 0 = 0 >= 0`) と invariant 2 (`(0,0)` は
+/// 非負サイズの任意 parent に収まる) の両方を再帰的に満たすため、subtree
+/// 全体をこの値で埋めても新たな invariant 違反を作らない (「直近の有限な
+/// 親サイズへの fallback」だと、fallback 後の値がさらに invariant 2 を
+/// 破らないことを別途保証する必要があり、再検査を繰り返す設計になる)、
+/// (b) issue 側の記述も「0 サイズ」を先に挙げている、の 2 点から選んだ。
+///
+/// # traversal は再帰しない
+///
+/// この関数が対象にする入力 (深い percentage nest — [`MAX_TAFFY_MAGNITUDE`]
+/// の doc 表) はまさに**深い DOM tree** なので、[`find_body`] や cascade の
+/// deep-nesting 対策と同じ理由で、素朴な再帰で書くと同じ入力で stack
+/// overflow の新しい経路を作ってしまう。本関数と [`zero_layout_subtree`]
+/// はともに `Vec` を明示 stack として使う iterative 実装。
+///
+/// # taffy が実際に visit した node だけを見る
+///
+/// `document.nodes[idx].children` をそのまま辿らず、taffy の
+/// `TraversePartialTree` 実装 (`taffy_impl.rs`) と同じ `is_in_document()`
+/// filter を子の走査に適用する — `<template>` descendants など taffy が
+/// そもそも layout しなかった node は `unrounded_layout` が構築時デフォルト
+/// (`Layout::with_order(0)`) のまま (他 subtree の古い値が紛れ込むわけでは
+/// ない) なので対象に含めても実害は無いが、taffy の traversal 契約と揃えて
+/// おく方が読み手にとって驚きが無い。
+///
+/// # 呼び出し元
+///
+/// [`layout_single_page`] の Step 5 (`compute_root_layout`) 直後、Step 6
+/// (warning replay) の前 — root (`<body>`) の下で taffy が実際に書いた全
+/// `unrounded_layout` が揃った直後に 1 回だけ走る。`compute_root_layout` を
+/// 直に呼ぶ経路 (`lib.rs` の各 unit test) はこの pass を経由しない —
+/// それらのテストは `sanitize_taffy_layout` (finiteness のみ) の
+/// characterization が目的であり、意味的 invariant は対象外
+/// (`taffy_block_layout_does_not_hang_on_raw_nonfinite_style_geometry` の
+/// doc参照)。
+pub(crate) fn enforce_layout_invariants(document: &mut Document, root_idx: usize) {
+    let mut content_box_violations = 0usize;
+    let mut containment_violations = 0usize;
+    let mut stack = vec![root_idx];
+    while let Some(idx) = stack.pop() {
+        let layout = document.nodes[idx].unrounded_layout;
+        if layout.content_box_width() < 0.0 || layout.content_box_height() < 0.0 {
+            zero_layout_subtree(document, idx);
+            content_box_violations += 1;
+            continue;
+        }
+        let child_count = document.nodes[idx].children.len();
+        for i in 0..child_count {
+            let child_idx = document.nodes[idx].children[i];
+            if !document.nodes[child_idx].is_in_document() {
+                continue;
+            }
+            let child_layout = document.nodes[child_idx].unrounded_layout;
+            if !child_within_parent_border_box(&layout, &child_layout) {
+                zero_layout_subtree(document, child_idx);
+                containment_violations += 1;
+            } else {
+                stack.push(child_idx);
+            }
+        }
+    }
+    if content_box_violations > 0 {
+        push_layout_warn(
+            &mut document.layout_warnings,
+            LayoutWarn::GeometryInvariantViolated {
+                invariant: "content_box_non_negative",
+                subtree_count: content_box_violations,
+            },
+        );
+    }
+    if containment_violations > 0 {
+        push_layout_warn(
+            &mut document.layout_warnings,
+            LayoutWarn::GeometryInvariantViolated {
+                invariant: "child_within_parent_border_box",
+                subtree_count: containment_violations,
+            },
+        );
+    }
+}
+
+/// [`enforce_layout_invariants`] の fallback 本体 — `root_idx` を根とする
+/// subtree (taffy が実際に訪問した node のみ、`is_in_document()` filter) の
+/// `unrounded_layout` を [`taffy::Layout::with_order`] (`order` だけ保持し
+/// 他は全 zero) で上書きする。iterative (`Vec` stack) — 対象がまさに深い
+/// DOM である以上、再帰は使わない ([`enforce_layout_invariants`] の
+/// 「traversal は再帰しない」節参照)。
+fn zero_layout_subtree(document: &mut Document, root_idx: usize) {
+    let mut stack = vec![root_idx];
+    while let Some(idx) = stack.pop() {
+        let order = document.nodes[idx].unrounded_layout.order;
+        document.nodes[idx].unrounded_layout = TaffyLayout::with_order(order);
+        let child_count = document.nodes[idx].children.len();
+        for i in 0..child_count {
+            let child_idx = document.nodes[idx].children[i];
+            if document.nodes[child_idx].is_in_document() {
+                stack.push(child_idx);
+            }
+        }
+    }
+}
+
+/// [`MAX_TAFFY_MAGNITUDE`] の対称 clamp 境界にちょうど乗っているかどうか。
+/// `sanitize_finite` (`v.clamp(min, max)`) は範囲外の有限値をちょうど
+/// `min` / `max` に丸めるので、この等価判定は「この field で実際に clamp
+/// が発火した」ことの正確な proxy になる — `NaN` は `0.0` に丸まる別経路
+/// なのでここには現れない ([`enforce_layout_invariants`] の doc「NaN →
+/// 0.0 …」節参照)。
+fn taffy_magnitude_is_saturated(v: f32) -> bool {
+    v == MAX_TAFFY_MAGNITUDE || v == -MAX_TAFFY_MAGNITUDE
+}
+
+/// `child` の border box の**原点** (`location`、`child.size` は見ない) が
+/// `parent` の border box (parent 座標系の原点 `(0,0)` から `parent.size`)
+/// の中にあるかどうか。**axis 単位**で判定する — 各 axis は、その axis の
+/// `child.location` 自身が [`MAX_TAFFY_MAGNITUDE`] の飽和境界にちょうど
+/// 達している場合**だけ**検査し、達していなければ無条件に「ok」とみなす。
+///
+/// # `child.size` を見ない理由 (issue 本文の記述に忠実)
+///
+/// 当初は `location.x + size.width <= parent.size.width` という **extent**
+/// (child の右端/下端まで含めた) containment を検査していたが、これは
+/// `width: 200%` のような「子が親より意図的に大きい」legitimate な CSS を
+/// 誤検出することが実装時に判明した — `width: 200%` は**どの深さでも** (飽和
+/// していない浅い段も含め) 同じ「child は parent の 2 倍」という一貫した
+/// 関係を表しており、破綻ではない。深い nest で個々の used value が
+/// [`MAX_TAFFY_MAGNITUDE`] の帯を超えて近似され始めても、この関係自体は
+/// 変わらない (`legitimate_negative_margin_overflow_is_not_reset` が pin する
+/// 「小さい parent + 大きい child」も同じ class の legitimate overflow)。
+/// bd raikiri-spike-ntxy issue 本文もこの区別を反映しており、「child の
+/// **location** が parent の border box 内」とだけ書いている — extent では
+/// なく **origin** の containment を指している。この関数はその通り origin
+/// だけを見る。
+///
+/// # gate を axis 単位・`child.location` 自身に限定する理由
+/// (§8.3 Codex final review、GATE FAIL 修正)
+///
+/// 直前の版は「`parent.size.width/height` か `child.size.width/height` か
+/// `child.location.x/y` のいずれか 1 つでも飽和していれば、`x`/`y` **両方**を
+/// 検査する」という gate だった。この形には 2 段階の false positive があった:
+///
+/// 1. **field 単位**: `child.location` 自身は飽和していなくても、
+///    無関係な `parent.size` (同じ subtree の別の場所の飽和が原因のことも
+///    ある) や `child.size` が飽和しているだけで検査が開いてしまい、
+///    legitimate な負 margin (`location.x` が通常範囲の負値、例: `-30`) を
+///    `>= 0.0` で弾いて誤って reset していた。
+/// 2. **axis 単位**: 1 を「`child.location` 自身が飽和していること」に
+///    絞っても、`x` と `y` の**どちらか一方**が飽和していれば両方を検査する
+///    形のままだと、飽和していない側の axis に legitimate な負 margin が
+///    あると同じ理由で誤検出しうる。
+///
+/// 現在の定義はどちらも閉じる — 検査対象になる (= 「収まっているか」を
+/// 問われる) のは、その **axis 自身の `child.location` が実際に飽和して
+/// いる**場合に限る。飽和していない axis の値は、たとえ負であっても
+/// (legitimate な負 margin) 常に「ok」として扱う。飽和した field だけが
+/// 「actual value が taffy の生の計算結果から乖離している」ため検査対象に
+/// なる、という本関数群の一貫した設計原則 (本 module doc「なぜ
+/// `sanitize_taffy_layout` だけでは閉じないか」節) をそのまま axis 粒度まで
+/// 徹底した形。
+///
+/// `saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
+/// がこの conjunction (「飽和した axis だけ検査、他 axis は無条件 ok」) を
+/// 直接 pin する — 飽和している axis 自身は実際には収まっているようにし、
+/// もう一方の (飽和していない) axis に legitimate な負 margin を与えることで、
+/// 「`y` 軸だけでも reset の説明がつく」fixture では新旧実装を区別できない
+/// という Codex re-review の指摘 (2 回目の GATE FAIL) を踏まえた設計。
+/// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
+/// は同じ組み合わせで飽和した axis が真に違反しているケース (`y` 軸の検出力)
+/// を pin する。真に壊れているケース
+/// (`saturated_child_outside_parent_resets_subtree_to_zero_layout`) は
+/// 飽和した axis 自身が違反しているので引き続き検出される。
+fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> bool {
+    let x_ok = !taffy_magnitude_is_saturated(child.location.x)
+        || (child.location.x >= 0.0 && child.location.x <= parent.size.width);
+    let y_ok = !taffy_magnitude_is_saturated(child.location.y)
+        || (child.location.y >= 0.0 && child.location.y <= parent.size.height);
+    x_ok && y_ok
 }
 
 /// [`ComputedLengthPercentage`] → [`taffy::LengthPercentage`] bridge
@@ -1313,15 +1647,26 @@ pub fn layout_single_page(
         },
     );
 
+    // Step 5b: 親子 geometry の意味的 invariant を検査し、破れている subtree
+    // を決定的 fallback (ゼロ) に倒す (bd raikiri-spike-ntxy)。Step 5 の内部
+    // (`set_unrounded_layout` 経由の `sanitize_taffy_layout`) が保証するのは
+    // finiteness だけなので、その一段上のレイヤーとしてここに置く —
+    // `enforce_layout_invariants`'s doc 参照。`document.layout_warnings` へ
+    // 積む event は Step 1/2 と同じ buffer で、Step 6 がまとめて drain する。
+    enforce_layout_invariants(document, body_id);
+
     // Step 6: replay buffered LayoutWarn events (bd raikiri-spike-7t1t).
     //
-    // `document.layout_warnings` accumulated events from both this
-    // function's own bridge calls (Step 1 / Step 2, via `&mut
-    // document.layout_warnings` passed directly) and from
-    // `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
-    // (invoked internally by `compute_root_layout` just above, via `self` —
-    // see `Document::layout_warnings`'s doc for why that trait-fixed
-    // signature can only reach an owned buffer, not a live observer).
+    // `document.layout_warnings` accumulated events from this function's own
+    // bridge calls (Step 1 / Step 2, via `&mut document.layout_warnings`
+    // passed directly), from `<Document as
+    // taffy::LayoutPartialTree>::set_unrounded_layout` (invoked internally
+    // by `compute_root_layout` just above, via `self` — see
+    // `Document::layout_warnings`'s doc for why that trait-fixed signature
+    // can only reach an owned buffer, not a live observer), and from Step 5b
+    // (`enforce_layout_invariants`, bd raikiri-spike-ntxy) just above, which
+    // pushes into the same buffer directly since it already holds `&mut
+    // Document`.
     //
     // No external caller can supply an observer yet — `layout_single_page`'s
     // signature is a dom→paint boundary (`raikiri-paint` and `raikiri` both
@@ -3367,5 +3712,625 @@ mod tests {
             diag.is_empty(),
             "全 field が range 内なので LayoutWarn は積まれないこと: {diag:?}"
         );
+    }
+
+    // ── 意味的 invariant fallback (bd raikiri-spike-ntxy) ─────────────────
+    //
+    // 上の `sanitize_taffy_layout_*` test 群は「全 field が有限」までしか
+    // 見ない (r8ew の scope)。以下は [`enforce_layout_invariants`] が扱う
+    // 「field は有限だが親子関係が意味的に壊れている」層の pin。
+    // [`enforce_layout_invariants`] の doc の 2 つの probe (border-box
+    // padding overflow / 負 margin overflow) の数値もここで正式な
+    // assertion に昇格させている。
+
+    /// invariant 1 (content box 非負) の直接 pin。field 単位では
+    /// `sanitize_taffy_layout` を素通りする値 (`size` も `padding` もどちらも
+    /// `[-MAX, MAX]` 内) で `content_box_width() < 0.0` を作り、
+    /// `enforce_layout_invariants` が (a) その node、(b) その **subtree 内の
+    /// child** の両方をゼロ化すること、(c) `LayoutWarn` を積むことを確認する。
+    /// (b) が無いと「親だけゼロ化して子は壊れた親を基準にした古い値のまま」
+    /// という中途半端な状態になり、invariant 2 を新たに破ってしまう。
+    #[test]
+    fn content_box_violation_resets_subtree_to_zero_layout() {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+
+        // size.width (10.0) より padding.left+right (40.0) の方が大きい ⇒
+        // content_box_width() = 10.0 - 40.0 = -30.0 < 0.0。size / padding
+        // どちらも個別には [-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE] 内
+        // なので `sanitize_taffy_layout` の field 単位 clamp はこれを止めない
+        // — bd raikiri-spike-r8ew §8.2 spec lens finding F5 の直接再現。
+        doc.nodes[parent].unrounded_layout = TaffyLayout {
+            order: 3,
+            location: Point::ZERO,
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect {
+                left: 20.0,
+                right: 20.0,
+                top: 0.0,
+                bottom: 0.0,
+            },
+            margin: Rect::zero(),
+        };
+        // child 自体は (壊れた parent を無視すれば) 何の問題も無い layout —
+        // subtree 全体がゼロ化されることを確認するための材料。
+        doc.nodes[child].unrounded_layout = TaffyLayout {
+            order: 1,
+            location: Point { x: 1.0, y: 1.0 },
+            size: Size {
+                width: 2.0,
+                height: 2.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+
+        enforce_layout_invariants(&mut doc, parent);
+
+        assert_eq!(
+            doc.nodes[parent].unrounded_layout,
+            TaffyLayout::with_order(3),
+            "content box が負の node は order だけ残してゼロ化されること"
+        );
+        assert_eq!(
+            doc.nodes[child].unrounded_layout,
+            TaffyLayout::with_order(1),
+            "破れた parent の subtree にいる child も (order だけ残して) \
+             ゼロ化されること — 壊れた親を基準にした古い座標を残さない"
+        );
+        assert!(
+            doc.layout_warnings.iter().any(|w| matches!(
+                w,
+                LayoutWarn::GeometryInvariantViolated {
+                    invariant: "content_box_non_negative",
+                    subtree_count: 1,
+                }
+            )),
+            "content box invariant 違反が LayoutWarn として記録されること: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// invariant 2 (child は parent の border box に収まる) の直接 pin。
+    /// [`child_within_parent_border_box`] の gate (「その axis 自身の
+    /// `child.location` が飽和している」) を満たしつつ、containment が
+    /// 破れている値を直接構築する。
+    #[test]
+    fn saturated_child_outside_parent_resets_subtree_to_zero_layout() {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+        let grandchild = doc.append_element(Some(child), "div", Style::default(), None::<&str>);
+
+        // parent は正常 (100x100, 飽和していない)。
+        doc.nodes[parent].unrounded_layout = TaffyLayout {
+            order: 0,
+            location: Point::ZERO,
+            size: Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+        // child.location.x がちょうど飽和境界 (MAX_TAFFY_MAGNITUDE) —
+        // parent (100x100) には到底収まらない。
+        doc.nodes[child].unrounded_layout = TaffyLayout {
+            order: 2,
+            location: Point {
+                x: MAX_TAFFY_MAGNITUDE,
+                y: 0.0,
+            },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+        // grandchild は child を基準にした normal な値 — subtree 全体が
+        // ゼロ化されることを確認する材料 (上の test と同じ理由)。
+        doc.nodes[grandchild].unrounded_layout = TaffyLayout {
+            order: 5,
+            location: Point { x: 1.0, y: 1.0 },
+            size: Size {
+                width: 1.0,
+                height: 1.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+
+        enforce_layout_invariants(&mut doc, parent);
+
+        assert_eq!(
+            doc.nodes[parent].unrounded_layout.size,
+            Size {
+                width: 100.0,
+                height: 100.0
+            },
+            "parent 自身は invariant を破っていないので手を付けないこと"
+        );
+        assert_eq!(
+            doc.nodes[child].unrounded_layout,
+            TaffyLayout::with_order(2),
+            "飽和 + containment 違反の child は (order だけ残して) ゼロ化されること"
+        );
+        assert_eq!(
+            doc.nodes[grandchild].unrounded_layout,
+            TaffyLayout::with_order(5),
+            "ゼロ化された child の下の grandchild も subtree として一緒にゼロ化されること"
+        );
+        assert!(
+            doc.layout_warnings.iter().any(|w| matches!(
+                w,
+                LayoutWarn::GeometryInvariantViolated {
+                    invariant: "child_within_parent_border_box",
+                    subtree_count: 1,
+                }
+            )),
+            "containment invariant 違反が LayoutWarn として記録されること: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// invariant 2 の gate が **無条件ではない**ことの pin — CSS が普通に
+    /// 許す overflow (小さい parent + 負 margin で右/下/左にはみ出す child)
+    /// を [`layout_single_page`] のフルパイプラインで実際に layout し、
+    /// `enforce_layout_invariants` がそれを誤って fallback しないことを
+    /// 確認する。数値は [`enforce_layout_invariants`] の doc に記録した
+    /// 実測値と同じ (probe で先に確認済み)。
+    ///
+    /// これが無いと「invariant 2 を無条件チェックにしてしまう」regression
+    /// (spec 違反 — legitimate な overflow layout を壊す) を検出できない。
+    #[test]
+    fn legitimate_negative_margin_overflow_is_not_reset() {
+        use raikiri_style::{build_rule_tree, cascade};
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width: 50px; height: 50px;"),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("width: 200px; height: 200px; margin-left: -30px;"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let parent_layout = doc.nodes[parent].unrounded_layout;
+        let child_layout = doc.nodes[child].unrounded_layout;
+        assert_eq!(
+            parent_layout.size,
+            Size {
+                width: 50.0,
+                height: 50.0
+            },
+            "parent の正常な layout は不変であること"
+        );
+        assert_eq!(
+            child_layout.location,
+            Point { x: -30.0, y: 0.0 },
+            "負 margin による legitimate overflow の location はゼロ化されないこと \
+             (parent の border box に収まらないが、これは正しい CSS layout)"
+        );
+        assert_eq!(
+            child_layout.size,
+            Size {
+                width: 200.0,
+                height: 200.0
+            },
+            "負 margin による legitimate overflow の size はゼロ化されないこと"
+        );
+        assert!(
+            doc.layout_warnings
+                .iter()
+                .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
+            "飽和していない legitimate overflow は invariant 2 の gate を \
+             通らないので GeometryInvariantViolated は 1 件も積まれないこと: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// gate (`child.location` 自身が飽和) と containment (収まっているか)
+    /// の**両方**が effective であることの pin — 飽和「している」が
+    /// containment は破れていない (境界ちょうど) ケースでは fallback しない
+    /// こと。
+    ///
+    /// [`saturated_child_outside_parent_resets_subtree_to_zero_layout`]
+    /// (飽和 かつ containment 違反 → reset) と対にして初めて、gate 単独では
+    /// なく「gate かつ containment 違反」という conjunction を検査している
+    /// ことになる。直接構築した最小ケースで conjunction の論理だけを孤立させて
+    /// 検査する — 実際の nested percentage chain を使った同種の pin は
+    /// [`nested_percentage_wide_child_chain_is_not_reset`] を参照
+    /// (extent ではなく origin だけを見る現行の [`child_within_parent_border_box`]
+    /// を選んだ直接の理由になった regression)。
+    #[test]
+    fn saturated_but_contained_layout_is_not_reset() {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+
+        // parent の size もちょうど飽和境界 — child の location がそこに
+        // ぴったり収まる (境界値、`<=` で ok) ケースを作る。
+        doc.nodes[parent].unrounded_layout = TaffyLayout {
+            order: 0,
+            location: Point::ZERO,
+            size: Size {
+                width: MAX_TAFFY_MAGNITUDE,
+                height: MAX_TAFFY_MAGNITUDE,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+        // child.location 自身がちょうど飽和境界 — gate
+        // (`child_within_parent_border_box` の axis 単位 gate) を発火させる。
+        // parent.size と同じ値なので `<=` で境界ちょうど「収まっている」。
+        doc.nodes[child].unrounded_layout = TaffyLayout {
+            order: 1,
+            location: Point {
+                x: MAX_TAFFY_MAGNITUDE,
+                y: MAX_TAFFY_MAGNITUDE,
+            },
+            size: Size {
+                width: 0.0,
+                height: 0.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+
+        let child_before = doc.nodes[child].unrounded_layout;
+        enforce_layout_invariants(&mut doc, parent);
+
+        assert_eq!(
+            doc.nodes[parent].unrounded_layout.size,
+            Size {
+                width: MAX_TAFFY_MAGNITUDE,
+                height: MAX_TAFFY_MAGNITUDE
+            },
+            "飽和した parent 自身は content box invariant を破っていないので \
+             手を付けないこと"
+        );
+        assert_eq!(
+            doc.nodes[child].unrounded_layout, child_before,
+            "gate (child.location 自身の飽和) が真でも containment が実際には \
+             保たれている (境界ちょうど) child はゼロ化されないこと — gate \
+             単独ではなく conjunction であることの pin"
+        );
+        assert!(
+            doc.layout_warnings
+                .iter()
+                .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
+            "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// `y` 軸の**検出力**が保たれていることの pin (§8.3 Codex final review、
+    /// GATE FAIL 修正の一部)。`child_within_parent_border_box` の doc「gate
+    /// を axis 単位・`child.location` 自身に限定する理由」節。
+    ///
+    /// 同じ subtree のどこかで実際に飽和が起きている状況 (ここでは child の
+    /// `y` 軸、かつ実際に parent に収まっていない = 真の violation) と、
+    /// その**同じ child** が legitimate な負 margin (`x` 軸、通常範囲の
+    /// 負値、飽和していない) を持つ状況が重なっても、`y` 軸の真の violation
+    /// は見逃されず reset されること — を確認する。
+    ///
+    /// **注意 (§8.3 Codex re-review、2 回目の GATE FAIL の理由)**: この
+    /// test 単体は「`x` 軸の legitimate な負 margin が reset の原因に
+    /// 寄与していないこと」の**証明にはならない** — `y` 軸だけで reset は
+    /// 説明がつくため、`x` 軸を (誤って) 検査する旧 axis-mixing 実装でも
+    /// 検査しない新実装でも結果は同じ (reset) になり、区別できない。その
+    /// 区別を直接証明するのは
+    /// [`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+    /// — 本 test とペアで初めて「`y` 軸の検出力は保たれている」かつ「`x` 軸の
+    /// legitimate な負 margin は独立して無視される」の両方が言える。
+    #[test]
+    fn saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset() {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+
+        doc.nodes[parent].unrounded_layout = TaffyLayout {
+            order: 0,
+            location: Point::ZERO,
+            size: Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+        // y 軸: child.location.y がちょうど飽和境界 — 別の (無関係な) 経路で
+        // 実際に破綻している、真に検出すべき軸。x 軸: 通常の負 margin
+        // (`-30`) による legitimate overflow — 飽和していないので gate が
+        // 対象にしてはいけない軸。
+        doc.nodes[child].unrounded_layout = TaffyLayout {
+            order: 1,
+            location: Point {
+                x: -30.0,
+                y: MAX_TAFFY_MAGNITUDE,
+            },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+
+        enforce_layout_invariants(&mut doc, parent);
+
+        // y 軸は真に飽和 + 収まっていない (MAX_TAFFY_MAGNITUDE > parent の
+        // 100.0) ので reset されるのが正しい —
+        // `saturated_child_outside_parent_resets_subtree_to_zero_layout` と
+        // 同じ理由。この test の主張は「x 軸の legitimate な負 margin が
+        // reset の"理由"にならない」ことであって、「一切 reset されない」
+        // ことではない (もし y 軸が飽和していなければそもそも reset
+        // されない — それは `legitimate_negative_margin_overflow_is_not_reset`
+        // が既に pin している別のケース)。
+        assert_eq!(
+            doc.nodes[child].unrounded_layout,
+            TaffyLayout::with_order(1),
+            "y 軸が真に飽和 + parent に収まっていないので reset は正しい — \
+             ただしその理由が x 軸の負 margin であってはならない (本 test の \
+             主眼)"
+        );
+        assert!(
+            doc.layout_warnings.iter().any(|w| matches!(
+                w,
+                LayoutWarn::GeometryInvariantViolated {
+                    invariant: "child_within_parent_border_box",
+                    subtree_count: 1,
+                }
+            )),
+            "y 軸の真の violation は引き続き記録されること: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// **§8.3 Codex re-review finding、2 回目の GATE FAIL の直接回帰 pin**
+    /// — 直前の
+    /// [`saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+    /// は「`y` 軸だけでも reset の説明がつく」ため、`x` 軸を実装が正しく
+    /// 無視しているかどうかを実際には区別できない、と Codex が指摘した
+    /// (旧 axis-mixing 実装でも新実装でも同じ「reset される」という結果に
+    /// なってしまうため)。
+    ///
+    /// 本 test は区別できる fixture を使う: `y` 軸を「飽和境界にちょうど
+    /// 達しているが、それでも parent に収まっている」(= 真の violation では
+    /// ない) 値にし、`x` 軸には legitimate な負 margin (`-30`、飽和して
+    /// いない) を与える。
+    ///
+    /// - **新実装 (axis 単位、`child.location` 自身が飽和した axis だけ
+    ///   検査)**: `x` 軸は飽和していないので無条件 ok。`y` 軸は飽和して
+    ///   いるので検査するが、実際に parent に収まっているので ok。
+    ///   → **reset されない**。
+    /// - **旧 axis-mixing 実装 (`parent.size` / `child.size` /
+    ///   `child.location` のいずれかが飽和していれば `x` / `y` 両方を
+    ///   無条件チェック)**: `y` の飽和で gate が開き、`x >= 0.0` の
+    ///   チェックに `-30.0` が失敗する → **誤って reset される**。
+    ///
+    /// すなわち本 test が pass することは「`x` 軸の legitimate な負 margin
+    /// が reset の原因になっていない」ことの直接証拠であり、旧実装への
+    /// 退行があれば本 test 単体で fail する。直前の test (`y` 軸の検出力の
+    /// pin) とペアで、「`y` 軸の検出力は保たれている」かつ「`x` 軸の
+    /// legitimate な負 margin は独立して無視される」の両方を証明する。
+    #[test]
+    fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset() {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+
+        // parent.size.height もちょうど飽和境界 — child.location.y
+        // (同じく飽和境界) がそこにぴったり収まる (`<=`、境界ちょうど) ように
+        // するため。width は通常値 (x 軸は飽和させないので関係ない)。
+        doc.nodes[parent].unrounded_layout = TaffyLayout {
+            order: 0,
+            location: Point::ZERO,
+            size: Size {
+                width: 100.0,
+                height: MAX_TAFFY_MAGNITUDE,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+        // x 軸: legitimate な負 margin (`-30`)、飽和していない — 無条件で
+        // ok 扱いされるべき軸。y 軸: 飽和境界ちょうどだが、parent.size.height
+        // と等しいので実際には収まっている (真の violation ではない) —
+        // 「飽和している」だけでは reset の理由にならないことも同時に示す。
+        doc.nodes[child].unrounded_layout = TaffyLayout {
+            order: 1,
+            location: Point {
+                x: -30.0,
+                y: MAX_TAFFY_MAGNITUDE,
+            },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+
+        let child_before = doc.nodes[child].unrounded_layout;
+        enforce_layout_invariants(&mut doc, parent);
+
+        assert_eq!(
+            doc.nodes[child].unrounded_layout, child_before,
+            "x 軸 (legitimate な負 margin、飽和していない) も y 軸 (飽和\
+             しているが実際には parent に収まっている) もどちらも reset の \
+             理由にならないので、child は一切変更されないこと — これが \
+             旧 axis-mixing 実装との直接の分岐点 (本 test の doc 参照)"
+        );
+        assert!(
+            doc.layout_warnings
+                .iter()
+                .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
+            "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// **§8.3 Codex final review finding、GATE FAIL の直接回帰 pin (その 2)**
+    /// — Codex が指摘した元の scenario そのもの: 同じ subtree の**無関係な
+    /// 別の場所** (ここでは同じ `parent` 自身) の `size` が飽和している状況で、
+    /// **その child 自身は何も飽和していない**のに legitimate な負 margin
+    /// (`location.x = -30`) を持つ。旧版の gate
+    /// (`parent.size` / `child.size` / `child.location` のいずれか 1 つでも
+    /// 飽和していれば検査する) はこれを誤って reset していた —
+    /// [`child_within_parent_border_box`] の doc「gate を axis 単位・
+    /// `child.location` 自身に限定する理由」節の 1. で説明した field 単位の
+    /// 問題を直接再現する。
+    #[test]
+    fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+
+        // parent.size が飽和 — 無関係な原因 (例えば別の subtree で起きた
+        // percentage 複利) を想定した、この child とは関係の無い飽和。
+        doc.nodes[parent].unrounded_layout = TaffyLayout {
+            order: 0,
+            location: Point::ZERO,
+            size: Size {
+                width: MAX_TAFFY_MAGNITUDE,
+                height: MAX_TAFFY_MAGNITUDE,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+        // child 自身は完全に正常 — location / size とも飽和していない、
+        // 通常の負 margin による legitimate overflow
+        // (`legitimate_negative_margin_overflow_is_not_reset` と同じ形)。
+        doc.nodes[child].unrounded_layout = TaffyLayout {
+            order: 1,
+            location: Point { x: -30.0, y: 0.0 },
+            size: Size {
+                width: 200.0,
+                height: 200.0,
+            },
+            content_size: Size::zero(),
+            scrollbar_size: Size::zero(),
+            border: Rect::zero(),
+            padding: Rect::zero(),
+            margin: Rect::zero(),
+        };
+
+        let child_before = doc.nodes[child].unrounded_layout;
+        enforce_layout_invariants(&mut doc, parent);
+
+        assert_eq!(
+            doc.nodes[child].unrounded_layout, child_before,
+            "child 自身は何も飽和していないので、無関係な parent.size の飽和を \
+             理由に legitimate な負 margin を reset してはならない — これが \
+             Codex §8.3 final review の GATE FAIL finding そのもの"
+        );
+        assert!(
+            doc.layout_warnings
+                .iter()
+                .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
+            "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
+            doc.layout_warnings
+        );
+    }
+
+    /// Regression pin for a false positive found while implementing this
+    /// task: `width: 200%` nested `DEPTH`-ish levels deep is
+    /// **legitimate** CSS (each level is, by design, twice its parent — the
+    /// child's origin never moves off `(0, 0)`), yet an earlier version of
+    /// [`child_within_parent_border_box`] checked *extent*
+    /// (`location + size <= parent.size`) rather than just `location`, so it
+    /// flagged the transition depth where one level's saturated `size` first
+    /// exceeded its still-unsaturated parent's `size` — even though nothing
+    /// about the relationship (child = 2x parent) had changed, only the
+    /// absolute magnitude crossed [`MAX_TAFFY_MAGNITUDE`]. That cascaded
+    /// through [`zero_layout_subtree`] and silently collapsed most of a
+    /// legitimate deep chain to zero-size boxes.
+    ///
+    /// [`saturated_but_contained_layout_is_not_reset`] pins the same
+    /// gate-plus-containment conjunction on a minimal synthetic case; this
+    /// test pins it against the exact real-world shape that first
+    /// surfaced the bug, so a future edit that reintroduces an extent-based
+    /// check (or anything else that treats "child bigger than parent" as
+    /// evidence of corruption) fails loudly here rather than only in the
+    /// synthetic test.
+    #[test]
+    fn nested_percentage_wide_child_chain_is_not_reset() {
+        const DEPTH: usize = 45;
+        let layouts = nested_decl_layouts("width: 200%", DEPTH);
+        assert_eq!(layouts.len(), DEPTH);
+
+        let saturated_count = layouts
+            .iter()
+            .filter(|l| taffy_magnitude_is_saturated(l.size.width))
+            .count();
+        assert!(
+            saturated_count > 0,
+            "this test's premise (some depth saturates `size.width` in this \
+             sweep range) no longer holds — re-verify against \
+             MAX_TAFFY_MAGNITUDE's doc before trusting the rest of this \
+             test: {layouts:?}"
+        );
+        for (i, l) in layouts.iter().enumerate() {
+            assert_ne!(
+                *l,
+                TaffyLayout::with_order(l.order),
+                "nest depth {} was reset to a zero layout — a legitimate \
+                 \"child is 2x parent at every depth\" declaration must \
+                 survive `enforce_layout_invariants` even past the depth \
+                 where `size` saturates, since the child's `location` never \
+                 leaves the parent's border box: {l:?}",
+                i + 1
+            );
+        }
     }
 }
