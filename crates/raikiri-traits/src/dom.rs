@@ -313,7 +313,10 @@ pub enum QuirksMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StylesheetKind {
     /// User Agent origin (bundled minimal UA CSS 等)。cascade 内で最弱、
-    /// ただし `!important` の場合は最強 (CSS Cascading L4 §6.4.4 反転扱い)。
+    /// ただし `!important` の場合は最強 (CSS Cascading L4 §6.3 Importance
+    /// <https://www.w3.org/TR/css-cascade-4/#importance> による origin 順の
+    /// 反転。origin 自体の定義は §6.2
+    /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>)。
     UserAgent,
     /// Author origin (HTML `<style>` element、`<link rel=stylesheet>`、
     /// Consumer 提供の `extra_stylesheets` 等)。M1 では User origin を
