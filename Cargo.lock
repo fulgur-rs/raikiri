@@ -1753,6 +1753,7 @@ dependencies = [
  "parley",
  "raikiri-style",
  "raikiri-traits",
+ "rustix",
  "smol_str",
  "taffy",
  "tempfile",
