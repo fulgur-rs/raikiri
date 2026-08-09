@@ -6,6 +6,7 @@
 use cssparser::{Parser, ParserInput, StyleSheetParser};
 use selectors::parser::{ParseRelative, SelectorList};
 
+use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
 use crate::page::{PageRule, PageSelector, parse_page_prelude};
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -27,10 +28,14 @@ pub enum Origin {
 /// Unified rule tree。cascade + GCPM (M5+) が消費する index。
 ///
 /// M1.4 では `style_rules` を populate。raikiri-spike-rbo で `page_rules` を
-/// 追加 (parse のみ、cascade は M4 defer)。future field
-/// (font_face_rules / counter_style_rules / media_rules /
-///  supports_rules / import_rules) は M4+ で追加、`#[non_exhaustive]` の恩恵で
-/// 非破壊的に拡張可能。
+/// 追加 (parse のみ、cascade は M4 defer)。bd raikiri-spike-gce8 で
+/// `counter_styles` ([`CounterStyleRegistry`]) を追加 — `@counter-style`
+/// at-rule の registry 化のみで、`generate a counter` 算出
+/// ([`crate::counter_style::resolve_custom_counter`]) の呼び出しは consumer
+/// 側の責務のまま (bd raikiri-spike-cvxe が raikiri-traits 側の配線を担当)。
+/// future field (font_face_rules / media_rules / supports_rules /
+/// import_rules) は M4+ で追加、`#[non_exhaustive]` の恩恵で非破壊的に
+/// 拡張可能。
 #[non_exhaustive]
 pub struct RuleTree {
     /// Qualified style rules (`selectors { declarations }`)、source order 保持。
@@ -43,6 +48,30 @@ pub struct RuleTree {
     /// approved scope 外である。非対称の帰結は
     /// [`crate::rule::expand_shorthand_into`] doc が canonical。
     pub page_rules: Vec<PageRule>,
+    /// `@counter-style` at-rule の name → rule registry (bd raikiri-spike-gce8)。
+    ///
+    /// [`RuleTree::add_stylesheet`] が `Origin::Author` の `source` で呼ばれるたび、
+    /// 同じ文字列に対して [`crate::counter_style::parse_counter_style_rules`] を
+    /// 独立にもう一度走らせ、得られた各 [`crate::counter_style::CounterStyleRule`]
+    /// を [`CounterStyleRegistry::insert`] する。`Origin::UserAgent` の `source`
+    /// はこの field に一切寄与しない — origin を跨いだ「同名は後勝ち」が CSS
+    /// Counter Styles L3 §3 の "standard cascade rules" (origin が第一基準) と
+    /// ズレてしまうのを避けるための意図的な制限。詳細と理由は
+    /// [`RuleTree::add_stylesheet`] doc 参照。
+    ///
+    /// `CounterStyleRegistry` はこの crate が cascade origin/specificity を
+    /// field 単位で追跡しない前提で「同名は後勝ち」を実装している
+    /// ([`CounterStyleRegistry`] 型 doc 参照) — 上記の Author-only 制限の下では、
+    /// 呼び出し順 (= `build_rule_tree` の DOM walk では document order、複数
+    /// `add_stylesheet` 呼び出し間でも呼び出し順) がそのまま同一 origin 内の
+    /// source order となり、「後勝ち」が spec の cascade 順と一致する。
+    ///
+    /// `style_rules` 用の parser とは意図的に別 pass ([`counter_style`] module doc
+    /// の "What's implemented" 節が元々の設計意図として明記) — このフィールドを
+    /// 追加した bd raikiri-spike-gce8 は「同じ source 文字列を追加でもう一度
+    /// `counter_style` 側の entry point に渡す」配線のみを担い、2 つの parser を
+    /// 1 pass に融合する話ではない。
+    pub(crate) counter_styles: CounterStyleRegistry,
 }
 
 impl RuleTree {
@@ -71,11 +100,40 @@ impl RuleTree {
         &self.style_rules
     }
 
+    /// `@counter-style` registry への read-only accessor (bd raikiri-spike-gce8)。
+    ///
+    /// [`RuleTree::add_stylesheet`] が `Origin::Author` の `source` で呼ばれるたびに
+    /// populate される (`Origin::UserAgent` の `source` は寄与しない — field doc
+    /// 参照)。空の `RuleTree` ([`RuleTree::empty`]) では
+    /// [`CounterStyleRegistry::is_empty`] が `true`。`generate a counter` の実行
+    /// (`counter()`/`counters()` の値 resolve) はこの registry を読む consumer 側の
+    /// 責務 — [`crate::counter_style::resolve_custom_counter`] にこの registry から
+    /// [`CounterStyleRegistry::get`] した [`crate::counter_style::CounterStyleRule`]
+    /// を渡す配線は raikiri-traits 側 (bd raikiri-spike-cvxe) が担う。
+    ///
+    /// # `counter_styles` field 自体への到達不能性
+    ///
+    /// `style_rules`/[`RuleTree::style_rules`] (bd raikiri-spike-ejia) と同じ
+    /// pin — `counter_styles` field は `pub(crate)` で、external crate から
+    /// 届くのはこの accessor だけである。以下は field 名そのものが private で
+    /// あることの compile-fail pin — `pub` に戻れば compile が通るようになる:
+    ///
+    /// ```compile_fail
+    /// use raikiri_style::RuleTree;
+    ///
+    /// let tree = RuleTree::empty();
+    /// let _ = &tree.counter_styles;
+    /// ```
+    pub fn counter_styles(&self) -> &CounterStyleRegistry {
+        &self.counter_styles
+    }
+
     /// 空の RuleTree (0 rule)。
     pub fn empty() -> Self {
         Self {
             style_rules: Vec::new(),
             page_rules: Vec::new(),
+            counter_styles: CounterStyleRegistry::new(),
         }
     }
 
@@ -91,9 +149,28 @@ impl RuleTree {
     ///   §"cascade-origin" (<https://www.w3.org/TR/css-cascade-4/#cascade-origin>)
     /// - Invalid selector / 未サポート property は既存の silent-drop 挙動を
     ///   継承 (spec §M1.4a)
+    /// - `@counter-style` at-rule は `origin` が [`Origin::Author`] のときのみ、
+    ///   [`crate::counter_style::parse_counter_style_rules`] が同じ `source` に対して
+    ///   独立にもう一度 parse し、得られた各 rule を `counter_styles` へ挿入する
+    ///   (bd raikiri-spike-gce8)。`Origin::UserAgent` の `source` は
+    ///   `counter_styles` に一切寄与しない — 理由は次点。
+    ///
+    ///   CSS Counter Styles L3 §3 は同名 `@counter-style` の勝者決定を "according
+    ///   to standard cascade rules" (origin が第一基準、UA は常に他 origin に負ける)
+    ///   と規定するが、[`CounterStyleRegistry`] はどの origin から来たかを記録しない
+    ///   flat `HashMap` (型 doc 参照) — 複数 origin から挿入させると「呼び出し順が
+    ///   そのまま勝敗」になり、UA が後から挿入されれば Author を上書きしてしまう
+    ///   spec 違反になる。`Origin::Author` のみを通すことで、この 2-origin モデルの
+    ///   下で「呼び出し順 (=同一 origin 内の source order) が勝敗」が spec の
+    ///   "standard cascade rules" (origin 一致時は source order) と一致する状態を
+    ///   保つ。`Origin::UserAgent` 側の `@counter-style` (predefined counter style
+    ///   の override 等) は現状 `counter_styles` に反映されない既知の scope 外 —
+    ///   `CounterStyleRegistry` 自体に origin 追跡を持たせる、より大きな変更が
+    ///   要る。
     ///
     /// spec: raikiri-spike-m1.22 (m1.21 spec addition の実装)、
-    /// raikiri-spike-rbo (@page scaffolding)
+    /// raikiri-spike-rbo (@page scaffolding)、raikiri-spike-gce8 (counter_styles wiring,
+    /// Author-only — see above)
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
@@ -123,6 +200,11 @@ impl RuleTree {
                     });
                     page_order = page_order.wrapping_add(1);
                 }
+            }
+        }
+        if origin == Origin::Author {
+            for rule in parse_counter_style_rules(source) {
+                self.counter_styles.insert(rule);
             }
         }
     }
@@ -988,5 +1070,160 @@ mod tests {
             ps_single(None, vec![PagePseudo::First])
         );
         assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    // ── counter_styles wiring (bd raikiri-spike-gce8) ──
+
+    #[test]
+    fn empty_rule_tree_has_empty_counter_styles() {
+        assert!(RuleTree::empty().counter_styles().is_empty());
+    }
+
+    #[test]
+    fn add_stylesheet_populates_counter_styles() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
+            Origin::Author,
+        );
+        assert_eq!(tree.counter_styles().len(), 1);
+        let rule = tree
+            .counter_styles()
+            .get("thumbs")
+            .expect("thumbs registered");
+        assert_eq!(rule.symbols.len(), 1);
+    }
+
+    #[test]
+    fn add_stylesheet_invalid_counter_style_rule_is_dropped() {
+        // `system: cyclic` に symbols 0 個 — is_valid() が false になり drop
+        // される (counter_style.rs の同型 test と同じ shape)。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@counter-style foo { system: cyclic; }", Origin::Author);
+        assert!(tree.counter_styles().is_empty());
+    }
+
+    #[test]
+    fn add_stylesheet_counter_style_alongside_style_and_page_rules() {
+        // 1 回の add_stylesheet 呼び出しで 3 種の rule が同じ source から
+        // それぞれ populate されることを確認 — 独立 2nd pass であって
+        // style_rules/page_rules の収集を妨げない。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            r#"
+            @counter-style thumbs { system: cyclic; symbols: "*"; }
+            @page :first { color: red }
+            p { color: blue }
+            "#,
+            Origin::Author,
+        );
+        assert_eq!(tree.counter_styles().len(), 1);
+        assert_eq!(tree.page_rules.len(), 1);
+        assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn counter_styles_same_name_later_author_call_replaces_earlier_entirely() {
+        // CounterStyleRegistry::insert の型 doc が明記する「同名は atomically
+        // 後勝ち」を、複数 add_stylesheet(Origin::Author) 呼び出しをまたいで
+        // 確認する (page_source_order_monotonic_across_add_stylesheet_calls の
+        // counter-style 版)。両方 Author origin — 同一 origin 内での source
+        // order tie-break が CSS Counter Styles L3 §3 の "standard cascade
+        // rules" と一致する場合。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
+            Origin::Author,
+        );
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "+" "-"; }"#,
+            Origin::Author,
+        );
+        assert_eq!(tree.counter_styles().len(), 1);
+        let rule = tree
+            .counter_styles()
+            .get("thumbs")
+            .expect("thumbs registered");
+        assert_eq!(rule.symbols.len(), 2);
+    }
+
+    #[test]
+    fn add_stylesheet_useragent_origin_does_not_populate_counter_styles() {
+        // Origin::UserAgent 単独では counter_styles に一切寄与しない
+        // (add_stylesheet doc の Author-only 制限 — bd raikiri-spike-gce8)。
+        // style_rules 側が origin を問わず populate されることは既存の
+        // add_stylesheet_ua_and_author_populate_rule_tree が別途 pin 済み。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
+            Origin::UserAgent,
+        );
+        assert!(tree.counter_styles().is_empty());
+    }
+
+    #[test]
+    fn add_stylesheet_useragent_after_author_does_not_override_counter_styles() {
+        // CSS Counter Styles L3 §3: "only one wins, according to standard
+        // cascade rules" — origin が第一基準で UA は常に Author に負ける。
+        // Author を先に定義し、同名 @counter-style を UA 側で後から
+        // add_stylesheet しても、UA は counter_styles に一切寄与しないため
+        // Author の定義が生き残ることを確認する。CounterStyleRegistry 自体は
+        // origin を追跡しないため、これは呼び出し側 (add_stylesheet の
+        // Origin::Author ゲート) が保証する不変条件 — 「flat call-order
+        // last-wins だと UA が後から Author を上書きし得る」spec 違反の
+        // regression pin (bd raikiri-spike-gce8)。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
+            Origin::Author,
+        );
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "+" "-"; }"#,
+            Origin::UserAgent,
+        );
+        assert_eq!(tree.counter_styles().len(), 1);
+        let rule = tree
+            .counter_styles()
+            .get("thumbs")
+            .expect("thumbs registered");
+        // UA 側の 2-symbol 定義ではなく、Author 側の 1-symbol 定義のまま。
+        assert_eq!(rule.symbols.len(), 1);
+    }
+
+    #[test]
+    fn build_rule_tree_populates_counter_styles_from_dom_style_element() {
+        let doc = dom_with_style(
+            r#"@counter-style thumbs { system: cyclic; symbols: "*"; } p { color: red }"#,
+        );
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.counter_styles().len(), 1);
+        assert!(tree.counter_styles().get("thumbs").is_some());
+        // 同 source の style rule も引き続き populate される (2nd pass が既存
+        // walk を妨げないことの確認)。
+        assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn build_rule_tree_counter_styles_across_multiple_style_elements_last_wins() {
+        // 兄弟 <style> 2 個、同名 @counter-style — walk_and_collect の
+        // document order 呼び出しに従い、後の <style> の定義が勝つ。
+        let mut doc = TestDoc::new();
+        let s1 = doc.push_element(0, "style", None);
+        doc.push_text(
+            s1,
+            r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
+        );
+        let s2 = doc.push_element(0, "style", None);
+        doc.push_text(
+            s2,
+            r#"@counter-style thumbs { system: cyclic; symbols: "+" "-"; }"#,
+        );
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.counter_styles().len(), 1);
+        let rule = tree
+            .counter_styles()
+            .get("thumbs")
+            .expect("thumbs registered");
+        assert_eq!(rule.symbols.len(), 2);
     }
 }
