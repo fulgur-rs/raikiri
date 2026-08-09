@@ -49,21 +49,53 @@
 //!   (like every other parse failure in this crate) silently drops the
 //!   surrounding declaration.
 //!
-//! What's out of scope, beyond the two bullets above:
+//! What's out of scope, beyond the bullet above:
 //!
 //! - `speak-as` (not in the bd issue's descriptor list; see above).
-//! - Wiring this module into [`crate::ruletree::RuleTree`] /
-//!   [`crate::ruletree::build_rule_tree`] so DOM `<style>` text
-//!   automatically populates a [`CounterStyleRegistry`] alongside the
-//!   existing `style_rules` / `page_rules` walk. [`parse_counter_style_rules`]
-//!   and [`CounterStyleRegistry::from_source`] intentionally run their own
-//!   independent single-pass parse of the stylesheet text instead, so that
-//!   landing this module touches no shared, heavily-tested file
-//!   (`ruletree.rs`) — a deliberate scope-narrowing choice for this first
-//!   landing, not a spec gap. A follow-up can route the DOM-walk-collected
-//!   source strings ([`crate::ruletree::walk_style_elements`] already
-//!   collects them) through this module's entry point instead of
-//!   duplicating the walk.
+//!
+//! # RuleTree wiring (bd raikiri-spike-gce8)
+//!
+//! [`crate::ruletree::RuleTree`] now owns a `counter_styles`
+//! [`CounterStyleRegistry`], populated by
+//! [`crate::ruletree::RuleTree::add_stylesheet`] whenever it is called with
+//! [`crate::ruletree::Origin::Author`] — which covers both
+//! [`crate::ruletree::build_rule_tree`] (DOM `<style>` element walk, always
+//! Author) and `raikiri`'s umbrella `build_cascaded` (the actual production
+//! entry point, which calls `add_stylesheet` directly with a mix of origins
+//! rather than going through `build_rule_tree`). `add_stylesheet` runs
+//! [`parse_counter_style_rules`] as its own independent second pass over the
+//! same `source` string rather than folding `@counter-style` recognition
+//! into the existing `style_rules`/`page_rules` parser — the
+//! single-pass-per-concern split this module started with (see the "What's
+//! implemented" section above) is preserved; only the *caller* changed, not
+//! the parse strategy. Read the populated registry back via
+//! [`crate::ruletree::RuleTree::counter_styles`].
+//!
+//! `Origin::UserAgent` sources are deliberately excluded: [`CounterStyleRegistry`]
+//! doesn't track which origin a rule came from (see its type doc's "cascade
+//! atomically" quote), so letting both origins insert into the same flat map
+//! would make "last call wins" the tie-break — which, if a UA source happened
+//! to be added after an Author one, would contradict CSS Counter Styles L3
+//! §3's actual same-name-resolution rule ("only one wins, according to
+//! standard cascade rules" — origin-first, so Author always beats UserAgent
+//! regardless of call order). Restricting this wiring to `Origin::Author`
+//! keeps the registry's existing flat "last-inserted-name wins" behavior
+//! spec-correct for the two-origin model this crate has today, at the cost
+//! of not yet capturing UA-origin `@counter-style` rules (e.g. an override of
+//! a predefined counter style declared in UA CSS) — that would need
+//! [`CounterStyleRegistry`] itself to track origin, a larger change out of
+//! this issue's scope.
+//!
+//! This closes the "no production consumer" gap this module previously had
+//! for [`parse_counter_style_rules`] / [`CounterStyleRegistry`] (a registry
+//! now exists alongside every `RuleTree` built from Author stylesheets), but
+//! it is still one layer short of `counter()`/`counters()` actually
+//! resolving during layout/paint: routing a matched [`CounterStyleRegistry`]
+//! entry through [`resolve_custom_counter`] into
+//! `raikiri-traits::TargetRegistry`'s resolution flow remains bd
+//! raikiri-spike-cvxe's scope, unchanged by this issue (see the "Scope"
+//! section above) — [`resolve_custom_counter`] itself is still exercised by
+//! this module's own tests only.
 
 use std::collections::HashMap;
 
@@ -949,14 +981,22 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 ///
 /// CSS Counter Styles L3 §3 (anchor above) verbatim on same-name rules: "If
 /// multiple `@counter-style` rules are defined with the same name, only one
-/// wins … `@counter-style` rules cascade 'atomically': if one replaces
-/// another of the same name, it replaces it *entirely*, rather than just
-/// replacing the specific descriptors it specifies." [`Self::insert`]
-/// implements this as a plain `HashMap` overwrite (whole `CounterStyleRule`
-/// values are stored, never merged field-by-field) — this module doesn't
-/// track cascade origin/specificity, so "which one wins" here reduces to
-/// "the last one inserted", i.e. source order within a single
-/// [`parse_counter_style_rules`] call.
+/// wins, according to standard cascade rules. … `@counter-style` rules
+/// cascade 'atomically': if one replaces another of the same name, it
+/// replaces it *entirely*, rather than just replacing the specific
+/// descriptors it specifies." [`Self::insert`] implements the "atomically"
+/// half as a plain `HashMap` overwrite (whole `CounterStyleRule` values are
+/// stored, never merged field-by-field). This type does **not** implement
+/// the "standard cascade rules" (origin, then source order) half itself — it
+/// doesn't track which origin (or even which [`parse_counter_style_rules`]
+/// call) a stored rule came from, so "which one wins" here reduces to
+/// exactly "the last one [`Self::insert`]-ed", full stop. A caller that
+/// inserts from more than one cascade origin is responsible for only
+/// presenting this type with rules whose relative insertion order already
+/// matches "standard cascade rules" — see
+/// [`crate::ruletree::RuleTree::add_stylesheet`]'s doc for how the one
+/// production caller (`crate::ruletree`) satisfies that today by only
+/// feeding this registry `Origin::Author` rules.
 #[non_exhaustive]
 #[derive(Clone, Debug, Default)]
 pub struct CounterStyleRegistry {
