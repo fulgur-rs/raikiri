@@ -758,6 +758,73 @@ pub struct Border {
     pub color: BorderColor,
 }
 
+/// `#[non_exhaustive]` は crate 外からの struct-literal 構築を `E0639` で塞ぐ
+/// (bd raikiri-spike-eow8 が umbrella (`raikiri` crate) へ [`Border`]
+/// 自体を re-export した際に踏んだ制約 — その時点では埋め合わせの
+/// constructor が無く、型は名指しできても値を得る public な経路が無かった)。
+///
+/// `raikiri-traits::page::PageBox` / `PageDefaults` 等、本 workspace で
+/// `#[non_exhaustive]` かつ umbrella re-export 対象の struct が共通して使う
+/// 「zero-arg `new()` (= `Default::default()`) + 全 field `pub` による
+/// mutation」の 2-pattern 構築契約 (`crates/raikiri/tests/external_consumer.rs`
+/// の M1.15 "3 pattern" acceptance criteria の pattern 1 + pattern 2) を
+/// [`Border`] にも適用する。3 field のみの単純な値なので builder
+/// (pattern 3) は他の類似 struct (`PageBox` / `PageContext` 等) と同様に
+/// 見送り — 複数 setter を持つ多 field config struct 向けの pattern であり、
+/// このためだけの builder は無駄な surface になる。
+///
+/// (bd raikiri-spike-x0dq)
+impl Border {
+    /// CSS Backgrounds 3 の初期値
+    /// (`width` = medium = 3px §3.3 / `style` = `none` §3.2 / `color` = `currentcolor` §3.1)
+    /// を持つ `Border` を返す zero-arg constructor。`Self::default()` の thin
+    /// wrapper — `raikiri_traits::page::PageBox::new` と同じ shape。
+    ///
+    /// 全 field が `pub` なので、initial 以外の値が要る呼び手は
+    /// `let mut b = Border::new(); b.width = Length::Px(5.0);` の mutation
+    /// pattern で組み立てる (`external_consumer_can_mutate_pub_fields_via_default_shorthand`
+    /// が umbrella 経由でこの経路を pin する)。
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for Border {
+    /// CSS Backgrounds 3 initial value。[`crate::specified::INITIAL_BORDER`]
+    /// (cascade の internal fast-path 用 `pub(crate) const`) と同じ値を保つ —
+    /// 単体テスト `border_default_matches_initial_border`
+    /// ([`crate::specified::INITIAL_BORDER`] と `assert_eq!` で突き合わせ) が
+    /// drift を検知する。2 つを 1 本化しない理由: `INITIAL_BORDER` は `const`
+    /// (cascade hot path で使う compile-time 値) だが、trait method
+    /// (`Default::default`) は stable Rust では `const fn` にできないため。
+    ///
+    /// # sibling [`BorderStyle`] / [`BorderColor`] の "Default は derive しない"
+    /// 注記との関係
+    ///
+    /// [`BorderStyle`] の doc は「`Default` は derive しない — 本 crate の
+    /// convention は "derive `Default` iff `.default()` が call される"」と
+    /// 述べている。これは **`#[derive(Default)]`** (呼ばれない Default を
+    /// タダだから足す) の話であり、本 impl はそれとは逆で「呼ばれるから
+    /// 手書きで足す」— 内部からは [`Border::new`]、外部からは umbrella
+    /// (`raikiri` crate) の pattern-1/pattern-2 construction pin
+    /// (`external_consumer_can_construct_all_non_exhaustive_types` /
+    /// `external_consumer_can_mutate_pub_fields_via_default_shorthand`) が
+    /// 実際に呼ぶ。手書き `impl Default` を `#[non_exhaustive]` struct に
+    /// 足す in-crate precedent は `counter_style.rs` の
+    /// [`NegativeDescriptor`](crate::counter_style::NegativeDescriptor) /
+    /// [`PadDescriptor`](crate::counter_style::PadDescriptor) (どちらも
+    /// hand-written `impl Default`、derive ではない) — 同じ判断基準
+    /// (「呼ばれるかどうか」) の適用であり、本 impl はその convention への
+    /// 違反ではなくむしろ一致 (bd raikiri-spike-x0dq)。
+    fn default() -> Self {
+        Self {
+            width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
+            style: BorderStyle::None,
+            color: BorderColor::CurrentColor,
+        }
+    }
+}
+
 /// `font-weight` property の **specified** value。
 ///
 /// CSS Fonts 4 §2.2 "Font weight: the font-weight property"
@@ -8675,6 +8742,40 @@ mod tests {
             crate::specified::INITIAL_BORDER.width,
             Length::Px(BORDER_WIDTH_MEDIUM_PX)
         );
+    }
+
+    #[test]
+    fn border_default_matches_initial_border() {
+        // bd raikiri-spike-x0dq: `Border::default()` (public, umbrella-facing
+        // constructor) and `crate::specified::INITIAL_BORDER` (`pub(crate)`,
+        // cascade-internal fast path) encode the same CSS Backgrounds 3
+        // initial value. Precision on what this actually catches (the sibling
+        // test just above, `border_width_medium_is_consistent_across_its_independent_call_sites`,
+        // warns explicitly against a "vacuous pin" of this shape):
+        //
+        // - `style` / `color`: each side hardcodes `BorderStyle::None` /
+        //   `BorderColor::CurrentColor` independently (no shared constant), so
+        //   this assert is a real independent-literal drift check for those 2
+        //   fields — same rationale as the sibling test.
+        // - `width`: both sides already read `BORDER_WIDTH_MEDIUM_PX` (this
+        //   fn's own body and `INITIAL_BORDER`'s definition), so an edit to
+        //   that const moves both sides together and this assert alone would
+        //   NOT catch it — that drift is what the sibling test's real,
+        //   behavior-driven exercise of the const (plus
+        //   `border_top_width_parse_medium_keyword`'s absolute-value literal
+        //   pin) already covers. This test's width leg is a
+        //   both-must-reference-the-same-const structural check, not an
+        //   independent value pin — do not treat it as one.
+        assert_eq!(Border::default(), crate::specified::INITIAL_BORDER);
+    }
+
+    #[test]
+    fn border_new_is_default() {
+        // bd raikiri-spike-x0dq: `Border::new()` is documented as a thin
+        // `Self::default()` wrapper (same shape as
+        // `raikiri_traits::page::PageBox::new`) — pin that the two stay
+        // equivalent.
+        assert_eq!(Border::new(), Border::default());
     }
 
     #[test]

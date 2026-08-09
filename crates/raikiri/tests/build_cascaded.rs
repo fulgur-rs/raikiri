@@ -223,7 +223,10 @@ fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
     // `PropertyValue::FontSize(Length::Px(12.0))` で入れた「実際に construct
     // して確認する」形と同じ shape を、直接 construct できる 3 variant
     // (Padding/Margin/LineHeight) には踏襲する。
-    use raikiri::{Border, Length, LengthOrAuto, LineHeight, PropertyValue, Sides};
+    use raikiri::{
+        Border, BorderColor, BorderStyle, CssColor, Length, LengthOrAuto, LineHeight,
+        PropertyValue, Sides,
+    };
 
     // `Padding(Sides<Length>)` — `Sides<T>` / `Length` はどちらも re-export 済みで
     // struct-literal 制約なく直接 construct できる。
@@ -237,13 +240,33 @@ fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
     // 既存 variant の construct 自体は (`Length` 同様) 外部 crate から可能。
     let _specified_line_height: PropertyValue = PropertyValue::LineHeight(LineHeight::Normal);
 
-    // `Border(Sides<Border>)` — `Border` は struct 自体が `#[non_exhaustive]` の
-    // ため、raikiri crate から `Border { .. }` struct-literal 構築は
-    // コンパイルエラーになる (E0639、struct-literal 経路は raikiri-style crate
-    // 内に限定される)。FontSize 同様の値 construct はできないので、tuple-variant
-    // constructor を fn pointer に coerce する形で `Sides<Border>` payload 型を
-    // 名指しする — `Border` 値そのものは要らず、型のみを pin できる。
-    let _border_ctor: fn(Sides<Border>) -> PropertyValue = PropertyValue::Border;
+    // `Border(Sides<Border>)` — bd raikiri-spike-x0dq より前は `Border` struct
+    // 自体が `#[non_exhaustive]` のため raikiri crate から `Border { .. }`
+    // struct-literal 構築ができず (E0639)、tuple-variant constructor を fn
+    // pointer に coerce する形で型だけ pin していた (値そのものは作れなかった)。
+    // x0dq で `Border::new()` (= `Self::default()`) を追加したので、
+    // FontSize/Padding/Margin/LineHeight と同じ「実際に値を construct する」
+    // 形に揃える。全 field が `pub` なので `Border::new()` の後に non-initial
+    // 値へ mutation することも確認する (`BorderStyle` / `BorderColor` も
+    // x0dq で umbrella re-export に追加、その2型も型付きで construct できる
+    // ことを合わせて pin する)。
+    let mut border = Border::new();
+    assert_eq!(
+        border.width,
+        Length::Px(3.0),
+        "Border::new() は CSS 初期値 (medium=3px)"
+    );
+    assert_eq!(border.style, BorderStyle::None);
+    assert_eq!(border.color, BorderColor::CurrentColor);
+    border.width = Length::Px(2.0);
+    border.style = BorderStyle::Solid;
+    border.color = BorderColor::Resolved(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    let _specified_border: PropertyValue = PropertyValue::Border(Sides::all(border));
 }
 
 #[test]

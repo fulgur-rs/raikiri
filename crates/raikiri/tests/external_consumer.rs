@@ -101,11 +101,12 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
 /// 対象は umbrella `raikiri` から re-export される全 `#[non_exhaustive]` pub
 /// struct with `impl Default` (下記 new()-pin test と同じ coverage set)。
 ///
-/// 対象外 (意図的): `raikiri_style::property::Border` (bd raikiri-spike-eow8
-/// で re-export 追加) は `impl Default` を持たないため対象外 — `Default`
-/// どころか `new()` も public constructor も一切無く、struct-literal も
-/// E0639 で塞がれている (raikiri crate から `Border` 値を得る経路が現状無い)。
-/// follow-up: bd raikiri-spike-x0dq。
+/// `raikiri_style::property::Border` (bd raikiri-spike-eow8 で re-export 追加)
+/// は当初 `impl Default` を持たず対象外だった — `Default` どころか `new()`
+/// も public constructor も一切無く、struct-literal も E0639 で塞がれていた
+/// (raikiri crate から `Border` 値を得る経路が無かった)。bd raikiri-spike-x0dq
+/// で `impl Default for Border` + `Border::new()` を追加し、この gap を
+/// 埋めた — 下記 coverage に合流させる。
 #[test]
 fn external_consumer_can_construct_all_non_exhaustive_types() {
     // struct via Default — configs
@@ -124,6 +125,11 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
     let _ = TargetRegistry::default();
     let _ = RunningTemplate::default();
     let _ = FormData::default();
+
+    // struct via Default — raikiri-style value 型 (bd raikiri-spike-x0dq)。
+    // CSS Backgrounds 3 initial value (width=medium(3px)/style=none/
+    // color=currentcolor) を返す。
+    let _ = Border::default();
 
     // struct via Default — plan mode / resolver / strategy placeholder shape。
     // これらは M4+ で populate 予定だが Default 契約は今から crate 外に露出。
@@ -234,10 +240,11 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
 /// - `HtmlDocument` は private field で opaque、`parse_html` 経由でのみ construct
 /// - `ResolvedIntrinsic` は `#[non_exhaustive]` でないため construction 契約が
 ///   `struct literal` 経由で crate 外から直接可能、この test の対象外
-/// - `raikiri_style::property::Border` (bd raikiri-spike-eow8 で re-export
-///   追加) は `new()` を持たない。`Default` も struct-literal (E0639) も
-///   無いため、raikiri crate から `Border` 値を得る経路が現状存在しない
-///   (follow-up: bd raikiri-spike-x0dq)。
+///
+/// `raikiri_style::property::Border` (bd raikiri-spike-eow8 で re-export
+/// 追加) は当初 `new()` を持たず対象外だった (`Default` も struct-literal
+/// (E0639) も無かった)。bd raikiri-spike-x0dq で `Border::new()`
+/// (= `Self::default()`) を追加し、下記 coverage に合流させた。
 #[test]
 fn external_consumer_can_use_new_constructor_on_all_types() {
     // paged model (raikiri-traits::page)
@@ -257,6 +264,9 @@ fn external_consumer_can_use_new_constructor_on_all_types() {
     let _ = LookaheadConfig::new();
     let _ = RenderLimits::new();
 
+    // raikiri-style value 型 (bd raikiri-spike-x0dq)
+    let _ = Border::new();
+
     // plan-mode types (raikiri-traits::plan)
     let _ = TargetDefinition::new();
 
@@ -274,9 +284,9 @@ fn external_consumer_can_use_new_constructor_on_all_types() {
 ///
 /// `#[non_exhaustive]` 下でも pub field は crate 外から代入可能な状態を保つ
 /// 必要がある。この test は `LookaheadConfig`, `RenderLimits`, `PageDefaults`,
-/// `PageBox`, `PlanConfig`, `StreamingConfig`, `BatchConfig` の各 pub field
-/// に対し `c.field = value` が compile することで、Consumer の runtime tuning
-/// 経路を pin する。
+/// `PageBox`, `PlanConfig`, `StreamingConfig`, `BatchConfig`, `Border` の各 pub
+/// field に対し `c.field = value` が compile することで、Consumer の runtime
+/// tuning 経路を pin する。
 #[test]
 fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     // spec §L705-706 の canonical mutation example そのまま。
@@ -302,6 +312,20 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
 
     let mut page_defaults = PageDefaults::default();
     page_defaults.page_box = PageBox::US_LETTER;
+
+    // raikiri-style value 型 (bd raikiri-spike-x0dq) — 全 3 field (width /
+    // style / color) への直接代入を pin する。`style` / `color` の型
+    // (`BorderStyle` / `BorderColor`) も umbrella re-export に x0dq で追加
+    // されたので、ここで型付きに構築できることも合わせて確認する。
+    let mut border = Border::default();
+    border.width = Length::Px(2.0);
+    border.style = BorderStyle::Dashed;
+    border.color = BorderColor::Resolved(CssColor {
+        r: 0,
+        g: 128,
+        b: 255,
+        a: 255,
+    });
 
     // Nested config (§4 "対象 struct" list) — inner struct の swap も pin。
     // `initial_registry` は明示的に `Option<TargetRegistry>` に対する
@@ -331,6 +355,7 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
         page_defaults,
         page_box,
         lookahead,
+        border,
     );
 }
 

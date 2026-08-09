@@ -187,27 +187,61 @@ pub use raikiri_dom::Document;
 //   crate root では re-export されておらず `raikiri_style::property::Border`
 //   経由でのみ public なため、下の一括 `pub use` block には含めず、直後の別
 //   `pub use` 文でその path から明示 import する (`LineHeight` も同じ理由で同居)。
-//   また `Border` 自体が `#[non_exhaustive]` struct なので raikiri crate から
-//   struct-literal 構築はできない (E0639)。保持/生成の public な経路は現状
-//   存在しない — `Sides::all` は既存の `Border` 値を 4 面に複製するだけで、
-//   その入力自体 (`Border` 値そのもの) を得る手段ではない。
 //
-// `Border` は `width: Length` field のみ Consumer が型付きに読める。
-// `style: BorderStyle` / `color: BorderColor` (どちらも `raikiri_style::property`
-// では public、`raikiri_style::property::Border` と同じ経路で到達可能) は本
-// task の approved scope (eow8 PMO 承認は Sides/LengthOrAuto/LineHeight/Border
-// の 4 型に限定) 外のため未 re-export — 追加するには別の wall/umbrella add
-// 方向 escalation が要る。follow-up: bd raikiri-spike-x0dq (`Border` 自体、
-// shorthand 展開により実 CSS からは値が得られない事情も含めて記録)。
+// **bd raikiri-spike-x0dq (2026-08-09 PMO 承認、wall/umbrella + wall/style)**:
+// 上の eow8 時点の記述には 2 つの gap があった。(1) `Border` 自体が
+// `#[non_exhaustive]` struct のため raikiri crate から struct-literal 構築が
+// できず (E0639)、再 export しても値を得る public な経路が無かった —
+// `Sides::all` は既存の `Border` 値を 4 面に複製するだけで、その入力自体
+// (`Border` 値そのもの) を得る手段ではなかった。(2) `style: BorderStyle` /
+// `color: BorderColor` (`Border` の残り 2 field の型) が re-export されて
+// おらず、Consumer が `Border::width` 以外の field を型付きで読めなかった。
+//
+// x0dq は両方を埋めた:
+//
+// - `raikiri_style::property::Border` に `pub fn new() -> Self`
+//   (= `Self::default()` の thin wrapper) + `impl Default for Border`
+//   (CSS Backgrounds 3 初期値: `width` = medium(3px) / `style` = `none` /
+//   `color` = `currentcolor`) を追加。`raikiri_traits::page::PageBox::new`
+//   と同じ「zero-arg `new()` + 全 field `pub` による mutation」の 2-pattern
+//   契約 (`crates/raikiri/tests/external_consumer.rs` の M1.15 "3 pattern"
+//   acceptance criteria の pattern 1 + pattern 2) — 3 field のみの単純な値
+//   なので pattern 3 (builder) は他の類似 struct 同様見送り。これで
+//   `raikiri::Border::new()` (+ 必要なら pub field への直接代入) が
+//   umbrella 経由の public な value-acquisition path になった。
+// - `BorderStyle` / `BorderColor` を re-export に追加 (下記)。どちらも
+//   `#[non_exhaustive]` enum だが、struct とは違い既存 variant の直接
+//   construct は enum では E0639 の対象外 (`LineHeight` enum と同じ扱い、
+//   上の該当箇所参照) — 追加 constructor は不要で re-export のみで足りる。
+//
+// **shorthand 展開についての残る注記**: `border` shorthand は parse 時に
+// 必ず 12 longhand (4 side × 3 sub-property) へ展開される
+// (`crate::rule::expand_border`)。この展開は `crate::rule::expand_shorthand_into`
+// (parse 出口 `parse_declaration_block` と `@page` cascade 入口の両方から
+// 呼ばれる、`crates/raikiri-style/src/page.rs` の
+// `absolutize_in_page_context_shorthand_fall_throughs` doc が明記) で行われる
+// ため、**DOM cascade (`RuleTree::style_rules()...declarations()`) と `@page`
+// cascade (`raikiri_style::page::cascade_page` / `PageCascadeResult`、
+// どちらも umbrella は re-export していない) の両方**で
+// `PropertyValue::Border(Sides<Border>)` を保持した `Declaration` は観測されず、
+// 観測されるのは展開後の `PropertyValue::BorderTopWidth(Length)` /
+// `BorderTopStyle(BorderStyle)` / `BorderTopColor(BorderColor)` 等の per-side
+// longhand である (`Border` 型は fields としては全部揃うが、実 declaration が
+// その形で出てくる経路は現状無い)。`Border::new()` が閉じるのはそれとは別の
+// gap — 「型は名指しできるが値を一切構築できない」という construction-path
+// gap であり、shorthand 展開の挙動そのものは変えていない。
 pub use raikiri_style::{
     Atom, CascadeResult, ComputedBorder, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues, CssColor, DisplayValue,
     Length, LengthOrAuto, Origin, PropertyValue, RuleTree, Sides,
 };
-// `Border` / `LineHeight` は raikiri-style crate root では re-export されておらず
-// (`raikiri_style::property::{Border, LineHeight}` 経由でのみ public)、上の一括
-// block には含められない (理由は上のコメント参照)。
-pub use raikiri_style::property::{Border, LineHeight};
+// `Border` / `BorderColor` / `BorderStyle` / `LineHeight` は raikiri-style
+// crate root では re-export されておらず
+// (`raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight}`
+// 経由でのみ public)、上の一括 block には含められない (理由は上のコメント
+// 参照)。`BorderColor` / `BorderStyle` は bd raikiri-spike-x0dq で追加
+// (`Border` の残り 2 field の型を Consumer に型付きで公開する)。
+pub use raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight};
 
 // ── url: `ParseOptions.base_url: Option<Url>` の実体型 ─────────────────
 pub use url::Url;
