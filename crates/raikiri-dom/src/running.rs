@@ -70,7 +70,11 @@
 //! Keying by the element's `NodeId` (the subtree root, unique in the arena)
 //! preserves the pool; a sibling `name_pool` index maps each name to its
 //! ordered list of ids. The per-page selector-keyword filter stays on the
-//! PageStream / paint driver side (bd raikiri-spike-96u.4 territory).
+//! PageStream / paint driver side — a later, separate wall/dom-paint task
+//! (see `MarginBoxGeometry` / `layout_running_template` below for the
+//! dom-internal boundary that task will consume). Deliberately left without
+//! a bd id here — see bd raikiri-spike-e81n's Non-goals section for why this
+//! stays out of that task's scope.
 //!
 //! **`CascadeSubset` local definition** — the design doc names
 //! `computed_styles: Arc<CascadeSubset>` but no such type exists in the
@@ -99,7 +103,7 @@
 //!
 //! **Registration order == document order** — the store assumes the caller
 //! invokes [`RunningTemplateStore::register`] in DOM tree order. The
-//! register-site walker landing with bd raikiri-spike-96u.4 will walk the
+//! register-site walker landing with bd raikiri-spike-e81n will walk the
 //! arena in document order, so this assumption holds automatically; if it is
 //! ever violated, per-page pool selection (any selector-keyword variant)
 //! would emit the wrong element and visible layout would drift. Regression
@@ -147,7 +151,7 @@ use raikiri_traits::{GcpmDirective, NodeId, RunningTemplateId, Symbol};
 #[allow(
     dead_code,
     reason = "Populated by the register-site walker landing with bd \
-              raikiri-spike-96u.4 (M6 directive-apply pass); exercised via \
+              raikiri-spike-e81n (M6 directive-apply pass); exercised via \
               unit tests until then."
 )]
 pub(crate) struct CascadeSubset {
@@ -230,13 +234,13 @@ impl DynamicFlags {
 /// through raikiri-spike-96u.3; the variant populate landed with
 /// raikiri-spike-96u.4 (canonical 6-variant shape per design doc §7.1
 /// line 1913-1920). The field remains an empty `Vec` by default; the
-/// register-site walker (later 96u-series task) will emit
+/// register-site walker (bd raikiri-spike-e81n) will emit
 /// `CounterIncrement` / `CounterReset` / `CounterSet` / `StringSet` /
 /// `RegisterRunning` / `RegisterTarget` records under each subtree.
 #[derive(Debug)]
 #[allow(
     dead_code,
-    reason = "Populated by the register-site walker (bd raikiri-spike-96u.4); \
+    reason = "Populated by the register-site walker (bd raikiri-spike-e81n); \
               exercised via unit tests until then."
 )]
 pub(crate) struct ParsedRunningTemplate {
@@ -251,7 +255,7 @@ pub(crate) struct ParsedRunningTemplate {
     /// GCPM directives that live inside the template subtree
     /// (`counter-increment`, `counter-reset`, `counter-set`, `string-set`,
     /// nested `running()` seeds if the spec/impl allows). Populated by the
-    /// register-site walker (later 96u-series task); empty by default (see
+    /// register-site walker (bd raikiri-spike-e81n); empty by default (see
     /// type-level `directives` field note).
     pub(crate) directives: Vec<GcpmDirective>,
     /// Which dynamic axes this template exercises (see [`DynamicFlags`]).
@@ -274,8 +278,9 @@ pub(crate) struct ParsedRunningTemplate {
 /// (document) order**. Per-page selection — applying the
 /// `element(<name>, [first|start|last|first-except]?)` selector keyword per
 /// CSS GCPM 3 §1.2.2 (<https://www.w3.org/TR/css-gcpm-3/#element-syntax>) —
-/// is a PageStream concern (bd raikiri-spike-96u.4); this store hands the
-/// full ordered pool over and lets the caller filter. See the module-level
+/// is a PageStream concern — a later, separate wall/dom-paint task; this
+/// store hands the full ordered pool over and lets the caller filter. See
+/// the module-level
 /// "`RunningTemplateId` = subtree_root" note for the shape justification.
 ///
 /// See the module-level "Divergence from canonical shape" note for the
@@ -284,8 +289,9 @@ pub(crate) struct ParsedRunningTemplate {
 #[allow(
     dead_code,
     reason = "Producer path (register at cascade time) + consumer path \
-              (element(name) resolve + per-page layout) both land with bd \
-              raikiri-spike-96u.4; exercised via unit tests until then."
+              (element(name) resolve via resolve_element_pool/get) both land \
+              with bd raikiri-spike-e81n; per-page layout is separate, see \
+              layout_running_template. Exercised via unit tests until then."
 )]
 pub(crate) struct RunningTemplateStore {
     /// Per-element unique-id → parsed template (design canonical shape:
@@ -324,7 +330,7 @@ impl RunningTemplateStore {
     ///
     /// **Caller invariant — document-order registration.** The store assumes
     /// the caller invokes `register` in document order (the register-site
-    /// walker landing with bd raikiri-spike-96u.4 walks the arena in
+    /// walker landing with bd raikiri-spike-e81n walks the arena in
     /// document order, so this holds automatically). If violated, per-page
     /// pool selection emits the wrong element.
     ///
@@ -343,7 +349,7 @@ impl RunningTemplateStore {
     ///   element), but the transfer keeps the store self-consistent under
     ///   repeated cascade or an unforeseen recursive walker. Regression pin:
     ///   `re_register_same_id_under_different_name_transfers_pool_entry`.
-    #[allow(dead_code, reason = "Producer path lands with bd raikiri-spike-96u.4.")]
+    #[allow(dead_code, reason = "Producer path lands with bd raikiri-spike-e81n.")]
     pub(crate) fn register(
         &mut self,
         name: Symbol,
@@ -399,7 +405,7 @@ impl RunningTemplateStore {
     /// empty-string fallback).
     #[allow(
         dead_code,
-        reason = "Consumer path lands with bd raikiri-spike-96u.4 (M6 \
+        reason = "Consumer path lands with bd raikiri-spike-e81n (M6 \
                   directive-apply pass); exercised via unit tests until then."
     )]
     pub(crate) fn resolve_element_pool(&self, name: &Symbol) -> &[RunningTemplateId] {
@@ -408,7 +414,7 @@ impl RunningTemplateStore {
 
     /// Fetch the parsed template for an id (typically an id drawn from
     /// [`Self::resolve_element_pool`]).
-    #[allow(dead_code, reason = "Consumer path lands with bd raikiri-spike-96u.4.")]
+    #[allow(dead_code, reason = "Consumer path lands with bd raikiri-spike-e81n.")]
     pub(crate) fn get(&self, id: RunningTemplateId) -> Option<&ParsedRunningTemplate> {
         self.parsed_templates.get(&id)
     }
@@ -478,7 +484,7 @@ impl RunningTemplateStore {
 #[allow(
     dead_code,
     reason = "Producer path is the register-site walker (bd \
-              raikiri-spike-96u.4); exercised via unit tests until then."
+              raikiri-spike-e81n); exercised via unit tests until then."
 )]
 pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags {
     // Fold into local booleans and build the struct at the end — avoids the
@@ -620,8 +626,8 @@ pub(crate) struct MarginBoxLayoutResult {
 /// integration.
 #[allow(
     dead_code,
-    reason = "Called from the per-page driver landing with bd \
-              raikiri-spike-96u.4 / paint integration."
+    reason = "Called from the per-page driver landing with the paint \
+              integration (a later, separate wall/dom-paint task)."
 )]
 pub(crate) fn layout_running_template(
     template_id: RunningTemplateId,
@@ -815,7 +821,7 @@ mod tests {
     #[test]
     fn pool_preserves_registration_order() {
         // Explicit regression pin: the register-site walker (bd
-        // raikiri-spike-96u.4) is expected to call register in document
+        // raikiri-spike-e81n) is expected to call register in document
         // order, and the pool must faithfully preserve that order — CSS
         // GCPM 3 §1.2.2 selector-keyword semantics (first/start/last/
         // first-except) all filter over an ordered pool. If a future
