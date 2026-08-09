@@ -45,8 +45,11 @@ pub struct RuleTree {
     /// derivation と margin-box slot layout は M4 defer。
     ///
     /// `style_rules` と違い `pub` のまま — 意図的で、bd raikiri-spike-qzn3 の
-    /// approved scope 外である。非対称の帰結は
-    /// [`crate::rule::expand_shorthand_into`] doc が canonical。
+    /// approved scope 外である。非対称の帰結の canonical な記述 (docs.rs から
+    /// 到達可能) は [`crate::page::PageRule::declarations`] の doc の
+    /// 「Why this field ... is still `pub`」節にある (bd raikiri-spike-ykee)。
+    /// 旧 pointer 先だった [`crate::rule::expand_shorthand_into`] は
+    /// `pub(crate)` で docs.rs に出ないため dead end だった。
     pub page_rules: Vec<PageRule>,
     /// `@counter-style` at-rule の name → rule registry (bd raikiri-spike-gce8)。
     ///

@@ -270,6 +270,12 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///   破れると 3 の経路は crate 外から再び開く** — `Declaration` に公開 ctor を
 ///   足す変更は本節を再導出してから行うこと。
 ///
+/// docs.rs 読者向けの summary (本節の結論だけを抜いたもの) は
+/// [`crate::page::PageRule::declarations`] の doc の「Why this field ... is
+/// still `pub`」節にある (bd raikiri-spike-ykee)。本関数は `pub(crate)` なので
+/// この doc 自体は docs.rs に出ない — 全 3 call site を跨ぐ完全な導出はここが
+/// canonical のまま。
+///
 /// ⚠️ **2 と 3 で破れ方が違う**。2 (element) の winner は
 /// [`crate::specified::SpecifiedValues`] の longhand と同じ field に畳まれるので
 /// shorthand が**誤って後勝ちする**。3 (`@page`) の出力は
