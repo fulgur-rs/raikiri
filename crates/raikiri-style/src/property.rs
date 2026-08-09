@@ -1699,9 +1699,16 @@ pub enum PositionValue {
 /// property name → variant mapping は `parse_value` 参照)。
 ///
 /// 認識できない property (例: `float` — 現行 milestone subset 外) や
-/// invalid value (例: `font-size: math` — MathML scaling algorithm 未実装
-/// (bd raikiri-spike-0vv.18) / `margin-top: 1cm` — `cm` unit 未対応) は
-/// parser 段で `None` に落として rule から silently 除外される。
+/// invalid value (例: `font-size: math` — MathML scaling algorithm 未実装、
+/// bd raikiri-spike-0vv.18) は parser 段で `None` に落として rule から
+/// silently 除外される。
+///
+/// unit 側の「現在何が未対応か」は本節では例示しない — 具体例を挙げると
+/// その unit が受理側へ移った時点で本節だけが取り残される (bd
+/// raikiri-spike-hif0 実測: `cm` の例がこの経路で 1 度 drift した)。
+/// canonical は [`parse_length_value`] の `Token::Dimension` match arm
+/// (`_` arm 直前 comment) と `parse_length_value_rejects_unsupported_unit`
+/// test。
 ///
 /// **box property は「認識できない」側ではない** — `margin` / `padding` /
 /// `border-*` / `width` / `height` はいずれも認識対象で、下記に variant を持つ
@@ -2747,14 +2754,20 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 ///
 /// # Mode selector
 ///
-/// `allow_percentage` で受理集合を分岐:
-/// - `false` → `<length>` mode: dimension unit のみ受理 (`px` / `em` / `rem` / `pt`)。
-/// - `true` → `<length-percentage>` mode: 上記 4 unit + `%` token を受理。
+/// `allow_percentage` は `%` (`Token::Percentage`) token の受理有無のみを
+/// 分岐する — dimension unit (`px` 等) の受理集合は分岐に依存しない (下の
+/// `Token::Dimension` match arm 参照、両 mode で同一集合を受理する)。
+/// - `false` → `<length>` mode: `%` を受理しない。
+/// - `true` → `<length-percentage>` mode: `%` も受理する。
 ///
-/// 未対応 unit (`vw` / `vh` / `ch` / `ex` / `cm` / `mm` / `in` / `pc` / `Q` /
-/// `cap` / `rcap` / `ic` / `ric` / `lh` / `rlh`) は spec-valid だが本 milestone
-/// scope 外 (g04 category (b) milestone subset、defer 先 Sprint 13+ style backlog、
-/// 未起票 — Epic 1 planner 判定)。
+/// **受理 / 未対応 unit の一覧は本節では列挙しない** — 下の
+/// `Token::Dimension` match arm (module doc 冒頭の「該 arm を single source
+/// of truth として扱う」と同じ convention、`_` arm 直前 comment が未対応側の
+/// 代表例を持つ) と `parse_length_value_rejects_unsupported_unit` test が
+/// canonical。**ここに一覧を書き足す運用は受理 unit が増えるたびに drift
+/// した** (bd raikiri-spike-hif0 実測: `cm` を筆頭に、`ch` / `ex` / `ic` /
+/// `mm` / `in` / `pc` / `Q` / `lh` / `rlh` の一括拡張のたびに本節の一覧全体が
+/// stale 化していた)。
 ///
 /// # Unitless zero
 ///
@@ -2861,6 +2874,15 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             // では正しく resolve できない (viewport size / font ascent が
             // style 層に存在しない) ため follow-up bd issue へ spinout 済
             // (bd raikiri-spike-wnpb、raikiri-spike-2x8 discovered-from)。
+            //
+            // この arm はそれ以外の全 unrecognized unit (例:
+            // container-query unit `cqw`/`cqh`/`cqi`/`cqb`/`cqmin`/`cqmax` —
+            // CSS Contain 3 §6 <https://www.w3.org/TR/css-contain-3/#container-lengths>、
+            // container size も viewport size 同様 style 層に存在しない)
+            // も等しく drop する。**個別に bd issue 化
+            // 済とは限らない** — 本 comment が「未対応 unit の一覧」の
+            // canonical source になった以上 (bd raikiri-spike-hif0)、
+            // 明示的な spinout の有無をこの一覧に混同しないこと。
             _ => None,
         },
         Token::Percentage { unit_value, .. } if allow_percentage => {
@@ -6858,6 +6880,12 @@ mod tests {
         // (下記 `parse_length_value_accepts_lh` / `_rlh` を参照)。
         assert_eq!(parse_length("10vw", false), None);
         assert_eq!(parse_length("1cap", true), None);
+        // container-query unit (CSS Contain 3 §6) — `_` arm 直前 comment が
+        // 挙げる `cq*` 一覧をこの assertion で pin する。comment のみで
+        // test 未網羅だと、将来 `cq*` 対応 arm が誤って追加されても
+        // どの test も落ちず canonical comment が silent に stale 化する
+        // (bd raikiri-spike-hif0 spec-lens follow-up)。
+        assert_eq!(parse_length("10cqw", false), None);
     }
 
     #[test]
