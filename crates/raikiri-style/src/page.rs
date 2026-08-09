@@ -183,9 +183,48 @@ pub struct PageRule {
     /// the margin-box at-rules `@top-left` etc. per L3 §5) are also dropped
     /// by this reuse; wiring them is M4 scope.
     ///
-    /// Still `pub` after bd raikiri-spike-qzn3 — deliberately, and outside that
-    /// task's approved scope. What the asymmetry implies is documented at
-    /// [`crate::rule::expand_shorthand_into`].
+    /// # Why this field (and `RuleTree::page_rules`) is still `pub`
+    ///
+    /// Still `pub` after bd raikiri-spike-qzn3 — deliberately, and outside
+    /// that task's approved scope. **This is the canonical, docs.rs-visible
+    /// statement of what that leaves open**; [`crate::ruletree::RuleTree::page_rules`]
+    /// points here rather than restating it (same discipline as
+    /// [`crate::page::PageCascadeResult::declarations`] — spell
+    /// `PageRule::declarations` verbatim if you add another pointer site;
+    /// bd raikiri-spike-ykee).
+    ///
+    /// qzn3 closed the *element* path — the `style_rules` /
+    /// `declarations` / `value` fields are now `pub(crate)`, reachable from
+    /// outside the crate only through their fully `pub` read-only accessors
+    /// (`RuleTree::style_rules()` / `StyleRule::declarations()` /
+    /// `Declaration::value()`) — but left the *`@page`* path alone. The
+    /// two are closed by different amounts:
+    ///
+    /// - **Element path**: closed by visibility alone. A consumer only ever
+    ///   reaches a read-only `&[StyleRule]` / `&[Declaration]`; no `&mut`
+    ///   path to a `Declaration`'s value is public.
+    /// - **`@page` path** (this field, and `RuleTree::page_rules`): a
+    ///   consumer can still duplicate / remove / reorder an existing
+    ///   `Declaration` in place, flip its `important` flag, or clone an
+    ///   existing `PageRule` and push back an edited copy (`PageRule` is
+    ///   `#[non_exhaustive]`, so a brand-new one cannot be built from a
+    ///   struct literal — a seed rule is required). What stays closed is
+    ///   narrower: a consumer cannot manufacture a *new* `Declaration`
+    ///   carrying a shorthand `PropertyValue` (`margin` / `padding` /
+    ///   `border`). That holds for two reasons: (a) `Declaration::value` is
+    ///   private, so no struct-literal / functional-update construction is
+    ///   possible, and (b) every `Declaration` a consumer could clone came
+    ///   out of `parse_declaration_block`, which never emits a shorthand key
+    ///   (pinned by `expand_shorthand_into`'s exhaustive match, bd
+    ///   raikiri-spike-ez7b). If either (a) or (b) breaks, the `@page` path
+    ///   reopens from outside the crate — re-derive this section before
+    ///   adding a public constructor to `Declaration`.
+    ///
+    /// The full mechanical derivation (all three shorthand-expansion call
+    /// sites, and why (a)/(b) above are each load-bearing) lives on
+    /// [`crate::rule::expand_shorthand_into`]'s doc. That function is
+    /// `pub(crate)`, so its doc does not render on docs.rs — this section is
+    /// the summary a docs.rs reader can actually reach.
     pub declarations: Vec<Declaration>,
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
