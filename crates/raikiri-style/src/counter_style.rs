@@ -2107,6 +2107,27 @@ mod tests {
         );
     }
 
+    /// The `generate_counter` step-4 gate (`uses_negative && value_i64 < 0`,
+    /// see its doc) is also false when the *value* is negative but the
+    /// *system* doesn't use a negative sign (`cyclic` here) — not just when
+    /// the value is non-negative (the sibling test above). `negative_reserved`
+    /// must still be `0` in that case, so the pad `difference` is computed
+    /// from `repr`'s length alone: `cyclic` with 3 symbols and value `-5`
+    /// produces the single symbol `"A"` (`(-5-1).rem_euclid(3) == 0`), and
+    /// `pad: 3 "0"` pads it to `"00A"` — the 2-symbol `negative: "(" ")"`
+    /// descriptor (length 2) must NOT be subtracted from the difference, and
+    /// step 5's negative-sign wrapping must not apply either.
+    #[test]
+    fn resolve_pad_unaffected_by_negative_descriptor_for_negative_value_without_negative_sign() {
+        let registry = CounterStyleRegistry::from_source(
+            r#"@counter-style thumbs { system: cyclic; symbols: "A" "B" "C"; pad: 3 "0"; negative: "(" ")"; }"#,
+        );
+        assert_eq!(
+            resolve_custom_counter(&registry, "thumbs", -5).as_deref(),
+            Some("00A")
+        );
+    }
+
     // ── resolve_custom_counter: fixed auto-range is unbounded (§3.5) ──
 
     /// §3.5 verbatim: "For cyclic, numeric, and fixed systems, the range is
