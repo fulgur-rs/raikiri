@@ -245,7 +245,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// 2 と 3 が要るのは、`add_stylesheet` の**後**に declaration を shorthand
 /// variant へ書き戻す post-parse mutation 経路が存在するからである
 /// (bd raikiri-spike-nqkj / bd raikiri-spike-3svx)。parse 出口の guard は parse
-/// 出口しか見ないのでこの経路を守らない。cascade 入口で同じ等価変換を通すことで、
+/// 出口しか見ないのでこの経路を守らない。両 cascade 入口で同じ等価変換を通すことで、
 /// **declaration がどこから来たかに依らず** 下の不変が成立する。
 ///
 /// bd raikiri-spike-qzn3 で [`crate::ruletree::RuleTree::style_rules()`] /
@@ -388,8 +388,8 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// `flat_map + vec![d].into_iter()` は non-shorthand path で per-decl の 1-slot
 /// heap Vec を alloc していた (common case regression、reviewer:quality F6)、
 /// in-place push で除去。shorthand path は 4 longhand を 4 回 push (同 alloc
-/// budget、shape のみ変更)。sink 化で call site 2 / 3 (どちらも受け皿が
-/// `Vec<Declaration>` ではない cascade 入口) も中間 buffer 無しになるので、
+/// budget、shape のみ変更)。sink 化で call site 2 / 3 (受け皿が
+/// `Vec<Declaration>` ではない両 cascade 入口) も中間 buffer 無しになるので、
 /// non-shorthand の common case でも追加の heap alloc は発生しない。
 ///
 /// # ⚠️ signature は perf 要件である (単純化しないこと)

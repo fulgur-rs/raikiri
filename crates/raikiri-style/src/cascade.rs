@@ -1413,7 +1413,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>
         // padding physical longhand (raikiri-spike-0vv.6)。
         // 4 side を独立に上書き。shorthand `PropertyValue::Padding` は
-        // `crate::rule::expand_shorthand_into` により parse 出口と cascade 入口
+        // `crate::rule::expand_shorthand_into` により parse 出口と element cascade 入口
         // (`collect_cascaded`) の両方で 4 longhand に展開されるため、cascade 段に
         // 届く declaration は per-side longhand
         // のみ = shorthand/longhand の cross-key dependency が消え、winner の
@@ -1431,7 +1431,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Padding(sides) => target.padding = sides,
         // 4 longhand margin sides (raikiri-spike-0vv.5、CSS Box 3 §3.1)。
         // shorthand `PropertyValue::Margin` は `crate::rule::expand_shorthand_into`
-        // により parse 出口と cascade 入口の両方で 4 longhand に展開されるため、
+        // により parse 出口と element cascade 入口の両方で 4 longhand に展開されるため、
         // cascade 段に届く declaration
         // は per-side longhand のみ = winner の適用順に依存しない per-key
         // determinism が成立する (詳細は `crate::rule::expand_shorthand_into` doc)。
@@ -1453,7 +1453,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //
         // それでも `unreachable!` を採らないのは reviewer-security の panic
         // surface 排除方針による。cascade 経路で unreachable なのは
-        // `crate::rule::expand_shorthand_into` の call site 1 / 2 (parse 出口 と
+        // `crate::rule::expand_shorthand_into` の call site 1 / 2 (parse 出口と
         // element cascade 入口) が担保しており、その担保のうち「展開 arm の
         // 書き忘れ」は同関数の exhaustive match で compile-time に排除されている
         // (bd raikiri-spike-ez7b。残る範囲は同関数 doc の
@@ -1463,7 +1463,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // CSS Backgrounds 3 §3.3/§3.2/§3.1 border physical longhand
         // (raikiri-spike-0vv.12)。4 side × 3 sub-property の 12 arm。shorthand
         // `PropertyValue::Border` は `crate::rule::expand_shorthand_into` により
-        // parse 出口と cascade 入口の両方で 12 longhand に展開されるため、
+        // parse 出口と element cascade 入口の両方で 12 longhand に展開されるため、
         // cascade 段に届く declaration
         // は per-side / per-sub-property longhand のみ = winner の適用順に
         // 依存しない per-key determinism が成立する (margin / padding precedent
@@ -4682,7 +4682,7 @@ mod tests {
     fn post_parse_shorthand_injection_propagates_important() {
         // 展開時の `!important` copy (spec §3 "Declaring a shorthand property
         // to be !important is equivalent to declaring all of its sub-properties
-        // to be !important.") が cascade 入口の展開でも保たれること。
+        // to be !important.") が element cascade 入口の展開でも保たれること。
         //
         // 注入した shorthand は `!important` を継承する (`[0]` は `!important`
         // 付きで parse される) ので、後方の normal longhand には**負けない**。
