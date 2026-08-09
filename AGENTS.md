@@ -317,6 +317,19 @@ bd raikiri-spike-8yj6 が持つ。
   詳細な実測 (`--cfg test` option の E0432 blocker、5 つの反転変数、blind zone の全体像)
   は bd raikiri-spike-8yj6 の comment 履歴を参照。
 
+  **この 3 件とは別に、raikiri-style 側でも同種のケースが見つかっていた**
+  (`crates/raikiri-style/src/counter_style.rs` の `CounterStyleSheetParser` doc —
+  `` [`crate::ruletree::StyleRuleParser`] ``。この位置が既定 gate command で
+  未検証なのは referrer 側の `CounterStyleSheetParser` 自身が private struct
+  だから (実測: link を `` [`crate::ruletreeXX`] `` に壊しても既定 command は
+  green のまま、`--document-private-items` だけが報告する — 参照先
+  `StyleRuleParser` の可視性は無関係)。持ち込みは bd raikiri-spike-r7r1、発見は
+  bd raikiri-spike-uy4g)。**上の 3 件と異なり、この 1 件は既に解消済み**
+  (bd raikiri-spike-n9ve) — 上記の「hatch の閾値」に従い、
+  `` [`crate::ruletree`] の `StyleRuleParser` `` (module link は維持、item 名のみ
+  bare code span 化) へ書き換えた。この aux-only dangling class は raikiri-dom 側
+  だけの現象ではない。
+
 ## 使い捨て worktree は `$HOME` 配下に作る (`/tmp` に作らない)
 
 一時的な目的 (baseline 比較、使い捨て実験など) で切る throwaway/scratch な

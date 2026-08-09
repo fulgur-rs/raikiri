@@ -880,7 +880,7 @@ enum TopLevelItem {
 /// everything else (other at-rules, all qualified/style rules) — this
 /// module has no interest in anything but `@counter-style`. See the module
 /// doc's "What's out of scope" bullet on why this runs its own independent
-/// scan rather than extending [`crate::ruletree::StyleRuleParser`].
+/// scan rather than extending [`crate::ruletree`]'s `StyleRuleParser`.
 struct CounterStyleSheetParser;
 
 impl<'i> AtRuleParser<'i> for CounterStyleSheetParser {
