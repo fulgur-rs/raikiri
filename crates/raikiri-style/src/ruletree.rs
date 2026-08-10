@@ -307,7 +307,12 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
             // resolve_inheritance) は訪問順に依存しない挙動保持のみが目的
             // だったのと対照的。
             // `walk_style_elements_pub_visits_all_style_texts_in_document_order`
-            // test が兄弟 `<style>` 2 個の text を visit 順で固定している。
+            // test が兄弟 `<style>` 2 個 (同一 depth) の text を visit 順で固定
+            // している。ただし同一 depth の兄弟だけでは DFS/BFS を判別できない
+            // (同深度なら両戦略の visit 順が一致してしまう) — mixed depth の
+            // regression net は
+            // `walk_and_collect_preserves_document_order_across_mixed_sibling_descendant_depths`
+            // test (bd raikiri-spike-spju) が別途固定している。
             let start = stack.len();
             stack.extend(dom.child_ids(id));
             stack[start..].reverse();
@@ -570,6 +575,90 @@ mod tests {
         assert_eq!(collected.len(), 2);
         assert_eq!(collected[0], "p { color: red }");
         assert_eq!(collected[1], "div { color: blue }");
+    }
+
+    /// bd raikiri-spike-spju: regression net for document-order preservation
+    /// across MIXED sibling/descendant depths — the existing sibling-only
+    /// test above (2 flat `<style>` at the same depth) cannot distinguish a
+    /// depth-first walk from a naive breadth-first one, because same-depth
+    /// visit order happens to coincide for both strategies. This test uses
+    /// a shape where the doc-order-earlier `<style>` sits *deeper* than the
+    /// doc-order-later one:
+    ///
+    /// ```text
+    /// root
+    /// ├── section          (depth 1)
+    /// │     └── mid        (depth 2)
+    /// │           └── style A   (depth 3, text "p { color: red }")
+    /// └── aside             (depth 1, later sibling of `section`)
+    ///       └── style B    (depth 2, text "div { background-color: blue }")
+    /// ```
+    ///
+    /// (A and B intentionally use different properties — `color` vs.
+    /// `background-color` — so the `build_rule_tree` half below can pin
+    /// *which* rule landed at which `source_order`, not just that 2 rules
+    /// exist.)
+    ///
+    /// Correct document order is A then B (pre-order: all of `section`'s
+    /// subtree, including the depth-3 A, precedes `aside`'s subtree)
+    /// regardless of A being deeper than B. A level-order (BFS) walk would
+    /// instead visit the shallower B (depth 2) before the deeper A
+    /// (depth 3), flipping the order — this is exactly the class of bug
+    /// `walk_and_collect`'s doc comment warns is a correctness requirement,
+    /// not just a behavior-compat nicety, because `source_order` feeds the
+    /// cascade order-of-appearance tie-break (CSS Cascading L4
+    /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort>).
+    ///
+    /// Empirically confirmed (bd raikiri-spike-spju filing): this test is
+    /// the only one of the 57 tests in this module that goes red when
+    /// `walk_and_collect` is mutated from `Vec`/LIFO-pop DFS to
+    /// `VecDeque`/`pop_front` BFS — the pre-existing
+    /// `walk_style_elements_pub_visits_all_style_texts_in_document_order`
+    /// test (2 flat siblings, same depth) stays green under that mutation
+    /// because same-depth visit order happens to coincide for DFS and BFS.
+    #[test]
+    fn walk_and_collect_preserves_document_order_across_mixed_sibling_descendant_depths() {
+        use crate::property::PropertyValue;
+
+        let mut doc = TestDoc::new();
+        let section = doc.push_element(0, "section", None);
+        let mid = doc.push_element(section, "mid", None);
+        let style_a = doc.push_element(mid, "style", None);
+        // A uses `color` — distinguishable from B's `background-color` below
+        // so the build_rule_tree assertions can pin *which* rule landed at
+        // which source_order, not just that 2 rules exist.
+        doc.push_text(style_a, "p { color: red }");
+
+        let aside = doc.push_element(0, "aside", None); // later sibling of `section`
+        let style_b = doc.push_element(aside, "style", None);
+        doc.push_text(style_b, "div { background-color: blue }");
+
+        // Entry point 1: raw text collection order via `walk_style_elements`.
+        let mut collected: Vec<String> = Vec::new();
+        super::walk_style_elements(&doc, |css| collected.push(css.to_string()));
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected[0], "p { color: red }");
+        assert_eq!(collected[1], "div { background-color: blue }");
+
+        // Entry point 2: `source_order` assigned via `build_rule_tree`, which
+        // is the value that actually feeds the cascade tie-break — pin it
+        // too so a regression here is caught even if a future change routes
+        // rule extraction through `build_rule_tree` without going through
+        // the raw-text collection path in the same way. Distinguish A vs B
+        // by declaration kind (Color vs BackgroundColor) rather than just
+        // counting, so a swap is actually detected.
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 2);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+        assert_eq!(tree.style_rules[1].source_order, 1);
+        assert!(matches!(
+            tree.style_rules[0].declarations()[0].value(),
+            PropertyValue::Color(_)
+        ));
+        assert!(matches!(
+            tree.style_rules[1].declarations()[0].value(),
+            PropertyValue::BackgroundColor(_)
+        ));
     }
 
     #[test]
