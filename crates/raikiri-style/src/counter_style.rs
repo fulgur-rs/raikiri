@@ -53,42 +53,41 @@
 //!
 //! - `speak-as` (not in the bd issue's descriptor list; see above).
 //!
-//! # RuleTree wiring (bd raikiri-spike-gce8)
+//! # RuleTree wiring (bd raikiri-spike-gce8, origin-aware since bd raikiri-spike-f7vg)
 //!
 //! [`crate::ruletree::RuleTree`] now owns a `counter_styles`
-//! [`CounterStyleRegistry`], populated by
-//! [`crate::ruletree::RuleTree::add_stylesheet`] whenever it is called with
-//! [`crate::ruletree::Origin::Author`] — which covers both
-//! [`crate::ruletree::build_rule_tree`] (DOM `<style>` element walk, always
-//! Author) and `raikiri`'s umbrella `build_cascaded` (the actual production
-//! entry point, which calls `add_stylesheet` directly with a mix of origins
-//! rather than going through `build_rule_tree`). `add_stylesheet` runs
-//! [`parse_counter_style_rules`] as its own independent second pass over the
-//! same `source` string rather than folding `@counter-style` recognition
-//! into the existing `style_rules`/`page_rules` parser — the
-//! single-pass-per-concern split this module started with (see the "What's
-//! implemented" section above) is preserved; only the *caller* changed, not
-//! the parse strategy. Read the populated registry back via
+//! [`CounterStyleRegistry`], populated by every call to
+//! [`crate::ruletree::RuleTree::add_stylesheet`] regardless of `origin` —
+//! which covers both [`crate::ruletree::build_rule_tree`] (DOM `<style>`
+//! element walk, always Author) and `raikiri`'s umbrella `build_cascaded`
+//! (the actual production entry point, which calls `add_stylesheet` directly
+//! with a mix of origins rather than going through `build_rule_tree`).
+//! `add_stylesheet` runs [`parse_counter_style_rules`] as its own independent
+//! second pass over the same `source` string rather than folding
+//! `@counter-style` recognition into the existing `style_rules`/`page_rules`
+//! parser — the single-pass-per-concern split this module started with (see
+//! the "What's implemented" section above) is preserved; only the *insertion*
+//! changed, not the parse strategy. Read the populated registry back via
 //! [`crate::ruletree::RuleTree::counter_styles`].
 //!
-//! `Origin::UserAgent` sources are deliberately excluded: [`CounterStyleRegistry`]
-//! doesn't track which origin a rule came from (see its type doc's "cascade
-//! atomically" quote), so letting both origins insert into the same flat map
-//! would make "last call wins" the tie-break — which, if a UA source happened
-//! to be added after an Author one, would contradict CSS Counter Styles L3
-//! §3's actual same-name-resolution rule ("only one wins, according to
-//! standard cascade rules" — origin-first, so Author always beats UserAgent
-//! regardless of call order). Restricting this wiring to `Origin::Author`
-//! keeps the registry's existing flat "last-inserted-name wins" behavior
-//! spec-correct for the two-origin model this crate has today, at the cost
-//! of not yet capturing UA-origin `@counter-style` rules (e.g. an override of
-//! a predefined counter style declared in UA CSS) — that would need
-//! [`CounterStyleRegistry`] itself to track origin, a larger change out of
-//! this issue's scope.
+//! Each parsed rule is fed to [`CounterStyleRegistry::insert_with_origin`]
+//! (`pub(crate)`, not [`CounterStyleRegistry::insert`] — see that method's
+//! doc for why the plain `insert` stays origin-blind) together with
+//! `add_stylesheet`'s own `origin` argument. The registry itself now tracks,
+//! per name, which origin its current entry came from (type doc below), so
+//! same-name resolution follows CSS Counter Styles L3 §3's "only one wins,
+//! according to standard cascade rules" verbatim (origin-first, so Author
+//! always beats UserAgent regardless of call order) without requiring the
+//! caller to pre-filter by origin: a standalone `Origin::UserAgent`
+//! `@counter-style` with no same-name `Origin::Author` rule is now available
+//! (previously dropped unconditionally by an Author-only gate at the
+//! `add_stylesheet` call site — bd raikiri-spike-f7vg), while a same-name
+//! `Origin::Author` rule still wins over any `Origin::UserAgent` rule
+//! irrespective of which was inserted first.
 //!
 //! This closes the "no production consumer" gap this module previously had
 //! for [`parse_counter_style_rules`] / [`CounterStyleRegistry`] (a registry
-//! now exists alongside every `RuleTree` built from Author stylesheets), but
+//! now exists alongside every `RuleTree`, populated from both origins), but
 //! it is still one layer short of `counter()`/`counters()` actually
 //! resolving during layout/paint: routing a matched [`CounterStyleRegistry`]
 //! entry through [`resolve_custom_counter`] into
@@ -105,7 +104,9 @@ use cssparser::{
 };
 use smol_str::SmolStr;
 
+use crate::cascade::cascade_rank;
 use crate::property::{is_reserved_custom_ident, parse_custom_ident};
+use crate::ruletree::Origin;
 
 // ---------------------------------------------------------------------------
 // Symbol — `<symbol>` production, narrowed to `<string> | <custom-ident>`.
@@ -984,23 +985,64 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 /// wins, according to standard cascade rules. … `@counter-style` rules
 /// cascade 'atomically': if one replaces another of the same name, it
 /// replaces it *entirely*, rather than just replacing the specific
-/// descriptors it specifies." [`Self::insert`] implements the "atomically"
-/// half as a plain `HashMap` overwrite (whole `CounterStyleRule` values are
-/// stored, never merged field-by-field). This type does **not** implement
-/// the "standard cascade rules" (origin, then source order) half itself — it
-/// doesn't track which origin (or even which [`parse_counter_style_rules`]
-/// call) a stored rule came from, so "which one wins" here reduces to
-/// exactly "the last one [`Self::insert`]-ed", full stop. A caller that
-/// inserts from more than one cascade origin is responsible for only
-/// presenting this type with rules whose relative insertion order already
-/// matches "standard cascade rules" — see
-/// [`crate::ruletree::RuleTree::add_stylesheet`]'s doc for how the one
-/// production caller (`crate::ruletree`) satisfies that today by only
-/// feeding this registry `Origin::Author` rules.
+/// descriptors it specifies."
+///
+/// Both halves of that quote are implemented here. "Atomically" is a plain
+/// overwrite — whole `CounterStyleRule` values are stored, never merged
+/// field-by-field. "Standard cascade rules" (origin first, then source
+/// order within an origin) is implemented by recording, per name, which
+/// [`Origin`] the currently-stored rule came from
+/// (bd raikiri-spike-f7vg; this field was origin-blind before — see
+/// [`Self::insert`]'s doc for the one remaining origin-blind entry point)
+/// and consulting that origin on every subsequent insert of the same name:
+///
+/// - [`Self::insert_with_origin`] (`pub(crate)`, used by
+///   [`crate::ruletree::RuleTree::add_stylesheet`]) applies the actual
+///   precedence via [`crate::cascade::cascade_rank`]: a new rule overwrites
+///   unless it is itself outranked by the currently-stored one. Concretely,
+///   for today's 2-origin model — a new `Origin::Author` rule always
+///   overwrites, regardless of what's currently stored (same rank as an
+///   existing Author entry, or outranks an existing UserAgent one); a new
+///   `Origin::UserAgent` rule overwrites only when nothing is stored yet or
+///   the stored entry is itself `Origin::UserAgent` (so the last
+///   `Origin::UserAgent` insert of a name wins among same-origin entries,
+///   matching the source-order tie-break), and is dropped when the stored
+///   entry is `Origin::Author` (Author always beats UserAgent, independent
+///   of call order — CSS Cascading L4 §"cascade-origin"
+///   (<https://www.w3.org/TR/css-cascade-4/#cascade-origin>)). Reuses
+///   [`crate::cascade::cascade_rank`] rather than a local rank fn — same
+///   sibling-arm convention [`crate::page::cascade_page`] already follows
+///   for `@page` (that function's doc, "Sibling arm convention"
+///   raikiri-spike-37n): `@counter-style` and style-rule origin ordering are
+///   the same CSS Cascading L4 mechanism, so a second copy of the
+///   `Origin -> u8` mapping would just be drift risk. The call always fixes
+///   `important` to `false`: CSS Counter Styles L3 §3's "standard cascade
+///   rules" has no `!important`-equivalent concept for `@counter-style` at
+///   all, so there's nothing to pass through — but `false` isn't an
+///   arbitrary placeholder either, it's specifically the *non-important*
+///   half of [`crate::cascade::cascade_rank`]'s ranking (UA < Author), which
+///   is the half that actually matches §3's origin order; the other half
+///   ([`crate::cascade::cascade_rank`] with `important: true`) inverts to
+///   Author < UA and would be wrong here. Resolution is by rank, not a
+///   hardcoded `Author`/`UserAgent` pair, specifically so adding a variant
+///   to [`Origin`] (`#[non_exhaustive]`, and its own doc already flags a
+///   deferred `User` origin) is a compile error at
+///   [`crate::cascade::cascade_rank`]'s own `match` — not a silently-wrong
+///   precedence here.
+/// - [`Self::insert`] (the `pub` entry point, unchanged since before
+///   bd raikiri-spike-f7vg) stays origin-blind: it always overwrites,
+///   exactly as it did when this type had no origin concept at all — safe
+///   regardless of what an external crate does with it, since `insert` is
+///   the only origin-tagging entry point external code can reach (
+///   [`Self::insert_with_origin`] is `pub(crate)`) and every entry it
+///   creates is tagged the same fixed `Origin::Author`, so the two-origin
+///   precedence rule above never actually branches for external callers.
+///   In-crate, the only callers are [`Self::from_source`] and this module's
+///   own unit tests, none of which mix origins either.
 #[non_exhaustive]
 #[derive(Clone, Debug, Default)]
 pub struct CounterStyleRegistry {
-    rules: HashMap<SmolStr, CounterStyleRule>,
+    rules: HashMap<SmolStr, (Origin, CounterStyleRule)>,
 }
 
 impl CounterStyleRegistry {
@@ -1009,8 +1051,8 @@ impl CounterStyleRegistry {
     }
 
     /// Parse `source` and insert every valid `@counter-style` rule it
-    /// contains (later same-name rules replace earlier ones — see the type
-    /// doc).
+    /// contains (later same-name rules replace earlier ones — see
+    /// [`Self::insert`]'s doc).
     pub fn from_source(source: &str) -> Self {
         let mut registry = Self::new();
         for rule in parse_counter_style_rules(source) {
@@ -1019,20 +1061,43 @@ impl CounterStyleRegistry {
         registry
     }
 
-    /// Insert `rule`, replacing any existing rule of the same name entirely.
-    /// A rule that fails [`CounterStyleRule::is_valid`] is silently dropped
-    /// (does not replace an existing valid rule of the same name) — this is
-    /// the one enforcement point for "only valid rules live in a registry",
-    /// covering both the [`parse_counter_style_rules`] entry path and direct
+    /// Insert `rule`, replacing any existing rule of the same name entirely,
+    /// **regardless of that existing entry's origin** — this method does not
+    /// participate in the [`Origin`]-aware precedence
+    /// [`Self::insert_with_origin`] implements (type doc). A rule that fails
+    /// [`CounterStyleRule::is_valid`] is silently dropped (does not replace
+    /// an existing valid rule of the same name) — this is the one
+    /// enforcement point for "only valid rules live in a registry", covering
+    /// both the [`parse_counter_style_rules`] entry path and direct
     /// construction of a [`CounterStyleRule`] via its `pub` fields.
     pub fn insert(&mut self, rule: CounterStyleRule) {
         if rule.is_valid() {
-            self.rules.insert(rule.name.clone(), rule);
+            self.rules.insert(rule.name.clone(), (Origin::Author, rule));
         }
     }
 
+    /// Insert `rule` as having come from `origin`, applying CSS Counter
+    /// Styles L3 §3's "standard cascade rules" same-name precedence against
+    /// whatever is currently stored for `rule.name` (type doc for the exact
+    /// resolution table). `pub(crate)` — the one production caller is
+    /// [`crate::ruletree::RuleTree::add_stylesheet`]; external crates only
+    /// ever reach [`Self::insert`] (origin-blind) or [`Self::from_source`].
+    /// A rule that fails [`CounterStyleRule::is_valid`] is silently dropped,
+    /// same enforcement point as [`Self::insert`].
+    pub(crate) fn insert_with_origin(&mut self, rule: CounterStyleRule, origin: Origin) {
+        if !rule.is_valid() {
+            return;
+        }
+        if let Some((existing_origin, _)) = self.rules.get(&rule.name)
+            && cascade_rank(origin, false) < cascade_rank(*existing_origin, false)
+        {
+            return; // Lower-ranked origin never overwrites a higher-ranked one.
+        }
+        self.rules.insert(rule.name.clone(), (origin, rule));
+    }
+
     pub fn get(&self, name: &str) -> Option<&CounterStyleRule> {
-        self.rules.get(name)
+        self.rules.get(name).map(|(_, rule)| rule)
     }
 
     pub fn len(&self) -> usize {
@@ -1822,6 +1887,25 @@ mod tests {
         let mut invalid = CounterStyleRule::new(SmolStr::new("foo"));
         invalid.system = CounterStyleSystem::Additive; // additive_symbols left empty -> invalid
         registry.insert(invalid);
+        assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn insert_with_origin_rejects_invalid_rule_constructed_directly() {
+        // insert_with_origin (bd raikiri-spike-f7vg) has its own is_valid
+        // gate, same enforcement point as insert() above — but every
+        // production caller (RuleTree::add_stylesheet) only ever feeds it
+        // rules that already passed parse_counter_style_rules's own
+        // is_valid filter, so that gate is otherwise unreachable through
+        // add_stylesheet. Exercise it directly, the same way
+        // insert_rejects_invalid_rule_constructed_directly does for
+        // insert(). Origin::UserAgent here is an arbitrary choice — the
+        // is_valid check is origin-independent, it runs before the
+        // origin-precedence resolution.
+        let mut registry = CounterStyleRegistry::new();
+        let mut invalid = CounterStyleRule::new(SmolStr::new("foo"));
+        invalid.system = CounterStyleSystem::Additive; // additive_symbols left empty -> invalid
+        registry.insert_with_origin(invalid, Origin::UserAgent);
         assert!(registry.is_empty());
     }
 
