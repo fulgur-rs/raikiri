@@ -53,6 +53,35 @@ retiring):
      original census); if that construct is ever introduced, re-check
      before trusting role 1's output blindly.
 
+     Two further known scan-scope gaps (bd raikiri-spike-1ghc, from bd
+     raikiri-spike-luxp §8.2 roborev-refine iter3's independent finding),
+     both re-verified inert (0, or 1 harmless, live hits) and left as a
+     documented caveat rather than a logic change. They pull in opposite
+     directions — gap 1 is under-scanning (a hazard could go uncaught),
+     gap 2 is over-flagging (legitimate Rust syntax could be misreported
+     as a role-1 violation) — but neither currently changes this script's
+     output on this repo:
+
+       - **Line-position gap**: `classify_line()` classifies on
+         `raw.lstrip()`, so a line with code *before* a trailing `//`
+         comment (e.g. `let x = 1; // see [Foo]`) is classified `code`
+         outright and the trailing comment is never scanned by either
+         role. This is a different axis (line position) from the `/* */`
+         exclusion above (comment syntax), even though both are the "same
+         hazard" by AGENTS.md's "never write this pattern" framing.
+         Repo-wide at filing/re-verification time: exactly one shape
+         match, `crates/raikiri-paint/src/text.rs`'s
+         `// &[i16] (anyrender::NormalizedCoord alias)`, harmless because
+         `[i16]` immediately follows `&`, so it would already be excluded
+         by the `(?<![#&])` pattern above even if this line were scanned.
+       - **Exclusion-prefix gap**: `(?<![#&])` above only excludes a `[`
+         immediately preceded by `#` or `&`; `&mut [T]` or
+         `impl AsRef<[u8]>` (a token sits between the `&`/generic bracket
+         and the `[`) are not excluded by the pattern as written — such a
+         shape in a `plain` `//` comment would be misreported as a role-1
+         violation (a false FAIL on ordinary Rust syntax, not a missed
+         hazard). Repo-wide at filing/re-verification time: 0 hits.
+
   2. **luxp ratchet (drift prevention)**: bare (non-linked) `crate::…`
      pointers in `doc` (`///` / `//!`) comment lines — i.e. occurrences of
      the exact violation AGENTS.md's "`crate::…` pointer は intra-doc link
