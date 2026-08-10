@@ -72,9 +72,11 @@
 //! ordered list of ids. The per-page selector-keyword filter stays on the
 //! PageStream / paint driver side — a later, separate wall/dom-paint task
 //! (see `MarginBoxGeometry` / `layout_running_template` below for the
-//! dom-internal boundary that task will consume). Deliberately left without
-//! a bd id here — see bd raikiri-spike-e81n's Non-goals section for why this
-//! stays out of that task's scope.
+//! dom-internal boundary that task will consume). That paint-side driver
+//! doesn't exist yet and isn't ready to be tracked as a bd issue — see
+//! [`RunningTemplateStore::resolve_first`]'s doc for the closest dom-side
+//! landing (pool-order lookup, explicitly NOT the spec's page-relative
+//! keyword semantics) and why the gap stops there.
 //!
 //! **`CascadeSubset` local definition** — the design doc names
 //! `computed_styles: Arc<CascadeSubset>` but no such type exists in the
@@ -94,20 +96,30 @@
 //! [`raikiri_style::property::ContentComponent`]) does NOT exist today; the
 //! enum has no `Element` arm. Adding it is a css-engine concern
 //! (wall/css-engine, not this task's walls). This module therefore lands the
-//! **dom-side deliverable** — name→pool→[`ParsedRunningTemplate`] lookup —
+//! **dom-side deliverable** — name→pool→[`ParsedRunningTemplate`] lookup, via
+//! [`RunningTemplateStore::resolve_first`] (bd raikiri-spike-e81n) —
 //! which is the actual "element(name) resolve" once the caller has extracted
-//! the name from wherever. When the css-engine adds the variant, a driver
-//! similar to [`raikiri_traits::resolve_content_component`] can wire
-//! ContentComponent → `resolve_element_pool` in a single call. Tracked as
-//! bd raikiri-spike-6z0 (filed by this task, blocked on css-engine sprint).
+//! the name from wherever. `resolve_first` composes
+//! [`RunningTemplateStore::resolve_element_pool`] +
+//! [`RunningTemplateStore::get`] but does NOT implement the CSS GCPM 3
+//! §1.2.2 selector-keyword semantics (`first`/`start`/`last`/`first-except`)
+//! — see `resolve_first`'s own doc for why that stays page-context-dependent
+//! and out of this store's reach. When the css-engine adds the
+//! `ContentComponent::Element` variant, a driver similar to
+//! [`raikiri_traits::resolve_content_component`] can wire ContentComponent →
+//! `resolve_first` (or the full pool, for keyword-aware callers) in a single
+//! call. Tracked as bd raikiri-spike-6z0 (filed by this task, blocked on
+//! css-engine sprint).
 //!
 //! **Registration order == document order** — the store assumes the caller
-//! invokes [`RunningTemplateStore::register`] in DOM tree order. The
-//! register-site walker landing with bd raikiri-spike-e81n will walk the
-//! arena in document order, so this assumption holds automatically; if it is
-//! ever violated, per-page pool selection (any selector-keyword variant)
-//! would emit the wrong element and visible layout would drift. Regression
-//! pin: the `pool_preserves_registration_order` unit test.
+//! invokes [`RunningTemplateStore::register`] in DOM tree order.
+//! [`build_running_template_store`] (bd raikiri-spike-e81n) walks the arena
+//! in document order, so this assumption holds automatically; if it is ever
+//! violated, per-page pool selection (any selector-keyword variant) would
+//! emit the wrong element and visible layout would drift. Regression pin:
+//! the `pool_preserves_registration_order` unit test (store-level) and
+//! `build_running_template_store_registers_siblings_in_document_order`
+//! (walker-level).
 //!
 //! **Single-name-per-id invariant** — a given subtree_root [`NodeId`] must be
 //! registered under a single running-template name for the lifetime of the
@@ -127,8 +139,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use raikiri_style::CascadeResult;
 use raikiri_style::property::{ContentComponent, ContentTextKeyword};
-use raikiri_traits::{GcpmDirective, NodeId, RunningTemplateId, Symbol};
+use raikiri_traits::{
+    ContentSource, ContentValueItem, GcpmDirective, NodeId, NodeKind, RunningTemplateId, Symbol,
+};
+
+use crate::document::Document;
 
 // `RunningTemplateId` is the shared identifier from raikiri-traits
 // (design §7.0 line 1904 "shared types → raikiri-traits"). Landed by bd
@@ -148,15 +165,17 @@ use raikiri_traits::{GcpmDirective, NodeId, RunningTemplateId, Symbol};
 /// looked up per-page and per-margin-box, so the store's `clone()` bump path
 /// must not deep-copy the style block.
 #[derive(Debug, Default)]
-#[allow(
-    dead_code,
-    reason = "Populated by the register-site walker landing with bd \
-              raikiri-spike-e81n (M6 directive-apply pass); exercised via \
-              unit tests until then."
-)]
 pub(crate) struct CascadeSubset {
     /// Per-node computed styles in subtree walk order (parallel to the DOM
     /// walk from `subtree_root`, matching `CascadeResult::computed`'s layout).
+    #[allow(
+        dead_code,
+        reason = "Written by collect_running_template (bd raikiri-spike-e81n); \
+                  read by the per-page PageStream / paint driver \
+                  (layout_running_template's future real body), a later \
+                  wall/dom-paint task — see bd raikiri-spike-e81n's \
+                  Non-goals section."
+    )]
     pub(crate) styles: Vec<raikiri_style::ComputedValues>,
 }
 
@@ -186,12 +205,6 @@ pub(crate) struct CascadeSubset {
 /// catch-all in `detect_dynamic_flags`'s Content arm over-marks unknown
 /// future keywords for safety (§7.3 line 2005 "correctness 優先").
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "Populated by detect_dynamic_flags (walk over the template's \
-              ContentComponent lists) and stored on ParsedRunningTemplate; \
-              consumed by the post-M8 static-template layout-result cache."
-)]
 pub(crate) struct DynamicFlags {
     /// `counter()` / `counters()` reference present anywhere in the template.
     pub(crate) has_counter: bool,
@@ -212,11 +225,6 @@ pub(crate) struct DynamicFlags {
 impl DynamicFlags {
     /// `true` iff every axis is `false` — the template is fully static and
     /// would qualify for the post-M8 layout-result cache.
-    #[allow(
-        dead_code,
-        reason = "Consumed by the post-M8 static-template layout-result cache \
-                  (§7.3 lines 2014-2016)."
-    )]
     pub(crate) fn is_fully_static(self) -> bool {
         !self.has_counter && !self.has_string && !self.has_target && !self.has_content_variant
     }
@@ -233,16 +241,18 @@ impl DynamicFlags {
 /// **`directives` field** — [`raikiri_traits::GcpmDirective`] was uninhabited
 /// through raikiri-spike-96u.3; the variant populate landed with
 /// raikiri-spike-96u.4 (canonical 6-variant shape per design doc §7.1
-/// line 1913-1920). The field remains an empty `Vec` by default; the
-/// register-site walker (bd raikiri-spike-e81n) will emit
-/// `CounterIncrement` / `CounterReset` / `CounterSet` / `StringSet` /
-/// `RegisterRunning` / `RegisterTarget` records under each subtree.
+/// line 1913-1920). [`collect_running_template`] (bd raikiri-spike-e81n)
+/// populates the field with `CounterIncrement` / `CounterReset` /
+/// `CounterSet` / `StringSet` records read off every node's
+/// [`raikiri_style::ComputedValues`] in the subtree. It does **not** emit
+/// `RegisterRunning` for nested `position: running(name)` seeds inside the
+/// subtree (the "if the spec/impl allows" hedge below is deliberately left
+/// unresolved — fail-closed, 原則 3) nor `RegisterTarget` (that directive is
+/// `id`-attribute-driven and belongs to the separate
+/// [`raikiri_traits::TargetRegistry`] registration walk, a different task's
+/// territory — see the module-level "Divergence from
+/// `raikiri_traits::TargetRegistry`'s register policy" note).
 #[derive(Debug)]
-#[allow(
-    dead_code,
-    reason = "Populated by the register-site walker (bd raikiri-spike-e81n); \
-              exercised via unit tests until then."
-)]
 pub(crate) struct ParsedRunningTemplate {
     /// The subtree root inside the document arena. `position: running(name)`
     /// removes this element from body flow; the pool holds the pointer.
@@ -251,12 +261,30 @@ pub(crate) struct ParsedRunningTemplate {
     pub(crate) subtree_root: NodeId,
     /// Pre-cascaded style block for every node under `subtree_root` (walk
     /// order). See [`CascadeSubset`].
+    #[allow(
+        dead_code,
+        reason = "Written by collect_running_template (bd raikiri-spike-e81n); \
+                  read by the per-page PageStream / paint driver, a later \
+                  wall/dom-paint task — see bd raikiri-spike-e81n's \
+                  Non-goals section."
+    )]
     pub(crate) computed_styles: Arc<CascadeSubset>,
     /// GCPM directives that live inside the template subtree
     /// (`counter-increment`, `counter-reset`, `counter-set`, `string-set`,
-    /// nested `running()` seeds if the spec/impl allows). Populated by the
-    /// register-site walker (bd raikiri-spike-e81n); empty by default (see
-    /// type-level `directives` field note).
+    /// nested `running()` seeds if the spec/impl allows). Populated by
+    /// [`collect_running_template`] (bd raikiri-spike-e81n); see the
+    /// type-level `directives` field note for exactly what is (and isn't)
+    /// emitted.
+    #[allow(
+        dead_code,
+        reason = "Written by collect_running_template (bd raikiri-spike-e81n); \
+                  read by the raikiri-dom Phase B walk that applies \
+                  directives to PageContext (design §7.0/§7.1), which has no \
+                  implementation anywhere in this crate yet — tracked as bd \
+                  raikiri-spike-8ejw, out of e81n's scope (register-site \
+                  walker + detect_dynamic_flags site + \
+                  resolve_element_pool/get wiring only)."
+    )]
     pub(crate) directives: Vec<GcpmDirective>,
     /// Which dynamic axes this template exercises (see [`DynamicFlags`]).
     pub(crate) dynamic_flags: DynamicFlags,
@@ -286,13 +314,6 @@ pub(crate) struct ParsedRunningTemplate {
 /// See the module-level "Divergence from canonical shape" note for the
 /// `pub(crate)` scoping rationale.
 #[derive(Debug, Default)]
-#[allow(
-    dead_code,
-    reason = "Producer path (register at cascade time) + consumer path \
-              (element(name) resolve via resolve_element_pool/get) both land \
-              with bd raikiri-spike-e81n; per-page layout is separate, see \
-              layout_running_template. Exercised via unit tests until then."
-)]
 pub(crate) struct RunningTemplateStore {
     /// Per-element unique-id → parsed template (design canonical shape:
     /// `HashMap<RunningTemplateId, ParsedRunningTemplate>`).
@@ -329,10 +350,10 @@ impl RunningTemplateStore {
     /// spec, different shape.
     ///
     /// **Caller invariant — document-order registration.** The store assumes
-    /// the caller invokes `register` in document order (the register-site
-    /// walker landing with bd raikiri-spike-e81n walks the arena in
-    /// document order, so this holds automatically). If violated, per-page
-    /// pool selection emits the wrong element.
+    /// the caller invokes `register` in document order
+    /// ([`build_running_template_store`] walks the arena in document order,
+    /// so this holds automatically). If violated, per-page pool selection
+    /// emits the wrong element.
     ///
     /// **Re-registration semantics** — determined by whether the id (=
     /// `template.subtree_root`) was previously seen:
@@ -349,7 +370,6 @@ impl RunningTemplateStore {
     ///   element), but the transfer keeps the store self-consistent under
     ///   repeated cascade or an unforeseen recursive walker. Regression pin:
     ///   `re_register_same_id_under_different_name_transfers_pool_entry`.
-    #[allow(dead_code, reason = "Producer path lands with bd raikiri-spike-e81n.")]
     pub(crate) fn register(
         &mut self,
         name: Symbol,
@@ -403,20 +423,55 @@ impl RunningTemplateStore {
     /// spec — this store returns `&[]` and lets the caller decide the empty
     /// fallback (mirrors [`raikiri_traits::TargetRegistry`]'s non-fragment
     /// empty-string fallback).
-    #[allow(
-        dead_code,
-        reason = "Consumer path lands with bd raikiri-spike-e81n (M6 \
-                  directive-apply pass); exercised via unit tests until then."
-    )]
     pub(crate) fn resolve_element_pool(&self, name: &Symbol) -> &[RunningTemplateId] {
         self.name_pool.get(name).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Fetch the parsed template for an id (typically an id drawn from
     /// [`Self::resolve_element_pool`]).
-    #[allow(dead_code, reason = "Consumer path lands with bd raikiri-spike-e81n.")]
     pub(crate) fn get(&self, id: RunningTemplateId) -> Option<&ParsedRunningTemplate> {
         self.parsed_templates.get(&id)
+    }
+
+    /// Compose [`Self::resolve_element_pool`] and [`Self::get`] into the
+    /// minimal dom-internal `content: element(name)` lookup: the
+    /// first-registered (== first document-order) template under `name`.
+    ///
+    /// **Not GCPM 3 §1.2.2 keyword semantics.** §1.2.2 ("The element()
+    /// value", <https://www.w3.org/TR/css-gcpm-3/#element-syntax>) supplies
+    /// the grammar (`element(<custom-ident>, [first|start|last|
+    /// first-except]?)`) but not the keyword's meaning — it says that, just
+    /// as with `string()`, `element()` takes an optional keyword to describe
+    /// which value should be used when there are multiple assignments on a
+    /// page, and defers to `string()`'s own definition. That definition
+    /// (§1.1.2 "The string() function",
+    /// <https://www.w3.org/TR/css-gcpm-3/#string-first>) is page-relative:
+    /// "The value of the first assignment on the page is used. If there is
+    /// no assignment on the page, the entry value is used" — where "entry
+    /// value" is itself defined as "the assignment in effect at the end of
+    /// the previous page." That per-page, carried-forward-from-the-previous-
+    /// page semantics needs the page-position context PageStream tracks
+    /// (design §9.1); this store has none. `resolve_first` instead returns
+    /// the pool-order head (document-first overall) — the only
+    /// name→template lookup expressible without page context, and NOT what
+    /// the spec's `first` keyword resolves to on any page after the running
+    /// element's first assignment. The real `first`/`start`/`last`/
+    /// `first-except` filter is the PageStream / paint driver's job — a
+    /// later, separate wall/dom-paint task (see the module-level
+    /// `RunningTemplateId = subtree_root` note), not this one.
+    ///
+    /// Returns `None` when `name` has no registrations (mirrors
+    /// [`Self::resolve_element_pool`]'s empty-pool contract).
+    #[allow(
+        dead_code,
+        reason = "Real (non-test) caller of resolve_element_pool + get, \
+                  landed by bd raikiri-spike-e81n; no production call site \
+                  yet — the css-engine ContentComponent::Element variant \
+                  (bd raikiri-spike-6z0) is the still-open blocker for one."
+    )]
+    pub(crate) fn resolve_first(&self, name: &Symbol) -> Option<&ParsedRunningTemplate> {
+        let id = *self.resolve_element_pool(name).first()?;
+        self.get(id)
     }
 
     /// Number of distinct registered templates.
@@ -433,11 +488,12 @@ impl RunningTemplateStore {
 /// [`raikiri_style::property::ContentComponent`] variants and flips the
 /// corresponding flag; multiple content lists (e.g. one per node in the
 /// subtree) are folded via repeated calls with [`DynamicFlags::default`] as
-/// the seed and OR-composing. No unit test exercises that multi-call fold
-/// today — `detect_dynamic_flags_composes_multiple_axes` only composes
-/// several axes within a *single* call's content list — a multi-call
-/// OR-fold test is expected to land alongside the register-site walker
-/// producer.
+/// the seed and OR-composing — [`collect_running_template`] is the real
+/// invocation site doing exactly that fold, one call per subtree node's
+/// `content`. `detect_dynamic_flags_composes_multiple_axes` composes several
+/// axes within a *single* call's content list; the walker-level
+/// `collect_running_template_folds_dynamic_flags_across_subtree_nodes` pins
+/// the cross-node OR-fold.
 ///
 /// **`#[non_exhaustive]` handling**: [`ContentComponent`] is
 /// `#[non_exhaustive]`; the future `ContentComponent::Element { name }`
@@ -481,11 +537,6 @@ impl RunningTemplateStore {
 /// **reviewer:spec sign-off pending** on this "no dynamic flag" call (bd
 /// raikiri-spike-5hp8) — the semantic read above is the implementer's, not
 /// yet a spec-lens-confirmed classification.
-#[allow(
-    dead_code,
-    reason = "Producer path is the register-site walker (bd \
-              raikiri-spike-e81n); exercised via unit tests until then."
-)]
 pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags {
     // Fold into local booleans and build the struct at the end — avoids the
     // `field_reassign_with_default` clippy trap that would fire on
@@ -559,6 +610,242 @@ pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags
         has_target,
         has_content_variant,
     }
+}
+
+// ── register-site walker (producer, bd raikiri-spike-e81n) ─────────────
+
+/// Document-order arena walk that registers every `position: running(name)`
+/// element into a fresh [`RunningTemplateStore`] — the "register-site
+/// walker" design §7.3 calls out as the producer half of the tier-1 cache.
+///
+/// Walks `doc` from its root in document order (iterative DFS, same
+/// reverse-push-children shape as [`crate::layout::find_body`], so pool
+/// order == document order, per [`RunningTemplateStore::register`]'s caller
+/// invariant). For every in-document [`NodeKind::Element`] whose
+/// `cascade.computed[idx].running_templates` is non-empty (the cascade-time
+/// seed raikiri-style emits, design §7.0 static side), builds a
+/// [`ParsedRunningTemplate`] via [`collect_running_template`] and calls
+/// [`RunningTemplateStore::register`].
+///
+/// **Nested `position: running(name)` elements are not pruned.** A running
+/// element nested inside another running element's subtree is visited (and
+/// registered) both as part of the outer template's [`CascadeSubset`] (its
+/// `computed_styles` include the nested subtree — DOM structure is
+/// unaffected by `running()`, same as `display: none`) and independently as
+/// its own top-level registration, uniformly like every other running
+/// element. See [`collect_running_template`]'s doc for why the outer
+/// template's `directives` does NOT also carry a `RegisterRunning` entry for
+/// the nested seed.
+///
+/// # Precondition
+///
+/// `doc`'s `IS_IN_DOCUMENT` flags must be up to date
+/// (see [`Document::mark_in_document_flags`]) — the same precondition
+/// [`raikiri_style::cascade()`] itself carries, since this walker is meant to
+/// run against the very `cascade` output produced from `doc`.
+#[allow(
+    dead_code,
+    reason = "Register-site walker landed by bd raikiri-spike-e81n; no \
+              production driver calls it yet (that's the per-page \
+              PageStream / paint integration, a later wall/dom-paint task — \
+              see bd raikiri-spike-e81n's Non-goals section). Exercised via \
+              unit tests until then, same status the pieces it wires \
+              together previously carried individually."
+)]
+pub(crate) fn build_running_template_store(
+    doc: &Document,
+    cascade: &CascadeResult,
+) -> RunningTemplateStore {
+    let mut store = RunningTemplateStore::default();
+    let mut stack: Vec<usize> = vec![doc.root];
+    while let Some(idx) = stack.pop() {
+        let node = &doc.nodes[idx];
+        if !node.is_in_document() {
+            continue;
+        }
+        if node.kind() == NodeKind::Element
+            && let Some(rt) = cascade
+                .computed
+                .get(idx)
+                .and_then(|cv| cv.running_templates.first())
+        {
+            let name = Symbol::new(rt.name.clone());
+            let template = collect_running_template(doc, cascade, idx);
+            store.register(name, template);
+        }
+        // Reverse-push children so the stack pops them in document order
+        // (same shape as `crate::layout::find_body`).
+        for &child in node.children.iter().rev() {
+            stack.push(child);
+        }
+    }
+    store
+}
+
+/// Build a [`ParsedRunningTemplate`] for the subtree rooted at
+/// `subtree_root` — the per-template half of
+/// [`build_running_template_store`]'s walk.
+///
+/// Walks the subtree in document order (same DFS shape as the caller),
+/// collecting for every in-document node:
+/// - its [`raikiri_style::ComputedValues`] into [`CascadeSubset::styles`]
+///   (walk order, per that field's doc);
+/// - `counter-reset` / `counter-increment` / `counter-set` entries as
+///   [`GcpmDirective::CounterReset`] / [`GcpmDirective::CounterIncrement`] /
+///   [`GcpmDirective::CounterSet`] (one directive per `(name, value)` pair),
+///   pushed in that CSS Lists 3 §4 processing order (not property
+///   declaration order) — see the loop's own comment;
+/// - `string-set` entries as [`GcpmDirective::StringSet`], via
+///   [`convert_string_set_source`] — see that function's doc for the
+///   skip-whole-entry-on-conversion-failure policy.
+/// - the node's `content` list, folded (OR) into the template's aggregate
+///   [`DynamicFlags`] via [`detect_dynamic_flags`] — the "real invocation
+///   site" this task adds (previously exercised only by unit tests calling
+///   `detect_dynamic_flags` directly).
+///
+/// Does NOT emit `RegisterRunning` for a nested `position: running(name)`
+/// seed found while walking the subtree — the nested element is registered
+/// independently by [`build_running_template_store`]'s own top-level walk;
+/// see [`ParsedRunningTemplate`]'s type-level `directives` field note for
+/// why this walker leaves that hedge unresolved (fail-closed, 原則 3) rather
+/// than guess a directive shape nothing downstream consumes yet. Does NOT
+/// emit `RegisterTarget` either — out of this task's scope (see the
+/// module-level "Divergence from `raikiri_traits::TargetRegistry`'s
+/// register policy" note).
+#[allow(
+    dead_code,
+    reason = "Helper for build_running_template_store (bd \
+              raikiri-spike-e81n); same not-yet-production-driven status."
+)]
+fn collect_running_template(
+    doc: &Document,
+    cascade: &CascadeResult,
+    subtree_root: usize,
+) -> ParsedRunningTemplate {
+    let mut styles = Vec::new();
+    let mut directives = Vec::new();
+    let mut dynamic_flags = DynamicFlags::default();
+
+    let mut stack: Vec<usize> = vec![subtree_root];
+    while let Some(idx) = stack.pop() {
+        let node = &doc.nodes[idx];
+        if !node.is_in_document() {
+            continue;
+        }
+        if let Some(cv) = cascade.computed.get(idx) {
+            styles.push(cv.clone());
+
+            // Pushed in CSS Lists 3 §4 "Automatic Numbering With Counters"
+            // processing order (reset → increment → set —
+            // <https://www.w3.org/TR/css-lists-3/#auto-numbering>, §4.2's
+            // note that counter-set is applied after counter-increment).
+            // No consumer walks this Vec yet (see this function's doc), but
+            // the future Phase B walk (bd raikiri-spike-8ejw) is expected to
+            // apply it front-to-back rather than re-sort by directive kind,
+            // so getting push order right now avoids baking in a
+            // same-element `counter-reset: c 0; counter-increment: c 1`
+            // ordering bug that nothing here would catch.
+            for (name, value) in cv.counter_reset.iter() {
+                directives.push(GcpmDirective::CounterReset {
+                    name: Symbol::new(name.clone()),
+                    value: *value,
+                });
+            }
+            for (name, delta) in cv.counter_increment.iter() {
+                directives.push(GcpmDirective::CounterIncrement {
+                    name: Symbol::new(name.clone()),
+                    delta: *delta,
+                });
+            }
+            for (name, value) in cv.counter_set.iter() {
+                directives.push(GcpmDirective::CounterSet {
+                    name: Symbol::new(name.clone()),
+                    value: *value,
+                });
+            }
+            for (name, content_list) in cv.string_set.iter() {
+                if let Some(source) = convert_string_set_source(content_list) {
+                    directives.push(GcpmDirective::StringSet {
+                        name: Symbol::new(name.clone()),
+                        source,
+                    });
+                }
+                // Conversion failure → skip this string-set entry entirely;
+                // see convert_string_set_source's doc comment.
+            }
+
+            let node_flags = detect_dynamic_flags(&cv.content);
+            dynamic_flags.has_counter |= node_flags.has_counter;
+            dynamic_flags.has_string |= node_flags.has_string;
+            dynamic_flags.has_target |= node_flags.has_target;
+            dynamic_flags.has_content_variant |= node_flags.has_content_variant;
+            // cov:ignore: the None arm of this defensive `.get(idx)` (unreached
+            // here — every idx on the stack comes from `doc`'s own `children`
+            // links, and `raikiri_style::cascade`'s own contract is
+            // `computed.len() == doc.node_count()`, so `idx` is always in
+            // bounds for the `cascade` this walker is called with) is
+            // impossible to hit without passing a `cascade` computed against a
+            // different `Document`, which isn't a real call pattern for this
+            // crate-private helper and isn't reachable from outside the crate
+            // to construct adversarially (`CascadeResult` is `#[non_exhaustive]`
+            // cross-crate).
+        }
+
+        for &child in node.children.iter().rev() {
+            stack.push(child);
+        }
+    }
+
+    ParsedRunningTemplate {
+        subtree_root: NodeId::new(subtree_root as u64),
+        computed_styles: Arc::new(CascadeSubset { styles }),
+        directives,
+        dynamic_flags,
+    }
+}
+
+/// Convert a resolved `string-set` content-list
+/// ([`raikiri_style::ComputedValues::string_set`])
+/// into a [`ContentSource`], or `None` if any component fails
+/// [`ContentValueItem`]'s `TryFrom<ContentComponent>`.
+///
+/// **Whole-entry skip, not partial-item truncation** — if any component in
+/// `content_list` fails to convert, the entire `string-set` entry is
+/// dropped rather than emitting a `ContentSource` missing just that item
+/// (a truncated content-list would silently change the named string's
+/// resolved value instead of omitting it, which is worse).
+///
+/// **Currently unreachable via a real `string-set:` CSS declaration** — the
+/// `GcpmStringSet` parser mode
+/// ([`raikiri_style::property`]'s `parse_content_function`) already rejects
+/// `target-counter()` / `target-counters()` / `target-text()` / `string()` /
+/// `leader()` / `<image>` / `contents` / `<quote>` at parse time, and every
+/// component `GcpmStringSet` mode *does* accept (`Literal`, `Counter`,
+/// `Counters`, `Attr`, `Content`) converts via `TryFrom` unconditionally (no
+/// URL, no fallible mapping). So today this function's `None` branch is
+/// defense-in-depth, not a reachable production path — kept for a future
+/// `ContentTextKeyword` variant this crate hasn't mirrored yet, or a future
+/// relaxation of the `GcpmStringSet` grammar that lets a URL-bearing
+/// component through (at which point the common failure would be
+/// `Url::parse` rejecting a relative `target-counter(url(#frag), ...)`
+/// reference — the `url` crate requires an absolute base for every URL,
+/// including fragment-only ones — a wall/traits base-URL-resolution gap,
+/// not something this task fixes). Pinned directly (bypassing the CSS
+/// parser) by
+/// `convert_string_set_source_skips_entry_on_url_conversion_failure`.
+#[allow(
+    dead_code,
+    reason = "Helper for collect_running_template (bd raikiri-spike-e81n); \
+              same not-yet-production-driven status."
+)]
+fn convert_string_set_source(content_list: &[ContentComponent]) -> Option<ContentSource> {
+    content_list
+        .iter()
+        .cloned()
+        .map(ContentValueItem::try_from)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+        .map(ContentSource::new)
 }
 
 /// Per-page margin box geometry — the input to [`layout_running_template`].
@@ -653,7 +940,9 @@ mod tests {
     use raikiri_style::property::{
         ContentPart, ContentTextKeyword, CounterStyle, LeaderType, QuoteKeyword, StringFetchMode,
     };
+    use raikiri_style::{build_rule_tree, cascade};
     use smol_str::SmolStr;
+    use taffy::Style;
 
     // ── Canonical-shape pins (design §7.3) ─────────────────────────
 
@@ -820,12 +1109,12 @@ mod tests {
 
     #[test]
     fn pool_preserves_registration_order() {
-        // Explicit regression pin: the register-site walker (bd
-        // raikiri-spike-e81n) is expected to call register in document
-        // order, and the pool must faithfully preserve that order — CSS
-        // GCPM 3 §1.2.2 selector-keyword semantics (first/start/last/
-        // first-except) all filter over an ordered pool. If a future
-        // implementation switches to a HashSet / BTreeSet, this test breaks.
+        // Explicit regression pin: the register-site walker
+        // (build_running_template_store) calls register in document order,
+        // and the pool must faithfully preserve that order — CSS GCPM 3
+        // §1.2.2 selector-keyword semantics (first/start/last/first-except)
+        // all filter over an ordered pool. If a future implementation
+        // switches to a HashSet / BTreeSet, this test breaks.
         let mut store = RunningTemplateStore::default();
         let name = Symbol::new("hdr");
         let ids: Vec<_> = (1..=5u64)
@@ -1185,6 +1474,447 @@ mod tests {
         assert!(f.has_target);
         assert!(f.has_content_variant);
         assert!(!f.is_fully_static());
+    }
+
+    // ── register-site walker (build_running_template_store) ────────
+
+    #[test]
+    fn build_running_template_store_registers_element_with_running_position() {
+        let mut doc = Document::new();
+        let header = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        assert_eq!(store.len(), 1);
+
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        assert_eq!(pool.len(), 1);
+        let template = store.get(pool[0]).expect("registered");
+        assert_eq!(template.subtree_root, NodeId::new(header as u64));
+    }
+
+    #[test]
+    fn build_running_template_store_ignores_elements_without_running_position() {
+        let mut doc = Document::new();
+        doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        doc.append_element(Some(0), "p", Style::default(), Some("color: red"));
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        assert_eq!(store.len(), 0, "no position: running() element present");
+    }
+
+    #[test]
+    fn build_running_template_store_and_collect_running_template_skip_not_in_document_nodes() {
+        // Comment nodes default IS_IN_DOCUMENT=true at construction (see
+        // Node::new_comment's doc) but get explicitly cleared by
+        // Document::mark_in_document_flags's DFS. Both this walker's
+        // top-level register-site walk and collect_running_template's own
+        // per-template subtree walk must skip such nodes via their
+        // is_in_document() gate, same as every other traversal in this
+        // crate (cascade / paint / layout — see layout::find_body's doc).
+        // A comment nested inside the running(header) subtree exercises
+        // both walks' gates in one pass: the outer walk visits it while
+        // looking for further running() elements past this subtree, and
+        // collect_running_template visits it while building this
+        // subtree's own CascadeSubset.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        doc.append_comment(Some(root), "note");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        assert_eq!(pool.len(), 1, "the comment must not itself register");
+        let template = store.get(pool[0]).expect("registered");
+
+        // Only the running(header) root itself is in-document — the
+        // comment must not contribute a ComputedValues entry to the
+        // subtree's CascadeSubset.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            template.computed_styles.styles.len(),
+            1,
+            "the comment child must be skipped by collect_running_template's \
+             own walk, not counted alongside the root"
+        );
+    }
+
+    #[test]
+    fn build_running_template_store_registers_siblings_in_document_order() {
+        // Regression pin referenced by the module-level "Registration order
+        // == document order" note: three sibling running(hdr) elements must
+        // land in the pool in document order.
+        let mut doc = Document::new();
+        let a = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(hdr)"),
+        );
+        let b = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(hdr)"),
+        );
+        let c = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(hdr)"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        assert_eq!(store.len(), 3);
+        let pool = store.resolve_element_pool(&Symbol::new("hdr"));
+        let subtree_roots: Vec<NodeId> = pool
+            .iter()
+            .map(|id| store.get(*id).expect("registered").subtree_root)
+            .collect();
+        assert_eq!(
+            subtree_roots,
+            vec![
+                NodeId::new(a as u64),
+                NodeId::new(b as u64),
+                NodeId::new(c as u64),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_running_template_store_registers_nested_running_elements_independently() {
+        // Nested position: running() elements are not pruned — both the
+        // outer and inner element register as their own top-level template,
+        // and the outer template's directives must NOT carry a
+        // RegisterRunning entry for the nested seed (see
+        // collect_running_template's doc comment).
+        let mut doc = Document::new();
+        let outer = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        let inner = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("position: running(footer)"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            store.len(),
+            2,
+            "outer and inner both registered independently"
+        );
+
+        let header_pool = store.resolve_element_pool(&Symbol::new("header"));
+        let header = store.get(header_pool[0]).expect("registered");
+        assert_eq!(header.subtree_root, NodeId::new(outer as u64));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            !header
+                .directives
+                .iter()
+                .any(|d| matches!(d, GcpmDirective::RegisterRunning { .. })),
+            "the nested running(footer) seed must not surface as a \
+             RegisterRunning directive on the outer template"
+        );
+
+        let footer_pool = store.resolve_element_pool(&Symbol::new("footer"));
+        let footer = store.get(footer_pool[0]).expect("registered");
+        assert_eq!(footer.subtree_root, NodeId::new(inner as u64));
+    }
+
+    #[test]
+    fn collect_running_template_collects_computed_styles_in_subtree_walk_order() {
+        // Per CascadeSubset::styles's doc: walk order parallel to the DOM
+        // walk from subtree_root. Distinguish nodes via distinct font-size
+        // markers.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header); font-size: 10px"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("font-size: 20px"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("font-size: 30px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        let sizes: Vec<f32> = template
+            .computed_styles
+            .styles
+            .iter()
+            .map(|cv| cv.font_size.px())
+            .collect();
+        assert_eq!(sizes, vec![10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn collect_running_template_includes_text_nodes_in_walk_order() {
+        // `styles` is a positional contract ("parallel to the DOM walk from
+        // subtree_root") that a future paint-driver consumer will index
+        // into alongside the arena — it must not silently drop Text nodes.
+        // CascadeResult.computed populates Text node slots too (inherited
+        // from the parent), so collect_running_template's kind-agnostic
+        // walk (no NodeKind::Element filter, unlike the top-level
+        // running(name) detection in build_running_template_store) must
+        // carry them through.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header); font-size: 10px"),
+        );
+        let child = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("font-size: 20px"),
+        );
+        doc.append_text(child, "hello");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        let sizes: Vec<f32> = template
+            .computed_styles
+            .styles
+            .iter()
+            .map(|cv| cv.font_size.px())
+            .collect();
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            sizes,
+            vec![10.0, 20.0, 20.0],
+            "root (10px), span (20px), then the text child inheriting the \
+             span's 20px — three entries, not two"
+        );
+    }
+
+    #[test]
+    fn collect_running_template_emits_counter_and_string_set_directives() {
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("counter-increment: chapter 2"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(r#"string-set: title "hello""#),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        assert!(
+            template
+                .directives
+                .contains(&GcpmDirective::CounterIncrement {
+                    name: Symbol::new("chapter"),
+                    delta: 2,
+                })
+        );
+        assert!(template.directives.contains(&GcpmDirective::StringSet {
+            name: Symbol::new("title"),
+            source: ContentSource::new(vec![ContentValueItem::Literal("hello".to_owned())]),
+        }));
+    }
+
+    #[test]
+    fn collect_running_template_emits_counter_directives_in_css_lists_3_processing_order() {
+        // CSS Lists 3 §4 "Automatic Numbering With Counters"
+        // (<https://www.w3.org/TR/css-lists-3/#auto-numbering>): counter
+        // values on one element are resolved reset → increment → set (§4.2
+        // notes counter-set is applied after counter-increment). Pin push
+        // order == that processing order (not property declaration order,
+        // and not raikiri-style's ComputedValues field order, which happens
+        // to match here but is not itself the authority) — nothing else
+        // catches a regression here since no consumer walk exists yet (see
+        // collect_running_template's doc).
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("counter-set: c 5; counter-increment: c 1; counter-reset: c 0"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            template.directives,
+            vec![
+                GcpmDirective::CounterReset {
+                    name: Symbol::new("c"),
+                    value: 0,
+                },
+                GcpmDirective::CounterIncrement {
+                    name: Symbol::new("c"),
+                    delta: 1,
+                },
+                GcpmDirective::CounterSet {
+                    name: Symbol::new("c"),
+                    value: 5,
+                },
+            ],
+            "must emit reset, then increment, then set — declaration order \
+             in the inline style was set/increment/reset, the opposite"
+        );
+    }
+
+    #[test]
+    fn collect_running_template_folds_dynamic_flags_across_subtree_nodes() {
+        // Walker-level cross-node OR-fold pin (module doc's "multiple
+        // content lists — one per node in the subtree — are folded via
+        // repeated calls" contract): child A contributes has_counter, child
+        // B (a different node) contributes has_string. Neither node alone
+        // would flip both flags.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("content: counter(chapter)"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("content: string(title)"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        assert!(template.dynamic_flags.has_counter);
+        assert!(template.dynamic_flags.has_string);
+        assert!(!template.dynamic_flags.has_target);
+        assert!(!template.dynamic_flags.has_content_variant);
+    }
+
+    #[test]
+    fn convert_string_set_source_skips_entry_on_url_conversion_failure() {
+        // The GcpmStringSet parser mode (raikiri_style::property's
+        // parse_content_function) already rejects target-counter() /
+        // target-counters() / target-text() / string() / leader() / <image>
+        // / contents / <quote> at parse time, so this failure path is
+        // unreachable via a real `string-set:` CSS declaration today — see
+        // convert_string_set_source's doc comment. This test bypasses the
+        // parser and calls the helper directly to pin the
+        // skip-whole-entry policy as defense-in-depth.
+        let content = [ContentComponent::TargetCounter {
+            url: "#c".to_owned(), // relative URL: Url::parse rejects it
+            name: SmolStr::new("page"),
+            style: CounterStyle::Decimal,
+        }];
+        assert!(convert_string_set_source(&content).is_none());
+    }
+
+    #[test]
+    fn resolve_first_returns_pool_head_and_none_for_unregistered_name() {
+        let mut store = RunningTemplateStore::default();
+        assert!(store.resolve_first(&Symbol::new("header")).is_none());
+
+        let id_a = store.register(
+            Symbol::new("header"),
+            make_parsed(11, DynamicFlags::default()),
+        );
+        store.register(
+            Symbol::new("header"),
+            make_parsed(22, DynamicFlags::default()),
+        );
+
+        let first = store
+            .resolve_first(&Symbol::new("header"))
+            .expect("header has registrations");
+        assert_eq!(first.subtree_root, NodeId::new(11));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            RunningTemplateId::new(first.subtree_root),
+            id_a,
+            "resolve_first must return the first-registered (document-first) template"
+        );
     }
 
     // ── layout_running_template (per-page re-layout stub) ──────────
