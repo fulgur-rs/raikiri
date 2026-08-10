@@ -2541,7 +2541,7 @@ mod tests {
     /// border-width = 0px、line-height = normal、font-size = 16px) になることを
     /// pin する。
     ///
-    /// 集約版 (`SpecifiedValues::finalize` 全体) は `crate::specified` の
+    /// 集約版 (`SpecifiedValues::finalize` 全体) は `crate::specified` の // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// `initial_specified_finalizes_to_initial_computed` が持つ。こちらは
     /// **どの関数が壊れたか**を局所化するための per-function 粒度。
     #[test]

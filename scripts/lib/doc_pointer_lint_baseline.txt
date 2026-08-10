@@ -30,4 +30,38 @@
 # excess traces to lines this branch didn't author, fix or
 # `doc-pointer-lint:ignore:` those specific lines (or escalate) rather
 # than raising this number to make the failure disappear.
-36
+#
+# 2026-08-10 deliberate lowering sweep (bd raikiri-spike-hrau, 36 -> 22):
+# at re-measurement time the count had already drifted to 37 (untouched
+# foreign-merge drift, tracked separately as bd raikiri-spike-u4uu, not
+# addressed here) — this sweep's own -15 delta is against that 37, not the
+# stale 36 this file previously recorded, so the new pinned value (22)
+# does not equal 36-15. Of the 37, 15 sites (~40%) were confirmed
+# (`わざと壊して確かめる` — deliberately broke an intra-doc link at one
+# #[test]-item-doc site and one fn-body-local-item-doc site, both inside
+# #[cfg(test)] mod tests, and RUSTDOCFLAGS="-D warnings" cargo doc stayed
+# silent both times) to be opt-out 3 (rustdoc-blind position): all 15 sit
+# inside a `#[cfg(test)] mod tests` block, 14 attached directly to a
+# `#[test]` fn and 1 nested inside another fn's body. All 15 are now
+# marked `doc-pointer-lint:ignore:` at the site itself rather than
+# excluded here — this shrinks the ratchet to debt not identified as
+# rustdoc-blind by this sweep's predicate (walk from doc block to the
+# item it attaches to, via #[test] and fn-body-local only), closing the
+# risk that a future contributor "reduces the ratchet count" by
+# converting one of these bare pointers to a bracket link, which would
+# look verified but never actually be checked by rustdoc at that position
+# (the same hazard bd raikiri-spike-vyse's role 1 exists to close for
+# plain `//` comments, reproduced here at a different position).
+#
+# Known gap, not swept here (bd raikiri-spike-hrau's dispatch explicitly
+# excluded "a general audit of every ratchet site"): the true rustdoc-
+# blind boundary is the whole `#[cfg(test)] mod tests` block, not just
+# `#[test]`-attached / fn-body-local items within it — a bare `crate::…`
+# pointer on a non-#[test] helper *inside* such a mod (e.g. a private fn
+# used only by tests in that mod) would be equally rustdoc-blind but is
+# NOT covered by this sweep's #[test]/fn-body-local predicate, so this
+# pinned 22 is a lower bound on remaining opt-out-3 debt, not a proof
+# there is none left. Tracked as bd raikiri-spike-csmj (filed 2026-08-10 by
+# this task's reviewer:quality lens, which found this gap was mentioned in
+# prose here but not filed as a bd issue).
+22

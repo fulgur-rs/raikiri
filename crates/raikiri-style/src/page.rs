@@ -2656,7 +2656,7 @@ mod tests {
     /// §3.1) — **not** `Auto` (`resolve_margin_length_or_auto`, bd
     /// raikiri-spike-vxha — element-path sibling is
     /// `margin_lh_falls_back_to_zero_not_auto_when_line_height_normal` in
-    /// `crate::cascade`).
+    /// `crate::cascade`). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     #[test]
     fn cascade_page_margin_lh_falls_back_to_zero_not_auto_when_line_height_normal() {
         let root = root_with_font_size(20.0); // line-height stays `normal` (initial)
@@ -2672,7 +2672,7 @@ mod tests {
 
     /// `@page { line-height: 1lh }` is self-referential — CSS Values 4
     /// §6.1.1, spec quote canonically documented on
-    /// `crate::resolve::resolve_line_height`. The page context's "parent"
+    /// `crate::resolve::resolve_line_height`. The page context's "parent" // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// for this purpose is the root element (CSS Paged Media 3 §6), which
     /// is exactly what `ctx.root_line_height` already carries.
     #[test]
@@ -2771,7 +2771,7 @@ mod tests {
     /// initial (`medium` = 16px), same "no real font metrics in the style
     /// layer" wall as the element path
     /// (`font_size_lh_falls_back_to_initial_when_parent_line_height_is_normal`
-    /// in `crate::cascade`). Deliberately **not** `root_with_font_size`'s
+    /// in `crate::cascade`). Deliberately **not** `root_with_font_size`'s // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// 20px — the fallback is `font-size`'s spec initial, unconditionally,
     /// not whatever font-size the root happens to declare.
     #[test]
@@ -3089,7 +3089,7 @@ mod tests {
 
     /// Direct exercise of the three **shorthand fall-through arms** of
     /// `absolutize_in_page_context`. They are unreachable through `cascade_page`:
-    /// `crate::rule::expand_shorthand_into` runs both at the parse exit
+    /// `crate::rule::expand_shorthand_into` runs both at the parse exit // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// (`parse_declaration_block`) and at the `@page` cascade entry (the
     /// candidate loop in `cascade_page`, bd raikiri-spike-3svx), so the
     /// post-parse mutation path through the `pub` field
@@ -3104,7 +3104,7 @@ mod tests {
     ///
     /// Since bd raikiri-spike-7m33 `absolutize_in_page_context` takes a
     /// `ResolvedAgainstInherited`, whose constructor is private outside
-    /// `crate::cascade` — `ResolvedAgainstInherited::for_test` is the
+    /// `crate::cascade` — `ResolvedAgainstInherited::for_test` is the // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// `#[cfg(test)]`-only escape hatch that lets this test keep driving the
     /// function directly with a hand-picked payload (see that type's doc,
     /// "test 用の裏口").
@@ -3723,7 +3723,7 @@ mod tests {
         /// `<percentage>` values to `<length>`)。`line-height` は CSS Inline 3
         /// §5.1 <https://www.w3.org/TR/css-inline-3/#line-height-property> が
         /// "Percentages: computed relative to 1em" と規定する。実装側は
-        /// `crate::resolve` の `resolve_font_size` / `resolve_line_height` が
+        /// `crate::resolve` の `resolve_font_size` / `resolve_line_height` が // doc-pointer-lint:ignore: opt-out-3, fn-body-local item doc (nested inside `specified_layer_residue`, itself inside #[cfg(test)] mod tests) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
         /// 両方とも `%` を絶対化しており、本 helper 以前の検出器はそれを
         /// computed 層と誤分類していた。
         fn length_absolute_only(l: Length, what: &'static str) -> Option<&'static str> {

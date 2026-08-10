@@ -2158,7 +2158,7 @@ mod tests {
 
     /// `line-height: 1lh` is self-referential (CSS Values 4 §6.1.1, spec
     /// quote canonically documented on
-    /// `crate::resolve::resolve_line_height`) — it must use the **parent's**
+    /// `crate::resolve::resolve_line_height`) — it must use the **parent's** // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// used line-height, not the declaring element's own font-size. The
     /// child's own font-size (50px) is deliberately different from the
     /// parent's (16px, initial) so a bug that leaks the child's own metrics
@@ -2194,7 +2194,7 @@ mod tests {
     /// in this crate (bd raikiri-spike-vxha — `rlh`'s own definition, "the
     /// lh unit on the root element", is a tree-global constant that does not
     /// depend on the declaring element's position; see
-    /// `crate::resolve::resolve_line_height`'s doc for why the literal
+    /// `crate::resolve::resolve_line_height`'s doc for why the literal // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// "Similarly, lh or rlh" spec wording is not followed for `rlh` on
     /// non-root elements). Three levels (root / middle / leaf) with
     /// **different** line-heights at the root and the immediate parent

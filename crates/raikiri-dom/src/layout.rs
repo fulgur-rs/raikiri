@@ -3498,7 +3498,7 @@ mod tests {
 
     /// `emit_layout_warn` は observer が `Some` ならそれを呼び、`eprintln!`
     /// はしない — fonts.rs の `emit_warn` と対称的な契約 (両方とも
-    /// `crate::diag::emit_warn_via` を経由するので同じ振る舞いになるはず)。
+    /// `crate::diag::emit_warn_via` を経由するので同じ振る舞いになるはず)。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     #[test]
     fn emit_layout_warn_calls_observer_when_some() {
         let mut collected: Vec<LayoutWarn> = Vec::new();
@@ -3582,7 +3582,7 @@ mod tests {
     }
 
     /// `LayoutWarn` の `Display` が両 variant で人間可読な文字列を出す
-    /// ことの pin (`crate::diag::emit_warn_via` の `eprintln!` fallback が
+    /// ことの pin (`crate::diag::emit_warn_via` の `eprintln!` fallback が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// 実際に読める行になることの保証)。
     #[test]
     fn layout_warn_display_is_human_readable() {

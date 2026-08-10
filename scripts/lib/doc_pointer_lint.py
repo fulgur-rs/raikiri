@@ -565,10 +565,18 @@ def main() -> int:
         print()
         print(
             "Fix: convert to an intra-doc link (AGENTS.md's `crate::…` "
-            "pointer 節), or if this span is a confirmed opt-out (removed "
+            "pointer 節) — but ONLY after checking this span isn't in a "
+            "rustdoc-blind position first (opt-out 3: #[test]-item doc, "
+            "fn-body-local item doc, #[doc(hidden)], #[cfg]-excluded item, "
+            "unexpanded macro_rules! body — see this file's module "
+            "docstring). A bracket link written there looks like a "
+            "verified intra-doc link but rustdoc never resolves it (bd "
+            "raikiri-spike-hrau — this exact ratchet's own baseline was "
+            "~40% such spans). If this span is a confirmed opt-out (removed "
             "marker / tests:: target / rustdoc-blind position verified by "
             "the わざと壊して確かめる procedure), mark it with "
-            "`doc-pointer-lint:ignore: <reason>` on the same line."
+            "`doc-pointer-lint:ignore: <reason>` on the same line instead "
+            "of linking it."
         )
     else:
         print(f"PASS: {ratchet_count} <= baseline {baseline}.")
