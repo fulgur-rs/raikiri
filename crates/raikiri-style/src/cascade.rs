@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use cssparser::{Parser, ParserInput};
+use selectors::attr::{CaseSensitivity, ParsedCaseSensitivity};
 use selectors::parser::{Selector, SelectorList};
 
 use crate::RaikiriSelectorImpl;
@@ -325,9 +326,8 @@ fn collect_cascaded<D: StyleDom>(
                 // before all real author declarations".
                 push_img_dimension_hints(&elem, &mut out.decls);
                 // stylesheet rule matching
-                let tag = elem.tag_name();
                 for rule in &rule_tree.style_rules {
-                    if let Some(spec) = match_by_tag(&rule.selectors, tag) {
+                    if let Some(spec) = match_simple_selectors(&rule.selectors, &elem) {
                         for decl in &rule.declarations {
                             // shorthand を longhand に展開してから candidate に
                             // 積む (parse 出口の展開だけでは `RuleTree` の
@@ -386,38 +386,130 @@ fn collect_cascaded<D: StyleDom>(
     }
 }
 
-/// tag_name 文字列と selector list を突き合わせる簡易 matcher (M1.4 scope)。
+/// `elem` と selector list を突き合わせる simple-selector matcher (single
+/// element のみ — combinator を要する tree-walk は非対応、bd raikiri-spike-flln.1)。
 ///
 /// Returns: matching した selector の最大 specificity。1 つも match しなければ None。
-/// - `Component::LocalName(name)` — name eq_ignore_ascii_case で判定
+/// - `Component::LocalName(name)` — `elem.tag_name()` と eq_ignore_ascii_case で判定
 /// - `Component::ExplicitUniversalType` — 常に match
-fn match_by_tag(list: &SelectorList<RaikiriSelectorImpl>, tag_name: &str) -> Option<Specificity> {
+/// - `Component::ID` — `elem.id()` と厳密一致 (CSS Selectors L4
+///   <https://www.w3.org/TR/selectors-4/#id-selectors>、HTML の `id` は
+///   case-sensitive)
+/// - `Component::Class` — `elem.has_class()` (CSS Selectors L4
+///   <https://www.w3.org/TR/selectors-4/#class-html>、
+///   [`StyleElement::has_class`] の doc 通り HTML-spec ASCII whitespace split
+///   + token 単位 case-sensitive 比較)
+/// - `Component::AttributeInNoNamespaceExists` / `Component::AttributeInNoNamespace`
+///   — `elem.attr()` (CSS Selectors L4
+///   <https://www.w3.org/TR/selectors-4/#attribute-selectors>)。存在チェック
+///   形態 (`[foo]`) の lookup key は element の namespace に応じて
+///   `local_name` / `local_name_lower` を選ぶ (詳細は該当 match arm の
+///   コメント)。値付き形態の case-sensitivity 解決は
+///   [`resolve_case_sensitivity`] 参照
+///
+/// 他 component (combinator / pseudo-class / namespace 付き属性 selector = 常に
+/// `Component::AttributeOther`、または非小文字 local name **かつ値付き**の
+/// 属性 selector = 同じく `Component::AttributeOther` — 非小文字でも値なしの
+/// 存在チェック形態は namespace 無指定なら `AttributeInNoNamespaceExists` の
+/// まま、詳細は `ruletree.rs` `is_supported_selector_list` のコメント) は
+/// `is_supported_selector_list` が rule tree 構築時点で drop 済のはずだが、
+/// safety net として引き続き match fail する。
+fn match_simple_selectors<E: StyleElement>(
+    list: &SelectorList<RaikiriSelectorImpl>,
+    elem: &E,
+) -> Option<Specificity> {
     use selectors::parser::Component;
 
     let mut best: Option<Specificity> = None;
     for selector in list.slice() {
         let mut matches = true;
         for component in selector.iter_raw_match_order() {
-            match component {
+            let component_matches = match component {
                 Component::LocalName(local) => {
                     // local.name は Atom (raikiri-style::Atom)、tag_name 文字列と比較
-                    if !tag_name.eq_ignore_ascii_case(local.name.0.as_str()) {
-                        matches = false;
-                        break;
-                    }
+                    elem.tag_name().eq_ignore_ascii_case(local.name.0.as_str())
                 }
                 Component::ExplicitUniversalType
                 | Component::ExplicitAnyNamespace
                 | Component::ExplicitNoNamespace
                 | Component::DefaultNamespace(_) => {
                     // 常に match / namespace は m1.4 では常に true 扱い
+                    true
                 }
+                // NB (bd raikiri-spike-tqwi): both arms below always compare
+                // case-sensitively — CSS Selectors L4 requires ASCII-case-
+                // insensitive id/class matching in quirks-mode documents
+                // ("otherwise case-sensitive"), but raikiri-style has no
+                // document-mode signal threaded through `StyleDom`/
+                // `StyleElement` yet (`raikiri_traits::QuirksMode` stops at
+                // the parse layer). Tracked by tqwi, not this task's scope.
+                Component::ID(id) => elem.id() == Some(id.0.as_str()),
+                Component::Class(class) => elem.has_class(class.0.as_str()),
+                Component::AttributeInNoNamespaceExists {
+                    local_name,
+                    local_name_lower,
+                } => {
+                    // Which key to look up under `elem.attr()` depends on
+                    // the *element's* namespace, unlike the with-value arm
+                    // below (whose lowercase guarantee comes from the
+                    // selector's own parse, not the element). HTML LS's
+                    // "attributes on HTML elements in HTML documents are
+                    // lowercased" scoping
+                    // (https://html.spec.whatwg.org/multipage/semantics-other.html#case-sensitivity-of-selectors)
+                    // only covers HTML-namespace elements — html5ever's
+                    // tokenizer/tree-builder already lower-cases attribute
+                    // names for those (confirmed via
+                    // `crates/raikiri-html/src/sink.rs`'s `wire_side_tables`,
+                    // which stores `a.name.local` verbatim with no extra
+                    // lowercasing pass of its own), so `local_name_lower` is
+                    // the correct — and actually-stored — key there. Foreign
+                    // (SVG/MathML) elements are outside that HTML LS scope:
+                    // html5ever's "adjust foreign attributes" step can
+                    // restore specific attributes to their original mixed
+                    // case (e.g. `viewBox`), and `wire_side_tables` stores
+                    // whatever case html5ever produced, unmodified — so
+                    // `local_name` (the selector's own, unmodified case) is
+                    // the correct key for those.
+                    let key = if elem.namespace_uri().is_none() {
+                        local_name_lower
+                    } else {
+                        local_name
+                    };
+                    elem.attr(key.0.as_str()).is_some()
+                }
+                Component::AttributeInNoNamespace {
+                    local_name,
+                    operator,
+                    value,
+                    case_sensitivity,
+                } => match elem.attr(local_name.0.as_str()) {
+                    // `local_name` を直に使ってよい理由 (この with-value arm
+                    // 限定 — 上の `AttributeInNoNamespaceExists` arm とは
+                    // 対比的に element の namespace を問わない): `selectors`
+                    // crate の parser (`AttributeInNoNamespace` を作る分岐) は
+                    // *selector 自身の* local name が既に ASCII-lowercase な
+                    // 場合にのみこの variant を選ぶ — 非小文字は
+                    // `Component::AttributeOther` に回る
+                    // (`is_supported_selector_list` が drop する)。この
+                    // lowercase 保証は selector の parse 時点で決まり、
+                    // どの element (HTML/foreign 問わず) に対して matching
+                    // するかに依存しないため、上の Exists arm と違って
+                    // namespace 分岐は不要。
+                    Some(attr_value) => {
+                        let case = resolve_case_sensitivity(*case_sensitivity, elem);
+                        operator.eval_str(attr_value, value.0.as_str(), case)
+                    }
+                    None => false,
+                },
                 _ => {
-                    // 他 component (class/id/attr/combinator/pseudo) は m1.4 では
+                    // 他 component (combinator/pseudo/AttributeOther) は
                     // ruletree build 段で drop 済のはずだが safety net で match fail
-                    matches = false;
-                    break;
+                    false
                 }
+            };
+            if !component_matches {
+                matches = false;
+                break;
             }
         }
         if matches {
@@ -429,6 +521,41 @@ fn match_by_tag(list: &SelectorList<RaikiriSelectorImpl>, tag_name: &str) -> Opt
         }
     }
     best
+}
+
+/// `Component::AttributeInNoNamespace`'s `ParsedCaseSensitivity` (spec-only,
+/// "language depends on this" placeholder for the
+/// `AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument` case) を、実際に
+/// `AttrSelectorOperator::eval_str` へ渡せる `CaseSensitivity` へ解決する。
+///
+/// upstream `selectors::matching::to_unconditional_case_sensitivity` と同じ
+/// 3-way 分岐を model 化しているが、その関数は tree-walk 込みの重い
+/// `selectors::Element` trait を要求するため呼べない (raikiri の
+/// `StyleElement` は single-element matching 用の縮小 trait — bd
+/// raikiri-spike-flln.1 scope、`wall/traits` を跨がない private helper として
+/// 再実装)。raikiri は現時点で HTML document のみ対象 (XML/XHTML 未対応) の
+/// ため「in html document」は常に true 扱い。「is html element」は
+/// [`StyleElement::namespace_uri`] の既存 contract
+/// (style_dom.rs: "HTML default namespace returns None (fast path)") を
+/// 代理指標として使う — SVG 等 non-HTML namespace の element は
+/// case-sensitive 側に倒す。
+fn resolve_case_sensitivity<E: StyleElement>(
+    parsed: ParsedCaseSensitivity,
+    elem: &E,
+) -> CaseSensitivity {
+    match parsed {
+        ParsedCaseSensitivity::CaseSensitive | ParsedCaseSensitivity::ExplicitCaseSensitive => {
+            CaseSensitivity::CaseSensitive
+        }
+        ParsedCaseSensitivity::AsciiCaseInsensitive => CaseSensitivity::AsciiCaseInsensitive,
+        ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument => {
+            if elem.namespace_uri().is_none() {
+                CaseSensitivity::AsciiCaseInsensitive
+            } else {
+                CaseSensitivity::CaseSensitive
+            }
+        }
+    }
 }
 
 fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
@@ -1792,6 +1919,446 @@ mod tests {
         assert_eq!(cv.color, BLUE);
     }
 
+    // ── class / id / attribute selector matching (bd raikiri-spike-flln.1) ──
+    //
+    // Spec: CSS Selectors Level 4 — class selector
+    // <https://www.w3.org/TR/selectors-4/#class-html>, ID selector
+    // <https://www.w3.org/TR/selectors-4/#id-selectors>, attribute selector
+    // <https://www.w3.org/TR/selectors-4/#attribute-selectors>.
+    //
+    // `cascade_doc` (above) has no way to set `class`/`id`/arbitrary attrs —
+    // it only threads `inline_style` through `push_element` — so these tests
+    // build the `TestDoc` directly via `push_element` + `TestDoc::set_attr`.
+
+    #[test]
+    fn class_selector_applies_declaration() {
+        // Acceptance (bd raikiri-spike-flln.1): `.chapter-title { font-weight:
+        // bold }` applied to `<p class="chapter-title">` — `font-weight: bold`
+        // computes to 700.0 (property.rs `parse_font_weight`).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".chapter-title { font-weight: bold }");
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "class", "chapter-title");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_weight, 700.0);
+    }
+
+    #[test]
+    fn class_selector_does_not_match_element_without_the_class() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".chapter-title { font-weight: bold }");
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "class", "intro"); // different token
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].font_weight, 400.0,
+            "initial, rule must not apply"
+        );
+    }
+
+    #[test]
+    fn class_selector_matches_one_token_among_several() {
+        // `class="a b c"` — HTML-spec ASCII whitespace split
+        // (`StyleElement::has_class` doc), `.b` must match the middle token.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".b { font-weight: bold }");
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "class", "a b c");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_weight, 700.0);
+    }
+
+    #[test]
+    fn class_selector_is_case_sensitive() {
+        // CSS Selectors L4 class-html: HTML class matching in standards mode
+        // is case-sensitive (`StyleElement::has_class` default impl does an
+        // exact token compare, no ASCII-case-folding).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".Foo { font-weight: bold }");
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "class", "foo"); // different case
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].font_weight, 400.0,
+            "initial, case must not fold"
+        );
+    }
+
+    #[test]
+    fn id_selector_applies_declaration() {
+        // Acceptance (bd raikiri-spike-flln.1): `#header { ... }` applied to
+        // `<div id="header">`.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "#header { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "id", "header");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, RED);
+    }
+
+    #[test]
+    fn id_selector_does_not_match_different_id() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "#header { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "id", "footer");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, ComputedValues::initial().color);
+    }
+
+    #[test]
+    fn attribute_exists_selector_applies_declaration() {
+        // Acceptance (bd raikiri-spike-flln.1): `[data-foo]` matches any
+        // element carrying that attribute, regardless of its value.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[data-foo] { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "data-foo", "anything");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, RED);
+    }
+
+    #[test]
+    fn attribute_exists_selector_does_not_match_when_attr_absent() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[data-foo] { color: red }");
+        let div = doc.push_element(0, "div", None); // no data-foo at all
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, ComputedValues::initial().color);
+    }
+
+    #[test]
+    fn attribute_exists_selector_does_not_match_empty_value_attr() {
+        // `StyleElement::attr` 契約 ("Empty string is normalised to `None`",
+        // style_dom.rs doc) の帰結を明示的に pin する — 実 DOM 上は
+        // `data-foo=""` も「属性は存在する」が、raikiri の `attr()` 契約は
+        // 空文字を無指定と同一視するため `[data-foo]` はここでは match しない。
+        // これは本 task が導入した挙動ではなく、既存の `StyleElement` 契約を
+        // そのまま matcher に伝播させた結果 (`elem.attr(...).is_some()`)。
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[data-foo] { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "data-foo", "");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, ComputedValues::initial().color);
+    }
+
+    #[test]
+    fn attribute_exists_selector_mixed_case_matches_html_element_via_lowercased_key() {
+        // HTML LS "case-sensitivity of selectors"
+        // (https://html.spec.whatwg.org/multipage/semantics-other.html#case-sensitivity-of-selectors):
+        // attribute names on HTML elements in HTML documents are
+        // ASCII-lowercased — html5ever already lower-cases them at parse
+        // time (`raikiri-html::sink::wire_side_tables` stores whatever case
+        // html5ever produced, unmodified). So a selector written with mixed
+        // case, `[Data-Foo]`, must still match an HTML (default-namespace)
+        // element whose stored attribute name is already-lowercased
+        // `data-foo`.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[Data-Foo] { color: red }");
+        let div = doc.push_element(0, "div", None); // default namespace = HTML
+        doc.set_attr(div, "data-foo", "anything");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, RED);
+    }
+
+    #[test]
+    fn attribute_exists_selector_mixed_case_uses_original_case_for_foreign_namespace_element() {
+        // Foreign-namespace (SVG/MathML) elements are NOT covered by HTML
+        // LS's "attributes on HTML elements in HTML documents" lowercasing
+        // scope — html5ever's "adjust foreign attributes" step can restore
+        // specific attributes to their original mixed case (e.g. `viewBox`),
+        // and `wire_side_tables` stores whatever case html5ever produced,
+        // unmodified. A selector written `[Data-Foo]` against such an
+        // element must use the *original-case* lookup key, not the
+        // lowercased one.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[Data-Foo] { color: red }");
+        let svg_el = doc.push_element(0, "rect", None);
+        doc.set_namespace(svg_el, "http://www.w3.org/2000/svg");
+        doc.set_attr(svg_el, "Data-Foo", "anything"); // original mixed case
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[svg_el].color, RED);
+    }
+
+    #[test]
+    fn attribute_exists_selector_mixed_case_does_not_fall_back_to_lowercase_for_foreign_namespace_element()
+     {
+        // Same shape as the sibling test above, but the foreign-namespace
+        // element carries only the *lowercased* attribute name — proving
+        // the lookup is genuinely gated on the original-case key for
+        // foreign elements, not silently trying both keys.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[Data-Foo] { color: red }");
+        let svg_el = doc.push_element(0, "rect", None);
+        doc.set_namespace(svg_el, "http://www.w3.org/2000/svg");
+        doc.set_attr(svg_el, "data-foo", "anything"); // lowercased — wrong key for this element
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[svg_el].color, ComputedValues::initial().color);
+    }
+
+    #[test]
+    fn attribute_value_exact_match_selector_applies_declaration() {
+        // Acceptance (bd raikiri-spike-flln.1): `[data-foo="bar"]` exact-match
+        // variant.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[data-foo=\"bar\"] { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "data-foo", "bar");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, RED);
+    }
+
+    #[test]
+    fn attribute_value_exact_match_selector_does_not_match_different_value() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[data-foo=\"bar\"] { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "data-foo", "baz");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, ComputedValues::initial().color);
+    }
+
+    #[test]
+    fn attribute_value_exact_match_is_case_sensitive_for_data_attr() {
+        // CSS Selectors L4 attribute-selectors: default case-sensitivity
+        // (no `i`/`s` flag) depends on the document language; `data-*` is not
+        // in HTML's ASCII-case-insensitive attribute list, so it resolves to
+        // `ParsedCaseSensitivity::CaseSensitive` at parse time (selectors
+        // crate `AttributeFlags::to_case_sensitivity`) — no
+        // `resolve_case_sensitivity` branching is even reached for this case.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[data-foo=\"bar\"] { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "data-foo", "BAR"); // different case
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, ComputedValues::initial().color);
+    }
+
+    #[test]
+    fn attribute_value_case_insensitive_flag_i_matches_regardless_of_case() {
+        // `[foo="bar" i]` — explicit `i` flag forces ASCII-case-insensitive
+        // matching regardless of the attribute's document-language default
+        // (CSS Selectors L4 attribute-selectors, `AttributeFlags::AsciiCaseInsensitive`).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[data-foo=\"bar\" i] { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "data-foo", "BAR");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color, RED);
+    }
+
+    #[test]
+    fn attribute_selector_style_local_name_matches_element_with_inline_style() {
+        // `StyleElement::attr`'s doc contract requires overrides to keep
+        // handling `local == "style"` by delegating to
+        // `inline_style_source()`; `TestElementRef::attr` (bd
+        // raikiri-spike-flln.1) does this, so `[style]` — an ordinary
+        // existence attribute selector whose local name happens to be
+        // `style` — must match any element carrying an inline `style="…"`.
+        // `font-weight` (not touched by the inline `color: blue`) is the
+        // observable, since inline style otherwise always outranks any
+        // stylesheet rule (`INLINE_SPECIFICITY`) regardless of whether
+        // `[style]` itself matched.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[style] { font-weight: bold }");
+        let p = doc.push_element(0, "p", Some("color: blue"));
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_weight, 700.0);
+    }
+
+    #[test]
+    fn attribute_selector_style_does_not_match_element_without_inline_style() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[style] { font-weight: bold }");
+        let p = doc.push_element(0, "p", None); // no inline style
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_weight, 400.0);
+    }
+
+    #[test]
+    fn compound_type_and_class_selector_requires_both() {
+        // `p.chapter-title` — compound selector, AND semantics: both the type
+        // and class component must match the same element.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p.chapter-title { font-weight: bold }");
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "class", "chapter-title");
+        let div = doc.push_element(0, "div", None); // wrong tag, same class
+        doc.set_attr(div, "class", "chapter-title");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].font_weight, 700.0,
+            "p.chapter-title must match <p class=chapter-title>"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[div].font_weight, 400.0,
+            "div.chapter-title selector must not match <div class=chapter-title> (wrong tag)"
+        );
+    }
+
+    #[test]
+    fn id_selector_specificity_beats_class_selector() {
+        // CSS Cascading L4 §6.1 sort criterion (b): higher specificity wins.
+        // ID (0,1,0,0) > class (0,0,1,0) — both target the same element via
+        // separate rules, later source order for the loser to make sure the
+        // win is attributable to specificity, not source order.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".foo { color: blue } #bar { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "class", "foo");
+        doc.set_attr(div, "id", "bar");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[div].color, RED,
+            "id selector must win over class selector"
+        );
+    }
+
+    #[test]
+    fn match_simple_selectors_rejects_unsupported_component_via_safety_net() {
+        // combinator/pseudo-class components never reach `match_simple_selectors`
+        // in the real pipeline — `ruletree.rs`'s `is_supported_selector_list`
+        // drops any rule containing one at `add_stylesheet` time (pinned by
+        // `ruletree::tests::pseudo_class_selector_still_dropped`). This test
+        // calls `match_simple_selectors` directly — both it and `parse_selector_list`
+        // are reachable from this `#[cfg(test)] mod tests` (`use super::*` /
+        // `crate::parse_selector_list`) — to exercise the `_ => false`
+        // safety-net arm defensively, per its own doc comment.
+        let list = crate::parse_selector_list("p:hover").expect("selector parses");
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", None);
+        let node = doc.node(StyleNodeId::new(p as u64)).unwrap();
+        let elem = node.as_element().unwrap();
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            match_simple_selectors(&list, &elem),
+            None,
+            "NonTSPseudoClass component must fall through the safety net"
+        );
+    }
+
+    #[test]
+    fn resolve_case_sensitivity_html_default_namespace_folds_case_for_html_case_insensitive_attr() {
+        // `type` is on HTML's ASCII-case-insensitive attribute list (the
+        // selectors crate's generated `ascii_case_insensitive_html_attributes`
+        // set) — with no explicit `i`/`s` flag, `[type=...]` parses to
+        // `ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument`,
+        // which `resolve_case_sensitivity` must fold to ASCII-case-insensitive
+        // for an element in the default (HTML) namespace — `TestElementRef`
+        // returns `None` from `namespace_uri()` unless overridden via
+        // `TestDoc::set_namespace`.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[type=\"text\"] { color: red }");
+        let input = doc.push_element(0, "input", None);
+        doc.set_attr(input, "type", "TEXT"); // different case than the selector
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[input].color, RED,
+            "[type=...] must ASCII-case-fold under the HTML default"
+        );
+    }
+
+    #[test]
+    fn resolve_case_sensitivity_non_html_namespace_element_is_case_sensitive() {
+        // Same `[type=...]` shape as the sibling test above, but the element
+        // carries an explicit non-HTML namespace (SVG) — `resolve_case_sensitivity`
+        // must fall back to case-sensitive matching for it (own doc comment:
+        // "SVG 等 non-HTML namespace の element は case-sensitive 側に倒す").
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "[type=\"text\"] { color: red }");
+        let input = doc.push_element(0, "input", None);
+        doc.set_attr(input, "type", "TEXT");
+        doc.set_namespace(input, "http://www.w3.org/2000/svg");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[input].color,
+            ComputedValues::initial().color,
+            "non-HTML-namespace element must not case-fold [type=...]"
+        );
+    }
+
     /// `INLINE_SPECIFICITY` (cascade.rs doc, CSS Cascading L4 §6.1
     /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort>: "declarations that
     /// do not belong to a style rule ... are considered to have a specificity
@@ -1820,19 +2387,24 @@ mod tests {
     /// 「今の幅を前提にした算術の pin」より頑丈 (bd raikiri-spike-nvhy 提案の
     /// うち、hardcoded const assert ではなく実測 test を採る方の案)。
     ///
-    /// # 未 cover: cascade 経由の end-to-end pin (M1.4 では実装不可)
+    /// # 未 cover: cascade 経由の end-to-end pin (M1.4 執筆時点では実装不可だった)
     ///
     /// bd issue が挙げるもう 1 案 (`<p id class>` に対する高 specificity
     /// selector と inline style を実際に cascade させ、inline が勝つことを
-    /// 見る e2e test) は **M1.4 では構築できない**: `ruletree.rs`
-    /// `is_type_or_universal_only` が id/class を含む selector を rule tree
-    /// 構築時点で drop し、`match_by_tag` も type/universal 以外の
-    /// component を持つ selector を一致させない (M1.4 は type + universal
-    /// selector のみ対応)。したがって本 test は「numeric な不変条件そのもの」
-    /// を `crate::parse_selector_list` 経由で直接 pin するに留め、id/class // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
-    /// selector matching が M1.4 以降で実装された時点で改めて e2e 版を追加する
-    /// — フォローアップは bd raikiri-spike-7ejc として起票済 (本 issue の
-    /// scope 外)。
+    /// 見る e2e test) は M1.4 執筆時点では構築できなかった: 当時の
+    /// `ruletree.rs` `is_type_or_universal_only` が id/class を含む selector
+    /// を rule tree 構築時点で drop し、当時の `match_by_tag` も
+    /// type/universal 以外の component を持つ selector を一致させなかった
+    /// (M1.4 は type + universal selector のみ対応)。したがって本 test は
+    /// 「numeric な不変条件そのもの」を `crate::parse_selector_list` 経由で // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
+    /// 直接 pin するに留めた。
+    ///
+    /// bd raikiri-spike-flln.1 で class/id/attribute selector matching が
+    /// 実装され (`is_type_or_universal_only` → `is_supported_selector_list`
+    /// rename、`match_by_tag` → `match_simple_selectors` rename +
+    /// `StyleElement` 対応)、上記の e2e test を阻んでいたブロッカーは解消
+    /// 済み。e2e test 自体の追加は本 test の scope 外のまま —
+    /// bd raikiri-spike-7ejc に残す。
     ///
     /// selector 内の class / pseudo-class 数も併せて増やし
     /// (class_like_selectors field)、id field 単独ではなく複数 field が
@@ -4694,10 +5266,12 @@ mod tests {
 
     #[test]
     fn img_tag_name_match_is_ascii_case_insensitive() {
-        // `match_by_tag` と同じ寛容さ — real DOM (html5ever) は tag name を
-        // 常に lowercase に正規化するので実運用では観測されないが、
-        // `StyleElement` は特定 DOM 実装に紐付かない generic trait なので
-        // defensive に確認しておく。
+        // `push_img_dimension_hints` 自身の `elem.tag_name().eq_ignore_ascii_case`
+        // 判定を確認 — `match_simple_selectors` の `Component::LocalName` 判定
+        // (bd raikiri-spike-flln.1、旧名 `match_by_tag`) と同じ寛容さの、独立
+        // した別実装。real DOM (html5ever) は tag name を常に lowercase に
+        // 正規化するので実運用では観測されないが、`StyleElement` は特定 DOM
+        // 実装に紐付かない generic trait なので defensive に確認しておく。
         let mut doc = TestDoc::new();
         let img = doc.push_element_with_attrs(0, "IMG", None, &[("width", "100")]);
         let tree = build_rule_tree(&doc);
