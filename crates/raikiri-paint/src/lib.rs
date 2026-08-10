@@ -1001,7 +1001,7 @@ mod nonfinite_rasterizer_probe {
     /// exactly the caller-requested canvas size (not something proportional
     /// to the infinite glyph scale), and — unlike the vacuous first draft of
     /// this test — it draws **zero** visible ink, in contrast to
-    /// [`draw_glyphs_at_natural_font_size_is_a_non_vacuous_control`] drawing
+    /// `draw_glyphs_at_natural_font_size_is_a_non_vacuous_control` drawing
     /// non-zero ink through the identical canvas/transform/font/glyphs. See
     /// this module's doc comment for the full mechanism (the
     /// `max_cached_font_size` gate) and source citations.

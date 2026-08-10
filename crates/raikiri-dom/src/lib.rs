@@ -701,9 +701,9 @@ mod tests {
     /// bridge helpers **on the input side** — including the `sanitize_taffy` /
     /// `sanitize_finite` guards bd raikiri-spike-2ui0 installed in those
     /// bridge functions — by constructing the `taffy::Style` directly and
-    /// handing it to [`Document::append_element`] (the same raw-`Style`
-    /// escape hatch [`build_document`] above already uses for non-cascade
-    /// layout tests), then driving [`compute_root_layout`] straight from this
+    /// handing it to `Document::append_element` (the same raw-`Style`
+    /// escape hatch `build_document` above already uses for non-cascade
+    /// layout tests), then driving `compute_root_layout` straight from this
     /// test. That characterizes **taffy's own** block layout algorithm (the
     /// sink named in the task), independent of whether raikiri's input guard
     /// currently prevents the input from reaching it — the same "characterize

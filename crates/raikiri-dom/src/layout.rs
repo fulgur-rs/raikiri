@@ -3122,7 +3122,7 @@ mod tests {
     ///
     /// # Why this exists as assertions, not just prose
     ///
-    /// The doc comment on [`MAX_FONT_SIZE_PX`] ("guard を外すと... 25 秒経っ
+    /// The doc comment on `MAX_FONT_SIZE_PX` ("guard を外すと... 25 秒経っ
     /// ても終了しない") reads as "non-finite font-size ⇒ hang" in general —
     /// but that claim was written from a manual repro that only ever
     /// exercised `+Inf` (the first sub-case its guarded test tries) before
@@ -3155,11 +3155,11 @@ mod tests {
 
     /// bd raikiri-spike-3653 point 2, `+Inf` half — formalizes into an
     /// automated regression test the manual measurement recorded in
-    /// [`MAX_FONT_SIZE_PX`]'s doc comment ("guard を外すと... 25 秒経っても
+    /// `MAX_FONT_SIZE_PX`'s doc comment ("guard を外すと... 25 秒経っても
     /// 終了しない"): `font_size = +Inf` reaching parley directly (bypassing
     /// `preshape_text` / `sanitize_finite`, not just disabling them)
     /// reproducibly hangs `break_all_lines`. See
-    /// [`parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size`]
+    /// `parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size`
     /// for why `NaN`/`-Inf`/huge-finite do *not* share this behavior (this is
     /// the one case that does, and it's the one bd raikiri-spike-2ui0's own
     /// repro — `1e40px`, `1e40em` compounding — actually produces).
@@ -3496,7 +3496,7 @@ mod tests {
     // fonts.rs の FontWarn observer pattern を汎用化した LayoutWarn 側の
     // 独自 unit test。fonts.rs の `observer_fires_*` test 群と対になる。
 
-    /// [`emit_layout_warn`] は observer が `Some` ならそれを呼び、`eprintln!`
+    /// `emit_layout_warn` は observer が `Some` ならそれを呼び、`eprintln!`
     /// はしない — fonts.rs の `emit_warn` と対称的な契約 (両方とも
     /// `crate::diag::emit_warn_via` を経由するので同じ振る舞いになるはず)。
     #[test]
@@ -3534,7 +3534,7 @@ mod tests {
         emit_layout_warn(&mut observer, LayoutWarn::Truncated { suppressed: 3 });
     }
 
-    /// [`push_layout_warn`] は [`LAYOUT_WARN_CAP`] を超えた分を個別 event
+    /// `push_layout_warn` は `LAYOUT_WARN_CAP` を超えた分を個別 event
     /// としてではなく単一の running `Truncated` counter に畳み込む —
     /// 「病的な入力で every field が毎回 clamp される」場合に buffer と
     /// 後段の eprintln! replay を有界にするための cap (doc 参照)。
@@ -3581,7 +3581,7 @@ mod tests {
         ));
     }
 
-    /// [`LayoutWarn`] の `Display` が両 variant で人間可読な文字列を出す
+    /// `LayoutWarn` の `Display` が両 variant で人間可読な文字列を出す
     /// ことの pin (`crate::diag::emit_warn_via` の `eprintln!` fallback が
     /// 実際に読める行になることの保証)。
     #[test]
@@ -3724,7 +3724,7 @@ mod tests {
     /// なる。**ただし機構は特定できていない** — この構造差が原因なら padding
     /// 系 3 行すべてがずれるはずだが `padding-left: 1000%` は 25/25 で一致
     /// する。数値自体は再現可能で、本 harness 列は `set_unrounded_layout` の
-    /// [`sanitize_taffy_layout`] 呼び出しだけを外して実測した値である。
+    /// `sanitize_taffy_layout` 呼び出しだけを外して実測した値である。
     /// `width` 系 4 行は完全一致。)
     ///
     /// 修正後はすべて「到達せず」になる。
@@ -3733,9 +3733,9 @@ mod tests {
     /// 本 test が pin するのは「この 9 declaration を深さ 45 まで見た範囲で
     /// 保存値が全 field 有限」という**検査した点**だけである。深さ非依存性
     /// そのものは test からは出てこない — 根拠は
-    /// [`sanitize_taffy_layout`] が taffy から arena への唯一の書き込み経路に
+    /// `sanitize_taffy_layout` が taffy から arena への唯一の書き込み経路に
     /// 置かれているという **choke point の構造的議論**の側にある。
-    /// [`nested_percentage_output_stays_finite_far_past_the_sweep`] も
+    /// `nested_percentage_output_stays_finite_far_past_the_sweep` も
     /// 「sweep よりかなり深い一例」を足すだけで、全称的な深さ非依存性を
     /// pin するものではない。したがってこの 45 を「安全な上限」として
     /// 下げないこと (下げてよい根拠は test ではなく構造の側にある)。
@@ -3770,14 +3770,14 @@ mod tests {
 
     /// **深さ 96 でも保存値が有限**であることの pin。
     ///
-    /// [`nested_percentage_output_is_finite_through_probe_sweep_depth`] は bd
+    /// `nested_percentage_output_is_finite_through_probe_sweep_depth` は bd
     /// の表に揃えた深さ 45 までしか見ないので、修正前に最も浅く破れた
     /// `padding-left: 1e9%` (probe harness で depth 4 / 本 harness で depth 5)
     /// を、その sweep 幅の 2 倍超で追加の 1 点として見る。
     ///
     /// **本 test は深さ非依存性を pin しない** — 有限深さの test が示せるのは
     /// 常に「検査した深さでは有限」までである。深さ非依存性の根拠は
-    /// [`sanitize_taffy_layout`] が taffy から arena への唯一の書き込み経路に
+    /// `sanitize_taffy_layout` が taffy から arena への唯一の書き込み経路に
     /// 置かれているという **choke point の構造的議論**であって、本 test では
     /// ない。本 test はその構造的議論に対する sanity check の位置づけ。
     ///
@@ -3802,7 +3802,7 @@ mod tests {
         }
     }
 
-    /// [`sanitize_taffy_layout`] の field 単位の挙動 (上の 2 test は「有限で
+    /// `sanitize_taffy_layout` の field 単位の挙動 (上の 2 test は「有限で
     /// ある」までしか見ないので、どの値に落ちるかはこちらで pin する)。
     #[test]
     fn sanitize_taffy_layout_clamps_every_f32_field() {
@@ -4025,7 +4025,7 @@ mod tests {
 
     /// **bd raikiri-spike-ckv0 で挙動が反転した直接 pin (旧名
     /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`)**。
-    /// [`child_within_parent_border_box`] の gate (「その axis 自身の
+    /// `child_within_parent_border_box` の gate (「その axis 自身の
     /// `child.location` が飽和している」) を満たし、かつ旧実装なら
     /// containment 違反として reset されていたはずの、直接構築した
     /// maximally-非-contained な値 (`location.x == MAX_TAFFY_MAGNITUDE`
@@ -4134,9 +4134,9 @@ mod tests {
 
     /// invariant 2 の gate が **無条件ではない**ことの pin — CSS が普通に
     /// 許す overflow (小さい parent + 負 margin で右/下/左にはみ出す child)
-    /// を [`layout_single_page`] のフルパイプラインで実際に layout し、
+    /// を `layout_single_page` のフルパイプラインで実際に layout し、
     /// `enforce_layout_invariants` がそれを誤って fallback しないことを
-    /// 確認する。数値は [`enforce_layout_invariants`] の doc に記録した
+    /// 確認する。数値は `enforce_layout_invariants` の doc に記録した
     /// 実測値と同じ (probe で先に確認済み)。
     ///
     /// これが無いと「invariant 2 を無条件チェックにしてしまう」regression
@@ -4203,7 +4203,7 @@ mod tests {
     /// **bd raikiri-spike-ckv0 以前の history**: この test はもともと旧
     /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`
     /// (飽和 かつ containment 違反 → reset、ckv0 で
-    /// [`saturated_child_outside_parent_is_not_reset`] に改名・反転) と
+    /// `saturated_child_outside_parent_is_not_reset` に改名・反転) と
     /// 対にして、「gate 単独ではなく『gate かつ containment 違反』という
     /// conjunction を検査している」ことを示す pin だった。ckv0 で
     /// `axis_ok` が符号を問わず無条件 `true` になったため、この
@@ -4213,10 +4213,10 @@ mod tests {
     /// 「収まっている」ケースだったため) 引き続き通るが、それは
     /// 「containment を検査して pass した」からではなく「そもそも
     /// containment を見ていない」から — その事実を示す対の regression pin
-    /// は [`saturated_child_outside_parent_is_not_reset`] を参照。
+    /// は `saturated_child_outside_parent_is_not_reset` を参照。
     /// 実際の nested percentage chain を使った同種の pin は
-    /// [`nested_percentage_wide_child_chain_is_not_reset`] を参照
-    /// (extent ではなく origin だけを見る現行の [`child_within_parent_border_box`]
+    /// `nested_percentage_wide_child_chain_is_not_reset` を参照
+    /// (extent ではなく origin だけを見る現行の `child_within_parent_border_box`
     /// を選んだ直接の理由になった regression)。
     #[test]
     fn saturated_but_contained_layout_is_not_reset() {
@@ -4299,7 +4299,7 @@ mod tests {
     /// containment を再検査しない —「収まっていない」という事実自体が
     /// reset の理由になり得なくなった。
     ///
-    /// 本 test は現在、[`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+    /// 本 test は現在、`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
     /// とほぼ同じ主張 (どちらの axis も reset の理由にならない) の近縁 pin
     /// になっている。唯一の違いは `y` 軸の値 — こちらは `y` が **実際には
     /// parent に収まっていない** (`MAX_TAFFY_MAGNITUDE > 100.0`) のに対し、
@@ -4367,7 +4367,7 @@ mod tests {
 
     /// **§8.3 Codex re-review finding、2 回目の GATE FAIL の直接回帰 pin**
     /// — 直前の
-    /// [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+    /// `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
     /// (bd raikiri-spike-ckv0 以前の旧名
     /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`)
     /// は当時「`y` 軸だけでも reset の説明がつく」ため、`x` 軸を実装が正しく
@@ -4387,8 +4387,8 @@ mod tests {
     ///   再検査)**: `x` 軸は無条件 ok、`y` 軸は飽和かつ正なので再検査するが
     ///   実際に parent に収まっているので ok。→ 同じく reset されない
     ///   (この test は ckv0 の前後で結果が変わらない — 変わったのは
-    ///   [`saturated_child_outside_parent_is_not_reset`] や
-    ///   [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+    ///   `saturated_child_outside_parent_is_not_reset` や
+    ///   `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
     ///   のように実際に containment が破れているケース)。
     /// - **旧 axis-mixing 実装 (`parent.size` / `child.size` /
     ///   `child.location` のいずれかが飽和していれば `x` / `y` 両方を
@@ -4467,7 +4467,7 @@ mod tests {
     /// (`location.x = -30`) を持つ。旧版の gate
     /// (`parent.size` / `child.size` / `child.location` のいずれか 1 つでも
     /// 飽和していれば検査する) はこれを誤って reset していた —
-    /// [`child_within_parent_border_box`] の doc「gate を axis 単位・
+    /// `child_within_parent_border_box` の doc「gate を axis 単位・
     /// `child.location` 自身に限定する理由」節の 1. で説明した field 単位の
     /// 問題を直接再現する。
     #[test]
@@ -4530,16 +4530,16 @@ mod tests {
     /// task: `width: 200%` nested `DEPTH`-ish levels deep is
     /// **legitimate** CSS (each level is, by design, twice its parent — the
     /// child's origin never moves off `(0, 0)`), yet an earlier version of
-    /// [`child_within_parent_border_box`] checked *extent*
+    /// `child_within_parent_border_box` checked *extent*
     /// (`location + size <= parent.size`) rather than just `location`, so it
     /// flagged the transition depth where one level's saturated `size` first
     /// exceeded its still-unsaturated parent's `size` — even though nothing
     /// about the relationship (child = 2x parent) had changed, only the
-    /// absolute magnitude crossed [`MAX_TAFFY_MAGNITUDE`]. That cascaded
-    /// through [`zero_layout_subtree`] and silently collapsed most of a
+    /// absolute magnitude crossed `MAX_TAFFY_MAGNITUDE`. That cascaded
+    /// through `zero_layout_subtree` and silently collapsed most of a
     /// legitimate deep chain to zero-size boxes.
     ///
-    /// [`saturated_but_contained_layout_is_not_reset`] pins the equivalent
+    /// `saturated_but_contained_layout_is_not_reset` pins the equivalent
     /// minimal synthetic case (its doc records how bd raikiri-spike-ckv0
     /// changed what that pin actually demonstrates); this test pins the
     /// same "not reset" outcome against the exact real-world shape that
@@ -4579,9 +4579,9 @@ mod tests {
     }
 
     /// bd raikiri-spike-epkj — minimal synthetic pin for the new negative-
-    /// saturation branch of [`child_within_parent_border_box`], isolated
+    /// saturation branch of `child_within_parent_border_box`, isolated
     /// from any real CSS pipeline (mirrors how
-    /// [`saturated_but_contained_layout_is_not_reset`] pins the positive-
+    /// `saturated_but_contained_layout_is_not_reset` pins the positive-
     /// saturation pass path). `child.location.x` is placed exactly at
     /// `-MAX_TAFFY_MAGNITUDE` against an ordinary, unsaturated
     /// `parent.size` — under the pre-fix predicate
@@ -4589,7 +4589,7 @@ mod tests {
     /// **unreachable as a pass**: no negative value ever satisfies `>= 0.0`,
     /// so the old code reset this unconditionally regardless of
     /// `parent.size`. This test pins that the sign-based branch introduced
-    /// by bd raikiri-spike-epkj (see [`child_within_parent_border_box`]'s
+    /// by bd raikiri-spike-epkj (see `child_within_parent_border_box`'s
     /// doc, "符号を問わず無条件 accept になった理由") treats
     /// saturated-negative as unconditionally ok, the same way
     /// unsaturated-negative already was — and, since bd raikiri-spike-ckv0,
@@ -4680,7 +4680,7 @@ mod tests {
     /// close the gap this issue investigated. Only a rule keyed on the
     /// *child's own sign* (this fix) accepts it, which is why this test is
     /// pinned independently of
-    /// [`deep_nested_negative_percentage_margin_saturating_location_is_not_reset`]
+    /// `deep_nested_negative_percentage_margin_saturating_location_is_not_reset`
     /// below (that one's parent *does* happen to be saturated too, so on
     /// its own it could not rule out the rejected alternative).
     #[test]
@@ -4742,7 +4742,7 @@ mod tests {
     }
 
     /// **bd raikiri-spike-ckv0 — positive-direction analog of
-    /// [`saturated_negative_margin_percentage_child_is_not_reset`]**, real
+    /// `saturated_negative_margin_percentage_child_is_not_reset`**, real
     /// CSS pipeline regression pin for the PMO-approved decision to extend
     /// epkj's negative-side unconditional-accept treatment symmetrically to
     /// the positive side.
@@ -4762,8 +4762,8 @@ mod tests {
     /// in a throwaway worktree before the decision was recorded). This test
     /// pins that the fix actually closes the gap through the real
     /// cascade+taffy pipeline, not just at the unit level
-    /// ([`saturated_but_contained_layout_is_not_reset`] and
-    /// [`saturated_child_outside_parent_is_not_reset`] build `TaffyLayout`
+    /// (`saturated_but_contained_layout_is_not_reset` and
+    /// `saturated_child_outside_parent_is_not_reset` build `TaffyLayout`
     /// literals directly and don't exercise cascade/taffy at all).
     #[test]
     fn saturated_positive_margin_percentage_child_is_not_reset() {
@@ -4824,7 +4824,7 @@ mod tests {
     }
 
     /// bd raikiri-spike-epkj — negative-direction analog of
-    /// [`nested_percentage_wide_child_chain_is_not_reset`]. `width: 200%`
+    /// `nested_percentage_wide_child_chain_is_not_reset`. `width: 200%`
     /// alone never moves the child's origin off `(0, 0)` (that test's own
     /// premise), so it can't exercise invariant 2's location check at all.
     /// Adding `margin-left: -100%` at every depth does: since each level's

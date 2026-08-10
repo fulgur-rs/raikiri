@@ -31,7 +31,7 @@ fn opts() -> ParseOptions<'static> {
     }
 }
 
-/// [`RenderLimits::default().max_input_bytes`] は SEC-HIGH d9y.3 の stopgap
+/// `RenderLimits::default().max_input_bytes` は SEC-HIGH d9y.3 の stopgap
 /// と一致する 32 MiB を継承していることを pin (Sprint 10 Option A promotion
 /// が behavior 不変であることの regression guard)。
 #[test]
