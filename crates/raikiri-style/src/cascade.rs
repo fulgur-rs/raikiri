@@ -37,7 +37,7 @@ use crate::RaikiriSelectorImpl;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::error::CascadeError;
 use crate::property::{
-    FontWeightValue, Length, PositionValue, PropertyValue, RelativeFontSize,
+    FontWeightValue, Length, LengthOrAuto, PositionValue, PropertyValue, RelativeFontSize,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{ComputedLength, ResolveContext, used_line_height_length};
@@ -127,6 +127,26 @@ type Specificity = u32;
 const INLINE_SPECIFICITY: Specificity = 1 << 30;
 /// inline style の source_order — 全 stylesheet rule より後 (最終出現扱い)。
 const INLINE_SOURCE_ORDER: u32 = u32::MAX;
+
+/// HTML presentational hint (`<img width>` / `<img height>`,
+/// [`push_img_dimension_hints`]) の specificity。HTML LS §15.2 "The CSS user
+/// agent style sheet and presentational hints"
+/// (<https://html.spec.whatwg.org/multipage/rendering.html#presentational-hints>)
+/// がこの種の hint を "author-level **zero-specificity** presentational
+/// hints" と呼ぶ — 0 はその verbatim な表現 (CSS Cascading L5 §6.5
+/// <https://drafts.csswg.org/css-cascade-5/#preshint> は origin 選択の
+/// 枠組みを定義するのみで "specificity" という語自体は使っていない —
+/// 引用元を混同しないよう分離。origin 選択の根拠は
+/// [`push_img_dimension_hints`] doc の "Cascade origin" 節参照)。
+const PRESENTATIONAL_HINT_SPECIFICITY: Specificity = 0;
+/// 同 hint の source_order。`0` — 「他候補と衝突しない値」ではなく、**実
+/// stylesheet の最初の rule と数値上 tie し得る**ことを承知の上で選んだ値
+/// ([`crate::ruletree::RuleTree::add_stylesheet`] は空 `RuleTree` への
+/// 最初の rule に `source_order = 0` を採番する)。tie した場合の決着は
+/// push 順序依存になる — [`collect_cascaded`] がこの hint を stylesheet
+/// rule matching / inline style より先に push する理由、および
+/// [`push_img_dimension_hints`] doc の "Cascade origin" 節 2. 参照。
+const PRESENTATIONAL_HINT_SOURCE_ORDER: u32 = 0;
 
 /// 1 candidate declaration = `(value, important, origin, specificity, source_order)`。
 /// `collect_cascaded` が populate、`pick_winners` が rank 化して winner を選ぶ
@@ -290,6 +310,20 @@ fn collect_cascaded<D: StyleDom>(
                 && let Some(elem) = node.as_element()
             {
                 let start = out.decls.len();
+                // HTML presentational hints (bd raikiri-spike-5z86.7). MUST
+                // be pushed before stylesheet-rule matching / inline style
+                // below, for this same element: the hint's (origin,
+                // specificity, source_order) = (Author, 0, 0) can exactly
+                // tie a real Author declaration for the same property (a
+                // zero-specificity selector that is the first rule in its
+                // stylesheet — `push_img_dimension_hints` doc's "Cascade
+                // origin" §2 has the full derivation). `beats`'s `>=`
+                // resolves an exact tie in favor of whichever candidate
+                // `pick_winners` scans *later*; pushing the hint first
+                // guarantees it loses that tie to any same-priority real
+                // declaration, matching "hint behaves as if positioned
+                // before all real author declarations".
+                push_img_dimension_hints(&elem, &mut out.decls);
                 // stylesheet rule matching
                 let tag = elem.tag_name();
                 for rule in &rule_tree.style_rules {
@@ -400,6 +434,199 @@ fn match_by_tag(list: &SelectorList<RaikiriSelectorImpl>, tag_name: &str) -> Opt
 fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
     // selectors crate の Selector::specificity は 32-bit packed integer を返す。
     selector.specificity()
+}
+
+/// `<img width>` / `<img height>` の HTML presentational-hint 昇格
+/// (bd raikiri-spike-5z86.7)。
+///
+/// # Spec mapping (verbatim, 2026-08-10 直接 fetch した live HTML Standard)
+///
+/// HTML Living Standard §15.4.3 "Attributes for embedded content and
+/// images" (<https://html.spec.whatwg.org/multipage/rendering.html#dimRendering>):
+///
+/// > The `width` and `height` attributes on an `img` element's dimension
+/// > attribute source map to the dimension properties 'width' and 'height'
+/// > on the `img` element respectively.
+///
+/// "maps to the dimension property" (**not** "…(ignoring zero)" — cf. e.g.
+/// `<table width>`) は
+/// <https://html.spec.whatwg.org/multipage/rendering.html#maps-to-the-dimension-property>
+/// が定義: 属性値を [`parse_html_dimension_value`] (HTML LS "rules for
+/// parsing dimension values") で parse し、失敗しなければその結果を
+/// presentational hint の値として使う。`0` は "ignoring zero" ではないため
+/// 有効な hint 値になる。parse 失敗時は hint 自体を作らない (cascade 的には
+/// 属性が存在しないのと同じ — 他の source があればそれが勝ち、無ければ
+/// property の initial value `auto` のまま)。
+///
+/// # Non-goals (spec が定義するがこの関数が扱わないこと)
+///
+/// - **`aspect-ratio` mapping**: 同じ spec 段落が続けて "They similarly map
+///   to the aspect-ratio property (using dimension rules) of the `img`
+///   element" と述べるが、raikiri-style は `aspect-ratio` property を
+///   まだ実装していない ([`crate::property::PropertyValue`] に該当 variant
+///   なし) — mapping 先が存在しないので実装しようがない、spec 逸脱ではなく
+///   「まだ生えていない property への言及」。
+/// - **`dimension attribute source` 間接**:
+///   <https://html.spec.whatwg.org/multipage/embedded-content.html#concept-img-dimension-attribute-source>
+///   は "initially set to the element itself" で、`<picture>`/`srcset`
+///   選択があった場合のみ選ばれた `<source>` 側に切り替わる。raikiri は
+///   `<picture>` source 選択を未実装なので、この関数は常に `img` 要素自身の
+///   属性を読む — 上記 default と一致する straightforward な subset。
+/// - **`embed` / `iframe` / `object` / `video` / `input[type=image]`**: 同じ
+///   spec 段落の後続文が他要素にも同じ mapping を適用するが、bd
+///   raikiri-spike-5z86.7 の scope narrowing は `img` のみに限定 (最小実装、
+///   将来 task の土台という位置づけ)。
+///
+/// # Cascade origin (retagged `Origin::Author` 2026-08-10 — coordinator
+/// spec-lens finding 1、bd raikiri-spike-wo36 が残差を追跡)
+///
+/// CSS Cascading L5 §6.5 "Precedence of Non-CSS Presentational Hints"
+/// (<https://drafts.csswg.org/css-cascade-5/#preshint>) はこの種の hint を
+/// **"author presentational hint origin"** という、user origin と author
+/// origin の間に位置する独立 origin に置くことを認め、host language が UA-
+/// origin か author-origin かを選べるとも書く。HTML LS §15.2 の文言
+/// ("author-level zero-specificity presentational hints part of the CSS
+/// cascade", <https://html.spec.whatwg.org/multipage/rendering.html#presentational-hints>)
+/// は author 寄りだが、raikiri-style の [`Origin`] は `UserAgent` /
+/// `Author` の 2 段のみで ([`crate::ruletree`] の module doc 参照)、
+/// "author presentational hint origin" 専用の 3 段目は無い。本関数は
+/// [`Origin::Author`] を採る — [`cascade_rank`] は `(Author, false) => 1`
+/// を `(UserAgent, false) => 0` より**無条件に** (specificity/source_order
+/// を問わず) 上位に置くため、真の UA-origin rule (現状
+/// `crates/raikiri-html/src/ua/minimal.css` に `img`/`width`/`height` を
+/// 宣言する selector は無い) に対しては常に hint が勝つ。
+///
+/// (旧版はここを [`Origin::UserAgent`] にしていた — 「Author CSS で上書き
+/// 可能」という要件は満たしていたが、真の UA-origin rule に対して負ける
+/// 方向という逆向きの不整合を持っていた。2-origin model の残差 2 点は
+/// この retag で 1 点に減った:)
+///
+/// 1. spec の完全な順序では hint は「user origin より強い」はず。この
+///    crate は user origin を独立に持たず (consumer が渡す
+///    `extra_stylesheets` は `Origin::Author` として届く — bd
+///    raikiri-spike-m1.22 が定めた 2-origin model、[`crate::ruletree`]
+///    module doc 参照)、hint と同じ `Origin::Author` に一律 fold されて
+///    いる。retag 後は「consumer 由来の user stylesheet が img の
+///    width/height を設定した場合」は同一 origin 内の tie-break
+///    (specificity → source_order、下記 2. 参照) に落ちる — 実際の user
+///    stylesheet 宣言は具体的な selector を持つ (specificity > 0) のが
+///    通常なので実用上は spec 通り user stylesheet が勝つが、理論上
+///    zero-specificity な user stylesheet 宣言と衝突すれば 2. と同じ
+///    push-order 依存になる。3 段目を追加する over-generalization は
+///    本 task の scope 外 (bd raikiri-spike-5z86.7 の「過剰な一般化は
+///    避け」)、bd raikiri-spike-wo36 が本来の 3rd origin tier 追加を
+///    追跡する。
+/// 2. 同一 origin ([`Origin::Author`]) 内での tie-break: 通常は real
+///    author 宣言が `beats` の specificity/source_order 勝負で hint に
+///    勝つ ([`PRESENTATIONAL_HINT_SPECIFICITY`] = 0 は spec 規定値、
+///    real 宣言はほぼ常にそれより高い specificity を持つ)。**例外**:
+///    real 宣言が zero-specificity (universal selector 等) かつ、それが
+///    その stylesheet の最初の rule (`source_order = 0`,
+///    [`crate::ruletree::RuleTree::add_stylesheet`] 参照) の場合、hint
+///    の `(rank, specificity, source_order)` と real 宣言のそれが
+///    **完全に一致**する ([`PRESENTATIONAL_HINT_SOURCE_ORDER`] doc 参照)。
+///    この tie は `beats` の `>=` により「[`pick_winners`] が後から scan
+///    した方が勝つ」で決着するため、[`collect_cascaded`] はこの関数を
+///    stylesheet rule matching / inline style より**必ず先に** push する
+///    — hint が先に scan され、後続の real 宣言が tie を上書きする。
+///    テスト
+///    `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
+///    がまさにこの exact-tie ケースを exercise する。
+fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
+    // HTML-namespace gate (Codex §8.3 final-review finding, 2026-08-11):
+    // this mapping is HTML LS's own presentational hint, scoped to the HTML
+    // namespace — a foreign-namespace element that merely shares the local
+    // name "img" (SVG has no `img` element today, but `StyleElement` is a
+    // generic trait not tied to any one DOM/parser, so this stays
+    // defensive rather than relying on "SVG doesn't currently define one").
+    // `namespace_uri()` returns `None` for the HTML default namespace
+    // (`style_dom.rs`'s "fast path" doc) — same check/shape as
+    // `ruletree.rs`'s `<template>` HTML-only gate
+    // (`tag.eq_ignore_ascii_case("template") && elem.namespace_uri().is_none()`,
+    // roborev job 292 L2 finding) and the same principle bd
+    // raikiri-spike-flln.1 applies to attribute-selector matching this
+    // sprint.
+    if !elem.tag_name().eq_ignore_ascii_case("img") || elem.namespace_uri().is_some() {
+        return;
+    }
+    if let Some(width) = elem.attr("width").and_then(parse_html_dimension_value) {
+        decls.push((
+            PropertyValue::Width(LengthOrAuto::Length(width)),
+            false,
+            Origin::Author,
+            PRESENTATIONAL_HINT_SPECIFICITY,
+            PRESENTATIONAL_HINT_SOURCE_ORDER,
+        ));
+    }
+    if let Some(height) = elem.attr("height").and_then(parse_html_dimension_value) {
+        decls.push((
+            PropertyValue::Height(LengthOrAuto::Length(height)),
+            false,
+            Origin::Author,
+            PRESENTATIONAL_HINT_SPECIFICITY,
+            PRESENTATIONAL_HINT_SOURCE_ORDER,
+        ));
+    }
+}
+
+/// HTML LS "rules for parsing dimension values"
+/// (<https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values>,
+/// verbatim algorithm, 2026-08-10 fetch 確認)。
+///
+/// 1. 先頭の ASCII whitespace を skip。
+/// 2. 直後が ASCII digit でなければ (末尾も含め) 失敗 → `None`。
+/// 3. 整数部の連続 digit を集めて 10 進数として解釈。
+/// 4. 直後が `.` なら、消費してから続く digit を小数部として集める
+///    (`.` の直後が digit でなければ小数部なしとして扱い、位置は `.` の
+///    次で確定)。
+/// 5. 最終的に「数値の直後の 1 文字」で分類: `%` なら percentage
+///    ([`Length::Percent`])、それ以外 (garbage でも文字列終端でも) は
+///    length ([`Length::Px`])。
+///
+/// 数値直後の garbage は失敗にならない — `"42px"` → `Px(42.0)`、
+/// `"10.5%rest"` → `Percent(10.5)`。この寛容さは
+/// `embedded-content-other.html#dimension-attributes` にある**著者向け**
+/// conformance 要件 ("must have values that are valid non-negative
+/// integers") とは別物で、UA 側の実際の parse 規則はこちら (dimension
+/// value 一般、非負整数だけでなく小数・percentage も受理) — bd
+/// raikiri-spike-5z86.7 dispatch prompt の "非負整数" という要約は
+/// 説明の簡略化であり、実装はこの spec 本文の algorithm に忠実にした
+/// (percentage / 小数を含む)。負値を作る分岐 (`-`/`+` の読み取り) は
+/// algorithm 自体に存在しないため、別途の負値拒否は不要。
+fn parse_html_dimension_value(input: &str) -> Option<Length> {
+    let bytes = input.as_bytes();
+    let mut pos = 0usize;
+    // Infra "ASCII whitespace": TAB / LF / FF / CR / SPACE。
+    while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t' | b'\n' | b'\x0C' | b'\r') {
+        pos += 1;
+    }
+    if pos >= bytes.len() || !bytes[pos].is_ascii_digit() {
+        return None;
+    }
+    let mut value: f64 = 0.0;
+    while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+        value = value * 10.0 + f64::from(bytes[pos] - b'0');
+        pos += 1;
+    }
+    if pos < bytes.len() && bytes[pos] == b'.' {
+        pos += 1;
+        if pos < bytes.len() && bytes[pos].is_ascii_digit() {
+            let mut divisor: f64 = 1.0;
+            loop {
+                divisor *= 10.0;
+                value += f64::from(bytes[pos] - b'0') / divisor;
+                pos += 1;
+                if pos >= bytes.len() || !bytes[pos].is_ascii_digit() {
+                    break;
+                }
+            }
+        }
+    }
+    Some(if pos < bytes.len() && bytes[pos] == b'%' {
+        Length::Percent(value as f32)
+    } else {
+        Length::Px(value as f32)
+    })
 }
 
 /// Top-down inheritance walk。子 node は親の computed value を必要とするため
@@ -4249,6 +4476,340 @@ mod tests {
             cv.height,
             ComputedLengthPercentageOrAuto::Auto,
             "negative height declaration must be dropped; height stays at initial"
+        );
+    }
+
+    // ── <img width>/<img height> presentational hint (bd raikiri-spike-5z86.7,
+    // HTML LS https://html.spec.whatwg.org/multipage/rendering.html#dimRendering) ──
+
+    #[test]
+    fn img_width_and_height_attributes_promoted_to_computed_style() {
+        // Acceptance (bd raikiri-spike-5z86.7): `<img width="100"
+        // height="50">` の HTML attribute が author CSS 無しでも computed
+        // width/height に届く。
+        let mut doc = TestDoc::new();
+        let img =
+            doc.push_element_with_attrs(0, "img", None, &[("width", "100"), ("height", "50")]);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[img].width,
+            ComputedLengthPercentageOrAuto::Px(100.0)
+        );
+        assert_eq!(
+            r.computed[img].height,
+            ComputedLengthPercentageOrAuto::Px(50.0)
+        );
+    }
+
+    #[test]
+    fn img_width_attribute_alone_does_not_set_height() {
+        // 独立 mapping — `width` だけ指定した場合 `height` は initial のまま
+        // (spec は 2 属性を "respectively" と個別に mapping する)。
+        let mut doc = TestDoc::new();
+        let img = doc.push_element_with_attrs(0, "img", None, &[("width", "100")]);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[img].width,
+            ComputedLengthPercentageOrAuto::Px(100.0)
+        );
+        assert_eq!(r.computed[img].height, ComputedLengthPercentageOrAuto::Auto);
+    }
+
+    #[test]
+    fn img_width_attribute_zero_is_a_valid_hint() {
+        // 「maps to the dimension property」であり「…(ignoring zero)」では
+        // ないことの pin (cf. `<table width>` は ignoring-zero) — `width="0"`
+        // は 0px という有効な hint になる。
+        let mut doc = TestDoc::new();
+        let img = doc.push_element_with_attrs(0, "img", None, &[("width", "0")]);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[img].width,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+    }
+
+    #[test]
+    fn img_width_attribute_percentage_and_decimal_accepted() {
+        // bd raikiri-spike-5z86.7 dispatch prompt は "非負整数" と要約したが、
+        // spec 本文の "rules for parsing dimension values" は percentage /
+        // 小数も受理する — 実装はその本文どおり (`parse_html_dimension_value`
+        // doc 参照)。
+        let mut doc = TestDoc::new();
+        let pct = doc.push_element_with_attrs(0, "img", None, &[("width", "50%")]);
+        let dec = doc.push_element_with_attrs(0, "img", None, &[("width", "10.5")]);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[pct].width,
+            ComputedLengthPercentageOrAuto::Percent(50.0)
+        );
+        assert_eq!(
+            r.computed[dec].width,
+            ComputedLengthPercentageOrAuto::Px(10.5)
+        );
+    }
+
+    #[test]
+    fn img_width_attribute_trailing_garbage_does_not_fail_parse() {
+        // legacy dimension-value microsyntax の寛容さ pin: 数値直後の garbage
+        // は失敗にならない (`"42px"` → 42px, naive integer parse ならここで
+        // 失敗していたはず)。先頭 whitespace の skip も同時に確認。
+        let mut doc = TestDoc::new();
+        let px = doc.push_element_with_attrs(0, "img", None, &[("width", "  42px")]);
+        let pct_dot = doc.push_element_with_attrs(0, "img", None, &[("width", "10.%")]);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[px].width,
+            ComputedLengthPercentageOrAuto::Px(42.0)
+        );
+        // cov:ignore: the message-format branch of this `assert_eq!` only
+        // executes on failure; this assertion passes on every run, so
+        // llvm-cov reports the message-string line as an uncovered added
+        // line even though the assertion itself runs (same shape as
+        // `counter_style.rs`'s `reserved_rule_names_are_dropped` cov:ignore).
+        assert_eq!(
+            r.computed[pct_dot].width,
+            ComputedLengthPercentageOrAuto::Percent(10.0),
+            "trailing `.` with no fractional digit still checks the following `%`"
+        );
+    }
+
+    #[test]
+    fn img_width_attribute_invalid_or_negative_value_produces_no_hint() {
+        // 失敗 (parse failure) は「hint を作らない」に落ちる — 属性が無いのと
+        // 同じ扱いで width は initial `auto` のまま。`-5` は algorithm に
+        // `-`/`+` 分岐が無いため即失敗 (先頭が ASCII digit でない)。
+        let mut doc = TestDoc::new();
+        let garbage = doc.push_element_with_attrs(0, "img", None, &[("width", "abc")]);
+        let negative = doc.push_element_with_attrs(0, "img", None, &[("width", "-5")]);
+        let empty = doc.push_element_with_attrs(0, "img", None, &[("width", "")]);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[garbage].width,
+            ComputedLengthPercentageOrAuto::Auto
+        );
+        assert_eq!(
+            r.computed[negative].width,
+            ComputedLengthPercentageOrAuto::Auto
+        );
+        assert_eq!(
+            r.computed[empty].width,
+            ComputedLengthPercentageOrAuto::Auto
+        );
+        // Independently pin the *other* rejection layer for the empty-
+        // string case: `TestElementRef::attr()` itself normalises `""` to
+        // `None` (matching the `StyleElement::attr` trait contract and the
+        // real `ElementRef::attr()`), so `push_img_dimension_hints` never
+        // even calls `parse_html_dimension_value` for `width=""` — the
+        // `Auto` result above isn't (only) a parse-failure outcome.
+        let node = doc
+            .node(StyleNodeId::new(empty as u64))
+            .expect("node exists");
+        let elem = node.as_element().expect("element node");
+        assert_eq!(elem.attr("width"), None);
+    }
+
+    #[test]
+    fn non_img_element_width_height_attributes_not_promoted() {
+        // bd raikiri-spike-5z86.7 scope narrowing: mapping は `img` のみ。
+        // 同じ attribute を持つ `div` は影響を受けない。
+        let mut doc = TestDoc::new();
+        let div =
+            doc.push_element_with_attrs(0, "div", None, &[("width", "100"), ("height", "50")]);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].width, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(r.computed[div].height, ComputedLengthPercentageOrAuto::Auto);
+    }
+
+    #[test]
+    fn img_width_attribute_overridable_by_inline_author_style() {
+        // Cascade-origin pin: presentational hint と inline style は共に
+        // `Origin::Author` (`push_img_dimension_hints` doc の "Cascade
+        // origin" 節) なので origin では決着せず、同一 origin 内の
+        // tie-break (specificity) に落ちる — inline style の
+        // `INLINE_SPECIFICITY` (`1 << 30`) は hint の `specificity = 0`
+        // (`PRESENTATIONAL_HINT_SPECIFICITY`) より圧倒的に大きいので、
+        // exact-tie の心配なく無条件に勝つ (対照的に、下の
+        // `..._by_author_stylesheet_regardless_of_specificity` は
+        // 両者とも specificity 0 になり得るので exact-tie 経路を通る)。
+        let mut doc = TestDoc::new();
+        let img = doc.push_element_with_attrs(
+            0,
+            "img",
+            Some("width: 50px"),
+            &[("width", "100"), ("height", "100")],
+        );
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: message-format branch of this `assert_eq!` only
+        // executes on failure (see the `pct_dot` cov:ignore above for the
+        // full explanation of this line-coverage false positive).
+        assert_eq!(
+            r.computed[img].width,
+            ComputedLengthPercentageOrAuto::Px(50.0),
+            "author inline style must override the HTML presentational hint"
+        );
+        // cov:ignore: same false positive, second assertion in this test.
+        assert_eq!(
+            r.computed[img].height,
+            ComputedLengthPercentageOrAuto::Px(100.0),
+            "height has no author override, so the hint still applies"
+        );
+    }
+
+    #[test]
+    fn img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity() {
+        // Exact-tie case pin (`push_img_dimension_hints` doc's "Cascade
+        // origin" §2): the hint and this `* { width: 30px }` rule are both
+        // `Origin::Author`, both specificity 0 (universal selector), and
+        // both `source_order = 0` (first/only rule in an otherwise-empty
+        // `RuleTree`) — an exact 3-tuple tie. `beats` resolves the tie in
+        // favor of whichever candidate is scanned later in `pick_winners`,
+        // and `collect_cascaded` pushes the hint *before* stylesheet-rule
+        // matching for the same element, so the real rule wins. This is not
+        // a specificity-driven outcome (both sides are 0) — it pins the
+        // push-order invariant instead.
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(style, "* { width: 30px }");
+        let img = doc.push_element_with_attrs(0, "img", None, &[("width", "100")]);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: same false positive as the other `img_width_attribute_*`
+        // tests above (message-format branch of `assert_eq!` only executes
+        // on failure).
+        assert_eq!(
+            r.computed[img].width,
+            ComputedLengthPercentageOrAuto::Px(30.0),
+            "real author rule must win the exact-tie via push-order (hint pushed first)"
+        );
+    }
+
+    #[test]
+    fn img_tag_name_match_is_ascii_case_insensitive() {
+        // `match_by_tag` と同じ寛容さ — real DOM (html5ever) は tag name を
+        // 常に lowercase に正規化するので実運用では観測されないが、
+        // `StyleElement` は特定 DOM 実装に紐付かない generic trait なので
+        // defensive に確認しておく。
+        let mut doc = TestDoc::new();
+        let img = doc.push_element_with_attrs(0, "IMG", None, &[("width", "100")]);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[img].width,
+            ComputedLengthPercentageOrAuto::Px(100.0)
+        );
+    }
+
+    #[test]
+    fn foreign_namespace_img_local_name_does_not_get_the_hint() {
+        // Codex §8.3 final-review finding 1 (2026-08-11): the mapping is
+        // HTML-namespace-specific (`push_img_dimension_hints` doc's
+        // namespace-gate comment). A foreign-namespace element that merely
+        // shares the local name "img" must not pick up the presentational
+        // hint, even though `tag_name()` alone would match.
+        let mut doc = TestDoc::new();
+        let img = doc.push_element_with_namespace(
+            0,
+            "img",
+            "http://example.com/not-html",
+            &[("width", "100")],
+        );
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: message-format branch of this `assert_eq!` only
+        // executes on failure (same false positive as the other
+        // `img_width_attribute_*` tests above).
+        assert_eq!(
+            r.computed[img].width,
+            ComputedLengthPercentageOrAuto::Auto,
+            "foreign-namespace element sharing the \"img\" local name must not get the hint"
+        );
+    }
+
+    #[test]
+    fn test_dom_attr_style_matches_inline_style_source_contract() {
+        // `push_img_dimension_hints` は `elem.attr("width")`/`attr("height")`
+        // 経由で `TestElementRef::attr()` の override (`crate::test_dom`,
+        // bd raikiri-spike-5z86.7 で追加) を叩く。`StyleElement::attr` の
+        // trait doc ("Default handles `style` by delegating to
+        // `inline_style_source`; overrides must preserve that contract")
+        // をこの override が守っていることを直接確認する — real DOM
+        // (`crates/raikiri-dom/src/dom_impl.rs`) の `ElementRef::attr()` も
+        // 同じ `"style"` 特別扱いを持つので、ここが崩れると実 DOM との
+        // 挙動差が生まれる。
+        let mut doc = TestDoc::new();
+        let id = doc.push_element(0, "div", Some("color: red"));
+        let node = doc.node(StyleNodeId::new(id as u64)).expect("node exists");
+        let elem = node.as_element().expect("element node");
+        assert_eq!(elem.attr("style"), Some("color: red"));
+        assert_eq!(elem.attr("style"), elem.inline_style_source());
+    }
+
+    #[test]
+    fn parse_html_dimension_value_matches_spec_algorithm_directly() {
+        // `parse_html_dimension_value` の unit-level pin — 上の end-to-end
+        // test 群と違い、cascade を経由せず algorithm 自体の分岐を直接叩く。
+        assert_eq!(parse_html_dimension_value("100"), Some(Length::Px(100.0)));
+        assert_eq!(parse_html_dimension_value("0"), Some(Length::Px(0.0)));
+        assert_eq!(
+            parse_html_dimension_value("50%"),
+            Some(Length::Percent(50.0))
+        );
+        assert_eq!(parse_html_dimension_value("10.5"), Some(Length::Px(10.5)));
+        assert_eq!(
+            parse_html_dimension_value("10.5%"),
+            Some(Length::Percent(10.5))
+        );
+        // 2 桁以上の小数部 — fractional-digit loop が 1 回で `break` せず
+        // 「まだ digit が続く」経路 (`parse_html_dimension_value` 内 `loop`
+        // の non-break iteration) を通ることを pin。1 桁小数
+        // (上の `10.5` / `10.5%`) だけでは exercise されない分岐。
+        assert_eq!(
+            parse_html_dimension_value("12.345"),
+            Some(Length::Px(12.345))
+        );
+        // cov:ignore: message-format branch of this `assert_eq!` only
+        // executes on failure (see `img_width_attribute_trailing_garbage_
+        // does_not_fail_parse`'s `pct_dot` cov:ignore for the full
+        // explanation of this line-coverage false positive).
+        assert_eq!(
+            parse_html_dimension_value("  42px"),
+            Some(Length::Px(42.0)),
+            "leading whitespace skipped, trailing garbage after the number ignored"
+        );
+        // cov:ignore: same false positive.
+        assert_eq!(
+            parse_html_dimension_value("10.%"),
+            Some(Length::Percent(10.0)),
+            "trailing `.` with no fractional digit still advances past it before the % check"
+        );
+        assert_eq!(parse_html_dimension_value("abc"), None);
+        // cov:ignore: same false positive.
+        assert_eq!(
+            parse_html_dimension_value("-5"),
+            None,
+            "no sign branch in the algorithm"
+        );
+        assert_eq!(parse_html_dimension_value(""), None);
+        // cov:ignore: same false positive.
+        assert_eq!(
+            parse_html_dimension_value("   "),
+            None,
+            "whitespace-only input never reaches a digit"
+        );
+        // cov:ignore: same false positive.
+        assert_eq!(
+            parse_html_dimension_value("."),
+            None,
+            "a lone `.` is not a leading digit"
         );
     }
 
