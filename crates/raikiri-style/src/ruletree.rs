@@ -69,7 +69,7 @@ pub struct RuleTree {
     /// `add_stylesheet` 呼び出し間でも呼び出し順) がそのまま同一 origin 内の
     /// source order となり、「後勝ち」が spec の cascade 順と一致する。
     ///
-    /// `style_rules` 用の parser とは意図的に別 pass ([`counter_style`] module doc
+    /// `style_rules` 用の parser とは意図的に別 pass ([`crate::counter_style`] module doc
     /// の "What's implemented" 節が元々の設計意図として明記) — このフィールドを
     /// 追加した bd raikiri-spike-gce8 は「同じ source 文字列を追加でもう一度
     /// `counter_style` 側の entry point に渡す」配線のみを担い、2 つの parser を
