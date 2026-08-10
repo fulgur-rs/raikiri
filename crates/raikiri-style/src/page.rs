@@ -3666,7 +3666,7 @@ mod tests {
     ///
     /// `Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
     /// `TextAlign`。この 5 型については
-    /// [`crate::cascade::resolve_against_inherited`] の doc が「この guard が
+    /// `crate::cascade::resolve_against_inherited` の doc が「この guard が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (non-#[test] mod-level helper doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-csmj; demoted from an already-linked span by bd raikiri-spike-gq7x)
     /// 守らない範囲」として挙げる **既存 variant への payload 追加**
     /// (bd raikiri-spike-7m33 の gap (a)) もここで compile error になる。
     ///
@@ -4453,7 +4453,7 @@ mod tests {
     /// 16 site に膨らむため。key ↔ variant が食い違う形の bug は本 helper では
     /// 検出できないが、`cascade_page` の key は `PropertyValue::key()` 由来であり
     /// (winner selection の `let key = value.key();`)、その対応は
-    /// [`crate::property`] の `margin_longhand_keys_map_correctly` が pin 済み。
+    /// `crate::property` の `margin_longhand_keys_map_correctly` が pin 済み。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (non-#[test] mod-level helper doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-csmj; demoted from an already-linked span by bd raikiri-spike-gq7x)
     /// border 側に同型 helper を置かず explicit assert にしてあるのは、3
     /// sub-property family ぶんの helper が要るのに対し assert が 12 個で済むため。
     fn margin_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {
