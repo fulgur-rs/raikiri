@@ -3,9 +3,10 @@
 //! **Ownership** (design §7.0 line 1904 "shared types → raikiri-traits"): this
 //! is the single canonical [`TargetRegistry`] shared across raikiri-dom,
 //! raikiri-paint, and consumer crates. raikiri-traits owns the type; the
-//! producer side (register-site directive walker feeding
-//! [`raikiri_traits::GcpmDirective::RegisterTarget`]) lives in raikiri-dom and
-//! calls [`TargetRegistry::register`] against this canonical instance.
+//! producer side (register-site directive walker, bd raikiri-spike-0nyv,
+//! feeding [`raikiri_traits::GcpmDirective::RegisterTarget`]) lives in
+//! raikiri-dom and calls [`TargetRegistry::register`] against this
+//! canonical instance.
 //!
 //! **History** — the impl and tests here were previously a `pub(crate)` shadow
 //! at `crates/raikiri-dom/src/target.rs` alongside an empty
@@ -25,8 +26,8 @@
 //! `next_sequence: u32` is an additive internal-only field stamping stable
 //! ids on pending slots; §7.2 does not enumerate it because
 //! `TargetSlotId = (page_index, sequence)` (§11.2 Finding #4) fixes the paired
-//! shape once PageContext / page_index plumbing lands. Until then the
-//! sequence alone is the stable handle.
+//! shape once PageContext / page_index plumbing lands (bd
+//! raikiri-spike-oqpc). Until then the sequence alone is the stable handle.
 
 use std::collections::HashMap;
 
@@ -42,7 +43,7 @@ use crate::dom::Symbol;
 /// referenced a fragment before it was walked and must be resolved on a
 /// second pass ([`TargetRegistry::flush_pending`]).
 ///
-/// Producer / register-site walker (bd raikiri-spike-96u.4) lives in
+/// Producer / register-site walker (bd raikiri-spike-0nyv) lives in
 /// raikiri-dom; the canonical type (shape + resolve strategy) lives here
 /// (bd raikiri-spike-bsi Option C).
 #[derive(Debug, Default, Clone)]
@@ -51,7 +52,7 @@ pub struct TargetRegistry {
     /// Fragment identifier → resolved target metadata (counter snapshot,
     /// textual content parts). Populated as the runtime walk encounters
     /// [`crate::GcpmDirective::RegisterTarget`] directives (populator: bd
-    /// raikiri-spike-96u.4 register-site walker in raikiri-dom).
+    /// raikiri-spike-0nyv register-site walker in raikiri-dom).
     resolved: HashMap<Symbol, TargetInfo>,
     /// Content-value sites (`target-counter(...)`, `target-counters(...)`,
     /// `target-text(...)`, and future `element(name)`) that referenced a
@@ -82,15 +83,15 @@ pub struct TargetRegistry {
 /// the hierarchical join `"1.1"` is literally unrepresentable. This module
 /// therefore carries the full stack per counter; when the §11.2
 /// `TargetDefinition` public shape is reconciled with the runtime side, the
-/// reconciliation must widen `counter_snapshot` to a stack — and the 96u.4
-/// register-site directive walker must populate the stack rather than the
-/// leaf value.
+/// reconciliation must widen `counter_snapshot` to a stack — and the bd
+/// raikiri-spike-0nyv register-site directive walker must populate the
+/// stack rather than the leaf value.
 ///
 /// **Text parts**: keyed by the same
 /// [`raikiri_style::property::ContentPart`] variants that
 /// `target-text(url, part)` accepts. Missing parts resolve to an empty
 /// string (CSS Content 3 §2.6.3 defers text extraction — populating each
-/// entry is the responsibility of the register site, bd raikiri-spike-96u.4).
+/// entry is the responsibility of the register site, bd raikiri-spike-0nyv).
 ///
 /// **Storage note**: `text_parts` is a `Vec<(ContentPart, String)>`, not a
 /// `HashMap`, because [`ContentPart`] does not implement `Hash`
@@ -207,7 +208,7 @@ pub(crate) enum TargetRequest {
 /// (a) slot ids stay byte-identical across iterations and (b) sinks can
 /// address a slot by its owning page. `page_index` is a PageContext-owned
 /// field and is out of current scope. Until the PageContext plumbing lands
-/// (bd raikiri-spike-96u.4), the sequence alone is the stable handle.
+/// (bd raikiri-spike-oqpc), the sequence alone is the stable handle.
 #[derive(Debug, Clone)]
 pub(crate) struct TargetSlot {
     pub(crate) sequence: u32,
@@ -263,7 +264,7 @@ impl TargetRegistry {
     }
 
     /// Record a resolved target — called from the register-site directive
-    /// walker (bd raikiri-spike-96u.4) once an element with an `id`
+    /// walker (bd raikiri-spike-0nyv) once an element with an `id`
     /// attribute is fully seen.
     ///
     /// **First-wins on duplicate fragment id.** Uses `entry().or_insert` so
@@ -273,7 +274,7 @@ impl TargetRegistry {
     /// order** when multiple elements share an id (which is invalid HTML in
     /// the first place — HTML §3.2.6.1 "id attribute" — but the resolution
     /// behavior is still well-defined). The register-site walker (M6, bd
-    /// raikiri-spike-96u.4) is expected to invoke `register()` in tree
+    /// raikiri-spike-0nyv) is expected to invoke `register()` in tree
     /// order, so `or_insert` preserves the spec's first-in-tree-order
     /// semantics without the walker having to check for duplicates.
     pub fn register(&mut self, fragment_id: Symbol, info: TargetInfo) {
@@ -387,7 +388,7 @@ impl TargetRegistry {
 
 /// Drive a [`TargetRegistry`] from a
 /// [`raikiri_style::property::ContentComponent`] — the "working conversion
-/// path" for the M6 directive-apply pass.
+/// path" for the M6 directive-apply pass (bd raikiri-spike-0nyv).
 ///
 /// Returns `Some(outcome)` for the three target-* variants
 /// (`TargetCounter`, `TargetCounters`, `TargetText`), `None` for every
@@ -1899,8 +1900,8 @@ mod tests {
     #[test]
     fn target_registry_default_is_empty() {
         // Constructibility pin: `TargetRegistry::default()` yields an empty
-        // registry. The M6 directive-apply driver (96u.4) will consume this
-        // constructor.
+        // registry. The M6 directive-apply driver (bd raikiri-spike-0nyv)
+        // will consume this constructor.
         let reg = TargetRegistry::default();
         assert!(reg.resolved.is_empty());
         assert!(reg.pending_slots.is_empty());
@@ -2921,8 +2922,9 @@ mod tests {
         // DOM id resolution is first-in-tree-order (HTML §3.2.6.1 —
         // duplicate ids are invalid HTML but `getElementById` still resolves
         // to the first element in tree order). register() is expected to be
-        // called in tree order by the M6 register-site walker; last-wins
-        // would cause target-* to resolve against a later duplicate.
+        // called in tree order by the M6 register-site walker (bd
+        // raikiri-spike-0nyv); last-wins would cause target-* to resolve
+        // against a later duplicate.
         let mut reg = TargetRegistry::default();
         reg.register(Symbol::new("dup"), make_info(&[("chapter", &[1])], &[]));
         // Second register call for the same fragment must be a no-op.
