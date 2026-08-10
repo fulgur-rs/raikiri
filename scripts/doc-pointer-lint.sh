@@ -16,6 +16,15 @@
 #      AGENTS.md's "`crate::…` pointer は intra-doc link で書く" rule
 #      prohibits. Must not exceed the pinned baseline in
 #      scripts/lib/doc_pointer_lint_baseline.txt.
+#   4. **role 4 (bd raikiri-spike-gq7x, informational only, NOT gated)**:
+#      already-*linked* `crate::…` pointers on a doc line at/after the
+#      first `#[cfg(test)] mod …` block in the file — equally invisible to
+#      a normal `cargo doc` build as a role-2 violation, but structurally
+#      un-markable with `doc-pointer-lint:ignore:` (that marker only ever
+#      exempts a *bare* span from role 2) and deliberately not given a
+#      baseline of its own — see scripts/lib/doc_pointer_lint.py's module
+#      docstring for the full rationale. Printed in every run's summary;
+#      never affects the exit code.
 #
 # Usage:
 #   scripts/doc-pointer-lint.sh            # gate mode: prints census, PASS/FAIL

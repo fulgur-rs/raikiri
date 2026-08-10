@@ -263,9 +263,17 @@ bd raikiri-spike-8yj6 が持つ。
   raikiri-style 全体 (cascade / computed / page / property / resolve / rule /
   specified の 7 file) で 42 occurrence を plain code span に一括変換済み
   (2026-08-08)。**新規に書く doc では opt-out 3 に従い code span にすること
-  — この位置に新しく bracket を書いても `scripts/doc-pointer-lint.sh` は
-  検知しない** (short-form / non-`crate::` pointer はこの checker の
-  ratchet 対象外。opt-out 3 の再発防止は本 checker の scope 外)。
+  — この位置に新しく short-form (non-`crate::`) bracket を書いても
+  `scripts/doc-pointer-lint.sh` は検知しない** (short-form / non-`crate::`
+  pointer はこの checker のいずれの role の対象にも入らない)。
+  **`crate::` 接頭辞を伴う bracket に限っては** bd raikiri-spike-gq7x の
+  role 4 (informational — ratchet でも gate でもない、
+  `#[cfg(test)] mod …` block 内の linked `crate::…` span を可視化するだけの
+  role) が新規発生を検知して毎 run の summary に出す。ただし role 4 は
+  commit を止めない — 「検知」はできても「防止」ではないので、opt-out 3 の
+  再発**防止**という意味では本 checker は依然 scope 外のまま
+  (bd raikiri-spike-gq7x が role 4 を ratchet 化しなかった理由は
+  `scripts/lib/doc_pointer_lint.py` のモジュール docstring 参照)。
 - **本規約には enforcement 機構が今も一部無い。** 規約に従わない新規記述の一部は
   何も止めない (実測: 規約 landing 前の 3 merge が bare pointer を 7 site
   追加した)。bd raikiri-spike-luxp が `scripts/doc-pointer-lint.sh` を追加し、

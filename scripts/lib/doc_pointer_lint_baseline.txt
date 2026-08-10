@@ -109,4 +109,35 @@
 # re-measured via `--print-count` and re-pinned to that measured value
 # rather than assuming hrau's 22 still held, per this file's own
 # "Regenerate the current value with --print-count" guidance above.
+#
+# 2026-08-10 gq7x: the "currently-uncounted hazard" the csmj paragraph
+# above describes (already-*linked* crate:: pointers on non-#[test]
+# mod-level helpers inside a #[cfg(test)] mod tests block) is resolved as
+# of this entry — NOT via this ratchet (this pin is unchanged at 21; see
+# below for why), via two independent, concurrently-worked fixes that
+# landed on top of each other (same base commit ba5fb5d, two separate
+# worktrees, rebased together rather than one seeing the other's work
+# live): bd raikiri-spike-o9h6 demoted 7 sites of this shape
+# (cascade.rs x4, page.rs x1, property.rs x1, specified.rs x1 — all
+# #[test]-item docs referencing production code, the exact position
+# class bd raikiri-spike-hrau already confirmed rustdoc-blind) to bare
+# code spans with `doc-pointer-lint:ignore:` markers; gq7x independently
+# found and fixed the same 7 via its own new detector (role 4, below)
+# plus the *2 sites this bd issue actually names*
+# (`specified_layer_residue` page.rs~L3669, `margin_px` page.rs~L4456,
+# re-confirmed rustdoc-blind here via わざと壊して確かめる on the
+# specified.rs site of the 7 before the rebase deduped them against
+# o9h6). Post-rebase, o9h6's 7 sites are attributed to o9h6 (its markers
+# say so); gq7x's commit carries only the 2 it was actually scoped to,
+# same remedy hrau's original 15 sites used — this is why this ratchet's
+# pinned value did not move either way: every demoted span (o9h6's 7,
+# gq7x's 2) lands in `doc_bare_crate_excluded`, not
+# `doc_bare_crate_ratchet`. Separately, `scripts/lib/doc_pointer_lint.py`
+# gained a new role 4 (informational only, no baseline, no
+# `doc-pointer-lint:ignore:` interaction — see that file's module
+# docstring for the full structural argument for why not) that surfaces
+# any *future* recurrence of this exact hazard shape: linked crate::
+# pointers at/after the first `#[cfg(test)] mod` block in a file. As of
+# this pin (o9h6 + gq7x both landed), role 4 reports 0 occurrences
+# repo-wide.
 21

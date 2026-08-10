@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """scripts/lib/test_doc_pointer_lint.py — unit tests for doc_pointer_lint.py.
 
-Covers the three checker roles (bd raikiri-spike-acsw / raikiri-spike-vyse /
-raikiri-spike-luxp). No class here invokes `cargo` or depends on this
+Covers the checker's roles: role 1 / role 2 (bd raikiri-spike-acsw /
+raikiri-spike-vyse / raikiri-spike-luxp) and role 4 (bd raikiri-spike-gq7x,
+informational only). No class here invokes `cargo` or depends on this
 repo's actual crate tree.
 
 ClassifyLineTests / Role1PlainBracketTests / Role2DocBarePointerTests /
-EvaluateGateTests exercise `census_file()` / `classify_line()` /
-`evaluate_gate()` purely in-memory (string/dataclass in, dataclass/tuple
-out) — no filesystem dependency at all.
+Role4LinkedInTestModTests / EvaluateGateTests exercise `census_file()` /
+`classify_line()` / `find_first_cfg_test_mod_line()` / `evaluate_gate()`
+purely in-memory (string/dataclass in, dataclass/tuple out) — no
+filesystem dependency at all.
 
 LoadBaselineTests and MainExitCodeTests *do* touch the filesystem: both
 use `tempfile.TemporaryDirectory()`, and `MainExitCodeTests` additionally
 writes a small throwaway `crates/*/src/*.rs` tree to disk (to drive
 `main()`'s `--repo-root`/`discover_files()` path end-to-end, not just
 `evaluate_gate()`'s pure logic) — see `MainExitCodeTests`'s own docstring
-for why that's deliberate. All of it is temp-dir-scoped and still fast
-(38 cases in ~0.006s as of this writing).
+for why that's deliberate. All of it is temp-dir-scoped and still fast.
 
 Run with:
 
@@ -39,6 +40,7 @@ from doc_pointer_lint import (
     census_file,
     classify_line,
     evaluate_gate,
+    find_first_cfg_test_mod_line,
     load_baseline,
     main,
 )
@@ -352,6 +354,189 @@ class Role2DocBarePointerTests(unittest.TestCase):
         self.assertEqual(result.doc_bare_crate_excluded, [])
 
 
+class FindFirstCfgTestModLineTests(unittest.TestCase):
+    """`find_first_cfg_test_mod_line()` — role 4's position predicate. A
+    line-position search, deliberately not a brace-depth parser (see role
+    4's paragraph in doc_pointer_lint.py's module docstring for why)."""
+
+    def test_no_cfg_test_returns_none(self) -> None:
+        lines = ["fn f() {}", "mod not_gated {", "}"]
+        self.assertIsNone(find_first_cfg_test_mod_line(lines))
+
+    def test_attribute_directly_above_mod_found(self) -> None:
+        lines = ["fn f() {}", "#[cfg(test)]", "mod tests {", "}"]
+        self.assertEqual(find_first_cfg_test_mod_line(lines), 2)
+
+    def test_blank_line_between_attribute_and_mod_still_found(self) -> None:
+        # Not the prevailing rustfmt style in this repo, but the search
+        # tolerates it rather than requiring the two lines be adjacent.
+        lines = ["#[cfg(test)]", "", "mod tests {", "}"]
+        self.assertEqual(find_first_cfg_test_mod_line(lines), 1)
+
+    def test_attribute_not_followed_by_mod_is_not_a_match(self) -> None:
+        # #[cfg(test)] can gate a standalone fn too, not just a mod — only
+        # the mod-gating shape is role 4's concern (see this function's
+        # docstring: "the start of the first #[cfg(test)] mod … block").
+        lines = ["#[cfg(test)]", "fn helper() {}"]
+        self.assertIsNone(find_first_cfg_test_mod_line(lines))
+
+    def test_stacked_attribute_between_cfg_test_and_mod_still_found(self) -> None:
+        # Real shape found while verifying this function against the whole
+        # tree post-implementation (crates/raikiri-html/src/lib.rs:15-17):
+        # `#[cfg(test)]` followed by a second attribute (e.g.
+        # `#[allow(...)]`) *before* the `mod` line — an earlier version of
+        # this function only skipped blank lines, so it stopped at the
+        # second attribute line, didn't see `mod`, and returned None for
+        # the whole file, silently hiding every doc-linked crate:: span in
+        # it from role 4 (a false-clean, not the documented over-count
+        # gap). Any number of stacked attributes must be skipped, not just
+        # one.
+        lines = [
+            "#[cfg(test)]",
+            "#[allow(clippy::needless_lifetimes, clippy::collapsible_if)]",
+            "mod tests {",
+            "}",
+        ]
+        self.assertEqual(find_first_cfg_test_mod_line(lines), 1)
+
+    def test_attribute_followed_by_non_mod_non_attribute_line_is_not_a_match(self) -> None:
+        # The stacked-attribute skip must not become unconditional — once
+        # a non-blank, non-attribute line is reached and it isn't `mod`,
+        # the search still correctly reports no match at this attribute.
+        lines = ["#[cfg(test)]", "#[allow(dead_code)]", "fn helper() {}"]
+        self.assertIsNone(find_first_cfg_test_mod_line(lines))
+
+    def test_named_test_mod_matches_same_as_plain_tests(self) -> None:
+        # bd raikiri-spike-csmj's own re-scan found #[cfg(test)] mod blocks
+        # under many names (flags_tests, stylesheets_tests, …), not just
+        # the literal `tests` — the predicate must not be name-anchored.
+        lines = ["#[cfg(test)]", "mod flags_tests {", "}"]
+        self.assertEqual(find_first_cfg_test_mod_line(lines), 1)
+
+    def test_pub_mod_still_matches(self) -> None:
+        lines = ["#[cfg(test)]", "pub mod tests {", "}"]
+        self.assertEqual(find_first_cfg_test_mod_line(lines), 1)
+
+    def test_only_the_first_matching_attribute_is_reported(self) -> None:
+        lines = [
+            "#[cfg(test)]",
+            "mod tests_a {",
+            "}",
+            "#[cfg(test)]",
+            "mod tests_b {",
+            "}",
+        ]
+        self.assertEqual(find_first_cfg_test_mod_line(lines), 1)
+
+    def test_combined_cfg_form_not_matched_documented_gap(self) -> None:
+        # bd raikiri-spike-csmj confirmed no cfg(all(test, …)) / cfg(any(
+        # test, …)) form exists in this tree at its scan time, so
+        # _CFG_TEST_ATTR_RE deliberately only matches the exact, unadorned
+        # `#[cfg(test)]` line — this test documents that as a known,
+        # inspected gap (module docstring's own framing), not asserts it's
+        # impossible to hit.
+        lines = ["#[cfg(all(test, feature = \"x\"))]", "mod tests {", "}"]
+        self.assertIsNone(find_first_cfg_test_mod_line(lines))
+
+
+class Role4LinkedInTestModTests(unittest.TestCase):
+    """role 4 (bd raikiri-spike-gq7x): linked crate:: spans at/after the
+    first #[cfg(test)] mod block — informational only, never gated."""
+
+    def _lines(self, *lines: str) -> str:
+        return "\n".join(lines) + "\n"
+
+    def test_linked_span_before_test_mod_not_counted(self) -> None:
+        text = self._lines(
+            "/// see [`crate::foo::Bar`] for details",
+            "fn production() {}",
+            "#[cfg(test)]",
+            "mod tests {",
+            "}",
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(result.doc_linked_crate_in_test_mod, [])
+        # Still counted in the plain informational total either way.
+        self.assertEqual(result.doc_linked_crate_count, 1)
+
+    def test_linked_span_inside_test_mod_counted(self) -> None:
+        text = self._lines(
+            "#[cfg(test)]",
+            "mod tests {",
+            "    /// see [`crate::foo::Bar`] for details",
+            "    fn helper() {}",
+            "}",
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.doc_linked_crate_in_test_mod), 1)
+        self.assertEqual(result.doc_linked_crate_in_test_mod[0].span, "crate::foo::Bar")
+
+    def test_no_test_mod_in_file_none_counted(self) -> None:
+        text = self._lines("/// see [`crate::foo::Bar`] for details", "fn f() {}")
+        result = census_file("f.rs", text)
+        self.assertEqual(result.doc_linked_crate_in_test_mod, [])
+
+    def test_non_crate_linked_span_not_counted(self) -> None:
+        # Same crate::-only scope as role 2/the doc_linked_crate_count
+        # informational counter above it — not a role-4-specific decision.
+        text = self._lines(
+            "#[cfg(test)]",
+            "mod tests {",
+            "    /// see [`PropertyKey`] for details",
+            "    fn helper() {}",
+            "}",
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(result.doc_linked_crate_in_test_mod, [])
+
+    def test_bare_span_inside_test_mod_not_counted_by_role_4(self) -> None:
+        # A *bare* crate:: pointer inside a test mod is role 2's territory
+        # (opt-out-2, tests:: path) or role 2's ratchet — never role 4,
+        # which only ever looks at linked spans.
+        text = self._lines(
+            "#[cfg(test)]",
+            "mod tests {",
+            "    /// see `crate::foo::Bar` for details",
+            "    fn helper() {}",
+            "}",
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(result.doc_linked_crate_in_test_mod, [])
+        self.assertEqual(len(result.doc_bare_crate_all), 1)
+
+    def test_ignore_marker_does_not_exempt_a_linked_span_from_role_4(self) -> None:
+        # Structural point from the module docstring: doc-pointer-lint:
+        # ignore: only ever exempts role 2's *bare*-span candidate set —
+        # it has no effect on a linked span at all, by design (role 4 has
+        # no marker-based escape hatch).
+        text = self._lines(
+            "#[cfg(test)]",
+            "mod tests {",
+            "    /// see [`crate::foo::Bar`] // doc-pointer-lint:ignore: reason",
+            "    fn helper() {}",
+            "}",
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.doc_linked_crate_in_test_mod), 1)
+
+    def test_direction_asymmetry_gap_over_counts_after_block_closes(self) -> None:
+        # Documented known gap (module docstring): the position predicate
+        # cannot see the test-mod block's closing brace, so a doc-linked
+        # span in *later* production code is over-counted. This test
+        # exists to pin that documented behavior, not to claim it's
+        # correct — over-counting is acceptable for an informational,
+        # non-gating role.
+        text = self._lines(
+            "#[cfg(test)]",
+            "mod tests {",
+            "}",
+            "/// see [`crate::foo::Bar`] for details -- actually production code",
+            "fn production() {}",
+        )
+        result = census_file("f.rs", text)
+        self.assertEqual(len(result.doc_linked_crate_in_test_mod), 1)
+
+
 class LoadBaselineTests(unittest.TestCase):
     """§8.2 roborev-refine iter1 quality lens Fix 1: load_baseline() had no
     direct test — the real baseline file has 32 comment lines before its
@@ -469,7 +654,7 @@ class MainExitCodeTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(code, 0)
-            self.assertIn("PASS: both roles satisfied.", out)
+            self.assertIn("PASS: both gate roles satisfied.", out)
 
     def test_exit_1_when_ratchet_exceeds_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -488,7 +673,7 @@ class MainExitCodeTests(unittest.TestCase):
             )
             self.assertEqual(code, 1)
             self.assertIn("FAIL: 1 > baseline 0", out)
-            self.assertNotIn("PASS: both roles satisfied.", out)
+            self.assertNotIn("PASS: both gate roles satisfied.", out)
 
     def test_exit_1_when_plain_comment_bracket_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
