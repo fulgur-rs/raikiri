@@ -5130,7 +5130,7 @@ mod tests {
     /// `<relative-size>` (`larger` / `smaller`) は parse 段では解決せず
     /// `PropertyValue::FontSizeRelative` をそのまま返す — 解決 (親の
     /// computed font-size に対する read-modify-write) は
-    /// [`crate::cascade`] の責務 (`bolder` / `lighter` と同型、
+    /// `crate::cascade` の責務 (`bolder` / `lighter` と同型、 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
     /// bd raikiri-spike-4rmu)。
     #[test]
     fn font_size_accepts_relative_size_keywords() {

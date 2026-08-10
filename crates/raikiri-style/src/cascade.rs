@@ -1602,7 +1602,7 @@ mod tests {
     /// 構築時点で drop し、`match_by_tag` も type/universal 以外の
     /// component を持つ selector を一致させない (M1.4 は type + universal
     /// selector のみ対応)。したがって本 test は「numeric な不変条件そのもの」
-    /// を [`crate::parse_selector_list`] 経由で直接 pin するに留め、id/class
+    /// を `crate::parse_selector_list` 経由で直接 pin するに留め、id/class // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
     /// selector matching が M1.4 以降で実装された時点で改めて e2e 版を追加する
     /// — フォローアップは bd raikiri-spike-7ejc として起票済 (本 issue の
     /// scope 外)。
@@ -1614,7 +1614,7 @@ mod tests {
     /// 1 つしか持てないが、descendant combinator で compound を連結すれば
     /// compound ごとに `Component::LocalName` が積み上がるため、この field も
     /// 公開 API 経由で飽和させられる (`RaikiriSelectorParser` は
-    /// pseudo-element 未サポート — [`crate::PseudoElem`] は uninhabited —
+    /// pseudo-element 未サポート — `crate::PseudoElem` は uninhabited — // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
     /// だが combinator 連結には無関係)。3 field 全てを飽和させると理論上の
     /// packed 最大値 `0x3FFF_FFFF` (margin 1、実測値) に一致する — これは
     /// 本 const 直上の doc の「margin はちょうど 1」と整合する。
@@ -2076,7 +2076,7 @@ mod tests {
 
     /// `line-height: normal` (initial value) の下で `1lh` を使うのは common
     /// case — real font metrics が無いので padding の spec initial `0` に
-    /// 倒す ([`crate::resolve::resolve_length_percentage`] doc、cleanroom:
+    /// 倒す (`crate::resolve::resolve_length_percentage` doc、cleanroom: // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
     /// 比率を捏造しない)。
     #[test]
     fn lh_falls_back_to_zero_when_own_line_height_is_normal() {
@@ -2522,7 +2522,7 @@ mod tests {
     }
 
     /// root element の `font-size: larger` — 親が無いので initial (16px) 基準
-    /// ([`crate::specified::SpecifiedValues::finalize_as_root`] doc の
+    /// (`crate::specified::SpecifiedValues::finalize_as_root` doc の // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
     /// "if the element has no parent" 条項、SPEC-6 derivation と同じ pattern)。
     #[test]
     fn larger_on_root_element_resolves_against_initial_font_size() {

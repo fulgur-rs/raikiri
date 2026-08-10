@@ -931,7 +931,7 @@ mod tests {
     ///
     /// Spec citation: CSS Text 3 §6.1 `#valdef-text-align-match-parent`
     /// says "interpreted against **the parent's** direction value" — not the
-    /// element's own. See [`crate::property::resolve_text_align_match_parent`]
+    /// element's own. See `crate::property::resolve_text_align_match_parent` // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
     /// doc for why this can't be resolved in `cascade::apply_value` (the
     /// same-node winner-order hazard between the `direction` and `text-align`
     /// `PropertyKey` slots).
