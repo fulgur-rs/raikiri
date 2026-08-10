@@ -989,7 +989,8 @@ pub enum CounterStyle {
 ///
 /// CSS Content 3 §2.7.2 "Inserting Named Strings: the string() function"
 /// <https://www.w3.org/TR/css-content-3/#string-function>。
-/// spec default = `first` (per §2.7.2 "if the second argument is omitted").
+/// spec default = `first` — `first` dt/dd 本文 verbatim: "If no second
+/// argument is provided, this is the default value."
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StringFetchMode {
