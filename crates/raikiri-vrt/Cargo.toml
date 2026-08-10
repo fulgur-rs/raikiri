@@ -19,5 +19,26 @@ peniko              = { workspace = true }
 kurbo               = { workspace = true }
 tempfile            = { workspace = true }  # Synthetic fixture dirs for reference-harness self-tests; workspace-centralized (root Cargo.toml declares tempfile = "3").
 
+# rustix backs `check_open_handle_containment`'s Apple-platform arm
+# (crates/raikiri-vrt/src/reference.rs, `fcntl(fd, F_GETPATH, ..)` via
+# `rustix::fs::getpath`) — bd raikiri-spike-895r, PMO decision
+# 2026-08-10 14:30, mirroring bd raikiri-spike-0nww's identical addition to
+# crates/raikiri-dom/Cargo.toml for the sibling call site. Target-gated to
+# the same platform set as the code `cfg` that uses it (macOS/iOS/tvOS/
+# watchOS/visionOS; `rustix::fs::getpath` is itself `#[cfg(apple)]`-gated
+# internally, see rustix's own build.rs) so Linux/Windows/non-Apple-BSD
+# builds do not gain a dependency they never compile against. Already
+# present transitively at v1.1.4 via this crate's own `tempfile`
+# dev-dependency (see Cargo.lock) before this change; "1" keeps resolution
+# pinned to that same major-version-compatible release rather than forcing
+# an unrelated bump. Default features (`std`, hence `alloc`) are
+# load-bearing and must stay on: `rustix::fs::getpath` requires
+# `feature = "alloc"`, and the `Errno` -> `std::io::Error` conversion the
+# Apple arm's error mapping depends on requires `feature = "std"` (both
+# gated internally in rustix's source) — do not add
+# `default-features = false` without re-adding `std`.
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+
 [lints]
 workspace = true
