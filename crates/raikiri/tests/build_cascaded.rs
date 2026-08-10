@@ -352,3 +352,55 @@ fn body_style_element_is_not_applied_per_m1_head_only_contract() {
         "<body> 内の <style> は M1 では未対応、<p> は UA CSS 経由で display: block を得る",
     );
 }
+
+#[test]
+fn img_width_height_html_attributes_reach_computed_style_through_real_parse_path() {
+    // bd raikiri-spike-5z86.7: raikiri-style crate 内 (`crate::cascade::
+    // push_img_dimension_hints`) の実装だけで足りる、という scope-narrowing
+    // 判定 ("wall/sink label dropped after re-verification") の根拠は
+    // `crates/raikiri-html/src/sink.rs::wire_side_tables` が null-namespace
+    // 属性を汎用的に `Node.attributes` へ配線済み、という **static code
+    // reading** だった (実行して確かめてはいない)。この umbrella test は
+    // raikiri-style 単体の unit test (`TestDoc` — テスト自身が属性を注入する
+    // mock) では検証できない箇所、すなわち「本物の html5ever TreeSink
+    // (`RaikiriTreeSink`) → `Document.set_element_attributes` →
+    // `ElementRef::attr()` → `StyleElement::attr()`」という配線の
+    // **実行時**証拠を、raikiri crate 公開 API のみを使って与える
+    // (m1.23 の "consumer は `use raikiri::…;` のみで完結" contract と同じ形)。
+    let doc = parse_html(r#"<html><body><img src="x.png" width="100" height="50"></body></html>"#);
+    let result = build_cascaded(&doc);
+
+    let img_id = find_by_tag(&doc.dom, "img").expect("<img> exists");
+    let computed = &result.computed[img_id.0 as usize];
+    assert_eq!(
+        computed.width,
+        raikiri::ComputedLengthPercentageOrAuto::Px(100.0),
+        "width attribute must reach computed style via the real sink → StyleElement::attr() path"
+    );
+    assert_eq!(
+        computed.height,
+        raikiri::ComputedLengthPercentageOrAuto::Px(50.0),
+        "height attribute must reach computed style via the real sink → StyleElement::attr() path"
+    );
+}
+
+#[test]
+fn img_width_html_attribute_overridable_by_real_author_stylesheet_through_real_parse_path() {
+    // 上と同じ real-path 証拠を、cascade-origin の主張 (「Author CSS で
+    // 上書き可能」) 側でも取る — `<style>` 由来の Author-origin 宣言が
+    // `raikiri::build_cascaded` の source_order 解決 (`stylesheet_kind_to_origin`
+    // 含む実 origin 配線) を経由してもなお hint に勝つことを確認する。
+    let html = r#"<html><head><style>img { width: 30px }</style></head>
+                  <body><img src="x.png" width="100"></body></html>"#;
+    let doc = parse_html(html);
+    let result = build_cascaded(&doc);
+
+    let img_id = find_by_tag(&doc.dom, "img").expect("<img> exists");
+    let computed = &result.computed[img_id.0 as usize];
+    assert_eq!(
+        computed.width,
+        raikiri::ComputedLengthPercentageOrAuto::Px(30.0),
+        "real <style> Author rule must outrank the author-origin presentational hint \
+         (same origin, real rule's non-zero specificity wins) end-to-end"
+    );
+}
