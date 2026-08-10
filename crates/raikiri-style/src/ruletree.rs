@@ -51,23 +51,20 @@ pub struct RuleTree {
     /// 旧 pointer 先だった [`crate::rule::expand_shorthand_into`] は
     /// `pub(crate)` で docs.rs に出ないため dead end だった。
     pub page_rules: Vec<PageRule>,
-    /// `@counter-style` at-rule の name → rule registry (bd raikiri-spike-gce8)。
+    /// `@counter-style` at-rule の name → rule registry (bd raikiri-spike-gce8、
+    /// origin-aware 化は bd raikiri-spike-f7vg)。
     ///
-    /// [`RuleTree::add_stylesheet`] が `Origin::Author` の `source` で呼ばれるたび、
-    /// 同じ文字列に対して [`crate::counter_style::parse_counter_style_rules`] を
+    /// [`RuleTree::add_stylesheet`] が呼ばれるたび (origin を問わず)、同じ
+    /// 文字列に対して [`crate::counter_style::parse_counter_style_rules`] を
     /// 独立にもう一度走らせ、得られた各 [`crate::counter_style::CounterStyleRule`]
-    /// を [`CounterStyleRegistry::insert`] する。`Origin::UserAgent` の `source`
-    /// はこの field に一切寄与しない — origin を跨いだ「同名は後勝ち」が CSS
-    /// Counter Styles L3 §3 の "standard cascade rules" (origin が第一基準) と
-    /// ズレてしまうのを避けるための意図的な制限。詳細と理由は
-    /// [`RuleTree::add_stylesheet`] doc 参照。
-    ///
-    /// `CounterStyleRegistry` はこの crate が cascade origin/specificity を
-    /// field 単位で追跡しない前提で「同名は後勝ち」を実装している
-    /// ([`CounterStyleRegistry`] 型 doc 参照) — 上記の Author-only 制限の下では、
-    /// 呼び出し順 (= `build_rule_tree` の DOM walk では document order、複数
-    /// `add_stylesheet` 呼び出し間でも呼び出し順) がそのまま同一 origin 内の
-    /// source order となり、「後勝ち」が spec の cascade 順と一致する。
+    /// を呼び出し時の `origin` と一緒に
+    /// [`CounterStyleRegistry::insert_with_origin`] へ渡す。同名 rule 間の
+    /// 勝敗は `CounterStyleRegistry` 自体が origin ごとに追跡して解決する
+    /// ([`CounterStyleRegistry`] 型 doc の解決表参照) — CSS Counter Styles L3
+    /// §3 の "standard cascade rules" (origin が第一基準、同一 origin 内は
+    /// source order) をこの 2-origin モデルの下でそのまま実装しており、
+    /// 呼び出し側 (`add_stylesheet`) は origin でフィルタする必要がない。
+    /// 詳細は [`RuleTree::add_stylesheet`] doc 参照。
     ///
     /// `style_rules` 用の parser とは意図的に別 pass ([`crate::counter_style`] module doc
     /// の "What's implemented" 節が元々の設計意図として明記) — このフィールドを
@@ -105,9 +102,9 @@ impl RuleTree {
 
     /// `@counter-style` registry への read-only accessor (bd raikiri-spike-gce8)。
     ///
-    /// [`RuleTree::add_stylesheet`] が `Origin::Author` の `source` で呼ばれるたびに
-    /// populate される (`Origin::UserAgent` の `source` は寄与しない — field doc
-    /// 参照)。空の `RuleTree` ([`RuleTree::empty`]) では
+    /// [`RuleTree::add_stylesheet`] が呼ばれるたびに (origin を問わず) populate
+    /// される — 同名 rule 間の origin 優先順位の解決は `CounterStyleRegistry`
+    /// 自体が担う (field doc 参照)。空の `RuleTree` ([`RuleTree::empty`]) では
     /// [`CounterStyleRegistry::is_empty`] が `true`。`generate a counter` の実行
     /// (`counter()`/`counters()` の値 resolve) はこの registry を読む consumer 側の
     /// 責務 — [`crate::counter_style::resolve_custom_counter`] にこの registry から
@@ -152,28 +149,25 @@ impl RuleTree {
     ///   §"cascade-origin" (<https://www.w3.org/TR/css-cascade-4/#cascade-origin>)
     /// - Invalid selector / 未サポート property は既存の silent-drop 挙動を
     ///   継承 (spec §M1.4a)
-    /// - `@counter-style` at-rule は `origin` が [`Origin::Author`] のときのみ、
+    /// - `@counter-style` at-rule は `origin` を問わず、
     ///   [`crate::counter_style::parse_counter_style_rules`] が同じ `source` に対して
-    ///   独立にもう一度 parse し、得られた各 rule を `counter_styles` へ挿入する
-    ///   (bd raikiri-spike-gce8)。`Origin::UserAgent` の `source` は
-    ///   `counter_styles` に一切寄与しない — 理由は次点。
+    ///   独立にもう一度 parse し、得られた各 rule を呼び出し時の `origin` と共に
+    ///   [`CounterStyleRegistry::insert_with_origin`] へ渡す (bd raikiri-spike-gce8、
+    ///   origin-aware 化は bd raikiri-spike-f7vg)。
     ///
     ///   CSS Counter Styles L3 §3 は同名 `@counter-style` の勝者決定を "according
     ///   to standard cascade rules" (origin が第一基準、UA は常に他 origin に負ける)
-    ///   と規定するが、[`CounterStyleRegistry`] はどの origin から来たかを記録しない
-    ///   flat `HashMap` (型 doc 参照) — 複数 origin から挿入させると「呼び出し順が
-    ///   そのまま勝敗」になり、UA が後から挿入されれば Author を上書きしてしまう
-    ///   spec 違反になる。`Origin::Author` のみを通すことで、この 2-origin モデルの
-    ///   下で「呼び出し順 (=同一 origin 内の source order) が勝敗」が spec の
-    ///   "standard cascade rules" (origin 一致時は source order) と一致する状態を
-    ///   保つ。`Origin::UserAgent` 側の `@counter-style` (predefined counter style
-    ///   の override 等) は現状 `counter_styles` に反映されない既知の scope 外 —
-    ///   `CounterStyleRegistry` 自体に origin 追跡を持たせる、より大きな変更が
-    ///   要る。
+    ///   と規定する。この解決自体は [`CounterStyleRegistry`] が origin ごとに
+    ///   entry を追跡して実装している (型 doc の解決表参照) — 呼び出し側の
+    ///   `add_stylesheet` は origin でフィルタする必要がなく、単に origin を
+    ///   そのまま伝播するだけでよい。結果として、他 origin との同名衝突がない
+    ///   単独の `Origin::UserAgent` `@counter-style` も (bd raikiri-spike-gce8 時点
+    ///   では Author-only gate により無条件 drop されていたが) `counter_styles`
+    ///   に反映されるようになった (bd raikiri-spike-f7vg)。
     ///
     /// spec: raikiri-spike-m1.22 (m1.21 spec addition の実装)、
-    /// raikiri-spike-rbo (@page scaffolding)、raikiri-spike-gce8 (counter_styles wiring,
-    /// Author-only — see above)
+    /// raikiri-spike-rbo (@page scaffolding)、raikiri-spike-gce8 (counter_styles wiring)、
+    /// raikiri-spike-f7vg (origin-aware 化、standalone UA-origin 定義の反映)
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
@@ -205,10 +199,8 @@ impl RuleTree {
                 }
             }
         }
-        if origin == Origin::Author {
-            for rule in parse_counter_style_rules(source) {
-                self.counter_styles.insert(rule);
-            }
+        for rule in parse_counter_style_rules(source) {
+            self.counter_styles.insert_with_origin(rule, origin);
         }
     }
 }
@@ -1164,7 +1156,7 @@ mod tests {
         assert_eq!(tree.style_rules.len(), 1);
     }
 
-    // ── counter_styles wiring (bd raikiri-spike-gce8) ──
+    // ── counter_styles wiring (bd raikiri-spike-gce8, origin-aware since bd raikiri-spike-f7vg) ──
 
     #[test]
     fn empty_rule_tree_has_empty_counter_styles() {
@@ -1216,9 +1208,9 @@ mod tests {
 
     #[test]
     fn counter_styles_same_name_later_author_call_replaces_earlier_entirely() {
-        // CounterStyleRegistry::insert の型 doc が明記する「同名は atomically
-        // 後勝ち」を、複数 add_stylesheet(Origin::Author) 呼び出しをまたいで
-        // 確認する (page_source_order_monotonic_across_add_stylesheet_calls の
+        // CounterStyleRegistry 型 doc が明記する「同名は atomically 後勝ち」を、
+        // 複数 add_stylesheet(Origin::Author) 呼び出しをまたいで確認する
+        // (page_source_order_monotonic_across_add_stylesheet_calls の
         // counter-style 版)。両方 Author origin — 同一 origin 内での source
         // order tie-break が CSS Counter Styles L3 §3 の "standard cascade
         // rules" と一致する場合。
@@ -1240,17 +1232,30 @@ mod tests {
     }
 
     #[test]
-    fn add_stylesheet_useragent_origin_does_not_populate_counter_styles() {
-        // Origin::UserAgent 単独では counter_styles に一切寄与しない
-        // (add_stylesheet doc の Author-only 制限 — bd raikiri-spike-gce8)。
-        // style_rules 側が origin を問わず populate されることは既存の
-        // add_stylesheet_ua_and_author_populate_rule_tree が別途 pin 済み。
+    fn add_stylesheet_useragent_origin_alone_populates_counter_styles() {
+        // CSS Counter Styles L3 §3: defining an @counter-style makes it
+        // available unconditionally — the "only one wins, according to
+        // standard cascade rules" sentence only applies when there IS a
+        // same-name conflict. A standalone Origin::UserAgent rule with no
+        // competing Origin::Author rule has no conflict, so it must be
+        // available. Before bd raikiri-spike-f7vg, add_stylesheet's
+        // Author-only gate dropped this unconditionally regardless of
+        // conflict — that was the bug this test now pins the fix for
+        // (previously named *_does_not_populate_counter_styles and asserted
+        // the opposite). style_rules 側が origin を問わず populate される
+        // ことは既存の add_stylesheet_ua_and_author_populate_rule_tree が
+        // 別途 pin 済み。
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
             Origin::UserAgent,
         );
-        assert!(tree.counter_styles().is_empty());
+        assert_eq!(tree.counter_styles().len(), 1);
+        let rule = tree
+            .counter_styles()
+            .get("thumbs")
+            .expect("thumbs registered");
+        assert_eq!(rule.symbols.len(), 1);
     }
 
     #[test]
@@ -1258,12 +1263,14 @@ mod tests {
         // CSS Counter Styles L3 §3: "only one wins, according to standard
         // cascade rules" — origin が第一基準で UA は常に Author に負ける。
         // Author を先に定義し、同名 @counter-style を UA 側で後から
-        // add_stylesheet しても、UA は counter_styles に一切寄与しないため
-        // Author の定義が生き残ることを確認する。CounterStyleRegistry 自体は
-        // origin を追跡しないため、これは呼び出し側 (add_stylesheet の
-        // Origin::Author ゲート) が保証する不変条件 — 「flat call-order
-        // last-wins だと UA が後から Author を上書きし得る」spec 違反の
-        // regression pin (bd raikiri-spike-gce8)。
+        // add_stylesheet しても、Author の定義が生き残ることを確認する。
+        // bd raikiri-spike-f7vg 以降、この保証は add_stylesheet 側の
+        // Origin::Author ゲート (UA を無条件 drop) ではなく、
+        // CounterStyleRegistry::insert_with_origin が同名 entry の origin を
+        // 個別に追跡して行う origin-precedence 解決 (型 doc の解決表) が担う
+        // — 「flat call-order last-wins だと UA が後から Author を上書きし
+        // 得る」spec 違反の regression pin (bd raikiri-spike-gce8) は変わらず
+        // 有効。
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
@@ -1280,6 +1287,79 @@ mod tests {
             .expect("thumbs registered");
         // UA 側の 2-symbol 定義ではなく、Author 側の 1-symbol 定義のまま。
         assert_eq!(rule.symbols.len(), 1);
+    }
+
+    #[test]
+    fn add_stylesheet_author_after_useragent_overrides_counter_styles() {
+        // 上のテストの call-order を反転させた版 — UA を先に定義し、同名
+        // @counter-style を Author 側で後から add_stylesheet する。origin
+        // 優先順位 (Author > UserAgent) は call order 非依存であるべきなので、
+        // こちらも Author が勝つ (CSS Counter Styles L3 §3, "standard cascade
+        // rules" は origin が第一基準 — bd raikiri-spike-f7vg)。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
+            Origin::UserAgent,
+        );
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "+" "-"; }"#,
+            Origin::Author,
+        );
+        assert_eq!(tree.counter_styles().len(), 1);
+        let rule = tree
+            .counter_styles()
+            .get("thumbs")
+            .expect("thumbs registered");
+        // Author 側の 2-symbol 定義が勝つ。
+        assert_eq!(rule.symbols.len(), 2);
+    }
+
+    #[test]
+    fn add_stylesheet_useragent_same_name_later_call_replaces_earlier() {
+        // counter_styles_same_name_later_author_call_replaces_earlier_entirely
+        // の Origin::UserAgent 版 — 同一 origin (UserAgent) 内での
+        // source-order tie-break (「後勝ち」) が Author 側と対称に効くことを
+        // 確認する (CounterStyleRegistry::insert_with_origin の型 doc 解決表、
+        // bd raikiri-spike-f7vg)。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
+            Origin::UserAgent,
+        );
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "+" "-"; }"#,
+            Origin::UserAgent,
+        );
+        assert_eq!(tree.counter_styles().len(), 1);
+        let rule = tree
+            .counter_styles()
+            .get("thumbs")
+            .expect("thumbs registered");
+        assert_eq!(rule.symbols.len(), 2);
+    }
+
+    #[test]
+    fn add_stylesheet_useragent_and_author_different_names_both_populate_counter_styles() {
+        // The headline spec claim this whole fix (bd raikiri-spike-f7vg) is
+        // about: CSS Counter Styles L3 §3 makes defining an @counter-style
+        // available unconditionally — availability, not just same-name
+        // conflict resolution. Every other origin-mixing test above reuses
+        // the same rule name ("thumbs") specifically to exercise conflict
+        // resolution; this one pins the non-conflicting case those can't:
+        // two differently-named rules from different origins must both
+        // survive together in the registry.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            r#"@counter-style ua-thumbs { system: cyclic; symbols: "*"; }"#,
+            Origin::UserAgent,
+        );
+        tree.add_stylesheet(
+            r#"@counter-style author-thumbs { system: cyclic; symbols: "+" "-"; }"#,
+            Origin::Author,
+        );
+        assert_eq!(tree.counter_styles().len(), 2);
+        assert!(tree.counter_styles().get("ua-thumbs").is_some());
+        assert!(tree.counter_styles().get("author-thumbs").is_some());
     }
 
     #[test]
