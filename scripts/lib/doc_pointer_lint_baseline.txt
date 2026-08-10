@@ -53,15 +53,60 @@
 # (the same hazard bd raikiri-spike-vyse's role 1 exists to close for
 # plain `//` comments, reproduced here at a different position).
 #
-# Known gap, not swept here (bd raikiri-spike-hrau's dispatch explicitly
-# excluded "a general audit of every ratchet site"): the true rustdoc-
-# blind boundary is the whole `#[cfg(test)] mod tests` block, not just
-# `#[test]`-attached / fn-body-local items within it — a bare `crate::…`
-# pointer on a non-#[test] helper *inside* such a mod (e.g. a private fn
-# used only by tests in that mod) would be equally rustdoc-blind but is
-# NOT covered by this sweep's #[test]/fn-body-local predicate, so this
-# pinned 22 is a lower bound on remaining opt-out-3 debt, not a proof
-# there is none left. Tracked as bd raikiri-spike-csmj (filed 2026-08-10 by
-# this task's reviewer:quality lens, which found this gap was mentioned in
-# prose here but not filed as a bd issue).
-22
+# 2026-08-10 block-wide re-scan (bd raikiri-spike-csmj, 22 -> 21): hrau's
+# sweep above classified opt-out 3 by walking from each doc block to the
+# item it directly attaches to (via #[test] or fn-body-local only) — not
+# the true rustdoc-blind boundary, which is the *whole* `#[cfg(test)] mod
+# tests` block (a non-#[test] mod-level helper inside such a mod, e.g. a
+# private fn used only by tests in that mod, is equally invisible to a
+# normal `cargo doc` build, since `#[cfg(test)]` excludes the whole module
+# unless built with `--cfg test`). csmj re-scanned every `#[cfg(test)]
+# mod …` block in `crates/*/src/**/*.rs` — every such block found (named
+# `tests` plus several dozen differently-named ones, e.g. `flags_tests`,
+# `stylesheets_tests`, `pagebox_px_baseline_tests`; a precise block/name
+# count isn't recorded here since ad hoc re-counts by different methods
+# disagreed by a few, and the census total isn't load-bearing for the
+# conclusion below — the line-position argument is);
+# confirmed no same-line `#[cfg(test)] mod x {}` or `cfg(all(test, …))` /
+# `cfg(any(test, …))` form exists in this tree) — against every *bare*
+# `crate::…` doc pointer this script currently reports as ratchet-relevant
+# (unexcluded) — result: *0* additional sites. Every one of that day's
+# 21 ratchet-relevant occurrences sits on a line strictly before the
+# start of the (only, or first) `#[cfg(test)] mod` block in its file, so
+# none are inside any test module at all — this is a plain line-number
+# comparison, not dependent on any brace-matching. The block-wide
+# rustdoc-blindness premise itself was independently re-confirmed
+# (not just assumed): breaking the intra-doc link on a non-#[test]
+# mod-level helper already inside `#[cfg(test)] mod tests`
+# (`crates/raikiri-style/src/page.rs`'s `margin_px`, ~L4456) left
+# `RUSTDOCFLAGS="-D warnings" cargo doc -p raikiri-style --no-deps`
+# silent, while breaking a same-crate production-code intra-doc link as a
+# control (`page.rs`'s `StyleRule` doc, L169, outside any `#[cfg(test)]`)
+# reliably produced `error: unresolved link to ...` — both reverted
+# before commit, neither landed. So hrau's item-local predicate, though
+# narrower than the true boundary in principle, empirically already
+# covered every *bare* pointer opt-out-3 site that exists in this tree;
+# there is currently no known-but-unmarked bare-pointer debt of this
+# kind. (This does not mean the block-wide boundary is moot in general —
+# see bd raikiri-spike-csmj's follow-up bd raikiri-spike-gq7x: two
+# already-*linked* `crate::…` pointers on non-#[test] mod-level helpers
+# inside this exact `page.rs` `#[cfg(test)] mod tests` block
+# — `specified_layer_residue` ~L3669 and `margin_px` ~L4456 itself — are
+# just as rustdoc-blind as any bare pointer would be there, but role 2
+# only ever counts *bare* spans, so a pointer that was already written as
+# a link is neither counted against this ratchet nor markable via
+# `doc-pointer-lint:ignore:` — a different, currently-uncounted hazard
+# csmj found but did not fix, being out of this script's role-2 shape.)
+#
+# The 22 -> 21 single-count drop pinned below is NOT from csmj marking
+# anything (it marked zero new sites) — it is ordinary foreign-merge
+# drift of the kind this file's "can drift out from under you" section
+# above already describes: bd raikiri-spike-f7vg (commit 78fe255, merged
+# a8aa927), landed after hrau's 22-pin, rewrote a doc comment in
+# `crates/raikiri-style/src/counter_style.rs` and in doing so deleted a
+# bare `crate::ruletree` doc-comment line outright (not converted to a
+# link — just removed) — unrelated to opt-out-3 debt either way. csmj
+# re-measured via `--print-count` and re-pinned to that measured value
+# rather than assuming hrau's 22 still held, per this file's own
+# "Regenerate the current value with --print-count" guidance above.
+21
