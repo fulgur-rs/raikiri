@@ -177,8 +177,8 @@ impl RuleTree {
         for rule in StyleSheetParser::new(&mut parser, &mut rule_parser).flatten() {
             match rule {
                 ParsedRule::Style(selectors, declarations) => {
-                    if !is_type_or_universal_only(&selectors) {
-                        continue; // class/id/attr/combinator selector は m1.4 では drop
+                    if !is_supported_selector_list(&selectors) {
+                        continue; // combinator/pseudo-class selector は m1.4 では drop
                     }
                     self.style_rules.push(StyleRule {
                         selectors,
@@ -384,9 +384,53 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
     }
 }
 
-/// SelectorList 内全 selector が type or universal のみで構成されているか判定。
-/// class/id/attribute/combinator/pseudo-class を 1 つでも含めば false → drop。
-fn is_type_or_universal_only(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
+/// SelectorList 内全 selector が現在サポート済みの component のみで構成されて
+/// いるか判定。type / universal / class / id / null-namespace 属性 selector
+/// (存在チェック `[foo]` と値付き `[foo=bar]` 系一式) を受理し、combinator /
+/// pseudo-class / それ以外の属性 selector 形態を 1 つでも含めば false →
+/// rule ごと drop。「それ以外の属性 selector 形態」= `Component::AttributeOther`
+/// に束ねられる 2 パターン、ただし両者は対称ではない (selectors crate
+/// v0.39.0 `parser.rs` の実 parse 分岐で確認、bd raikiri-spike-flln.1
+/// フォローアップ round): namespace 付き (`[ns|foo]`) は存在チェック/値付き
+/// 両形態とも常に `AttributeOther`。非 ASCII-lowercase local name
+/// (`[Data-Foo]` 等、namespace 無指定) は**値付き形態のみ** `AttributeOther`
+/// に回る — 存在チェック形態は namespace 無指定である限り
+/// `Component::AttributeInNoNamespaceExists` のまま受理される。両形態の
+/// 非対称の理由: 値付き形態の `local_name` は selector 自身の parse 時点で
+/// 既に ASCII-lowercase であることが保証される (そうでなければ
+/// `AttributeOther` に回るため — この保証だけで足り、element 側の
+/// namespace は attribute *name* の lookup key 選択には影響しない。値
+/// **文字列**自体の case-sensitivity 解決は別の話で、match 時に
+/// `cascade.rs::resolve_case_sensitivity` が行う)。一方、存在チェック
+/// 形態には比較すべき値がなく、local name の大文字小文字はそのまま
+/// selector 内に保持される — そのため element 側の namespace に応じて
+/// `local_name`/`local_name_lower` のどちらを attribute name の lookup key
+/// にすべきかが変わる (`cascade.rs::match_simple_selectors` の該当 arm 参照)。
+///
+/// bd raikiri-spike-flln.1 で class/id/attribute selector を受理するよう拡張
+/// (旧名 `is_type_or_universal_only` — 拡張後は type/universal only という
+/// 名前が実態と合わなくなったため rename)。combinator と pseudo-class は
+/// 本 task の scope 外のまま — single-element (compound-only) matching のみ、
+/// tree-walk を要する combinator 拡張は別 task。
+///
+/// spec: CSS Selectors Level 4 — class selector
+/// <https://www.w3.org/TR/selectors-4/#class-html>、ID selector
+/// <https://www.w3.org/TR/selectors-4/#id-selectors>、attribute selector
+/// <https://www.w3.org/TR/selectors-4/#attribute-selectors>。
+///
+/// # Invariant with `cascade.rs::match_simple_selectors`
+///
+/// この関数が受理する `Component` variant は、`cascade.rs`
+/// `match_simple_selectors` 側に対応する match arm が**必ず**存在しなければ
+/// ならない — なければ、rule tree には乗るが cascade では絶対に match しない
+/// (safety net の `_ => false` に落ちる) rule を静かに作ってしまう。逆方向の
+/// 対応関係 (`match_simple_selectors` の doc から本関数への pointer) は
+/// `cascade.rs` 側に既にある。両者は独立した enumerate で、shared helper 化は
+/// されていない (quality/debt 両 lens が premature abstraction として見送り —
+/// doc pointer で invariant を明示するに留める)。flln.2-6 でこのペアを
+/// combinator/pseudo-class 分の追加で複数回同時編集することになるため、
+/// 変更のたびにこの対応関係を保つこと。
+fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
     use selectors::parser::Component;
 
     for selector in list.slice() {
@@ -396,7 +440,11 @@ fn is_type_or_universal_only(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
                 | Component::ExplicitUniversalType
                 | Component::ExplicitAnyNamespace
                 | Component::ExplicitNoNamespace
-                | Component::DefaultNamespace(_) => {}
+                | Component::DefaultNamespace(_)
+                | Component::ID(_)
+                | Component::Class(_)
+                | Component::AttributeInNoNamespaceExists { .. }
+                | Component::AttributeInNoNamespace { .. } => {}
                 _ => return false,
             }
         }
@@ -439,11 +487,84 @@ mod tests {
     }
 
     #[test]
-    fn class_selector_silently_dropped() {
+    fn class_selector_is_captured() {
+        // bd raikiri-spike-flln.1: class selector はもう drop されない — 両方残る。
         let doc = dom_with_style(".foo { color: red } p { color: blue }");
         let tree = build_rule_tree(&doc);
-        // .foo が drop、p が残る (source_order は 0 のまま = drop された rule は order を消費しない)
+        assert_eq!(tree.style_rules.len(), 2);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+        assert_eq!(tree.style_rules[1].source_order, 1);
+    }
+
+    #[test]
+    fn id_selector_is_captured() {
+        let doc = dom_with_style("#header { color: red }");
+        let tree = build_rule_tree(&doc);
         assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn attribute_exists_selector_is_captured() {
+        let doc = dom_with_style("[data-foo] { color: red }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn attribute_exists_selector_with_mixed_case_local_name_is_captured() {
+        // `[Data-Foo]` (no value, no namespace) — unlike the value-bearing
+        // form (`non_lowercase_attribute_name_with_value_selector_still_dropped`
+        // below), the selectors crate parser routes this to
+        // `Component::AttributeInNoNamespaceExists` regardless of the local
+        // name's case (only `namespace.is_some()` sends the exists-only form
+        // to `AttributeOther` — see `is_supported_selector_list`'s doc for
+        // the parser trace). Must therefore be captured, not dropped.
+        let doc = dom_with_style("[Data-Foo] { color: red }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn attribute_value_selector_is_captured() {
+        let doc = dom_with_style("[data-foo=\"bar\"] { color: red }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn combinator_selector_still_dropped() {
+        // descendant combinator (`div p`) は bd raikiri-spike-flln.1 の scope 外 —
+        // 引き続き drop (safety net regression)。
+        let doc = dom_with_style("div p { color: red } p { color: blue }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+    }
+
+    #[test]
+    fn pseudo_class_selector_still_dropped() {
+        // `:hover` (NonTSPseudoClass) は bd raikiri-spike-flln.1 の scope 外 —
+        // 引き続き drop (safety net regression)。
+        let doc = dom_with_style("p:hover { color: red } p { color: blue }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+    }
+
+    #[test]
+    fn non_lowercase_attribute_name_with_value_selector_still_dropped() {
+        // `[Data-Foo="bar"]` — local name が ASCII-lowercase でない**値付き**
+        // 属性 selector は selectors crate 側の parse で
+        // `Component::AttributeOther` (`is_supported_selector_list` 未対応の
+        // 形態) になる。これは値付き形態限定の gate — 値なしの存在チェック
+        // 形態 (`[Data-Foo]`) は非小文字でも namespace 無指定なら
+        // `AttributeInNoNamespaceExists` のまま受理される
+        // (`attribute_exists_selector_with_mixed_case_local_name_is_captured`
+        // 参照)。値付き形態のみ引き続き drop (safety net regression)。
+        let doc = dom_with_style("[Data-Foo=\"bar\"] { color: red } p { color: blue }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
     }
 
     #[test]
@@ -537,9 +658,12 @@ mod tests {
 
     #[test]
     fn add_stylesheet_dropped_selectors_do_not_consume_source_order() {
-        // .foo (class selector) は M1.4 では drop、p は残る
+        // `div p` (descendant combinator) は bd raikiri-spike-flln.1 後も未サポート
+        // のため drop、`p` は残る (class selector `.foo` は flln.1 でもう drop
+        // されなくなったため、combinator selector に差し替え — regression 意図は
+        // 「drop された rule は source_order counter を消費しない」のまま)。
         let mut tree = RuleTree::empty();
-        tree.add_stylesheet(".foo { color: red } p { color: blue }", Origin::Author);
+        tree.add_stylesheet("div p { color: red } p { color: blue }", Origin::Author);
         assert_eq!(tree.style_rules.len(), 1);
         assert_eq!(tree.style_rules[0].source_order, 0);
     }

@@ -19,15 +19,22 @@ pub(crate) struct TestNode {
     pub(crate) inline_style: Option<String>,
     /// Null-namespace attributes other than `style` (bd raikiri-spike-5z86.7 —
     /// needed to exercise `StyleElement::attr()` lookups other than the
-    /// `id` / `class` / `style` ones the trait already special-cases).
-    /// First-wins on duplicate names, mirroring `ElementRef::attr()`'s
-    /// contract in `crates/raikiri-dom/src/dom_impl.rs`.
+    /// `id` / `class` / `style` ones the trait already special-cases; bd
+    /// raikiri-spike-flln.1 independently needed the same field for
+    /// class/id/attribute selector matching tests and added the post-hoc
+    /// [`TestDoc::set_attr`] setter as a second way to reach it — both
+    /// bd's tests read this one field). First-wins on duplicate names,
+    /// mirroring `ElementRef::attr()`'s contract in
+    /// `crates/raikiri-dom/src/dom_impl.rs`.
     pub(crate) attrs: Vec<(String, String)>,
     /// Namespace URI; `None` = HTML default namespace (matches
     /// `StyleElement::namespace_uri`'s "fast path" doc). bd
-    /// raikiri-spike-5z86.7 Codex final-review finding 1 — needed to
+    /// raikiri-spike-5z86.7 Codex final-review finding 1 needed this to
     /// exercise the HTML-namespace gate on foreign-namespace elements that
-    /// happen to share a local name with an HTML element.
+    /// happen to share a local name with an HTML element; bd
+    /// raikiri-spike-flln.1 independently needed it to exercise
+    /// `resolve_case_sensitivity`'s non-HTML-namespace branch (via the
+    /// post-hoc [`TestDoc::set_namespace`] setter).
     pub(crate) namespace: Option<String>,
     pub(crate) text: Option<String>,
     pub(crate) children: Vec<usize>,
@@ -129,6 +136,29 @@ impl TestDoc {
         self.nodes[parent].children.push(id);
         id
     }
+
+    /// Set a null-namespace attribute (e.g. `class`, `id`, `data-foo`) on an
+    /// already-pushed element (bd raikiri-spike-flln.1) — a post-hoc
+    /// alternative to [`Self::push_element_with_attrs`]'s constructor-time
+    /// form, for call sites that only decide which attrs to add after
+    /// already having the element's id. `name` should already be
+    /// lower-case — this mock does not itself lower-case, mirroring how a
+    /// real HTML parser hands `raikiri-style` already-lowercased attribute
+    /// names.
+    pub(crate) fn set_attr(&mut self, id: usize, name: &str, value: &str) {
+        self.nodes[id]
+            .attrs
+            .push((name.to_string(), value.to_string()));
+    }
+
+    /// Override an already-pushed element's namespace URI (bd
+    /// raikiri-spike-flln.1) — a post-hoc alternative to
+    /// [`Self::push_element_with_namespace`]'s constructor-time form.
+    /// Exercises `resolve_case_sensitivity`'s non-HTML-namespace branch,
+    /// which the default `None` (HTML) never reaches.
+    pub(crate) fn set_namespace(&mut self, id: usize, namespace_uri: &str) {
+        self.nodes[id].namespace = Some(namespace_uri.to_string());
+    }
 }
 
 pub(crate) struct TestNodeRef<'a> {
@@ -201,26 +231,40 @@ impl<'a> StyleElement for TestElementRef<'a> {
     fn tag_name(&self) -> &str {
         &self.node.tag
     }
+    /// `.filter(|s| !s.is_empty())`: matches the `StyleElement::inline_style_source`
+    /// trait doc contract ("`None` if unset or empty") and the real
+    /// `ElementRef::inline_style_source()` (`crates/raikiri-dom/src/dom_impl.rs`)
+    /// it mirrors. Fixed alongside the `attr()` override below during the
+    /// bd raikiri-spike-flln.1 / bd raikiri-spike-5z86.7 test_dom.rs
+    /// reconciliation (Codex §8.3 finding): both branches of `attr()` — the
+    /// `"style"` delegation and the generic attrs lookup — must normalise
+    /// empty to `None`, and this is the one place that normalisation
+    /// belongs, since `attr("style")` delegates here.
     fn inline_style_source(&self) -> Option<&str> {
-        self.node.inline_style.as_deref()
+        self.node.inline_style.as_deref().filter(|s| !s.is_empty())
     }
     fn namespace_uri(&self) -> Option<&str> {
         self.node.namespace.as_deref()
     }
+    /// Overrides the default (`"style"`-only) `attr()` to also serve attrs
+    /// set via [`TestDoc::set_attr`] / [`TestDoc::push_element_with_attrs`]
+    /// — needed so the inherited default `id()` / `has_class()` impls
+    /// (which delegate to `attr()`) exercise the same code path a real
+    /// `StyleElement` impl would.
+    ///
+    /// Preserves the `attr()` contract's "empty string is normalised to
+    /// `None`" clause (`StyleElement::attr` doc) — overrides must keep it.
+    /// The `"style"` branch gets this via `inline_style_source()`'s own
+    /// filter (above); the generic branch filters directly.
     fn attr(&self, local: &str) -> Option<&str> {
         if local == "style" {
-            self.inline_style_source()
-        } else {
-            // `.filter(|s| !s.is_empty())`: matches the `StyleElement::attr`
-            // trait doc contract ("Empty string is normalised to `None`")
-            // and the real `ElementRef::attr()`
-            // (`crates/raikiri-dom/src/dom_impl.rs`) it mirrors.
-            self.node
-                .attrs
-                .iter()
-                .find(|(k, _)| k == local)
-                .map(|(_, v)| v.as_str())
-                .filter(|s| !s.is_empty())
+            return self.inline_style_source();
         }
+        self.node
+            .attrs
+            .iter()
+            .find(|(k, _)| k == local)
+            .map(|(_, v)| v.as_str())
+            .filter(|s| !s.is_empty())
     }
 }
