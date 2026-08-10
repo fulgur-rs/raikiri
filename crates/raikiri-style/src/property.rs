@@ -1424,8 +1424,9 @@ pub enum DisplayValue {
 ///
 /// # Scope carving (g04 3-category)
 ///
-/// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` /
-///   `unset` / `revert` / `revert-layer`) は Epic 7、silent drop。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
 /// - **(a) spec-invalid**: 未知 keyword (`padding-box` — CSS UI 3 draft 相当
 ///   だが css-sizing-3 では削除、`margin-box` 等) は silent drop = `None`。
 ///
@@ -1467,8 +1468,9 @@ pub enum BoxSizing {
 ///   `content` (`normal`/`none` → 空 list) と同じ「shorthand as single field」
 ///   convention。text-align-all / text-align-last longhand 分離 (§6.2 / §6.3) は
 ///   future task (Epic 5 or Epic 7 相当) で拡張。
-/// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` / `unset` /
-///   `revert` / `revert-layer`) は Epic 7、silent drop。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
 /// - **実装済み** (raikiri-spike-l3wg): `match-parent` の **computed-value 時解決**
 ///   (spec §6.1 `#valdef-text-align-match-parent` verbatim: "This value behaves
 ///   the same as inherit (computes to its parent's computed value) except that
@@ -1561,9 +1563,9 @@ pub enum TextAlign {
 ///
 /// # Scope carving (g04 3-category)
 ///
-/// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` /
-///   `unset` / `revert` / `revert-layer`) は Epic 7、silent drop (37n sibling
-///   [`TextAlign`] と同 convention)。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3。37n sibling [`TextAlign`] と同 convention)。
 /// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
 ///   spec には旧 draft 相当の `auto` 値は無い (現行 §2.1 grammar は 2 keyword のみ)。
 /// - **Non-goal**: HTML `dir` attribute → UA-level `direction` mapping
@@ -1709,6 +1711,35 @@ pub enum PositionValue {
 /// canonical は [`parse_length_value`] の `Token::Dimension` match arm
 /// (`_` arm 直前 comment) と `parse_length_value_rejects_unsupported_unit`
 /// test。
+///
+/// # CSS-wide keyword (canonical、bd raikiri-spike-rzv3)
+///
+/// CSS-wide keyword (`inherit` / `initial` / `unset` / `revert` — CSS
+/// Cascade 4 §7.3 "Explicit Defaulting"
+/// <https://www.w3.org/TR/css-cascade-4/#defaulting-keywords>、`revert-layer`
+/// — CSS Cascade 5 §7.3.5 "Rolling Back Cascade Layers: the revert-layer
+/// keyword" <https://www.w3.org/TR/css-cascade-5/#revert-layer>) の support は
+/// 本 crate ではまだ実装されていない (crate 内の informal な milestone 通称で
+/// "Epic 7")。
+///
+/// unit 側と違い、この不対応には単一の code arm が無い — 各 `parse_*` 関数は
+/// これらの ident を単に認識せず、他の spec-invalid keyword と同じ「未知
+/// keyword」rejection 経路 (各関数自身の `_ => None` 等) へ落ちる、という
+/// **実装しないことによる不作為の一致**。したがって本節でも個々の property
+/// doc でも 5 keyword の enumeration を反復しない — 反復は property が増える
+/// たびに drift する (bd raikiri-spike-rzv3 実測: property.rs 内 16 箇所で
+/// 独立に再記述され、うち border-width / border-style / box-sizing の 3 箇所は
+/// pinning test を伴わずに存在していた)。canonical はこの 1 段落と、
+/// `rejects_css_wide_keyword` 命名の代表 pinning test 群
+/// (`text_align_rejects_css_wide_keyword` 等、crate 内で grep すれば全件
+/// 見つかる)。
+///
+/// `<custom-ident>` ベースの grammar (`counter-name` / `string-set` の name /
+/// `position: running()` の引数) は不作為ではなく **明示的な** reject list
+/// ([`is_reserved_counter_name`] / [`is_reserved_custom_ident`]) を持つ — CSS
+/// Values 4 §4.2 <https://www.w3.org/TR/css-values-4/#custom-idents> の
+/// permanent な spec 除外規定であり、Epic 7 の実装状況とは無関係 (Epic 7 が
+/// landing しても変わらない) — 上の「不作為の一致」と混同しないこと。
 ///
 /// **box property は「認識できない」側ではない** — `margin` / `padding` /
 /// `border-*` / `width` / `height` はいずれも認識対象で、下記に variant を持つ
@@ -3354,8 +3385,9 @@ pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
 ///
 /// - **(a) spec-invalid → drop**: 負値 (`-1px`)、未知 keyword (`fat` 等)、
 ///   spec-invalid unit (`%` は grammar に含まれない → drop)。
-/// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` /
-///   `unset` / `revert` / `revert-layer`) は Epic 7、silent drop。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
 /// - **(b) milestone subset**: `calc()` / `var()` は Epic 5、silent drop。
 ///
 /// (raikiri-spike-0vv.12)
@@ -3406,7 +3438,9 @@ fn parse_border_width_side_res<'i>(
 /// # Non-goals (g04 3-category labels)
 ///
 /// - **(a) spec-invalid → drop**: 未知 keyword (`wavy` 等) は silent drop。
-/// - **(b) milestone subset**: CSS-wide keyword は Epic 7、silent drop。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
 ///
 /// (raikiri-spike-0vv.12)
 fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
@@ -3575,9 +3609,12 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
 ///   外、silent drop (auto ident branch から外れる他 keyword は
 ///   `expect_ident_matching("auto")` が失敗 → length parser の Dimension /
 ///   Percentage arm でも受理されず None に落ちる)。
-/// - **(b) milestone subset — CSS-wide keyword**: `inherit` / `initial` /
-///   `unset` / `revert` / `revert-layer` / `all` は Epic 7、silent drop
-///   (同 ident 経路で他 keyword と同じく落ちる)。
+/// - **(b) milestone subset — CSS-wide keyword**: Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3。同 ident 経路で他 keyword と同じく
+///   落ちる。旧稿は `all` を CSS-wide keyword の一つとして誤って列挙していた
+///   — `all` は shorthand property 名であって値ではなく、この訂正も
+///   consolidation の一部)。
 /// - **calc() / var()**: Epic 5 対象、本 task scope 外
 ///   (`Token::Function` は `parse_length_value` が Dimension / Percentage 以外を
 ///   silent drop)。
@@ -3650,8 +3687,9 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 ///
 /// # Non-goals (g04 3-category labels)
 ///
-/// - **(b) milestone subset**: global keyword (`inherit` / `initial` / `unset` /
-///   `revert` / `revert-layer`) は Epic 7 対象、silent drop
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7 対象、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
 /// - **(b) milestone subset**: `calc()` / `var()` は Epic 5 (css-variables-and-math)
 ///   対象、silent drop
 /// - **(a) spec-invalid → drop**: `<number>` / `<length-percentage>` の負値、
@@ -3797,8 +3835,9 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
 ///
 /// # Scope carving (g04 3-category、[`BoxSizing`] doc-comment に詳述)
 ///
-/// - **(b) milestone subset**: CSS-wide keyword (`inherit` / `initial` /
-///   `unset` / `revert` / `revert-layer`) は Epic 7 で silent drop。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7 で silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
 /// - **(a) spec-invalid**: 他 keyword (`padding-box` — CSS-UI 3 draft 相当
 ///   だが css-sizing-3 では削除、`margin-box` 等) は silent drop = `None`。
 fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
@@ -3824,7 +3863,10 @@ fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
 ///   §6.1 の grammar には無く、CSS Text 4 §7.1
 ///   <https://www.w3.org/TR/css-text-4/#text-align-property> で追加された
 ///   alternative (semantics は同 §7.2 "Character-based Alignment in a Table
-///   Column")。CSS-wide keyword (`inherit` 等) も Epic 7 で silent drop。
+///   Column")。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7 で silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
 /// - **(a) spec-invalid**: 未知 keyword (`middle` 等) は silent drop = `None`。
 fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
     let ident = input.expect_ident().ok()?.clone();
@@ -3849,8 +3891,9 @@ fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
 ///
 /// # Scope carving (g04 3-category、[`Direction`] doc-comment に詳述)
 ///
-/// - **(b) milestone subset**: CSS-wide keyword (`inherit` 等) は Epic 7、
-///   silent drop。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
 /// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
 fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
     let ident = input.expect_ident().ok()?.clone();
@@ -3921,6 +3964,11 @@ fn parse_counter_property(
 ///
 /// CSS-wide keyword + `default` (Counter Styles L3) + `none` (top-level alternative)
 /// を弾く。case-insensitive 比較。
+///
+/// これは CSS Values 4 §4.2 の permanent な spec 除外規定であり、**Epic 7 の
+/// 実装状況とは無関係** — [`PropertyValue`] doc の「CSS-wide keyword」節
+/// (bd raikiri-spike-rzv3) が説明する「property value としては未実装」claim
+/// とは別の話なので混同しないこと。
 fn is_reserved_counter_name(ident: &str) -> bool {
     matches!(
         ident.to_ascii_lowercase().as_str(),
@@ -4231,6 +4279,11 @@ pub(crate) fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> 
 /// `<counter-style-name>` 系 production (rule name / `fallback` / `system:
 /// extends`) の除外 predicate を組み立てる際にこの base list を再利用する
 /// ([`parse_custom_ident`] の doc 参照)。
+///
+/// これは CSS Values 4 §4.2 の permanent な spec 除外規定であり、**Epic 7 の
+/// 実装状況とは無関係** — [`PropertyValue`] doc の「CSS-wide keyword」節
+/// (bd raikiri-spike-rzv3) が説明する「property value としては未実装」claim
+/// とは別の話なので混同しないこと。
 pub(crate) fn is_reserved_custom_ident(ident: &str) -> bool {
     matches!(
         ident.to_ascii_lowercase().as_str(),
@@ -5498,6 +5551,17 @@ mod tests {
         assert_eq!(parse("padding-box", "box-sizing"), None);
         assert_eq!(parse("margin-box", "box-sizing"), None);
         assert_eq!(parse("bogus", "box-sizing"), None);
+    }
+
+    #[test]
+    fn box_sizing_rejects_css_wide_keyword() {
+        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
+        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
+        assert_eq!(parse("inherit", "box-sizing"), None);
+        assert_eq!(parse("initial", "box-sizing"), None);
+        assert_eq!(parse("unset", "box-sizing"), None);
+        assert_eq!(parse("revert", "box-sizing"), None);
+        assert_eq!(parse("revert-layer", "box-sizing"), None);
     }
 
     #[test]
@@ -7552,12 +7616,23 @@ mod tests {
 
     #[test]
     fn line_height_rejects_unknown_keyword() {
-        // spec `normal` 以外の ident (Epic 7 global keyword 含む) は本 milestone
-        // scope 外、silent drop (`auto` / `medium` は spec-invalid、CSS-wide
-        // keyword `inherit` 等は milestone subset で defer)。
+        // spec grammar 外の ident (`auto` / `medium` 等) は (a) spec-invalid、
+        // silent drop。CSS-wide keyword は別 test
+        // (`line_height_rejects_css_wide_keyword`) — (a) ではなく (b)
+        // milestone subset なので混同しないこと。
         assert_eq!(parse("auto", "line-height"), None);
         assert_eq!(parse("medium", "line-height"), None);
+    }
+
+    #[test]
+    fn line_height_rejects_css_wide_keyword() {
+        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
+        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
         assert_eq!(parse("inherit", "line-height"), None);
+        assert_eq!(parse("initial", "line-height"), None);
+        assert_eq!(parse("unset", "line-height"), None);
+        assert_eq!(parse("revert", "line-height"), None);
+        assert_eq!(parse("revert-layer", "line-height"), None);
     }
 
     #[test]
@@ -7714,9 +7789,9 @@ mod tests {
 
     #[test]
     fn text_align_rejects_css_wide_keyword() {
-        // g04 (b) milestone subset: `inherit` / `initial` / `unset` / `revert` /
-        // `revert-layer` は Epic 7、現状は silent drop = None
-        // (parse_text_align の `_ => None` arm 経由)。
+        // g04 (b) milestone subset — Epic 7、silent drop。5 keyword の一覧・
+        // 理由は `PropertyValue` doc の「CSS-wide keyword」節が canonical
+        // (bd raikiri-spike-rzv3)。
         assert_eq!(parse("inherit", "text-align"), None);
         assert_eq!(parse("initial", "text-align"), None);
         assert_eq!(parse("unset", "text-align"), None);
@@ -7790,7 +7865,9 @@ mod tests {
 
     #[test]
     fn direction_rejects_css_wide_keyword() {
-        // g04 (b) milestone subset: CSS-wide keyword は Epic 7、silent drop。
+        // g04 (b) milestone subset — Epic 7、silent drop。5 keyword の一覧・
+        // 理由は `PropertyValue` doc の「CSS-wide keyword」節が canonical
+        // (bd raikiri-spike-rzv3)。
         assert_eq!(parse("inherit", "direction"), None);
         assert_eq!(parse("initial", "direction"), None);
         assert_eq!(parse("unset", "direction"), None);
@@ -8363,6 +8440,17 @@ mod tests {
     }
 
     #[test]
+    fn border_width_rejects_css_wide_keyword() {
+        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
+        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
+        assert_eq!(parse("inherit", "border-top-width"), None);
+        assert_eq!(parse("initial", "border-top-width"), None);
+        assert_eq!(parse("unset", "border-top-width"), None);
+        assert_eq!(parse("revert", "border-top-width"), None);
+        assert_eq!(parse("revert-layer", "border-top-width"), None);
+    }
+
+    #[test]
     fn border_width_accepts_absolute_unit() {
         // `<line-width>` の `<length [0,∞]>` half は `<percentage>` を含まないが
         // 他 absolute unit は含む — bd raikiri-spike-2x8 で追加した `pc` を
@@ -8497,6 +8585,17 @@ mod tests {
         // `<line-style>` grammar 外 (`wavy` は CSS Text Decoration 4 由来、
         // border-style では invalid) は drop。
         assert_eq!(parse("wavy", "border-top-style"), None);
+    }
+
+    #[test]
+    fn border_style_rejects_css_wide_keyword() {
+        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
+        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
+        assert_eq!(parse("inherit", "border-top-style"), None);
+        assert_eq!(parse("initial", "border-top-style"), None);
+        assert_eq!(parse("unset", "border-top-style"), None);
+        assert_eq!(parse("revert", "border-top-style"), None);
+        assert_eq!(parse("revert-layer", "border-top-style"), None);
     }
 
     #[test]
@@ -9032,13 +9131,14 @@ mod tests {
     }
 
     #[test]
-    fn height_rejects_global_keyword() {
-        // Non-goal (b): CSS-wide keyword (`inherit` / `initial` / `unset` /
-        // `revert` / `revert-layer`) は Epic 7、silent drop。auto 以外の ident
-        // は length parser でも受理されず None。
+    fn height_rejects_css_wide_keyword() {
+        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
+        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
         assert_eq!(parse("inherit", "height"), None);
         assert_eq!(parse("initial", "height"), None);
         assert_eq!(parse("unset", "height"), None);
+        assert_eq!(parse("revert", "height"), None);
+        assert_eq!(parse("revert-layer", "height"), None);
     }
 
     #[test]
