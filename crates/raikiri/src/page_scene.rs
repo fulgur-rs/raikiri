@@ -517,8 +517,8 @@ mod tests {
         assert_eq!(scene.page_metadata.orientation, Orientation::Portrait);
     }
 
-    /// build_page_scene が Element node → [`BlockEntry`] / Text node →
-    /// [`ParagraphEntry`] を `drawables` へ populate する (raikiri-spike-4hp1
+    /// build_page_scene が Element node → `BlockEntry` / Text node →
+    /// `ParagraphEntry` を `drawables` へ populate する (raikiri-spike-4hp1
     /// item 2/3 の regression pin — `TrackedMap::insert` の非-test call site が
     /// この production path 経由で exercise されることも同時に確認する)。
     #[test]

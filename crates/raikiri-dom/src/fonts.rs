@@ -2414,7 +2414,7 @@ mod tests {
     }
 
     /// Observer fires `WalkerSkippedOversized` when a `.ttf` grows past
-    /// [`FONT_SIZE_CAP`].  Sparse `set_len(FONT_SIZE_CAP + 1)` avoids
+    /// `FONT_SIZE_CAP`.  Sparse `set_len(FONT_SIZE_CAP + 1)` avoids
     /// consuming 100 MiB of test disk; `metadata.len()` returns the logical
     /// size regardless.  bd raikiri-spike-1uq.
     #[test]
@@ -2497,8 +2497,8 @@ mod tests {
         let _ = build_wpt_font_ctx(tmp.path());
     }
 
-    /// `read_reject_to_warn` maps every non-Io [`FontReadReject`] variant to
-    /// its [`FontWarn::ReadRejected*`] counterpart.  The read-time observer
+    /// `read_reject_to_warn` maps every non-Io `FontReadReject` variant to
+    /// its `FontWarn::ReadRejected*` counterpart.  The read-time observer
     /// arm in `build_wpt_font_ctx_with_observer` is `cov:ignore` (the
     /// walker pre-filters symlink/non-regular/oversized, so the arm only
     /// fires on a real TOCTOU race), which would otherwise leave the
