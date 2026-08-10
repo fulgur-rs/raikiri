@@ -2642,7 +2642,7 @@ mod tests {
 
     /// The common case: no font metrics available for `normal` — falls back
     /// to padding's own initial value `0`, same policy as the element path
-    /// ([`crate::resolve::resolve_length_percentage`] doc).
+    /// (`crate::resolve::resolve_length_percentage` doc). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
     #[test]
     fn cascade_page_padding_lh_falls_back_to_zero_when_line_height_normal() {
         let root = root_with_font_size(20.0); // line-height stays `normal` (initial)
