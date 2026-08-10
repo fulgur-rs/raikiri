@@ -1831,6 +1831,7 @@ dependencies = [
  "kurbo",
  "libc",
  "peniko",
+ "rustix",
  "tempfile",
  "tiny-skia",
  "vello_cpu",
