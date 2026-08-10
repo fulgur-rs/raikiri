@@ -1265,8 +1265,32 @@ mod tests {
         // 選択子と扱う。素の contains() だと `p` が comment 内の `Appendix` /
         // `paragraph` / `display` の一部に match してしまう (roborev job 217 low
         // 対応)。
+        // bd raikiri-spike-5z86.1: article/section/nav/aside/header/footer/
+        // main/figure/figcaption/blockquote 追加 (block-level sectioning /
+        // grouping elements)。cascade まで通した非-vacuous な検証は
+        // `crates/raikiri/tests/build_cascaded.rs`
+        // `sectioning_and_grouping_elements_are_display_block_via_ua_css` 側。
         for tag in [
-            "html", "body", "div", "p", "h1", "h2", "h3", "h4", "h5", "h6",
+            "html",
+            "body",
+            "div",
+            "p",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "article",
+            "section",
+            "nav",
+            "aside",
+            "header",
+            "footer",
+            "main",
+            "figure",
+            "figcaption",
+            "blockquote",
         ] {
             let has_rule = MINIMAL_UA_CSS.lines().any(|line| {
                 let trimmed = line.trim_start();

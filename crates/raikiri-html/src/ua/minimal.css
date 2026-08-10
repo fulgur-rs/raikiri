@@ -33,3 +33,23 @@ h3     { display: block; }
 h4     { display: block; }
 h5     { display: block; }
 h6     { display: block; }
+
+/* HTML Living Standard "Rendering" §sections-and-headings (15.3.6) —
+ * sectioning content is block-level. (spec selector also lists :heading
+ * and hgroup; :heading is covered by the h1-h6 rule above, hgroup has no
+ * rule yet.) */
+article { display: block; }
+aside   { display: block; }
+nav     { display: block; }
+section { display: block; }
+
+/* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) — flow
+ * content is block-level. div and p are already covered above; the full
+ * spec selector also lists several other flow-content elements not added
+ * here (out of scope for this rule set). */
+header     { display: block; }
+footer     { display: block; }
+main       { display: block; }
+figure     { display: block; }
+figcaption { display: block; }
+blockquote { display: block; }
