@@ -859,7 +859,7 @@ mod tests {
     /// When the own line-height is unresolvable (`normal`, the initial value
     /// — the common case, not an edge case), `1lh` falls back to padding's
     /// own spec initial `0` rather than a fabricated length (cleanroom: see
-    /// `crate::resolve::resolve_length_percentage` doc for why).
+    /// `crate::resolve::resolve_length_percentage` doc for why). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     #[test]
     fn finalize_resolves_lh_falls_back_to_zero_when_line_height_normal() {
         let mut sv = SpecifiedValues::initial(); // line_height stays `normal`

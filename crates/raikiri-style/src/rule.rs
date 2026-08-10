@@ -664,7 +664,7 @@ mod tests {
     /// `parse_declaration_block` の出口に shorthand key が 1 つも残らないこと。
     ///
     /// この不変は cascade 段の正しさに load-bearing である
-    /// (`crate::cascade` の `apply_winners` doc): shorthand key が cascade に
+    /// (`crate::cascade` の `apply_winners` doc): shorthand key が cascade に // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// 届くと `PropertyKey` 宣言順で longhand より後に適用され、declaration の
     /// 並び方によっては longhand winner を潰して spec と食い違う。
     ///
@@ -678,8 +678,8 @@ mod tests {
     /// 出口) だけ**である。post-parse mutation 経路 (bd raikiri-spike-qzn3 以降は
     /// crate 内からのみ到達可能) は本 test を素通りする
     /// (bd raikiri-spike-nqkj)。call site 2 (element cascade 入口) の guard は
-    /// `crate::cascade` の `post_parse_*` test 群 (6 本) が、call site 3
-    /// (`@page` cascade 入口) の guard は `crate::page` の `post_parse_page_*`
+    /// `crate::cascade` の `post_parse_*` test 群 (6 本) が、call site 3 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// (`@page` cascade 入口) の guard は `crate::page` の `post_parse_page_*` // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
     /// test 群 (6 本) が持つ (bd raikiri-spike-3svx)。
     #[test]
     fn declaration_block_never_emits_shorthand_keys() {
