@@ -819,42 +819,77 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
     true
 }
 
+/// CSS Text Module Level 4 "document white space character" (see
+/// [`matches_empty`]'s doc for the full verbatim citation and provenance,
+/// including the deliberate exclusion of form feed U+000C). For
+/// HTML-parsed content this set is `{space, tab, line feed}`; carriage
+/// return is included too for defensiveness against a non-HTML-normalized
+/// `StyleDom`, even though it cannot occur in a real HTML DOM text node.
+fn is_document_white_space(c: char) -> bool {
+    matches!(c, '\u{0020}' | '\u{0009}' | '\u{000A}' | '\u{000D}')
+}
+
 /// `:empty` (bd raikiri-spike-flln.5, CSS Selectors L4 §13.2
 /// <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — whether
 /// `elem_id` has no children that count toward emptiness.
 ///
-/// # Spec provenance
+/// # Spec provenance and correction (reviewer:spec, 2026-08-12)
 ///
 /// L4's own TR anchor repeatedly truncated on WebFetch before reaching
-/// normative prose (2026-08-12, both `#the-empty-pseudo` directly and the
-/// combined `#structural-pseudos` anchor) — same failure mode
-/// [`match_combinator_chain`]'s "Spec provenance note" documents for
-/// combinators. Fell back to Selectors **Level 3** §6.6.4
-/// <https://www.w3.org/TR/selectors-3/#structural-pseudos> (also a W3C CSS
-/// spec, same feature — no changelog entry between L3 and L4 alters
-/// `:empty`'s definition), verbatim (2026-08-12 direct fetch): "an E
-/// element that has no children at all. Only element nodes and content
-/// nodes (such as DOM text nodes, CDATA nodes, and entity references)
-/// whose data has a non-zero length must be considered as affecting
-/// emptiness; comments, processing instructions, and other nodes must not
-/// affect whether an element is considered empty or not."
+/// normative prose — same failure mode [`match_combinator_chain`]'s "Spec
+/// provenance note" documents for combinators. The first pass of this
+/// function fell back to Selectors **Level 3** prose ("only... content
+/// nodes... whose data has a non-zero length must be considered as
+/// affecting emptiness") without realizing L4 had *deliberately changed*
+/// this from L3, not merely restated it. Corrected after a direct raw
+/// fetch of `raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/
+/// Overview.bs` (bypassing WebFetch's truncation entirely — `curl` the
+/// bikeshed source and grep it directly), `#the-empty-pseudo` section,
+/// verbatim: "The :empty pseudo-class represents an element that has no
+/// children except, optionally, [=document white space characters=]. ...
+/// only element nodes and content nodes (such as [[DOM]] text nodes, and
+/// entity references) whose data has a non-zero length must be considered
+/// as affecting emptiness; comments, processing instructions, and other
+/// nodes must not affect whether an element is considered empty or not."
+/// — followed by an explicit changelog note: "In Level 2 and Level 3 of
+/// Selectors, :empty did not match elements that contained only white
+/// space. This was changed so that... elements which authors perceive of
+/// as empty can be selected by this selector, as they expect." The
+/// section's own worked examples list `<p> </p>` (whitespace-only) among
+/// what `p:empty` matches, and `<div>&nbsp;</div>` among what it does
+/// *not* match — pinning both directions.
 ///
-/// # Open spec-interpretation item (for `reviewer:spec`)
+/// "Document white space characters" is itself a CSS Text Module Level 4
+/// term (`#the-empty-pseudo`'s own autolink target), verbatim (direct raw
+/// fetch of `.../css-text-4/Overview.bs`, `#white-space-rules`): "the
+/// [document white space characters]: spaces (U+0020), tabs (U+0009), and
+/// segment breaks" — stated a second time nearby, identically: "both
+/// include spaces (U+0020), tabs (U+0009), and line feeds (U+000A)". For
+/// HTML specifically (same source, `#white-space-rules` preamble), a
+/// segment break is exactly line feed (U+000A): "In the case of HTML,
+/// newlines are normalized to line feed characters (U+000A)... so... each
+/// line feed (U+000A) is treated as a segment break" — and carriage
+/// return (U+000D) is separately stated to be "treated identically to
+/// spaces (U+0020) in all respects" (same source), even though that same
+/// passage confirms CR cannot actually reach a real HTML DOM text node
+/// ("carriage returns present in the source code are converted to line
+/// feeds at the parsing stage... and therefore do not appear as U+000D...
+/// to CSS" — kept here only for defensive completeness against a
+/// non-HTML-normalized `StyleDom`, since [`is_document_white_space`] is
+/// generic over any `StyleDom` impl, not just `raikiri-html`'s).
 ///
-/// A *separate* L4 fetch (the same truncation-surviving summary-table
-/// blurb near the document's front matter, reproduced consistently across
-/// two independent fetch attempts, 2026-08-12) instead reads: "an E
-/// element that has no children (neither elements nor text) except
-/// perhaps white space" — which could be read as *permitting*
-/// whitespace-only text children (opposite of the L3 prose's "non-zero
-/// length... must be considered as affecting emptiness"). This function
-/// implements the stricter L3 reading (whitespace-only text disqualifies
-/// — matches this crate's own prior understanding of real UA behavior,
-/// pinned by
-/// `cascade::tests::empty_pseudo_class_does_not_match_whitespace_only_text_child`),
-/// but the two W3C sources disagree on their face and this was not
-/// resolved beyond picking the more detailed/specific of the two — flagged
-/// here for `reviewer:spec` to confirm or overturn.
+/// **Deliberately excludes form feed (U+000C)** — unlike Rust's
+/// `char::is_ascii_whitespace()` / this crate's own HTML "ASCII
+/// whitespace" 5-character set used elsewhere ([`crate::style_dom`]'s
+/// `class_token_matches`). Direct search of the css-text-4 raw source
+/// (not a WebFetch summary) for "U+000C"/"form feed" returns zero hits
+/// anywhere near the "document white space characters" dfn, which is
+/// stated explicitly — twice — as exactly {space, tab, segment break/line
+/// feed}, no fourth category. This is narrower than an earlier relayed
+/// characterization of the set as "U+000A/U+000D/U+000C family" — flagged
+/// as a discrepancy for `reviewer:spec` to confirm or correct with a
+/// citation, since this function currently follows the directly-verified
+/// primary source over the relayed one where they disagree.
 ///
 /// # Node-kind coverage
 ///
@@ -874,7 +909,11 @@ fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
         .all(|child_id| match dom.node(child_id) {
             Some(node) => match node.kind() {
                 StyleNodeKind::Element => false,
-                StyleNodeKind::Text => node.text_content().unwrap_or("").is_empty(),
+                StyleNodeKind::Text => node
+                    .text_content()
+                    .unwrap_or("")
+                    .chars()
+                    .all(is_document_white_space),
                 StyleNodeKind::Comment
                 | StyleNodeKind::ProcessingInstruction
                 | StyleNodeKind::DocumentFragment
@@ -4742,7 +4781,6 @@ mod tests {
         assert!(language_range_matches("*", "und"));
     }
 
-
     // --- structural pseudo-classes (bd raikiri-spike-flln.5) ---
     //
     // `:root` (CSS Selectors L4 §13.1
@@ -4766,13 +4804,25 @@ mod tests {
         // comment documents). `background-color` is not inherited (CSS
         // Backgrounds 3 §2.2), so a red `body` here can only mean `:root`
         // itself wrongly matched it.
+        //
+        // `RuleTree::empty()` + `add_stylesheet`, not the usual
+        // `push_element(0, "style", None)` + `build_rule_tree` convention
+        // (quality-lens finding): that convention parks `<style>` itself as
+        // a direct child of the Document node — i.e. an element sibling of
+        // `<html>` that *also* has `parent_id.is_none()` and would *also*
+        // match `:root`. Since this test never asserted anything about
+        // `<style>`'s own computed value, that convention only proved "an
+        // element with no element parent matches" (true of `html` here by
+        // coincidence of push order), not "`:root` matches the root
+        // element and no other top-level node" — the actual claim this
+        // test's name makes. `RuleTree::empty()` avoids adding any such
+        // ambiguous second candidate.
         let mut doc = TestDoc::new();
-        let s = doc.push_element(0, "style", None);
-        doc.push_text(s, ":root { background-color: red }");
         let html = doc.push_element(0, "html", None);
         let body = doc.push_element(html, "body", None);
 
-        let tree = build_rule_tree(&doc);
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(":root { background-color: red }", Origin::Author);
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(
             r.computed[html].background_color, RED,
@@ -4798,6 +4848,30 @@ mod tests {
         assert_eq!(
             r.computed[p].color, RED,
             ":empty must match a childless element"
+        );
+    }
+
+    #[test]
+    fn empty_pseudo_class_matches_element_with_zero_length_text_child() {
+        // Spec text (`matches_empty` doc, verbatim): "...content nodes...
+        // whose data has a non-zero length must be considered as affecting
+        // emptiness" — a zero-length text node (`data.len() == 0`) does
+        // NOT meet "non-zero length" and so must not disqualify `:empty`,
+        // regardless of the L3/L4 whitespace-handling difference (quality
+        // lens finding: this branch of `matches_empty`'s `Text` arm was
+        // previously untested).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:empty { color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrap, "p", None);
+        doc.push_text(p, "");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].color, RED,
+            ":empty must match an element with a zero-length text child"
         );
     }
 
@@ -4838,12 +4912,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_pseudo_class_does_not_match_whitespace_only_text_child() {
-        // Spec-interpretation regression pin — see `matches_empty`'s doc
-        // "Open spec-interpretation item" note: this crate implements the
-        // stricter CSS Selectors L3 §6.6.4 reading ("content nodes...
-        // whose data has a non-zero length must be considered as affecting
-        // emptiness"), under which a single whitespace character disqualifies.
+    fn empty_pseudo_class_matches_whitespace_only_text_child() {
+        // Acceptance-pinning test for the reviewer:spec correction
+        // (`matches_empty` doc's "Spec provenance and correction" note):
+        // CSS Selectors L4 *deliberately changed* `:empty` from L3 so that
+        // whitespace-only content — "given white space is largely
+        // collapsible in HTML and is therefore used for source code
+        // formatting" (L4 changelog note, verbatim) — no longer
+        // disqualifies. The L4 spec's own worked example lists `<p> </p>`
+        // among what `p:empty` matches, verbatim. This test used to assert
+        // the opposite (the pre-correction L3-only reading); inverted, not
+        // just renamed, when the bug was fixed.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "p:empty { color: red }");
@@ -4854,17 +4933,42 @@ mod tests {
         let tree = build_rule_tree(&doc);
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(
+            r.computed[p].color, RED,
+            ":empty must match an element with a document-white-space-only text child (CSS Selectors L4)"
+        );
+    }
+
+    #[test]
+    fn empty_pseudo_class_does_not_match_nbsp_only_text_child() {
+        // No-break space (U+00A0) is explicitly NOT a "document white
+        // space character" (CSS Text 4, `is_document_white_space` doc) —
+        // the L4 spec's own worked example lists `<div>&nbsp;</div>`
+        // among what `div:empty` does *not* match, verbatim. Distinguishes
+        // this from the (now-passing) plain-space case above: `:empty`'s
+        // L4 whitespace carve-out is narrower than "any Unicode
+        // whitespace".
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:empty { color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrap, "p", None);
+        doc.push_text(p, "\u{00A0}");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
             r.computed[p].color,
             ComputedValues::initial().color,
-            ":empty must not match an element with a whitespace-only text child (L3 strict reading)"
+            ":empty must not match an element with an NBSP-only text child"
         );
     }
 
     #[test]
     fn empty_pseudo_class_matches_element_with_only_a_comment_child() {
         // "comments... must not affect whether an element is considered
-        // empty" (L3 §6.6.4 verbatim) — a comment-only element still
-        // matches `:empty`.
+        // empty" (CSS Selectors L4 §13.2 `#the-empty-pseudo`, verbatim,
+        // unchanged from L3) — a comment-only element still matches
+        // `:empty`.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "p:empty { color: red }");
@@ -5143,6 +5247,28 @@ mod tests {
             r.computed[html].border.bottom.style,
             BorderStyle::Solid,
             "root element must match :nth-child(1)"
+        );
+    }
+
+    #[test]
+    fn root_element_does_not_match_nth_child_2() {
+        // Negative half of the previous test (WPT reference:
+        // `css/selectors/child-indexed-no-parent.html`, per CSS Selectors
+        // L3's "an+b-1 siblings before it" framing this crate follows):
+        // the root element's sibling list under `dom.root_id()` has size
+        // 1 (itself alone), so no `:nth-child(N)`/`:nth-last-child(N)` for
+        // `N >= 2` can ever match it. `:root:nth-last-child(2)` is the
+        // canonical form of this check.
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(0, "html", None);
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(":root:nth-last-child(2) { color: red }", Origin::Author);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[html].color,
+            ComputedValues::initial().color,
+            ":root:nth-last-child(2) must not match — the root element has no siblings at all"
         );
     }
 
