@@ -578,7 +578,16 @@ mod tests {
             Symbol::new("c"),
             raikiri_style::property::CounterStyle::Decimal,
         );
-        assert_eq!(out, raikiri_traits::ResolveOutcome::Pending(0));
+        // bd raikiri-spike-oqpc widened `ResolveOutcome::Pending`'s payload
+        // from a bare sequence to `TargetSlotId = (page_index, sequence)`;
+        // a fresh registry's first dispatch is still page 0 / sequence 0.
+        assert_eq!(
+            out,
+            raikiri_traits::ResolveOutcome::Pending(raikiri_traits::TargetSlotId {
+                page_index: 0,
+                sequence: 0,
+            })
+        );
     }
 
     #[test]

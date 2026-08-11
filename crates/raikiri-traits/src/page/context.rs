@@ -1240,7 +1240,10 @@ mod tests {
             );
             assert_eq!(
                 out,
-                crate::page::ResolveOutcome::Pending(0),
+                crate::page::ResolveOutcome::Pending(crate::error::TargetSlotId {
+                    page_index: 0,
+                    sequence: 0,
+                }),
                 "set_targets after RegisterTarget must wipe the earlier registration, \
                  not merge with or preserve it"
             );
