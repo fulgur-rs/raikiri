@@ -41,6 +41,7 @@
 //! 追加時に漏れる。設計判断: bd raikiri-spike-37c。
 
 mod diag;
+mod gcpm;
 mod node;
 mod running;
 
