@@ -487,7 +487,11 @@ fn parse_fragment(url: &str) -> Option<&str> {
 ///    description asked to avoid; tracked as a residual scope item in bd
 ///    raikiri-spike-jvzx (filed separately from ce3k so this pointer
 ///    doesn't dangle once ce3k itself closes).
-fn format_counter(value: i32, style: &CounterStyle) -> String {
+///
+/// **Visibility**: `pub(crate)` since bd raikiri-spike-8ejw.1 — see
+/// [`join_counter_stack`]'s doc for why (sibling `page::context` module
+/// needs this for real `string-set` text resolution).
+pub(crate) fn format_counter(value: i32, style: &CounterStyle) -> String {
     match style {
         CounterStyle::Decimal => format_decimal(value),
         CounterStyle::Named(name) => format_named_counter(value, name),
@@ -1881,7 +1885,19 @@ fn format_ethiopic_numeric(value: i32) -> Option<String> {
 
 /// Join a nested counter stack with `separator`, formatting each level via
 /// [`format_counter`].
-fn join_counter_stack(stack: &[i32], separator: &str, style: &CounterStyle) -> String {
+///
+/// **Visibility**: `pub(crate)` (not private) since bd raikiri-spike-8ejw.1 —
+/// sibling `page::context` module needs both this and [`format_counter`] to
+/// fully resolve a `string-set` content-list's `counter()`/`counters()`
+/// items (design §7.2's `NamedStringState`, which — unlike this crate's own
+/// pre-8ejw.1 placeholder — needs real text, not a deferred snapshot).
+/// `pub(crate)` rather than full `pub`: no cross-crate caller needs either
+/// helper directly (raikiri-dom only calls through
+/// [`crate::page::PageContext::apply_directive`]), so crate-internal
+/// visibility is the minimal fix (bd raikiri-spike-8ejw.1's carried-forward
+/// 2026-08-11 comment flagged this gap; resolved here rather than
+/// duplicating the formatting logic elsewhere).
+pub(crate) fn join_counter_stack(stack: &[i32], separator: &str, style: &CounterStyle) -> String {
     stack
         .iter()
         .map(|v| format_counter(*v, style))

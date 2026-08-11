@@ -8,20 +8,31 @@
 //! §7.2 (lines 1940-1965) gives the canonical shape those 3 fields would
 //! take on `raikiri_traits::PageContext` — `counters: HashMap<Symbol,
 //! CounterStack>`, `strings: HashMap<Symbol, NamedStringState>`,
-//! `running: HashMap<Symbol, RunningTemplateId>` — all fields written
-//! *without* `pub`, meaning raikiri-traits must grow new accessor/mutator
-//! `pub` methods before raikiri-dom can populate them there. That's a
-//! genuine wall/traits crossing, split out to bd raikiri-spike-8ejw.1
-//! (blocked/human, not part of this module).
+//! `running: HashMap<Symbol, RunningTemplateId>`.
 //!
-//! **This module builds the algorithm + state dom-locally instead**,
-//! entirely inside raikiri-dom, so the walk's correctness (nested counter
-//! scopes, snapshot timing, running-binding rebind) can be built and unit
-//! tested now, with the "promote onto `raikiri_traits::PageContext`" step
-//! deferred to 8ejw.1 as a separate, human-reviewed follow-up (same
-//! discipline [`crate::running`]'s `ParsedRunningTemplate::directives` field
-//! already applied to *this* module before it existed — see that field's
-//! doc comment).
+//! **Promotion landed** — bd raikiri-spike-8ejw.1 (human-reviewed
+//! wall/traits crossing) added the `pub` accessor/mutator surface this
+//! required and promoted this module's algorithm onto
+//! `raikiri_traits::page::PageContext` (`crates/raikiri-traits/src/page/context.rs`):
+//! `PageContext::apply_directive` is now the canonical, single-entry-point
+//! implementation, with `CounterStack` / `NamedStringState` promoted
+//! alongside it as `pub` raikiri-traits types. **This module is deliberately
+//! retained, not deleted** — no production driver in raikiri-dom calls
+//! `PageContext::apply_directive` yet; wiring a real DOM-tree-walking driver
+//! (`CounterStack::pop_scope` / `NamedStringState` page-boundary call sites)
+//! is bd raikiri-spike-si32, not yet landed. Until si32 rewires
+//! [`apply_running_template_directives`] (this module's current caller) to
+//! target `raikiri_traits::PageContext` directly, this dom-local mirror
+//! remains the *only* currently-exercised implementation reachable from
+//! raikiri-dom's actual code path.
+//!
+//! **This module builds the algorithm + state dom-locally**, entirely inside
+//! raikiri-dom, so the walk's correctness (nested counter scopes, snapshot
+//! timing, running-binding rebind) can be built and unit tested independent
+//! of the raikiri-traits promotion (same discipline
+//! [`crate::running`]'s `ParsedRunningTemplate::directives` field already
+//! applied to *this* module before it existed — see that field's doc
+//! comment).
 //!
 //! **Input source** — [`PhaseBWalkState::apply_directive`] consumes one
 //! [`GcpmDirective`] at a time; [`apply_running_template_directives`] is the
@@ -33,10 +44,15 @@
 //! "Caller invariant" note for what that does and doesn't let this walk
 //! prove yet.
 //!
-//! **`RegisterTarget` is out of scope** — bd raikiri-spike-0nyv owns the
-//! `TargetRegistry` producer/`RegisterTarget` wiring (a sibling task, not
-//! this one). [`PhaseBWalkState::apply_directive`] treats it as a
-//! documented no-op.
+//! **`RegisterTarget` is out of scope for *this* dom-local mirror** — bd
+//! raikiri-spike-0nyv owns the `TargetRegistry` producer
+//! (`crate::target::build_target_registry`); this module has no
+//! `TargetRegistry` field to wire it into, so
+//! [`PhaseBWalkState::apply_directive`] treats it as a documented no-op.
+//! **Unlike this mirror, the promoted `raikiri_traits::PageContext::apply_directive`
+//! really registers** (it owns a `targets: TargetRegistry` field) — see that
+//! method's doc for exactly what it can and cannot populate from a bare
+//! directive.
 
 use std::collections::HashMap;
 
@@ -96,9 +112,23 @@ impl CounterStack {
     /// non-existent counter" path instantiates it at 0 and then applies the
     /// increment, which is equivalent to starting the new frame at `delta`
     /// directly.
+    ///
+    /// **Saturating, not wrapping/panicking, on overflow** (security lens
+    /// finding on bd raikiri-spike-8ejw.1, user-confirmed 2026-08-11): same
+    /// finding, same fix, as `raikiri_traits::page::context::CounterStack::increment`
+    /// (`crates/raikiri-traits/src/page/context.rs`) — this dom-local mirror
+    /// shares the exact same field shape and had the exact same unbounded
+    /// `+=` bug. `counter-reset: c 2147483647` followed by
+    /// `counter-increment: c 1` is spec-legal CSS (CSS Lists 3 places no
+    /// range limit on `<integer>`/`<counter-name>` values) and would panic
+    /// on `+=`'s debug overflow check — or silently wrap in release, which
+    /// is worse (a rendered counter value jumping to `i32::MIN`).
+    /// `i32::saturating_add` clamps to `i32::MAX`/`i32::MIN` instead,
+    /// matching the "fail-closed, not fail-silent-wrong" discipline this
+    /// crate already applies elsewhere (原則3).
     pub(crate) fn increment(&mut self, delta: i32) {
         match self.frames.last_mut() {
-            Some(top) => *top += delta,
+            Some(top) => *top = top.saturating_add(delta),
             None => self.frames.push(delta),
         }
     }
@@ -199,21 +229,26 @@ pub(crate) struct StringSnapshot {
 /// mirror stores [`Option<StringSnapshot>`] instead — full text resolution
 /// of a `string-set`'s content-list (in particular `counter()`/`counters()`
 /// with a non-decimal [`raikiri_style::property::CounterStyle::Named`])
-/// needs `raikiri_traits::page::target`'s private `format_counter` helper
-/// (`crates/raikiri-traits/src/page/target.rs:490` — a bare `fn`, not `pub`,
-/// not re-exported) — and, for `counters()`'s separator-joined form, that
-/// same module's private `join_counter_stack`
-/// (`crates/raikiri-traits/src/page/target.rs:1884`, also unexported) — both
-/// wall/traits-gated dependencies this task cannot reach. Partially
-/// resolving (Literal-only, or decimal-only counters) was considered and
-/// rejected: it would silently bake wrong text for `Named` counter styles
-/// and for `Attr`/`Content` items (which additionally need the originating
-/// DOM element — also unavailable to this flat-directive walk, see
-/// module-level doc), which is worse than deferring resolution entirely
-/// (原則3, fail-closed). See bd raikiri-spike-8ejw.1 for the promotion step
-/// that will need to resolve this gap — either by exposing
-/// `format_counter`/`join_counter_stack` or moving resolution to a
-/// different phase.
+/// needed `raikiri_traits::page::target`'s private `format_counter` /
+/// `join_counter_stack` helpers, both `wall/traits`-gated (unreachable from
+/// raikiri-dom) at the time this module was written. Partially resolving
+/// (Literal-only, or decimal-only counters) was considered and rejected: it
+/// would silently bake wrong text for `Named` counter styles and for
+/// `Attr`/`Content` items (which additionally need the originating DOM
+/// element — also unavailable to this flat-directive walk, see module-level
+/// doc), which is worse than deferring resolution entirely (原則3,
+/// fail-closed).
+///
+/// **Resolved by the promotion** (bd raikiri-spike-8ejw.1): those two
+/// helpers are now `pub(crate)` inside raikiri-traits, and the promoted
+/// `raikiri_traits::page::context::NamedStringState` matches design §7.2
+/// exactly (`Option<String>`, eagerly resolved at
+/// `PageContext::apply_directive` time — see that promoted module's
+/// `resolve_content_source` doc for the still-deferred non-counter variants,
+/// same fail-closed rationale as this doc's previous paragraph). This
+/// dom-local `StringSnapshot`/`Option<StringSnapshot>` deferral remains
+/// correct *for this mirror specifically* — it's simply superseded, not
+/// broken, by the promoted type.
 ///
 /// **4-snapshot field mapping** — design §7.2's prose names the 4 snapshots
 /// "start/first/last/first-except" (the CSS GCPM 3 §1.1.2 keyword set) but
@@ -341,17 +376,18 @@ impl NamedStringState {
 /// Dom-local Phase B GCPM directive-application walk state (design
 /// §7.0/§7.1/§7.2 "Phase B walk").
 ///
-/// **Not `raikiri_traits::PageContext`.** Design §7.2 lists `PageContext`'s
-/// 6 fields (`counters`, `strings`, `running`, `targets`, `page_index`,
-/// `page_name`) without `pub` — populating them requires new raikiri-traits
-/// accessor/mutator `pub` methods, a genuine wall/traits crossing split to
-/// bd raikiri-spike-8ejw.1 (blocked/human). This type is the dom-internal
-/// mirror of 3 of those 6 fields (`counters` / `strings` / `running` —
-/// `targets` is bd raikiri-spike-0nyv's `TargetRegistry` territory,
-/// `page_index` / `page_name` are per-page driver state neither task owns
-/// yet): the algorithm this task was scoped to build and unit test in
-/// isolation before promotion. **Promotion onto `PageContext` is tracked
-/// separately and not yet landed** — bd raikiri-spike-8ejw.1.
+/// **Not `raikiri_traits::PageContext`.** This type is the dom-internal
+/// mirror of 3 of `PageContext`'s 6 §7.2 fields (`counters` / `strings` /
+/// `running` — `targets` is bd raikiri-spike-0nyv's `TargetRegistry`
+/// territory, `page_index` / `page_name` are per-page driver state neither
+/// task owns): the algorithm this module was scoped to build and unit test
+/// in isolation. **Promotion onto `PageContext` has landed** — bd
+/// raikiri-spike-8ejw.1, `raikiri_traits::page::context::PageContext`. This
+/// type is kept as the pre-promotion working area (module-level doc
+/// "Promotion landed" explains why it isn't deleted yet), *not* an
+/// unfinished duplicate — its `RegisterTarget` no-op and lack of a
+/// `TargetRegistry` field are permanent characteristics of this dom-local
+/// mirror, not a promotion gap.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PhaseBWalkState {
     counters: HashMap<Symbol, CounterStack>,
@@ -562,6 +598,25 @@ mod tests {
             stack.reset(10);
             stack.increment(5);
             assert_eq!(stack.values(), &[0, 15], "outer frame must be untouched");
+        }
+
+        #[test]
+        fn increment_saturates_instead_of_panicking_or_wrapping_on_overflow() {
+            // Security lens regression pin (bd raikiri-spike-8ejw.1,
+            // user-confirmed 2026-08-11): `counter-reset: c 2147483647;
+            // counter-increment: c 1` is spec-legal CSS. Must saturate at
+            // i32::MAX, not panic (debug builds) or wrap to i32::MIN
+            // (release builds).
+            let mut stack = CounterStack::default();
+            stack.reset(i32::MAX);
+            stack.increment(1);
+            assert_eq!(stack.current(), Some(i32::MAX));
+
+            // Symmetric check on the negative side.
+            let mut stack = CounterStack::default();
+            stack.reset(i32::MIN);
+            stack.increment(-1);
+            assert_eq!(stack.current(), Some(i32::MIN));
         }
 
         #[test]

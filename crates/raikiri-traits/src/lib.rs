@@ -52,10 +52,10 @@ pub use net::{
     NetworkProvider, Request,
 };
 pub use page::{
-    ContentSource, ContentValueConvertError, ContentValueItem, FormData, GcpmDirective,
-    LayoutBuffer, PageBox, PageContext, PageDefaults, PageDefaultsBuilder, PageFragment,
-    PendingResolution, ResolveOutcome, RunningTemplate, RunningTemplateId, TargetInfo,
-    TargetRegistry, resolve_content_component,
+    ContentSource, ContentValueConvertError, ContentValueItem, CounterStack, FormData,
+    GcpmDirective, LayoutBuffer, NamedStringState, PageBox, PageContext, PageDefaults,
+    PageDefaultsBuilder, PageFragment, PendingResolution, ResolveOutcome, RunningTemplate,
+    RunningTemplateId, TargetInfo, TargetRegistry, resolve_content_component,
 };
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};

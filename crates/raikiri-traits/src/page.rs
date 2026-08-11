@@ -12,8 +12,10 @@
 //! construct しないため Default / new を要件外とする (raikiri-spike-bsi Option C
 //! wall/traits merge で確立、`#[non_exhaustive]` は全 public struct に維持)。
 
+mod context;
 mod target;
 
+pub use context::{CounterStack, NamedStringState, PageContext};
 pub use target::{
     PendingResolution, ResolveOutcome, TargetInfo, TargetRegistry, resolve_content_component,
 };
@@ -140,21 +142,12 @@ impl PageDefaultsBuilder {
     }
 }
 
-/// PageContext — GCPM runtime state (counter tree, named string 4-snapshot,
-/// running bindings)。M4 GCPM で populate。
-#[allow(missing_docs)]
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub struct PageContext {
-    // M4 で populate。
-}
-
-impl PageContext {
-    /// Construct an empty PageContext. M1.1 placeholder.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
+// `PageContext` — GCPM Phase B runtime state (counter tree, named string
+// 4-snapshot, running bindings, target registry, page_index/page_name).
+// design doc §7.2 canonical shape, promoted from the M1.1 opaque placeholder
+// onto the raikiri-dom-authored `PhaseBWalkState` algorithm by bd
+// raikiri-spike-8ejw.1 (human-reviewed wall/traits crossing). Canonical impl
+// is sibling `context` submodule; this module re-exports only.
 
 /// LayoutBuffer — widow / orphan / break-inside / container probe lookahead
 /// buffer の中立モデル。実装は raikiri-dom 側 (§5 参照)。
