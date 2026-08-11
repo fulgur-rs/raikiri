@@ -3,21 +3,29 @@
 
 Covers the checker's roles: role 1 / role 2 (bd raikiri-spike-acsw /
 raikiri-spike-vyse / raikiri-spike-luxp) and role 4 (bd raikiri-spike-gq7x,
-informational only). No class here invokes `cargo` or depends on this
-repo's actual crate tree.
+informational only, plus its bd raikiri-spike-8m2l cross-file extension).
+No class here invokes `cargo` or depends on this repo's actual crate tree.
 
 ClassifyLineTests / Role1PlainBracketTests / Role2DocBarePointerTests /
-Role4LinkedInTestModTests / EvaluateGateTests exercise `census_file()` /
-`classify_line()` / `find_first_cfg_test_mod_line()` / `evaluate_gate()`
-purely in-memory (string/dataclass in, dataclass/tuple out) — no
-filesystem dependency at all.
+Role4LinkedInTestModTests / FindExternalTestModNamesTests /
+FindExternalTestModTargetsTests / EvaluateGateTests exercise
+`census_file()` / `classify_line()` / `find_first_cfg_test_mod_line()` /
+`find_external_test_mod_names()` / `find_external_test_mod_targets()` /
+`evaluate_gate()` purely in-memory (string/dataclass in, dataclass/tuple
+out) — no filesystem dependency at all.
 
-LoadBaselineTests and MainExitCodeTests *do* touch the filesystem: both
-use `tempfile.TemporaryDirectory()`, and `MainExitCodeTests` additionally
-writes a small throwaway `crates/*/src/*.rs` tree to disk (to drive
-`main()`'s `--repo-root`/`discover_files()` path end-to-end, not just
-`evaluate_gate()`'s pure logic) — see `MainExitCodeTests`'s own docstring
-for why that's deliberate. All of it is temp-dir-scoped and still fast.
+LoadBaselineTests, MainExitCodeTests, and
+ExternalTestModCrossFileCensusTests *do* touch the filesystem: all use
+`tempfile.TemporaryDirectory()`, and `MainExitCodeTests` /
+`ExternalTestModCrossFileCensusTests` additionally write a small throwaway
+`crates/*/src/*.rs` tree to disk (to drive `main()`'s / `run_census()`'s
+`--repo-root`/`discover_files()` path end-to-end, not just a single
+function's pure logic) — see `MainExitCodeTests`'s own docstring for why
+that's deliberate; `ExternalTestModCrossFileCensusTests` needs the same
+end-to-end shape because its regression (bd raikiri-spike-8m2l) is
+specifically about *crate-wide* file discovery, not anything
+`census_file()` alone could exercise on a single file's text. All of it is
+temp-dir-scoped and still fast.
 
 Run with:
 
@@ -40,9 +48,12 @@ from doc_pointer_lint import (
     census_file,
     classify_line,
     evaluate_gate,
+    find_external_test_mod_names,
+    find_external_test_mod_targets,
     find_first_cfg_test_mod_line,
     load_baseline,
     main,
+    run_census,
 )
 
 
@@ -535,6 +546,253 @@ class Role4LinkedInTestModTests(unittest.TestCase):
         )
         result = census_file("f.rs", text)
         self.assertEqual(len(result.doc_linked_crate_in_test_mod), 1)
+
+
+class FindExternalTestModNamesTests(unittest.TestCase):
+    """find_external_test_mod_names() — bd raikiri-spike-8m2l's cross-file
+    extension. Unlike find_first_cfg_test_mod_line(), this collects every
+    match (a file may declare more than one external test module) and only
+    the semicolon (external-file) form, never an inline `{ … }` block."""
+
+    def test_semicolon_form_collected(self) -> None:
+        lines = ["#[cfg(test)]", "pub(crate) mod test_dom;"]
+        self.assertEqual(find_external_test_mod_names(lines), {"test_dom"})
+
+    def test_inline_brace_form_not_collected(self) -> None:
+        # The inline form's body is already in this same file — already
+        # covered by find_first_cfg_test_mod_line(), out of scope here.
+        lines = ["#[cfg(test)]", "mod tests {", "}"]
+        self.assertEqual(find_external_test_mod_names(lines), set())
+
+    def test_no_cfg_test_yields_empty_set(self) -> None:
+        lines = ["mod not_gated;"]
+        self.assertEqual(find_external_test_mod_names(lines), set())
+
+    def test_multiple_external_declarations_all_collected(self) -> None:
+        lines = [
+            "#[cfg(test)]",
+            "mod test_dom;",
+            "#[cfg(test)]",
+            "mod test_fixtures;",
+        ]
+        self.assertEqual(
+            find_external_test_mod_names(lines), {"test_dom", "test_fixtures"}
+        )
+
+    def test_plain_mod_without_cfg_test_not_collected(self) -> None:
+        # A regular (non-test-gated) `mod foo;` must never be treated as an
+        # external test-mod target — only one immediately gated by
+        # #[cfg(test)] counts.
+        lines = ["mod helpers;", "#[cfg(test)]", "mod test_dom;"]
+        self.assertEqual(find_external_test_mod_names(lines), {"test_dom"})
+
+
+class FindExternalTestModTargetsTests(unittest.TestCase):
+    """find_external_test_mod_targets() — resolves cross-file `#[cfg(test)]
+    mod <name>;` declarations to target file path(s), restricted to files
+    actually present in `texts` (repo-relative path -> content; no separate
+    file list — `run_census()`, the sole real caller, always has
+    `files == list(texts.keys())`, so this is the only input the function
+    takes)."""
+
+    def test_sibling_rs_file_resolved(self) -> None:
+        # The real crates/raikiri-style/src/lib.rs -> test_dom.rs shape:
+        # declaring file is a crate root (lib.rs), so the target resolves
+        # to a same-directory sibling.
+        texts = {
+            "crates/x/src/lib.rs": "#[cfg(test)]\npub(crate) mod test_dom;\n",
+            "crates/x/src/test_dom.rs": "pub(crate) struct TestDoc;\n",
+        }
+        self.assertEqual(
+            find_external_test_mod_targets(texts), {"crates/x/src/test_dom.rs"}
+        )
+
+    def test_mod_rs_form_resolved(self) -> None:
+        texts = {
+            "crates/x/src/lib.rs": "#[cfg(test)]\nmod test_dom;\n",
+            "crates/x/src/test_dom/mod.rs": "pub(crate) struct TestDoc;\n",
+        }
+        self.assertEqual(
+            find_external_test_mod_targets(texts),
+            {"crates/x/src/test_dom/mod.rs"},
+        )
+
+    def test_non_root_declaring_file_resolves_under_its_own_subdirectory(self) -> None:
+        # rustc's real rule: a non-root file (`bar.rs`, not lib.rs/main.rs/
+        # mod.rs) introduces its own same-named subdirectory namespace —
+        # `mod foo;` in `bar.rs` is `bar/foo.rs`, not a sibling of `bar.rs`.
+        texts = {
+            "crates/x/src/lib.rs": "pub mod bar;\n",
+            "crates/x/src/bar.rs": "#[cfg(test)]\nmod test_helpers;\n",
+            "crates/x/src/bar/test_helpers.rs": "pub(crate) struct Fixture;\n",
+        }
+        self.assertEqual(
+            find_external_test_mod_targets(texts),
+            {"crates/x/src/bar/test_helpers.rs"},
+        )
+
+    def test_target_not_in_scanned_tree_silently_skipped(self) -> None:
+        # find_external_test_mod_targets() must stay total rather than
+        # raising when a declared target isn't part of the discovered file
+        # list (e.g. behind a cfg-gated path this scan didn't reach).
+        texts = {"crates/x/src/lib.rs": "#[cfg(test)]\nmod missing;\n"}
+        self.assertEqual(find_external_test_mod_targets(texts), set())
+
+    def test_non_test_gated_mod_not_resolved(self) -> None:
+        texts = {
+            "crates/x/src/lib.rs": "mod helpers;\n",
+            "crates/x/src/helpers.rs": "pub fn f() {}\n",
+        }
+        self.assertEqual(find_external_test_mod_targets(texts), set())
+
+
+class ExternalTestModCrossFileCensusTests(unittest.TestCase):
+    """census_file()'s is_external_test_mod_target parameter and
+    run_census()'s crate-wide wiring of it (bd raikiri-spike-8m2l) — the
+    actual false-clean regression this task fixes: a target file named by
+    a *different* file's `#[cfg(test)] mod <name>;` declaration has no
+    #[cfg(test)] line of its own, so find_first_cfg_test_mod_line() alone
+    always returned None for it (every line "before" any test-mod block,
+    role 4's blind spot), even though the file's entire content only
+    compiles under #[cfg(test)] in the first place. Real-world shape:
+    crates/raikiri-style/src/lib.rs:74-75's
+    `#[cfg(test)] pub(crate) mod test_dom;` ->
+    crates/raikiri-style/src/test_dom.rs, verified by direct reading before
+    this fix (test_dom.rs has zero `#[cfg(test)]` lines of its own)."""
+
+    def _write(self, repo_root: str, crate: str, rel: str, content: str) -> None:
+        path = Path(repo_root, "crates", crate, "src", rel)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    def test_census_file_forces_line_1_when_flagged_external_target(self) -> None:
+        # Direct, filesystem-free check of census_file()'s new keyword arg:
+        # a file with NO #[cfg(test)] line of its own still gets its
+        # doc-linked crate:: span counted toward role 4 once the caller
+        # (run_census(), exercised end to end below) tells it this file is
+        # an external test-mod target.
+        text = "//! module docstring\n/// see [`crate::foo::Bar`] for details\nfn helper() {}\n"
+        result = census_file("f.rs", text, is_external_test_mod_target=True)
+        self.assertEqual(len(result.doc_linked_crate_in_test_mod), 1)
+        self.assertEqual(result.doc_linked_crate_in_test_mod[0].line, 2)
+
+    def test_census_file_default_false_matches_pre_8m2l_behavior(self) -> None:
+        # Same text, is_external_test_mod_target omitted (defaults False):
+        # must reproduce the exact pre-fix false-clean this task addresses.
+        text = "/// see [`crate::foo::Bar`] for details\nfn helper() {}\n"
+        result = census_file("f.rs", text)
+        self.assertEqual(result.doc_linked_crate_in_test_mod, [])
+
+    def test_run_census_end_to_end_catches_the_lib_rs_test_dom_shape(self) -> None:
+        # The actual bd raikiri-spike-8m2l scenario, reproduced as a
+        # throwaway two-file crate tree and driven through run_census()
+        # (not just census_file() in isolation) so the crate-wide
+        # file-discovery step itself is exercised, not only the per-file
+        # override it feeds.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._write(
+                tmp_dir,
+                "fakestyle",
+                "lib.rs",
+                "pub mod cascade;\n\n#[cfg(test)]\npub(crate) mod test_dom;\n\nfn f() {}\n",
+            )
+            self._write(
+                tmp_dir,
+                "fakestyle",
+                "test_dom.rs",
+                "//! crate-internal test helper.\n"
+                "/// see [`crate::foo::Bar`] for details\n"
+                "pub(crate) struct TestDoc;\n",
+            )
+            files = [
+                "crates/fakestyle/src/lib.rs",
+                "crates/fakestyle/src/test_dom.rs",
+            ]
+            result = run_census(tmp_dir, files=files)
+            self.assertEqual(len(result.doc_linked_crate_in_test_mod), 1)
+            occ = result.doc_linked_crate_in_test_mod[0]
+            self.assertEqual(occ.path, "crates/fakestyle/src/test_dom.rs")
+            self.assertEqual(occ.line, 2)
+
+    def test_run_census_ignores_mod_declaration_without_cfg_test(self) -> None:
+        # Negative control: a plain `mod test_dom;` (no #[cfg(test)] gate)
+        # must NOT mark test_dom.rs as an external test-mod target — that
+        # would be a real production module, not a test-only one, and role
+        # 4 must not over-flag it.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._write(
+                tmp_dir, "fakestyle", "lib.rs", "pub(crate) mod test_dom;\n"
+            )
+            self._write(
+                tmp_dir,
+                "fakestyle",
+                "test_dom.rs",
+                "/// see [`crate::foo::Bar`] for details\npub(crate) struct TestDoc;\n",
+            )
+            files = [
+                "crates/fakestyle/src/lib.rs",
+                "crates/fakestyle/src/test_dom.rs",
+            ]
+            result = run_census(tmp_dir, files=files)
+            self.assertEqual(result.doc_linked_crate_in_test_mod, [])
+
+    def test_run_census_resolves_mod_rs_target_form(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._write(
+                tmp_dir, "fakestyle", "lib.rs", "#[cfg(test)]\nmod test_dom;\n"
+            )
+            path = Path(tmp_dir, "crates", "fakestyle", "src", "test_dom", "mod.rs")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "/// see [`crate::foo::Bar`] for details\npub(crate) struct TestDoc;\n",
+                encoding="utf-8",
+            )
+            files = [
+                "crates/fakestyle/src/lib.rs",
+                "crates/fakestyle/src/test_dom/mod.rs",
+            ]
+            result = run_census(tmp_dir, files=files)
+            self.assertEqual(len(result.doc_linked_crate_in_test_mod), 1)
+            self.assertEqual(
+                result.doc_linked_crate_in_test_mod[0].path,
+                "crates/fakestyle/src/test_dom/mod.rs",
+            )
+
+    def test_own_in_file_test_mod_line_overridden_when_also_an_external_target(
+        self,
+    ) -> None:
+        # Pins doc_pointer_lint.py's module docstring, "Canonical statement
+        # of the override rule" paragraph: census_file()'s override is
+        # unconditional, not None-only, so a file that's simultaneously an
+        # external target AND declares its own later in-file
+        # #[cfg(test)] mod block still counts a doc-linked span appearing
+        # *before* that in-file block.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._write(
+                tmp_dir, "fakestyle", "lib.rs", "#[cfg(test)]\nmod test_dom;\n"
+            )
+            self._write(
+                tmp_dir,
+                "fakestyle",
+                "test_dom.rs",
+                "/// see [`crate::foo::Bar`] for details\n"
+                "pub(crate) struct TestDoc;\n"
+                "#[cfg(test)]\n"
+                "mod nested_tests {\n"
+                "}\n",
+            )
+            files = [
+                "crates/fakestyle/src/lib.rs",
+                "crates/fakestyle/src/test_dom.rs",
+            ]
+            result = run_census(tmp_dir, files=files)
+            # The span is on line 1, strictly before the in-file
+            # #[cfg(test)] mod nested_tests block (line 3) that
+            # find_first_cfg_test_mod_line() alone would have found — it
+            # must still be counted because the whole file is externally
+            # gated.
+            self.assertEqual(len(result.doc_linked_crate_in_test_mod), 1)
+            self.assertEqual(result.doc_linked_crate_in_test_mod[0].line, 1)
 
 
 class LoadBaselineTests(unittest.TestCase):
