@@ -142,13 +142,16 @@ const INLINE_SOURCE_ORDER: u32 = u32::MAX;
 /// 引用元を混同しないよう分離。origin 選択の根拠は
 /// [`push_img_dimension_hints`] doc の "Cascade origin" 節参照)。
 const PRESENTATIONAL_HINT_SPECIFICITY: Specificity = 0;
-/// 同 hint の source_order。`0` — 「他候補と衝突しない値」ではなく、**実
-/// stylesheet の最初の rule と数値上 tie し得る**ことを承知の上で選んだ値
+/// 同 hint の source_order。`0` — 実 stylesheet の最初の rule
 /// ([`crate::ruletree::RuleTree::add_stylesheet`] は空 `RuleTree` への
-/// 最初の rule に `source_order = 0` を採番する)。tie した場合の決着は
-/// push 順序依存になる — [`collect_cascaded`] がこの hint を stylesheet
-/// rule matching / inline style より先に push する理由、および
-/// [`push_img_dimension_hints`] doc の "Cascade origin" 節 2. 参照。
+/// 最初の rule に `source_order = 0` を採番する) と数値上 tie し得る値だが、
+/// bd raikiri-spike-wo36 で hint 専用の `cascade_rank` tier
+/// ([`Origin::AuthorPresentationalHint`]) を導入して以降、この tie は
+/// 実際には発生しない — rank 差が specificity/source_order より先に
+/// tuple compare で決着するため ([`push_img_dimension_hints`] doc の
+/// "Cascade origin" 節参照)。`0` という値自体は「他候補と衝突しない値」を
+/// 意図したものではなく、単に real stylesheet rule の source_order と同じ
+/// 値域を使うという単純さのための選択。
 const PRESENTATIONAL_HINT_SOURCE_ORDER: u32 = 0;
 
 /// 1 candidate declaration = `(value, important, origin, specificity, source_order)`。
@@ -255,26 +258,93 @@ struct RankedDecl {
     idx: usize,
 }
 
-/// Cascade origin + `!important` flag に基づく優先度 rank (raikiri-spike-m1.22)。
+/// Cascade origin + `!important` flag に基づく優先度 rank (raikiri-spike-m1.22、
+/// 3rd origin tier は bd raikiri-spike-wo36)。
 ///
 /// 高いほど勝つ。CSS Cascading L4 §6.1 "Cascade Sorting Order"
 /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Origin and Importance
 /// 段を表現する (origin の定義は §6.2
 /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>、`!important` に
-/// よる反転は §6.3 <https://www.w3.org/TR/css-cascade-4/#importance>):
-/// - Normal   : UA < User < Author (Author が最強、UA が最弱)
-/// - Important: UA > User > Author (反転、UA が最強)
+/// よる反転は §6.3 <https://www.w3.org/TR/css-cascade-4/#importance>)。
+/// [`Origin::AuthorPresentationalHint`] は CSS Cascading L5 §6.5
+/// "Precedence of Non-CSS Presentational Hints"
+/// (<https://drafts.csswg.org/css-cascade-5/#preshint>, 2026-08-11 再 fetch
+/// 確認) が定める "author presentational hint origin"。以下は §6.5 の
+/// 段落から**関連する抜粋を verbatim 引用**したもの (段落全体の逐語コピーでは
+/// ない — 完全性を主張しない):
+/// - "All document language-based styling must be translated to
+///   corresponding CSS rules and enter the cascade as rules in **either
+///   the UA-origin or** a special-purpose author presentational hint
+///   origin between the regular user origin and the author origin" —
+///   "treated as an independent origin"
+/// - "Presentational hints entering the cascade as author presentational
+///   hint origin rules can be overridden by author-origin styles, but not
+///   by non-important user-origin styles"
+/// - "**A document language may define whether** such a presentational
+///   hint enters the cascade as UA-origin or author-origin; if so, the UA
+///   must behave accordingly. For example, SVG maps its presentation
+///   attributes into the author origin."
+/// - "however for the purpose of the revert keyword (but not for the
+///   revert-layer keyword) it is considered part of the author origin"
 ///
-/// M1 では User origin を扱わないので UA + Author の 2 段。
+/// **どの tier を選ぶかは host language 次第、という点に注意**: 上記 3 番目の
+/// 引用の通り、spec は presentational hint の origin 配置を host language に
+/// 委ねる (UA-origin か author-origin かを明示的に選べる、SVG は author
+/// origin を選ぶ例)。HTML Living Standard §15.2 は自身のこの選択を
+/// "author-level zero-specificity presentational hints" と呼ぶだけで、
+/// CSS-Cascade-5 の origin taxonomy の用語 ("UA-origin" / "author-origin" /
+/// "author presentational hint origin") を一切参照しない — つまり HTML LS
+/// 自身は「UA-origin」「author-origin」「author presentational hint
+/// origin」のどれを選んだとも明言していない。`<img>` の width/height hint を
+/// 独立 origin tier ([`Origin::AuthorPresentationalHint`]) に置くという本
+/// crate の判断 ([`push_img_dimension_hints`] doc 参照) は、したがって
+/// **spec が直接指定する結論ではなく**、"author-level" という HTML LS の
+/// 言葉遣いと上記引用群を突き合わせた this crate の解釈 (bd
+/// raikiri-spike-5z86.7 / bd raikiri-spike-wo36 で reviewer:spec が
+/// defensible と判定済みの judgment call)。
+///
+/// 上記の引用が直接定めるのは **Normal 段の位置**だけ: UA < User <
+/// AuthorPresentationalHint < Author。Important 段での
+/// `AuthorPresentationalHint` の位置は spec に verbatim 記述が無い —
+/// presentational hint は host language 側 (HTML LS §15.2) が生成するもので
+/// 常に non-important なため、spec 側にも important-hint tier を定める
+/// 動機が無い。以下の Important 順序はその不在を、origin 独立性
+/// (「独立 origin である」という上記引用) と §6.3 の importance 反転規則
+/// から**対称的に導出した**もの (verbatim ではない):
+/// - Normal   : UA < User < AuthorPresentationalHint < Author (Author が
+///   最強、UA が最弱)
+/// - Important: UA > User > AuthorPresentationalHint > Author (反転、UA が
+///   最強 — Important 段の AuthorPresentationalHint 順位は上記の通り derived)
+///
+/// `(AuthorPresentationalHint, true)` の arm は現状
+/// [`push_img_dimension_hints`] から到達しない (常に `important = false` で
+/// push する) — [`crate::page::cascade_page`] も同じ [`Origin`] を経由する
+/// ため、`unreachable!()` にはせず total function として値を返す。
+///
+/// `revert` keyword carve-out (上記 4 番目の引用: "it is considered part of
+/// the author origin" — `revert-layer` は対象外) は本 crate に現状影響しない
+/// — `revert`/`revert-layer` CSS-wide keyword 自体がまだ未実装
+/// ([`crate::property`] の "CSS-wide keyword (canonical)" 節、"Epic 7"
+/// milestone 参照)。実装時にこの carve-out の special-case が必要になる。
+///
+/// raikiri-style は独立した User origin をまだ持たない ([`Origin`] doc の
+/// 残差 4 参照、bd raikiri-spike-wo36 item 4 は本 task の scope 外) ため、
+/// 上記の "User" 段はこの match には現れない — UA と
+/// AuthorPresentationalHint の間、および AuthorPresentationalHint と
+/// Important-UA の間に将来 User の rank が挿入される余地を残す (現状の
+/// consumer 由来 "user stylesheet" は [`Origin::Author`] に fold されて
+/// 届く、[`crate::ruletree`] module doc 参照)。
 ///
 /// `@page` cascade (raikiri-spike-m4.1) も同じ origin ordering を共有するため
 /// `pub(crate)` で公開し [`crate::page::cascade_page`] から reuse。
 pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
     match (origin, important) {
         (Origin::UserAgent, false) => 0,
-        (Origin::Author, false) => 1,
-        (Origin::Author, true) => 2,
-        (Origin::UserAgent, true) => 3,
+        (Origin::AuthorPresentationalHint, false) => 1,
+        (Origin::Author, false) => 2,
+        (Origin::Author, true) => 3,
+        (Origin::AuthorPresentationalHint, true) => 4,
+        (Origin::UserAgent, true) => 5,
     }
 }
 
@@ -316,19 +386,19 @@ fn collect_cascaded<D: StyleDom>(
                 && let Some(elem) = node.as_element()
             {
                 let start = out.decls.len();
-                // HTML presentational hints (bd raikiri-spike-5z86.7). MUST
-                // be pushed before stylesheet-rule matching / inline style
-                // below, for this same element: the hint's (origin,
-                // specificity, source_order) = (Author, 0, 0) can exactly
-                // tie a real Author declaration for the same property (a
-                // zero-specificity selector that is the first rule in its
-                // stylesheet — `push_img_dimension_hints` doc's "Cascade
-                // origin" §2 has the full derivation). `beats`'s `>=`
-                // resolves an exact tie in favor of whichever candidate
-                // `pick_winners` scans *later*; pushing the hint first
-                // guarantees it loses that tie to any same-priority real
-                // declaration, matching "hint behaves as if positioned
-                // before all real author declarations".
+                // HTML presentational hints (bd raikiri-spike-5z86.7,
+                // retagged to `Origin::AuthorPresentationalHint` by bd
+                // raikiri-spike-wo36). This push is kept ahead of
+                // stylesheet-rule matching / inline style below for
+                // historical/document-order reasons, but it is no longer a
+                // *correctness* requirement: since the hint has its own
+                // `cascade_rank` tier (strictly between `UserAgent` and
+                // `Author`, see `push_img_dimension_hints` doc's "Cascade
+                // origin" section), rank alone decides against any real
+                // Author-origin declaration regardless of specificity,
+                // source_order, or push order — no tie can occur (that was
+                // only possible before wo36, when hint and real Author
+                // declarations shared the same `Origin::Author` rank).
                 push_img_dimension_hints(&elem, &mut out.decls);
                 // stylesheet rule matching
                 for rule in &rule_tree.style_rules {
@@ -644,61 +714,51 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 ///   raikiri-spike-5z86.7 の scope narrowing は `img` のみに限定 (最小実装、
 ///   将来 task の土台という位置づけ)。
 ///
-/// # Cascade origin (retagged `Origin::Author` 2026-08-10 — coordinator
-/// spec-lens finding 1、bd raikiri-spike-wo36 が残差を追跡)
+/// # Cascade origin (retagged `Origin::AuthorPresentationalHint` 2026-08-11
+/// — bd raikiri-spike-wo36, spec text 再確認済み)
 ///
 /// CSS Cascading L5 §6.5 "Precedence of Non-CSS Presentational Hints"
-/// (<https://drafts.csswg.org/css-cascade-5/#preshint>) はこの種の hint を
-/// **"author presentational hint origin"** という、user origin と author
-/// origin の間に位置する独立 origin に置くことを認め、host language が UA-
-/// origin か author-origin かを選べるとも書く。HTML LS §15.2 の文言
-/// ("author-level zero-specificity presentational hints part of the CSS
-/// cascade", <https://html.spec.whatwg.org/multipage/rendering.html#presentational-hints>)
-/// は author 寄りだが、raikiri-style の [`Origin`] は `UserAgent` /
-/// `Author` の 2 段のみで ([`crate::ruletree`] の module doc 参照)、
-/// "author presentational hint origin" 専用の 3 段目は無い。本関数は
-/// [`Origin::Author`] を採る — [`cascade_rank`] は `(Author, false) => 1`
-/// を `(UserAgent, false) => 0` より**無条件に** (specificity/source_order
-/// を問わず) 上位に置くため、真の UA-origin rule (現状
-/// `crates/raikiri-html/src/ua/minimal.css` に `img`/`width`/`height` を
-/// 宣言する selector は無い) に対しては常に hint が勝つ。
+/// (<https://drafts.csswg.org/css-cascade-5/#preshint>, verbatim) はこの種の
+/// hint を "a special-purpose author presentational hint origin between the
+/// regular user origin and the author origin" — user origin と author
+/// origin の間に位置する独立 origin — に置くことを定め、"Presentational
+/// hints entering the cascade as author presentational hint origin rules
+/// can be overridden by author-origin styles, but not by non-important
+/// user-origin styles" と続ける。本関数は専用 variant
+/// [`Origin::AuthorPresentationalHint`] を採る — [`cascade_rank`] はこれを
+/// `(UserAgent, false) => 0` より上、`(Author, false) => 2` より下に置く
+/// ([`cascade_rank`] doc 参照)。この rank 差は `beats` の tuple compare
+/// `(rank, specificity, source_order)` の**第一要素**なので、真の UA-origin
+/// rule には specificity/source_order を問わず常に勝ち、real author-origin
+/// 宣言 (stylesheet rule でも inline style でも) には specificity/
+/// source_order を問わず常に負ける — かつて (2026-08-10 retag 時点、旧版は
+/// hint も real 宣言も同じ `Origin::Author` に tag していた) は後者の保証を
+/// 「hint の specificity を 0 に固定し、real 宣言が zero-specificity かつ
+/// stylesheet 先頭 rule の場合に限り発生する exact tie を push 順序
+/// (hint を先に push) で決着させる」という同一 origin 内 tie-break に
+/// 依存していた — 3rd tier 導入によりその依存は解消され、origin rank
+/// だけで無条件に決着する。[`collect_cascaded`] が今も
+/// stylesheet rule matching / inline style より先にこの関数を push する
+/// 呼び出し順は残っているが、上記の通りもう correctness の必要条件では
+/// ない (無害な残置)。
 ///
-/// (旧版はここを [`Origin::UserAgent`] にしていた — 「Author CSS で上書き
-/// 可能」という要件は満たしていたが、真の UA-origin rule に対して負ける
-/// 方向という逆向きの不整合を持っていた。2-origin model の残差 2 点は
-/// この retag で 1 点に減った:)
+/// テスト
+/// `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
+/// はこの「specificity を問わず real author 宣言が勝つ」性質を、かつては
+/// exact-tie 経由で、今は origin rank 差で直接 exercise する。
 ///
-/// 1. spec の完全な順序では hint は「user origin より強い」はず。この
-///    crate は user origin を独立に持たず (consumer が渡す
-///    `extra_stylesheets` は `Origin::Author` として届く — bd
-///    raikiri-spike-m1.22 が定めた 2-origin model、[`crate::ruletree`]
-///    module doc 参照)、hint と同じ `Origin::Author` に一律 fold されて
-///    いる。retag 後は「consumer 由来の user stylesheet が img の
-///    width/height を設定した場合」は同一 origin 内の tie-break
-///    (specificity → source_order、下記 2. 参照) に落ちる — 実際の user
-///    stylesheet 宣言は具体的な selector を持つ (specificity > 0) のが
-///    通常なので実用上は spec 通り user stylesheet が勝つが、理論上
-///    zero-specificity な user stylesheet 宣言と衝突すれば 2. と同じ
-///    push-order 依存になる。3 段目を追加する over-generalization は
-///    本 task の scope 外 (bd raikiri-spike-5z86.7 の「過剰な一般化は
-///    避け」)、bd raikiri-spike-wo36 が本来の 3rd origin tier 追加を
-///    追跡する。
-/// 2. 同一 origin ([`Origin::Author`]) 内での tie-break: 通常は real
-///    author 宣言が `beats` の specificity/source_order 勝負で hint に
-///    勝つ ([`PRESENTATIONAL_HINT_SPECIFICITY`] = 0 は spec 規定値、
-///    real 宣言はほぼ常にそれより高い specificity を持つ)。**例外**:
-///    real 宣言が zero-specificity (universal selector 等) かつ、それが
-///    その stylesheet の最初の rule (`source_order = 0`,
-///    [`crate::ruletree::RuleTree::add_stylesheet`] 参照) の場合、hint
-///    の `(rank, specificity, source_order)` と real 宣言のそれが
-///    **完全に一致**する ([`PRESENTATIONAL_HINT_SOURCE_ORDER`] doc 参照)。
-///    この tie は `beats` の `>=` により「[`pick_winners`] が後から scan
-///    した方が勝つ」で決着するため、[`collect_cascaded`] はこの関数を
-///    stylesheet rule matching / inline style より**必ず先に** push する
-///    — hint が先に scan され、後続の real 宣言が tie を上書きする。
-///    テスト
-///    `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
-///    がまさにこの exact-tie ケースを exercise する。
+/// 残る 2-origin model の残差 (bd raikiri-spike-wo36 item 4、本 retag の
+/// scope 外): raikiri-style は独立した `Origin::User` をまだ持たず、
+/// consumer が渡す `extra_stylesheets` ("user stylesheet" 相当) は
+/// [`Origin::Author`] として届く ([`crate::ruletree`] module doc 参照)。
+/// spec の完全な順序では hint は「user origin より強い」はずだが、本実装は
+/// user stylesheet 宣言を hint より強い [`Origin::Author`] rank に一律
+/// fold している — user stylesheet が img の width/height を上書きできる
+/// という結果自体は spec と一致するが (`Author` rank は hint より常に上)、
+/// 独立した User origin を追加すれば hint が真の author 宣言だけに
+/// overridable になる、というモデルの精度としては不完全なまま。umbrella
+/// 側の `stylesheet_kind_to_origin` 拡張が要るため別 followup 判断
+/// (bd raikiri-spike-wo36 item 4)。
 fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
     // HTML-namespace gate (Codex §8.3 final-review finding, 2026-08-11):
     // this mapping is HTML LS's own presentational hint, scoped to the HTML
@@ -720,7 +780,7 @@ fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDe
         decls.push((
             PropertyValue::Width(LengthOrAuto::Length(width)),
             false,
-            Origin::Author,
+            Origin::AuthorPresentationalHint,
             PRESENTATIONAL_HINT_SPECIFICITY,
             PRESENTATIONAL_HINT_SOURCE_ORDER,
         ));
@@ -729,7 +789,7 @@ fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDe
         decls.push((
             PropertyValue::Height(LengthOrAuto::Length(height)),
             false,
-            Origin::Author,
+            Origin::AuthorPresentationalHint,
             PRESENTATIONAL_HINT_SPECIFICITY,
             PRESENTATIONAL_HINT_SOURCE_ORDER,
         ));
@@ -1120,7 +1180,9 @@ fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option<RankedDecl
 
 fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
     // Tuple compare: (rank, specificity, source_order)
-    // - rank 高い方が勝つ (Important UA > Important Author > Normal Author > Normal UA)
+    // - rank 高い方が勝つ (順序と正確な値は `cascade_rank` doc 参照 — bd
+    //   raikiri-spike-wo36 で UA/Author の 2 段から
+    //   UA/AuthorPresentationalHint/Author の 3 段に拡張済み)
     // - 同 rank なら specificity 高い方が勝つ
     // - 同 rank + spec なら source_order 大 (=後ろ) が勝つ
     // `>=` は同一 rule 内 duplicate property の後方勝ち (CSS Cascading L4 §6.1
@@ -3729,9 +3791,10 @@ mod tests {
         // が優位)
         // ただし M1.4a では add_stylesheet の呼び出し順で source_order が振られ
         // Author が先 (source_order 小)、UA が後 (source_order 大) となる。
-        // rank 化により Origin::UserAgent の Normal は rank=0 (最弱)、
-        // Origin::Author の Normal は rank=1 なので UA rule が Author を上書き
-        // することはない (source_order に関わらず rank が優先)。
+        // rank 化により Origin::UserAgent の Normal は Origin::Author の
+        // Normal より常に低い rank になる (`cascade_rank` doc に正確な値
+        // あり) ので UA rule が Author を上書きすることはない (source_order
+        // に関わらず rank が優先)。
         if !ua_css.is_empty() {
             tree.add_stylesheet(ua_css, Origin::UserAgent);
         }
@@ -3748,14 +3811,15 @@ mod tests {
 
     #[test]
     fn author_display_inline_overrides_ua_block() {
-        // Normal Author > Normal UA (rank 1 > rank 0)
+        // Normal Author > Normal UA (`cascade_rank` doc has the exact values)
         let cv = cascade_with_ua("p { display: block }", "p { display: inline }", "p", None);
         assert_eq!(cv.display, DisplayValue::Inline);
     }
 
     #[test]
     fn important_ua_beats_important_author_display() {
-        // Important UA > Important Author (rank 3 > rank 2、!important 反転)
+        // Important UA > Important Author (!important 反転、`cascade_rank`
+        // doc has the exact values)
         let cv = cascade_with_ua(
             "p { display: block !important }",
             "p { display: inline !important }",
@@ -3763,6 +3827,70 @@ mod tests {
             None,
         );
         assert_eq!(cv.display, DisplayValue::Block);
+    }
+
+    // ── cascade_rank 3rd origin tier (bd raikiri-spike-wo36, CSS Cascading
+    // L5 §6.5 "author presentational hint origin") ──
+
+    #[test]
+    fn cascade_rank_orders_ua_hint_author_normal_then_reverses_for_important() {
+        // Direct unit pin of `cascade_rank`'s full 6-value table.
+        //
+        // The Normal-tier ordering (UA < hint < Author) is a direct
+        // consequence of CSS Cascading L5 §6.5's verbatim text
+        // (<https://drafts.csswg.org/css-cascade-5/#preshint>) — see
+        // `cascade_rank`'s doc for the exact quotes.
+        //
+        // The Important-tier position of `AuthorPresentationalHint` is
+        // *not* spec-verbatim: §6.5 never defines an important
+        // presentational hint (host languages only ever emit normal-tier
+        // hints), so this half pins `cascade_rank`'s own derived symmetry
+        // (origin independence + CSS Cascading L4 §6.3's importance
+        // reversal, <https://www.w3.org/TR/css-cascade-4/#importance>) and
+        // its status as a total function, not an external requirement.
+        // No production code path emits an `!important` presentational
+        // hint (`push_img_dimension_hints` always pushes
+        // `important = false`), so this is the only place that arm is
+        // exercised.
+        let normal_ua = cascade_rank(Origin::UserAgent, false);
+        let normal_hint = cascade_rank(Origin::AuthorPresentationalHint, false);
+        let normal_author = cascade_rank(Origin::Author, false);
+        let important_author = cascade_rank(Origin::Author, true);
+        let important_hint = cascade_rank(Origin::AuthorPresentationalHint, true);
+        let important_ua = cascade_rank(Origin::UserAgent, true);
+
+        // Spec-verbatim (§6.5): Normal UA < Normal hint < Normal Author.
+        assert!(normal_ua < normal_hint, "normal UA must lose to the hint");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            normal_hint < normal_author,
+            "normal hint must lose to a real author declaration"
+        );
+        // Spec-verbatim (§6.1/§6.3): any important declaration beats any
+        // normal declaration.
+        //
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            normal_author < important_author,
+            "any important declaration must beat any normal declaration"
+        );
+        // Derived (not spec-verbatim, see comment above): symmetry of
+        // origin independence under importance reversal.
+        //
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            important_author < important_hint,
+            "derived symmetry: important hint ranks above important author"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            important_hint < important_ua,
+            "derived symmetry: important UA ranks above important hint"
+        );
     }
 
     #[test]
@@ -5446,15 +5574,12 @@ mod tests {
 
     #[test]
     fn img_width_attribute_overridable_by_inline_author_style() {
-        // Cascade-origin pin: presentational hint と inline style は共に
-        // `Origin::Author` (`push_img_dimension_hints` doc の "Cascade
-        // origin" 節) なので origin では決着せず、同一 origin 内の
-        // tie-break (specificity) に落ちる — inline style の
-        // `INLINE_SPECIFICITY` (`1 << 30`) は hint の `specificity = 0`
-        // (`PRESENTATIONAL_HINT_SPECIFICITY`) より圧倒的に大きいので、
-        // exact-tie の心配なく無条件に勝つ (対照的に、下の
-        // `..._by_author_stylesheet_regardless_of_specificity` は
-        // 両者とも specificity 0 になり得るので exact-tie 経路を通る)。
+        // Cascade-origin pin (bd raikiri-spike-wo36): presentational hint は
+        // `Origin::AuthorPresentationalHint`、inline style は `Origin::Author`
+        // (`push_img_dimension_hints` doc の "Cascade origin" 節) — 別 origin
+        // tier なので `cascade_rank` の rank 差だけで無条件に決着し、
+        // inline style の specificity (`INLINE_SPECIFICITY` = `1 << 30`) を
+        // 参照するまでもなく勝つ。
         let mut doc = TestDoc::new();
         let img = doc.push_element_with_attrs(
             0,
@@ -5482,16 +5607,19 @@ mod tests {
 
     #[test]
     fn img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity() {
-        // Exact-tie case pin (`push_img_dimension_hints` doc's "Cascade
-        // origin" §2): the hint and this `* { width: 30px }` rule are both
-        // `Origin::Author`, both specificity 0 (universal selector), and
-        // both `source_order = 0` (first/only rule in an otherwise-empty
-        // `RuleTree`) — an exact 3-tuple tie. `beats` resolves the tie in
-        // favor of whichever candidate is scanned later in `pick_winners`,
-        // and `collect_cascaded` pushes the hint *before* stylesheet-rule
-        // matching for the same element, so the real rule wins. This is not
-        // a specificity-driven outcome (both sides are 0) — it pins the
-        // push-order invariant instead.
+        // Origin-rank pin (bd raikiri-spike-wo36, `push_img_dimension_hints`
+        // doc's "Cascade origin" section): the hint is
+        // `Origin::AuthorPresentationalHint` (rank below `Origin::Author`
+        // per `cascade_rank`), while this `* { width: 30px }` rule is a
+        // real `Origin::Author` rule with zero specificity (universal
+        // selector). Before bd raikiri-spike-wo36 both sides shared
+        // `Origin::Author` and this exact zero-specificity/zero-source-order
+        // case only resolved via `collect_cascaded`'s push-order (hint
+        // pushed first, so the later-scanned real rule won the `beats` tie).
+        // Now the rank difference alone decides it, independent of
+        // specificity or push order — this test still pins "real author
+        // rule wins regardless of specificity", just via a different
+        // mechanism.
         let mut doc = TestDoc::new();
         let style = doc.push_element(0, "style", None);
         doc.push_text(style, "* { width: 30px }");
@@ -5504,7 +5632,7 @@ mod tests {
         assert_eq!(
             r.computed[img].width,
             ComputedLengthPercentageOrAuto::Px(30.0),
-            "real author rule must win the exact-tie via push-order (hint pushed first)"
+            "real author rule must win over the hint via origin rank, regardless of specificity"
         );
     }
 
