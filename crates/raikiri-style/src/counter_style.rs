@@ -1006,8 +1006,12 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 ///   comes from the crate-private HTML presentational-hint path
 ///   (`push_img_dimension_hints`, `crates/raikiri-style/src/cascade.rs`),
 ///   so [`Origin::AuthorPresentationalHint`] does not reach here via any
-///   caller in this crate today, even though [`Origin`] itself has 3
-///   variants as of bd raikiri-spike-wo36). Note that `add_stylesheet` is
+///   caller in this crate today, even though [`Origin`] itself has 4
+///   variants as of bd raikiri-spike-pdta). [`Origin::User`] (added by
+///   pdta, alongside [`Origin::AuthorPresentationalHint`] added earlier by
+///   bd raikiri-spike-wo36) is likewise unreachable here — no caller
+///   anywhere in the crate routes to `Origin::User` yet, [`Origin::User`]'s
+///   doc has the "no production producer" status. Note that `add_stylesheet` is
 ///   `pub fn` with an unconstrained `origin: Origin` parameter, so this is
 ///   a fact about current callers, not a structural guarantee — an
 ///   external caller passing `Origin::AuthorPresentationalHint` directly
@@ -1032,19 +1036,21 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 ///   rules" has no `!important`-equivalent concept for `@counter-style` at
 ///   all, so there's nothing to pass through — but `false` isn't an
 ///   arbitrary placeholder either, it's specifically the *non-important*
-///   half of [`crate::cascade::cascade_rank`]'s ranking (UA < AuthorPresentationalHint
-///   < Author as of bd raikiri-spike-wo36, `cascade_rank` doc has the exact
-///   values), which is the half that actually matches §3's origin order;
+///   half of [`crate::cascade::cascade_rank`]'s ranking (UA < User <
+///   AuthorPresentationalHint < Author as of bd raikiri-spike-pdta,
+///   `cascade_rank` doc has the exact values), which is the half that
+///   actually matches §3's origin order;
 ///   the other half ([`crate::cascade::cascade_rank`] with
 ///   `important: true`) inverts precedence and would be wrong here.
 ///   Resolution is by rank, not a hardcoded `Author`/`UserAgent` pair,
-///   specifically so adding a variant to [`Origin`] (`#[non_exhaustive]`,
-///   and its own doc already flags a deferred `User` origin) is a compile
-///   error at [`crate::cascade::cascade_rank`]'s own `match` — not a
-///   silently-wrong precedence here. (This is exactly what happened when
-///   bd raikiri-spike-wo36 added [`Origin::AuthorPresentationalHint`]:
-///   `cascade_rank`'s `match` had to be updated to stay exhaustive, but this
-///   function's logic needed no change.)
+///   specifically so adding a variant to [`Origin`] (`#[non_exhaustive]`)
+///   is a compile error at [`crate::cascade::cascade_rank`]'s own `match`
+///   — not a silently-wrong precedence here. This has now happened twice:
+///   bd raikiri-spike-wo36 added [`Origin::AuthorPresentationalHint`], and
+///   bd raikiri-spike-pdta added [`Origin::User`] (currently with no
+///   production producer of its own, [`Origin::User`]'s doc has the
+///   status) — both times `cascade_rank`'s `match` had to be updated to
+///   stay exhaustive, but this function's logic needed no change.
 /// - [`Self::insert`] (the `pub` entry point, unchanged since before
 ///   bd raikiri-spike-f7vg) stays origin-blind: it always overwrites,
 ///   exactly as it did when this type had no origin concept at all — safe
