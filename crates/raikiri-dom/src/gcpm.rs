@@ -221,9 +221,12 @@ pub(crate) struct StringSnapshot {
 /// `on_page_last_use` / `running` (no `first_except` field). Following the
 /// struct (the normative part) rather than the prose: `first-except` is
 /// derivable at read time from `on_page_first_use` plus page-position
-/// context (spec: same as `first`, except empty if the string was set by
-/// the very first formatted element on the page) rather than stored as its
-/// own snapshot slot — deliberate, not an oversight.
+/// context (spec: same as `first`, except empty on the page where a
+/// `string-set` assignment for this name actually occurs — i.e. empty
+/// whenever `on_page_first_use` is `Some` for the current page, a
+/// page-local condition, not an element-position one; see the keyword
+/// table below for the precise rule) rather than stored as its own
+/// snapshot slot — deliberate, not an oversight.
 ///
 /// **None of the 4 keywords reduce to a single stored field read** — a
 /// future `string()` implementation must combine these fields with
