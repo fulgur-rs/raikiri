@@ -195,6 +195,34 @@ fn dom_style_element_author_rule_overrides_ua() {
 }
 
 #[test]
+fn lang_pseudo_class_inherits_from_html_lang_attribute_through_real_parse_pipeline() {
+    // bd raikiri-spike-flln.6 acceptance, exercised through the *real*
+    // html5ever parse -> raikiri-dom -> build_cascaded pipeline (not the
+    // raikiri-style-internal `TestDoc` mock other coverage for this feature
+    // uses) — this is the actual shape the bd description's example gives:
+    // `<html lang="ja">` with a `<p>` descendant that carries no `lang`
+    // attribute of its own must still match `:lang(ja)`. This also pins
+    // that bd raikiri-spike-blg's `lang` attribute wiring
+    // (`raikiri-html`'s sink -> `raikiri-dom::Node.attributes` ->
+    // `ElementRef::attr`) actually surfaces `lang` where
+    // `raikiri-style::StyleElement::attr("lang")` reads it end to end.
+    let html = "<html lang=\"ja\"><head>\
+                <style>:lang(ja) { font-family: serif-ja }</style></head>\
+                <body><p>Hi</p></body></html>";
+    let doc = parse_html(html);
+    let result = build_cascaded(&doc);
+
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+    let font_family = &result.computed[p_id.0 as usize].font_family;
+    assert_eq!(
+        font_family[0].to_string(),
+        "serif-ja",
+        ":lang(ja) must match <p> via the ancestor <html lang=\"ja\">, \
+         through the real parse pipeline",
+    );
+}
+
+#[test]
 fn extra_stylesheets_author_rule_overrides_ua_via_umbrella() {
     // Consumer が opts.extra_stylesheets 経由で渡した CSS が Author として
     // build_cascaded 経路に到達することを verify (parse 時 Document.stylesheets
