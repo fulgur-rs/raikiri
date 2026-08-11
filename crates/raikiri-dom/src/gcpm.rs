@@ -82,17 +82,6 @@ pub(crate) struct CounterStack {
 }
 
 impl CounterStack {
-    #[allow(
-        dead_code,
-        reason = "No production caller yet — PhaseBWalkState::apply_directive \
-                  reaches this state via HashMap::or_default(), not this \
-                  constructor directly; exercised directly by this module's \
-                  unit tests."
-    )]
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
     /// `counter-reset: name value` (CSS Lists 3 §4.1) — push a new nested
     /// scope frame at `value`. See the type-level "Caller invariant" note:
     /// always pushes, never replaces the innermost frame.
@@ -255,17 +244,6 @@ pub(crate) struct NamedStringState {
 }
 
 impl NamedStringState {
-    #[allow(
-        dead_code,
-        reason = "No production caller yet — PhaseBWalkState::apply_directive \
-                  reaches this state via HashMap::or_default(), not this \
-                  constructor directly; exercised directly by this module's \
-                  unit tests."
-    )]
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
     /// Page-boundary hook — snapshot the current `running` value as the new
     /// page's entry/start value, and clear the per-page first/last-use
     /// trackers (a fresh page starts with no assignments of its own).
@@ -359,16 +337,6 @@ pub(crate) struct PhaseBWalkState {
 }
 
 impl PhaseBWalkState {
-    #[allow(
-        dead_code,
-        reason = "No production caller yet — apply_running_template_directives \
-                  and this module's unit tests are the only callers today \
-                  (see module-level doc for why no per-page driver exists)."
-    )]
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
     /// Apply one [`GcpmDirective`] to this walk state.
     ///
     /// `RegisterTarget` is explicitly **not** handled here — bd
@@ -533,14 +501,14 @@ mod tests {
 
         #[test]
         fn fresh_stack_has_no_current_value() {
-            let stack = CounterStack::new();
+            let stack = CounterStack::default();
             assert_eq!(stack.current(), None);
             assert!(stack.values().is_empty());
         }
 
         #[test]
         fn reset_creates_scope_with_given_value() {
-            let mut stack = CounterStack::new();
+            let mut stack = CounterStack::default();
             stack.reset(5);
             assert_eq!(stack.current(), Some(5));
         }
@@ -550,7 +518,7 @@ mod tests {
             // Regression pin: reset must PUSH, not overwrite — two resets
             // for the same name (e.g. a nested <ol><li><ol>...) must both be
             // observable via `values()`, not collapse to one frame.
-            let mut stack = CounterStack::new();
+            let mut stack = CounterStack::default();
             stack.reset(0);
             stack.reset(10);
             assert_eq!(stack.values(), &[0, 10]);
@@ -559,14 +527,14 @@ mod tests {
 
         #[test]
         fn increment_on_empty_stack_implicitly_creates_at_delta() {
-            let mut stack = CounterStack::new();
+            let mut stack = CounterStack::default();
             stack.increment(3);
             assert_eq!(stack.current(), Some(3));
         }
 
         #[test]
         fn increment_mutates_only_innermost_frame() {
-            let mut stack = CounterStack::new();
+            let mut stack = CounterStack::default();
             stack.reset(0);
             stack.reset(10);
             stack.increment(5);
@@ -575,14 +543,14 @@ mod tests {
 
         #[test]
         fn set_on_empty_stack_implicitly_creates_at_value() {
-            let mut stack = CounterStack::new();
+            let mut stack = CounterStack::default();
             stack.set(7);
             assert_eq!(stack.current(), Some(7));
         }
 
         #[test]
         fn set_mutates_only_innermost_frame() {
-            let mut stack = CounterStack::new();
+            let mut stack = CounterStack::default();
             stack.reset(0);
             stack.reset(10);
             stack.set(99);
@@ -591,7 +559,7 @@ mod tests {
 
         #[test]
         fn pop_scope_removes_only_innermost_frame_and_reveals_previous() {
-            let mut stack = CounterStack::new();
+            let mut stack = CounterStack::default();
             stack.reset(1);
             stack.reset(2);
             assert_eq!(stack.pop_scope(), Some(2));
@@ -602,13 +570,13 @@ mod tests {
 
         #[test]
         fn pop_scope_on_empty_stack_returns_none_without_panicking() {
-            let mut stack = CounterStack::new();
+            let mut stack = CounterStack::default();
             assert_eq!(stack.pop_scope(), None);
         }
 
         #[test]
         fn values_are_ordered_outermost_first() {
-            let mut stack = CounterStack::new();
+            let mut stack = CounterStack::default();
             stack.reset(1);
             stack.reset(2);
             stack.reset(3);
@@ -623,7 +591,7 @@ mod tests {
 
         #[test]
         fn fresh_state_has_no_snapshots() {
-            let state = NamedStringState::new();
+            let state = NamedStringState::default();
             assert_eq!(state.on_page_start(), None);
             assert_eq!(state.on_page_first_use(), None);
             assert_eq!(state.on_page_last_use(), None);
@@ -632,7 +600,7 @@ mod tests {
 
         #[test]
         fn first_string_set_sets_first_last_and_running_but_not_start() {
-            let mut state = NamedStringState::new();
+            let mut state = NamedStringState::default();
             state.apply_string_set(literal_snapshot("A"));
             let a = literal_snapshot("A");
             assert_eq!(state.on_page_first_use(), Some(&a));
@@ -644,7 +612,7 @@ mod tests {
 
         #[test]
         fn second_string_set_same_page_updates_last_not_first() {
-            let mut state = NamedStringState::new();
+            let mut state = NamedStringState::default();
             state.apply_string_set(literal_snapshot("A"));
             state.apply_string_set(literal_snapshot("B"));
             assert_eq!(
@@ -660,14 +628,14 @@ mod tests {
         fn begin_page_before_any_string_set_leaves_start_none() {
             // Document-start case: no entry value exists yet because
             // nothing has ever been assigned.
-            let mut state = NamedStringState::new();
+            let mut state = NamedStringState::default();
             state.begin_page();
             assert_eq!(state.on_page_start(), None);
         }
 
         #[test]
         fn begin_page_snapshots_running_into_start_and_clears_first_last() {
-            let mut state = NamedStringState::new();
+            let mut state = NamedStringState::default();
             state.apply_string_set(literal_snapshot("A"));
             state.begin_page();
             assert_eq!(
@@ -691,7 +659,7 @@ mod tests {
         #[test]
         fn multi_page_sequence_tracks_snapshot_timing_and_ordering() {
             // page 1: single assignment "A"
-            let mut state = NamedStringState::new();
+            let mut state = NamedStringState::default();
             state.apply_string_set(literal_snapshot("A"));
 
             // → page 2 starts; entry value carried from page 1's "A"
@@ -725,7 +693,7 @@ mod tests {
 
         #[test]
         fn counter_directives_dispatch_to_named_stack() {
-            let mut state = PhaseBWalkState::new();
+            let mut state = PhaseBWalkState::default();
             let foo = Symbol::new("foo");
             let bar = Symbol::new("bar");
             state.apply_directive(&GcpmDirective::CounterReset {
@@ -751,7 +719,7 @@ mod tests {
             // pushes reset → increment → set for the SAME element (CSS
             // Lists 3 §4 processing order), and this walk must apply that
             // sequence front-to-back, not group/re-sort by directive kind.
-            let mut state = PhaseBWalkState::new();
+            let mut state = PhaseBWalkState::default();
             let c = Symbol::new("c");
             let directives = vec![
                 GcpmDirective::CounterReset {
@@ -776,7 +744,7 @@ mod tests {
 
         #[test]
         fn register_running_inserts_binding() {
-            let mut state = PhaseBWalkState::new();
+            let mut state = PhaseBWalkState::default();
             let name = Symbol::new("header");
             let id = RunningTemplateId::new(NodeId::new(7));
             state.apply_directive(&GcpmDirective::RegisterRunning {
@@ -788,7 +756,7 @@ mod tests {
 
         #[test]
         fn register_running_rebind_overwrites_previous_binding() {
-            let mut state = PhaseBWalkState::new();
+            let mut state = PhaseBWalkState::default();
             let name = Symbol::new("header");
             let id1 = RunningTemplateId::new(NodeId::new(7));
             let id2 = RunningTemplateId::new(NodeId::new(42));
@@ -809,7 +777,7 @@ mod tests {
 
         #[test]
         fn register_target_is_a_documented_no_op() {
-            let mut before = PhaseBWalkState::new();
+            let mut before = PhaseBWalkState::default();
             before.apply_directive(&GcpmDirective::CounterReset {
                 name: Symbol::new("x"),
                 value: 1,
@@ -826,7 +794,7 @@ mod tests {
 
         #[test]
         fn string_set_freezes_counter_values_at_apply_time() {
-            let mut state = PhaseBWalkState::new();
+            let mut state = PhaseBWalkState::default();
             let chapter = Symbol::new("chapter");
             let title = Symbol::new("title");
 
@@ -864,7 +832,7 @@ mod tests {
 
         #[test]
         fn begin_page_forwards_to_every_tracked_named_string() {
-            let mut state = PhaseBWalkState::new();
+            let mut state = PhaseBWalkState::default();
             let a = Symbol::new("a");
             let b = Symbol::new("b");
             state.apply_directive(&GcpmDirective::StringSet {
@@ -939,7 +907,7 @@ mod tests {
                 dynamic_flags: Default::default(),
             };
 
-            let mut state = PhaseBWalkState::new();
+            let mut state = PhaseBWalkState::default();
             apply_running_template_directives(&mut state, &template);
 
             assert_eq!(
