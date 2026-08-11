@@ -57,6 +57,43 @@ fn p_without_author_style_is_display_block_via_ua_css() {
 }
 
 #[test]
+fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
+    // bd raikiri-spike-5z86.1 Acceptance: <article><h2>...</h2><p>...</p>
+    // </article> が block box として render される (article 自体が inline化
+    // して子要素と混線しない)。article を含む、同じ UA CSS 追加を受けた 10
+    // 要素すべてを real parse → build_cascaded パイプラインで直接検証する —
+    // `crates/raikiri-html/src/lib.rs` の
+    // `minimal_ua_css_covers_required_display_block_selectors` は
+    // `MINIMAL_UA_CSS` の生テキストを走査するだけで実際に cssparser で
+    // parse されるとは限らない (comment 構文の誤りなどを検出できない)。
+    // この test は cascade まで通した computed value を見るので非-vacuous。
+    for tag in [
+        "article",
+        "section",
+        "nav",
+        "aside",
+        "header",
+        "footer",
+        "main",
+        "figure",
+        "figcaption",
+        "blockquote",
+    ] {
+        let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
+        let doc = parse_html(&html);
+        let result = build_cascaded(&doc);
+
+        let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
+        let display = result.computed[el_id.0 as usize].display;
+        assert_eq!(
+            display,
+            DisplayValue::Block,
+            "<{tag}> should be display: block from bundled UA CSS via build_cascaded",
+        );
+    }
+}
+
+#[test]
 fn author_inline_style_overrides_ua_display_block() {
     // NB: m1.4 cascade は class/id selector を drop するので inline style を使う
     let doc = parse_html("<html><body><p style=\"display:inline\">Hi</p></body></html>");
