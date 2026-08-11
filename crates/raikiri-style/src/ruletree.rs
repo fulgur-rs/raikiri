@@ -462,12 +462,16 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// bd raikiri-spike-flln.3 で `Component::Combinator(Combinator::NextSibling
 /// | Combinator::LaterSibling)` を、bd raikiri-spike-flln.6 で
 /// `Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_))`
-/// (`:lang()`/`:dir()`) を追加受理 — 他 combinator
-/// (`Combinator::PseudoElement` / `Combinator::SlotAssignment` /
-/// `Combinator::Part`) と `:hover`/`:active` pseudo-class は引き続き scope 外
-/// (`cascade.rs::match_combinator_chain` の doc 参照 — この 3 つは
-/// pseudo-element 専用で、本 crate の `parse_selector_list` が
-/// pseudo-element 構文自体を parse error にするため到達不能)。
+/// (`:lang()`/`:dir()`) を、bd raikiri-spike-flln.5 で `Component::Root` /
+/// `Component::Empty` / `Component::Nth(_)` を追加受理 — `:root` / `:empty` /
+/// `:first-child`/`:last-child`/`:only-child`/`:nth-child()`/`:nth-last-child()`
+/// / `:first-of-type`/`:last-of-type`/`:only-of-type`/`:nth-of-type()`/
+/// `:nth-last-of-type()`。他 combinator (`Combinator::PseudoElement` /
+/// `Combinator::SlotAssignment` / `Combinator::Part`) と `:hover`/`:active`
+/// pseudo-class は引き続き scope 外 (`cascade.rs::match_combinator_chain` の
+/// doc 参照 — combinator 側の 3 つは pseudo-element 専用で、本 crate の
+/// `parse_selector_list` が pseudo-element 構文自体を parse error にするため
+/// 到達不能)。
 ///
 /// **4 combinator 間の混在に制限は無い** (bd raikiri-spike-flln.3): 同じ
 /// complex selector の中で祖先系 (`>`/space) と兄弟系 (`+`/`~`)
@@ -480,6 +484,25 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// truncate 済みで引き継ぐため、その chain の `.last()` が遷移先自身の親を
 /// 指し、兄弟系 combinator へもそのまま繋げられる — どちらの合成方向にも
 /// 追加の状態は要らない (`match_combinator_chain` doc の "親の解決" note
+/// 参照)。
+///
+/// `:root`/`:empty`/`:first-child` 等 (bd raikiri-spike-flln.5) はいずれも
+/// `selectors` crate 自身の `parse_simple_pseudo_class`/
+/// `parse_functional_pseudo_class` (selectors 0.39.0 `parser.rs`、直接
+/// fetch confirmed — 依存 crate の公開 parse 分岐を読んだだけで、Stylo 実装を
+/// 参照していない) がこれら専用の `Component` variant へ直接 parse する —
+/// `RaikiriSelectorParser::parse_non_ts_pseudo_class`/
+/// `parse_non_ts_functional_pseudo_class` 経由の `Component::NonTSPseudoClass`
+/// には一切ならない (`:hover`/`:active`/`:lang()`/`:dir()` のような
+/// non-tree-structural pseudo-class だけがそちら経由)。`:nth-child(An+B of
+/// S)` (L4 拡張 selector-list 形態) は `Parser::parse_nth_child_of()` を
+/// override していない (デフォルト `false`) ため常に `Component::NthOf`
+/// ではなく `Component::Nth` になり、" of S" 部分は
+/// `cssparser::Parser::parse_nested_block` の「closure が block 終端まで
+/// 消費しなければ Err に上書きする」contract (cssparser 0.37.0 `parser.rs`
+/// doc、直接 confirm) により leftover token として selector 全体を parse
+/// error に落とす — fail-closed (silent superset-match にはならない、
+/// regression test `nth_child_of_extended_syntax_is_rejected_not_silently_widened`
 /// 参照)。
 ///
 /// spec: CSS Selectors Level 4 — class selector
@@ -528,7 +551,10 @@ fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool 
                     | Combinator::Child
                     | Combinator::NextSibling
                     | Combinator::LaterSibling,
-                ) => {}
+                )
+                | Component::Root
+                | Component::Empty
+                | Component::Nth(_) => {}
                 Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_)) => {}
                 _ => return false,
             }
@@ -635,6 +661,53 @@ mod tests {
         let doc = dom_with_style("ol > li { color: red }");
         let tree = build_rule_tree(&doc);
         assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn structural_pseudo_class_selectors_are_captured() {
+        // bd raikiri-spike-flln.5 acceptance: `:root`/`:empty`/
+        // `:first-child`/`:nth-child()`/`-of-type` counterparts must no
+        // longer be dropped by `is_supported_selector_list` — pairs with
+        // `pseudo_class_selector_still_dropped` (which pins that
+        // `:hover`/`:active`, true `NonTSPseudoClass` components, remain
+        // dropped; these are architecturally different `Component`
+        // variants the `selectors` crate parses directly, see
+        // `is_supported_selector_list`'s doc).
+        let doc = dom_with_style(
+            ":root { color: red } \
+             p:empty { color: red } \
+             li:first-child { color: red } \
+             li:last-child { color: red } \
+             li:only-child { color: red } \
+             li:nth-child(2n+1) { color: red } \
+             li:nth-last-child(1) { color: red } \
+             h2:first-of-type { color: red } \
+             h2:last-of-type { color: red } \
+             h2:only-of-type { color: red } \
+             h2:nth-of-type(2) { color: red } \
+             h2:nth-last-of-type(1) { color: red }",
+        );
+        let tree = build_rule_tree(&doc);
+        assert_eq!(
+            tree.style_rules.len(),
+            12,
+            "all 12 structural pseudo-class rules must be kept"
+        );
+    }
+
+    #[test]
+    fn nth_child_of_extended_syntax_selector_is_dropped() {
+        // `:nth-child(An+B of S)` (L4's extended selector-list form) is out
+        // of scope for bd raikiri-spike-flln.5 (`is_supported_selector_list`
+        // doc's `Component::Nth`/`Component::NthOf` note) — the whole
+        // selector fails to *parse* (see
+        // `cascade::tests::nth_child_of_extended_syntax_is_rejected_not_silently_widened`),
+        // so it never even reaches this gate; pinned here at the
+        // `add_stylesheet`/`build_rule_tree` integration level too.
+        let doc = dom_with_style("p:nth-child(2n+1 of .foo) { color: red } p { color: blue }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
     }
 
     #[test]
