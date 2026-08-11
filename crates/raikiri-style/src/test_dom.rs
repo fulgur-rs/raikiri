@@ -7,10 +7,18 @@
 //! (Phase B で除去予定) を外しても TestDoc はそのまま cascade / ruletree に
 //! 食わせられる。
 
-use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
+use crate::style_dom::{
+    StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,
+};
 
 pub(crate) struct TestDoc {
     pub(crate) nodes: Vec<TestNode>,
+    /// Document-mode context (bd raikiri-spike-tqwi). Defaults to
+    /// `NoQuirks`, matching [`StyleDom::quirks_mode`]'s own default —
+    /// callers assign this field directly for quirks-mode regression tests
+    /// (no setter: no arena-indexing work to wrap, unlike
+    /// [`Self::set_attr`] / [`Self::set_namespace`]).
+    pub(crate) quirks_mode: StyleQuirksMode,
 }
 
 pub(crate) struct TestNode {
@@ -53,6 +61,7 @@ impl TestDoc {
                 text: None,
                 children: Vec::new(),
             }],
+            quirks_mode: StyleQuirksMode::NoQuirks,
         }
     }
 
@@ -206,6 +215,10 @@ impl StyleDom for TestDoc {
     fn node_count(&self) -> usize {
         // raikiri-spike-37c: cascade が out.resize() の pre-allocation で消費する。
         self.nodes.len()
+    }
+
+    fn quirks_mode(&self) -> StyleQuirksMode {
+        self.quirks_mode
     }
 }
 

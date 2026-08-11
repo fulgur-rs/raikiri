@@ -46,7 +46,9 @@ use crate::rule::{expand_shorthand_into, parse_declaration_block};
 use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
 use crate::specified::SpecifiedValues;
-use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
+use crate::style_dom::{
+    StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,
+};
 
 /// Cascade 結果。
 ///
@@ -297,6 +299,9 @@ fn collect_cascaded<D: StyleDom>(
     rule_tree: &RuleTree,
     out: &mut CascadedArena,
 ) {
+    // Document-wide constant (bd raikiri-spike-tqwi) — read once rather than
+    // per (node, rule) pair inside the loop below.
+    let quirks_mode = dom.quirks_mode();
     let mut stack: Vec<StyleNodeId> = vec![id];
     while let Some(id) = stack.pop() {
         if let Some(node) = dom.node(id) {
@@ -327,7 +332,8 @@ fn collect_cascaded<D: StyleDom>(
                 push_img_dimension_hints(&elem, &mut out.decls);
                 // stylesheet rule matching
                 for rule in &rule_tree.style_rules {
-                    if let Some(spec) = match_simple_selectors(&rule.selectors, &elem) {
+                    if let Some(spec) = match_simple_selectors(&rule.selectors, &elem, quirks_mode)
+                    {
                         for decl in &rule.declarations {
                             // shorthand を longhand に展開してから candidate に
                             // 積む (parse 出口の展開だけでは `RuleTree` の
@@ -392,13 +398,22 @@ fn collect_cascaded<D: StyleDom>(
 /// Returns: matching した selector の最大 specificity。1 つも match しなければ None。
 /// - `Component::LocalName(name)` — `elem.tag_name()` と eq_ignore_ascii_case で判定
 /// - `Component::ExplicitUniversalType` — 常に match
-/// - `Component::ID` — `elem.id()` と厳密一致 (CSS Selectors L4
-///   <https://www.w3.org/TR/selectors-4/#id-selectors>、HTML の `id` は
-///   case-sensitive)
-/// - `Component::Class` — `elem.has_class()` (CSS Selectors L4
-///   <https://www.w3.org/TR/selectors-4/#class-html>、
-///   [`StyleElement::has_class`] の doc 通り HTML-spec ASCII whitespace split
-///   + token 単位 case-sensitive 比較)
+/// - `Component::ID` — `elem.id()` と一致比較 (CSS Selectors L4
+///   <https://www.w3.org/TR/selectors-4/#id-selectors>、verbatim: "When
+///   matching against a document which is in quirks mode, IDs must be
+///   matched ASCII case-insensitively; ID selectors are otherwise
+///   case-sensitive")。`quirks_mode` 引数が
+///   [`StyleQuirksMode::Quirks`] のときのみ `eq_ignore_ascii_case`、それ以外
+///   ([`StyleQuirksMode::NoQuirks`] / [`StyleQuirksMode::LimitedQuirks`]) は
+///   厳密一致 (bd raikiri-spike-tqwi — "limited-quirks" は DOM Standard上
+///   "quirks mode" と別 dfn、fold の対象外)
+/// - `Component::Class` — `elem.has_class()` / `elem.has_class_ascii_case_insensitive()`
+///   (CSS Selectors L4 <https://www.w3.org/TR/selectors-4/#class-html>、
+///   verbatim: "When matching against a document which is in quirks mode,
+///   class names must be matched ASCII case-insensitively; class selectors
+///   are otherwise case-sensitive")。ID と同じ `quirks_mode` 分岐 (bd
+///   raikiri-spike-tqwi)。both variants share the same HTML-spec ASCII
+///   whitespace tokenisation — [`StyleElement::has_class`] の doc 参照
 /// - `Component::AttributeInNoNamespaceExists` / `Component::AttributeInNoNamespace`
 ///   — `elem.attr()` (CSS Selectors L4
 ///   <https://www.w3.org/TR/selectors-4/#attribute-selectors>)。存在チェック
@@ -417,6 +432,7 @@ fn collect_cascaded<D: StyleDom>(
 fn match_simple_selectors<E: StyleElement>(
     list: &SelectorList<RaikiriSelectorImpl>,
     elem: &E,
+    quirks_mode: StyleQuirksMode,
 ) -> Option<Specificity> {
     use selectors::parser::Component;
 
@@ -436,15 +452,29 @@ fn match_simple_selectors<E: StyleElement>(
                     // 常に match / namespace は m1.4 では常に true 扱い
                     true
                 }
-                // NB (bd raikiri-spike-tqwi): both arms below always compare
-                // case-sensitively — CSS Selectors L4 requires ASCII-case-
-                // insensitive id/class matching in quirks-mode documents
-                // ("otherwise case-sensitive"), but raikiri-style has no
-                // document-mode signal threaded through `StyleDom`/
-                // `StyleElement` yet (`raikiri_traits::QuirksMode` stops at
-                // the parse layer). Tracked by tqwi, not this task's scope.
-                Component::ID(id) => elem.id() == Some(id.0.as_str()),
-                Component::Class(class) => elem.has_class(class.0.as_str()),
+                // CSS Selectors L4 id-selectors / class-html (bd
+                // raikiri-spike-tqwi, verbatim quoted on the function doc
+                // above): ASCII-case-fold only under full quirks mode.
+                // `LimitedQuirks` is a *separate* DOM Standard dfn from
+                // "quirks mode" (confirmed via direct fetch of
+                // <https://dom.spec.whatwg.org/#concept-document-quirks>) and
+                // does not get the fold, matching `NoQuirks`.
+                Component::ID(id) => match quirks_mode {
+                    StyleQuirksMode::Quirks => elem
+                        .id()
+                        .is_some_and(|elem_id| elem_id.eq_ignore_ascii_case(id.0.as_str())),
+                    StyleQuirksMode::NoQuirks | StyleQuirksMode::LimitedQuirks => {
+                        elem.id() == Some(id.0.as_str())
+                    }
+                },
+                Component::Class(class) => match quirks_mode {
+                    StyleQuirksMode::Quirks => {
+                        elem.has_class_ascii_case_insensitive(class.0.as_str())
+                    }
+                    StyleQuirksMode::NoQuirks | StyleQuirksMode::LimitedQuirks => {
+                        elem.has_class(class.0.as_str())
+                    }
+                },
                 Component::AttributeInNoNamespaceExists {
                     local_name,
                     local_name_lower,
@@ -539,6 +569,16 @@ fn match_simple_selectors<E: StyleElement>(
 /// (style_dom.rs: "HTML default namespace returns None (fast path)") を
 /// 代理指標として使う — SVG 等 non-HTML namespace の element は
 /// case-sensitive 側に倒す。
+///
+/// # 「in html document」は quirks-mode と別軸
+///
+/// ここでの "in html document" は CSS Selectors L4 §3.7/§6.3 が定める
+/// document-**language** (HTML vs XML) 軸であり、id/class matching が使う
+/// quirks-mode 軸 (`StyleQuirksMode`、CSS Selectors L4 §6.6/§6.7) とは
+/// spec 上別概念 — 混同しないこと。raikiri-html は HTML5 tree builder のみで
+/// XML document を生成する経路が無いため、この軸は現状 unconditionally true
+/// で正しい。XML document parsing が入るときに、document-language 信号を
+/// この関数へ渡す配線が必要になる (bd raikiri-spike-tqwi)。
 fn resolve_case_sensitivity<E: StyleElement>(
     parsed: ParsedCaseSensitivity,
     elem: &E,
@@ -2000,6 +2040,97 @@ mod tests {
         );
     }
 
+    /// bd raikiri-spike-tqwi acceptance: quirks-mode 3 状態 × class-selector
+    /// case variation の regression matrix. CSS Selectors L4 class-html
+    /// (<https://www.w3.org/TR/selectors-4/#class-html>, verbatim): "When
+    /// matching against a document which is in quirks mode, class names must
+    /// be matched ASCII case-insensitively; class selectors are otherwise
+    /// case-sensitive". `NoQuirks`'s different-case branch overlaps
+    /// `class_selector_is_case_sensitive` above (kept as its own smaller,
+    /// standalone regression test); this table adds `LimitedQuirks` /
+    /// `Quirks` plus a same-case control per mode so a regression that stops
+    /// matching entirely (rather than over-folding) would also be caught.
+    #[test]
+    fn class_selector_case_sensitivity_across_quirks_modes() {
+        struct Case {
+            mode: StyleQuirksMode,
+            element_class: &'static str,
+            expect_match: bool,
+        }
+        let cases = [
+            // NoQuirks (standards mode): always case-sensitive.
+            Case {
+                mode: StyleQuirksMode::NoQuirks,
+                element_class: "foo",
+                expect_match: true,
+            },
+            Case {
+                mode: StyleQuirksMode::NoQuirks,
+                element_class: "FOO",
+                expect_match: false,
+            },
+            // LimitedQuirks ("almost standards"): distinct DOM Standard dfn
+            // from "quirks mode" — must NOT fold, same as NoQuirks.
+            Case {
+                mode: StyleQuirksMode::LimitedQuirks,
+                element_class: "foo",
+                expect_match: true,
+            },
+            Case {
+                mode: StyleQuirksMode::LimitedQuirks,
+                element_class: "FOO",
+                expect_match: false,
+            },
+            // Quirks (full quirks mode): ASCII case-insensitive fold.
+            Case {
+                mode: StyleQuirksMode::Quirks,
+                element_class: "foo",
+                expect_match: true,
+            },
+            Case {
+                mode: StyleQuirksMode::Quirks,
+                element_class: "FOO",
+                expect_match: true,
+            },
+        ];
+
+        for case in cases {
+            let mut doc = TestDoc::new();
+            doc.quirks_mode = case.mode;
+            let s = doc.push_element(0, "style", None);
+            doc.push_text(s, ".foo { font-weight: bold }");
+            let p = doc.push_element(0, "p", None);
+            doc.set_attr(p, "class", case.element_class);
+
+            let tree = build_rule_tree(&doc);
+            let r = cascade(&doc, &tree).expect("cascade Ok");
+            let matched = r.computed[p].font_weight == 700.0;
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                matched, case.expect_match,
+                "mode={:?} element_class={:?}: expected match={}",
+                case.mode, case.element_class, case.expect_match
+            );
+        }
+    }
+
+    /// `has_class_ascii_case_insensitive`'s empty-query guard. A real CSS
+    /// class selector can never lexically produce an empty class name, so
+    /// `match_simple_selectors` can't reach this branch — hence a direct
+    /// call on `TestElementRef`, mirroring
+    /// `match_simple_selectors_rejects_unsupported_component_via_safety_net`
+    /// below.
+    #[test]
+    fn has_class_ascii_case_insensitive_empty_query_is_false() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "class", "foo");
+        let node = doc.node(StyleNodeId::new(p as u64)).unwrap();
+        let elem = node.as_element().unwrap();
+        assert!(!elem.has_class_ascii_case_insensitive(""));
+    }
+
     #[test]
     fn id_selector_applies_declaration() {
         // Acceptance (bd raikiri-spike-flln.1): `#header { ... }` applied to
@@ -2026,6 +2157,78 @@ mod tests {
         let tree = build_rule_tree(&doc);
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[div].color, ComputedValues::initial().color);
+    }
+
+    /// bd raikiri-spike-tqwi acceptance: quirks-mode 3 状態 × id-selector case
+    /// variation の regression matrix — [`class_selector_case_sensitivity_across_quirks_modes`]
+    /// の id-selector 版。CSS Selectors L4 id-selectors
+    /// (<https://www.w3.org/TR/selectors-4/#id-selectors>, verbatim): "When
+    /// matching against a document which is in quirks mode, IDs must be
+    /// matched ASCII case-insensitively; ID selectors are otherwise
+    /// case-sensitive".
+    #[test]
+    fn id_selector_case_sensitivity_across_quirks_modes() {
+        struct Case {
+            mode: StyleQuirksMode,
+            element_id: &'static str,
+            expect_match: bool,
+        }
+        let cases = [
+            // NoQuirks (standards mode): always case-sensitive.
+            Case {
+                mode: StyleQuirksMode::NoQuirks,
+                element_id: "header",
+                expect_match: true,
+            },
+            Case {
+                mode: StyleQuirksMode::NoQuirks,
+                element_id: "HEADER",
+                expect_match: false,
+            },
+            // LimitedQuirks ("almost standards"): distinct DOM Standard dfn
+            // from "quirks mode" — must NOT fold, same as NoQuirks.
+            Case {
+                mode: StyleQuirksMode::LimitedQuirks,
+                element_id: "header",
+                expect_match: true,
+            },
+            Case {
+                mode: StyleQuirksMode::LimitedQuirks,
+                element_id: "HEADER",
+                expect_match: false,
+            },
+            // Quirks (full quirks mode): ASCII case-insensitive fold.
+            Case {
+                mode: StyleQuirksMode::Quirks,
+                element_id: "header",
+                expect_match: true,
+            },
+            Case {
+                mode: StyleQuirksMode::Quirks,
+                element_id: "HEADER",
+                expect_match: true,
+            },
+        ];
+
+        for case in cases {
+            let mut doc = TestDoc::new();
+            doc.quirks_mode = case.mode;
+            let s = doc.push_element(0, "style", None);
+            doc.push_text(s, "#header { color: red }");
+            let div = doc.push_element(0, "div", None);
+            doc.set_attr(div, "id", case.element_id);
+
+            let tree = build_rule_tree(&doc);
+            let r = cascade(&doc, &tree).expect("cascade Ok");
+            let matched = r.computed[div].color == RED;
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                matched, case.expect_match,
+                "mode={:?} element_id={:?}: expected match={}",
+                case.mode, case.element_id, case.expect_match
+            );
+        }
     }
 
     #[test]
@@ -2303,7 +2506,7 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            match_simple_selectors(&list, &elem),
+            match_simple_selectors(&list, &elem, StyleQuirksMode::NoQuirks),
             None,
             "NonTSPseudoClass component must fall through the safety net"
         );
