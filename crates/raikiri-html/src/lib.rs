@@ -1277,6 +1277,12 @@ mod tests {
         // track (詳細は minimal.css のコメント参照)。cascade まで通した
         // 非-vacuous な検証は `crates/raikiri/tests/build_cascaded.rs`
         // `list_elements_are_display_block_via_ua_css` 側。
+        // bd raikiri-spike-5z86.5: hr 追加 (display: block は §flow-content-3
+        // (15.3.3) の flow-content グループ側の rule に相乗り。border/color/
+        // margin の hr 固有 rule は別 group、詳細は minimal.css のコメント
+        // 参照)。cascade まで通した非-vacuous な検証は
+        // `crates/raikiri/tests/build_cascaded.rs`
+        // `hr_is_display_block_border_inset_and_margin_via_ua_css` 側。
         for tag in [
             "html",
             "body",
@@ -1301,6 +1307,7 @@ mod tests {
             "ol",
             "ul",
             "li",
+            "hr",
         ] {
             let has_rule = MINIMAL_UA_CSS.lines().any(|line| {
                 let trimmed = line.trim_start();

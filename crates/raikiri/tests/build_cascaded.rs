@@ -505,3 +505,108 @@ fn img_width_html_attribute_overridable_by_real_author_stylesheet_through_real_p
          (same origin, real rule's non-zero specificity wins) end-to-end"
     );
 }
+
+#[test]
+fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
+    // bd raikiri-spike-5z86.5 Acceptance: <hr> renders as a horizontal
+    // line. HTML Living Standard §the-hr-element-2 (15.3.11, WebFetch
+    // verified) specifies `hr { color: gray; border-style: inset;
+    // border-width: 1px; margin-block: 0.5em; margin-inline: auto;
+    // overflow: hidden; }`, plus `display: block` from the separate
+    // §flow-content-3 (15.3.3) flow-content group. raikiri-style has no
+    // standalone `border-style` / `border-width` multi-side properties, no
+    // `margin-block` / `margin-inline` logical properties, and no
+    // `overflow` property at all (see minimal.css comment for the full
+    // rationale) — this test pins the *substituted* rule's cascade output
+    // (border shorthand + physical margin longhands + color, no
+    // overflow), which is what minimal.css actually declares, not the
+    // literal spec text. Like `sectioning_and_grouping_elements_are_
+    // display_block_via_ua_css` / `list_elements_are_display_block_via_
+    // ua_css`, this drives a real parse -> build_cascaded so it is
+    // non-vacuous (the raikiri-html::lib textual scan only confirms the
+    // rule text exists, not that cssparser accepts it).
+    let doc = parse_html("<html><body><hr></body></html>");
+    let result = build_cascaded(&doc);
+
+    let hr_id = find_by_tag(&doc.dom, "hr").expect("<hr> exists");
+    let computed = &result.computed[hr_id.0 as usize];
+
+    assert_eq!(
+        computed.display,
+        DisplayValue::Block,
+        "<hr> should be display: block from the flow-content UA CSS group"
+    );
+
+    // color: gray — load-bearing, not decorative: the `border` shorthand
+    // below omits its color component, which defaults to currentcolor, so
+    // this is what actually makes the border paint spec gray instead of
+    // whatever `color` this hr would otherwise inherit.
+    assert_eq!(
+        computed.color,
+        raikiri::CssColor {
+            r: 128,
+            g: 128,
+            b: 128,
+            a: 255,
+        },
+        "<hr> color should resolve to CSS named color `gray`"
+    );
+
+    // border-style: inset + border-width: 1px on all 4 sides, via the
+    // `border: 1px inset` shorthand substitution (raikiri-style has no
+    // standalone border-style/border-width properties). Checking all 4
+    // sides (not just top) confirms the shorthand's `Sides::all` fan-out
+    // actually happened.
+    for (side_name, side) in [
+        ("top", &computed.border.top),
+        ("right", &computed.border.right),
+        ("bottom", &computed.border.bottom),
+        ("left", &computed.border.left),
+    ] {
+        assert_eq!(
+            side.width(),
+            raikiri::ComputedLength(1.0),
+            "<hr> border-{side_name}-width should be 1px"
+        );
+        assert_eq!(
+            side.style(),
+            raikiri::BorderStyle::Inset,
+            "<hr> border-{side_name}-style should be inset"
+        );
+        assert_eq!(
+            side.color,
+            raikiri::BorderColor::CurrentColor,
+            "<hr> border-{side_name}-color should be the shorthand's omitted-color default \
+             (currentcolor), not an explicit color"
+        );
+    }
+
+    // margin-block: 0.5em fallback (margin-top/margin-bottom physical
+    // longhands, raikiri-style has no margin-block logical property).
+    // 0.5em resolves against the inherited (UA-default) 16px font-size.
+    assert_eq!(
+        computed.margin.top,
+        raikiri::ComputedLengthPercentageOrAuto::Px(8.0),
+        "<hr> margin-top should be 0.5em (8px at default 16px font-size), the margin-block \
+         fallback"
+    );
+    assert_eq!(
+        computed.margin.bottom,
+        raikiri::ComputedLengthPercentageOrAuto::Px(8.0),
+        "<hr> margin-bottom should be 0.5em (8px at default 16px font-size), the margin-block \
+         fallback"
+    );
+
+    // margin-inline: auto fallback (margin-left/margin-right physical
+    // longhands, raikiri-style has no margin-inline logical property).
+    assert_eq!(
+        computed.margin.left,
+        raikiri::ComputedLengthPercentageOrAuto::Auto,
+        "<hr> margin-left should be auto, the margin-inline fallback"
+    );
+    assert_eq!(
+        computed.margin.right,
+        raikiri::ComputedLengthPercentageOrAuto::Auto,
+        "<hr> margin-right should be auto, the margin-inline fallback"
+    );
+}
