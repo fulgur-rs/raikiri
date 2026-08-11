@@ -34,12 +34,13 @@
 //! design §7.6 "Slot ID の安定性保証" states `sequence` is "page 内
 //! 0-indexed" (page-local, not document-wide), so a page-boundary call must
 //! restart the local count. Calling contract: `begin_page` once per page,
-//! with a monotonically increasing `page_index`, before the first
-//! `resolve_target_*` dispatch for that page — enforced at runtime by an
-//! `assert!` in [`TargetRegistry::begin_page`] (bd raikiri-spike-oqpc
-//! security-lens finding) since a backward `page_index` would silently mint
-//! a duplicate [`TargetSlotId`] for a still-pending slot from the earlier
-//! visit to that page.
+//! with a monotonically non-decreasing `page_index` (same-index calls are a
+//! no-op; a redundant same-page call is fine, a backward call is not),
+//! before the first `resolve_target_*` dispatch for that page — enforced at
+//! runtime by an `assert!` in [`TargetRegistry::begin_page`] (bd
+//! raikiri-spike-oqpc security-lens finding) since a backward `page_index`
+//! would silently mint a duplicate [`TargetSlotId`] for a still-pending
+//! slot from the earlier visit to that page.
 
 use std::collections::HashMap;
 
@@ -427,12 +428,13 @@ impl TargetRegistry {
     ///
     /// Panics if `page_index` is less than the registry's current
     /// `page_index` — i.e. `page_index` must be monotonically
-    /// non-decreasing across calls, matching the calling contract the module
-    /// doc's "Canonical shape" note states (design §7.6: "page_index は …
-    /// emit された順に増加"). A backward call would otherwise reset
-    /// `next_sequence` to 0 while an earlier, still-unresolved
-    /// [`TargetSlot`] for that same `page_index` sits in `pending_slots`
-    /// (unresolved slots are retained across flushes, never dropped — see
+    /// non-decreasing across calls (design §7.6: "page_index は … emit
+    /// された順に増加"; same-index calls remain the documented no-op above,
+    /// so the enforced contract is non-decreasing, not strictly
+    /// increasing). A backward call would otherwise reset `next_sequence`
+    /// to 0 while an earlier, still-unresolved `TargetSlot` for that same
+    /// `page_index` sits in `pending_slots` (unresolved slots are retained
+    /// across flushes, never dropped — see
     /// [`Self::flush_pending`]'s doc), so the very next dispatch would mint
     /// a [`TargetSlotId`] byte-identical to that still-pending one. Two
     /// distinct [`PendingResolution`]s would then carry the same `slot_id`,
