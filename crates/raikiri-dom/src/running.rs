@@ -278,12 +278,14 @@ pub(crate) struct ParsedRunningTemplate {
     #[allow(
         dead_code,
         reason = "Written by collect_running_template (bd raikiri-spike-e81n); \
-                  read by the raikiri-dom Phase B walk that applies \
-                  directives to PageContext (design §7.0/§7.1), which has no \
-                  implementation anywhere in this crate yet — tracked as bd \
-                  raikiri-spike-8ejw, out of e81n's scope (register-site \
-                  walker + detect_dynamic_flags site + \
-                  resolve_element_pool/get wiring only)."
+                  read by crate::gcpm::PhaseBWalkState::apply_directive via \
+                  crate::gcpm::apply_running_template_directives (bd \
+                  raikiri-spike-8ejw, landed — the dom-local Phase B walk \
+                  state/algorithm; promotion onto raikiri_traits::PageContext \
+                  is a separate follow-up, bd raikiri-spike-8ejw.1, blocked/ \
+                  human). No production per-page driver invokes that walk \
+                  yet (a later, separate wall/dom-paint task) — exercised via \
+                  unit tests until then."
     )]
     pub(crate) directives: Vec<GcpmDirective>,
     /// Which dynamic axes this template exercises (see [`DynamicFlags`]).
