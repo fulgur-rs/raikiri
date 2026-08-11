@@ -35,11 +35,11 @@ h5     { display: block; }
 h6     { display: block; }
 
 /* HTML Living Standard "Rendering" §sections-and-headings (15.3.6) —
- * sectioning content is block-level. (spec selector also lists :heading
- * and hgroup; :heading is covered by the h1-h6 rule above, hgroup has no
- * rule yet.) */
+ * sectioning content is block-level. (spec selector also lists :heading,
+ * which is covered by the h1-h6 rule above.) */
 article { display: block; }
 aside   { display: block; }
+hgroup  { display: block; }
 nav     { display: block; }
 section { display: block; }
 

@@ -60,18 +60,22 @@ fn p_without_author_style_is_display_block_via_ua_css() {
 fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
     // bd raikiri-spike-5z86.1 Acceptance: <article><h2>...</h2><p>...</p>
     // </article> が block box として render される (article 自体が inline化
-    // して子要素と混線しない)。article を含む、同じ UA CSS 追加を受けた 10
+    // して子要素と混線しない)。article を含む、同じ UA CSS 追加を受けた 11
     // 要素すべてを real parse → build_cascaded パイプラインで直接検証する —
     // `crates/raikiri-html/src/lib.rs` の
     // `minimal_ua_css_covers_required_display_block_selectors` は
     // `MINIMAL_UA_CSS` の生テキストを走査するだけで実際に cssparser で
     // parse されるとは限らない (comment 構文の誤りなどを検出できない)。
     // この test は cascade まで通した computed value を見るので非-vacuous。
+    // bd raikiri-spike-xhgn: hgroup 追加 (article/aside/nav/section と同じ
+    // §sections-and-headings (15.3.6) selector group の一員、5z86.1 の
+    // scope からは漏れていた)。
     for tag in [
         "article",
         "section",
         "nav",
         "aside",
+        "hgroup",
         "header",
         "footer",
         "main",

@@ -1283,6 +1283,12 @@ mod tests {
         // 参照)。cascade まで通した非-vacuous な検証は
         // `crates/raikiri/tests/build_cascaded.rs`
         // `hr_is_display_block_border_inset_and_margin_via_ua_css` 側。
+        // bd raikiri-spike-xhgn: hgroup 追加 (article/aside/nav/section と
+        // 同じ §sections-and-headings (15.3.6) selector group の一員、
+        // 5z86.1 の scope からは漏れていた)。cascade まで通した非-vacuous
+        // な検証は `crates/raikiri/tests/build_cascaded.rs`
+        // `sectioning_and_grouping_elements_are_display_block_via_ua_css`
+        // 側 (既存 loop に追加)。
         for tag in [
             "html",
             "body",
@@ -1298,6 +1304,7 @@ mod tests {
             "section",
             "nav",
             "aside",
+            "hgroup",
             "header",
             "footer",
             "main",
