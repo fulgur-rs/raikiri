@@ -515,8 +515,9 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
     // 規定し、`display: block` は別の §flow-content-3 (15.3.3) flow-content
     // group 側から来る。raikiri-style には border-style / border-width の
     // 独立 multi-side property、margin-block / margin-inline logical
-    // property、overflow property のいずれも実装がない (詳細は
-    // minimal.css のコメント参照) — 本 test は「minimal.css が実際に宣言
+    // property、overflow property のいずれも実装がない (overflow gap は
+    // bd raikiri-spike-cmd3 で track、詳細は minimal.css のコメント参照)
+    // — 本 test は「minimal.css が実際に宣言
     // している *置換後* の rule」の cascade 出力を pin する (border
     // shorthand + margin shorthand + color、overflow なし)。spec 原文
     // そのものを pin しているわけではない点に注意。
