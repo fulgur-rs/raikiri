@@ -1715,15 +1715,15 @@ impl OverflowXY {
 pub(crate) fn resolve_overflow(specified: OverflowXY) -> OverflowXY {
     /// 1 axis 分の解決。`other` が "neither visible nor clip" (= hidden /
     /// scroll / auto のいずれか) なら `this` の `visible`→`auto` /
-    /// `clip`→`hidden` を適用する。判定条件を「other が visible/clip では
-    /// ない」の否定形で書くのは、[`OverflowValue`] が `#[non_exhaustive]` な
-    /// ため将来 variant が増えても (allowlist 漏れで) 誤って gate しない
-    /// fail-safe な形にするため — `resolve_border` の未知 `BorderStyle`
-    /// variant を「visible 側」に倒す fail-safe と同じ判断。
+    /// `clip`→`hidden` を適用する。`other` の判定を `Visible | Clip` の
+    /// allowlist に対する `matches!` で書いているのは、[`OverflowValue`] が
+    /// `#[non_exhaustive]` なため将来 variant が増えても、その未知 variant は
+    /// allowlist に一致せず自動的に「neither visible nor clip」側 (=
+    /// fallback 適用) に倒れる fail-safe な形にするため — `resolve_border`
+    /// の未知 `BorderStyle` variant を「visible 側」に倒す fail-safe と同じ
+    /// 判断。
     fn axis(this: OverflowValue, other: OverflowValue) -> OverflowValue {
-        let other_is_neither_visible_nor_clip =
-            !matches!(other, OverflowValue::Visible | OverflowValue::Clip);
-        if !other_is_neither_visible_nor_clip {
+        if matches!(other, OverflowValue::Visible | OverflowValue::Clip) {
             return this;
         }
         match this {
