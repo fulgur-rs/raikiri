@@ -2945,12 +2945,12 @@ mod tests {
         // Site A resolves *before* the register site has been walked.
         let out_a =
             reg.resolve_target_counter("#chapter-3", Symbol::new("chapter"), CounterStyle::Decimal);
-        let seq_a = match out_a {
+        let id_a = match out_a {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending, got Resolved"),
         };
         assert_eq!(
-            seq_a,
+            id_a,
             TargetSlotId {
                 page_index: 0,
                 sequence: 0,
@@ -2960,12 +2960,12 @@ mod tests {
 
         // Second forward reference to a different fragment / kind.
         let out_b = reg.resolve_target_text("#chapter-3", ContentPart::Content);
-        let seq_b = match out_b {
+        let id_b = match out_b {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending, got Resolved"),
         };
         assert_eq!(
-            seq_b,
+            id_b,
             TargetSlotId {
                 page_index: 0,
                 sequence: 1,
@@ -2989,14 +2989,14 @@ mod tests {
         assert_eq!(
             resolutions[0],
             PendingResolution {
-                slot_id: seq_a,
+                slot_id: id_a,
                 value: Some("3".to_owned()),
             }
         );
         assert_eq!(
             resolutions[1],
             PendingResolution {
-                slot_id: seq_b,
+                slot_id: id_b,
                 value: Some("The Middle".to_owned()),
             }
         );
@@ -3068,12 +3068,12 @@ mod tests {
         //   seq 1: #b  counters
         //   seq 2: #c  text
         //   seq 3: #a  text  (same fragment as seq 0)
-        let seq_a =
+        let id_a =
             match reg.resolve_target_counter("#a", Symbol::new("chapter"), CounterStyle::Decimal) {
                 ResolveOutcome::Pending(s) => s,
                 ResolveOutcome::Resolved(_) => panic!("expected Pending"),
             };
-        let seq_b = match reg.resolve_target_counters(
+        let id_b = match reg.resolve_target_counters(
             "#b",
             Symbol::new("section"),
             "-",
@@ -3082,25 +3082,20 @@ mod tests {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending"),
         };
-        let seq_c = match reg.resolve_target_text("#c", ContentPart::Content) {
+        let id_c = match reg.resolve_target_text("#c", ContentPart::Content) {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending"),
         };
-        let seq_a2 = match reg.resolve_target_text("#a", ContentPart::Before) {
+        let id_a2 = match reg.resolve_target_text("#a", ContentPart::Before) {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending"),
         };
         assert_eq!(
-            (
-                seq_a.sequence,
-                seq_b.sequence,
-                seq_c.sequence,
-                seq_a2.sequence
-            ),
+            (id_a.sequence, id_b.sequence, id_c.sequence, id_a2.sequence),
             (0, 1, 2, 3)
         );
         assert!(
-            [seq_a, seq_b, seq_c, seq_a2]
+            [id_a, id_b, id_c, id_a2]
                 .iter()
                 .all(|id| id.page_index == 0),
             "no page boundary crossed in this test — every slot stays on page 0"
@@ -3124,30 +3119,30 @@ mod tests {
         assert_eq!(
             resolutions[0],
             PendingResolution {
-                slot_id: seq_a,
+                slot_id: id_a,
                 value: Some("7".to_owned()),
             }
         );
         assert_eq!(
             resolutions[1],
             PendingResolution {
-                slot_id: seq_a2,
+                slot_id: id_a2,
                 value: Some("prefix".to_owned()),
             }
         );
 
         // Retained slots keep their original ordering (seq 1 before seq 2).
-        assert_eq!(reg.pending_slots[0].id, seq_b);
-        assert_eq!(reg.pending_slots[1].id, seq_c);
+        assert_eq!(reg.pending_slots[0].id, id_b);
+        assert_eq!(reg.pending_slots[1].id, id_c);
 
         // Registering #b later resolves it on the next flush; #c stays.
         reg.register(Symbol::new("b"), make_info(&[("section", &[1, 2])], &[]));
         let resolutions2 = reg.flush_pending();
         assert_eq!(resolutions2.len(), 1);
-        assert_eq!(resolutions2[0].slot_id, seq_b);
+        assert_eq!(resolutions2[0].slot_id, id_b);
         assert_eq!(resolutions2[0].value.as_deref(), Some("1-2"));
         assert_eq!(reg.pending_slots.len(), 1);
-        assert_eq!(reg.pending_slots[0].id, seq_c);
+        assert_eq!(reg.pending_slots[0].id, id_c);
     }
 
     #[test]
