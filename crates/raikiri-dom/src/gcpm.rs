@@ -209,15 +209,19 @@ pub(crate) struct StringSnapshot {
 /// with a non-decimal [`raikiri_style::property::CounterStyle::Named`])
 /// needs `raikiri_traits::page::target`'s private `format_counter` helper
 /// (`crates/raikiri-traits/src/page/target.rs:490` — a bare `fn`, not `pub`,
-/// not re-exported), a wall/traits-gated dependency this task cannot reach.
-/// Partially resolving (Literal-only, or decimal-only counters) was
-/// considered and rejected: it would silently bake wrong text for `Named`
-/// counter styles and for `Attr`/`Content` items (which additionally need
-/// the originating DOM element — also unavailable to this flat-directive
-/// walk, see module-level doc), which is worse than deferring resolution
-/// entirely (原則3, fail-closed). See bd raikiri-spike-8ejw.1 for the
-/// promotion step that will need to resolve this gap — either by exposing
-/// `format_counter` or moving resolution to a different phase.
+/// not re-exported) — and, for `counters()`'s separator-joined form, that
+/// same module's private `join_counter_stack`
+/// (`crates/raikiri-traits/src/page/target.rs:1884`, also unexported) — both
+/// wall/traits-gated dependencies this task cannot reach. Partially
+/// resolving (Literal-only, or decimal-only counters) was considered and
+/// rejected: it would silently bake wrong text for `Named` counter styles
+/// and for `Attr`/`Content` items (which additionally need the originating
+/// DOM element — also unavailable to this flat-directive walk, see
+/// module-level doc), which is worse than deferring resolution entirely
+/// (原則3, fail-closed). See bd raikiri-spike-8ejw.1 for the promotion step
+/// that will need to resolve this gap — either by exposing
+/// `format_counter`/`join_counter_stack` or moving resolution to a
+/// different phase.
 ///
 /// **4-snapshot field mapping** — design §7.2's prose names the 4 snapshots
 /// "start/first/last/first-except" (the CSS GCPM 3 §1.1.2 keyword set) but
@@ -374,6 +378,19 @@ impl PhaseBWalkState {
     /// `#[non_exhaustive]` cross-crate, so a trailing wildcard arm covers
     /// any future variant the same way (no-op, not a panic) until this walk
     /// is deliberately extended to handle it.
+    ///
+    /// **`RegisterRunning` has no producer yet.** This arm's rebind
+    /// semantics are handled and unit tested, but
+    /// `crate::running::collect_running_template` (bd raikiri-spike-e81n)
+    /// deliberately does *not* emit `RegisterRunning` for nested
+    /// `position: running(name)` seeds inside a template subtree — that
+    /// "if the spec/impl allows" hedge is left open on purpose (fail-closed,
+    /// 原則3; see that function's doc and
+    /// [`crate::running::ParsedRunningTemplate`]'s type-level `directives`
+    /// note). So on the only production path into this walk today
+    /// ([`apply_running_template_directives`]), this arm is unreachable —
+    /// `self.running` is currently populated only by this module's direct
+    /// unit tests, not by any real producer.
     pub(crate) fn apply_directive(&mut self, directive: &GcpmDirective) {
         match directive {
             GcpmDirective::CounterIncrement { name, delta } => {
