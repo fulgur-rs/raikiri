@@ -144,17 +144,82 @@ retiring):
      *after* its first `#[cfg(test)] mod` block would have any doc-linked
      `crate::…` span in that later code over-counted by role 4, since the
      predicate has no way to know the test-mod block has already closed.
-     This codebase's prevailing convention is tests-at-end-of-file (never
-     observed to be violated at authoring time), so this is expected to be
-     inert in practice, but — unlike the true absence this predicate can
-     prove — presence is not similarly provable without brace-depth
-     tracking, which this role deliberately does not implement (would be
-     the single largest complexity addition in this script's history,
-     spent on a non-gating, informational role). This is documented here
-     in the same register as the two `1ghc` scan-scope gaps below: a
-     known, inspected approximation that only over-counts (never
-     under-counts, and over-counting cannot fail a gate this role doesn't
-     have), not a silently wrong one.
+     This codebase's prevailing convention for an *inline* (brace-form)
+     `#[cfg(test)] mod tests { … }` block is tests-at-end-of-file — and this
+     direction-asymmetry gap not having fired for that shape is,
+     concretely, role 4's repo-wide count reading 0 at authoring time
+     (rather than a claim this script re-derives from the convention
+     itself, which it has no way to verify). The convention does NOT
+     reliably hold for the external-file (semicolon) form
+     `#[cfg(test)] mod <name>;` that bd raikiri-spike-8m2l (below)
+     separately deals with: `crates/raikiri-style/src/lib.rs`'s
+     `#[cfg(test)] mod test_dom;` declaration is grouped with the file's
+     other `pub mod …` declarations, with substantial production code
+     following it — not near the end of the file. Deliberately a
+     file-level pointer only, no line number or embedded shell command: a
+     pinned line reference goes stale (and *looks* still-verified) the
+     moment `lib.rs` gains or loses a `pub mod` line above it; re-derive
+     current numbers from the file directly if needed rather than trusting
+     one frozen here. Presence (an actual over-count) is still not
+     provable without brace-depth tracking, which this role deliberately
+     does not implement (would be the single largest complexity addition
+     in this script's history, spent on a non-gating, informational role).
+     This is documented here in the same register as the two `1ghc`
+     scan-scope gaps below: a known, inspected approximation that only
+     over-counts (never under-counts, and over-counting cannot fail a gate
+     this role doesn't have), not a silently wrong one.
+
+     **Cross-file extension (bd raikiri-spike-8m2l)**: the position
+     predicate above only ever looks *inside* the file being scanned — but
+     a `#[cfg(test)] mod <name>;` declaration (semicolon form, as opposed
+     to an inline `mod <name> { … }` block) gates a *different* file
+     (`<name>.rs` or `<name>/mod.rs`), and that target file's own content
+     has no `#[cfg(test)]` line in it at all — the attribute lives one
+     file away, at the declaration site. Scanned in isolation, such a
+     target file's `first_test_mod_line` was always `None`: a false-clean,
+     since every line in it — doc comments included — only compiles under
+     `#[cfg(test)]` in the first place. Confirmed real (not hypothetical):
+     `crates/raikiri-style/src/lib.rs`'s `#[cfg(test)] mod test_dom;` →
+     `crates/raikiri-style/src/test_dom.rs`; before this fix, the target
+     file was entirely outside role 4's reach regardless of what it
+     contained (currently inert only because `test_dom.rs` happens to hold
+     no doc-linked `crate::…` span itself — it has exactly one `crate::`
+     reference at all, `crate::style_dom::{…}`, and that's a plain `use`
+     line, not a doc comment).
+
+     `find_external_test_mod_names()` / `_module_dir_for()` /
+     `find_external_test_mod_targets()` resolve a **standard, file-relative**
+     `#[cfg(test)] mod <name>;` declaration — the ordinary `<name>.rs` /
+     `<name>/mod.rs` convention, no `#[path = …]` override — to its target
+     file path(s), crate-tree-wide; this is not a general resolver for
+     every shape such a declaration could legally take (see
+     `_module_dir_for()`'s own docstring for the `crates/*/src/bin/*.rs`
+     binary-crate-root gap, and `find_external_test_mod_targets()`'s own
+     docstring for the full list of what's out of scope). `run_census()`
+     computes this once per invocation and passes the result into each
+     `census_file()` call as `is_external_test_mod_target`.
+
+     **Canonical statement of the override rule** — restated nowhere else
+     in this module; `find_external_test_mod_targets()`'s docstring,
+     `census_file()`'s inline comment, and this module's test suite all
+     point back here instead of repeating it: when
+     `is_external_test_mod_target` is true, `census_file()` forces
+     `first_test_mod_line` to `1` (the *whole file*, not a specific line
+     within it, is what's gated) **unconditionally** — not only as a
+     `None`-only fallback. This matters when a file is simultaneously an
+     external target *and* declares its own later in-file
+     `#[cfg(test)] mod nested;` block: without the unconditional override,
+     only lines at or after that later in-file block would count, even
+     though the external declaration already gates the file's earlier
+     lines too (`ExternalTestModCrossFileCensusTests
+     .test_own_in_file_test_mod_line_overridden_when_also_an_external_target`
+     pins this).
+
+     This is deliberately a **file-discovery-step extension only**:
+     `find_first_cfg_test_mod_line()` itself is untouched, and the new
+     cross-file logic resolves whole target files, never partial ones — so
+     the "line-position, not brace-depth" constraint above still holds
+     without exception.
 
 Opt-out classification (AGENTS.md "opt-out (link 化しない)"), applied only
 to the role-2 (ratchet) candidate set:
@@ -193,6 +258,7 @@ import argparse
 import glob
 import re
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -230,28 +296,40 @@ _CFG_TEST_ATTR_RE = re.compile(r"^#\[cfg\(test\)\]\s*$")
 # anchored to a trailing `{` (rustfmt sometimes breaks a long `mod` line
 # before its brace) or to any particular visibility/name shape.
 _MOD_DECL_RE = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+\w")
+# The external-file (semicolon) subset of `_MOD_DECL_RE`'s matches — a
+# `mod <name>;` declaration with no inline `{ … }` body, which points at a
+# *separate* file (`<name>.rs` or `<name>/mod.rs`) rather than the
+# following block in this same file. Captures the module name so
+# `find_external_test_mod_names()` can resolve it to a target path (bd
+# raikiri-spike-8m2l). An inline `mod <name> { … }` block never matches
+# this (no trailing `;`) — its body already lives in this same file, so it
+# needs no cross-file handling at all.
+_EXTERNAL_MOD_DECL_RE = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;")
 
 
-def find_first_cfg_test_mod_line(lines: list[str]) -> int | None:
-    """Return the 1-indexed line number of the first `#[cfg(test)]`
-    attribute in `lines` that is (skipping blank lines and any further
+def _iter_cfg_test_mod_lines(lines: list[str]) -> Iterator[tuple[int, str]]:
+    """Yield `(cfg_line_index, mod_line_stripped)` for every `#[cfg(test)]`
+    attribute line in `lines` that is (skipping blank lines and any further
     stacked `#[...]` attribute lines — e.g. a `#[allow(...)]` commonly
     stacked between `#[cfg(test)]` and its `mod` line, a real shape found
     at `crates/raikiri-html/src/lib.rs:15-17` while verifying this
     function) eventually followed by a `mod …` declaration — i.e. the
-    start of the first `#[cfg(test)] mod …` block in the file — or `None`
-    if there is no such block.
+    start of every `#[cfg(test)] mod …` block in the file, not just the
+    first. `cfg_line_index` is 0-indexed (callers that need a 1-indexed
+    line number, matching this module's convention elsewhere, add 1).
+
+    Shared by `find_first_cfg_test_mod_line()` (role 4's in-file,
+    first-match-only predicate) and `find_external_test_mod_names()` (bd
+    raikiri-spike-8m2l's cross-file extension, which needs every match in
+    the file, not just the first) so the two functions can never disagree
+    about what counts as "the mod line a `#[cfg(test)]` attribute gates."
 
     Deliberately a line-position search, not a brace-depth parser — see
     role 4's paragraph in this module's docstring for why: this is the same
     approximation bd raikiri-spike-csmj's own block-wide re-scan used by
     hand ("a plain line-number comparison, not dependent on any
     brace-matching") to prove no ratchet-relevant bare span sits inside a
-    test-mod block. Only the *first* such attribute in the file is
-    reported (a second, later `#[cfg(test)] mod` block does not move this
-    line number further out) — every line at or after this line number is
-    role 4's "inside/after a test-mod block" region, per this function's
-    caller.
+    test-mod block.
     """
     for i, raw in enumerate(lines):
         if not _CFG_TEST_ATTR_RE.match(raw.lstrip()):
@@ -263,9 +341,144 @@ def find_first_cfg_test_mod_line(lines: list[str]) -> int | None:
             if nxt_stripped.startswith("#["):
                 continue  # another stacked attribute — keep looking
             if _MOD_DECL_RE.match(nxt_stripped):
-                return i + 1
+                yield i, nxt_stripped
             break  # first non-blank, non-attribute line isn't `mod`
+
+
+def find_first_cfg_test_mod_line(lines: list[str]) -> int | None:
+    """Return the 1-indexed line number of the first `#[cfg(test)]`
+    attribute in `lines` that is eventually followed by a `mod …`
+    declaration — i.e. the start of the first `#[cfg(test)] mod …` block in
+    the file — or `None` if there is no such block.
+
+    Only the *first* such attribute in the file is reported (a second,
+    later `#[cfg(test)] mod` block does not move this line number further
+    out) — every line at or after this line number is role 4's
+    "inside/after a test-mod block" region, per this function's caller.
+    See `_iter_cfg_test_mod_lines()` for the shared search this and
+    `find_external_test_mod_names()` both build on.
+    """
+    for i, _mod_line in _iter_cfg_test_mod_lines(lines):
+        return i + 1
     return None
+
+
+def find_external_test_mod_names(lines: list[str]) -> set[str]:
+    """Return every module name declared as `#[cfg(test)] mod <name>;`
+    (external-file form) in `lines` — sibling modules whose *body* lives in
+    a separate file, one this file's own `#[cfg(test)]` attribute never
+    appears in (bd raikiri-spike-8m2l). An inline
+    `#[cfg(test)] mod <name> { … }` block is deliberately not returned
+    here: its body is already in this same file, so
+    `find_first_cfg_test_mod_line()`'s existing in-file search already
+    covers it; only the semicolon form points somewhere that search
+    structurally cannot see.
+
+    Unlike `find_first_cfg_test_mod_line()`, this collects every match in
+    the file, not just the first — a file can declare more than one
+    external `#[cfg(test)]` module, and each needs to be resolved to its
+    own target file by the caller (`find_external_test_mod_targets()`).
+    """
+    names: set[str] = set()
+    for _cfg_line, mod_line in _iter_cfg_test_mod_lines(lines):
+        m = _EXTERNAL_MOD_DECL_RE.match(mod_line)
+        if m:
+            names.add(m.group(1))
+    return names
+
+
+def _module_dir_for(path: Path) -> Path:
+    r"""The directory a `mod <name>;` declared in `path` resolves against: a
+    crate/directory root (`lib.rs`, `main.rs`, or the legacy `mod.rs`
+    directory-module form) resolves a submodule against its own parent
+    directory; any other file introduces its own same-named subdirectory
+    namespace (2018+ edition — `bar.rs`'s submodules live under `bar/`),
+    e.g. `crates/x/src/bar.rs`'s `mod foo;` is `crates/x/src/bar/foo.rs`,
+    not `crates/x/src/foo.rs`. This covers the one real external
+    `#[cfg(test)] mod …;` site in this tree at authoring time
+    (`crates/raikiri-style/src/lib.rs`, the root case) plus the ordinary
+    non-root shape.
+
+    NOT covered, and not claimed to be: `crates/*/src/bin/*.rs`. Each such
+    file is its own separate binary-crate root under Cargo's default
+    target auto-discovery, so by the same root/non-root logic above it
+    arguably belongs in the root branch too — but this function only
+    special-cases the `lib`/`main`/`mod` stems, so a `src/bin/*.rs` file
+    falls into the non-root branch instead, untested against real rustc
+    behavior for that shape. Currently inert regardless of which branch
+    would be "correct" here: no file under `crates/*/src/bin/*.rs` in this
+    tree declares any `mod` at all (`grep -rn '^\s*\(pub[^ ]* \)\?mod '
+    crates/*/src/bin/*.rs` — confirmed empty), so this gap has never
+    produced a wrong resolution in practice. Documented as a known,
+    unhandled case rather than one this function claims to resolve.
+    """
+    if path.stem in ("lib", "main", "mod"):
+        return path.parent
+    return path.parent / path.stem
+
+
+def find_external_test_mod_targets(texts: dict[str, str]) -> set[str]:
+    """Cross-file counterpart to `find_first_cfg_test_mod_line()` (bd
+    raikiri-spike-8m2l) — see this module's docstring ("Cross-file
+    extension" paragraph) for the full rationale and the concrete
+    `lib.rs` → `test_dom.rs` example this exists to catch, and its
+    "Canonical statement of the override rule" paragraph for how a `True`
+    result feeds into `census_file()`.
+
+    Resolves each **standard, file-relative** `#[cfg(test)] mod <name>;`
+    declaration found across `texts` (repo-relative path -> file content,
+    this repo's whole scanned `.rs` tree) to the target file path(s) it
+    points at under the ordinary `<name>.rs` / `<name>/mod.rs` convention
+    (via `_module_dir_for()`), restricted to paths that are themselves keys
+    of `texts` — a declaration whose target isn't part of the scanned tree
+    (should not happen for a real crate, but keeps this function total
+    rather than assuming the filesystem always matches the declaration) is
+    silently skipped rather than raising. Takes only `texts`, not a
+    separate file list: `run_census()`, the sole caller, always has
+    `files == list(texts.keys())` by construction, so a second parameter
+    would only be able to disagree with `texts` by caller error.
+
+    NOT a general resolver for every legal shape such a declaration could
+    take: a `#[path = …]` attribute on the same declaration would silently
+    redirect its real target elsewhere, but `find_external_test_mod_names()`
+    (the name-collection step this builds on) skips over any stacked
+    attribute — `#[path = …]` included — the same way it skips
+    `#[allow(...)]`, so a `#[path]`-overridden declaration is resolved (or
+    silently mis-resolved) as if it used the default convention. A
+    `crates/*/src/bin/*.rs` binary-crate-root declaring file has the same
+    gap one level down, in `_module_dir_for()` (see its own docstring).
+    And since this module never does brace-depth tracking (this module's
+    own docstring, role 4's paragraph), a declaration only reachable
+    through a non-standard nested-module namespace — one whose real
+    filesystem location diverges from what its declaring file's own path
+    implies — is likewise outside what this can resolve. None of these
+    shapes appear anywhere in this repo's current `#[cfg(test)] mod` sites
+    (only the one plain, standard-convention site this bd task addresses),
+    so this is a documented scope limit, not a known-wrong resolution.
+
+    Returns the set of target file paths (same repo-relative string form
+    as `texts`'s keys) whose *entire* content is gated by an external
+    `#[cfg(test)]` declaration in a different file.
+
+    Deliberately a second, file-discovery-level pass, not a change to
+    `find_first_cfg_test_mod_line()` itself: role 4's existing
+    "line-position search, not brace-depth tracking" constraint is
+    preserved — the whole *file* stands in for "the block" here, so there
+    is still no brace-matching anywhere in this module.
+    """
+    known = set(texts)
+    targets: set[str] = set()
+    for path_str, text in texts.items():
+        names = find_external_test_mod_names(text.splitlines())
+        if not names:
+            continue
+        module_dir = _module_dir_for(Path(path_str))
+        for name in names:
+            for candidate in (module_dir / f"{name}.rs", module_dir / name / "mod.rs"):
+                candidate_str = str(candidate)
+                if candidate_str in known:
+                    targets.add(candidate_str)
+    return targets
 
 
 # -- occurrence extraction --------------------------------------------------
@@ -470,7 +683,17 @@ def _classify_opt_out(occ: Occurrence) -> str | None:
     return None
 
 
-def census_file(path: str, text: str) -> CensusResult:
+def census_file(
+    path: str, text: str, *, is_external_test_mod_target: bool = False
+) -> CensusResult:
+    """Census one file's `text`. `is_external_test_mod_target`
+    (bd raikiri-spike-8m2l): True iff some *other* file in the crate
+    declares `#[cfg(test)] mod <name>;` where `<name>` resolves to this
+    file — see `find_external_test_mod_targets()`. Defaults to False so
+    existing single-file callers (this module's own test suite) are
+    unaffected; `run_census()` is the only caller that computes and passes
+    a real value.
+    """
     result = CensusResult()
     # Carried across consecutive lines of the *same* comment kind (see
     # analyze_line()'s docstring for why: a backtick span word-wrapped
@@ -488,6 +711,11 @@ def census_file(path: str, text: str) -> CensusResult:
     # docstring for why this is a line-position search, not a brace-depth
     # parser.
     first_test_mod_line = find_first_cfg_test_mod_line(lines)
+    if is_external_test_mod_target:
+        # bd raikiri-spike-8m2l: unconditional override (not None-only) —
+        # see this module's docstring, "Canonical statement of the
+        # override rule" paragraph, for why.
+        first_test_mod_line = 1
     for lineno, raw in enumerate(lines, start=1):
         lstripped = raw.lstrip()
         kind = classify_line(lstripped)
@@ -558,13 +786,33 @@ def run_census(repo_root: str, files: list[str] | None = None) -> CensusResult:
     """Census `files` (repo-relative paths), or `discover_files(repo_root)`
     if `files` is omitted. Accepting a pre-computed file list lets a caller
     that also wants the file *count* (main(), for the summary line) reuse a
-    single `discover_files()` call instead of running the glob twice."""
+    single `discover_files()` call instead of running the glob twice.
+
+    Reads every file's text into memory up front, rather than streaming
+    one file at a time (the pre-bd-8m2l shape): role 4's cross-file
+    extension (`find_external_test_mod_targets()`) needs a first pass over
+    every file's content before any single file's `census_file()` call can
+    know whether *it* is an external `#[cfg(test)] mod` target, and a full
+    read is required either way since `census_file()` itself needs each
+    file's text regardless — this repo's `crates/*/src/**/*.rs` tree
+    (~65 files at authoring time) is small enough that holding all of it
+    in memory at once is not a concern.
+    """
     if files is None:
         files = discover_files(repo_root)
-    results = []
-    for rel_path in files:
-        text = Path(repo_root, rel_path).read_text(encoding="utf-8")
-        results.append(census_file(rel_path, text))
+    texts = {
+        rel_path: Path(repo_root, rel_path).read_text(encoding="utf-8")
+        for rel_path in files
+    }
+    external_test_mod_targets = find_external_test_mod_targets(texts)
+    results = [
+        census_file(
+            rel_path,
+            texts[rel_path],
+            is_external_test_mod_target=rel_path in external_test_mod_targets,
+        )
+        for rel_path in files
+    ]
     return merge(results)
 
 
