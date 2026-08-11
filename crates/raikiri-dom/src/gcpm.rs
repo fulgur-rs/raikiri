@@ -112,9 +112,23 @@ impl CounterStack {
     /// non-existent counter" path instantiates it at 0 and then applies the
     /// increment, which is equivalent to starting the new frame at `delta`
     /// directly.
+    ///
+    /// **Saturating, not wrapping/panicking, on overflow** (security lens
+    /// finding on bd raikiri-spike-8ejw.1, user-confirmed 2026-08-11): same
+    /// finding, same fix, as `raikiri_traits::page::context::CounterStack::increment`
+    /// (`crates/raikiri-traits/src/page/context.rs`) — this dom-local mirror
+    /// shares the exact same field shape and had the exact same unbounded
+    /// `+=` bug. `counter-reset: c 2147483647` followed by
+    /// `counter-increment: c 1` is spec-legal CSS (CSS Lists 3 places no
+    /// range limit on `<integer>`/`<counter-name>` values) and would panic
+    /// on `+=`'s debug overflow check — or silently wrap in release, which
+    /// is worse (a rendered counter value jumping to `i32::MIN`).
+    /// `i32::saturating_add` clamps to `i32::MAX`/`i32::MIN` instead,
+    /// matching the "fail-closed, not fail-silent-wrong" discipline this
+    /// crate already applies elsewhere (原則3).
     pub(crate) fn increment(&mut self, delta: i32) {
         match self.frames.last_mut() {
-            Some(top) => *top += delta,
+            Some(top) => *top = top.saturating_add(delta),
             None => self.frames.push(delta),
         }
     }
@@ -584,6 +598,25 @@ mod tests {
             stack.reset(10);
             stack.increment(5);
             assert_eq!(stack.values(), &[0, 15], "outer frame must be untouched");
+        }
+
+        #[test]
+        fn increment_saturates_instead_of_panicking_or_wrapping_on_overflow() {
+            // Security lens regression pin (bd raikiri-spike-8ejw.1,
+            // user-confirmed 2026-08-11): `counter-reset: c 2147483647;
+            // counter-increment: c 1` is spec-legal CSS. Must saturate at
+            // i32::MAX, not panic (debug builds) or wrap to i32::MIN
+            // (release builds).
+            let mut stack = CounterStack::default();
+            stack.reset(i32::MAX);
+            stack.increment(1);
+            assert_eq!(stack.current(), Some(i32::MAX));
+
+            // Symmetric check on the negative side.
+            let mut stack = CounterStack::default();
+            stack.reset(i32::MIN);
+            stack.increment(-1);
+            assert_eq!(stack.current(), Some(i32::MIN));
         }
 
         #[test]

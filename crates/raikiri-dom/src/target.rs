@@ -210,7 +210,16 @@ impl CounterScopes {
             let sym = Symbol::new(name.clone());
             let stack = self.stacks.entry(sym.clone()).or_default();
             match stack.last_mut() {
-                Some(top) => *top += delta,
+                // Saturating, not wrapping/panicking, on overflow (security
+                // lens finding on bd raikiri-spike-8ejw.1, user-confirmed
+                // 2026-08-11): same finding, same fix, as
+                // `raikiri_traits::page::context::CounterStack::increment`
+                // and `crate::gcpm::CounterStack::increment` — this walker's
+                // top-of-stack increment shared the exact same unbounded
+                // `+=` bug. `counter-reset: c 2147483647; counter-increment:
+                // c 1` is spec-legal CSS and would panic (debug) or
+                // silently wrap to `i32::MIN` (release) on plain `+=`.
+                Some(top) => *top = top.saturating_add(*delta),
                 None => {
                     // No ancestor counter-reset scope for `name` — local
                     // auto-instantiation (module doc's divergence note
@@ -694,6 +703,47 @@ mod tests {
         assert_eq!(
             out,
             raikiri_traits::ResolveOutcome::Resolved("7".to_owned())
+        );
+    }
+
+    #[test]
+    fn build_target_registry_increment_saturates_instead_of_panicking_or_wrapping_on_overflow() {
+        // Security lens regression pin (bd raikiri-spike-8ejw.1,
+        // user-confirmed 2026-08-11): spec-legal CSS driving
+        // counter-increment past i32::MAX must saturate, not panic (debug
+        // builds) or wrap to i32::MIN (release builds). Same finding, same
+        // fix, as `CounterStack::increment` in `raikiri-traits`'s
+        // `page::context` and `raikiri-dom`'s `gcpm` — this walker's
+        // top-of-stack increment shared the exact same unbounded `+=` bug.
+        //
+        // reset is deliberately `i32::MAX - 1`, not `i32::MAX`, so the
+        // expected result (`i32::MAX`) is reachable ONLY by actually adding
+        // `delta` — a dropped/no-op increment would leave the leaf at
+        // `2147483646`, not `i32::MAX`, so this also pins that the
+        // increment declaration is applied at all, not just that it
+        // saturates.
+        let mut doc = Document::new();
+        let el = doc.append_element(
+            Some(0),
+            "h2",
+            Style::default(),
+            Some("counter-reset: c 2147483646; counter-increment: c 5"),
+        );
+        set_id(&mut doc, el, "el");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut registry = build_target_registry(&doc, &cr);
+        let out = registry.resolve_target_counter(
+            "#el",
+            Symbol::new("c"),
+            raikiri_style::property::CounterStyle::Decimal,
+        );
+        assert_eq!(
+            out,
+            raikiri_traits::ResolveOutcome::Resolved(i32::MAX.to_string()),
+            "increment past i32::MAX must saturate, not panic or wrap"
         );
     }
 
