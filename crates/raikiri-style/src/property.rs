@@ -1586,6 +1586,158 @@ pub enum Direction {
     Rtl,
 }
 
+/// `overflow-x` / `overflow-y` の共通 value type (raikiri-spike-cmd3)。
+///
+/// CSS Overflow Module Level 3 §3.1 "Overflow: the overflow-x, overflow-y,
+/// overflow-block, overflow-inline, and overflow properties"
+/// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>。
+///
+/// propdef (spec 確認済み、2026-08-11 WebFetch verbatim): Value: `visible |
+/// hidden | clip | scroll | auto`、Initial: `visible`、Inherited: **no**、
+/// Computed value: "usually specified value, but see text" — 本 crate は
+/// text が指す cross-axis coupling を [`resolve_overflow`] で実装する
+/// (詳細は同関数 doc)。
+///
+/// # 5 keyword の意味 (spec 確認済み verbatim)
+///
+/// - [`Visible`](Self::Visible) — "There is no special handling of overflow,
+///   that is, the box's content is rendered outside the box if positioned
+///   there." spec initial value。
+/// - [`Hidden`](Self::Hidden) — "The box's content is clipped to its padding
+///   box and the UA must not provide any scrolling user interface to view
+///   content outside the clipping region."
+/// - [`Clip`](Self::Clip) — "The box's content is clipped to its overflow
+///   clip edge and no scrolling user interface should be provided. Unlike
+///   hidden, overflow: clip forbids scrolling entirely."
+/// - [`Scroll`](Self::Scroll) — "The content is clipped to the padding box,
+///   but can be scrolled into view and the box is a scroll container."
+/// - [`Auto`](Self::Auto) — "Like scroll when the box has scrollable
+///   overflow; like hidden otherwise."
+///
+/// # Scope carving (g04 3-category)
+///
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
+/// - **(a) spec-invalid**: 未知 keyword は silent drop = `None`。
+/// - **Non-goal**: `overflow-block` / `overflow-inline` logical longhand
+///   (spec §3.1 propdef が同時に定義するが、raikiri-style は writing-mode
+///   未実装のため物理 axis (x/y) にのみ写像する —
+///   `crates/raikiri-html/src/ua/minimal.css` の `hr` rule comment が
+///   `margin-block`/`margin-inline` について述べる carve out と同型の判断)。
+///
+/// 37n sibling [`BoxSizing`] / [`Direction`] と同じ convention で `Default`
+/// を derive しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`]) が [`OverflowValue::Visible`]
+/// を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverflowValue {
+    /// `visible` — spec initial value。
+    Visible,
+    /// `hidden`。
+    Hidden,
+    /// `clip`。
+    Clip,
+    /// `scroll`。
+    Scroll,
+    /// `auto`。
+    Auto,
+}
+
+/// `overflow-x` + `overflow-y` の pair holder (raikiri-spike-cmd3)。
+///
+/// [`Sides<T>`] (4-side box-model holder) の 2-axis sibling。`overflow`
+/// shorthand の 1-2 value expansion (CSS Overflow 3 §3.1
+/// `<'overflow-block'>{1,2}`、[`OverflowValue`] doc の Non-goal 節が説明する
+/// とおり本 crate は物理 axis にそのまま写像する) と、cross-axis の
+/// computed-value coupling ([`resolve_overflow`]) の両方が x/y を同時に
+/// 読み書きするため、独立した 2 field ([`SpecifiedValues`]/[`ComputedValues`]
+/// 直下の scalar field 2 つ) ではなく 1 struct に bundle する —
+/// [`ComputedValues::border`] が `border-*-style` / `border-*-width` の
+/// 同時参照のため `Sides<Border>` に bundle しているのと同型の設計判断
+/// ([`crate::resolve::resolve_border`] doc 参照)。
+///
+/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
+/// [`ComputedValues`]: crate::computed::ComputedValues
+/// [`ComputedValues::border`]: crate::computed::ComputedValues::border
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverflowXY {
+    /// `overflow-x` に相当する axis。
+    pub x: OverflowValue,
+    /// `overflow-y` に相当する axis。
+    pub y: OverflowValue,
+}
+
+impl OverflowXY {
+    /// x/y を同じ値で埋める constructor — [`Sides::all`] の 2-axis 版。
+    /// `overflow: <value>` の 1-value shorthand expansion (CSS Overflow 3
+    /// §3.1 "If the second value is omitted, it is copied from the first.")
+    /// と spec initial value (両 axis に `visible` を配る) の両方で使う。
+    pub const fn both(v: OverflowValue) -> Self {
+        Self { x: v, y: v }
+    }
+}
+
+/// `overflow-x` / `overflow-y` の cross-axis computed-value coupling を解決する
+/// (raikiri-spike-cmd3、CSS Overflow 3 §3.1、2026-08-11 WebFetch 確認済み
+/// verbatim):
+///
+/// > The visible/clip values of overflow compute to auto/hidden
+/// > (respectively) if one of overflow-x or overflow-y is neither visible nor
+/// > clip.
+///
+/// # Per-axis reading vs the spec's whole-pair phrasing
+///
+/// The quoted rule is phrased over the whole pair ("if **one of**
+/// overflow-x or overflow-y is neither visible nor clip"), but this function
+/// implements it as two independent per-axis checks (`axis` below: rewrite
+/// `this` iff `other` is neither visible nor clip). The two readings agree:
+/// the whole-pair condition is "the axis being tested is visible/clip, AND
+/// the *other* axis is neither" (if the axis under test is itself neither
+/// visible nor clip, [`axis`] has nothing to rewrite regardless of what the
+/// condition evaluates to) — which is exactly the per-axis check applied
+/// independently to each of the two axes.
+///
+/// 同一 node の 2 property (`overflow-x` / `overflow-y`) が互いの computed
+/// value を決める **same-node cross-field dependency** —
+/// [`resolve_text_align_match_parent`] (親の computed 値に依存) とは異なり、
+/// 依存先は自 node 内の**もう一方の axis**のみ。
+/// [`crate::resolve::resolve_border`] の style→width gating
+/// (`border-*-style` が `border-*-width` の computed value を決める) と同型の
+/// 「同一 node 内の sibling property が computed value を決める」パターンで
+/// あり、両方とも **phase 3** (絶対化) で解決する — element 経路は
+/// [`crate::specified::SpecifiedValues::finalize`] (内部の `absolutize_with`)、
+/// page 経路は [`crate::page::cascade_page`] の phase 3 (`page_context_overflow_pair`
+/// で両 axis の winner を先に集めてから本関数へ渡す)。
+///
+/// `pub(crate)` — 呼び手は `specified` / `page` の 2 module のみ。
+pub(crate) fn resolve_overflow(specified: OverflowXY) -> OverflowXY {
+    /// 1 axis 分の解決。`other` が "neither visible nor clip" (= hidden /
+    /// scroll / auto のいずれか) なら `this` の `visible`→`auto` /
+    /// `clip`→`hidden` を適用する。判定条件を「other が visible/clip では
+    /// ない」の否定形で書くのは、[`OverflowValue`] が `#[non_exhaustive]` な
+    /// ため将来 variant が増えても (allowlist 漏れで) 誤って gate しない
+    /// fail-safe な形にするため — `resolve_border` の未知 `BorderStyle`
+    /// variant を「visible 側」に倒す fail-safe と同じ判断。
+    fn axis(this: OverflowValue, other: OverflowValue) -> OverflowValue {
+        let other_is_neither_visible_nor_clip =
+            !matches!(other, OverflowValue::Visible | OverflowValue::Clip);
+        if !other_is_neither_visible_nor_clip {
+            return this;
+        }
+        match this {
+            OverflowValue::Visible => OverflowValue::Auto,
+            OverflowValue::Clip => OverflowValue::Hidden,
+            same => same,
+        }
+    }
+    OverflowXY {
+        x: axis(specified.x, specified.y),
+        y: axis(specified.y, specified.x),
+    }
+}
+
 /// `text-align: match-parent` の解決 (CSS Text 3 §6.1
 /// `#valdef-text-align-match-parent`
 /// <https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent> verbatim):
@@ -2214,6 +2366,37 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照)
     Direction(Direction),
+    /// `overflow-x: visible | hidden | clip | scroll | auto` —
+    /// **non-inherited**、initial: [`OverflowValue::Visible`] (CSS Overflow 3
+    /// §3.1 <https://www.w3.org/TR/css-overflow-3/#overflow-properties>)。
+    /// computed value は同一 node の `overflow-y` に依存しうる —
+    /// [`resolve_overflow`] 参照 (単純代入ではない、[`crate::cascade::apply_value`]
+    /// の本 variant arm doc も参照)。
+    /// (raikiri-spike-cmd3、末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照)
+    OverflowX(OverflowValue),
+    /// `overflow-y: visible | hidden | clip | scroll | auto` —
+    /// [`Self::OverflowX`] と同 grammar / initial / non-inherited、逆 axis。
+    /// (raikiri-spike-cmd3、末尾配置は [`Self::OverflowX`] と同理由)
+    OverflowY(OverflowValue),
+    /// `overflow: <'overflow-block'>{1,2}` shorthand — CSS Overflow 3 §3.1
+    /// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>。1 value
+    /// は両 axis、2 value は 1st=x, 2nd=y ([`OverflowXY`] doc 参照、spec は
+    /// logical `overflow-block`/`overflow-inline` に写像するが raikiri-style
+    /// は writing-mode 未実装のため物理 axis にそのまま写像する —
+    /// [`OverflowValue`] doc の Non-goal 節と同型の carve out)。
+    ///
+    /// **element cascade 段でこの variant は観測されない**:
+    /// [`Self::Padding`] と同型、[`crate::rule::expand_shorthand_into`] が
+    /// parse 出口と element cascade 入口の両方で
+    /// [`OverflowX`](Self::OverflowX) / [`OverflowY`](Self::OverflowY) の 2
+    /// longhand に展開するため (CSS Cascading L4 §3 "Shorthand Properties"
+    /// <https://www.w3.org/TR/css-cascade-4/#shorthand> 準拠)。万一到達した
+    /// 場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
+    /// — [`Self::Padding`] doc と同じ framing、詳細は同 doc 参照。
+    /// (raikiri-spike-cmd3、末尾配置は [`Self::OverflowX`] と同理由)
+    Overflow(OverflowXY),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -2338,6 +2521,13 @@ pub enum PropertyKey {
     // variants carry no per-variant docs per crate convention). 末尾配置の
     // 理由は PropertyValue::Direction の doc 参照。
     Direction,
+    // overflow-x / overflow-y longhand + overflow shorthand — raikiri-spike-cmd3
+    // (CSS Overflow 3 §3.1、semantics on the matching PropertyValue::Overflow*
+    // variants; sibling PropertyKey variants carry no per-variant docs per
+    // crate convention). 末尾配置の理由は PropertyValue::OverflowX の doc 参照。
+    OverflowX,
+    OverflowY,
+    Overflow,
 }
 
 impl PropertyValue {
@@ -2393,6 +2583,9 @@ impl PropertyValue {
             PropertyValue::Height(_) => PropertyKey::Height,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
             PropertyValue::Direction(_) => PropertyKey::Direction,
+            PropertyValue::OverflowX(_) => PropertyKey::OverflowX,
+            PropertyValue::OverflowY(_) => PropertyKey::OverflowY,
+            PropertyValue::Overflow(_) => PropertyKey::Overflow,
         }
     }
 }
@@ -2561,6 +2754,18 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // value grammar `ltr | rtl`、initial `ltr`、inherited、
         // computed value = specified keyword (`Direction` doc 参照)。
         "direction" => parse_direction(input).map(PropertyValue::Direction),
+        // CSS Overflow 3 §3.1 overflow-x/overflow-y physical longhand
+        // (raikiri-spike-cmd3). grammar: visible | hidden | clip | scroll |
+        // auto, initial visible, not inherited. cross-axis computed-value
+        // coupling is applied in phase 3 (`resolve_overflow`), not here —
+        // this only carries the specified keyword.
+        "overflow-x" => parse_overflow_value(input).map(PropertyValue::OverflowX),
+        "overflow-y" => parse_overflow_value(input).map(PropertyValue::OverflowY),
+        // CSS Overflow 3 §3.1 overflow shorthand: `<'overflow-block'>{1,2}`
+        // (raikiri-spike-cmd3). 1-2 value expansion via
+        // parse_overflow_shorthand (mapped to physical x/y — `OverflowValue`
+        // doc's Non-goal note).
+        "overflow" => parse_overflow_shorthand(input).map(PropertyValue::Overflow),
         _ => None,
     }
 }
@@ -3903,6 +4108,65 @@ fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
         "rtl" => Some(Direction::Rtl),
         _ => None,
     }
+}
+
+/// `overflow-x` / `overflow-y: <ident>` を parse する (raikiri-spike-cmd3、
+/// CSS Overflow 3 §3.1 <https://www.w3.org/TR/css-overflow-3/#overflow-properties>)。
+///
+/// Spec value grammar (§3.1): `visible | hidden | clip | scroll | auto`。
+/// ASCII case-insensitive で ident を比較する (37n sibling [`parse_box_sizing`] /
+/// [`parse_direction`] と同 flavor)。
+///
+/// # Scope carving (g04 3-category、[`OverflowValue`] doc-comment に詳述)
+///
+/// - **(a) spec-invalid**: 上記 5 keyword 以外の ident は silent drop = `None`。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
+fn parse_overflow_value(input: &mut Parser<'_, '_>) -> Option<OverflowValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "visible" => Some(OverflowValue::Visible),
+        "hidden" => Some(OverflowValue::Hidden),
+        "clip" => Some(OverflowValue::Clip),
+        "scroll" => Some(OverflowValue::Scroll),
+        "auto" => Some(OverflowValue::Auto),
+        _ => None,
+    }
+}
+
+/// `overflow: <'overflow-block'>{1,2}` shorthand — 1-2 value expansion
+/// (raikiri-spike-cmd3)。
+///
+/// grammar reference: CSS Overflow 3 §3.1
+/// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>。
+///
+/// # Expansion rule (spec verbatim, §3.1)
+///
+/// "The overflow property is a shorthand property that sets the specified
+/// values of overflow-x and overflow-y in that order. If the second value is
+/// omitted, it is copied from the first."
+///
+/// [`parse_margin_shorthand`] と同じ try_parse 積み上げ pattern の 2-value
+/// 版 (1-4 value ではなく 1-2 value であること以外は同型)。
+///
+/// # Trailing garbage handling
+///
+/// 3rd value (`overflow: hidden scroll auto`) は本 helper では 2 value 消費
+/// して残り 1 token を unconsumed で return する。caller の
+/// [`mod@crate::rule`] の `DeclParser` の
+/// [`cssparser::DeclarationParser::parse_value`] impl が `expect_exhausted`
+/// で余剰 token を検知して declaration ごと drop する
+/// ([`parse_margin_shorthand`] doc の「Trailing garbage handling」節と同じ
+/// 責務分担)。
+fn parse_overflow_shorthand(input: &mut Parser<'_, '_>) -> Option<OverflowXY> {
+    let v1 = parse_overflow_value(input)?;
+    // 2nd value 不在 → 1 value case: 両 axis に spread (§3.1 "If the second
+    // value is omitted, it is copied from the first.")。
+    let Some(v2) = input.try_parse(|i| parse_overflow_value(i).ok_or(())).ok() else {
+        return Some(OverflowXY::both(v1));
+    };
+    Some(OverflowXY { x: v1, y: v2 })
 }
 
 /// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
@@ -7888,6 +8152,258 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::Direction);
         let v = PropertyValue::Direction(Direction::Rtl);
         assert_eq!(v.key(), PropertyKey::Direction);
+    }
+
+    // ── overflow-x / overflow-y / overflow (CSS Overflow 3 §3.1,
+    // raikiri-spike-cmd3) ──
+    //
+    // Value grammar (§3.1 spec verbatim): visible | hidden | clip | scroll |
+    // auto. Initial: visible / Inherited: no. `overflow` shorthand grammar:
+    // `<'overflow-block'>{1,2}` (mapped to physical x/y — see `OverflowValue`
+    // doc's Non-goal note).
+
+    #[test]
+    fn overflow_x_parse_all_five_keywords() {
+        assert_eq!(
+            parse("visible", "overflow-x"),
+            Some(PropertyValue::OverflowX(OverflowValue::Visible))
+        );
+        assert_eq!(
+            parse("hidden", "overflow-x"),
+            Some(PropertyValue::OverflowX(OverflowValue::Hidden))
+        );
+        assert_eq!(
+            parse("clip", "overflow-x"),
+            Some(PropertyValue::OverflowX(OverflowValue::Clip))
+        );
+        assert_eq!(
+            parse("scroll", "overflow-x"),
+            Some(PropertyValue::OverflowX(OverflowValue::Scroll))
+        );
+        assert_eq!(
+            parse("auto", "overflow-x"),
+            Some(PropertyValue::OverflowX(OverflowValue::Auto))
+        );
+    }
+
+    #[test]
+    fn overflow_y_parse_all_five_keywords() {
+        // Sibling of `overflow_x_parse_all_five_keywords` — same grammar,
+        // separate `PropertyValue` variant / `PropertyKey`.
+        assert_eq!(
+            parse("visible", "overflow-y"),
+            Some(PropertyValue::OverflowY(OverflowValue::Visible))
+        );
+        assert_eq!(
+            parse("hidden", "overflow-y"),
+            Some(PropertyValue::OverflowY(OverflowValue::Hidden))
+        );
+        assert_eq!(
+            parse("clip", "overflow-y"),
+            Some(PropertyValue::OverflowY(OverflowValue::Clip))
+        );
+        assert_eq!(
+            parse("scroll", "overflow-y"),
+            Some(PropertyValue::OverflowY(OverflowValue::Scroll))
+        );
+        assert_eq!(
+            parse("auto", "overflow-y"),
+            Some(PropertyValue::OverflowY(OverflowValue::Auto))
+        );
+    }
+
+    #[test]
+    fn overflow_is_case_insensitive() {
+        assert_eq!(
+            parse("HIDDEN", "overflow-x"),
+            Some(PropertyValue::OverflowX(OverflowValue::Hidden))
+        );
+        assert_eq!(
+            parse("Auto", "overflow-y"),
+            Some(PropertyValue::OverflowY(OverflowValue::Auto))
+        );
+    }
+
+    #[test]
+    fn overflow_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "overflow-x"), None);
+        assert_eq!(parse("collapse", "overflow-y"), None);
+        // `padding-box` etc. are not part of this property's grammar.
+        assert_eq!(parse("padding-box", "overflow-x"), None);
+    }
+
+    #[test]
+    fn overflow_rejects_css_wide_keyword() {
+        // g04 (b) milestone subset — Epic 7, silent drop (bd raikiri-spike-rzv3,
+        // `PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "overflow-x"), None);
+            assert_eq!(parse(kw, "overflow-y"), None);
+            assert_eq!(parse(kw, "overflow"), None);
+        }
+    }
+
+    #[test]
+    fn overflow_rejects_non_ident() {
+        assert_eq!(parse("16px", "overflow-x"), None);
+        assert_eq!(parse(r#""hidden""#, "overflow-y"), None);
+    }
+
+    #[test]
+    fn overflow_x_key_maps_to_overflow_x_property_key() {
+        let v = PropertyValue::OverflowX(OverflowValue::Hidden);
+        assert_eq!(v.key(), PropertyKey::OverflowX);
+    }
+
+    #[test]
+    fn overflow_y_key_maps_to_overflow_y_property_key() {
+        let v = PropertyValue::OverflowY(OverflowValue::Scroll);
+        assert_eq!(v.key(), PropertyKey::OverflowY);
+    }
+
+    #[test]
+    fn overflow_key_maps_to_overflow_property_key() {
+        let v = PropertyValue::Overflow(OverflowXY::both(OverflowValue::Auto));
+        assert_eq!(v.key(), PropertyKey::Overflow);
+    }
+
+    #[test]
+    fn overflow_shorthand_one_value_spreads_to_both_axes() {
+        // §3.1 "If there is only one component value, it applies to all
+        // sides" (paraphrase of the shared `<'overflow-block'>{1,2}`
+        // expansion rule this crate maps onto physical x/y).
+        assert_eq!(
+            parse("hidden", "overflow"),
+            Some(PropertyValue::Overflow(OverflowXY::both(
+                OverflowValue::Hidden
+            )))
+        );
+    }
+
+    #[test]
+    fn overflow_shorthand_two_values_set_x_then_y() {
+        // §3.1 verbatim: "The overflow property is a shorthand property that
+        // sets the specified values of overflow-x and overflow-y in that
+        // order."
+        assert_eq!(
+            parse("hidden scroll", "overflow"),
+            Some(PropertyValue::Overflow(OverflowXY {
+                x: OverflowValue::Hidden,
+                y: OverflowValue::Scroll,
+            }))
+        );
+    }
+
+    #[test]
+    fn overflow_shorthand_leaves_extra_values_for_caller_exhausted_check() {
+        // Mirrors `margin_shorthand_leaves_extra_values_for_caller_exhausted_check`
+        // — this helper consumes only 2 values; a 3rd is left unconsumed for
+        // the `expect_exhausted` caller in `rule.rs` to reject the whole
+        // declaration. `parse_value` itself does not call `expect_exhausted`,
+        // so this direct call only demonstrates the helper's own consumption,
+        // not the end-to-end drop (that is `rule.rs`'s job, pinned by
+        // `rule::tests::overflow_shorthand_three_values_declaration_dropped`).
+        assert_eq!(
+            parse("hidden scroll auto", "overflow"),
+            Some(PropertyValue::Overflow(OverflowXY {
+                x: OverflowValue::Hidden,
+                y: OverflowValue::Scroll,
+            }))
+        );
+    }
+
+    // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value
+    // coupling, raikiri-spike-cmd3) ──
+    //
+    // Spec verbatim: "The visible/clip values of overflow compute to
+    // auto/hidden (respectively) if one of overflow-x or overflow-y is
+    // neither visible nor clip."
+
+    #[test]
+    fn resolve_overflow_both_visible_is_unaffected() {
+        let pair = OverflowXY::both(OverflowValue::Visible);
+        assert_eq!(resolve_overflow(pair), pair);
+    }
+
+    #[test]
+    fn resolve_overflow_visible_x_computes_to_auto_when_y_is_hidden() {
+        let pair = OverflowXY {
+            x: OverflowValue::Visible,
+            y: OverflowValue::Hidden,
+        };
+        assert_eq!(
+            resolve_overflow(pair),
+            OverflowXY {
+                x: OverflowValue::Auto,
+                y: OverflowValue::Hidden,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_overflow_clip_x_computes_to_hidden_when_y_is_scroll() {
+        let pair = OverflowXY {
+            x: OverflowValue::Clip,
+            y: OverflowValue::Scroll,
+        };
+        assert_eq!(
+            resolve_overflow(pair),
+            OverflowXY {
+                x: OverflowValue::Hidden,
+                y: OverflowValue::Scroll,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_overflow_visible_and_clip_do_not_gate_each_other() {
+        // The gate condition is "the *other* axis is neither visible nor
+        // clip" — `visible` and `clip` are each themselves one of the two
+        // values the gate exempts, so pairing them together never satisfies
+        // the condition for either axis. Both stay as specified.
+        let pair = OverflowXY {
+            x: OverflowValue::Visible,
+            y: OverflowValue::Clip,
+        };
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            resolve_overflow(pair),
+            pair,
+            "visible/clip do not gate each other"
+        );
+    }
+
+    #[test]
+    fn resolve_overflow_non_visible_non_clip_values_pass_through_unchanged() {
+        // `hidden`/`scroll`/`auto` are not rewritten by the coupling
+        // regardless of the other axis's value (the rule only ever rewrites
+        // `visible`/`clip`).
+        for this in [
+            OverflowValue::Hidden,
+            OverflowValue::Scroll,
+            OverflowValue::Auto,
+        ] {
+            for other in [
+                OverflowValue::Visible,
+                OverflowValue::Hidden,
+                OverflowValue::Clip,
+                OverflowValue::Scroll,
+                OverflowValue::Auto,
+            ] {
+                let pair = OverflowXY { x: this, y: other };
+                assert_eq!(resolve_overflow(pair).x, this);
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_overflow_both_non_visible_non_clip_is_unaffected() {
+        let pair = OverflowXY {
+            x: OverflowValue::Scroll,
+            y: OverflowValue::Auto,
+        };
+        assert_eq!(resolve_overflow(pair), pair);
     }
 
     // ── resolve_text_align_match_parent (CSS Text 3 §6.1

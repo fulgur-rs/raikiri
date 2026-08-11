@@ -515,12 +515,24 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
     // 規定し、`display: block` は別の §flow-content-3 (15.3.3) flow-content
     // group 側から来る。raikiri-style には border-style / border-width の
     // 独立 multi-side property、margin-block / margin-inline logical
-    // property、overflow property のいずれも実装がない (overflow gap は
-    // bd raikiri-spike-cmd3 で track、詳細は minimal.css のコメント参照)
+    // property のいずれも実装がない (overflow property 自体は
+    // bd raikiri-spike-cmd3 で実装済み — 詳細は minimal.css のコメント参照)
     // — 本 test は「minimal.css が実際に宣言
     // している *置換後* の rule」の cascade 出力を pin する (border
-    // shorthand + margin shorthand + color、overflow なし)。spec 原文
+    // shorthand + margin shorthand + color)。spec 原文
     // そのものを pin しているわけではない点に注意。
+    //
+    // NB: `computed.overflow` (raikiri-style `OverflowValue`/`OverflowXY`,
+    // bd raikiri-spike-cmd3) is deliberately **not** asserted here — this
+    // module's own doc states its purpose is verifying `use raikiri::…;`
+    // alone suffices, and `OverflowValue`/`OverflowXY` are not (yet)
+    // re-exported at the umbrella crate root (`crates/raikiri/src/lib.rs`
+    // re-exports `Border`/`BorderColor`/`BorderStyle`/`LineHeight` from
+    // `raikiri_style::property` for the same "consumer needs the payload
+    // type to match on this `PropertyValue` variant" reason bd
+    // raikiri-spike-x0dq added those; `OverflowValue`/`OverflowXY` would be
+    // the same shape of follow-up, but deciding the umbrella's public
+    // surface is out of scope here — wall/umbrella).
     // `sectioning_and_grouping_elements_are_display_block_via_ua_css` /
     // `list_elements_are_display_block_via_ua_css` と同様、実 parse ->
     // build_cascaded を通すので非-vacuous (raikiri-html::lib の textual

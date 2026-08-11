@@ -82,7 +82,8 @@ use crate::cascade::{
 };
 use crate::computed::ComputedValues;
 use crate::property::{
-    Border, BorderColor, BorderStyle, Length, LengthOrAuto, PropertyKey, PropertyValue, Sides,
+    Border, BorderColor, BorderStyle, Length, LengthOrAuto, OverflowValue, OverflowXY, PropertyKey,
+    PropertyValue, Sides, resolve_overflow,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
@@ -608,6 +609,34 @@ impl PageCascadeResult {
     ///   property does not apply to the page or page-margin box." So
     ///   `@page { border-top-width: 5px }` alone computes to `0px`, matching
     ///   the element path.
+    /// - `overflow-x` / `overflow-y` (raikiri-spike-cmd3) apply the CSS
+    ///   Overflow 3 §3.1 cross-axis coupling
+    ///   ([`crate::property::resolve_overflow`]) the same way the element
+    ///   path does, with one representational gap this map does not close:
+    ///   the coupling can rewrite an axis based on the *other* axis's value
+    ///   even when the other axis is **undeclared** (e.g. `@page { overflow-x:
+    ///   hidden }` alone should compute `overflow-y` to `auto`, not its raw
+    ///   initial `visible`, on the element path). Because this map only
+    ///   contains *declared* properties (see the "not a full computed-value
+    ///   bag" note below), an undeclared `overflow-y` never becomes a
+    ///   `PropertyKey::OverflowY` entry here, so that computed value is not
+    ///   representable in this map at all — unlike the `border-*-width` /
+    ///   `border-*-style` gate above, which only ever needs the *declared*
+    ///   property's own computed value plus an *undeclared* input's initial
+    ///   value (never the reverse). `overflow`/`overflow-x`/`overflow-y` are
+    ///   **not** in CSS Paged Media 3 Appendix A's page-property-list
+    ///   (verified directly against the raw Appendix A table, 2026-08-11,
+    ///   by reviewer:spec during bd raikiri-spike-cmd3's gate) — same as
+    ///   [`crate::property::DisplayValue`], [`crate::property::PositionValue`],
+    ///   `box-sizing`, `counter-reset`/`counter-increment`, `content`, and
+    ///   `string-set`, all of which this crate already wires into the page
+    ///   cascade beyond Appendix A's CSS 2.1 floor (§6's wording is a
+    ///   positive minimum, not a ceiling, and does not prohibit extending
+    ///   further). So this wiring is intentional, not a scope question.
+    ///   The representational gap itself remains open, tracked by
+    ///   bd raikiri-spike-hrwz: closing it needs [`page_context_overflow_pair`]
+    ///   (or its caller) to synthesize the missing axis's entry rather than
+    ///   silently omitting it.
     /// - `<percentage>` on `padding` / `margin` / `width` / `height` **stays**
     ///   [`Length::Percent`]. The governing rule is the general one — CSS
     ///   Values 4 §5.5.1 "Computation and Combination of `<percentage>`"
@@ -1039,6 +1068,11 @@ pub fn cascade_page(
     // sibling is `SpecifiedValues::finalize`, not `finalize_as_root`. `ctx`
     // (built above, before step 3) already carries this basis.
     let border_styles = page_context_border_styles(&resolved);
+    // The page context's raw `overflow-x`/`overflow-y` winners
+    // (raikiri-spike-cmd3) — mirrors `border_styles` above: the CSS Overflow
+    // 3 §3.1 cross-axis coupling needs both axes at once, and `resolved`'s
+    // iteration below only ever sees one winner at a time.
+    let overflow_pair = page_context_overflow_pair(&resolved);
     // The page context's own `lh` basis (bd raikiri-spike-vxha) — mirrors
     // `font_size` above: `1lh` in `padding`/`margin`/`border-*-width` needs
     // the page context's *own* resolved line-height, not the root's.
@@ -1049,7 +1083,14 @@ pub fn cascade_page(
             .map(|(k, v)| {
                 (
                     k,
-                    absolutize_in_page_context(v, font_size, own_line_height, &ctx, border_styles),
+                    absolutize_in_page_context(
+                        v,
+                        font_size,
+                        own_line_height,
+                        &ctx,
+                        border_styles,
+                        overflow_pair,
+                    ),
                 )
             })
             .collect(),
@@ -1208,6 +1249,31 @@ fn page_context_border_styles(
     sides
 }
 
+/// The page context's raw (pre-[`resolve_overflow`]) `overflow-x` +
+/// `overflow-y` winners — the input to the CSS Overflow 3 §3.1 cross-axis
+/// coupling gate in phase 3 (raikiri-spike-cmd3).
+///
+/// Sibling of [`page_context_border_styles`] — same shape and same rationale
+/// (dispatch on the variant, never on the key; an **absent** declaration
+/// means the initial value, CSS Paged Media 3 §6 "both the page context and
+/// the margin context have a computed value for every property"; `overflow`
+/// is not inherited, CSS Overflow 3 §3.1 "Inherited: no", so the fallback for
+/// an undeclared axis is the property's own initial `visible`, not
+/// `inherited`'s value).
+fn page_context_overflow_pair(
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
+) -> OverflowXY {
+    let mut pair = OverflowXY::both(OverflowValue::Visible);
+    for value in declarations.values() {
+        match value.as_property_value() {
+            PropertyValue::OverflowX(v) => pair.x = *v,
+            PropertyValue::OverflowY(v) => pair.y = *v,
+            _ => {}
+        }
+    }
+    pair
+}
+
 /// **phase 3** for the page context — absolutize one winner against the page
 /// context's own `font-size` and apply the `border-*-width` style gate.
 ///
@@ -1261,12 +1327,21 @@ fn page_context_border_styles(
 /// `padding`/`margin`/`border-*-width` needs this context's *own* resolved
 /// line-height (not the root's — that is `ctx.root_line_height`, used only
 /// for `rlh`).
+///
+/// # `overflow_pair` (raikiri-spike-cmd3)
+///
+/// [`page_context_overflow_pair`]'s output — the page context's raw
+/// `overflow-x`/`overflow-y` winners, threaded in for the same reason
+/// `border_styles` is: CSS Overflow 3 §3.1's cross-axis coupling
+/// ([`resolve_overflow`]) needs *both* axes at once, and this function
+/// otherwise only sees one [`PropertyValue`] winner at a time.
 fn absolutize_in_page_context(
     value: ResolvedAgainstInherited,
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
     border_styles: Sides<BorderStyle>,
+    overflow_pair: OverflowXY,
 ) -> PropertyValue {
     let value = value.into_property_value();
     /// `<length-percentage>` → computed, mapped back into the specified-layer
@@ -1522,6 +1597,29 @@ fn absolutize_in_page_context(
         // ── width / height ────────────────────────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
+        // ── overflow-x / overflow-y (raikiri-spike-cmd3) ────────────────────
+        // CSS Overflow 3 §3.1 cross-axis coupling — this axis's own winner
+        // (`v`) paired with the *other* axis's winner (`overflow_pair`,
+        // [`page_context_overflow_pair`]'s output), same shape as
+        // `border_width` pairing `w` with `border_styles.top` above.
+        PropertyValue::OverflowX(v) => PropertyValue::OverflowX(
+            resolve_overflow(OverflowXY {
+                x: v,
+                y: overflow_pair.y,
+            })
+            .x,
+        ),
+        PropertyValue::OverflowY(v) => PropertyValue::OverflowY(
+            resolve_overflow(OverflowXY {
+                x: overflow_pair.x,
+                y: v,
+            })
+            .y,
+        ),
+        // `overflow` shorthand fall-through (see `Border` above) — unreachable
+        // in practice (`expand_shorthand_into` expands it before this
+        // function ever sees a winner), not a safety net if it were.
+        PropertyValue::Overflow(pair) => PropertyValue::Overflow(resolve_overflow(pair)),
     }
 }
 
@@ -1653,7 +1751,7 @@ mod tests {
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontWeightValue, Length,
-        LengthOrAuto, LineHeight, PositionValue, TextAlign,
+        LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -3087,6 +3185,33 @@ mod tests {
         assert_eq!(styles.left, BorderStyle::None);
     }
 
+    #[test]
+    fn page_context_overflow_pair_collects_both_axes() {
+        // Sibling of `page_context_border_styles_default_to_initial_none`
+        // above — covers `page_context_overflow_pair`'s `OverflowX`/
+        // `OverflowY` match arms (bd raikiri-spike-cmd3) — `resolved`'s
+        // `HashMap` iteration only ever yields one winner at a time, so
+        // both axes need collecting into a single `OverflowXY` before the
+        // CSS Overflow 3 §3.1 cross-axis coupling gate can run in phase 3
+        // (this test only pins the collection step, not the gate itself —
+        // see `property::tests::resolve_overflow_*` for that).
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { overflow-x: hidden; overflow-y: scroll; }",
+            Origin::Author,
+        );
+        let query = PageContextQuery::default();
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OverflowX),
+            Some(&PropertyValue::OverflowX(OverflowValue::Hidden)),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OverflowY),
+            Some(&PropertyValue::OverflowY(OverflowValue::Scroll)),
+        );
+    }
+
     /// Direct exercise of the three **shorthand fall-through arms** of
     /// `absolutize_in_page_context`. They are unreachable through `cascade_page`:
     /// `crate::rule::expand_shorthand_into` runs both at the parse exit // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
@@ -3123,6 +3248,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::Padding(Sides::all(Length::Px(40.0))),
         );
@@ -3135,6 +3261,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Px(32.0)))),
         );
@@ -3151,12 +3278,36 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::Border(Sides::all(Border {
                 width: Length::Px(20.0),
                 style: BorderStyle::Solid,
                 color: BorderColor::CurrentColor,
             })),
+        );
+        // `overflow` shorthand fall-through (raikiri-spike-cmd3) — resolves
+        // against its *own* pair, ignoring the `overflow_pair` parameter
+        // (which describes the longhands, sibling note to the `border` case
+        // above). `y: Hidden` is "neither visible nor clip", so `x: Visible`
+        // computes to `Auto` (CSS Overflow 3 §3.1); `y` itself is unaffected
+        // since `x`'s specified value (`Visible`) does not trigger the gate.
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::Overflow(OverflowXY {
+                    x: OverflowValue::Visible,
+                    y: OverflowValue::Hidden,
+                })),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::Overflow(OverflowXY {
+                x: OverflowValue::Auto,
+                y: OverflowValue::Hidden,
+            }),
         );
     }
 
@@ -3189,6 +3340,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::FontSize(Length::Px(24.0)),
         );
@@ -3201,6 +3353,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::FontSize(Length::Px(20.0 / 1.2)),
         );
@@ -3366,8 +3519,30 @@ mod tests {
     /// 独自の (structurally unreachable な) transform arm を持ち
     /// `phase_3_transformed_variants()` 側に既に数えられているため
     /// (二重計上を避ける、上記関数の doc 参照)。
+    ///
+    /// # `overflow-x` / `overflow-y` / `overflow` は逆方向の例外 (raikiri-spike-cmd3)
+    ///
+    /// bd raikiri-spike-a754 までは「phase 3 が変換する variant」と「raw
+    /// corpus サンプルが specified 層残滓を持つ variant」が偶然 1:1 対応して
+    /// いた — `phase_3_transformed_variants()` の内訳 (`padding` / `margin` /
+    /// `border-*-width` / `width` / `height` / `line-height` /
+    /// `font-size: larger/smaller`) は全て raw サンプルに `Length::Em`/`Rem`/
+    /// `Pt` を使う worst-case payload だったため、変換対象 = 残滓持ち、が
+    /// 常に成立していた。
+    ///
+    /// `overflow-x`/`overflow-y`/`overflow` は CSS Overflow 3 §3.1 の
+    /// cross-axis coupling (`resolve_overflow`) により phase 3 で実際に
+    /// 変換される (`absolutize_in_page_context` の `OverflowX`/`OverflowY`/
+    /// `Overflow` arm、`phase_3_transformed_variants()` に正しく含まれる) が、
+    /// payload は length を運ばない keyword (`OverflowValue`) のみなので raw
+    /// corpus サンプルは `specified_layer_residue` に一切引っかからない
+    /// (同関数の `OverflowX`/`OverflowY`/`Overflow` arm が `None` を返す)。
+    /// この 1:1 対応が初めて崩れた 3 variant — `phase_3_transformed_variants()`
+    /// 側の +3 を打ち消す。
+    const OVERFLOW_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 3;
+
     fn raw_corpus_residue_variants() -> usize {
-        phase_3_transformed_variants() + 3
+        phase_3_transformed_variants() + 3 - OVERFLOW_TRANSFORMED_WITHOUT_RAW_RESIDUE
     }
 
     /// `sample_for` / `ALL_PROPERTY_KEYS` を **1 つの token 列**から生成する
@@ -3458,6 +3633,23 @@ mod tests {
         // No specified/computed distinction for `direction` (computed
         // value = specified value) — any value is "worst case".
         Direction => PropertyValue::Direction(Direction::Rtl),
+        // `Visible` is deliberately the "worst case" here (raikiri-spike-cmd3)
+        // — it is the one value the CSS Overflow 3 §3.1 cross-axis coupling
+        // actually rewrites (`visible` -> `auto`) when the fixed test
+        // `overflow_pair`/pair fixtures used by the corpus-driven tests below
+        // pair it with a non-visible/clip other axis (see
+        // `phase_3_variant_classification_matches_the_documented_counts`).
+        OverflowX => PropertyValue::OverflowX(OverflowValue::Visible),
+        // `Clip` is the other value the coupling rewrites (`clip` -> `hidden`).
+        OverflowY => PropertyValue::OverflowY(OverflowValue::Clip),
+        // Self-contained pair whose own two axes already trigger the coupling
+        // (`x: Visible` paired with `y: Hidden`, a "neither visible nor clip"
+        // value) — the `Overflow` shorthand fall-through arm reads only its
+        // own payload, not the external `overflow_pair` parameter.
+        Overflow => PropertyValue::Overflow(OverflowXY {
+            x: OverflowValue::Visible,
+            y: OverflowValue::Hidden,
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -3612,6 +3804,9 @@ mod tests {
         Height,
         BoxSizing,
         Direction,
+        OverflowX,
+        OverflowY,
+        Overflow,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -3828,7 +4023,17 @@ mod tests {
             | PropertyValue::BorderRightColor(_)
             | PropertyValue::BorderBottomColor(_)
             | PropertyValue::BorderLeftColor(_)
-            | PropertyValue::BoxSizing(_) => None,
+            | PropertyValue::BoxSizing(_)
+            // `OverflowValue` carries no length — raikiri-spike-cmd3's
+            // cross-axis coupling (`resolve_overflow`) is real phase-3 work
+            // (see `absolutize_in_page_context`'s `OverflowX`/`OverflowY`
+            // arms), but has nothing to do with this detector, which is
+            // specifically about *length* residue. See
+            // `OVERFLOW_TRANSFORMED_WITHOUT_RAW_RESIDUE` below for where that
+            // distinction is accounted for.
+            | PropertyValue::OverflowX(_)
+            | PropertyValue::OverflowY(_)
+            | PropertyValue::Overflow(_) => None,
         }
     }
 
@@ -4028,6 +4233,12 @@ mod tests {
         // `Solid` にしておかないと border-*-width が style gate で `0px` に
         // 潰れ、「変換された」判定が gate 由来か絶対化由来か区別できない。
         let styles = Sides::all(BorderStyle::Solid);
+        // Both axes `hidden` (raikiri-spike-cmd3) — "neither visible nor
+        // clip", so it always triggers the CSS Overflow 3 §3.1 coupling for
+        // whichever axis the corpus sample under test is (mirrors `Solid`
+        // above: chosen so "changed" is due to the coupling, not a
+        // coincidence of the fixture).
+        let overflow_pair = OverflowXY::both(OverflowValue::Hidden);
 
         let unchanged = page_corpus()
             .into_iter()
@@ -4038,6 +4249,7 @@ mod tests {
                     None,
                     &ctx,
                     styles,
+                    overflow_pair,
                 ) == *value
             })
             .count();
@@ -4063,11 +4275,12 @@ mod tests {
         let font_size = ComputedLength(20.0);
         let ctx = ResolveContext::new(root.font_size);
         let styles = Sides::all(BorderStyle::Solid);
+        let overflow_pair = OverflowXY::both(OverflowValue::Hidden);
 
         let residues: Vec<(PropertyKey, &'static str)> = page_corpus()
             .into_iter()
             .map(|v| resolve_against_inherited(v, &root, &ctx))
-            .map(|v| absolutize_in_page_context(v, font_size, None, &ctx, styles))
+            .map(|v| absolutize_in_page_context(v, font_size, None, &ctx, styles, overflow_pair))
             .filter_map(|v| specified_layer_residue(&v).map(|r| (v.key(), r)))
             .collect();
 

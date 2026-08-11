@@ -13,8 +13,8 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
-    Sides, TextAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
-    initial_font_family,
+    OverflowValue, OverflowXY, Sides, TextAlign, empty_content_list, empty_counter_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -475,6 +475,34 @@ pub struct ComputedValues {
     ///
     /// (raikiri-spike-0vv.13)
     pub box_sizing: BoxSizing,
+    /// `overflow-x` + `overflow-y`. **non-inherited**, initial:
+    /// [`OverflowXY::both`]`(`[`OverflowValue::Visible`]`)` (CSS Overflow
+    /// Module Level 3 §3.1 "Overflow: the overflow-x, overflow-y,
+    /// overflow-block, overflow-inline, and overflow properties"
+    /// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>, "Initial:
+    /// visible" / "Inherited: no").
+    ///
+    /// Computed value is **not** simply the specified keyword — CSS Overflow
+    /// 3 §3.1 defines a cross-axis coupling ("The visible/clip values of
+    /// overflow compute to auto/hidden (respectively) if one of overflow-x
+    /// or overflow-y is neither visible nor clip"), applied by
+    /// [`resolve_overflow`](crate::property::resolve_overflow) in phase 3.
+    /// Bundled into one [`OverflowXY`] field (rather than two independent
+    /// scalar fields) for the same reason [`Self::border`] bundles
+    /// `border-*-width`/`border-*-style` into [`Sides<ComputedBorder>`] — the
+    /// coupling needs both axes at once ([`OverflowXY`] doc).
+    ///
+    /// # Downstream handoff (future scope, style-scope confined)
+    ///
+    /// This field carries the cascade static side seed only, mirroring
+    /// [`Self::box_sizing`] — the block-formatting-context establishment and
+    /// float-clearing consequences of `overflow != visible` (CSS 2.1 §9.4.1 /
+    /// §9.5) are dom/paint scope and deferred to a follow-up task (see the
+    /// `overflow` UA rule comment in
+    /// `crates/raikiri-html/src/ua/minimal.css`).
+    ///
+    /// (raikiri-spike-cmd3)
+    pub overflow: OverflowXY,
 }
 
 impl ComputedValues {
@@ -549,6 +577,10 @@ impl ComputedValues {
             // CSS Sizing 3 §3.3: box-sizing initial は `content-box`
             // (raikiri-spike-0vv.13)。
             box_sizing: BoxSizing::ContentBox,
+            // CSS Overflow 3 §3.1: overflow-x/overflow-y initial は `visible`
+            // (raikiri-spike-cmd3)。両 axis が `visible` なので cross-axis
+            // coupling (`resolve_overflow`) は initial state では no-op。
+            overflow: OverflowXY::both(OverflowValue::Visible),
         }
     }
 
@@ -562,7 +594,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / width / height / box_sizing)。
+    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow)。
     ///
     /// # 実装 (bd raikiri-spike-zls8 以降は delegation)
     ///
@@ -760,13 +792,23 @@ mod tests {
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),
             box_sizing: BoxSizing::BorderBox,
+            // CSS Overflow 3 §3.1: `Hidden`/`Scroll` — non-initial (`visible`)
+            // pair, and one that is also stable under `resolve_overflow`
+            // (neither axis is `visible`/`clip`, so the cross-axis coupling
+            // is a no-op here) so this fixture stays a plain "non-initial
+            // parent", not an accidental probe of the coupling itself
+            // (raikiri-spike-cmd3).
+            overflow: OverflowXY {
+                x: OverflowValue::Hidden,
+                y: OverflowValue::Scroll,
+            },
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 21 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 22 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -807,6 +849,9 @@ mod tests {
         assert_eq!(child.width, initial.width);
         assert_eq!(child.height, initial.height);
         assert_eq!(child.box_sizing, initial.box_sizing);
+        // CSS Overflow 3 §3.1 (raikiri-spike-cmd3): overflow-x/overflow-y は
+        // non-inherited。
+        assert_eq!(child.overflow, initial.overflow);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。

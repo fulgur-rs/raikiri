@@ -103,12 +103,17 @@ li { display: block; }
  * `direction` (ltr/rtl), but it can't matter here since both physical
  * sides resolve identically).
  *
- * overflow: hidden is dropped — raikiri-style has no `overflow` property
- * implementation at all yet, tracked at bd raikiri-spike-cmd3 (same
- * "implement the fallback, track the gap" precedent as the li
- * display:list-item fallback above (bd raikiri-spike-uhzy)). Note this
- * isn't just about clipping: per CSS 2.1 §9.4.1, `overflow` other than
- * `visible` makes an element establish a new block formatting context,
- * whose §9.5 effect is that hr should clear adjacent floats rather than
- * run under them — cmd3 tracks that divergence too. */
-hr { color: gray; border: 1px inset; margin: 0.5em auto; }
+ * overflow: hidden is included below — raikiri-style implements the
+ * `overflow` property (bd raikiri-spike-cmd3, CSS Overflow Module Level 3
+ * §3.1 shorthand + overflow-x/overflow-y longhands). Note this isn't just
+ * about clipping: per CSS 2.1 §9.4.1, `overflow` other than `visible` makes
+ * an element establish a new block formatting context, whose §9.5 effect is
+ * that hr should clear adjacent floats rather than run under them. That
+ * layout-side consequence (BFC establishment + float-clearing) is NOT yet
+ * wired in raikiri-dom/raikiri-paint — raikiri has no float support at all
+ * (bd raikiri-spike-cmd3 verified 0 hits for `bd search "float"` and no
+ * `float` property parser), so there is nothing yet for a BFC to clear.
+ * Tracked at bd raikiri-spike-spa2 (blocked on float support landing
+ * first), same "implement the fallback, track the gap" precedent as the li
+ * display:list-item fallback above (bd raikiri-spike-uhzy). */
+hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
