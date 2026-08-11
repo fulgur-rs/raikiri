@@ -43,6 +43,7 @@
 mod diag;
 mod node;
 mod running;
+mod target;
 
 pub mod document;
 pub mod dom_impl;
