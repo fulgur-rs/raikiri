@@ -208,6 +208,54 @@ pub trait StyleElement {
     ///
     /// Default handles `"style"` by delegating to
     /// [`Self::inline_style_source`]; overrides must preserve that contract.
+    ///
+    /// **Known gap vs. CSS Selectors L4** (bd raikiri-spike-pp4a): the
+    /// attribute-presence selector form `[foo]`
+    /// (<https://www.w3.org/TR/selectors-4/#attribute-selectors>) is defined
+    /// to match on attribute *presence* alone, independent of value — an
+    /// element with `foo=""` still "has a `foo` attribute" per spec and must
+    /// match `[foo]`. This trait's `attr()` contract collapses `foo=""` into
+    /// `None`, identically to `foo` being wholly absent (both the mock
+    /// (`test_dom.rs`) and the real DOM impl
+    /// (`raikiri-dom::dom_impl::ElementRef::attr`) honor this uniformly), so
+    /// `Component::AttributeInNoNamespaceExists` matching
+    /// (`cascade.rs::match_simple_selectors`), which is built directly on
+    /// `elem.attr(...).is_some()`, cannot observe the distinction: `[foo]`
+    /// will not match `<div foo="">`.
+    ///
+    /// Same root cause, same blast radius: the exact-value form `[foo=""]`
+    /// is affected identically, and for the same reason. Per spec `[foo=""]`
+    /// should match an element carrying `foo=""` (attribute value compares
+    /// equal to the empty string), but `Component::AttributeInNoNamespace`'s
+    /// `match_simple_selectors` arm (`cascade.rs`, the `elem.attr(local_name)
+    /// => None => false` branch) already sees `None` for `foo=""` — it
+    /// cannot distinguish "value is empty" from "attribute absent" any more
+    /// than the `Exists` arm above can, so `[foo=""]` will not match
+    /// `<div foo="">` either.
+    ///
+    /// There is no other `StyleElement` method that exposes raw
+    /// presence-independent-of-value attribute information, so this cannot
+    /// be worked around from within `raikiri-style` alone. Accepted as a
+    /// permanent M1.4+ simplification rather than fixed, because fixing it
+    /// would require changing this trait's contract (e.g. splitting out a
+    /// `has_attr()` that distinguishes absent from present-but-empty, or
+    /// widening `attr()`'s return type) — a `StyleElement` signature change
+    /// that crosses into DOM-impl crate territory (`raikiri-dom`'s
+    /// `impl StyleElement for ElementRef` in `dom_impl.rs`, which owns the
+    /// filtering) and is out of scope for a `raikiri-style`-only change. No
+    /// known real-world content in this repo's test corpus currently relies
+    /// on presence-with-empty-value matching.
+    ///
+    /// The decision to accept this spec divergence as a permanent M1.4+
+    /// baseline (rather than fix it immediately) is formally recorded in
+    /// **bd raikiri-spike-k5y3** (g04 accept/reject category (c),
+    /// "intentional stricter") — this is an accepted-baseline call, not a
+    /// bug being silently tolerated; see that decision for the full
+    /// rationale. Regression-pinned by
+    /// `cascade::tests::attribute_exists_selector_does_not_match_empty_value_attr`
+    /// (the `[foo]` form) and
+    /// `cascade::tests::attribute_exact_match_selector_does_not_match_empty_value_attr`
+    /// (the `[foo=""]` form) — both tests cite bd raikiri-spike-k5y3 too.
     fn attr(&self, local: &str) -> Option<&str> {
         if local == "style" {
             self.inline_style_source()
