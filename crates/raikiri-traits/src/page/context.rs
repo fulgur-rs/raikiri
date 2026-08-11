@@ -101,6 +101,7 @@ use crate::dom::Symbol;
 /// same-depth scopes, not accumulating nesting) — bd raikiri-spike-si32, not
 /// yet landed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CounterStack {
     /// Nested scope frames, outermost first. Empty = the counter has not
     /// been instantiated yet (CSS Lists 3 §4.2: an un-instantiated counter
@@ -123,9 +124,24 @@ impl CounterStack {
     /// non-existent counter" path instantiates it at 0 and then applies the
     /// increment, which is equivalent to starting the new frame at `delta`
     /// directly.
+    ///
+    /// **Saturating, not wrapping/panicking, on overflow** (security lens
+    /// finding on bd raikiri-spike-8ejw.1, user-confirmed 2026-08-11):
+    /// `counter-reset: c 2147483647` followed by `counter-increment: c 1` is
+    /// spec-legal CSS (CSS Lists 3 places no range limit on
+    /// `<integer>`/`<counter-name>` values) and would panic on `+=`'s debug
+    /// overflow check — or silently wrap in release, which is worse (a
+    /// rendered counter value jumping to `i32::MIN`). `i32::saturating_add`
+    /// clamps to `i32::MAX`/`i32::MIN` instead, matching the "fail-closed,
+    /// not fail-silent-wrong" discipline this crate already applies
+    /// elsewhere (原則3). A second, lower-severity finding from the same
+    /// review pass (unbounded frame growth via unbounded nested
+    /// `counter-reset`) is tracked separately as bd raikiri-spike-pc7z,
+    /// gated behind bd raikiri-spike-si32's not-yet-built driver — no fix
+    /// needed here.
     pub fn increment(&mut self, delta: i32) {
         match self.frames.last_mut() {
-            Some(top) => *top += delta,
+            Some(top) => *top = top.saturating_add(delta),
             None => self.frames.push(delta),
         }
     }
@@ -202,6 +218,7 @@ impl CounterStack {
 /// consuming `string()` implementation itself is a future consumer's task,
 /// not this promotion's.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NamedStringState {
     /// The value in effect at the start of the page — `running` as it stood
     /// when [`Self::begin_page`] was last called (CSS GCPM 3 §1.1.2's "entry
@@ -456,6 +473,17 @@ impl PageContext {
                 // assignment entirely — no snapshot slot is fabricated, and
                 // any prior tracked state for `name` is left untouched (see
                 // resolve_content_source's doc "Skipping, not fabricating").
+                //
+                // Convention departure (quality lens, bd raikiri-spike-8ejw.1):
+                // `super::target`'s `ResolveOutcome::Pending` pattern makes
+                // "can't resolve yet" observable to the caller; this arm's
+                // silent skip does not — `apply_directive` returns `()`, so
+                // there is no signal that a StringSet was dropped. Left as-is
+                // deliberately (no driver exists yet to consume a richer
+                // return type — building one now would be speculative), but
+                // this is where the `attr()`/`content()` gap tracked by bd
+                // raikiri-spike-eaaq would need reconsidering if a future
+                // consumer needs to observe silently-dropped assignments.
                 if let Some(resolved) = resolve_content_source(source, &self.counters) {
                     self.strings
                         .entry(name.clone())
@@ -525,6 +553,18 @@ impl PageContext {
     /// Page-boundary hook — forwards to every tracked [`NamedStringState`].
     /// See [`NamedStringState::begin_page`] for why this has no production
     /// caller yet (bd raikiri-spike-si32).
+    ///
+    /// **Lifetime contract** (spec lens, bd raikiri-spike-8ejw.1): only
+    /// `strings` resets here — `counters`, `targets`, `page_index`, and
+    /// `page_name` are deliberately left untouched, since `TargetRegistry`
+    /// is per-*document* (not per-page) and `counters`/`page_index`/
+    /// `page_name` carry forward across the page boundary by design (CSS
+    /// Lists 3 §4's counters are document-scoped, not reset per page). This
+    /// implies a single `PageContext` instance must live for the **whole
+    /// document**, mutated in place across pages (this method plus
+    /// reassigning `page_index`/`page_name` per page) — constructing a fresh
+    /// `PageContext` per page would incorrectly discard `targets` and
+    /// `counters` state that must persist.
     pub fn begin_page(&mut self) {
         for state in self.strings.values_mut() {
             state.begin_page();
@@ -546,15 +586,24 @@ impl PageContext {
     /// `RegisterTarget`. `&mut self`, matching this type's other mutators,
     /// rather than a consuming builder.
     ///
-    /// **Not a violation of the "no per-field accessor" human decision**
-    /// (bd raikiri-spike-8ejw.1 comment #1, which rules out bypassing
-    /// [`Self::apply_directive`] for arbitrary `targets` mutation): this
-    /// setter is the dispatch's own explicitly-authorized alternative for
-    /// *this one* bulk-wiring need (bd raikiri-spike-8ejw.1 dispatch item 4:
-    /// "does `PageContext` itself grow a way to accept a pre-built
-    /// `TargetRegistry`") — narrower in purpose than a general mutable
-    /// accessor like `targets_mut` (which [`Self::targets`]'s doc explains
-    /// was rejected), since it only ever *replaces the whole value*, never
+    /// **Not a violation of the "no per-field accessor" human decision** —
+    /// bd raikiri-spike-8ejw.1's 2026-08-11 06:34 "Human clarification —
+    /// set_targets scope" comment addresses this exact question (raised by
+    /// reviewer:quality against the 03:46 decision's literal text) and
+    /// authorizes `set_targets` as a deliberate, narrower exception:
+    /// "`counters`/`strings`/`running` are built up incrementally,
+    /// directive-by-directive, and the 'single apply_directive entry point'
+    /// rule exists to protect `PageContext`'s internal accumulation
+    /// semantics (counter-stack nesting, 4-snapshot timing) from being
+    /// corrupted by ad-hoc external pokes. `TargetRegistry` is different in
+    /// kind — it's a separately-produced, already-fully-encapsulated type
+    /// (its own pub methods, its own invariants) built in bulk by bd
+    /// raikiri-spike-0nyv's dom-side walker, not incrementally accumulated
+    /// by `PageContext` itself. A bulk transfer method for it doesn't create
+    /// the same risk the no-per-field-accessor rule was written to
+    /// prevent." Also narrower in purpose than a general mutable accessor
+    /// like `targets_mut` (which [`Self::targets`]'s doc explains was
+    /// rejected), since it only ever *replaces the whole value*, never
     /// exposes the live registry for arbitrary external mutation.
     pub fn set_targets(&mut self, targets: TargetRegistry) {
         self.targets = targets;
@@ -630,6 +679,25 @@ mod tests {
             stack.reset(10);
             stack.increment(5);
             assert_eq!(stack.values(), &[0, 15]);
+        }
+
+        #[test]
+        fn increment_saturates_instead_of_panicking_or_wrapping_on_overflow() {
+            // Security lens regression pin (bd raikiri-spike-8ejw.1,
+            // user-confirmed 2026-08-11): `counter-reset: c 2147483647;
+            // counter-increment: c 1` is spec-legal CSS. Must saturate at
+            // i32::MAX, not panic (debug builds) or wrap to i32::MIN
+            // (release builds).
+            let mut stack = CounterStack::default();
+            stack.reset(i32::MAX);
+            stack.increment(1);
+            assert_eq!(stack.current(), Some(i32::MAX));
+
+            // Symmetric check on the negative side.
+            let mut stack = CounterStack::default();
+            stack.reset(i32::MIN);
+            stack.increment(-1);
+            assert_eq!(stack.current(), Some(i32::MIN));
         }
 
         #[test]
@@ -1140,6 +1208,42 @@ mod tests {
             // Missing counter on an existing (registered) target resolves
             // immediately to "0", proving #ch1 landed via set_targets.
             assert_eq!(out, crate::page::ResolveOutcome::Resolved("0".to_owned()));
+        }
+
+        #[test]
+        fn set_targets_after_register_target_wipes_the_earlier_registration() {
+            // Spec lens regression pin (bd raikiri-spike-8ejw.1): the
+            // apply_directive RegisterTarget arm's doc documents that
+            // set_targets called AFTER a prior RegisterTarget directive is a
+            // wholesale wipe, not an order-independent merge — only the
+            // reverse ordering (set_targets first) had a test. This pins the
+            // other direction: a fragment registered via apply_directive
+            // must NOT survive a later set_targets call whose registry
+            // doesn't contain it.
+            let mut ctx = PageContext::default();
+            ctx.apply_directive(&GcpmDirective::CounterReset {
+                name: Symbol::new("chapter"),
+                value: 1,
+            });
+            ctx.apply_directive(&GcpmDirective::RegisterTarget {
+                fragment_id: Symbol::new("intro"),
+            });
+
+            // A fresh, unrelated registry that never saw "intro".
+            ctx.set_targets(TargetRegistry::new());
+
+            let mut result = ctx.targets().clone();
+            let out = result.resolve_target_counter(
+                "#intro",
+                Symbol::new("chapter"),
+                CounterStyle::Decimal,
+            );
+            assert_eq!(
+                out,
+                crate::page::ResolveOutcome::Pending(0),
+                "set_targets after RegisterTarget must wipe the earlier registration, \
+                 not merge with or preserve it"
+            );
         }
     }
 
