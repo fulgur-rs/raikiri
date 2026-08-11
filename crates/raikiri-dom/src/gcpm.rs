@@ -156,11 +156,14 @@ impl CounterStack {
 /// that point in the walk.
 ///
 /// **Why the counter freeze is required, not optional** — CSS GCPM 3 §1.1.1
-/// "the `string-set` property"
-/// <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>: the content-list
-/// is "evaluated in place ... and the resulting string is stored". A
-/// `counter()`/`counters()` reference inside a `string-set` value must
-/// therefore resolve against the counter values *at the element the
+/// <https://www.w3.org/TR/css-gcpm-3/#setting-named-strings-the-string-set-pro>:
+/// "The content values of named strings are assigned at the point when the
+/// content box of the element is first created (or would have been created
+/// if the element's display value is none)." The spec fixes *when* the
+/// assignment happens; it does not spell out how a `counter()`/`counters()`
+/// reference inside the content-list resolves relative to that instant.
+/// Taking the assignment-time rule at face value, such a reference must
+/// resolve against the counter values in scope *at the element the
 /// `string-set` fired on* — not against whatever the counters have drifted
 /// to by the time some later consumer actually renders the stored value.
 /// Deferring full *text* resolution is fine (see [`NamedStringState`]'s
@@ -221,6 +224,23 @@ pub(crate) struct StringSnapshot {
 /// context (spec: same as `first`, except empty if the string was set by
 /// the very first formatted element on the page) rather than stored as its
 /// own snapshot slot — deliberate, not an oversight.
+///
+/// **None of the 4 keywords reduce to a single stored field read** — a
+/// future `string()` implementation must combine these fields with
+/// page-position context for 2 of the 4 keywords, not just `first-except`:
+/// `first` → `on_page_first_use`, else `on_page_start` (CSS GCPM 3
+/// §1.1.2 <https://www.w3.org/TR/css-gcpm-3/#string-first>: "the value of
+/// the first assignment on the page ... If there is no assignment on the
+/// page, the entry value is used"). `start` → **if the querying element is
+/// the page's first formatted element**, `on_page_first_use`; **otherwise**
+/// `on_page_start` (spec: "If the element is the first element on the
+/// page, the value of the first assignment is used. Otherwise the entry
+/// value is used") — this element-position condition is *not* captured by
+/// this state machine at all and must come from the caller. `last` →
+/// `on_page_last_use`, else `on_page_start` (exit value). `first-except` →
+/// `on_page_first_use.is_some()` ? empty : `on_page_start` (condition is
+/// "the page where the value is assigned", i.e. page-local, not
+/// element-position).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct NamedStringState {
     /// The value in effect at the start of the page — `running` as it stood
