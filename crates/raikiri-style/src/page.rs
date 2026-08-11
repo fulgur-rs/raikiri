@@ -1644,8 +1644,10 @@ mod tests {
     //! says "Author !important > UA !important > Author normal > UA normal",
     //! which contradicts CSS Cascading L4 §"Cascade Origin" (Important order:
     //! Author < User < UA — UA-important wins). The parenthetical
-    //! (`UA_imp=3` > `Author_imp=2`) is spec-correct and matches `cascade_rank`
-    //! and the existing style-rule test
+    //! (`UA_imp` > `Author_imp`, exact `cascade_rank` values shift as origin
+    //! tiers are added — see that function's doc; bd raikiri-spike-wo36
+    //! added a 3rd tier) is spec-correct and matches `cascade_rank` and the
+    //! existing style-rule test
     //! `cascade::tests::important_ua_beats_important_author_display`.
     //! Implementation follows the spec; this test asserts UA `!important` wins.
 
@@ -1740,7 +1742,8 @@ mod tests {
     #[test]
     fn cascade_page_author_normal_beats_ua_normal_regardless_of_stylesheet_add_order() {
         // Author added first, UA second — origin rank (not source order) still
-        // makes Author win because UA-normal rank (0) < Author-normal rank (1).
+        // makes Author win because UA-normal rank < Author-normal rank
+        // (`cascade_rank` doc has the exact values).
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { color: blue }", Origin::Author);
         tree.add_stylesheet("@page { color: red }", Origin::UserAgent);
@@ -1771,7 +1774,8 @@ mod tests {
 
     #[test]
     fn cascade_page_important_author_beats_normal_ua_and_author() {
-        // rank(Author, important) = 2 > rank(Author, normal) = 1 > rank(UA, normal) = 0
+        // rank(Author, important) > rank(Author, normal) > rank(UA, normal)
+        // (`cascade_rank` doc has the exact values).
         let mut tree = RuleTree::empty();
         tree.add_stylesheet("@page { color: green }", Origin::UserAgent);
         tree.add_stylesheet("@page { color: blue }", Origin::Author);

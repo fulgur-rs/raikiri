@@ -13,8 +13,18 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 use crate::{RaikiriSelectorImpl, RaikiriSelectorParser};
 
 /// Cascade origin (CSS Cascading L4 §6.2)。M1 では UserAgent + Author の
-/// 2 段のみ。User origin は Consumer が `extra_stylesheets` 経由で Author
-/// として渡す想定 (spec §M1.4a Non-goals、raikiri-spike-m1.22)。
+/// 2 段のみだった。User origin は今も Consumer が `extra_stylesheets` 経由で
+/// Author として渡す想定のまま (spec §M1.4a Non-goals、raikiri-spike-m1.22)
+/// — 独立した `Origin::User` variant はまだ無い (この残差は bd
+/// raikiri-spike-wo36 の scope item 4、umbrella 側の
+/// `stylesheet_kind_to_origin` 拡張が要るため別 followup)。
+///
+/// bd raikiri-spike-wo36 で 3rd variant [`Origin::AuthorPresentationalHint`]
+/// を追加 — CSS Cascading L5 §6.5 "Precedence of Non-CSS Presentational
+/// Hints" (<https://drafts.csswg.org/css-cascade-5/#preshint>) が定める
+/// "author presentational hint origin" (user origin と author origin の
+/// 間に位置する独立 origin) に対応する。この origin の rank 上の位置付けは
+/// [`crate::cascade::cascade_rank`] の doc 参照。
 ///
 /// `StylesheetKind` (dom-level tag) との対応は raikiri umbrella crate が
 /// cascade orchestration の一部として map する。
@@ -22,6 +32,11 @@ use crate::{RaikiriSelectorImpl, RaikiriSelectorParser};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
     UserAgent,
+    /// CSS Cascading L5 §6.5 "author presentational hint origin"
+    /// (<https://drafts.csswg.org/css-cascade-5/#preshint>) — HTML
+    /// presentational hint (`<img width>`/`<img height>` 等) 用の
+    /// user origin と author origin の間の独立 origin。
+    AuthorPresentationalHint,
     Author,
 }
 
@@ -631,6 +646,10 @@ mod tests {
         fn assert_copy<T: Copy + PartialEq + Eq>() {}
         assert_copy::<Origin>();
         assert_ne!(Origin::UserAgent, Origin::Author);
+        // bd raikiri-spike-wo36: 3rd variant (CSS Cascading L5 §6.5 "author
+        // presentational hint origin") is pairwise distinct from both.
+        assert_ne!(Origin::UserAgent, Origin::AuthorPresentationalHint);
+        assert_ne!(Origin::AuthorPresentationalHint, Origin::Author);
     }
 
     #[test]
