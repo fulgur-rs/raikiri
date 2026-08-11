@@ -44,14 +44,18 @@
 //! `super::target`'s private `format_counter` / `join_counter_stack`
 //! helpers (a documented gap, flagged on bd raikiri-spike-8ejw.1's
 //! 2026-08-11 04:00 comment). Now that this promotion lives *inside*
-//! raikiri-traits, that gap dissolves for real: [`NamedStringState`] here
-//! matches the design doc's `Option<String>` shape exactly, and
-//! [`resolve_content_source`] does full eager resolution at
+//! raikiri-traits, that gap dissolves for the `Named`-counter-style half of
+//! it: [`NamedStringState`] here matches the design doc's `Option<String>`
+//! shape exactly, and `resolve_content_source` does eager resolution at
 //! [`PageContext::apply_directive`] time using those two helpers (widened
 //! from private to `pub(crate)` — see that fn's doc for why `pub(crate)`
 //! rather than full `pub`: [`PageContext`] and `super::target` are sibling
 //! `page` submodules, so a same-crate, narrower-than-`pub` visibility
-//! already suffices; there is no cross-crate need).
+//! already suffices; there is no cross-crate need) *when the content-list is
+//! fully resolvable* — otherwise it skips the assignment (never fabricates
+//! `Some("")`), preserving the dom-local mirror's fail-closed discipline for
+//! the DOM-element-needing half of the original gap (`Attr`/`Content`/etc.
+//! — see `resolve_content_source`'s doc "Skipping, not fabricating").
 //!
 //! **`RegisterTarget` now really mutates `self.targets`** — unlike
 //! `raikiri_dom::gcpm`'s documented no-op (that module doesn't own
@@ -280,8 +284,9 @@ impl NamedStringState {
 /// separate raw snapshot the way the pre-promotion dom-local mirror did (see
 /// module-level doc "Field-shape divergence").
 ///
-/// **Only [`ContentValueItem::Literal`] / `Counter` / `Counters`
-/// resolve to real text here.** Every other variant
+/// **Only [`ContentValueItem::Literal`] / `Counter` / `Counters` are
+/// resolvable here — `None` (skip the assignment) if *any* item in the
+/// content-list is not one of those three.** Every other variant
 /// (`String`/`Element`/`Content`/`Attr`/`TargetCounter`/`TargetCounters`/
 /// `TargetText`/`Image`/`Contents`/`Quote`/`Leader`) needs context this
 /// directive-only resolution path structurally cannot have: DOM element
@@ -290,16 +295,31 @@ impl NamedStringState {
 /// `TargetText` — and [`PageContext::apply_directive`] already holds
 /// `&mut self.targets` exclusively for the *current* directive, so
 /// re-entrant resolution isn't available either), or paint-time layout
-/// machinery (`Image`/`Contents`/`Quote`/`Leader`). Contributing nothing for
-/// those is a fail-closed narrowing (原則3), not a stub bug — same
-/// discipline `raikiri_dom::target`'s "`ContentPart::Content` only" text-part
-/// narrowing already established, and matches the dom-local mirror's
-/// documented rationale for deferring resolution entirely rather than
-/// guessing at wrong text.
+/// machinery (`Image`/`Contents`/`Quote`/`Leader`).
+///
+/// **Skipping, not fabricating `""`, is load-bearing.** [`NamedStringState`]
+/// stores `Option<String>`; `None` and `Some("")` are *not* interchangeable
+/// under CSS GCPM 3 §1.1.2's `string()` keyword rules — `first`/`start`
+/// fall back to the entry value (`on_page_start`/`running` carried from the
+/// previous page) precisely when no on-page assignment happened, and
+/// `first-except` is defined by whether an assignment occurred at all, not
+/// by what it resolved to. Storing `Some("")` for an unresolvable
+/// content-list (e.g. `string-set: chapter attr(data-title)`, the canonical
+/// GCPM running-header idiom) would suppress that fallback and make
+/// `first-except` see a phantom assignment — silently and unrecoverably
+/// wrong, since no downstream consumer can tell "resolved to empty" from
+/// "couldn't resolve" once collapsed to the same `Some("")`. Returning
+/// `None` here so the whole directive is skipped (see
+/// [`PageContext::apply_directive`]'s `StringSet` arm) preserves the same
+/// fail-closed discipline (原則3) the pre-promotion dom-local mirror's
+/// `Option<StringSnapshot>` deferral already established — this promotion
+/// narrows *which* content-lists resolve (the `Named`-counter-style half of
+/// that old gap is fixed, since `format_counter` is reachable now), it does
+/// not change the "don't guess at wrong text" discipline itself.
 fn resolve_content_source(
     source: &ContentSource,
     counters: &HashMap<Symbol, CounterStack>,
-) -> String {
+) -> Option<String> {
     let mut out = String::new();
     for item in &source.items {
         match item {
@@ -339,11 +359,15 @@ fn resolve_content_source(
             | ContentValueItem::Contents
             | ContentValueItem::Quote(_)
             | ContentValueItem::Leader(_) => {
-                // Fail-closed narrowing — see this fn's doc.
+                // Unresolvable in this context — skip the whole assignment
+                // rather than fabricate empty text. See this fn's doc
+                // "Skipping, not fabricating" for why that distinction is
+                // load-bearing.
+                return None;
             }
         }
     }
-    out
+    Some(out)
 }
 
 // ── PageContext ──────────────────────────────────────────────────────────
@@ -398,9 +422,11 @@ impl PageContext {
     /// decision, bd raikiri-spike-8ejw.1). Mirrors
     /// `raikiri_dom::gcpm::PhaseBWalkState::apply_directive`'s dispatch, with
     /// two differences documented on the relevant arms below:
-    /// `StringSet` fully resolves text (module doc "Field-shape
-    /// divergence") and `RegisterTarget` really registers (module doc
-    /// "`RegisterTarget` now really mutates `self.targets`").
+    /// `StringSet` resolves text where possible and otherwise skips the
+    /// assignment (module doc "Field-shape divergence",
+    /// `resolve_content_source`'s doc "Skipping, not fabricating") and
+    /// `RegisterTarget` really registers (module doc "`RegisterTarget` now
+    /// really mutates `self.targets`").
     ///
     /// **Exhaustive same-crate match, no wildcard arm.** [`GcpmDirective`] is
     /// defined in this crate; `#[non_exhaustive]`'s "downstream `match` needs
@@ -426,11 +452,16 @@ impl PageContext {
                 // Resolve against *current* counter state now — see
                 // resolve_content_source's doc for why "now" is correct
                 // ("at assignment time") without a separate raw snapshot.
-                let resolved = resolve_content_source(source, &self.counters);
-                self.strings
-                    .entry(name.clone())
-                    .or_default()
-                    .apply_string_set(resolved);
+                // `None` (an unresolvable content-list item) skips the
+                // assignment entirely — no snapshot slot is fabricated, and
+                // any prior tracked state for `name` is left untouched (see
+                // resolve_content_source's doc "Skipping, not fabricating").
+                if let Some(resolved) = resolve_content_source(source, &self.counters) {
+                    self.strings
+                        .entry(name.clone())
+                        .or_default()
+                        .apply_string_set(resolved);
+                }
             }
             GcpmDirective::RegisterRunning { name, template_id } => {
                 // Insert-or-overwrite — a later RegisterRunning for the same
@@ -450,10 +481,16 @@ impl PageContext {
                 // dedicated DOM walk — see that method's doc.
                 //
                 // TargetRegistry::register is first-wins (entry().or_insert)
-                // by design, so if set_targets already populated this
-                // fragment_id with a fuller TargetInfo (text included), this
-                // arm's counts-only registration is naturally a no-op for
-                // that fragment — no clobbering, regardless of call order.
+                // by design, so IF set_targets already populated this
+                // fragment_id with a fuller TargetInfo (text included)
+                // BEFORE this directive is applied, this arm's counts-only
+                // registration is naturally a no-op for that fragment — no
+                // clobbering *in that call order*. The reverse order is NOT
+                // safe: set_targets is a wholesale replace (see its own
+                // doc), so calling it AFTER this arm has registered
+                // fragments discards every one of them, not just this
+                // fragment_id. Callers driving both paths (a future si32
+                // driver) must call set_targets first.
                 let counters = self
                     .counters
                     .iter()
@@ -491,6 +528,17 @@ impl PageContext {
     /// variant carrying a whole registry, only single-fragment
     /// `RegisterTarget`. `&mut self`, matching this type's other mutators,
     /// rather than a consuming builder.
+    ///
+    /// **Not a violation of the "no per-field accessor" human decision**
+    /// (bd raikiri-spike-8ejw.1 comment #1, which rules out bypassing
+    /// [`Self::apply_directive`] for arbitrary `targets` mutation): this
+    /// setter is the dispatch's own explicitly-authorized alternative for
+    /// *this one* bulk-wiring need (bd raikiri-spike-8ejw.1 dispatch item 4:
+    /// "does `PageContext` itself grow a way to accept a pre-built
+    /// `TargetRegistry`") — narrower in purpose than a general mutable
+    /// accessor like `targets_mut` (which [`Self::targets`]'s doc explains
+    /// was rejected), since it only ever *replaces the whole value*, never
+    /// exposes the live registry for arbitrary external mutation.
     pub fn set_targets(&mut self, targets: TargetRegistry) {
         self.targets = targets;
     }
@@ -678,7 +726,10 @@ mod tests {
         fn literal_only_resolves_verbatim() {
             let source = ContentSource::new(vec![ContentValueItem::Literal("Ch. ".into())]);
             let counters = HashMap::new();
-            assert_eq!(resolve_content_source(&source, &counters), "Ch. ");
+            assert_eq!(
+                resolve_content_source(&source, &counters),
+                Some("Ch. ".to_owned())
+            );
         }
 
         #[test]
@@ -691,7 +742,10 @@ mod tests {
                 name: Symbol::new("chapter"),
                 style: CounterStyle::Decimal,
             }]);
-            assert_eq!(resolve_content_source(&source, &counters), "3");
+            assert_eq!(
+                resolve_content_source(&source, &counters),
+                Some("3".to_owned())
+            );
         }
 
         #[test]
@@ -701,7 +755,33 @@ mod tests {
                 name: Symbol::new("missing"),
                 style: CounterStyle::Decimal,
             }]);
-            assert_eq!(resolve_content_source(&source, &counters), "0");
+            assert_eq!(
+                resolve_content_source(&source, &counters),
+                Some("0".to_owned())
+            );
+        }
+
+        #[test]
+        fn counter_item_named_style_reaches_format_counter() {
+            // Regression pin for the format_counter/join_counter_stack
+            // pub(crate) visibility widening (bd raikiri-spike-8ejw.1 step
+            // 7): CounterStyle::Decimal alone would exercise only
+            // format_decimal, never touching the widened-visibility path. A
+            // Named style forces resolve_content_source through
+            // format_named_counter, proving the widening actually pays off
+            // (not just compiles).
+            let mut counters = HashMap::new();
+            let mut stack = CounterStack::default();
+            stack.reset(3);
+            counters.insert(Symbol::new("chapter"), stack);
+            let source = ContentSource::new(vec![ContentValueItem::Counter {
+                name: Symbol::new("chapter"),
+                style: CounterStyle::Named("upper-roman".into()),
+            }]);
+            assert_eq!(
+                resolve_content_source(&source, &counters),
+                Some("III".to_owned())
+            );
         }
 
         #[test]
@@ -716,7 +796,10 @@ mod tests {
                 separator: ".".into(),
                 style: CounterStyle::Decimal,
             }]);
-            assert_eq!(resolve_content_source(&source, &counters), "1.1");
+            assert_eq!(
+                resolve_content_source(&source, &counters),
+                Some("1.1".to_owned())
+            );
         }
 
         #[test]
@@ -732,11 +815,18 @@ mod tests {
                     style: CounterStyle::Decimal,
                 },
             ]);
-            assert_eq!(resolve_content_source(&source, &counters), "Ch. 2");
+            assert_eq!(
+                resolve_content_source(&source, &counters),
+                Some("Ch. 2".to_owned())
+            );
         }
 
         #[test]
-        fn unresolvable_variant_contributes_empty_string() {
+        fn unresolvable_variant_yields_none_not_fabricated_empty_string() {
+            // See resolve_content_source's doc "Skipping, not fabricating":
+            // Some("") and None are NOT interchangeable under CSS GCPM 3
+            // §1.1.2's string() keyword rules, so an unresolvable item must
+            // skip the whole assignment (None), never contribute "".
             let counters = HashMap::new();
             let source = ContentSource::new(vec![
                 ContentValueItem::Literal("[".into()),
@@ -747,9 +837,9 @@ mod tests {
             ]);
             assert_eq!(
                 resolve_content_source(&source, &counters),
-                "[]",
-                "Attr needs DOM element access unavailable here — contributes nothing, \
-                 not a placeholder or panic"
+                None,
+                "Attr needs DOM element access unavailable here — the whole \
+                 content-list must be skipped, not partially resolved to \"[]\""
             );
         }
     }
@@ -874,6 +964,49 @@ mod tests {
             assert_eq!(
                 ctx.counter(&chapter).and_then(CounterStack::current),
                 Some(103)
+            );
+        }
+
+        #[test]
+        fn string_set_with_unresolvable_item_leaves_no_tracked_state() {
+            // Regression pin for the "skip, don't fabricate Some(\"\")"
+            // fix — see resolve_content_source's doc "Skipping, not
+            // fabricating" for why Some("") would be observably wrong
+            // (CSS GCPM 3 §1.1.2 string() keyword fallback rules).
+            let mut ctx = PageContext::default();
+            let title = Symbol::new("title");
+            ctx.apply_directive(&GcpmDirective::StringSet {
+                name: title.clone(),
+                source: ContentSource::new(vec![ContentValueItem::Attr {
+                    name: Symbol::new("data-title"),
+                }]),
+            });
+            assert_eq!(
+                ctx.string_state(&title),
+                None,
+                "an unresolvable string-set must not create a tracked entry at all"
+            );
+        }
+
+        #[test]
+        fn string_set_with_unresolvable_item_does_not_clobber_prior_resolvable_assignment() {
+            let mut ctx = PageContext::default();
+            let title = Symbol::new("title");
+            ctx.apply_directive(&GcpmDirective::StringSet {
+                name: title.clone(),
+                source: ContentSource::new(vec![ContentValueItem::Literal("Ch. 1".into())]),
+            });
+            ctx.apply_directive(&GcpmDirective::StringSet {
+                name: title.clone(),
+                source: ContentSource::new(vec![ContentValueItem::Attr {
+                    name: Symbol::new("data-title"),
+                }]),
+            });
+            assert_eq!(
+                ctx.string_state(&title).and_then(NamedStringState::running),
+                Some("Ch. 1"),
+                "a later unresolvable string-set must skip entirely, not overwrite \
+                 the prior resolvable assignment with fabricated empty text"
             );
         }
 
