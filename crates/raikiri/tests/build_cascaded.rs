@@ -508,23 +508,23 @@ fn img_width_html_attribute_overridable_by_real_author_stylesheet_through_real_p
 
 #[test]
 fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
-    // bd raikiri-spike-5z86.5 Acceptance: <hr> renders as a horizontal
-    // line. HTML Living Standard §the-hr-element-2 (15.3.11, WebFetch
-    // verified) specifies `hr { color: gray; border-style: inset;
-    // border-width: 1px; margin-block: 0.5em; margin-inline: auto;
-    // overflow: hidden; }`, plus `display: block` from the separate
-    // §flow-content-3 (15.3.3) flow-content group. raikiri-style has no
-    // standalone `border-style` / `border-width` multi-side properties, no
-    // `margin-block` / `margin-inline` logical properties, and no
-    // `overflow` property at all (see minimal.css comment for the full
-    // rationale) — this test pins the *substituted* rule's cascade output
-    // (border shorthand + physical margin longhands + color, no
-    // overflow), which is what minimal.css actually declares, not the
-    // literal spec text. Like `sectioning_and_grouping_elements_are_
-    // display_block_via_ua_css` / `list_elements_are_display_block_via_
-    // ua_css`, this drives a real parse -> build_cascaded so it is
-    // non-vacuous (the raikiri-html::lib textual scan only confirms the
-    // rule text exists, not that cssparser accepts it).
+    // bd raikiri-spike-5z86.5 Acceptance: <hr> が水平線として render される。
+    // HTML Living Standard §the-hr-element-2 (15.3.11、WebFetch 2026-08-11
+    // 確認) は `hr { color: gray; border-style: inset; border-width: 1px;
+    // margin-block: 0.5em; margin-inline: auto; overflow: hidden; }` を
+    // 規定し、`display: block` は別の §flow-content-3 (15.3.3) flow-content
+    // group 側から来る。raikiri-style には border-style / border-width の
+    // 独立 multi-side property、margin-block / margin-inline logical
+    // property、overflow property のいずれも実装がない (詳細は
+    // minimal.css のコメント参照) — 本 test は「minimal.css が実際に宣言
+    // している *置換後* の rule」の cascade 出力を pin する (border
+    // shorthand + margin shorthand + color、overflow なし)。spec 原文
+    // そのものを pin しているわけではない点に注意。
+    // `sectioning_and_grouping_elements_are_display_block_via_ua_css` /
+    // `list_elements_are_display_block_via_ua_css` と同様、実 parse ->
+    // build_cascaded を通すので非-vacuous (raikiri-html::lib の textual
+    // scan は rule 文字列の存在しか確認せず、cssparser が実際に accept
+    // するかどうかは見ていない)。
     let doc = parse_html("<html><body><hr></body></html>");
     let result = build_cascaded(&doc);
 
@@ -537,10 +537,11 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
         "<hr> should be display: block from the flow-content UA CSS group"
     );
 
-    // color: gray — load-bearing, not decorative: the `border` shorthand
-    // below omits its color component, which defaults to currentcolor, so
-    // this is what actually makes the border paint spec gray instead of
-    // whatever `color` this hr would otherwise inherit.
+    // color: gray は decorative ではなく load-bearing — 下の `border`
+    // shorthand は color component を省略しており currentcolor に
+    // default するため、border を spec 通り gray に塗らせているのは
+    // 実質この color 宣言。省略すると、この hr が本来 inherit するはずの
+    // 別の `color` で border が塗られてしまう。
     assert_eq!(
         computed.color,
         raikiri::CssColor {
@@ -552,11 +553,11 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
         "<hr> color should resolve to CSS named color `gray`"
     );
 
-    // border-style: inset + border-width: 1px on all 4 sides, via the
-    // `border: 1px inset` shorthand substitution (raikiri-style has no
-    // standalone border-style/border-width properties). Checking all 4
-    // sides (not just top) confirms the shorthand's `Sides::all` fan-out
-    // actually happened.
+    // border-style: inset + border-width: 1px を 4 side 全てに — `border:
+    // 1px inset` shorthand 経由の置換 (raikiri-style には独立の
+    // border-style/border-width property がない)。top だけでなく 4 side
+    // 全てを検査することで、shorthand の `Sides::all` fan-out が実際に
+    // 起きたことを確認する。
     for (side_name, side) in [
         ("top", &computed.border.top),
         ("right", &computed.border.right),
@@ -581,9 +582,10 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
         );
     }
 
-    // margin-block: 0.5em fallback (margin-top/margin-bottom physical
-    // longhands, raikiri-style has no margin-block logical property).
-    // 0.5em resolves against the inherited (UA-default) 16px font-size.
+    // margin-block: 0.5em の fallback (margin shorthand 経由で
+    // margin-top/margin-bottom 物理 longhand に展開される — raikiri-style
+    // には margin-block logical property がない)。0.5em は inherit
+    // された (UA-default の) 16px font-size 基準で解決される。
     assert_eq!(
         computed.margin.top,
         raikiri::ComputedLengthPercentageOrAuto::Px(8.0),
@@ -597,8 +599,9 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
          fallback"
     );
 
-    // margin-inline: auto fallback (margin-left/margin-right physical
-    // longhands, raikiri-style has no margin-inline logical property).
+    // margin-inline: auto の fallback (margin shorthand 経由で
+    // margin-left/margin-right 物理 longhand に展開される —
+    // raikiri-style には margin-inline logical property がない)。
     assert_eq!(
         computed.margin.left,
         raikiri::ComputedLengthPercentageOrAuto::Auto,

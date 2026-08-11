@@ -83,26 +83,32 @@ li { display: block; }
  * border-{top,right,bottom,left}-{width,style} physical longhands and the
  * combined `border` shorthand — CSS Backgrounds 3 §3.2/§3.3 define
  * border-style/border-width as real spec properties, but this crate has
- * no parser arm for either bare name; raikiri-spike-5z86.5 verification).
- * `border: 1px inset` below reaches the same 4-side width/style result
- * through the shorthand instead; the shorthand's omitted color component
- * defaults to currentcolor (CSS Backgrounds 3 §3.4 initial), so
- * `color: gray` is included above it and is load-bearing, not decorative
- * — dropping it would paint the border in whatever `color` this hr
- * inherits instead of spec gray.
+ * no parser arm for either bare name). `border: 1px inset` below reaches
+ * the same 4-side width/style result through the shorthand instead; the
+ * shorthand's omitted color component defaults to currentcolor (CSS
+ * Backgrounds 3 §3.4 initial), so `color: gray` is included above it and
+ * is load-bearing, not decorative — dropping it would paint the border in
+ * whatever `color` this hr inherits instead of spec gray.
  *
  * margin-block / margin-inline are logical properties raikiri-style does
  * not implement (only margin-{top,right,bottom,left} physical longhands
- * exist). Falls back to the physical equivalents: margin-top /
- * margin-bottom for the block axis (raikiri-style has no writing-mode
- * support at all yet, so physical block-axis == logical block-axis
- * unconditionally here), and margin-left / margin-right: auto for the
- * inline axis (both sides get the same auto value, so the
- * logical->physical mapping is symmetric regardless of which `direction`
- * — ltr or rtl, raikiri-style does implement `direction` — applies).
+ * and the physical `margin` shorthand exist). `margin: 0.5em auto;`
+ * below reaches the physical equivalents through the shorthand's 2-value
+ * form (top/bottom = 0.5em, right/left = auto): margin-top/margin-bottom
+ * for the block axis (raikiri-style has no writing-mode support at all
+ * yet, so physical block-axis == logical block-axis unconditionally
+ * here), and margin-left/margin-right: auto for the inline axis (both
+ * sides get the same auto value, so the logical->physical mapping is
+ * symmetric regardless of `direction` — raikiri-style does implement
+ * `direction` (ltr/rtl), but it can't matter here since both physical
+ * sides resolve identically).
  *
  * overflow: hidden is dropped — raikiri-style has no `overflow` property
- * implementation at all yet (out of scope for this rule set, same
+ * implementation at all yet, tracked at bd raikiri-spike-cmd3 (same
  * "implement the fallback, track the gap" precedent as the li
- * display:list-item fallback above: bd raikiri-spike-uhzy). */
-hr { color: gray; border: 1px inset; margin-top: 0.5em; margin-bottom: 0.5em; margin-left: auto; margin-right: auto; }
+ * display:list-item fallback above (bd raikiri-spike-uhzy)). Note this
+ * isn't just about clipping: per CSS 2.1 §9.4.1, `overflow` other than
+ * `visible` makes an element establish a new block formatting context,
+ * whose §9.5 effect is that hr should clear adjacent floats rather than
+ * run under them — cmd3 tracks that divergence too. */
+hr { color: gray; border: 1px inset; margin: 0.5em auto; }
