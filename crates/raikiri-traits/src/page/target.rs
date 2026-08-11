@@ -23,17 +23,31 @@
 //!     pending_slots: Vec<TargetSlot>,
 //! }
 //! ```
-//! `next_sequence: u32` is an additive internal-only field stamping stable
-//! ids on pending slots; §7.2 does not enumerate it because
-//! `TargetSlotId = (page_index, sequence)` (§11.2 Finding #4) fixes the paired
-//! shape once PageContext / page_index plumbing lands (bd
-//! raikiri-spike-oqpc). Until then the sequence alone is the stable handle.
+//! `next_sequence: u32` and `page_index: u32` are additive internal-only
+//! fields; §7.2 does not enumerate either. Together they stamp every
+//! pending slot with its stable handle,
+//! [`TargetSlotId`] = `(page_index, sequence)` (design §7.4 line 2098 /
+//! §7.6 lines 2312-2317, Finding #4, landed bd raikiri-spike-oqpc, paired
+//! with the `PageContext::page_index` field bd raikiri-spike-8ejw.1 landed).
+//! `page_index` defaults to 0 and advances via
+//! [`TargetRegistry::begin_page`], which also resets `next_sequence` to 0 —
+//! design §7.6 "Slot ID の安定性保証" states `sequence` is "page 内
+//! 0-indexed" (page-local, not document-wide), so a page-boundary call must
+//! restart the local count. Calling contract: `begin_page` once per page,
+//! with a monotonically non-decreasing `page_index` (same-index calls are a
+//! no-op; a redundant same-page call is fine, a backward call is not),
+//! before the first `resolve_target_*` dispatch for that page — enforced at
+//! runtime by an `assert!` in [`TargetRegistry::begin_page`] (bd
+//! raikiri-spike-oqpc security-lens finding) since a backward `page_index`
+//! would silently mint a duplicate [`TargetSlotId`] for a still-pending
+//! slot from the earlier visit to that page.
 
 use std::collections::HashMap;
 
 use raikiri_style::property::{ContentComponent, ContentPart, CounterStyle};
 
 use crate::dom::Symbol;
+use crate::error::TargetSlotId;
 
 /// Runtime registry for GCPM `target-*()` / `element()` fragment references.
 ///
@@ -62,9 +76,18 @@ pub struct TargetRegistry {
     /// the queue after a flush (streaming intent: a later batch or
     /// finish_render pass may still land them; see design §7.4).
     pending_slots: Vec<TargetSlot>,
-    /// Monotonic sequence stamp for pending slots. Not in the §7.2 shape —
-    /// see module-level "canonical shape" note.
+    /// Page-local monotonic sequence stamp for pending slots, reset to 0 by
+    /// [`Self::begin_page`]. Not in the §7.2 shape — see module-level
+    /// "canonical shape" note.
     next_sequence: u32,
+    /// 0-based index of the page whose target-* dispatches are currently
+    /// being recorded, advanced via [`Self::begin_page`]. Not in the §7.2
+    /// shape — see module-level "canonical shape" note. Defaults to 0
+    /// (correct for a single-page document; a caller that never advances it
+    /// tags every slot to page 0, which is harmless — just uninformative —
+    /// until a real per-page driver exists, same gap
+    /// `PageContext::begin_page`'s doc flags).
+    page_index: u32,
 }
 
 /// Resolved target metadata — the counter snapshot and text parts captured
@@ -200,18 +223,24 @@ pub(crate) enum TargetRequest {
 
 /// Unresolved content-value site — a forward reference to a fragment that
 /// hasn't been walked yet. Crate-private: only observed externally through
-/// [`ResolveOutcome::Pending`]'s sequence handle and later
-/// [`PendingResolution`].
+/// [`ResolveOutcome::Pending`]'s [`TargetSlotId`] handle and later
+/// [`PendingResolution::slot_id`].
 ///
-/// **Sequence vs. design's `TargetSlotId = (page_index, sequence)`**
-/// (§11.2 Finding #4): the design pairs the sequence with `page_index` so
-/// (a) slot ids stay byte-identical across iterations and (b) sinks can
-/// address a slot by its owning page. `page_index` is a PageContext-owned
-/// field and is out of current scope. Until the PageContext plumbing lands
-/// (bd raikiri-spike-oqpc), the sequence alone is the stable handle.
+/// **Stable handle = `TargetSlotId = (page_index, sequence)`** (design §7.4
+/// line 2098 / §7.6 lines 2312-2317, Finding #4, landed bd
+/// raikiri-spike-oqpc — not §11.2, whose `TargetSlot` is a distinct,
+/// not-yet-built public paint-layer type with a different shape `{ id,
+/// fragment_id, kind, rect, resolved, fallback_text }`): pairing the
+/// sequence with `page_index` keeps (a) slot ids byte-identical across
+/// streaming/batch iterations and (b) lets sinks address a slot by its
+/// owning page.
+/// `page_index` comes from [`TargetRegistry::begin_page`] (paired with the
+/// `PageContext::page_index` field bd raikiri-spike-8ejw.1 landed) — see the
+/// module doc's "Canonical shape" note for the page-local `sequence` reset
+/// this implies.
 #[derive(Debug, Clone)]
 pub(crate) struct TargetSlot {
-    pub(crate) sequence: u32,
+    pub(crate) id: TargetSlotId,
     pub(crate) fragment_id: Symbol,
     pub(crate) request: TargetRequest,
 }
@@ -221,20 +250,20 @@ pub(crate) struct TargetSlot {
 /// `Resolved(String)` — the fragment was in `resolved` (or the URL was a
 /// non-fragment fallback), the formatted answer is returned inline.
 ///
-/// `Pending(sequence)` — the fragment is not yet in `resolved`; a pending
-/// slot with this sequence id has been queued in the registry. Call
-/// [`TargetRegistry::flush_pending`] after further register calls to receive
-/// the eventual value.
+/// `Pending(slot_id)` — the fragment is not yet in `resolved`; a pending
+/// slot addressed by this [`TargetSlotId`] has been queued in the registry.
+/// Call [`TargetRegistry::flush_pending`] after further register calls to
+/// receive the eventual value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ResolveOutcome {
     /// Immediately resolved — the fragment was in `resolved` or the URL was
     /// a non-fragment fallback (in which case the payload is empty).
     Resolved(String),
-    /// Deferred — the sequence id addresses the queued pending slot;
+    /// Deferred — the [`TargetSlotId`] addresses the queued pending slot;
     /// [`TargetRegistry::flush_pending`] will return the resolved value
     /// once the fragment lands.
-    Pending(u32),
+    Pending(TargetSlotId),
 }
 
 /// One entry returned by [`TargetRegistry::flush_pending`].
@@ -247,9 +276,10 @@ pub enum ResolveOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PendingResolution {
-    /// Sequence id of the slot that was resolved on this flush — matches
-    /// the value returned by the original [`ResolveOutcome::Pending`].
-    pub sequence: u32,
+    /// [`TargetSlotId`] of the slot that was resolved on this flush —
+    /// matches the value returned by the original
+    /// [`ResolveOutcome::Pending`].
+    pub slot_id: TargetSlotId,
     /// Resolved value; `Some(...)` on successful resolve. Reserved `None`
     /// for the future "give up after N passes" streaming exit — see the
     /// type-level note.
@@ -343,13 +373,16 @@ impl TargetRegistry {
         if let Some(info) = self.resolved.get(&key) {
             ResolveOutcome::Resolved(info.resolve(&request))
         } else {
-            let sequence = self.next_sequence();
+            let id = TargetSlotId {
+                page_index: self.page_index,
+                sequence: self.next_sequence(),
+            };
             self.pending_slots.push(TargetSlot {
-                sequence,
+                id,
                 fragment_id: key,
                 request,
             });
-            ResolveOutcome::Pending(sequence)
+            ResolveOutcome::Pending(id)
         }
     }
 
@@ -368,7 +401,7 @@ impl TargetRegistry {
         for slot in std::mem::take(&mut self.pending_slots) {
             if let Some(info) = self.resolved.get(&slot.fragment_id) {
                 resolutions.push(PendingResolution {
-                    sequence: slot.sequence,
+                    slot_id: slot.id,
                     value: Some(info.resolve(&slot.request)),
                 });
             } else {
@@ -377,6 +410,96 @@ impl TargetRegistry {
         }
         self.pending_slots = remaining;
         resolutions
+    }
+
+    /// Page-boundary hook — advance the page whose target-* dispatches are
+    /// being recorded, resetting the page-local sequence counter to 0.
+    ///
+    /// Design §7.6 "Slot ID の安定性保証" defines `sequence` as "page 内
+    /// 0-indexed" (page-local, not document-wide); a page-boundary call must
+    /// restart the local count so a re-run over the same input produces the
+    /// same [`TargetSlotId`]s (the byte-identical goal Finding #4, design
+    /// §7.4/§7.6, exists for). A no-op if `page_index` already matches the
+    /// current value (redundant same-page calls don't corrupt the count of
+    /// an in-progress page) — see the "Re-seeded registry" caveat below for
+    /// the one case where that guard is *not* what a caller wants.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `page_index` is less than the registry's current
+    /// `page_index` — i.e. `page_index` must be monotonically
+    /// non-decreasing across calls (design §7.6: "page_index は … emit
+    /// された順に増加"; same-index calls remain the documented no-op above,
+    /// so the enforced contract is non-decreasing, not strictly
+    /// increasing). A backward call would otherwise reset `next_sequence`
+    /// to 0 while an earlier, still-unresolved `TargetSlot` for that same
+    /// `page_index` sits in `pending_slots` (unresolved slots are retained
+    /// across flushes, never dropped — see
+    /// [`Self::flush_pending`]'s doc), so the very next dispatch would mint
+    /// a [`TargetSlotId`] byte-identical to that still-pending one. Two
+    /// distinct [`PendingResolution`]s would then carry the same `slot_id`,
+    /// breaking the uniqueness/byte-identical guarantee `TargetSlotId`
+    /// exists to provide ([`crate::error::TargetSlotId`]'s own doc comment).
+    /// `page_index` is driver-supplied internal input, not
+    /// external/untrusted data, so a non-monotonic call is a driver
+    /// precondition violation rather than adversarial input — this asserts
+    /// unconditionally (both debug and release profiles) rather than
+    /// `debug_assert!`, since silently corrupting `pending_slots` in a
+    /// release build is exactly the failure mode this guard exists to rule
+    /// out.
+    ///
+    /// Same page-boundary role as the sibling
+    /// [`super::context::PageContext::begin_page`] hook (different
+    /// signature: that one has no driver-supplied index to advance, this one
+    /// does), but there is no path from one to the other — `PageContext`
+    /// exposes `targets` read-only (no `targets_mut`, see
+    /// [`super::context::PageContext::targets`]'s doc), so a driver must
+    /// call this directly on an *owned* registry (e.g. the one
+    /// `raikiri_dom::target::build_target_registry` returns) before wiring
+    /// it into a `PageContext` via
+    /// [`super::context::PageContext::set_targets`].
+    ///
+    /// **Re-seeded registry caveat**: design §7.4's convergence flow seeds a
+    /// re-run with a previously-converged registry
+    /// (`StreamingConfig::initial_registry` / `BatchConfig::initial_registry`
+    /// / `PlanConfig::initial_registry`). If that seed registry's
+    /// `page_index` already equals the first page's index (typically 0) but
+    /// `next_sequence` is *not* 0 (carried over from the prior run), the
+    /// same-value no-op guard above will skip the reset the re-run actually
+    /// needs — the re-run's first slot would get the prior run's leftover
+    /// sequence instead of restarting at 0, breaking the exact
+    /// byte-identical guarantee this method exists to protect. Worse, once a
+    /// seed's `page_index` is above the first page's index (the more likely
+    /// shape: §7.4's convergence flow seeds with `prev`, the registry as it
+    /// stood at the *last* page of the prior run), the monotonic guard above
+    /// now turns that same re-run's `begin_page(0)` into a **panic** rather
+    /// than a silent reset. No current production code reads
+    /// `initial_registry` (M1.1 placeholder configs), so neither shape is
+    /// reachable today; a future consumer of it is now *required* (not
+    /// merely advised) to either reset the seed registry's `page_index` /
+    /// `next_sequence` independently before the re-run, or `begin_page` must
+    /// gain a force-reset variant — tracked as a follow-up, not fixed here.
+    ///
+    /// No production driver calls this yet — the per-page walk that would
+    /// call it is bd raikiri-spike-si32, not yet landed (same gap
+    /// `PageContext::begin_page`'s doc already flags). Until a driver calls
+    /// it, every slot is tagged to page 0 — correct for a single-page
+    /// document, harmless (just uninformative) for a multi-page one.
+    pub fn begin_page(&mut self, page_index: u32) {
+        let current = self.page_index;
+        assert!(
+            page_index >= current,
+            "TargetRegistry::begin_page: page_index must be monotonically \
+             non-decreasing across calls (design §7.6 \"page_index は … \
+             emit された順に増加\"); got page_index={page_index} after \
+             current page_index={current}. A backward call would reset \
+             next_sequence while page {page_index}'s earlier pending slots \
+             are still queued, minting a duplicate TargetSlotId."
+        );
+        if page_index != current {
+            self.page_index = page_index;
+            self.next_sequence = 0;
+        }
     }
 
     fn next_sequence(&mut self) -> u32 {
@@ -1922,6 +2045,7 @@ mod tests {
         assert!(reg.resolved.is_empty());
         assert!(reg.pending_slots.is_empty());
         assert_eq!(reg.next_sequence, 0);
+        assert_eq!(reg.page_index, 0);
     }
 
     #[test]
@@ -1931,11 +2055,18 @@ mod tests {
         //   pending_slots: Vec<TargetSlot>
         // If this test breaks, the type has drifted from the design and the
         // coordinator should reconcile before landing follow-up work.
+        // `TargetSlot.id` is the design's `TargetSlotId` (§7.4 line 2098 /
+        // §7.6 lines 2312-2317, Finding #4, landed bd raikiri-spike-oqpc) —
+        // a break here means that pairing drifted, not just the two
+        // enumerated fields above.
         let mut reg = TargetRegistry::default();
         reg.resolved
             .insert(Symbol::new("fragment-1"), TargetInfo::default());
         reg.pending_slots.push(TargetSlot {
-            sequence: 0,
+            id: TargetSlotId {
+                page_index: 0,
+                sequence: 0,
+            },
             fragment_id: Symbol::new("fragment-1"),
             request: TargetRequest::Text {
                 part: ContentPart::Content,
@@ -2864,20 +2995,32 @@ mod tests {
         // Site A resolves *before* the register site has been walked.
         let out_a =
             reg.resolve_target_counter("#chapter-3", Symbol::new("chapter"), CounterStyle::Decimal);
-        let seq_a = match out_a {
+        let id_a = match out_a {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending, got Resolved"),
         };
-        assert_eq!(seq_a, 0);
+        assert_eq!(
+            id_a,
+            TargetSlotId {
+                page_index: 0,
+                sequence: 0,
+            }
+        );
         assert_eq!(reg.pending_slots.len(), 1);
 
         // Second forward reference to a different fragment / kind.
         let out_b = reg.resolve_target_text("#chapter-3", ContentPart::Content);
-        let seq_b = match out_b {
+        let id_b = match out_b {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending, got Resolved"),
         };
-        assert_eq!(seq_b, 1);
+        assert_eq!(
+            id_b,
+            TargetSlotId {
+                page_index: 0,
+                sequence: 1,
+            }
+        );
         assert_eq!(reg.pending_slots.len(), 2);
 
         // Walk lands the register.
@@ -2896,14 +3039,14 @@ mod tests {
         assert_eq!(
             resolutions[0],
             PendingResolution {
-                sequence: seq_a,
+                slot_id: id_a,
                 value: Some("3".to_owned()),
             }
         );
         assert_eq!(
             resolutions[1],
             PendingResolution {
-                sequence: seq_b,
+                slot_id: id_b,
                 value: Some("The Middle".to_owned()),
             }
         );
@@ -2975,12 +3118,12 @@ mod tests {
         //   seq 1: #b  counters
         //   seq 2: #c  text
         //   seq 3: #a  text  (same fragment as seq 0)
-        let seq_a =
+        let id_a =
             match reg.resolve_target_counter("#a", Symbol::new("chapter"), CounterStyle::Decimal) {
                 ResolveOutcome::Pending(s) => s,
                 ResolveOutcome::Resolved(_) => panic!("expected Pending"),
             };
-        let seq_b = match reg.resolve_target_counters(
+        let id_b = match reg.resolve_target_counters(
             "#b",
             Symbol::new("section"),
             "-",
@@ -2989,15 +3132,24 @@ mod tests {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending"),
         };
-        let seq_c = match reg.resolve_target_text("#c", ContentPart::Content) {
+        let id_c = match reg.resolve_target_text("#c", ContentPart::Content) {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending"),
         };
-        let seq_a2 = match reg.resolve_target_text("#a", ContentPart::Before) {
+        let id_a2 = match reg.resolve_target_text("#a", ContentPart::Before) {
             ResolveOutcome::Pending(s) => s,
             ResolveOutcome::Resolved(_) => panic!("expected Pending"),
         };
-        assert_eq!((seq_a, seq_b, seq_c, seq_a2), (0, 1, 2, 3));
+        assert_eq!(
+            (id_a.sequence, id_b.sequence, id_c.sequence, id_a2.sequence),
+            (0, 1, 2, 3)
+        );
+        assert!(
+            [id_a, id_b, id_c, id_a2]
+                .iter()
+                .all(|id| id.page_index == 0),
+            "no page boundary crossed in this test — every slot stays on page 0"
+        );
         assert_eq!(reg.pending_slots.len(), 4);
 
         // Register #a only. #b and #c are still absent.
@@ -3017,30 +3169,30 @@ mod tests {
         assert_eq!(
             resolutions[0],
             PendingResolution {
-                sequence: seq_a,
+                slot_id: id_a,
                 value: Some("7".to_owned()),
             }
         );
         assert_eq!(
             resolutions[1],
             PendingResolution {
-                sequence: seq_a2,
+                slot_id: id_a2,
                 value: Some("prefix".to_owned()),
             }
         );
 
         // Retained slots keep their original ordering (seq 1 before seq 2).
-        assert_eq!(reg.pending_slots[0].sequence, seq_b);
-        assert_eq!(reg.pending_slots[1].sequence, seq_c);
+        assert_eq!(reg.pending_slots[0].id, id_b);
+        assert_eq!(reg.pending_slots[1].id, id_c);
 
         // Registering #b later resolves it on the next flush; #c stays.
         reg.register(Symbol::new("b"), make_info(&[("section", &[1, 2])], &[]));
         let resolutions2 = reg.flush_pending();
         assert_eq!(resolutions2.len(), 1);
-        assert_eq!(resolutions2[0].sequence, seq_b);
+        assert_eq!(resolutions2[0].slot_id, id_b);
         assert_eq!(resolutions2[0].value.as_deref(), Some("1-2"));
         assert_eq!(reg.pending_slots.len(), 1);
-        assert_eq!(reg.pending_slots[0].sequence, seq_c);
+        assert_eq!(reg.pending_slots[0].id, id_c);
     }
 
     #[test]
@@ -3064,6 +3216,147 @@ mod tests {
         let resolutions = reg.flush_pending();
         assert_eq!(resolutions.len(), 1);
         assert_eq!(resolutions[0].value.as_deref(), Some("1-2-3"));
+    }
+
+    // ── TargetSlotId pairing / begin_page (bd raikiri-spike-oqpc) ────
+
+    #[test]
+    fn begin_page_resets_sequence_and_advances_page_index() {
+        // Design §7.6 "Slot ID の安定性保証": sequence is page-local
+        // (0-indexed within the page), so a page-boundary call must restart
+        // the local count. The same local sequence value on two different
+        // pages must therefore produce two distinct TargetSlotIds.
+        let mut reg = TargetRegistry::default();
+
+        let out_page0 =
+            reg.resolve_target_counter("#a", Symbol::new("chapter"), CounterStyle::Decimal);
+        let id_page0 = match out_page0 {
+            ResolveOutcome::Pending(id) => id,
+            ResolveOutcome::Resolved(_) => panic!("expected Pending"),
+        };
+        assert_eq!(
+            id_page0,
+            TargetSlotId {
+                page_index: 0,
+                sequence: 0,
+            }
+        );
+
+        reg.begin_page(1);
+        let out_page1 =
+            reg.resolve_target_counter("#b", Symbol::new("chapter"), CounterStyle::Decimal);
+        let id_page1 = match out_page1 {
+            ResolveOutcome::Pending(id) => id,
+            ResolveOutcome::Resolved(_) => panic!("expected Pending"),
+        };
+
+        assert_eq!(
+            id_page1,
+            TargetSlotId {
+                page_index: 1,
+                sequence: 0,
+            },
+            "begin_page must reset the local sequence counter to 0"
+        );
+        assert_eq!(
+            id_page0.sequence, id_page1.sequence,
+            "both slots are each page's first dispatch — same local sequence"
+        );
+        assert_ne!(
+            id_page0, id_page1,
+            "same local sequence on different pages must yield distinct TargetSlotIds"
+        );
+    }
+
+    #[test]
+    fn begin_page_same_index_is_a_no_op() {
+        // A redundant begin_page call for the page already in progress must
+        // not reset the count out from under slots already queued this
+        // page — only an actual page transition resets `next_sequence`.
+        let mut reg = TargetRegistry::default();
+        reg.begin_page(0); // already page 0 — no-op
+        let out_a = reg.resolve_target_counter("#a", Symbol::new("chapter"), CounterStyle::Decimal);
+        reg.begin_page(0); // redundant same-page call — still a no-op
+        let out_b = reg.resolve_target_counter("#b", Symbol::new("chapter"), CounterStyle::Decimal);
+
+        let (id_a, id_b) = match (out_a, out_b) {
+            (ResolveOutcome::Pending(a), ResolveOutcome::Pending(b)) => (a, b),
+            _ => panic!("expected both Pending"),
+        };
+        assert_eq!(id_a.page_index, 0);
+        assert_eq!(id_b.page_index, 0);
+        assert_eq!(
+            (id_a.sequence, id_b.sequence),
+            (0, 1),
+            "redundant same-index begin_page must not reset the in-progress page's sequence"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "page_index must be monotonically non-decreasing")]
+    fn begin_page_backward_call_panics_instead_of_duplicating_slot_id() {
+        // Security-lens finding (bd raikiri-spike-oqpc): without a
+        // monotonicity guard, a backward begin_page() call resets
+        // next_sequence to 0 while an earlier page's slot is still
+        // unresolved in pending_slots (unresolved slots are retained across
+        // flushes forever — see flush_pending_retains_unregistered_slots).
+        // The very next dispatch on the revisited page would then mint a
+        // TargetSlotId byte-identical to the still-pending one, breaking
+        // the uniqueness guarantee TargetSlotId exists to provide
+        // (crate::error::TargetSlotId's doc comment). This must now panic
+        // instead of silently corrupting pending_slots.
+        let mut reg = TargetRegistry::default();
+
+        // Step 1: begin_page(0), dispatch an unresolved target — mints
+        // TargetSlotId{page_index:0, sequence:0}, retained in pending_slots
+        // (its fragment "#never-registered" is never registered).
+        let out_page0 = reg.resolve_target_counter(
+            "#never-registered",
+            Symbol::new("chapter"),
+            CounterStyle::Decimal,
+        );
+        let id_page0 = match out_page0 {
+            ResolveOutcome::Pending(id) => id,
+            ResolveOutcome::Resolved(_) => panic!("expected Pending"),
+        };
+        assert_eq!(
+            id_page0,
+            TargetSlotId {
+                page_index: 0,
+                sequence: 0,
+            }
+        );
+        assert_eq!(reg.pending_slots.len(), 1, "slot from page 0 still queued");
+
+        // Step 2: begin_page(1), more dispatches on page 1.
+        reg.begin_page(1);
+        let _ = reg.resolve_target_counter("#b", Symbol::new("chapter"), CounterStyle::Decimal);
+
+        // Step 3: begin_page(0) again — a backward call (convergence
+        // re-run / two-pass layout walk / driver bug). This must panic
+        // rather than reset next_sequence out from under the still-pending
+        // page-0 slot from step 1.
+        reg.begin_page(0);
+    }
+
+    #[test]
+    fn target_slot_id_is_stable_across_repeated_construction() {
+        // Byte-identical goal (design §7.4 / §7.6, Finding #4): constructing
+        // the same (page_index, sequence) pair twice must compare equal and
+        // hash identically — Consumer patch tables key off this.
+        let a = TargetSlotId {
+            page_index: 2,
+            sequence: 5,
+        };
+        let b = TargetSlotId {
+            page_index: 2,
+            sequence: 5,
+        };
+        assert_eq!(a, b);
+
+        let mut set = std::collections::HashSet::new();
+        set.insert(a);
+        assert!(set.contains(&b));
     }
 
     // ── ContentComponent wire-through (M5 → M6 conversion path) ─────

@@ -578,7 +578,14 @@ mod tests {
             Symbol::new("c"),
             raikiri_style::property::CounterStyle::Decimal,
         );
-        assert_eq!(out, raikiri_traits::ResolveOutcome::Pending(0));
+        // A fresh registry's first dispatch is page 0 / sequence 0.
+        assert_eq!(
+            out,
+            raikiri_traits::ResolveOutcome::Pending(raikiri_traits::TargetSlotId {
+                page_index: 0,
+                sequence: 0,
+            })
+        );
     }
 
     #[test]

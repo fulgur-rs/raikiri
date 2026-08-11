@@ -565,6 +565,14 @@ impl PageContext {
     /// reassigning `page_index`/`page_name` per page) — constructing a fresh
     /// `PageContext` per page would incorrectly discard `targets` and
     /// `counters` state that must persist.
+    ///
+    /// **`targets` still has its own, separate page-boundary obligation**
+    /// (bd raikiri-spike-oqpc): `TargetRegistry` being per-document (`resolved`
+    /// / `pending_slots` persist across pages, per the contract above) is
+    /// orthogonal to its *internal* slot-id sequence numbering, which design
+    /// §7.6 defines as page-local. This method does not cover it — see
+    /// [`TargetRegistry::begin_page`] for the obligation and how a driver
+    /// reaches it.
     pub fn begin_page(&mut self) {
         for state in self.strings.values_mut() {
             state.begin_page();
@@ -1240,7 +1248,10 @@ mod tests {
             );
             assert_eq!(
                 out,
-                crate::page::ResolveOutcome::Pending(0),
+                crate::page::ResolveOutcome::Pending(crate::error::TargetSlotId {
+                    page_index: 0,
+                    sequence: 0,
+                }),
                 "set_targets after RegisterTarget must wipe the earlier registration, \
                  not merge with or preserve it"
             );
