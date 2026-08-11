@@ -506,6 +506,7 @@ fn collect_cascaded<D: StyleDom>(
                         &rule.selectors,
                         dom,
                         &elem,
+                        id,
                         &ancestor_path,
                         quirks_mode,
                     ) {
@@ -743,40 +744,49 @@ fn compound_matches<E: StyleElement>(
     true
 }
 
-/// `elem` (と、descendant/child combinator を跨ぐ場合は `ancestors` で
-/// 表される祖先 element 列) と selector list を突き合わせるトップレベル
-/// matcher。
+/// `elem` (と、combinator を跨ぐ場合は `ancestors` で表される祖先 element 列
+/// / `elem_id` から辿る兄弟 element 列) と selector list を突き合わせる
+/// トップレベル matcher。
 ///
-/// # Combinator 対応 (bd raikiri-spike-flln.2)
+/// # Combinator 対応 (bd raikiri-spike-flln.2 / flln.3)
 ///
 /// bd raikiri-spike-flln.1 時点は single-element (compound-only) matching
 /// のみで、combinator を含む selector は `ruletree.rs`
 /// `is_supported_selector_list` の gate で rule tree に乗る前に drop されて
-/// いた。本 task で descendant (space, CSS Selectors L4
+/// いた。bd raikiri-spike-flln.2 で descendant (space, CSS Selectors L4
 /// <https://www.w3.org/TR/selectors-4/#descendant-combinators>) と child
 /// (`>`, <https://www.w3.org/TR/selectors-4/#child-combinators>) の 2
-/// combinator を追加。complex selector の一般的な match 条件は CSSWG
-/// Editor's Draft <https://drafts.csswg.org/selectors-4/#complex> (verbatim,
-/// 2026-08-12 直接 fetch 確認 — provenance の詳細は
-/// [`match_combinator_chain`] doc の note 参照) の記述: "A given element ...
-/// is said to match a complex selector when it matches the final compound
-/// selector ... in the sequence, and every preceding unit of the sequence
-/// also matches an element ..., with the correct relationship between
-/// consecutive units as expressed by the combinators separating them" —
-/// 本関数はこれを右 (elem 自身) から左 (祖先) への
+/// combinator を追加、bd raikiri-spike-flln.3 で adjacent sibling (`+`,
+/// <https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>) と
+/// general sibling (`~`,
+/// <https://www.w3.org/TR/selectors-4/#general-sibling-combinators>) を追加
+/// (4 combinator 全対応、詳細は [`match_combinator_chain`] doc)。complex
+/// selector の一般的な match 条件は CSSWG Editor's Draft
+/// <https://drafts.csswg.org/selectors-4/#complex> (verbatim, 2026-08-12
+/// 直接 fetch 確認 — provenance の詳細は [`match_combinator_chain`] doc の
+/// note 参照) の記述: "A given element ... is said to match a complex
+/// selector when it matches the final compound selector ... in the
+/// sequence, and every preceding unit of the sequence also matches an
+/// element ..., with the correct relationship between consecutive units as
+/// expressed by the combinators separating them" — 本関数はこれを右 (elem
+/// 自身) から左 (祖先/兄弟) への
 /// `Selector::iter`/`SelectorIter::next_sequence` の反復として実装する:
 ///
 /// 1. 一番右の compound を `elem` 自身に対して [`compound_matches`] で判定。
 /// 2. 不一致ならこの selector は不一致、次の selector へ。
 /// 3. 一致すれば `iter.next_sequence()` で次の combinator を見る:
 ///    - `None` (もう combinator が無い) → selector 全体が一致。
-///    - `Some(combinator)` → [`match_combinator_chain`] に委譲、`ancestors`
-///      の中から combinator の意味 (child = 直近の親のみ、descendant =
-///      いずれかの祖先) に沿って次の compound を判定する。
+///    - `Some(combinator)` → [`match_combinator_chain`] に委譲、combinator
+///      の意味 (child = 直近の親のみ、descendant = いずれかの祖先、
+///      next-sibling = 直前の兄弟のみ、later-sibling = それ以前のいずれかの
+///      兄弟) に沿って次の compound を判定する。
 ///
 /// `ancestors` は root 側が先頭、直近の親が末尾の順 (`ancestors.last()` ==
 /// `elem` の親) — [`collect_cascaded`] の DFS 訪問順から構築される
-/// (同関数の doc 参照)。
+/// (同関数の doc 参照)。`elem_id` は `elem` 自身の id — sibling combinator が
+/// 「`elem` の親の子リストの中で `elem` より前にいるのは誰か」を
+/// [`StyleDom::child_ids`] から直接求める際の探索終端として使う
+/// ([`match_combinator_chain`] の `NextSibling`/`LaterSibling` arm 参照)。
 ///
 /// Returns: matching した selector の最大 specificity。1 つも match しなければ None。
 /// `specificity_of` は selector 全体 (combinator を跨いだ複合 selector) に
@@ -786,6 +796,7 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     list: &SelectorList<RaikiriSelectorImpl>,
     dom: &D,
     elem: &E,
+    elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
 ) -> Option<Specificity> {
@@ -796,7 +807,7 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
             && match iter.next_sequence() {
                 None => true,
                 Some(combinator) => {
-                    match_combinator_chain(dom, combinator, ancestors, iter, quirks_mode)
+                    match_combinator_chain(dom, combinator, elem_id, ancestors, iter, quirks_mode)
                 }
             };
         if whole_matches {
@@ -811,8 +822,8 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 }
 
 /// [`match_complex_selector_list`] が右端 compound を `elem` に対して
-/// マッチさせたあと、残りの combinator + compound 列を `ancestors` を遡って
-/// 判定する。
+/// マッチさせたあと、残りの combinator + compound 列を `ancestors`
+/// (祖先チェーン) / `current_id` から辿る兄弟列のどちらかを遡って判定する。
 ///
 /// - [`Combinator::Child`] (CSS Selectors L4
 ///   <https://www.w3.org/TR/selectors-4/#child-combinators>, verbatim: "A
@@ -866,21 +877,71 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 ///   実行する。
 ///
 ///   sibling combinator (`+`/`~`) のような非祖先チェーン型 combinator が
-///   同じ complex selector 内に混在するとさらに事情が変わりうる
-///   (それらは scope 外、上記 doc 参照) — 本 doc は上記の
-///   descendant/child 限定の反例のみを扱う。探索順序 (直近から遠方へ)
+///   同じ complex selector 内に混在するとさらに事情が変わりうる — ただし
+///   bd raikiri-spike-flln.3 で判明した通り「事情が変わる」というのは
+///   「不正確になる」ではなく「別の軸で load-bearing になる」だった:
+///   sibling ジャンプは `ancestors` を不変のまま引き継ぐため、そこから
+///   さらに左へ [`Combinator::Descendant`] が続く場合もこの retry は
+///   同じ理由でそのまま load-bearing (下記 [`Combinator::NextSibling`] /
+///   [`Combinator::LaterSibling`] の説明、および `ruletree.rs`
+///   `is_supported_selector_list` doc の "4 combinator 間の混在" note
+///   参照)。探索順序 (直近から遠方へ)
 ///   自体は正しさに影響しない — いずれの順で候補を試しても最終的な
 ///   一致/不一致の結果 (「一致する候補が存在するか」という真偽値) は
 ///   変わらない。
+/// - [`Combinator::NextSibling`] (bd raikiri-spike-flln.3, CSS Selectors L4
+///   <https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>
+///   §14.3, verbatim: "The elements represented by the two compound
+///   selectors share the same parent in the document tree and the element
+///   represented by the first compound selector immediately precedes the
+///   element represented by the second one. Non-element nodes (e.g. text
+///   between elements) are ignored when considering the adjacency of
+///   elements.") — 候補は `current_id` の親 (`ancestors.last()`、無ければ
+///   [`StyleDom::root_id`]、下記 note 参照) の子リストの中で `current_id`
+///   の**直前**の element 1 つだけ ([`immediate_preceding_sibling`])。
+///   バックトラックは無い — `+` は「直前の兄弟」を一意に指すため
+///   ([`Combinator::Child`] と同じ形)。
+/// - [`Combinator::LaterSibling`] (bd raikiri-spike-flln.3, CSS Selectors L4
+///   <https://www.w3.org/TR/selectors-4/#general-sibling-combinators> §14.4,
+///   verbatim: "The elements represented by the two compound selectors
+///   share the same parent in the document tree and the element
+///   represented by the first compound selector precedes (not necessarily
+///   immediately) the element represented by the second one.") —
+///   `current_id` の親の子リストを先頭から順に試し、`current_id` に達したら
+///   打ち切る。一致する候補が見つかり次第、その候補を起点にさらに左の残りを
+///   再帰的に判定する ([`Combinator::Descendant`] と同じ「単一の直線を
+///   バックトラックする」形 — 兄弟リストも分岐が無いため、探索順序は正しさに
+///   影響しない。ここでは `child_ids` が返す自然な順序 (先頭 = 最も遠い兄弟)
+///   のまま辿る)。
 ///
-/// 他 combinator ([`Combinator::NextSibling`] / [`Combinator::LaterSibling`]
-/// / [`Combinator::PseudoElement`] / [`Combinator::SlotAssignment`] /
-/// [`Combinator::Part`]) はこの task の scope 外 — `ruletree.rs`
-/// `is_supported_selector_list` が rule tree 構築時点で drop 済のはずだが、
-/// [`compound_matches`] の `_ => false` safety net と同じ姿勢で、ここでも
-/// 到達したら match fail 扱いにする。
+/// # 親の解決: `ancestors.last()` の空スライス fallback (bd raikiri-spike-flln.3)
 ///
-/// # Spec provenance note (bd raikiri-spike-flln.2, 2026-08-12)
+/// `ancestor_path` は **Element kind の node のみ**を積む
+/// ([`collect_cascaded`] doc 参照) ので、`current_id` の親が
+/// [`StyleNodeKind::Document`] root 自身であるとき (= document 直下の
+/// element、`<html>` 等) `ancestors` は空になる — `Child`/`Descendant` は
+/// この場合を「親が compound に一致し得ない」= 不一致として正しく扱う
+/// (`ancestors.split_last() => None`) が、sibling combinator は**親自身を
+/// compound と照合するわけではなく**、[`StyleDom::child_ids`] の lookup key
+/// として親の id が要るだけ — root であっても兄弟は実在しうる (`<h2>` と
+/// `<p>` が両方 document 直下の兄弟、という acceptance のケースそのもの)。
+/// そのため `NextSibling`/`LaterSibling` の 2 arm だけ `ancestors.last()` が
+/// `None` のとき [`StyleDom::root_id`] にフォールバックする — `Child`/
+/// `Descendant` 側はこのフォールバックを持たない (持ってはならない — root は
+/// 決して compound に一致しない)。
+///
+/// 他 combinator ([`Combinator::PseudoElement`] / [`Combinator::SlotAssignment`]
+/// / [`Combinator::Part`]) はこの task の scope 外 — `ruletree.rs`
+/// `is_supported_selector_list` が rule tree 構築時点で drop するのに加え、
+/// これら 3 つは pseudo-element 専用の combinator で、本 crate の
+/// `parse_selector_list` (`RaikiriSelectorImpl`) がそもそも pseudo-element
+/// 構文自体を `Custom(UnsupportedPseudoClassOrElement(..))` として parse
+/// error にする (bd raikiri-spike-flln.3 で `a::before` を直接 parse させて
+/// 実地確認、2026-08-12) ため、この crate 内で生成された `SelectorList` から
+/// 到達することは無い。[`compound_matches`] の `_ => false` safety net と
+/// 同じ姿勢で、ここでも到達したら match fail 扱いにする。
+///
+/// # Spec provenance note (bd raikiri-spike-flln.2 / flln.3, 2026-08-12)
 ///
 /// この doc および [`match_complex_selector_list`] / [`collect_cascaded`]
 /// が引用する verbatim 文言はすべて、`https://www.w3.org/TR/selectors-4/`
@@ -889,36 +950,63 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 /// 受け、代わりに同一文書の正典 source である CSSWG bikeshed 原稿
 /// (`raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/Overview.bs`,
 /// 2026-08-12 直接 fetch) から確認したもの — TR ページの当該 anchor への
-/// 直接到達はできていない。descendant/child combinator の文言 (定義文中心の
-/// 安定した記述) はこの ED 原稿の内容が publish 済み TR とも一致していると
-/// 見込んで TR anchor (`#descendant-combinators` / `#child-combinators`) に
-/// 紐付けたままにしているが、`#complex` (complex selector 全体の match 条件)
-/// は ED 側の周辺記述に pseudo-compound selector 関連の、TR 発行後に
-/// 追加された可能性のある文言が混在しており、そちらは "TR と一致している
-/// はず" という前提を置かず ED URL
+/// 直接到達はできていない。descendant/child/next-sibling/general-sibling
+/// combinator の文言 (定義文中心の安定した記述、4 つとも同じ `<h3 id=…>`
+/// 形式の見出し直下) はこの ED 原稿の内容が publish 済み TR とも一致して
+/// いると見込んで TR anchor (`#descendant-combinators` /
+/// `#child-combinators` / `#adjacent-sibling-combinators` /
+/// `#general-sibling-combinators`) に紐付けたままにしているが、`#complex`
+/// (complex selector 全体の match 条件) は ED 側の周辺記述に
+/// pseudo-compound selector 関連の、TR 発行後に追加された可能性のある文言が
+/// 混在しており、そちらは "TR と一致しているはず" という前提を置かず ED URL
 /// (<https://drafts.csswg.org/selectors-4/#complex>) 自体に紐付けている
-/// ([`match_complex_selector_list`] の引用も同様)。
+/// ([`match_complex_selector_list`] の引用も同様)。§14.3/§14.4 の節番号は
+/// 同じ ED 原稿内の `<h2 id="combinators">` 配下の `<h3>` 出現順
+/// (descendant, child, adjacent-sibling, general-sibling — 2026-08-12
+/// 直接確認) から数えたもの。
 fn match_combinator_chain<D: StyleDom>(
     dom: &D,
     combinator: Combinator,
+    current_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     iter: SelectorIter<'_, RaikiriSelectorImpl>,
     quirks_mode: StyleQuirksMode,
 ) -> bool {
     match combinator {
         Combinator::Child => match ancestors.split_last() {
-            Some((&parent_id, rest)) => {
-                match_from_ancestor(dom, parent_id, rest, iter, quirks_mode)
-            }
+            Some((&parent_id, rest)) => match_from_element(dom, parent_id, rest, iter, quirks_mode),
             None => false,
         },
         Combinator::Descendant => {
             let mut remaining = ancestors;
             while let Some((&candidate_id, further)) = remaining.split_last() {
-                if match_from_ancestor(dom, candidate_id, further, iter.clone(), quirks_mode) {
+                if match_from_element(dom, candidate_id, further, iter.clone(), quirks_mode) {
                     return true;
                 }
                 remaining = further;
+            }
+            false
+        }
+        Combinator::NextSibling => {
+            let parent_id = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
+            match immediate_preceding_sibling(dom, parent_id, current_id) {
+                Some(sibling_id) => {
+                    match_from_element(dom, sibling_id, ancestors, iter, quirks_mode)
+                }
+                None => false,
+            }
+        }
+        Combinator::LaterSibling => {
+            let parent_id = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
+            for candidate_id in dom.child_ids(parent_id) {
+                if candidate_id == current_id {
+                    break;
+                }
+                if is_in_document_element(dom, candidate_id)
+                    && match_from_element(dom, candidate_id, ancestors, iter.clone(), quirks_mode)
+                {
+                    return true;
+                }
             }
             false
         }
@@ -926,24 +1014,79 @@ fn match_combinator_chain<D: StyleDom>(
     }
 }
 
+/// `parent_id`'s direct children (document order) が `Element` kind かつ
+/// [`StyleNode::is_in_document`] であるかを判定する共有述語。
+/// [`immediate_preceding_sibling`] と [`match_combinator_chain`] の
+/// `LaterSibling` arm の両方から使う — [`collect_cascaded`] が
+/// `ancestor_path` に積む前に行う `!node.is_in_document() => continue` gate
+/// (同関数の doc 参照) と同じ基準を、sibling 側の候補選定でも揃えるための
+/// 抽出 (bd raikiri-spike-flln.3) — 揃えないと `<template>` 子孫のような
+/// inert element が sibling combinator の候補として拾われてしまう。
+fn is_in_document_element<D: StyleDom>(dom: &D, id: StyleNodeId) -> bool {
+    dom.node(id)
+        .is_some_and(|node| node.is_in_document() && node.kind() == StyleNodeKind::Element)
+}
+
+/// `parent_id` の直接の子のうち、`current_id` の**直前**にいる element の id
+/// ([`Combinator::NextSibling`] 用)。[`StyleDom::child_ids`] を先頭から 1
+/// パス走査し、`current_id` に達した時点でそれまでに見た最後の element
+/// candidate を返す — 割り当ては行わない (`Vec` 不使用、bd
+/// raikiri-spike-75ch の「使い捨て `Vec` を経由しない」方針を踏襲)。
+///
+/// Non-element node (text 等) は候補から除外 — CSS Selectors L4
+/// next-sibling combinator 自身の verbatim: "Non-element nodes (e.g. text
+/// between elements) are ignored when considering the adjacency of
+/// elements" (<https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>)。
+fn immediate_preceding_sibling<D: StyleDom>(
+    dom: &D,
+    parent_id: StyleNodeId,
+    current_id: StyleNodeId,
+) -> Option<StyleNodeId> {
+    let mut last_element = None;
+    for candidate_id in dom.child_ids(parent_id) {
+        if candidate_id == current_id {
+            return last_element;
+        }
+        if is_in_document_element(dom, candidate_id) {
+            last_element = Some(candidate_id);
+        }
+    }
+    // cov:ignore: `current_id` is always one of `parent_id`'s own children
+    // when this helper is called — `parent_id` is derived from `current_id`
+    // itself (either `current_id`'s own parent via `ancestors.last()`, or —
+    // when `current_id` was reached through a prior sibling/ancestor jump —
+    // the parent shared with the node that produced it, see
+    // `match_combinator_chain`'s callers). Would need a `StyleDom` impl
+    // whose `child_ids(parent_id)` omits an id it itself supplied as
+    // `ancestors.last()` / a sibling candidate to exercise this branch.
+    None
+}
+
 /// `elem_id` の element を解決し、[`compound_matches`] で `iter` が指す
 /// compound をそれに対して判定、一致すればさらに左の combinator へ再帰する
-/// ([`match_combinator_chain`] との相互再帰) — descendant combinator の
-/// バックトラック探索 ([`match_combinator_chain`] 内の `Descendant` arm) が
-/// 候補ごとにこの関数を呼ぶ。
+/// ([`match_combinator_chain`] との相互再帰)。祖先候補 (`Child`/
+/// `Descendant`) と兄弟候補 (`NextSibling`/`LaterSibling`) の両方が
+/// この 1 つの関数を共有する — 「id を解決して compound を照合し、
+/// 一致すればさらに左へ委譲する」というロジック自体は候補がどちらの
+/// combinator 由来かに依存しない (bd raikiri-spike-flln.3: `ancestors` は
+/// 兄弟ジャンプでは不変のまま引き継がれる — 兄弟は親を共有するため — ことが
+/// この共有を成立させる。祖先ジャンプでは従来通り `split_last`/バックトラック
+/// で truncate 済みの残り `ancestors` を渡す)。旧名 `match_from_ancestor`
+/// (bd raikiri-spike-flln.2) — 兄弟候補にも使われるようになったため
+/// bd raikiri-spike-flln.3 で `match_from_element` に rename。
 ///
 /// `elem_id` を [`StyleElement`] の借用値ではなく [`StyleNodeId`] で受け取る
 /// 設計: `StyleElement` は [`StyleDom::NodeRef`]/[`StyleNode::Element`] と
 /// いう GAT 経由の型で、再帰呼び出しをまたいで別の借用ライフタイムの値を
 /// 持ち回るにはシグネチャが煩雑になる — id は `Copy` なのでこの再帰には
 /// 明らかに軽量。[`collect_cascaded`] 側で既に解決済みの `elem` を再利用
-/// しない分、祖先 1 段ごとに `dom.node()`/`as_element()` を 1 回余分に
+/// しない分、候補 1 段ごとに `dom.node()`/`as_element()` を 1 回余分に
 /// 呼ぶが、raikiri-style crate-internal な `#[cfg(test)]` 限定 mock
 /// (`TestDoc`) / raikiri-dom の実装いずれも arena index 参照相当の安価な
 /// lookup (`TestDoc` の宿る module は `#[cfg(test)]` gated のため、ここは
 /// あえて intra-doc link 化しない — non-test の `cargo doc` からは解決
 /// できない target になる)。
-fn match_from_ancestor<D: StyleDom>(
+fn match_from_element<D: StyleDom>(
     dom: &D,
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
@@ -952,22 +1095,24 @@ fn match_from_ancestor<D: StyleDom>(
 ) -> bool {
     // Both guards below are defensive and not reachable via the real
     // `collect_cascaded` → `match_complex_selector_list` call path: every
-    // `elem_id` this function is ever invoked with (both the initial call
-    // from `match_combinator_chain`'s `Child`/`Descendant` arms and this
-    // function's own recursive `match_combinator_chain` call) comes from
-    // `ancestors`, and `collect_cascaded` only ever pushes an id onto
-    // `ancestor_path` — the source of every `ancestors` slice — inside its
-    // `node.kind() == StyleNodeKind::Element` branch (see that function's
-    // doc). So `dom.node(elem_id)` is always `Some`, and its `as_element()`
-    // is always `Some` too. Kept as an explicit safety net rather than
-    // `.unwrap()`/`unreachable!()` — same defensive posture as
-    // `compound_matches`'s own `_ => false` arm for unsupported
-    // `Component` variants — because `StyleDom`/`StyleElement` are generic
-    // traits not owned by this crate; a future non-test implementation
-    // could theoretically violate the invariant.
-    // cov:ignore: unreachable given the `ancestor_path` construction
-    // invariant above; would need a `StyleDom` impl that returns `None`/
-    // non-Element for an id it itself pushed as an ancestor to exercise.
+    // `elem_id` this function is ever invoked with comes from one of two
+    // sources, both already filtered to Element-kind + in-document ids —
+    // `ancestors` (built by `collect_cascaded`'s `ancestor_path`, which only
+    // ever pushes an id inside its `node.kind() == StyleNodeKind::Element`
+    // branch after the `!node.is_in_document() => continue` gate — see that
+    // function's doc), or a sibling candidate already passed through
+    // `is_in_document_element` (`immediate_preceding_sibling` /
+    // `match_combinator_chain`'s `LaterSibling` arm). So `dom.node(elem_id)`
+    // is always `Some`, and its `as_element()` is always `Some` too. Kept as
+    // an explicit safety net rather than `.unwrap()`/`unreachable!()` — same
+    // defensive posture as `compound_matches`'s own `_ => false` arm for
+    // unsupported `Component` variants — because `StyleDom`/`StyleElement`
+    // are generic traits not owned by this crate; a future non-test
+    // implementation could theoretically violate the invariant.
+    // cov:ignore: unreachable given the construction invariants above;
+    // would need a `StyleDom` impl that returns `None`/non-Element for an id
+    // it itself supplied as an ancestor or a filtered sibling candidate to
+    // exercise.
     let Some(node) = dom.node(elem_id) else {
         return false;
     };
@@ -980,7 +1125,9 @@ fn match_from_ancestor<D: StyleDom>(
     }
     match iter.next_sequence() {
         None => true,
-        Some(combinator) => match_combinator_chain(dom, combinator, ancestors, iter, quirks_mode),
+        Some(combinator) => {
+            match_combinator_chain(dom, combinator, elem_id, ancestors, iter, quirks_mode)
+        }
     }
 }
 
@@ -3106,20 +3253,17 @@ mod tests {
     }
 
     #[test]
-    fn match_combinator_chain_rejects_unsupported_combinator_via_safety_net() {
-        // Next-sibling (`+`) combinator is out of scope for bd
-        // raikiri-spike-flln.2 (descendant/child only) and never reaches
-        // this pipeline in the real production path — `ruletree.rs`'s
-        // `is_supported_selector_list` drops any rule containing one at
-        // `add_stylesheet` time (pinned by
-        // `ruletree::tests::sibling_combinator_selector_still_dropped`).
-        // This test calls `match_complex_selector_list` directly, mirroring
-        // `match_complex_selector_list_rejects_unsupported_component_via_safety_net`
-        // below, to exercise `match_combinator_chain`'s `_ => false`
-        // safety-net arm defensively, per its own doc comment. A non-empty
-        // `ancestors` is supplied (a real `<div>` parent) so the safety net
-        // is reached via the normal combinator-dispatch path, not short-
-        // circuited by an empty `ancestors` slice.
+    fn next_sibling_combinator_does_not_match_parent_child_relationship() {
+        // bd raikiri-spike-flln.3: `div + p` requires `div`/`p` to be
+        // *siblings* (CSS Selectors L4 adjacent-sibling-combinators,
+        // "share the same parent"). Here `p` is instead a *child* of
+        // `div` — the ancestor relationship must NOT satisfy the sibling
+        // combinator, even though `div` is literally `ancestors.last()`.
+        // Directly exercises `match_combinator_chain`'s `NextSibling` arm
+        // (this test predates flln.3 as
+        // `match_combinator_chain_rejects_unsupported_combinator_via_safety_net`,
+        // when `+` fell through the `_ => false` safety net for a different
+        // reason — repurposed now that `+` is supported).
         let list = crate::parse_selector_list("div + p").expect("selector parses");
         let mut doc = TestDoc::new();
         let div = doc.push_element(0, "div", None);
@@ -3131,11 +3275,12 @@ mod tests {
                 &list,
                 &doc,
                 &elem,
+                StyleNodeId::new(p as u64),
                 &[StyleNodeId::new(div as u64)],
                 StyleQuirksMode::NoQuirks,
             ),
             None,
-            "NextSibling combinator must fall through the safety net"
+            "div + p must not match a p that is div's child, not its sibling"
         );
     }
 
@@ -3207,6 +3352,248 @@ mod tests {
         let tree = build_rule_tree(&doc);
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].color, ComputedValues::initial().color);
+    }
+
+    // ── Sibling combinators (bd raikiri-spike-flln.3) ──
+
+    #[test]
+    fn adjacent_sibling_combinator_applies_only_to_immediately_following_sibling() {
+        // bd raikiri-spike-flln.3 acceptance: `h2 + p` applies to the `<p>`
+        // immediately following an `<h2>`, but NOT to a second/third `<p>`
+        // further along — CSS Selectors L4 next-sibling combinator
+        // (<https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>
+        // §14.3, "match_combinator_chain" doc's verbatim quote). Elements
+        // are pushed at the **document root** (parent id `0`, no wrapping
+        // `<div>`) deliberately — `ancestor_path` only ever contains
+        // Element-kind ids, so a root-level sibling pair exercises
+        // `match_combinator_chain`'s `ancestors.last() == None →
+        // dom.root_id()` fallback; a wrapping element would hide a bug in
+        // that fallback entirely.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "h2 + p { background-color: red }");
+        let _h2 = doc.push_element(0, "h2", None);
+        let p1 = doc.push_element(0, "p", None); // immediately follows h2
+        let p2 = doc.push_element(0, "p", None); // follows p1, not h2
+        let p3 = doc.push_element(0, "p", None); // follows p2, not h2
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p1].background_color, RED,
+            "h2 + p must match the p immediately following h2"
+        );
+        assert_eq!(
+            r.computed[p2].background_color,
+            ComputedValues::initial().background_color,
+            "h2 + p must NOT match the second p (not immediately after h2)"
+        );
+        assert_eq!(
+            r.computed[p3].background_color,
+            ComputedValues::initial().background_color,
+            "h2 + p must NOT match the third p (not immediately after h2)"
+        );
+    }
+
+    #[test]
+    fn general_sibling_combinator_applies_to_every_following_sibling() {
+        // bd raikiri-spike-flln.3 acceptance: `h2 ~ p` applies to every
+        // `<p>` that follows an `<h2>`, not just the immediate one — CSS
+        // Selectors L4 general-sibling combinator
+        // (<https://www.w3.org/TR/selectors-4/#general-sibling-combinators>
+        // §14.4). Same root-level layout as the adjacent-sibling test above
+        // (same rationale — exercises the `ancestors.last() == None`
+        // fallback).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "h2 ~ p { background-color: red }");
+        let _h2 = doc.push_element(0, "h2", None);
+        let p1 = doc.push_element(0, "p", None);
+        let p2 = doc.push_element(0, "p", None);
+        let p3 = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p1].background_color, RED,
+            "h2 ~ p must match the 1st following p"
+        );
+        assert_eq!(
+            r.computed[p2].background_color, RED,
+            "h2 ~ p must match the 2nd following p"
+        );
+        assert_eq!(
+            r.computed[p3].background_color, RED,
+            "h2 ~ p must match the 3rd following p"
+        );
+    }
+
+    #[test]
+    fn adjacent_and_general_sibling_combinator_are_distinguished_on_the_same_dom() {
+        // bd raikiri-spike-flln.3 acceptance, literal form: both `h2 + p`
+        // and `h2 ~ p` active on the same `<h2><p><p><p>` DOM, using two
+        // independent non-inherited properties (`background-color`, CSS
+        // Backgrounds 3 §2.2; `box-sizing`, CSS Box Sizing dfn "Inherited:
+        // no") so each combinator's reach is independently observable on
+        // the same elements.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            "h2 + p { background-color: red } h2 ~ p { box-sizing: border-box }",
+        );
+        let _h2 = doc.push_element(0, "h2", None);
+        let p1 = doc.push_element(0, "p", None);
+        let p2 = doc.push_element(0, "p", None);
+        let p3 = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // `+` (background-color): only p1.
+        assert_eq!(r.computed[p1].background_color, RED);
+        assert_eq!(
+            r.computed[p2].background_color,
+            ComputedValues::initial().background_color
+        );
+        assert_eq!(
+            r.computed[p3].background_color,
+            ComputedValues::initial().background_color
+        );
+        // `~` (box-sizing): all three.
+        assert_eq!(
+            r.computed[p1].box_sizing,
+            crate::property::BoxSizing::BorderBox
+        );
+        assert_eq!(
+            r.computed[p2].box_sizing,
+            crate::property::BoxSizing::BorderBox
+        );
+        assert_eq!(
+            r.computed[p3].box_sizing,
+            crate::property::BoxSizing::BorderBox
+        );
+    }
+
+    #[test]
+    fn sibling_combinator_ignores_non_element_nodes_between_siblings() {
+        // CSS Selectors L4 next-sibling combinator, verbatim: "Non-element
+        // nodes (e.g. text between elements) are ignored when considering
+        // the adjacency of elements"
+        // (<https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>).
+        // A text node is pushed to the *root* (same parent as `h2`/`p`)
+        // between them — `TestDoc::push_text(parent, ..)` appends to
+        // `parent`'s children list in call order, so pushing it between the
+        // `h2` and `p` pushes below makes it a genuine root-level sibling
+        // positioned between them, not a descendant of either. `h2 + p`
+        // must still match `p` despite this — i.e.
+        // `match_combinator_chain`'s `NextSibling` arm
+        // (`immediate_preceding_sibling`) must skip the non-Element
+        // `child_ids` entry rather than treating the text node as "the"
+        // immediately preceding sibling (which would make `p` NOT
+        // immediately follow `h2` from an all-nodes perspective).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "h2 + p { background-color: red }");
+        let _h2 = doc.push_element(0, "h2", None);
+        doc.push_text(0, "root-level text node, sibling of h2 and p, between them");
+        let p = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].background_color, RED,
+            "h2 + p must match p despite the text node inside h2 (not a sibling at all) \
+             and must not be confused by non-element nodes in general"
+        );
+    }
+
+    #[test]
+    fn sibling_combinator_does_not_match_preceding_element() {
+        // Order matters: CSS Selectors L4 requires the left compound's
+        // element to *precede* the right compound's element. A `<p>` placed
+        // BEFORE the `<h2>` must not satisfy `h2 + p` / `h2 ~ p` when
+        // matching is attempted from that earlier `<p>`'s perspective.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "h2 + p { background-color: red } h2 ~ p { color: red }");
+        let p_before = doc.push_element(0, "p", None);
+        let _h2 = doc.push_element(0, "h2", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p_before].background_color,
+            ComputedValues::initial().background_color
+        );
+        assert_eq!(r.computed[p_before].color, ComputedValues::initial().color);
+    }
+
+    #[test]
+    fn sibling_combinator_applies_under_a_non_root_parent() {
+        // Same as the acceptance tests above but wrapped in a `<div>`
+        // parent, so `ancestors` is non-empty when the sibling combinator
+        // arms run — exercises the `ancestors.last() == Some(parent)` branch
+        // (as opposed to the root-level tests' `None → root_id()` fallback
+        // branch) of `match_combinator_chain`.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "h2 + p { background-color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let _h2 = doc.push_element(wrap, "h2", None);
+        let p = doc.push_element(wrap, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].background_color, RED);
+    }
+
+    #[test]
+    fn sibling_combinator_composes_with_child_combinator_further_left() {
+        // Mixed chain, sibling-then-ancestor direction: `.x > .y ~ .z`.
+        // `.z` and `.y` are siblings (share parent `.x`); `.y` must in turn
+        // be a direct child of `.x`. Exercises the "sibling jump keeps
+        // `ancestors` unchanged, so a further-left Child/Descendant combinator
+        // composes for free" path documented on
+        // `is_supported_selector_list` (bd raikiri-spike-flln.3).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".x > .y ~ .z { background-color: red }");
+        let x = doc.push_element(0, "div", None);
+        doc.set_attr(x, "class", "x");
+        let y = doc.push_element(x, "div", None);
+        doc.set_attr(y, "class", "y");
+        let z = doc.push_element(x, "div", None); // sibling of y, child of x
+        doc.set_attr(z, "class", "z");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[z].background_color, RED);
+    }
+
+    #[test]
+    fn child_combinator_composes_with_sibling_combinator_further_left() {
+        // Mixed chain, ancestor-then-sibling direction: `.x ~ .y > .z`.
+        // `.z`'s parent is `.y`; `.y` must in turn have a preceding sibling
+        // `.x` (sharing `.y`'s own parent). Exercises the opposite
+        // composition from the test above — after the `Child` jump to `.y`,
+        // the `ancestors` slice `match_from_element` carries onward is
+        // already `.y`'s own ancestor chain, so `.last()` correctly resolves
+        // to `.y`'s parent for the `LaterSibling` step (see
+        // `match_combinator_chain`'s "親の解決" doc note).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".x ~ .y > .z { background-color: red }");
+        let container = doc.push_element(0, "div", None);
+        let x = doc.push_element(container, "div", None);
+        doc.set_attr(x, "class", "x");
+        let y = doc.push_element(container, "div", None); // sibling of x
+        doc.set_attr(y, "class", "y");
+        let z = doc.push_element(y, "div", None); // child of y
+        doc.set_attr(z, "class", "z");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[z].background_color, RED);
     }
 
     #[test]
@@ -3327,9 +3714,10 @@ mod tests {
         // tests` (`use super::*` / `crate::parse_selector_list`) — to
         // exercise `compound_matches`'s `_ => false` safety-net arm
         // defensively, per its own doc comment. `p:hover` has no combinator,
-        // so `ancestors` is irrelevant here — `&[]` (bd raikiri-spike-flln.2
-        // renamed this test alongside the function, and added `dom`/
-        // `ancestors` args the new signature requires).
+        // so `ancestors`/`elem_id` are irrelevant here — `&[]` / `p`'s own id
+        // (bd raikiri-spike-flln.2 renamed this test alongside the function
+        // and added `dom`/`ancestors` args; bd raikiri-spike-flln.3 added
+        // the `elem_id` arg the current signature requires).
         let list = crate::parse_selector_list("p:hover").expect("selector parses");
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", None);
@@ -3338,7 +3726,14 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            match_complex_selector_list(&list, &doc, &elem, &[], StyleQuirksMode::NoQuirks),
+            match_complex_selector_list(
+                &list,
+                &doc,
+                &elem,
+                StyleNodeId::new(p as u64),
+                &[],
+                StyleQuirksMode::NoQuirks,
+            ),
             None,
             "NonTSPseudoClass component must fall through the safety net"
         );
