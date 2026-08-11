@@ -473,12 +473,29 @@ impl PageContext {
                 // bare RegisterTarget carries only `fragment_id`, so the
                 // TargetInfo built here can only carry *this context's live
                 // counters* snapshot (mirrors the counter-freeze precedent
-                // StringSet already uses) — no text_parts, since DOM element
-                // access isn't available at this call site (same fail-closed
-                // narrowing as resolve_content_source). The richer,
-                // text-carrying registration path is `Self::set_targets`,
-                // fed by `raikiri_dom::target::build_target_registry`'s
-                // dedicated DOM walk — see that method's doc.
+                // StringSet already uses) — text_parts is left empty, since
+                // DOM element access isn't available at this call site.
+                //
+                // Unlike resolve_content_source (which SKIPS an
+                // unresolvable string-set entirely, see that fn's doc), this
+                // arm still registers with text_parts empty rather than
+                // skipping registration altogether: TargetInfo::text_part's
+                // own documented "" fallback for absent parts is pre-existing
+                // blessed semantics (CSS Content 3 §2.6.3 is itself marked
+                // not-ready-for-implementation on this point), and
+                // `raikiri_dom::target::build_target_registry` already ships
+                // with 3 of 4 ContentPart variants absent by design (module
+                // doc "Text parts — ContentPart::Content only"). The
+                // counters snapshot registered here is independently useful
+                // on its own. A caller wanting real text must use
+                // `Self::set_targets` instead — see the call-order note
+                // below for why that means "before", not "after", this
+                // directive fires. `resolve_target_text` on a fragment
+                // registered only through this arm therefore returns
+                // `Resolved("")`, not `Pending` — a known, accepted
+                // imprecision (widening `ResolveOutcome` to distinguish
+                // "resolved empty" from "text genuinely unavailable" is bd
+                // raikiri-spike-oqpc's non-goal territory, not this task's).
                 //
                 // TargetRegistry::register is first-wins (entry().or_insert)
                 // by design, so IF set_targets already populated this
