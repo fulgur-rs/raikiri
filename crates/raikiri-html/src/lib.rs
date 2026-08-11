@@ -838,6 +838,58 @@ mod tests {
     }
 
     #[test]
+    fn hr_ua_rule_overflow_hidden_survives_real_parse_and_cascade() {
+        // bd raikiri-spike-cmd3 spec-lens finding: no test anywhere pinned
+        // that `hr`'s new `overflow: hidden;` UA rule (HTML LS
+        // §the-hr-element-2) actually survives real cssparser parsing and
+        // cascade, as opposed to just being literal text in
+        // `MINIMAL_UA_CSS` (`minimal_ua_css_covers_required_display_block_selectors`
+        // above only textually scans for `display: block`, not `overflow`).
+        // The `raikiri` umbrella's `build_cascaded.rs` sibling test
+        // (`hr_is_display_block_border_inset_and_margin_via_ua_css`)
+        // explicitly skips asserting `overflow` because `OverflowValue`/
+        // `OverflowXY` aren't re-exported at the umbrella root yet
+        // (`wall/umbrella`, correctly deferred) — but `raikiri-html` depends
+        // on `raikiri-style` directly, so this crate can pin it today
+        // without crossing that wall.
+        use raikiri_style::Origin;
+        use raikiri_style::property::OverflowValue;
+
+        let html = b"<html><body><hr></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let hr_id = (0..uncascaded.dom.node_count())
+            .find(|&id_u| {
+                uncascaded
+                    .dom
+                    .node(raikiri_traits::NodeId::new(id_u as u64))
+                    .unwrap()
+                    .as_element()
+                    .is_some_and(|el| el.tag_name() == "hr")
+            })
+            .expect("<hr> should exist");
+        let overflow = cascade.computed[hr_id].overflow;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            overflow.x,
+            OverflowValue::Hidden,
+            "hr's UA rule overflow: hidden must reach computed.overflow.x through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            overflow.y,
+            OverflowValue::Hidden,
+            "hr's UA rule overflow: hidden must reach computed.overflow.y through real parse+cascade"
+        );
+    }
+
+    #[test]
     fn parse_ignores_body_style_in_m1_scope() {
         // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。

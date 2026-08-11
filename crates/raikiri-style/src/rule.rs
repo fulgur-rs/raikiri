@@ -9,7 +9,9 @@ use cssparser::{
 use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
-use crate::property::{Border, Length, LengthOrAuto, PropertyValue, Sides, parse_value};
+use crate::property::{
+    Border, Length, LengthOrAuto, OverflowXY, PropertyValue, Sides, parse_value,
+};
 
 /// 1 property declaration = value + `!important` flag。
 ///
@@ -443,6 +445,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         PropertyValue::Margin(sides) => expand_margin(sides, d.important, push),
         PropertyValue::Padding(sides) => expand_padding(sides, d.important, push),
         PropertyValue::Border(sides) => expand_border(sides, d.important, push),
+        PropertyValue::Overflow(pair) => expand_overflow(pair, d.important, push),
         // 展開先の longhand variant を持たない — そのまま 1 個 push。
         // `_` に潰さないこと (上の「wildcard arm を置かない理由 (契約)」節)。
         // ここへ variant を足すことは「展開先が無い」という主張である。
@@ -484,7 +487,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::Width(_)
         | PropertyValue::Height(_)
         | PropertyValue::BoxSizing(_)
-        | PropertyValue::Direction(_) => expand_none(d, push),
+        | PropertyValue::Direction(_)
+        | PropertyValue::OverflowX(_)
+        | PropertyValue::OverflowY(_) => expand_none(d, push),
     }
 }
 
@@ -597,6 +602,23 @@ fn expand_border(sides: Sides<Border>, important: bool, mut push: impl FnMut(Dec
     });
 }
 
+/// `overflow` shorthand (CSS Overflow 3 §3.1
+/// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>) を
+/// `overflow-x` / `overflow-y` の 2 longhand に展開する cold helper
+/// (raikiri-spike-cmd3)。margin / padding / border shorthand precedent と
+/// 同 pattern — 2-axis なので push は 2 回のみ。
+#[inline(never)]
+fn expand_overflow(pair: OverflowXY, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::OverflowX(pair.x),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::OverflowY(pair.y),
+        important,
+    });
+}
+
 /// Per-declaration parser for cssparser::RuleBodyParser。
 struct DeclParser;
 
@@ -651,7 +673,7 @@ mod tests {
 
     use super::*;
     use crate::property::{
-        BorderColor, BorderStyle, CssColor, FontWeightValue, Length, LengthOrAuto,
+        BorderColor, BorderStyle, CssColor, FontWeightValue, Length, LengthOrAuto, OverflowValue,
     };
     use cssparser::ParserInput;
 
@@ -1029,6 +1051,81 @@ mod tests {
         assert!(
             decls.is_empty(),
             "border shorthand with leftover token must be dropped, got {decls:?}"
+        );
+    }
+
+    // ── overflow shorthand expansion (CSS Overflow 3 §3.1,
+    // raikiri-spike-cmd3) ──
+
+    #[test]
+    fn overflow_shorthand_expands_into_two_longhand_declarations() {
+        // `overflow: hidden scroll` → 2 longhand (x=hidden, y=scroll), spec
+        // order per §3.1 "sets the specified values of overflow-x and
+        // overflow-y in that order".
+        let decls = parse_block("overflow: hidden scroll;");
+        assert_eq!(decls.len(), 2, "shorthand must expand to 2 longhand decls");
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::OverflowX(OverflowValue::Hidden)
+        );
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::OverflowY(OverflowValue::Scroll)
+        );
+    }
+
+    #[test]
+    fn overflow_shorthand_one_value_expands_to_both_axes() {
+        // §3.1 "If the second value is omitted, it is copied from the first."
+        let decls = parse_block("overflow: auto;");
+        assert_eq!(decls.len(), 2);
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::OverflowX(OverflowValue::Auto)
+        );
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::OverflowY(OverflowValue::Auto)
+        );
+    }
+
+    #[test]
+    fn overflow_shorthand_important_flag_propagates_to_all_longhand() {
+        // spec CSS Cascading L4 §3: shorthand `!important` は全 longhand に copy
+        // される (margin / padding / border important 拡張と同 pattern)。
+        let decls = parse_block("overflow: hidden !important;");
+        assert_eq!(decls.len(), 2);
+        for d in &decls {
+            assert!(d.important, "important must propagate to every longhand");
+        }
+    }
+
+    #[test]
+    fn overflow_shorthand_three_values_declaration_dropped() {
+        // property.rs
+        // `overflow_shorthand_leaves_extra_values_for_caller_exhausted_check`
+        // の end-to-end 側 pin: `parse_overflow_shorthand` は 2 value 消費、3rd
+        // 残り token は expect_exhausted で declaration 全体を drop する
+        // (0 decl、margin 5-value sibling と同 pattern)。
+        let decls = parse_block("overflow: hidden scroll auto;");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            decls.is_empty(),
+            "3-value shorthand must be dropped by expect_exhausted, got {decls:?}"
+        );
+    }
+
+    #[test]
+    fn overflow_longhand_declaration_not_expanded() {
+        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl
+        // のまま)。shorthand-only expansion の scope を pin する negative test
+        // (margin / padding / border sibling と同 pattern)。
+        let decls = parse_block("overflow-x: hidden;");
+        assert_eq!(decls.len(), 1);
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::OverflowX(OverflowValue::Hidden)
         );
     }
 }

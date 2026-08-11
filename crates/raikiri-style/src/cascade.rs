@@ -1602,7 +1602,17 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Border(_)
         | PropertyValue::Width(_)
         | PropertyValue::Height(_)
-        | PropertyValue::BoxSizing(_)) => v,
+        | PropertyValue::BoxSizing(_)
+        // `overflow-x`/`overflow-y`/`overflow` join this arm — CSS Overflow 3
+        // §3.1's cross-axis coupling (`resolve_overflow`) depends only on the
+        // *other axis of the same node*, never on the inheritance parent, so
+        // there is nothing for this function (phase 2) to resolve. It is
+        // applied in phase 3 instead (`crate::page::absolutize_in_page_context`,
+        // mirroring the element path's `SpecifiedValues::absolutize_with`).
+        // (raikiri-spike-cmd3)
+        | PropertyValue::OverflowX(_)
+        | PropertyValue::OverflowY(_)
+        | PropertyValue::Overflow(_)) => v,
     })
 }
 
@@ -1958,6 +1968,24 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // cascade winner が specified keyword をそのまま computed value に反映。
         // BoxSizing は Copy、by-value 代入で十分。
         PropertyValue::BoxSizing(bs) => target.box_sizing = bs,
+        // CSS Overflow 3 §3.1 overflow-x/overflow-y physical longhand
+        // (raikiri-spike-cmd3)。non-inherited、per-axis winner を staging の
+        // `overflow.x`/`overflow.y` へ直接代入。cross-axis の computed-value
+        // coupling (`resolve_overflow`) はここでは**適用しない** —
+        // `target.overflow` は winner 適用の途中経過であり、まだ他方の axis の
+        // 最終 winner を反映し終えていない可能性がある。coupling は全 winner
+        // 適用後の phase 3 (`SpecifiedValues::finalize` → `absolutize_with`)
+        // でのみ解決する (border style→width gating と同じ順序、
+        // [`resolve_overflow`] doc 参照)。
+        PropertyValue::OverflowX(v) => target.overflow.x = v,
+        PropertyValue::OverflowY(v) => target.overflow.y = v,
+        // `overflow` shorthand fall-through。sibling `PropertyValue::Padding`
+        // arm と同じく **safety net ではない** — 到達すれば 2 longhand winner
+        // を一括で破壊し spec と食い違う。cascade 経路では unreachable
+        // (`expand_shorthand_into` が 2 longhand に展開する)。詳細な framing
+        // とその unreachability の compile-time 強制は `Margin` arm の
+        // comment 参照。(raikiri-spike-cmd3)
+        PropertyValue::Overflow(pair) => target.overflow = pair,
     }
 }
 
@@ -1967,7 +1995,9 @@ mod tests {
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::CssColor;
     use crate::property::DisplayValue;
-    use crate::property::{Border, BorderColor, BorderStyle, Length, LengthOrAuto, Sides};
+    use crate::property::{
+        Border, BorderColor, BorderStyle, Length, LengthOrAuto, OverflowValue, OverflowXY, Sides,
+    };
     use crate::resolve::{
         ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
         ComputedLineHeight,
@@ -5777,6 +5807,24 @@ mod tests {
         };
         apply_value(PropertyValue::Margin(sides), &mut cv);
         assert_eq!(cv.margin, sides);
+    }
+
+    #[test]
+    fn apply_value_direct_overflow_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_margin_shorthand_fall_through`
+        // above (bd raikiri-spike-cmd3): `apply_value`'s
+        // `PropertyValue::Overflow(pair)` arm is unreachable via the
+        // cascade path (`expand_shorthand_into` expands it to the 2
+        // `OverflowX`/`OverflowY` longhands before `apply_value` ever
+        // sees it) — not a safety net, a canary that catches regression
+        // if the arm is ever reached with a stale/wrong pair.
+        let mut cv = SpecifiedValues::initial();
+        let pair = OverflowXY {
+            x: OverflowValue::Hidden,
+            y: OverflowValue::Scroll,
+        };
+        apply_value(PropertyValue::Overflow(pair), &mut cv);
+        assert_eq!(cv.overflow, pair);
     }
 
     // ── border longhand + shorthand cascade (raikiri-spike-0vv.12) ──

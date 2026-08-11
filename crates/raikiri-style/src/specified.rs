@@ -33,9 +33,9 @@ use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
-    CssColor, Direction, DisplayValue, Length, LengthOrAuto, LineHeight, Sides, TextAlign,
-    empty_content_list, empty_counter_entries, empty_string_set_entries, initial_font_family,
-    resolve_text_align_match_parent,
+    CssColor, Direction, DisplayValue, Length, LengthOrAuto, LineHeight, OverflowValue, OverflowXY,
+    Sides, TextAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    initial_font_family, resolve_overflow, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_line_height,
@@ -59,7 +59,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -178,6 +178,13 @@ pub struct SpecifiedValues {
     pub height: LengthOrAuto,
     /// [`ComputedValues::box_sizing`] の staging。層は computed-equivalent。
     pub box_sizing: BoxSizing,
+    /// [`ComputedValues::overflow`] の staging。層は computed-equivalent
+    /// (`OverflowValue` は length を運ばない) だが、cross-axis の
+    /// computed-value coupling は**ここでは解決されない** — [`Self`] doc の
+    /// "`text_align: match-parent` は D5 と同型ではない" 節と同じ理由で、
+    /// [`resolve_overflow`] は phase 3 ([`Self::absolutize_with`]) が呼ぶ
+    /// (raikiri-spike-cmd3)。
+    pub overflow: OverflowXY,
 }
 
 impl SpecifiedValues {
@@ -226,6 +233,9 @@ impl SpecifiedValues {
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
+            // CSS Overflow 3 §3.1: overflow-x/overflow-y initial は
+            // `visible` (raikiri-spike-cmd3)。
+            overflow: OverflowXY::both(OverflowValue::Visible),
         }
     }
 
@@ -295,6 +305,8 @@ impl SpecifiedValues {
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
+            // non-inherited (raikiri-spike-cmd3、CSS Overflow 3 §3.1)。
+            overflow: OverflowXY::both(OverflowValue::Visible),
         }
     }
 
@@ -605,6 +617,12 @@ impl SpecifiedValues {
             width: resolve_length_percentage_or_auto(self.width, font_size, own_line_height, ctx),
             height: resolve_length_percentage_or_auto(self.height, font_size, own_line_height, ctx),
             box_sizing: self.box_sizing,
+            // CSS Overflow 3 §3.1 cross-axis computed-value coupling
+            // (raikiri-spike-cmd3) — same-node sibling dependency, resolved
+            // here (phase 3) once both `overflow-x`/`overflow-y` winners are
+            // known, mirroring the `border-*-style` -> `border-*-width` gate
+            // a few fields up (`resolve_border`). See `resolve_overflow` doc.
+            overflow: resolve_overflow(self.overflow),
         }
     }
 }
@@ -743,6 +761,10 @@ mod tests {
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),
             box_sizing: BoxSizing::BorderBox,
+            overflow: OverflowXY {
+                x: OverflowValue::Hidden,
+                y: OverflowValue::Scroll,
+            },
         }
     }
 
@@ -786,6 +808,9 @@ mod tests {
         assert_eq!(child.width, LengthOrAuto::Auto);
         assert_eq!(child.height, LengthOrAuto::Auto);
         assert_eq!(child.box_sizing, BoxSizing::ContentBox);
+        // CSS Overflow 3 §3.1 (raikiri-spike-cmd3): overflow-x/overflow-y は
+        // non-inherited。
+        assert_eq!(child.overflow, initial.overflow);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は
