@@ -290,7 +290,7 @@ pub trait StyleElement {
     /// (`test_dom.rs`) and the real DOM impl
     /// (`raikiri-dom::dom_impl::ElementRef::attr`) honor this uniformly), so
     /// `Component::AttributeInNoNamespaceExists` matching
-    /// (`cascade.rs::match_simple_selectors`), which is built directly on
+    /// (`cascade.rs::compound_matches`), which is built directly on
     /// `elem.attr(...).is_some()`, cannot observe the distinction: `[foo]`
     /// will not match `<div foo="">`.
     ///
@@ -298,7 +298,7 @@ pub trait StyleElement {
     /// is affected identically, and for the same reason. Per spec `[foo=""]`
     /// should match an element carrying `foo=""` (attribute value compares
     /// equal to the empty string), but `Component::AttributeInNoNamespace`'s
-    /// `match_simple_selectors` arm (`cascade.rs`, the `elem.attr(local_name)
+    /// `compound_matches` arm (`cascade.rs`, the `elem.attr(local_name)
     /// => None => false` branch) already sees `None` for `foo=""` — it
     /// cannot distinguish "value is empty" from "attribute absent" any more
     /// than the `Exists` arm above can, so `[foo=""]` will not match

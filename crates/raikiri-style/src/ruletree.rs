@@ -192,8 +192,12 @@ impl RuleTree {
         for rule in StyleSheetParser::new(&mut parser, &mut rule_parser).flatten() {
             match rule {
                 ParsedRule::Style(selectors, declarations) => {
+                    // 未サポート component (pseudo-class / sibling combinator 等、
+                    // `is_supported_selector_list` doc 参照) を含む selector は
+                    // drop — descendant/child combinator は bd raikiri-spike-flln.2
+                    // で受理対象に入った。
                     if !is_supported_selector_list(&selectors) {
-                        continue; // combinator/pseudo-class selector は m1.4 では drop
+                        continue;
                     }
                     self.style_rules.push(StyleRule {
                         selectors,
@@ -401,15 +405,17 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 
 /// SelectorList 内全 selector が現在サポート済みの component のみで構成されて
 /// いるか判定。type / universal / class / id / null-namespace 属性 selector
-/// (存在チェック `[foo]` と値付き `[foo=bar]` 系一式) を受理し、combinator /
-/// pseudo-class / それ以外の属性 selector 形態を 1 つでも含めば false →
-/// rule ごと drop。「それ以外の属性 selector 形態」= `Component::AttributeOther`
-/// に束ねられる 2 パターン、ただし両者は対称ではない (selectors crate
-/// v0.39.0 `parser.rs` の実 parse 分岐で確認、bd raikiri-spike-flln.1
-/// フォローアップ round): namespace 付き (`[ns|foo]`) は存在チェック/値付き
-/// 両形態とも常に `AttributeOther`。非 ASCII-lowercase local name
-/// (`[Data-Foo]` 等、namespace 無指定) は**値付き形態のみ** `AttributeOther`
-/// に回る — 存在チェック形態は namespace 無指定である限り
+/// (存在チェック `[foo]` と値付き `[foo=bar]` 系一式) に加え、bd
+/// raikiri-spike-flln.2 で descendant (space) / child (`>`) combinator も
+/// 受理するようになった。pseudo-class / sibling combinator (`+`/`~`) /
+/// それ以外の属性 selector 形態を 1 つでも含めば false → rule ごと drop。
+/// 「それ以外の属性 selector 形態」= `Component::AttributeOther` に束ねられる
+/// 2 パターン、ただし両者は対称ではない (selectors crate v0.39.0
+/// `parser.rs` の実 parse 分岐で確認、bd raikiri-spike-flln.1 フォローアップ
+/// round): namespace 付き (`[ns|foo]`) は存在チェック/値付き両形態とも常に
+/// `AttributeOther`。非 ASCII-lowercase local name (`[Data-Foo]` 等、
+/// namespace 無指定) は**値付き形態のみ** `AttributeOther` に回る — 存在
+/// チェック形態は namespace 無指定である限り
 /// `Component::AttributeInNoNamespaceExists` のまま受理される。両形態の
 /// 非対称の理由: 値付き形態の `local_name` は selector 自身の parse 時点で
 /// 既に ASCII-lowercase であることが保証される (そうでなければ
@@ -420,33 +426,39 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// 形態には比較すべき値がなく、local name の大文字小文字はそのまま
 /// selector 内に保持される — そのため element 側の namespace に応じて
 /// `local_name`/`local_name_lower` のどちらを attribute name の lookup key
-/// にすべきかが変わる (`cascade.rs::match_simple_selectors` の該当 arm 参照)。
+/// にすべきかが変わる (`cascade.rs::compound_matches` の該当 arm 参照)。
 ///
 /// bd raikiri-spike-flln.1 で class/id/attribute selector を受理するよう拡張
 /// (旧名 `is_type_or_universal_only` — 拡張後は type/universal only という
-/// 名前が実態と合わなくなったため rename)。combinator と pseudo-class は
-/// 本 task の scope 外のまま — single-element (compound-only) matching のみ、
-/// tree-walk を要する combinator 拡張は別 task。
+/// 名前が実態と合わなくなったため rename)。bd raikiri-spike-flln.2 で
+/// `Component::Combinator(Combinator::Descendant | Combinator::Child)` を
+/// 追加受理 — 他 combinator (`Combinator::NextSibling` /
+/// `Combinator::LaterSibling` / `Combinator::PseudoElement` /
+/// `Combinator::SlotAssignment` / `Combinator::Part`) と pseudo-class は
+/// 引き続き本 task の scope 外 (flln.3-6 以降の別 task)。
 ///
 /// spec: CSS Selectors Level 4 — class selector
 /// <https://www.w3.org/TR/selectors-4/#class-html>、ID selector
 /// <https://www.w3.org/TR/selectors-4/#id-selectors>、attribute selector
-/// <https://www.w3.org/TR/selectors-4/#attribute-selectors>。
+/// <https://www.w3.org/TR/selectors-4/#attribute-selectors>、descendant
+/// combinator <https://www.w3.org/TR/selectors-4/#descendant-combinators>、
+/// child combinator <https://www.w3.org/TR/selectors-4/#child-combinators>。
 ///
-/// # Invariant with `cascade.rs::match_simple_selectors`
+/// # Invariant with `cascade.rs::compound_matches` / `match_combinator_chain`
 ///
-/// この関数が受理する `Component` variant は、`cascade.rs`
-/// `match_simple_selectors` 側に対応する match arm が**必ず**存在しなければ
+/// この関数が受理する `Component` variant は、`cascade.rs` 側
+/// (simple selector component は `compound_matches`、combinator は
+/// `match_combinator_chain`) に対応する match arm が**必ず**存在しなければ
 /// ならない — なければ、rule tree には乗るが cascade では絶対に match しない
 /// (safety net の `_ => false` に落ちる) rule を静かに作ってしまう。逆方向の
-/// 対応関係 (`match_simple_selectors` の doc から本関数への pointer) は
+/// 対応関係 (`compound_matches` の doc から本関数への pointer) は
 /// `cascade.rs` 側に既にある。両者は独立した enumerate で、shared helper 化は
 /// されていない (quality/debt 両 lens が premature abstraction として見送り —
 /// doc pointer で invariant を明示するに留める)。flln.2-6 でこのペアを
 /// combinator/pseudo-class 分の追加で複数回同時編集することになるため、
 /// 変更のたびにこの対応関係を保つこと。
 fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
-    use selectors::parser::Component;
+    use selectors::parser::{Combinator, Component};
 
     for selector in list.slice() {
         for component in selector.iter_raw_match_order() {
@@ -459,7 +471,8 @@ fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool 
                 | Component::ID(_)
                 | Component::Class(_)
                 | Component::AttributeInNoNamespaceExists { .. }
-                | Component::AttributeInNoNamespace { .. } => {}
+                | Component::AttributeInNoNamespace { .. }
+                | Component::Combinator(Combinator::Descendant | Combinator::Child) => {}
                 _ => return false,
             }
         }
@@ -547,10 +560,51 @@ mod tests {
     }
 
     #[test]
-    fn combinator_selector_still_dropped() {
-        // descendant combinator (`div p`) は bd raikiri-spike-flln.1 の scope 外 —
-        // 引き続き drop (safety net regression)。
+    fn descendant_combinator_selector_is_captured() {
+        // bd raikiri-spike-flln.2: descendant combinator (`div p`) は もう
+        // drop されない — both rules kept (was
+        // `combinator_selector_still_dropped` pre-flln.2, when combinators
+        // were entirely out of scope and this asserted `len() == 1`).
         let doc = dom_with_style("div p { color: red } p { color: blue }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 2);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+        assert_eq!(tree.style_rules[1].source_order, 1);
+    }
+
+    #[test]
+    fn child_combinator_selector_is_captured() {
+        // bd raikiri-spike-flln.2 acceptance: `ol > li` must be captured.
+        let doc = dom_with_style("ol > li { color: red }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn chained_combinator_selector_is_captured() {
+        // CSS Selectors L4 child-combinators
+        // (<https://www.w3.org/TR/selectors-4/#child-combinators>) example
+        // selector `div ol>li p`, verbatim from the spec — mixes descendant
+        // and child combinators in one complex selector. Must be captured
+        // whole (not partially, `is_supported_selector_list` walks every
+        // component in the selector regardless of which combinator
+        // separates it from its neighbours).
+        let doc = dom_with_style("div ol>li p { color: red }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn sibling_combinator_selector_still_dropped() {
+        // next-sibling (`+`) / subsequent-sibling (`~`) combinators remain
+        // out of scope for bd raikiri-spike-flln.2 (descendant/child only) —
+        // still dropped (safety net regression).
+        let doc = dom_with_style("p + p { color: red } p { color: blue }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+
+        let doc = dom_with_style("p ~ p { color: red } p { color: blue }");
         let tree = build_rule_tree(&doc);
         assert_eq!(tree.style_rules.len(), 1);
         assert_eq!(tree.style_rules[0].source_order, 0);
@@ -677,12 +731,13 @@ mod tests {
 
     #[test]
     fn add_stylesheet_dropped_selectors_do_not_consume_source_order() {
-        // `div p` (descendant combinator) は bd raikiri-spike-flln.1 後も未サポート
-        // のため drop、`p` は残る (class selector `.foo` は flln.1 でもう drop
-        // されなくなったため、combinator selector に差し替え — regression 意図は
-        // 「drop された rule は source_order counter を消費しない」のまま)。
+        // `div + p` (next-sibling combinator) は bd raikiri-spike-flln.2 後も
+        // 未サポートのため drop、`p` は残る (`div p` descendant combinator は
+        // flln.2 でもう drop されなくなったため、依然未サポートの sibling
+        // combinator に差し替え — regression 意図は「drop された rule は
+        // source_order counter を消費しない」のまま)。
         let mut tree = RuleTree::empty();
-        tree.add_stylesheet("div p { color: red } p { color: blue }", Origin::Author);
+        tree.add_stylesheet("div + p { color: red } p { color: blue }", Origin::Author);
         assert_eq!(tree.style_rules.len(), 1);
         assert_eq!(tree.style_rules[0].source_order, 0);
     }
