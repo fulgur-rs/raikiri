@@ -565,6 +565,20 @@ impl PageContext {
     /// reassigning `page_index`/`page_name` per page) — constructing a fresh
     /// `PageContext` per page would incorrectly discard `targets` and
     /// `counters` state that must persist.
+    ///
+    /// **`targets` still has its own, separate page-boundary obligation**
+    /// (bd raikiri-spike-oqpc): `TargetRegistry` being per-document (`resolved`
+    /// / `pending_slots` persist across pages, per the contract above) is
+    /// orthogonal to its *internal* slot-id sequence numbering, which design
+    /// §7.6 defines as page-local. A driver that advances `page_index` per
+    /// page must also call [`TargetRegistry::begin_page`] with the new
+    /// index, or every pending slot's [`crate::error::TargetSlotId`] stays
+    /// tagged to page 0 with a document-wide sequence. There is no
+    /// `targets_mut` accessor (see [`Self::targets`]'s doc), so this call
+    /// cannot go through `PageContext` at all — a driver must make it on an
+    /// *owned* registry (e.g. the one
+    /// `raikiri_dom::target::build_target_registry` returns) before wiring
+    /// it in via [`Self::set_targets`].
     pub fn begin_page(&mut self) {
         for state in self.strings.values_mut() {
             state.begin_page();

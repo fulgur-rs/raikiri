@@ -411,10 +411,35 @@ impl TargetRegistry {
     /// same [`TargetSlotId`]s (the byte-identical goal §11.2 Finding #4
     /// exists for). A no-op if `page_index` already matches the current
     /// value (redundant same-page calls don't corrupt the count of an
-    /// in-progress page). Mirrors the sibling
-    /// [`super::context::PageContext::begin_page`] page-boundary hook
-    /// (different signature: that one has no driver-supplied index to
-    /// advance, this one does).
+    /// in-progress page) — see the "Re-seeded registry" caveat below for the
+    /// one case where that guard is *not* what a caller wants.
+    ///
+    /// Same page-boundary role as the sibling
+    /// [`super::context::PageContext::begin_page`] hook (different
+    /// signature: that one has no driver-supplied index to advance, this one
+    /// does), but there is no path from one to the other — `PageContext`
+    /// exposes `targets` read-only (no `targets_mut`, see
+    /// [`super::context::PageContext::targets`]'s doc), so a driver must
+    /// call this directly on an *owned* registry (e.g. the one
+    /// `raikiri_dom::target::build_target_registry` returns) before wiring
+    /// it into a `PageContext` via
+    /// [`super::context::PageContext::set_targets`].
+    ///
+    /// **Re-seeded registry caveat**: design §7.4's convergence flow seeds a
+    /// re-run with a previously-converged registry
+    /// (`StreamingConfig::initial_registry` / `BatchConfig::initial_registry`
+    /// / `PlanConfig::initial_registry`). If that seed registry's
+    /// `page_index` already equals the first page's index (typically 0) but
+    /// `next_sequence` is *not* 0 (carried over from the prior run), the
+    /// same-value no-op guard above will skip the reset the re-run actually
+    /// needs — the re-run's first slot would get the prior run's leftover
+    /// sequence instead of restarting at 0, breaking the exact
+    /// byte-identical guarantee this method exists to protect. No current
+    /// production code reads `initial_registry` (M1.1 placeholder configs),
+    /// so this is not reachable today; a future consumer of it must either
+    /// reset the seed registry's sequence independently before the re-run,
+    /// or `begin_page` must gain a force-reset variant — tracked as a
+    /// follow-up, not fixed here.
     ///
     /// No production driver calls this yet — the per-page walk that would
     /// call it is bd raikiri-spike-si32, not yet landed (same gap
