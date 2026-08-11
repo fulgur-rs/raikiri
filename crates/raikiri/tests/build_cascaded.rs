@@ -94,6 +94,70 @@ fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
 }
 
 #[test]
+fn list_elements_are_display_block_via_ua_css() {
+    // bd raikiri-spike-5z86.2 Acceptance: <ul><li>...</li><li>...</li></ul>
+    // の各 <li> が縦に積まれた block として表示される (marker記号は Epic 4
+    // 待ちで出なくてよい)。ol/ul は spec通り display: block、li は spec の
+    // `display: list-item` が raikiri-style で未実装 (parse_display /
+    // display_rejects_unknown_ident test) なため display: block に
+    // interim fallback している。list-item 実装は bd raikiri-spike-uhzy
+    // で track (詳細は crates/raikiri-html/src/ua/minimal.css のコメント
+    // 参照)。sectioning test と同様、cascade まで通した computed value を
+    // 見るので非-vacuous。
+    for tag in ["ol", "ul", "li"] {
+        let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
+        let doc = parse_html(&html);
+        let result = build_cascaded(&doc);
+
+        let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
+        let display = result.computed[el_id.0 as usize].display;
+        assert_eq!(
+            display,
+            DisplayValue::Block,
+            "<{tag}> should be display: block from bundled UA CSS via build_cascaded",
+        );
+    }
+}
+
+#[test]
+fn li_block_fallback_stacks_siblings_as_boxes() {
+    // Acceptance の literal fixture を直接再現: <ul><li>A</li><li>B</li></ul>
+    // の2つの <li> が両方とも display: block であることを、tag 走査ではなく
+    // 実際の親子構造 (ul の child_ids) 経由で確認する — 1つ目の <li> だけを
+    // 見る find_by_tag では2つ目の <li> の取りこぼしを検出できないため。
+    let doc = parse_html("<html><body><ul><li>A</li><li>B</li></ul></body></html>");
+    let result = build_cascaded(&doc);
+
+    let ul_id = find_by_tag(&doc.dom, "ul").expect("<ul> exists");
+    let li_ids: Vec<NodeId> = doc.dom.child_ids(ul_id).collect();
+    assert_eq!(li_ids.len(), 2, "expected two <li> children under <ul>");
+    for li_id in li_ids {
+        let node = doc.dom.node(li_id).expect("child node exists");
+        assert_eq!(
+            node.kind(),
+            NodeKind::Element,
+            "expected an Element child under <ul>",
+        );
+        let tag = node
+            .as_element()
+            .expect("Element node has as_element()")
+            .tag_name()
+            .to_owned();
+        assert_eq!(
+            tag, "li",
+            "expected <ul> children to be <li>, found <{tag}>"
+        );
+
+        let display = result.computed[li_id.0 as usize].display;
+        assert_eq!(
+            display,
+            DisplayValue::Block,
+            "each <li> under <ul> should be display: block from bundled UA CSS",
+        );
+    }
+}
+
+#[test]
 fn author_inline_style_overrides_ua_display_block() {
     // NB: m1.4 cascade は class/id selector を drop するので inline style を使う
     let doc = parse_html("<html><body><p style=\"display:inline\">Hi</p></body></html>");
