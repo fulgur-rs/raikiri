@@ -439,7 +439,7 @@ impl TargetRegistry {
     /// a [`TargetSlotId`] byte-identical to that still-pending one. Two
     /// distinct [`PendingResolution`]s would then carry the same `slot_id`,
     /// breaking the uniqueness/byte-identical guarantee `TargetSlotId`
-    /// exists to provide (`crate::error::TargetSlotId`'s own doc comment).
+    /// exists to provide ([`crate::error::TargetSlotId`]'s own doc comment).
     /// `page_index` is driver-supplied internal input, not
     /// external/untrusted data, so a non-monotonic call is a driver
     /// precondition violation rather than adversarial input — this asserts
