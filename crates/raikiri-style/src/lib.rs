@@ -28,7 +28,9 @@ pub mod error;
 pub use error::CascadeError;
 
 pub mod style_dom;
-pub use style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
+pub use style_dom::{
+    StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,
+};
 
 pub mod property;
 pub use property::{

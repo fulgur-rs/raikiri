@@ -46,6 +46,38 @@ impl StyleNodeId {
     }
 }
 
+/// Document-mode context: HTML5 quirks mode. Mirror of
+/// `raikiri_traits::QuirksMode` for the style-owned trait surface (Phase B
+/// decoupling, raikiri-spike-3ps + 94e) — same rationale as
+/// [`StyleNodeKind`] mirroring `raikiri_traits::NodeKind` just below:
+/// raikiri-style does not depend on raikiri-traits (see this module's
+/// header), so it carries its own copy of the 3-way state rather than
+/// reaching across that dropped Cargo edge.
+///
+/// Consumed by [`StyleDom::quirks_mode`], which [`mod@crate::cascade`]'s
+/// id/class selector matching reads to decide whether to ASCII-case-fold
+/// (CSS Selectors L4 quirks-mode case-insensitivity — bd raikiri-spike-tqwi).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum StyleQuirksMode {
+    /// Standards mode (`<!DOCTYPE html>` explicit, or no quirks-mode trigger
+    /// matched).
+    #[default]
+    NoQuirks,
+    /// Limited quirks mode ("almost standards mode"). CSS Selectors L4's
+    /// id/class case-insensitivity applies only to
+    /// [`StyleQuirksMode::Quirks`] — this variant is
+    /// spec-distinct from it (DOM Standard
+    /// <https://dom.spec.whatwg.org/#concept-document-quirks>, verbatim: "A
+    /// document is said to be in no-quirks mode if its mode is 'no-quirks',
+    /// **quirks mode** if its mode is 'quirks', and **limited-quirks mode**
+    /// if its mode is 'limited-quirks'" — three separate named dfns,
+    /// confirmed via direct fetch, bd raikiri-spike-tqwi).
+    LimitedQuirks,
+    /// Full quirks mode (missing / obsolete DOCTYPE).
+    Quirks,
+}
+
 /// DOM node kind — mirror of `raikiri_traits::NodeKind` for the style-owned
 /// trait surface (Phase B decoupling, raikiri-spike-3ps + 94e).
 ///
@@ -116,6 +148,27 @@ pub trait StyleDom {
     /// (raikiri-dom, test_dom) override with the true arena length.
     fn node_count(&self) -> usize {
         0
+    }
+
+    /// Document-mode context (HTML5 quirks mode) for this whole document.
+    ///
+    /// Default [`StyleQuirksMode::NoQuirks`] is a safe fallback for shell
+    /// implementations (mirrors [`Self::node_count`]'s `0` default) — DOM
+    /// implementations that already track parse-time quirks-mode detection
+    /// (e.g. `raikiri_traits::QuirksMode`, set by raikiri-html's sink and
+    /// carried through `UncascadedDocument`) should override this to report
+    /// the true value. [`mod@crate::cascade`]'s id/class selector matching
+    /// reads this to decide ASCII-case-folding (CSS Selectors L4 — bd
+    /// raikiri-spike-tqwi).
+    ///
+    /// **Not yet overridden by raikiri-dom** as of bd raikiri-spike-tqwi:
+    /// `raikiri-dom::Document` does not carry a quirks-mode field, and
+    /// `impl StyleDom for Document` (`crates/raikiri-dom/src/dom_impl.rs`)
+    /// still relies on this default — so real parsed HTML documents take the
+    /// `NoQuirks` path today regardless of their actual doctype. Tracked as a
+    /// dom-scope follow-up, bd raikiri-spike-wolu.
+    fn quirks_mode(&self) -> StyleQuirksMode {
+        StyleQuirksMode::NoQuirks
     }
 }
 
@@ -191,17 +244,35 @@ pub trait StyleElement {
 
     /// Whether `class` attribute contains the given token.
     ///
-    /// HTML-spec ASCII whitespace split (space / tab / LF / CR / FF).
-    /// Empty query always `false`.
+    /// HTML-spec ASCII whitespace split (space / tab / LF / CR / FF), exact
+    /// (case-sensitive) per-token comparison. Empty query always `false`.
+    /// See [`Self::has_class_ascii_case_insensitive`] for the quirks-mode
+    /// counterpart (CSS Selectors L4 class-html — bd raikiri-spike-tqwi).
     fn has_class(&self, class: &str) -> bool {
         if class.is_empty() {
             return false;
         }
-        self.attr("class").is_some_and(|value| {
-            value
-                .split([' ', '\t', '\n', '\r', '\x0C'])
-                .any(|token| token == class)
-        })
+        self.attr("class")
+            .is_some_and(|value| class_token_matches(value, class, false))
+    }
+
+    /// Whether `class` attribute contains the given token, matched ASCII
+    /// case-insensitively (bd raikiri-spike-tqwi — CSS Selectors L4
+    /// <https://www.w3.org/TR/selectors-4/#class-html>, verbatim: "When
+    /// matching against a document which is in quirks mode, class names must
+    /// be matched ASCII case-insensitively; class selectors are otherwise
+    /// case-sensitive").
+    ///
+    /// Same HTML-spec ASCII whitespace tokenisation as [`Self::has_class`] —
+    /// only the per-token comparison differs (`eq_ignore_ascii_case` instead
+    /// of `==`). Default delegates to `attr("class")` exactly like
+    /// `has_class`, so overriding `attr` alone keeps both consistent.
+    fn has_class_ascii_case_insensitive(&self, class: &str) -> bool {
+        if class.is_empty() {
+            return false;
+        }
+        self.attr("class")
+            .is_some_and(|value| class_token_matches(value, class, true))
     }
 
     /// Null-namespace attribute lookup. Empty string is normalised to `None`.
@@ -215,4 +286,21 @@ pub trait StyleElement {
             None
         }
     }
+}
+
+/// Shared class-token search for [`StyleElement::has_class`] /
+/// [`StyleElement::has_class_ascii_case_insensitive`] — HTML-spec ASCII
+/// whitespace split, with the per-token comparison as the only thing that
+/// differs between the two callers (`ascii_case_insensitive` selects
+/// `eq_ignore_ascii_case` vs `==`).
+fn class_token_matches(attr_value: &str, class: &str, ascii_case_insensitive: bool) -> bool {
+    attr_value
+        .split([' ', '\t', '\n', '\r', '\x0C'])
+        .any(|token| {
+            if ascii_case_insensitive {
+                token.eq_ignore_ascii_case(class)
+            } else {
+                token == class
+            }
+        })
 }
