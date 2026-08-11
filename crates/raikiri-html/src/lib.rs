@@ -1270,6 +1270,13 @@ mod tests {
         // grouping elements)。cascade まで通した非-vacuous な検証は
         // `crates/raikiri/tests/build_cascaded.rs`
         // `sectioning_and_grouping_elements_are_display_block_via_ua_css` 側。
+        // bd raikiri-spike-5z86.2: ol/ul/li 追加 (block-level list
+        // treatment、marker/list-style は Epic 4 へ defer)。li は spec の
+        // `display: list-item` が raikiri-style で未実装のため display:
+        // block に fallback、list-item 実装は bd raikiri-spike-uhzy で
+        // track (詳細は minimal.css のコメント参照)。cascade まで通した
+        // 非-vacuous な検証は `crates/raikiri/tests/build_cascaded.rs`
+        // `list_elements_are_display_block_via_ua_css` 側。
         for tag in [
             "html",
             "body",
@@ -1291,6 +1298,9 @@ mod tests {
             "figure",
             "figcaption",
             "blockquote",
+            "ol",
+            "ul",
+            "li",
         ] {
             let has_rule = MINIMAL_UA_CSS.lines().any(|line| {
                 let trimmed = line.trim_start();

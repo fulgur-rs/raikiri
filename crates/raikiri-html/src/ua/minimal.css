@@ -53,3 +53,20 @@ main       { display: block; }
 figure     { display: block; }
 figcaption { display: block; }
 blockquote { display: block; }
+
+/* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
+ * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,
+ * which have no rule yet (out of scope for this rule set). */
+ol { display: block; }
+ul { display: block; }
+
+/* HTML Living Standard "Rendering" §lists (15.3.7) specifies
+ * li { display: list-item; text-align: match-parent; }, but list-item is
+ * not yet a valid display keyword in raikiri-style (property.rs
+ * parse_display rejects it; display_rejects_unknown_ident test). Without
+ * a rule li would fall back to CSS-initial display: inline, breaking
+ * this task's Acceptance (li siblings must stack as vertical blocks).
+ * Interim fallback: display: block — replace with display: list-item
+ * once that lands (bd raikiri-spike-uhzy). text-align: match-parent and
+ * list-style-type/::marker generation are out of scope here (Epic 4). */
+li { display: block; }
