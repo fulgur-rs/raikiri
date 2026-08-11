@@ -34,7 +34,6 @@ use cssparser::{Parser, ParserInput};
 use selectors::attr::{CaseSensitivity, ParsedCaseSensitivity};
 use selectors::parser::{Combinator, Selector, SelectorIter, SelectorList};
 
-use crate::RaikiriSelectorImpl;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::error::CascadeError;
 use crate::property::{
@@ -49,6 +48,7 @@ use crate::specified::SpecifiedValues;
 use crate::style_dom::{
     StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,
 };
+use crate::{Direction, RaikiriSelectorImpl};
 
 /// Cascade 結果。
 ///
@@ -626,17 +626,26 @@ fn collect_cascaded<D: StyleDom>(
 ///   `local_name` / `local_name_lower` を選ぶ (詳細は該当 match arm の
 ///   コメント)。値付き形態の case-sensitivity 解決は
 ///   [`resolve_case_sensitivity`] 参照
+/// - `Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_))`
+///   (bd raikiri-spike-flln.6) — [`language_range_matches`] /
+///   [`resolve_directionality`] 経由、`dom` + `ancestors` (自身の祖先 chain)
+///   を使って ancestor-inherited な effective language / directionality を
+///   解決する。`PseudoClass::Hover` / `PseudoClass::Active` はこの arm 内で
+///   引き続き `false` (下の safety net と同じ扱い — bd raikiri-spike-flln.1
+///   の scope 外のまま)。
 ///
-/// 他 component (pseudo-class / namespace 付き属性 selector = 常に
-/// `Component::AttributeOther`、または非小文字 local name **かつ値付き**の
-/// 属性 selector = 同じく `Component::AttributeOther` — 非小文字でも値なしの
-/// 存在チェック形態は namespace 無指定なら `AttributeInNoNamespaceExists` の
-/// まま、詳細は `ruletree.rs` `is_supported_selector_list` のコメント) は
+/// 他 component (namespace 付き属性 selector = 常に `Component::AttributeOther`、
+/// または非小文字 local name **かつ値付き**の属性 selector = 同じく
+/// `Component::AttributeOther` — 非小文字でも値なしの存在チェック形態は
+/// namespace 無指定なら `AttributeInNoNamespaceExists` のまま、詳細は
+/// `ruletree.rs` `is_supported_selector_list` のコメント) は
 /// `is_supported_selector_list` が rule tree 構築時点で drop 済のはずだが、
 /// safety net として引き続き match fail する。
-fn compound_matches<E: StyleElement>(
+fn compound_matches<D: StyleDom, E: StyleElement>(
+    dom: &D,
     iter: &mut SelectorIter<'_, RaikiriSelectorImpl>,
     elem: &E,
+    ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
 ) -> bool {
     use selectors::parser::Component;
@@ -731,8 +740,23 @@ fn compound_matches<E: StyleElement>(
                 }
                 None => false,
             },
+            Component::NonTSPseudoClass(pseudo) => match pseudo {
+                crate::PseudoClass::Lang(ranges) => {
+                    lang_pseudo_matches(ranges, dom, elem, ancestors)
+                }
+                crate::PseudoClass::Dir(dir) => {
+                    resolve_directionality(dom, elem, ancestors) == *dir
+                }
+                // `:hover` / `:active` — bd raikiri-spike-flln.1 の scope 外
+                // のまま。`is_supported_selector_list` が rule tree 構築時点で
+                // drop する契約 (`ruletree::tests::pseudo_class_selector_still_dropped`
+                // で pin) だが、`match_complex_selector_list_rejects_unsupported_component_via_safety_net`
+                // がこの関数を直接呼んで safety net を確認する — 同じ姿勢を
+                // 維持。
+                crate::PseudoClass::Hover | crate::PseudoClass::Active => false,
+            },
             _ => {
-                // 他 component (pseudo/AttributeOther) は ruletree build 段で
+                // 他 component (AttributeOther) は ruletree build 段で
                 // drop 済のはずだが safety net で match fail
                 false
             }
@@ -803,7 +827,7 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     let mut best: Option<Specificity> = None;
     for selector in list.slice() {
         let mut iter = selector.iter();
-        let whole_matches = compound_matches(&mut iter, elem, quirks_mode)
+        let whole_matches = compound_matches(dom, &mut iter, elem, ancestors, quirks_mode)
             && match iter.next_sequence() {
                 None => true,
                 Some(combinator) => {
@@ -1120,7 +1144,7 @@ fn match_from_element<D: StyleDom>(
     let Some(elem) = node.as_element() else {
         return false;
     };
-    if !compound_matches(&mut iter, &elem, quirks_mode) {
+    if !compound_matches(dom, &mut iter, &elem, ancestors, quirks_mode) {
         return false;
     }
     match iter.next_sequence() {
@@ -1128,6 +1152,373 @@ fn match_from_element<D: StyleDom>(
         Some(combinator) => {
             match_combinator_chain(dom, combinator, elem_id, ancestors, iter, quirks_mode)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `:lang()` / `:dir()` (bd raikiri-spike-flln.6).
+//
+// Both pseudo-classes resolve a property of the element that is NOT a plain
+// own-attribute lookup — CSS Selectors L4 explicitly distinguishes them from
+// the attribute-selector equivalent (`[lang|=C]` / `[dir=C]`) precisely
+// because they consult "the UA's knowledge of the document's semantics"
+// (`:dir()`'s own wording, quoted on `resolve_directionality`'s doc) —
+// concretely, ancestor inheritance. Both therefore reuse the same
+// `ancestors: &[StyleNodeId]` (root-first, immediate-parent-last) that
+// `compound_matches` already threads through for descendant/child combinator
+// matching (bd raikiri-spike-flln.2) — self is checked first, then
+// `ancestors` is walked from `.last()` (immediate parent) toward `.first()`
+// (document root).
+// ---------------------------------------------------------------------------
+
+/// `PseudoClass::Lang` arm of [`compound_matches`] — CSS Selectors L4 §7.2
+/// <https://www.w3.org/TR/selectors-4/#the-lang-pseudo>: "represents an
+/// element whose content language is one of the languages listed in its
+/// argument" (bikeshed source verbatim, see [`language_range_matches`] doc
+/// for the fetch note). `ranges` is empty-or-more per [`PseudoClass::Lang`]
+/// grammar (`parse_comma_separated` never actually returns an empty `Vec`
+/// for a non-empty `:lang(...)` argument list, but this function does not
+/// special-case emptiness — `ranges.iter().any(..)` is vacuously `false` on
+/// an empty slice, the same "never matches" outcome an empty argument list
+/// should have, so no explicit guard is needed even if that upstream
+/// guarantee ever changes). An element with no resolvable content language
+/// never matches, regardless of `ranges` (this also implements the spec's
+/// wildcard-range special case for free, see [`effective_language`] doc).
+fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
+    ranges: &[String],
+    dom: &D,
+    elem: &E,
+    ancestors: &[StyleNodeId],
+) -> bool {
+    match effective_language(dom, elem, ancestors) {
+        Some(lang) => ranges
+            .iter()
+            .any(|range| language_range_matches(range, &lang)),
+        None => false,
+    }
+}
+
+/// Resolves an element's **content language** per HTML Living Standard
+/// §3.2.6.2 "The `lang` and `xml:lang` attributes"
+/// (<https://html.spec.whatwg.org/multipage/dom.html#the-lang-and-xml:lang-attributes>,
+/// 2026-08-12 direct fetch), simplified to the subset of "determine the
+/// language of a node" this crate can express:
+///
+/// > To determine the language of a node, user agents must use the first
+/// > appropriate step in the following list: \[...\] If the node is an HTML
+/// > element or an element in the SVG namespace, and it has a lang in no
+/// > namespace attribute set — Use the value of that attribute. \[...\] If
+/// > the node's parent element is not null — Use the language of that
+/// > parent element. Otherwise \[...\] the language of the node is unknown,
+/// > and the corresponding language tag is the empty string.
+///
+/// i.e. own `lang` attribute wins; absent, walk up to the nearest ancestor
+/// that has one; absent everywhere (no pragma-set default / protocol-level
+/// language either, both out of scope — this crate has no HTTP layer and
+/// does not parse `<meta http-equiv=content-language>`), the language is
+/// unknown.
+///
+/// Like [`own_explicit_direction`]'s `dir` reads, the **own**-attribute
+/// step gates on `elem.namespace_uri()` — but a 2-element allowlist (HTML
+/// *or* SVG) rather than `dir`'s HTML-only 1-element one, per the quoted
+/// step's explicit "an HTML element or an element in the SVG namespace"
+/// wording (reviewer:spec finding, 2026-08-12: an earlier version of this
+/// function read `lang` unconditionally, which is wrong for any other
+/// foreign-namespace element — MathML concretely: `<math lang="ja">` nested
+/// under `<html lang="en">` must resolve to `"en"`, not `"ja"`, since MathML
+/// is neither HTML nor SVG. [`own_html_or_svg_lang_attribute`] is the gate;
+/// see its doc for the allowlist). This only restricts *whose own*
+/// attribute counts — the ancestor walk below still applies the same gate
+/// per ancestor (a MathML ancestor's `lang` is skipped too, same as its own
+/// element case), and a chain that bottoms out with no HTML/SVG element
+/// carrying `lang` still resolves to `None`, same as "absent everywhere"
+/// below.
+///
+/// # Deliberately out of scope
+///
+/// - **`xml:lang` (XML-namespace `lang`)** — the first step in the quoted
+///   list, and it *would* take priority over the plain `lang` attribute.
+///   Skipped because raikiri does not parse XML/XHTML documents at all yet
+///   (`StyleDom::quirks_mode` doc / `resolve_case_sensitivity` doc: "raikiri
+///   は現時点で HTML document のみ対象") — there is no XML-namespace
+///   attribute surface to read.
+/// - **`lang=""` stopping inheritance** — per the quoted algorithm, an
+///   empty-string `lang` attribute is itself a *found* value ("the primary
+///   language is unknown", a distinct terminal state from "no `lang`
+///   attribute at all", which would keep walking to the parent). This
+///   function cannot observe that distinction: [`StyleElement::attr`]'s
+///   contract already collapses `foo=""` to `None` uniformly (documented on
+///   that trait method, bd raikiri-spike-k5y3 — an existing accepted M1.4+
+///   baseline, not something newly introduced here), so `lang=""` and "no
+///   `lang` attribute" are indistinguishable at this crate's DOM boundary —
+///   both fall through to the parent-element walk below. Fixing this would
+///   require widening `StyleElement::attr`'s contract, which is
+///   `raikiri-style`-only-change out of scope the same way k5y3 already
+///   reasons about `[foo=""]` attribute-selector matching.
+fn effective_language<D: StyleDom, E: StyleElement>(
+    dom: &D,
+    elem: &E,
+    ancestors: &[StyleNodeId],
+) -> Option<String> {
+    if let Some(lang) = own_html_or_svg_lang_attribute(elem) {
+        return Some(lang.to_owned());
+    }
+    for &ancestor_id in ancestors.iter().rev() {
+        // `node`'s borrow must outlive `ancestor_elem`'s — a `.and_then`
+        // chain would try to return a `&str` borrowed from a `node` that
+        // drops at the end of the closure, hence the explicit `if let`
+        // nesting instead of the more compact combinator chain
+        // [`effective_language`]'s own doc-adjacent sibling functions use
+        // where the borrow doesn't need to cross a temporary like this.
+        if let Some(node) = dom.node(ancestor_id)
+            && let Some(ancestor_elem) = node.as_element()
+            && let Some(lang) = own_html_or_svg_lang_attribute(&ancestor_elem)
+        {
+            return Some(lang.to_owned());
+        }
+    }
+    None
+}
+
+/// The **own**-attribute half of HTML LS §3.2.6.2's "determine the language
+/// of a node" step (quoted in full on [`effective_language`]'s doc), gated
+/// to HTML-namespace (`elem.namespace_uri() == None`, this crate's
+/// established "is HTML" proxy — see [`own_explicit_direction`]'s doc) or
+/// SVG-namespace elements. Any other namespace (MathML concretely, but the
+/// gate is namespace-allowlist shaped so it excludes any future foreign
+/// namespace equally) returns `None` regardless of whether `lang` is
+/// present on the element, so [`effective_language`]'s caller falls through
+/// to the ancestor walk exactly as if `lang` were absent — matching the
+/// quoted algorithm's own next step ("If the node's parent element is not
+/// null — Use the language of that parent element").
+fn own_html_or_svg_lang_attribute<E: StyleElement>(elem: &E) -> Option<&str> {
+    match elem.namespace_uri() {
+        None | Some("http://www.w3.org/2000/svg") => elem.attr("lang"),
+        Some(_) => None,
+    }
+}
+
+/// Does `range` (one comma-separated argument of `:lang(...)`) match
+/// `content_language` (the resolved [`effective_language`])? Implements RFC
+/// 4647 §3.3.2 "Extended Filtering"
+/// (<https://www.rfc-editor.org/rfc/rfc4647.html#section-3.3.2>, 2026-08-12
+/// direct fetch), which CSS Selectors L4 §7.2 cites verbatim (bikeshed
+/// source `selectors-4/Overview.bs`, same fetch as [`Direction`]'s doc —
+/// the published TR page truncated before §7.2 for this crate's WebFetch
+/// tool):
+///
+/// > The element's content language matches a language range if its content
+/// > language, as represented in BCP 47 syntax, matches the given language
+/// > range in an extended filtering operation per \[RFC4647\] (section
+/// > 3.3.2).
+///
+/// RFC 4647 §3.3.2 verbatim (direct fetch of `rfc-editor.org`'s plain-text
+/// rendering):
+///
+/// > 1. Split both the extended language range and the language tag being
+/// >    compared into a list of subtags by dividing on the hyphen (%x2D)
+/// >    character. Two subtags match if either they are the same when
+/// >    compared case-insensitively or the language range's subtag is the
+/// >    wildcard '*'.
+/// > 2. Begin with the first subtag in each list. If the first subtag in
+/// >    the range does not match the first subtag in the tag, the overall
+/// >    match fails. Otherwise, move to the next subtag in both the range
+/// >    and the tag.
+/// > 3. While there are more subtags left in the language range's list:
+/// >    A. If the subtag currently being examined in the range is the
+/// >       wildcard ('*'), move to the next subtag in the range and
+/// >       continue with the loop.
+/// >    B. Else, if there are no more subtags in the language tag's list,
+/// >       the match fails.
+/// >    C. Else, if the current subtag in the range's list matches the
+/// >       current subtag in the language tag's list, move to the next
+/// >       subtag in both lists and continue with the loop.
+/// >    D. Else, if the language tag's subtag is a "singleton" (a single
+/// >       letter or digit, which includes the private-use subtag 'x') the
+/// >       match fails.
+/// >    E. Else, move to the next subtag in the language tag's list and
+/// >       continue with the loop.
+/// > 4. When the language range's list has no more subtags, the match
+/// >    succeeds.
+///
+/// This function implements exactly the above (`subtags_match` = step 1's
+/// per-subtag comparator). Per the CSS quote above, "the matching is
+/// performed ASCII case-insensitively", which is exactly RFC4647's own
+/// per-subtag rule — no separate case-folding pass needed.
+///
+/// # Deliberately out of scope: BCP47 canonicalization / well-formedness
+///
+/// CSS Selectors L4 §7.2 additionally requires the content language and the
+/// range to be "canonicalized and converted to extlang form as per section
+/// 4.5 of \[RFC5646\] prior to the extended filtering operation" and that
+/// "language tags or ranges that are not valid do not match anything" /
+/// "language ranges that are not well-formed \[...\] do not match anything".
+/// Implementing BCP47 canonicalization and well-formedness validation is a
+/// substantial undertaking on its own (a subtag registry / grammar checker),
+/// comparable in scope to the Unicode Bidi Algorithm this task's bd
+/// description explicitly permits deferring for `:dir()`'s `auto` value —
+/// this function skips both and operates directly on the raw hyphen-split
+/// subtag strings as written. In practice this only under-rejects (a
+/// genuinely ill-formed tag like `:lang(åå)` — non-ASCII, spec says "would
+/// not match" — is instead compared subtag-by-subtag and may spuriously
+/// match); it never causes a spec-valid match to be missed. No known
+/// real-world content in this repo's test corpus depends on the rejection
+/// behavior.
+pub(crate) fn language_range_matches(range: &str, content_language: &str) -> bool {
+    fn subtags_match(range_subtag: &str, tag_subtag: &str) -> bool {
+        range_subtag == "*" || range_subtag.eq_ignore_ascii_case(tag_subtag)
+    }
+    fn is_singleton(subtag: &str) -> bool {
+        subtag.chars().count() == 1
+    }
+
+    let range_subtags: Vec<&str> = range.split('-').collect();
+    let tag_subtags: Vec<&str> = content_language.split('-').collect();
+
+    // Step 2: first subtag must match (range's first subtag may itself be
+    // `*`, e.g. the bare wildcard range `:lang(*)` — `subtags_match` already
+    // handles that).
+    if !subtags_match(range_subtags[0], tag_subtags[0]) {
+        return false;
+    }
+    let mut ri = 1;
+    let mut ti = 1;
+
+    // Step 3.
+    while ri < range_subtags.len() {
+        let r = range_subtags[ri];
+        if r == "*" {
+            ri += 1; // 3.A
+            continue;
+        }
+        let Some(&t) = tag_subtags.get(ti) else {
+            return false; // 3.B
+        };
+        if subtags_match(r, t) {
+            ri += 1;
+            ti += 1; // 3.C
+            continue;
+        }
+        if is_singleton(t) {
+            return false; // 3.D
+        }
+        ti += 1; // 3.E
+    }
+    true // Step 4.
+}
+
+/// `PseudoClass::Dir` arm of [`compound_matches`] — resolves the element's
+/// **directionality** per HTML Living Standard §3.2.6.4 "The `dir`
+/// attribute" (<https://html.spec.whatwg.org/multipage/dom.html#the-directionality>,
+/// 2026-08-12 direct fetch) simplified to explicit `ltr`/`rtl` only:
+///
+/// > The directionality of an element \[...\] is either 'ltr' or 'rtl'. To
+/// > compute the directionality given an element element, switch on
+/// > element's dir attribute state: LTR — Return 'ltr'. RTL — Return 'rtl'.
+/// > \[...\] Undefined \[...\] Otherwise — Return the parent directionality
+/// > of element.
+/// >
+/// > To compute the parent directionality given an element element: Let
+/// > parentNode be element's parent node. \[...\] If parentNode is an
+/// > element, then return the directionality of parentNode. Return 'ltr'.
+///
+/// i.e. own `dir="ltr"`/`dir="rtl"` wins; otherwise walk up to the nearest
+/// ancestor with an explicit `ltr`/`rtl` `dir`; if none exists anywhere
+/// (including at the document root, which has no parent element), the
+/// default is `'ltr'` — this function is total (`Direction`, not
+/// `Option<Direction>`), matching the spec's own "always ltr or rtl, never
+/// undetermined" shape.
+///
+/// CSS Selectors L4 §7.1 <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>
+/// (bikeshed source, same fetch as [`Direction`]'s doc) is what motivates
+/// consulting ancestors at all rather than just the own attribute (`[dir=C]`
+/// would suffice for that): "the directionality of an element inherits so
+/// that a child without a dir attribute will have the same directionality
+/// as its closest ancestor with a valid dir attribute."
+///
+/// # Deliberately out of scope: `auto` state and its content-sniffing fallback
+///
+/// The HTML quote above elides the `Auto` state's own arm, which this
+/// function folds into `Undefined`'s "return the parent directionality"
+/// behavior instead of implementing — see [`Direction`]'s doc for why this
+/// is a *real* behavioral divergence (Auto's own content-sniffing fallback
+/// is `'ltr'` unconditionally, not the parent's directionality) and not
+/// merely an implementation-order simplification. Also elided: the `bdi`
+/// element and `input[type=tel]` special cases in HTML's `Undefined` arm
+/// (raikiri has no notion of element-specific behavior at this layer) and
+/// the shadow-tree host step of "parent directionality" (raikiri has no
+/// shadow DOM).
+pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
+    dom: &D,
+    elem: &E,
+    ancestors: &[StyleNodeId],
+) -> Direction {
+    if let Some(dir) = own_explicit_direction(elem) {
+        return dir;
+    }
+    for &ancestor_id in ancestors.iter().rev() {
+        // Same "explicit `if let` nesting instead of `.and_then` chain"
+        // reason as [`effective_language`]'s sibling loop — `own_explicit_direction`
+        // borrows from `ancestor_elem`, which itself borrows from a `node`
+        // temporary that must stay alive across the call.
+        if let Some(node) = dom.node(ancestor_id)
+            && let Some(ancestor_elem) = node.as_element()
+            && let Some(dir) = own_explicit_direction(&ancestor_elem)
+        {
+            return dir;
+        }
+    }
+    Direction::Ltr
+}
+
+/// HTML's `dir` attribute LTR/RTL states only (`Undefined`/`Auto` — missing,
+/// invalid, or `auto` — all collapse to `None` here; see
+/// [`resolve_directionality`] doc for how the caller folds `Auto` into the
+/// same "keep walking up" treatment as `Undefined`). Attribute keyword
+/// matching is ASCII case-insensitive, per HTML's general treatment of
+/// enumerated attribute keywords (`the dir attribute is an enumerated
+/// attribute with the following keywords and states`, same fetch as
+/// [`resolve_directionality`]'s doc) — same posture as this crate's other
+/// HTML-enumerated-value comparisons (e.g. `elem.tag_name()`'s
+/// `eq_ignore_ascii_case` in [`compound_matches`]).
+///
+/// # HTML-namespace-only, unlike [`effective_language`]'s `lang` reads
+///
+/// The same fetch [`resolve_directionality`]'s doc quotes continues,
+/// immediately after the quoted algorithm:
+///
+/// > Since the `dir` attribute is only defined for HTML elements, it cannot
+/// > be present on elements from other namespaces. Thus, elements from
+/// > other namespaces always end up using the parent directionality.
+///
+/// so a `dir` attribute on a foreign-namespace element (e.g. inline
+/// `<svg dir="rtl">`) must not be read here — it falls through to
+/// [`resolve_directionality`]'s ancestor walk instead, same as if the
+/// attribute were absent. `elem.namespace_uri().is_none()` is this crate's
+/// established "is an HTML element" proxy — the same one
+/// `resolve_case_sensitivity`'s doc documents and
+/// `resolve_case_sensitivity_non_html_namespace_element_is_case_sensitive`
+/// pins for the analogous case-sensitivity divergence.
+///
+/// This is a *narrower* allowlist than HTML's `lang` step in the same
+/// algorithm ("If the node is an HTML element **or an element in the SVG
+/// namespace**, and it has a lang in no namespace attribute set" — quoted in
+/// full on [`effective_language`]'s doc, gated by that function's own
+/// [`own_html_or_svg_lang_attribute`] helper): both `dir` (here) and `lang`
+/// gate on `elem.namespace_uri()`, but `dir` is HTML-only (1-element
+/// allowlist — the "only defined for HTML elements" quote above has no SVG
+/// carve-out) while `lang` is HTML-**or**-SVG (2-element allowlist). The
+/// difference is allowlist *size*, not gate-vs-no-gate — do not widen this
+/// function's allowlist to match [`own_html_or_svg_lang_attribute`]'s; `dir`
+/// genuinely has no SVG exception in the quoted algorithm.
+fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direction> {
+    if elem.namespace_uri().is_some() {
+        return None;
+    }
+    match elem.attr("dir") {
+        Some(v) if v.eq_ignore_ascii_case("ltr") => Some(Direction::Ltr),
+        Some(v) if v.eq_ignore_ascii_case("rtl") => Some(Direction::Rtl),
+        _ => None,
     }
 }
 
@@ -3737,6 +4128,348 @@ mod tests {
             None,
             "NonTSPseudoClass component must fall through the safety net"
         );
+    }
+
+    // ── `:lang()` / `:dir()` (bd raikiri-spike-flln.6) ──
+
+    /// bd acceptance: `:lang(ja) { font-family: serif-ja }` applies to an
+    /// element that has `lang="ja"` **directly on itself**.
+    #[test]
+    fn lang_matches_own_lang_attribute() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":lang(ja) { font-family: serif-ja }");
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "lang", "ja");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_family[0].to_string(), "serif-ja");
+    }
+
+    /// bd acceptance (the actual "top gap" this task closes): `:lang(ja)`
+    /// must apply to an element with **no lang attribute of its own**, whose
+    /// language is inherited from an ancestor (`<html lang="ja">` in the bd
+    /// description's own example) — the ancestor-walk this task reuses from
+    /// bd raikiri-spike-flln.2's descendant/child combinator matching.
+    #[test]
+    fn lang_matches_via_ancestor_inherited_language() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":lang(ja) { font-family: serif-ja }");
+        let html = doc.push_element(0, "html", None);
+        doc.set_attr(html, "lang", "ja");
+        let body = doc.push_element(html, "body", None);
+        let p = doc.push_element(body, "p", None); // no lang of its own
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].font_family[0].to_string(),
+            "serif-ja",
+            ":lang(ja) must match an element with no lang attribute of its \
+             own when an ancestor carries lang=\"ja\""
+        );
+    }
+
+    /// Negative counterpart of the two tests above: neither the element nor
+    /// any ancestor carries a `lang` attribute at all — `:lang(ja)` must not
+    /// match (no content language to compare against, CSS Selectors L4 §7.2
+    /// — see `effective_language`'s doc).
+    #[test]
+    fn lang_does_not_match_when_no_lang_anywhere_in_ancestor_chain() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":lang(ja) { font-family: serif-ja }");
+        let html = doc.push_element(0, "html", None); // no lang
+        let body = doc.push_element(html, "body", None); // no lang
+        let p = doc.push_element(body, "p", None); // no lang
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].font_family,
+            ComputedValues::initial().font_family,
+            ":lang(ja) must not match when no element in the chain has a lang attribute"
+        );
+    }
+
+    /// A closer ancestor's `lang` must win over a farther one — regression
+    /// pin for `effective_language`'s "own first, then nearest ancestor"
+    /// (not "any ancestor") walk order.
+    #[test]
+    fn lang_prefers_nearest_ancestor_lang_over_farther_one() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":lang(en) { font-family: serif-en }");
+        let html = doc.push_element(0, "html", None);
+        doc.set_attr(html, "lang", "ja");
+        let section = doc.push_element(html, "section", None);
+        doc.set_attr(section, "lang", "en");
+        let p = doc.push_element(section, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_family[0].to_string(), "serif-en");
+    }
+
+    /// reviewer:spec finding (2026-08-12): HTML LS §3.2.6.2's own-`lang`
+    /// step is scoped to "an HTML element or an element in the SVG
+    /// namespace" (quoted in full on `effective_language`'s doc) — a MathML
+    /// element's own `lang` attribute must NOT be consulted, unlike SVG's
+    /// (`own_html_or_svg_lang_attribute`'s 2-element allowlist). Concrete
+    /// spec example from the finding: `<html lang="en"><math lang="ja">…`
+    /// — `<math>`'s own `lang="ja"` is ignored, so its effective language
+    /// falls through to the `<html>` ancestor's `"en"`.
+    #[test]
+    fn lang_on_mathml_namespace_element_is_ignored_falls_through_to_ancestor() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":lang(en) { font-family: en-font } :lang(ja) { font-family: ja-font }",
+        );
+        let html = doc.push_element(0, "html", None);
+        doc.set_attr(html, "lang", "en");
+        let math = doc.push_element_with_namespace(
+            html,
+            "math",
+            "http://www.w3.org/1998/Math/MathML",
+            &[("lang", "ja")],
+        );
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[math].font_family[0].to_string(),
+            "en-font",
+            "MathML element's own lang attribute must be ignored per HTML \
+             LS §3.2.6.2 (HTML/SVG only), falling through to the <html \
+             lang=\"en\"> ancestor — :lang(en) must match, :lang(ja) must not"
+        );
+    }
+
+    /// reviewer:spec backlog finding 3 (2026-08-12, low severity, optional):
+    /// `:lang()`/`:dir()` on a non-rightmost compound — the left side of a
+    /// combinator, matched via `match_from_ancestor` rather than the
+    /// rightmost-element entry point in `match_complex_selector_list` — was
+    /// reviewed by hand and judged structurally correct but untested.
+    /// `:lang(ja) p` matches a `<p>` whose *grandparent* `<html>` (not its
+    /// immediate parent `<body>`) carries `lang="ja"`, exercising both
+    /// `match_from_ancestor`'s own `compound_matches` call (the `:lang(ja)`
+    /// compound tested against the `<html>` ancestor candidate) and that
+    /// call's `ancestors` slice (the further-out ancestors above `<html>` —
+    /// here empty, but exercised as a real argument rather than `&[]`).
+    #[test]
+    fn lang_pseudo_class_matches_on_non_rightmost_compound_via_descendant_combinator() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":lang(ja) p { font-family: serif-ja }");
+        let html = doc.push_element(0, "html", None);
+        doc.set_attr(html, "lang", "ja");
+        let body = doc.push_element(html, "body", None);
+        let p = doc.push_element(body, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].font_family[0].to_string(),
+            "serif-ja",
+            ":lang(ja) p must match <p> whose ancestor <html> (not <p> \
+             itself) satisfies :lang(ja), via the ancestor-compound path \
+             (match_from_ancestor) rather than the rightmost-element path"
+        );
+    }
+
+    /// RFC 4647 §3.3.2 extended filtering: `:lang(en)` must match a more
+    /// specific tagged element (`lang="en-US"`) — subtag prefix matching,
+    /// not exact string equality.
+    #[test]
+    fn lang_range_matches_more_specific_tag_via_extended_filtering() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":lang(en) { font-family: serif-en }");
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "lang", "en-US");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_family[0].to_string(), "serif-en");
+    }
+
+    /// `:dir(ltr)` matches an element with an explicit `dir="ltr"` attribute.
+    #[test]
+    fn dir_matches_explicit_ltr() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":dir(ltr) { font-family: ltr-font }");
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "dir", "ltr");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_family[0].to_string(), "ltr-font");
+    }
+
+    /// `:dir(rtl)` matches an element with an explicit `dir="rtl"` attribute,
+    /// and — the actual differentiator from `[dir=rtl]` this task's bd
+    /// description points at — a descendant with no `dir` of its own
+    /// inherits that directionality (`resolve_directionality`'s ancestor
+    /// walk).
+    #[test]
+    fn dir_matches_explicit_rtl_and_inherits_to_descendant_without_own_dir() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":dir(rtl) { font-family: rtl-font }");
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let span = doc.push_element(article, "span", None); // no dir of its own
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[article].font_family[0].to_string(),
+            "rtl-font",
+            ":dir(rtl) must match the element with the explicit attribute"
+        );
+        assert_eq!(
+            r.computed[span].font_family[0].to_string(),
+            "rtl-font",
+            ":dir(rtl) must match a descendant with no dir attribute of its \
+             own, inheriting from its dir=\"rtl\" ancestor"
+        );
+    }
+
+    /// Default directionality (no `dir` attribute anywhere in the chain) is
+    /// `ltr` — HTML LS "parent directionality" §3.2.6.4's root fallback
+    /// (`resolve_directionality`'s doc). `:dir(rtl)` must not match; `:dir(ltr)`
+    /// must.
+    #[test]
+    fn dir_defaults_to_ltr_when_no_dir_attribute_anywhere() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { font-family: rtl-font } :dir(ltr) { font-family: ltr-font }",
+        );
+        let p = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_family[0].to_string(), "ltr-font");
+    }
+
+    /// RFC 4647 §3.3.2 extended filtering, direct pin (bypassing the cascade
+    /// pipeline) of the examples the RFC itself gives for range `de-*-DE` /
+    /// its synonym `de-DE` — [`language_range_matches`]'s doc quotes the
+    /// algorithm this exercises.
+    #[test]
+    fn language_range_matches_rfc4647_de_de_examples() {
+        // Matches (RFC 4647 §3.3.2, "matches all of the following tags"):
+        for tag in [
+            "de-DE",
+            "de-de",
+            "de-Latn-DE",
+            "de-Latf-DE",
+            "de-DE-x-goethe",
+            "de-Latn-DE-1996",
+            "de-Deva-DE",
+        ] {
+            assert!(
+                language_range_matches("de-*-DE", tag),
+                "de-*-DE must match {tag}"
+            );
+            assert!(
+                language_range_matches("de-DE", tag),
+                "de-DE (synonym) must match {tag}"
+            );
+        }
+        // Does not match (RFC 4647 §3.3.2, "does not match any of the
+        // following tags"):
+        assert!(
+            !language_range_matches("de-*-DE", "de"),
+            "missing 'DE' subtag entirely"
+        );
+        assert!(
+            !language_range_matches("de-*-DE", "de-x-DE"),
+            "singleton 'x' occurs before 'DE', blocking the skip"
+        );
+        assert!(
+            !language_range_matches("de-*-DE", "de-Deva"),
+            "'Deva' present but 'DE' subtag never appears"
+        );
+    }
+
+    #[test]
+    fn language_range_matches_is_ascii_case_insensitive() {
+        assert!(language_range_matches("EN", "en-us"));
+        assert!(language_range_matches("en", "EN-US"));
+    }
+
+    /// `dir="auto"` folds into the same "keep walking up" bucket as a
+    /// missing/invalid `dir` attribute — the documented scope cut on
+    /// [`resolve_directionality`] (deferred Unicode-bidi content sniffing).
+    #[test]
+    fn dir_auto_falls_through_to_ancestor_directionality_not_default_ltr() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":dir(rtl) { font-family: rtl-font }");
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let bdi_like = doc.push_element(article, "span", None);
+        doc.set_attr(bdi_like, "dir", "auto"); // deferred, not resolved via bidi
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[bdi_like].font_family[0].to_string(),
+            "rtl-font",
+            "dir=\"auto\" must fall through to the ancestor's directionality \
+             under this task's documented scope cut, not block inheritance"
+        );
+    }
+
+    /// HTML LS §3.2.6.4 (quoted on `own_explicit_direction`'s doc): "the
+    /// `dir` attribute is only defined for HTML elements \[...\] elements
+    /// from other namespaces always end up using the parent
+    /// directionality." A `dir="rtl"` attribute on a foreign-namespace
+    /// (SVG) element must therefore be ignored, falling through to the
+    /// ancestor walk — same shape as
+    /// `resolve_case_sensitivity_non_html_namespace_element_is_case_sensitive`'s
+    /// SVG regression above.
+    #[test]
+    fn dir_attribute_on_foreign_namespace_element_is_ignored_falls_through_to_ancestor() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":dir(ltr) { font-family: ltr-font }");
+        let html = doc.push_element(0, "html", None); // no dir -> default ltr
+        let svg = doc.push_element_with_namespace(
+            html,
+            "svg",
+            "http://www.w3.org/2000/svg",
+            &[("dir", "rtl")],
+        );
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[svg].font_family[0].to_string(),
+            "ltr-font",
+            "dir on a foreign-namespace element must be ignored, not treated \
+             as an explicit directionality"
+        );
+    }
+
+    #[test]
+    fn language_range_matches_wildcard_matches_any_tagged_language() {
+        // The CSS-spec-level "wildcard doesn't match untagged" rule
+        // (`effective_language` doc) is enforced by `lang_pseudo_matches`
+        // returning `false` on `None` before this function is ever called —
+        // this function itself just needs to accept any non-empty tag for a
+        // bare `*` range (RFC 4647 §3.3.2 step 2's wildcard-subtag clause).
+        assert!(language_range_matches("*", "ja"));
+        assert!(language_range_matches("*", "en-US"));
+        assert!(language_range_matches("*", "und"));
     }
 
     #[test]

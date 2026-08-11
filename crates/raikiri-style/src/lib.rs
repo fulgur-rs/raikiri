@@ -162,6 +162,74 @@ impl ToCss for AttrValue {
 pub enum PseudoClass {
     Hover,
     Active,
+    /// `:lang(range1, range2, ...)` — CSS Selectors L4 §7.2
+    /// <https://www.w3.org/TR/selectors-4/#the-lang-pseudo>. Each `String` is
+    /// one comma-separated language range **as written in the selector**
+    /// (already unescaped by `cssparser`'s ident/string tokenizing, but
+    /// otherwise unvalidated / uncanonicalized — see
+    /// [`crate::cascade::language_range_matches`] doc for the scope
+    /// simplifications this implies).
+    Lang(Vec<String>),
+    /// `:dir(ltr)` / `:dir(rtl)` — CSS Selectors L4 §7.1
+    /// <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>. See [`Direction`]
+    /// doc for the scope cut (explicit values only, no `auto` content
+    /// sniffing).
+    Dir(Direction),
+}
+
+/// Explicit directionality value accepted by [`PseudoClass::Dir`] (CSS
+/// Selectors L4 §7.1 <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>,
+/// CSSWG bikeshed source `selectors-4/Overview.bs` §"The Directionality
+/// Pseudo-class: :dir()", 2026-08-12 direct fetch — the published TR page
+/// truncated before reaching this section for this crate's WebFetch tool,
+/// same truncation `mod@crate::cascade`'s combinator doc already notes for
+/// this spec):
+///
+/// > The argument to `:dir()` must be a single identifier, otherwise the
+/// > selector is invalid. \[...\] Values other than `ltr` and `rtl` are not
+/// > invalid, but do not match anything.
+///
+/// This crate's parser (`RaikiriSelectorParser::parse_non_ts_functional_pseudo_class`)
+/// diverges from that last sentence for simplicity: an argument that is
+/// syntactically a single identifier but neither `ltr` nor `rtl` (e.g.
+/// `:dir(foo)`) is rejected as a parse error rather than accepted as a
+/// permanently-non-matching valid selector. Blast radius: **the whole
+/// selector list is dropped**, not just the one compound that used
+/// `:dir(foo)` — `SelectorList::parse` (used by both this crate's
+/// `parse_selector_list` and `ruletree.rs`'s `StyleRuleParser::parse_prelude`)
+/// is the `selectors` crate's *non-forgiving* entry point
+/// (`RaikiriSelectorParser` does not override `allow_forgiving_selectors`,
+/// so `SelectorList::parse_forgiving`'s per-selector recovery never
+/// applies), verified directly against `selectors` v0.39.0's own public
+/// behavior via `parse_dir_rejects_non_ltr_rtl_identifier_drops_whole_comma_separated_list`
+/// below — so `p, :dir(foo) { color: red }` drops the `p` selector too, not
+/// just `:dir(foo)`. Low real-world impact (no known content in this
+/// repo's corpus uses a bogus `:dir()` argument) and keeps `Direction` a
+/// plain 2-variant enum instead of needing a third "other identifier,
+/// never matches" variant.
+///
+/// # Scope: explicit values only, `auto` not resolved (bd raikiri-spike-flln.6)
+///
+/// The HTML directionality algorithm
+/// (<https://html.spec.whatwg.org/multipage/dom.html#the-directionality>)
+/// resolves a `dir="auto"` element's directionality by scanning its text
+/// content for the first character with strong bidirectional type (a
+/// simplified form of the Unicode Bidirectional Algorithm's paragraph-level
+/// determination) — a substantial undertaking on its own, and out of this
+/// task's scope per its bd description's explicit recommendation.
+/// [`crate::cascade::resolve_directionality`] folds `dir="auto"` into the
+/// same bucket as a missing/invalid `dir` attribute (HTML's "Undefined"
+/// state) and defers to the nearest ancestor's directionality — see that
+/// function's doc for the precise divergence from the full algorithm (HTML's
+/// own `Auto`-state fallback is `'ltr'` when no strong character is found,
+/// *not* the parent's directionality, so this is a real behavioral
+/// simplification, not just an implementation-order detail).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// Left-to-right (`dir="ltr"`, HTML LS "LTR" state).
+    Ltr,
+    /// Right-to-left (`dir="rtl"`, HTML LS "RTL" state).
+    Rtl,
 }
 
 impl ToCss for PseudoClass {
@@ -169,6 +237,24 @@ impl ToCss for PseudoClass {
         match self {
             PseudoClass::Hover => dest.write_str(":hover"),
             PseudoClass::Active => dest.write_str(":active"),
+            PseudoClass::Lang(ranges) => {
+                dest.write_str(":lang(")?;
+                for (i, range) in ranges.iter().enumerate() {
+                    if i > 0 {
+                        dest.write_str(", ")?;
+                    }
+                    cssparser::serialize_identifier(range, dest)?;
+                }
+                dest.write_str(")")
+            }
+            PseudoClass::Dir(dir) => {
+                dest.write_str(":dir(")?;
+                dest.write_str(match dir {
+                    Direction::Ltr => "ltr",
+                    Direction::Rtl => "rtl",
+                })?;
+                dest.write_str(")")
+            }
         }
     }
 }
@@ -245,6 +331,65 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
             )
         }
     }
+
+    /// `:lang(range, ...)` / `:dir(ltr|rtl)` — CSS Selectors L4 §7.2 / §7.1
+    /// (see [`PseudoClass::Lang`] / [`PseudoClass::Dir`] doc for spec
+    /// anchors). Grammar (bikeshed source, 2026-08-12 direct fetch, quoted
+    /// verbatim on [`Direction`]'s doc / [`crate::cascade::language_range_matches`]'s
+    /// doc): `:lang()` "accepts a comma-separated list of one or more
+    /// language ranges \[...\] a valid CSS `<ident>` or `<string>`"; `:dir()`'s
+    /// "argument \[...\] must be a single identifier, otherwise the selector
+    /// is invalid."
+    // `_after_part` is unused: the `selectors` crate only ever sets it after
+    // a successfully-parsed `::part()` (gated by `Parser::parse_part()`,
+    // which this impl leaves at its `false` default) or another
+    // element-backed pseudo-element (gated by `parse_pseudo_element`
+    // succeeding, which can never happen here — `crate::PseudoElem` is an
+    // uninhabited enum, so no pseudo-element construct parses successfully
+    // in this crate at all yet). Both preconditions are unreachable today,
+    // so `after_part` is always `false` when this function runs — unlike
+    // the `selectors` crate's own reference test impl (its internal
+    // `"lang" if !after_part => ...` arm, `selectors-0.39.0/parser.rs`),
+    // this crate has no live case to guard against. Revisit if/when
+    // pseudo-element support is ever added.
+    fn parse_non_ts_functional_pseudo_class<'t>(
+        &self,
+        name: CowRcStr<'i>,
+        parser: &mut CssParser<'i, 't>,
+        _after_part: bool,
+    ) -> Result<PseudoClass, cssparser::ParseError<'i, Self::Error>> {
+        if name.eq_ignore_ascii_case("lang") {
+            let ranges = parser.parse_comma_separated(|input| {
+                input
+                    .expect_ident_or_string()
+                    .map(|s| s.as_ref().to_owned())
+                    .map_err(Into::into)
+            })?;
+            Ok(PseudoClass::Lang(ranges))
+        } else if name.eq_ignore_ascii_case("dir") {
+            let location = parser.current_source_location();
+            let ident = parser.expect_ident()?.clone();
+            if ident.eq_ignore_ascii_case("ltr") {
+                Ok(PseudoClass::Dir(Direction::Ltr))
+            } else if ident.eq_ignore_ascii_case("rtl") {
+                Ok(PseudoClass::Dir(Direction::Rtl))
+            } else {
+                // Spec allows this (valid selector, matches nothing) — this
+                // crate rejects it as a parse error instead, see
+                // `Direction` doc's "single identifier ... otherwise
+                // invalid" note for the accepted-scope rationale.
+                Err(location.new_custom_error(
+                    SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
+                ))
+            }
+        } else {
+            Err(
+                parser.new_custom_error(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(
+                    name,
+                )),
+            )
+        }
+    }
 }
 
 /// Parse a selector list from CSS source using raikiri's SelectorImpl.
@@ -300,5 +445,57 @@ mod tests {
         assert!(out.contains(":hover"));
         assert!(out.contains(":active"));
         assert!(out.contains(','));
+    }
+
+    #[test]
+    fn parse_lang_single_range_roundtrip() {
+        let list = parse_selector_list(":lang(ja)").expect("parse :lang(ja)");
+        let mut out = String::new();
+        list.to_css(&mut out).expect("serialize");
+        assert_eq!(out, ":lang(ja)");
+    }
+
+    #[test]
+    fn parse_lang_multi_range_comma_separated() {
+        let list = parse_selector_list(":lang(en, fr-CA, \"*-Hant\")").expect("parse :lang(...)");
+        let selector = &list.slice()[0];
+        let mut iter = selector.iter();
+        let component = iter.next().expect("one component");
+        match component {
+            selectors::parser::Component::NonTSPseudoClass(PseudoClass::Lang(ranges)) => {
+                assert_eq!(ranges, &["en", "fr-CA", "*-Hant"]);
+            }
+            other => panic!("expected PseudoClass::Lang, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dir_ltr_and_rtl_roundtrip() {
+        let list = parse_selector_list(":dir(ltr)").expect("parse :dir(ltr)");
+        let mut out = String::new();
+        list.to_css(&mut out).expect("serialize");
+        assert_eq!(out, ":dir(ltr)");
+
+        let list = parse_selector_list(":dir(rtl)").expect("parse :dir(rtl)");
+        let mut out = String::new();
+        list.to_css(&mut out).expect("serialize");
+        assert_eq!(out, ":dir(rtl)");
+    }
+
+    #[test]
+    fn parse_dir_rejects_non_ltr_rtl_identifier() {
+        // `Direction` doc's documented scope cut: unlike the real spec
+        // (valid selector, matches nothing), this parser treats any
+        // identifier other than ltr/rtl as a parse error.
+        assert!(parse_selector_list(":dir(sideways)").is_err());
+    }
+
+    #[test]
+    fn parse_dir_rejects_non_ltr_rtl_identifier_drops_whole_comma_separated_list() {
+        // `Direction` doc's "blast radius" note: `SelectorList::parse` is
+        // non-forgiving, so one bad selector in a comma-separated list
+        // fails the *whole* list — `p` here is otherwise perfectly valid on
+        // its own.
+        assert!(parse_selector_list("p, :dir(sideways)").is_err());
     }
 }

@@ -10,7 +10,7 @@ use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
 use crate::page::{PageRule, PageSelector, parse_page_prelude};
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
-use crate::{RaikiriSelectorImpl, RaikiriSelectorParser};
+use crate::{PseudoClass, RaikiriSelectorImpl, RaikiriSelectorParser};
 
 /// Cascade origin (CSS Cascading L4 §6.2)。M1 では UserAgent + Author の
 /// 2 段のみだった。
@@ -429,8 +429,13 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// (存在チェック `[foo]` と値付き `[foo=bar]` 系一式) に加え、bd
 /// raikiri-spike-flln.2 で descendant (space) / child (`>`) combinator、bd
 /// raikiri-spike-flln.3 で next-sibling (`+`) / general-sibling (`~`)
-/// combinator も受理するようになった。pseudo-class /
-/// それ以外の属性 selector 形態を 1 つでも含めば false → rule ごと drop。
+/// combinator、bd raikiri-spike-flln.6 で
+/// `Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_))`
+/// (`:lang()` / `:dir()`) も受理するようになった — ただし同じ `Component`
+/// variant を持つ `PseudoClass::Hover` / `PseudoClass::Active` (`:hover` /
+/// `:active`) は引き続き対象外 (bd raikiri-spike-flln.1 の scope 外のまま)。
+/// それ以外の pseudo-class / 属性 selector 形態を 1 つでも含めば false →
+/// rule ごと drop。
 /// 「それ以外の属性 selector 形態」= `Component::AttributeOther` に束ねられる
 /// 2 パターン、ただし両者は対称ではない (selectors crate v0.39.0
 /// `parser.rs` の実 parse 分岐で確認、bd raikiri-spike-flln.1 フォローアップ
@@ -455,9 +460,11 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// 名前が実態と合わなくなったため rename)。bd raikiri-spike-flln.2 で
 /// `Component::Combinator(Combinator::Descendant | Combinator::Child)` を、
 /// bd raikiri-spike-flln.3 で `Component::Combinator(Combinator::NextSibling
-/// | Combinator::LaterSibling)` を追加受理 — 他 combinator
+/// | Combinator::LaterSibling)` を、bd raikiri-spike-flln.6 で
+/// `Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_))`
+/// (`:lang()`/`:dir()`) を追加受理 — 他 combinator
 /// (`Combinator::PseudoElement` / `Combinator::SlotAssignment` /
-/// `Combinator::Part`) と pseudo-class は引き続き scope 外
+/// `Combinator::Part`) と `:hover`/`:active` pseudo-class は引き続き scope 外
 /// (`cascade.rs::match_combinator_chain` の doc 参照 — この 3 つは
 /// pseudo-element 専用で、本 crate の `parse_selector_list` が
 /// pseudo-element 構文自体を parse error にするため到達不能)。
@@ -484,7 +491,9 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// next-sibling combinator
 /// <https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>、
 /// general-sibling combinator
-/// <https://www.w3.org/TR/selectors-4/#general-sibling-combinators>。
+/// <https://www.w3.org/TR/selectors-4/#general-sibling-combinators>、
+/// `:lang()` <https://www.w3.org/TR/selectors-4/#the-lang-pseudo>、`:dir()`
+/// <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>。
 ///
 /// # Invariant with `cascade.rs::compound_matches` / `match_combinator_chain`
 ///
@@ -520,6 +529,7 @@ fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool 
                     | Combinator::NextSibling
                     | Combinator::LaterSibling,
                 ) => {}
+                Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_)) => {}
                 _ => return false,
             }
         }
@@ -685,6 +695,21 @@ mod tests {
         let tree = build_rule_tree(&doc);
         assert_eq!(tree.style_rules.len(), 1);
         assert_eq!(tree.style_rules[0].source_order, 0);
+    }
+
+    #[test]
+    fn lang_and_dir_pseudo_class_selectors_are_captured() {
+        // bd raikiri-spike-flln.6 acceptance counterpart to
+        // `descendant_combinator_selector_is_captured` /
+        // `child_combinator_selector_is_captured` above — `:lang()`/`:dir()`
+        // are the first `Component::NonTSPseudoClass` variants admitted by
+        // `is_supported_selector_list` (siblings `:hover`/`:active` remain
+        // dropped, pinned by `pseudo_class_selector_still_dropped` above).
+        let doc = dom_with_style(":lang(ja) { color: red } :dir(ltr) { color: blue }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 2);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+        assert_eq!(tree.style_rules[1].source_order, 1);
     }
 
     #[test]
