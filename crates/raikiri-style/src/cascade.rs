@@ -32,7 +32,7 @@ use std::ops::Range;
 
 use cssparser::{Parser, ParserInput};
 use selectors::attr::{CaseSensitivity, ParsedCaseSensitivity};
-use selectors::parser::{Combinator, Selector, SelectorIter, SelectorList};
+use selectors::parser::{Combinator, NthSelectorData, Selector, SelectorIter, SelectorList};
 
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::error::CascadeError;
@@ -631,8 +631,38 @@ fn collect_cascaded<D: StyleDom>(
 ///   [`resolve_directionality`] 経由、`dom` + `ancestors` (自身の祖先 chain)
 ///   を使って ancestor-inherited な effective language / directionality を
 ///   解決する。`PseudoClass::Hover` / `PseudoClass::Active` はこの arm 内で
-///   引き続き `false` (下の safety net と同じ扱い — bd raikiri-spike-flln.1
-///   の scope 外のまま)。
+///   引き続き `false` (bd raikiri-spike-flln.1 の scope 外のまま)。
+/// - `Component::Root` (`:root`, bd raikiri-spike-flln.5, CSS Selectors L4
+///   §13.1 <https://www.w3.org/TR/selectors-4/#the-root-pseudo>) — matches
+///   iff `ancestors.is_empty()`. Both call sites
+///   ([`match_complex_selector_list`] for the rightmost compound,
+///   [`match_from_element`] for compounds reached by crossing a combinator)
+///   pass `ancestors` root-first/immediate-parent-last — [`collect_cascaded`]'s
+///   doc establishes that only `StyleNodeKind::Element` nodes are ever
+///   pushed onto `ancestor_path`, so an empty `ancestors` slice means "no
+///   element ancestor", i.e. this element is the root element of the
+///   document tree — exactly the spec's "root of the document" (TR
+///   anchor's own prose repeatedly truncated on WebFetch before reaching
+///   normative text, same failure mode as [`match_combinator_chain`]'s
+///   "Spec provenance note"; what loaded is the summary-table one-liner,
+///   "an E element, root of the document", 2026-08-12 direct fetch —
+///   sufficient to pin this simple a definition).
+/// - `Component::Empty` (`:empty`, bd raikiri-spike-flln.5, CSS Selectors
+///   L4 §13.2 <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — see
+///   [`matches_empty`] doc for the verbatim spec text and its L4-vs-L3
+///   whitespace-handling correction history.
+/// - `Component::Nth(data)` (`:first-child`/`:last-child`/`:only-child`/
+///   `:nth-child()`/`:nth-last-child()` and their `-of-type` counterparts,
+///   bd raikiri-spike-flln.5, CSS Selectors L4 §13.3/§13.4) — see
+///   [`matches_nth`] doc for the sibling-position algorithm and its spec
+///   citation. Reuses `ancestors.last().copied().unwrap_or_else(||
+///   dom.root_id())` for its sibling-list parent — the exact same
+///   root-fallback idiom [`match_combinator_chain`]'s `NextSibling`/
+///   `LaterSibling` arms already established (bd raikiri-spike-flln.3) for
+///   an unrelated reason (sibling lookup key, not a compound-match
+///   target); both fall back for the same underlying reason ("the root
+///   element's parent-in-tree is the Document node, not an `Element`, but
+///   `StyleDom::child_ids` still works against it").
 ///
 /// 他 component (namespace 付き属性 selector = 常に `Component::AttributeOther`、
 /// または非小文字 local name **かつ値付き**の属性 selector = 同じく
@@ -645,6 +675,7 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
     dom: &D,
     iter: &mut SelectorIter<'_, RaikiriSelectorImpl>,
     elem: &E,
+    elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
 ) -> bool {
@@ -755,6 +786,26 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
                 // 維持。
                 crate::PseudoClass::Hover | crate::PseudoClass::Active => false,
             },
+            Component::Root => ancestors.is_empty(),
+            Component::Empty => matches_empty(dom, elem_id),
+            Component::Nth(data) => {
+                // Root element (`ancestors.is_empty()`) still has a sibling
+                // list — the empty set of *element* siblings under
+                // `dom.root_id()` — per CSS Selectors L3 §6.6
+                // structural-pseudos preamble's sibling-counting framing
+                // (`matches_nth` doc, verbatim); it is not itself excluded
+                // just because it has no *element* parent, unlike
+                // `Component::Root` above. `dom.root_id()` is the Document
+                // node `collect_cascaded` never pushes onto `ancestor_path`
+                // (see that function's doc), and its `child_ids` already
+                // includes the root element — the natural "sibling-list
+                // container" for a root element that in the DOM tree has no
+                // element parent at all. Same root-fallback idiom
+                // `match_combinator_chain`'s `NextSibling`/`LaterSibling`
+                // arms already use (bd raikiri-spike-flln.3).
+                let sibling_parent = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
+                matches_nth(dom, sibling_parent, elem_id, elem.tag_name(), data)
+            }
             _ => {
                 // 他 component (AttributeOther) は ruletree build 段で
                 // drop 済のはずだが safety net で match fail
@@ -766,6 +817,249 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
         }
     }
     true
+}
+
+/// CSS Text Module Level 4 "document white space character" (see
+/// [`matches_empty`]'s doc for the full verbatim citation and provenance,
+/// including the deliberate exclusion of form feed U+000C). For
+/// HTML-parsed content this set is `{space, tab, line feed}`; carriage
+/// return is included too for defensiveness against a non-HTML-normalized
+/// `StyleDom`, even though it cannot occur in a real HTML DOM text node.
+fn is_document_white_space(c: char) -> bool {
+    matches!(c, '\u{0020}' | '\u{0009}' | '\u{000A}' | '\u{000D}')
+}
+
+/// `:empty` (bd raikiri-spike-flln.5, CSS Selectors L4 §13.2
+/// <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — whether
+/// `elem_id` has no children that count toward emptiness.
+///
+/// # Spec provenance and correction (reviewer:spec, 2026-08-12)
+///
+/// L4's own TR anchor repeatedly truncated on WebFetch before reaching
+/// normative prose — same failure mode [`match_combinator_chain`]'s "Spec
+/// provenance note" documents for combinators. The first pass of this
+/// function fell back to Selectors **Level 3** prose ("only... content
+/// nodes... whose data has a non-zero length must be considered as
+/// affecting emptiness") without realizing L4 had *deliberately changed*
+/// this from L3, not merely restated it. Corrected after a direct raw
+/// fetch of `raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/
+/// Overview.bs` (bypassing WebFetch's truncation entirely — `curl` the
+/// bikeshed source and grep it directly), `#the-empty-pseudo` section,
+/// verbatim: "The :empty pseudo-class represents an element that has no
+/// children except, optionally, [=document white space characters=]. ...
+/// only element nodes and content nodes (such as [[DOM]] text nodes, and
+/// entity references) whose data has a non-zero length must be considered
+/// as affecting emptiness; comments, processing instructions, and other
+/// nodes must not affect whether an element is considered empty or not."
+/// — followed by an explicit changelog note: "In Level 2 and Level 3 of
+/// Selectors, :empty did not match elements that contained only white
+/// space. This was changed so that... elements which authors perceive of
+/// as empty can be selected by this selector, as they expect." The
+/// section's own worked examples list `<p> </p>` (whitespace-only) among
+/// what `p:empty` matches, and `<div>&nbsp;</div>` among what it does
+/// *not* match — pinning both directions.
+///
+/// "Document white space characters" is itself a CSS Text Module Level 4
+/// term (`#the-empty-pseudo`'s own autolink target), verbatim (direct raw
+/// fetch of `.../css-text-4/Overview.bs`, `#white-space-rules`): "the
+/// [document white space characters]: spaces (U+0020), tabs (U+0009), and
+/// segment breaks" — stated a second time nearby, identically: "both
+/// include spaces (U+0020), tabs (U+0009), and line feeds (U+000A)". For
+/// HTML specifically (same source, `#white-space-rules` preamble), a
+/// segment break is exactly line feed (U+000A): "In the case of HTML,
+/// newlines are normalized to line feed characters (U+000A)... so... each
+/// line feed (U+000A) is treated as a segment break" — and carriage
+/// return (U+000D) is separately stated to be "treated identically to
+/// spaces (U+0020) in all respects" (same source), even though that same
+/// passage confirms CR cannot actually reach a real HTML DOM text node
+/// ("carriage returns present in the source code are converted to line
+/// feeds at the parsing stage... and therefore do not appear as U+000D...
+/// to CSS" — kept here only for defensive completeness against a
+/// non-HTML-normalized `StyleDom`, since [`is_document_white_space`] is
+/// generic over any `StyleDom` impl, not just `raikiri-html`'s).
+///
+/// **Deliberately excludes form feed (U+000C)** — unlike Rust's
+/// `char::is_ascii_whitespace()` / this crate's own HTML "ASCII
+/// whitespace" 5-character set used elsewhere ([`crate::style_dom`]'s
+/// `class_token_matches`). Direct search of the css-text-4 raw source
+/// (not a WebFetch summary) for "U+000C"/"form feed" returns zero hits
+/// anywhere near the "document white space characters" dfn, which is
+/// stated explicitly — twice — as exactly {space, tab, segment break/line
+/// feed}, no fourth category. This is narrower than an earlier relayed
+/// characterization of the set as "U+000A/U+000D/U+000C family" — flagged
+/// as a discrepancy for `reviewer:spec` to confirm or correct with a
+/// citation, since this function currently follows the directly-verified
+/// primary source over the relayed one where they disagree.
+///
+/// # Node-kind coverage
+///
+/// [`StyleNodeKind`] has no CDATA/entity-reference variant — HTML parsing
+/// produces neither (html5ever folds CDATA-section syntax outside foreign
+/// content into a bogus comment per HTML LS tokenization, and HTML has no
+/// entity-reference *nodes* the way XML does, only inline character
+/// reference expansion during tokenization) — so only `Element` and `Text`
+/// need an explicit arm below; `Comment` / `ProcessingInstruction` /
+/// `DocumentFragment` (`<template>` contents live in a separate detached
+/// tree per that variant's own doc, so they never appear in `child_ids`
+/// here regardless) fall through to "does not affect emptiness", matching
+/// the spec text's "comments, processing instructions, and other nodes
+/// must not affect" clause.
+fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
+    dom.child_ids(elem_id)
+        .all(|child_id| match dom.node(child_id) {
+            Some(node) => match node.kind() {
+                StyleNodeKind::Element => false,
+                StyleNodeKind::Text => node
+                    .text_content()
+                    .unwrap_or("")
+                    .chars()
+                    .all(is_document_white_space),
+                StyleNodeKind::Comment
+                | StyleNodeKind::ProcessingInstruction
+                | StyleNodeKind::DocumentFragment
+                | StyleNodeKind::Document => true,
+            },
+            // cov:ignore: `child_ids` only ever yields ids that `dom.node`
+            // resolves (`StyleDom` trait doc: "child_ids(id) returns an empty
+            // iterator for invalid id", implying ids it does yield are valid) —
+            // defensive fallback in the same posture as `match_from_element`'s
+            // own `dom.node(elem_id)` guard.
+            None => true,
+        })
+}
+
+/// 1-based sibling position of `elem_id` among `parent_id`'s **element**
+/// children, both from the start and from the end, plus the total count of
+/// such siblings — shared arithmetic behind every `Component::Nth` variant
+/// (bd raikiri-spike-flln.5, [`matches_nth`]).
+///
+/// `of_type == false` (`:nth-child`/`:first-child`/`:last-child`/
+/// `:only-child`) counts **all** element siblings regardless of tag; CSS
+/// Selectors L3 §6.6 structural-pseudos preamble (verbatim, 2026-08-12
+/// direct fetch, <https://www.w3.org/TR/selectors-3/#structural-pseudos> —
+/// same feature, L4 does not change this): "Standalone text and other
+/// non-element nodes are not counted when calculating the position of an
+/// element in its list of siblings; index numbering starts at 1."
+///
+/// `of_type == true` (`:nth-of-type`/`:first-of-type`/`:last-of-type`/
+/// `:only-of-type`) additionally restricts to siblings sharing `elem_tag`
+/// — same source, verbatim: "an+b−1 siblings with the same expanded
+/// element name". "Expanded element name" is tag name **and** namespace;
+/// this crate's `compound_matches` already treats namespace matching as
+/// always-true at M1.4 (`Component::DefaultNamespace(_) => true`, "常に
+/// match / namespace は m1.4 では常に true 扱い") for the equivalent
+/// selector-vs-element case, so restricting this sibling-vs-sibling
+/// comparison to `tag_name` equality inherits that existing scope
+/// simplification rather than introducing a new one. Plain `==` (not
+/// `eq_ignore_ascii_case`, unlike the selector-vs-element `LocalName` arm)
+/// — html5ever already normalises HTML tag names to lowercase before they
+/// ever reach `StyleElement::tag_name`, and "expanded name" comparison for
+/// non-HTML (SVG/MathML) content is case-sensitive per XML tag-name rules,
+/// so exact comparison is correct for both.
+fn sibling_position<D: StyleDom>(
+    dom: &D,
+    parent_id: StyleNodeId,
+    elem_id: StyleNodeId,
+    elem_tag: &str,
+    of_type: bool,
+) -> (i32, i32, i32) {
+    let mut total = 0i32;
+    let mut index_from_start = 0i32;
+    for child_id in dom.child_ids(parent_id) {
+        let Some(child_node) = dom.node(child_id) else {
+            continue;
+        };
+        let Some(sibling) = child_node.as_element() else {
+            continue;
+        };
+        if of_type && sibling.tag_name() != elem_tag {
+            continue;
+        }
+        total += 1;
+        if child_id == elem_id {
+            index_from_start = total;
+        }
+    }
+    let index_from_end = total - index_from_start + 1;
+    (index_from_start, index_from_end, total)
+}
+
+/// `Component::Nth` — covers `:first-child`/`:last-child`/`:only-child`/
+/// `:nth-child()`/`:nth-last-child()` (CSS Selectors L4 §13.3
+/// <https://www.w3.org/TR/selectors-4/#the-first-child-pseudo> area) and
+/// their `-of-type` counterparts (§13.4
+/// <https://www.w3.org/TR/selectors-4/#the-nth-of-type-pseudo> area) — the
+/// `selectors` crate itself parses all ten syntaxes into this one
+/// `Component` variant, distinguished only by `NthSelectorData::ty`
+/// (`selectors` 0.39.0 `parser.rs`'s `NthSelectorData::only`/`first`/`last`
+/// constructors and `parse_nth_pseudo_class`, 2026-08-12 direct fetch of
+/// the dependency's own public parse dispatch — not a Stylo reference).
+///
+/// L4's own per-selector TR anchors truncated the same way documented on
+/// [`matches_empty`]; fell back to Selectors **Level 3** §6.6
+/// <https://www.w3.org/TR/selectors-3/#structural-pseudos> (verbatim,
+/// 2026-08-12 direct fetch — again the same feature, unchanged by L4
+/// except for the unrelated `An+B of S` extension this task does not
+/// implement, see `ruletree.rs`'s `is_supported_selector_list` doc):
+/// "The :nth-child(an+b) pseudo-class notation represents an element that
+/// has an+b-1 siblings before it in the document tree... The
+/// :nth-last-child(an+b) pseudo-class notation represents an element that
+/// has an+b-1 siblings after it... :first-child — Same as :nth-child(1)...
+/// :last-child — Same as :nth-last-child(1)... :only-child — represents an
+/// element that has no siblings... :nth-of-type(an+b) — an element that
+/// has an+b-1 siblings with the same expanded element name before it...
+/// :only-of-type — an element that has no siblings with the same expanded
+/// element name."
+///
+/// Implementation: convert "an+b−1 siblings before/after" into a 1-based
+/// index ([`sibling_position`]) and let `AnPlusB::matches_index` (the
+/// `selectors` crate's own An+B arithmetic, already used as-is — no
+/// hand-rolled micro-syntax math here) decide. `:only-*` is `total == 1`
+/// directly (an element with exactly one matching sibling — itself — has
+/// "no siblings" in the relevant filtered sense) rather than routing
+/// through `an_plus_b`, matching how `NthSelectorData::only()` fixes
+/// `an_plus_b` at a placeholder `AnPlusB(0, 1)` that was never meant to be
+/// evaluated for this `ty`.
+///
+/// The root element (`parent_id` resolved by the caller to `ancestors.last()
+/// .copied().unwrap_or_else(|| dom.root_id())` when there is no element
+/// ancestor, see the `Component::Nth` arm's own comment in
+/// [`compound_matches`]) trivially satisfies `:first-child`/
+/// `:last-child`/`:only-child`/`:nth-child(1)` — it has zero element
+/// siblings before or after it, which the "an+b-1 siblings before/after
+/// it" framing above does not require a *parent element* to state, only a
+/// sibling list (possibly of size 1, itself alone).
+fn matches_nth<D: StyleDom>(
+    dom: &D,
+    parent_id: StyleNodeId,
+    elem_id: StyleNodeId,
+    elem_tag: &str,
+    data: &NthSelectorData,
+) -> bool {
+    let (from_start, from_end, total) =
+        sibling_position(dom, parent_id, elem_id, elem_tag, data.ty.is_of_type());
+    if from_start == 0 {
+        // Defensive: `elem_id` was not found among `parent_id`'s (filtered)
+        // element children at all — unreachable given `collect_cascaded`'s
+        // ancestor-path invariant (every `elem_id`/`parent_id` pair this is
+        // ever called with really is a child/parent pair in the walked
+        // tree), same posture as `match_from_element`'s own defensive
+        // guards. Guards specifically against `AnPlusB(0, 0)`
+        // (`:nth-child(0)`, a degenerate but syntactically valid selector)
+        // spuriously matching via `matches_index(0) == true` if that
+        // invariant were ever violated.
+        // cov:ignore: unreachable given the invariant above; would need a
+        // `StyleDom` impl that lies about an element's own parent to
+        // exercise.
+        return false;
+    }
+    if data.ty.is_only() {
+        total == 1
+    } else if data.ty.is_from_end() {
+        data.an_plus_b.matches_index(from_end)
+    } else {
+        data.an_plus_b.matches_index(from_start)
+    }
 }
 
 /// `elem` (と、combinator を跨ぐ場合は `ancestors` で表される祖先 element 列
@@ -807,10 +1101,14 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
 ///
 /// `ancestors` は root 側が先頭、直近の親が末尾の順 (`ancestors.last()` ==
 /// `elem` の親) — [`collect_cascaded`] の DFS 訪問順から構築される
-/// (同関数の doc 参照)。`elem_id` は `elem` 自身の id — sibling combinator が
-/// 「`elem` の親の子リストの中で `elem` より前にいるのは誰か」を
-/// [`StyleDom::child_ids`] から直接求める際の探索終端として使う
-/// ([`match_combinator_chain`] の `NextSibling`/`LaterSibling` arm 参照)。
+/// (同関数の doc 参照)。`elem_id` は `elem` 自身の id — bd raikiri-spike-flln.3
+/// で sibling combinator が「`elem` の親の子リストの中で `elem` より前にいる
+/// のは誰か」を [`StyleDom::child_ids`] から直接求める際の探索終端として
+/// 導入され ([`match_combinator_chain`] の `NextSibling`/`LaterSibling` arm
+/// 参照)、bd raikiri-spike-flln.5 で [`compound_matches`] 自身にも渡すよう
+/// 拡張 — `:root`/`:empty`/`:nth-child()` 等の構造的 pseudo-class が
+/// `dom`/`elem_id`/`ancestors.last()` (= `elem` の親) を必要とするため、
+/// `elem` の借用値だけでは表現できない情報として渡す。
 ///
 /// Returns: matching した selector の最大 specificity。1 つも match しなければ None。
 /// `specificity_of` は selector 全体 (combinator を跨いだ複合 selector) に
@@ -827,7 +1125,7 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     let mut best: Option<Specificity> = None;
     for selector in list.slice() {
         let mut iter = selector.iter();
-        let whole_matches = compound_matches(dom, &mut iter, elem, ancestors, quirks_mode)
+        let whole_matches = compound_matches(dom, &mut iter, elem, elem_id, ancestors, quirks_mode)
             && match iter.next_sequence() {
                 None => true,
                 Some(combinator) => {
@@ -1144,7 +1442,18 @@ fn match_from_element<D: StyleDom>(
     let Some(elem) = node.as_element() else {
         return false;
     };
-    if !compound_matches(dom, &mut iter, &elem, ancestors, quirks_mode) {
+    // `ancestors` here is *this* element's own remaining ancestor chain
+    // (root-most first) — `match_combinator_chain`'s `Child`/`Descendant`
+    // arms pass `rest`/`further` (everything left after popping `elem_id`
+    // itself off the end), so `ancestors.last()` is `elem_id`'s parent,
+    // exactly mirroring `match_complex_selector_list`'s own use of
+    // `ancestors` for the rightmost compound (bd raikiri-spike-flln.5) —
+    // needed so a structural pseudo-class in a non-rightmost compound
+    // (e.g. `body > div:only-child p`) resolves against the right parent,
+    // not `elem`'s (the recursion's original caller's) parent. Sibling
+    // jumps (bd raikiri-spike-flln.3) pass `ancestors` through unchanged
+    // (siblings share a parent), so this holds for those candidates too.
+    if !compound_matches(dom, &mut iter, &elem, elem_id, ancestors, quirks_mode) {
         return false;
     }
     match iter.next_sequence() {
@@ -4470,6 +4779,575 @@ mod tests {
         assert!(language_range_matches("*", "ja"));
         assert!(language_range_matches("*", "en-US"));
         assert!(language_range_matches("*", "und"));
+    }
+
+    // --- structural pseudo-classes (bd raikiri-spike-flln.5) ---
+    //
+    // `:root` (CSS Selectors L4 §13.1
+    // <https://www.w3.org/TR/selectors-4/#the-root-pseudo>), `:empty`
+    // (§13.2 <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>),
+    // `:first-child`/`:last-child`/`:only-child`/`:nth-child()`/
+    // `:nth-last-child()` (§13.3 area) and `:first-of-type`/`:last-of-type`/
+    // `:only-of-type`/`:nth-of-type()`/`:nth-last-of-type()` (§13.4 area).
+    // See `matches_empty`/`sibling_position`/`matches_nth` docs for the
+    // full spec-provenance notes (L4's own TR anchors truncated on
+    // WebFetch; fell back to Selectors Level 3, verbatim-quoted there).
+
+    #[test]
+    fn root_pseudo_class_matches_the_document_root_element_only() {
+        // `background-color`, not `color`: `color` is inherited (CSS
+        // Cascading L4 §5.2) — even a correct implementation that matched
+        // `:root` on `<html>` alone would show a red `body.color` through
+        // ordinary inheritance, making that a false-negative test for the
+        // "must not also match a descendant" half (same pitfall
+        // `child_combinator_applies_declaration_to_direct_child_only`'s own
+        // comment documents). `background-color` is not inherited (CSS
+        // Backgrounds 3 §2.2), so a red `body` here can only mean `:root`
+        // itself wrongly matched it.
+        //
+        // `RuleTree::empty()` + `add_stylesheet`, not the usual
+        // `push_element(0, "style", None)` + `build_rule_tree` convention
+        // (quality-lens finding): that convention parks `<style>` itself as
+        // a direct child of the Document node — i.e. an element sibling of
+        // `<html>` that *also* has `parent_id.is_none()` and would *also*
+        // match `:root`. Since this test never asserted anything about
+        // `<style>`'s own computed value, that convention only proved "an
+        // element with no element parent matches" (true of `html` here by
+        // coincidence of push order), not "`:root` matches the root
+        // element and no other top-level node" — the actual claim this
+        // test's name makes. `RuleTree::empty()` avoids adding any such
+        // ambiguous second candidate.
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(0, "html", None);
+        let body = doc.push_element(html, "body", None);
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(":root { background-color: red }", Origin::Author);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[html].background_color, RED,
+            ":root must match the root element"
+        );
+        assert_eq!(
+            r.computed[body].background_color,
+            ComputedValues::initial().background_color,
+            ":root must not match a non-root descendant"
+        );
+    }
+
+    #[test]
+    fn empty_pseudo_class_matches_element_with_no_children() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:empty { color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrap, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].color, RED,
+            ":empty must match a childless element"
+        );
+    }
+
+    #[test]
+    fn empty_pseudo_class_matches_element_with_zero_length_text_child() {
+        // Spec text (`matches_empty` doc, verbatim): "...content nodes...
+        // whose data has a non-zero length must be considered as affecting
+        // emptiness" — a zero-length text node (`data.len() == 0`) does
+        // NOT meet "non-zero length" and so must not disqualify `:empty`,
+        // regardless of the L3/L4 whitespace-handling difference (quality
+        // lens finding: this branch of `matches_empty`'s `Text` arm was
+        // previously untested).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:empty { color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrap, "p", None);
+        doc.push_text(p, "");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].color, RED,
+            ":empty must match an element with a zero-length text child"
+        );
+    }
+
+    #[test]
+    fn empty_pseudo_class_does_not_match_element_with_an_element_child() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:empty { color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrap, "p", None);
+        doc.push_element(p, "span", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].color,
+            ComputedValues::initial().color,
+            ":empty must not match an element with an element child"
+        );
+    }
+
+    #[test]
+    fn empty_pseudo_class_does_not_match_element_with_a_text_child() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:empty { color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrap, "p", None);
+        doc.push_text(p, "hello");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].color,
+            ComputedValues::initial().color,
+            ":empty must not match an element with a non-empty text child"
+        );
+    }
+
+    #[test]
+    fn empty_pseudo_class_matches_whitespace_only_text_child() {
+        // Acceptance-pinning test for the reviewer:spec correction
+        // (`matches_empty` doc's "Spec provenance and correction" note):
+        // CSS Selectors L4 *deliberately changed* `:empty` from L3 so that
+        // whitespace-only content — "given white space is largely
+        // collapsible in HTML and is therefore used for source code
+        // formatting" (L4 changelog note, verbatim) — no longer
+        // disqualifies. The L4 spec's own worked example lists `<p> </p>`
+        // among what `p:empty` matches, verbatim. This test used to assert
+        // the opposite (the pre-correction L3-only reading); inverted, not
+        // just renamed, when the bug was fixed.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:empty { color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrap, "p", None);
+        doc.push_text(p, " ");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].color, RED,
+            ":empty must match an element with a document-white-space-only text child (CSS Selectors L4)"
+        );
+    }
+
+    #[test]
+    fn empty_pseudo_class_does_not_match_nbsp_only_text_child() {
+        // No-break space (U+00A0) is explicitly NOT a "document white
+        // space character" (CSS Text 4, `is_document_white_space` doc) —
+        // the L4 spec's own worked example lists `<div>&nbsp;</div>`
+        // among what `div:empty` does *not* match, verbatim. Distinguishes
+        // this from the (now-passing) plain-space case above: `:empty`'s
+        // L4 whitespace carve-out is narrower than "any Unicode
+        // whitespace".
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:empty { color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrap, "p", None);
+        doc.push_text(p, "\u{00A0}");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].color,
+            ComputedValues::initial().color,
+            ":empty must not match an element with an NBSP-only text child"
+        );
+    }
+
+    #[test]
+    fn empty_pseudo_class_matches_element_with_only_a_comment_child() {
+        // "comments... must not affect whether an element is considered
+        // empty" (CSS Selectors L4 §13.2 `#the-empty-pseudo`, verbatim,
+        // unchanged from L3) — a comment-only element still matches
+        // `:empty`.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:empty { color: red }");
+        let wrap = doc.push_element(0, "div", None);
+        let p = doc.push_element(wrap, "p", None);
+        doc.push_comment(p, " note ");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].color, RED,
+            ":empty must match an element whose only child is a comment"
+        );
+    }
+
+    #[test]
+    fn first_child_last_child_only_child_ignore_text_node_siblings() {
+        // CSS Selectors L3 §6.6 preamble (verbatim, `sibling_position`
+        // doc): "Standalone text and other non-element nodes are not
+        // counted when calculating the position of an element in its list
+        // of siblings" — a text node between two <li> must not shift
+        // indices.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            "li:first-child { color: red } \
+             li:last-child { background-color: red }",
+        );
+        let ul = doc.push_element(0, "ul", None);
+        let first = doc.push_element(ul, "li", None);
+        doc.push_text(ul, "\n  "); // whitespace between <li> siblings
+        let last = doc.push_element(ul, "li", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[first].color, RED,
+            ":first-child must match despite an intervening text node"
+        );
+        assert_eq!(
+            r.computed[last].background_color, RED,
+            ":last-child must match despite an intervening text node"
+        );
+        assert_eq!(
+            r.computed[first].background_color,
+            ComputedValues::initial().background_color,
+            "the first <li> must not also match :last-child"
+        );
+    }
+
+    #[test]
+    fn only_child_matches_the_sole_element_child_and_nothing_else() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "li:only-child { color: red }");
+        let solo_wrap = doc.push_element(0, "ul", None);
+        let solo = doc.push_element(solo_wrap, "li", None);
+        let pair_wrap = doc.push_element(0, "ul", None);
+        let pair_a = doc.push_element(pair_wrap, "li", None);
+        let pair_b = doc.push_element(pair_wrap, "li", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[solo].color, RED,
+            ":only-child must match a sole <li>"
+        );
+        assert_eq!(
+            r.computed[pair_a].color,
+            ComputedValues::initial().color,
+            ":only-child must not match when a sibling <li> exists"
+        );
+        assert_eq!(
+            r.computed[pair_b].color,
+            ComputedValues::initial().color,
+            ":only-child must not match when a sibling <li> exists"
+        );
+    }
+
+    #[test]
+    fn nth_child_zebra_striping_acceptance() {
+        // Acceptance (bd raikiri-spike-flln.5): `:nth-child(2n+1)` zebra
+        // striping. Rows 1/3/5 (1-based) get the declaration, 2/4 don't.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "tr:nth-child(2n+1) { background-color: red }");
+        let table = doc.push_element(0, "table", None);
+        let rows: Vec<usize> = (0..5)
+            .map(|_| doc.push_element(table, "tr", None))
+            .collect();
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        for (i, &row) in rows.iter().enumerate() {
+            let one_based = i + 1;
+            let expect_red = one_based % 2 == 1;
+            assert_eq!(
+                r.computed[row].background_color,
+                if expect_red {
+                    RED
+                } else {
+                    ComputedValues::initial().background_color
+                },
+                "row {one_based} (0-based index {i}): nth-child(2n+1) zebra stripe mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn nth_child_negative_b_and_explicit_index_forms() {
+        // `:nth-child(3)` (a=0) and `:nth-child(-n+2)` (first two only) —
+        // exercises `AnPlusB` beyond the simple odd/even case.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            "li:nth-child(3) { color: red } li:nth-child(-n+2) { background-color: red }",
+        );
+        let ul = doc.push_element(0, "ul", None);
+        let items: Vec<usize> = (0..4).map(|_| doc.push_element(ul, "li", None)).collect();
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[items[0]].background_color, RED,
+            "index 1 in -n+2"
+        );
+        assert_eq!(
+            r.computed[items[1]].background_color, RED,
+            "index 2 in -n+2"
+        );
+        assert_eq!(
+            r.computed[items[2]].background_color,
+            ComputedValues::initial().background_color,
+            "index 3 not in -n+2"
+        );
+        assert_eq!(
+            r.computed[items[2]].color, RED,
+            "index 3 matches nth-child(3)"
+        );
+        assert_eq!(
+            r.computed[items[0]].color,
+            ComputedValues::initial().color,
+            "index 1 does not match nth-child(3)"
+        );
+    }
+
+    #[test]
+    fn nth_last_child_counts_from_the_end() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "li:nth-last-child(1) { color: red }");
+        let ul = doc.push_element(0, "ul", None);
+        let items: Vec<usize> = (0..3).map(|_| doc.push_element(ul, "li", None)).collect();
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[items[2]].color, RED,
+            ":nth-last-child(1) must match the last element sibling"
+        );
+        assert_eq!(
+            r.computed[items[0]].color,
+            ComputedValues::initial().color,
+            ":nth-last-child(1) must not match the first element sibling"
+        );
+    }
+
+    #[test]
+    fn first_of_type_last_of_type_only_of_type_are_restricted_to_matching_tag() {
+        // Mixed-tag sibling list: <h2><p><p><h2> — the -of-type family must
+        // count only same-tag siblings (CSS Selectors L3 §6.6, "an+b-1
+        // siblings with the same expanded element name"), unlike plain
+        // :first-child/:last-child/:only-child.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            "h2:first-of-type { color: red } \
+             h2:last-of-type { background-color: red } \
+             p:only-of-type { border-top-style: solid }",
+        );
+        let section = doc.push_element(0, "section", None);
+        let h2_first = doc.push_element(section, "h2", None);
+        let p = doc.push_element(section, "p", None);
+        let h2_last = doc.push_element(section, "h2", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[h2_first].color, RED,
+            "h2:first-of-type must match the first <h2> even though a <p> is its actual first-child"
+        );
+        assert_eq!(
+            r.computed[h2_last].background_color, RED,
+            "h2:last-of-type must match the second <h2>"
+        );
+        assert_eq!(
+            r.computed[h2_first].background_color,
+            ComputedValues::initial().background_color,
+            "the first <h2> must not also match :last-of-type"
+        );
+        assert_eq!(
+            r.computed[p].border.top.style,
+            BorderStyle::Solid,
+            "p:only-of-type must match the sole <p> despite <h2> siblings"
+        );
+    }
+
+    #[test]
+    fn nth_of_type_counts_only_same_tag_siblings() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p:nth-of-type(2) { color: red }");
+        let div = doc.push_element(0, "div", None);
+        doc.push_element(div, "h2", None);
+        let p1 = doc.push_element(div, "p", None);
+        doc.push_element(div, "h2", None);
+        let p2 = doc.push_element(div, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p2].color, RED,
+            "p:nth-of-type(2) must match the 2nd <p>, ignoring interleaved <h2> siblings"
+        );
+        assert_eq!(
+            r.computed[p1].color,
+            ComputedValues::initial().color,
+            "p:nth-of-type(2) must not match the 1st <p>"
+        );
+    }
+
+    #[test]
+    fn root_element_matches_first_child_last_child_only_child_and_nth_child_1() {
+        // The root element has no *element* parent, but per CSS Selectors
+        // L3's "an+b-1 siblings before/after it" framing (`matches_nth`
+        // doc) it still has a (trivial, size-1) sibling list — itself
+        // alone under the Document node.
+        //
+        // Deliberately does NOT use the usual `push_element(0, "style",
+        // None)` + `build_rule_tree` convention: that convention parks the
+        // `<style>` element itself as a direct child of the Document node
+        // (id 0) — i.e. as an *element sibling of the root element being
+        // tested here*, which would make `<style>` the real first element
+        // child and `<html>` the second, defeating the point of this test.
+        // `RuleTree::empty()` + `add_stylesheet` supplies the CSS without
+        // adding any DOM node at all.
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(0, "html", None);
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "html:first-child { color: red } \
+             html:last-child { background-color: red } \
+             html:only-child { border-top-style: solid } \
+             html:nth-child(1) { border-bottom-style: solid }",
+            Origin::Author,
+        );
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[html].color, RED,
+            "root element must match :first-child"
+        );
+        assert_eq!(
+            r.computed[html].background_color, RED,
+            "root element must match :last-child"
+        );
+        assert_eq!(
+            r.computed[html].border.top.style,
+            BorderStyle::Solid,
+            "root element must match :only-child"
+        );
+        assert_eq!(
+            r.computed[html].border.bottom.style,
+            BorderStyle::Solid,
+            "root element must match :nth-child(1)"
+        );
+    }
+
+    #[test]
+    fn root_element_does_not_match_nth_child_2() {
+        // Negative half of the previous test (WPT reference:
+        // `css/selectors/child-indexed-no-parent.html`, per CSS Selectors
+        // L3's "an+b-1 siblings before it" framing this crate follows):
+        // the root element's sibling list under `dom.root_id()` has size
+        // 1 (itself alone), so no `:nth-child(N)`/`:nth-last-child(N)` for
+        // `N >= 2` can ever match it. `:root:nth-last-child(2)` is the
+        // canonical form of this check.
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(0, "html", None);
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(":root:nth-last-child(2) { color: red }", Origin::Author);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[html].color,
+            ComputedValues::initial().color,
+            ":root:nth-last-child(2) must not match — the root element has no siblings at all"
+        );
+    }
+
+    #[test]
+    fn section_gt_p_first_child_acceptance() {
+        // Acceptance (bd raikiri-spike-flln.5, audit doc top gap example
+        // verbatim): `.section > p:first-child { font-weight: bold }`.
+        // Combines the child combinator (bd raikiri-spike-flln.2) with a
+        // structural pseudo-class on the *rightmost* compound.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".section > p:first-child { font-weight: bold }");
+        let section = doc.push_element(0, "div", None);
+        doc.set_attr(section, "class", "section");
+        let first_p = doc.push_element(section, "p", None);
+        let second_p = doc.push_element(section, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[first_p].font_weight, 700.0,
+            ".section > p:first-child must match the first <p>"
+        );
+        assert_eq!(
+            r.computed[second_p].font_weight,
+            ComputedValues::initial().font_weight,
+            ".section > p:first-child must not match the second <p>"
+        );
+    }
+
+    #[test]
+    fn structural_pseudo_class_on_an_ancestor_compound_uses_that_ancestors_own_parent() {
+        // `body > div:only-child p` — the structural pseudo-class sits on
+        // the *ancestor* compound (`div:only-child`), reached by crossing
+        // the child combinator via `match_from_ancestor`, not on the
+        // rightmost compound. This is the one test that would catch a
+        // wrong `parent_id` slice at that recursion site (using `elem`'s
+        // parent instead of the ancestor-being-matched's own parent).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "body > div:only-child p { color: red }");
+        let body = doc.push_element(0, "body", None);
+        let solo_div = doc.push_element(body, "div", None); // only element child of <body>
+        let p_under_solo = doc.push_element(solo_div, "p", None);
+
+        let other_body = doc.push_element(0, "body", None);
+        let div_a = doc.push_element(other_body, "div", None);
+        doc.push_element(other_body, "div", None); // makes div_a NOT an only-child
+        let p_under_div_a = doc.push_element(div_a, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p_under_solo].color, RED,
+            "body > div:only-child p must match when the <div> really is body's only child"
+        );
+        assert_eq!(
+            r.computed[p_under_div_a].color,
+            ComputedValues::initial().color,
+            "body > div:only-child p must not match when the <div> has a sibling <div>"
+        );
+    }
+
+    #[test]
+    fn nth_child_of_extended_syntax_is_rejected_not_silently_widened() {
+        // `:nth-child(An+B of S)` (CSS Selectors L4's extended
+        // selector-list form) is out of scope — `RaikiriSelectorParser`
+        // does not override `Parser::parse_nth_child_of` (default `false`,
+        // `ruletree.rs`'s `is_supported_selector_list` doc). Per
+        // `cssparser::Parser::parse_nested_block`'s own contract ("The
+        // result is overridden to an `Err(..)` if the closure leaves some
+        // input before that point", cssparser 0.37.0 `parser.rs`, direct
+        // fetch) this must be a hard parse error — NOT silently parsed as
+        // plain `:nth-child(An+B)` (which would silently match a superset
+        // of what the author wrote).
+        assert!(
+            crate::parse_selector_list("p:nth-child(2n+1 of .foo)").is_err(),
+            "the `of S` extended nth-child syntax must fail to parse, not silently widen"
+        );
     }
 
     #[test]

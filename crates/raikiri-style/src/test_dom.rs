@@ -146,6 +146,25 @@ impl TestDoc {
         id
     }
 
+    /// Comment node (bd raikiri-spike-flln.5 — needed to exercise
+    /// `:empty`'s "comments... must not affect whether an element is
+    /// considered empty" clause, CSS Selectors L3 §6.6.4 verbatim, see
+    /// `cascade.rs`'s `matches_empty` doc).
+    pub(crate) fn push_comment(&mut self, parent: usize, text: &str) -> usize {
+        let id = self.nodes.len();
+        self.nodes.push(TestNode {
+            kind: StyleNodeKind::Comment,
+            tag: String::new(),
+            inline_style: None,
+            attrs: Vec::new(),
+            namespace: None,
+            text: Some(text.into()),
+            children: Vec::new(),
+        });
+        self.nodes[parent].children.push(id);
+        id
+    }
+
     /// Set a null-namespace attribute (e.g. `class`, `id`, `data-foo`) on an
     /// already-pushed element (bd raikiri-spike-flln.1) — a post-hoc
     /// alternative to [`Self::push_element_with_attrs`]'s constructor-time
