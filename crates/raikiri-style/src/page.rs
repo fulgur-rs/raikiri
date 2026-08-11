@@ -231,9 +231,13 @@ pub struct PageRule {
     /// `RuleTree::add_stylesheet` calls.
     pub source_order: u32,
     /// Cascade origin this rule was parsed under. See [`Origin`] for the
-    /// current variant set — under M1.4a the crate exposes only UA and
-    /// Author because User declarations are folded into Author (that
-    /// folding rationale lives on [`Origin`] itself).
+    /// current 4-variant set (`UserAgent` / `User` / `AuthorPresentationalHint`
+    /// / `Author`, bd raikiri-spike-pdta) — `@page` rules are only ever
+    /// parsed via [`crate::ruletree::RuleTree::add_stylesheet`], the same
+    /// entry point style rules use, so any [`Origin`] a caller passes
+    /// (including [`Origin::User`], which currently has no production
+    /// producer — [`Origin`]'s own doc has that status) flows through here
+    /// unchanged; this field does no origin-narrowing of its own.
     ///
     /// Two primary sources back the wiring; the fragment anchors are the
     /// stable form of each citation:
@@ -244,8 +248,9 @@ pub struct PageRule {
     ///   *participates* in the cascade:
     ///   <https://www.w3.org/TR/css-page-3/#cascading-and-page-context>
     /// - CSS Cascading Level 4, "Cascade Origins" — the per-origin
-    ///   ordering mechanism (UA < Author, `!important` reversal) that
-    ///   `@page` rules cascade through:
+    ///   ordering mechanism (`!important` reversal) that `@page` rules
+    ///   cascade through, reusing [`crate::cascade::cascade_rank`]'s full
+    ///   ordering (see that function's doc for the current rank table):
     ///   <https://www.w3.org/TR/css-cascade-4/#cascade-origin>
     ///
     /// M4 pre-work (raikiri-spike-jzv): the field is populated at parse
@@ -885,9 +890,10 @@ pub enum PageInheritance<'a> {
 /// 2. Group candidate declarations by [`PropertyKey`], pick the winner per
 ///    `(rank, specificity, source_order)` tuple where higher beats lower.
 ///    `rank` comes from the crate-internal `cascade_rank` (shared with the
-///    style-rule cascade) and encodes the L4 §6.2 origin ordering (Normal:
-///    UA < Author; Important: reversed — UA `!important` beats Author
-///    `!important`).
+///    style-rule cascade) and encodes the full L4 §6.2 / L5 §6.5 origin
+///    ordering across all 4 [`Origin`] variants — see that function's doc
+///    for the exact rank table, which this module reuses rather than
+///    duplicating.
 /// 3. **Phase 2** — resolve each winner against the page context's inheritance
 ///    parent ([`PageInheritance`]) through the crate-internal
 ///    [`crate::cascade::resolve_against_inherited`], the sibling of
@@ -1744,8 +1750,8 @@ mod tests {
     //! Author < User < UA — UA-important wins). The parenthetical
     //! (`UA_imp` > `Author_imp`, exact `cascade_rank` values shift as origin
     //! tiers are added — see that function's doc; bd raikiri-spike-wo36
-    //! added a 3rd tier) is spec-correct and matches `cascade_rank` and the
-    //! existing style-rule test
+    //! added a 3rd tier, bd raikiri-spike-pdta a 4th) is spec-correct and
+    //! matches `cascade_rank` and the existing style-rule test
     //! `cascade::tests::important_ua_beats_important_author_display`.
     //! Implementation follows the spec; this test asserts UA `!important` wins.
 

@@ -259,19 +259,47 @@ struct RankedDecl {
 }
 
 /// Cascade origin + `!important` flag に基づく優先度 rank (raikiri-spike-m1.22、
-/// 3rd origin tier は bd raikiri-spike-wo36)。
+/// 3rd origin tier は bd raikiri-spike-wo36、4th origin tier ([`Origin::User`])
+/// は bd raikiri-spike-pdta — pdta で 4-tier 全体を re-derive した、単純な
+/// 番号ずらしではない点に注意、下記参照)。
 ///
 /// 高いほど勝つ。CSS Cascading L4 §6.1 "Cascade Sorting Order"
 /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Origin and Importance
 /// 段を表現する (origin の定義は §6.2
 /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>、`!important` に
 /// よる反転は §6.3 <https://www.w3.org/TR/css-cascade-4/#importance>)。
+///
+/// # UA / User / Author の 3-origin 部分 (spec-verbatim)
+///
+/// §6.1 "Cascade Sorting Order" は origin 優先度を降順 8 項目のリストで
+/// 定める (2026-08-12 再 fetch 確認、transition/animation の 2 項目は本
+/// crate 未実装のため以下では省略):
+/// - "Important user agent declarations"
+/// - "Important user declarations"
+/// - "Important author declarations"
+/// - "Normal author declarations"
+/// - "Normal user declarations"
+/// - "Normal user agent declarations"
+///
+/// "Declarations from origins earlier in this list win over declarations
+/// from later origins" — すなわち降順优先度を昇順 (弱い→強い) rank に
+/// 反転すると: `Normal UA < Normal User < Normal Author < Important Author
+/// < Important User < Important UA`。UA/User/Author の 3-origin に関しては
+/// これが spec の直接記述であり、Important 段の User の位置 (`Important
+/// Author < Important User < Important UA`) も含めて **verbatim** — 導出
+/// ではない。
+///
+/// # [`Origin::AuthorPresentationalHint`] の挿入 (CSS Cascading L5 §6.5)
+///
 /// [`Origin::AuthorPresentationalHint`] は CSS Cascading L5 §6.5
 /// "Precedence of Non-CSS Presentational Hints"
-/// (<https://drafts.csswg.org/css-cascade-5/#preshint>, 2026-08-11 再 fetch
-/// 確認) が定める "author presentational hint origin"。以下は §6.5 の
-/// 段落から**関連する抜粋を verbatim 引用**したもの (段落全体の逐語コピーでは
-/// ない — 完全性を主張しない):
+/// (<https://drafts.csswg.org/css-cascade-5/#preshint>, 2026-08-12 再 fetch
+/// 確認) が定める "author presentational hint origin"。L5 自身の §6.1 も
+/// 上記と同じ 8 項目リストのままで hint origin をそこに明示的には
+/// 挿入しない (2026-08-12 再 fetch で確認 — hint の位置付けは §6.5 側の
+/// 独立した記述に委ねられている)。以下は §6.5 の段落から**関連する抜粋を
+/// verbatim 引用**したもの (段落全体の逐語コピーではない — 完全性を主張
+/// しない):
 /// - "All document language-based styling must be translated to
 ///   corresponding CSS rules and enter the cascade as rules in **either
 ///   the UA-origin or** a special-purpose author presentational hint
@@ -303,23 +331,58 @@ struct RankedDecl {
 /// raikiri-spike-5z86.7 / bd raikiri-spike-wo36 で reviewer:spec が
 /// defensible と判定済みの judgment call)。
 ///
-/// 上記の引用が直接定めるのは **Normal 段の位置**だけ: UA < User <
-/// AuthorPresentationalHint < Author。Important 段での
-/// `AuthorPresentationalHint` の位置は spec に verbatim 記述が無い —
-/// presentational hint は host language 側 (HTML LS §15.2) が生成するもので
-/// 常に non-important なため、spec 側にも important-hint tier を定める
-/// 動機が無い。以下の Important 順序はその不在を、origin 独立性
-/// (「独立 origin である」という上記引用) と §6.3 の importance 反転規則
-/// から**対称的に導出した**もの (verbatim ではない):
-/// - Normal   : UA < User < AuthorPresentationalHint < Author (Author が
-///   最強、UA が最弱)
-/// - Important: UA > User > AuthorPresentationalHint > Author (反転、UA が
-///   最強 — Important 段の AuthorPresentationalHint 順位は上記の通り derived)
+/// 上記 §6.5 の引用が直接定めるのは **Normal 段の位置**だけ: hint は
+/// "between the regular user origin and the author origin" — Normal User
+/// と Normal Author の間。Important 段での `AuthorPresentationalHint` の
+/// 位置は spec に verbatim 記述が無い — presentational hint は host
+/// language 側 (HTML LS §15.2) が生成するもので常に non-important なため、
+/// spec 側にも important-hint tier を定める動機が無い。この不在を、
+/// origin 独立性 (「独立 origin である」という上記引用) と §6.1 の
+/// **reversal-equivalence** から導出する: UA/User/Author の 3-origin に
+/// 限れば、Important 段の昇順順序 (`Author < User < UA`) は Normal 段の
+/// 昇順順序 (`UA < User < Author`) のちょうど逆順になっている — これは
+/// 類推ではなく、§6.1 の同じ 8 項目リストから直接読み取れる事実 (上記
+/// 「UA / User / Author の 3-origin 部分」節参照)。hint (4th origin) に
+/// この同じ reversal 機構をそのまま延長するのが、追加の仮定を要さない
+/// 最小の拡張であり、それが以下の順序を導く: Normal 段で hint が User と
+/// Author の間に挟まる (「独立した第三者」として) のと同じ相対位置を、
+/// reversal された Important 段 (Important Author と Important User の
+/// 間) でも保つ、という位置取りを採用する (verbatim ではない、derived —
+/// ただし spec 自身の reversal 機構をそのまま延長しただけで、恣意的な
+/// 選択の余地は無い)。
+///
+/// # 4-tier 全体の rank 表 (pdta の re-derivation)
+///
+/// 上記 2 節を合成すると、Normal / Important 各 4 origin の順序は:
+/// - Normal   : UA < User < AuthorPresentationalHint < Author (spec-verbatim
+///   な UA/User/Author の骨格に、spec-verbatim な hint の位置 — User と
+///   Author の間 — を挿入)
+/// - Important: Author < AuthorPresentationalHint < User < UA (反転した
+///   spec-verbatim な Author/User/UA の骨格に、derived な hint の位置 —
+///   Important Author と Important User の間 — を挿入)
+///
+/// rank 番号を割り当てると (0 が最弱、7 が最強):
+///
+/// | origin                     | Normal | Important |
+/// |-----------------------------|--------|-----------|
+/// | `UserAgent`                 | 0      | 7         |
+/// | `User`                      | 1      | 6         |
+/// | `AuthorPresentationalHint`  | 2      | 5         |
+/// | `Author`                    | 3      | 4         |
+///
+/// 検算: `min(Important) = 4 > max(Normal) = 3` — 「any important
+/// declaration beats any normal declaration」(§6.1/§6.3) を満たす。UA/User/
+/// Author の 3 列はいずれも Normal 昇順・Important 降順が spec-verbatim の
+/// 骨格 (`0,1,3` と `7,6,4`) と一致し、hint の挿入 (`2` / `5`) は両列とも
+/// 「User と Author の間」という同じ relative position を保つ (対称)。
 ///
 /// `(AuthorPresentationalHint, true)` の arm は現状
 /// [`push_img_dimension_hints`] から到達しない (常に `important = false` で
-/// push する) — [`crate::page::cascade_page`] も同じ [`Origin`] を経由する
-/// ため、`unreachable!()` にはせず total function として値を返す。
+/// push する)、`(User, false)` / `(User, true)` の 2 arm は現状どの
+/// production 呼び出し元からも到達しない ([`Origin::User`] の doc の
+/// "no production producer" 節参照、bd raikiri-spike-d7h3 が producer 追加を
+/// 追跡) — [`crate::page::cascade_page`] も同じ [`Origin`] を経由するため、
+/// これらも `unreachable!()` にはせず total function として値を返す。
 ///
 /// `revert` keyword carve-out (上記 4 番目の引用: "it is considered part of
 /// the author origin" — `revert-layer` は対象外) は本 crate に現状影響しない
@@ -327,24 +390,18 @@ struct RankedDecl {
 /// ([`crate::property`] の "CSS-wide keyword (canonical)" 節、"Epic 7"
 /// milestone 参照)。実装時にこの carve-out の special-case が必要になる。
 ///
-/// raikiri-style は独立した User origin をまだ持たない ([`Origin`] doc の
-/// 残差 4 参照、bd raikiri-spike-wo36 item 4 は本 task の scope 外) ため、
-/// 上記の "User" 段はこの match には現れない — UA と
-/// AuthorPresentationalHint の間、および AuthorPresentationalHint と
-/// Important-UA の間に将来 User の rank が挿入される余地を残す (現状の
-/// consumer 由来 "user stylesheet" は [`Origin::Author`] に fold されて
-/// 届く、[`crate::ruletree`] module doc 参照)。
-///
 /// `@page` cascade (raikiri-spike-m4.1) も同じ origin ordering を共有するため
 /// `pub(crate)` で公開し [`crate::page::cascade_page`] から reuse。
 pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
     match (origin, important) {
         (Origin::UserAgent, false) => 0,
-        (Origin::AuthorPresentationalHint, false) => 1,
-        (Origin::Author, false) => 2,
-        (Origin::Author, true) => 3,
-        (Origin::AuthorPresentationalHint, true) => 4,
-        (Origin::UserAgent, true) => 5,
+        (Origin::User, false) => 1,
+        (Origin::AuthorPresentationalHint, false) => 2,
+        (Origin::Author, false) => 3,
+        (Origin::Author, true) => 4,
+        (Origin::AuthorPresentationalHint, true) => 5,
+        (Origin::User, true) => 6,
+        (Origin::UserAgent, true) => 7,
     }
 }
 
@@ -399,6 +456,16 @@ fn collect_cascaded<D: StyleDom>(
                 // source_order, or push order — no tie can occur (that was
                 // only possible before wo36, when hint and real Author
                 // declarations shared the same `Origin::Author` rank).
+                // Re-verified after bd raikiri-spike-pdta inserted the 4th
+                // `Origin::User` tier: the hint's `cascade_rank` value moved
+                // (see `cascade_rank`'s rank table) but stayed strictly
+                // between `Origin::User` and `Origin::Author` — never equal
+                // to the real `Author` rank in either the Normal or the
+                // Important half of the table — so this reasoning still
+                // holds unchanged; no test pins the push order itself
+                // (nothing here is order-*dependent* left to pin), but
+                // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
+                // continues to pin the outcome this comment claims.
                 push_img_dimension_hints(&elem, &mut out.decls);
                 // stylesheet rule matching
                 for rule in &rule_tree.style_rules {
@@ -726,39 +793,49 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 /// can be overridden by author-origin styles, but not by non-important
 /// user-origin styles" と続ける。本関数は専用 variant
 /// [`Origin::AuthorPresentationalHint`] を採る — [`cascade_rank`] はこれを
-/// `(UserAgent, false) => 0` より上、`(Author, false) => 2` より下に置く
-/// ([`cascade_rank`] doc 参照)。この rank 差は `beats` の tuple compare
-/// `(rank, specificity, source_order)` の**第一要素**なので、真の UA-origin
-/// rule には specificity/source_order を問わず常に勝ち、real author-origin
-/// 宣言 (stylesheet rule でも inline style でも) には specificity/
-/// source_order を問わず常に負ける — かつて (2026-08-10 retag 時点、旧版は
-/// hint も real 宣言も同じ `Origin::Author` に tag していた) は後者の保証を
-/// 「hint の specificity を 0 に固定し、real 宣言が zero-specificity かつ
-/// stylesheet 先頭 rule の場合に限り発生する exact tie を push 順序
-/// (hint を先に push) で決着させる」という同一 origin 内 tie-break に
-/// 依存していた — 3rd tier 導入によりその依存は解消され、origin rank
-/// だけで無条件に決着する。[`collect_cascaded`] が今も
-/// stylesheet rule matching / inline style より先にこの関数を push する
-/// 呼び出し順は残っているが、上記の通りもう correctness の必要条件では
-/// ない (無害な残置)。
+/// `(User, false) => 1` より上、`(Author, false) => 3` より下に置く (bd
+/// raikiri-spike-pdta で [`Origin::User`] 挿入後の値 — [`cascade_rank`] doc
+/// 参照)。この rank 差は `beats` の tuple compare `(rank, specificity, source_order)` の
+/// **第一要素**なので、真の UA-origin rule には specificity/source_order を
+/// 問わず常に勝ち、real author-origin 宣言 (stylesheet rule でも inline
+/// style でも) には specificity/source_order を問わず常に負ける — かつて
+/// (2026-08-10 retag 時点、旧版は hint も real 宣言も同じ `Origin::Author`
+/// に tag していた) は後者の保証を「hint の specificity を 0 に固定し、
+/// real 宣言が zero-specificity かつ stylesheet 先頭 rule の場合に限り
+/// 発生する exact tie を push 順序 (hint を先に push) で決着させる」という
+/// 同一 origin 内 tie-break に依存していた — 3rd tier 導入によりその依存は
+/// 解消され、origin rank だけで無条件に決着する。[`Origin::User`] の挿入
+/// (bd raikiri-spike-pdta) はこの結論を変えない — hint の rank は挿入後も
+/// 依然として real `Author` rank と等しくなることが無い (`AuthorPresentationalHint`
+/// と `Author` は常に隣接する別 rank 値のまま、[`cascade_rank`] doc の rank
+/// 表参照) ため、[`collect_cascaded`] が今も stylesheet rule matching /
+/// inline style より先にこの関数を push する呼び出し順は残っているが、
+/// 上記の通りもう correctness の必要条件ではない (無害な残置、pdta で
+/// re-verify 済み)。
 ///
 /// テスト
 /// `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
 /// はこの「specificity を問わず real author 宣言が勝つ」性質を、かつては
-/// exact-tie 経由で、今は origin rank 差で直接 exercise する。
+/// exact-tie 経由で、今は origin rank 差で直接 exercise する ([`Origin::User`]
+/// 挿入後も rank 差の大小関係は変わらないため、この test は無変更で pin
+/// し続ける)。
 ///
-/// 残る 2-origin model の残差 (bd raikiri-spike-wo36 item 4、本 retag の
-/// scope 外): raikiri-style は独立した `Origin::User` をまだ持たず、
-/// consumer が渡す `extra_stylesheets` ("user stylesheet" 相当) は
-/// [`Origin::Author`] として届く ([`crate::ruletree`] module doc 参照)。
-/// spec の完全な順序では hint は「user origin より強い」はずだが、本実装は
-/// user stylesheet 宣言を hint より強い [`Origin::Author`] rank に一律
-/// fold している — user stylesheet が img の width/height を上書きできる
-/// という結果自体は spec と一致するが (`Author` rank は hint より常に上)、
-/// 独立した User origin を追加すれば hint が真の author 宣言だけに
-/// overridable になる、というモデルの精度としては不完全なまま。umbrella
-/// 側の `stylesheet_kind_to_origin` 拡張が要るため別 followup 判断
-/// (bd raikiri-spike-wo36 item 4)。
+/// 残る `Origin::User` no-producer 残差 (旧: bd raikiri-spike-wo36 item 4): bd
+/// raikiri-spike-pdta で raikiri-style 内の [`Origin::User`] variant 自体は
+/// 追加済み ([`cascade_rank`] は 4-tier 化済み) だが、consumer が渡す
+/// `extra_stylesheets` を実際に [`Origin::User`] へ route する producer は
+/// まだ無い — 今も `StylesheetKind::Author` 経由で [`Origin::Author`] として
+/// 届く ([`crate::ruletree`] module doc 参照)。spec の完全な順序では hint は
+/// 「user origin より強い」はずだが、本実装は user stylesheet 宣言を hint
+/// より強い [`Origin::Author`] rank に一律 fold している — user stylesheet
+/// が img の width/height を上書きできるという結果自体は spec と一致するが
+/// (`Author` rank は hint より常に上)、独立した User origin へ実際に route
+/// すれば hint が真の author 宣言だけに overridable になる、というモデルの
+/// 精度としては不完全なまま。raikiri-traits 側の `StylesheetKind` に
+/// 独立 variant を追加し raikiri-html で retag し、umbrella 側の
+/// `stylesheet_kind_to_origin` を拡張する必要がある genuine multi-crate diff
+/// (raikiri-style 単体では完結しない) のため bd raikiri-spike-d7h3 に
+/// 切り出し済み (wall/traits 経路)。
 fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
     // HTML-namespace gate (Codex §8.3 final-review finding, 2026-08-11):
     // this mapping is HTML LS's own presentational hint, scoped to the HTML
@@ -1182,7 +1259,8 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
     // Tuple compare: (rank, specificity, source_order)
     // - rank 高い方が勝つ (順序と正確な値は `cascade_rank` doc 参照 — bd
     //   raikiri-spike-wo36 で UA/Author の 2 段から
-    //   UA/AuthorPresentationalHint/Author の 3 段に拡張済み)
+    //   UA/AuthorPresentationalHint/Author の 3 段に拡張、bd raikiri-spike-pdta
+    //   で UA/User/AuthorPresentationalHint/Author の 4 段に拡張済み)
     // - 同 rank なら specificity 高い方が勝つ
     // - 同 rank + spec なら source_order 大 (=後ろ) が勝つ
     // `>=` は同一 rule 内 duplicate property の後方勝ち (CSS Cascading L4 §6.1
@@ -3859,38 +3937,78 @@ mod tests {
         assert_eq!(cv.display, DisplayValue::Block);
     }
 
-    // ── cascade_rank 3rd origin tier (bd raikiri-spike-wo36, CSS Cascading
-    // L5 §6.5 "author presentational hint origin") ──
+    // ── cascade_rank 4-tier ordering (3rd tier: bd raikiri-spike-wo36, CSS
+    // Cascading L5 §6.5 "author presentational hint origin"; 4th tier: bd
+    // raikiri-spike-pdta, CSS Cascading L4 §6.2 "user origin") ──
 
     #[test]
-    fn cascade_rank_orders_ua_hint_author_normal_then_reverses_for_important() {
-        // Direct unit pin of `cascade_rank`'s full 6-value table.
+    fn cascade_rank_orders_ua_user_hint_author_normal_then_reverses_for_important() {
+        // Direct unit exercise of `cascade_rank`'s full 8-arm match
+        // (`cascade_rank`'s doc has the full re-derivation and rank table).
+        // Pinned via a chain of relative-order assertions rather than exact
+        // `assert_eq!` values: the chain below establishes a complete total
+        // order over all 8 values (each value related to its neighbor, no
+        // gaps) — it does *not* prove the exact literal values 0-7 (e.g.
+        // ranks 10,11,12,14,15,16,17,18 would satisfy the same chain), but
+        // that's the right level of strength here, since none of
+        // `cascade_rank`'s 3 call sites — `counter_style.rs`'s
+        // `insert_with_origin`, `page.rs`'s `cascade_page`, this file's
+        // `beats` — switch on the literal `u8`, only compare/order it.
         //
-        // The Normal-tier ordering (UA < hint < Author) is a direct
-        // consequence of CSS Cascading L5 §6.5's verbatim text
-        // (<https://drafts.csswg.org/css-cascade-5/#preshint>) — see
-        // `cascade_rank`'s doc for the exact quotes.
+        // The Normal-tier ordering (UA < User < hint < Author) combines two
+        // spec-verbatim facts: CSS Cascading L4 §6.1's origin list gives
+        // UA < User < Author directly, and CSS Cascading L5 §6.5's verbatim
+        // text places the hint strictly between User and Author.
         //
-        // The Important-tier position of `AuthorPresentationalHint` is
-        // *not* spec-verbatim: §6.5 never defines an important
-        // presentational hint (host languages only ever emit normal-tier
-        // hints), so this half pins `cascade_rank`'s own derived symmetry
-        // (origin independence + CSS Cascading L4 §6.3's importance
-        // reversal, <https://www.w3.org/TR/css-cascade-4/#importance>) and
-        // its status as a total function, not an external requirement.
+        // The Important-tier ordering (Author < hint < User < UA) also
+        // combines two facts, but only one is spec-verbatim: §6.1 directly
+        // gives Author < User < UA for the important tier — exactly the
+        // reverse of the normal-tier UA < User < Author order, read
+        // straight off §6.1's list, not an analogy. The hint's position in
+        // that reversal is *not* spec-verbatim: §6.5 never defines an
+        // important presentational hint (host languages only ever emit
+        // normal-tier hints), so this half pins `cascade_rank`'s own
+        // minimal, non-arbitrary extension of that same reversal mechanism
+        // to the hint (origin independence + CSS Cascading L4 §6.3's
+        // importance reversal, <https://www.w3.org/TR/css-cascade-4/#importance>)
+        // and its status as a total function, not an external requirement.
         // No production code path emits an `!important` presentational
         // hint (`push_img_dimension_hints` always pushes
-        // `important = false`), so this is the only place that arm is
+        // `important = false`), and no production code path routes any
+        // declaration to `Origin::User` yet (`Origin::User`'s doc has the
+        // "no production producer" status, bd raikiri-spike-d7h3 tracks
+        // adding one) — this test is the only place the 3
+        // currently-production-unreached arms (`(User, false)`,
+        // `(User, true)`, `(AuthorPresentationalHint, true)`) are
         // exercised.
         let normal_ua = cascade_rank(Origin::UserAgent, false);
+        let normal_user = cascade_rank(Origin::User, false);
         let normal_hint = cascade_rank(Origin::AuthorPresentationalHint, false);
         let normal_author = cascade_rank(Origin::Author, false);
         let important_author = cascade_rank(Origin::Author, true);
         let important_hint = cascade_rank(Origin::AuthorPresentationalHint, true);
+        let important_user = cascade_rank(Origin::User, true);
         let important_ua = cascade_rank(Origin::UserAgent, true);
 
-        // Spec-verbatim (§6.5): Normal UA < Normal hint < Normal Author.
-        assert!(normal_ua < normal_hint, "normal UA must lose to the hint");
+        // Spec-verbatim (§6.1): Normal UA < Normal User < Normal Author.
+        //
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            normal_ua < normal_user,
+            "normal UA must lose to normal user"
+        );
+        // Spec-verbatim (§6.5): the hint sits strictly between Normal User
+        // and Normal Author. `normal_user < normal_author` follows
+        // transitively from this assert and the next one, so it isn't
+        // pinned separately.
+        //
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            normal_user < normal_hint,
+            "normal user must lose to the hint"
+        );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert!(
@@ -3906,8 +4024,18 @@ mod tests {
             normal_author < important_author,
             "any important declaration must beat any normal declaration"
         );
+        // Spec-verbatim (§6.1): Important Author < Important User < Important UA.
+        //
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            important_user < important_ua,
+            "important user must lose to important UA"
+        );
         // Derived (not spec-verbatim, see comment above): symmetry of
-        // origin independence under importance reversal.
+        // origin independence under importance reversal places the hint
+        // strictly between Important Author and Important User, mirroring
+        // its Normal-tier position between Normal User and Normal Author.
         //
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -3918,8 +4046,8 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert!(
-            important_hint < important_ua,
-            "derived symmetry: important UA ranks above important hint"
+            important_hint < important_user,
+            "derived symmetry: important user ranks above important hint"
         );
     }
 

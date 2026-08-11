@@ -13,11 +13,7 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 use crate::{RaikiriSelectorImpl, RaikiriSelectorParser};
 
 /// Cascade origin (CSS Cascading L4 §6.2)。M1 では UserAgent + Author の
-/// 2 段のみだった。User origin は今も Consumer が `extra_stylesheets` 経由で
-/// Author として渡す想定のまま (spec §M1.4a Non-goals、raikiri-spike-m1.22)
-/// — 独立した `Origin::User` variant はまだ無い (この残差は bd
-/// raikiri-spike-wo36 の scope item 4、umbrella 側の
-/// `stylesheet_kind_to_origin` 拡張が要るため別 followup)。
+/// 2 段のみだった。
 ///
 /// bd raikiri-spike-wo36 で 3rd variant [`Origin::AuthorPresentationalHint`]
 /// を追加 — CSS Cascading L5 §6.5 "Precedence of Non-CSS Presentational
@@ -26,12 +22,31 @@ use crate::{RaikiriSelectorImpl, RaikiriSelectorParser};
 /// 間に位置する独立 origin) に対応する。この origin の rank 上の位置付けは
 /// [`crate::cascade::cascade_rank`] の doc 参照。
 ///
+/// bd raikiri-spike-pdta で 4th variant [`Origin::User`] を追加 — CSS
+/// Cascading L4 §6.2 <https://www.w3.org/TR/css-cascade-4/#cascading-origins>
+/// が定める "user origin" (2026-08-12 再 fetch 確認)。**raikiri-style 内では
+/// この variant は完全に機能する** ([`crate::cascade::cascade_rank`] の
+/// 4-tier ordering に組み込み済み) が、**この origin へ実際に route される
+/// production 上の呼び出し元はまだ無い** — 唯一の候補である consumer 提供
+/// `extra_stylesheets` は今も `StylesheetKind::Author` 経由で
+/// [`Origin::Author`] として届く。umbrella 側の `stylesheet_kind_to_origin`
+/// を `Origin::User` に対応させるには raikiri-traits 側の `StylesheetKind`
+/// (dom-level tag) に独立 variant を追加し raikiri-html 側で retag する必要が
+/// あり、raikiri-style 単体では完結しない genuine multi-crate diff
+/// (raikiri-traits public surface 変更、walls.md wall 2) — bd
+/// raikiri-spike-d7h3 で追跡。
+///
 /// `StylesheetKind` (dom-level tag) との対応は raikiri umbrella crate が
 /// cascade orchestration の一部として map する。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
     UserAgent,
+    /// CSS Cascading L4 §6.2 "user origin"
+    /// (<https://www.w3.org/TR/css-cascade-4/#cascading-origins>)。現状 no
+    /// production producer — [`Origin`] の doc の "bd raikiri-spike-pdta"
+    /// 節参照。
+    User,
     /// CSS Cascading L5 §6.5 "author presentational hint origin"
     /// (<https://drafts.csswg.org/css-cascade-5/#preshint>) — HTML
     /// presentational hint (`<img width>`/`<img height>` 等) 用の
@@ -77,9 +92,14 @@ pub struct RuleTree {
     /// 勝敗は `CounterStyleRegistry` 自体が origin ごとに追跡して解決する
     /// ([`CounterStyleRegistry`] 型 doc の解決表参照) — CSS Counter Styles L3
     /// §3 の "standard cascade rules" (origin が第一基準、同一 origin 内は
-    /// source order) をこの 2-origin モデルの下でそのまま実装しており、
-    /// 呼び出し側 (`add_stylesheet`) は origin でフィルタする必要がない。
-    /// 詳細は [`RuleTree::add_stylesheet`] doc 参照。
+    /// source order) を [`crate::cascade::cascade_rank`] ベースの rank
+    /// 比較でそのまま実装しており ([`Origin`] の variant 数に依存しない —
+    /// `add_stylesheet` に実際に渡る origin は現状 `UserAgent`/`Author` の
+    /// 2 つだけだが、それは呼び出し側の実態であって本 field の実装が
+    /// 2-origin 前提にハードコードされているわけではない、詳細は
+    /// [`CounterStyleRegistry::insert_with_origin`] doc 参照)、呼び出し側
+    /// (`add_stylesheet`) は origin でフィルタする必要がない。詳細は
+    /// [`RuleTree::add_stylesheet`] doc 参照。
     ///
     /// `style_rules` 用の parser とは意図的に別 pass ([`crate::counter_style`] module doc
     /// の "What's implemented" 節が元々の設計意図として明記) — このフィールドを
