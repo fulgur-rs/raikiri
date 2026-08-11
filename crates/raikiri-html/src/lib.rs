@@ -1289,6 +1289,28 @@ mod tests {
         // な検証は `crates/raikiri/tests/build_cascaded.rs`
         // `sectioning_and_grouping_elements_are_display_block_via_ua_css`
         // 側 (既存 loop に追加)。
+        // bd raikiri-spike-cfbo: address/center/listing/plaintext/search/xmp
+        // 追加 (§flow-content-3 (15.3.3) の display:block selector の残り、
+        // bd raikiri-spike-5z86.1 の audit で未追跡と判明した7要素のうち6つ)。
+        // center/listing/plaintext/xmp は HTML LS §16.2 上は
+        // "entirely obsolete" 分類だが、その分類は authoring conformance の
+        // 話であって UA rendering の話ではない (詳細は minimal.css のコメント
+        // 参照)。dialog (7要素目) はこのループには含めない —
+        // まだ本ファイルに rule 自体が無い (deliberately deferred、詳細は
+        // minimal.css のコメント参照)。当初 `dialog { display: none; }` /
+        // `dialog[open] { display: block; }` の2 rule ペアで追加していたが、
+        // reviewer:spec が regression を発見し amend で削除した:
+        // `raikiri_dom::ElementRef::attr()` が空文字列属性値を `None` に
+        // 正規化する bug (bd raikiri-spike-kxki) により、canonical form の
+        // 素の `<dialog open>` では `dialog[open]` が発火せず、無条件の
+        // `dialog { display: none; }` だけが効いてしまう —
+        // rule 追加前 (no-rule → CSS-initial `inline`、box type は誤りだが
+        // content は見える) より悪化する (`display: none` で content が
+        // 完全に不可視になる) regression だったため。bd raikiri-spike-wezw
+        // (kxki 解消後に再導入する followup) で追跡する。cascade まで通した非-vacuous な検証は
+        // 追加した6要素分は
+        // `crates/raikiri/tests/build_cascaded.rs`
+        // `flow_content_3_residue_elements_are_display_block_via_ua_css` 側。
         for tag in [
             "html",
             "body",
@@ -1315,6 +1337,12 @@ mod tests {
             "ul",
             "li",
             "hr",
+            "address",
+            "center",
+            "listing",
+            "plaintext",
+            "search",
+            "xmp",
         ] {
             let has_rule = MINIMAL_UA_CSS.lines().any(|line| {
                 let trimmed = line.trim_start();

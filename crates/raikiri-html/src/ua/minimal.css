@@ -55,6 +55,51 @@ figcaption { display: block; }
 blockquote { display: block; }
 hr         { display: block; }
 
+/* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) — remaining
+ * display:block members of the flow-content selector not yet tracked by
+ * any milestone-gap-audit item (bd raikiri-spike-cfbo, residue found by
+ * bd raikiri-spike-5z86.1's reviewer:spec pass). address and search are
+ * current conforming elements. center/listing/plaintext/xmp are each
+ * classified "entirely obsolete, and must not be used by authors" under
+ * HTML LS §16.2 "Non-conforming features"
+ * (https://html.spec.whatwg.org/multipage/obsolete.html#non-conforming-
+ * features) — that classification governs *authoring* conformance, not
+ * UA rendering: §flow-content-3 itself still lists all four in the same
+ * display:block selector as address/search, because a conformant UA is
+ * still expected to render existing documents that use them, not only
+ * newly-authored ones. Their other §flow-content-3 rules — address's
+ * `font-style: italic`, and listing/plaintext/xmp's shared
+ * `margin-block: 1em` (with blockquote/figure/p/pre) and
+ * `font-family: monospace; white-space: pre` (with pre) — are deferred
+ * here, bucketed with this file's existing `<pre>`/`<code>` deferral (see
+ * file header; milestone-gap-audit item Q3, M3 defer) since
+ * listing/plaintext/xmp are the historical predecessors that HTML LS's
+ * own §16.2 obsoletion notice says to replace with pre + code, and so
+ * share pre's deferred presentation wholesale, not just its display
+ * value. */
+address   { display: block; }
+center    { display: block; }
+listing   { display: block; }
+plaintext { display: block; }
+search    { display: block; }
+xmp       { display: block; }
+
+/* dialog (the 7th §flow-content-3 residue element, bd raikiri-spike-cfbo)
+ * is deliberately NOT added here yet. The spec pair
+ * `dialog { display: block; } dialog:not([open]) { display: none; }`
+ * needs reproducing without `:not()` support (`is_supported_selector_list`
+ * in ruletree.rs), which is reachable via specificity as `dialog {
+ * display: none; }` overridden by `dialog[open] { display: block; }` —
+ * but `raikiri_dom::ElementRef::attr()` currently normalizes any
+ * empty-value attribute (including the canonical bare `<dialog open>`
+ * HTML5 boolean-attribute form) to `None`, so `dialog[open]` would never
+ * fire for real documents while the unconditional `dialog { display:
+ * none; }` half still would — net regression vs. today's no-rule-at-all
+ * (CSS-initial `inline`, at least visible) for the common open-dialog
+ * case. Deferred as a whole unit to bd raikiri-spike-wezw, a followup
+ * blocked on bd raikiri-spike-kxki (raikiri-dom empty-value-attribute
+ * bug), rather than landed half-correct. */
+
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
  * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,
  * which have no rule yet (out of scope for this rule set). */

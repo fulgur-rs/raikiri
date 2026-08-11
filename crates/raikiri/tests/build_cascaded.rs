@@ -618,3 +618,48 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
         "<hr> margin-right should be auto, the margin-inline fallback"
     );
 }
+
+#[test]
+fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
+    // bd raikiri-spike-cfbo Acceptance: the 6 §flow-content-3 (15.3.3)
+    // display:block selector members that were untracked by any existing
+    // milestone-gap-audit category (found by bd raikiri-spike-5z86.1's
+    // reviewer:spec audit) now resolve to display: block end-to-end.
+    // center/listing/plaintext/xmp are HTML LS §16.2 "entirely obsolete"
+    // elements, but that classification governs authoring conformance,
+    // not UA rendering — §flow-content-3 itself still lists them in the
+    // same display:block selector as address/search (full reasoning in
+    // minimal.css's comment). dialog, the 7th residue element, is
+    // deliberately NOT in this list — minimal.css has no rule for it at
+    // all yet. An earlier version of this change added a
+    // `dialog { display: none; } dialog[open] { display: block; }` pair
+    // (plus a test here), but reviewer:spec found it was a regression:
+    // `raikiri_dom::ElementRef::attr()` normalizes any empty-value
+    // attribute to `None` (bd raikiri-spike-kxki), so `dialog[open]`
+    // never fires for the canonical bare `<dialog open>` form, leaving
+    // only the unconditional `dialog { display: none; }` in effect — a
+    // real open dialog's content went from visible-but-wrong-box
+    // (CSS-initial `inline`, no rule) to fully invisible (`none`). Pulled
+    // out in the amend; dialog's UA CSS is deferred as a whole unit to
+    // bd raikiri-spike-wezw, a followup blocked on kxki (see minimal.css's
+    // comment). Same
+    // non-vacuous real parse -> build_cascaded pattern as
+    // `sectioning_and_grouping_elements_are_display_block_via_ua_css` /
+    // `list_elements_are_display_block_via_ua_css` /
+    // `hr_is_display_block_border_inset_and_margin_via_ua_css` (the
+    // raikiri-html::lib textual scan only confirms the rule text exists,
+    // not that cssparser actually accepts it end-to-end).
+    for tag in ["address", "center", "listing", "plaintext", "search", "xmp"] {
+        let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
+        let doc = parse_html(&html);
+        let result = build_cascaded(&doc);
+
+        let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
+        let display = result.computed[el_id.0 as usize].display;
+        assert_eq!(
+            display,
+            DisplayValue::Block,
+            "<{tag}> should be display: block from the flow-content-3 UA CSS group"
+        );
+    }
+}
