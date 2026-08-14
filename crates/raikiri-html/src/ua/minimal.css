@@ -2,18 +2,16 @@
  * raikiri-html — Minimal UA stylesheet for HTML documents
  *
  * Cleanroom implementation derived from CSS 2.1 Appendix D "Default style
- * sheet for HTML 4" and HTML Living Standard "Rendering" section. Browser-
- * specific UA stylesheets (Chromium html.css, Firefox
+ * sheet for HTML 4" and HTML Living Standard "Rendering" section.
+ * Browser-specific UA stylesheets (Chromium html.css, Firefox
  * layout/style/res/html.css, WebKit UA CSS, blitz bundled UA CSS) are
- * intentionally NOT referenced (memory raikiri-implementation-independence
- * §UA CSS の扱い).
+ * intentionally NOT referenced, so this implementation stays independent
+ * of any other engine's behavior.
  *
- * Scope (spec M1.4a): the minimal rule set required for hello-world VRT
- * (<p style="color:red">Hi</p> → PNG) to succeed. Form controls, margins,
- * <pre>/<code>, and <table> presentation are deliberately deferred (M2+).
- *
- * spec: bd raikiri-spike-m1.22 (M1.4a impl: minimal UA stylesheet bundle +
- * Origin::UserAgent cascade path)
+ * Scope: the minimal rule set required for a hello-world visual
+ * regression test (<p style="color:red">Hi</p> → PNG) to succeed. Form
+ * controls, margins, <pre>/<code>, and <table> presentation are
+ * deliberately deferred.
  */
 
 /* CSS 2.1 App.D — html and body form the initial containing block */
@@ -56,12 +54,10 @@ blockquote { display: block; }
 hr         { display: block; }
 
 /* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) — remaining
- * display:block members of the flow-content selector not yet tracked by
- * any milestone-gap-audit item (bd raikiri-spike-cfbo, residue found by
- * bd raikiri-spike-5z86.1's reviewer:spec pass). address and search are
- * current conforming elements. center/listing/plaintext/xmp are each
- * classified "entirely obsolete, and must not be used by authors" under
- * HTML LS §16.2 "Non-conforming features"
+ * display:block members of the flow-content selector not covered above.
+ * address and search are current conforming elements. center/listing/
+ * plaintext/xmp are each classified "entirely obsolete, and must not be
+ * used by authors" under HTML LS §16.2 "Non-conforming features"
  * (https://html.spec.whatwg.org/multipage/obsolete.html#non-conforming-
  * features) — that classification governs *authoring* conformance, not
  * UA rendering: §flow-content-3 itself still lists all four in the same
@@ -72,11 +68,10 @@ hr         { display: block; }
  * `margin-block: 1em` (with blockquote/figure/p/pre) and
  * `font-family: monospace; white-space: pre` (with pre) — are deferred
  * here, bucketed with this file's existing `<pre>`/`<code>` deferral (see
- * file header; milestone-gap-audit item Q3, M3 defer) since
- * listing/plaintext/xmp are the historical predecessors that HTML LS's
- * own §16.2 obsoletion notice says to replace with pre + code, and so
- * share pre's deferred presentation wholesale, not just its display
- * value. */
+ * file header) since listing/plaintext/xmp are the historical
+ * predecessors that HTML LS's own §16.2 obsoletion notice says to
+ * replace with pre + code, and so share pre's deferred presentation
+ * wholesale, not just its display value. */
 address   { display: block; }
 center    { display: block; }
 listing   { display: block; }
@@ -84,8 +79,8 @@ plaintext { display: block; }
 search    { display: block; }
 xmp       { display: block; }
 
-/* dialog (the 7th §flow-content-3 residue element, bd raikiri-spike-cfbo)
- * is deliberately NOT added here yet. The spec pair
+/* dialog (the 7th §flow-content-3 element not covered above) is
+ * deliberately NOT added here yet. The spec pair
  * `dialog { display: block; } dialog:not([open]) { display: none; }`
  * needs reproducing without `:not()` support (`is_supported_selector_list`
  * in ruletree.rs), which is reachable via specificity as `dialog {
@@ -96,9 +91,8 @@ xmp       { display: block; }
  * fire for real documents while the unconditional `dialog { display:
  * none; }` half still would — net regression vs. today's no-rule-at-all
  * (CSS-initial `inline`, at least visible) for the common open-dialog
- * case. Deferred as a whole unit to bd raikiri-spike-wezw, a followup
- * blocked on bd raikiri-spike-kxki (raikiri-dom empty-value-attribute
- * bug), rather than landed half-correct. */
+ * case. Deferred as a whole unit, blocked on a raikiri-dom
+ * empty-value-attribute bug, rather than landed half-correct. */
 
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
  * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,
@@ -111,10 +105,10 @@ ul { display: block; }
  * not yet a valid display keyword in raikiri-style (property.rs
  * parse_display rejects it; display_rejects_unknown_ident test). Without
  * a rule li would fall back to CSS-initial display: inline, breaking
- * this task's Acceptance (li siblings must stack as vertical blocks).
+ * the requirement that li siblings stack as vertical blocks.
  * Interim fallback: display: block — replace with display: list-item
- * once that lands (bd raikiri-spike-uhzy). text-align: match-parent and
- * list-style-type/::marker generation are out of scope here (Epic 4). */
+ * once that lands. text-align: match-parent and list-style-type/
+ * ::marker generation are out of scope here. */
 li { display: block; }
 
 /* HTML Living Standard "Rendering" §the-hr-element-2 (15.3.11) specifies
@@ -149,18 +143,17 @@ li { display: block; }
  * sides resolve identically).
  *
  * overflow: hidden is included below — raikiri-style implements the
- * `overflow` property (bd raikiri-spike-cmd3, CSS Overflow Module Level 3
- * §3.1 shorthand + overflow-x/overflow-y longhands). Note this isn't just
- * about clipping: per CSS 2.1 §9.4.1, `overflow` other than `visible` makes
- * an element establish a new block formatting context, whose §9.5 effect is
- * that hr should clear adjacent floats rather than run under them. That
+ * `overflow` property (CSS Overflow Module Level 3 §3.1 shorthand +
+ * overflow-x/overflow-y longhands). Note this isn't just about clipping:
+ * per CSS 2.1 §9.4.1, `overflow` other than `visible` makes an element
+ * establish a new block formatting context, whose §9.5 effect is that hr
+ * should clear adjacent floats rather than run under them. That
  * layout-side consequence (BFC establishment + float-clearing) is NOT yet
- * wired in raikiri-dom/raikiri-paint — raikiri has no float support at all
- * (bd raikiri-spike-cmd3 verified 0 hits for `bd search "float"` and no
- * `float` property parser), so there is nothing yet for a BFC to clear.
- * Tracked at bd raikiri-spike-spa2 (blocked on float support landing
- * first), same "implement the fallback, track the gap" precedent as the li
- * display:list-item fallback above (bd raikiri-spike-uhzy). */
+ * wired in raikiri-dom/raikiri-paint — raikiri has no float support at
+ * all (no `float` property parser exists), so there is nothing yet for a
+ * BFC to clear. Tracked separately, blocked on float support landing
+ * first, same "implement the fallback, track the gap" precedent as the li
+ * display:list-item fallback above. */
 hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
 
 /* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.4) specifies,
@@ -169,15 +162,12 @@ hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
  *   a:visited { color: #551A8B; }
  *   a:link:active, a:visited:active { color: #FF0000; }
  *   a:link, a:visited { text-decoration: underline; cursor: pointer; }
- * (verbatim confirmed 2026-08-14 WebFetch, bd raikiri-spike-5z86.3).
  *
- * `:link` / `:visited` are an explicit Non-Goal (audit Category M9,
- * interactive selector — visited-link history is not something a static
- * cleanroom style engine can observe). This rule applies the unvisited
- * `#0000EE` color to `a` unconditionally instead of gating it on `:link`,
- * an accepted simplification (bd raikiri-spike-5z86.3 issue body's
- * "Non-Goal境界の note" — does not distinguish visited from unvisited, but
- * does not contradict the Non-Goal boundary either). `:active` (`#FF0000`)
+ * `:link` / `:visited` are an explicit non-goal here — visited-link
+ * history is not something a static cleanroom style engine can observe.
+ * This rule applies the unvisited `#0000EE` color to `a` unconditionally
+ * instead of gating it on `:link`, an accepted simplification that does
+ * not distinguish visited from unvisited. `:active` (`#FF0000`)
  * is not reproducible without `:active` support and is out of scope here
  * for the same reason. `cursor: pointer` is out of scope — raikiri's
  * print-first scope has no interactive cursor concept (same carve-out
@@ -196,9 +186,9 @@ hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
  * Note: `raikiri_dom::ElementRef::attr()` currently filters out empty-
  * value attributes, so `<a href="">` (an href-having-but-empty link,
  * still spec-`:link` per the same clause) will not match `[href]` here
- * until that's fixed — tracked at bd raikiri-spike-kxki (same bug the
- * `dialog[open]` deferral above cites). Still strictly more correct than
- * the unconditional `a { ... }` this replaces. */
+ * until that's fixed (same underlying bug the `dialog[open]` deferral
+ * above cites). Still strictly more correct than the unconditional
+ * `a { ... }` this replaces. */
 a[href] { color: #0000EE; text-decoration: underline; }
 
 /* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.4) also
@@ -211,7 +201,6 @@ a[href] { color: #0000EE; text-decoration: underline; }
  *   sub { vertical-align: sub; }
  *   sup { vertical-align: super; }
  *   sub, sup { line-height: normal; font-size: smaller; }
- * (verbatim confirmed 2026-08-15 WebFetch, bd raikiri-spike-5z86.4).
  *
  * font-weight: bolder/lighter (property.rs's `FontWeightValue::Bolder` /
  * `Lighter`, parsed at parse_font_weight L4057-4058, resolved against the
@@ -219,8 +208,8 @@ a[href] { color: #0000EE; text-decoration: underline; }
  * font-size: smaller (`RelativeFontSize::Smaller`, parsed at
  * parse_font_size_keyword) are both already implemented, so `strong`/`b`/
  * `small` reach the spec rule verbatim below. `text-decoration: underline`
- * (already implemented as of bd raikiri-spike-5z86.3) covers `ins`/`u`
- * together, same as the spec's shared selector.
+ * (already implemented) covers `ins`/`u` together, same as the spec's
+ * shared selector.
  *
  * `background-color` and `color` are both implemented, but the `background`
  * shorthand itself is not (property.rs `parse_value` has no "background"
@@ -234,14 +223,13 @@ a[href] { color: #0000EE; text-decoration: underline; }
  *
  * em/i are part of a 5-element spec selector, `cite, dfn, em, i, var {
  * font-style: italic; }` — not added here at all (not just em/i): font-style
- * is not yet a raikiri-style property (0 hits across property.rs,
- * re-verified 2026-08-15), out of scope for this task, left for a follow-up
- * once it lands (parent epic bd raikiri-spike-5z86).
+ * is not yet a raikiri-style property (0 hits across property.rs),
+ * out of scope for this task, left for a follow-up once it lands.
  *
  * sub/sup get two separate spec rules. `sub { vertical-align: sub; } sup {
  * vertical-align: super; }` is genuinely blocked — vertical-align is not
- * yet a raikiri-style property either (0 hits, re-verified 2026-08-15).
- * `sub, sup { line-height: normal; font-size: smaller; }` is NOT blocked on
+ * yet a raikiri-style property either (0 hits). `sub, sup {
+ * line-height: normal; font-size: smaller; }` is NOT blocked on
  * its own — line-height: normal is implemented (property.rs L3964-3970,
  * parse_line_height's `normal` branch) and font-size: smaller is the same
  * already-implemented RelativeFontSize::Smaller used for `small` above. It
@@ -253,7 +241,7 @@ a[href] { color: #0000EE; text-decoration: underline; }
  * concern this file already raises for `dialog` above (unlike dialog's
  * case, nothing here is hidden or broken, it's cosmetic-only smaller
  * same-baseline text, so the two aren't equally severe). Deferred as a
- * whole unit alongside vertical-align (parent epic bd raikiri-spike-5z86). */
+ * whole unit alongside vertical-align. */
 b, strong { font-weight: bolder; }
 small { font-size: smaller; }
 mark { background-color: yellow; color: black; }
