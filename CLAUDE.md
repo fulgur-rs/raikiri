@@ -98,4 +98,6 @@ _Add a brief overview of your project architecture_
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+Topic-scoped guides under `.claude/rules/` (read on demand, not loaded into context by default):
+
+- `.claude/rules/no-internal-jargon-in-source-comments.md` — checked-in source comments under `crates/**` (Rust doc comments, UA CSS, etc.) must not reference bd issue IDs, milestone/epic labels, internal audit/workflow process names, or agent-memory paths; keep spec citations and technical rationale intact.
