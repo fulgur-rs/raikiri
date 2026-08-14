@@ -223,10 +223,12 @@ fn lang_pseudo_class_inherits_from_html_lang_attribute_through_real_parse_pipeli
 }
 
 #[test]
-fn extra_stylesheets_author_rule_overrides_ua_via_umbrella() {
-    // Consumer が opts.extra_stylesheets 経由で渡した CSS が Author として
+fn extra_stylesheets_user_rule_overrides_ua_via_umbrella() {
+    // Consumer が opts.extra_stylesheets 経由で渡した CSS が User origin として
     // build_cascaded 経路に到達することを verify (parse 時 Document.stylesheets
-    // に Author として push される)。
+    // に User kind として push される、bd raikiri-spike-d7h3 で Author retag から
+    // 分離)。normal User (rank 1) は normal UserAgent (rank 0) より強いため UA
+    // CSS を上書きする。
     let extra: &[&str] = &["p { display: inline }"];
     let opts = raikiri::ParseOptions {
         extra_stylesheets: extra,
@@ -261,19 +263,21 @@ fn style_inside_template_element_does_not_affect_cascade() {
 }
 
 #[test]
-fn author_important_beats_normal_ua_via_umbrella() {
+fn user_important_beats_normal_ua_via_umbrella() {
     // CSS Cascading L4 §6.1 "Cascade Sorting Order"
     // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Origin and
     // Importance 段 (`!important` による反転は §6.3
-    // <https://www.w3.org/TR/css-cascade-4/#importance>) の cascade rank ordering:
-    //   Normal UA (rank 0) < Normal Author (1) < Important Author (2) < Important UA (3)。
+    // <https://www.w3.org/TR/css-cascade-4/#importance>)。raikiri-style の full
+    // cascade_rank ordering (bd raikiri-spike-pdta で 4-tier 化、8-arm total):
+    //   Normal UA(0) < Normal User(1) < Normal Hint(2) < Normal Author(3) <
+    //   Important Author(4) < Important Hint(5) < Important User(6) < Important UA(7)。
     // bundled UA CSS (spec §M1.4a minimal.css) は !important を含まないため、
-    // Important UA > Important Author の反転検証は本 test では直接行えない。
-    // ここで verify するのは "Important Author が Normal UA を破る" leg で、これは
-    // umbrella の StylesheetKind → Origin map が正しく機能していることを end-to-end で
-    // 確認する最小 case。full !important 反転 (Important UA vs Important Author) は
-    // Consumer が UA `!important` rule を提供する構造が spec で許容された時点で追加検討。
-    // Author 側は extra_stylesheets で渡す (parse 時 Author kind として Document に注入される)。
+    // Important UA との反転検証は本 test では直接行えない。
+    // ここで verify するのは "Important User が Normal UA を破る" leg で、これは
+    // umbrella の StylesheetKind → Origin map (extra_stylesheets → `Origin::User`、
+    // bd raikiri-spike-d7h3) が正しく機能していることを end-to-end で確認する最小
+    // case。extra_stylesheets で渡す (parse 時 User kind として Document に注入
+    // される、bd raikiri-spike-d7h3 で Author retag から分離)。
     let extra: &[&str] = &["p { display: inline !important }"];
     let opts = raikiri::ParseOptions {
         extra_stylesheets: extra,
@@ -287,13 +291,13 @@ fn author_important_beats_normal_ua_via_umbrella() {
     let display = result.computed[p_id.0 as usize].display;
 
     // NB: この test 段階では bundled UA CSS は !important を含まない (spec §M1.4a の minimal.css)。
-    // Author !important があると Author が勝つ (Normal UA 0 < Important Author 2 < Important UA 3)。
-    // したがって p の display は inline になる。この test は "Important Author > Normal UA"
+    // User !important があると User が勝つ (Normal UA 0 < ... < Important User 6)。
+    // したがって p の display は inline になる。この test は "Important User > Normal UA"
     // の origin-rank ordering が umbrella wiring 越しに保存されることを confirm する。
     assert_eq!(
         display,
         DisplayValue::Inline,
-        "Author !important should beat Normal UA via umbrella cascade wiring",
+        "Important User (extra_stylesheets) should beat Normal UA via umbrella cascade wiring",
     );
 }
 
@@ -593,6 +597,55 @@ fn img_width_html_attribute_overridable_by_real_author_stylesheet_through_real_p
         raikiri::ComputedLengthPercentageOrAuto::Px(30.0),
         "real <style> Author rule must outrank the author-origin presentational hint \
          (same origin, real rule's non-zero specificity wins) end-to-end"
+    );
+}
+
+#[test]
+fn img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrella() {
+    // Consumer-visible behavior change from bd raikiri-spike-d7h3: `extra_stylesheets`
+    // is now tagged `StylesheetKind::User` (→ `Origin::User`, normal rank 1), which
+    // CSS Cascading L5 §6.5 places *below* `Origin::AuthorPresentationalHint` (normal
+    // rank 2) — so `<img width>`'s presentational hint now beats an
+    // `extra_stylesheets` rule regardless of specificity. Before d7h3, `extra_stylesheets`
+    // was tagged `Author` (rank 3), which beat the hint — contrast with
+    // `img_width_html_attribute_overridable_by_real_author_stylesheet_through_real_parse_path`
+    // above, where a *real* Author-origin rule (in-document `<style>`) still beats the
+    // hint today.
+    //
+    // The `extra_stylesheets` rule below sets both `width` (contested by the hint,
+    // since the `<img>` has a `width` attribute) and `height` (uncontested — no
+    // `height` attribute, so no height hint is pushed). Asserting both distinguishes
+    // "the hint outranked the width declaration" from "the stylesheet never reached
+    // the RuleTree at all" (which would leave *both* properties at their initial
+    // value, not just width) — `extra_stylesheets` reachability on its own is already
+    // covered by `extra_stylesheets_user_rule_overrides_ua_via_umbrella` above, but this
+    // test is the one cited by name from crates/raikiri-style/src/cascade.rs's
+    // `push_img_dimension_hints` doc as *the* end-to-end pin for the flipped ranking, so it
+    // should stand alone.
+    let extra: &[&str] = &["img { width: 30px; height: 7px }"];
+    let opts = raikiri::ParseOptions {
+        extra_stylesheets: extra,
+        network: None,
+        base_url: None,
+    };
+    let doc = raikiri::parse(&br#"<img src="x.png" width="100">"#[..], &opts).expect("parse");
+
+    let result = build_cascaded(&doc);
+    let img_id = find_by_tag(&doc.dom, "img").expect("<img> exists");
+    let computed = &result.computed[img_id.0 as usize];
+    assert_eq!(
+        computed.width,
+        raikiri::ComputedLengthPercentageOrAuto::Px(100.0),
+        "img width presentational hint (Origin::AuthorPresentationalHint, rank 2) must \
+         beat extra_stylesheets (Origin::User, rank 1) — this ranking flipped in bd \
+         raikiri-spike-d7h3 (extra_stylesheets used to be tagged Author, rank 3)"
+    );
+    assert_eq!(
+        computed.height,
+        raikiri::ComputedLengthPercentageOrAuto::Px(7.0),
+        "extra_stylesheets' uncontested height declaration must still land — proves the \
+         stylesheet did reach the RuleTree and it's specifically the width property that \
+         lost to the hint, not the whole stylesheet being absent"
     );
 }
 
