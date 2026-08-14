@@ -126,6 +126,48 @@ COV_IGNORE_RE = re.compile(r"^//\s*cov:ignore:\s*(\S.*)$")
 HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
+def _char_literal_end(line: str, i: int) -> int | None:
+    """If `line[i]` is a `'` that opens a genuine Rust char literal (shape
+    `'x'`: one character, or one of Rust's fixed-shape backslash escapes,
+    closed by another `'`), return the index of that closing `'`.
+    Otherwise return None — the `'` is a lifetime sigil (`'i`, `'t`,
+    `'static`, `'a_long_name`, ...), not a literal, and callers must not
+    treat it as opening a string-like span.
+
+    Bounded lookahead only (never more than a handful of characters),
+    rather than scanning the rest of the line for a matching quote: a char
+    literal's body is always short — one character, or one of `\\n` `\\t`
+    `\\r` `\\\\` `\\'` `\\"` `\\0`, `\\xHH`, or `\\u{...}` — while a
+    lifetime name can be arbitrarily long and is never itself followed by
+    a closing `'`. Bounding the lookahead is what keeps a real lifetime
+    (however long) from ever being mistaken for an unterminated char
+    literal that swallows the rest of the line — the exact failure mode
+    this function replaces (see module docstring / code_only()).
+    """
+    n = len(line)
+    j = i + 1
+    if j >= n or line[j] == "'":
+        return None  # nothing after `'`, or `''` — not a char literal
+    if line[j] == "\\":
+        k = j + 1
+        if k >= n:
+            return None
+        if line[k] == "x":
+            k += 3  # \xHH: 'x' + 2 hex digits (not validated as hex)
+        elif line[k] == "u":
+            if k + 1 >= n or line[k + 1] != "{":
+                return None
+            close_brace = line.find("}", k + 1)
+            if close_brace == -1:
+                return None
+            k = close_brace + 1
+        else:
+            k += 1  # single-char escape: \n \t \r \\ \' \" \0 ...
+    else:
+        k = j + 1  # ordinary single character
+    return k if k < n and line[k] == "'" else None
+
+
 def comment_part(line: str) -> str | None:
     """Return the `//`-comment suffix of `line` (starting at the `//`), or
     None if the line has no real (not-inside-a-string-or-char-literal) `//`.
@@ -162,7 +204,17 @@ def comment_part(line: str) -> str | None:
                 in_str = False
             i += 1
             continue
-        if c in ('"', "'"):
+        if c == "'":
+            end = _char_literal_end(line, i)
+            if end is None:
+                # Lifetime sigil, not a char literal — leave it as
+                # ordinary code and keep scanning normally instead of
+                # entering "inside a literal" state.
+                i += 1
+                continue
+            i = end + 1
+            continue
+        if c == '"':
             in_str = True
             quote = c
             i += 1
@@ -189,6 +241,19 @@ def code_only(line: str) -> str:
     Best-effort: does not handle raw strings (`r"..."`) or byte-string
     prefixes specially, which can misparse in rare cases. Good enough for
     brace-depth bookkeeping, not a real Rust lexer.
+
+    A `'` is only treated as opening a char literal if `_char_literal_end()`
+    finds a matching closing `'` within its bounded lookahead; otherwise
+    it's a lifetime sigil (`'i`, `'t`, `'static`, ...) and is passed through
+    as ordinary code instead of putting the scanner into "inside a
+    literal" state. Rust generic signatures like `Parser<'i, 't>` or
+    `ParseError<'i, Self::Error>` are full of these bare, unpaired
+    apostrophes; treating one as an unterminated char literal used to
+    silently drop every character after it on the line (and, since this
+    function feeds brace_delta() for `cov:ignore:` block-scope tracking,
+    could truncate an exempted block early — see counter_style.rs's
+    `QualifiedRuleParser::parse_block` for a real signature that triggered
+    this).
     """
     out = []
     in_str = False
@@ -205,7 +270,16 @@ def code_only(line: str) -> str:
                 in_str = False
             i += 1
             continue
-        if c in ('"', "'"):
+        if c == "'":
+            end = _char_literal_end(line, i)
+            if end is None:
+                # Lifetime sigil — keep as ordinary code.
+                out.append(c)
+                i += 1
+                continue
+            i = end + 1
+            continue
+        if c == '"':
             in_str = True
             quote = c
             i += 1

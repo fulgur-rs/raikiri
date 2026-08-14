@@ -23,6 +23,19 @@ deterministic; the JSON shape used here was confirmed by hand against this
 repo's actual `cargo metadata --no-deps --format-version=1` output during
 development of this fix) and `is_structurally_unreported()` against plain
 sets, so no test here depends on the `cargo` binary being on PATH.
+
+Also covers a second, unrelated regression: `code_only()` (and the
+`comment_part()` / `compute_exempt_lines()` machinery built on it)
+misparsing Rust lifetime apostrophes (`'i`, `'t`, `'a`, ...) as the start of
+an unterminated char literal, which silently dropped every character after
+the lifetime on that line and, for `compute_exempt_lines()`, corrupted the
+brace-depth tracking that decides how far a `// cov:ignore:` block extends.
+Reproduced for real in `crates/raikiri-style/src/counter_style.rs`'s
+`QualifiedRuleParser::parse_block`, whose `Parser<'i, 't>` /
+`ParseError<'i, Self::Error>` signature truncated an intended 8-line
+exempt block down to 1 line. `CodeOnlyLifetimeTests` covers `code_only()`
+directly; `ComputeExemptLinesLifetimeTests` mirrors the `counter_style.rs`
+shape end-to-end through `compute_exempt_lines()`.
 """
 
 from __future__ import annotations
@@ -33,6 +46,9 @@ import unittest
 
 from patch_coverage import (
     classify_no_lcov_record_lines,
+    code_only,
+    compute_exempt_lines,
+    cov_ignore_reason,
     is_structurally_unreported,
     structurally_unreported_paths,
 )
@@ -323,6 +339,105 @@ class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
         )
         self.assertEqual(uncovered, [])
         self.assertEqual(exempted, [6])
+
+
+class CodeOnlyLifetimeTests(unittest.TestCase):
+    """Regression tests for the lifetime-apostrophe misparse (see module
+    docstring): a bare `'` introducing a Rust lifetime (`'i`, `'t`, `'a`,
+    `'static`, ...) must not be mistaken for the start of an unterminated
+    char literal, which used to silently drop every character after it on
+    the line."""
+
+    def test_lifetime_generics_do_not_swallow_rest_of_line(self) -> None:
+        line = (
+            "    fn parse_block<'t>(&mut self, input: &mut Parser<'i, 't>) "
+            "-> Result<Self::QualifiedRule, ParseError<'i, Self::Error>> {"
+        )
+        # Nothing on the line — in particular the trailing `{` that
+        # brace-depth tracking depends on — may be dropped.
+        self.assertEqual(code_only(line), line)
+
+    def test_impl_block_lifetime_param_is_preserved(self) -> None:
+        line = "impl<'i> QualifiedRuleParser<'i> for CounterStyleSheetParser {"
+        self.assertEqual(code_only(line), line)
+
+    def test_reference_lifetime_is_preserved(self) -> None:
+        line = "fn f<'a: 'b>(x: &'a str, y: &'b str) {}"
+        self.assertEqual(code_only(line), line)
+
+    def test_comment_after_lifetime_generics_is_still_found(self) -> None:
+        # comment_part() shares the same literal-tracking as code_only();
+        # a lifetime earlier on the line must not blind it to a later
+        # real `//` comment (here, a `cov:ignore:` marker).
+        line = (
+            "fn parse_block<'t>(&mut self, input: &mut Parser<'i, 't>) {} "
+            "// cov:ignore: stub, never invoked"
+        )
+        self.assertEqual(cov_ignore_reason(line), "stub, never invoked")
+
+    def test_single_char_literal_is_still_stripped(self) -> None:
+        # Not just "doesn't crash on lifetimes" — genuine char literals
+        # (shape `'x'`) must still be recognized and stripped.
+        self.assertEqual(code_only("if c == 'x' { do_thing(); }"), "if c ==  { do_thing(); }")
+
+    def test_escaped_newline_char_literal_is_still_stripped(self) -> None:
+        self.assertEqual(code_only(r"if c == '\n' { }"), "if c ==  { }")
+
+    def test_escaped_quote_char_literal_is_still_stripped(self) -> None:
+        self.assertEqual(code_only(r"if c == '\'' { }"), "if c ==  { }")
+
+    def test_escaped_backslash_char_literal_is_still_stripped(self) -> None:
+        self.assertEqual(code_only(r"if c == '\\' { }"), "if c ==  { }")
+
+    def test_hex_escape_char_literal_is_still_stripped(self) -> None:
+        self.assertEqual(code_only(r"if c == '\x41' { }"), "if c ==  { }")
+
+    def test_unicode_escape_char_literal_is_still_stripped(self) -> None:
+        self.assertEqual(code_only(r"if c == '\u{1F600}' { }"), "if c ==  { }")
+
+    def test_char_range_pattern_literals_are_still_stripped(self) -> None:
+        # Two char literals back to back, no lifetime involved — brace/paren
+        # counting elsewhere in the codebase depends on both being handled.
+        self.assertEqual(code_only("'a'..='z' => true,"), "..= => true,")
+
+    def test_double_quoted_string_is_unaffected(self) -> None:
+        # Sanity: this fix only changes `'` handling; `"..."` string
+        # stripping must be untouched.
+        self.assertEqual(code_only('let s = "contains { and } braces";'), "let s = ;")
+
+
+class ComputeExemptLinesLifetimeTests(unittest.TestCase):
+    """End-to-end regression test mirroring the real
+    `crates/raikiri-style/src/counter_style.rs` repro: a `cov:ignore:`
+    comment placed before a trait method whose signature contains
+    `Parser<'i, 't>` / `ParseError<'i, Self::Error>` must exempt the
+    method's *entire* body, not just its first line."""
+
+    def test_cov_ignore_before_lifetime_bearing_signature_exempts_full_body(self) -> None:
+        lines = [
+            "// cov:ignore: stub trait method exists only to satisfy the",
+            "// trait, never invoked in practice",
+            "fn parse_block<'t>(",
+            "    &mut self,",
+            "    _prelude: Self::Prelude,",
+            "    _start: &ParserState,",
+            "    input: &mut Parser<'i, 't>,",
+            ") -> Result<Self::QualifiedRule, ParseError<'i, Self::Error>> {",
+            "    Err(input.new_custom_error(()))",
+            "}",
+            "",
+            "fn unrelated_next_item() {}",
+        ]
+        exempt = compute_exempt_lines(lines)
+        # 1-indexed lines 3..10 are the method's full 8-line body (the
+        # signature through the closing `}`). Before the fix, the lone `'`
+        # in `<'t>` on line 3 corrupted code_only()'s output for that line
+        # to `"fn parse_block<"` — no unmatched parens left to count — so
+        # brace-depth returned to 0 immediately and only line 3 was
+        # exempted.
+        self.assertEqual(exempt, {3, 4, 5, 6, 7, 8, 9, 10})
+        # The following unrelated item must not be swept in.
+        self.assertNotIn(12, exempt)
 
 
 if __name__ == "__main__":
