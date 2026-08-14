@@ -1287,6 +1287,44 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 /// 同じ ED 原稿内の `<h2 id="combinators">` 配下の `<h3>` 出現順
 /// (descendant, child, adjacent-sibling, general-sibling — 2026-08-12
 /// 直接確認) から数えたもの。
+///
+/// # Implementation: explicit `Vec` stack, not native recursion (bd raikiri-spike-8r16)
+///
+/// Prior to bd raikiri-spike-8r16 this function and [`match_from_element`]
+/// mutually recursed on the native Rust call stack — one stack frame pair
+/// per combinator actually walked while matching successively along the
+/// ancestor/sibling chain, with no selector-length/complexity cap anywhere
+/// in the parse/build path. That is the same class of problem
+/// `collect_cascaded` had pre-job-199 (tree-depth-correlated native
+/// recursion on untrusted-depth input) — confirmed empirically here too:
+/// regression test `deep_child_combinator_chain_small_stack_no_overflow`
+/// (this module's `tests`) reliably aborted the process with a native stack
+/// overflow (128 KiB stack, 500-deep uniformly-matching `>` chain) against
+/// the prior recursive implementation.
+///
+/// The fix below uses an explicit `Vec`-based stack, the same *technique*
+/// `collect_cascaded` uses for its own job-199 fix — but not the same
+/// *shape*: `collect_cascaded` is a plain DFS with no backtracking (visit
+/// every node once), whereas [`Combinator::Descendant`] /
+/// [`Combinator::LaterSibling`] must try multiple candidates in order and
+/// fall back to the next one when a deeper match fails entirely (see this
+/// doc's "load-bearing" retry note above). So each stack entry here is a
+/// *choice point* (a [`PendingCandidates`] cursor over not-yet-tried
+/// candidates for one level of the chain, plus the ancestors to hand a
+/// matched candidate and the [`SelectorIter`] to resume from) rather than a
+/// bare node id — pushed when a candidate's compound matches and a further
+/// combinator remains (going one level deeper/further left), popped when a
+/// level's candidates are exhausted (backtracking to the next candidate of
+/// the parent choice point). A full match short-circuits immediately
+/// (`return true`) without draining the stack; only exhausting the
+/// outermost choice point's candidates yields an overall `false`.
+///
+/// The word "再帰的に" ("recursively") in the per-combinator prose above
+/// describes the *logical* structure of the search — CSS complex selectors
+/// are themselves defined recursively (CSSWG ED `#complex`, cited above) —
+/// not this function's implementation technique; that logical recursion is
+/// realized here as the explicit stack's push/pop, never the native call
+/// stack.
 fn match_combinator_chain<D: StyleDom>(
     dom: &D,
     combinator: Combinator,
@@ -1295,50 +1333,208 @@ fn match_combinator_chain<D: StyleDom>(
     iter: SelectorIter<'_, RaikiriSelectorImpl>,
     quirks_mode: StyleQuirksMode,
 ) -> bool {
-    match combinator {
-        Combinator::Child => match ancestors.split_last() {
-            Some((&parent_id, rest)) => match_from_element(dom, parent_id, rest, iter, quirks_mode),
-            None => false,
-        },
-        Combinator::Descendant => {
-            let mut remaining = ancestors;
-            while let Some((&candidate_id, further)) = remaining.split_last() {
-                if match_from_element(dom, candidate_id, further, iter.clone(), quirks_mode) {
-                    return true;
-                }
-                remaining = further;
+    struct Frame<'a, 's, D: StyleDom> {
+        candidates: PendingCandidates<'a, D>,
+        /// Ancestors [`Combinator::NextSibling`]/[`Combinator::LaterSibling`]
+        /// candidates are evaluated against — unchanged across every
+        /// candidate in this frame (siblings share a parent). Unused by
+        /// [`Combinator::Child`]/[`Combinator::Descendant`], whose
+        /// candidates carry their own (shrinking) ancestors directly out of
+        /// `PendingCandidates::next` instead.
+        ancestors_unchanged: &'a [StyleNodeId],
+        /// Positioned at the compound this frame's combinator introduced;
+        /// cloned fresh for every candidate attempt (`Descendant`/
+        /// `LaterSibling` mirror the pre-fix code's own per-candidate
+        /// `iter.clone()`; `Child`/`NextSibling` are newly cloned here too,
+        /// for uniform frame handling across all four combinators — each
+        /// has exactly one candidate, so the pre-fix code moved `iter`
+        /// instead of cloning it. Negligible cost, no heap allocation; see
+        /// perf lens's bd raikiri-spike-bj4p follow-up for the broader
+        /// allocation picture).
+        iter: SelectorIter<'s, RaikiriSelectorImpl>,
+    }
+
+    let mut stack = vec![Frame {
+        candidates: pending_candidates_for(dom, combinator, current_id, ancestors),
+        ancestors_unchanged: ancestors,
+        iter,
+    }];
+    loop {
+        let Some(frame) = stack.last_mut() else {
+            // Outermost choice point exhausted with no full match found.
+            return false;
+        };
+        let Some((candidate_id, candidate_ancestors)) =
+            frame.candidates.next(dom, frame.ancestors_unchanged)
+        else {
+            // This level's candidates are exhausted — backtrack to the
+            // parent choice point's next candidate.
+            stack.pop();
+            continue;
+        };
+        let candidate_iter = frame.iter.clone();
+        let Some(mut matched_iter) = match_from_element(
+            dom,
+            candidate_id,
+            candidate_ancestors,
+            candidate_iter,
+            quirks_mode,
+        ) else {
+            // Candidate's compound didn't match — try this frame's next
+            // candidate (loop back without push/pop).
+            continue;
+        };
+        match matched_iter.next_sequence() {
+            // No further combinator to the left: the whole complex
+            // selector matched.
+            None => return true,
+            Some(next_combinator) => {
+                // Compound matched and more remains further left — descend
+                // one level (push a new choice point) rather than recurse.
+                stack.push(Frame {
+                    candidates: pending_candidates_for(
+                        dom,
+                        next_combinator,
+                        candidate_id,
+                        candidate_ancestors,
+                    ),
+                    ancestors_unchanged: candidate_ancestors,
+                    iter: matched_iter,
+                });
             }
-            false
         }
+    }
+}
+
+/// Not-yet-tried candidates for one [`match_combinator_chain`] choice point
+/// — the iterative counterpart of that function's four `match combinator`
+/// arms' candidate-generation logic (bd raikiri-spike-8r16). Each variant
+/// corresponds 1:1 to a [`Combinator`] arm; see [`pending_candidates_for`]
+/// for the construction side and [`match_combinator_chain`]'s "Implementation"
+/// doc for why this needs to be a resumable cursor rather than a one-shot
+/// iterator (backtracking may resume a frame after a deeper level failed).
+enum PendingCandidates<'a, D: StyleDom + 'a> {
+    /// [`Combinator::Child`]: exactly one candidate
+    /// (`ancestors.split_last()`'s parent, paired with the remaining
+    /// ancestors above it) — `None` once taken, or if there was no parent
+    /// to begin with. No backtracking past this single candidate, matching
+    /// the pre-fix code's non-looping `match ancestors.split_last() { .. }`.
+    Child(Option<(StyleNodeId, &'a [StyleNodeId])>),
+    /// [`Combinator::Descendant`]: remaining ancestors to try, closest-first
+    /// — mirrors the pre-fix code's `while let Some((&id, further)) =
+    /// remaining.split_last()` loop. Each candidate is handed the *further*
+    /// ancestors (everything above it) both as its own matching context and
+    /// as the next resume point.
+    Descendant(&'a [StyleNodeId]),
+    /// [`Combinator::NextSibling`]: exactly one candidate (the immediate
+    /// preceding sibling, if any), evaluated against the frame's unchanged
+    /// `ancestors_unchanged`.
+    NextSibling(Option<StyleNodeId>),
+    /// [`Combinator::LaterSibling`]: children of the shared parent up to
+    /// (excluding) `stop_at`, in document order — mirrors the pre-fix
+    /// code's single-pass `for candidate_id in dom.child_ids(parent_id) {
+    /// if == current_id { break } .. }` loop. Holds a *live* `D::ChildIter`
+    /// (not a re-derived one) so resuming this frame after a deeper level
+    /// fails continues exactly where the previous attempt left off — same
+    /// single left-to-right pass as the original, no re-scan, no throwaway
+    /// `Vec` (same convention [`immediate_preceding_sibling`]'s doc
+    /// establishes).
+    LaterSibling {
+        child_iter: D::ChildIter<'a>,
+        stop_at: StyleNodeId,
+    },
+}
+
+impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
+    /// Advances to (and returns) the next untried candidate, paired with
+    /// the ancestors it should be evaluated against, or `None` once this
+    /// choice point is exhausted. `ancestors_unchanged` is the frame's own
+    /// field (not stored on `Self` — only the [`Combinator::NextSibling`]/
+    /// [`Combinator::LaterSibling`] variants need it, and every candidate
+    /// within a frame needs the *same* value, so the caller threads it
+    /// through rather than duplicating it per variant).
+    fn next(
+        &mut self,
+        dom: &D,
+        ancestors_unchanged: &'a [StyleNodeId],
+    ) -> Option<(StyleNodeId, &'a [StyleNodeId])> {
+        match self {
+            Self::Child(slot) => slot.take(),
+            Self::Descendant(remaining) => {
+                let (&candidate_id, further) = remaining.split_last()?;
+                *remaining = further;
+                Some((candidate_id, further))
+            }
+            Self::NextSibling(slot) => slot.take().map(|id| (id, ancestors_unchanged)),
+            Self::LaterSibling {
+                child_iter,
+                stop_at,
+            } => {
+                for candidate_id in child_iter.by_ref() {
+                    if candidate_id == *stop_at {
+                        // Reached `current_id` itself: no more candidates
+                        // are ever valid past this point (mirrors the
+                        // pre-fix code's `break`). Not resetting the
+                        // iterator is fine — a choice point that returned
+                        // `None` once is never queried again by
+                        // `match_combinator_chain`'s driving loop.
+                        return None;
+                    }
+                    if is_in_document_element(dom, candidate_id) {
+                        return Some((candidate_id, ancestors_unchanged));
+                    }
+                }
+                // cov:ignore: same invariant as `immediate_preceding_sibling`'s
+                // own trailing `None` — `stop_at` (`current_id`) is always one
+                // of `parent_id`'s own children (it is `pending_candidates_for`'s
+                // own `current_id` argument, and `parent_id` is derived from
+                // it via `ancestors.last()`), so the loop above always returns
+                // via the `*stop_at` branch before `child_iter` is exhausted.
+                // Would need a `StyleDom` impl whose `child_ids(parent_id)`
+                // omits an id it itself supplied as `current_id` to exercise.
+                None
+            }
+        }
+    }
+}
+
+/// Builds the [`PendingCandidates`] cursor for one combinator, mirroring
+/// [`match_combinator_chain`]'s pre-fix per-combinator candidate-generation
+/// logic exactly (bd raikiri-spike-8r16) — this function does no matching
+/// itself, only candidate enumeration setup. The `_ => ..` safety-net arm
+/// (unsupported combinators, see this module's "他 combinator" doc note)
+/// yields an already-exhausted `Child(None)` cursor, the same "no candidate
+/// ever succeeds" outcome the pre-fix `_ => false` arm produced.
+fn pending_candidates_for<'a, D: StyleDom + 'a>(
+    dom: &'a D,
+    combinator: Combinator,
+    current_id: StyleNodeId,
+    ancestors: &'a [StyleNodeId],
+) -> PendingCandidates<'a, D> {
+    match combinator {
+        Combinator::Child => PendingCandidates::Child(
+            ancestors
+                .split_last()
+                .map(|(&parent_id, rest)| (parent_id, rest)),
+        ),
+        Combinator::Descendant => PendingCandidates::Descendant(ancestors),
         Combinator::NextSibling => {
             let parent_id = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
-            match immediate_preceding_sibling(dom, parent_id, current_id) {
-                Some(sibling_id) => {
-                    match_from_element(dom, sibling_id, ancestors, iter, quirks_mode)
-                }
-                None => false,
-            }
+            PendingCandidates::NextSibling(immediate_preceding_sibling(dom, parent_id, current_id))
         }
         Combinator::LaterSibling => {
             let parent_id = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
-            for candidate_id in dom.child_ids(parent_id) {
-                if candidate_id == current_id {
-                    break;
-                }
-                if is_in_document_element(dom, candidate_id)
-                    && match_from_element(dom, candidate_id, ancestors, iter.clone(), quirks_mode)
-                {
-                    return true;
-                }
+            PendingCandidates::LaterSibling {
+                child_iter: dom.child_ids(parent_id),
+                stop_at: current_id,
             }
-            false
         }
         // cov:ignore: `Combinator::PseudoElement`/`SlotAssignment`/`Part`
-        // are structurally unconstructible here. The `selectors` crate only
-        // ever pushes each of these 3 combinators from behind its own
-        // `Parser` trait hook (parser.rs `parse_one_simple_selector`), and
-        // `RaikiriSelectorParser` overrides none of the three, so all fall
-        // to the trait's default:
+        // are structurally unconstructible here (bd raikiri-spike-2neb).
+        // The `selectors` crate only ever pushes each of these 3
+        // combinators from behind its own `Parser` trait hook (parser.rs
+        // `parse_one_simple_selector`), and `RaikiriSelectorParser`
+        // overrides none of the three, so all fall to the trait's default:
         //   - `PseudoElement`: gated by `parse_pseudo_element`, default
         //     `Err`; also `RaikiriSelectorImpl::PseudoElement = PseudoElem`
         //     is an uninhabited enum, so no value could exist even if the
@@ -1351,9 +1547,11 @@ fn match_combinator_chain<D: StyleDom>(
         // `parse_part`/`parse_slotted` on their own would make `Part`/
         // `SlotAssignment` reachable without `a::before` ever failing, so
         // overriding any of the three voids this exemption. See this
-        // function's "他 combinator" doc paragraph above for the full
-        // argument.
-        _ => false,
+        // module's "他 combinator" doc note, above `match_combinator_chain`,
+        // for the full argument. Yields an already-exhausted `Child(None)`
+        // cursor (bd raikiri-spike-8r16) — same "no candidate ever
+        // succeeds" outcome the pre-fix `_ => false` arm produced.
+        _ => PendingCandidates::Child(None),
     }
 }
 
@@ -1406,11 +1604,9 @@ fn immediate_preceding_sibling<D: StyleDom>(
 }
 
 /// `elem_id` の element を解決し、[`compound_matches`] で `iter` が指す
-/// compound をそれに対して判定、一致すればさらに左の combinator へ再帰する
-/// ([`match_combinator_chain`] との相互再帰)。祖先候補 (`Child`/
-/// `Descendant`) と兄弟候補 (`NextSibling`/`LaterSibling`) の両方が
-/// この 1 つの関数を共有する — 「id を解決して compound を照合し、
-/// 一致すればさらに左へ委譲する」というロジック自体は候補がどちらの
+/// compound をそれに対して判定する。祖先候補 (`Child`/`Descendant`) と
+/// 兄弟候補 (`NextSibling`/`LaterSibling`) の両方がこの 1 つの関数を共有する
+/// — 「id を解決して compound を照合する」というロジック自体は候補がどちらの
 /// combinator 由来かに依存しない (bd raikiri-spike-flln.3: `ancestors` は
 /// 兄弟ジャンプでは不変のまま引き継がれる — 兄弟は親を共有するため — ことが
 /// この共有を成立させる。祖先ジャンプでは従来通り `split_last`/バックトラック
@@ -1418,10 +1614,20 @@ fn immediate_preceding_sibling<D: StyleDom>(
 /// (bd raikiri-spike-flln.2) — 兄弟候補にも使われるようになったため
 /// bd raikiri-spike-flln.3 で `match_from_element` に rename。
 ///
+/// bd raikiri-spike-8r16 より前は、compound が一致した後さらに左の
+/// combinator へ**自分で再帰**していた ([`match_combinator_chain`] との
+/// 相互再帰、native stack を消費する側)。現在は compound 一致後の `iter`
+/// (次の compound の手前まで進んだ状態) を `Some` で返すだけに変わり、
+/// 「さらに左の combinator へ進むかどうか」の判断とその実行は
+/// [`match_combinator_chain`] の explicit `Vec` stack 駆動ループ側の責務に
+/// 一本化されている (同関数の "Implementation" doc 参照) — 呼び出し側が
+/// 自分の判断で `matched_iter.next_sequence()` を呼び、`stack.push` するか
+/// `return true` するかを選ぶ。
+///
 /// `elem_id` を [`StyleElement`] の借用値ではなく [`StyleNodeId`] で受け取る
 /// 設計: `StyleElement` は [`StyleDom::NodeRef`]/[`StyleNode::Element`] と
-/// いう GAT 経由の型で、再帰呼び出しをまたいで別の借用ライフタイムの値を
-/// 持ち回るにはシグネチャが煩雑になる — id は `Copy` なのでこの再帰には
+/// いう GAT 経由の型で、呼び出しをまたいで別の借用ライフタイムの値を
+/// 持ち回るにはシグネチャが煩雑になる — id は `Copy` なのでこの受け渡しには
 /// 明らかに軽量。[`collect_cascaded`] 側で既に解決済みの `elem` を再利用
 /// しない分、候補 1 段ごとに `dom.node()`/`as_element()` を 1 回余分に
 /// 呼ぶが、raikiri-style crate-internal な `#[cfg(test)]` 限定 mock
@@ -1429,13 +1635,17 @@ fn immediate_preceding_sibling<D: StyleDom>(
 /// lookup (`TestDoc` の宿る module は `#[cfg(test)]` gated のため、ここは
 /// あえて intra-doc link 化しない — non-test の `cargo doc` からは解決
 /// できない target になる)。
-fn match_from_element<D: StyleDom>(
+///
+/// Returns: compound が一致すれば、その後の compound を指す `iter` を
+/// `Some` で返す (呼び出し側がさらに左へ進めるかどうかを判断する)。
+/// 一致しなければ `None`。
+fn match_from_element<'s, D: StyleDom>(
     dom: &D,
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
-    mut iter: SelectorIter<'_, RaikiriSelectorImpl>,
+    mut iter: SelectorIter<'s, RaikiriSelectorImpl>,
     quirks_mode: StyleQuirksMode,
-) -> bool {
+) -> Option<SelectorIter<'s, RaikiriSelectorImpl>> {
     // Both guards below are defensive and not reachable via the real
     // `collect_cascaded` → `match_complex_selector_list` call path: every
     // `elem_id` this function is ever invoked with comes from one of two
@@ -1445,9 +1655,9 @@ fn match_from_element<D: StyleDom>(
     // branch after the `!node.is_in_document() => continue` gate — see that
     // function's doc), or a sibling candidate already passed through
     // `is_in_document_element` (`immediate_preceding_sibling` /
-    // `match_combinator_chain`'s `LaterSibling` arm). So `dom.node(elem_id)`
-    // is always `Some`, and its `as_element()` is always `Some` too. Kept as
-    // an explicit safety net rather than `.unwrap()`/`unreachable!()` — same
+    // `PendingCandidates::LaterSibling`). So `dom.node(elem_id)` is always
+    // `Some`, and its `as_element()` is always `Some` too. Kept as an
+    // explicit safety net rather than `.unwrap()`/`unreachable!()` — same
     // defensive posture as `compound_matches`'s own `_ => false` arm for
     // unsupported `Component` variants — because `StyleDom`/`StyleElement`
     // are generic traits not owned by this crate; a future non-test
@@ -1456,33 +1666,24 @@ fn match_from_element<D: StyleDom>(
     // would need a `StyleDom` impl that returns `None`/non-Element for an id
     // it itself supplied as an ancestor or a filtered sibling candidate to
     // exercise.
-    let Some(node) = dom.node(elem_id) else {
-        return false;
-    };
+    let node = dom.node(elem_id)?;
     // cov:ignore: see the guard immediately above — same invariant.
-    let Some(elem) = node.as_element() else {
-        return false;
-    };
+    let elem = node.as_element()?;
     // `ancestors` here is *this* element's own remaining ancestor chain
-    // (root-most first) — `match_combinator_chain`'s `Child`/`Descendant`
-    // arms pass `rest`/`further` (everything left after popping `elem_id`
-    // itself off the end), so `ancestors.last()` is `elem_id`'s parent,
-    // exactly mirroring `match_complex_selector_list`'s own use of
+    // (root-most first) — `pending_candidates_for`'s `Child`/`Descendant`
+    // arms hand out `rest`/`further` (everything left after popping
+    // `elem_id` itself off the end), so `ancestors.last()` is `elem_id`'s
+    // parent, exactly mirroring `match_complex_selector_list`'s own use of
     // `ancestors` for the rightmost compound (bd raikiri-spike-flln.5) —
     // needed so a structural pseudo-class in a non-rightmost compound
     // (e.g. `body > div:only-child p`) resolves against the right parent,
-    // not `elem`'s (the recursion's original caller's) parent. Sibling
-    // jumps (bd raikiri-spike-flln.3) pass `ancestors` through unchanged
-    // (siblings share a parent), so this holds for those candidates too.
+    // not `elem`'s (the search's original caller's) parent. Sibling jumps
+    // (bd raikiri-spike-flln.3) pass `ancestors` through unchanged (siblings
+    // share a parent), so this holds for those candidates too.
     if !compound_matches(dom, &mut iter, &elem, elem_id, ancestors, quirks_mode) {
-        return false;
+        return None;
     }
-    match iter.next_sequence() {
-        None => true,
-        Some(combinator) => {
-            match_combinator_chain(dom, combinator, elem_id, ancestors, iter, quirks_mode)
-        }
-    }
+    Some(iter)
 }
 
 // ---------------------------------------------------------------------------
@@ -4239,6 +4440,96 @@ mod tests {
     }
 
     #[test]
+    fn general_sibling_combinator_skips_a_leading_non_element_candidate() {
+        // Same CSS Selectors L4 "non-element nodes... are ignored" rule as
+        // `sibling_combinator_ignores_non_element_nodes_between_siblings`
+        // above, but for `~` (general sibling) rather than `+` (adjacent
+        // sibling) — these exercise different code paths:
+        // `PendingCandidates::LaterSibling`'s new resumable scan loop vs
+        // `PendingCandidates::NextSibling`'s single-shot
+        // `immediate_preceding_sibling`, for the same kind()-based skip
+        // (`TestDoc` always reports `is_in_document() == true`; it has no
+        // inert/`<template>`-descendant node concept, so this doesn't
+        // separately discriminate `is_in_document_element`'s
+        // `is_in_document()` conjunct from its `kind() == Element` one). A
+        // root-level text node is pushed *before* `h2` (not between `h2`
+        // and `p` — `~`'s candidate scan walks the parent's children
+        // forward from the start, so the non-element candidate must be
+        // reached *before* the eventual matching candidate to exercise the
+        // "skip, keep scanning" branch rather than the "reached
+        // `current_id`, stop" one).
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "h2 ~ p { background-color: red }");
+        doc.push_text(0, "root-level text node, sibling of h2 and p, before both");
+        let _h2 = doc.push_element(0, "h2", None);
+        let p = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].background_color, RED,
+            "h2 ~ p must match p despite a non-element sibling preceding h2 in \
+             the same child list"
+        );
+    }
+
+    #[test]
+    fn later_sibling_choice_point_resumes_live_iterator_across_backtrack() {
+        // Discriminator for `PendingCandidates::LaterSibling`'s *live,
+        // resumable* `D::ChildIter` (bd raikiri-spike-8r16 review probe,
+        // reviewer:spec) - not covered by any existing test: doubling `~`
+        // is required to exercise one `LaterSibling` choice point being
+        // popped-into-and-resumed by a stack.pop() backtrack from a
+        // *different, nested* `LaterSibling` choice point (a single `~`
+        // combined with `>`/` ` can't discriminate this, since sibling
+        // candidates all share the same ancestors, so a Child/Descendant
+        // check after a sibling jump can't distinguish "resume mid-scan"
+        // from "rescan from the top").
+        //
+        // Children of the shared parent, document order: b1(.b), a(.a),
+        // b2(.b), t(.t). Selector `.a ~ .b ~ .t` requires some `.b` that
+        // precedes `t`, itself preceded by some `.a`.
+        //
+        // b1 is the *first* `.b` candidate tried for `t`'s `~` frame - but
+        // b1's own nested `~` scan for `.a` immediately hits its `stop_at`
+        // (b1 is the very first child), so that inner frame is exhausted
+        // with zero candidates and pops immediately. Correctness requires
+        // the *outer* frame (scanning for `.b` before `t`) to resume its
+        // live iterator at `a` next (not restart at b1 - that would loop
+        // forever / re-fail identically - and not skip past `a` straight to
+        // `b2`, which would only find the wrong, but still spec-correct-
+        // looking, match via a different `.b` and hide a real skip bug).
+        // The only `.b` with a valid `.a` before it is b2 (via `a`), so a
+        // match requires both correct resume *and* correct non-skip.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".a ~ .b ~ .t { background-color: red }");
+        let b1 = doc.push_element(0, "div", None);
+        doc.set_attr(b1, "class", "b");
+        let a = doc.push_element(0, "div", None);
+        doc.set_attr(a, "class", "a");
+        let b2 = doc.push_element(0, "div", None);
+        doc.set_attr(b2, "class", "b");
+        let t = doc.push_element(0, "div", None);
+        doc.set_attr(t, "class", "t");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[t].background_color, RED,
+            ".a ~ .b ~ .t must match t via b2 (preceded by a), after b1's own \
+             nested .a search (immediately empty) is backtracked past - this \
+             requires the LaterSibling choice point's live child iterator to \
+             resume correctly rather than restart or skip"
+        );
+    }
+
+    #[test]
     fn sibling_combinator_does_not_match_preceding_element() {
         // Order matters: CSS Selectors L4 requires the left compound's
         // element to *precede* the right compound's element. A `<p>` placed
@@ -6530,6 +6821,81 @@ mod tests {
         let color = handle
             .join()
             .expect("thread must not stack-overflow on deep DOM");
+        assert_eq!(color, RED);
+    }
+
+    /// Same DOM shape as [`deep_chain_doc`], but the stylesheet's selector is
+    /// a `depth`-compound **child**-combinator chain (`div > div > ... > div`)
+    /// instead of a single compound (`div`). Child combinator is chosen over
+    /// descendant here because `Combinator::Child` has exactly one candidate
+    /// per level (`ancestors.split_last()`, no backtracking), so cost is
+    /// O(`depth`) — this isolates the pure *stack-depth* question bd
+    /// raikiri-spike-8r16 asks. A descendant-combinator version was tried
+    /// first and rejected for an unrelated reason, not stack depth: see bd
+    /// raikiri-spike-3p3h (`Combinator::Descendant`'s backtracking is
+    /// separately exponential on uniformly-matching chains — discovered by
+    /// that attempt).
+    ///
+    /// Before bd raikiri-spike-8r16's fix, this forced the
+    /// `match_combinator_chain`/`match_from_element` mutual recursion
+    /// (renamed from `match_from_ancestor`, bd raikiri-spike-flln.3) to a
+    /// depth of `depth - 1` (one combinator per ancestor level), 2 native
+    /// stack frames per level, independently of `collect_cascaded`'s own
+    /// (already-iterative, job 199) DOM-DFS depth. Post-fix, this same
+    /// `depth - 1`-long chain instead drives the explicit `Vec<Frame>` stack
+    /// [`match_combinator_chain`]'s "Implementation" doc describes, with no
+    /// native call-stack recursion involved at all.
+    fn deep_child_combinator_chain_doc(depth: usize) -> (TestDoc, usize) {
+        let mut doc = TestDoc::new();
+        let mut parent = 0usize;
+        for _ in 0..depth {
+            parent = doc.push_element(parent, "div", None);
+        }
+        let style = doc.push_element(parent, "style", None);
+        let selector = vec!["div"; depth].join(" > ");
+        doc.push_text(style, &format!("{selector} {{ color: red }}"));
+        (doc, parent)
+    }
+
+    /// Empirical answer for bd raikiri-spike-8r16: does a long, uniformly-
+    /// matching child-combinator chain stack-overflow
+    /// `match_combinator_chain`/`match_from_element`'s mutual recursion? Same
+    /// small-fixed-stack technique as [`deep_nesting_small_stack_no_overflow`]
+    /// (job 199 precedent) — deterministic, hardware/platform-independent.
+    /// Unlike that test, `doc`/`tree` are built on the *main* (default-size)
+    /// stack and only borrowed into the constrained-stack scoped thread —
+    /// selector parsing (`build_rule_tree`, `selectors`/`cssparser` crate
+    /// internals, outside this crate's cleanroom review surface) is
+    /// deliberately excluded from the measured region, so a crash here can
+    /// only be attributed to `cascade`'s own matching path.
+    ///
+    /// Confirmed empirically at depth 500 / 128 KiB stack against the
+    /// mutually-recursive pre-fix implementation: the spawned thread
+    /// aborted the whole process with `thread '<unknown>' has overflowed
+    /// its stack` / SIGABRT, the same crash shape
+    /// [`deep_nesting_small_stack_no_overflow`]'s doc describes for
+    /// `collect_cascaded` pre-job-199 — i.e. this was a real, not
+    /// hypothetical, overflow risk, matching the bd raikiri-spike-8r16
+    /// concern. After converting the recursion to the explicit-stack form
+    /// below, this test completes cleanly and returns the correct computed
+    /// color.
+    #[test]
+    fn deep_child_combinator_chain_small_stack_no_overflow() {
+        let (doc, deepest) = deep_child_combinator_chain_doc(500);
+        let tree = build_rule_tree(&doc);
+        let color = std::thread::scope(|scope| {
+            let handle = std::thread::Builder::new()
+                .stack_size(128 * 1024)
+                .spawn_scoped(scope, || {
+                    let result = cascade(&doc, &tree).expect("cascade Ok");
+                    result.computed[deepest].color
+                })
+                .expect("spawn thread");
+            handle.join().expect(
+                "thread must not stack-overflow matching a long, successively-matching \
+                 child-combinator chain",
+            )
+        });
         assert_eq!(color, RED);
     }
 
