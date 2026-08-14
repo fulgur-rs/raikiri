@@ -306,9 +306,13 @@ pub enum QuirksMode {
 /// nominal tag。cascade phase (raikiri umbrella crate) で
 /// `raikiri_style::Origin` にマップされる。
 ///
-/// M1 では `UserAgent` + `Author` の 2 段のみ。User origin は Consumer が
-/// `extra_stylesheets` (Author 扱い) で提供する想定 (spec §M1.4a Non-goals)。
-/// 将来必要になったら variant を追加 (`#[non_exhaustive]` で non-breaking)。
+/// M1 では `UserAgent` + `Author` の 2 段のみだった。bd raikiri-spike-d7h3 で
+/// `User` variant を追加し、Consumer が `extra_stylesheets` 経由で提供する
+/// CSS を独立した user origin として route できるようにした。旧実装は
+/// `Author` に混ぜて扱う暫定 (spec §M1.4a Non-goals) だったが、将来 real
+/// author-origin stylesheet (`<link rel=stylesheet>` 等) がこの経路に
+/// 乗ってきたときに誤って user origin 扱いになる regression trap があった
+/// ため、独立 variant として切り離した。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StylesheetKind {
@@ -318,9 +322,13 @@ pub enum StylesheetKind {
     /// 反転。origin 自体の定義は §6.2
     /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>)。
     UserAgent,
-    /// Author origin (HTML `<style>` element、`<link rel=stylesheet>`、
-    /// Consumer 提供の `extra_stylesheets` 等)。M1 では User origin を
-    /// Author に混ぜて扱う。
+    /// User origin (CSS Cascading L4 §6.2
+    /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>)。Consumer
+    /// が `ParseOptions::extra_stylesheets` 経由で提供する CSS はここに tag
+    /// される (`raikiri-html/src/parse.rs`、bd raikiri-spike-d7h3 で
+    /// `Author` から分離)。
+    User,
+    /// Author origin (HTML `<style>` element、`<link rel=stylesheet>` 等)。
     Author,
 }
 

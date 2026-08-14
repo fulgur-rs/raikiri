@@ -819,5 +819,7 @@ mod tests {
         let ua2 = ua; // Copy
         assert_eq!(ua, ua2);
         assert_ne!(StylesheetKind::UserAgent, StylesheetKind::Author);
+        assert_ne!(StylesheetKind::UserAgent, StylesheetKind::User);
+        assert_ne!(StylesheetKind::User, StylesheetKind::Author);
     }
 }

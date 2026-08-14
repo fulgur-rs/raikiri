@@ -270,14 +270,31 @@ pub use bytes::Bytes;
 /// 未対応 (M2+ で拡張予定、`raikiri-html/src/sink.rs::extract_inline_stylesheets`
 /// の invariant に一致、roborev-refine job 226 参照)。
 ///
-/// # source_order tie-break (Author vs Author)
+/// # DOM `<style>` (Author) vs `extra_stylesheets` (User)
 ///
 /// `Document.stylesheets()` (parse 時に注入された UA + `extra_stylesheets`) が
 /// 先に RuleTree に流し込まれ、次に `stylesheet_sources` (head 配下 `<style>`)
-/// が Author として追加される。同 Author 内の tie-break (同 specificity・同
-/// `!important`) では後から来た方が source_order 大で勝つため、**DOM `<style>`
-/// は `extra_stylesheets` を上書きする**。この precedence は仕様書 §M1.4a には
-/// 明記されていない M1 実装判断 (raikiri-spike-m1.23)。
+/// が Author として追加される。bd raikiri-spike-d7h3 より前は `extra_stylesheets`
+/// も `Author` としてタグされており、DOM `<style>` との勝敗は同一 origin 内の
+/// source_order tie-break (後から来た方が勝つ) に依存していた。bd
+/// raikiri-spike-d7h3 で `extra_stylesheets` は [`Origin::User`] に retag された
+/// ため、両者はもはや同一 origin ではない — 勝敗は origin rank の差で
+/// specificity / source_order を問わず決まる。
+///
+/// **normal 同士なら** [`Origin::Author`] (normal rank 3) > [`Origin::User`]
+/// (normal rank 1) なので **DOM `<style>` が `extra_stylesheets` を上書きする**
+/// — 旧 M1 実装判断 (raikiri-spike-m1.23) が偶然同一 origin tie-break で
+/// 実現していたのと同じ勝敗だが、根拠が「同 origin tie-break」から「別
+/// origin の rank 差」に変わった。
+///
+/// **`!important` が絡むとこの勝敗は反転しうる** (CSS Cascading L4 §6.3 の
+/// importance による origin 順反転)。`extra_stylesheets` 側が `!important`
+/// を持てば ([`Origin::User`] important rank 6) DOM `<style>` 側の
+/// importance に関係なく (`Author` は normal rank 3 / important rank 4、
+/// いずれも 6 未満) `extra_stylesheets` が勝つ。逆に `extra_stylesheets` 側
+/// が normal (rank 1) なら DOM `<style>` は normal/important いずれでも
+/// (rank 3 / 4、いずれも 1 より上) 勝つ — 実質、勝敗は `extra_stylesheets`
+/// 側の importance だけで決まる。
 ///
 /// # Dep 方向
 ///
@@ -309,18 +326,23 @@ pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
 ///
 /// `StylesheetKind` は他 crate の `#[non_exhaustive]` enum のため exhaustive match
 /// はできないが、将来 variant が追加された場合の silent misroute を防ぐため
-/// `_` arm は `unreachable!` で loud fail させる (M1 では UserAgent / Author の 2
-/// variant で網羅済み)。
+/// `_` arm は `unreachable!` で loud fail させる (bd raikiri-spike-d7h3 時点で
+/// UserAgent / User / Author の 3 variant で網羅済み)。
 fn stylesheet_kind_to_origin(kind: StylesheetKind) -> Origin {
     match kind {
         StylesheetKind::UserAgent => Origin::UserAgent,
+        StylesheetKind::User => Origin::User,
         StylesheetKind::Author => Origin::Author,
-        // `StylesheetKind` は `#[non_exhaustive]`。M1 では UserAgent / Author の 2 variant を
-        // 上で網羅済み。将来 User 等が追加された時点で対応が漏れるとここに到達し、
-        // silent misroute を防ぐため panic で loud fail する (dev が cascade origin map の
-        // 更新に気付ける)。
+        // `StylesheetKind` は `#[non_exhaustive]`。bd raikiri-spike-d7h3 時点で
+        // UserAgent / User / Author の 3 variant を上で網羅済み。将来別の variant が
+        // 追加された時点で対応が漏れるとここに到達し、silent misroute を防ぐため
+        // panic で loud fail する (dev が cascade origin map の更新に気付ける)。
+        // cov:ignore: defensive `_` arm for a cross-crate `#[non_exhaustive]` enum —
+        // unreachable by construction while all 3 current variants are matched above;
+        // only becomes reachable if a future variant is added upstream without a
+        // corresponding arm here (the panic message tells the dev to add one).
         _ => unreachable!(
-            "StylesheetKind variant not yet mapped to Origin — update stylesheet_kind_to_origin in raikiri crate (m1.23)"
+            "StylesheetKind variant not yet mapped to Origin — update stylesheet_kind_to_origin in raikiri crate (bd raikiri-spike-d7h3)"
         ),
     }
 }
@@ -337,6 +359,10 @@ mod smoke_tests {
         assert_eq!(
             stylesheet_kind_to_origin(StylesheetKind::UserAgent),
             Origin::UserAgent,
+        );
+        assert_eq!(
+            stylesheet_kind_to_origin(StylesheetKind::User),
+            Origin::User,
         );
         assert_eq!(
             stylesheet_kind_to_origin(StylesheetKind::Author),

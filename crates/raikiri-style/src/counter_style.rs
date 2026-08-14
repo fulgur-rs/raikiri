@@ -1002,16 +1002,25 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 ///   unless it is itself outranked by the currently-stored one. Concretely,
 ///   for the origins every current in-repo call site of
 ///   [`crate::ruletree::RuleTree::add_stylesheet`] actually passes it
-///   (`Origin::UserAgent` / `Origin::Author` — `@counter-style` never
-///   comes from the crate-private HTML presentational-hint path
+///   (`Origin::UserAgent` / `Origin::Author` / `Origin::User` as of bd
+///   raikiri-spike-d7h3 — `@counter-style` never comes from the
+///   crate-private HTML presentational-hint path
 ///   (`push_img_dimension_hints`, `crates/raikiri-style/src/cascade.rs`),
 ///   so [`Origin::AuthorPresentationalHint`] does not reach here via any
 ///   caller in this crate today, even though [`Origin`] itself has 4
 ///   variants as of bd raikiri-spike-pdta). [`Origin::User`] (added by
 ///   pdta, alongside [`Origin::AuthorPresentationalHint`] added earlier by
-///   bd raikiri-spike-wo36) is likewise unreachable here — no caller
-///   anywhere in the crate routes to `Origin::User` yet, [`Origin::User`]'s
-///   doc has the "no production producer" status. Note that `add_stylesheet` is
+///   bd raikiri-spike-wo36) was likewise unreachable here at pdta-landing
+///   time — no caller anywhere routed to `Origin::User` yet. bd
+///   raikiri-spike-d7h3 changed that: consumer-provided `extra_stylesheets`
+///   is now tagged `Origin::User` end-to-end (via raikiri-html's retag +
+///   umbrella's `stylesheet_kind_to_origin`), and
+///   [`crate::ruletree::RuleTree::add_stylesheet`] runs
+///   [`parse_counter_style_rules`] +
+///   [`Self::insert_with_origin`] against the *same* `source`/`origin` it
+///   was given for style rules — so an `@counter-style` rule inside a
+///   consumer's `extra_stylesheets` string now reaches here tagged
+///   `Origin::User` too, in production. Note that `add_stylesheet` is
 ///   `pub fn` with an unconstrained `origin: Origin` parameter, so this is
 ///   a fact about current callers, not a structural guarantee — an
 ///   external caller passing `Origin::AuthorPresentationalHint` directly
@@ -1047,10 +1056,11 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 ///   is a compile error at [`crate::cascade::cascade_rank`]'s own `match`
 ///   — not a silently-wrong precedence here. This has now happened twice:
 ///   bd raikiri-spike-wo36 added [`Origin::AuthorPresentationalHint`], and
-///   bd raikiri-spike-pdta added [`Origin::User`] (currently with no
-///   production producer of its own, [`Origin::User`]'s doc has the
-///   status) — both times `cascade_rank`'s `match` had to be updated to
-///   stay exhaustive, but this function's logic needed no change.
+///   bd raikiri-spike-pdta added [`Origin::User`] (which bd
+///   raikiri-spike-d7h3 later gave a production producer, [`Origin::User`]'s
+///   doc has the status) — both times `cascade_rank`'s `match` had to be
+///   updated to stay exhaustive, but this function's logic needed no
+///   change (rank-based, not per-variant — see above).
 /// - [`Self::insert`] (the `pub` entry point, unchanged since before
 ///   bd raikiri-spike-f7vg) stays origin-blind: it always overwrites,
 ///   exactly as it did when this type had no origin concept at all — safe

@@ -235,9 +235,10 @@ pub struct PageRule {
     /// / `Author`, bd raikiri-spike-pdta) — `@page` rules are only ever
     /// parsed via [`crate::ruletree::RuleTree::add_stylesheet`], the same
     /// entry point style rules use, so any [`Origin`] a caller passes
-    /// (including [`Origin::User`], which currently has no production
-    /// producer — [`Origin`]'s own doc has that status) flows through here
-    /// unchanged; this field does no origin-narrowing of its own.
+    /// (including [`Origin::User`], whose only production producer today is
+    /// consumer-provided `extra_stylesheets` — bd raikiri-spike-d7h3, see
+    /// [`Origin`]'s own doc) flows through here unchanged; this field does no
+    /// origin-narrowing of its own.
     ///
     /// Two primary sources back the wiring; the fragment anchors are the
     /// stable form of each citation:

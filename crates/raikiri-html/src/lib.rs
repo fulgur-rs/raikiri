@@ -1439,7 +1439,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_injects_extra_stylesheets_as_author() {
+    fn parse_injects_extra_stylesheets_as_user() {
         use raikiri_traits::StylesheetKind;
 
         let html = b"<html><body></body></html>";
@@ -1452,14 +1452,32 @@ mod tests {
         };
         let doc = parse(&html[..], &opts).expect("parse ok");
 
+        // bd raikiri-spike-d7h3: extra_stylesheets は StylesheetKind::User
+        // としてタグされる (以前は Author に混ぜていた — regression trap
+        // だったため独立 variant に分離した)。
+        let user_entries: Vec<&str> = doc
+            .dom
+            .stylesheets()
+            .filter(|(_, k)| *k == StylesheetKind::User)
+            .map(|(s, _)| s)
+            .collect();
+        assert_eq!(user_entries.len(), 2);
+        assert_eq!(user_entries[0], extra_a);
+        assert_eq!(user_entries[1], extra_b);
+
+        // Author 側には何も混入していないことも確認 (retag 前は 2 entries 混入していた)。
         let author_entries: Vec<&str> = doc
             .dom
             .stylesheets()
             .filter(|(_, k)| *k == StylesheetKind::Author)
             .map(|(s, _)| s)
             .collect();
-        assert_eq!(author_entries.len(), 2);
-        assert_eq!(author_entries[0], extra_a);
-        assert_eq!(author_entries[1], extra_b);
+        // cov:ignore: same false positive as the `img_width_attribute_*` tests in
+        // raikiri-style/src/cascade.rs (message-format branch of assert! only
+        // executes on failure).
+        assert!(
+            author_entries.is_empty(),
+            "extra_stylesheets should no longer tag as Author"
+        );
     }
 }

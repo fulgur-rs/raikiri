@@ -24,17 +24,22 @@ use crate::{PseudoClass, RaikiriSelectorImpl, RaikiriSelectorParser};
 ///
 /// bd raikiri-spike-pdta で 4th variant [`Origin::User`] を追加 — CSS
 /// Cascading L4 §6.2 <https://www.w3.org/TR/css-cascade-4/#cascading-origins>
-/// が定める "user origin" (2026-08-12 再 fetch 確認)。**raikiri-style 内では
-/// この variant は完全に機能する** ([`crate::cascade::cascade_rank`] の
-/// 4-tier ordering に組み込み済み) が、**この origin へ実際に route される
-/// production 上の呼び出し元はまだ無い** — 唯一の候補である consumer 提供
-/// `extra_stylesheets` は今も `StylesheetKind::Author` 経由で
-/// [`Origin::Author`] として届く。umbrella 側の `stylesheet_kind_to_origin`
-/// を `Origin::User` に対応させるには raikiri-traits 側の `StylesheetKind`
-/// (dom-level tag) に独立 variant を追加し raikiri-html 側で retag する必要が
-/// あり、raikiri-style 単体では完結しない genuine multi-crate diff
-/// (raikiri-traits public surface 変更、walls.md wall 2) — bd
-/// raikiri-spike-d7h3 で追跡。
+/// が定める "user origin" (2026-08-12 再 fetch 確認)。pdta 着地時点では
+/// raikiri-style 内で variant 自体は完全に機能する
+/// ([`crate::cascade::cascade_rank`] の 4-tier ordering に組み込み済み) 一方、
+/// この origin へ実際に route される production 上の呼び出し元がまだ無い状態
+/// だった (唯一の候補である consumer 提供 `extra_stylesheets` は
+/// `StylesheetKind::Author` 経由で [`Origin::Author`] として届いていた) —
+/// umbrella 側の `stylesheet_kind_to_origin` を `Origin::User` に対応させる
+/// には raikiri-traits 側の `StylesheetKind` (dom-level tag) に独立 variant
+/// を追加し raikiri-html 側で retag する必要があり、raikiri-style 単体では
+/// 完結しない genuine multi-crate diff (raikiri-traits public surface 変更、
+/// walls.md wall 2) だったため bd raikiri-spike-d7h3 に切り出された。
+/// bd raikiri-spike-d7h3 でその 3-crate wiring (raikiri-traits の
+/// `StylesheetKind::User` 追加 + raikiri-html の retag + umbrella の
+/// `stylesheet_kind_to_origin` 拡張) が着地し、`extra_stylesheets` は今は
+/// 実際に [`Origin::User`] へ route される — この variant は現在 production
+/// producer を持つ。
 ///
 /// `StylesheetKind` (dom-level tag) との対応は raikiri umbrella crate が
 /// cascade orchestration の一部として map する。
@@ -43,9 +48,10 @@ use crate::{PseudoClass, RaikiriSelectorImpl, RaikiriSelectorParser};
 pub enum Origin {
     UserAgent,
     /// CSS Cascading L4 §6.2 "user origin"
-    /// (<https://www.w3.org/TR/css-cascade-4/#cascading-origins>)。現状 no
-    /// production producer — [`Origin`] の doc の "bd raikiri-spike-pdta"
-    /// 節参照。
+    /// (<https://www.w3.org/TR/css-cascade-4/#cascading-origins>)。Consumer
+    /// が `ParseOptions::extra_stylesheets` 経由で提供する CSS がここに route
+    /// される (raikiri-html の `StylesheetKind::User` retag 経由、bd
+    /// raikiri-spike-d7h3)。
     User,
     /// CSS Cascading L5 §6.5 "author presentational hint origin"
     /// (<https://drafts.csswg.org/css-cascade-5/#preshint>) — HTML
@@ -1664,6 +1670,37 @@ mod tests {
         tree.add_stylesheet(
             r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
             Origin::UserAgent,
+        );
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "+" "-"; }"#,
+            Origin::Author,
+        );
+        assert_eq!(tree.counter_styles().len(), 1);
+        let rule = tree
+            .counter_styles()
+            .get("thumbs")
+            .expect("thumbs registered");
+        // Author 側の 2-symbol 定義が勝つ。
+        assert_eq!(rule.symbols.len(), 2);
+    }
+
+    #[test]
+    fn add_stylesheet_author_after_user_overrides_counter_styles() {
+        // add_stylesheet_author_after_useragent_overrides_counter_styles の
+        // Origin::User 版。bd raikiri-spike-d7h3 で consumer 提供
+        // `extra_stylesheets` が実際に Origin::User へ route されるようになった
+        // ため (raikiri-html の retag + umbrella の stylesheet_kind_to_origin
+        // 拡張)、この pair (User → Author call order) は production からも
+        // 到達しうる genuine な組み合わせになった — User を先に定義し、同名
+        // @counter-style を Author 側で後から add_stylesheet する。origin
+        // 優先順位 (Author normal rank 3 > User normal rank 1、
+        // cascade::cascade_rank) は call order 非依存であるべきなので、
+        // こちらも Author が勝つ (CSS Counter Styles L3 §3, "standard cascade
+        // rules" は origin が第一基準 — bd raikiri-spike-f7vg)。
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
+            Origin::User,
         );
         tree.add_stylesheet(
             r#"@counter-style thumbs { system: cyclic; symbols: "+" "-"; }"#,

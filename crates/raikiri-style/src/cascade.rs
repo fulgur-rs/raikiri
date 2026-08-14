@@ -378,11 +378,14 @@ struct RankedDecl {
 ///
 /// `(AuthorPresentationalHint, true)` の arm は現状
 /// [`push_img_dimension_hints`] から到達しない (常に `important = false` で
-/// push する)、`(User, false)` / `(User, true)` の 2 arm は現状どの
-/// production 呼び出し元からも到達しない ([`Origin::User`] の doc の
-/// "no production producer" 節参照、bd raikiri-spike-d7h3 が producer 追加を
-/// 追跡) — [`crate::page::cascade_page`] も同じ [`Origin`] を経由するため、
-/// これらも `unreachable!()` にはせず total function として値を返す。
+/// push する)。`(User, false)` / `(User, true)` の 2 arm は bd
+/// raikiri-spike-pdta 時点ではどの production 呼び出し元からも到達しな
+/// かったが、bd raikiri-spike-d7h3 で consumer 提供 `extra_stylesheets` が
+/// [`Origin::User`] へ route されるようになったため、今は両方とも到達する
+/// ([`Origin::User`] の doc 参照) — [`crate::page::cascade_page`] も同じ
+/// [`Origin`] を経由するため、これらも `unreachable!()` にはせず total
+/// function として値を返す (この判断自体は producer の有無に関わらず
+/// 元々正しかった)。
 ///
 /// `revert` keyword carve-out (上記 4 番目の引用: "it is considered part of
 /// the author origin" — `revert-layer` は対象外) は本 crate に現状影響しない
@@ -1961,22 +1964,38 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 /// 挿入後も rank 差の大小関係は変わらないため、この test は無変更で pin
 /// し続ける)。
 ///
-/// 残る `Origin::User` no-producer 残差 (旧: bd raikiri-spike-wo36 item 4): bd
-/// raikiri-spike-pdta で raikiri-style 内の [`Origin::User`] variant 自体は
-/// 追加済み ([`cascade_rank`] は 4-tier 化済み) だが、consumer が渡す
-/// `extra_stylesheets` を実際に [`Origin::User`] へ route する producer は
-/// まだ無い — 今も `StylesheetKind::Author` 経由で [`Origin::Author`] として
-/// 届く ([`crate::ruletree`] module doc 参照)。spec の完全な順序では hint は
-/// 「user origin より強い」はずだが、本実装は user stylesheet 宣言を hint
-/// より強い [`Origin::Author`] rank に一律 fold している — user stylesheet
-/// が img の width/height を上書きできるという結果自体は spec と一致するが
-/// (`Author` rank は hint より常に上)、独立した User origin へ実際に route
-/// すれば hint が真の author 宣言だけに overridable になる、というモデルの
-/// 精度としては不完全なまま。raikiri-traits 側の `StylesheetKind` に
-/// 独立 variant を追加し raikiri-html で retag し、umbrella 側の
-/// `stylesheet_kind_to_origin` を拡張する必要がある genuine multi-crate diff
-/// (raikiri-style 単体では完結しない) のため bd raikiri-spike-d7h3 に
-/// 切り出し済み (wall/traits 経路)。
+/// `Origin::User` no-producer 残差の解消 (旧: bd raikiri-spike-wo36 item 4、
+/// 続き bd raikiri-spike-pdta): bd raikiri-spike-pdta で raikiri-style 内の
+/// [`Origin::User`] variant 自体を追加した時点 ([`cascade_rank`] の 4-tier
+/// 化) では、consumer が渡す `extra_stylesheets` を実際に [`Origin::User`]
+/// へ route する producer がまだ無く、今も `StylesheetKind::Author` 経由で
+/// [`Origin::Author`] として届いていた。spec の完全な順序では hint は
+/// 「user origin より強い」はずだが、当時の実装は user stylesheet 宣言を
+/// hint より強い [`Origin::Author`] rank に一律 fold していた — user
+/// stylesheet が img の width/height を上書きできるという結果自体は spec と
+/// 一致していたが (`Author` rank は hint より常に上)、独立した User origin
+/// へ実際に route されていない分、モデルの精度としては不完全だった。
+///
+/// bd raikiri-spike-d7h3 で raikiri-traits 側の `StylesheetKind` に独立
+/// `User` variant を追加し raikiri-html で retag、umbrella 側の
+/// `stylesheet_kind_to_origin` を拡張する genuine multi-crate diff
+/// (raikiri-style 単体では完結しない) が着地し、この残差は解消された —
+/// `extra_stylesheets` は今は実際に [`Origin::User`] へ route される。**normal
+/// 宣言同士なら** user stylesheet の宣言はもう [`Origin::Author`] rank に
+/// fold されず、spec 通り hint ([`Origin::AuthorPresentationalHint`]、normal
+/// rank 2) より弱い ([`Origin::User`] normal rank 1) — つまり `<img width>`
+/// hint は今や normal な `extra_stylesheets` 由来の宣言に specificity を
+/// 問わず勝つ (real author-origin 宣言、たとえば in-document `<style>`、には
+/// normal 同士なら今も負ける — umbrella crate の `build_cascaded` doc の
+/// "DOM `<style>` vs `extra_stylesheets`" 節参照)。ただし
+/// `extra_stylesheets` 側が `!important` を持つ場合はこの勝敗も反転する:
+/// [`Origin::User`] の important rank (6) は hint の (常に normal で push
+/// される、[`cascade_rank`] doc 参照) rank (2) より高いため、`!important`
+/// 付きの `extra_stylesheets` 宣言は hint に specificity を問わず勝つ。この
+/// normal-tier の振る舞いの umbrella 越し end-to-end pin は
+/// `crates/raikiri/tests/build_cascaded.rs`'s
+/// `img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrella`
+/// 参照。
 fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
     // HTML-namespace gate (Codex §8.3 final-review finding, 2026-08-11):
     // this mapping is HTML LS's own presentational hint, scoped to the HTML
@@ -6601,13 +6620,16 @@ mod tests {
         // and its status as a total function, not an external requirement.
         // No production code path emits an `!important` presentational
         // hint (`push_img_dimension_hints` always pushes
-        // `important = false`), and no production code path routes any
-        // declaration to `Origin::User` yet (`Origin::User`'s doc has the
-        // "no production producer" status, bd raikiri-spike-d7h3 tracks
-        // adding one) — this test is the only place the 3
-        // currently-production-unreached arms (`(User, false)`,
-        // `(User, true)`, `(AuthorPresentationalHint, true)`) are
-        // exercised.
+        // `important = false`), so `(AuthorPresentationalHint, true)`
+        // stays production-unreached. `(User, false)` / `(User, true)`
+        // used to be production-unreached too (no code path routed any
+        // declaration to `Origin::User`) until bd raikiri-spike-d7h3 wired
+        // consumer `extra_stylesheets` to it — this test remains the only
+        // place `(AuthorPresentationalHint, true)` is exercised, but the
+        // two `User` arms now also have real end-to-end coverage via
+        // `crates/raikiri/tests/build_cascaded.rs`'s
+        // `extra_stylesheets_user_rule_overrides_ua_via_umbrella` (normal)
+        // and `user_important_beats_normal_ua_via_umbrella` (important).
         let normal_ua = cascade_rank(Origin::UserAgent, false);
         let normal_user = cascade_rank(Origin::User, false);
         let normal_hint = cascade_rank(Origin::AuthorPresentationalHint, false);

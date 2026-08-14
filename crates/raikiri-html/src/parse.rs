@@ -72,11 +72,14 @@ where
         StylesheetKind::UserAgent,
     );
 
-    // Consumer 提供の extra_stylesheets を Author として追加 (spec §M1
-    // ParseOptions::extra_stylesheets の実 consume 経路)
+    // Consumer 提供の extra_stylesheets を User origin として追加 (spec §M1
+    // ParseOptions::extra_stylesheets の実 consume 経路)。bd raikiri-spike-d7h3
+    // で StylesheetKind::Author retag から独立 StylesheetKind::User へ移行 —
+    // real author-origin stylesheet (`<link rel=stylesheet>` 等) が将来
+    // Author として届く経路と混同しないため。
     for extra in options.extra_stylesheets {
         doc.dom
-            .add_stylesheet(Cow::Owned((*extra).to_string()), StylesheetKind::Author);
+            .add_stylesheet(Cow::Owned((*extra).to_string()), StylesheetKind::User);
     }
 
     Ok(doc)
