@@ -49,8 +49,54 @@ use std::path::{Path, PathBuf};
 ///   `raikiri_dom::fonts::safe_open`'s O_NONBLOCK, added there by bd
 ///   raikiri-spike-f4j — 61l Codex §8.3 finding #2).
 ///
-/// The non-unix fallback keeps the current default `File::open` semantics.
-/// Windows equivalent tracked in raikiri-spike-akk.
+/// The Windows impl takes a different route to the same guarantee, because
+/// Win32 has no direct `O_NOFOLLOW` equivalent: `CreateFile` normally
+/// resolves a reparse point (symlink, junction, mount point, ...) and hands
+/// back a handle to whatever it points at, rather than failing the open.
+/// `FILE_FLAG_OPEN_REPARSE_POINT` changes that: it opens the reparse point
+/// itself instead of following it. The open still *succeeds* on a symlink
+/// (unlike `O_NOFOLLOW`, which fails it outright), so the returned handle
+/// can be bound to a symlink object rather than its target.
+///
+/// `FILE_FLAG_BACKUP_SEMANTICS` is deliberately **not** added alongside it.
+/// That flag is only needed to open a *directory-type* reparse point
+/// (junction, directory symlink) — without it, `CreateFile` on a
+/// directory-attributed object fails outright, which is still fail-closed
+/// for this fixture-loading path (an `Err` from the open propagates via
+/// `?` exactly like a rejected file-type reparse point does below). Adding
+/// it would buy detection of a threat class this call site never has to
+/// open (a directory can never be a legitimate `input.html` or
+/// `expected/page-*.png` leaf; the pre-open `!is_file()` gate in
+/// [`read_bounded_fixture_file`] already rejects one before `safe_open`
+/// runs) at the cost of a real behavior change: in a process that holds
+/// `SeBackupPrivilege` (not exotic for a Windows CI/build agent),
+/// `FILE_FLAG_BACKUP_SEMANTICS` bypasses normal access checks. Omitting it
+/// keeps this function's access checks identical to a plain `CreateFile`
+/// call in every privilege context, at zero loss of coverage for the
+/// file-type-reparse-point case this defense targets.
+///
+/// Because the open can succeed on a (file-type) symlink, the symlink
+/// check has to move to *after* the open: the handle's `dwFileAttributes`
+/// (read via `std::os::windows::fs::MetadataExt::file_attributes`, itself
+/// a thin wrapper over `GetFileInformationByHandle`) is inspected for
+/// `FILE_ATTRIBUTE_REPARSE_POINT`, and the handle is discarded with an
+/// error if the bit is set. There is no path through this function that
+/// returns a handle bound to a followed reparse-point target: either
+/// `CreateFile` itself fails (directory-type reparse point, or any other
+/// I/O error) and `?` propagates it, or it succeeds bound to the leaf
+/// object exactly as `CreateFile` resolved it and the attribute check
+/// rejects that object before it is returned. Because both the open and
+/// the check operate on the same handle — no path is re-resolved in
+/// between — a leaf swapped in between the pre-open `symlink_metadata`
+/// check and this call cannot cause a fresh reparse-point target to be
+/// read: whatever `CreateFile` bound the handle to is exactly what
+/// `file_attributes()` reports on. This mirrors the "checked == used, same
+/// fd" shape [`check_open_handle_regular`] already uses for the
+/// regular-file-kind check below.
+///
+/// Any other platform (neither unix nor windows) keeps the plain
+/// `File::open` follow-at-open default; no leaf-swap defense is applied
+/// there.
 ///
 /// bd raikiri-spike-8yu (O_NOFOLLOW), raikiri-spike-z719 (O_NONBLOCK).
 // Callsite-local defense: sharing this stack with raikiri-dom is deferred to
@@ -65,10 +111,40 @@ fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-    // Follow-symlink-at-open is unresolved on non-unix; tracked in
-    // raikiri-spike-akk.  Regain parity when the follow-up lands.
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+
+    // Win32 `CreateFile` flag/attribute bits (winnt.h). Not exposed as
+    // constants by std, but part of the stable Win32 ABI — these values
+    // have been unchanged since Windows NT and are not expected to move.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+
+    // Post-open, same-handle check: reject if what CreateFile actually
+    // bound the handle to is a reparse point. See the doc comment above for
+    // why this has to run after the open rather than before it.
+    let attrs = file.metadata()?.file_attributes();
+    if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(std::io::Error::other(format!(
+            "refusing to open {}: leaf resolved to a reparse point (symlink/junction) \
+             rather than a plain file",
+            path.display()
+        )));
+    }
+    Ok(file)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    // No leaf-swap defense is implemented for platforms outside the
+    // unix/windows pair above; this fallback keeps plain follow-at-open
+    // `File::open` semantics.
     std::fs::File::open(path)
 }
 
@@ -864,9 +940,9 @@ fn check_open_handle_containment(
 }
 
 /// Read a single fixture-tree file with the full defense stack:
-/// leaf-symlink reject (pre-open metadata + open-time O_NOFOLLOW on unix),
-/// `!is_file()` reject, up-front size cap,
-/// canonicalize-and-`starts_with(canonical_root)` containment check,
+/// leaf-symlink reject (pre-open metadata + open-time O_NOFOLLOW on unix /
+/// reparse-point-aware open on Windows), `!is_file()` reject, up-front size
+/// cap, canonicalize-and-`starts_with(canonical_root)` containment check,
 /// `safe_open` at open time, two post-open fd-based rechecks —
 /// [`check_open_handle_regular`] (rejects non-regular kinds bound to the
 /// descriptor) and [`check_open_handle_containment`] (rejects an fd
@@ -876,10 +952,11 @@ fn check_open_handle_containment(
 /// `safe_open` actually returned rather than re-resolving `path`, and a
 /// bounded `take(cap + 1)` read that also catches TOCTOU-grow.
 ///
-/// The open-time O_NOFOLLOW closes the leaf-swap race between the pre-open
-/// `symlink_metadata` check and `File::open` on unix (raikiri-spike-8yu).
-/// Non-unix retains follow-at-open semantics; tracked in
-/// raikiri-spike-akk.
+/// The open-time leaf-swap race between the pre-open `symlink_metadata`
+/// check and the actual open is closed on unix (`O_NOFOLLOW`, raikiri-spike-8yu)
+/// and on Windows (reparse-point-aware open + same-handle attribute check,
+/// see [`safe_open`]'s doc comment). Platforms outside that pair keep
+/// follow-at-open semantics with no defense against this specific race.
 ///
 /// The two post-open rechecks port `raikiri_dom::fonts::read_bounded_font_file`'s
 /// equivalent stack (bd raikiri-spike-f4j / raikiri-spike-1ef) to this
@@ -932,11 +1009,12 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
             root: canonical_root.to_path_buf(),
         });
     }
-    // safe_open adds O_NOFOLLOW on unix so a leaf-symlink swapped in between
-    // the earlier symlink_metadata check and this open call cannot cause a
-    // fresh symlink target to be followed.  The Err arm's inline comment
-    // below documents the errno mapping and the portable fallback that
-    // covers legacy BSD variants.  bd raikiri-spike-8yu.
+    // safe_open adds O_NOFOLLOW on unix (reparse-point-aware open on
+    // Windows) so a leaf-symlink swapped in between the earlier
+    // symlink_metadata check and this open call cannot cause a fresh
+    // symlink target to be followed.  The Err arm's inline comments below
+    // document the platform-specific reject-detection and the portable
+    // fallback each uses.  bd raikiri-spike-8yu.
     let mut file = match safe_open(path) {
         Ok(f) => f,
         Err(e) => {
@@ -955,6 +1033,26 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
                     || std::fs::symlink_metadata(path)
                         .map(|m| m.file_type().is_symlink())
                         .unwrap_or(false);
+                if looks_like_symlink_swap {
+                    return Err(FixtureError::SymlinkRejected {
+                        path: path.to_path_buf(),
+                    });
+                }
+            }
+            #[cfg(windows)]
+            {
+                // safe_open's own reparse-point reject is synthesized by this
+                // crate (there is no OS errno to match, unlike unix's ELOOP —
+                // CreateFile itself succeeded; safe_open constructed the Err
+                // after inspecting the handle), so there is nothing to check
+                // on `e` directly. Fall back to the same symlink_metadata
+                // recheck unix uses for legacy BSDs that also lack a
+                // matchable errno. Not race-perfect for the same reason the
+                // unix recheck isn't: the leaf could be swapped back to a
+                // regular file between safe_open and this recheck.
+                let looks_like_symlink_swap = std::fs::symlink_metadata(path)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false);
                 if looks_like_symlink_swap {
                     return Err(FixtureError::SymlinkRejected {
                         path: path.to_path_buf(),
@@ -2073,6 +2171,72 @@ mod defense_tests {
                 );
             }
             Ok(_) => panic!("safe_open followed the symlink (O_NOFOLLOW not applied)"),
+        }
+    }
+
+    /// Windows counterpart of `safe_open_rejects_symlink_at_open_time`:
+    /// `safe_open` must not hand back a readable handle bound to a
+    /// symlink's target.
+    ///
+    /// `std::os::windows::fs::symlink_file` requires either Developer Mode
+    /// or `SeCreateSymbolicLinkPrivilege` on the running account; a
+    /// restricted CI/sandbox account without either denies the symlink
+    /// creation itself (`ERROR_PRIVILEGE_NOT_HELD`) before this test can
+    /// exercise `safe_open` at all. That setup failure is orthogonal to the
+    /// property under test, so it is treated as a skip rather than a
+    /// failure — this test has no way to grant the privilege it does not
+    /// have.
+    ///
+    /// This early-return-on-skip shape is the one the race-simulation test
+    /// below deliberately avoids (`#[ignore]` instead, for exactly this
+    /// reason: an early return that reports success without the check ever
+    /// running is a silent-pass hazard). The two cases differ in what the
+    /// skip condition means: the race test's `#[ignore]` guards a
+    /// deliberately-not-run-by-default timing simulation, where "did it
+    /// run" is itself the signal worth preserving. This test's skip guards
+    /// a missing OS privilege that is a fixed property of the account
+    /// running the suite, not a per-run coin flip — an account either has
+    /// the privilege for the whole session or it doesn't, so a stderr
+    /// notice at the one point where that's discovered is enough to make
+    /// the skip visible without adding an `#[ignore]` that would also
+    /// suppress the (non-privilege-dependent) common case.
+    ///
+    /// Compile-checked via `cargo check --target x86_64-pc-windows-gnu`; not
+    /// executed — its actual runtime behavior on Windows is unverified
+    /// until it runs there.
+    #[cfg(windows)]
+    #[test]
+    fn safe_open_rejects_symlink_at_open_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.bin");
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"target contents")
+            .unwrap();
+        let link = dir.path().join("link.bin");
+        if std::os::windows::fs::symlink_file(&target, &link).is_err() {
+            eprintln!(
+                "skipping safe_open_rejects_symlink_at_open_time: \
+                 symlink creation requires Developer Mode or \
+                 SeCreateSymbolicLinkPrivilege"
+            );
+            return;
+        }
+
+        match safe_open(&link) {
+            Err(_) => {
+                // Sanity-check that the path is still a symlink at
+                // observation time — proves the Err is due to safe_open's
+                // post-open reparse-point check rather than an unrelated
+                // I/O error like permission or NotFound.
+                let post = std::fs::symlink_metadata(&link)
+                    .expect("symlink still present after safe_open Err");
+                assert!(
+                    post.file_type().is_symlink(),
+                    "link at test observation time was not a symlink"
+                );
+            }
+            Ok(_) => panic!("safe_open followed the symlink (reparse-point check not applied)"),
         }
     }
 
