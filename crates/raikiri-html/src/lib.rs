@@ -1416,6 +1416,117 @@ mod tests {
     }
 
     #[test]
+    fn phrasing_content_ua_rules_survive_real_parse_and_cascade() {
+        // bd raikiri-spike-5z86.4: HTML LS §phrasing-content-3's
+        //   b, strong { font-weight: bolder; }
+        //   small { font-size: smaller; }
+        //   mark { background: yellow; color: black; }
+        //   ins, u { text-decoration: underline; }
+        // all landed. The rest of §phrasing-content-3 — the 5-element
+        // `cite, dfn, em, i, var { font-style: italic; }` rule and both
+        // sub/sup rules — is deliberately not landed here; see minimal.css
+        // for the per-rule rationale (sub/sup's `line-height: normal;
+        // font-size: smaller` half is NOT itself blocked, it's held back
+        // deliberately, not "blocked" like the rest). Same "survives real
+        // parse+cascade, not just literal text in MINIMAL_UA_CSS" concern as
+        // the hr / a[href] tests above.
+        use raikiri_style::Origin;
+        use raikiri_style::property::{CssColor, TextDecoration};
+
+        let html = b"<html><body><strong>x</strong><b>x</b><small>x</small>\
+                     <mark>x</mark><ins>x</ins><u>x</u></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let strong_id = find_first_by_tag(&uncascaded.dom, "strong")
+            .expect("<strong> should exist")
+            .0 as usize;
+        let b_id = find_first_by_tag(&uncascaded.dom, "b")
+            .expect("<b> should exist")
+            .0 as usize;
+        let small_id = find_first_by_tag(&uncascaded.dom, "small")
+            .expect("<small> should exist")
+            .0 as usize;
+        let mark_id = find_first_by_tag(&uncascaded.dom, "mark")
+            .expect("<mark> should exist")
+            .0 as usize;
+        let ins_id = find_first_by_tag(&uncascaded.dom, "ins")
+            .expect("<ins> should exist")
+            .0 as usize;
+        let u_id = find_first_by_tag(&uncascaded.dom, "u")
+            .expect("<u> should exist")
+            .0 as usize;
+
+        // strong, b { font-weight: bolder } — CSS Fonts 4 §2.2.1's
+        // relative-weight table resolves an inherited 400 (the CSS-initial
+        // `normal`) to 700.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[strong_id].font_weight, 700.0,
+            "strong's UA rule font-weight: bolder must resolve to 700 against the inherited initial 400 through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[b_id].font_weight, 700.0,
+            "b's UA rule font-weight: bolder must resolve to 700 against the inherited initial 400 through real parse+cascade"
+        );
+
+        // small { font-size: smaller } — simple-ratio (1.2) branch applied
+        // against the inherited initial 16px.
+        let small_font_size = cascade.computed[small_id].font_size.0;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (small_font_size - 16.0 / 1.2).abs() < 0.0001,
+            "small's UA rule font-size: smaller must resolve to 16px / 1.2 through real parse+cascade, got {small_font_size}"
+        );
+
+        // mark { background-color: yellow; color: black; } (background-color
+        // longhand substituted for the unimplemented `background` shorthand,
+        // see minimal.css comment).
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[mark_id].background_color,
+            CssColor {
+                r: 0xFF,
+                g: 0xFF,
+                b: 0x00,
+                a: 255,
+            },
+            "mark's UA rule background-color: yellow must reach computed.background_color through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[mark_id].color,
+            CssColor::BLACK,
+            "mark's UA rule color: black must reach computed.color through real parse+cascade"
+        );
+
+        // ins, u { text-decoration: underline; }
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[ins_id].text_decoration,
+            TextDecoration::Underline,
+            "ins's UA rule text-decoration: underline must reach computed.text_decoration through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[u_id].text_decoration,
+            TextDecoration::Underline,
+            "u's UA rule text-decoration: underline must reach computed.text_decoration through real parse+cascade"
+        );
+    }
+
+    #[test]
     fn parse_ignores_body_style_in_m1_scope() {
         // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。
