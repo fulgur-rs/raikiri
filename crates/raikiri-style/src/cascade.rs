@@ -1332,6 +1332,26 @@ fn match_combinator_chain<D: StyleDom>(
             }
             false
         }
+        // cov:ignore: `Combinator::PseudoElement`/`SlotAssignment`/`Part`
+        // are structurally unconstructible here. The `selectors` crate only
+        // ever pushes each of these 3 combinators from behind its own
+        // `Parser` trait hook (parser.rs `parse_one_simple_selector`), and
+        // `RaikiriSelectorParser` overrides none of the three, so all fall
+        // to the trait's default:
+        //   - `PseudoElement`: gated by `parse_pseudo_element`, default
+        //     `Err`; also `RaikiriSelectorImpl::PseudoElement = PseudoElem`
+        //     is an uninhabited enum, so no value could exist even if the
+        //     hook were overridden to accept (verified via direct
+        //     `a::before` parse, bd raikiri-spike-flln.3 2026-08-12).
+        //   - `Part`: gated by `parse_part()`, default `false`.
+        //   - `SlotAssignment`: gated by `parse_slotted()`, default
+        //     `false`.
+        // The `a::before` check only exercises the first hook — overriding
+        // `parse_part`/`parse_slotted` on their own would make `Part`/
+        // `SlotAssignment` reachable without `a::before` ever failing, so
+        // overriding any of the three voids this exemption. See this
+        // function's "他 combinator" doc paragraph above for the full
+        // argument.
         _ => false,
     }
 }
