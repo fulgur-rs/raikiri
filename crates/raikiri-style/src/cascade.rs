@@ -580,11 +580,12 @@ fn collect_cascaded<D: StyleDom>(
 /// selector 全体の終端に達する) まで — を `elem` 単体に対して判定する。
 ///
 /// [`match_complex_selector_list`] が右端 compound を `elem` 自身に対して
-/// 判定する最初の 1 手と、descendant/child combinator 越しの祖先判定
-/// ([`match_combinator_chain`] / [`match_from_ancestor`], bd
-/// raikiri-spike-flln.2) の両方がこの関数を共有する — bd raikiri-spike-flln.1
-/// 時点の (当時の) `match_simple_selectors` 本体をそのまま抽出しただけで、
-/// per-component の判定ロジック自体に変更は無い。
+/// 判定する最初の 1 手と、combinator 越しの祖先/兄弟候補判定
+/// ([`match_combinator_chain`] / [`match_from_element`] — descendant/child
+/// 越しの祖先判定は bd raikiri-spike-flln.2、NextSibling/LaterSibling 越しの
+/// 兄弟判定は同じ関数へ bd raikiri-spike-flln.3 で統合) の両方がこの関数を
+/// 共有する — bd raikiri-spike-flln.1 時点の (当時の) `match_simple_selectors`
+/// 本体をそのまま抽出しただけで、per-component の判定ロジック自体に変更は無い。
 ///
 /// `iter: &mut SelectorIter` を `for component in iter` で回すと、
 /// `selectors` crate 自身の contract (`Selector::iter` の doc, verbatim:
