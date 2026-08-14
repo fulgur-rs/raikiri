@@ -303,8 +303,8 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     limits.max_target_slots = Some(200_000);
     limits.max_layout_buffer_entries = Some(20_000);
     limits.max_aggregate_bytes = Some(4 * 1_073_741_824);
-    // bd raikiri-spike-4kw: Sprint 10 で追加された 6 番目の pub field。
     limits.max_input_bytes = Some(64 * 1024 * 1024);
+    limits.max_parse_warnings = Some(512);
 
     let mut page_box = PageBox::default();
     page_box.width = 500.0;
@@ -377,8 +377,8 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert_eq!(lookahead.orphan_line_buffer, 2);
     assert!(lookahead.allow_cross_size_lookahead);
 
-    // RenderLimitsBuilder は全 6 setter を chain (全 method が `Self` を返す
-    // regression pin)。bd raikiri-spike-4kw で `max_input_bytes` が 6 番目に追加。
+    // RenderLimitsBuilder は全 7 setter を chain (全 method が `Self` を返す
+    // regression pin)。
     let limits = RenderLimits::builder()
         .max_document_pages(Some(100))
         .max_dom_nodes(Some(2_000_000))
@@ -386,10 +386,12 @@ fn external_consumer_can_chain_builder_fluent_setters() {
         .max_layout_buffer_entries(Some(5_000))
         .max_aggregate_bytes(Some(512 * 1_024 * 1_024))
         .max_input_bytes(Some(16 * 1_024 * 1_024))
+        .max_parse_warnings(Some(256))
         .build();
     assert_eq!(limits.max_document_pages, Some(100));
     assert_eq!(limits.max_target_slots, Some(50_000));
     assert_eq!(limits.max_input_bytes, Some(16 * 1_024 * 1_024));
+    assert_eq!(limits.max_parse_warnings, Some(256));
 
     // Cross-struct wiring: LookaheadConfig を PlanConfig / StreamingConfig /
     // BatchConfig に差し込む fluent chain も pin。`initial_registry` は

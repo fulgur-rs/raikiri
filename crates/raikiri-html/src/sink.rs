@@ -16,21 +16,6 @@ use taffy::Style;
 
 use crate::types::UncascadedDocument;
 
-/// `parse_error` が保持する [`RenderWarning`] 件数の上限 (Codex Security
-/// finding raikiri-spike-g9vr、SEC HIGH)。
-///
-/// html5ever は malformed input の小さな token 1 個あたり概ね 1 個の
-/// parse_error を報告しうるため、cap が無いと attacker が任意個数の owned
-/// `String` 持ち `RenderWarning` を積ませて memory を枯渇させられる (PoC:
-/// 100,000 個の `</x>` で 100,001 warnings、RSS 線形増加を実測)。
-/// `raikiri_traits::RenderLimits::max_input_bytes` (bd raikiri-spike-4kw) は
-/// 別軸の入力 byte 数 cap であり、この per-token 増幅は防がない。
-///
-/// Option B stopgap (bd raikiri-spike-d9y.3 の parse_html DoS fix と同じ
-/// pattern): `raikiri-html` crate 内で完結する local const。`RenderLimits`
-/// へ昇格する Option A は follow-up task に defer (raikiri-spike-4kw 参照)。
-pub(crate) const MAX_HTML_PARSE_WARNINGS: usize = 1024;
-
 /// html5ever `TreeSink` の raikiri 実装。Handle は raikiri-dom arena の
 /// index (`usize`)、Output は [`UncascadedDocument`]。QualName / Attribute
 /// の side-table を RefCell 内 FxHashMap で保持し、raikiri-dom::Node に
@@ -51,18 +36,29 @@ pub struct RaikiriTreeSink {
     warnings: RefCell<Vec<RenderWarning>>,
     /// Document 全体の quirks mode。cascade phase (m1.4) が参照する予定。
     quirks_mode: Cell<QuirksMode>,
+    /// `parse_error` が `warnings` に記録する件数の上限 (`None` = 無制限)。
+    /// [`raikiri_traits::RenderLimits::max_parse_warnings`] から consult
+    /// される想定の値 — 詳しい rationale はそちらの field doc を参照。
+    max_parse_warnings: Option<usize>,
 }
 
 impl RaikiriTreeSink {
     /// 新規 sink を construct。Document は arena index 0 に virtual root を持つ
     /// 空 Document で初期化される。
-    pub fn new() -> Self {
+    ///
+    /// `max_parse_warnings` は [`TreeSink::parse_error`] が記録する warning
+    /// 件数の上限 (`None` = 無制限)。呼び出し側は通常
+    /// `raikiri_traits::RenderLimits::max_parse_warnings` の値をそのまま渡す
+    /// (`raikiri_html::parse` は default 値、`raikiri::parse_html_with_limits`
+    /// は consumer が設定した値を渡す)。
+    pub fn new(max_parse_warnings: Option<usize>) -> Self {
         Self {
             document: RefCell::new(Document::new()),
             qual_names: RefCell::new(FxHashMap::default()),
             attributes: RefCell::new(FxHashMap::default()),
             warnings: RefCell::new(Vec::new()),
             quirks_mode: Cell::new(QuirksMode::NoQuirks),
+            max_parse_warnings,
         }
     }
 
@@ -99,7 +95,7 @@ impl RaikiriTreeSink {
 
 impl Default for RaikiriTreeSink {
     fn default() -> Self {
-        Self::new()
+        Self::new(raikiri_traits::RenderLimits::default().max_parse_warnings)
     }
 }
 
@@ -148,13 +144,44 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn parse_error(&self, msg: Cow<'static, str>) {
-        // 最後の 1 slot は「以降 suppress した」ことを示す synthetic entry
-        // 専用に予約する (silent drop だと 1024 件と 8,000,000 件を consumer
-        // が区別できない)。よって実際の parse error は MAX-1 件まで記録する。
-        const LAST_REAL_SLOT: usize = MAX_HTML_PARSE_WARNINGS - 1;
-
         let mut warnings = self.warnings.borrow_mut();
-        match warnings.len().cmp(&LAST_REAL_SLOT) {
+
+        let Some(cap) = self.max_parse_warnings else {
+            // 無制限 (Consumer が明示的に `max_parse_warnings = None` を
+            // 設定した場合のみ到達する)。
+            warnings.push(RenderWarning {
+                kind: WarningKind::HtmlParseError {
+                    message: msg.into_owned(),
+                },
+                node_id: None,
+                details: String::new(),
+            });
+            return;
+        };
+        if cap == 0 {
+            // 実 warning 用の slot は無いが、cap>0 の場合と同じく「1件以上の
+            // parse error が発生したが suppress された」ことを示す synthetic
+            // entry を最初の呼び出し時にだけ 1 件積む。無条件 no-op だと
+            // parse error が 0 件だったケースと区別できず、cap>0 の
+            // trip-and-record semantics と非対称な silent disable になる。
+            if warnings.is_empty() {
+                warnings.push(RenderWarning {
+                    kind: WarningKind::HtmlParseError {
+                        message: "parse errors suppressed (max_parse_warnings = 0)".to_string(),
+                    },
+                    node_id: None,
+                    details: String::new(),
+                });
+            }
+            return;
+        }
+
+        // 最後の 1 slot は「以降 suppress した」ことを示す synthetic entry
+        // 専用に予約する (silent drop だと cap 件とそれを大幅に超える件数を
+        // consumer が区別できない)。よって実際の parse error は cap-1 件まで
+        // 記録する。
+        let last_real_slot = cap - 1;
+        match warnings.len().cmp(&last_real_slot) {
             std::cmp::Ordering::Less => {
                 warnings.push(RenderWarning {
                     kind: WarningKind::HtmlParseError {
@@ -168,7 +195,7 @@ impl TreeSink for RaikiriTreeSink {
                 warnings.push(RenderWarning {
                     kind: WarningKind::HtmlParseError {
                         message: format!(
-                            "further parse errors suppressed after reaching the {MAX_HTML_PARSE_WARNINGS}-warning cap"
+                            "further parse errors suppressed after reaching the {cap}-warning cap"
                         ),
                     },
                     node_id: None,

@@ -199,9 +199,12 @@ mod tests {
         assert_eq!(d.max_target_slots, Some(100_000));
         assert_eq!(d.max_layout_buffer_entries, Some(10_000));
         assert_eq!(d.max_aggregate_bytes, Some(1_073_741_824));
-        // Sprint 10 Option A: d9y.3 stopgap の hard-coded 32 MiB を継承
-        // (bd raikiri-spike-4kw)。
+        // 元は raikiri-html の parse-time input read に対する hard-coded cap
+        // だった 32 MiB を継承。
         assert_eq!(d.max_input_bytes, Some(32 * 1024 * 1024));
+        // 元は raikiri-html の RaikiriTreeSink 内 hard-coded const だった値
+        // (1024) を継承。
+        assert_eq!(d.max_parse_warnings, Some(1024));
     }
 
     // ── Config builders ─────────────────────────────────────────
@@ -232,6 +235,27 @@ mod tests {
             cfg.max_target_slots,
             RenderLimits::default().max_target_slots
         );
+    }
+
+    #[test]
+    fn render_limits_max_parse_warnings_builder_roundtrip() {
+        let via_builder = RenderLimits::builder().max_parse_warnings(Some(16)).build();
+        assert_eq!(via_builder.max_parse_warnings, Some(16));
+
+        // Direct field construct pattern (`with_*` ergonomic を持たない
+        // sibling convention に揃えている)。同一 crate 内なので struct update
+        // syntax が使える (external consumer 視点の直接代入 pin は
+        // `external_consumer_can_mutate_pub_fields_via_default_shorthand` 側
+        // が担当)。
+        let via_field = RenderLimits {
+            max_parse_warnings: Some(16),
+            ..RenderLimits::default()
+        };
+        assert_eq!(via_field.max_parse_warnings, Some(16));
+
+        // None も builder 経由で設定可能 (cap 無効化)。
+        let unbounded = RenderLimits::builder().max_parse_warnings(None).build();
+        assert_eq!(unbounded.max_parse_warnings, None);
     }
 
     #[test]

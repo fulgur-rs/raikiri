@@ -57,6 +57,30 @@ pub struct RenderLimits {
     /// raw byte stream を pin する (parse 開始前に enforce できるので DoS
     /// 対策として直接的、fail-closed 早期返却)。
     pub max_input_bytes: Option<u64>,
+    /// HTML parse 中に html5ever が報告する非致命 parse error を warning
+    /// として記録する件数の上限。超過すると、以降の parse error は記録され
+    /// なくなる代わりに「以降 suppress した」ことを示す synthetic な 1 件の
+    /// warning が追加される (silent drop だと consumer が「warning が 1 件も
+    /// 無かった」のか「cap に達して drop された」のか区別できないため)。
+    ///
+    /// Default は `Some(1024)`。
+    ///
+    /// **Security**: HTML5 のエラー回復アルゴリズムは、malformed な入力の
+    /// 小さな token 1 個あたり概ね 1 個の parse error を報告しうる。cap が
+    /// 無いと、attacker が任意個数の owned `String` を持つ warning を積ませて
+    /// memory を線形に消費させられる (parse error 自体は tree construction を
+    /// 止めない non-fatal な事象なので、上限が無いと入力サイズにほぼ比例した
+    /// allocation が発生する)。`None` はこの cap を無効化するため、明示的な
+    /// opt-out としてのみ使用し、無効化する場合は upstream で別途 bound を
+    /// 設ける前提であること。
+    ///
+    /// **Semantic**: [`max_input_bytes`](Self::max_input_bytes) が生の入力
+    /// byte 数 (線形) を pin するのに対し、`max_parse_warnings` は同じ入力
+    /// サイズでも malformed token の密度によって非線形に増幅しうる出力側の
+    /// warning 件数を pin する — 短い入力でも極端に高密度な malformed token
+    /// 列を送り込めば大量の warning を生成できるため、入力 byte cap だけでは
+    /// この増幅を防げない。
+    pub max_parse_warnings: Option<usize>,
 }
 
 impl Default for RenderLimits {
@@ -67,9 +91,15 @@ impl Default for RenderLimits {
             max_target_slots: Some(100_000),
             max_layout_buffer_entries: Some(10_000),
             max_aggregate_bytes: Some(1_073_741_824), // 1 GB
-            // 32 MiB — bd raikiri-spike-d9y.3 stopgap の hard-coded 値を継承
-            // (Option A promotion 完了時に behavior 不変)。
+            // 32 MiB — 元は raikiri-html の parse-time input read に対する
+            // hard-coded cap だった値を継承 (behavior 不変)。
             max_input_bytes: Some(32 * 1024 * 1024),
+            // 1024 — 元は raikiri-html の RaikiriTreeSink 内 hard-coded const
+            // だった値を継承 (behavior 不変)。html5ever のエラー回復アルゴリズム
+            // は malformed input の 1 token あたり概ね 1 個の parse error を
+            // 報告しうるため、cap が無いと memory 消費が入力サイズにほぼ比例
+            // して増加する (field doc の Security note 参照)。
+            max_parse_warnings: Some(1024),
         }
     }
 }
@@ -95,6 +125,7 @@ pub struct RenderLimitsBuilder {
     max_layout_buffer_entries: Option<Option<u32>>,
     max_aggregate_bytes: Option<Option<u64>>,
     max_input_bytes: Option<Option<u64>>,
+    max_parse_warnings: Option<Option<usize>>,
 }
 
 impl RenderLimitsBuilder {
@@ -128,9 +159,15 @@ impl RenderLimitsBuilder {
         self
     }
 
-    /// `max_input_bytes` を設定 (`None` = cap 無効化、bd raikiri-spike-4kw)。
+    /// `max_input_bytes` を設定 (`None` = cap 無効化)。
     pub fn max_input_bytes(mut self, v: Option<u64>) -> Self {
         self.max_input_bytes = Some(v);
+        self
+    }
+
+    /// `max_parse_warnings` を設定 (`None` = cap 無効化)。
+    pub fn max_parse_warnings(mut self, v: Option<usize>) -> Self {
+        self.max_parse_warnings = Some(v);
         self
     }
 
@@ -146,6 +183,7 @@ impl RenderLimitsBuilder {
                 .unwrap_or(d.max_layout_buffer_entries),
             max_aggregate_bytes: self.max_aggregate_bytes.unwrap_or(d.max_aggregate_bytes),
             max_input_bytes: self.max_input_bytes.unwrap_or(d.max_input_bytes),
+            max_parse_warnings: self.max_parse_warnings.unwrap_or(d.max_parse_warnings),
         }
     }
 }

@@ -573,12 +573,13 @@ mod tests {
 
     #[test]
     fn parse_caps_html_parse_warnings_and_does_not_grow_past_cap() {
-        // Codex Security finding raikiri-spike-g9vr: html5ever は malformed
-        // input の 1 token あたり概ね 1 parse_error を報告するため、cap が
-        // 無いと attacker-controlled 個数の RenderWarning (owned String 持ち)
-        // が積み上がる (DoS)。100,000 個の `</x>` で 100,001 warnings /
-        // RSS 線形増加を実測済み。
+        // html5ever は malformed input の 1 token あたり概ね 1 parse_error を
+        // 報告するため、cap が無いと attacker-controlled 個数の RenderWarning
+        // (owned String 持ち) が積み上がる (DoS)。
         let opts = empty_options();
+        let default_cap = raikiri_traits::RenderLimits::default()
+            .max_parse_warnings
+            .expect("default max_parse_warnings must be Some");
 
         let small = b"</x>".repeat(2_000);
         let small_count = parse(small.as_slice(), &opts)
@@ -587,7 +588,7 @@ mod tests {
             .len();
 
         assert!(
-            small_count <= crate::sink::MAX_HTML_PARSE_WARNINGS,
+            small_count <= default_cap,
             "parse warnings must be capped, got {small_count}"
         );
 
@@ -602,6 +603,141 @@ mod tests {
         assert_eq!(
             small_count, large_count,
             "warning count must plateau at the cap regardless of input size"
+        );
+    }
+
+    #[test]
+    fn raikiri_tree_sink_new_consults_custom_max_parse_warnings_cap() {
+        // `RaikiriTreeSink::new` の parameter が `parse()` の default 経路を
+        // 経由せず直接 `parse_error` の cap として使われることを検証する。
+        //
+        // cap=5 → last_real_slot=4 なので real warning は 4 件のみ記録され、
+        // 5 件目は「以降 suppress した」ことを示す synthetic entry に置き換わる
+        // (reserved-last-slot 契約、`RaikiriTreeSink::parse_error` doc 参照)。
+        // 50 個の `</x>` は raw parse error 数がこの cap を大きく上回る入力
+        // (`parse_caps_html_parse_warnings_and_does_not_grow_past_cap` と同じ
+        // input shape で、cap=1024 でも頭打ちになることが確認済み)。
+        use raikiri_traits::WarningKind;
+
+        let opts = empty_options();
+        let malformed = b"</x>".repeat(50);
+
+        let sink = RaikiriTreeSink::new(Some(5));
+        let uncascaded =
+            parse_with_sink(malformed.as_slice(), sink, &opts).expect("parse recovers");
+        assert_eq!(
+            uncascaded.warnings.len(),
+            5,
+            "custom cap=5 must yield exactly 4 real + 1 synthetic warning"
+        );
+        match &uncascaded.warnings.last().expect("cap > 0").kind {
+            WarningKind::HtmlParseError { message } => {
+                assert!(
+                    message.contains("5-warning cap"),
+                    "last entry must be the synthetic suppression notice naming the runtime cap (5), got: {message:?}"
+                );
+            }
+            other => panic!("expected HtmlParseError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn raikiri_tree_sink_new_zero_cap_records_one_synthetic_suppression_entry() {
+        // cap=0 has no slot for a real warning, but must still record exactly
+        // one synthetic suppression entry on the first parse_error call
+        // (rather than silently recording nothing), so that "0 parse errors
+        // occurred" and "N>=1 parse errors occurred but all were suppressed"
+        // remain distinguishable -- consistent with cap>0's
+        // trip-and-record-suppression semantics.
+        use raikiri_traits::WarningKind;
+
+        let opts = empty_options();
+        let malformed = b"</x>".repeat(50);
+
+        let sink = RaikiriTreeSink::new(Some(0));
+        let uncascaded =
+            parse_with_sink(malformed.as_slice(), sink, &opts).expect("parse recovers");
+        assert_eq!(
+            uncascaded.warnings.len(),
+            1,
+            "cap=0 must record exactly one synthetic suppression entry, got {}",
+            uncascaded.warnings.len()
+        );
+        match &uncascaded.warnings[0].kind {
+            WarningKind::HtmlParseError { message } => {
+                assert!(
+                    message.contains("suppressed"),
+                    "expected a suppression message, got {message:?}"
+                );
+            }
+            other => panic!("expected HtmlParseError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn raikiri_tree_sink_new_zero_cap_records_nothing_when_no_parse_errors_occur() {
+        // Companion to the above: cap=0 with a well-formed document that
+        // never calls parse_error must still record zero warnings -- the
+        // synthetic entry is only pushed in response to an actual
+        // suppressed parse error, not unconditionally at cap=0.
+        let opts = empty_options();
+        // `<!DOCTYPE html>` is required here -- a fragment lacking it
+        // already triggers an unrelated html5ever "Unexpected token"
+        // HtmlParseError (spec-conformant per HTML5 §13.2.6.4.1 initial
+        // insertion mode) regardless of this test's own concern, which
+        // would make the assertion below fail for a reason unrelated to
+        // cap=0's suppression behavior (see the NB comment elsewhere in
+        // this file documenting the same fixture-shape pitfall).
+        let well_formed = b"<!DOCTYPE html><html><head></head><body><p>ok</p></body></html>";
+        let sink = RaikiriTreeSink::new(Some(0));
+        let uncascaded = parse_with_sink(well_formed.as_slice(), sink, &opts).expect("parse ok");
+        assert!(
+            uncascaded.warnings.is_empty(),
+            "cap=0 with no parse errors must record zero warnings, got {}",
+            uncascaded.warnings.len()
+        );
+    }
+
+    #[test]
+    fn raikiri_tree_sink_new_cap_of_one_yields_only_the_synthetic_entry() {
+        // cap=1 は last_real_slot=0 なので real warning 用の slot が無く、
+        // 最初の parse_error 呼び出しで即座に synthetic entry が積まれる境界値。
+        use raikiri_traits::WarningKind;
+
+        let opts = empty_options();
+        let malformed = b"</x>".repeat(50);
+
+        let sink = RaikiriTreeSink::new(Some(1));
+        let uncascaded =
+            parse_with_sink(malformed.as_slice(), sink, &opts).expect("parse recovers");
+        assert_eq!(
+            uncascaded.warnings.len(),
+            1,
+            "cap=1 must yield exactly 1 warning (the synthetic entry, zero real slots)"
+        );
+        match &uncascaded.warnings[0].kind {
+            WarningKind::HtmlParseError { message } => {
+                assert!(
+                    message.contains("1-warning cap"),
+                    "the single entry must be the synthetic suppression notice, got: {message:?}"
+                );
+            }
+            other => panic!("expected HtmlParseError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn raikiri_tree_sink_new_none_disables_warning_cap() {
+        let opts = empty_options();
+        let malformed = b"</x>".repeat(2_000);
+
+        let sink = RaikiriTreeSink::new(None);
+        let uncascaded =
+            parse_with_sink(malformed.as_slice(), sink, &opts).expect("parse recovers");
+        assert!(
+            uncascaded.warnings.len() > 1024,
+            "None must disable the warning cap entirely, got {}",
+            uncascaded.warnings.len()
         );
     }
 
@@ -734,7 +870,7 @@ mod tests {
         let html = b"<html><body><p>Hi</p></body></html>";
         let opts = empty_options();
         let sink = TransparentSink {
-            inner: RaikiriTreeSink::new(),
+            inner: RaikiriTreeSink::default(),
             observed_elements: std::cell::Cell::new(0),
         };
         // observed_elements is inside sink and moves into parse_with_sink.
@@ -1638,7 +1774,7 @@ mod tests {
         use html5ever::tendril::StrTendril;
         use markup5ever::{LocalName, Namespace};
 
-        let sink = RaikiriTreeSink::new();
+        let sink = RaikiriTreeSink::default();
         let name = QualName::new(
             None,
             Namespace::from("http://www.w3.org/1999/xhtml"),
@@ -1684,7 +1820,7 @@ mod tests {
         use html5ever::tendril::StrTendril;
         use markup5ever::{LocalName, Namespace};
 
-        let sink = RaikiriTreeSink::new();
+        let sink = RaikiriTreeSink::default();
         let name = QualName::new(None, Namespace::from(ns_uri), LocalName::from(local));
         let attrs = encoding
             .map(|v| {
@@ -1805,7 +1941,7 @@ mod tests {
         // Case A: first=text/html (match), second=application/xml (non-match)
         // → first wins → integration point (true)
         {
-            let sink = RaikiriTreeSink::new();
+            let sink = RaikiriTreeSink::default();
             let name = QualName::new(
                 None,
                 Namespace::from("http://www.w3.org/1998/Math/MathML"),
@@ -1825,7 +1961,7 @@ mod tests {
         // Case B: first=application/xml (non-match), second=text/html (match)
         // → first wins → NOT integration point (false)
         {
-            let sink = RaikiriTreeSink::new();
+            let sink = RaikiriTreeSink::default();
             let name = QualName::new(
                 None,
                 Namespace::from("http://www.w3.org/1998/Math/MathML"),

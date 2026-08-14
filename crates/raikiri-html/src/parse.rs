@@ -38,7 +38,7 @@ pub fn parse<R: Read>(
     input: R,
     options: &ParseOptions<'_>,
 ) -> Result<UncascadedDocument, ParseError> {
-    parse_with_sink(input, RaikiriTreeSink::new(), options)
+    parse_with_sink(input, RaikiriTreeSink::default(), options)
 }
 
 /// Consumer-supplied sink 経由で parse する。Consumer wrapper は

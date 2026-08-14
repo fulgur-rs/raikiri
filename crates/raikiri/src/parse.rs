@@ -29,7 +29,7 @@
 
 use std::io::Read;
 
-use raikiri_html::ParseOptions;
+use raikiri_html::{ParseOptions, RaikiriTreeSink, parse_with_sink};
 use raikiri_traits::{LimitKind, ParseError, RenderError, RenderLimits};
 
 use crate::{HtmlDocument, build_cascaded};
@@ -77,6 +77,12 @@ pub fn parse_html<R: Read>(
 ///   し、`cap` 超過なら [`RenderError::LimitExceeded`] で早期返却
 /// * `None` の場合、input を無制限に read する (Consumer が明示的に cap を
 ///   無効化した場合のみ、fail-closed default は 32 MiB)
+///
+/// [`RenderLimits::max_parse_warnings`] も consult される: `raikiri_html`
+/// の `RaikiriTreeSink` に直接渡され、html5ever が報告する非致命 parse
+/// error を warning として記録する件数を cap する (詳細は field doc 参照、
+/// input byte cap と異なりこちらは早期 return しない — 超過分は黙って
+/// drop される代わりに synthetic な 1 件の warning が追加される)。
 ///
 /// その他の `limits.*` field (`max_dom_nodes` / `max_aggregate_bytes` / etc.)
 /// は現時点で `parse_html_with_limits` 内では **consult されない** — これらは
@@ -136,11 +142,14 @@ pub fn parse_html_with_limits<R: Read>(
         }
     }
 
-    // Under cap: 既存 raikiri_html::parse に materialized slice で渡す。
-    // raikiri_html::parse は内部で `read_to_end` するため、`&[u8]` を渡すと
-    // 1 回の memcpy で済む (bytes 二重 alloc は避けられないが、cap 分の
-    // memory が上限)。
-    let uncascaded = raikiri_html::parse(buf.as_slice(), options).map_err(RenderError::Parse)?;
+    // Under cap: materialized slice を raikiri_html::parse_with_sink に渡す
+    // (raikiri_html::parse の thin wrapper 経路だと sink が
+    // `RaikiriTreeSink::default()` 固定になり `limits.max_parse_warnings` を
+    // consult できないため、ここでは sink を明示的に construct する)。
+    // parse_with_sink は内部で `read_to_end` するため、`&[u8]` を渡すと 1 回の
+    // memcpy で済む (bytes 二重 alloc は避けられないが、cap 分の memory が上限)。
+    let sink = RaikiriTreeSink::new(limits.max_parse_warnings);
+    let uncascaded = parse_with_sink(buf.as_slice(), sink, options).map_err(RenderError::Parse)?;
     let cascade = build_cascaded(&uncascaded);
     Ok(HtmlDocument {
         uncascaded,
