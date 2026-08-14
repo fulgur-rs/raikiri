@@ -18,6 +18,7 @@ url            = { workspace = true }
 
 [dev-dependencies]
 raikiri-style  = { workspace = true }
+bytes          = { workspace = true }
 
 [lints]
 workspace = true

@@ -1763,6 +1763,7 @@ dependencies = [
 name = "raikiri-html"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "html5ever",
  "markup5ever",
  "raikiri-dom",

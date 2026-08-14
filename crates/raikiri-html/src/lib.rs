@@ -91,18 +91,460 @@ mod tests {
     }
 
     #[test]
-    fn parse_ignores_link_stylesheet_in_m1_scope() {
-        // M1: external <link rel="stylesheet"> は fetch せず stylesheet_sources
-        // にも含めない。M2 network integration で `StylesheetSource::External`
-        // に昇格予定。
+    fn parse_skips_link_stylesheet_when_no_network_provider() {
+        // raikiri-spike-5z86.6: 外部 <link rel="stylesheet"> の fetch は
+        // `ParseOptions::network` が `Some` の時のみ行われる opt-in 機能。
+        // `network: None` (empty_options()) の場合は href の解決すら試みず、
+        // stylesheet_sources は空のまま — Consumer が network capability を
+        // 渡さない既存 caller の挙動は不変。
         let html =
             br#"<html><head><link rel="stylesheet" href="foo.css"></head><body>x</body></html>"#;
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        // cov:ignore: assert! message args only evaluate when the condition
+        // is false; this assertion passes in every run.
         assert!(
             uncascaded.stylesheet_sources.is_empty(),
-            "external link stylesheets should be ignored in M1 scope"
+            "external link stylesheets must not be fetched without a NetworkProvider"
         );
+        // NB: doesn't assert `warnings.is_empty()` — this minimal fixture (no
+        // `<!DOCTYPE html>`) already triggers an unrelated html5ever
+        // `HtmlParseError` ("Unexpected token", spec-conformant per HTML5
+        // §13.2.6.4.1 initial insertion mode) regardless of the `<link>`
+        // element. The assertion below targets only what raikiri-spike-5z86.6
+        // could plausibly add: no fetch-related warning without a provider.
+        // cov:ignore: assert! message args only evaluate when the condition
+        // is false; this assertion passes in every run.
+        assert!(
+            !uncascaded.warnings.iter().any(|w| matches!(
+                &w.kind,
+                raikiri_traits::WarningKind::NetworkFallback { .. }
+                    | raikiri_traits::WarningKind::PolicyWarning { .. }
+            )),
+            "no NetworkProvider means no fetch attempt, so no fetch-related warning either, got: {:?}",
+            uncascaded.warnings
+        );
+    }
+
+    /// raikiri-spike-5z86.6: `<link rel="stylesheet">` fetch → CSS text →
+    /// `UncascadedDocument.stylesheet_sources` の wiring を、mock
+    /// `NetworkProvider` を使って end-to-end で検証する (実 CSS parsing /
+    /// cascade 統合は raikiri-style / raikiri umbrella crate 側、ここでは
+    /// raikiri-html の責務である「検出 → fetch → doc.stylesheet_sources
+    /// への統合」までを見る)。
+    mod external_link_stylesheet_fetch_tests {
+        use super::*;
+        use raikiri_traits::{
+            FetchedResource, NetworkError, NetworkProvider, PolicyViolation, Request, ResourceKind,
+            ViolationType, WarningKind,
+        };
+
+        /// `NetworkProvider` that echoes the resolved request URL back as
+        /// the CSS body comment (`/* <url> */`). Doubles as both a
+        /// content-producer (fetch succeeded) and an assertion probe (which
+        /// URL raikiri-html actually resolved and requested) without extra
+        /// interior-mutability bookkeeping.
+        struct EchoUrlProvider;
+
+        impl NetworkProvider for EchoUrlProvider {
+            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+                Ok(FetchedResource {
+                    bytes: bytes::Bytes::from(format!("/* {} */", request.url).into_bytes()),
+                    content_type: Some("text/css".to_string()),
+                    final_url: request.url,
+                    encoding: None,
+                })
+            }
+        }
+
+        /// `NetworkProvider` that returns a successful, empty-body response
+        /// (verifies the `extract_inline_stylesheets`-style empty-body
+        /// guard: an empty fetched stylesheet must not be pushed).
+        struct EmptyBodyProvider;
+
+        impl NetworkProvider for EmptyBodyProvider {
+            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+                Ok(FetchedResource {
+                    bytes: bytes::Bytes::new(),
+                    content_type: Some("text/css".to_string()),
+                    final_url: request.url,
+                    encoding: None,
+                })
+            }
+        }
+
+        /// `NetworkProvider` whose `fetch` always fails with a caller-chosen
+        /// error (constructed fresh per call since `NetworkError` isn't
+        /// `Clone`).
+        struct AlwaysErrorProvider(fn() -> NetworkError);
+
+        impl NetworkProvider for AlwaysErrorProvider {
+            fn fetch(&self, _request: Request) -> Result<FetchedResource, NetworkError> {
+                Err((self.0)())
+            }
+        }
+
+        /// `NetworkProvider` whose `fetch` panics if invoked — used to
+        /// assert a `<link>` was correctly *not* recognized as an external
+        /// stylesheet reference (rel-token / type-attribute / href-missing
+        /// gating), i.e. fetch must not even be attempted.
+        struct PanicIfCalledProvider;
+
+        impl NetworkProvider for PanicIfCalledProvider {
+            // cov:ignore: this fn's body must never execute — that is
+            // exactly what every test using this mock asserts. See the
+            // type's doc comment above.
+            fn fetch(&self, _request: Request) -> Result<FetchedResource, NetworkError> {
+                panic!("fetch must not be called for a <link> that is not a stylesheet reference");
+            }
+        }
+
+        #[test]
+        fn parse_fetches_external_stylesheet_with_absolute_href() {
+            let provider = EchoUrlProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="stylesheet" href="https://example.test/a.css"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://example.test/a.css */")]
+            );
+        }
+
+        #[test]
+        fn parse_skips_comment_node_and_still_finds_link_stylesheet_after_it() {
+            // Exercises collect_external_stylesheet_hrefs's `is_in_document()`
+            // gate for real: unlike <template> contents (routed through a
+            // detached fragment root that a plain child_ids() DFS never
+            // reaches at all, per raikiri-dom::Document::mark_in_document_flags
+            // doc comment), a <!-- comment --> node *is* reachable via normal
+            // child_ids() traversal from <head> and still gets its
+            // IS_IN_DOCUMENT bit cleared (Comment/ProcessingInstruction kind
+            // gate, raikiri-spike-84y) — so this is the one case that
+            // genuinely walks into the `if !node.is_in_document() { continue }`
+            // branch during a real parse.
+            let provider = EchoUrlProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head>
+                           <!-- a comment between head children -->
+                           <link rel="stylesheet" href="https://example.test/a.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            // cov:ignore: assert_eq! message args only evaluate when the
+            // condition is false; this assertion passes in every run.
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://example.test/a.css */")],
+                "the comment must not prevent the <link> after it from being fetched"
+            );
+        }
+
+        #[test]
+        fn parse_resolves_relative_href_against_base_url() {
+            let provider = EchoUrlProvider;
+            let base =
+                url::Url::parse("https://example.test/dir/page.html").expect("valid base url");
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(base),
+            };
+            let html =
+                br#"<html><head><link rel="stylesheet" href="style.css"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://example.test/dir/style.css */")]
+            );
+        }
+
+        #[test]
+        fn parse_skips_relative_href_without_base_url() {
+            let provider = PanicIfCalledProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html =
+                br#"<html><head><link rel="stylesheet" href="style.css"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            // cov:ignore: assert! message args only evaluate when the
+            // condition is false; this assertion passes in every run.
+            assert!(
+                uncascaded.stylesheet_sources.is_empty(),
+                "relative href without base_url is unresolvable and must not be fetched"
+            );
+        }
+
+        #[test]
+        fn parse_preserves_document_order_across_multiple_link_stylesheets() {
+            let provider = EchoUrlProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head>
+                           <link rel="stylesheet" href="https://example.test/a.css">
+                           <link rel="stylesheet" href="https://example.test/b.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![
+                    String::from("/* https://example.test/a.css */"),
+                    String::from("/* https://example.test/b.css */"),
+                ]
+            );
+        }
+
+        #[test]
+        fn parse_appends_external_stylesheets_after_inline_style_sources() {
+            // 既知の scope 制限 (parse.rs::fetch_external_stylesheets doc
+            // 参照): 同一 <head> 内で <style> と <link> が混在する場合、
+            // <link> は常に全ての <style> の後ろに追記される (真の
+            // document-order interleave ではない)。
+            let provider = EchoUrlProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head>
+                           <link rel="stylesheet" href="https://example.test/a.css">
+                           <style>p{color:red}</style>
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            // cov:ignore: assert_eq! message args only evaluate when the
+            // condition is false; this assertion passes in every run.
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![
+                    String::from("p{color:red}"),
+                    String::from("/* https://example.test/a.css */"),
+                ],
+                "external stylesheet is appended after inline <style> sources (known scope limitation)"
+            );
+        }
+
+        #[test]
+        fn parse_skips_link_stylesheet_inside_template_element() {
+            // <template> contents are inert per spec (mirrors
+            // `parse_skips_style_inside_template_element` for <style>) —
+            // a <link rel=stylesheet> nested inside <template> in <head>
+            // must not be fetched at all.
+            let provider = PanicIfCalledProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head>
+                           <template><link rel="stylesheet" href="https://example.test/a.css"></template>
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert!(uncascaded.stylesheet_sources.is_empty());
+        }
+
+        #[test]
+        fn parse_skips_non_stylesheet_rel_without_fetching() {
+            let provider = PanicIfCalledProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="icon" href="https://example.test/favicon.ico"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert!(uncascaded.stylesheet_sources.is_empty());
+        }
+
+        #[test]
+        fn parse_skips_non_css_type_attribute_without_fetching() {
+            let provider = PanicIfCalledProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="stylesheet" type="application/rss+xml" href="https://example.test/feed"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert!(uncascaded.stylesheet_sources.is_empty());
+        }
+
+        #[test]
+        fn parse_ignores_href_missing_link_stylesheet() {
+            let provider = PanicIfCalledProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="stylesheet"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert!(uncascaded.stylesheet_sources.is_empty());
+        }
+
+        #[test]
+        fn parse_ignores_whitespace_only_href_link_stylesheet() {
+            // `href`'s HTML attribute type is "valid non-empty URL
+            // potentially surrounded by spaces" — a value that's only
+            // spaces is not a valid non-empty URL and must be skipped, not
+            // resolved (`Url::join("   ")` on a base URL resolves to that
+            // *base URL itself*, which would otherwise cause raikiri to
+            // fetch the page's own URL and feed the resulting HTML to the
+            // CSS parser — reviewer-spec finding, bd raikiri-spike-5z86.6).
+            let provider = PanicIfCalledProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(
+                    url::Url::parse("https://example.test/page.html").expect("valid base url"),
+                ),
+            };
+            let html =
+                br#"<html><head><link rel="stylesheet" href="   "></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert!(uncascaded.stylesheet_sources.is_empty());
+        }
+
+        #[test]
+        fn parse_trims_surrounding_whitespace_from_a_real_href() {
+            // The trim in the fix above must not reject a legitimate href
+            // that merely has incidental surrounding whitespace (a common
+            // authoring artifact) — only whitespace-*only* values are
+            // skipped.
+            let provider = EchoUrlProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="stylesheet" href="  https://example.test/a.css  "></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://example.test/a.css */")]
+            );
+        }
+
+        #[test]
+        fn parse_ignores_empty_fetched_stylesheet_body() {
+            let provider = EmptyBodyProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="stylesheet" href="https://example.test/empty.css"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            // cov:ignore: assert! message args only evaluate when the
+            // condition is false; this assertion passes in every run.
+            assert!(
+                uncascaded.stylesheet_sources.is_empty(),
+                "empty-body fetch response must not push an empty stylesheet source"
+            );
+            // Empty body is a *successful* fetch (Ok(FetchedResource { bytes:
+            // empty, .. })), not a failure — no fetch-related warning either.
+            // (Doesn't assert overall `warnings.is_empty()`: this minimal
+            // fixture, like the sibling test above, independently triggers an
+            // unrelated html5ever "Unexpected token" HtmlParseError from
+            // missing `<!DOCTYPE html>`.)
+            // cov:ignore: assert! message args only evaluate when the
+            // condition is false; this assertion passes in every run.
+            assert!(
+                !uncascaded.warnings.iter().any(|w| matches!(
+                    &w.kind,
+                    WarningKind::NetworkFallback { .. } | WarningKind::PolicyWarning { .. }
+                )),
+                "empty body is a successful fetch, not a failure: got {:?}",
+                uncascaded.warnings
+            );
+        }
+
+        #[test]
+        fn parse_records_network_fallback_warning_on_fetch_failure() {
+            let provider = AlwaysErrorProvider(|| NetworkError::Http(404));
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="stylesheet" href="https://example.test/missing.css"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            // cov:ignore: assert! message args only evaluate when the
+            // condition is false; this assertion passes in every run.
+            assert!(
+                uncascaded.stylesheet_sources.is_empty(),
+                "failed fetch must not contribute a stylesheet source"
+            );
+            let warning = uncascaded
+                .warnings
+                .iter()
+                .find(|w| matches!(&w.kind, WarningKind::NetworkFallback { .. }))
+                .expect("expected a NetworkFallback warning");
+            match &warning.kind {
+                WarningKind::NetworkFallback { url } => {
+                    assert_eq!(url.as_str(), "https://example.test/missing.css");
+                }
+                // cov:ignore: defensive "unexpected variant" arm, unreachable
+                // while production code matches this test's expectation.
+                other => panic!("expected NetworkFallback, got {other:?}"),
+            }
+            // cov:ignore: assert! message args only evaluate when the
+            // condition is false; this assertion passes in every run.
+            assert!(
+                warning.details.contains("404"),
+                "details should carry the underlying NetworkError message, got: {}",
+                warning.details
+            );
+        }
+
+        #[test]
+        fn parse_records_policy_warning_on_policy_violation() {
+            let provider = AlwaysErrorProvider(|| {
+                NetworkError::PolicyViolation(PolicyViolation {
+                    kind: ResourceKind::ExternalStylesheet,
+                    url: url::Url::parse("https://blocked.test/a.css").expect("valid url"),
+                    violation_type: ViolationType::HostNotAllowed,
+                    details: "host not on allow-list".to_string(),
+                })
+            });
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="stylesheet" href="https://blocked.test/a.css"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert!(uncascaded.stylesheet_sources.is_empty());
+            let warning = uncascaded
+                .warnings
+                .iter()
+                .find(|w| matches!(&w.kind, WarningKind::PolicyWarning { .. }))
+                .expect("expected a PolicyWarning warning");
+            match &warning.kind {
+                WarningKind::PolicyWarning { violation } => {
+                    assert_eq!(violation.kind, ResourceKind::ExternalStylesheet);
+                    assert!(matches!(
+                        violation.violation_type,
+                        ViolationType::HostNotAllowed
+                    ));
+                }
+                // cov:ignore: defensive "unexpected variant" arm, unreachable
+                // while production code matches this test's expectation.
+                other => panic!("expected PolicyWarning, got {other:?}"),
+            }
+        }
     }
 
     #[test]
