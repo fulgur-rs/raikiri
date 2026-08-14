@@ -122,6 +122,14 @@ FAIL=0
 # mechanically; the remaining "path doesn't encode content" cases are not
 # mechanically enumerable and are left to the caller per §8.1.4's own
 # "判定手法の適用限界" clause — this script only automates condition (1)).
+#
+# The pattern below also has to catch files that are not source code by
+# extension but do get compiled into the binary as a literal string or byte
+# array (e.g. the `.css` case: a stylesheet pulled in via Rust's
+# include_str!). A file like that is a real build input even though its own
+# extension gives no hint of that. If a future change embeds another asset
+# type the same way, extend the pattern for that extension too rather than
+# assuming a non-`.rs` extension is safe to skip.
 echo "-- §8.1.4 applicability test --"
 APPLICABILITY_DIFF="$(git diff --no-renames --name-only "$BASE_REF"...HEAD)"
 echo "git diff --no-renames --name-only $BASE_REF...HEAD"
@@ -131,7 +139,7 @@ else
   echo "$APPLICABILITY_DIFF"
 fi
 
-if echo "$APPLICABILITY_DIFF" | grep -qE '\.rs$|(^|/)Cargo\.(toml|lock)$|(^|/)expectations/.*\.txt$'; then
+if echo "$APPLICABILITY_DIFF" | grep -qE '\.rs$|\.css$|(^|/)Cargo\.(toml|lock)$|(^|/)expectations/.*\.txt$'; then
   APPLICABLE=1
   echo "=> match found, §8.1 applies"
 else
