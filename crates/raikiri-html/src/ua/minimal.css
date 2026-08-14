@@ -162,3 +162,41 @@ li { display: block; }
  * first), same "implement the fallback, track the gap" precedent as the li
  * display:list-item fallback above (bd raikiri-spike-uhzy). */
 hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
+
+/* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.5) specifies,
+ * for hyperlink elements:
+ *   a:link { color: #0000EE; }
+ *   a:visited { color: #551A8B; }
+ *   a:link:active, a:visited:active { color: #FF0000; }
+ *   a:link, a:visited { text-decoration: underline; cursor: pointer; }
+ * (verbatim confirmed 2026-08-14 WebFetch, bd raikiri-spike-5z86.3).
+ *
+ * `:link` / `:visited` are an explicit Non-Goal (audit Category M9,
+ * interactive selector — visited-link history is not something a static
+ * cleanroom style engine can observe). This rule applies the unvisited
+ * `#0000EE` color to `a` unconditionally instead of gating it on `:link`,
+ * an accepted simplification (bd raikiri-spike-5z86.3 issue body's
+ * "Non-Goal境界の note" — does not distinguish visited from unvisited, but
+ * does not contradict the Non-Goal boundary either). `:active` (`#FF0000`)
+ * is not reproducible without `:active` support and is out of scope here
+ * for the same reason. `cursor: pointer` is out of scope — raikiri's
+ * print-first scope has no interactive cursor concept (same carve-out
+ * this file's header commentary already applies elsewhere).
+ *
+ * `:link` itself additionally requires an `href` attribute — HTML LS
+ * "The :link and :visited pseudo-classes" §selector-link
+ * <https://html.spec.whatwg.org/multipage/semantics-other.html#selector-link>:
+ * "All a elements that have an href attribute ... must match ... :link".
+ * A bare `<a name="x">` / `<a id="x">` fragment-target anchor with no
+ * `href` is not a link at all per spec and must stay at CSS-initial (no
+ * color/underline). Gated here via the `[href]` attribute selector
+ * (`Component::AttributeInNoNamespaceExists`, already exercised in this
+ * same file by the `dialog[open]` deferral note above).
+ *
+ * Note: `raikiri_dom::ElementRef::attr()` currently filters out empty-
+ * value attributes, so `<a href="">` (an href-having-but-empty link,
+ * still spec-`:link` per the same clause) will not match `[href]` here
+ * until that's fixed — tracked at bd raikiri-spike-kxki (same bug the
+ * `dialog[open]` deferral above cites). Still strictly more correct than
+ * the unconditional `a { ... }` this replaces. */
+a[href] { color: #0000EE; text-decoration: underline; }

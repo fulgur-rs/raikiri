@@ -34,8 +34,9 @@ use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
     CssColor, Direction, DisplayValue, Length, LengthOrAuto, LineHeight, OverflowValue, OverflowXY,
-    Sides, TextAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
-    initial_font_family, resolve_overflow, resolve_text_align_match_parent,
+    Sides, TextAlign, TextDecoration, empty_content_list, empty_counter_entries,
+    empty_string_set_entries, initial_font_family, resolve_overflow,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_line_height,
@@ -59,7 +60,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -185,6 +186,9 @@ pub struct SpecifiedValues {
     /// [`resolve_overflow`] は phase 3 ([`Self::absolutize_with`]) が呼ぶ
     /// (raikiri-spike-cmd3)。
     pub overflow: OverflowXY,
+    /// [`ComputedValues::text_decoration`] の staging。層は computed-equivalent
+    /// (bd raikiri-spike-5z86.3、`TextDecoration` は length を運ばない)。
+    pub text_decoration: TextDecoration,
 }
 
 impl SpecifiedValues {
@@ -236,6 +240,9 @@ impl SpecifiedValues {
             // CSS Overflow 3 §3.1: overflow-x/overflow-y initial は
             // `visible` (raikiri-spike-cmd3)。
             overflow: OverflowXY::both(OverflowValue::Visible),
+            // CSS Text Decoration Module Level 3 §2: text-decoration-line
+            // initial は `none` (bd raikiri-spike-5z86.3)。
+            text_decoration: TextDecoration::None,
         }
     }
 
@@ -307,6 +314,9 @@ impl SpecifiedValues {
             box_sizing: BoxSizing::ContentBox,
             // non-inherited (raikiri-spike-cmd3、CSS Overflow 3 §3.1)。
             overflow: OverflowXY::both(OverflowValue::Visible),
+            // non-inherited (bd raikiri-spike-5z86.3、CSS Text Decoration
+            // Module Level 3 §2 "Inherited: no")。
+            text_decoration: TextDecoration::None,
         }
     }
 
@@ -623,6 +633,9 @@ impl SpecifiedValues {
             // known, mirroring the `border-*-style` -> `border-*-width` gate
             // a few fields up (`resolve_border`). See `resolve_overflow` doc.
             overflow: resolve_overflow(self.overflow),
+            // computed value = specified keyword (`TextDecoration` doc 参照、
+            // length を運ばないため相対解決なし、bd raikiri-spike-5z86.3)。
+            text_decoration: self.text_decoration,
         }
     }
 }
@@ -765,6 +778,7 @@ mod tests {
                 x: OverflowValue::Hidden,
                 y: OverflowValue::Scroll,
             },
+            text_decoration: TextDecoration::Underline,
         }
     }
 
@@ -811,6 +825,9 @@ mod tests {
         // CSS Overflow 3 §3.1 (raikiri-spike-cmd3): overflow-x/overflow-y は
         // non-inherited。
         assert_eq!(child.overflow, initial.overflow);
+        // CSS Text Decoration Module Level 3 §2 (bd raikiri-spike-5z86.3):
+        // text-decoration は non-inherited。
+        assert_eq!(child.text_decoration, initial.text_decoration);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は

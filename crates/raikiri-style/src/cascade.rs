@@ -2852,7 +2852,12 @@ pub(crate) fn resolve_against_inherited(
         // (raikiri-spike-cmd3)
         | PropertyValue::OverflowX(_)
         | PropertyValue::OverflowY(_)
-        | PropertyValue::Overflow(_)) => v,
+        | PropertyValue::Overflow(_)
+        // `text-decoration` carries no length and does not depend on the
+        // inheritance parent (computed value = specified keyword,
+        // `TextDecoration` doc) — nothing for phase 2 to resolve.
+        // (bd raikiri-spike-5z86.3)
+        | PropertyValue::TextDecoration(_)) => v,
     })
 }
 
@@ -3226,6 +3231,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // とその unreachability の compile-time 強制は `Margin` arm の
         // comment 参照。(raikiri-spike-cmd3)
         PropertyValue::Overflow(pair) => target.overflow = pair,
+        // CSS Text Decoration Module Level 3 §2 (bd raikiri-spike-5z86.3)。
+        // non-inherited、cascade winner が specified keyword をそのまま
+        // computed value に反映。`TextDecoration` は Copy、by-value 代入で
+        // 十分 (`BoxSizing` arm と同型)。
+        PropertyValue::TextDecoration(td) => target.text_decoration = td,
     }
 }
 

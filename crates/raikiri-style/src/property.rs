@@ -1850,6 +1850,45 @@ pub enum PositionValue {
     Running(SmolStr),
 }
 
+/// `text-decoration: none | underline` の keyword payload。
+///
+/// CSS Text Decoration Module Level 3 §1 "Text Decoration Lines: the
+/// text-decoration property"
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-property> は
+/// `text-decoration` を `<'text-decoration-line'> || <'text-decoration-style'>
+/// || <'text-decoration-color'>` の shorthand と定める。`text-decoration-line`
+/// 自体の value grammar (同 §2
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>)
+/// は `none | [ underline || overline || line-through || blink ]`、
+/// Initial: `none`、Inherited: **no** (draw 段の伝播規則は別途 prose にあるが、
+/// cascade の inherited/non-inherited 分類には効かない)、Computed value:
+/// specified keyword(s)。
+///
+/// # Scope carving (minimal scope、bd raikiri-spike-5z86.3)
+///
+/// 本 crate は `text-decoration` を `text-decoration-line` /
+/// `-style` / `-color` の 3 longhand に分解しない。`||` (any-order,
+/// each-at-most-once) の combination grammar も実装しない — `none` /
+/// `underline` の 2 keyword のみを受理する単一 property として扱う。これは
+/// HTML LS §phrasing-content-3 の UA default (`a:link, a:visited {
+/// text-decoration: underline; }`) を満たすのに必要十分な最小 scope
+/// (bd raikiri-spike-5z86.3 issue body の Scope 節 item 1)。`overline` /
+/// `line-through` / `blink`、combination grammar、longhand 分解は明示的な
+/// follow-up。
+///
+/// `Default` は derive しない — 37n sibling [`DisplayValue`] / [`Direction`] と
+/// 同じ convention (spec default は初期化側
+/// [`crate::computed::ComputedValues::initial`] が直接指定する)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextDecoration {
+    /// `none` — spec initial value。装飾線なし。
+    None,
+    /// `underline` — テキストの under edge に沿って装飾線を引く
+    /// (`text-decoration-line` の 4 keyword のうち本 crate が受理する 1 つ)。
+    Underline,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -2397,6 +2436,15 @@ pub enum PropertyValue {
     /// — [`Self::Padding`] doc と同じ framing、詳細は同 doc 参照。
     /// (raikiri-spike-cmd3、末尾配置は [`Self::OverflowX`] と同理由)
     Overflow(OverflowXY),
+    /// `text-decoration: none | underline` — **non-inherited**、initial:
+    /// [`TextDecoration::None`] (CSS Text Decoration Module Level 3 §2
+    /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>、
+    /// "Inherited: no")。computed value = specified keyword ([`TextDecoration`]
+    /// doc 参照、length を運ばないため相対解決なし)。
+    /// (bd raikiri-spike-5z86.3、末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    TextDecoration(TextDecoration),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -2528,6 +2576,12 @@ pub enum PropertyKey {
     OverflowX,
     OverflowY,
     Overflow,
+    // text-decoration — bd raikiri-spike-5z86.3 (CSS Text Decoration Module
+    // Level 3 §2、semantics on the matching PropertyValue::TextDecoration
+    // variant; sibling PropertyKey variants carry no per-variant docs per
+    // crate convention). 末尾配置の理由は PropertyValue::TextDecoration の
+    // doc 参照。
+    TextDecoration,
 }
 
 impl PropertyValue {
@@ -2586,6 +2640,7 @@ impl PropertyValue {
             PropertyValue::OverflowX(_) => PropertyKey::OverflowX,
             PropertyValue::OverflowY(_) => PropertyKey::OverflowY,
             PropertyValue::Overflow(_) => PropertyKey::Overflow,
+            PropertyValue::TextDecoration(_) => PropertyKey::TextDecoration,
         }
     }
 }
@@ -2766,6 +2821,11 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // parse_overflow_shorthand (mapped to physical x/y — `OverflowValue`
         // doc's Non-goal note).
         "overflow" => parse_overflow_shorthand(input).map(PropertyValue::Overflow),
+        // CSS Text Decoration Module Level 3 §2 text-decoration-line grammar,
+        // restricted to `none` / `underline` (bd raikiri-spike-5z86.3, minimal
+        // scope — `TextDecoration` doc's "Scope carving" section). initial
+        // `none`, not inherited, computed value = specified keyword.
+        "text-decoration" => parse_text_decoration(input).map(PropertyValue::TextDecoration),
         _ => None,
     }
 }
@@ -4167,6 +4227,34 @@ fn parse_overflow_shorthand(input: &mut Parser<'_, '_>) -> Option<OverflowXY> {
         return Some(OverflowXY::both(v1));
     };
     Some(OverflowXY { x: v1, y: v2 })
+}
+
+/// `text-decoration: <ident>` を parse する (bd raikiri-spike-5z86.3、CSS Text
+/// Decoration Module Level 3 §2
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>)。
+///
+/// Spec `text-decoration-line` value grammar: `none | [ underline || overline
+/// || line-through || blink ]`。ASCII case-insensitive で ident を比較する
+/// (37n sibling [`parse_direction`] / [`parse_overflow_value`] と同 flavor)。
+///
+/// # Scope carving (minimal scope、[`TextDecoration`] doc-comment に詳述)
+///
+/// - **(b) milestone subset**: `overline` / `line-through` / `blink`、および
+///   `||` combination grammar (`text-decoration: underline overline` 等の
+///   複数 keyword 同時指定) は silent drop = `None` — `text-decoration-line`
+///   longhand 分解と合わせて follow-up ([`TextDecoration`] doc 参照)。
+/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical、bd raikiri-spike-rzv3)。
+/// - **(a) spec-invalid**: `none` / `underline` 以外の ident は silent drop
+///   = `None`。
+fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDecoration> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "none" => Some(TextDecoration::None),
+        "underline" => Some(TextDecoration::Underline),
+        _ => None,
+    }
 }
 
 /// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
@@ -8310,6 +8398,81 @@ mod tests {
                 y: OverflowValue::Scroll,
             }))
         );
+    }
+
+    // ── text-decoration (CSS Text Decoration Module Level 3 §2,
+    // bd raikiri-spike-5z86.3) ──
+    //
+    // Value grammar (minimal scope — `TextDecoration` doc's "Scope carving"
+    // section): none | underline. Initial: none / Inherited: no / Computed
+    // value: specified keyword.
+
+    #[test]
+    fn text_decoration_parse_both_keywords() {
+        assert_eq!(
+            parse("none", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecoration::None))
+        );
+        assert_eq!(
+            parse("underline", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecoration::Underline))
+        );
+    }
+
+    #[test]
+    fn text_decoration_is_case_insensitive() {
+        assert_eq!(
+            parse("NONE", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecoration::None))
+        );
+        assert_eq!(
+            parse("Underline", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecoration::Underline))
+        );
+    }
+
+    #[test]
+    fn text_decoration_rejects_unimplemented_line_keywords() {
+        // g04 (b) milestone subset — full `text-decoration-line` grammar
+        // (`overline` / `line-through` / `blink`) is explicit follow-up
+        // (`TextDecoration` doc's "Scope carving" section), not (a)
+        // spec-invalid. The `||` combination syntax (e.g. `underline
+        // overline`) is a separate, already-covered concern — this single-
+        // ident parser consumes only the first token and leaves the rest
+        // for the caller's `expect_exhausted` check (`rule.rs`'s
+        // `rejects_trailing_garbage_after_value` pins that end-to-end for
+        // single-value properties generically; not repeated per property).
+        assert_eq!(parse("overline", "text-decoration"), None);
+        assert_eq!(parse("line-through", "text-decoration"), None);
+        assert_eq!(parse("blink", "text-decoration"), None);
+    }
+
+    #[test]
+    fn text_decoration_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "text-decoration"), None);
+    }
+
+    #[test]
+    fn text_decoration_rejects_css_wide_keyword() {
+        // g04 (b) milestone subset — Epic 7, silent drop (bd raikiri-spike-rzv3,
+        // `PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "text-decoration"), None);
+        }
+    }
+
+    #[test]
+    fn text_decoration_rejects_non_ident() {
+        assert_eq!(parse("16px", "text-decoration"), None);
+        assert_eq!(parse(r#""underline""#, "text-decoration"), None);
+    }
+
+    #[test]
+    fn text_decoration_key_maps_to_text_decoration_property_key() {
+        let v = PropertyValue::TextDecoration(TextDecoration::None);
+        assert_eq!(v.key(), PropertyKey::TextDecoration);
+        let v = PropertyValue::TextDecoration(TextDecoration::Underline);
+        assert_eq!(v.key(), PropertyKey::TextDecoration);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value
