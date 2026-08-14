@@ -355,15 +355,15 @@ class CodeOnlyLifetimeTests(unittest.TestCase):
         )
         # Nothing on the line — in particular the trailing `{` that
         # brace-depth tracking depends on — may be dropped.
-        self.assertEqual(code_only(line), line)
+        self.assertEqual(code_only(line)[0], line)
 
     def test_impl_block_lifetime_param_is_preserved(self) -> None:
         line = "impl<'i> QualifiedRuleParser<'i> for CounterStyleSheetParser {"
-        self.assertEqual(code_only(line), line)
+        self.assertEqual(code_only(line)[0], line)
 
     def test_reference_lifetime_is_preserved(self) -> None:
         line = "fn f<'a: 'b>(x: &'a str, y: &'b str) {}"
-        self.assertEqual(code_only(line), line)
+        self.assertEqual(code_only(line)[0], line)
 
     def test_comment_after_lifetime_generics_is_still_found(self) -> None:
         # comment_part() shares the same literal-tracking as code_only();
@@ -378,32 +378,32 @@ class CodeOnlyLifetimeTests(unittest.TestCase):
     def test_single_char_literal_is_still_stripped(self) -> None:
         # Not just "doesn't crash on lifetimes" — genuine char literals
         # (shape `'x'`) must still be recognized and stripped.
-        self.assertEqual(code_only("if c == 'x' { do_thing(); }"), "if c ==  { do_thing(); }")
+        self.assertEqual(code_only("if c == 'x' { do_thing(); }")[0], "if c ==  { do_thing(); }")
 
     def test_escaped_newline_char_literal_is_still_stripped(self) -> None:
-        self.assertEqual(code_only(r"if c == '\n' { }"), "if c ==  { }")
+        self.assertEqual(code_only(r"if c == '\n' { }")[0], "if c ==  { }")
 
     def test_escaped_quote_char_literal_is_still_stripped(self) -> None:
-        self.assertEqual(code_only(r"if c == '\'' { }"), "if c ==  { }")
+        self.assertEqual(code_only(r"if c == '\'' { }")[0], "if c ==  { }")
 
     def test_escaped_backslash_char_literal_is_still_stripped(self) -> None:
-        self.assertEqual(code_only(r"if c == '\\' { }"), "if c ==  { }")
+        self.assertEqual(code_only(r"if c == '\\' { }")[0], "if c ==  { }")
 
     def test_hex_escape_char_literal_is_still_stripped(self) -> None:
-        self.assertEqual(code_only(r"if c == '\x41' { }"), "if c ==  { }")
+        self.assertEqual(code_only(r"if c == '\x41' { }")[0], "if c ==  { }")
 
     def test_unicode_escape_char_literal_is_still_stripped(self) -> None:
-        self.assertEqual(code_only(r"if c == '\u{1F600}' { }"), "if c ==  { }")
+        self.assertEqual(code_only(r"if c == '\u{1F600}' { }")[0], "if c ==  { }")
 
     def test_char_range_pattern_literals_are_still_stripped(self) -> None:
         # Two char literals back to back, no lifetime involved — brace/paren
         # counting elsewhere in the codebase depends on both being handled.
-        self.assertEqual(code_only("'a'..='z' => true,"), "..= => true,")
+        self.assertEqual(code_only("'a'..='z' => true,")[0], "..= => true,")
 
     def test_double_quoted_string_is_unaffected(self) -> None:
         # Sanity: this fix only changes `'` handling; `"..."` string
         # stripping must be untouched.
-        self.assertEqual(code_only('let s = "contains { and } braces";'), "let s = ;")
+        self.assertEqual(code_only('let s = "contains { and } braces";')[0], "let s = ;")
 
 
 class ComputeExemptLinesLifetimeTests(unittest.TestCase):
@@ -438,6 +438,174 @@ class ComputeExemptLinesLifetimeTests(unittest.TestCase):
         self.assertEqual(exempt, {3, 4, 5, 6, 7, 8, 9, 10})
         # The following unrelated item must not be swept in.
         self.assertNotIn(12, exempt)
+
+
+class CodeOnlyTests(unittest.TestCase):
+    """Unit tests for `code_only()`'s cross-line string-literal state
+    (bd raikiri-spike-q5xj).
+
+    `code_only()` strips string/char literal contents so callers can do
+    brace-depth bookkeeping without being confused by punctuation inside a
+    string. It used to only ever be called with a fresh "not in a string"
+    state per physical line, which is correct for a line that opens and
+    closes its own string literals, but wrong for a string literal left
+    open across a line boundary (a backslash-continued `assert!`/`panic!`
+    message is the common real-world shape): the continuation line's prose
+    would be parsed as if it were code. These tests exercise the
+    `in_str`/`quote` parameters directly, which now let a caller carry
+    that state from one call to the next.
+    """
+
+    def test_single_line_call_behaves_like_the_old_no_state_version(self) -> None:
+        code, in_str, quote = code_only('let x = "a(b)c" + 1; // trailing')
+        self.assertEqual(code, "let x =  + 1; ")
+        self.assertFalse(in_str)
+        self.assertEqual(quote, "")
+
+    def test_string_left_open_at_end_of_line_reports_in_str_true(self) -> None:
+        # A backslash line-continuation inside a string literal: the `\`
+        # is the last character on the line, so the string is still open
+        # when the line ends.
+        code, in_str, quote = code_only('    "first line of message \\')
+        self.assertTrue(in_str)
+        self.assertEqual(quote, '"')
+        # Nothing after the opening quote is real code.
+        self.assertEqual(code.strip(), "")
+
+    def test_incoming_in_str_state_suppresses_punctuation_until_the_closing_quote(
+        self,
+    ) -> None:
+        # Continuing the previous test's line: this physical line's prose
+        # contains a `)` before the string actually closes. With the
+        # incoming state honored, that `)` must not appear in the
+        # stripped-code output.
+        code, in_str, quote = code_only(
+            'continuation has a closing paren) right here",', in_str=True, quote='"'
+        )
+        self.assertFalse(in_str)
+        self.assertEqual(quote, "")
+        self.assertEqual(code, ",")
+
+    def test_reparsing_the_continuation_line_from_scratch_reproduces_the_old_bug(
+        self,
+    ) -> None:
+        # Documents exactly what went wrong before this fix: calling
+        # code_only() on a continuation line with the *default* (fresh,
+        # "not in a string") state — i.e. what every call site did before
+        # bd raikiri-spike-q5xj — misreads the still-open string's `"` as
+        # an opening quote instead of a close, so the `)` that precedes it
+        # in the prose is treated as real code syntax.
+        code, in_str, quote = code_only(
+            'continuation has a closing paren) right here",'
+        )
+        self.assertIn(")", code)
+
+    def test_apparently_open_apostrophe_state_is_never_propagated(self) -> None:
+        # A bare `'` this function can't tell apart from an opening char
+        # literal (a lifetime like `&'static`, or a generic bound `T: 'a`)
+        # never legitimately continues onto the next physical line —
+        # unlike `"`, `'` must not be reported as still-open at end of
+        # line, or a single stray apostrophe would suppress brace-depth
+        # counting for every following line instead of just its own.
+        code, in_str, quote = code_only("&'static str")
+        self.assertFalse(in_str)
+        self.assertEqual(quote, "")
+
+
+class ComputeExemptLinesTests(unittest.TestCase):
+    """Integration tests for `compute_exempt_lines()`'s block-scoping
+    (bd raikiri-spike-q5xj).
+
+    Focused on the interaction between a `// cov:ignore:`-scoped block and
+    a Rust string literal inside it: the block-depth scan must not let a
+    string literal's contents be miscounted as real brace/paren/bracket
+    syntax, whether the string is confined to one physical line or spans
+    several via backslash continuation.
+    """
+
+    def test_string_with_punctuation_on_a_single_line_does_not_affect_depth(
+        self,
+    ) -> None:
+        # Baseline / non-regression: a single-line string containing
+        # `)`/`]`/`}` must not perturb the block's depth count. (This case
+        # never depended on cross-line state — code_only() always stripped
+        # a same-line string's contents — but is worth pinning alongside
+        # the multi-line case below.)
+        lines = [
+            "// cov:ignore: reason",
+            'foo("has ) and ] and } inside a single-line string");',
+            "let after = 1;",
+        ]
+        exempt = compute_exempt_lines(lines)
+        self.assertEqual(exempt, {2})
+
+    def test_backslash_continued_string_with_prose_punctuation_is_not_truncated_early(
+        self,
+    ) -> None:
+        # The bug this task fixes: a cov:ignore block containing a
+        # backslash-continued multi-line string literal (the common
+        # `assert!`/`panic!` message style in this codebase) whose
+        # continuation line's prose has a `)` before the string's actual
+        # closing quote. Before the fix, code_only() reset its
+        # string-literal state per physical line, so the continuation
+        # line was parsed as if no string were open: the `)` in "closing
+        # paren)" was miscounted as a real closing paren, driving the
+        # cumulative depth to <= 0 one line early and truncating the
+        # exempted block before the statement's real closing `);` line.
+        lines = [
+            "// cov:ignore: multi-line panic message, punctuation in continuation prose",
+            "assert!(",
+            "    condition,",
+            '    "first line of message \\',
+            '     continuation has a closing paren) right here",',
+            ");",
+            "let after_block = 1;",
+        ]
+        exempt = compute_exempt_lines(lines)
+        # The full statement (assert!( ... );) is lines 2-6 inclusive.
+        self.assertEqual(exempt, {2, 3, 4, 5, 6})
+        # In particular, the closing `);` line must still be exempted —
+        # this is the exact line the pre-fix bug dropped.
+        self.assertIn(6, exempt)
+        # And the block must not overreach into unrelated code after it.
+        self.assertNotIn(7, exempt)
+
+    def test_single_line_statement_is_exempted_alone(self) -> None:
+        lines = [
+            "// cov:ignore: reason",
+            "let x = 1;",
+            "let y = 2;",
+        ]
+        exempt = compute_exempt_lines(lines)
+        self.assertEqual(exempt, {2})
+
+    def test_odd_apostrophe_on_a_middle_line_does_not_leak_state_past_the_block(
+        self,
+    ) -> None:
+        # Guards against a regression the cross-line `"`-threading fix
+        # could otherwise introduce: `code_only()` already has a
+        # pre-existing, independent quirk where a lifetime (`&'static`,
+        # `T: 'a`) is momentarily mistaken for an opening char-literal
+        # quote, since a bare `'` can't be told apart from one by this
+        # best-effort parser. Before cross-line threading existed, that
+        # mistake only ever mis-parsed its own line (state reset every
+        # call), so it self-corrected by the next line. If a still-"open"
+        # `'` state were threaded forward the same way a `"` is, that
+        # single-line quirk would instead suppress brace-depth counting
+        # for every subsequent line through end of block (or end of file)
+        # — turning a cosmetic mis-parse into a real under-exemption bug
+        # of its own. `code_only()` must only ever propagate `"` state
+        # across the line boundary, never `'` state, to avoid this.
+        lines = [
+            "// cov:ignore: reason",
+            "foo(",
+            "    bar::<&'static str>(),",
+            ");",
+            "let after = 1;",
+        ]
+        exempt = compute_exempt_lines(lines)
+        self.assertEqual(exempt, {2, 3, 4})
+        self.assertNotIn(5, exempt)
 
 
 if __name__ == "__main__":

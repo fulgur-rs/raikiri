@@ -23,7 +23,11 @@ with nothing following it does not match. It is either:
     exempts the block of code that *immediately follows* the comment run.
     "Block" is computed by tracking `{`/`(`/`[` vs `}`/`)`/`]` depth
     (string/char literal contents and `//` line comments are stripped
-    first, so brace characters inside a `"..."` don't confuse the count):
+    first, so brace characters inside a `"..."` don't confuse the count;
+    this stripping carries open-string-literal state across physical
+    lines, so a backslash-continued multi-line string literal doesn't
+    leak its prose's punctuation into the depth count either — bd
+    raikiri-spike-q5xj):
     starting at the first non-comment, non-attribute, non-blank line after
     the marker, keep including lines while cumulative depth > 0; stop
     (inclusive) once depth returns to <= 0. A single-line statement (net
@@ -235,8 +239,27 @@ def cov_ignore_reason(line: str) -> str | None:
     return m.group(1) if m else None
 
 
-def code_only(line: str) -> str:
+def code_only(line: str, in_str: bool = False, quote: str = "") -> tuple[str, bool, str]:
     """Strip string/char literal contents and a trailing `//` comment.
+
+    `in_str`/`quote` are the string-literal state the caller already has
+    open coming into `line` (e.g. a Rust string literal — commonly a
+    backslash-continued `assert!`/`panic!` message — that didn't close on
+    a prior physical line); the returned `(code, in_str, quote)` tuple's
+    last two elements are that same state as it stands at the end of
+    `line`, for the caller to pass into the next physical line. A caller
+    that only has one line to look at (no cross-line context) can ignore
+    the returned state and rely on the `False`/`""` defaults, which behave
+    exactly like a per-line-only parse.
+
+    This state must be threaded across physical lines by any caller doing
+    multi-line brace-depth bookkeeping (see `compute_exempt_lines()`
+    below): a Rust string literal can itself contain an unescaped `)`,
+    `]`, or `}` in its text (most commonly prose in a multi-line assert/
+    panic message), and if the caller re-parses each line from a fresh
+    "not in a string" state, that punctuation is miscounted as real code
+    syntax. Resetting per line was exactly this function's bug before
+    `in_str`/`quote` became threadable (bd raikiri-spike-q5xj).
 
     Best-effort: does not handle raw strings (`r"..."`) or byte-string
     prefixes specially, which can misparse in rare cases. Good enough for
@@ -253,11 +276,29 @@ def code_only(line: str) -> str:
     function feeds brace_delta() for `cov:ignore:` block-scope tracking,
     could truncate an exempted block early — see counter_style.rs's
     `QualifiedRuleParser::parse_block` for a real signature that triggered
-    this).
+    this). Because a lone `'` is always resolved on its own line this way
+    (either consumed as a genuine char literal, closing before the line
+    ends, or passed through as ordinary code), `in_str`/`quote` state is
+    only ever left open across a line boundary for a `"` (double-quoted
+    string) literal in practice — a Rust char literal can never
+    legitimately span a physical line, so there is no equivalent
+    cross-line case for `'` to thread. The trailing `if quote != '"':`
+    reset below is a defensive backstop for that invariant rather than a
+    load-bearing branch under normal input.
+
+    Threading `"` state across lines like this means an existing
+    raw-string misparse (an odd number of literal `"` inside an
+    `r#"..."#` body being mistaken for a literal boundary) can now also
+    propagate across a line boundary instead of self-correcting every
+    line — accepted for the same reason the module docstring already
+    accepts other over-exemption risk in this heuristic: the failure
+    direction is over-exemption, and unlike a lifetime apostrophe, a
+    legitimate double-quoted string *does* routinely continue across
+    lines (a backslash-continued `assert!`/`panic!` message, most
+    commonly), so there's no equivalent "never legitimate" rule available
+    to suppress it the way there is for `'`.
     """
     out = []
-    in_str = False
-    quote = ""
     i = 0
     n = len(line)
     while i < n:
@@ -268,6 +309,7 @@ def code_only(line: str) -> str:
                 continue
             if c == quote:
                 in_str = False
+                quote = ""
             i += 1
             continue
         if c == "'":
@@ -288,7 +330,10 @@ def code_only(line: str) -> str:
             break
         out.append(c)
         i += 1
-    return "".join(out)
+    if quote != '"':
+        in_str = False
+        quote = ""
+    return "".join(out), in_str, quote
 
 
 def brace_delta(code: str) -> int:
@@ -322,8 +367,18 @@ def compute_exempt_lines(lines: list[str]) -> set[int]:
         if pending:
             depth = 0
             j = i
+            # in_str/quote thread code_only()'s string-literal state across
+            # physical lines of this block (starting fresh at the block's
+            # first line): a backslash-continued Rust string literal that's
+            # still open at the end of line j must not have its state reset
+            # before line j+1 is parsed, or punctuation in the continuation
+            # line's prose gets miscounted as real brace/paren/bracket
+            # syntax and truncates the block early (bd raikiri-spike-q5xj).
+            in_str = False
+            quote = ""
             while True:
-                delta = brace_delta(code_only(lines[j]))
+                code, in_str, quote = code_only(lines[j], in_str, quote)
+                delta = brace_delta(code)
                 depth += delta
                 exempt.add(j + 1)
                 j += 1
