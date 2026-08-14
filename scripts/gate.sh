@@ -292,9 +292,13 @@ if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
 fi
 echo
 
-echo "-- §8.1(b) RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --workspace --"
-if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --locked; then
-  echo "FAIL: cargo doc --no-deps --workspace"
+echo "-- §8.1(b) RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --workspace --document-private-items --"
+# --document-private-items is required here: without it, rustdoc only
+# resolves intra-doc links inside public items, so a broken link inside a
+# private (non-pub) item's doc comment is silently skipped instead of
+# hard-erroring under -D warnings.
+if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --document-private-items --locked; then
+  echo "FAIL: cargo doc --no-deps --workspace --document-private-items"
   FAIL=1
 fi
 echo
