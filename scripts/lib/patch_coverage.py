@@ -48,14 +48,29 @@ an executable line, no coverage obligation". Absence for an *entire file*
 (zero `SF:` records) is split into two cases, verified empirically against
 this workspace's `cargo-llvm-cov 0.8.7` output rather than assumed:
 
-  - `benches/*.rs`: a plain `cargo llvm-cov --workspace` (mirroring
-    `cargo test --workspace`) never builds bench targets, so a changed
-    bench file has *zero* chance of being exercised by this coverage run —
-    "never instrumented" here really does mean "never ran under any gate
-    check". Every added line is reported **uncovered**. This is
-    intentional, not a bug: see bd raikiri-spike-iebo's gate history for
+  - A file cargo-llvm-cov's target set didn't build/run under a plain
+    `cargo llvm-cov --workspace` (mirroring `cargo test --workspace`) at
+    all. Two source-level shapes land here, handled identically by
+    `main()` (they share one code path — see the `else` arm of the
+    `da_map is None` branch): `benches/*.rs` (a changed bench file has
+    *zero* chance of being exercised by this coverage run — "never
+    instrumented" really does mean "never ran under any gate check"), and
+    an ordinary `src/*.rs` file that happens to have zero executable
+    lines at all — a "pure declaration" file: only `use` statements,
+    struct/enum definitions, and doc comments, e.g.
+    `crates/raikiri-html/src/types.rs` (there was simply never anything
+    for cargo-llvm-cov to instrument, not "ran but wasn't measured").
+    Every added *code* line is reported **uncovered** for the bench case
+    (intentional, not a bug: see bd raikiri-spike-iebo's gate history for
     why a bench-file diff hitting this is expected and needs either a
-    `--benches`-style follow-up or a per-diff escalation.
+    `--benches`-style follow-up or a per-diff escalation) — and vacuously
+    never triggered for a genuine pure-declaration file, since by
+    definition it has no code lines to report. Blank/comment added lines
+    are the one exception in *both* sub-shapes: see
+    `classify_no_lcov_record_lines()` below for why those can never be
+    "uncovered" even with no `DA:` table to check them against — this is
+    what fixes the false positive a pure-declaration file's doc-comment-only
+    diff used to produce.
   - Cargo `test`/`example` **targets** (auto-discovered `tests/*.rs` /
     `examples/*.rs` integration-test and example binaries): confirmed by
     direct measurement (`cargo llvm-cov -p raikiri --lcov`, then
@@ -252,6 +267,60 @@ def compute_exempt_lines(lines: list[str]) -> set[int]:
             exempt.add(idx + 1)
 
     return exempt
+
+
+def classify_no_lcov_record_lines(
+    added_lines: list[int],
+    file_lines: list[str],
+    exempt: set[int],
+) -> tuple[list[int], list[int]]:
+    """Classify added lines for a file with zero lcov records at all (no
+    `SF:` block — `da_map is None` in `main()`) that is *not* a
+    structurally-unreported Cargo test/example target. Returns
+    `(uncovered, exempted)`.
+
+    When there *is* a `DA:` table to consult (the normal branch in
+    `main()`), a blank or pure-comment added line is filtered out before
+    the `exempt` check even runs, simply because such a line never has a
+    `DA:` record in the first place (`if ln not in da_map: continue`) — it
+    was never "executable", so it was never eligible to be "uncovered".
+    With no `DA:` table at all, that filter can't be expressed the same
+    way; this function reconstructs the same outcome structurally, using
+    the same `COMMENT_LINE_RE` `compute_exempt_lines()` uses to recognize
+    a comment line, plus a blank-line check. A line skipped this way is
+    reported in neither list — deliberate parity with the normal branch,
+    where such a line doesn't appear in `uncovered`/`exempted` either (it
+    still counts toward the file's `added_lines` total, same as there).
+
+    `// cov:ignore:` still exempts a *code* line exactly as before; this
+    function doesn't touch that path. It only stops a comment/blank line
+    from being misclassified as uncovered in a file that had no
+    executable-line table to filter it out with — a comment line was
+    never something `cov:ignore:` needed to reach, since it was never
+    going to be "uncovered" to begin with.
+
+    Known limitation, not fixed here: a non-comment, non-blank *added*
+    line that also happens to be non-executable in real Rust (e.g. a
+    `pub bar: u32,` struct field, a bare `}` closing a block) is still
+    classified `uncovered` unless `cov:ignore:`-annotated. Distinguishing
+    "syntactically code-shaped" from "actually executable" in general
+    requires a real Rust parser, not a regex; `COMMENT_LINE_RE` only
+    catches the comment/blank case this function exists to fix. Files
+    that mix zero-SF-record status with genuinely new field/variant
+    declarations will still need a `// cov:ignore:` or an escalation for
+    those specific lines, same as before this fix.
+    """
+    uncovered: list[int] = []
+    exempted: list[int] = []
+    for ln in added_lines:
+        raw = file_lines[ln - 1] if 0 <= ln - 1 < len(file_lines) else ""
+        if not raw.strip() or COMMENT_LINE_RE.match(raw):
+            continue
+        if ln in exempt:
+            exempted.append(ln)
+        else:
+            uncovered.append(ln)
+    return uncovered, exempted
 
 
 class CargoMetadataError(RuntimeError):
@@ -519,13 +588,17 @@ def main() -> int:
                 fr.unreported.extend(fr.added_lines)
             else:
                 # benches/*.rs (or any other file cargo-llvm-cov's target
-                # set didn't build/run at all): a real gap, same treatment
-                # as an uncovered line.
-                for ln in fr.added_lines:
-                    if ln in exempt:
-                        fr.exempted.append(ln)
-                    else:
-                        fr.uncovered.append(ln)
+                # set didn't build/run at all, e.g. a zero-executable-line
+                # "pure declaration" src file): added *code* lines get the
+                # same treatment as an uncovered line. Blank/comment added
+                # lines are filtered out first, mirroring the `if ln not
+                # in da_map: continue` skip the branch below does with an
+                # actual DA: table — see classify_no_lcov_record_lines().
+                uncovered, exempted = classify_no_lcov_record_lines(
+                    fr.added_lines, file_lines, exempt
+                )
+                fr.uncovered.extend(uncovered)
+                fr.exempted.extend(exempted)
         else:
             for ln in fr.added_lines:
                 if ln not in da_map:

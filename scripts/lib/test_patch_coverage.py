@@ -31,7 +31,11 @@ import contextlib
 import io
 import unittest
 
-from patch_coverage import is_structurally_unreported, structurally_unreported_paths
+from patch_coverage import (
+    classify_no_lcov_record_lines,
+    is_structurally_unreported,
+    structurally_unreported_paths,
+)
 
 REPO_ROOT = "/repo"
 
@@ -227,6 +231,98 @@ class IsStructurallyUnreportedTests(unittest.TestCase):
                 "crates/raikiri/src/lib.rs", self.unreported_paths
             )
         )
+
+
+class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
+    """Regression tests for the whole-file-zero-SF-record false positive: a
+    "pure declaration" file (only `use` statements, struct/enum
+    definitions, doc comments — no executable statements anywhere, e.g.
+    crates/raikiri-html/src/types.rs) gets zero `SF:`/`DA:` records from
+    cargo-llvm-cov, so `main()`'s `da_map is None` branch used to check
+    every added line — including a `///` doc-comment prose edit — directly
+    against `exempt`, with no equivalent of the normal (`da_map is not
+    None`) branch's `if ln not in da_map: continue` pre-filter that
+    already lets comment/blank lines through there. A diff that only
+    touched doc-comment prose was therefore reported 100% uncovered, and
+    `// cov:ignore:` provided no escape hatch — it only ever exempts the
+    *code* block following a marker, never the marker's own comment lines
+    or unrelated comment lines elsewhere in the file.
+
+    `classify_no_lcov_record_lines()` is the function that now does what
+    the `if ln not in da_map: continue` check does implicitly in the
+    normal branch, using `COMMENT_LINE_RE` (the same regex
+    `compute_exempt_lines()` uses to recognize a comment line) plus a
+    blank check, so it is tested directly here rather than through
+    `main()` — same approach the rest of this file takes for
+    `structurally_unreported_paths()`/`is_structurally_unreported()`
+    above, avoiding a real `git`/`cargo` invocation.
+    """
+
+    def setUp(self) -> None:
+        # A synthetic stand-in for a "pure declaration" file: a `use`
+        # statement, a blank line, doc comments (one `///`, one bare
+        # `//`), and a struct with a doc'd field. No line here is
+        # executable Rust — consistent with a file cargo-llvm-cov would
+        # give zero SF:/DA: records to.
+        self.file_lines = [
+            "use std::fmt;",                                     # 1
+            "",                                                    # 2
+            "/// Represents a parsed HTML tag name.",              # 3
+            "//",                                                   # 4
+            "/// Second line of prose, edited independently.",      # 5
+            "pub struct TagName {",                                  # 6
+            "    /// The raw tag string.",                            # 7
+            "    pub raw: String,",                                    # 8
+            "}",                                                         # 9
+        ]
+
+    def test_comment_only_diff_is_not_uncovered(self) -> None:
+        # The exact reported bug: a diff touching only `///`/`//` prose
+        # lines in a zero-SF-record file must not be flagged uncovered.
+        uncovered, exempted = classify_no_lcov_record_lines(
+            added_lines=[3, 4, 5], file_lines=self.file_lines, exempt=set()
+        )
+        self.assertEqual(uncovered, [])
+        self.assertEqual(exempted, [])
+
+    def test_blank_added_line_is_not_uncovered(self) -> None:
+        # Same reasoning applies to a blank added line: it never has a
+        # DA: record in the normal branch either, so it must not be
+        # treated as uncovered here just because there's no DA: table to
+        # filter it out with directly.
+        uncovered, exempted = classify_no_lcov_record_lines(
+            added_lines=[2], file_lines=self.file_lines, exempt=set()
+        )
+        self.assertEqual(uncovered, [])
+        self.assertEqual(exempted, [])
+
+    def test_real_code_line_is_still_uncovered(self) -> None:
+        # Discrimination check: mixing a comment line (3) with a genuine
+        # code line (6, `pub struct TagName {`) in the same diff must
+        # still flag the code line. Without this test,
+        # test_comment_only_diff_is_not_uncovered alone would also pass
+        # if the whole branch were changed to route every line to "not
+        # uncovered" regardless of content — this pins that the fix
+        # discriminates rather than blanket-passing. This is also the
+        # case that keeps bd raikiri-spike-iebo's bench-file behavior
+        # intact: a genuine added code line in a file with no lcov
+        # records (bench or otherwise) is still a real gap.
+        uncovered, exempted = classify_no_lcov_record_lines(
+            added_lines=[3, 6], file_lines=self.file_lines, exempt=set()
+        )
+        self.assertEqual(uncovered, [6])
+        self.assertEqual(exempted, [])
+
+    def test_cov_ignore_exempted_code_line_still_exempted(self) -> None:
+        # cov:ignore-driven exemption (computed by compute_exempt_lines()
+        # elsewhere and passed in here as `exempt`) must keep working
+        # alongside the new comment/blank filtering, not be bypassed or
+        # shadowed by it.
+        uncovered, exempted = classify_no_lcov_record_lines(
+            added_lines=[3, 6], file_lines=self.file_lines, exempt={6}
+        )
+        self.assertEqual(uncovered, [])
+        self.assertEqual(exempted, [6])
 
 
 if __name__ == "__main__":
