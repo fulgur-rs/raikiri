@@ -456,6 +456,128 @@ fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
     None
 }
 
+/// `<head>` 内の `<link rel="stylesheet" href="...">` を document order で
+/// 収集する (raikiri-spike-5z86.6、M2 network integration)。
+///
+/// `extract_inline_stylesheets` と同じ head-only DFS scope — `<body>` 内
+/// `<link>` は `<style>` (M1) と同じ理由で defer。実際の fetch
+/// (`NetworkProvider` 経由の I/O) はここでは行わない: `TreeSink::finish()`
+/// (このモジュール) は I/O を持たない契約を保つ必要がある (sink 実装が
+/// 観測可能な副作用を追加すると wall/sink 対象)。href の収集のみ行い、実
+/// fetch は `ParseOptions::network` / `base_url` にアクセスできる
+/// `parse.rs::parse_with_sink` 側の post-processing に委ねる。
+///
+/// `disabled` boolean attribute は判定しない: `raikiri_traits::Element::attr`
+/// は値なし/空文字列 (`disabled` / `disabled=""` いずれも) を `None` に正規化
+/// する契約 (`raikiri-dom/src/dom_impl.rs::ElementRef::attr` の
+/// `.filter(|s| !s.is_empty())`) のため、属性の**値**ではなく**有無**を問う
+/// boolean attribute はこの trait surface からは判別できない
+/// (`has_attribute` 相当が無い)。追加は raikiri-traits の public surface
+/// 変更 = wall/traits 対象であり、本 task 単独で unilateral に広げない
+/// (follow-up は bd raikiri-spike-5z86.6 の comment 参照)。
+///
+/// `<base href>` は考慮しない: href の相対 URL 解決は常に静的な
+/// `ParseOptions::base_url` に対して行われ、文書内 `<base>` element は一切
+/// 見ない。HTML Standard の外部 resource link 処理は "document base URL"
+/// (`<base href>` があればそれが override する) に対して解決する契約なので、
+/// これは既知の spec 逸脱 (reviewer-spec finding、`<base href="https://cdn.
+/// example/">` + `<link href="a.css">` が誤って `options.base_url` 側の host
+/// で解決される)。Full fix は bd raikiri-spike-r9vu に deferred (html-parser
+/// scope 判断待ち、本 task では未実装)。
+///
+/// `title` 属性付き `rel="alternate stylesheet"` の preferred/selected
+/// stylesheet set semantics も未実装: 空 title の扱いは CSSOM の algorithm
+/// 通り (無条件適用) だが、非空 title を持つ alternate link はこの crate に
+/// stylesheet-set concept が無いため常に適用されてしまう
+/// (reviewer-spec finding、bd raikiri-spike-hwth に deferred)。
+pub(crate) fn collect_external_stylesheet_hrefs(
+    doc: &Document,
+) -> Vec<(raikiri_traits::NodeId, String)> {
+    use raikiri_traits::{Dom, Element, Node};
+
+    let Some(head_id) = find_head_element(doc) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    let mut stack: Vec<raikiri_traits::NodeId> = vec![head_id];
+    while let Some(id) = stack.pop() {
+        // Flat `let...else continue` (rather than nesting the rest of the
+        // loop body inside `if let Some(node) = doc.node(id) { ... }`, the
+        // shape `extract_inline_stylesheets` above uses) — same intent, but
+        // makes the never-taken `None` case an isolated one-line branch
+        // instead of leaving an ambiguous coverage region on the enclosing
+        // block's closing brace.
+        let Some(node) = doc.node(id) else {
+            // cov:ignore: unreachable in practice — every `id` pushed onto
+            // `stack` comes from `find_head_element` or `doc.child_ids` for
+            // this same `doc`, both of which only ever yield valid ids, so
+            // `doc.node(id)` can't return `None` here. Kept as a `let...else`
+            // (rather than `.expect(...)`) to match `Dom::node`'s documented
+            // `Option` contract defensively, same as the sibling check this
+            // mirrors in `extract_inline_stylesheets` above.
+            continue;
+        };
+        if !node.is_in_document() {
+            continue;
+        }
+        if let Some(el) = node.as_element()
+            && el.tag_name() == "link"
+            && is_stylesheet_link(el.attr("rel"), el.attr("type"))
+            && let Some(href) = el.attr("href")
+        {
+            // `href`'s attribute type is "valid non-empty URL potentially
+            // surrounded by spaces" — `Element::attr` only filters a truly
+            // empty (`""`) value, so a whitespace-only `href="   "` still
+            // reaches here. Trim before checking emptiness; without this,
+            // `resolve_stylesheet_url`'s `Url::join("   ")` resolves to the
+            // *page's own URL* (verified empirically against the `url`
+            // crate), causing the page's own HTML to be fetched and fed to
+            // the CSS parser as a stylesheet (reviewer-spec finding, bd
+            // raikiri-spike-5z86.6).
+            let trimmed_href = href.trim();
+            if !trimmed_href.is_empty() {
+                out.push((id, trimmed_href.to_string()));
+            }
+        }
+        let kids: Vec<_> = doc.child_ids(id).collect();
+        for c in kids.into_iter().rev() {
+            stack.push(c);
+        }
+    }
+    out
+}
+
+/// `rel` トークンリストに `stylesheet` (ASCII case-insensitive) が含まれ、
+/// かつ `type` 属性が無いか `text/css` (MIME パラメータを無視、ASCII
+/// case-insensitive) の場合のみ true。HTML Standard §4.2.4 (The link
+/// element) の外部 resource link 判定の該当部分のみを実装するサブセット —
+/// `media` / `crossorigin` / `integrity` / `disabled` は M2 scope 外
+/// (`collect_external_stylesheet_hrefs` doc 参照)。
+///
+/// `type` 属性の比較は `;` 以降 (MIME parameter、例:
+/// `text/css; charset=utf-8`) を無視する — browser の実際の "type attribute
+/// gate" 挙動 (MIME parameter は無視、essence のみ比較) に合わせる
+/// (roborev-refine reviewer-spec finding、bd raikiri-spike-5z86.6)。
+fn is_stylesheet_link(rel: Option<&str>, type_attr: Option<&str>) -> bool {
+    let Some(rel) = rel else {
+        return false;
+    };
+    let has_stylesheet_token = rel
+        .split_ascii_whitespace()
+        .any(|token| token.eq_ignore_ascii_case("stylesheet"));
+    if !has_stylesheet_token {
+        return false;
+    }
+    type_attr.is_none_or(|t| {
+        t.split(';')
+            .next()
+            .unwrap_or(t)
+            .trim()
+            .eq_ignore_ascii_case("text/css")
+    })
+}
+
 /// side-table (`qual_names` / `attributes`) の内容を raikiri-dom::Node に写す。
 ///
 /// - `qual_names`: element の namespace URI が HTML default (`ns!(html)`) 以外
@@ -521,5 +643,91 @@ fn convert_quirks(mode: QuirksMode) -> raikiri_traits::QuirksMode {
         QuirksMode::Quirks => raikiri_traits::QuirksMode::Quirks,
         QuirksMode::LimitedQuirks => raikiri_traits::QuirksMode::LimitedQuirks,
         QuirksMode::NoQuirks => raikiri_traits::QuirksMode::NoQuirks,
+    }
+}
+
+#[cfg(test)]
+mod stylesheet_link_tests {
+    use super::is_stylesheet_link;
+
+    #[test]
+    fn no_rel_attribute_is_not_a_stylesheet_link() {
+        assert!(!is_stylesheet_link(None, None));
+    }
+
+    #[test]
+    fn rel_without_stylesheet_token_is_not_a_stylesheet_link() {
+        assert!(!is_stylesheet_link(Some("icon"), None));
+    }
+
+    #[test]
+    fn rel_stylesheet_token_is_case_insensitive() {
+        assert!(is_stylesheet_link(Some("StyleSheet"), None));
+        assert!(is_stylesheet_link(Some("STYLESHEET"), None));
+    }
+
+    #[test]
+    fn rel_stylesheet_among_multiple_space_separated_tokens_matches() {
+        assert!(is_stylesheet_link(Some("alternate stylesheet"), None));
+        assert!(is_stylesheet_link(Some("stylesheet next"), None));
+    }
+
+    #[test]
+    fn absent_type_attribute_is_treated_as_stylesheet() {
+        assert!(is_stylesheet_link(Some("stylesheet"), None));
+    }
+
+    #[test]
+    fn type_text_css_case_insensitive_is_treated_as_stylesheet() {
+        assert!(is_stylesheet_link(Some("stylesheet"), Some("text/css")));
+        assert!(is_stylesheet_link(Some("stylesheet"), Some("Text/CSS")));
+    }
+
+    #[test]
+    fn non_css_type_attribute_is_not_treated_as_stylesheet() {
+        assert!(!is_stylesheet_link(
+            Some("stylesheet"),
+            Some("application/rss+xml")
+        ));
+    }
+
+    #[test]
+    fn type_with_charset_mime_parameter_is_still_treated_as_stylesheet() {
+        // browsers ignore MIME parameters (charset, etc.) when gating on the
+        // `type` attribute's essence — only `text/css` (before any `;`)
+        // matters (reviewer-spec finding, bd raikiri-spike-5z86.6).
+        assert!(is_stylesheet_link(
+            Some("stylesheet"),
+            Some("text/css; charset=utf-8")
+        ));
+        assert!(is_stylesheet_link(
+            Some("stylesheet"),
+            Some("TEXT/CSS;charset=UTF-8")
+        ));
+    }
+
+    #[test]
+    fn non_css_essence_with_mime_parameter_is_not_treated_as_stylesheet() {
+        assert!(!is_stylesheet_link(
+            Some("stylesheet"),
+            Some("application/rss+xml; charset=utf-8")
+        ));
+    }
+}
+
+#[cfg(test)]
+mod collect_external_stylesheet_hrefs_tests {
+    use super::collect_external_stylesheet_hrefs;
+    use raikiri_dom::Document;
+
+    #[test]
+    fn document_without_a_head_element_yields_no_hrefs() {
+        // find_head_element's None branch: a Document that never got a
+        // <head> attached at all (html5ever's tree construction always
+        // synthesizes one, so this only happens for a hand-built Document
+        // like this one — exercised directly since collect_external_stylesheet_hrefs
+        // is pub(crate) and doesn't need the full parse pipeline).
+        let doc = Document::new();
+        assert!(collect_external_stylesheet_hrefs(&doc).is_empty());
     }
 }

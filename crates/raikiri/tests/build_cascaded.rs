@@ -465,6 +465,64 @@ fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
 }
 
 #[test]
+fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade() {
+    // bd raikiri-spike-5z86.6: <link rel="stylesheet" href="..."> の
+    // 検出→fetch (NetworkProvider::fetch, ResourceKind::ExternalStylesheet)
+    // →CSS text 化までは raikiri-html 単体 unit test 済み。この umbrella
+    // test はその先 — raikiri-html が `UncascadedDocument.stylesheet_sources`
+    // に積んだ fetch 結果を、raikiri crate 側の `build_cascaded` が本当に
+    // Author stylesheet として RuleTree に統合し、computed style まで届く
+    // ことを、本物の parse → build_cascaded pipeline で end-to-end 検証する
+    // (img_width_height_html_attributes_reach_computed_style_through_real_parse_path
+    // と同じ理由: static reading だけでは「本当に繋がっているか」は確認
+    // できない)。
+    use raikiri::{
+        Bytes, DisplayValue, FetchedResource, NetworkError, NetworkProvider, ParseOptions, Request,
+        Url, build_cascaded, parse,
+    };
+
+    struct StylesheetProvider;
+
+    impl NetworkProvider for StylesheetProvider {
+        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+            Ok(FetchedResource {
+                bytes: Bytes::from_static(b"div { display: none }"),
+                content_type: Some("text/css".to_string()),
+                final_url: request.url,
+                encoding: None,
+            })
+        }
+    }
+
+    let provider = StylesheetProvider;
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: Some(&provider as &dyn NetworkProvider),
+        base_url: Some(Url::parse("https://example.test/").expect("valid base url")),
+    };
+    let html = br#"<html><head><link rel="stylesheet" href="a.css"></head><body><div>Hi</div></body></html>"#;
+    let doc = parse(&html[..], &opts).expect("parse");
+
+    // Fetch した CSS text が Author stylesheet として届いていることを、
+    // raikiri-html 側の契約 (stylesheet_sources) でも確認する。
+    assert_eq!(
+        doc.stylesheet_sources,
+        vec![String::from("div { display: none }")],
+        "fetched external stylesheet CSS text must land in stylesheet_sources"
+    );
+
+    let result = build_cascaded(&doc);
+    let div_id = find_by_tag(&doc.dom, "div").expect("<div> exists");
+    let display = result.computed[div_id.0 as usize].display;
+    assert_eq!(
+        display,
+        DisplayValue::None,
+        "div {{ display: none }} fetched via <link rel=stylesheet> must beat the UA CSS \
+         display:block default through the real build_cascaded pipeline"
+    );
+}
+
+#[test]
 fn body_style_element_is_not_applied_per_m1_head_only_contract() {
     // spec §M1: raikiri-html は現状 head 配下の <style> のみ stylesheet_sources
     // に集約する (<body> 内 <style> の position-aware semantics は M2+)。
