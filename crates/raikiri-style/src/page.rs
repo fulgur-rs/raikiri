@@ -1465,7 +1465,11 @@ fn absolutize_in_page_context(
         | PropertyValue::BorderRightColor(_)
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
-        | PropertyValue::BoxSizing(_)) => v,
+        | PropertyValue::BoxSizing(_)
+        // `text-decoration` carries no length and computed value = specified
+        // keyword (`TextDecoration` doc, bd raikiri-spike-5z86.3) — nothing
+        // for phase 3 to absolutize.
+        | PropertyValue::TextDecoration(_)) => v,
         // ── font-size: larger / smaller (raikiri-spike-4rmu) ────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -1760,6 +1764,7 @@ mod tests {
     use crate::property::{
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontWeightValue, Length,
         LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
+        TextDecoration,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -3475,12 +3480,14 @@ mod tests {
     ///
     /// 22 → 23 (raikiri-spike-l3wg、`Direction` は phase 3 で変換する length を
     /// 持たないため pass-through 側に加わる — `TextAlign` 自身は元々こちら側)。
+    /// 23 → 24 (bd raikiri-spike-5z86.3、`TextDecoration` も同じ理由で
+    /// pass-through 側 — length を運ばないため phase 3 に変換対象が無い)。
     ///
     /// raikiri-spike-a754 の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、bd raikiri-spike-a754 が明示的に別途判断としている
     /// (origin bd raikiri-spike-awjx §8.2 quality lens F1 の「残り 2 つ」)。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 23;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 24;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -3660,6 +3667,11 @@ mod tests {
             x: OverflowValue::Visible,
             y: OverflowValue::Hidden,
         }),
+        // No specified/computed distinction for `text-decoration` (computed
+        // value = specified keyword, `TextDecoration` doc) — any value is
+        // "worst case" (bd raikiri-spike-5z86.3, `Direction` sibling comment
+        // above uses the same reasoning).
+        TextDecoration => PropertyValue::TextDecoration(TextDecoration::Underline),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -3817,6 +3829,7 @@ mod tests {
         OverflowX,
         OverflowY,
         Overflow,
+        TextDecoration,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4043,7 +4056,9 @@ mod tests {
             // distinction is accounted for.
             | PropertyValue::OverflowX(_)
             | PropertyValue::OverflowY(_)
-            | PropertyValue::Overflow(_) => None,
+            | PropertyValue::Overflow(_)
+            // `TextDecoration` carries no length either (bd raikiri-spike-5z86.3).
+            | PropertyValue::TextDecoration(_) => None,
         }
     }
 

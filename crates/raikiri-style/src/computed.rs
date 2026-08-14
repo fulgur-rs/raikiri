@@ -13,8 +13,8 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
-    OverflowValue, OverflowXY, Sides, TextAlign, empty_content_list, empty_counter_entries,
-    empty_string_set_entries, initial_font_family,
+    OverflowValue, OverflowXY, Sides, TextAlign, TextDecoration, empty_content_list,
+    empty_counter_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -503,6 +503,31 @@ pub struct ComputedValues {
     ///
     /// (raikiri-spike-cmd3)
     pub overflow: OverflowXY,
+    /// `text-decoration`. **non-inherited**, initial:
+    /// [`TextDecoration::None`] (CSS Text Decoration Module Level 3 §2
+    /// "Text Decoration Lines: the text-decoration-line property"
+    /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>,
+    /// "Initial: none" / "Inherited: no"). Computed value = specified
+    /// keyword ([`TextDecoration`] doc — no length payload, so no relative
+    /// resolution is needed).
+    ///
+    /// # Scope carving (minimal scope, bd raikiri-spike-5z86.3)
+    ///
+    /// This field holds the single-property `none | underline` value
+    /// described on [`TextDecoration`] — the `text-decoration-line` /
+    /// `-style` / `-color` longhand decomposition, the full
+    /// `text-decoration-line` keyword set (`overline` / `line-through` /
+    /// `blink`), and their `||` combination grammar are explicit follow-up,
+    /// not represented by this field.
+    ///
+    /// # Downstream handoff (future scope, style-scope confined)
+    ///
+    /// This field carries the cascade static side seed only, mirroring
+    /// [`Self::box_sizing`] / [`Self::overflow`] — actually painting the
+    /// decoration line is raikiri-paint scope and not yet wired
+    /// (`crates/raikiri-paint/src/lib.rs`'s module doc lists "Text
+    /// decoration (underline / line-through)" as a future milestone).
+    pub text_decoration: TextDecoration,
 }
 
 impl ComputedValues {
@@ -581,6 +606,9 @@ impl ComputedValues {
             // (raikiri-spike-cmd3)。両 axis が `visible` なので cross-axis
             // coupling (`resolve_overflow`) は initial state では no-op。
             overflow: OverflowXY::both(OverflowValue::Visible),
+            // CSS Text Decoration Module Level 3 §2: text-decoration-line
+            // initial は `none` (bd raikiri-spike-5z86.3)。
+            text_decoration: TextDecoration::None,
         }
     }
 
@@ -594,7 +622,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow)。
+    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration)。
     ///
     /// # 実装 (bd raikiri-spike-zls8 以降は delegation)
     ///
@@ -802,13 +830,16 @@ mod tests {
                 x: OverflowValue::Hidden,
                 y: OverflowValue::Scroll,
             },
+            // bd raikiri-spike-5z86.3: `Underline` — initial (`None`) と異なる
+            // 値 (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            text_decoration: TextDecoration::Underline,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 22 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 23 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -852,6 +883,9 @@ mod tests {
         // CSS Overflow 3 §3.1 (raikiri-spike-cmd3): overflow-x/overflow-y は
         // non-inherited。
         assert_eq!(child.overflow, initial.overflow);
+        // CSS Text Decoration Module Level 3 §2 (bd raikiri-spike-5z86.3):
+        // text-decoration は non-inherited。
+        assert_eq!(child.text_decoration, initial.text_decoration);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。

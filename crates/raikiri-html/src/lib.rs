@@ -890,6 +890,90 @@ mod tests {
     }
 
     #[test]
+    fn a_ua_rule_color_and_text_decoration_survives_real_parse_and_cascade() {
+        // bd raikiri-spike-5z86.3: HTML LS §phrasing-content-3's
+        // `a:link, a:visited { color: #0000EE; text-decoration: underline; }`
+        // is approximated here as `a[href] { color: #0000EE; text-decoration:
+        // underline; }` (no `:link`/`:visited` — Non-Goal, see the UA rule's
+        // comment in `minimal.css`; `:link` itself additionally requires an
+        // `href` attribute per HTML LS §selector-link, gated here via
+        // `[href]`). Same "survives real parse+cascade, not just literal
+        // text" concern as the `hr` test above. Also pins the `[href]` gate
+        // itself: a bare `<a id="anchor">` with no `href` (e.g. a fragment
+        // target, not a link at all per spec) must stay at CSS-initial
+        // (spec-lens/debt-lens finding on the original unconditional `a { }`
+        // rule, bd raikiri-spike-5z86.3 review round).
+        use raikiri_style::Origin;
+        use raikiri_style::property::{CssColor, TextDecoration};
+
+        let html = b"<html><body><a href=\"x\">link</a><a id=\"anchor\">bare</a></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let a_id = (0..uncascaded.dom.node_count())
+            .find(|&id_u| {
+                uncascaded
+                    .dom
+                    .node(raikiri_traits::NodeId::new(id_u as u64))
+                    .unwrap()
+                    .as_element()
+                    .is_some_and(|el| el.tag_name() == "a" && el.attr("href").is_some())
+            })
+            .expect("<a href> should exist");
+        let bare_a_id = (0..uncascaded.dom.node_count())
+            .find(|&id_u| {
+                uncascaded
+                    .dom
+                    .node(raikiri_traits::NodeId::new(id_u as u64))
+                    .unwrap()
+                    .as_element()
+                    .is_some_and(|el| el.tag_name() == "a" && el.attr("href").is_none())
+            })
+            .expect("<a> without href should exist");
+        let computed = &cascade.computed[a_id];
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            computed.color,
+            CssColor {
+                r: 0x00,
+                g: 0x00,
+                b: 0xEE,
+                a: 255,
+            },
+            "a[href]'s UA rule color: #0000EE must reach computed.color through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            computed.text_decoration,
+            TextDecoration::Underline,
+            "a[href]'s UA rule text-decoration: underline must reach computed.text_decoration through real parse+cascade"
+        );
+
+        // HTML LS §selector-link: an `a` with no `href` is not `:link` at
+        // all — must NOT pick up the UA rule's color/text-decoration.
+        let bare_computed = &cascade.computed[bare_a_id];
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            bare_computed.color,
+            CssColor::BLACK,
+            "a without href must stay at CSS-initial color, not the a[href] UA rule's #0000EE"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            bare_computed.text_decoration,
+            TextDecoration::None,
+            "a without href must stay at CSS-initial text-decoration, not the a[href] UA rule's underline"
+        );
+    }
+
+    #[test]
     fn parse_ignores_body_style_in_m1_scope() {
         // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。
