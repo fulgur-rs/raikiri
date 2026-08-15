@@ -2820,7 +2820,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    `specified_layer_residue` が網羅 match しているので test compile 段で
 ///    捕まる。それ以外 (`BorderStyle` / `BorderColor`
 ///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`
-///    / `OverflowValue` / `TextDecoration` / `VerticalAlign`)
+///    / `OverflowValue` / `TextDecoration` / `VerticalAlign` / `FontStyle`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
@@ -3063,7 +3063,12 @@ pub(crate) fn resolve_against_inherited(
         // note) — CSS 2.1 §10.8.1's computed value is still the bare
         // specified keyword, so there is nothing for this function (phase
         // 2, computed-value resolution) to resolve here either.
-        | PropertyValue::VerticalAlign(_)) => v,
+        | PropertyValue::VerticalAlign(_)
+        // `font-style` carries no length at this crate's scope (only
+        // `normal`/`italic` implemented, `FontStyle` doc) and does not
+        // depend on the inheritance parent — nothing for phase 2 to
+        // resolve.
+        | PropertyValue::FontStyle(_)) => v,
     })
 }
 
@@ -3445,6 +3450,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `VerticalAlign` は Copy、by-value 代入で十分 (`BoxSizing` /
         // `TextDecoration` arm と同型)。
         PropertyValue::VerticalAlign(va) => target.vertical_align = va,
+        // CSS Fonts 4 §2.4。
+        // inherited property のため cascade winner が無い child は
+        // inherit_from で親値を引き継ぐ (`Direction` arm と同じ handling)。
+        // `FontStyle` は Copy、by-value 代入で十分。
+        PropertyValue::FontStyle(fs) => target.font_style = fs,
     }
 }
 
@@ -7460,6 +7470,46 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].direction, Direction::Rtl);
         assert_eq!(r.computed[span].direction, Direction::Ltr);
+    }
+
+    // ── font-style wire-through (CSS Fonts 4 §2.4) ──
+
+    #[test]
+    fn font_style_wired_through_cascade_from_inline_style() {
+        use crate::property::FontStyle;
+        let cv = cascade_doc("", "p", Some("font-style: italic"));
+        assert_eq!(cv.font_style, FontStyle::Italic);
+    }
+
+    #[test]
+    fn font_style_inherits_from_parent_element() {
+        // CSS Fonts 4 §2.4: font-style は **inherited**.
+        use crate::property::FontStyle;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-style: italic"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_style, FontStyle::Italic);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].font_style,
+            FontStyle::Italic,
+            "child should inherit font-style from parent (CSS Fonts 4 §2.4 Inherited: yes)"
+        );
+    }
+
+    #[test]
+    fn font_style_child_own_value_wins_over_inherited() {
+        use crate::property::FontStyle;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-style: italic"));
+        let span = doc.push_element(p, "span", Some("font-style: normal"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_style, FontStyle::Italic);
+        assert_eq!(r.computed[span].font_style, FontStyle::Normal);
     }
 
     // ── text-align: match-parent (CSS Text 3 §6.1) ──

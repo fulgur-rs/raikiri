@@ -489,7 +489,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::OverflowX(_)
         | PropertyValue::OverflowY(_)
         | PropertyValue::TextDecoration(_)
-        | PropertyValue::VerticalAlign(_) => expand_none(d, push),
+        | PropertyValue::VerticalAlign(_)
+        | PropertyValue::FontStyle(_) => expand_none(d, push),
     }
 }
 
