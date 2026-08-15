@@ -115,6 +115,12 @@ impl TreeSink for RaikiriTreeSink {
         // attributes → Node.attributes (null-ns、style を除く) + Node.inline_style。
         wire_side_tables(&mut document, &qual_names, &attributes);
 
+        // html5ever が set_quirks_mode callback で報告した値を Document 自体
+        // に持たせる。cascade phase (raikiri-style の id/class selector
+        // matching) が `impl StyleDom for Document` 経由でこの値を読む。
+        let quirks_mode = convert_quirks(self.quirks_mode.get());
+        document.set_quirks_mode(quirks_mode);
+
         // 旧 strip_non_element_stubs (pseudo-tag な
         // "#comment" / "#pi" Element を tree から physical 除去) を廃止。
         // Comment / ProcessingInstruction は NodeData::Comment /
@@ -139,7 +145,7 @@ impl TreeSink for RaikiriTreeSink {
             dom: document,
             stylesheet_sources,
             warnings,
-            quirks_mode: convert_quirks(self.quirks_mode.get()),
+            quirks_mode,
         }
     }
 
