@@ -4065,6 +4065,37 @@ mod tests {
         );
     }
 
+    /// CSS Cascading and Inheritance Level 4 §6.1 "Cascade Sorting Order"
+    /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort>, Specificity step
+    /// verbatim: "declarations that do not belong to a style rule (such as
+    /// the contents of a style attribute) are considered to have a
+    /// specificity higher than any selector." Unlike
+    /// [`inline_specificity_exceeds_max_reachable_packed_specificity`],
+    /// which pins the `INLINE_SPECIFICITY` constant against a
+    /// packed-specificity numeric ceiling, this drives the full
+    /// [`cascade()`] pipeline end to end: a real `build_rule_tree` +
+    /// `cascade` run against a deliberately high-specificity author
+    /// selector (id + 3 classes) matched against an inline `style`
+    /// attribute on the same element.
+    #[test]
+    fn inline_style_beats_maximally_specific_selector_via_cascade() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "#a.b.c.d { color: red }");
+        let p = doc.push_element(0, "p", Some("color: blue"));
+        doc.set_attr(p, "id", "a");
+        doc.set_attr(p, "class", "b c d");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].color, BLUE,
+            "inline style must win over #a.b.c.d despite its high selector specificity"
+        );
+    }
+
     // --- descendant / child combinator ---
     //
     // CSS Selectors L4 descendant combinator
