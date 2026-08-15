@@ -1556,6 +1556,7 @@ mod tests {
     fn phrasing_content_ua_rules_survive_real_parse_and_cascade() {
         // HTML LS §phrasing-content-3's
         //   b, strong { font-weight: bolder; }
+        //   big { font-size: larger; }
         //   small { font-size: smaller; }
         //   mark { background: yellow; color: black; }
         //   ins, u { text-decoration: underline; }
@@ -1570,7 +1571,7 @@ mod tests {
         use raikiri_style::Origin;
         use raikiri_style::property::{CssColor, TextDecoration};
 
-        let html = b"<html><body><strong>x</strong><b>x</b><small>x</small>\
+        let html = b"<html><body><strong>x</strong><b>x</b><big>x</big><small>x</small>\
                      <mark>x</mark><ins>x</ins><u>x</u></body></html>";
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
@@ -1583,6 +1584,9 @@ mod tests {
             .0 as usize;
         let b_id = find_first_by_tag(&uncascaded.dom, "b")
             .expect("<b> should exist")
+            .0 as usize;
+        let big_id = find_first_by_tag(&uncascaded.dom, "big")
+            .expect("<big> should exist")
             .0 as usize;
         let small_id = find_first_by_tag(&uncascaded.dom, "small")
             .expect("<small> should exist")
@@ -1611,6 +1615,16 @@ mod tests {
         assert_eq!(
             cascade.computed[b_id].font_weight, 700.0,
             "b's UA rule font-weight: bolder must resolve to 700 against the inherited initial 400 through real parse+cascade"
+        );
+
+        // big { font-size: larger } — simple-ratio (1.2) branch applied
+        // against the inherited initial 16px.
+        let big_font_size = cascade.computed[big_id].font_size.0;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (big_font_size - 16.0 * 1.2).abs() < 0.0001,
+            "big's UA rule font-size: larger must resolve to 16px * 1.2 through real parse+cascade, got {big_font_size}"
         );
 
         // small { font-size: smaller } — simple-ratio (1.2) branch applied

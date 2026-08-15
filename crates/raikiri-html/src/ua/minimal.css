@@ -194,6 +194,7 @@ a[href] { color: #0000EE; text-decoration: underline; }
 /* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.4) also
  * specifies, among other phrasing-content elements:
  *   b, strong { font-weight: bolder; }
+ *   big { font-size: larger; }
  *   small { font-size: smaller; }
  *   mark { background: yellow; color: black; }
  *   ins, u { text-decoration: underline; }
@@ -205,11 +206,12 @@ a[href] { color: #0000EE; text-decoration: underline; }
  * font-weight: bolder/lighter (property.rs's `FontWeightValue::Bolder` /
  * `Lighter`, parsed at parse_font_weight L4057-4058, resolved against the
  * inherited computed weight by `resolve_relative_weight` in cascade.rs) and
- * font-size: smaller (`RelativeFontSize::Smaller`, parsed at
- * parse_font_size_keyword) are both already implemented, so `strong`/`b`/
- * `small` reach the spec rule verbatim below. `text-decoration: underline`
- * (already implemented) covers `ins`/`u` together, same as the spec's
- * shared selector.
+ * font-size: larger/smaller (`RelativeFontSize::Larger` / `Smaller`, both
+ * parsed at parse_font_size_keyword and resolved against the inherited
+ * computed size by `resolve_relative_font_size` in cascade.rs) are both
+ * already implemented, so `strong`/`b`/`big`/`small` reach the spec rule
+ * verbatim below. `text-decoration: underline` (already implemented) covers
+ * `ins`/`u` together, same as the spec's shared selector.
  *
  * `background-color` and `color` are both implemented, but the `background`
  * shorthand itself is not (property.rs `parse_value` has no "background"
@@ -243,6 +245,7 @@ a[href] { color: #0000EE; text-decoration: underline; }
  * same-baseline text, so the two aren't equally severe). Deferred as a
  * whole unit alongside vertical-align. */
 b, strong { font-weight: bolder; }
+big { font-size: larger; }
 small { font-size: smaller; }
 mark { background-color: yellow; color: black; }
 ins, u { text-decoration: underline; }
