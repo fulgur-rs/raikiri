@@ -195,6 +195,69 @@
 //! reading a suspiciously large improvement, check those tests still pass
 //! before believing it.
 //!
+//! # Combinator-chain workload
+//!
+//! `match_complex_selector_list` (`crates/raikiri-style/src/cascade.rs`)
+//! matches a selector's rightmost compound against the element directly, and
+//! only calls into `match_combinator_chain` once `iter.next_sequence()`
+//! reports a combinator remaining further left. Both configs above generate
+//! bare-tag, zero-combinator rules (`div { … }`), so `next_sequence()`
+//! returns `None` immediately for every one of them and
+//! `match_combinator_chain` is never invoked at all — neither config can see
+//! a change to that function's cost.
+//!
+//! `match_combinator_chain` walks its choice points on an explicit
+//! `Vec<Frame>` stack (one heap allocation per top-level call) rather than
+//! native recursion, so a chain of ancestor/sibling combinators has a real
+//! per-call allocation cost that this file's other two configs cannot
+//! exercise. The `combinator_chain_5000x4` config gives that allocation a
+//! workload: a single rule with a 5-compound, 4-child-combinator selector
+//! (`div > div > div > div > div`) matched against a straight 5000-deep
+//! parent-child chain of `div`s ([`BenchDoc::chain`]). The rightmost compound
+//! is a bare `div`, so every element in the chain triggers exactly one
+//! top-level `match_combinator_chain` call — that element count is this
+//! config's throughput unit (see the `group.throughput` call site), not
+//! declarations, since most calls do not go on to produce any.
+//!
+//! 4 combinators sits within the 2–5 combinator range typical of real-world
+//! selectors. A deeper chain would still allocate on every call (the `Vec`
+//! grows via push-triggered doubling with no cap), but would stop
+//! representing a typical selector shape.
+//!
+//! [`combinator_chain_workload`]'s probe checks both directions: elements at
+//! chain position `selector_depth` or deeper carry the winning rule's
+//! values, and — unlike [`workload`]'s single-direction check — the
+//! `selector_depth - 1` elements nearest the root keep their *initial*
+//! values, since they run out of ancestors before the selector's combinators
+//! do. A matcher that ignored ancestor structure and returned true
+//! unconditionally would pass every other assertion in this file while
+//! failing only this one.
+//!
+//! `combinator_chain_5000x4`'s selector is pure child combinators
+//! (`Combinator::Child`), which never backtrack — `PendingCandidates::Child`
+//! has exactly one candidate, so `match_combinator_chain` either matches it
+//! or gives up immediately. It cannot exercise the retry
+//! `Combinator::Descendant` needs when a closer candidate matches the
+//! `Descendant` step but then fails a `Combinator::Child` step further left
+//! (see `match_combinator_chain`'s own doc, "load-bearing" retry note, and
+//! the regression test `descendant_retry_past_a_failed_child_combinator_candidate_is_required`
+//! in `crates/raikiri-style/src/cascade.rs`) — each such failure pops one
+//! choice-point frame and resumes the outer `Descendant` search, real stack
+//! churn a pure child chain never triggers.
+//!
+//! `mixed_combinator_chain_300` gives that path a workload:
+//! [`BenchDoc::mixed_chain`] builds a `section` followed by a straight
+//! 300-deep parent-child chain of `article`s, each with its own `div` child,
+//! matched against `section > article div`. The `div` under `article` level
+//! `k` (1-indexed, closest to `section` = 1) only matches once the
+//! `Descendant` search reaches level 1 — every closer `article` candidate
+//! matches the `Descendant` step but fails the following `Child` step (its
+//! own immediate parent is another `article`, not `section`), so level `k`
+//! costs `k` push-then-pop retry cycles, not 1. [`mixed_combinator_workload`]
+//! also matches against an `article` → `article` → `div` subtree with no
+//! `section` ancestor anywhere at all, which must not match — the same
+//! both-directions guard `combinator_chain_workload` uses.
+//!
 //! # Running it
 //!
 //! ```text
@@ -219,6 +282,34 @@ use raikiri_style::{
 /// Declarations emitted per generated rule. Kept at 10 to match the
 /// reference numbers in the module doc.
 const DECLS_PER_RULE: usize = 10;
+
+/// Shared `.expect()` message for every `cascade()` call site in this file —
+/// see [`cascade`]'s own doc: it always returns `Ok` in the current
+/// implementation.
+// cov:ignore: bench harness constant — `cargo test`/`cargo llvm-cov
+// --workspace` never build this bench target, so nothing in this file has
+// coverage instrumentation to attribute to.
+const CASCADE_NEVER_ERRS: &str = "cascade never returns Err in the current implementation";
+
+/// Compound count of the `combinator_chain` config's selector — see the
+/// module doc's "Combinator-chain workload" section.
+// cov:ignore: bench harness constant — `cargo test`/`cargo llvm-cov
+// --workspace` never build this bench target, so nothing in this file has
+// coverage instrumentation to attribute to.
+const COMBINATOR_CHAIN_SELECTOR_DEPTH: usize = 5;
+
+/// Depth of the `combinator_chain` config's `div` chain — see the module
+/// doc's "Combinator-chain workload" section.
+// cov:ignore: same reason as the constant above.
+const COMBINATOR_CHAIN_DOC_DEPTH: usize = 5000;
+
+/// `article` level count of the `mixed_combinator_chain` config — see
+/// [`BenchDoc::mixed_chain`]'s doc. Total retry cycles across the whole
+/// config scale roughly with the square of this count (level `k`'s `div`
+/// costs `k` cycles), so this is kept an order of magnitude below
+/// [`COMBINATOR_CHAIN_DOC_DEPTH`].
+// cov:ignore: same reason as the constant above.
+const MIXED_CHAIN_ARTICLES: usize = 300;
 
 // ── Minimal DOM ───────────────────────────────────────────────────────────
 //
@@ -274,6 +365,137 @@ impl BenchDoc {
             nodes[0].children.push(div);
         }
         Self { nodes }
+    }
+
+    /// Build a straight `depth`-deep parent-child chain of `div`s under the
+    /// document root — `div` → `div` → … → `div`, one child per level, no
+    /// siblings and no text nodes.
+    ///
+    /// Unlike [`BenchDoc::new`]'s flat topology (every `div` a direct child
+    /// of the document root, so none has a `div` ancestor at all), every
+    /// `div` here has every shallower `div` in the chain as an ancestor —
+    /// this is what lets [`combinator_chain_workload`] exercise
+    /// `match_combinator_chain`'s ancestor walk.
+    // cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+    // never build this bench target, so nothing in this function has
+    // coverage instrumentation to attribute to.
+    fn chain(depth: usize) -> Self {
+        let mut nodes = Vec::with_capacity(1 + depth);
+        nodes.push(BenchNode {
+            kind: StyleNodeKind::Document,
+            tag: "",
+            text: None,
+            children: Vec::with_capacity(1),
+        });
+        let mut parent = 0usize;
+        for _ in 0..depth {
+            let div = nodes.len();
+            nodes.push(BenchNode {
+                kind: StyleNodeKind::Element,
+                tag: "div",
+                text: None,
+                children: Vec::new(),
+            });
+            nodes[parent].children.push(div);
+            parent = div;
+        }
+        Self { nodes }
+    }
+
+    /// Build a mixed child+descendant selector-matching topology: a
+    /// `section` with a straight `n_articles`-deep parent-child chain of
+    /// `article`s below it, each carrying its own `div` child — plus an
+    /// unrelated `article` → `article` → `div` chain with no `section`
+    /// ancestor anywhere, as a negative control.
+    ///
+    /// Matched against `section > article div`
+    /// ([`mixed_combinator_workload`]'s selector), this is what a pure
+    /// child-combinator chain ([`BenchDoc::chain`]) cannot exercise: the
+    /// `Combinator::Descendant` candidate search past a failed
+    /// `Combinator::Child` candidate. The `div` under `article` level `k`
+    /// (1-indexed, closest to `section` = 1) only matches once the
+    /// `Descendant` search reaches level-1's `article` — every closer
+    /// `article` candidate matches the `Descendant` step but then fails the
+    /// `Child` step (its own immediate parent is another `article`, not
+    /// `section`), forcing a push-then-pop retry — so level `k`'s `div`
+    /// costs `k` such choice-point cycles, not 1.
+    ///
+    /// Returns `(doc, positive_div_ids, negative_div_id)`: `positive_div_ids`
+    /// is one `div` id per `article` level (all of which must match),
+    /// `negative_div_id` is the one `div` with no `section` ancestor at all
+    /// (which must not).
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    fn mixed_chain(n_articles: usize) -> (Self, Vec<usize>, usize) {
+        let mut nodes = Vec::with_capacity(1 + n_articles * 2 + 3);
+        nodes.push(BenchNode {
+            kind: StyleNodeKind::Document,
+            tag: "",
+            text: None,
+            children: Vec::with_capacity(2),
+        });
+
+        let section = nodes.len();
+        nodes.push(BenchNode {
+            kind: StyleNodeKind::Element,
+            tag: "section",
+            text: None,
+            children: Vec::with_capacity(1),
+        });
+        nodes[0].children.push(section);
+
+        let mut positive_div_ids = Vec::with_capacity(n_articles);
+        let mut parent = section;
+        for _ in 0..n_articles {
+            let article = nodes.len();
+            nodes.push(BenchNode {
+                kind: StyleNodeKind::Element,
+                tag: "article",
+                text: None,
+                children: Vec::with_capacity(1),
+            });
+            nodes[parent].children.push(article);
+
+            let div = nodes.len();
+            nodes.push(BenchNode {
+                kind: StyleNodeKind::Element,
+                tag: "div",
+                text: None,
+                children: Vec::new(),
+            });
+            nodes[article].children.push(div);
+            positive_div_ids.push(div);
+
+            parent = article;
+        }
+
+        // Negative control: `article` → `article` → `div`, no `section`
+        // ancestor anywhere.
+        let neg_article_1 = nodes.len();
+        nodes.push(BenchNode {
+            kind: StyleNodeKind::Element,
+            tag: "article",
+            text: None,
+            children: Vec::with_capacity(1),
+        });
+        nodes[0].children.push(neg_article_1);
+        let neg_article_2 = nodes.len();
+        nodes.push(BenchNode {
+            kind: StyleNodeKind::Element,
+            tag: "article",
+            text: None,
+            children: Vec::with_capacity(1),
+        });
+        nodes[neg_article_1].children.push(neg_article_2);
+        let negative_div_id = nodes.len();
+        nodes.push(BenchNode {
+            kind: StyleNodeKind::Element,
+            tag: "div",
+            text: None,
+            children: Vec::new(),
+        });
+        nodes[neg_article_2].children.push(negative_div_id);
+
+        (Self { nodes }, positive_div_ids, negative_div_id)
     }
 }
 
@@ -416,6 +638,75 @@ fn stylesheet(n_rules: usize) -> (String, Winners) {
     (css, winners)
 }
 
+/// Build a single-rule stylesheet whose selector is a `depth`-compound
+/// child-combinator chain (`div > div > … > div`, `depth - 1` `>`
+/// combinators), with [`DECLS_PER_RULE`] longhand declarations.
+///
+/// Returns the CSS together with the [`Winners`] it cascades to, on the same
+/// one-source-of-truth contract as [`stylesheet`] — the probe in
+/// [`combinator_chain_workload`] compares against these exact values.
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+fn chain_stylesheet(depth: usize) -> (String, Winners) {
+    let box_px = 7.0;
+    let font_size = 42.0;
+    let color = CssColor {
+        r: 9,
+        g: 8,
+        b: 7,
+        a: 255,
+    };
+    let selector = vec!["div"; depth].join(" > ");
+    let css = format!(
+        "{selector} {{ margin-top: {box_px}px; margin-right: {box_px}px; \
+         margin-bottom: {box_px}px; margin-left: {box_px}px; \
+         padding-top: {box_px}px; padding-right: {box_px}px; \
+         padding-bottom: {box_px}px; padding-left: {box_px}px; \
+         font-size: {font_size}px; color: rgb({}, {}, {}) }}\n",
+        color.r, color.g, color.b,
+    );
+    (
+        css,
+        Winners {
+            font_size,
+            box_px,
+            color,
+        },
+    )
+}
+
+/// Build a single-rule stylesheet for the `section > article div` mixed
+/// child+descendant selector ([`BenchDoc::mixed_chain`]'s topology), with
+/// [`DECLS_PER_RULE`] longhand declarations.
+///
+/// Same one-source-of-truth contract as [`stylesheet`]/[`chain_stylesheet`].
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+fn mixed_stylesheet() -> (String, Winners) {
+    let box_px = 3.0;
+    let font_size = 21.0;
+    let color = CssColor {
+        r: 1,
+        g: 2,
+        b: 3,
+        a: 255,
+    };
+    let css = format!(
+        "section > article div {{ margin-top: {box_px}px; margin-right: {box_px}px; \
+         margin-bottom: {box_px}px; margin-left: {box_px}px; \
+         padding-top: {box_px}px; padding-right: {box_px}px; \
+         padding-bottom: {box_px}px; padding-left: {box_px}px; \
+         font-size: {font_size}px; color: rgb({}, {}, {}) }}\n",
+        color.r, color.g, color.b,
+    );
+    (
+        css,
+        Winners {
+            font_size,
+            box_px,
+            color,
+        },
+    )
+}
+
 /// Assemble one config and prove the workload is the one it claims to be.
 ///
 /// The assertions are the load-bearing part. A benchmark that measures
@@ -425,13 +716,14 @@ fn stylesheet(n_rules: usize) -> (String, Winners) {
 /// - **Input side.** If a parser change dropped a declaration or a whole
 ///   rule, the loop would simply run fewer times and the benchmark would
 ///   report a speedup.
-/// - **Matching side.** This is the subtler one. `match_by_tag`'s selector
-///   walk ends in `_ => { matches = false; break; }`
-///   (`crates/raikiri-style/src/cascade.rs`), so if a `selectors` upgrade
-///   ever changes how a bare type selector decomposes into components, *every
-///   rule stops matching every element*. The parse-side assertions below
-///   would still pass, `collect_cascaded`'s inner loop would never execute,
-///   and this file would report a large improvement while measuring nothing.
+/// - **Matching side.** This is the subtler one. `compound_matches`'s
+///   per-component walk ends in a `_ => false` safety-net arm
+///   (`crates/raikiri-style/src/cascade.rs`) that fails the whole compound on
+///   any unrecognized component, so if a `selectors` upgrade ever changes how
+///   a bare type selector decomposes into components, *every rule stops
+///   matching every element*. The parse-side assertions below would still
+///   pass, `collect_cascaded`'s inner loop would never execute, and this file
+///   would report a large improvement while measuring nothing.
 ///
 /// So the input assertions are not enough on their own: the function also
 /// runs one throwaway `cascade()` and checks that *every* declaration reached
@@ -474,8 +766,11 @@ fn workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
          different rule count"
     );
 
-    let probe =
-        cascade(&doc, &tree).expect("cascade never returns Err in the current implementation");
+    // cov:ignore: bench harness — never instrumented under `cargo llvm-cov
+    // --workspace` (bench targets are not built by `cargo test`/`cargo
+    // llvm-cov --workspace`). The assertions in this function are the actual
+    // correctness check, run once at setup outside any timed region.
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -563,6 +858,225 @@ fn workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
     (doc, tree, declarations)
 }
 
+/// Assemble the combinator-chain config and prove it exercises what it
+/// claims to — see the module doc's "Combinator-chain workload" section for
+/// the design.
+///
+/// `selector_depth` compounds (`selector_depth - 1` child combinators) are
+/// matched against a straight `doc_depth`-deep parent-child chain of `div`s
+/// ([`BenchDoc::chain`]). `doc.nodes` index `i` (`1..=doc_depth`) is the
+/// `div` at chain position `i` (1-indexed), with `i - 1` `div` ancestors
+/// above it — exactly the ancestor count the selector's `selector_depth - 1`
+/// child combinators need. So `i >= selector_depth` matches the whole
+/// selector, and `i < selector_depth` runs out of ancestors first and does
+/// not.
+///
+/// Unlike [`workload`], not every element matches: the probe below checks
+/// both directions; on [`workload`]'s "the assertions are the load-bearing
+/// part" logic, proving the negative (shallow elements keep their initial
+/// values) is what catches a matcher that ignored ancestor structure and
+/// returned true unconditionally.
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above. The
+// assertions in this function are the actual correctness check (run once at
+// setup, outside any timed region, and would panic on failure) — coverage
+// instrumentation is what's structurally unavailable here, not testing.
+fn combinator_chain_workload(selector_depth: usize, doc_depth: usize) -> (BenchDoc, RuleTree, u64) {
+    assert!(
+        selector_depth >= 1 && selector_depth <= doc_depth,
+        "selector_depth must be in [1, doc_depth] for the probe below to see \
+         both a matching and a non-matching element"
+    );
+
+    let mut tree = RuleTree::empty();
+    let (css, want) = chain_stylesheet(selector_depth);
+    tree.add_stylesheet(&css, Origin::Author);
+
+    assert_eq!(
+        tree.style_rules().len(),
+        1,
+        "combinator-chain stylesheet did not parse into exactly one rule"
+    );
+    assert_eq!(
+        tree.style_rules()[0].declarations().len(),
+        DECLS_PER_RULE,
+        "combinator-chain rule did not parse into the expected declaration count"
+    );
+
+    let doc = BenchDoc::chain(doc_depth);
+    let initial = ComputedValues::initial();
+    assert!(
+        want.font_size != initial.font_size.px()
+            && want.box_px != 0.0
+            && want.color != initial.color,
+        "combinator-chain winner values must differ from the initial ones, \
+         or the probe below would be vacuous"
+    );
+
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    assert_eq!(
+        probe.computed.len(),
+        doc.node_count(),
+        "cascade did not produce one entry per arena node"
+    );
+
+    let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
+    let want_padding = ComputedLengthPercentage::Px(want.box_px);
+
+    for i in 1..=doc_depth {
+        let cv = &probe.computed[i];
+        if i >= selector_depth {
+            assert_eq!(
+                cv.font_size.px(),
+                want.font_size,
+                "div at chain position {i} of {doc_depth} has {} div ancestors \
+                 ({selector_depth} needed) and should match the selector, but \
+                 does not carry the winning font-size",
+                i - 1,
+            );
+            assert_eq!(
+                cv.color, want.color,
+                "div at chain position {i} of {doc_depth} should match the \
+                 selector but does not carry the winning color"
+            );
+            assert_eq!(
+                cv.margin.top, want_margin,
+                "div at chain position {i} of {doc_depth}: margin-top does \
+                 not carry the winning rule's value"
+            );
+            assert_eq!(
+                cv.padding.top, want_padding,
+                "div at chain position {i} of {doc_depth}: padding-top does \
+                 not carry the winning rule's value"
+            );
+        } else {
+            assert_eq!(
+                cv.font_size.px(),
+                initial.font_size.px(),
+                "div at chain position {i} of {doc_depth} has only {} div \
+                 ancestors ({selector_depth} needed) and must NOT match — a \
+                 matcher that ignores ancestor structure would wrongly style \
+                 it",
+                i - 1,
+            );
+            assert_eq!(
+                cv.color, initial.color,
+                "div at chain position {i} of {doc_depth} has insufficient \
+                 div ancestors and must keep the initial color"
+            );
+        }
+    }
+
+    (doc, tree, doc_depth as u64)
+}
+
+/// Assemble the mixed child+descendant config and prove it exercises what it
+/// claims to — see [`BenchDoc::mixed_chain`]'s doc for the topology and why
+/// it forces `match_combinator_chain`'s `Combinator::Descendant` retry-past-
+/// a-failed-`Combinator::Child`-candidate path, which neither [`workload`]
+/// nor [`combinator_chain_workload`] reaches (the former never invokes
+/// `match_combinator_chain` at all; the latter's pure child-combinator chain
+/// never backtracks — `PendingCandidates::Child` has exactly one
+/// candidate).
+///
+/// On [`workload`]'s "the assertions are the load-bearing part" logic: every
+/// `article` level's `div` must carry the winning rule's values (the
+/// `Descendant` retry must eventually succeed), and the negative-control
+/// `div` (no `section` ancestor) must not (the retry must not
+/// over-match once a `Child` candidate fails).
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above. The
+// assertions in this function are the actual correctness check (run once at
+// setup, outside any timed region, and would panic on failure) — coverage
+// instrumentation is what's structurally unavailable here, not testing.
+fn mixed_combinator_workload(n_articles: usize) -> (BenchDoc, RuleTree, u64) {
+    let mut tree = RuleTree::empty();
+    let (css, want) = mixed_stylesheet();
+    tree.add_stylesheet(&css, Origin::Author);
+
+    assert_eq!(
+        tree.style_rules().len(),
+        1,
+        "mixed-combinator stylesheet did not parse into exactly one rule"
+    );
+    assert_eq!(
+        tree.style_rules()[0].declarations().len(),
+        DECLS_PER_RULE,
+        "mixed-combinator rule did not parse into the expected declaration count"
+    );
+
+    let (doc, positive_div_ids, negative_div_id) = BenchDoc::mixed_chain(n_articles);
+    let initial = ComputedValues::initial();
+    assert!(
+        want.font_size != initial.font_size.px()
+            && want.box_px != 0.0
+            && want.color != initial.color,
+        "mixed-combinator winner values must differ from the initial ones, \
+         or the probe below would be vacuous"
+    );
+
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    assert_eq!(
+        probe.computed.len(),
+        doc.node_count(),
+        "cascade did not produce one entry per arena node"
+    );
+
+    let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
+    let want_padding = ComputedLengthPercentage::Px(want.box_px);
+
+    for (level, &div_id) in positive_div_ids.iter().enumerate() {
+        let cv = &probe.computed[div_id];
+        assert_eq!(
+            cv.font_size.px(),
+            want.font_size,
+            "div under article level {} of {n_articles} should match \
+             `section > article div` but does not carry the winning \
+             font-size — the Descendant retry past a failed Child candidate \
+             did not run to completion",
+            level + 1,
+        );
+        assert_eq!(
+            cv.color,
+            want.color,
+            "div under article level {} of {n_articles} should match but \
+             does not carry the winning color",
+            level + 1,
+        );
+        assert_eq!(
+            cv.margin.top,
+            want_margin,
+            "div under article level {} of {n_articles}: margin-top does \
+             not carry the winning rule's value",
+            level + 1,
+        );
+        assert_eq!(
+            cv.padding.top,
+            want_padding,
+            "div under article level {} of {n_articles}: padding-top does \
+             not carry the winning rule's value",
+            level + 1,
+        );
+    }
+
+    let negative_cv = &probe.computed[negative_div_id];
+    assert_eq!(
+        negative_cv.font_size.px(),
+        initial.font_size.px(),
+        "the negative-control div (no `section` ancestor) must not match \
+         `section > article div` — a matcher that over-matched once a \
+         Child candidate failed would wrongly style it"
+    );
+    assert_eq!(
+        negative_cv.color, initial.color,
+        "the negative-control div must keep the initial color"
+    );
+
+    // Throughput unit: one top-level `match_combinator_chain` call per `div`
+    // in the tree (both the `n_articles` positive ones and the one negative
+    // control) — see the module doc.
+    let match_attempts = (positive_div_ids.len() + 1) as u64;
+    (doc, tree, match_attempts)
+}
+
 fn bench_cascade(c: &mut Criterion) {
     let mut group = c.benchmark_group("cascade");
 
@@ -572,6 +1086,11 @@ fn bench_cascade(c: &mut Criterion) {
     // the throughput note below).
     // The ≈4 ns/declaration in the module doc is the regression *delta*, not
     // the healthy cost.
+    //
+    // cov:ignore: bench harness — never instrumented under `cargo llvm-cov
+    // --workspace` (bench targets are not built by `cargo test`/`cargo
+    // llvm-cov --workspace`), so nothing in this loop has coverage
+    // instrumentation to attribute to.
     for (name, n_rules, n_elems) in [
         ("rule_heavy_50x500", 50usize, 500usize),
         ("element_heavy_5x2000", 5usize, 2000usize),
@@ -590,10 +1109,46 @@ fn bench_cascade(c: &mut Criterion) {
         // at the `832500e` baseline). Only the *delta* is comparable.
         group.throughput(Throughput::Elements(declarations));
         group.bench_function(name, |b| {
-            b.iter_with_large_drop(|| {
-                cascade(&doc, &tree)
-                    .expect("cascade never returns Err in the current implementation")
-            });
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // Combinator-chain config — see the module doc's "Combinator-chain
+    // workload" section for why the two configs above cannot exercise
+    // `match_combinator_chain` at all.
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    {
+        let (doc, tree, match_attempts) =
+            combinator_chain_workload(COMBINATOR_CHAIN_SELECTOR_DEPTH, COMBINATOR_CHAIN_DOC_DEPTH);
+
+        // Throughput denominated in elements attempted, not declarations:
+        // every `div` in the chain triggers exactly one top-level call into
+        // `match_combinator_chain` (see the module doc), which is the
+        // quantity whose per-call allocation cost is under study here —
+        // unlike the two configs above, most attempts do not go on to
+        // produce any declarations at all.
+        group.throughput(Throughput::Elements(match_attempts));
+        group.bench_function("combinator_chain_5000x4", |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // Mixed child+descendant config — see `mixed_combinator_workload`'s doc
+    // for why `combinator_chain_5000x4` above, despite exercising
+    // `match_combinator_chain`, still cannot reach its
+    // `Combinator::Descendant` retry-past-a-failed-`Combinator::Child`-
+    // candidate path (a pure child-combinator chain never backtracks).
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    {
+        let (doc, tree, match_attempts) = mixed_combinator_workload(MIXED_CHAIN_ARTICLES);
+
+        // Throughput denominated in elements attempted, same convention as
+        // `combinator_chain_5000x4` above.
+        group.throughput(Throughput::Elements(match_attempts));
+        group.bench_function("mixed_combinator_chain_300", |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
