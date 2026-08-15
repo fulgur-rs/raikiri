@@ -26,7 +26,7 @@ use smol_str::SmolStr;
 use std::borrow::Cow;
 use taffy::Style;
 
-use raikiri_traits::StylesheetKind;
+use raikiri_traits::{QuirksMode, StylesheetKind};
 
 use crate::layout::LayoutWarn;
 use crate::node::{Attr, Node, NodeData};
@@ -103,6 +103,18 @@ pub struct Document {
     ///
     /// [`LAYOUT_WARN_CAP`]: crate::layout::LAYOUT_WARN_CAP
     pub(crate) layout_warnings: Vec<LayoutWarn>,
+    /// HTML5 quirks mode for this whole document. Default
+    /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
+    /// `Document`s built by hand (raikiri-dom unit tests, raikiri-paint
+    /// hello-world setup). raikiri-html's parse sink calls
+    /// [`Document::set_quirks_mode`] with the html5ever-detected value
+    /// before handing the `Document` off, so parsed documents carry their
+    /// real value. Read back via [`Document::quirks_mode`] and by
+    /// `impl raikiri_style::StyleDom for Document`'s `quirks_mode()`
+    /// override (`dom_impl.rs`), which converts it to
+    /// `raikiri_style::StyleQuirksMode` for cascade's id/class
+    /// case-folding (CSS Selectors L4).
+    quirks_mode: QuirksMode,
 }
 
 impl Document {
@@ -120,6 +132,7 @@ impl Document {
             flags_dirty: false,
             stylesheets: Vec::new(),
             layout_warnings: Vec::new(),
+            quirks_mode: QuirksMode::default(),
         }
     }
 
@@ -742,6 +755,24 @@ impl Document {
         self.stylesheets
             .iter()
             .map(|(cow, kind)| (cow.as_ref(), *kind))
+    }
+
+    // ─── quirks mode ───────────────────
+
+    /// この Document の HTML5 quirks mode を設定する。raikiri-html の parse
+    /// sink が html5ever `TreeSink::set_quirks_mode` callback で得た値を
+    /// `finish()` 時にここへ書き込む想定 (`RaikiriTreeSink::finish` 参照)。
+    pub fn set_quirks_mode(&mut self, mode: QuirksMode) {
+        self.quirks_mode = mode;
+    }
+
+    /// この Document の HTML5 quirks mode。手動構築された `Document` (parse
+    /// を経由しない test / setup コード) では [`QuirksMode::NoQuirks`]
+    /// のまま。`impl raikiri_style::StyleDom for Document` の
+    /// `quirks_mode()` override がこの値を `StyleQuirksMode` へ変換して
+    /// cascade に渡す (`dom_impl.rs`)。
+    pub fn quirks_mode(&self) -> QuirksMode {
+        self.quirks_mode
     }
 }
 

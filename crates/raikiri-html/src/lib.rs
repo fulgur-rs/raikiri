@@ -1258,6 +1258,55 @@ mod tests {
         assert_eq!(uncascaded.quirks_mode, QuirksMode::NoQuirks);
     }
 
+    /// End-to-end regression: html5ever's quirks-mode detection
+    /// (`UncascadedDocument.quirks_mode`, asserted by
+    /// `parse_captures_quirks_mode_for_missing_doctype` above) must also
+    /// reach `raikiri_dom::Document` itself (`RaikiriTreeSink::finish`
+    /// calling `Document::set_quirks_mode`) and, through
+    /// `impl raikiri_style::StyleDom for Document`, `StyleDom::quirks_mode()`
+    /// — the accessor `raikiri-style`'s cascade actually reads for id/class
+    /// selector ASCII-case-folding (CSS Selectors L4). Previously
+    /// `Document` carried no quirks-mode field at all, so this path always
+    /// fell back to `StyleDom::quirks_mode`'s default (`NoQuirks`)
+    /// regardless of the parsed document's real doctype.
+    #[test]
+    fn parse_wires_quirks_mode_through_document_to_style_dom() {
+        use raikiri_style::{StyleDom, StyleQuirksMode};
+        use raikiri_traits::QuirksMode;
+
+        let html = b"<html><body>x</body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+
+        assert_eq!(uncascaded.quirks_mode, QuirksMode::Quirks);
+        assert_eq!(uncascaded.dom.quirks_mode(), QuirksMode::Quirks);
+        assert_eq!(
+            StyleDom::quirks_mode(&uncascaded.dom),
+            StyleQuirksMode::Quirks
+        );
+    }
+
+    /// Standards-mode counterpart of
+    /// `parse_wires_quirks_mode_through_document_to_style_dom`: an explicit
+    /// `<!DOCTYPE html>` must reach `StyleDom::quirks_mode()` as `NoQuirks`
+    /// end-to-end, not just as the (indistinguishable) trait default.
+    #[test]
+    fn parse_wires_no_quirks_through_document_to_style_dom() {
+        use raikiri_style::{StyleDom, StyleQuirksMode};
+        use raikiri_traits::QuirksMode;
+
+        let html = b"<!DOCTYPE html><html><body>x</body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+
+        assert_eq!(uncascaded.quirks_mode, QuirksMode::NoQuirks);
+        assert_eq!(uncascaded.dom.quirks_mode(), QuirksMode::NoQuirks);
+        assert_eq!(
+            StyleDom::quirks_mode(&uncascaded.dom),
+            StyleQuirksMode::NoQuirks
+        );
+    }
+
     #[test]
     fn parse_survives_table_foster_parenting() {
         // <table> 直下 text の foster parenting は html5ever が

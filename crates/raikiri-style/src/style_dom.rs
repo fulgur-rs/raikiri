@@ -160,12 +160,12 @@ pub trait StyleDom {
     /// the true value. [`mod@crate::cascade`]'s id/class selector matching
     /// reads this to decide ASCII-case-folding (CSS Selectors L4).
     ///
-    /// **Not yet overridden by raikiri-dom**:
-    /// `raikiri-dom::Document` does not carry a quirks-mode field, and
-    /// `impl StyleDom for Document` (`crates/raikiri-dom/src/dom_impl.rs`)
-    /// still relies on this default — so real parsed HTML documents take the
-    /// `NoQuirks` path today regardless of their actual doctype. Tracked as a
-    /// dom-scope follow-up.
+    /// `raikiri-dom::Document` carries a real quirks-mode field
+    /// (`Document::set_quirks_mode` / `Document::quirks_mode`, populated by
+    /// raikiri-html's parse sink), and `impl StyleDom for Document`
+    /// (`crates/raikiri-dom/src/dom_impl.rs`) overrides this method to
+    /// report it — so real parsed HTML documents reach cascade with their
+    /// actual doctype-derived quirks mode.
     fn quirks_mode(&self) -> StyleQuirksMode {
         StyleQuirksMode::NoQuirks
     }
