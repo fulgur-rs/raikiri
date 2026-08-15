@@ -13,8 +13,9 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
-    FontStyle, OverflowValue, OverflowXY, Sides, TextAlign, TextDecoration, VerticalAlign,
-    empty_content_list, empty_counter_entries, empty_string_set_entries, initial_font_family,
+    FontStyle, OverflowValue, OverflowXY, Sides, TextAlign, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, VerticalAlign, empty_content_list,
+    empty_counter_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -483,22 +484,13 @@ pub struct ComputedValues {
     /// `overflow` UA rule comment in
     /// `crates/raikiri-html/src/ua/minimal.css`).
     pub overflow: OverflowXY,
-    /// `text-decoration`. **non-inherited**, initial:
-    /// [`TextDecoration::None`] (CSS Text Decoration Module Level 3 §2
-    /// "Text Decoration Lines: the text-decoration-line property"
+    /// `text-decoration-line`. **non-inherited**, initial:
+    /// [`TextDecorationLine::NONE`] (CSS Text Decoration Module Level 3
+    /// §2.1 "Text Decoration Lines: the text-decoration-line property"
     /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>,
     /// "Initial: none" / "Inherited: no"). Computed value = specified
-    /// keyword ([`TextDecoration`] doc — no length payload, so no relative
-    /// resolution is needed).
-    ///
-    /// # Scope carving (minimal scope)
-    ///
-    /// This field holds the single-property `none | underline` value
-    /// described on [`TextDecoration`] — the `text-decoration-line` /
-    /// `-style` / `-color` longhand decomposition, the full
-    /// `text-decoration-line` keyword set (`overline` / `line-through` /
-    /// `blink`), and their `||` combination grammar are explicit follow-up,
-    /// not represented by this field.
+    /// keyword(s) ([`TextDecorationLine`] doc — no length payload, so no
+    /// relative resolution is needed).
     ///
     /// # Downstream handoff (future scope, style-scope confined)
     ///
@@ -507,7 +499,29 @@ pub struct ComputedValues {
     /// decoration line is raikiri-paint scope and not yet wired
     /// (`crates/raikiri-paint/src/lib.rs`'s module doc lists "Text
     /// decoration (underline / line-through)" as a future milestone).
-    pub text_decoration: TextDecoration,
+    pub text_decoration_line: TextDecorationLine,
+    /// `text-decoration-style`. **non-inherited**, initial:
+    /// [`TextDecorationStyle::Solid`] (CSS Text Decoration Module Level 3
+    /// §2.2 "Text Decoration Style: the text-decoration-style property"
+    /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-style-property>,
+    /// "Initial: solid" / "Inherited: no"). Computed value = specified
+    /// keyword ([`TextDecorationStyle`] doc).
+    ///
+    /// Downstream handoff mirrors [`Self::text_decoration_line`] — the
+    /// paint-side rendering of a non-`solid` style is not yet wired.
+    pub text_decoration_style: TextDecorationStyle,
+    /// `text-decoration-color`. **non-inherited**, initial:
+    /// [`TextDecorationColor::CurrentColor`] (CSS Text Decoration Module
+    /// Level 3 §2.3 "Text Decoration Color: the text-decoration-color
+    /// property"
+    /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-color-property>,
+    /// "Initial: currentcolor" / "Inherited: no"). Computed value =
+    /// computed color ([`TextDecorationColor`] doc — used-value resolution
+    /// of `currentcolor` is paint scope responsibility, mirroring
+    /// [`BorderColor`]).
+    ///
+    /// Downstream handoff mirrors [`Self::text_decoration_line`].
+    pub text_decoration_color: TextDecorationColor,
     /// `vertical-align`. **non-inherited**, initial:
     /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1 "Vertical alignment: the
     /// 'vertical-align' property"
@@ -527,7 +541,7 @@ pub struct ComputedValues {
     /// # Downstream handoff (future scope, style-scope confined)
     ///
     /// This field carries the cascade static side seed only, mirroring
-    /// [`Self::text_decoration`] — the actual baseline-shift amount
+    /// [`Self::text_decoration_line`] — the actual baseline-shift amount
     /// calculation and glyph rendering for `sub`/`super` is raikiri-paint
     /// scope and not yet wired.
     pub vertical_align: VerticalAlign,
@@ -620,9 +634,11 @@ impl ComputedValues {
             // 両 axis が `visible` なので cross-axis
             // coupling (`resolve_overflow`) は initial state では no-op。
             overflow: OverflowXY::both(OverflowValue::Visible),
-            // CSS Text Decoration Module Level 3 §2: text-decoration-line
-            // initial は `none`。
-            text_decoration: TextDecoration::None,
+            // CSS Text Decoration Module Level 3 §2.1/§2.2/§2.3: initial は
+            // それぞれ `none` / `solid` / `currentcolor`。
+            text_decoration_line: TextDecorationLine::NONE,
+            text_decoration_style: TextDecorationStyle::Solid,
+            text_decoration_color: TextDecorationColor::CurrentColor,
             // CSS 2.1 §10.8.1: vertical-align initial は `baseline`。
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
@@ -640,7 +656,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration / vertical_align)。
+    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align)。
     ///
     /// # 実装 (delegation)
     ///
@@ -846,9 +862,11 @@ mod tests {
                 x: OverflowValue::Hidden,
                 y: OverflowValue::Scroll,
             },
-            // `Underline` — initial (`None`) と異なる
-            // 値 (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            text_decoration: TextDecoration::Underline,
+            // 3 field とも initial と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            text_decoration_line: TextDecorationLine::UNDERLINE,
+            text_decoration_style: TextDecorationStyle::Wavy,
+            text_decoration_color: TextDecorationColor::Resolved(CssColor::BLACK),
             // `Sub` — initial (`Baseline`) と異なる値 (non_initial_parent の
             // 趣旨どおり全 field を非 initial に)。
             vertical_align: VerticalAlign::Sub,
@@ -861,7 +879,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 24 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 27 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -907,9 +925,11 @@ mod tests {
         // CSS Overflow 3 §3.1: overflow-x/overflow-y は
         // non-inherited。
         assert_eq!(child.overflow, initial.overflow);
-        // CSS Text Decoration Module Level 3 §2:
-        // text-decoration は non-inherited。
-        assert_eq!(child.text_decoration, initial.text_decoration);
+        // CSS Text Decoration Module Level 3 §2.1/§2.2/§2.3:
+        // text-decoration-line/-style/-color は non-inherited。
+        assert_eq!(child.text_decoration_line, initial.text_decoration_line);
+        assert_eq!(child.text_decoration_style, initial.text_decoration_style);
+        assert_eq!(child.text_decoration_color, initial.text_decoration_color);
         // CSS 2.1 §10.8.1: vertical-align は non-inherited。
         assert_eq!(child.vertical_align, initial.vertical_align);
     }

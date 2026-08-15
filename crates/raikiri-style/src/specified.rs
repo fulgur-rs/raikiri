@@ -31,9 +31,9 @@ use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
     CssColor, Direction, DisplayValue, FontStyle, Length, LengthOrAuto, LineHeight, OverflowValue,
-    OverflowXY, Sides, TextAlign, TextDecoration, VerticalAlign, empty_content_list,
-    empty_counter_entries, empty_string_set_entries, initial_font_family, resolve_overflow,
-    resolve_text_align_match_parent,
+    OverflowXY, Sides, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
+    VerticalAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    initial_font_family, resolve_overflow, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_line_height,
@@ -57,7 +57,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration` / `vertical_align` / `font_style` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -180,9 +180,16 @@ pub struct SpecifiedValues {
     /// "`text_align: match-parent` は D5 と同型ではない" 節と同じ理由で、
     /// [`resolve_overflow`] は phase 3 ([`Self::absolutize_with`]) が呼ぶ。
     pub overflow: OverflowXY,
-    /// [`ComputedValues::text_decoration`] の staging。層は computed-equivalent
-    /// (`TextDecoration` は length を運ばない)。
-    pub text_decoration: TextDecoration,
+    /// [`ComputedValues::text_decoration_line`] の staging。層は
+    /// computed-equivalent (`TextDecorationLine` は length を運ばない)。
+    pub text_decoration_line: TextDecorationLine,
+    /// [`ComputedValues::text_decoration_style`] の staging。層は
+    /// computed-equivalent (`TextDecorationStyle` は length を運ばない)。
+    pub text_decoration_style: TextDecorationStyle,
+    /// [`ComputedValues::text_decoration_color`] の staging。層は
+    /// computed-equivalent (`TextDecorationColor` は length を運ばない、
+    /// currentcolor の used-value resolution は paint scope 責務)。
+    pub text_decoration_color: TextDecorationColor,
     /// [`ComputedValues::vertical_align`] の staging。層は computed-equivalent
     /// (minimal scope の `VerticalAlign` — `baseline`/`sub`/`super` — は
     /// length を運ばない)。
@@ -240,9 +247,11 @@ impl SpecifiedValues {
             // CSS Overflow 3 §3.1: overflow-x/overflow-y initial は
             // `visible`。
             overflow: OverflowXY::both(OverflowValue::Visible),
-            // CSS Text Decoration Module Level 3 §2: text-decoration-line
-            // initial は `none`。
-            text_decoration: TextDecoration::None,
+            // CSS Text Decoration Module Level 3 §2.1/§2.2/§2.3: initial は
+            // それぞれ `none` / `solid` / `currentcolor`。
+            text_decoration_line: TextDecorationLine::NONE,
+            text_decoration_style: TextDecorationStyle::Solid,
+            text_decoration_color: TextDecorationColor::CurrentColor,
             // CSS 2.1 §10.8.1: vertical-align initial は `baseline`。
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
@@ -319,9 +328,11 @@ impl SpecifiedValues {
             box_sizing: BoxSizing::ContentBox,
             // non-inherited (CSS Overflow 3 §3.1)。
             overflow: OverflowXY::both(OverflowValue::Visible),
-            // non-inherited (CSS Text Decoration
-            // Module Level 3 §2 "Inherited: no")。
-            text_decoration: TextDecoration::None,
+            // non-inherited (CSS Text Decoration Module Level 3 §2.1/§2.2/
+            // §2.3, all "Inherited: no")。
+            text_decoration_line: TextDecorationLine::NONE,
+            text_decoration_style: TextDecorationStyle::Solid,
+            text_decoration_color: TextDecorationColor::CurrentColor,
             // non-inherited (CSS 2.1 §10.8.1 "Inherited: no")。
             vertical_align: VerticalAlign::Baseline,
         }
@@ -639,9 +650,12 @@ impl SpecifiedValues {
             // known, mirroring the `border-*-style` -> `border-*-width` gate
             // a few fields up (`resolve_border`). See `resolve_overflow` doc.
             overflow: resolve_overflow(self.overflow),
-            // computed value = specified keyword (`TextDecoration` doc 参照、
-            // length を運ばないため相対解決なし)。
-            text_decoration: self.text_decoration,
+            // computed value = specified keyword(s)/color
+            // (`TextDecorationLine`/`TextDecorationStyle`/`TextDecorationColor`
+            // docs 参照、length を運ばないため相対解決なし)。
+            text_decoration_line: self.text_decoration_line,
+            text_decoration_style: self.text_decoration_style,
+            text_decoration_color: self.text_decoration_color,
             // computed value = specified keyword (`VerticalAlign` doc 参照、
             // minimal scope の `baseline`/`sub`/`super` は length を運ばない
             // ため相対解決なし)。
@@ -790,7 +804,9 @@ mod tests {
                 x: OverflowValue::Hidden,
                 y: OverflowValue::Scroll,
             },
-            text_decoration: TextDecoration::Underline,
+            text_decoration_line: TextDecorationLine::UNDERLINE,
+            text_decoration_style: TextDecorationStyle::Wavy,
+            text_decoration_color: TextDecorationColor::Resolved(CssColor::BLACK),
             vertical_align: VerticalAlign::Sub,
             font_style: FontStyle::Italic,
         }
@@ -840,9 +856,11 @@ mod tests {
         // CSS Overflow 3 §3.1: overflow-x/overflow-y は
         // non-inherited。
         assert_eq!(child.overflow, initial.overflow);
-        // CSS Text Decoration Module Level 3 §2:
-        // text-decoration は non-inherited。
-        assert_eq!(child.text_decoration, initial.text_decoration);
+        // CSS Text Decoration Module Level 3 §2.1/§2.2/§2.3:
+        // text-decoration-line/-style/-color は non-inherited。
+        assert_eq!(child.text_decoration_line, initial.text_decoration_line);
+        assert_eq!(child.text_decoration_style, initial.text_decoration_style);
+        assert_eq!(child.text_decoration_color, initial.text_decoration_color);
         // CSS 2.1 §10.8.1: vertical-align は non-inherited。
         assert_eq!(child.vertical_align, initial.vertical_align);
     }

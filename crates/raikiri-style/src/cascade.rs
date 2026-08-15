@@ -3000,7 +3000,8 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    `specified_layer_residue` が網羅 match しているので test compile 段で
 ///    捕まる。それ以外 (`BorderStyle` / `BorderColor`
 ///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`
-///    / `OverflowValue` / `TextDecoration` / `VerticalAlign` / `FontStyle`)
+///    / `OverflowValue` / `TextDecorationLine` / `TextDecorationStyle` /
+///    `TextDecorationColor` / `VerticalAlign` / `FontStyle`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
@@ -3233,9 +3234,15 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::OverflowX(_)
         | PropertyValue::OverflowY(_)
         | PropertyValue::Overflow(_)
-        // `text-decoration` carries no length and does not depend on the
-        // inheritance parent (computed value = specified keyword,
-        // `TextDecoration` doc) — nothing for phase 2 to resolve.
+        // `text-decoration-line`/`-style`/`-color` (and the `text-decoration`
+        // shorthand, structurally unreachable here per
+        // `crate::rule::expand_shorthand_into`) carry no length and do not
+        // depend on the inheritance parent (computed value = specified
+        // keyword(s)/color, `TextDecorationLine`/`TextDecorationStyle`/
+        // `TextDecorationColor` docs) — nothing for phase 2 to resolve.
+        | PropertyValue::TextDecorationLine(_)
+        | PropertyValue::TextDecorationStyle(_)
+        | PropertyValue::TextDecorationColor(_)
         | PropertyValue::TextDecoration(_)
         // `vertical-align: sub`/`super` describe a shift *relative to the
         // parent's baseline*, but that relation is a used-value/layout
@@ -3620,15 +3627,28 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // とその unreachability の compile-time 強制は `Margin` arm の
         // comment 参照。
         PropertyValue::Overflow(pair) => target.overflow = pair,
-        // CSS Text Decoration Module Level 3 §2。
-        // non-inherited、cascade winner が specified keyword をそのまま
-        // computed value に反映。`TextDecoration` は Copy、by-value 代入で
-        // 十分 (`BoxSizing` arm と同型)。
-        PropertyValue::TextDecoration(td) => target.text_decoration = td,
+        // CSS Text Decoration Module Level 3 §2.1-§2.3。3 longhand とも
+        // non-inherited、cascade winner が specified keyword/color をそのまま
+        // computed value に反映。いずれも Copy、by-value 代入で十分
+        // (`BoxSizing` arm と同型)。
+        PropertyValue::TextDecorationLine(v) => target.text_decoration_line = v,
+        PropertyValue::TextDecorationStyle(v) => target.text_decoration_style = v,
+        PropertyValue::TextDecorationColor(v) => target.text_decoration_color = v,
+        // `text-decoration` shorthand fall-through。sibling `PropertyValue::Margin`
+        // arm と同じく **safety net ではない** — 到達すれば 3 longhand winner を
+        // 一括で破壊し spec と食い違う。cascade 経路では unreachable
+        // (`expand_shorthand_into` が 3 longhand に展開する)。詳細な framing と
+        // その unreachability の compile-time 強制は `Margin` arm の comment
+        // 参照。
+        PropertyValue::TextDecoration(shorthand) => {
+            target.text_decoration_line = shorthand.line;
+            target.text_decoration_style = shorthand.style;
+            target.text_decoration_color = shorthand.color;
+        }
         // CSS 2.1 §10.8.1 vertical-align。non-inherited、cascade winner が
         // specified keyword をそのまま computed value に反映。
         // `VerticalAlign` は Copy、by-value 代入で十分 (`BoxSizing` /
-        // `TextDecoration` arm と同型)。
+        // `TextDecorationLine` arm と同型)。
         PropertyValue::VerticalAlign(va) => target.vertical_align = va,
         // CSS Fonts 4 §2.4。
         // inherited property のため cascade winner が無い child は
@@ -3646,6 +3666,7 @@ mod tests {
     use crate::property::DisplayValue;
     use crate::property::{
         Border, BorderColor, BorderStyle, Length, LengthOrAuto, OverflowValue, OverflowXY, Sides,
+        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
     };
     use crate::resolve::{
         ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -9361,6 +9382,27 @@ mod tests {
         assert_eq!(cv.overflow, pair);
     }
 
+    #[test]
+    fn apply_value_direct_text_decoration_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_margin_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::TextDecoration(shorthand)`
+        // arm is unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 3 `TextDecorationLine`/`TextDecorationStyle`/
+        // `TextDecorationColor` longhands before `apply_value` ever sees
+        // it) — not a safety net, a canary that catches regression if the
+        // arm is ever reached with a stale/wrong shorthand value.
+        let mut cv = SpecifiedValues::initial();
+        let shorthand = TextDecorationShorthand {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Wavy,
+            color: TextDecorationColor::Resolved(RED),
+        };
+        apply_value(PropertyValue::TextDecoration(shorthand), &mut cv);
+        assert_eq!(cv.text_decoration_line, shorthand.line);
+        assert_eq!(cv.text_decoration_style, shorthand.style);
+        assert_eq!(cv.text_decoration_color, shorthand.color);
+    }
+
     // ── border longhand + shorthand cascade ──
 
     #[test]
@@ -9497,6 +9539,92 @@ mod tests {
         };
         apply_value(PropertyValue::Border(sides), &mut cv);
         assert_eq!(cv.border, sides);
+    }
+
+    // ── text-decoration longhand + shorthand cascade (CSS Text Decoration
+    // Module Level 3 §2.1-§2.4) ──
+
+    #[test]
+    fn text_decoration_shorthand_expands_to_line_style_and_color() {
+        // `text-decoration: underline wavy red` — all 3 longhand winners
+        // reach the same node through real parse + cascade.
+        let cv = cascade_doc("", "div", Some("text-decoration: underline wavy red"));
+        assert_eq!(cv.text_decoration_line, TextDecorationLine::UNDERLINE);
+        assert_eq!(cv.text_decoration_style, TextDecorationStyle::Wavy);
+        assert_eq!(cv.text_decoration_color, TextDecorationColor::Resolved(RED));
+    }
+
+    #[test]
+    fn text_decoration_shorthand_resets_earlier_longhand_declarations() {
+        // Shorthand-resets-omitted-longhands (CSS Cascading L4 §3 "exactly
+        // as if expanded in place"): `text-decoration: underline` omits the
+        // style/color components, but `parse_text_decoration_shorthand`
+        // fills them with their *own* initial values rather than leaving
+        // them unset — so a later bare `text-decoration: underline` still
+        // resets an earlier explicit `text-decoration-style: wavy` back to
+        // `solid` through ordinary "later declaration in the same block
+        // wins" cascade order (CSS Cascading L4 §6.1 "Order of Appearance").
+        // This is the test that actually discriminates a spec-correct
+        // expansion from one that merely "leaves the others alone" — see
+        // `crate::rule::tests::text_decoration_shorthand_always_overwrites_all_three_longhand` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+        // for the declaration-list-shape version of the same fact.
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("text-decoration-style: wavy; text-decoration: underline"),
+        );
+        assert_eq!(cv.text_decoration_line, TextDecorationLine::UNDERLINE);
+        assert_eq!(
+            cv.text_decoration_style,
+            TextDecorationStyle::Solid,
+            "the later `text-decoration` shorthand must reset style back to \
+             its own initial value, not leave the earlier `wavy` in place"
+        );
+        assert_eq!(cv.text_decoration_color, TextDecorationColor::CurrentColor);
+    }
+
+    #[test]
+    fn text_decoration_shorthand_then_longhand_later_longhand_wins() {
+        // Mirror of `border_shorthand_then_longhand_later_longhand_wins`:
+        // `text-decoration: underline wavy; text-decoration-style: dotted;`
+        // → style ends up `dotted` (later longhand wins), line stays
+        // `underline` (untouched by the longhand declaration).
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("text-decoration: underline wavy; text-decoration-style: dotted"),
+        );
+        assert_eq!(cv.text_decoration_line, TextDecorationLine::UNDERLINE);
+        assert_eq!(cv.text_decoration_style, TextDecorationStyle::Dotted);
+    }
+
+    #[test]
+    fn text_decoration_non_inherited_child_starts_from_initial() {
+        // CSS Text Decoration Module Level 3 §2.1-§2.3 — all 3 propdefs are
+        // "Inherited: no". sibling: border / margin / padding non-inherited
+        // test pattern.
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("text-decoration: underline wavy red"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[div].text_decoration_line,
+            TextDecorationLine::UNDERLINE
+        );
+        assert_eq!(
+            r.computed[span].text_decoration_line,
+            TextDecorationLine::NONE,
+            "text-decoration-line must not inherit from parent"
+        );
+        assert_eq!(
+            r.computed[span].text_decoration_style,
+            TextDecorationStyle::Solid
+        );
+        assert_eq!(
+            r.computed[span].text_decoration_color,
+            TextDecorationColor::CurrentColor
+        );
     }
 
     #[test]
