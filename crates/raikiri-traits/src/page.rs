@@ -1,7 +1,7 @@
 //! Page-related neutral model types.
 //!
 //! ここに集めた型は §5 (Pipeline), §7 (GCPM), §9 (PageBox), §11 (Paint) が
-//! authoritative なので、M1.1 では opaque placeholder として置き、後続の
+//! authoritative なので、現時点では opaque placeholder として置き、後続の
 //! task が field / method を段階的に populate する。
 //!
 //! 入力/構築対象の struct は `#[non_exhaustive]` + `impl Default` + `pub fn new()` を持ち、
@@ -9,8 +9,8 @@
 //! ([`TargetInfo`] は `TargetRegistry::register` の input として consumer 側で構築)。
 //! Output-only snapshot 型 (現状 [`PendingResolution`] のみ — registry 内部で
 //! populate されて API 返り値経由で consumer に届くのみ) は consumer 側で直接
-//! construct しないため Default / new を要件外とする (raikiri-spike-bsi Option C
-//! wall/traits merge で確立、`#[non_exhaustive]` は全 public struct に維持)。
+//! construct しないため Default / new を要件外とする
+//! (`#[non_exhaustive]` は全 public struct に維持)。
 
 mod context;
 mod target;
@@ -30,12 +30,12 @@ use smol_str::SmolStr;
 use url::Url;
 
 /// PageFragment — 1 ページの painted output (glyph run / decoration / target slot 含む)。
-/// M1.7 paint-basic + M2 pagestream で populate。
+/// 未実装 — paint / pagestream 対応が入り次第 populate される予定。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct PageFragment {
-    // M1.7 / M2 で populate:
+    // 将来 populate 予定のフィールド:
     //   pub page_index: u32,
     //   pub page_box: PageBox,
     //   pub items: Vec<PaintedBoxItem>,
@@ -44,15 +44,15 @@ pub struct PageFragment {
 }
 
 impl PageFragment {
-    /// Construct an empty PageFragment. M1.1 placeholder.
+    /// Construct an empty PageFragment (placeholder, not yet populated).
     pub fn new() -> Self {
         Self::default()
     }
 }
 
 /// PageBox — @page rule 解決結果 (size, margins, margin box slots)。
-/// M1.6 layout-single-page で width / height + `A4` / `US_LETTER` const を populate。
-/// margins / margin_boxes は M4 で populate。
+/// `width` / `height` および `A4` / `US_LETTER` const は実装済み。
+/// `margins` / `margin_boxes` は未実装で、将来 populate される予定。
 ///
 /// **単位 = CSS px** (1 CSS px = 1/96 in in print context per CSS Values L4 §6.2
 /// "Absolute Lengths" <https://www.w3.org/TR/css-values-4/#absolute-lengths>)。
@@ -64,7 +64,7 @@ pub struct PageBox {
     pub width: f32,
     /// Page 高 (CSS px)。
     pub height: f32,
-    // M4 で populate:
+    // 将来 populate 予定:
     //   pub margins: Margins,
     //   pub margin_boxes: `[Option<MarginBox>; 16]`,
 }
@@ -96,8 +96,8 @@ impl Default for PageBox {
     }
 }
 
-/// Consumer が render 開始時に渡す page-level default 値。M1 は paper size
-/// のみを持つ最小 shape。M2+ で margin / orientation / named pages 等を追加予定。
+/// Consumer が render 開始時に渡す page-level default 値。現状は paper size
+/// のみを持つ最小 shape。将来 margin / orientation / named pages 等を追加予定。
 ///
 /// 全 field は CSS px 単位 (`PageBox` 参照)。pt/mm/in 換算は Consumer 責務。
 #[non_exhaustive]
@@ -144,44 +144,44 @@ impl PageDefaultsBuilder {
 
 // `PageContext` — GCPM Phase B runtime state (counter tree, named string
 // 4-snapshot, running bindings, target registry, page_index/page_name).
-// design doc §7.2 canonical shape, promoted from the M1.1 opaque placeholder
-// onto the raikiri-dom-authored `PhaseBWalkState` algorithm by bd
-// raikiri-spike-8ejw.1 (human-reviewed wall/traits crossing). Canonical impl
-// is sibling `context` submodule; this module re-exports only.
+// design doc §7.2 canonical shape, promoted from an opaque placeholder onto
+// the raikiri-dom-authored `PhaseBWalkState` algorithm (human-reviewed
+// wall/traits crossing). Canonical impl is sibling `context` submodule; this
+// module re-exports only.
 
 /// LayoutBuffer — widow / orphan / break-inside / container probe lookahead
 /// buffer の中立モデル。実装は raikiri-dom 側 (§5 参照)。
-/// M2 layoutbuffer-skeleton で populate。
+/// 未実装で、将来 populate される予定。
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct LayoutBuffer {
-    // M2 で populate。
+    // 将来 populate 予定。
 }
 
 impl LayoutBuffer {
-    /// Construct an empty LayoutBuffer. M1.1 placeholder.
+    /// Construct an empty LayoutBuffer (placeholder, not yet populated).
     pub fn new() -> Self {
         Self::default()
     }
 }
 
 // `TargetRegistry` — target-* placeholder emit + resolve の runtime registry。
-// design doc §7.2 canonical shape、raikiri-spike-bsi (Sprint 15 dom-3 Wave 1)
-// で raikiri-dom `pub(crate)` shadow を Option C で本 crate に merge、canonical
-// impl は sibling `target` submodule。この module では re-export のみ。
+// design doc §7.2 canonical shape、raikiri-dom 側の `pub(crate)` shadow 実装を
+// 本 crate に merge したもの。canonical impl は sibling `target` submodule。
+// この module では re-export のみ。
 
 /// RunningTemplate — `position: running(name)` の template 登録。
-/// M4 で populate。
+/// 未実装で、将来 populate される予定。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct RunningTemplate {
-    // M4 で populate。
+    // 将来 populate 予定。
 }
 
 impl RunningTemplate {
-    /// Construct an empty RunningTemplate. M1.1 placeholder.
+    /// Construct an empty RunningTemplate (placeholder, not yet populated).
     pub fn new() -> Self {
         Self::default()
     }
@@ -198,7 +198,7 @@ pub struct FormData {
 }
 
 impl FormData {
-    /// Construct an empty FormData. M1.1 placeholder.
+    /// Construct an empty FormData (placeholder, not yet populated).
     pub fn new() -> Self {
         Self::default()
     }
@@ -212,11 +212,9 @@ impl FormData {
 ///
 /// Wraps a subtree-root [`NodeId`]。`position: running(name)` された element の
 /// subtree root は arena 内で per-element unique なので、そのまま stable な
-/// per-template key として使える (canonical: 内 raikiri-dom
-/// `RunningTemplateStore` の keying rationale と同 — raikiri-spike-96u.3 で
-/// pinned)。newtype で `NodeId` の他用途との mix を防ぐ。
-///
-/// (raikiri-spike-96u.4 populate; wall/traits.)
+/// per-template key として使える (canonical: raikiri-dom 内の
+/// `RunningTemplateStore` の keying rationale と同一)。newtype で `NodeId` の
+/// 他用途との mix を防ぐ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RunningTemplateId(pub NodeId);
 
@@ -235,11 +233,9 @@ impl RunningTemplateId {
 /// (start / first / last / first-except) で [`PageContext`] named-string state
 /// にコピーする際の source shape。
 ///
-/// M6+ 側で consumer (raikiri-style bridge) が [`Vec<ContentValueItem>`] から
+/// 将来、consumer (raikiri-style bridge) 側で [`Vec<ContentValueItem>`] から
 /// 構築する。`items` は public field で `..Default::default()` の struct-update
 /// syntax でも construct 可 (sibling [`PageBox`] pattern)。
-///
-/// (raikiri-spike-96u.4 populate; wall/traits.)
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContentSource {
@@ -269,8 +265,8 @@ impl ContentSource {
 /// block しない。既存 variant の payload **type** 変更は downstream の
 /// constructor を compile-break させる。
 ///
-/// (raikiri-spike-96u.4 populate; wall/traits — M1.1〜M5 の uninhabited placeholder
-/// を design doc §7.1 line 1913-1920 の canonical 6 variant に置き換え。)
+/// (design doc §7.1 line 1913-1920 の canonical 6 variant で、以前の
+/// uninhabited placeholder を置き換え済み。)
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GcpmDirective {
@@ -343,20 +339,20 @@ pub enum GcpmDirective {
 ///
 /// `ContentValueItem::Element` は design doc §7.1 line 1931 の
 /// canonical variant だが、`ContentComponent::Element` は raikiri-style に
-/// 未実装 (spinout: bd raikiri-spike-6z0 scope/css-engine)。ゆえに [`TryFrom`]
-/// impl 経路では現在到達不能で、raikiri-dom 内部の running-template pipeline
-/// producer が直接 construct する。6z0 land 後に bridge arm を追加。
+/// 未実装。ゆえに [`TryFrom`] impl 経路では現在到達不能で、raikiri-dom 内部の
+/// running-template pipeline producer が直接 construct する。
+/// `ContentComponent::Element` 実装後に bridge arm を追加予定。
 ///
-/// (raikiri-spike-96u.4 populate; wall/traits — M1.1〜M5 の uninhabited placeholder
-/// を design doc §7.1 line 1926-1937 の canonical 10 variant に置き換え。
+/// (design doc §7.1 line 1926-1937 の canonical 10 variant で、以前の
+/// uninhabited placeholder を置き換え済み。
 ///
 /// [`Image`](Self::Image) / [`Contents`](Self::Contents) / [`Quote`](Self::Quote) /
 /// [`Leader`](Self::Leader) の 4 variant は design doc §7.1 の canonical 10 には
 /// **含まれない** — raikiri-style 側で `ContentComponent` に同 4 variant が
-/// 追加されたこと (bd raikiri-spike-1us、CSS Content 3 §2.2/§2.3/§2.4.2/§2.5.1)
-/// を受けた 1:1 mirror 追加 (bd raikiri-spike-5hp8.1、PMO 承認: 2026-08-07 コメント —
-/// [`QuoteKeyword`] / [`LeaderType`] は raikiri-style の型を直接 reuse、
-/// sibling [`Counter`](Self::Counter) の `style: CounterStyle` 直接 reuse 慣行と同じ)。)
+/// 追加されたこと (CSS Content 3 §2.2/§2.3/§2.4.2/§2.5.1) を受けた 1:1 mirror
+/// 追加。[`QuoteKeyword`] / [`LeaderType`] は raikiri-style の型を直接 reuse、
+/// sibling [`Counter`](Self::Counter) の `style: CounterStyle` 直接 reuse 慣行と
+/// 同じ)。)
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContentValueItem {
@@ -391,7 +387,7 @@ pub enum ContentValueItem {
     /// <https://www.w3.org/TR/css-gcpm-3/#element-syntax>)。runtime resolve は
     /// raikiri-dom の [`RunningTemplate`] pool 引きから。
     ///
-    /// **From-impl gap**: `ContentComponent::Element` は未実装 (bd raikiri-spike-6z0)。
+    /// **From-impl gap**: `ContentComponent::Element` は未実装。
     /// See type-level docstring "Element variant" section。
     Element {
         /// Running-template name (custom-ident)。
@@ -402,7 +398,7 @@ pub enum ContentValueItem {
     /// 受理済み記法であり spec の grammar 自体の表記ではない)。keyword 省略時は
     /// [`ContentPart::Content`] をフォールバック値として使う (根拠は spec の
     /// "default" 宣言ではない — 詳細は [`ContentTextKeyword`] の doc comment
-    /// 参照、bd raikiri-spike-x8i6 / raikiri-spike-83r2)。
+    /// 参照)。
     Content {
         /// Element の string value のどの部分を挿入するか。
         part: ContentPart,
@@ -448,9 +444,9 @@ pub enum ContentValueItem {
     },
     /// `<image>` (`url()` alternative) — CSS Content 3 §2.2
     /// <https://www.w3.org/TR/css-content-3/#content-uri>。
-    /// [`ContentComponent::Image`] の 1:1 mirror (bd raikiri-spike-5hp8.1)。
+    /// [`ContentComponent::Image`] の 1:1 mirror。
     ///
-    /// **`<content-replacement>` 未実装 (bd raikiri-spike-mn99)**:
+    /// **`<content-replacement>` 未実装**:
     /// [`raikiri_style::property::ContentComponent::Image`] の docstring と同じ
     /// 注意点がここにも及ぶ — 単一 `Image` item の `content-list` を
     /// `<content-replacement>` (pseudo-element 抑制 + 全要素置換) として扱う
@@ -464,20 +460,20 @@ pub enum ContentValueItem {
     },
     /// `contents` keyword — CSS Content 3 §2.3
     /// <https://www.w3.org/TR/css-content-3/#element-content>。
-    /// [`ContentComponent::Contents`] の 1:1 mirror (bd raikiri-spike-5hp8.1)。
+    /// [`ContentComponent::Contents`] の 1:1 mirror。
     Contents,
     /// `<quote>` (`open-quote` / `close-quote` / `no-open-quote` /
     /// `no-close-quote`) — CSS Content 3 §2.4.2
     /// <https://www.w3.org/TR/css-content-3/#quote-values>。
-    /// [`ContentComponent::Quote`] の 1:1 mirror (bd raikiri-spike-5hp8.1) —
+    /// [`ContentComponent::Quote`] の 1:1 mirror —
     /// payload は [`raikiri_style::property::QuoteKeyword`] を直接 reuse
-    /// (traits-side 複製なし、PMO 承認: 2026-08-07 コメント)。
+    /// (traits-side 複製なし)。
     Quote(QuoteKeyword),
     /// `leader(<leader-type>)` — CSS Content 3 §2.5.1
     /// <https://www.w3.org/TR/css-content-3/#leader-function>。
-    /// [`ContentComponent::Leader`] の 1:1 mirror (bd raikiri-spike-5hp8.1) —
+    /// [`ContentComponent::Leader`] の 1:1 mirror —
     /// payload は [`raikiri_style::property::LeaderType`] を直接 reuse
-    /// (traits-side 複製なし、PMO 承認: 2026-08-07 コメント)。
+    /// (traits-side 複製なし)。
     Leader(LeaderType),
 }
 
@@ -564,10 +560,10 @@ impl TryFrom<ContentComponent> for ContentValueItem {
     type Error = ContentValueConvertError;
 
     /// [`raikiri_style::property::ContentComponent`] → [`ContentValueItem`]
-    /// canonical taxonomy 変換 (raikiri-spike-376 amended)。
+    /// canonical taxonomy 変換。
     ///
-    /// 変換対象 13 variant (Element は raikiri-style 側未実装、bd raikiri-spike-6z0
-    /// で raikiri-style 側に生えたら arm 追加):
+    /// 変換対象 13 variant (Element は raikiri-style 側未実装、raikiri-style 側に
+    /// 生えたら arm 追加):
     ///
     /// - [`ContentComponent::Literal`] → [`ContentValueItem::Literal`] (`String` に変換)
     /// - [`ContentComponent::Counter`] → [`ContentValueItem::Counter`]
@@ -583,14 +579,13 @@ impl TryFrom<ContentComponent> for ContentValueItem {
     /// - [`ContentComponent::Content`] → [`ContentValueItem::Content`]
     ///   ([`ContentTextKeyword`] → [`ContentPart`] mapping)
     /// - [`ContentComponent::Image`] → [`ContentValueItem::Image`]
-    ///   (URL は [`Url::parse`]、失敗時 [`ContentValueConvertError::InvalidUrl`]、
-    ///   bd raikiri-spike-5hp8.1)
+    ///   (URL は [`Url::parse`]、失敗時 [`ContentValueConvertError::InvalidUrl`])
     /// - [`ContentComponent::Contents`] → [`ContentValueItem::Contents`]
-    ///   (unit variant 1:1、bd raikiri-spike-5hp8.1)
+    ///   (unit variant 1:1)
     /// - [`ContentComponent::Quote`] → [`ContentValueItem::Quote`]
-    ///   (payload [`QuoteKeyword`] straight passthrough、bd raikiri-spike-5hp8.1)
+    ///   (payload [`QuoteKeyword`] straight passthrough)
     /// - [`ContentComponent::Leader`] → [`ContentValueItem::Leader`]
-    ///   (payload [`LeaderType`] straight passthrough、bd raikiri-spike-5hp8.1)
+    ///   (payload [`LeaderType`] straight passthrough)
     fn try_from(cc: ContentComponent) -> Result<Self, Self::Error> {
         Ok(match cc {
             ContentComponent::Literal(s) => Self::Literal(s.into()),
@@ -647,11 +642,11 @@ impl TryFrom<ContentComponent> for ContentValueItem {
             // Rust requires the `_` arm for exhaustive matching on
             // ContentComponent defined in raikiri-style; unreachable until
             // raikiri-style adds a variant this crate has not yet mirrored
-            // (e.g. bd raikiri-spike-6z0 will land `ContentComponent::Element`
-            // and this arm's coverage window opens for one iter). Reporting
-            // `UnsupportedVariant` at runtime is the fail-closed discipline
-            // for raikiri-style landing ahead of raikiri-traits — see
-            // type-level docstring "Element variant" section.
+            // (e.g. once raikiri-style lands `ContentComponent::Element`,
+            // this arm's coverage window opens until a bridge arm is added).
+            // Reporting `UnsupportedVariant` at runtime is the fail-closed
+            // discipline for raikiri-style landing ahead of raikiri-traits —
+            // see type-level docstring "Element variant" section.
             _ => return Err(ContentValueConvertError::UnsupportedVariant),
         })
     }
@@ -725,7 +720,7 @@ mod pagedefaults_tests {
 
 #[cfg(test)]
 mod gcpm_directive_populate_tests {
-    //! GcpmDirective canonical 6 variant construction pins (raikiri-spike-96u.4)。
+    //! GcpmDirective canonical 6 variant construction pins。
     //!
     //! design doc §7.1 line 1913-1920 verbatim shape。variant 追加 / rename /
     //! payload type 変更で fail、`#[non_exhaustive]` catch-all は無し
@@ -831,9 +826,9 @@ mod gcpm_directive_populate_tests {
 
 #[cfg(test)]
 mod content_value_item_populate_tests {
-    //! ContentValueItem canonical 10 variant construction pins (raikiri-spike-96u.4)
-    //! と、Image/Contents/Quote/Leader 4 variant construction pins
-    //! (raikiri-spike-5hp8.1、design doc §7.1 canonical 10 の外、raikiri-style
+    //! ContentValueItem canonical 10 variant construction pins と、
+    //! Image/Contents/Quote/Leader 4 variant construction pins
+    //! (design doc §7.1 canonical 10 の外、raikiri-style
     //! `ContentComponent` 1:1 mirror)。
     //!
     //! design doc §7.1 line 1926-1937 verbatim shape (canonical 10 分)。
@@ -1069,12 +1064,12 @@ mod content_value_item_populate_tests {
 #[cfg(test)]
 mod content_component_bridge_tests {
     //! [`TryFrom<ContentComponent> for ContentValueItem`] roundtrip pins
-    //! (raikiri-spike-96u.4、canonical taxonomy conversion per raikiri-spike-376
-    //! amended; Image/Contents/Quote/Leader arms added raikiri-spike-5hp8.1)。
+    //! (canonical taxonomy conversion; Image/Contents/Quote/Leader arms
+    //! added as a 1:1 mirror of raikiri-style `ContentComponent`)。
     //!
     //! Coverage: 13 of 14 [`ContentValueItem`] variants — [`Element`] は
-    //! [`ContentComponent::Element`] 未実装 (bd raikiri-spike-6z0) のため
-    //! bridge 経路では現在到達不能。variant 追加時に arm を extend する。
+    //! [`ContentComponent::Element`] 未実装のため bridge 経路では現在到達
+    //! 不能。variant 追加時に arm を extend する。
 
     use super::*;
 

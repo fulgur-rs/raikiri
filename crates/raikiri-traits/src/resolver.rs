@@ -19,12 +19,12 @@ pub trait ReplacedResolver {
     fn resolve(&self, req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError>;
 }
 
-/// Intrinsic size + metadata。M4 で fields を populate。M1.1 では opaque。
+/// Intrinsic size + metadata。将来 fields を populate。現時点では opaque。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct IntrinsicBox {
-    // M4 で populate:
+    // 将来 populate 予定:
     //   pub width: Option<f32>,
     //   pub height: Option<f32>,
     //   pub aspect_ratio: Option<f32>,
@@ -34,7 +34,7 @@ pub struct IntrinsicBox {
 }
 
 impl IntrinsicBox {
-    /// M1.1 placeholder constructor.
+    /// Placeholder constructor (not yet populated).
     pub fn new() -> Self {
         Self::default()
     }
@@ -66,13 +66,13 @@ pub enum ResolveDisposition {
 
 /// Resolve 対象 element の詳細 (borrowed reference)。
 ///
-/// M4 で fields (element_kind / url / hint_size / attributes 等) を populate。
-/// M1.1 では phantom lifetime marker のみ。
+/// 将来 fields (element_kind / url / hint_size / attributes 等) を populate。
+/// 現時点では phantom lifetime marker のみ。
 #[allow(missing_docs)]
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct ResolverRequest<'a> {
-    // M4 で populate:
+    // 将来 populate 予定:
     //   pub url: &'a Url,
     //   pub element_kind: ReplacedElementKind,
     //   pub hint_size: Option<Size>,
@@ -81,7 +81,7 @@ pub struct ResolverRequest<'a> {
 }
 
 impl<'a> ResolverRequest<'a> {
-    /// M1.1 placeholder constructor.
+    /// Placeholder constructor (not yet populated).
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
@@ -95,9 +95,9 @@ impl<'a> Default for ResolverRequest<'a> {
     }
 }
 
-/// Resolver 層 error。M4 で variant を populate。M1.1 では uninhabited。
+/// Resolver 層 error。将来 variant を populate。現時点では uninhabited。
 ///
-/// M4 想定 variant:
+/// 想定 variant:
 ///   - `Io(std::io::Error)`
 ///   - `Decode(String)`
 ///   - `Timeout`
@@ -105,7 +105,7 @@ impl<'a> Default for ResolverRequest<'a> {
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ResolverError {
-    // M4 で populate。
+    // 将来 populate 予定。
 }
 
 impl std::fmt::Display for ResolverError {

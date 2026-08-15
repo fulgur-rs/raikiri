@@ -1,5 +1,4 @@
-//! Per-page per-attribute drawable maps (raikiri-spike-0icy Axis 2 の
-//! ECS 風 struct-of-arrays shape).
+//! Per-page per-attribute drawable maps (ECS 風 struct-of-arrays shape).
 //!
 //! [`PageDrawables`] は [`PageScene`](crate::PageScene) が保持する
 //! per-attribute node map の集合。1 page 内の全 drawable state を
@@ -14,18 +13,18 @@
 //!
 //! 1. Deterministic iteration semantics (BTreeMap ordering) を consumer に
 //!    そのまま公開して byte-identical output を保証する
-//! 2. Future sprint で raikiri 内部の convert pass が「特定 subtree の
+//! 2. 将来 raikiri 内部の convert pass が「特定 subtree の
 //!    scope 内で新規挿入された NodeId のみ」を再訪する時、log の tail 参照
 //!    で O(inserted-since) に置換可能な mechanism を先行 landing する
 //!
-//! Insertion log tail 読み出し API (`mark` / `since`) は Sprint 22 では
+//! Insertion log tail 読み出し API (`mark` / `since`) は現時点では
 //! **pub にしない**。raikiri PageScene = per-page immutable snapshot
-//! semantics では初期 unused、future sprint で raikiri 内部の convert /
+//! semantics では初期 unused、将来 raikiri 内部の convert /
 //! reflow pass が必要とした時点で pub 化を再判断する。
 //!
 //! # 参考 shape
 //!
-//! Field 集合は fulgur drawables.rs (v0.12、fulgur-9t3z + fulgur-vrkv 系)
+//! Field 集合は fulgur drawables.rs (v0.12)
 //! を reference shape として選定。fulgur 21 field のうち、[`PageDrawables`] は
 //! 13 field を採用する。残り 8 field は 2 分類:
 //!
@@ -35,7 +34,7 @@
 //! - **5 field は raikiri では不要**: paragraph_slices / root_dir_rtl /
 //!   synthetic_id_counter / li_lbl_ids / li_lbody_ids は fulgur の reflow-
 //!   machinery / PDF-tag-tree / RTL page priming 系、raikiri snapshot semantics
-//!   には無関係 (raikiri-spike-0icy Rationale 参照)
+//!   には無関係
 
 use crate::entries::{
     BlockEntry, BookmarkAnchorEntry, ImageEntry, LinkSpanEntry, ListItemEntry, MulticolRuleEntry,
@@ -112,17 +111,17 @@ impl<V> TrackedMap<V> {
 ///
 /// # Field 選定基準
 ///
-/// Fulgur drawables.rs (fulgur-9t3z / fulgur-vrkv) の per-attribute map を
+/// Fulgur drawables.rs の per-attribute map を
 /// reference shape として、raikiri PageScene = immutable per-page snapshot
-/// semantics で意味を持つ 13 field を選定 (raikiri-spike-0icy 参照)。
+/// semantics で意味を持つ 13 field を選定。
 /// fulgur-specific な reflow-machinery / PDF-tag-tree / RTL page priming 系
 /// field (paragraph_slices / synthetic_id_counter / li_lbl_ids / li_lbody_ids
 /// / root_dir_rtl 等) は raikiri では不要のため採用しない。
 ///
-/// # Sprint 22 → Sprint 24 landing scope
+/// # landing scope
 ///
-/// Sprint 22 は struct field surface のみ landing。Sprint 24
-/// (raikiri-spike-4hp1) で各 Entry 型に fulgur reference と照合した minimal
+/// 最初は struct field surface のみ landing、その後
+/// 各 Entry 型に fulgur reference と照合した minimal
 /// field を追加し (`crate::entries` module doc参照)、
 /// `build_page_scene` (crate::page_scene) が実際に
 /// [`BlockEntry`] / [`ParagraphEntry`] を construct して `block_styles` /

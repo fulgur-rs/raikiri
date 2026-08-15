@@ -1,12 +1,11 @@
 //! [`PageDrawables`](crate::PageDrawables) の per-attribute map に格納される
-//! entry 型群 (raikiri-spike-0icy Axis 2 の struct-of-arrays element)。
+//! entry 型群 (struct-of-arrays element)。
 //!
-//! # Sprint 22 (raikiri-spike-os52) → Sprint 24 (raikiri-spike-4hp1) landing
+//! # Landing history
 //!
-//! Sprint 22 は pub type surface のみ landing (全 struct `{}` 空)。本 sprint
-//! (raikiri-spike-4hp1 item 1、narrowed scope — item 4 の
-//! `raikiri_paint::paint_single_page` rework は bd raikiri-spike-iest に
-//! 分離) で fulgur reference shape と照合しつつ minimal field を追加した。
+//! 当初は pub type surface のみ landing (全 struct `{}` 空)。その後
+//! (narrowed scope — `raikiri_paint::paint_single_page` rework は
+//! 別途分離) で fulgur reference shape と照合しつつ minimal field を追加した。
 //!
 //! 実際に [`build_page_scene`](crate::page_scene::build_page_scene) から
 //! instance が construct され `PageDrawables` へ insert されるのは
@@ -17,21 +16,20 @@
 //! bookmark・tag・link-span) がまだ存在しないため常に `Default::default()`
 //! のまま — 一度も construct されない。詳細な理由は各 struct doc を参照。
 //!
-//! # Field type 方針 (raikiri-spike-4hp1 escalation 対応)
+//! # Field type 方針
 //!
-//! Item 4 の crate-topology 判断 (bd raikiri-spike-iest、選択肢 A は
-//! `PageDrawables`/entries を raikiri-traits へ relocate) がどの案に転んでも
-//! この sprint の作業をやり直さずに済むよう、各 struct の field 型は
+//! crate-topology 判断 (`PageDrawables`/entries を raikiri-traits へ
+//! relocate する案も検討対象) がどの案に転んでもこれまでの作業をやり直さず
+//! に済むよう、各 struct の field 型は
 //! **raikiri-style / taffy / parley の型を直接参照しない** — `f32` / `bool` /
 //! `u8` tuple / `Option<String>` / [`NodeId`] / `Vec<NodeId>` のみを使う。
 //! 理由: raikiri-traits は raikiri-style に依存していない (原則5 cleanroom
 //! 境界とは別の、純粋な dependency-graph 制約) ため、これらの型を relocate
-//! 先の crate が新たに引き込む必要が生じるのを避ける (escalation comment
-//! 参照)。`ComputedValues` の値は populate 時に primitive へ変換して埋める。
+//! 先の crate が新たに引き込む必要が生じるのを避ける。`ComputedValues` の
+//! 値は populate 時に primitive へ変換して埋める。
 //!
 //! `opacity` (CSS property) は `raikiri_style::ComputedValues` にまだ存在
-//! しない (raikiri-spike-4hp1 escalation の副次発見、`visibility` /
-//! `overflow` も同様)。これらの field は CSS 初期値
+//! しない (`visibility` / `overflow` も同様)。これらの field は CSS 初期値
 //! (`opacity: 1`、`visibility: visible`、descendant-clip 対象 0 件) を
 //! hardcode している — これは「未実装だから嘘の値」ではなく「該当
 //! property が cascade に存在しない = 常に初期値」を正しく反映した値で
@@ -40,9 +38,9 @@
 //!
 //! Numeric な長さ系 field は [`crate::page_scene::Pt`] (= `f32` alias) を
 //! 再利用する。名前は "Pt" (PDF point) だが、[`build_page_scene`] は CSS px
-//! 値をそのまま詰める既存の unit debt (bd raikiri-spike-v0zm、
-//! `crate::page_scene` module doc 参照) に本 entry 群も従う — 新たに
-//! 別種の unit debt を作らないための意図的な選択。
+//! 値をそのまま詰める既存の unit debt (`crate::page_scene` module doc 参照)
+//! に本 entry 群も従う — 新たに別種の unit debt を作らないための意図的な
+//! 選択。
 //!
 //! `#[non_exhaustive]` を全 struct に付与しているため、future field 追加は
 //! **semver-non-breaking** に行える (consumer は literal `BlockEntry { .. }`
@@ -57,11 +55,11 @@ use raikiri_traits::NodeId;
 /// Fulgur drawables.rs:142-177 の `BlockEntry` shape (`style` / `opacity` /
 /// `visible` / `id` / `layout_size` / `clip_descendants` /
 /// `opacity_descendants`) を reference に、raikiri で実際に取得できる
-/// minimal field を選定 (raikiri-spike-4hp1)。
+/// minimal field を選定。
 ///
 /// `build_page_scene` (crate::page_scene) が post-layout
 /// Element node ごとに construct し `PageDrawables::block_styles` へ insert
-/// する — 本 sprint で populate される 2 型のうちの 1 つ (もう 1 つは
+/// する — この段階で populate される 2 型のうちの 1 つ (もう 1 つは
 /// [`ParagraphEntry`])。
 ///
 /// # `style` を bundle 型にしなかった理由
@@ -131,7 +129,7 @@ impl Default for BlockEntry {
 /// Paragraph (shaped inline text lines) の per-node paint state。
 ///
 /// Fulgur drawables.rs:183-191 の `ParagraphEntry` shape (`lines` /
-/// `opacity` / `visible` / `id`) を reference に、raikiri の M1 text model
+/// `opacity` / `visible` / `id`) を reference に、raikiri の現状の text model
 /// (inline formatting context 未実装、[`raikiri_dom::Node::text_layout`] が
 /// Text node 自身に付く — `crates/raikiri-paint/src/walk.rs` module doc
 /// 参照) に合わせて minimal field を選定。
@@ -153,11 +151,11 @@ pub struct ParagraphEntry {
     pub opacity: f32,
     /// `visibility`。[`BlockEntry::visible`] と同じ理由で常に `true`。
     pub visible: bool,
-    /// Anchor id (`id="..."` on the inline root)。M1 の per-node 粒度は
+    /// Anchor id (`id="..."` on the inline root)。現状の per-node 粒度は
     /// Text node 自身であり、inline root (親 Element、例: `<p id="...">`) の
     /// id を引くには `build_page_scene` の DFS stack に parent element id を
-    /// thread する変更が要る。本 sprint はその変更を持ち込まず常に `None`
-    /// (documented gap、id-anchored hyperlink 解決は M4+ 領域)。
+    /// thread する変更が要る。現時点ではその変更を持ち込まず常に `None`
+    /// (documented gap、id-anchored hyperlink 解決は将来の領域)。
     pub id: Option<String>,
 }
 
@@ -184,9 +182,9 @@ impl Default for ParagraphEntry {
 /// `width` / `height` / `opacity` / `visible` のみ shape を保持する。
 ///
 /// **未 populate**: `build_page_scene` (crate::page_scene)
-/// はこの型の instance を一度も construct しない (raikiri-spike-4hp1 は
+/// はこの型の instance を一度も construct しない (現状
 /// [`BlockEntry`] / [`ParagraphEntry`] の 2 型のみ populate、他 9 型は
-/// 「fulgur shape 由来の field 追加」のみが本 sprint scope)。
+/// 「fulgur shape 由来の field 追加」のみがこれまでの scope)。
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ImageEntry {

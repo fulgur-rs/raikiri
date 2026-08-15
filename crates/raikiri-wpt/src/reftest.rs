@@ -1,4 +1,4 @@
-//! WPT reftest pair + result types (spec §12.9). Stubs; execution in M3.
+//! WPT reftest pair + result types (spec §12.9). Stubs; execution is future work.
 
 use std::path::PathBuf;
 

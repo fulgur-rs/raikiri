@@ -13,7 +13,7 @@ use url::Url;
 /// custom policy を実装するか、`raikiri-net::DefaultSandboxPolicy` を利用。
 ///
 /// Finding #6 対応 (round 7 未対応 finding: redirect / timeout / recursion 系
-/// method の削除は M4 sandboxed-net-provider-impl 前に確定)。
+/// method の削除は sandboxed-net-provider-impl 実装前に確定)。
 pub trait ResourcePolicy: Send + Sync {
     /// URL scheme (`https` / `data` / `file` / ...) が許可されているか。
     fn is_scheme_allowed(&self, scheme: &str, kind: ResourceKind) -> bool;
@@ -114,7 +114,7 @@ impl std::error::Error for PolicyViolation {}
 /// Policy 違反の分類。
 ///
 /// §4 の 8 variant を再現。round 7 未対応 finding: redirect / timeout /
-/// recursion 系は M4 で `ResourcePolicy` から削除される可能性あり。
+/// recursion 系は将来 `ResourcePolicy` から削除される可能性あり。
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ViolationType {
@@ -194,7 +194,7 @@ mod tests {
             details: "expected text/css".to_string(),
         };
         let s = format!("{violation}");
-        // kind (Display of ResourceKind — raikiri-spike-d6j: Debug → Display swap)
+        // kind (Display of ResourceKind, not Debug)
         assert!(
             s.contains("external stylesheet"),
             "display must include kind via ResourceKind::Display: got {s:?}"

@@ -11,20 +11,17 @@
 //! 本 module の入力に現れるときは specified 層だが、型そのものが層を決めるわけ
 //! ではなく、**層は値の出所で決まる**。実際 page 経路
 //! ([`crate::page::cascade_page`]) は `PropertyValue` の bag を運ぶので
-//! **computed 値も [`Length`] で運ばれる** (bd raikiri-spike-sshp)。
+//! **computed 値も [`Length`] で運ばれる**。
 //! canonical な説明は [`Length`] の doc の「本型は『specified 層』を意味しない
 //! — 層は出所で決まる」節、page 経路が保証する内容は
 //! [`crate::page::PageCascadeResult::declarations`] の doc が canonical。
 //! **本節は要約に留め、規則の中身をここに書き足さないこと** — 以前ここには
 //! 「書き換えるときは必ずあちらと揃えること」と書いてあったが、その手運用は
-//! 実際に 2 度 drift した (bd raikiri-spike-awjx)。現在は `page::tests` の
-//! `page_declarations_carry_no_specified_layer_residue` (raikiri-spike-l3wg
-//! 以前は `page_declarations_carry_exactly_one_specified_layer_residue`、
+//! 実際に 2 度 drift した。現在は `page::tests` の
+//! `page_declarations_carry_no_specified_layer_residue` (以前は
+//! `page_declarations_carry_exactly_one_specified_layer_residue` という名前で、
 //! `text-align: match-parent` が唯一の specified 層残滓だった) が保証内容を
 //! 機械的に pin している。
-//!
-//! bd decision raikiri-spike-082k (Option A) / bd task raikiri-spike-i5bs
-//! (Phase 1 = additive)。
 //!
 //! # なぜ絶対化が独立 phase なのか
 //!
@@ -38,8 +35,7 @@
 //! かつ絶対化は **cascade winner の適用とは別 phase** でなければならない —
 //! `padding: 2em` の基準となる `font-size` は、同 node の全 winner を適用し終えた
 //! 後にしか確定しないため、winner を 1 つずつ適用する途中で絶対化することは
-//! できない (適用順は property 間で保証されない)。これは decision 082k の
-//! 拘束事項である。
+//! できない (適用順は property 間で保証されない)。
 //!
 //! 本 module の関数群は、この制約を守るのに必要な材料を signature に持つ —
 //! いずれも cascade の winner 集合に触らない純関数で、基準となる font-size を
@@ -49,11 +45,10 @@
 //!
 //! **順序は型で縛られていない。** 引数はただの [`ComputedLength`] なので、winner を
 //! 1 つ適用するたびに本 module の関数を呼び、親の font-size や phase 2 前の中間値を
-//! 基準として渡す誤実装は**普通に書ける** (型検査は通る)。すなわち decision 082k の
-//! 拘束事項は本 module では**規約として**守るものであり、下の doctest がその規約
-//! である。
+//! 基準として渡す誤実装は**普通に書ける** (型検査は通る)。すなわち上記の制約は
+//! 本 module では**規約として**守るものであり、下の doctest がその規約である。
 //!
-//! **cascade pipeline 側は規約に頼っていない** (bd raikiri-spike-zls8 の判断):
+//! **cascade pipeline 側は規約に頼っていない**:
 //! 絶対化の入口を [`SpecifiedValues::finalize`] /
 //! [`SpecifiedValues::finalize_as_root`] の 2 つに絞り、phase 3 を
 //! `parent_font_size` を受け取らない private 関数に閉じ込めてある。
@@ -66,13 +61,13 @@
 //!
 //! # 想定される 4 段階 (phase 1 / 2 / 2.5 / 3) の呼び出し順序
 //!
-//! phase 2.5 (line-height の絶対化) は bd raikiri-spike-vxha で追加された —
+//! phase 2.5 (line-height の絶対化) は後から追加された —
 //! `padding: 2lh` のような box property が `1lh` を使うには、自 node の
 //! line-height が **先に**確定していなければならない (font-size が phase 2 で
-//! 先に確定するのと同じ理由、decision raikiri-spike-082k)。
+//! 先に確定するのと同じ理由)。
 //!
 //! `parent_line_height_basis` (**親要素の**確定済み used line-height) は
-//! bd raikiri-spike-yh3w で phase 2 (`font-size` の `lh` 自己参照、
+//! phase 2 (`font-size` の `lh` 自己参照、
 //! [`resolve_font_size`] doc 参照) にも必要になった。**これは phase 2 → 2.5 の
 //! 順序を逆転させるものではない** — `parent_line_height_basis` が指すのは
 //! **自 node の** phase 2.5 の結果ではなく、**親 node** の (別の再帰呼び出しで
@@ -134,7 +129,8 @@
 //!
 //! **crate-wide の規則ではない。** specified 層の [`Length`] / [`LengthOrAuto`] /
 //! [`LineHeight`] / [`Border`] を含む `property.rs` の公開 enum は sum 型でも
-//! `#[non_exhaustive]` を付ける (37n sibling convention)。本 module の
+//! `#[non_exhaustive]` を付ける (この crate 内の類似 enum に共通の convention)。
+//! 本 module の
 //! computed 型群だけがそこから外れる — 理由は下記の **explicit trade** であって
 //! 「sum 型だから」という形の性質ではない。
 //!
@@ -157,13 +153,14 @@
 //! > - a computed calc() expression otherwise
 //!
 //! と規定しており、computed `<length-percentage>` は px / percentage /
-//! **calc()** の 3 形態を取る。したがって Epic 5 (css-variables-and-math) で
-//! `Calc` variant は**確実に増える**。これは以下の **explicit trade** である。
+//! **calc()** の 3 形態を取る。したがって将来 css-variables-and-math 対応が
+//! 入れば `Calc` variant は**確実に増える**。これは以下の **explicit trade**
+//! である。
 //!
 //! - **得るもの**: 今すぐ下流で網羅 match が書けること。`raikiri-dom` の
 //!   `layout.rs` にある defensive な `_ => length(0.0)` を削除でき、
 //!   fail-quiet の class が型検査で閉じる。
-//! - **払うもの**: Epic 5 で `Calc` variant を追加する際、raikiri-style /
+//! - **払うもの**: 将来 `Calc` variant を追加する際、raikiri-style /
 //!   raikiri-dom / raikiri を跨ぐ coordinated breaking change が 1 回発生する。
 //! - **取る理由**: `calc()` は下流が**必ず対応すべき**形態なので、compile error
 //!   で強制通知する方が、`#[non_exhaustive]` にして黙って 0px に落とすより安全。
@@ -218,7 +215,7 @@ use crate::property::{Border, BorderColor, BorderStyle, Length, LengthOrAuto, Li
 ///
 /// **§5.6.1 `#combine-mixed` は本主張の根拠にならない** — 同 section が規定する
 /// のは *percentage 成分と dimension 成分の混合*であり、`1em + 2px` は dimension
-/// 同士の加算なので対象外 (bd raikiri-spike-i5bs NOTES 訂正 1)。
+/// 同士の加算なので対象外。
 ///
 /// 加えて本型は `pub f32` 1 field の tuple struct であり、`ComputedLength(16.0)`
 /// という位置構築を下流に許したい (`#[non_exhaustive]` はそれを禁じる) —
@@ -457,27 +454,27 @@ pub enum ComputedLineHeight {
 /// // non-vacuous control を兼ねる。
 /// ```
 ///
-/// # write 経路が無いことの compile-fail pin (bd raikiri-spike-smqp)
+/// # write 経路が無いことの compile-fail pin
 ///
 /// `width` / `style` はいずれも `pub(crate)` に絞ってある (各 field doc
 /// 参照)。この narrowing が保たれ続けることは prose の主張のままだと将来の
-/// regression (rename 時の見落とし等) で静かに崩れうる。bd
-/// raikiri-spike-ejia が [`crate::rule::Declaration`] の `value` field で
-/// 確立した技法 (同型の doc comment 参照) をここに転用する。
+/// regression (rename 時の見落とし等) で静かに崩れうる。
+/// [`crate::rule::Declaration`] の `value` field で確立した技法 (同型の
+/// doc comment 参照) をここに転用する。
 ///
 /// `ComputedBorder` にはすでに `#[non_exhaustive]` が付いているため、struct
 /// literal 構築や `..base` functional-update による fence は width / style
 /// 単独の visibility を discriminate **できない** — 発生するエラーは常に
 /// non_exhaustive 由来の `E0639` であり、両 field が将来 `pub` に戻っても
-/// compile-fail し続けてしまう (`Declaration` で ejia が fence 1/2 について
-/// 指摘した vacuous pin と同種。ただしあちらは「将来 non_exhaustive が付いたら」
+/// compile-fail し続けてしまう (`Declaration` の doc が指摘する同種の
+/// vacuous pin と同じ構造。ただしあちらは「将来 non_exhaustive が付いたら」
 /// という risk だったのに対し、こちらは non_exhaustive が既に付いている現在
 /// の事実であり、非 struct-literal 系 fence を最初から作らない理由になる)。
 ///
 /// そのため struct literal fence は作らず、[`resolve_border`] が返す
 /// **所有権のある**値への直接 field 代入だけを使う。`resolve_border` が
-/// 参照ではなく値そのものを返すため (上の主 doctest 参照)、ejia が
-/// `Declaration` で踏んだ confound (`declarations()` が `&[_]` を返すので
+/// 参照ではなく値そのものを返すため (上の主 doctest 参照)、`Declaration` の
+/// doc が踏んだ confound (`declarations()` が `&[_]` を返すので
 /// `.clone()` を挟まないと代入が常に `E0594` (immutable な参照への代入) で
 /// vacuous-compile-fail する) は **そもそも発生しない** — 借用を経由しない
 /// ので、代入の成否は各 field 自身の visibility だけで決まる:
@@ -529,12 +526,12 @@ pub struct ComputedBorder {
     /// [`resolve_border`] は本 field を必ず `ComputedLength::ZERO` にする
     /// (上記 propdef の gating)。crate 外からの直接書き換えでこの対応関係を
     /// 崩せないよう `pub(crate)` に絞り、read-only accessor [`Self::width`]
-    /// のみを公開する (bd raikiri-spike-9jmt)。
+    /// のみを公開する。
     pub(crate) width: ComputedLength,
     /// `border-*-style` — computed 層でも specified keyword。
     ///
     /// `width` と対で `pub(crate)` に絞り、read-only accessor
-    /// [`Self::style`] のみを公開する (bd raikiri-spike-9jmt)。
+    /// [`Self::style`] のみを公開する。
     pub(crate) style: BorderStyle,
     /// `border-*-color` — `currentcolor` keyword を保持したまま computed 層に
     /// 残る (used-value 解決は paint 責務)。
@@ -545,14 +542,12 @@ impl ComputedBorder {
     /// 絶対化済みの border width への read-only accessor。
     ///
     /// [`Self::style`] が [`BorderStyle::None`] / [`BorderStyle::Hidden`] の
-    /// ときは必ず `ComputedLength::ZERO` — [`resolve_border`] が gate する
-    /// (bd raikiri-spike-9jmt)。
+    /// ときは必ず `ComputedLength::ZERO` — [`resolve_border`] が gate する。
     pub fn width(&self) -> ComputedLength {
         self.width
     }
 
-    /// `border-*-style` の computed value への read-only accessor
-    /// (bd raikiri-spike-9jmt)。
+    /// `border-*-style` の computed value への read-only accessor。
     pub fn style(&self) -> BorderStyle {
         self.style
     }
@@ -567,7 +562,7 @@ impl ComputedBorder {
 /// `rem` の参照値 (root element の computed font-size) と、`rlh` の参照値
 /// (root element の computed line-height を [`used_line_height_length`] で
 /// 絶対長に変換した値、`normal` で解決不能なら `None`) の 2 つ
-/// (bd raikiri-spike-vxha で後者を追加)。
+/// (後者は後から追加された)。
 ///
 /// # Primary source (§ title + anchor)
 ///
@@ -582,7 +577,7 @@ impl ComputedBorder {
 /// [`ResolveContext::with_root_line_height`] を使う。
 ///
 /// **ただし `new` は positional なので `#[non_exhaustive]` の source 互換は
-/// constructor まで及ばない。** `root_line_height` の追加 (bd raikiri-spike-vxha)
+/// constructor まで及ばない。** `root_line_height` の追加
 /// はこの trade-off の実例 — `new` の signature を破壊せず、`root_line_height`
 /// を明示したい呼び手のためだけに [`ResolveContext::with_root_line_height`] を
 /// 第 2 constructor として追加した (`new` は `root_line_height: None` 固定の
@@ -616,7 +611,7 @@ pub struct ResolveContext {
     /// 型は [`ComputedLength`] — 本 field が保持するのは**絶対化済の computed
     /// `<length>`** であり、[`resolve_font_size`] の戻り値をそのまま格納できる。
     pub root_font_size: ComputedLength,
-    /// root element の `lh` 値 — `rlh` の参照値 (bd raikiri-spike-vxha)。
+    /// root element の `lh` 値 — `rlh` の参照値。
     ///
     /// [`used_line_height_length`] が root element の
     /// (computed line-height, computed font-size) から導く**絶対化済の
@@ -644,7 +639,7 @@ impl ResolveContext {
     }
 
     /// root element の computed font-size **と** `rlh` の参照値を指定して
-    /// 構築する (bd raikiri-spike-vxha)。
+    /// 構築する。
     ///
     /// `root_line_height` は呼び手が [`used_line_height_length`] で
     /// あらかじめ絶対化した値 (root element の computed line-height が
@@ -679,8 +674,7 @@ impl ResolveContext {
     /// `lh`/`rlh` にも同条項の類似規定を及ぼすが、両者の非対称
     /// (`lh` は自己参照として扱う、`rlh` は tree-global 定数として扱う) の
     /// 判断根拠は [`resolve_line_height`] doc が canonical
-    /// (roborev-refine iter 1 quality lens 1、bd raikiri-spike-awjx の
-    /// drift 前例により要約に留める) — 結論だけ述べると、root element の
+    /// (前述の drift 前例により要約に留める) — 結論だけ述べると、root element の
     /// `line-height: 1lh` / `1rlh` はどちらも「initial line-height
     /// (`normal`)」基準に帰着し、常に unresolved になる。
     ///
@@ -715,12 +709,12 @@ impl ResolveContext {
 /// `v * (4.0 / 3.0)` に「簡約」すると異なる bit パターンの f32 になる。
 /// **この式の形を変えてはならない。**
 ///
-/// (bd raikiri-spike-zls8 以前は `raikiri-dom` の `layout.rs` bridge helper
+/// (以前は `raikiri-dom` の `layout.rs` bridge helper
 /// 群 (padding / width-height / margin の3関数) にも同じ変換 (`Length::Pt(v)`
 /// を受けて `v * 4.0 / 3.0` する arm、返り値の wrapper 型は関数ごとに
 /// `LengthPercentage` / `Dimension` / `LengthPercentageAuto` と異なる) が
 /// 存在し、それらと bit 単位で一致させることもこの評価順を選ぶ理由の
-/// 一つだった。zls8 が bridge の引数を computed 層の型に切り替えた際に
+/// 一つだった。その後 bridge の引数を computed 層の型に切り替えた際に
 /// その arm は3関数とも削除され — pt は cascade phase 3 で既に px に
 /// 絶対化済みのため bridge に届かない — cross-check 対象は今は存在しない。
 /// f32 非結合性という理由だけでこの式の形は独立に正しい。)
@@ -760,8 +754,7 @@ fn pc_to_px(v: f32) -> f32 {
 }
 
 /// すでに絶対化済みの [`ComputedLineHeight`] (自要素の、または root element の)
-/// を、`lh` / `rlh` 単位の乗数として使える**絶対長**に変換する
-/// (bd raikiri-spike-vxha)。
+/// を、`lh` / `rlh` 単位の乗数として使える**絶対長**に変換する。
 ///
 /// # Primary source (§ title + anchor)
 ///
@@ -835,7 +828,7 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// [`ComputedLength`]`(16.0)`) を渡す。
 ///
 /// `self_reference_basis` は**親要素の** used line-height ([`Length::Lh`]
-/// の解決に使う — 下記 `Nlh` 行、bd raikiri-spike-yh3w)。呼び手が
+/// の解決に使う — 下記 `Nlh` 行)。呼び手が
 /// [`used_line_height_length`]`(parent.line_height, parent.font_size)` で
 /// あらかじめ絶対長化したもの。`normal` で解決不能、または親がない (root
 /// element) 場合は `None`。命名は [`resolve_line_height`] の同名引数と揃えた
@@ -864,7 +857,7 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 ///
 /// [`INITIAL_FONT_SIZE_PX`]: crate::computed::INITIAL_FONT_SIZE_PX
 ///
-/// # `lh` / `rlh` の自己参照 (bd raikiri-spike-yh3w)
+/// # `lh` / `rlh` の自己参照
 ///
 /// CSS Values 4 §6.1.1 "Font-relative Lengths"
 /// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) verbatim:
@@ -908,7 +901,7 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// spec initial) に intercept するのと同じ判断。汎用 resolver 側が一律 `0px`
 /// に倒すのは border-width の spec initial (`medium` = 3px) と一致しない
 /// **既知の compromise** ([`resolve_length`] doc の「border-width: 1lh の
-/// 0px fallback — 未解決の設計妥協」節、bd raikiri-spike-k05m が追う) であって
+/// 0px fallback — 未解決の設計妥協」節) であって
 /// 「単一 property 専用 resolver でも 0px に倒すべき」という一般原則ではない
 /// — `resolve_font_size` はこの関数が `font-size` の唯一の consumer なので、
 /// その compromise を持ち込む理由がない。
@@ -940,7 +933,7 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// 「initial values」= `line-height: normal` = 解決不能)。
 ///
 /// cascade pipeline ではこの contract を
-/// [`SpecifiedValues::finalize_as_root`] が守る (bd raikiri-spike-zls8) —
+/// [`SpecifiedValues::finalize_as_root`] が守る —
 /// end-to-end の pin は [`mod@crate::cascade`] の
 /// `rem_on_root_element_resolves_against_initial_font_size` /
 /// `rem_below_root_element_resolves_against_root_computed_font_size` /
@@ -961,7 +954,7 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// let grandchild = resolve_font_size(Length::Em(1.5), child, None, &ctx);
 /// assert_eq!(grandchild, ComputedLength(36.0));
 ///
-/// // `1lh` resolves against the *parent's* used line-height (bd raikiri-spike-yh3w)
+/// // `1lh` resolves against the *parent's* used line-height
 /// // — not the declaring element's own font-size. Parent: font-size 16px,
 /// // `line-height: 1.5` (unitless) → used line-height 24px.
 /// let self_reference_basis = Some(ComputedLength(24.0));
@@ -998,7 +991,7 @@ pub fn resolve_font_size(
         // element's font size" — font-size は §5.5.1 の「percentage は
         // percentage のまま computed される」原則の明示的な例外。
         Length::Percent(p) => ComputedLength(parent_font_size.0 * p / 100.0),
-        // `lh` / `rlh` (bd raikiri-spike-yh3w) — 上記「`lh` / `rlh` の自己参照」
+        // `lh` / `rlh` — 上記「`lh` / `rlh` の自己参照」
         // 節。基準が `None` のときの fallback は `font-size` 自身の spec
         // initial (`INITIAL_FONT_SIZE_PX`) — `resolve_length` /
         // `resolve_length_percentage` の汎用 `0px` fallback とは**意図的に
@@ -1041,14 +1034,14 @@ pub fn resolve_font_size(
 /// spec initial 相当の保守的な値であり、fail-quiet を許すためではなく
 /// 「grammar 上ありえない入力に対する全域性」のための arm である。
 ///
-/// これは設計文書 §4.6 が Option A で削除するとした下流 (`raikiri-dom`
-/// `layout.rs`) の catch-all とは別物である (あちらは bd raikiri-spike-zls8 で
-/// 実際に削除済) — あちらは **computed 層**の型を
+/// これは設計文書 §4.6 が削除するとした下流 (`raikiri-dom`
+/// `layout.rs`) の catch-all とは別物である (あちらは実際に削除済) —
+/// あちらは **computed 層**の型を
 /// match して `Em` / `Rem` という **spec-valid な入力**を黙って 0px に潰す
 /// (= fail-quiet)。本 arm は **specified 層の [`Length`]** に対するもので、
 /// 潰れる入力が grammar 上存在しない。
 ///
-/// # `Length::Lh` / `Length::Rlh` (bd raikiri-spike-vxha)
+/// # `Length::Lh` / `Length::Rlh`
 ///
 /// `own_line_height` は**呼び手が [`used_line_height_length`] であらかじめ
 /// 絶対化した**、この関数が絶対化中の property を持つ要素**自身**の
@@ -1060,7 +1053,7 @@ pub fn resolve_font_size(
 /// / `Length::Rlh` を除外した後**なので、本関数の Lh/Rlh arm が「自己参照」
 /// 問題を踏むことはない。
 ///
-/// # `border-*-width: 1lh` の `0px` fallback — 未解決の設計妥協 (roborev-refine iter 1 Finding B)
+/// # `border-*-width: 1lh` の `0px` fallback — 未解決の設計妥協 (Finding B)
 ///
 /// 基準が `None` (`normal` で解決不能、cap/rcap と同じ wall) のときは `0px` に
 /// 倒す。**これは上記の `Percent` arm ("grammar 上ありえない入力") と同じ
@@ -1083,10 +1076,10 @@ pub fn resolve_font_size(
 /// この不整合は認識した上で **今回は直さない** — root 原因は
 /// [`used_line_height_length`] doc の "normal" wall そのもの (real font
 /// metrics が style 層に無い) であり、根本修正 (`ComputedLength` に
-/// "unresolved" を表す手段を持たせる等) は bd raikiri-spike-k05m が追う
-/// 範囲の一部として扱う。border-width 固有の「`medium` 相当へ倒す」代替案
-/// (style gate 済みの `resolve_border` が既に持つ判定ロジックを再利用できる
-/// 見込みはある) も k05m 側で検討することとし、本関数では `Percent` arm と
+/// "unresolved" を表す手段を持たせる等) は今後の別途対応の範囲として扱う。
+/// border-width 固有の「`medium` 相当へ倒す」代替案 (style gate 済みの
+/// `resolve_border` が既に持つ判定ロジックを再利用できる見込みはある) も
+/// その対応の中で検討することとし、本関数では `Percent` arm と
 /// 同じコードパスに相乗りしない独立した設計判断として `0px` を明示的に
 /// 選んでいる — 比率を捏造しない (cleanroom) という一線だけは守るが、
 /// この `0px` 自体が border-width の正しい fallback だと主張するものではない。
@@ -1129,7 +1122,7 @@ pub(crate) fn resolve_length(
 /// containing block width への解決は used value 層 (CSS Cascade 5 §4.5
 /// <https://www.w3.org/TR/css-cascade-5/#used>、raikiri では taffy) の責務。
 ///
-/// # `Length::Lh` / `Length::Rlh` (bd raikiri-spike-vxha)
+/// # `Length::Lh` / `Length::Rlh`
 ///
 /// `own_line_height` は[`resolve_length`]の同名引数と同じ契約 — 呼び手が
 /// [`used_line_height_length`] であらかじめ絶対化した、この property を持つ
@@ -1180,13 +1173,13 @@ pub fn resolve_length_percentage(
 
 /// `<length-percentage> | auto` を取る property (**`width` / `height`
 /// のみ** — `margin-*` は [`resolve_margin_length_or_auto`] を使うこと、下記
-/// "roborev-refine iter 1 Finding A" 節参照) の specified value を絶対化する
+/// "Finding A" 節参照) の specified value を絶対化する
 /// (**phase 3** — 自 node 基準)。
 ///
 /// `Auto` は computed 層でも keyword のまま。`Percent` の扱いは
 /// [`resolve_length_percentage`] と同じ (素通し、used value 層で解決)。
 ///
-/// # `Length::Lh` / `Length::Rlh` の解決不能 fallback は `Auto` (bd raikiri-spike-vxha)
+/// # `Length::Lh` / `Length::Rlh` の解決不能 fallback は `Auto`
 ///
 /// [`resolve_length_percentage`] へ丸ごと delegate**しない** — 基準
 /// (`own_line_height` / `ctx.root_line_height`) が `None` (`normal` で解決
@@ -1199,10 +1192,9 @@ pub fn resolve_length_percentage(
 /// `width`/`height` にとって真の spec initial である `Auto` に合わせて
 /// 適用したもの。
 ///
-/// # roborev-refine iter 1 Finding A — `margin-*` は本関数を使わない
+/// # Finding A — `margin-*` は本関数を使わない
 ///
-/// 当初 `margin-*` もこの関数の consumer に含めていたが (bd raikiri-spike-vxha
-/// 初版)、roborev-refine iter 1 の spec lens 指摘により訂正した:
+/// 当初 `margin-*` もこの関数の consumer に含めていたが、spec 指摘により訂正した:
 /// margin の spec initial (CSS Box 3 §3.1
 /// <https://www.w3.org/TR/css-box-3/#margin-physical> "Initial: 0") は
 /// **definite length `0`** であって `auto` ではない — `width`/`height` とは
@@ -1242,7 +1234,7 @@ pub fn resolve_length_percentage_or_auto(
 }
 
 /// `<length-percentage> | auto` を取る **`margin-*`専用** の absolutization
-/// (roborev-refine iter 1 Finding A、bd raikiri-spike-vxha)。
+/// (Finding A)。
 ///
 /// [`resolve_length_percentage_or_auto`] と shape は同じ (`Auto` keyword は
 /// そのまま、`<length-percentage>` は [`resolve_length_percentage`] に
@@ -1291,7 +1283,7 @@ pub fn resolve_margin_length_or_auto(
 /// - `<length>` (`Lh` / `Rlh` を除く) は [`resolve_length`] と同じ規則で
 ///   絶対化する。
 ///
-/// # `Length::Lh` — 自己参照 (bd raikiri-spike-vxha)
+/// # `Length::Lh` — 自己参照
 ///
 /// `line-height: 1lh` は「自分の computed line-height」を自分の値として
 /// 使う自己参照になる — `lh` の素の定義 ("the element on which it is used")
@@ -1330,8 +1322,7 @@ pub fn resolve_margin_length_or_auto(
 /// 素の定義に反する誤った基準 (親の line-height) を使ってしまう。
 /// 引用文の "Similarly" は「自己参照が起こり得る場面では同じ fallback 構造を
 /// 使う」ことを述べているに過ぎず、`rlh` について「循環しない場面でも親を
-/// 参照せよ」と読むのは `rlh` 自身の定義と矛盾するため採らない
-/// (bd raikiri-spike-vxha 完了報告の「ambiguity 節」に経緯を残す)。
+/// 参照せよ」と読むのは `rlh` 自身の定義と矛盾するため採らない。
 pub fn resolve_line_height(
     specified: LineHeight,
     font_size: ComputedLength,
@@ -1384,12 +1375,12 @@ pub fn resolve_line_height(
 /// width is 0." と **used** 層で述べる一方、規範な propdef table は **computed**
 /// 層を指定している。Note は非規範なので propdef table が governs。
 ///
-/// **version marker (bd raikiri-spike-8dfv)**: 上記は TR
+/// **version marker**: 上記は TR
 /// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の記述。ED
 /// (<https://drafts.csswg.org/css-backgrounds-3/#border-width>) は CSSWG
 /// [Issue 11494](https://github.com/w3c/csswg-drafts/issues/11494) により
 /// この gate を **computed → resolved/used 層へ移動**する規定変更を経ている
-/// (2026-08-08 時点で curl -sL 実測して現存を再確認 — computed value 行から
+/// (computed value 行から
 /// "zero if the border style is `none` or `hidden`" 節が消え、代わりに
 /// "The resolved value for the border-width properties is the used value.
 /// If the border-style corresponding to a given border-width is none or
@@ -1404,14 +1395,14 @@ pub fn resolve_line_height(
 /// 決定なしに変更しないこと。
 ///
 /// **本関数は gate の単一 source である (element 経路 / page 経路の両方)** —
-/// `raikiri-dom` の `layout.rs` は Sprint 18 まで同じ gating を used 層
-/// (`used_border_width` helper) で 1 層遅れて行っていたが、bd raikiri-spike-zls8
-/// が `layout.rs` を [`ComputedBorder`] consumer に migrate した際に削除した。
+/// `raikiri-dom` の `layout.rs` は以前、同じ gating を used 層
+/// (`used_border_width` helper) で 1 層遅れて行っていたが、`layout.rs` を
+/// [`ComputedBorder`] consumer に migrate した際に削除した。
 /// 下流に同じ判定を再実装してはならない (spec 規則の二重実装は片方だけ直す
 /// drift を生む)。
 ///
-/// page 経路 (`@page`) は `PropertyValue` の bag を運ぶが、bd raikiri-spike-sshp
-/// 以降 [`crate::page::cascade_page`] の phase 3 が `border-*-width` longhand を
+/// page 経路 (`@page`) は `PropertyValue` の bag を運ぶが、
+/// [`crate::page::cascade_page`] の phase 3 が `border-*-width` longhand を
 /// [`Border`] に組み直して**本関数へ funnel する** — `matches!(style, None |
 /// Hidden)` を page 側で書き直してはならない。longhand には color が無いので
 /// placeholder を渡すが、本関数は width の判定に color を読まない。
@@ -1427,10 +1418,10 @@ pub fn resolve_line_height(
 /// "No border. Color and width are ignored (i.e., the border has width 0). Note
 /// this means that the initial value of `border-image-width` will also resolve to
 /// zero." であり、§3.3 の Computed value 行と整合する (border-image に対する
-/// 例外を作らない)。`border-image-*` は Epic 未着手
+/// 例外を作らない)。`border-image-*` は未着手
 /// (`ComputedValues::border` doc の Non-goals) なので現状 gate 位置の再検討は
 /// 不要だが、着手時には両 section を読み直すこと。
-/// `own_line_height` (bd raikiri-spike-vxha) — 呼び手が [`used_line_height_length`]
+/// `own_line_height` — 呼び手が [`used_line_height_length`]
 /// であらかじめ絶対化した、この border を持つ要素自身の line-height 基準。
 /// `border-*-width: 1lh` の resolve に使う ([`resolve_length`] の同名引数と
 /// 同じ契約)。`None` (`normal` で解決不能) のときは `resolve_length` が
@@ -1601,8 +1592,7 @@ mod tests {
         );
     }
 
-    /// `em` の compounding: 16px → 1.5em → 1.5em = 24px → 36px
-    /// (decision raikiri-spike-082k Rationale 1 (i))。
+    /// `em` の compounding: 16px → 1.5em → 1.5em = 24px → 36px。
     #[test]
     fn font_size_em_compounds_across_two_levels() {
         let child = resolve_font_size(Length::Em(1.5), ComputedLength(16.0), None, &CTX);
@@ -1654,7 +1644,7 @@ mod tests {
     /// `ex` / `ch` は style 層に real font metrics が無いため常に spec の
     /// unknown-metric fallback (`0.5em`) を使う (`Length::Ex` / `Length::Ch`
     /// doc)。`font-size` 上では他 font-relative unit と同じく **親** 基準
-    /// (self-reference avoidance、bd raikiri-spike-2x8)。
+    /// (self-reference avoidance)。
     #[test]
     fn font_size_ex_and_ch_resolve_against_parent_font_size_with_half_em_fallback() {
         assert_eq!(
@@ -1696,7 +1686,7 @@ mod tests {
     }
 
     /// `font-size: 1lh` resolves against the **parent's** used line-height
-    /// (bd raikiri-spike-yh3w — CSS Values 4 §6.1.1's self-reference clause,
+    /// (CSS Values 4 §6.1.1's self-reference clause,
     /// same判断 as `resolve_line_height`'s `Length::Lh` arm). The `parent`
     /// argument to `resolve_font_size` (16px, unrelated) is deliberately
     /// different from `parent_line_height_basis` (30px) so a bug that
@@ -1716,8 +1706,8 @@ mod tests {
     }
 
     /// `font-size: 1rlh` resolves against `ctx.root_line_height` — a
-    /// tree-global constant, **not** `parent_line_height_basis` (bd
-    /// raikiri-spike-yh3w — mirrors `resolve_line_height`'s `Length::Rlh`
+    /// tree-global constant, **not** `parent_line_height_basis` (mirrors
+    /// `resolve_line_height`'s `Length::Rlh`
     /// arm and its "not self-referential for non-root elements" rationale).
     /// `parent_line_height_basis` is deliberately set to a different value
     /// (30px) than `ctx.root_line_height` (50px) so a bug that swaps the two
@@ -1743,7 +1733,7 @@ mod tests {
     /// root element with no parent) — **not** `0px`. Unlike the generic,
     /// multi-property `resolve_length`/`resolve_length_percentage` (whose
     /// flat `0px` fallback is a known compromise for `border-width`, tracked
-    /// separately by bd raikiri-spike-k05m), `resolve_font_size` is a
+    /// separately), `resolve_font_size` is a
     /// dedicated single-property resolver and can fall back to its own true
     /// initial directly — same convention as `resolve_line_height`'s `Lh`
     /// arm falling back to `line-height`'s own initial `normal`.
@@ -1921,7 +1911,7 @@ mod tests {
     }
 
     /// `resolve_length_percentage` (`padding-*` の絶対化関数) 側でも
-    /// bd raikiri-spike-2x8 で追加した全 unit を直接 exercise する
+    /// 追加した全 unit を直接 exercise する
     /// (`resolve_font_size` / `resolve_length` の同 unit test とは別 site —
     /// 3 関数それぞれが独立した match を持つため、patch coverage は
     /// 関数単位で見る)。
@@ -1975,8 +1965,7 @@ mod tests {
         );
     }
 
-    /// `padding: 1lh` — own line-height が解決済 (`Some`) なら乗数として使う
-    /// (bd raikiri-spike-vxha)。
+    /// `padding: 1lh` — own line-height が解決済 (`Some`) なら乗数として使う。
     #[test]
     fn length_percentage_lh_multiplies_own_line_height_basis() {
         let fs = ComputedLength(20.0);
@@ -2061,7 +2050,7 @@ mod tests {
     }
 
     /// `width: 1lh` (`resolve_length_percentage_or_auto` — `width`/`height`
-    /// only since roborev-refine iter 1 Finding A, bd raikiri-spike-vxha) —
+    /// only since Finding A) —
     /// resolvable な own line-height なら乗数として使う。
     /// `resolve_length_percentage_or_auto` は `Lh`/`Rlh` を
     /// `resolve_length_percentage` へ delegate**しない** (fallback が違う、
@@ -2083,7 +2072,7 @@ mod tests {
     /// `width: 1lh` — own line-height が `normal` で解決不能なら **`Auto`**
     /// に倒す (`width`/`height`'s spec initial, CSS Sizing 3 §3.1.1) —
     /// `resolve_length_percentage`'s `0px` fallback とは異なる。**margin
-    /// はもう本関数を通らない** (roborev-refine iter 1 Finding A) —
+    /// はもう本関数を通らない** (Finding A) —
     /// margin の同型テストは `resolve_margin_length_or_auto_lh_falls_back_to_zero_when_unresolvable`
     /// を参照。
     #[test]
@@ -2110,7 +2099,7 @@ mod tests {
         );
     }
 
-    /// `margin-top: 1lh` (roborev-refine iter 1 Finding A, bd raikiri-spike-vxha)
+    /// `margin-top: 1lh` (Finding A)
     /// — resolvable な own line-height なら乗数として使う。Numerically
     /// identical to `resolve_length_percentage_or_auto`'s answer when
     /// resolvable — only the unresolvable fallback differs (next test).
@@ -2243,7 +2232,7 @@ mod tests {
 
     /// `line-height: 1lh` is self-referential (CSS Values 4 §6.1.1, spec
     /// quote + `lh`/`rlh` asymmetry rationale canonically documented on
-    /// `resolve_line_height` — bd raikiri-spike-vxha). When the parent's
+    /// `resolve_line_height`). When the parent's
     /// own line-height is resolvable, `lh` multiplies by it — `own
     /// font_size` (the 2nd arg) and `ctx.root_line_height` are **not**
     /// consulted at all for this case, only `self_reference_basis` is.
@@ -2299,7 +2288,7 @@ mod tests {
     /// 4 §6.1.1's "if the element has no parent" clause reduces to `normal`
     /// there too, see `SpecifiedValues::finalize_as_root` doc), `1lh` falls
     /// back to `line-height`'s own spec initial value `normal` rather than
-    /// inventing a length (bd raikiri-spike-vxha — this is the per-property
+    /// inventing a length (this is the per-property
     /// fallback chosen for the "normal" wall, distinct from
     /// `resolve_length_percentage`'s `0px` / `resolve_length_percentage_or_auto`'s
     /// `Auto`, because `normal` is what "unspecified" actually means for
@@ -2352,7 +2341,7 @@ mod tests {
         assert_eq!(computed.color, specified.color);
     }
 
-    /// `border-*-width: 1lh` / `1rlh` (bd raikiri-spike-vxha) — resolvable な
+    /// `border-*-width: 1lh` / `1rlh` — resolvable な
     /// 基準なら乗数、`None` (`normal` で解決不能) なら `resolve_length` の
     /// grammar-unreachable `Percent` arm と同じ `0px` に倒す。
     #[test]
@@ -2393,8 +2382,8 @@ mod tests {
         );
     }
 
-    /// `ComputedBorder::width()` / `::style()` accessor 本体を実行する pin
-    /// (bd raikiri-spike-9jmt)。上の test は同一モジュール内なので
+    /// `ComputedBorder::width()` / `::style()` accessor 本体を実行する pin。
+    /// 上の test は同一モジュール内なので
     /// `pub(crate)` field に直接アクセスし、accessor 関数本体そのものは
     /// 経由しない。crate 外視点から accessor を叩く doctest (`ComputedBorder`
     /// 型 doc 内) はあるが、この repo の toolchain (stable 固定、
@@ -2438,7 +2427,7 @@ mod tests {
         assert_eq!(computed.width, ComputedLength(10.0));
     }
 
-    /// bd raikiri-spike-2x8 で追加した absolute unit (`pc`) も
+    /// 追加した absolute unit (`pc`) も
     /// `border-*-width` の style gating (この module doc / `resolve_border`
     /// doc の "spec tension" 節) と組み合わさって正しく解決する — `1pc = 16px`
     /// (CSS Values 4 §6.2)。`style: none` では新 unit も他 unit と同じく 0px に
@@ -2541,7 +2530,7 @@ mod tests {
     /// border-width = 0px、line-height = normal、font-size = 16px) になることを
     /// pin する。
     ///
-    /// 集約版 (`SpecifiedValues::finalize` 全体) は `crate::specified` の // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// 集約版 (`SpecifiedValues::finalize` 全体) は `crate::specified` の // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// `initial_specified_finalizes_to_initial_computed` が持つ。こちらは
     /// **どの関数が壊れたか**を局所化するための per-function 粒度。
     #[test]

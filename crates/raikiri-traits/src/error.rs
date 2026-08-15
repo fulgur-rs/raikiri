@@ -12,8 +12,8 @@ use crate::page::TargetRegistry;
 use crate::policy::PolicyViolation;
 use crate::resolver::ResolverError;
 
-// CSS cascade error taxonomy is owned by raikiri-style (Stylo pattern —
-// raikiri-spike-94e Phase B). Re-exported here so `RenderError::Cascade`
+// CSS cascade error taxonomy is owned by raikiri-style (Stylo pattern).
+// Re-exported here so `RenderError::Cascade`
 // and `impl From<CascadeError> for RenderError` below (which reference
 // `CascadeError` by unqualified path) keep the same identity, and downstream
 // consumers observing `raikiri_traits::CascadeError` (raikiri umbrella's
@@ -62,12 +62,12 @@ pub enum RenderError {
     /// その他 `std::io::Error` 系。
     Io(std::io::Error),
 
-    /// M1 stub 段階の API に対する call。M2+ で実装完了時にこの variant は
+    /// stub 段階の API に対する call。実装完了時にこの variant は
     /// **削除される** (breaking change として release notes に明記)。Consumer
-    /// は M1 期間中のみ pattern match し、M2+ upgrade 時に arm 削除でよい。
+    /// は stub 期間中のみ pattern match し、実装完了時に arm 削除でよい。
     /// `feature` は呼ばれた stub API の識別 (`"plan"`, `"render_streaming"` 等)。
     Unimplemented {
-        /// M1 stub の API 名。
+        /// stub の API 名。
         feature: &'static str,
         /// Consumer 向け migration hint。
         migration_hint: &'static str,
@@ -105,7 +105,7 @@ impl std::fmt::Display for RenderError {
             } => {
                 write!(
                     f,
-                    "{feature} is not implemented in M1 (hint: {migration_hint})"
+                    "{feature} is not implemented yet (hint: {migration_hint})"
                 )
             }
         }
@@ -163,7 +163,7 @@ pub enum LimitKind {
     /// `max_aggregate_bytes` 超過 (post-parse の approximate memory footprint、
     /// DOM node arena / cascade table 等の合計)。
     AggregateBytes,
-    /// `max_input_bytes` 超過 (bd raikiri-spike-4kw、Sprint 10 Option A promotion)。
+    /// `max_input_bytes` 超過。
     ///
     /// [`AggregateBytes`](Self::AggregateBytes) との semantic 分離: `InputBytes`
     /// は **parse-time** の raw input byte stream を pin する fail-closed 早期
@@ -216,7 +216,7 @@ pub struct RenderWarning {
     pub details: String,
 }
 
-/// 警告 kind。§4 の 5 base variant + m1.3 で追加された `HtmlParseError`。
+/// 警告 kind。§4 の 5 base variant + 追加された `HtmlParseError`。
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum WarningKind {
@@ -249,8 +249,8 @@ pub enum WarningKind {
     },
     /// html5ever tokenizer が非致命 parse error を報告した (malformed HTML を
     /// recover した場合等)。Stylo/blitz と同じ責務境界: raikiri-html 内で
-    /// warning に降格し、rendering は継続する。M1.5+ orchestrator が Document
-    /// → `RenderSummary.warnings` に merge する。
+    /// warning に降格し、rendering は継続する。orchestrator が Document →
+    /// `RenderSummary.warnings` に merge する。
     HtmlParseError {
         /// html5ever が返した診断メッセージ (Cow<'static, str> を String 化)。
         message: String,
@@ -325,11 +325,11 @@ pub struct TargetSlotId {
 
 /// target-* の種別 (target-counter / target-text / target-string 等)。
 ///
-/// M4 target-* で variant を populate。M1.1 では uninhabited。
+/// target-* 対応時に variant を populate。現時点では uninhabited。
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetKind {
-    // M4 で populate:
+    // 将来 populate 予定:
     //   Counter,
     //   Text,
     //   String,
@@ -358,7 +358,7 @@ pub struct TargetDiscrepancy {
 /// [`RenderWarning`] として summary に集約し、この enum には含めない。
 /// この enum の variant は rendering を halt させる真の terminal error のみ。
 ///
-/// M1.2 で `Io` / `Encoding` の 2 variant を populate。html5ever 固有の
+/// `Io` / `Encoding` の 2 variant を populate 済み。html5ever 固有の
 /// error variant は raikiri-html 側で crate-private に扱い、必要になった
 /// 時点で `#[non_exhaustive]` の恩恵で追加する。
 #[non_exhaustive]
@@ -402,7 +402,7 @@ impl From<std::io::Error> for ParseError {
 }
 
 // NB: `CascadeError` enum + `Display` + `Error` impls used to live here.
-// Ownership moved to `raikiri-style::error` in raikiri-spike-94e Phase B
+// Ownership moved to `raikiri-style::error`
 // (Stylo pattern — style owns its cascade error taxonomy). The re-export at
 // the top of this file preserves the `raikiri_traits::CascadeError` name path.
 
@@ -411,7 +411,7 @@ impl From<std::io::Error> for ParseError {
 /// **同じ責務境界**: taffy 固有 error 型は raikiri-dom 内部に閉じ込め、
 /// この enum は raikiri-dom が明示的に fail-hard を選択した場合の signal のみ。
 ///
-/// M1.2 で `Internal` variant のみ populate。taffy 実装詳細を trait layer
+/// `Internal` variant のみ populate 済み。taffy 実装詳細を trait layer
 /// に漏らさない。必要になった時点で `#[non_exhaustive]` の恩恵で追加する。
 #[non_exhaustive]
 #[derive(Debug)]
@@ -442,14 +442,17 @@ mod unimplemented_variant_tests {
     fn unimplemented_display_includes_feature_and_hint() {
         let err = RenderError::Unimplemented {
             feature: "plan",
-            migration_hint: "M2+ で pagination 実装後に populate",
+            migration_hint: "pagination 実装後に populate予定",
         };
         let s = format!("{err}");
         assert!(
             s.contains("plan"),
             "display must include feature: got {s:?}"
         );
-        assert!(s.contains("M2+"), "display must include hint: got {s:?}");
+        assert!(
+            s.contains("pagination"),
+            "display must include hint: got {s:?}"
+        );
         assert!(
             s.contains("not implemented"),
             "display must include 'not implemented': got {s:?}"

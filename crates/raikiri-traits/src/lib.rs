@@ -16,12 +16,12 @@
 //! - [`strategy`] — Strategy traits (LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy)
 //! - [`config`]   — Entry point configs (RenderLimits, LookaheadConfig, ...)
 //! - [`plan`]     — `plan()` output types (DocumentPlan, PageSummary)
-//! - [`io`]       — bounded regular-file read primitive (raikiri-spike-fe1)
+//! - [`io`]       — bounded regular-file read primitive
 //!
 //! ## Spec authority
 //!
-//! 型定義の authoritative source は bd raikiri-spike-m1 (Workspace Layout
-//! scope + spec drift protocol の design 由来)。
+//! 型定義の authoritative source は design doc (Workspace Layout scope +
+//! spec drift protocol の design 由来)。
 
 pub mod config;
 pub mod dom;
@@ -112,11 +112,11 @@ mod tests {
         _assert::<dyn ResourcePolicy>();
         // Strategy traits (LookaheadPolicy / TargetResolver / EmissionPolicy /
         // ReflowPolicy) は generic param 経由で受ける (§4 `render_with<L,T,E,R>`
-        // 設計) ため object-safety は要件外。M1.5+ で dyn 化が必要なら判断。
+        // 設計) ため object-safety は要件外。将来 dyn 化が必要なら判断。
         //
-        // Dom / Element / Node は M1.5 dom-model で associated type / GAT を
+        // Dom / Element / Node は今後 associated type / GAT を
         // 追加する予定で、その段階で non-object-safe になる可能性が高いため
-        // M1.1 では assert しない。
+        // 現時点では assert しない。
     }
 
     // ── AbortController semantic ────────────────────────────────
@@ -286,7 +286,7 @@ mod tests {
         let _ = TargetDefinition::default();
     }
 
-    // ── Sub-error trait bounds (M1.2) ───────────────────────────
+    // ── Sub-error trait bounds ───────────────────────────
 
     #[test]
     fn parse_error_is_error_and_display() {
@@ -353,7 +353,7 @@ mod tests {
         }
     }
 
-    // ── Sub-error trait bounds (0hh) ────────────────────────────
+    // ── Sub-error trait bounds ────────────────────────────
 
     #[test]
     fn policy_violation_is_error_and_display() {
@@ -363,7 +363,7 @@ mod tests {
         _assert_display::<PolicyViolation>();
     }
 
-    // ── ViolationType::Display (raikiri-spike-bz9) ──────────────
+    // ── ViolationType::Display ──────────────
     // Debug-in-Display の排除。Display 出力は stability 契約の対象なので
     // 全 variant の string を pin する。Debug format (auto-derived) が
     // variant field 追加時に silently 変わるのを防ぐため、代表 field 値も
@@ -427,7 +427,7 @@ mod tests {
         // PolicyViolation::Display が violation_type / kind を `{}` で format
         // することを regression pin。旧実装は `{:?}` で
         // "FetchTooLarge { limit: .., actual: .. }" や "Image" を垂れ流していた。
-        // kind Display swap (raikiri-spike-d6j) 分の kind assertion も含む。
+        // kind Display swap 分の kind assertion も含む。
         use url::Url;
         let v = PolicyViolation {
             kind: ResourceKind::Image,
@@ -458,12 +458,12 @@ mod tests {
         );
     }
 
-    // ── ResourceKind::Display (raikiri-spike-d6j) ───────────────
-    // Debug-in-Display の排除 (bz9 sister task 完結)。Display 出力は
-    // stability 契約の対象なので、全 7 variants の string を pin する。
-    // Debug format (auto-derived) が variant 追加時に silently 変わるのを
-    // 防ぐため、bz9 の `violation_type_display_*` pattern に合わせて
-    // per-variant assert_eq! で固定する。
+    // ── ResourceKind::Display ───────────────
+    // Debug-in-Display の排除 (ViolationType::Display と対になるタスクとして
+    // 完結)。Display 出力は stability 契約の対象なので、全 7 variants の
+    // string を pin する。Debug format (auto-derived) が variant 追加時に
+    // silently 変わるのを防ぐため、`violation_type_display_*` pattern に
+    // 合わせて per-variant assert_eq! で固定する。
 
     #[test]
     fn resource_kind_display_stylesheet_import() {
@@ -703,11 +703,11 @@ mod tests {
         );
     }
 
-    // ── RenderStatus::Aborted contract (M1.2、実 semantic は M6c) ─
+    // ── RenderStatus::Aborted contract ─
 
     /// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`
     /// field が Consumer から観測可能で、round-trip することを固定する。
-    /// 実 render pipeline 経由での partial_pages 追跡は M6c
+    /// 実 render pipeline 経由での partial_pages 追跡は将来
     /// (`abort-signal-integration` / `renderstatus-aborted-impl`) で verify。
     #[test]
     fn render_status_aborted_carries_partial_pages() {
@@ -718,7 +718,7 @@ mod tests {
         }
     }
 
-    // ── Element trait extension (M1.4, raikiri-spike-blg) ──────
+    // ── Element trait extension ──────
 
     #[test]
     fn element_defaults_return_none_or_false() {
@@ -783,7 +783,7 @@ mod tests {
         assert_eq!(e.attr("style"), Some("color:red"));
     }
 
-    // ── WarningKind extension (M1.3) ────────────────────────────
+    // ── WarningKind extension ────────────────────────────
 
     #[test]
     fn warning_kind_html_parse_error_is_constructable() {
@@ -800,7 +800,7 @@ mod tests {
         }
     }
 
-    // ── PageBox populate (M1.6) ────────────────────────────────
+    // ── PageBox populate ────────────────────────────────
 
     #[test]
     fn page_box_a4_has_expected_dimensions() {
@@ -817,7 +817,7 @@ mod tests {
 
     #[test]
     fn page_box_external_constructable_via_struct_update_from_a4() {
-        // #[non_exhaustive] pub struct の external constructable pattern (M1 acceptance)。
+        // #[non_exhaustive] pub struct の external constructable pattern。
         // `..PageBox::A4` を base に width だけ変える。
         let landscape_a4 = PageBox {
             width: 1122.5197,
@@ -828,7 +828,7 @@ mod tests {
         assert_eq!(landscape_a4.height, 793.7008);
     }
 
-    // ── StylesheetKind trait bounds (M1.4a) ──────────────────
+    // ── StylesheetKind trait bounds ──────────────────
 
     #[test]
     fn stylesheet_kind_is_copy_send_eq() {

@@ -9,7 +9,7 @@
 //! `raikiri_traits::Dom / Node / Element` は raikiri-html / raikiri-paint /
 //! raikiri umbrella が共有する neutral DOM abstraction。`raikiri_style::StyleDom
 //! / StyleNode / StyleElement` は raikiri-style が Stylo pattern に沿って自前
-//! で持つ CSS-engine 向け abstraction (raikiri-spike-3ps + 94e)。両者は概念
+//! で持つ CSS-engine 向け abstraction。両者は概念
 //! 上ほぼ相似形だが、raikiri-style は raikiri-traits に依存しないため、
 //! `impl StyleDom for Document` は `raikiri_traits::Dom` に delegate せず
 //! Document arena に直接 dispatch する (blanket compat 経路を排除した atomic
@@ -18,7 +18,7 @@
 //! (as_element / text_content / is_in_document / tag_name /
 //! inline_style_source / namespace_uri / attr) live once as private inherent
 //! methods on NodeRef / ElementRef; both trait families delegate via
-//! `self.foo()` (raikiri-spike-c3b). `kind()` is excluded — it projects onto
+//! `self.foo()`. `kind()` is excluded — it projects onto
 //! `NodeKind` vs `StyleNodeKind`.
 
 use raikiri_style::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -49,7 +49,7 @@ impl Iterator for ChildIter<'_> {
 }
 
 // Shared inherent method bodies for the two trait families below
-// (raikiri-spike-c3b — see module doc header).
+// (see module doc header).
 
 impl<'a> NodeRef<'a> {
     fn as_element(&self) -> Option<ElementRef<'_>> {
@@ -134,8 +134,8 @@ impl raikiri_traits::Dom for Document {
     fn child_ids(&self, id: NodeId) -> Self::ChildIter<'_> {
         let idx = id.0 as usize;
         // Contract-align with `node()`: out-of-range NodeId → empty iter, not panic.
-        // Guards Consumer patterns that stash NodeId across document rebuilds
-        // (raikiri-spike-ajy, M6 blitz-compat integration).
+        // Guards consumer patterns that stash NodeId across document rebuilds,
+        // including future blitz-compat integration.
         let slice = self
             .nodes
             .get(idx)
@@ -145,8 +145,8 @@ impl raikiri_traits::Dom for Document {
     }
 
     fn node_count(&self) -> usize {
-        // Document::node_count() の trait 経由 view (raikiri-spike-37c, roborev
-        // job 293 M1 finding 対応)。arena 全 node の数 (detached を含む)。
+        // Document::node_count() の trait 経由 view。arena 全 node の数
+        // (detached を含む)。
         Document::node_count(self)
     }
 }
@@ -197,9 +197,8 @@ impl<'a> raikiri_traits::Element for ElementRef<'a> {
 }
 
 // ─────────────────────────────────────────────────────────────
-// raikiri_style::{StyleDom, StyleNode, StyleElement} direct impls
-// (raikiri-spike-94e Phase B — Node/Element bodies via the shared inherent
-// helpers above, raikiri-spike-c3b).
+// raikiri_style::{StyleDom, StyleNode, StyleElement} direct impls —
+// Node/Element bodies via the shared inherent helpers above.
 // ─────────────────────────────────────────────────────────────
 
 /// Child `StyleNodeId` iterator for `StyleDom::child_ids`.
@@ -260,8 +259,8 @@ impl<'a> StyleNode for NodeRef<'a> {
         // NodeData variant → StyleNodeKind projection. Direct arena lookup —
         // no raikiri_traits::NodeKind bridge.
         //
-        // raikiri-spike-84y: Comment / ProcessingInstruction / DocumentFragment
-        // arms を追加。cascade / rule-tree walk は Element のみ処理する契約
+        // Comment / ProcessingInstruction / DocumentFragment arms を追加。
+        // cascade / rule-tree walk は Element のみ処理する契約
         // (crates/raikiri-style/src/cascade.rs / ruletree.rs) なので、追加 kind
         // は自動的に non-styling。両 trait family で kind() の projection が
         // 一致することは Two-way invariant の一部。

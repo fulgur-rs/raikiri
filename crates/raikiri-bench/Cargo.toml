@@ -1,7 +1,7 @@
 [package]
 name = "raikiri-bench"
 version = "0.1.0"
-description = "Performance-parity harness for raikiri vs. the fulgur v0.12 baseline (bd raikiri-spike-vvf6)"
+description = "Performance-parity harness for raikiri vs. the fulgur v0.12 baseline"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,16 +12,15 @@ publish = false
 [dependencies]
 # Regular (non-dev) dependency: this crate has no `src/lib.rs`, so the bench
 # target is the only consumer, but `raikiri` is the "actual current rendering
-# entry point" the harness measures (bd raikiri-spike-vvf6 scope note) rather
-# than a throwaway/test-only fixture, hence `[dependencies]` over
-# `[dev-dependencies]` — mirrors raikiri-wpt's own `raikiri = { workspace = true }`
-# placement.
+# entry point" the harness measures rather than a throwaway/test-only
+# fixture, hence `[dependencies]` over `[dev-dependencies]` — mirrors
+# raikiri-wpt's own `raikiri = { workspace = true }` placement.
 raikiri = { workspace = true }
 
 [dev-dependencies]
 # See root `Cargo.toml` `[workspace.dependencies]` `criterion` entry for the
-# version pin + Pure Rust / WASM rationale (promoted there by this same bd
-# issue because raikiri-bench is the second crate to grow a bench target).
+# version pin + Pure Rust / WASM rationale (promoted there because
+# raikiri-bench is the second crate to grow a bench target).
 criterion = { workspace = true }
 
 [[bench]]

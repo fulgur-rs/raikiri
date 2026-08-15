@@ -1,7 +1,7 @@
 //! Taffy layout trait implementations on Document.
 //!
-//! M0 spike (nzv.6 `taffy-layout-modes`) の SpikeTree pattern を production 化
-//! したもの。実装内容は spike と等価:
+//! 初期スパイク実装 (`taffy-layout-modes`) の SpikeTree pattern を production
+//! 化したもの。実装内容は spike と等価:
 //! - `TraversePartialTree`: children iterator
 //! - `CacheTree`: per-node cache getter / setter
 //! - `LayoutPartialTree`: display に応じて block / flexbox / grid をdispatch
@@ -18,8 +18,7 @@ use taffy::{
 use crate::document::Document;
 
 /// Taffy child iterator。raw arena children から `is_in_document() == false`
-/// (`<template>` descendants など) を filter する (raikiri-spike-37c, roborev
-/// job 292 M1 finding 対応)。
+/// (`<template>` descendants など) を filter する。
 ///
 /// Taffy の layout tree = web spec の "flat tree" なので、layout traversal
 /// では template contents を "存在しない" ものとして扱う必要がある (paint 側で
@@ -108,13 +107,13 @@ impl LayoutPartialTree for Document {
     ///
     /// ここで [`crate::layout::sanitize_taffy_layout`] を通すことで
     /// 「`Node.unrounded_layout` は決して非有限 f32 を含まない」を構造的に
-    /// 保証する (bd raikiri-spike-r8ew)。bridge 側の入力 guard
+    /// 保証する。bridge 側の入力 guard
     /// (`layout::sanitize_taffy`) だけでは nested percentage が used value 層で
     /// 複利して非有限に戻るため閉じない — 理由と実測は
     /// `layout::sanitize_taffy_layout` の doc を参照。
     ///
     /// clamp が実際に発火した field は `self.layout_warnings` (owned buffer)
-    /// に積む (bd raikiri-spike-7t1t)。この trait method の signature は
+    /// に積む。この trait method の signature は
     /// `taffy` crate が固定しているため観測用の引数を追加できない —
     /// `self` 経由で書ける owned buffer に積むことで signature を変えずに
     /// 診断を残す。`layout_single_page` がパス終了時にこの buffer を drain
@@ -132,8 +131,8 @@ impl LayoutPartialTree for Document {
     }
 
     fn resolve_calc_value(&self, _val: *const (), _basis: f32) -> f32 {
-        // M1.5: calc pointer は populate されないため 0.0 を返す (spike と同じ)。
-        // M4 で CSS calc() を実装する際に resolver をここに wire する予定。
+        // calc pointer は現状 populate されないため 0.0 を返す (spike と同じ)。
+        // 将来 CSS calc() を実装する際に resolver をここに wire する予定。
         0.0
     }
 
@@ -255,15 +254,16 @@ impl LayoutGridContainer for Document {
 // pointer) を保持する。Raw pointer は !Send のため `Style: !Send`、そこから
 // `Document: !Send` が導出される。
 //
-// **Invariant (m1.17 決定、approach A: self-contained arena)**:
-// raikiri-dom 内で `Style` を保持する任意の型 (Document、M2 以降 LayoutBuffer
-// 等) に格納される全 `CompactLength::calc(ptr)` の `ptr` は、同じ Document
-// が own する calc arena (M4 で raikiri-dom 内に追加予定) を指す。この
-// invariant が守られる限り、Document 全体を別 thread へ move しても pointer
-// target が follow するため validity は保たれる。
+// **Invariant (self-contained arena approach)**:
+// raikiri-dom 内で `Style` を保持する任意の型 (Document、将来追加予定の
+// LayoutBuffer 等) に格納される全 `CompactLength::calc(ptr)` の `ptr` は、
+// 同じ Document が own する calc arena (将来 raikiri-dom 内に追加予定) を
+// 指す。この invariant が守られる限り、Document 全体を別 thread へ move
+// しても pointer target が follow するため validity は保たれる。
 //
-// **Sync は付けない**: raikiri の parallel layout 経路 (M4 の 16 margin box
-// slot + column-count) は `Arc<GcpmSnapshot>` (owned deep copy、design doc
+// **Sync は付けない**: raikiri の (将来実装予定の) parallel layout 経路
+// (16 margin box slot + column-count 並列化) は `Arc<GcpmSnapshot>`
+// (owned deep copy、design doc
 // §5.4.1) 又は `&Style` の read-only borrow 経由で動作。`&Document` を
 // 複数 thread から同時 read する path は無いため Sync は不要。blitz-dom は
 // stylo parallel style traversal のため `unsafe impl Sync for Node` を追加
@@ -275,12 +275,12 @@ impl LayoutGridContainer for Document {
 // chain が calc data を own する外部 arena モデル、raikiri は self-contained
 // arena モデルで invariant の依存対象が異なる。
 //
-// **State (M1.5)**: calc pointer を populate する path は不在 (Node.style は
-// `length(px)` / `percent` / `auto` のみ)。M4 sandboxed resolver で CSS calc()
-// を実装する際、calc arena を raikiri-dom 側に配置し、`CompactLength::calc(...)`
-// の唯一の callsite が arena allocation と同一 site に閉じるよう API を絞る
-// (structural enforcement)。M4 前に混入を防ぐ custom lint
-// (`raikiri-lints::no_calc_construction`、design §5.4.1) を M2〜M3 で raikiri-dom
-// crate に導入する。
+// **Current state**: calc pointer を populate する path は不在 (Node.style は
+// `length(px)` / `percent` / `auto` のみ)。将来 sandboxed resolver で CSS
+// calc() を実装する際、calc arena を raikiri-dom 側に配置し、
+// `CompactLength::calc(...)` の唯一の callsite が arena allocation と同一
+// site に閉じるよう API を絞る (structural enforcement)。calc() 実装前に
+// 混入を防ぐ custom lint (`raikiri-lints::no_calc_construction`、design
+// §5.4.1) を raikiri-dom crate に導入する予定。
 #[allow(unsafe_code)]
 unsafe impl Send for Document {}

@@ -1,15 +1,15 @@
-//! WPT test runner dispatch (spec §12.6). Type stubs; run logic lands in M3.
+//! WPT test runner dispatch (spec §12.6). Type stubs; run logic is future work.
 
 use crate::expectations::ExpectationSet;
 
 /// Dispatches WPT tests and records outcomes.
 ///
-/// In M1 the constructor stores the loaded `ExpectationSet`; `run_test`
-/// is a `todo!()` populated in M3 alongside the tree-walker and reftest
+/// Currently the constructor stores the loaded `ExpectationSet`; `run_test`
+/// is a `todo!()` to be populated alongside the tree-walker and reftest
 /// runner (currently stubs in [`crate::reftest`]).
 #[non_exhaustive]
 pub struct WptRunner {
-    #[allow(dead_code)] // field held for M3 populate; silence M1 warning.
+    #[allow(dead_code)] // field held for future populate; silence unused-field warning.
     expectations: ExpectationSet,
 }
 
@@ -19,9 +19,9 @@ impl WptRunner {
         Self { expectations }
     }
 
-    /// Run one WPT test by id. **M1 stub**: panics via `todo!()`.
+    /// Run one WPT test by id. **Stub**: panics via `todo!()`.
     pub fn run_test(&self, _test_id: &str) -> TestExecution {
-        todo!("M3: walk the WPT submodule tree and dispatch to reftest::run_pair")
+        todo!("walk the WPT submodule tree and dispatch to reftest::run_pair")
     }
 }
 

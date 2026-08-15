@@ -2,8 +2,8 @@
 //!
 //! Pipeline: cascade (raikiri-style) 出力 + Document arena + PageBox から
 //! taffy compute_root_layout を駆動し、text intrinsic size は parley 0.10 の
-//! 最小統合で pre-shape する。M1.6 scope: 単一 A4 ページ、ASCII Latin、
-//! parley system font default (byte-identical cross-machine は m1.13 で font pinning)。
+//! 最小統合で pre-shape する。現在の scope は単一 A4 ページ、ASCII Latin、
+//! parley system font default (byte-identical cross-machine は将来 font pinning で対応予定)。
 //!
 //! 全 helper は crate-private、pub 型は [`layout_single_page`] のみ。
 
@@ -32,7 +32,7 @@ use taffy::{
 /// deep DOM で stack overflow を回避)。fragment parse (no `<body>`) では
 /// `None`、caller が `LayoutError::Internal` に昇格させる。
 ///
-/// raikiri-spike-37c roborev job 295 M3 finding: `!is_in_document()` の subtree
+/// `!is_in_document()` の subtree
 /// (`<template>` descendants など) を skip する。inert subtree 内に `<body>`
 /// tag があってもそれを本物の body として選ばないため — 例えば
 /// `<template><body>ghost</body></template>` の後に real `<body>` が来る HTML
@@ -59,9 +59,9 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
 
 /// `<body>` の taffy::Style.size を PageBox の width / height (CSS px) に強制する。
 ///
-/// CSS Paged Media の initial containing block = @page size。M1 は @page 非対応
-/// のため body.style.size に直接注入する妥協。M4 で @page cascade + per-page
-/// PageBox を導入時に `<html>` root style に site を昇格予定。
+/// CSS Paged Media の initial containing block = @page size。現行実装は @page 非対応
+/// のため body.style.size に直接注入する妥協。将来 @page cascade + per-page
+/// PageBox を導入する際に `<html>` root style に site を昇格予定。
 pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_box: PageBox) {
     doc.nodes[body_id].style.size = Size {
         width: Dimension::length(page_box.width),
@@ -71,30 +71,23 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 
 /// ComputedValues → taffy::Style bridge の dispatch site。
 ///
-/// Sprint 18 (raikiri-spike-j5rz) で per-element for loop 内 inline mapping から
-/// per-field `bridge_*` helper へ dispatch する pattern に refactor
-/// (advisor #4 first-merged refactor scaffold)。Wave 2+ で bridge_padding /
-/// bridge_size / bridge_border / bridge_box_sizing を helper add + dispatch 1 行
-/// 追加 のみで conflict 密度最小化。
+/// per-element for loop 内 inline mapping から per-field `bridge_*` helper へ
+/// dispatch する pattern にリファクタ済み。新しい bridge は helper 追加 +
+/// dispatch 1 行追加のみで足りるよう設計している。
 ///
 /// 現時点で active な bridge:
-/// - [`bridge_display`] — [`DisplayValue`] → [`taffy::Display`] (Sprint 13
-///   w2s で initial landing)
+/// - [`bridge_display`] — [`DisplayValue`] → [`taffy::Display`]
 /// - [`bridge_margin`] — `Sides<ComputedLengthPercentageOrAuto>` → [`taffy::Rect<LengthPercentageAuto>`]
-///   (raikiri-spike-j5rz)
 /// - [`bridge_padding`] — `Sides<ComputedLengthPercentage>` → [`taffy::Rect<LengthPercentage>`]
-///   (raikiri-spike-jbu0)
 /// - [`bridge_size`] — [`ComputedLengthPercentageOrAuto`] `cv.width` / `cv.height` →
-///   [`taffy::Style::size`] (`Size<Dimension>`)。Wave 2 (raikiri-spike-ggig) が
-///   width 側、Wave 3 (raikiri-spike-01up) が height 側を追記し struct literal
-///   1 発 assign に refactor。
+///   [`taffy::Style::size`] (`Size<Dimension>`)。width / height 両 field を
+///   struct literal 1 発 assign で書く。
 /// - [`bridge_border`] — `Sides<ComputedBorder>` → [`taffy::Rect<LengthPercentage>`]
-///   (raikiri-spike-q0uc Wave 2)。**border-style gating は本 bridge ではなく上流の
+///   。**border-style gating は本 bridge ではなく上流の
 ///   `raikiri_style::resolve_border` (computed 層) が持つ** — CSS Backgrounds 3
-///   §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>、
-///   bd raikiri-spike-zls8 で移動
+///   §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>。
 /// - [`bridge_box_sizing`] — [`raikiri_style::BoxSizing`] → [`taffy::BoxSizing`]
-///   (raikiri-spike-o11x Wave 2, CSS Sizing 3 §7)
+///   (CSS Sizing 3 §7)
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -113,7 +106,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
 
 /// [`DisplayValue`] → [`taffy::Display`] mapping。
 ///
-/// raikiri-spike-0vv.4 (Sprint 12) で追加された [`DisplayValue`] を
+/// [`DisplayValue`] を
 /// [`taffy::Display`] に mapping する。taffy 0.x は Block / Flex / Grid /
 /// None のみ (`Inline` / `InlineBlock` 独立 variant なし) のため:
 /// - `Inline` → `Block` (initial は Block、text-only は leaf で render)
@@ -144,8 +137,6 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
 /// `left,right,top,bottom` が異なるため silent transpose を防ぐ)。
 ///
 /// Length policy は [`computed_length_percentage_or_auto_to_taffy_length_percentage_auto`] を参照。
-///
-/// (raikiri-spike-j5rz Sprint 18 Wave 1)
 fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let m = cv.margin;
     style.margin = Rect {
@@ -169,8 +160,6 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 /// [`computed_length_percentage_to_taffy_length_percentage`] を使う。
 ///
 /// Length policy は [`computed_length_percentage_to_taffy_length_percentage`] を参照。
-///
-/// (raikiri-spike-jbu0 Sprint 18 Wave 2)
 fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let p = cv.padding;
     style.padding = Rect {
@@ -184,7 +173,7 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<
 /// [`ComputedValues::border`] (`Sides<ComputedBorder>`) → [`taffy::Style::border`]
 /// (`Rect<LengthPercentage>`) bridge。
 ///
-/// # style-gating は **上流** で済んでいる (bd raikiri-spike-zls8)
+/// # style-gating は **上流** で済んでいる
 ///
 /// `border-style: none` / `hidden` の側で width を 0 にする規則は、CSS
 /// Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>
@@ -195,19 +184,19 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<
 /// 時点で width は既に 0 に潰れている。
 ///
 /// 本 bridge が同じ判定を再実装してはならない (spec 規則の二重実装になり、
-/// 一方だけ直す drift の温床になる)。Sprint 18 の `used_border_width` helper は
+/// 一方だけ直す drift の温床になる)。かつてあった `used_border_width` helper は
 /// この理由で削除した。end-to-end の gating pin は本 file の
 /// `apply_computed_to_style_bridges_border_to_taffy` が引き続き持つ。
 ///
 /// `@page` 経路 (`PageCascadeResult::declarations`) も同じ `resolve_border` へ
-/// funnel するようになった (bd raikiri-spike-sshp) ので、border-width の gate は
+/// funnel するようになったので、border-width の gate は
 /// raikiri-style 側に 1 本しか無い。本 bridge が読むのは per-node
 /// [`ComputedValues`] なので直接の影響は無いが、将来 page-margin box の layout を
 /// 本 bridge に通す場合も **gate を再実装せず** 上流の値を信頼すること。
 ///
 /// ⚠️ 上記は **border-style gating に限った話**。`PageCascadeResult::declarations`
 /// は非有限 `f32` (+Inf / NaN) について本段落とは別の未対応 hazard を抱えている
-/// (bd raikiri-spike-kj2s — contract は `raikiri_style::page::PageCascadeResult::declarations`
+/// (contract は `raikiri_style::page::PageCascadeResult::declarations`
 /// の doc が canonical)。将来 page-margin box の layout を本 bridge に通す際は
 /// gating の再確認だけでなくそちらも再確認すること。
 ///
@@ -220,9 +209,7 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<
 /// - `border-color` / `border-style` 自体は taffy が track しない (taffy は
 ///   border-width のみ)。色 / 線 pattern は paint scope が別途 [`ComputedValues::border`]
 ///   から consume する将来 task。
-/// - `border-image` / `border-radius` は Sprint 18 スコープ外。
-///
-/// (raikiri-spike-q0uc Sprint 18 Wave 2、raikiri-spike-zls8 で computed 層へ移行)
+/// - `border-image` / `border-radius` はスコープ外。
 fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let b = cv.border;
     style.border = Rect {
@@ -238,21 +225,20 @@ fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 /// "Preferred Size Properties"
 /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
 ///
-/// Wave 2 (raikiri-spike-ggig) が width 側を landing、Wave 3
-/// (raikiri-spike-01up) が height 側を追記して両 preferred size 軸を full-bridge
-/// にした。両 field を同時に書き込むため struct literal
+/// width 側を先に landing、続けて height 側を追記して両 preferred size 軸を
+/// full-bridge にした。両 field を同時に書き込むため struct literal
 /// (`style.size = Size { width, height }`) で 1 発 assign する — partial write
-/// scaffold は Wave 3 で不要になった。
+/// scaffold はもう不要になった。
 ///
 /// Length policy は [`computed_length_percentage_or_auto_to_taffy_dimension`] を参照。
 ///
-/// # PageBox 妥協 (M1)
+/// # PageBox 妥協
 ///
 /// `<body>` element の `style.size` は本 bridge の後、[`apply_page_box_to_body`]
 /// で PageBox の値 (width / height 両方) に上書きされる (layout.rs Step 1 →
 /// Step 4)。したがって `<body style="width: 100px; height: 200px">` の author
 /// 値は本 helper で一度 taffy に write されるが、Step 4 で PageBox 値に
-/// clobber される — M1 期間中の意図された挙動 (M4 で @page cascade + per-page
+/// clobber される — 現行実装で意図された挙動 (将来 @page cascade + per-page
 /// PageBox に refactor 予定)。width 側 clobber の author→PageBox 上書き経路は
 /// test `apply_page_box_clobbers_body_width_from_bridge` が pin する。height
 /// 側は [`apply_page_box_to_body`] が `style.size = Size { width, height }` の
@@ -262,8 +248,8 @@ fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 /// が担う (author→PageBox の bridge→clobber 連鎖 test は width 側で十分、
 /// 冗長化を避け height 側は structural 保証に留める)。
 fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
-    // Wave 3 完了後: width + height 両方を同時に書くので struct literal を採用。
-    // (Wave 2 の field-assign scaffold は Wave 3 マージまでの一時形態で、
+    // width + height 両方を同時に書くので struct literal を採用。
+    // (以前の field-assign scaffold は一時形態で、
     //  もはや保つ必要がない — default 保持は cv 側で `Auto` を返せば自然に達成。)
     style.size = Size {
         width: computed_length_percentage_or_auto_to_taffy_dimension(cv.width, "width", diag),
@@ -276,7 +262,7 @@ fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
 /// CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
 /// <https://www.w3.org/TR/css-sizing-3/#box-sizing>: value grammar
 /// `content-box | border-box`、spec initial `content-box`。**enum 1:1 mapping**
-/// (Length policy に不参加、Sprint 18 Wave 2 の最小 helper)。
+/// (Length policy に不参加の最小 helper)。
 ///
 /// # Initial-value 補正 note
 ///
@@ -290,15 +276,13 @@ fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
 ///
 /// # non_exhaustive catch-all
 ///
-/// raikiri-style の [`BoxSizing`] は `#[non_exhaustive]` (37n sibling pattern
-/// for forward-compat)。未知 variant は spec initial (`ContentBox`) に
+/// raikiri-style の [`BoxSizing`] は `#[non_exhaustive]`
+/// (forward-compat のための sibling pattern)。未知 variant は spec initial (`ContentBox`) に
 /// fail-quiet — spec-violation を silent に伸ばさないよう "最も安全な既定"
 /// にする方針 ([`bridge_display`] catch-all → `Block` と同じ趣旨)。
 ///
 /// taffy 側 (`taffy::BoxSizing`) は `#[non_exhaustive]` **ではない** ため、
 /// mapping 出力 arm は `ContentBox` / `BorderBox` の 2 個で網羅済。
-///
-/// (raikiri-spike-o11x Sprint 18 Wave 2)
 ///
 /// [`BoxSizing`]: raikiri_style::property::BoxSizing
 fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
@@ -312,7 +296,7 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
 }
 
 // ---------------------------------------------------------------------------
-// 非有限 f32 の guard (bd raikiri-spike-2ui0、PMO 判断 2026-07-27)
+// 非有限 f32 の guard
 // ---------------------------------------------------------------------------
 
 /// taffy に渡す幾何値の絶対値上限 (px、および percentage の fraction)。
@@ -325,8 +309,7 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
 /// 極端な literal すら不要で、`font-size: 10em` を 38 段 nest するだけで
 /// `16 * 10^38 > f32::MAX` から +Inf が出る。
 ///
-/// これらは bd raikiri-spike-zls8 (decision raikiri-spike-082k Phase 2) が
-/// 絶対化を cascade に入れるまで、`layout.rs` の
+/// これらは絶対化を cascade に入れるまで、`layout.rs` の
 /// `Length::Em(_) | Length::Rem(_) => length(0.0)` arm に**偶然**吸収されて
 /// いた。網羅 match 化自体は正しいが、その arm は病的な数値も潰していた。
 ///
@@ -394,7 +377,7 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
 /// **和** (width + padding + border + margin) が overflow して非有限に戻ることは
 /// ない。
 ///
-/// # 入力側 bound の射程と、出力側 guard による決着 (bd raikiri-spike-r8ew)
+/// # 入力側 bound の射程と、出力側 guard による決着
 ///
 /// 本定数は [`sanitize_taffy`] 経由で **px 幾何と percentage の fraction の
 /// 両方**に適用されている。px 側については上の #4552 の導出がそのまま効くが、
@@ -448,8 +431,8 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
 /// ある — そこで近似される値は fraction ではなく px の used value だから。
 ///
 /// 入力側 guard ([`sanitize_taffy`]) は出力側 guard 導入後も**外さないこと**:
-/// ±Inf / NaN を taffy の内部演算に入れない役割が残っており (bd
-/// raikiri-spike-2ui0 の site 1-4 test が pin)、出力側 clamp は「arena に
+/// ±Inf / NaN を taffy の内部演算に入れない役割が残っており (site 1-4 の
+/// test がこれを pin している)、出力側 clamp は「arena に
 /// 非有限が入らない」ことしか保証しない。
 ///
 /// # 出力側 clamp が実際に効く帯 (通常 layout との境界)
@@ -477,8 +460,8 @@ const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 ///
 /// taffy 幾何 ([`MAX_TAFFY_MAGNITUDE`]) と分けているのは CSS Values 4 §5 の
 /// 「supported range は property / context ごとに違ってよい」に従うため
-/// (PMO 判断 2026-07-27 §4「site ごとに target context が違うので一律に
-/// しない」)。font-size の target context は parley → skrifa の glyph scaler
+/// (site ごとに target context が違うので一律にしない方針)。font-size の
+/// target context は parley → skrifa の glyph scaler
 /// であり、幾何とは妥当域が違う。
 ///
 /// # 値の決定 (1e6 px)
@@ -502,8 +485,8 @@ const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 ///
 /// # 本 site の harm は「値が壊れる」ではなく **hang** (実測)
 ///
-/// bd raikiri-spike-2ui0 の security lens は下流 sink の帰結を「PLAUSIBLE、
-/// 未 characterize」としていたが、本 guard の実装時に実測した:
+/// 下流 sink の帰結は当初 plausible なリスクとして未 characterize のままだったが、
+/// 本 guard の実装時に実測した:
 /// `sanitize_finite` を恒等関数に差し替えて
 /// `nonfinite_font_size_is_clamped_before_parley` を単独実行すると
 /// **25 秒経っても終了しない**。すなわち非有限 font-size は parley の shaping を
@@ -512,7 +495,7 @@ const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 /// 対して site 1-4 の taffy 側 test は **本 test 入力では**即座に assert 失敗する
 /// (値が壊れるだけ)。これは「taffy は非有限で hang しない」という一般命題では
 /// ない — 測ったのは 5 本の入力だけである。taffy 内部の used value に対する
-/// 挙動は bd raikiri-spike-r8ew / 下流 sink の characterize 課題を参照。
+/// 挙動は下流 sink 側の characterize 課題として別途残る。
 ///
 /// 1 element の untrusted author CSS (`<p style="font-size: 1e40px">`) で
 /// 到達するので、**本 site の guard は正しさではなく可用性の要求**である。
@@ -525,13 +508,13 @@ const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 /// 後続 test の結果もまとめて失われるため。
 const MAX_FONT_SIZE_PX: f32 = 1e6;
 
-/// parley に渡す `font-weight` の妥当域下限 (bd raikiri-spike-sxd7)。
+/// parley に渡す `font-weight` の妥当域下限。
 ///
 /// CSS Fonts 4 §2.2 "Font weight: the font-weight property"
 /// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop> の grammar は
 /// `<number [1,1000]>` — target context は [`MAX_TAFFY_MAGNITUDE`] /
-/// [`MAX_FONT_SIZE_PX`] とは別の sink (`parley::FontWeight`) なので、bd
-/// raikiri-spike-kfl7 precedent (「上限は sink ごとに変える」) に従い spec
+/// [`MAX_FONT_SIZE_PX`] とは別の sink (`parley::FontWeight`) なので、
+/// 「上限は sink ごとに変える」という方針に従い spec
 /// 由来の妥当域をそのまま採る — skrifa / CSSWG issue のような engineering
 /// measurement を要しない、数少ない site。
 const MIN_FONT_WEIGHT: f32 = 1.0;
@@ -600,17 +583,16 @@ const FALLBACK_FONT_WEIGHT: f32 = 400.0;
 /// なり、guard を置いた意味が消える。§5 は「supported range」を実装が決めると
 /// しているので、範囲外の有限値を上限に寄せるのも同じ条項の適用である。
 ///
-/// panic しない (`LayoutError` も返さない) — PMO 判断 2026-07-27 §5 のとおり
-/// **clamp して続行**する。
+/// panic しない (`LayoutError` も返さない) — **clamp して続行**する方針である。
 ///
-/// # なぜ silent clamp ではないのか (bd raikiri-spike-7t1t)
+/// # なぜ silent clamp ではないのか
 ///
 /// `log` / `tracing` は workspace に依存が無い (`grep` → 0 hit) が、**それが
 /// 理由ではない** — 同一 crate の `fonts.rs` に dep 追加ゼロの診断機構が既に
 /// ある (`FontWarn` enum + `FontWarnObserver = Option<&mut dyn FnMut(&FontWarn)>`
-/// + `emit_warn`、bd raikiri-spike-1uq)。
+/// + `emit_warn`)。
 ///
-/// 当初 (bd raikiri-spike-2ui0) この observer を本 site まで通すと公開
+/// 当初この observer を本 site まで通すと公開
 /// signature に波及すると判断し silent のままにしていた: `sanitize_*` は
 /// `bridge_*` → `apply_computed_to_style` → `layout_single_page` の奥にあり、
 /// また出力側の choke point (`sanitize_taffy_layout`) は
@@ -618,7 +600,7 @@ const FALLBACK_FONT_WEIGHT: f32 = 400.0;
 /// 呼ばれる — これは `taffy` crate 側が固定した trait method signature なので
 /// **観測用引数を追加できない**。
 ///
-/// bd raikiri-spike-7t1t で `crate::diag::emit_warn_via` 共通機構を導入し、
+/// `crate::diag::emit_warn_via` 共通機構を導入し、
 /// この 2 点を以下で解決した:
 /// - `bridge_*` → `apply_computed_to_style` の chain は crate 内 private
 ///   function のみで構成されるため、`diag: &mut Vec<LayoutWarn>` を通すのは
@@ -636,11 +618,11 @@ const FALLBACK_FONT_WEIGHT: f32 = 400.0;
 /// `FontWarn` が「warn+skip の異常」だけを observer に渡し、処理した file
 /// 全部を都度報告しないのと同じ設計原則である。
 ///
-/// **残余リスク (bd raikiri-spike-2ui0 での declare、部分的にのみ縮小)**:
+/// **残余リスク (部分的にのみ縮小)**:
 /// 将来 absolutize 側に本物の算術 bug (例: 単位換算ミスで `1e9px`) が入ると、
 /// 本 guard が 1e7 に吸収して**「それらしい layout」として描画されてしまう**
-/// リスクは元々あった — NaN や破綻として可視化されない。これは decision
-/// 082k が削除した fail-quiet arm (`Em(_) => length(0.0)`) と**同じ class の
+/// リスクは元々あった — NaN や破綻として可視化されない。これはかつて
+/// 削除した fail-quiet arm (`Em(_) => length(0.0)`) と**同じ class の
 /// 残余リスク**である。
 ///
 /// 今は clamp が発生するたび [`LayoutWarn::NonFiniteClamped`] が
@@ -703,21 +685,21 @@ fn sanitize_taffy(v: f32, site: &'static str, diag: &mut Vec<LayoutWarn>) -> f32
 
 /// 非有限 (`NaN` / `±Inf`) または `[MIN_FONT_WEIGHT, MAX_FONT_WEIGHT]`
 /// 範囲外の `font-weight` を `parley::FontWeight::new` へ渡す直前で
-/// sanitize する (bd raikiri-spike-sxd7)。
+/// sanitize する。
 ///
-/// # なぜここに置くか (bd raikiri-spike-kfl7 precedent の踏襲)
+/// # なぜここに置くか
 ///
-/// bd raikiri-spike-kfl7 (precedent ledger、承認済み) は「非有限 / 範囲外
-/// f32 の guard は値が実際に使われる sink 境界 (target context) に置く。
-/// parse-time (specified 層) にも resolve 層 (computed 層) にも置かない」
-/// と規定する。`crate::page::cascade_page` (raikiri-style)
-/// の継承元 root 引数や `ComputedValues` の直接構築は raikiri-style 側の
-/// resolve/computed 層であり、`raikiri_style::cascade::resolve_relative_weight`
-/// も同じ層に属する — kfl7 はそのどちらへの guard 追加も明示的に禁じる
-/// (carve-out 2: "public な computed 層 surface は sanitize しない")。
+/// 「非有限 / 範囲外 f32 の guard は値が実際に使われる sink 境界
+/// (target context) に置く。parse-time (specified 層) にも resolve 層
+/// (computed 層) にも置かない」という方針に従う。`crate::page::cascade_page`
+/// (raikiri-style) の継承元 root 引数や `ComputedValues` の直接構築は
+/// raikiri-style 側の resolve/computed 層であり、
+/// `raikiri_style::cascade::resolve_relative_weight` も同じ層に属する —
+/// この方針はそのどちらへの guard 追加も明示的に禁じる
+/// ("public な computed 層 surface は sanitize しない")。
 ///
 /// 本関数は [`preshape_text`] — `parley::FontWeight::new` を呼ぶ唯一の call
-/// site — に置くことで、bd raikiri-spike-2ui0 の 5 site (taffy bridge
+/// site — に置くことで、他の 5 site (taffy bridge
 /// helper 4 本 + font-size 用 `preshape_text` 呼び出し) と同じ「sink 直前」
 /// 構造に揃える (site 6)。
 ///
@@ -731,8 +713,8 @@ fn sanitize_taffy(v: f32, site: &'static str, diag: &mut Vec<LayoutWarn>) -> f32
 ///    後の値が sink の妥当域を割る。CSS Fonts 4 §2.2
 ///    "Font weight: the font-weight property"
 ///    <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> の
-///    `normal` の computed value である `400.0` を採る方が、kfl7 の
-///    「fallback / 上限は sink ごとに変える」に忠実。
+///    `normal` の computed value である `400.0` を採る方が、
+///    「fallback / 上限は sink ごとに変える」という方針に忠実。
 /// 2. **signature 変更の波及範囲** — `nan_fallback` 引数を足せば理屈上
 ///    1 関数に統合できるが、それは既存の length 系 4 call site
 ///    (`sanitize_taffy` 経由の 4 本 + font-size 直接呼び出し 1 本) と、
@@ -744,7 +726,7 @@ fn sanitize_taffy(v: f32, site: &'static str, diag: &mut Vec<LayoutWarn>) -> f32
 ///
 /// `resolve_relative_weight` の非対称処理 (`Bolder`/`Lighter`/`-Inf` の
 /// 扱いが異なる、同関数 doc 参照) は本関数の追加で修正しない —
-/// resolve 層の挙動変更は kfl7 の禁止対象であり、本 sink guard は
+/// resolve 層の挙動変更は本方針の禁止対象であり、本 sink guard は
 /// 「resolve 層が何を出しても最終的に有限 + 妥当域内にする」ことだけを
 /// 保証する。
 fn sanitize_font_weight(v: f32, diag: &mut Vec<LayoutWarn>) -> f32 {
@@ -769,8 +751,8 @@ fn sanitize_font_weight(v: f32, diag: &mut Vec<LayoutWarn>) -> f32 {
 /// Structured warn event for this module's non-finite-clamp diagnostic sites
 /// (`sanitize_finite` / `sanitize_taffy` / `sanitize_taffy_layout` /
 /// `sanitize_font_weight`). Sibling
-/// of [`crate::fonts::FontWarn`] (bd raikiri-spike-1uq), generalized via the
-/// shared [`crate::diag::emit_warn_via`] mechanism (bd raikiri-spike-7t1t) so
+/// of [`crate::fonts::FontWarn`], generalized via the
+/// shared [`crate::diag::emit_warn_via`] mechanism so
 /// the "silent clamp" residual risk documented on [`sanitize_finite`] gets
 /// the same observability `fonts.rs` already has.
 ///
@@ -791,9 +773,9 @@ pub(crate) enum LayoutWarn {
     /// finite in-range value before being handed to one of this module's
     /// sink boundaries: `taffy::Style` or the `Node.unrounded_layout` arena
     /// field (sites 1-5, `sanitize_finite` / `sanitize_taffy` /
-    /// `sanitize_taffy_layout`, bd raikiri-spike-2ui0 / raikiri-spike-r8ew),
-    /// or `parley::FontWeight::new` (site 6, `sanitize_font_weight`, bd
-    /// raikiri-spike-sxd7). Only emitted when clamping actually changed the
+    /// `sanitize_taffy_layout`),
+    /// or `parley::FontWeight::new` (site 6, `sanitize_font_weight`). Only
+    /// emitted when clamping actually changed the
     /// value (not on every call) so ordinary in-range layouts stay silent —
     /// the "warn+skip" shape `FontWarn` uses, not a per-node trace.
     NonFiniteClamped {
@@ -818,7 +800,7 @@ pub(crate) enum LayoutWarn {
         suppressed: usize,
     },
     /// One or more subtrees had a broken **parent/child geometry invariant**
-    /// (bd raikiri-spike-ntxy) and were reset to a deterministic zero
+    /// and were reset to a deterministic zero
     /// [`taffy::Layout`] by [`enforce_layout_invariants`]. This is a
     /// different failure class than [`LayoutWarn::NonFiniteClamped`]: that
     /// variant fires when a single `f32` field was out of range, this one
@@ -844,14 +826,14 @@ pub(crate) enum LayoutWarn {
         /// `site`, a human-readable category, not a stable
         /// machine-parseable identifier.
         ///
-        /// **bd raikiri-spike-ckv0**: the `"child_within_parent_border_box"`
+        /// The `"child_within_parent_border_box"`
         /// value can no longer actually occur — [`child_within_parent_border_box`]
         /// (the predicate) now always returns `true`, so
         /// [`enforce_layout_invariants`]'s containment branch that would
         /// produce this event is unreachable for any input. It remains
         /// listed here (and the branch remains in the code) because whether
         /// to remove the dead invariant check entirely is a separate,
-        /// explicitly deferred decision (see ckv0 issue). Do not treat this
+        /// explicitly deferred decision. Do not treat this
         /// value's continued presence in this doc as evidence the check is
         /// still live.
         invariant: &'static str,
@@ -937,7 +919,7 @@ fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
 }
 
 /// taffy が resolve した [`taffy::Layout`] の全 f32 field を
-/// [`sanitize_taffy`] に通す **出力側** guard (bd raikiri-spike-r8ew)。
+/// [`sanitize_taffy`] に通す **出力側** guard。
 ///
 /// # なぜ出力側なのか (入力側の bound では閉じられない)
 ///
@@ -1036,17 +1018,15 @@ pub(crate) fn sanitize_taffy_layout(
 
 /// [`sanitize_taffy_layout`] が保証する **finiteness** の一段上のレイヤー —
 /// 親子 geometry の**意味的** invariant を検査し、破れている subtree を
-/// 決定的な既定 geometry (ゼロ) に置き換える (bd raikiri-spike-ntxy、r8ew の
-/// §8.3 Codex final review 非軽微 finding 1 への対応)。
+/// 決定的な既定 geometry (ゼロ) に置き換える。
 ///
 /// # なぜ `sanitize_taffy_layout` だけでは閉じないか
 ///
-/// `sanitize_taffy_layout` (bd raikiri-spike-r8ew) の doc が明言する通り、
+/// `sanitize_taffy_layout` の doc が明言する通り、
 /// その guard は **field ごとに独立に** clamp するため、box model の包含
 /// 関係 (CSS Box 3 の content ⊆ padding ⊆ border) は保存しない —
 /// `size.width` と `padding.{left,right}` が同時に飽和すると
-/// `content_box_width()` が負になりうる (bd raikiri-spike-r8ew の §8.2
-/// spec lens finding F5)。また taffy 内部の演算 chain は `LayoutOutput`
+/// `content_box_width()` が負になりうる。また taffy 内部の演算 chain は `LayoutOutput`
 /// 経由で **clamp 前の生値** を子から親へ返す (`taffy-0.12.1` の
 /// `compute/block.rs:947,973,981,1072`、`set_unrounded_layout` が呼ばれる
 /// のはその**後**であり、かつ子の `Layout` を書くのは子自身ではなく
@@ -1070,18 +1050,18 @@ pub(crate) fn sanitize_taffy_layout(
 ///    を誤検出しない。
 /// 2. **child の border box の原点 (`location`) が parent の border box に
 ///    収まる** — もともとは containment を検査する invariant として設計
-///    されたが、**bd raikiri-spike-ckv0 の時点で、飽和した axis は符号を
-///    問わず無条件に ok** (詳細は後述の符号別の節) — つまり本 invariant は
+///    されたが、**飽和した axis は符号を
+///    問わず無条件に ok とする変更が入った** (詳細は後述の符号別の節) — つまり本 invariant は
 ///    もはや実際には何も検査しない (taffy の座標系は「parent border box
 ///    原点からの相対位置」、`taffy-0.12.1/src/tree/layout.rs` の
 ///    `Layout::content_box_x/y` の doc参照)。**`child.size` は見ない** —
-///    issue 本文もこの invariant を「child の **location** が parent の
-///    border box 内」とだけ書いており、child 自身の大きさは対象にしていない
+///    本 invariant はもともと「child の **location** が parent の
+///    border box 内」とだけ規定しており、child 自身の大きさは対象にしていない
 ///    ([`child_within_parent_border_box`] の doc「`child.size` を見ない理由」
 ///    節、実装時に extent (`location + size`) 版で `width: 200%` の
 ///    legitimate nest を誤検出することが判明した経緯を記録している)。
 ///
-///    **以下は ckv0 以前の設計とその根拠の記録** — 上述のとおり ckv0 以降、
+///    **以下はこの変更が入る前の設計とその根拠の記録** — 上述のとおりこの変更以降、
 ///    本 invariant は実際には何も検査しない無条件 accept になっている。
 ///    なぜ元々こちらを無条件検査にしなかったか: CSS は
 ///    子が親の border box をはみ出すことを普通に許す (`overflow: visible`
@@ -1100,18 +1080,18 @@ pub(crate) fn sanitize_taffy_layout(
 ///    `child.size` が飽和しているかどうかはこの gate に関与しない)。
 ///    飽和が起きたということは、その field の「actual value」(近似後の値)
 ///    が taffy 内部の「used value」(実際の計算結果) と乖離している —
-///    ntxy / epkj 時点ではこれを根拠に「だからこそ改めて明示的に整合性を
-///    検査し、破れていれば決定的な値に倒す」という設計だった。**bd
-///    raikiri-spike-ckv0 でこの設計は覆った**: 「actual value が近似
+///    以前の版ではこれを根拠に「だからこそ改めて明示的に整合性を
+///    検査し、破れていれば決定的な値に倒す」という設計だった。**その後
+///    この設計は覆った**: 「actual value が近似
 ///    されている」こと自体は仕様上許容された範囲内の動作であり、収まって
 ///    いようといまいと本関数が reset の理由にすることはない、という結論に
 ///    符号を問わず統一された (詳細は後述の符号別の節)。
 ///    `saturated_but_contained_layout_is_not_reset` は元々「gate かつ
 ///    containment 違反」という conjunction を pin する目的の test だった
-///    が、ckv0 以降は assert 自体は変わらず通る (この test の fixture が
+///    が、この変更以降は assert 自体は変わらず通る (この test の fixture が
 ///    たまたま「収まっている」ケースなので) ものの、conjunction の主張は
 ///    もう成立しない — 同 test の doc および対の regression pin
-///    ([`saturated_child_outside_parent_is_not_reset`]、`ckv0` で
+///    ([`saturated_child_outside_parent_is_not_reset`]、
 ///    「明らかに収まっていない」fixture でも reset されないことを直接示す
 ///    ために追加/改名) を参照。
 ///
@@ -1123,7 +1103,7 @@ pub(crate) fn sanitize_taffy_layout(
 ///    定義では reset されない
 ///    (`nested_percentage_wide_child_chain_is_not_reset` が pin)。
 ///
-///    **§8.3 Codex final review finding (GATE FAIL、修正済み)**: origin
+///    **過去に発見された gate 不備 (修正済み)**: origin
 ///    だけを見るようにした直後の版は、なお gate を「`parent.size` /
 ///    `child.size` / `child.location` のいずれか 1 つでも飽和していれば
 ///    axis 区別なく両 axis を検査する」という条件にしていた。この形では
@@ -1131,24 +1111,24 @@ pub(crate) fn sanitize_taffy_layout(
 ///    どこか別の node の `parent.size` が (無関係な原因で) 飽和していた
 ///    だけで — legitimate な負 margin (`location.x` が通常範囲の負値、
 ///    例: `-30`) を持つ child が `>= 0.0` に落ちて誤って reset されうる、と
-///    Codex final review (§8.3) が非軽微 finding として指摘した。現在の
+///    非軽微な finding として指摘された。現在の
 ///    axis 単位 gate (`child.location.x` / `.y` 自身が飽和している場合だけ、
 ///    その axis だけを検査する) はこれを構造的に閉じる — 検査対象になる
 ///    field は必ず「それ自身が近似された」field に限られるため、legitimate
 ///    な小さい負値がこの gate を通ることはない
 ///    (`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 ///    が直接 pin する — 「`y` 軸だけでも reset の説明がつく」fixture では
-///    新旧実装を区別できないと Codex re-review が指摘したため、`y` 軸が
+///    新旧実装を区別できないという指摘を受けて、`y` 軸が
 ///    飽和かつ収まっている fixture に差し替えた経緯は同 test の doc参照。
 ///    `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-///    は bd raikiri-spike-ckv0 以前は `y` 軸の検出力が保たれていることの
-///    pin だったが、ckv0 でその検出力自体が失われたため、現在は同 test の
+///    はこの変更が入る前は `y` 軸の検出力が保たれていることの
+///    pin だったが、この変更でその検出力自体が失われたため、現在は同 test の
 ///    doc が記録するとおり別の主張 (どちらの axis も reset の理由に
 ///    ならない) の pin になっている)。
 ///
-///    **bd raikiri-spike-epkj (ntxy が残余リスクとして自己申告、本 issue で
-///    解決)**: axis 単位の gate まで閉じた上でも、飽和した axis 自身が
-///    **負**の場合に固有の false positive が残っていた。ntxy が導入した版の
+///    **負方向の false positive (当初は残余リスクとして認識されていたが、
+///    後に解決)**: axis 単位の gate まで閉じた上でも、飽和した axis 自身が
+///    **負**の場合に固有の false positive が残っていた。当時導入されていた版の
 ///    再検査式 `child.location >= 0.0 && child.location <= parent.size` は、
 ///    `child.location` が負である間は **恒等的に false** — `>= 0.0` を満たす
 ///    負数は存在しないので、負方向についてこの式は「containment を
@@ -1164,7 +1144,7 @@ pub(crate) fn sanitize_taffy_layout(
 ///    (`±MAX_TAFFY_MAGNITUDE` にちょうど達する瞬間) だけ扱いが不連続に
 ///    反転する理由が無い。
 ///
-///    epkj の時点ではここから「したがって現在の定義は符号で分岐する:
+///    当時はここから「したがって現在の定義は符号で分岐する:
 ///    飽和した axis が負なら無条件に ok、正なら従来通り `<= parent.size`
 ///    を再検査する」という結論を導いていた。根拠は 2 つ — (a) `padding` /
 ///    `border` / `width` は parse 時点で非負が enforce されるため、正方向の
@@ -1175,7 +1155,7 @@ pub(crate) fn sanitize_taffy_layout(
 ///    `saturated_child_outside_parent_resets_subtree_to_zero_layout`) ので
 ///    緩めると既存の検出力を実際に失う——というものだった。
 ///
-///    **bd raikiri-spike-ckv0 (2026-08-08 PMO 承認) でこの根拠 (a) は覆った**:
+///    **この根拠 (a) は後に覆った**:
 ///    margin は symmetric — CSS Box 3 §3.1
 ///    (<https://www.w3.org/TR/css-box-3/#margin-physical>、"Negative values
 ///    for margin properties are allowed, but there may be
@@ -1183,17 +1163,17 @@ pub(crate) fn sanitize_taffy_layout(
 ///    だけで、正の margin をそれより厳しく縛る根拠にはなっていない —
 ///    `margin-left` の grammar (`<length-percentage> | auto`) は正負どちらの
 ///    巨大な値も等しく spec-legal であり、[`MAX_TAFFY_MAGNITUDE`] という
-///    「implementation-specific limit」に達すること自体は、epkj が負方向で
+///    「implementation-specific limit」に達すること自体は、先に負方向で
 ///    確立したのと同じ理由で、正方向でも破綻の証拠にはならない。実際
 ///    `margin-left: 1e9%` (100px container 内) は `location.x` を正方向に
 ///    飽和させ、旧実装はこれを誤って reset していた — 実測は
 ///    [`saturated_negative_margin_percentage_child_is_not_reset`] の正方向対
 ///    である CSS パイプライン経由の regression test を参照。
 ///
-///    根拠 (b) (「正方向の再検査には現に検出力がある」) は ckv0 でも
+///    根拠 (b) (「正方向の再検査には現に検出力がある」) はこの変更でも
 ///    **反証されてはいない** — 反証されたのは (a) だけで、(b) の
-///    「検出力を失う」という指摘自体は正しかった。PMO はその損失を
-///    **承知の上で受け入れた** — 既存 test は TaffyLayout を直接構築する
+///    「検出力を失う」という指摘自体は正しかった。その損失は
+///    **承知の上で受け入れられた** — 既存 test は TaffyLayout を直接構築する
 ///    のみで実 CSS パイプライン経由の検出力を一度も示しておらず、一方で
 ///    今回の data loss (legitimate content の完全消失) は実 CSS 経由で
 ///    実証済みだったため。**結果として `axis_ok` は符号を問わず「飽和して
@@ -1201,10 +1181,10 @@ pub(crate) fn sanitize_taffy_layout(
 ///    は常に `true` を返す** — containment を再検査する経路は
 ///    もう存在しない (`axis_ok` の実装、および doc「符号を問わず無条件
 ///    accept になった理由」節参照)。「この invariant 自体を維持すべきか」
-///    は ckv0 issue 自身が明示的に deferred とした別の decision であり、
+///    は別途明示的に deferred とされた decision であり、
 ///    本 doc のこの時点では未解決。
 ///
-///    ckv0 で挙動が反転した regression pin: 旧
+///    この変更で挙動が反転した regression pin: 旧
 ///    `saturated_child_outside_parent_resets_subtree_to_zero_layout` は
 ///    [`saturated_child_outside_parent_is_not_reset`] に改名・反転し、旧
 ///    `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
@@ -1233,8 +1213,7 @@ pub(crate) fn sanitize_taffy_layout(
 /// # 決定的 fallback: subtree をゼロ化 (`zero_layout_subtree`)
 ///
 /// 「入力制限」「途中 saturation」「layout abort」を採らず「決定的
-/// fallback」を採る設計判断は coordinator 決定 (bd raikiri-spike-ntxy、
-/// 2026-08-07 comment) 済み。fallback 値は issue 本文が挙げる 2 案
+/// fallback」を採る設計判断は決定済み。fallback 値は検討時に挙がった 2 案
 /// (「0 サイズ」「直近の有限な親サイズ」) のうち **0 サイズ**を採る —
 /// [`taffy::Layout::with_order`] (`order` だけ保持、他は全 zero) は
 /// (a) 自明に invariant 1 (`0 - 0 - 0 = 0 >= 0`) と invariant 2 (`(0,0)` は
@@ -1242,7 +1221,7 @@ pub(crate) fn sanitize_taffy_layout(
 /// 全体をこの値で埋めても新たな invariant 違反を作らない (「直近の有限な
 /// 親サイズへの fallback」だと、fallback 後の値がさらに invariant 2 を
 /// 破らないことを別途保証する必要があり、再検査を繰り返す設計になる)、
-/// (b) issue 側の記述も「0 サイズ」を先に挙げている、の 2 点から選んだ。
+/// (b) 検討時の記述でも「0 サイズ」を先に挙げていた、の 2 点から選んだ。
 ///
 /// # traversal は再帰しない
 ///
@@ -1274,14 +1253,13 @@ pub(crate) fn sanitize_taffy_layout(
 /// doc参照)。
 pub(crate) fn enforce_layout_invariants(document: &mut Document, root_idx: usize) {
     let mut content_box_violations = 0usize;
-    // bd raikiri-spike-ckv0: `child_within_parent_border_box` now always
+    // `child_within_parent_border_box` now always
     // returns `true` (see its doc), so the `if` below that increments this
     // is unreachable for any input — `containment_violations` can never
     // exceed 0, and the `LayoutWarn::GeometryInvariantViolated { invariant:
     // "child_within_parent_border_box", .. }` warning below can never be
     // emitted. Kept (not deleted) because removing the dead branch is part
-    // of the deferred "should this invariant check exist at all" follow-up,
-    // out of scope for ckv0.
+    // of the deferred "should this invariant check exist at all" follow-up.
     let mut containment_violations = 0usize;
     let mut stack = vec![root_idx];
     while let Some(idx) = stack.pop() {
@@ -1359,16 +1337,16 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 
 /// `child` の border box の**原点** (`location`、`child.size` は見ない) が
 /// `parent` の border box (parent 座標系の原点 `(0,0)` から `parent.size`)
-/// の中にあるかどうかを検査する述語として設計された。**ただし bd
-/// raikiri-spike-ckv0 の時点で、本関数は常に `true` を返す** — 飽和して
+/// の中にあるかどうかを検査する述語として設計された。**ただし
+/// 本関数は常に `true` を返す** — 飽和して
 /// いない axis は元から無条件に「ok」、飽和している axis も**符号を問わず**
 /// 無条件に「ok」になったため (詳細は下の「符号を問わず無条件 accept に
-/// なった理由」節、bd raikiri-spike-epkj / bd raikiri-spike-ckv0)、
+/// なった理由」節)、
 /// containment を実際に再検査する経路はもう存在しない。「この invariant
-/// check 自体を維持すべきか」は ckv0 issue が明示的に deferred とした
-/// 別の decision であり、この doc の時点では未解決 (下記参照)。
+/// check 自体を維持すべきか」は別途明示的に deferred とされた
+/// decision であり、この doc の時点では未解決 (下記参照)。
 ///
-/// # `child.size` を見ない理由 (issue 本文の記述に忠実)
+/// # `child.size` を見ない理由
 ///
 /// 当初は `location.x + size.width <= parent.size.width` という **extent**
 /// (child の右端/下端まで含めた) containment を検査していたが、これは
@@ -1379,13 +1357,12 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// [`MAX_TAFFY_MAGNITUDE`] の帯を超えて近似され始めても、この関係自体は
 /// 変わらない (`legitimate_negative_margin_overflow_is_not_reset` が pin する
 /// 「小さい parent + 大きい child」も同じ class の legitimate overflow)。
-/// bd raikiri-spike-ntxy issue 本文もこの区別を反映しており、「child の
+/// この関数の設計もこの区別を反映しており、「child の
 /// **location** が parent の border box 内」とだけ書いている — extent では
 /// なく **origin** の containment を指している。この関数はその通り origin
 /// だけを見る。
 ///
 /// # gate を axis 単位・`child.location` 自身に限定する理由
-/// (§8.3 Codex final review、GATE FAIL 修正)
 ///
 /// 直前の版は「`parent.size.width/height` か `child.size.width/height` か
 /// `child.location.x/y` のいずれか 1 つでも飽和していれば、`x`/`y` **両方**を
@@ -1401,7 +1378,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 ///    形のままだと、飽和していない側の axis に legitimate な負 margin が
 ///    あると同じ理由で誤検出しうる。
 ///
-/// axis 単位に絞った版 (§8.3 時点) はどちらも閉じていた — field 単位で
+/// axis 単位に絞った版はどちらも閉じていた — field 単位で
 /// 「検査対象にする/しない」を区別する gate 自体は **axis 自身の
 /// `child.location` が実際に飽和しているかどうか**に限っていたため、
 /// legitimate な負 margin (通常範囲、飽和していない) を持つ axis が
@@ -1409,33 +1386,32 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// が taffy の生の計算結果から乖離している」ため区別対象になる、という
 /// 本関数群の一貫した設計原則 (本 module doc「なぜ `sanitize_taffy_layout`
 /// だけでは閉じないか」節) を axis 粒度まで徹底した形、という説明はこの
-/// 時点では正確だった。**bd raikiri-spike-ckv0 以降は、飽和した axis も
+/// 時点では正確だった。**この変更以降は、飽和した axis も
 /// 無条件 accept になったため、この gate は「どの axis が検査対象になるか」
 /// ではなく「どの axis も検査されない」という結果に収束している** — 下の
 /// 「符号を問わず無条件 accept になった理由」節参照。
 ///
 /// `saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-/// は §8.3 時点では「飽和した axis だけ検査、他 axis は無条件 ok」という
+/// は当初「飽和した axis だけ検査、他 axis は無条件 ok」という
 /// conjunction を直接 pin していた — 飽和している axis 自身は実際には
 /// 収まっているようにし、もう一方の (飽和していない) axis に legitimate な
 /// 負 margin を与えることで、「`y` 軸だけでも reset の説明がつく」fixture
-/// では新旧実装を区別できないという Codex re-review の指摘 (2 回目の
-/// GATE FAIL) を踏まえた設計だった。ckv0 以降はこの test の assert 自体は
+/// では新旧実装を区別できないという指摘を踏まえた設計だった。この変更以降はこの test の assert 自体は
 /// 変わらず通るが (fixture がたまたま「収まっている」ケースなので)、
 /// 主張の中身は「どちらの axis も reset の理由にならない」に変わっている
 /// (同 test の doc 参照)。旧
 /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 /// (現
 /// [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`])
-/// は §8.3 時点では「`y` 軸の検出力」の pin だったが、ckv0 でその検出力
+/// は当初「`y` 軸の検出力」の pin だったが、この変更でその検出力
 /// 自体が失われたため reset されなくなった。旧
 /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`
 /// (現 [`saturated_child_outside_parent_is_not_reset`]) も同様 — 飽和した
-/// axis 自身が (かつては) 違反していても、ckv0 以降はもう検出されない。
+/// axis 自身が (かつては) 違反していても、この変更以降はもう検出されない。
 ///
-/// # 符号を問わず無条件 accept になった理由 (bd raikiri-spike-epkj → bd raikiri-spike-ckv0)
+/// # 符号を問わず無条件 accept になった理由 (負方向 → 正方向の順で変更)
 ///
-/// **負方向 (bd raikiri-spike-epkj)**: axis 単位まで絞った直後の版でも
+/// **負方向**: axis 単位まで絞った直後の版でも
 /// なお、**飽和した axis 自身が負**のケースに固有の false positive が
 /// 残っていた。再検査式 `child.location >= 0.0 && child.location <=
 /// parent.size` は、`child.location` が負である限り `>= 0.0` を
@@ -1451,7 +1427,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// であり、`±MAX_TAFFY_MAGNITUDE` の境界を跨いだ瞬間だけ扱いを不連続に
 /// 反転させる理由が無い。
 ///
-/// epkj の時点ではここで「正方向は緩めない」と結論していた。根拠は 2 つ —
+/// 当時はここで「正方向は緩めない」と結論していた。根拠は 2 つ —
 /// (a) `padding` / `border` / `width` は parse 時点で非負が enforce
 /// されるため、正方向の巨大な `location` を margin と同じ「CSS が無制限に
 /// 許す」根拠では正当化できない、(b) 正方向の再検査は実際に pass/fail
@@ -1460,7 +1436,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// が fail)、緩めると現に存在する検出力を失う — 負方向はそもそも pass
 /// する経路が存在しなかったので、失われる検出力は無い、というものだった。
 ///
-/// **正方向 (bd raikiri-spike-ckv0、2026-08-08 PMO 承認)**: 根拠 (a) は
+/// **正方向**: 根拠 (a) は
 /// 覆った — margin は symmetric。CSS Box 3 §3.1
 /// (<https://www.w3.org/TR/css-box-3/#margin-physical>、"Negative values
 /// for margin properties are allowed, but there may be
@@ -1471,7 +1447,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// [`saturated_positive_margin_percentage_child_is_not_reset`] が実際の
 /// CSS パイプライン経由でこれを pin する (`saturated_negative_margin_
 /// percentage_child_is_not_reset` の正方向対)。根拠 (b) (「検出力を失う」)
-/// は反証されていない — PMO はその損失を承知の上で受け入れた: 既存 test
+/// は反証されていない — その損失は承知の上で受け入れられた: 既存 test
 /// (`saturated_but_contained_layout_is_not_reset`、旧
 /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`) は
 /// TaffyLayout を直接構築するのみで実 CSS パイプライン経由の検出力を
@@ -1487,8 +1463,8 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// は
 /// [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
 /// に、それぞれ改名・反転した (詳細は各 test の doc参照)。「この
-/// invariant check 自体を維持すべきか」は ckv0 issue が明示的に deferred
-/// とした別の decision であり、この doc の時点では未解決。
+/// invariant check 自体を維持すべきか」は別途明示的に deferred
+/// とされた decision であり、この doc の時点では未解決。
 ///
 /// `saturated_negative_margin_percentage_child_is_not_reset` (単一の
 /// `margin-left: -1e9%` 宣言、nest 無し) と
@@ -1500,12 +1476,12 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// する」という検討したが却下した別案を反証する最小 fixture でもある —
 /// この fixture は `parent.size.width` が飽和していない (`100.0` のまま)
 /// ので、判別軸は「parent も飽和しているか」ではなく「child 自身の符号」
-/// でなければならないことを示す (ckv0 以降、この判別軸自体は意味を失った
+/// でなければならないことを示す (この変更以降、この判別軸自体は意味を失った
 /// が、fixture と regression pin としての価値は変わらない)。
 /// `saturated_negative_location_is_not_reset` は同じ組み合わせを直接構築
 /// した最小 synthetic case で孤立させて検査する
 /// (`saturated_but_contained_layout_is_not_reset` と対になる、正方向
-/// ケースの負方向対 — ckv0 以降はどちらも「飽和していれば無条件 accept」
+/// ケースの負方向対 — この変更以降はどちらも「飽和していれば無条件 accept」
 /// という同じ結論の pin)。
 fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> bool {
     /// 1 axis 分の判定。`location` はその axis の `child.location.{x,y}`
@@ -1513,7 +1489,7 @@ fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> 
     /// 削除せず「対応する `parent.size.{width,height}` を渡す」という
     /// 呼び出し規約の見た目だけ残しているのは、この関数・`axis_ok` 自体を
     /// 削除するかどうかを含めて「この invariant check を維持すべきか」が
-    /// ckv0 issue の明示的な deferred follow-up だから — 将来その follow-up
+    /// 別途明示的に deferred とされた follow-up だから — 将来その follow-up
     /// で `axis_ok` ごと削除される可能性があることを見越して、今
     /// signature を先回りして変える判断はしていない。詳細は上の doc
     /// 「符号を問わず無条件 accept になった理由」節。同じ理由で、直下の
@@ -1525,8 +1501,8 @@ fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> 
         if !taffy_magnitude_is_saturated(location) {
             return true;
         }
-        // bd raikiri-spike-ckv0: 飽和していれば符号を問わず無条件 accept。
-        // 負方向は bd raikiri-spike-epkj が先に確立していた — 本 decision は
+        // 飽和していれば符号を問わず無条件 accept。
+        // 負方向は先に確立していた — 本 decision は
         // その前例を正方向にも対称に拡張し、旧 `location <= parent_size`
         // 再検査 (正方向限定) を撤去した。containment を再検査する経路は
         // もう存在しない。
@@ -1538,9 +1514,9 @@ fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> 
 /// [`ComputedLengthPercentage`] → [`taffy::LengthPercentage`] bridge
 /// (padding 用)。
 ///
-/// # 網羅 match (bd raikiri-spike-zls8 / decision raikiri-spike-082k)
+/// # 網羅 match
 ///
-/// 引数が **computed 層**の型になったため 2 arm で網羅する。Sprint 18 の
+/// 引数が **computed 層**の型になったため 2 arm で網羅する。以前あった
 /// `Length::Em(_) | Length::Rem(_) => length(0.0)` (font-relative unit を黙って
 /// 0px に潰す fail-quiet) と `_ => length(0.0)` (non_exhaustive catch-all) は
 /// **削除した** — `em` / `rem` / `pt` は cascade の phase 3 で px に絶対化済み
@@ -1548,11 +1524,11 @@ fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> 
 ///
 /// **ただし削除した arm は「単位」だけでなく「病的な f32 の値」も吸収していた**
 /// (`Em(inf)` / `0.0 * inf` = NaN)。その分は [`sanitize_taffy`] が
-/// backfill している (bd raikiri-spike-2ui0) — **guard を「不要な防御」と
+/// backfill している — **guard を「不要な防御」と
 /// 判断して外さないこと。**
 ///
 /// [`ComputedLengthPercentage`] に `#[non_exhaustive]` が付いていないのは、
-/// この網羅性を今得るための explicit trade である (Epic 5 で `Calc` variant が
+/// この網羅性を今得るための explicit trade である (将来 `Calc` variant が
 /// 増えるときに coordinated breaking change を払う。`raikiri_style::resolve`
 /// の module doc 参照)。**`_` arm を足して「forward-compat」にしてはならない** —
 /// trade の得る側を捨てることになる。
@@ -1560,8 +1536,8 @@ fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> 
 /// # Percent policy
 ///
 /// `Percent(p)` → `percent(sanitize_taffy(p / 100.0))` — CSS spec の authored
-/// 0-100 を taffy の fraction 0.0-1.0 に変換し、[`sanitize_taffy`] で有限化する
-/// (bd raikiri-spike-2ui0)。containing block に対する解決は **used value 層**
+/// 0-100 を taffy の fraction 0.0-1.0 に変換し、[`sanitize_taffy`] で有限化する。
+/// containing block に対する解決は **used value 層**
 /// (CSS Cascade 5 §4.5 <https://www.w3.org/TR/css-cascade-5/#used>) であり
 /// taffy に委譲する — **guard が bound するのは fraction であって解決後の
 /// used value ではない** ([`MAX_TAFFY_MAGNITUDE`] の射程節を参照)。
@@ -1570,7 +1546,7 @@ fn computed_length_percentage_to_taffy_length_percentage(
     diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentage {
     match len {
-        // site 1 (bd raikiri-spike-2ui0): `sanitize_taffy` で非有限を落とす。
+        // site 1: `sanitize_taffy` で非有限を落とす。
         // 唯一の caller (`bridge_padding`) 由来なので site label は固定。
         ComputedLengthPercentage::Px(v) => {
             LengthPercentage::length(sanitize_taffy(v, "padding", diag))
@@ -1589,8 +1565,7 @@ fn computed_length_percentage_to_taffy_length_percentage(
 /// 2 arm)。本関数はそれに `Auto` arm が加わり合計 3 arm (catch-all なし)。
 /// `Auto` → `Dimension::auto()` (f32 を持たないので guard 対象外)。
 ///
-/// [`bridge_size`] から width (raikiri-spike-ggig Wave 2) / height
-/// (raikiri-spike-01up Wave 3) 両方で consume される。
+/// [`bridge_size`] から width / height 両方で consume される。
 ///
 /// `site` distinguishes the two [`bridge_size`] callers (`"width"` /
 /// `"height"`) in [`LayoutWarn::NonFiniteClamped`] events.
@@ -1600,7 +1575,7 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
     diag: &mut Vec<LayoutWarn>,
 ) -> Dimension {
     match loa {
-        // site 2 (bd raikiri-spike-2ui0)。
+        // site 2。
         ComputedLengthPercentageOrAuto::Px(v) => Dimension::length(sanitize_taffy(v, site, diag)),
         ComputedLengthPercentageOrAuto::Percent(p) => {
             Dimension::percent(sanitize_taffy(p / 100.0, site, diag))
@@ -1621,7 +1596,7 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
     diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentageAuto {
     match loa {
-        // site 3 (bd raikiri-spike-2ui0)。margin は負値が spec-valid なので
+        // site 3。margin は負値が spec-valid なので
         // `sanitize_taffy` の対称 clamp が load-bearing。唯一の caller
         // (`bridge_margin`) 由来なので site label は固定。
         ComputedLengthPercentageOrAuto::Px(v) => {
@@ -1640,7 +1615,7 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
 /// sibling 3 helper (`computed_length_percentage_to_taffy_length_percentage` /
 /// `computed_length_percentage_or_auto_to_taffy_dimension` /
 /// `computed_length_percentage_or_auto_to_taffy_length_percentage_auto`) と同じ
-/// `<src>_to_taffy_<dst>` 命名 / 同じ cluster に置く (37n sibling convention)。
+/// `<src>_to_taffy_<dst>` 命名 / 同じ cluster に置く。
 ///
 /// `border-*-width` 専用に分けているのは、grammar (`<line-width>` =
 /// `<length [0,∞]> | thin | medium | thick`) が `<percentage>` を含まないため
@@ -1650,13 +1625,12 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
 /// [`computed_length_percentage_to_taffy_length_percentage`] と同一
 /// (`LengthPercentage` が taffy 側の最小共通型) だが、入力型が
 /// [`ComputedLength`] なので percentage arm を
-/// 持たない点が違う。非有限 guard ([`sanitize_taffy`]) は同じく通す
-/// (bd raikiri-spike-2ui0)。
+/// 持たない点が違う。非有限 guard ([`sanitize_taffy`]) は同じく通す。
 fn computed_length_to_taffy_length_percentage(
     len: ComputedLength,
     diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentage {
-    // site 4 (bd raikiri-spike-2ui0)。唯一の caller (`bridge_border`) 由来
+    // site 4。唯一の caller (`bridge_border`) 由来
     // なので site label は固定。
     LengthPercentage::length(sanitize_taffy(len.px(), "border-width", diag))
 }
@@ -1669,7 +1643,7 @@ fn computed_length_to_taffy_length_percentage(
 /// Font stack / size / weight は `cascade.computed[idx]` (親から inherit 済) を消費。
 /// `max_advance` は行折り返し境界で、通常 `page_box.width`。
 ///
-/// # 失敗しない (bd raikiri-spike-zls8)
+/// # 失敗しない
 ///
 /// 以前は `Result<(), LayoutError>` を返していた。唯一の `Err` 経路は
 /// `cv.font_size` が specified 層の `Length` で `Px` 以外だった場合の
@@ -1689,7 +1663,7 @@ pub(crate) fn preshape_text(
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
         }
-        // raikiri-spike-37c roborev job 294 M3 finding: template subtree /
+        // template subtree /
         // detached な text は paint も layout tree (taffy) からも filter される。
         // 無駄な parley shape + intrinsic size 計算を避けるため、bit gate で
         // 早期 skip する。paint / cascade の gate と一貫。
@@ -1703,7 +1677,7 @@ pub(crate) fn preshape_text(
             _ => continue,
         };
         // cascade は Text node 位置にも ComputedValues を populate する
-        // (親から inherit)。M1.4 test `text_node_inherits_from_element_parent`
+        // (親から inherit)。test `text_node_inherits_from_element_parent`
         // で確認済。
         let cv = &cascade.computed[idx];
 
@@ -1724,18 +1698,17 @@ pub(crate) fn preshape_text(
             .join(", ");
         let font_family = FontFamily::from(family_str.as_str());
 
-        // bd raikiri-spike-zls8: `cv.font_size` は computed 層の
+        // `cv.font_size` は computed 層の
         // `ComputedLength` (px) になったので match も fallback も要らない。
-        // Sprint 18 までは specified 層の `Length` を受けていたため
+        // 以前は specified 層の `Length` を受けていたため
         // `LayoutError::Internal` を返す wildcard arm があったが、`em` / `rem` /
         // `pt` は cascade の phase 2 で絶対化されるようになり到達しない。
         //
-        // site 5 (bd raikiri-spike-2ui0): ただし**値**は非有限になり得るので
+        // site 5: ただし**値**は非有限になり得るので
         // parley に渡す直前で有限化する。下限 0.0 は grammar
         // `<length-percentage [0,∞]>` (CSS Fonts 4 §2.5) に一致。clamp が
-        // 実際に発火した場合は `doc.layout_warnings` に積む (bd
-        // raikiri-spike-7t1t、silent から stderr-visible への降格 —
-        // `sanitize_finite` の doc参照)。
+        // 実際に発火した場合は `doc.layout_warnings` に積む (silent から
+        // stderr-visible への降格 — `sanitize_finite` の doc参照)。
         let font_size_px = sanitize_finite(
             cv.font_size.px(),
             0.0,
@@ -1747,11 +1720,11 @@ pub(crate) fn preshape_text(
         let mut builder = layout_cx.ranged_builder(fonts, &text, 1.0, true);
         builder.push_default(StyleProperty::FontFamily(font_family));
         builder.push_default(StyleProperty::FontSize(font_size_px));
-        // `cv.font_weight` は bd raikiri-spike-e52s で `f32` に格上げ済み
+        // `cv.font_weight` はすでに `f32` に格上げ済み
         // (旧 `u16`) — `parley::FontWeight::new` が要求する型そのものなので
         // cast は不要 (`as f32` を残すと `clippy::unnecessary_cast` に抵触する)。
         //
-        // site 6 (bd raikiri-spike-sxd7、2ui0 の 5 site に続く 6 本目): 値は
+        // site 6 (前述の 5 site に続く 6 本目): 値は
         // 非有限になり得るので (`ComputedValues` は全 field が `pub` — 詳細は
         // `sanitize_font_weight` の doc) parley に渡す直前で有限化する。
         let font_weight = sanitize_font_weight(cv.font_weight, &mut doc.layout_warnings);
@@ -1775,40 +1748,38 @@ pub(crate) fn preshape_text(
 ///
 /// # 変更 (in-place)
 /// - Node.text_layout を全 `None` にクリア (re-entrance safety)
-/// - `apply_computed_to_style` で computed → taffy::Style bridge (M1.4 no-op)
+/// - `apply_computed_to_style` で computed → taffy::Style bridge (現時点では no-op)
 /// - `preshape_text` で全 Text node を parley shape、Node.text_layout に格納
 /// - `apply_page_box_to_body` で body.style.size = length(PageBox)
 /// - `compute_root_layout` で taffy 計算、Node.unrounded_layout に書き込む
 ///
 /// # Errors
 /// - `LayoutError::Internal` — `<body>` element が見つからない (fragment
-///   parse は M1 非対応) / taffy internal
+///   parse は現行実装では非対応) / taffy internal
 ///
-///   parley shape (`preshape_text`) は bd raikiri-spike-zls8 以降 **失敗しない**
+///   parley shape (`preshape_text`) は **失敗しない**
 ///   (同関数の doc 参照)。
 ///
-/// # Non-goals in M1.6
+/// # Non-goals (現時点)
 /// - 同じ Document で複数回呼ぶことは safe (text_layout を毎回 clear) だが、
-///   incremental (差分だけ再走) は M2+ で追加
-/// - Consumer からの PageBox 上書きは M4 per-page PageBox で対応
-/// - Fragment parse (no `<body>`) support は M2+
-/// # API 互換性 (raikiri-spike-e93)
+///   incremental (差分だけ再走) は将来追加予定
+/// - Consumer からの PageBox 上書きは将来の per-page PageBox 対応で扱う
+/// - Fragment parse (no `<body>`) support は将来追加予定
+/// # API 互換性
 ///
-/// この signature は M1.14 の 3-arg `(document, cascade, page_box)` から
+/// この signature は以前の 3-arg `(document, cascade, page_box)` から
 /// 4-arg `(document, cascade, page_box, font_ctx)` に **意図的に breaking
 /// change** された (choice β)。α (dual API: 既存 3-arg +
 /// 新規 `_with_fonts`) との trade-off の末、raikiri-dom 内 caller が全て
 /// in-repo (12 箇所 = production 1 + test 11) であり、内部 DI の explicit
-/// 化と signature 統一の方が長期保守で優れると判断した。詳細:
-/// - bd raikiri-spike-e93 (font pin + layout_single_page 4-arg 化の起点)
-/// - roborev finding e93 round 3 M3 で reflag、user 再確認済 (plan-mandated)
+/// 化と signature 統一の方が長期保守で優れると判断した。
 pub fn layout_single_page(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
     mut font_ctx: FontContext,
 ) -> Result<(), LayoutError> {
-    // raikiri-spike-37c roborev job 295 M1 finding: observation-side entry で
+    // observation-side entry で
     // membership を sync する — `mark_in_document_flags` は flags_dirty=false
     // なら idempotent no-op なので、既に sink.finish() 経由で sync 済の場合は
     // 事実上 free。post-parse mutation (`Document::append_*` 等) の後で cascade
@@ -1826,7 +1797,7 @@ pub fn layout_single_page(
             t.text_layout = None;
         }
     }
-    // Step 0b: layout_warnings re-entrance clear (bd raikiri-spike-7t1t) —
+    // Step 0b: layout_warnings re-entrance clear —
     // same rationale as the text_layout clear above: this Vec is populated
     // over the course of a pass (bridges below, then the taffy compute step
     // via `set_unrounded_layout`) and drained near the end of this function,
@@ -1834,7 +1805,7 @@ pub fn layout_single_page(
     // leftover entries for the next call to inherit.
     document.layout_warnings.clear();
 
-    // Step 1: ComputedValues → taffy::Style bridge (M1.4 no-op site)
+    // Step 1: ComputedValues → taffy::Style bridge (現時点では no-op site)
     apply_computed_to_style(document, cascade);
 
     // Step 2: pre-shape all text with parley
@@ -1851,7 +1822,7 @@ pub fn layout_single_page(
 
     // Step 3: <body> lookup
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
-        message: "no <body> element found (fragment parse not supported in M1)".to_string(),
+        message: "no <body> element found (fragment parse not supported yet)".to_string(),
     })?;
 
     // Step 4: body.style.size を PageBox に強制セット
@@ -1868,14 +1839,14 @@ pub fn layout_single_page(
     );
 
     // Step 5b: 親子 geometry の意味的 invariant を検査し、破れている subtree
-    // を決定的 fallback (ゼロ) に倒す (bd raikiri-spike-ntxy)。Step 5 の内部
+    // を決定的 fallback (ゼロ) に倒す。Step 5 の内部
     // (`set_unrounded_layout` 経由の `sanitize_taffy_layout`) が保証するのは
     // finiteness だけなので、その一段上のレイヤーとしてここに置く —
     // `enforce_layout_invariants`'s doc 参照。`document.layout_warnings` へ
     // 積む event は Step 1/2 と同じ buffer で、Step 6 がまとめて drain する。
     enforce_layout_invariants(document, body_id);
 
-    // Step 6: replay buffered LayoutWarn events (bd raikiri-spike-7t1t).
+    // Step 6: replay buffered LayoutWarn events.
     //
     // `document.layout_warnings` accumulated events from this function's own
     // bridge calls (Step 1 / Step 2, via `&mut document.layout_warnings`
@@ -1884,7 +1855,7 @@ pub fn layout_single_page(
     // by `compute_root_layout` just above, via `self` — see
     // `Document::layout_warnings`'s doc for why that trait-fixed signature
     // can only reach an owned buffer, not a live observer), and from Step 5b
-    // (`enforce_layout_invariants`, bd raikiri-spike-ntxy) just above, which
+    // (`enforce_layout_invariants`) just above, which
     // pushes into the same buffer directly since it already holds `&mut
     // Document`.
     //
@@ -2043,25 +2014,25 @@ mod tests {
 
     #[test]
     fn apply_computed_to_style_bridges_display_to_taffy() {
-        // raikiri-spike-w2s: display bridge active — DisplayValue → taffy::Display
+        // display bridge active — DisplayValue → taffy::Display
         // mapping が正しく行われていることを確認する regression pin。
         //
-        // raikiri-spike-j5rz (Sprint 18): bridge_margin が dispatch に加わったが
+        // bridge_margin が dispatch に加わったが
         // margin unspecified の element では initial `Sides::all(Length::Px(0.0))`
         // が cascade で入る → taffy `LengthPercentageAuto::length(0.0)` に translate、
         // これは `taffy::Style::default().margin` (all `Length(0.0)`) と一致するため
         // 既存 assertion は無変更で通ることを確認する pin にもなる。
         //
-        // raikiri-spike-jbu0 (Sprint 18 Wave 2): bridge_padding も dispatch に
+        // bridge_padding も dispatch に
         // 加わったが同様に padding unspecified の element では initial
         // `Sides::all(Length::Px(0.0))` → taffy `LengthPercentage::length(0.0)`
         // が入り、`taffy::Style::default().padding` と一致するため padding assertion
         // も無変更で通る pin。
         //
-        // raikiri-spike-ggig (Sprint 18 Wave 2): bridge_size (width) が dispatch に
+        // bridge_size (width) が dispatch に
         // 加わったが width unspecified の element は initial `LengthOrAuto::Auto`
         // → `Dimension::auto()` に translate、これは `taffy::Style::default().size`
-        // (`Size::auto()`) の width と一致 (height は Wave 3 まで default 保持)。
+        // (`Size::auto()`) の width と一致 (height は default 保持のまま追加予定)。
         // 既存 `size == default_style.size` 相当 assertion は変化なく通る。
         use raikiri_style::{build_rule_tree, cascade};
 
@@ -2082,12 +2053,12 @@ mod tests {
 
     #[test]
     fn apply_computed_to_style_bridges_margin_to_taffy() {
-        // raikiri-spike-j5rz (Sprint 18 dom-4 Wave 1): bridge_margin が
+        // bridge_margin が
         // Sides<ComputedLengthPercentageOrAuto> を taffy::Rect<LengthPercentageAuto>
         // に translate することを確認する regression pin。bridge の 3 分岐
         // (Px / Percent / Auto) をそれぞれ 1 case で covering。
         //
-        // bd raikiri-spike-zls8: Case 4 の `pt` は bridge の分岐ではなくなった
+        // Case 4 の `pt` は bridge の分岐ではなくなった
         // (cascade の phase 3 が px に絶対化する) が、end-to-end の期待値は
         // 変わらないので test は残す。
         //
@@ -2148,8 +2119,8 @@ mod tests {
         // Case 4: longhand `margin-top: 10pt` → top = length(10 * 4/3) = length(13.333...)。
         //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
         //   **この変換は bridge ではなく cascade の phase 3
-        //   (`raikiri_style::resolve_length_percentage_or_auto`) が行う**
-        //   (bd raikiri-spike-zls8)。bridge に届く時点で既に px。本 case は
+        //   (`raikiri_style::resolve_length_percentage_or_auto`) が行う**。
+        //   bridge に届く時点で既に px。本 case は
         //   end-to-end の値を pin する。
         //   f32 bit-identical assert のため右辺を expression のまま書く
         //   (`13.333` literal は round-trip で drift する。この式は
@@ -2169,13 +2140,13 @@ mod tests {
 
     #[test]
     fn apply_computed_to_style_bridges_padding_to_taffy() {
-        // raikiri-spike-jbu0 (Sprint 18 dom-4 Wave 2): bridge_padding が
+        // bridge_padding が
         // Sides<ComputedLengthPercentage> を taffy::Rect<LengthPercentage> に
         // translate することを確認する regression pin。padding は margin と違い
         // `auto` を持たない (<length-percentage `[0,∞]`>) ため bridge は **2 arm**
         // (Px / Percent) で網羅する。
         //
-        // bd raikiri-spike-zls8: Case 3 の `pt` は **bridge の分岐ではなくなった**
+        // Case 3 の `pt` は **bridge の分岐ではなくなった**
         // (cascade の phase 3 が px に絶対化する) が、end-to-end の期待値は
         // 変わらないので test は残す。
         //
@@ -2225,7 +2196,7 @@ mod tests {
         // Case 3: longhand `padding-top: 3pt` → top = length(3 * 4/3) = length(4.0)。
         //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
         //   **変換の所在は cascade の phase 3** (`resolve_length_percentage`) で
-        //   bridge ではない (bd raikiri-spike-zls8)。
+        //   bridge ではない。
         //   f32 bit-identical assert のため右辺を expression のまま書く
         //   (`4.0` literal は 3*4/3 と bit-identical だが policy 明示のため式のまま)。
         assert_eq!(
@@ -2241,11 +2212,11 @@ mod tests {
 
     #[test]
     fn apply_computed_to_style_bridges_width_to_taffy() {
-        // raikiri-spike-ggig (Sprint 18 dom-4 Wave 2): bridge_size (width component)
+        // bridge_size (width component)
         // が cv.width: ComputedLengthPercentageOrAuto を taffy::Style::size.width:
         // Dimension に translate することを pin する。bridge の 3 分岐
         // (Px / Percent / Auto) をそれぞれ 1 case で covering
-        // (`pt` は cascade の phase 3 で px 化される — raikiri-spike-zls8)。
+        // (`pt` は cascade の phase 3 で px 化される)。
         //
         // Test 戦略: fixture は **非 body element** (この場合 `<p>`) を使う —
         // `<body>` は後段 `apply_page_box_to_body` で clobber されるため本 bridge
@@ -2255,7 +2226,7 @@ mod tests {
         // regression pin。
         //
         // 本 test は width 軸に絞る — height 軸は sibling test
-        // `apply_computed_to_style_bridges_height_to_taffy` (Wave 3、raikiri-spike-01up)
+        // `apply_computed_to_style_bridges_height_to_taffy`
         // が同 fixture pattern で LengthOrAuto → Dimension bridge を pin する。
         use raikiri_style::{build_rule_tree, cascade};
 
@@ -2285,8 +2256,7 @@ mod tests {
 
         // Case 4: `width: 20pt` → Dimension::length(20 * 4/3) = length(26.666...)。
         //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
-        //   **変換の所在は cascade の phase 3** で bridge ではない
-        //   (bd raikiri-spike-zls8)。
+        //   **変換の所在は cascade の phase 3** で bridge ではない。
         //   f32 bit-identical assert のため右辺を expression で書く。
         assert_eq!(
             width_for("width: 20pt"),
@@ -2296,13 +2266,13 @@ mod tests {
 
     #[test]
     fn apply_computed_to_style_bridges_height_to_taffy() {
-        // raikiri-spike-01up (Sprint 18 dom-4 Wave 3): bridge_size の height 側
+        // bridge_size の height 側
         // 拡張。cv.height: ComputedLengthPercentageOrAuto を
         // taffy::Style::size.height: Dimension に translate することを pin する。
-        // Wave 2 sibling test `apply_computed_to_style_bridges_width_to_taffy` と
-        // 対を成し、Wave 3 の struct literal 化 (Size { width, height } の 1 発
+        // sibling test `apply_computed_to_style_bridges_width_to_taffy` と
+        // 対を成し、struct literal 化 (Size { width, height } の 1 発
         // assign) で height 側の 3 分岐 (Px / Percent / Auto) が意図通り
-        // 書き込まれるか確認する (型名は bd raikiri-spike-zls8 で更新)。
+        // 書き込まれるか確認する。
         //
         // Test 戦略: fixture は **非 body element** (`<p>`) を使う — `<body>` は
         // 後段 `apply_page_box_to_body` で height も clobber されるため本 bridge
@@ -2312,8 +2282,8 @@ mod tests {
         //
         // Pt case は sibling width test が同じ
         // computed_length_percentage_or_auto_to_taffy_dimension policy を
-        // pin しているため redundant (かつ pt → px 変換は bd
-        // raikiri-spike-zls8 以降 cascade の phase 3 の責務)。ここでは height
+        // pin しているため redundant (かつ pt → px 変換は
+        // cascade の phase 3 の責務)。ここでは height
         // 特有の 3 arm (auto default 保持、`Px` 通路、`Percent` 通路) に絞る。
         use raikiri_style::{build_rule_tree, cascade};
 
@@ -2345,7 +2315,7 @@ mod tests {
 
     #[test]
     fn apply_computed_to_style_bridges_border_to_taffy() {
-        // raikiri-spike-q0uc (Sprint 18 dom-4 Wave 2): bridge_border が
+        // bridge_border が
         // Sides<ComputedBorder> を taffy::Rect<LengthPercentage> に translate
         // することを確認する regression pin。
         //
@@ -2357,8 +2327,8 @@ mod tests {
         // <https://www.w3.org/TR/css-backgrounds-3/#border-width> の propdef が
         // "Computed value: absolute length, snapped as a border width; zero if
         // the border style is none or hidden" と規定するため (TR 版 — ED は
-        // CSSWG Issue 11494 で resolved-value 効果へ移動済、bd raikiri-spike-8dfv)
-        // (bd raikiri-spike-zls8 で used 層から computed 層へ移動、bridge 側の
+        // CSSWG Issue 11494 で resolved-value 効果へ移動済)
+        // (used 層から computed 層へ移動済で、bridge 側の
         // `used_border_width` helper は削除済)。§3.2 "Line Patterns: the
         // border-style properties"
         // <https://www.w3.org/TR/css-backgrounds-3/#border-style> の `none` も
@@ -2369,13 +2339,12 @@ mod tests {
         // 移っても `5px none red` の 5px が taffy に leak しないことを保証する
         // のが目的)。§ 番号と引用は spec の `data-level` / 本文実測に基づく —
         // 以前あった "§5.2 The used values of the corresponding border-*-width
-        // become 0." は css-backgrounds-3 に存在しない文だったので差し替えた
-        // (bd raikiri-spike-zls8 §8.2 spec lens SPEC-7)。
+        // become 0." は css-backgrounds-3 に存在しない文だったので差し替えた。
         //
         // Test 戦略: `border: <w> <s> <c>` 4-side shorthand と longhand の
         // 両方を使い、shorthand 展開 → per-side cascade → bridge_border の
-        // pipeline を end-to-end で pin する (raikiri-spike-e51 codebase note:
-        // 単一 side shorthand `border-top: ...` は現時点で parser 未対応、
+        // pipeline を end-to-end で pin する (単一 side shorthand
+        // `border-top: ...` は現時点で parser 未対応、
         // computed.rs 228-229 参照)。
         use raikiri_style::{build_rule_tree, cascade};
         use taffy::{LengthPercentage, Rect};
@@ -2404,7 +2373,7 @@ mod tests {
             }
         );
 
-        // Case 2 (spec correctness — advisor #2): `border: 5px none red` shorthand
+        // Case 2 (spec correctness): `border: 5px none red` shorthand
         //   → 4 side 全て width=5, style=None で cascade。§3.2 の `none` と
         //   §3.3 propdef (TR 版、逐語引用は冒頭 block) による style-gating で
         //   computed width = 0 → 4 side 全て length(0.0)。gating が壊れると 5.0
@@ -2419,7 +2388,7 @@ mod tests {
             }
         );
 
-        // Case 3 (spec correctness — advisor #2): `border: 5px hidden red`
+        // Case 3 (spec correctness): `border: 5px hidden red`
         //   shorthand → computed width = 0。直接の根拠は §3.3 propdef (TR 版) が
         //   `none` と並べて `hidden` を名指ししていること。§3.2 の `hidden` は
         //   "Same as none, but has different behavior in the border conflict
@@ -2469,7 +2438,7 @@ mod tests {
         );
     }
 
-    /// bd raikiri-spike-9jmt: `ComputedBorder::width` / `::style` を `pub`
+    /// `ComputedBorder::width` / `::style` を `pub`
     /// field から `pub(crate)` + read-only accessor へ narrow した動機になった
     /// invariant の end-to-end pin。
     ///
@@ -2479,8 +2448,8 @@ mod tests {
     /// して届くことを確認する。narrowing 前はこの gate を consumer が
     /// `ComputedValues::initial()` 等で得た `ComputedBorder` の
     /// `.style = BorderStyle::None` 直接書き換えで迂回でき、`.width` が非 0 の
-    /// まま taffy に leak し得た (`used_border_width` bridge 削除後、bd
-    /// raikiri-spike-zls8)。narrowing は `width` / `style` に限り crate 外
+    /// まま taffy に leak し得た (`used_border_width` bridge 削除後)。narrowing は
+    /// `width` / `style` に限り crate 外
     /// からのその書き換え経路を塞ぐ — `color` は pub のまま、
     /// `cv.border.top = cv.border.left` のような side 単位の丸ごと代入も
     /// 引き続き可能で、いずれも本 invariant を破らない。
@@ -2496,10 +2465,9 @@ mod tests {
     /// **未解決なのは別の軸 — regression 検知**: 将来誰かが `width` /
     /// `style` を `pub(crate)` から `pub` に戻す (= 上記の型保証そのものを
     /// 撤回する) 変更をしても、それを検知して落ちる test が現状無い。
-    /// qzn3 の 3 field (`Declaration::value` 等) には同じ形の regression を
-    /// 検知する compile-fail harness が bd raikiri-spike-ejia で追加され
-    /// 既に main に merge 済みだが、`ComputedBorder::width` / `::style` への
-    /// 横展開はまだ行われていない。
+    /// 他の 3 field (`Declaration::value` 等) には同じ形の regression を
+    /// 検知する compile-fail harness がすでに追加され既に main に merge 済みだが、
+    /// `ComputedBorder::width` / `::style` への横展開はまだ行われていない。
     #[test]
     fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
         use raikiri_style::{build_rule_tree, cascade};
@@ -2533,9 +2501,7 @@ mod tests {
 
     #[test]
     fn font_relative_lengths_reach_taffy_as_real_pixels() {
-        // bd raikiri-spike-zls8 (decision raikiri-spike-082k Phase 2)。
-        //
-        // Sprint 18 の bridge は specified 層の `Length` を受けており、
+        // 以前の bridge は specified 層の `Length` を受けており、
         // `Length::Em(_) | Length::Rem(_) => length(0.0)` で font-relative unit
         // を **黙って 0px に潰していた** (fail-quiet)。cascade が phase 2 /
         // phase 3 で絶対化するようになったので、実 px が taffy に届く。
@@ -2592,7 +2558,7 @@ mod tests {
 
     #[test]
     fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
-        // raikiri-spike-o11x (Sprint 18 dom-4 Wave 2): bridge_box_sizing が
+        // bridge_box_sizing が
         // raikiri_style::BoxSizing → taffy::BoxSizing の enum 1:1 mapping を
         // 実施することを確認する regression pin。
         //
@@ -2637,14 +2603,14 @@ mod tests {
 
     #[test]
     fn apply_page_box_clobbers_body_width_from_bridge() {
-        // raikiri-spike-ggig (Sprint 18 dom-4 Wave 2、advisor #3): M1 PageBox
+        // PageBox
         // 妥協の regression pin — `<body style="width: 100px">` に対して
         //   Step 1 (`apply_computed_to_style`) → bridge_size が body.style.size.width
         //       を length(100.0) に write
         //   Step 4 (`apply_page_box_to_body`) → PageBox.width で clobber
         // の順で走ると、最終 body.style.size.width は PageBox.width (author 値
-        // ではない) になる。M4 で @page per-page PageBox に refactor するまで
-        // この clobber 挙動を意図的に保つ (M1 妥協) — silent regression 検出用。
+        // ではない) になる。将来 @page per-page PageBox に refactor するまで
+        // この clobber 挙動を意図的に保つ (現行実装での妥協) — silent regression 検出用。
         use raikiri_traits::PageBox;
 
         let mut doc = Document::new();
@@ -2666,7 +2632,7 @@ mod tests {
         assert_eq!(
             doc.nodes[body].style.size.width,
             Dimension::length(PageBox::A4.width),
-            "apply_page_box_to_body must clobber author width with PageBox.width (M1 妥協)"
+            "apply_page_box_to_body must clobber author width with PageBox.width (現行実装での妥協)"
         );
         // author 値と PageBox 値は不一致 (clobber が実際に起きていることを pin)。
         assert_ne!(
@@ -2680,7 +2646,7 @@ mod tests {
 
     fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
         // <html><head></head><body><p style="color:red">Hi</p></body></html>
-        // 相当 (parser の代わりに手動構築、raikiri-html 統合は m1.7+ で umbrella が担当)
+        // 相当 (parser の代わりに手動構築、raikiri-html 統合は将来 umbrella が担当)
         use raikiri_style::{build_rule_tree, cascade};
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -2756,7 +2722,7 @@ mod tests {
 
     #[test]
     fn layout_single_page_bridges_display_none() {
-        // raikiri-spike-w2s: layout_single_page 経由で display bridge が active
+        // layout_single_page 経由で display bridge が active
         // であることを確認 — body に display:none を指定すると taffy::Style.display
         // が Display::None になる。
         use raikiri_style::{build_rule_tree, cascade};
@@ -2777,8 +2743,8 @@ mod tests {
 
     #[test]
     fn layout_single_page_deterministic_across_10_runs() {
-        // M1 acceptance: 10 回連続実行で byte-identical。
-        // 同一マシン上の determinism を pin (cross-machine は m1.13 で font
+        // 10 回連続実行で byte-identical であることを acceptance 条件とする。
+        // 同一マシン上の determinism を pin (cross-machine は将来 font
         // pinning に置き換わる)。
         use raikiri_traits::PageBox;
 
@@ -2820,7 +2786,7 @@ mod tests {
             let _ = parley::FontContext::new();
         }
         let elapsed = start.elapsed();
-        // 10 回 total で 5 秒未満なら M1.6 の per-call new() は許容
+        // 10 回 total で 5 秒未満なら現行実装の per-call new() は許容
         // (10 連ラン determinism test が timeout しないため)
         assert!(
             elapsed.as_secs() < 5,
@@ -2829,10 +2795,10 @@ mod tests {
         );
     }
 
-    // ── 非有限 f32 guard (bd raikiri-spike-2ui0、PMO 判断 2026-07-27) ────────
+    // ── 非有限 f32 guard ────────
     //
     // untrusted author CSS から +Inf / NaN が taffy / parley に到達しないことを
-    // **5 site すべて**で pin する。reproducer は 2ui0 の probe comment 由来。
+    // **5 site すべて**で pin する。reproducer は元の probe comment 由来。
     //
     // 期待値は「非有限でない」ではなく **clamp 後の具体値** で書く — NaN は
     // `NaN != NaN` なので `assert_ne!(x, ...NAN)` は無条件に pass してしまい
@@ -2868,7 +2834,7 @@ mod tests {
         );
 
         // Reproducer A: IEEE 754 `0.0 * inf = NaN` — em の乗算で NaN が生まれる。
-        // zls8 以前は `Em(_) => length(0.0)` arm がこれを吸収していた。
+        // かつては `Em(_) => length(0.0)` arm がこれを吸収していた。
         assert_eq!(
             guarded_style_for("font-size: 0px; padding-top: 1e40em")
                 .padding
@@ -3028,7 +2994,7 @@ mod tests {
                 Err(RecvTimeoutError::Timeout) => panic!(
                     "parley shaping が 30 秒で終わらなかった — font-size の非有限 \
                      guard (sanitize_finite) が外れると break_all_lines が spin \
-                     する (bd raikiri-spike-2ui0)"
+                     する"
                 ),
                 Err(RecvTimeoutError::Disconnected) => {
                     panic!("worker thread が panic した (hang ではない、上の stderr を参照)")
@@ -3075,7 +3041,7 @@ mod tests {
         );
     }
 
-    /// bd raikiri-spike-3653 point 2 — shapes `"Hi"` via parley **directly**
+    /// Shapes `"Hi"` via parley **directly**
     /// (bypassing `preshape_text` / `sanitize_finite` entirely, not just
     /// disabling them) with a raw `font_size`, bounded via worker-thread +
     /// `recv_timeout`. Shared by the two `#[test]` fns below it: one pins the
@@ -3112,7 +3078,7 @@ mod tests {
         }
     }
 
-    /// bd raikiri-spike-3653 point 2, narrower half — pins that `NaN`,
+    /// Narrower half of a paired characterization — pins that `NaN`,
     /// `-Inf`, and a merely-huge finite `font_size` (`1e9`) **do not** hang
     /// parley's `break_all_lines`, at the same raw (guard-bypassing) call
     /// site the `#[ignore]`d `+Inf` test below uses. Cheap (each sub-case
@@ -3148,12 +3114,12 @@ mod tests {
             assert_eq!(
                 shape_raw_bounded(font_size, std::time::Duration::from_secs(5)),
                 Ok(()),
-                "parley::Layout::break_all_lines(font_size = {label}) did not complete within 5s (bypassing raikiri's guard, same as the +Inf case) — this module's characterization that only +Inf hangs (bd raikiri-spike-3653 point 2) no longer holds for {label}; re-characterize rather than deleting this case"
+                "parley::Layout::break_all_lines(font_size = {label}) did not complete within 5s (bypassing raikiri's guard, same as the +Inf case) — this module's characterization that only +Inf hangs no longer holds for {label}; re-characterize rather than deleting this case"
             );
         }
     }
 
-    /// bd raikiri-spike-3653 point 2, `+Inf` half — formalizes into an
+    /// `+Inf` half of the paired characterization — formalizes into an
     /// automated regression test the manual measurement recorded in
     /// `MAX_FONT_SIZE_PX`'s doc comment ("guard を外すと... 25 秒経っても
     /// 終了しない"): `font_size = +Inf` reaching parley directly (bypassing
@@ -3161,12 +3127,12 @@ mod tests {
     /// reproducibly hangs `break_all_lines`. See
     /// `parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size`
     /// for why `NaN`/`-Inf`/huge-finite do *not* share this behavior (this is
-    /// the one case that does, and it's the one bd raikiri-spike-2ui0's own
+    /// the one case that does, and it's the one this module's own
     /// repro — `1e40px`, `1e40em` compounding — actually produces).
     ///
-    /// # Why `#[ignore]` (unlike every other test this task added)
+    /// # Why `#[ignore]` (unlike every other test added alongside it)
     ///
-    /// Every other bd raikiri-spike-3653 characterization test resolves in
+    /// Every other characterization test in this pair resolves in
     /// well under a second because the sink under test either doesn't hang
     /// or fails fast. This one is different **in the passing case**: parley
     /// has no shaping-cancellation mechanism (documented on `MAX_FONT_SIZE_PX`
@@ -3189,7 +3155,7 @@ mod tests {
     // cov:ignore: this whole test body never runs under default `cargo
     // test` (it's `#[ignore]`d — a genuine ~10s hang + leaked thread, see
     // the doc comment above); it's exercised explicitly via `-- --ignored`
-    // (recorded as run and passing in this task's gate evidence), which
+    // (verified separately to run and pass), which
     // llvm-cov's default `cargo test` invocation doesn't capture.
     #[test]
     #[ignore = "confirms a genuine ~10s hang + leaks a spinning worker thread for the rest \
@@ -3199,8 +3165,7 @@ mod tests {
             shape_raw_bounded(f32::INFINITY, std::time::Duration::from_secs(10)),
             Err("timeout"),
             "parley::Layout::break_all_lines(font_size = +Inf) did not hang within 10s \
-             — the line_break.rs livelock this test pins (bd raikiri-spike-2ui0 / bd \
-             raikiri-spike-3653 point 2) no longer reproduces in parley 0.10.0; \
+             — the line_break.rs livelock this test pins no longer reproduces in parley 0.10.0; \
              re-characterize rather than deleting this test (and consider whether \
              raikiri-dom's own MAX_FONT_SIZE_PX guard is still load-bearing for this \
              specific sink if parley itself now handles it). If this instead reports \
@@ -3226,7 +3191,7 @@ mod tests {
             0.0
         );
         // 両方とも実際に clamp した (NaN != 0.0) ので、それぞれ 1 event ずつ
-        // `LayoutWarn::NonFiniteClamped` が積まれる (bd raikiri-spike-7t1t)。
+        // `LayoutWarn::NonFiniteClamped` が積まれる。
         assert_eq!(
             diag.len(),
             2,
@@ -3293,18 +3258,18 @@ mod tests {
             );
         }
         // 範囲内 (clamp が実質 no-op) では何も積まない — per-node spam を
-        // 避ける設計の pin (`sanitize_finite` の doc / bd raikiri-spike-7t1t)。
+        // 避ける設計の pin (`sanitize_finite` の doc参照)。
         assert!(
             diag.is_empty(),
             "in-range value must not push a LayoutWarn: {diag:?}"
         );
     }
 
-    // ── site 6 (bd raikiri-spike-sxd7): sanitize_font_weight ─────────────
+    // ── site 6: sanitize_font_weight ─────────────
     //
     // sanitize_finite / sanitize_taffy と同型の unit test。`ComputedValues`
-    // が全 field `pub` であることに由来する非有限 font_weight (bd
-    // raikiri-spike-e52s の f32 格上げで型による排除ができなくなった) が
+    // が全 field `pub` であることに由来する非有限 font_weight (f32 格上げで
+    // 型による排除ができなくなった) が
     // `parley::FontWeight::new` の直前で有限 + `[1,1000]` に収まることを
     // 直接検証する。
 
@@ -3361,7 +3326,7 @@ mod tests {
 
     #[test]
     fn sanitize_font_weight_passes_through_in_range_values() {
-        // 通常値 (fractional weight 含む、bd raikiri-spike-e52s) は
+        // 通常値 (fractional weight 含む) は
         // bit-identical に素通しする。
         let mut diag = Vec::new();
         for v in [
@@ -3492,13 +3457,13 @@ mod tests {
         }
     }
 
-    // ── crate::diag 経由の generalized 診断 channel (bd raikiri-spike-7t1t) ──
+    // ── crate::diag 経由の generalized 診断 channel ──
     // fonts.rs の FontWarn observer pattern を汎用化した LayoutWarn 側の
     // 独自 unit test。fonts.rs の `observer_fires_*` test 群と対になる。
 
     /// `emit_layout_warn` は observer が `Some` ならそれを呼び、`eprintln!`
     /// はしない — fonts.rs の `emit_warn` と対称的な契約 (両方とも
-    /// `crate::diag::emit_warn_via` を経由するので同じ振る舞いになるはず)。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// `crate::diag::emit_warn_via` を経由するので同じ振る舞いになるはず)。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     #[test]
     fn emit_layout_warn_calls_observer_when_some() {
         let mut collected: Vec<LayoutWarn> = Vec::new();
@@ -3582,7 +3547,7 @@ mod tests {
     }
 
     /// `LayoutWarn` の `Display` が両 variant で人間可読な文字列を出す
-    /// ことの pin (`crate::diag::emit_warn_via` の `eprintln!` fallback が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// ことの pin (`crate::diag::emit_warn_via` の `eprintln!` fallback が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// 実際に読める行になることの保証)。
     #[test]
     fn layout_warn_display_is_human_readable() {
@@ -3629,7 +3594,7 @@ mod tests {
         );
     }
 
-    // ── 出力側 guard: nested percentage (bd raikiri-spike-r8ew) ──────────
+    // ── 出力側 guard: nested percentage ──────────
     //
     // 入力側 guard (上の site 1-4) は bridge に入る f32 を有限化するが、
     // percentage は used value 層 (taffy) で containing block に対して解決され
@@ -3676,8 +3641,7 @@ mod tests {
     /// document を [`layout_single_page`] に通し、**各段の**
     /// `unrounded_layout` を浅い順に返す。
     ///
-    /// 起点は probe 材料の depth sweep harness (bd raikiri-spike-r8ew 添付、
-    /// zls8 perf lens iter2) だが、**depth ごとに document を作り直さない** —
+    /// 起点は probe 材料の depth sweep harness だが、**depth ごとに document を作り直さない** —
     /// depth `N` の chain は 1..=`N` の各深さの node を既に含んでおり、
     /// probe が depth ごとに払っていた `FontContext::new()`
     /// (`font_context_new_cost_is_reasonable` が 10 回 5 秒未満を pin =
@@ -3701,7 +3665,7 @@ mod tests {
             .collect()
     }
 
-    /// 修正前 (bd raikiri-spike-r8ew) は下記の depth で `unrounded_layout` が
+    /// 修正前は下記の depth で `unrounded_layout` が
     /// 非有限に戻っていた。probe 材料 RAWDATA.txt の depth sweep 実測では
     /// **base (guard 前) / head (入力側 guard 後) が完全に一致**していた =
     /// 入力側 guard では閉じない穴であることの証拠:
@@ -3770,7 +3734,7 @@ mod tests {
 
     /// **深さ 96 でも保存値が有限**であることの pin。
     ///
-    /// `nested_percentage_output_is_finite_through_probe_sweep_depth` は bd
+    /// `nested_percentage_output_is_finite_through_probe_sweep_depth` は上
     /// の表に揃えた深さ 45 までしか見ないので、修正前に最も浅く破れた
     /// `padding-left: 1e9%` (probe harness で depth 4 / 本 harness で depth 5)
     /// を、その sweep 幅の 2 倍超で追加の 1 点として見る。
@@ -3852,8 +3816,8 @@ mod tests {
         // 16 field が非有限/範囲外 (下の個別 assert が数える対象と一致): location
         // 2 + size 2 + content_size 2 + scrollbar_size 1 + border 3 + padding 3
         // + margin 3。範囲内の 4 field (scrollbar_size.height / border.bottom /
-        // padding.bottom / margin.top) は積まれない (bd raikiri-spike-7t1t、
-        // per-node spam を避ける設計)。
+        // padding.bottom / margin.top) は積まれない (per-node spam を
+        // 避ける設計)。
         assert_eq!(
             diag.len(),
             16,
@@ -3936,10 +3900,10 @@ mod tests {
         );
     }
 
-    // ── 意味的 invariant fallback (bd raikiri-spike-ntxy) ─────────────────
+    // ── 意味的 invariant fallback ─────────────────
     //
     // 上の `sanitize_taffy_layout_*` test 群は「全 field が有限」までしか
-    // 見ない (r8ew の scope)。以下は `enforce_layout_invariants` が扱う
+    // 見ない (前段の scope)。以下は `enforce_layout_invariants` が扱う
     // 「field は有限だが親子関係が意味的に壊れている」層の pin。
     // `enforce_layout_invariants` の doc の 2 つの probe (border-box
     // padding overflow / 負 margin overflow) の数値もここで正式な
@@ -3962,7 +3926,7 @@ mod tests {
         // content_box_width() = 10.0 - 40.0 = -30.0 < 0.0。size / padding
         // どちらも個別には `[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]` 内
         // なので `sanitize_taffy_layout` の field 単位 clamp はこれを止めない
-        // — bd raikiri-spike-r8ew §8.2 spec lens finding F5 の直接再現。
+        // — これが実際に起こりうることの直接的な再現。
         doc.nodes[parent].unrounded_layout = TaffyLayout {
             order: 3,
             location: Point::ZERO,
@@ -4023,20 +3987,20 @@ mod tests {
         );
     }
 
-    /// **bd raikiri-spike-ckv0 で挙動が反転した直接 pin (旧名
+    /// **この変更で挙動が反転した直接 pin (旧名
     /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`)**。
     /// `child_within_parent_border_box` の gate (「その axis 自身の
     /// `child.location` が飽和している」) を満たし、かつ旧実装なら
     /// containment 違反として reset されていたはずの、直接構築した
     /// maximally-非-contained な値 (`location.x == MAX_TAFFY_MAGNITUDE`
-    /// に対し `parent.size.width == 100.0`) を使う。ckv0 で `axis_ok` が
+    /// に対し `parent.size.width == 100.0`) を使う。この変更で `axis_ok` が
     /// 符号を問わず無条件 `true` になったため、この fixture は — 実際には
     /// 明らかに parent border box の外にあるにもかかわらず — もう reset
     /// されない。「fixture を直接構築しても、もはやこの invariant を
     /// 破らせることはできない」ことを示す regression pin として残す
     /// (`child_within_parent_border_box` の doc「符号を問わず無条件
     /// accept になった理由」節、および将来「この check 自体を維持すべきか」
-    /// を判断する follow-up (ckv0 issue が明示的に deferred とした問題)
+    /// を判断する follow-up (別途明示的に deferred とされた問題)
     /// が「現在の関数は実際に何をするか」を確認する材料として使うことを
     /// 想定している)。
     #[test]
@@ -4061,7 +4025,7 @@ mod tests {
             margin: Rect::zero(),
         };
         // child.location.x がちょうど飽和境界 (MAX_TAFFY_MAGNITUDE) —
-        // parent (100x100) には到底収まらない。bd raikiri-spike-ckv0 以降、
+        // parent (100x100) には到底収まらない。この変更以降、
         // この「明らかに収まっていない」事実はもう reset の理由にならない。
         doc.nodes[child].unrounded_layout = TaffyLayout {
             order: 2,
@@ -4113,7 +4077,7 @@ mod tests {
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             doc.nodes[child].unrounded_layout, child_before,
-            "child.location.x が飽和境界にちょうど達し、かつ実際に parent border box の外にあっても、bd raikiri-spike-ckv0 以降は符号を問わず無条件 accept なので reset されないこと"
+            "child.location.x が飽和境界にちょうど達し、かつ実際に parent border box の外にあっても、現在の実装では符号を問わず無条件 accept なので reset されないこと"
         );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -4200,12 +4164,12 @@ mod tests {
     /// gate (`child.location` 自身が飽和) が真でも child が実際には parent
     /// に収まっている (境界ちょうど) ケースでは fallback しないことの pin。
     ///
-    /// **bd raikiri-spike-ckv0 以前の history**: この test はもともと旧
+    /// **この変更が入る前の history**: この test はもともと旧
     /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`
-    /// (飽和 かつ containment 違反 → reset、ckv0 で
+    /// (飽和 かつ containment 違反 → reset、この変更で
     /// `saturated_child_outside_parent_is_not_reset` に改名・反転) と
     /// 対にして、「gate 単独ではなく『gate かつ containment 違反』という
-    /// conjunction を検査している」ことを示す pin だった。ckv0 で
+    /// conjunction を検査している」ことを示す pin だった。この変更で
     /// `axis_ok` が符号を問わず無条件 `true` になったため、この
     /// conjunction はもう成立しない — containment が実際にどうであっても
     /// (境界ちょうどで収まっていても、明らかに外れていても) reset は
@@ -4274,7 +4238,7 @@ mod tests {
         assert_eq!(
             doc.nodes[child].unrounded_layout, child_before,
             "gate (child.location 自身の飽和) が真の child はゼロ化されないこと \
-             — bd raikiri-spike-ckv0 以降、この fixture がたまたま境界ちょうど \
+             — 現在の実装では、この fixture がたまたま境界ちょうど \
              で収まっているかどうかは無関係 (containment はもう見ていない)"
         );
         assert!(
@@ -4286,15 +4250,15 @@ mod tests {
         );
     }
 
-    /// **bd raikiri-spike-ckv0 で挙動が反転した pin (旧名
+    /// **この変更で挙動が反転した pin (旧名
     /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`,
     /// 旧主張「`y` 軸の検出力が保たれていること」)**。
     ///
-    /// ckv0 以前は、この fixture (`y` 軸が飽和かつ実際に parent に
+    /// この変更が入る前は、この fixture (`y` 軸が飽和かつ実際に parent に
     /// 収まっていない = 真の violation、`x` 軸は飽和していない legitimate
     /// な負 margin `-30`) は `y` 軸の検出力を示す pin として意味があった —
     /// `y` 軸の再検査だけで reset の理由が説明でき、`x` 軸の legitimate な
-    /// 負値は無視されることを示せた。ckv0 で `axis_ok` が符号を問わず
+    /// 負値は無視されることを示せた。この変更で `axis_ok` が符号を問わず
     /// 無条件 `true` になったため、`y` 軸は飽和しているだけでもう
     /// containment を再検査しない —「収まっていない」という事実自体が
     /// reset の理由になり得なくなった。
@@ -4326,7 +4290,7 @@ mod tests {
         };
         // y 軸: child.location.y がちょうど飽和境界かつ実際に parent
         // (height=100.0) に収まっていない。x 軸: 通常の負 margin (`-30`)
-        // による legitimate overflow — 飽和していない。bd raikiri-spike-ckv0
+        // による legitimate overflow — 飽和していない。この変更
         // 以降、どちらの軸も reset の理由にならない。
         doc.nodes[child].unrounded_layout = TaffyLayout {
             order: 1,
@@ -4352,7 +4316,7 @@ mod tests {
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             doc.nodes[child].unrounded_layout, child_before,
-            "y 軸 (飽和かつ実際には parent に収まっていない) も x 軸 (legitimate な負 margin、飽和していない) もどちらも bd raikiri-spike-ckv0 以降は reset の理由にならないので、child は一切変更されないこと"
+            "y 軸 (飽和かつ実際には parent に収まっていない) も x 軸 (legitimate な負 margin、飽和していない) もどちらも現在の実装では reset の理由にならないので、child は一切変更されないこと"
         );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -4365,13 +4329,13 @@ mod tests {
         );
     }
 
-    /// **§8.3 Codex re-review finding、2 回目の GATE FAIL の直接回帰 pin**
+    /// **直前の指摘への直接回帰 pin**
     /// — 直前の
     /// `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-    /// (bd raikiri-spike-ckv0 以前の旧名
+    /// (この変更が入る前の旧名
     /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`)
     /// は当時「`y` 軸だけでも reset の説明がつく」ため、`x` 軸を実装が正しく
-    /// 無視しているかどうかを実際には区別できない、と Codex が指摘した
+    /// 無視しているかどうかを実際には区別できない、と指摘された
     /// (旧 axis-mixing 実装でも当時の axis 単位実装でも同じ「reset される」
     /// という結果になってしまうため)。
     ///
@@ -4380,13 +4344,13 @@ mod tests {
     /// ない) 値にし、`x` 軸には legitimate な負 margin (`-30`、飽和して
     /// いない) を与える。
     ///
-    /// - **現行実装 (bd raikiri-spike-ckv0、符号を問わず無条件 accept)**:
+    /// - **現行実装 (符号を問わず無条件 accept)**:
     ///   `x` 軸は飽和していないので無条件 ok。`y` 軸は飽和しているが、
     ///   containment を再検査せずやはり無条件 ok。→ **reset されない**。
-    /// - **ckv0 直前の実装 (axis 単位・符号で分岐、正方向だけ `<=` を
+    /// - **この変更が入る直前の実装 (axis 単位・符号で分岐、正方向だけ `<=` を
     ///   再検査)**: `x` 軸は無条件 ok、`y` 軸は飽和かつ正なので再検査するが
     ///   実際に parent に収まっているので ok。→ 同じく reset されない
-    ///   (この test は ckv0 の前後で結果が変わらない — 変わったのは
+    ///   (この test はこの変更の前後で結果が変わらない — 変わったのは
     ///   `saturated_child_outside_parent_is_not_reset` や
     ///   `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
     ///   のように実際に containment が破れているケース)。
@@ -4460,8 +4424,8 @@ mod tests {
         );
     }
 
-    /// **§8.3 Codex final review finding、GATE FAIL の直接回帰 pin (その 2)**
-    /// — Codex が指摘した元の scenario そのもの: 同じ subtree の**無関係な
+    /// **直前の指摘への直接回帰 pin (その 2)**
+    /// — 指摘された元の scenario そのもの: 同じ subtree の**無関係な
     /// 別の場所** (ここでは同じ `parent` 自身) の `size` が飽和している状況で、
     /// **その child 自身は何も飽和していない**のに legitimate な負 margin
     /// (`location.x = -30`) を持つ。旧版の gate
@@ -4515,7 +4479,7 @@ mod tests {
             doc.nodes[child].unrounded_layout, child_before,
             "child 自身は何も飽和していないので、無関係な parent.size の飽和を \
              理由に legitimate な負 margin を reset してはならない — これが \
-             Codex §8.3 final review の GATE FAIL finding そのもの"
+             以前指摘された finding そのもの"
         );
         assert!(
             doc.layout_warnings
@@ -4540,7 +4504,7 @@ mod tests {
     /// legitimate deep chain to zero-size boxes.
     ///
     /// `saturated_but_contained_layout_is_not_reset` pins the equivalent
-    /// minimal synthetic case (its doc records how bd raikiri-spike-ckv0
+    /// minimal synthetic case (its doc records how a later change
     /// changed what that pin actually demonstrates); this test pins the
     /// same "not reset" outcome against the exact real-world shape that
     /// first surfaced the bug, so a future edit that reintroduces an
@@ -4578,7 +4542,7 @@ mod tests {
         }
     }
 
-    /// bd raikiri-spike-epkj — minimal synthetic pin for the new negative-
+    /// Minimal synthetic pin for the new negative-
     /// saturation branch of `child_within_parent_border_box`, isolated
     /// from any real CSS pipeline (mirrors how
     /// `saturated_but_contained_layout_is_not_reset` pins the positive-
@@ -4589,10 +4553,10 @@ mod tests {
     /// **unreachable as a pass**: no negative value ever satisfies `>= 0.0`,
     /// so the old code reset this unconditionally regardless of
     /// `parent.size`. This test pins that the sign-based branch introduced
-    /// by bd raikiri-spike-epkj (see `child_within_parent_border_box`'s
+    /// later (see `child_within_parent_border_box`'s
     /// doc, "符号を問わず無条件 accept になった理由") treats
     /// saturated-negative as unconditionally ok, the same way
-    /// unsaturated-negative already was — and, since bd raikiri-spike-ckv0,
+    /// unsaturated-negative already was — and, since a later change,
     /// the same way saturated-positive now is too.
     #[test]
     fn saturated_negative_location_is_not_reset() {
@@ -4643,13 +4607,13 @@ mod tests {
         // string 状態をリセットするため、backslash 継続行の途中に (地の文
         // としての) `)`/`]`/`}` があると `cov:ignore` の block scope 計算が
         // そこで途切れ、後続行が exempt されず patch coverage が誤って
-        // FAIL する (bd raikiri-spike-epkj で実際に踏んだ)。1 行に畳むのは
+        // FAIL する (実際に踏んだ経験がある)。1 行に畳むのは
         // その回避策であり、単なる style の揺れではない。
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             doc.nodes[child].unrounded_layout, child_before,
-            "child.location.x が飽和境界にちょうど達していても、負である限り MAX_TAFFY_MAGNITUDE の doc が言う implementation-specific limit に達しただけで破綻の証拠にはならない (bd raikiri-spike-epkj) — reset されないこと"
+            "child.location.x が飽和境界にちょうど達していても、負である限り MAX_TAFFY_MAGNITUDE の doc が言う implementation-specific limit に達しただけで破綻の証拠にはならない — reset されないこと"
         );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -4662,7 +4626,7 @@ mod tests {
         );
     }
 
-    /// bd raikiri-spike-epkj — real CSS pipeline regression pin, and the
+    /// Real CSS pipeline regression pin, and the
     /// **discriminating fixture** between the sign-based fix and a
     /// considered-and-rejected alternative ("skip re-validation whenever
     /// `parent.size` on that axis is also saturated, regardless of sign").
@@ -4677,7 +4641,7 @@ mod tests {
     ///
     /// The rejected "parent-also-saturated" alternative would still reset
     /// this case (parent isn't saturated on this axis), so it does not
-    /// close the gap this issue investigated. Only a rule keyed on the
+    /// close this gap. Only a rule keyed on the
     /// *child's own sign* (this fix) accepts it, which is why this test is
     /// pinned independently of
     /// `deep_nested_negative_percentage_margin_saturating_location_is_not_reset`
@@ -4741,10 +4705,10 @@ mod tests {
         );
     }
 
-    /// **bd raikiri-spike-ckv0 — positive-direction analog of
+    /// **Positive-direction analog of
     /// `saturated_negative_margin_percentage_child_is_not_reset`**, real
-    /// CSS pipeline regression pin for the PMO-approved decision to extend
-    /// epkj's negative-side unconditional-accept treatment symmetrically to
+    /// CSS pipeline regression pin for the decision to extend
+    /// the negative-side unconditional-accept treatment symmetrically to
     /// the positive side.
     ///
     /// A *single* `margin-left: 1e9%` declaration (no nesting) on a child of
@@ -4754,11 +4718,11 @@ mod tests {
     /// (`1e7 * 100 = 1e9`), and `sanitize_taffy_layout` clamps the resulting
     /// raw `location.x` to exactly `MAX_TAFFY_MAGNITUDE` on write.
     /// `parent.size.width` stays `100.0` — nowhere near saturated. Before
-    /// bd raikiri-spike-ckv0, `axis_ok` re-checked `location.x <=
+    /// this fix, `axis_ok` re-checked `location.x <=
     /// parent.size.width` for saturated positive locations
     /// (`1e7 <= 100.0` → false) and reset the whole child subtree to a zero
-    /// layout, discarding spec-legal content — this is the exact repro the
-    /// ckv0 issue's PMO-approval comment records (independently reproduced
+    /// layout, discarding spec-legal content — this is the exact repro that
+    /// motivated the decision (independently reproduced
     /// in a throwaway worktree before the decision was recorded). This test
     /// pins that the fix actually closes the gap through the real
     /// cascade+taffy pipeline, not just at the unit level
@@ -4810,7 +4774,7 @@ mod tests {
         assert_ne!(
             child_layout,
             TaffyLayout::with_order(child_layout.order),
-            "a single extreme-but-spec-valid positive percentage margin (no nesting needed) must not reset the subtree merely because it saturates the location — bd raikiri-spike-ckv0 extends epkj's negative-side unconditional-accept treatment symmetrically to this positive case: {child_layout:?}"
+            "a single extreme-but-spec-valid positive percentage margin (no nesting needed) must not reset the subtree merely because it saturates the location — this fix extends the negative-side unconditional-accept treatment symmetrically to this positive case: {child_layout:?}"
         );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -4823,7 +4787,7 @@ mod tests {
         );
     }
 
-    /// bd raikiri-spike-epkj — negative-direction analog of
+    /// Negative-direction analog of
     /// `nested_percentage_wide_child_chain_is_not_reset`. `width: 200%`
     /// alone never moves the child's origin off `(0, 0)` (that test's own
     /// premise), so it can't exercise invariant 2's location check at all.

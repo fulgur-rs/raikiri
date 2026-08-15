@@ -8,8 +8,8 @@
 //! inheritance parent, then phase 3 = absolutization against the page context's
 //! own font-size + `border-*-width` style gating — see that function's doc).
 //! Per-page `PageBox` derivation and
-//! margin-box slot layout remain deferred to M4 and live downstream; this
-//! module produces the declaration bag they consume.
+//! margin-box slot layout remain deferred future work that lives downstream;
+//! this module produces the declaration bag they consume.
 //!
 //! # Primary source
 //!
@@ -29,7 +29,7 @@
 //!   [`PageSelectorEntry::ident`] for the case-sensitivity citation chain):
 //!   <https://www.w3.org/TR/css-page-3/#using-named-pages>
 //!
-//! # Grammar coverage (raikiri-spike-mvu, M4 pre-work)
+//! # Grammar coverage
 //!
 //! The spec grammar is:
 //!
@@ -56,8 +56,8 @@
 //!
 //! Whitespace *within* a compound (e.g. `@page : left`, `@page named :first`,
 //! `@page :first :left`) is rejected per the compound rule — the whole
-//! `@page` rule is dropped. This tightening addresses the codex §8.3 F3
-//! finding on the raikiri-spike-rbo scaffolding.
+//! `@page` rule is dropped. This tightening was added after review surfaced
+//! a gap in the initial parser scaffolding.
 //!
 //! # Note on `:nth-page`
 //!
@@ -66,10 +66,10 @@
 //! that `:nth-page` is not part of CSS Paged Media Level 3 nor the Level 4
 //! Editor's Draft. Accepting it under autonomous authority would emit a
 //! [`PagePseudo`] variant no primary source defines, forcing invented
-//! cascade semantics at M4. The decision on whether raikiri should ship a
-//! spec-outside `:nth-page` extension (e.g. for GCPM prototyping) is
-//! deferred to a human ledger — see the bd task filed as an M4-handoff
-//! escalation.
+//! cascade semantics ahead of the rest of the cascade design. The decision on
+//! whether raikiri should ship a spec-outside `:nth-page` extension (e.g. for
+//! GCPM prototyping) is deferred to a human decision, tracked outside this
+//! source tree.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -99,8 +99,8 @@ use crate::specified::INITIAL_BORDER;
 /// [`#syntax-page-selector`](https://www.w3.org/TR/css-page-3/#syntax-page-selector)).
 ///
 /// An empty prelude (`@page { … }`) is represented as a single empty
-/// [`PageSelectorEntry`] so the M4 cascade code can uniformly iterate
-/// `entries` without a special "default" enum arm.
+/// [`PageSelectorEntry`] so the cascade code can uniformly iterate `entries`
+/// without a special "default" enum arm.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageSelector {
@@ -163,14 +163,14 @@ pub enum PagePseudo {
 /// `source_order` numbers `@page` rules *independently* of style rules; the
 /// two rule kinds cascade in different tuple positions in the CSS spec, so a
 /// separate 0-indexed counter keeps their bookkeeping decoupled and leaves
-/// `StyleRule::source_order` semantics untouched. Cross-kind ordering will be
-/// reconstructed by M4 cascade code if needed.
+/// `StyleRule::source_order` semantics untouched. Cross-kind ordering can be
+/// reconstructed by future cascade code if needed.
 ///
 /// Field order (selector → declarations → source_order → origin) mirrors
-/// [`crate::StyleRule`] so both rule kinds present the same shape to M4
-/// cascade code (raikiri-spike-jzv M4 pre-work). Future field (`@page`-specific
-/// descriptor size / marks / bleed / margin-box、cascade-origin cache 等) は
-/// M4+ で追加、`#[non_exhaustive]` の恩恵で non-breaking。
+/// [`crate::StyleRule`] so both rule kinds present the same shape to the
+/// cascade code. Future fields (`@page`-specific descriptors like size /
+/// marks / bleed / margin-box, a cascade-origin cache, etc.) are expected to
+/// be added later; `#[non_exhaustive]` means that addition stays non-breaking.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct PageRule {
@@ -178,23 +178,23 @@ pub struct PageRule {
     pub selector: PageSelector,
     /// Declarations from the block body — parsed with the same
     /// `parse_declaration_block` used by qualified rules, so unsupported
-    /// properties are silently dropped (matching the M1.4 policy).
+    /// properties are silently dropped (matching this crate's general
+    /// unsupported-property policy).
     ///
-    /// M4 note: `@page`-specific descriptors (`size`, `marks`, `bleed`, and
-    /// the margin-box at-rules `@top-left` etc. per L3 §5) are also dropped
-    /// by this reuse; wiring them is M4 scope.
+    /// Note: `@page`-specific descriptors (`size`, `marks`, `bleed`, and the
+    /// margin-box at-rules `@top-left` etc. per L3 §5) are also dropped by
+    /// this reuse; wiring them is future scope.
     ///
     /// # Why this field (and `RuleTree::page_rules`) is still `pub`
     ///
-    /// Still `pub` after bd raikiri-spike-qzn3 — deliberately, and outside
-    /// that task's approved scope. **This is the canonical, docs.rs-visible
+    /// Still `pub` deliberately, and outside a prior visibility-tightening
+    /// pass's approved scope. **This is the canonical, docs.rs-visible
     /// statement of what that leaves open**; [`crate::ruletree::RuleTree::page_rules`]
     /// points here rather than restating it (same discipline as
     /// [`crate::page::PageCascadeResult::declarations`] — spell
-    /// `PageRule::declarations` verbatim if you add another pointer site;
-    /// bd raikiri-spike-ykee).
+    /// `PageRule::declarations` verbatim if you add another pointer site).
     ///
-    /// qzn3 closed the *element* path — the `style_rules` /
+    /// That earlier pass closed the *element* path — the `style_rules` /
     /// `declarations` / `value` fields are now `pub(crate)`, reachable from
     /// outside the crate only through their fully `pub` read-only accessors
     /// (`RuleTree::style_rules()` / `StyleRule::declarations()` /
@@ -216,8 +216,8 @@ pub struct PageRule {
     ///   private, so no struct-literal / functional-update construction is
     ///   possible, and (b) every `Declaration` a consumer could clone came
     ///   out of `parse_declaration_block`, which never emits a shorthand key
-    ///   (pinned by `expand_shorthand_into`'s exhaustive match, bd
-    ///   raikiri-spike-ez7b). If either (a) or (b) breaks, the `@page` path
+    ///   (pinned by `expand_shorthand_into`'s exhaustive match). If either
+    ///   (a) or (b) breaks, the `@page` path
     ///   reopens from outside the crate — re-derive this section before
     ///   adding a public constructor to `Declaration`.
     ///
@@ -232,11 +232,11 @@ pub struct PageRule {
     pub source_order: u32,
     /// Cascade origin this rule was parsed under. See [`Origin`] for the
     /// current 4-variant set (`UserAgent` / `User` / `AuthorPresentationalHint`
-    /// / `Author`, bd raikiri-spike-pdta) — `@page` rules are only ever
+    /// / `Author`) — `@page` rules are only ever
     /// parsed via [`crate::ruletree::RuleTree::add_stylesheet`], the same
     /// entry point style rules use, so any [`Origin`] a caller passes
     /// (including [`Origin::User`], whose only production producer today is
-    /// consumer-provided `extra_stylesheets` — bd raikiri-spike-d7h3, see
+    /// consumer-provided `extra_stylesheets` — see
     /// [`Origin`]'s own doc) flows through here unchanged; this field does no
     /// origin-narrowing of its own.
     ///
@@ -254,10 +254,9 @@ pub struct PageRule {
     ///   ordering (see that function's doc for the current rank table):
     ///   <https://www.w3.org/TR/css-cascade-4/#cascade-origin>
     ///
-    /// M4 pre-work (raikiri-spike-jzv): the field is populated at parse
-    /// time so M4 cascade wiring never has to re-index page rules by
-    /// origin. The cascade *ordering* itself is M4 scope and not wired
-    /// here.
+    /// The field is populated at parse time so cascade wiring never has to
+    /// re-index page rules by origin later. The cascade *ordering* itself
+    /// remains future work and is not wired here.
     pub origin: Origin,
 }
 
@@ -278,7 +277,7 @@ pub(crate) fn parse_page_prelude<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<PageSelector, ParseError<'i, ()>> {
     // Empty prelude → `@page { … }` matches every page. Represented as a
-    // single empty entry so M4 cascade code can iterate uniformly.
+    // single empty entry so the cascade code can iterate uniformly.
     if input.is_exhausted() {
         return Ok(PageSelector {
             entries: vec![PageSelectorEntry::default()],
@@ -394,14 +393,14 @@ fn parse_and_push_pseudo<'i>(
 }
 
 // ---------------------------------------------------------------------------
-// @page cascade order 本実装 (raikiri-spike-m4.1)
+// @page cascade order 本実装
 //
 // CSS Paged Media Level 3, §"Cascading and page context" —
 //   <https://www.w3.org/TR/css-page-3/#cascading-and-page-context>
 // CSS Cascading and Inheritance Level 4, §"Cascade Origin" —
 //   <https://www.w3.org/TR/css-cascade-4/#cascade-origin>
 //
-// # Sibling arm convention (raikiri-spike-37n)
+// # Sibling arm convention
 //
 // Follows the sibling convention established by
 // `crate::cascade::collect_cascaded` + `crate::cascade::pick_winners`:
@@ -427,7 +426,7 @@ fn parse_and_push_pseudo<'i>(
 /// Fields default to `None` / `false`, i.e. an unnamed page with no
 /// pseudo-page state — matches only `@page { … }`.
 ///
-/// `#[non_exhaustive]`: future M4 pseudo-pages (e.g. spec-outside extensions)
+/// `#[non_exhaustive]`: future pseudo-pages (e.g. spec-outside extensions)
 /// or additional context (media query state, forced-orientation flags) can be
 /// added without a semver break. Consumers construct via
 /// `PageContextQuery { page_name: …, is_first: …, ..Default::default() }` per
@@ -460,16 +459,16 @@ pub struct PageContextQuery {
 ///
 /// Contains one entry per property that at least one matching `@page` rule
 /// declared. `@page`-specific **descriptors** (`size`, `marks`, `bleed`) are
-/// absent — the M1.4 property parser silently drops them, and wiring them is
-/// M4 scope (see
+/// absent — the current property parser silently drops them, and wiring
+/// them is future scope (see
 /// `ruletree::tests::page_body_unsupported_property_drops_declaration`).
 ///
 /// The ordinary box properties are **not** in that category: `margin` /
 /// `padding` / `border-*` / `width` / `height` are parsed (the `margin`
-/// shorthand has been expanded to longhands since raikiri-spike-0vv.5) and go
+/// shorthand is expanded to longhands) and go
 /// through both resolution phases below. Downstream page-layout code is
 /// expected to translate this bag into its page-box model and future
-/// `@page`-descriptor fields when the M4 descriptor property parser lands;
+/// `@page`-descriptor fields once a descriptor property parser lands;
 /// raikiri-style remains a leaf crate.
 ///
 /// Iteration order over `declarations` is `HashMap`-random; consumers that
@@ -480,10 +479,9 @@ pub struct PageContextQuery {
 pub struct PageCascadeResult {
     // Private so the "resolved against the inheritance parent" contract
     // documented on `declarations()` is enforced by construction: only
-    // `cascade_page` can populate this map (raikiri-spike-ygl0). Read-only
+    // `cascade_page` can populate this map. Read-only
     // access is public API — see the `declarations()` accessor below, in
-    // particular its "Why this is a method, not a field" section
-    // (raikiri-spike-dyxj).
+    // particular its "Why this is a method, not a field" section.
     declarations: HashMap<PropertyKey, PropertyValue>,
 }
 
@@ -495,8 +493,8 @@ impl PageCascadeResult {
     /// that touch it point here instead of restating it — enumerate them with
     /// `git grep "PageCascadeResult::declarations"` rather than trusting a
     /// list, because a list of pointer sites drifts exactly the way the
-    /// duplicated rule statements did (bd raikiri-spike-ygl0 /
-    /// raikiri-spike-sshp, twice). **A new site that mentions this contract
+    /// duplicated rule statements did (this has already happened twice).
+    /// **A new site that mentions this contract
     /// must spell `PageCascadeResult::declarations` verbatim** (in an
     /// intra-doc link, or in plain text where links do not resolve, as the
     /// umbrella crate's `pub use` commentary does) — that is what keeps the
@@ -507,12 +505,12 @@ impl PageCascadeResult {
     ///
     /// The **"no specified-layer residue"** claim below is pinned by
     /// `page::tests`' `page_declarations_carry_no_specified_layer_residue`
-    /// (raikiri-spike-l3wg; before that, `text-align: match-parent` was the
+    /// (before a later change, `text-align: match-parent` was the
     /// one documented exception and the same test was named
     /// `page_declarations_carry_exactly_one_specified_layer_residue`),
-    /// `cascade_page_output_carries_no_specified_layer_residue` and
-    /// `phase_3_variant_classification_matches_the_documented_counts`
-    /// (bd raikiri-spike-awjx). The **individual phase-table rows** below (the
+    /// `cascade_page_output_carries_no_specified_layer_residue`, and
+    /// `phase_3_variant_classification_matches_the_documented_counts`.
+    /// The **individual phase-table rows** below (the
     /// `border-*-width` style gate, the `<percentage>` pass-through, `auto`,
     /// `line-height: <number>`) are *not* covered by those three — they each
     /// have their own acceptance test in `page::tests` instead, and their
@@ -526,11 +524,12 @@ impl PageCascadeResult {
     ///   *this* entry point's output is a computed-value bag; they cannot
     ///   assert it for an entry point that does not exist yet. CSS Paged
     ///   Media 3 §6's page-margin-box cascade ("page-margin boxes inherit from
-    ///   the page context") would be a third path. Since bd raikiri-spike-7m33,
+    ///   the page context") would be a third path.
     ///   [`absolutize_in_page_context`]'s parameter type forces any caller that
     ///   reuses phase 3 to have gone through phase 2 first; see
     ///   [`crate::cascade::ResolvedAgainstInherited`] for exactly what that
-    ///   does and does not close (bd raikiri-spike-m4.2 tracks the remainder).
+    ///   does and does not close (the remainder is tracked separately, as
+    ///   future work outside this source tree).
     /// - The residue detector classifies five payload types exhaustively
     ///   (`Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
     ///   `TextAlign`); a new payload case in any *other* type is not caught.
@@ -539,8 +538,8 @@ impl PageCascadeResult {
     ///   nothing then forces the author to extend `page_corpus`, so a new
     ///   variant can sit outside the corpus with every test green.
     ///
-    /// **These are computed values, with no documented exception** (as of
-    /// raikiri-spike-l3wg — see the phase 2 bullet below for the property
+    /// **These are computed values, with no documented exception** (see
+    /// the phase 2 bullet below for the property
     /// that used to be the one exception). CSS Paged Media 3 §6 "Page Properties"
     /// (<https://www.w3.org/TR/css-page-3/#page-properties>) states that "both
     /// the page context and the margin context have a computed value for every
@@ -553,20 +552,19 @@ impl PageCascadeResult {
     ///
     /// - `font-weight` — `bolder` / `lighter` are resolved against the
     ///   inherited weight, so **no relative font-weight sentinel** reaches the
-    ///   consumer (raikiri-spike-ygl0).
+    ///   consumer.
     /// - `font-size` — `em` / `rem` / `%` are absolutized against the root
     ///   element's computed font-size, so the value is always
     ///   [`Length::Px`]. §6 verbatim: "When used on
     ///   the font-size property in the page context, they are relative to the
-    ///   font-size of the root element." (raikiri-spike-zls8). `larger` /
+    ///   font-size of the root element." `larger` /
     ///   `smaller` (`<relative-size>`) are resolved the same way against the
     ///   root element's computed font-size, so **no relative font-size
     ///   sentinel** reaches the consumer either — same guarantee as the
-    ///   `font-weight` bullet above (raikiri-spike-4rmu).
+    ///   `font-weight` bullet above.
     /// - `text-align` — [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent)
     ///   is resolved against the inheritance parent's computed `text-align`
-    ///   **and** `direction` (raikiri-spike-l3wg; origin: raikiri-spike-ygl0
-    ///   §8.2 spec lens F1). CSS Text 3 §6.1
+    ///   **and** `direction`. CSS Text 3 §6.1
     ///   `#valdef-text-align-match-parent`
     ///   (<https://www.w3.org/TR/css-text-3/#valdef-text-align-match-parent>)
     ///   verbatim: "This value behaves the same as inherit (computes to its
@@ -589,7 +587,7 @@ impl PageCascadeResult {
     ///   different entry point entirely — `cascade_page` never calls it.)
     ///
     /// **Phase 3** — absolutization against the page context's *own*
-    /// `font-size` (`absolutize_in_page_context`, raikiri-spike-sshp):
+    /// `font-size` (`absolutize_in_page_context`):
     ///
     /// - `padding` / `margin` / `width` / `height` / `border-*-width` /
     ///   `line-height` — [`Length::Em`] / `Rem` /
@@ -615,7 +613,7 @@ impl PageCascadeResult {
     ///   property does not apply to the page or page-margin box." So
     ///   `@page { border-top-width: 5px }` alone computes to `0px`, matching
     ///   the element path.
-    /// - `overflow-x` / `overflow-y` (raikiri-spike-cmd3) apply the CSS
+    /// - `overflow-x` / `overflow-y` apply the CSS
     ///   Overflow 3 §3.1 cross-axis coupling
     ///   ([`crate::property::resolve_overflow`]) the same way the element
     ///   path does, with one representational gap this map does not close:
@@ -631,16 +629,15 @@ impl PageCascadeResult {
     ///   property's own computed value plus an *undeclared* input's initial
     ///   value (never the reverse). `overflow`/`overflow-x`/`overflow-y` are
     ///   **not** in CSS Paged Media 3 Appendix A's page-property-list
-    ///   (verified directly against the raw Appendix A table, 2026-08-11,
-    ///   by reviewer:spec during bd raikiri-spike-cmd3's gate) — same as
+    ///   (checked directly against the raw Appendix A table) — same as
     ///   [`crate::property::DisplayValue`], [`crate::property::PositionValue`],
     ///   `box-sizing`, `counter-reset`/`counter-increment`, `content`, and
     ///   `string-set`, all of which this crate already wires into the page
     ///   cascade beyond Appendix A's CSS 2.1 floor (§6's wording is a
     ///   positive minimum, not a ceiling, and does not prohibit extending
     ///   further). So this wiring is intentional, not a scope question.
-    ///   The representational gap itself remains open, tracked by
-    ///   bd raikiri-spike-hrwz: closing it needs [`page_context_overflow_pair`]
+    ///   The representational gap itself remains open, tracked separately:
+    ///   closing it needs [`page_context_overflow_pair`]
     ///   (or its caller) to synthesize the missing axis's entry rather than
     ///   silently omitting it.
     /// - `<percentage>` on `padding` / `margin` / `width` / `height` **stays**
@@ -677,7 +674,7 @@ impl PageCascadeResult {
     /// consumer's job, and it starts from the resolved [`PageInheritance`]
     /// plus these declarations.
     ///
-    /// # Non-finite values pass through unguarded (bd raikiri-spike-kj2s)
+    /// # Non-finite values pass through unguarded
     ///
     /// The absolutization in phase 2 / phase 3 above is IEEE 754 `f32`
     /// arithmetic over untrusted author input. CSS Values 4 §5 "Numeric Data
@@ -692,8 +689,8 @@ impl PageCascadeResult {
     /// for the pinned reproducer.
     ///
     /// That `1e40em` example's *parse-time* overflow-to-`f32::INFINITY` step
-    /// is itself disputed: bd raikiri-spike-9mbo (open, `blocked/human`)
-    /// argues that CSS Values 4 §5's "closest value" wording may require
+    /// is itself disputed: it is an open question whether CSS Values 4 §5's
+    /// "closest value" wording may require
     /// saturating to `f32::MAX` instead, which is a question about
     /// cssparser's `f64`→`f32` cast, not about this crate. The hazard this
     /// section documents does not depend on how that resolves: two already
@@ -702,7 +699,7 @@ impl PageCascadeResult {
     /// declaration), with no contested cast anywhere in the chain. See
     /// `page::tests::cascade_page_font_size_can_carry_infinity_from_finite_operand_multiply`
     /// for that arithmetic-only reproducer, which stays valid regardless of
-    /// how 9mbo is resolved.
+    /// how that open question is resolved.
     ///
     /// **This map does not filter that out**, and neither does
     /// [`ComputedValues`] — the element path's equivalent computed-value bag —
@@ -711,45 +708,45 @@ impl PageCascadeResult {
     /// anywhere in parsing, cascade, or resolution (grep the crate to
     /// confirm), and the element path's guard against non-finite geometry
     /// lives entirely outside this crate, in `raikiri-dom`'s layout module
-    /// (`sanitize_taffy`, decided by bd raikiri-spike-2ui0's PMO ruling:
+    /// (`sanitize_taffy`, per a deliberate design decision:
     /// **the guard belongs at the sink that consumes the computed-value bag,
     /// not at the parse/resolve layer that produces it**). This map is the
     /// same kind of computed-value bag, so the same precedent applies to it.
     ///
     /// No sink for `declarations` exists yet — the consumer that would read
     /// this map (page-margin-box layout, mirroring `apply_computed_to_style`
-    /// for the element path) is M4+ scope, and `raikiri-style` currently has
+    /// for the element path) is future scope, and `raikiri-style` currently has
     /// zero consumers of this field outside this crate: grepping the type
     /// name `PageCascadeResult` (not `.declarations`, which `PageRule` and
     /// `StyleRule` also expose as an unrelated field/accessor name) finds
     /// only doc-comment *mentions* elsewhere (`raikiri-dom`, and an umbrella
     /// comment noting that `cascade_page` itself is not re-exported), never
     /// an actual field read, as of this writing. The hazard is therefore
-    /// real but currently unreachable; **when the M4 sink is built, its
+    /// real but currently unreachable; **when that sink is built, its
     /// bridge must add the equivalent guard**, following the same precedent
     /// rather than adding one here.
     ///
-    /// # Why this is a method, not a field (bd raikiri-spike-dyxj)
+    /// # Why this is a method, not a field
     ///
-    /// Before raikiri-spike-dyxj, `declarations` was a `pub` field. The
+    /// Before this accessor existed, `declarations` was a `pub` field. The
     /// `#[non_exhaustive]` on this type already blocked external struct-literal
     /// construction, but a `pub` field leaves one hole open regardless:
     /// `let mut r = PageCascadeResult::default(); r.declarations.insert(key,
     /// raw_specified_value)` — parking an unresolved specified-layer value in
     /// the map without going through [`cascade_page`] at all. That is the same
-    /// *class* of defect as the raikiri-spike-ygl0 regression this whole doc
+    /// *class* of defect as the regression this whole doc
     /// pins against, just reached by direct field-write instead of a cascade
     /// bug, so the field is now private and this accessor is the only read
     /// path — the "resolved against the inheritance parent" contract is
     /// enforced by construction (only `cascade_page`, in this module, can
     /// populate the field) rather than by convention.
     ///
-    /// ## Compile-fail pin (bd raikiri-spike-ejia precedent)
+    /// ## Compile-fail pin
     ///
     /// "The field is private" is a claim about what does *not* compile, which
-    /// no ordinary (must-pass) doctest can pin — the same gap
-    /// bd raikiri-spike-ejia closed for `Declaration::value` /
-    /// `StyleRule::declarations` / `RuleTree::style_rules` on the same day.
+    /// no ordinary (must-pass) doctest can pin — the same gap was
+    /// closed for `Declaration::value` /
+    /// `StyleRule::declarations` / `RuleTree::style_rules` at the same time.
     /// `PageCascadeResult::default()` returns an owned, mutable value (the
     /// type derives [`Default`]), so unlike `Declaration::value` (reached only
     /// through a `&Declaration` behind an accessor) this needs no `.clone()`
@@ -764,7 +761,8 @@ impl PageCascadeResult {
     /// r.declarations.insert(PropertyKey::Color, PropertyValue::Color(CssColor::BLACK));
     /// ```
     ///
-    /// Verified non-vacuous the same way as the ejia precedent: temporarily
+    /// Verified non-vacuous the same way as this crate's other compile-fail
+    /// pins: temporarily
     /// restoring `pub` on the field makes the fence above compile (and thus
     /// makes `cargo test --doc` fail on it), confirming the fence fails
     /// *because* the field is private and not for some unrelated reason.
@@ -824,9 +822,9 @@ impl PageCascadeResult {
 /// apply with the following exceptions: page-margin boxes inherit from the page
 /// context. The page context inherits from the root element."
 ///
-/// Before bd raikiri-spike-mnvr this argument was `Option<&ComputedValues>`,
+/// Before this type was introduced, this argument was `Option<&ComputedValues>`,
 /// and `None` was accepted with no compile error, warning, or lint marking
-/// the choice — bd raikiri-spike-ygl0 §8.2 debt lens D3 (CONFIRMED, latent)
+/// the choice — a call-site audit
 /// found 27 of the 29 call sites existing at that time reached the L3 legacy
 /// exception this way, by omission rather than by a deliberate choice, which
 /// silently resolves inherited properties against the initial values instead
@@ -863,7 +861,7 @@ pub enum PageInheritance<'a> {
     /// The spec states this exception will be removed in Level 4. Choosing
     /// this variant where a root style could have been supplied instead
     /// silently resolves `bolder` / `lighter` against `400` instead of the
-    /// root's weight. Since bd raikiri-spike-sshp wired phase 3 through the
+    /// root's weight. Since phase 3 is wired through the
     /// same `font-size` basis, it also affects `em` / `rem` lengths in the
     /// page box (`padding` / `margin` / `width` / `height` /
     /// `border-*-width` / `line-height`) — but not uniformly: the `rem`
@@ -909,7 +907,7 @@ pub enum PageInheritance<'a> {
 ///    apply the `border-*-width` style gate. Mirrors the element path's
 ///    [`crate::specified::SpecifiedValues::finalize`]; the split into two phases
 ///    is required because `padding: 2em` depends on a sibling declaration whose
-///    winner is only known after step 2 (decision raikiri-spike-082k).
+///    winner is only known after step 2.
 ///
 /// The result is a bag of **computed** values —
 /// [`PageCascadeResult::declarations`] documents the one remaining exception
@@ -920,9 +918,9 @@ pub enum PageInheritance<'a> {
 /// See [`PageInheritance`] for the two named choices, their spec basis, and
 /// which one to prefer — that is what step 3 above resolves winners against.
 ///
-/// # Compile-fail pin (bd raikiri-spike-mnvr)
+/// # Compile-fail pin
 ///
-/// Before bd raikiri-spike-mnvr the third parameter was
+/// Before this type was introduced the third parameter was
 /// `Option<&ComputedValues>` and a bare `None` literal compiled silently —
 /// see [`PageInheritance`]'s doc for the history. The parameter's type is now
 /// [`PageInheritance`] itself (not `impl Into<PageInheritance>`, which would
@@ -974,7 +972,7 @@ pub fn cascade_page(
     inheritance: PageInheritance<'_>,
 ) -> PageCascadeResult {
     // Candidate: (value, important, origin, specificity, source_order).
-    // Shape mirrors `cascade::CascadedDecl` per sibling convention (37n), with
+    // Shape mirrors `cascade::CascadedDecl` per the sibling convention, with
     // `PageSpecificity` in place of `selectors`-crate `Specificity`.
     let mut candidates: Vec<(PropertyValue, bool, Origin, PageSpecificity, u32)> = Vec::new();
     for rule in &rule_tree.page_rules {
@@ -996,8 +994,8 @@ pub fn cascade_page(
                 // Expand shorthands into longhands before pushing candidates —
                 // the parse-time expansion alone does not cover the post-parse
                 // mutation path through the `pub` field `PageRule::declarations`
-                // (bd raikiri-spike-3svx; the element-path sibling is
-                // `crate::cascade`'s `collect_cascaded`, bd raikiri-spike-nqkj).
+                // (the element-path sibling is
+                // `crate::cascade`'s `collect_cascaded`).
                 // Rationale is consolidated in `crate::rule::expand_shorthand_into`.
                 expand_shorthand_into(decl, |d| {
                     candidates.push((d.value, d.important, rule.origin, spec, rule.source_order));
@@ -1035,15 +1033,15 @@ pub fn cascade_page(
         PageInheritance::FromRoot(root) => root,
         PageInheritance::LegacyInitialValues => &INITIAL_PAGE_PARENT,
     };
-    // `ctx` carries `inherited`'s used line-height as `root_line_height` (bd
-    // raikiri-spike-yh3w) — needed by *both* step 3 below (`resolve_against_inherited`'s
+    // `ctx` carries `inherited`'s used line-height as `root_line_height` —
+    // needed by *both* step 3 below (`resolve_against_inherited`'s
     // `FontSize` arm, for `font-size: 1lh`/`1rlh`'s self-reference basis) and
     // step 4 (phase 3, for `padding: 1lh` etc.'s basis via `own_line_height`).
     // Built once here rather than separately in each step: `inherited` is
     // immutable for the whole function, so the two steps would otherwise
     // compute the exact same value twice.
     //
-    // `rlh` (bd raikiri-spike-vxha) always refers to the *root element's* own
+    // `rlh` always refers to the *root element's* own
     // `lh`, never the page context's — CSS Paged Media 3 §6 "The page context
     // inherits from the root element", so `inherited` (the root element's
     // `ComputedValues`, or the L3 legacy initial-values fallback) is the right
@@ -1064,7 +1062,7 @@ pub fn cascade_page(
     // Step 4 (phase 3): absolutize the remaining lengths against the page
     // context's own font-size and apply the `border-*-width` style gate.
     // Splitting this out of step 3 is forced by the same constraint the element
-    // path has (decision raikiri-spike-082k): `padding: 2em` needs the page
+    // path has: `padding: 2em` needs the page
     // context's font-size, which step 3 only finalises once *all* winners have
     // been seen — `best` iteration order is `HashMap`-random.
     let font_size = page_context_font_size(&resolved, inherited);
@@ -1076,11 +1074,11 @@ pub fn cascade_page(
     // (built above, before step 3) already carries this basis.
     let border_styles = page_context_border_styles(&resolved);
     // The page context's raw `overflow-x`/`overflow-y` winners
-    // (raikiri-spike-cmd3) — mirrors `border_styles` above: the CSS Overflow
+    // — mirrors `border_styles` above: the CSS Overflow
     // 3 §3.1 cross-axis coupling needs both axes at once, and `resolved`'s
     // iteration below only ever sees one winner at a time.
     let overflow_pair = page_context_overflow_pair(&resolved);
-    // The page context's own `lh` basis (bd raikiri-spike-vxha) — mirrors
+    // The page context's own `lh` basis — mirrors
     // `font_size` above: `1lh` in `padding`/`margin`/`border-*-width` needs
     // the page context's *own* resolved line-height, not the root's.
     let own_line_height = page_context_line_height_basis(&resolved, inherited, font_size, &ctx);
@@ -1116,7 +1114,7 @@ pub fn cascade_page(
 /// value for every property").
 ///
 /// `declarations` must already have been through phase 2
-/// ([`crate::cascade::resolve_against_inherited`]) — since bd raikiri-spike-7m33
+/// ([`crate::cascade::resolve_against_inherited`]) —
 /// this is enforced by the parameter type itself, not merely documented; see
 /// [`crate::cascade::ResolvedAgainstInherited`] for the exact scope of that
 /// guarantee. Its `FontSize` arm always wraps its result in [`Length::Px`].
@@ -1157,7 +1155,7 @@ fn page_context_font_size(
 }
 
 /// The page context's own `lh` basis — the resolve basis for `1lh` used in
-/// `padding`/`margin`/`border-*-width` in phase 3 (bd raikiri-spike-vxha).
+/// `padding`/`margin`/`border-*-width` in phase 3.
 ///
 /// Mirrors [`page_context_font_size`]'s shape: an undeclared `line-height`
 /// falls back to `inherited.line_height` (CSS Paged Media 3 §6 "The page
@@ -1231,8 +1229,7 @@ fn page_context_border_styles(
     // keying invariant (`PropertyValue::key()` agreeing with the key it is
     // stored under) — an invariant that lives only in prose, and whose
     // violation would degrade silently to the initial value. Scanning the
-    // values makes the invariant irrelevant: each arm names the side it writes
-    // (bd raikiri-spike-sshp §8.2 debt lens D3).
+    // values makes the invariant irrelevant: each arm names the side it writes.
     //
     // Order-independence: `cascade_page` keeps at most one winner per
     // `PropertyKey`, so at most one value matches each arm and the
@@ -1258,7 +1255,7 @@ fn page_context_border_styles(
 
 /// The page context's raw (pre-[`resolve_overflow`]) `overflow-x` +
 /// `overflow-y` winners — the input to the CSS Overflow 3 §3.1 cross-axis
-/// coupling gate in phase 3 (raikiri-spike-cmd3).
+/// coupling gate in phase 3.
 ///
 /// Sibling of [`page_context_border_styles`] — same shape and same rationale
 /// (dispatch on the variant, never on the key; an **absent** declaration
@@ -1298,7 +1295,7 @@ fn page_context_overflow_pair(
 /// spec citation lives in [`PageCascadeResult::declarations`] (canonical).
 ///
 /// `text-align: match-parent` is **not** handled here either, but for a
-/// different reason than it used to be (raikiri-spike-l3wg): it is now fully
+/// different reason than it used to be: it is now fully
 /// resolved by **phase 2**
 /// ([`crate::cascade::resolve_against_inherited`], which runs before this
 /// function) — inherited-value dependence is phase 2's shape, not phase 3's,
@@ -1316,18 +1313,18 @@ fn page_context_overflow_pair(
 /// ([`crate::cascade::apply_value`] / [`crate::cascade::resolve_against_inherited`]).
 /// A new [`PropertyValue`] variant that carries a length must be classified
 /// here explicitly; a catch-all would let it reach the public `declarations`
-/// map as a specified value — the exact regression shape of bd
-/// raikiri-spike-ygl0. (What this guard does *not* catch is a new **payload**
-/// case inside an existing variant — bd raikiri-spike-7m33 gap (a).)
+/// map as a specified value — the exact shape of a regression this crate has
+/// already hit once. (What this guard does *not* catch is a new **payload**
+/// case inside an existing variant — gap (a).)
 ///
 /// # The `value` parameter is phase-2 output, enforced by its type
 ///
-/// Since bd raikiri-spike-7m33, `value` is a
+/// `value` is a
 /// [`crate::cascade::ResolvedAgainstInherited`]
 /// rather than a raw [`PropertyValue`] — see that type's doc for what this
 /// does and does not guarantee ("narrowed, not closed").
 ///
-/// # `own_line_height` (bd raikiri-spike-vxha)
+/// # `own_line_height`
 ///
 /// The page context's own `lh` basis — [`page_context_line_height_basis`]'s
 /// output, threaded alongside `font_size` for the same reason: `1lh` in
@@ -1335,7 +1332,7 @@ fn page_context_overflow_pair(
 /// line-height (not the root's — that is `ctx.root_line_height`, used only
 /// for `rlh`).
 ///
-/// # `overflow_pair` (raikiri-spike-cmd3)
+/// # `overflow_pair`
 ///
 /// [`page_context_overflow_pair`]'s output — the page context's raw
 /// `overflow-x`/`overflow-y` winners, threaded in for the same reason
@@ -1378,8 +1375,8 @@ fn absolutize_in_page_context(
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
         }
     }
-    /// `<length-percentage> | auto` for `margin-*` specifically (roborev-refine
-    /// iter 1 Finding A, bd raikiri-spike-vxha) — same mapping as [`lpa`] but
+    /// `<length-percentage> | auto` for `margin-*` specifically —
+    /// same mapping as [`lpa`] but
     /// routed through [`resolve_margin_length_or_auto`], whose unresolvable-`lh`/
     /// `rlh` fallback is `Px(0.0)` (margin's true spec initial), not `Auto`
     /// (which is `width`/`height`'s initial, and which would trigger real
@@ -1468,10 +1465,10 @@ fn absolutize_in_page_context(
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::BoxSizing(_)
         // `text-decoration` carries no length and computed value = specified
-        // keyword (`TextDecoration` doc, bd raikiri-spike-5z86.3) — nothing
+        // keyword (see `TextDecoration`'s doc) — nothing
         // for phase 3 to absolutize.
         | PropertyValue::TextDecoration(_)) => v,
-        // ── font-size: larger / smaller (raikiri-spike-4rmu) ────────────────
+        // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
         // through `resolve_against_inherited` before this function ever runs,
@@ -1483,7 +1480,7 @@ fn absolutize_in_page_context(
         // The arm still exists — not folded into the `Color`/`FontSize`/…
         // bucket above, and not `unreachable!` — for the same two reasons the
         // shorthand fall-throughs keep real arms: the crate keeps the cascade
-        // panic-free (reviewer-security policy, see the `Margin` fall-through
+        // panic-free (a deliberate design policy, see the `Margin` fall-through
         // in `crate::cascade::apply_value`), and this function's `pub(crate)`
         // visibility means test code *can* call it directly with an
         // unresolved `FontSizeRelative`, bypassing step 3 (as
@@ -1504,8 +1501,8 @@ fn absolutize_in_page_context(
         // `<percentage>` is "computed relative to 1em" of the declaring
         // context. `normal` / `<number>` survive as keywords by spec.
         //
-        // `lh`/`rlh` used *within* this declaration's own value (self-reference,
-        // bd raikiri-spike-vxha) use `ctx.root_line_height` — the page context's
+        // `lh`/`rlh` used *within* this declaration's own value (self-reference)
+        // use `ctx.root_line_height` — the page context's
         // CSS Values 4 §6.1.1 self-reference "parent" is the root element
         // (`page_context_line_height_basis` doc), the same source
         // `ctx.root_line_height` already carries.
@@ -1529,25 +1526,26 @@ fn absolutize_in_page_context(
         // `crate::rule::expand_shorthand_into` runs at both boundaries that feed
         // this function: the parse exit (`crate::rule::parse_declaration_block`,
         // which `ruletree` reuses) and the `@page` cascade entry (the candidate
-        // loop in `cascade_page` itself, bd raikiri-spike-3svx — the sibling of
-        // `crate::cascade`'s `collect_cascaded`, bd raikiri-spike-nqkj). The
+        // loop in `cascade_page` itself — the sibling of
+        // `crate::cascade`'s `collect_cascaded`). The
         // entry-side expansion is what covers the post-parse mutation path
         // through the `pub` field `PageRule::declarations`.
         //
         // ⚠️ **これは "safety" net ではない — 到達したら既に bug である**
-        // (element 側 bd raikiri-spike-8kn8 の framing 訂正と同旨)。到達した
+        // (element 側の同種の framing 訂正と同旨)。到達した
         // winner は `PropertyKey::Margin` 等の独立 key に park したまま
         // absolutize され、well-formed に見える値のまま `MarginTop` を読む
-        // consumer から黙って消える — bd raikiri-spike-3svx の headline failure
-        // mode そのものである。degraded ではなく deterministic に CSS Cascading
+        // consumer から黙って消える — まさにこの fall-through が引き起こす
+        // 典型的な failure mode である。degraded ではなく deterministic に
+        // CSS Cascading
         // L4 §3 <https://www.w3.org/TR/css-cascade-4/#shorthand> 違反であり、
         // 本 arm はそれを穏当に見せない。
         //
         // The arms are kept rather than folded into `unreachable!` for the same
         // reason `cascade::apply_value` keeps its shorthand arms: the guarantee
         // above is only partly compile-time enforced — the carve-outs are in the
-        // expansion `match`'s own doc (bd raikiri-spike-ez7b) — and the crate
-        // keeps the cascade panic-free per reviewer:security policy. Behaviour
+        // expansion `match`'s own doc — and the crate
+        // keeps the cascade panic-free as a deliberate design policy. Behaviour
         // is pinned directly
         // by `tests::absolutize_in_page_context_shorthand_fall_throughs`.
         PropertyValue::Padding(sides) => {
@@ -1608,7 +1606,7 @@ fn absolutize_in_page_context(
         // ── width / height ────────────────────────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
-        // ── overflow-x / overflow-y (raikiri-spike-cmd3) ────────────────────
+        // ── overflow-x / overflow-y ──────────────────────────────────────────
         // CSS Overflow 3 §3.1 cross-axis coupling — this axis's own winner
         // (`v`) paired with the *other* axis's winner (`overflow_pair`,
         // [`page_context_overflow_pair`]'s output), same shape as
@@ -1739,24 +1737,23 @@ fn page_beats(
 
 #[cfg(test)]
 mod tests {
-    //! Verification tests for `@page` cascade order (raikiri-spike-m4.1).
+    //! Verification tests for `@page` cascade order.
     //!
-    //! Spec anchors, verified by planner + implementer (WebFetch):
+    //! Spec anchors:
     //! - CSS Paged Media L3 §"Cascading and page context" —
     //!   <https://www.w3.org/TR/css-page-3/#cascading-and-page-context>
     //! - CSS Cascading L4 §"Cascade Origin" —
     //!   <https://www.w3.org/TR/css-cascade-4/#cascade-origin>
     //!
-    //! Test naming mirrors `cascade::tests` (sibling convention 37n).
+    //! Test naming mirrors `cascade::tests` (sibling convention).
     //!
-    //! **Note on task description Verification 2**: the parent bd task's prose
+    //! **Note on a source of confusion elsewhere**: some prose elsewhere
     //! says "Author !important > UA !important > Author normal > UA normal",
     //! which contradicts CSS Cascading L4 §"Cascade Origin" (Important order:
-    //! Author < User < UA — UA-important wins). The parenthetical
+    //! Author < User < UA — UA-important wins). The correct order
     //! (`UA_imp` > `Author_imp`, exact `cascade_rank` values shift as origin
-    //! tiers are added — see that function's doc; bd raikiri-spike-wo36
-    //! added a 3rd tier, bd raikiri-spike-pdta a 4th) is spec-correct and
-    //! matches `cascade_rank` and the existing style-rule test
+    //! tiers are added over time — see that function's doc) is spec-correct
+    //! and matches `cascade_rank` and the existing style-rule test
     //! `cascade::tests::important_ua_beats_important_author_display`.
     //! Implementation follows the spec; this test asserts UA `!important` wins.
 
@@ -2018,12 +2015,12 @@ mod tests {
     }
 
     // ── Verification 5: named-page cascade produces named-page declarations ──
-    // Task Verification 5 target: `(page_name=Some("landscape_a3"), page_index=0,
+    // Verification target: `(page_name=Some("landscape_a3"), page_index=0,
     // is_first=true)` — the winning declarations must come from the named-page
-    // rule. Property proxy: `color` (M1.4 supported). `size` is an
+    // rule. Property proxy: `color` (already supported). `size` is an
     // `@page` descriptor and is still not wired through the declaration parser
     // (see `ruletree::tests::page_body_unsupported_property_drops_declaration`);
-    // `margin` *is* supported (raikiri-spike-0vv.5) but `color` keeps this test
+    // `margin` *is* supported but `color` keeps this test
     // focused on selector specificity rather than on length resolution, which
     // the phase 3 tests cover. The named-page
     // rule wins because its specificity `(1, 1, 0)` beats every non-named
@@ -2236,8 +2233,8 @@ mod tests {
     // font_weight_bolder_lighter_table_all_six_rows`. What these tests pin is the
     // **wiring**: that `cascade_page` resolves against its `PageInheritance`
     // argument at all, and which weight it uses as the inherited value
-    // (raikiri-spike-ygl0 — before
-    // this, `FontWeightValue::Bolder` parked unresolved in the public
+    // (before
+    // this was wired up, `FontWeightValue::Bolder` parked unresolved in the public
     // `declarations` map).
 
     /// Direct, single-site pin that `PageInheritance::FromRoot` and
@@ -2294,7 +2291,8 @@ mod tests {
     /// [`PageInheritance`]).
     ///
     /// Panics unless the winner is an already-resolved `Absolute` — a relative
-    /// keyword surviving into the public map is exactly the ygl0 regression.
+    /// keyword surviving into the public map is exactly the regression
+    /// documented above.
     fn page_font_weight(decl: &str, inheritance: PageInheritance<'_>) -> f32 {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(&format!("@page {{ font-weight: {decl} }}"), Origin::Author);
@@ -2302,15 +2300,15 @@ mod tests {
         match result.declarations().get(&PropertyKey::FontWeight) {
             Some(PropertyValue::FontWeight(FontWeightValue::Absolute(w))) => *w,
             Some(other) => panic!(
-                "raikiri-spike-ygl0 regression: an unresolved font-weight value \
+                "regression: an unresolved font-weight value \
                  reached the public PageCascadeResult.declarations — expected \
                  FontWeight(Absolute(_)), got {other:?}"
             ),
             None => panic!(
                 "no font-weight winner in PageCascadeResult.declarations for \
                  `@page {{ font-weight: {decl} }}` — the declaration failed to \
-                 parse or the cascade dropped it (this is *not* the ygl0 \
-                 resolution path)"
+                 parse or the cascade dropped it (this is *not* the \
+                 relative-font-weight resolution path)"
             ),
         }
     }
@@ -2359,7 +2357,7 @@ mod tests {
         assert_eq!(lighter(1000.0), 700.0, "900 <= w row");
     }
 
-    // ── font-size in the page context (bd raikiri-spike-zls8) ──────────────
+    // ── font-size in the page context ───────────────────────────────────────
     //
     // CSS Page 3 §6 "Page Properties"
     // <https://www.w3.org/TR/css-page-3/#page-properties> verbatim: "When used
@@ -2373,7 +2371,7 @@ mod tests {
     ///
     /// Panics unless the winner is an already-absolutized `Length::Px` — a
     /// font-relative unit surviving into the public map is the same class of
-    /// regression as ygl0's `FontWeightValue::Bolder`.
+    /// regression documented above for `FontWeightValue::Bolder`.
     fn page_font_size_px(decl: &str, inheritance: PageInheritance<'_>) -> f32 {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(&format!("@page {{ font-size: {decl} }}"), Origin::Author);
@@ -2450,11 +2448,12 @@ mod tests {
         );
     }
 
-    /// `<relative-size>` (`larger` / `smaller`、raikiri-spike-4rmu) in the page
+    /// `<relative-size>` (`larger` / `smaller`) in the page
     /// context resolves against the root's computed font-size, same basis as
     /// `em` / `rem` above (CSS Page 3 §6). Reuses `page_font_size_px`, which
     /// already panics on an unresolved winner reaching `declarations` — a
-    /// `FontSizeRelative` leak here is the same regression class as ygl0.
+    /// `FontSizeRelative` leak here is the same regression class documented
+    /// above.
     #[test]
     fn cascade_page_font_size_relative_resolves_against_root_computed_font_size() {
         let root = root_with_font_size(20.0);
@@ -2478,12 +2477,12 @@ mod tests {
         );
     }
 
-    // ── declarations may carry non-finite f32 (bd raikiri-spike-kj2s) ──────
+    // ── declarations may carry non-finite f32 ───────────────────────────────
     //
     // This is not guarded here — see the `# Non-finite values pass through
     // unguarded` section of
     // `PageCascadeResult::declarations`'s doc for why that is intentional
-    // (sink-boundary precedent, bd raikiri-spike-2ui0) rather than an
+    // (the sink-boundary precedent described there) rather than an
     // oversight. This test exists to pin that the hazard is *real*, so a
     // future reader cannot dismiss the doc's claim as theoretical, and so a
     // regression that added a clamp here (which would violate the
@@ -2491,7 +2490,7 @@ mod tests {
 
     #[test]
     fn cascade_page_font_size_can_carry_nan_from_pathological_em() {
-        // Same overflow-then-multiply mechanism as the element path's 2ui0
+        // Same overflow-then-multiply mechanism as the element path's
         // reproducer (`crates/raikiri-dom/src/layout.rs`, "Reproducer A'"):
         // `1e40` overflows `f32` to `+Inf` at parse time (cssparser's f64 →
         // f32 conversion), and phase 2's `resolve_font_size`
@@ -2503,7 +2502,7 @@ mod tests {
         // the assertion fails, which it doesn't while this test passes.
         assert!(
             px.is_nan(),
-            "expected NaN from `0.0 * inf` (root font-size 0 times an overflowed `1e40em`), got {px} — either the overflow/multiply mechanism changed (update this test and the `declarations` doc together) or a guard was added in raikiri-style (which would violate the sink-boundary precedent from bd raikiri-spike-2ui0 — see the doc's rationale before doing that)"
+            "expected NaN from `0.0 * inf` (root font-size 0 times an overflowed `1e40em`), got {px} — either the overflow/multiply mechanism changed (update this test and the `declarations` doc together) or a guard was added in raikiri-style (which would violate the sink-boundary precedent — see the doc's rationale before doing that)"
         );
     }
 
@@ -2511,13 +2510,13 @@ mod tests {
     fn cascade_page_font_size_can_carry_infinity_from_finite_operand_multiply() {
         // Arithmetic-only counterpart to the test above: both operands are
         // already finite `f32` values (no contested f64→f32 cast involved,
-        // unlike the `1e40em` reproducer — see bd
-        // raikiri-spike-9mbo). `1e30` (root font-size) and `1e20` (page
+        // unlike the `1e40em` reproducer — see the open question noted
+        // above). `1e30` (root font-size) and `1e20` (page
         // em multiplier) are each well within f32's finite range on their
         // own; their product, `1e50`, overflows f32 (max ~3.4e38) to
         // `+Infinity` per IEEE 754. This pins that the non-finite hazard
         // documented on `PageCascadeResult::declarations` holds
-        // independently of how 9mbo's parse-time question is resolved.
+        // independently of how that parse-time question is resolved.
         let root = root_with_font_size(1e30);
         let px = page_font_size_px("1e20em", PageInheritance::FromRoot(&root));
         // cov:ignore: panic-message literal only executed on assertion
@@ -2615,7 +2614,7 @@ mod tests {
     #[test]
     fn cascade_page_length_em_is_absolutized_against_page_context_font_size() {
         // Was `cascade_page_length_em_passes_through_as_specified_value` until
-        // bd raikiri-spike-sshp added phase 3 (082k Phase 3). CSS Paged Media 3
+        // phase 3 was added. CSS Paged Media 3
         // §6 <https://www.w3.org/TR/css-page-3/#page-properties>: "Values in
         // units of em and ex are interpreted relative to the font associated
         // with their context". With no `font-size` in the page context the
@@ -2638,7 +2637,7 @@ mod tests {
         );
     }
 
-    // ── 082k Phase 3 (bd raikiri-spike-sshp): phase 3 in the page context ───
+    // ── Phase 3 in the page context ─────────────────────────────────────────
     //
     // Primary sources, fetched as raw HTML (`curl -sL`) so the `data-level`
     // attributes are visible:
@@ -2717,7 +2716,7 @@ mod tests {
         );
     }
 
-    // ── `lh` / `rlh` in the page context (CSS Values 4 §6.1.1, bd raikiri-spike-vxha) ──
+    // ── `lh` / `rlh` in the page context (CSS Values 4 §6.1.1) ─────────────
 
     /// `@page { line-height: 2; padding: 1.5lh }` — `1lh` uses the page
     /// context's **own** used line-height (its own font-size × the declared
@@ -2756,7 +2755,7 @@ mod tests {
 
     /// The common case: no font metrics available for `normal` — falls back
     /// to padding's own initial value `0`, same policy as the element path
-    /// (`crate::resolve::resolve_length_percentage` doc). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
+    /// (`crate::resolve::resolve_length_percentage` doc). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     #[test]
     fn cascade_page_padding_lh_falls_back_to_zero_when_line_height_normal() {
         let root = root_with_font_size(20.0); // line-height stays `normal` (initial)
@@ -2764,13 +2763,13 @@ mod tests {
         assert_eq!(padding_top_of(&result), Some(Length::Px(0.0)));
     }
 
-    /// roborev-refine iter 1 Finding A regression pin, `@page` path:
+    /// Regression pin, `@page` path:
     /// `margin-top: 1lh` under (the initial, unresolvable) `line-height: normal`
     /// must compute to `Px(0.0)` — margin's true spec initial (CSS Box 3
-    /// §3.1) — **not** `Auto` (`resolve_margin_length_or_auto`, bd
-    /// raikiri-spike-vxha — element-path sibling is
+    /// §3.1) — **not** `Auto` (`resolve_margin_length_or_auto` —
+    /// element-path sibling is
     /// `margin_lh_falls_back_to_zero_not_auto_when_line_height_normal` in
-    /// `crate::cascade`). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// `crate::cascade`). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     #[test]
     fn cascade_page_margin_lh_falls_back_to_zero_not_auto_when_line_height_normal() {
         let root = root_with_font_size(20.0); // line-height stays `normal` (initial)
@@ -2786,7 +2785,7 @@ mod tests {
 
     /// `@page { line-height: 1lh }` is self-referential — CSS Values 4
     /// §6.1.1, spec quote canonically documented on
-    /// `crate::resolve::resolve_line_height`. The page context's "parent" // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// `crate::resolve::resolve_line_height`. The page context's "parent" // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// for this purpose is the root element (CSS Paged Media 3 §6), which
     /// is exactly what `ctx.root_line_height` already carries.
     #[test]
@@ -2829,7 +2828,7 @@ mod tests {
         );
     }
 
-    // ── `font-size: 1lh` / `1rlh` in the page context (bd raikiri-spike-yh3w) ──
+    // ── `font-size: 1lh` / `1rlh` in the page context ───────────────────────
     //
     // §6 does not mention `lh`/`rlh` explicitly (only `em`/`ex`, verified against
     // the primary source at implementation time) — this is the same kind of
@@ -2885,7 +2884,7 @@ mod tests {
     /// initial (`medium` = 16px), same "no real font metrics in the style
     /// layer" wall as the element path
     /// (`font_size_lh_falls_back_to_initial_when_parent_line_height_is_normal`
-    /// in `crate::cascade`). Deliberately **not** `root_with_font_size`'s // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// in `crate::cascade`). Deliberately **not** `root_with_font_size`'s // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// 20px — the fallback is `font-size`'s spec initial, unconditionally,
     /// not whatever font-size the root happens to declare.
     #[test]
@@ -2955,7 +2954,7 @@ mod tests {
         assert_eq!(padding_top_of(&result), Some(Length::Px(16.0)));
     }
 
-    /// The (b) case of bd raikiri-spike-sshp. CSS Backgrounds 3 §3.3 propdef
+    /// The border-`*`-width style-gating case. CSS Backgrounds 3 §3.3 propdef
     /// verbatim: "Computed value: absolute length, snapped as a border width;
     /// zero if the border style is `none` or `hidden`" — a **computed**-layer
     /// requirement, so the declared `5px` must not reach `declarations`.
@@ -3205,7 +3204,7 @@ mod tests {
     fn page_context_overflow_pair_collects_both_axes() {
         // Sibling of `page_context_border_styles_default_to_initial_none`
         // above — covers `page_context_overflow_pair`'s `OverflowX`/
-        // `OverflowY` match arms (bd raikiri-spike-cmd3) — `resolved`'s
+        // `OverflowY` match arms — `resolved`'s
         // `HashMap` iteration only ever yields one winner at a time, so
         // both axes need collecting into a single `OverflowXY` before the
         // CSS Overflow 3 §3.1 cross-axis coupling gate can run in phase 3
@@ -3230,9 +3229,9 @@ mod tests {
 
     /// Direct exercise of the three **shorthand fall-through arms** of
     /// `absolutize_in_page_context`. They are unreachable through `cascade_page`:
-    /// `crate::rule::expand_shorthand_into` runs both at the parse exit // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// `crate::rule::expand_shorthand_into` runs both at the parse exit // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// (`parse_declaration_block`) and at the `@page` cascade entry (the
-    /// candidate loop in `cascade_page`, bd raikiri-spike-3svx), so the
+    /// candidate loop in `cascade_page`), so the
     /// post-parse mutation path through the `pub` field
     /// `PageRule::declarations` is covered too — that is what the
     /// `post_parse_page_*` tests in this module pin.
@@ -3241,11 +3240,11 @@ mod tests {
     /// `cascade::tests::apply_value_direct_margin_shorthand_fall_through` exists
     /// (behaviour pinned instead of `unreachable!` — the crate keeps the
     /// cascade panic-free, and the exhaustive expansion `match` does not
-    /// enforce everything; see its doc, bd raikiri-spike-ez7b).
+    /// enforce everything; see its doc).
     ///
-    /// Since bd raikiri-spike-7m33 `absolutize_in_page_context` takes a
+    /// `absolutize_in_page_context` takes a
     /// `ResolvedAgainstInherited`, whose constructor is private outside
-    /// `crate::cascade` — `ResolvedAgainstInherited::for_test` is the // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// `crate::cascade` — `ResolvedAgainstInherited::for_test` is the // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// `#[cfg(test)]`-only escape hatch that lets this test keep driving the
     /// function directly with a hand-picked payload (see that type's doc,
     /// "test 用の裏口").
@@ -3302,7 +3301,7 @@ mod tests {
                 color: BorderColor::CurrentColor,
             })),
         );
-        // `overflow` shorthand fall-through (raikiri-spike-cmd3) — resolves
+        // `overflow` shorthand fall-through — resolves
         // against its *own* pair, ignoring the `overflow_pair` parameter
         // (which describes the longhands, sibling note to the `border` case
         // above). `y: Hidden` is "neither visible nor clip", so `x: Visible`
@@ -3334,7 +3333,7 @@ mod tests {
     /// `pub(crate)` function can still be driven directly with an unresolved
     /// value, same as `absolutize_in_page_context_shorthand_fall_throughs`
     /// above — via `ResolvedAgainstInherited::for_test`, the `#[cfg(test)]`
-    /// escape hatch bd raikiri-spike-7m33 added once the function's parameter
+    /// escape hatch added once the function's parameter
     /// stopped being a raw `PropertyValue` (see that type's doc, "test 用の
     /// 裏口"). Pins: no panic, and the result shape matches what phase 2
     /// (`resolve_against_inherited`'s `FontSizeRelative` arm) would have
@@ -3377,30 +3376,31 @@ mod tests {
 
     // ── 「`declarations` は computed 値」契約の機械的 pin ────────────────────
     //
-    // bd raikiri-spike-awjx。契約の canonical な記述は
+    // 契約の canonical な記述は
     // `PageCascadeResult::declarations` の doc にあり、本節はそれを**散文では
     // なく実行可能な形で**押さえる。散文だけで保っていた間に drift が 2 回
-    // 起きている: (1) bd raikiri-spike-ygl0 で対応表が実装と乖離し
-    // bd raikiri-spike-zls8 が in-band caveat で patch、(2) bd raikiri-spike-sshp
-    // の diff 内で pass-through arm の数え上げが「21」と書かれた (実測 22)。
+    // 起きている: (1) ある変更で対応表が実装と乖離し
+    // 別の変更が in-band caveat で patch した、(2) 上で触れた phase 3 追加の
+    // diff 内で pass-through arm の数え上げが「21」と書かれた (実測 22)。
     //
     // 本節が壊れる条件:
     //
     // - `PropertyValue` に variant を足す → `specified_layer_residue` の網羅
-    //   match が **compile error**。raikiri-spike-a754 以前は、分類を書いた
+    //   match が **compile error**。`page_corpus` を `sample_for` 駆動に
+    //   変える前は、分類を書いた
     //   後に `page_corpus` / `PROPERTY_VALUE_VARIANTS` (手で持つ数)
     //   の更新を強制するものが無かった — 両者が 40 で整合したまま新 variant
-    //   が corpus 外に残る case は**全 test green になる** (bd
-    //   raikiri-spike-awjx §8.2 debt lens が `PropertyValue::Orphan` を足して
-    //   実測、raikiri-spike-a754 で当時の crate 状態 (58343de) に対し
+    //   が corpus 外に残る case は**全 test green になる** (最初の debt 監査で
+    //   `PropertyValue::Orphan` を足して
+    //   実測、その後の rework で当時の crate 状態 (58343de) に対し
     //   再実証: 6 箇所の網羅 match [`property::PropertyValue::key`,
     //   `rule::expand_shorthand_into`, `absolutize_in_page_context`,
     //   `specified_layer_residue`, `cascade::resolve_against_inherited`,
     //   `cascade::apply_value`] を素直に分類しただけで 674 passed / 0
     //   failed、新 variant は corpus 側 3 本の pin のどれにも通らなかった —
-    //   awjx 時点の記録は 5 site だったが、`rule::expand_shorthand_into` が
+    //   最初の debt 監査時点の記録は 5 site だったが、`rule::expand_shorthand_into` が
     //   その後の landing で網羅 match になっており今は 6 site)。
-    //   raikiri-spike-a754 は `PROPERTY_VALUE_VARIANTS` を廃止し、
+    //   その後の rework で `PROPERTY_VALUE_VARIANTS` を廃止し、
     //   `page_corpus` を `sample_for` (`PropertyKey` に対する網羅 match、
     //   `property_key_samples!` マクロ生成) 駆動に変えた — 新しい
     //   `PropertyKey` variant を伴う通常の property 追加は、上と同じ手順
@@ -3416,19 +3416,19 @@ mod tests {
     //   `PHASE_3_PASS_THROUGH_VARIANTS` 系の別定数側が動かないことで発火する、
     //   詳細は該当 test の doc) に変わることを確認した。
     //
-    //   **guard は当初 one-way だった** (bd raikiri-spike-a754 が
-    //   bd raikiri-spike-c0z9 として追跡開始) — 新 variant が既存の
+    //   **guard は当初 one-way だった** (その rework 自身がこのギャップに
+    //   気づき、follow-up として追跡を開始した) — 新 variant が既存の
     //   `PropertyKey` を再利用する場合 (`FontSizeRelative` と同型) は
     //   `PropertyKey` の variant 集合が増えないため `sample_for` も compile
     //   error にならず、`key_sharing_extras` への追加は手作業のままだった。
-    //   raikiri-spike-c0z9 起票時点の記録は「真の automatic closure には
+    //   その follow-up 起票時点の記録は「真の automatic closure には
     //   `PropertyValue`/`PropertyKey` 自体への macro/derive が要り、それは
     //   walls.md 壁 5 (umbrella re-export) の再判定を要する out-of-scope な
     //   変更」だった — この結論は「型の variant を安全に列挙する手段が
     //   stable Rust に無い (`mem::variant_count` は unstable、外部 derive
     //   crate は cleanroom 方針外)」という前提に基づいていたが、
     //   **reflection による列挙**と**網羅 match による forcing**を区別して
-    //   いなかった。bd raikiri-spike-c0z9 の実装は後者を選んだ:
+    //   いなかった。その follow-up の実装は後者を選んだ:
     //   `property_value_variant_registry!` (`key_sharing_extras` の直後) が
     //   `PropertyKey` ではなく `PropertyValue` **自身**に対して網羅的な
     //   match を生成する — `property_key_samples!` が `PropertyKey` に
@@ -3449,7 +3449,7 @@ mod tests {
     //   増えない) の不一致が test failure として現れる。
     //
     //   ⚠️ 本節がこの一連の経緯・機構・残存ギャップの canonical な記述
-    //   (raikiri-spike-a754、raikiri-spike-c0z9) — `property_key_samples!` /
+    //   — `property_key_samples!` /
     //   `sample_for` / `property_value_variant_registry!` /
     //   `specified_layer_residue` / 下の corpus 整合性 test の doc は
     //   ここへの pointer のみを持ち、繰り返さない。
@@ -3459,19 +3459,19 @@ mod tests {
     //   `page_declarations_carry_no_specified_layer_residue` /
     //   `cascade_page_output_carries_no_specified_layer_residue` が落ちる。
     //
-    // raikiri-spike-l3wg で実際に踏んだ改修: `text-align: match-parent` が
+    // 実際に踏んだ改修の例: `text-align: match-parent` が
     // 解決可能になったことで上記 2 test の期待値は「例外 1 つ」から「例外 0」
     // (空 vec) に変わった (旧 test 名
     // `page_declarations_carry_exactly_one_specified_layer_residue` は
     // `page_declarations_carry_no_specified_layer_residue` に改名)。
     // `specified_layer_residue` の `TextAlign::MatchParent` arm 自体は
     // **削除しなかった** — `resolve_against_inherited` を経由し損ねる将来の
-    // regression (bd raikiri-spike-7m33 gap (b) 相当) に対する tripwire として
+    // regression (gap (b) 相当) に対する tripwire として
     // 残してある。同じ「今後別の inherited-value-dependent keyword を足す」
     // ケースへの一般化: 新しい `PropertyValue` variant / payload が **phase 2
     // で解決される**ようになったら、本節に残る手で持つ数
     // (`PHASE_3_PASS_THROUGH_VARIANTS` / `raw_corpus_residue_variants` の
-    // `+ 3` 項の内訳コメント — raikiri-spike-a754 でこの 2 つは対象外、
+    // `+ 3` 項の内訳コメント — この 2 つは `sample_for` 駆動の corpus の対象外、
     // 別途判断が要ることが確定している) と `page_corpus` の worst-case
     // payload、および `page_declarations_carry_no_specified_layer_residue` /
     // `cascade_page_output_carries_no_specified_layer_residue` の期待値を
@@ -3479,35 +3479,34 @@ mod tests {
 
     /// phase 3 (`absolutize_in_page_context`) が**素通しする** variant 数。
     ///
-    /// 22 → 23 (raikiri-spike-l3wg、`Direction` は phase 3 で変換する length を
+    /// 22 → 23 (`Direction` は phase 3 で変換する length を
     /// 持たないため pass-through 側に加わる — `TextAlign` 自身は元々こちら側)。
-    /// 23 → 24 (bd raikiri-spike-5z86.3、`TextDecoration` も同じ理由で
+    /// 23 → 24 (`TextDecoration` も同じ理由で
     /// pass-through 側 — length を運ばないため phase 3 に変換対象が無い)。
     ///
-    /// raikiri-spike-a754 の対象外 — 本定数と下の `raw_corpus_residue_variants`
+    /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
-    /// であり、bd raikiri-spike-a754 が明示的に別途判断としている
-    /// (origin bd raikiri-spike-awjx §8.2 quality lens F1 の「残り 2 つ」)。
+    /// であり、明示的に別途判断としている。
     const PHASE_3_PASS_THROUGH_VARIANTS: usize = 24;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
     /// border-width (longhand 4 + `border` shorthand 1) / width + height 2 /
-    /// font-size: larger/smaller 1 (`FontSizeRelative` — raikiri-spike-4rmu、
+    /// font-size: larger/smaller 1 (`FontSizeRelative` —
     /// `absolutize_in_page_context` の structurally-unreachable な safety-net
     /// arm。到達しないが「素通し」ではなく実際に変換する形の arm なので
     /// `PHASE_3_PASS_THROUGH_VARIANTS` 側には数えない)。
     ///
-    /// raikiri-spike-a754 以前は `PROPERTY_VALUE_VARIANTS -
+    /// 以前は `PROPERTY_VALUE_VARIANTS -
     /// PHASE_3_PASS_THROUGH_VARIANTS` という `const` 式だった。
     /// `PROPERTY_VALUE_VARIANTS` を廃止した (`page_corpus` の doc 参照) ので
     /// `page_corpus().len()` (`Vec` を allocate するため const 文脈で呼べない)
     /// を使う `fn` に変えてある。**この値の基準は `page_corpus().len()` —
     /// corpus が `PropertyValue` の全 variant を実際に覆っている間だけ
     /// 「変換する variant 数」を表す。** corpus の完全性自体は
-    /// raikiri-spike-a754 時点では独立には検査されていなかった (旧 `const`
+    /// この変更の当時は独立には検査されていなかった (旧 `const`
     /// 式と数値的に同じ結果を返すことと「意味が同じ」ことは別の主張
-    /// だった) — bd raikiri-spike-c0z9 (`page_corpus` 手前の section
+    /// だった) — その後の follow-up (`page_corpus` 手前の section
     /// comment 参照) がこのギャップを埋め、`property_value_variant_registry!`
     /// (`PropertyValue` 自身の variant 集合に対する網羅 match、`page_corpus`
     /// 直後) と `page_corpus_covers_every_registered_property_value_variant`
@@ -3521,7 +3520,7 @@ mod tests {
     /// `phase_3_transformed_variants()` + phase 2 が解決する `font-size` /
     /// `font-weight` / `text-align: match-parent` の 3。
     ///
-    /// 数自体 (3) は raikiri-spike-l3wg 前後で**変わらない** — 変わったのは
+    /// 数自体 (3) はこの改修の前後で**変わらない** — 変わったのは
     /// 3 番目の意味: 以前は「phase 2 でも phase 3 でも解決しない孤立した残滓」
     /// (`text-align: match-parent`) だったが、今は他 2 つ (`font-size` /
     /// `font-weight`) と同じ「phase 2 が解決する」側に合流した。この値は
@@ -3538,9 +3537,9 @@ mod tests {
     /// `phase_3_transformed_variants()` 側に既に数えられているため
     /// (二重計上を避ける、上記関数の doc 参照)。
     ///
-    /// # `overflow-x` / `overflow-y` / `overflow` は逆方向の例外 (raikiri-spike-cmd3)
+    /// # `overflow-x` / `overflow-y` / `overflow` は逆方向の例外
     ///
-    /// bd raikiri-spike-a754 までは「phase 3 が変換する variant」と「raw
+    /// その rework までは「phase 3 が変換する variant」と「raw
     /// corpus サンプルが specified 層残滓を持つ variant」が偶然 1:1 対応して
     /// いた — `phase_3_transformed_variants()` の内訳 (`padding` / `margin` /
     /// `border-*-width` / `width` / `height` / `line-height` /
@@ -3563,8 +3562,8 @@ mod tests {
         phase_3_transformed_variants() + 3 - OVERFLOW_TRANSFORMED_WITHOUT_RAW_RESIDUE
     }
 
-    /// `sample_for` / `ALL_PROPERTY_KEYS` を **1 つの token 列**から生成する
-    /// (raikiri-spike-a754)。`key => value` の対を 1 度書けば
+    /// `sample_for` / `ALL_PROPERTY_KEYS` を **1 つの token 列**から生成する。
+    /// `key => value` の対を 1 度書けば
     /// `ALL_PROPERTY_KEYS` (列挙) と `sample_for` (網羅 match) の**両方**に
     /// そのまま展開される。
     ///
@@ -3588,8 +3587,8 @@ mod tests {
             /// 展開そのものが持たない) — `PropertyKey` に variant を足すと
             /// ここで **compile error** になる。この compile error が何を
             /// 強制し (通常の新 property 追加)、何を強制しないか
-            /// (`FontSizeRelative` 型の key 共有 variant、bd
-            /// raikiri-spike-c0z9) の canonical な記述は `page_corpus` 手前の
+            /// (`FontSizeRelative` 型の key 共有 variant) の canonical な
+            /// 記述は `page_corpus` 手前の
             /// section comment にある。
             fn sample_for(key: PropertyKey) -> PropertyValue {
                 match key {
@@ -3651,7 +3650,7 @@ mod tests {
         // No specified/computed distinction for `direction` (computed
         // value = specified value) — any value is "worst case".
         Direction => PropertyValue::Direction(Direction::Rtl),
-        // `Visible` is deliberately the "worst case" here (raikiri-spike-cmd3)
+        // `Visible` is deliberately the "worst case" here
         // — it is the one value the CSS Overflow 3 §3.1 cross-axis coupling
         // actually rewrites (`visible` -> `auto`) when the fixed test
         // `overflow_pair`/pair fixtures used by the corpus-driven tests below
@@ -3670,7 +3669,7 @@ mod tests {
         }),
         // No specified/computed distinction for `text-decoration` (computed
         // value = specified keyword, `TextDecoration` doc) — any value is
-        // "worst case" (bd raikiri-spike-5z86.3, `Direction` sibling comment
+        // "worst case" (`Direction` sibling comment
         // above uses the same reasoning).
         TextDecoration => PropertyValue::TextDecoration(TextDecoration::Underline),
     }
@@ -3687,11 +3686,11 @@ mod tests {
     /// ここに `vec!` の要素をもう 1 つ足すだけで済み、この comment を
     /// 読み解いて magic number を計算し直す必要が無い。
     ///
-    /// 沿革: raikiri-spike-4rmu 以前は空 (共有 pattern 自体が無かった)、
-    /// 4rmu で `FontSizeRelative` により 1 要素になって以来変わっていない。
+    /// 沿革: 当初は空 (共有 pattern 自体が無かった)、
+    /// `FontSizeRelative` が追加されて以来 1 要素のまま変わっていない。
     ///
     /// 2 つ目の key 共有 variant を足す義務は、以前は comment 頼みだった
-    /// (compile error による forcing が無かった — bd raikiri-spike-c0z9)。
+    /// (compile error による forcing が無かった)。
     /// 今は `property_value_variant_registry!` (下) が `PropertyValue` 自身に
     /// 対して網羅的な match を生成しており、新 variant を足すとまずそちらが
     /// compile error になる。その状態で本関数への追加を忘れても
@@ -3704,7 +3703,7 @@ mod tests {
 
     /// 全 `PropertyValue` variant を **specified 層の worst case** payload で
     /// 1 つずつ並べたもの — `sample_for` (`ALL_PROPERTY_KEYS` を経由) と
-    /// `key_sharing_extras` から生成する (raikiri-spike-a754)。並び順は
+    /// `key_sharing_extras` から生成する。並び順は
     /// `PropertyKey` の宣言順 + 末尾に key 共有 variant。本 module のどの
     /// test も corpus の順序には依存しない (`HashSet` / `filter` / 走査で
     /// 完結する) ので、`PropertyValue` 自身の宣言順 (旧来の順序) との違いは
@@ -3713,14 +3712,14 @@ mod tests {
     /// worst case = 「phase 2 / phase 3 を通さなければ specified 層の残滓が
     /// 残る」値: length は `Em` / `Rem` / `Pt` (`Px` / `Percent` は既に computed
     /// 層なので使わない)、`font-weight` は `bolder`、`text-align` は
-    /// `match-parent`、`font-size` の relative variant は `larger`
-    /// (raikiri-spike-4rmu)。個々の選定根拠は `sample_for` / `key_sharing_extras`
+    /// `match-parent`、`font-size` の relative variant は `larger`。
+    /// 個々の選定根拠は `sample_for` / `key_sharing_extras`
     /// の呼び出し箇所を参照。
     ///
     /// この関数**自体**の完全性 (「`PropertyValue` の全 variant を実際に
     /// 覆っているか」) は `ALL_PROPERTY_KEYS` / `sample_for` の網羅性からは
     /// 出てこない (`sample_for` は `PropertyKey` に対して網羅的であり、
-    /// `PropertyValue` に対してではない — bd raikiri-spike-c0z9)。その完全性は
+    /// `PropertyValue` に対してではない)。その完全性は
     /// `property_value_variant_registry!` + `page_corpus_covers_every_registered_property_value_variant`
     /// (共に下) が別途保証する。
     fn page_corpus() -> Vec<PropertyValue> {
@@ -3731,15 +3730,15 @@ mod tests {
     }
 
     /// `PropertyValue` **自身**に対して網羅的な match を 1 つの token 列から
-    /// 生成する (`property_key_samples!` の姉妹 macro、bd raikiri-spike-c0z9)。
+    /// 生成する (`property_key_samples!` の姉妹 macro)。
     ///
     /// `property_key_samples!` は `PropertyKey` に対して網羅的なので、新しい
     /// `PropertyKey` を伴う通常の property 追加は forced だが、**既存の**
     /// `PropertyKey` を再利用する新 variant (`FontSizeRelative` が
     /// `PropertyKey::FontSize` を再利用するのと同型) は `PropertyKey` の
     /// variant 集合を増やさないため、その網羅 match は compile error に
-    /// ならない (`page_corpus` 手前の section comment の「一方向性」節、
-    /// raikiri-spike-a754 が残した bd raikiri-spike-c0z9 として追跡していた
+    /// ならない (`page_corpus` 手前の section comment の「一方向性」節で
+    /// 述べた、その rework が残した follow-up として追跡していた
     /// ギャップ)。
     ///
     /// 本 macro はこの穴を埋める — `PropertyValue` 自身の variant 集合に
@@ -3835,7 +3834,7 @@ mod tests {
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
     /// **全ての** `PropertyValue` variant を実際に覆っていること —
-    /// bd raikiri-spike-c0z9 の一方向性 gap のクローズ。
+    /// 先述の一方向性 gap のクローズ。
     ///
     /// 新しい variant が `property_value_variant_registry!` の呼び出しに
     /// 追加されないままだと `property_value_variant_name` の網羅 match が
@@ -3862,8 +3861,7 @@ mod tests {
             "page_corpus() has {} entries but property_value_variant_registry! \
              lists {} PropertyValue variants -- a variant was added to the \
              registry without a matching sample_for (new PropertyKey) or \
-             key_sharing_extras() (reused PropertyKey) entry, or vice versa. \
-             See bd raikiri-spike-c0z9.",
+             key_sharing_extras() (reused PropertyKey) entry, or vice versa.",
             corpus.len(),
             PROPERTY_VALUE_VARIANT_COUNT,
         );
@@ -3878,16 +3876,16 @@ mod tests {
     /// **wildcard arm を置かない** — `PropertyValue` に variant を足すとここで
     /// compile error になる。この compile error と `page_corpus`
     /// (`sample_for`) 側の更新がどう連動する (しない) かの canonical な
-    /// 記述は `page_corpus` 手前の section comment (raikiri-spike-a754) に
+    /// 記述は `page_corpus` 手前の section comment に
     /// ある。
     ///
     /// # 網羅 match が及ぶ payload 型は 5 つだけ
     ///
     /// `Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
     /// `TextAlign`。この 5 型については
-    /// `crate::cascade::resolve_against_inherited` の doc が「この guard が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (non-#[test] mod-level helper doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-csmj; demoted from an already-linked span by bd raikiri-spike-gq7x)
+    /// `crate::cascade::resolve_against_inherited` の doc が「この guard が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (non-#[test] mod-level helper doc) — rustdoc-blind, confirmed via わざと壊して確かめる (demoted from an already-linked span)
     /// 守らない範囲」として挙げる **既存 variant への payload 追加**
-    /// (bd raikiri-spike-7m33 の gap (a)) もここで compile error になる。
+    /// (gap (a)) もここで compile error になる。
     ///
     /// **及ばない**もの: `BorderStyle` / `BorderColor` / `DisplayValue` /
     /// `PositionValue` / `BoxSizing` / `ContentComponent` などは `(_)` で捨てて
@@ -3913,7 +3911,7 @@ mod tests {
                 Length::Em(_) => Some("Length::Em"),
                 Length::Rem(_) => Some("Length::Rem"),
                 Length::Pt(_) => Some("Length::Pt"),
-                // bd raikiri-spike-2x8 — additional font-relative / absolute
+                // additional font-relative / absolute
                 // units。`Em` / `Rem` / `Pt` と同じ理由で残滓 (絶対化前は
                 // computed 層に存在しない specified-only 表現)。
                 Length::Ex(_) => Some("Length::Ex"),
@@ -3927,7 +3925,7 @@ mod tests {
                 Length::Q(_) => Some("Length::Q"),
                 Length::In(_) => Some("Length::In"),
                 Length::Pc(_) => Some("Length::Pc"),
-                // bd raikiri-spike-vxha — same reasoning as the `Em`/`Rem`/`Pt`
+                // Same reasoning as the `Em`/`Rem`/`Pt`
                 // arms above: pre-absolutization these units don't exist in
                 // the computed layer.
                 Length::Lh(_) => Some("Length::Lh"),
@@ -3942,7 +3940,7 @@ mod tests {
         /// `<percentage>` values to `<length>`)。`line-height` は CSS Inline 3
         /// §5.1 <https://www.w3.org/TR/css-inline-3/#line-height-property> が
         /// "Percentages: computed relative to 1em" と規定する。実装側は
-        /// `crate::resolve` の `resolve_font_size` / `resolve_line_height` が // doc-pointer-lint:ignore: opt-out-3, fn-body-local item doc (nested inside `specified_layer_residue`, itself inside #[cfg(test)] mod tests) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+        /// `crate::resolve` の `resolve_font_size` / `resolve_line_height` が // doc-pointer-lint:ignore: opt-out-3, fn-body-local item doc (nested inside `specified_layer_residue`, itself inside #[cfg(test)] mod tests) — rustdoc-blind, confirmed via わざと壊して確かめる
         /// 両方とも `%` を絶対化しており、本 helper 以前の検出器はそれを
         /// computed 層と誤分類していた。
         fn length_absolute_only(l: Length, what: &'static str) -> Option<&'static str> {
@@ -3980,12 +3978,12 @@ mod tests {
                 | TextAlign::Center
                 | TextAlign::Justify
                 | TextAlign::JustifyAll => None,
-                // raikiri-spike-l3wg 以降、`resolve_against_inherited` の
+                // この改修以降、`resolve_against_inherited` の
                 // phase 2 が必ず解決するため、この arm に**到達すること自体が
                 // bug** (かつての「唯一の文書化された例外」ではない —
                 // `PageCascadeResult::declarations` の doc も参照)。`Some`
                 // のまま残してあるのは意図的な tripwire: 新しい entry point が
-                // phase 2 を経由し損ねた場合 (bd raikiri-spike-7m33 gap (b) 相当)
+                // phase 2 を経由し損ねた場合 (gap (b) 相当)
                 // に本検出器が拾えるようにするため。raw corpus
                 // (`specified_layer_residue_detector_is_not_vacuous`) はまさに
                 // この「未解決の raw 値」を検査しているので、`None` に変えると
@@ -4006,8 +4004,8 @@ mod tests {
             PropertyValue::LineHeight(lh) => line_height(*lh),
             // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
             PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),
-            // `larger` / `smaller` — `font_weight` の `Bolder`/`Lighter` と同型
-            // (raikiri-spike-4rmu): 常に未解決の残滓。`page_corpus` の worst-case
+            // `larger` / `smaller` — `font_weight` の `Bolder`/`Lighter` と同型:
+            // 常に未解決の残滓。`page_corpus` の worst-case
             // payload としても使う。
             PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
             PropertyValue::PaddingTop(l)
@@ -4048,7 +4046,7 @@ mod tests {
             | PropertyValue::BorderBottomColor(_)
             | PropertyValue::BorderLeftColor(_)
             | PropertyValue::BoxSizing(_)
-            // `OverflowValue` carries no length — raikiri-spike-cmd3's
+            // `OverflowValue` carries no length — its
             // cross-axis coupling (`resolve_overflow`) is real phase-3 work
             // (see `absolutize_in_page_context`'s `OverflowX`/`OverflowY`
             // arms), but has nothing to do with this detector, which is
@@ -4058,7 +4056,7 @@ mod tests {
             | PropertyValue::OverflowX(_)
             | PropertyValue::OverflowY(_)
             | PropertyValue::Overflow(_)
-            // `TextDecoration` carries no length either (bd raikiri-spike-5z86.3).
+            // `TextDecoration` carries no length either.
             | PropertyValue::TextDecoration(_) => None,
         }
     }
@@ -4088,7 +4086,7 @@ mod tests {
         );
     }
 
-    /// bd raikiri-spike-2x8 で追加した font-relative / absolute unit も
+    /// 追加した font-relative / absolute unit も
     /// `Em` / `Rem` / `Pt` と同じく「絶対化前は specified 層の残滓」として
     /// 検出される (`length()` inner helper の網羅 match — 新 variant 追加は
     /// compile error で強制されるが、各 arm の到達は compile では保証されない
@@ -4144,7 +4142,7 @@ mod tests {
             specified_layer_residue(&PropertyValue::PaddingTop(Length::Pc(1.0))),
             Some("Length::Pc"),
         );
-        // bd raikiri-spike-vxha.
+        // `lh` / `rlh` units.
         assert_eq!(
             specified_layer_residue(&PropertyValue::PaddingTop(Length::Lh(1.0))),
             Some("Length::Lh"),
@@ -4156,13 +4154,13 @@ mod tests {
     }
 
     /// `page_corpus` に重複 variant が無く、`sample_for` の各 arm が自分の
-    /// key と一致する `PropertyValue` を返すこと (raikiri-spike-a754)。
+    /// key と一致する `PropertyValue` を返すこと。
     ///
     /// 以前の本 test は手で持つ `PROPERTY_VALUE_VARIANTS` (単なる数) と
     /// `corpus.len()` を比較していたが、両者は互いにしか照合されておらず
-    /// (bd raikiri-spike-awjx §8.2 debt lens M4 が `PropertyValue::Orphan` で
+    /// (実際に `PropertyValue::Orphan` を足して
     /// 実証)、新 variant が両方同じ数のまま corpus 外に残るケースを検出
-    /// できなかった。raikiri-spike-a754 で `PROPERTY_VALUE_VARIANTS` を廃止し
+    /// できなかった。その後の rework で `PROPERTY_VALUE_VARIANTS` を廃止し
     /// `page_corpus` を `sample_for` 駆動に変えたので、その旧チェックは
     /// **常に真になる同語反復** (`corpus.len()` は `ALL_PROPERTY_KEYS.len() +
     /// key_sharing_extras().len()` の定義から出てくる) になり、削除した。
@@ -4173,7 +4171,7 @@ mod tests {
     ///
     /// - discriminant の重複が無いこと (`std::mem::discriminant` — payload の
     ///   trait bound に依存せず variant のみを区別する)。`PropertyValue::key()`
-    ///   はもう使えない — raikiri-spike-4rmu で `FontSizeRelative` /
+    ///   はもう使えない — `FontSizeRelative` /
     ///   `FontSize` が意図的に `PropertyKey::FontSize` を共有し単射性が崩れた
     ///   ため。
     /// - `sample_for(key).key() == key` — arm の中身が自分の key と食い違って
@@ -4227,7 +4225,7 @@ mod tests {
 
     /// phase 3 の「素通し」分類が doc の数え上げと一致すること。
     ///
-    /// bd raikiri-spike-sshp が doc に書いた「21」が実測 22 だった drift の
+    /// phase 3 追加時の diff が doc に書いた「21」が実測 22 だった drift の
     /// 再発 pin。分類 (どの arm にどの variant を置くか) を動かすと落ちる。
     ///
     /// ⚠️ **射程**: 判定は `out == value` なので、pin しているのは arm の所属
@@ -4240,13 +4238,13 @@ mod tests {
     ///
     /// `page_corpus()` は phase 2 を通していない raw payload を含む
     /// (`FontWeight::Bolder` / `TextAlign::MatchParent` 等) — 本 test はそれを
-    /// **意図的に** phase 3 へ直接投入して分類する。bd raikiri-spike-7m33 で
+    /// **意図的に** phase 3 へ直接投入して分類する。後の変更で
     /// `absolutize_in_page_context` の引数が `ResolvedAgainstInherited` に
     /// なったため、`ResolvedAgainstInherited::for_test` (`#[cfg(test)]` 限定)
     /// を経由してこの raw payload を包む。
     ///
     /// 「変換」側の数 (`phase_3_transformed_variants()`) は独立には assert
-    /// しない (raikiri-spike-a754 debt lens) — `unchanged + 変換された数 ==
+    /// しない — `unchanged + 変換された数 ==
     /// page_corpus().len()` の恒等式と `phase_3_transformed_variants() ==
     /// page_corpus().len() - PHASE_3_PASS_THROUGH_VARIANTS` の定義から、下の
     /// `unchanged` の assert が通った時点で自動的に真になる算術的同語反復
@@ -4259,7 +4257,7 @@ mod tests {
         // `Solid` にしておかないと border-*-width が style gate で `0px` に
         // 潰れ、「変換された」判定が gate 由来か絶対化由来か区別できない。
         let styles = Sides::all(BorderStyle::Solid);
-        // Both axes `hidden` (raikiri-spike-cmd3) — "neither visible nor
+        // Both axes `hidden` — "neither visible nor
         // clip", so it always triggers the CSS Overflow 3 §3.1 coupling for
         // whichever axis the corpus sample under test is (mirrors `Solid`
         // above: chosen so "changed" is due to the coupling, not a
@@ -4290,7 +4288,7 @@ mod tests {
     ///
     /// `PageCascadeResult::declarations` の doc が consumer に宣言している
     /// 「These are computed values, with no documented exception」そのもの。
-    /// raikiri-spike-l3wg 以前は `text-align: match-parent` が唯一の例外
+    /// この改修より前は `text-align: match-parent` が唯一の例外
     /// だった (旧 test 名
     /// `page_declarations_carry_exactly_one_specified_layer_residue`) — 本
     /// task がそれを解消したので期待値を空 `vec![]` に変えた。例外が復活したら
@@ -4315,7 +4313,7 @@ mod tests {
         assert_eq!(
             residues,
             Vec::<(PropertyKey, &'static str)>::new(),
-            "PageCascadeResult::declarations に specified 層残滓が残ってはならない (raikiri-spike-l3wg 以降、documented exception は無い)",
+            "PageCascadeResult::declarations に specified 層残滓が残ってはならない (この改修以降、documented exception は無い)",
         );
     }
 
@@ -4324,11 +4322,11 @@ mod tests {
     /// 上の test は phase 2 ∘ phase 3 を直接合成しているので、`cascade_page`
     /// が phase 3 を呼ばなくなっても落ちない。契約が書かれているのは
     /// `PageCascadeResult::declarations` = `cascade_page` の戻り値なので、
-    /// 主語を合わせた pin をもう 1 本置く。bd raikiri-spike-7m33 で
+    /// 主語を合わせた pin をもう 1 本置く。後の変更で
     /// `resolve_against_inherited` → `absolutize_in_page_context` の合成順序
     /// 自体は `ResolvedAgainstInherited` 型で強制されるようになったが、
     /// 「本関数群を一切呼ばない新しい entry point」までは型で数え上げられない
-    /// (7m33 は narrow しただけで close していない) ので、既存経路
+    /// (その変更は narrow しただけで close していない) ので、既存経路
     /// (`cascade_page`) の wiring だけでも押さえておく。
     #[test]
     fn cascade_page_output_carries_no_specified_layer_residue() {
@@ -4353,8 +4351,8 @@ mod tests {
         //
         // 診断文言は (custom message ではなく) この comment 側に置く:
         // `assert_eq!` の custom message 引数は assertion 失敗時のみ評価され
-        // る cold path なので、test が pass する限り gate §8.1.1 patch
-        // coverage 上 uncovered 扱いになる (bd raikiri-spike-sxd7 と同型)。
+        // る cold path なので、test が pass する限り自動 coverage 計測上
+        // uncovered 扱いになる。
         assert_eq!(result.declarations().len(), 27);
 
         // `declarations` は HashMap-random 順なので sort して比較する。
@@ -4364,7 +4362,7 @@ mod tests {
             .filter_map(|v| specified_layer_residue(v).map(|r| format!("{:?}: {r}", v.key())))
             .collect();
         residues.sort();
-        // raikiri-spike-l3wg 以前はここに `TextAlign: text-align: match-parent`
+        // この改修より前はここに `TextAlign: text-align: match-parent`
         // が 1 件残っていた (関数名が予告していた「no residue」と実際の
         // assertion が食い違っていた quirk) — 今は名前どおり空になる。
         // cov:ignore: panic-message literal only executed on assertion
@@ -4380,7 +4378,7 @@ mod tests {
     /// `cascade_page_output_carries_no_specified_layer_residue` が vacuous で
     /// ないこと (negative control) — 検出器は phase 2 / phase 3 を通していない
     /// **raw** 値に対しては実際に発火する (`text-align: match-parent` を含む —
-    /// raikiri-spike-l3wg 以降も raw corpus はまだ resolve 前なので、この
+    /// この改修以降も raw corpus はまだ resolve 前なので、この
     /// negative control 自体は変わらない)。
     #[test]
     fn specified_layer_residue_detector_is_not_vacuous() {
@@ -4403,7 +4401,7 @@ mod tests {
     /// unresolved. That count is only a stand-in for "of the `PropertyValue`
     /// variants" while `page_corpus` stays complete — completeness is no
     /// longer independently checked (see the section comment above
-    /// `page_corpus`; tracked at bd raikiri-spike-c0z9). The counts
+    /// `page_corpus`). The counts
     /// themselves are pinned by
     /// `phase_3_variant_classification_matches_the_documented_counts`; this
     /// test drives the same rule end-to-end through `cascade_page`.
@@ -4438,7 +4436,7 @@ mod tests {
     }
 
     /// `@page { text-align: match-parent }` now resolves against the root
-    /// element's computed `text-align` + `direction` (raikiri-spike-l3wg) —
+    /// element's computed `text-align` + `direction` —
     /// this used to be the crate's one documented specified-layer exception
     /// (`cascade_page_text_align_match_parent_passes_through_as_specified_value`,
     /// asserting `TextAlign::MatchParent` survived unresolved). CSS Text 3
@@ -4599,19 +4597,19 @@ mod tests {
         assert_send::<PageCascadeResult>();
     }
 
-    // ── post-parse shorthand injection into `@page` (bd raikiri-spike-3svx) ──
+    // ── post-parse shorthand injection into `@page` ─────────────────────────
     //
     // `add_stylesheet` の**後**に declaration を shorthand variant へ書き戻す
     // post-parse mutation 経路。`crate::rule::parse_declaration_block` の
     // parse-time 展開はこの経路を守らない。element 経路の同形 gap を塞いだのが
-    // bd raikiri-spike-nqkj (`crate::cascade` の `collect_cascaded`)、`@page`
-    // 経路 = `cascade_page` を塞いだのが bd raikiri-spike-3svx。
+    // element-path 側の fix (`crate::cascade` の `collect_cascaded`)、`@page`
+    // 経路 = `cascade_page` を塞いだのが `@page`-path 側の fix (本節)。
     //
-    // `RuleTree.page_rules` / `PageRule.declarations` は bd raikiri-spike-qzn3
+    // `RuleTree.page_rules` / `PageRule.declarations` は先述の可視性引き締め
     // の後も `pub` field である (element 経路と違い可視性では閉じない)。何が
     // 閉じていて何が開いているかは `crate::rule::expand_shorthand_into` doc の
     // 「2 と 3 で閉じている範囲が違う」節が canonical — ここには再掲しない
-    // (再掲は既に 2 度 drift した — bd raikiri-spike-awjx)。
+    // (再掲は既に 2 度 drift した)。
     //
     // 守るべき spec は 2 条:
     //
@@ -4629,17 +4627,18 @@ mod tests {
     //
     // 各 test の comment にある「展開の有無を区別する / しない」の判定は、
     // `cascade_page` の展開 hunk を revert した状態での実測に基づく
-    // (bd raikiri-spike-3svx gate §8.2、`crate::cascade` の `post_parse_*` 群が
+    // (`crate::cascade` の `post_parse_*` 群が
     // 採ったのと同じ hunk-revert 法)。
 
-    /// nqkj の element 経路 helper (`cascade::tests::
+    /// element-path 側の fix にあった helper (`cascade::tests::
     /// cascade_with_post_parse_injection`) の `@page` 版。
     ///
     /// `css` を `RuleTree::add_stylesheet` で parse したあと、
     /// `page_rules[0].declarations[idx].value` を `injected` に差し替え、
     /// `cascade_page` を通した結果を返す。
     ///
-    /// この手つきは **3svx が報告した当時の Consumer 経路**そのもの。qzn3 で
+    /// この手つきは **`@page`-path 側の fix が報告した当時の Consumer 経路**
+    /// そのもの。先述の可視性引き締めで
     /// `Declaration::value` が `pub(crate)` になったので、もう crate 外からは
     /// 書けない。
     ///
@@ -4692,7 +4691,7 @@ mod tests {
     /// 16 site に膨らむため。key ↔ variant が食い違う形の bug は本 helper では
     /// 検出できないが、`cascade_page` の key は `PropertyValue::key()` 由来であり
     /// (winner selection の `let key = value.key();`)、その対応は
-    /// `crate::property` の `margin_longhand_keys_map_correctly` が pin 済み。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (non-#[test] mod-level helper doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-csmj; demoted from an already-linked span by bd raikiri-spike-gq7x)
+    /// `crate::property` の `margin_longhand_keys_map_correctly` が pin 済み。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (non-#[test] mod-level helper doc) — rustdoc-blind, confirmed via わざと壊して確かめる (demoted from an already-linked span)
     /// border 側に同型 helper を置かず explicit assert にしてあるのは、3
     /// sub-property family ぶんの helper が要るのに対し assert が 12 個で済むため。
     fn margin_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {

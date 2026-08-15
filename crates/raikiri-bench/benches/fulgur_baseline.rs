@@ -1,19 +1,19 @@
-//! fulgur v0.12 baseline parity harness — first landing (bd raikiri-spike-vvf6).
+//! fulgur v0.12 baseline parity harness — first landing.
 //!
 //! # Why this benchmark exists
 //!
-//! bd raikiri-spike-vvf6 (`type: decision`) makes raikiri's failure condition
-//! explicit: **if raikiri renders slower than fulgur v0.12, the migration this
-//! project exists to enable has negative economic value**, independent of how
-//! much correctness (WPT pass rate, nested multicol, etc.) improves. That
-//! decision names a concrete evidence point — fulgur v0.12's own "100 pages ×
-//! 100 tables" scenario dropped from 139s to 0.67s (**209×**) — as the
-//! baseline raikiri must meet or beat, and calls for a `raikiri-bench` crate
-//! to make the comparison runnable instead of aspirational. This file is that
-//! crate's first real (non-vaporware) benchmark.
+//! Raikiri's failure condition is explicit: **if raikiri renders slower than
+//! fulgur v0.12, the migration this project exists to enable has negative
+//! economic value**, independent of how much correctness (WPT pass rate,
+//! nested multicol, etc.) improves. A concrete evidence point — fulgur
+//! v0.12's own "100 pages × 100 tables" scenario dropped from 139s to 0.67s
+//! (**209×**) — is the baseline raikiri must meet or beat, which calls for a
+//! `raikiri-bench` crate to make the comparison runnable instead of
+//! aspirational. This file is that crate's first real (non-vaporware)
+//! benchmark.
 //!
-//! The 209×/0.67s/100-pages-×-100-tables numbers come from the bd issue text,
-//! which cites a Zenn article (<https://zenn.dev/mitzh/articles/93a99ce7201e95>).
+//! The 209×/0.67s/100-pages-×-100-tables numbers come from that decision's
+//! record, which cites a Zenn article (<https://zenn.dev/mitzh/articles/93a99ce7201e95>).
 //! **They are not re-derived here.** Treat them as the decision's stated
 //! target, not as something this benchmark proves.
 //!
@@ -36,14 +36,14 @@
 //!   port; it is a from-scratch construction aimed at the same axis fulgur's
 //!   number names.
 //! - `crates/fulgur/src/drawables.rs:1-60` (real content, read directly) *is*
-//!   available and matches what bd raikiri-spike-vvf6 and
+//!   available and matches what the decision record and
 //!   `crates/raikiri/src/entries.rs`/`page_drawables.rs` already cite: a
 //!   `Drawables` struct of per-NodeId side-channel maps (replacing a
 //!   `Pageable` trait + 17 impls) plus `TrackedMap`, a `BTreeMap` that also
 //!   logs insertion order so "which NodeIds were added since an earlier
 //!   point" is `O(inserted-since)` instead of an `O(N²)` snapshot-diff across
 //!   a whole document. That is the *architectural* explanation for fulgur's
-//!   209× (per bd raikiri-spike-vvf6's rationale section), not benchmark
+//!   209× (per the decision's rationale section), not benchmark
 //!   *code* — raikiri's own `PageDrawables`/`TrackedMap` (`page_drawables.rs`)
 //!   already inherits the shape. This benchmark cannot yet exercise that path
 //!   at all: see the PageDrawables note below.
@@ -53,7 +53,7 @@
 //! A literal "100 pages × 100 tables" port is not possible against raikiri
 //! today, on two independent axes:
 //!
-//! 1. **No pages.** `raikiri::render_streaming` and `raikiri::plan` are M1
+//! 1. **No pages.** `raikiri::render_streaming` and `raikiri::plan` are
 //!    stubs — both unconditionally return `RenderError::Unimplemented`
 //!    (`crates/raikiri/src/stubs.rs`). The only rendering entry point that
 //!    actually runs end-to-end is [`raikiri::html_to_png`] /
@@ -77,14 +77,14 @@
 //!    fulgur's page axis is **not represented in this file at all**; only
 //!    the table-count axis is measured, at single-page granularity. A future
 //!    file that actually wants a page-count axis would need raikiri to grow
-//!    real pagination first (see the M1-stub point above) — there is no way
+//!    real pagination first (see the stub point above) — there is no way
 //!    to approximate one honestly against the current entry point.
 //!
 //! 2. **No `<table>` layout.** `crates/raikiri-style/src/property.rs`'s own
 //!    test pins `assert_eq!(parse("table", "display"), None)` — `display:
 //!    table` does not parse in raikiri today, and
 //!    `crates/raikiri-html/src/ua/minimal.css` says outright: "`<table>`
-//!    presentation are deliberately deferred (M2+)". `raikiri::TableEntry`
+//!    presentation are deliberately deferred". `raikiri::TableEntry`
 //!    (`crates/raikiri/src/entries.rs`) is a `#[non_exhaustive]` placeholder
 //!    with zero fields — `PageDrawables` does not populate it yet, so a
 //!    perf-only benchmark cannot exercise it regardless of markup.
@@ -104,15 +104,15 @@
 //! Point 1 is a gap this file leaves open (no page axis at all), and point 2
 //! is a genuine approximation (real markup, substitute layout treatment).
 //! Both are the "closest feasible using raikiri's actual current rendering
-//! entry point" per bd raikiri-spike-vvf6's initial-landing scope, not a
-//! claim of parity with fulgur's real scenario. A future sprint restoring
+//! entry point" for this benchmark's initial-landing scope, not a
+//! claim of parity with fulgur's real scenario. Future work restoring
 //! real pagination and/or table layout should replace this file's workload
 //! rather than layer a second one beside it, so the "what does
 //! `fulgur_baseline_pages` measure" story does not fork.
 //!
 //! # Explicitly out of scope for this landing
 //!
-//! Per bd raikiri-spike-vvf6's own initial-landing framing, none of the
+//! Per this benchmark's own initial-landing framing, none of the
 //! following are attempted here — they are follow-up work:
 //!
 //! - CI integration / nightly cron wiring (fulgur `wpt-nightly.yml` pattern)

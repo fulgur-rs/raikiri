@@ -1,7 +1,7 @@
 //! Per-page immutable snapshot consumed by raikiri downstream consumers
 //! (fulgur PDF translator が想定 primary consumer).
 //!
-//! # Consumer contract (raikiri-spike-0icy Axis 1)
+//! # Consumer contract
 //!
 //! [`PageScene`] は raikiri 内部 pipeline (fragmentation + reflow +
 //! LayoutBuffer) を通り抜けた後の **1 page 分の immutable snapshot**。
@@ -11,20 +11,19 @@
 //! # Node identity
 //!
 //! [`raikiri_traits::NodeId`] を key として page 内で分布する DOM node を
-//! 表現する。raikiri crate の Document (raikiri-spike-m1.23 で umbrella
-//! re-export) と PageScene が **同一 NodeId 空間** を共有するため、
+//! 表現する。raikiri crate の Document (umbrella re-export) と PageScene
+//! が **同一 NodeId 空間** を共有するため、
 //! consumer は 1 個の `NodeId` を Document 側の property lookup と
 //! PageScene 側の drawable / fragment lookup に **conversion なしで**
-//! 使い回せる (coord 2026-07-24 decision on raikiri-spike-os52、bd
-//! comment 参照)。
+//! 使い回せる (確立済みの design decision)。
 //!
-//! # Sprint 22 (raikiri-spike-os52) landing scope
+//! # Landing scope: pub type surface
 //!
 //! Pub type surface のみ landing (`#[non_exhaustive]` で future field 追加を
 //! semver-non-breaking に保つ)。内部 pipeline から `PageScene` を実際に
-//! populate する path は future sprint (M2 streaming pagination) で fill。
+//! populate する path は将来の streaming pagination 対応で fill される。
 //!
-//! # Sprint 23 (raikiri-spike-bkkm) landing scope
+//! # Landing scope: html_to_png の PageScene 経由 refactor
 //!
 //! 内部 `html_to_png` pipeline を PageScene 経由に refactor。
 //! [`build_page_scene`] で post-layout Document から metadata + fragments を
@@ -32,12 +31,11 @@
 //! `raikiri_paint::paint_single_page` + `anyrender_vello_cpu` + PNG encode の
 //! byte-identical triple を verbatim reuse する。
 //!
-//! Sprint 23 では `drawables` field を empty のままにした (glyph run /
-//! position 情報を持たない Sprint 22 landed empty entries に populate すると
-//! emission order が変わり byte-identical が破れるため、advisor consult で
-//! 確定した hard constraint)。
+//! この段階では `drawables` field を empty のままにした (glyph run /
+//! position 情報を持たない empty entries に populate すると emission order
+//! が変わり byte-identical が破れるため、意図的な hard constraint)。
 //!
-//! # Sprint 24 (raikiri-spike-4hp1) landing scope — narrowed (items 1-3)
+//! # Landing scope: drawables populate (narrowed, items 1-3)
 //!
 //! [`build_page_scene`] が `drawables` を実際に populate するようになった
 //! (post-layout Element node → [`crate::BlockEntry`]、post-layout Text node →
@@ -45,10 +43,10 @@
 //! **paint pipeline は今回も `PageDrawables` を一切消費しない** —
 //! [`PageScene::rasterize`] は引き続き `dom` + `cascade` を thread して
 //! `raikiri_paint::paint_single_page` を verbatim call する (下記
-//! `rasterize` doc参照)。populate と consume が分離されているため、本
-//! sprint は byte-identical VRT に影響しない。`raikiri_paint::paint_single_page`
+//! `rasterize` doc参照)。populate と consume が分離されているため、この
+//! 変更は byte-identical VRT に影響しない。`raikiri_paint::paint_single_page`
 //! を `PageDrawables` 消費に rework する話 (元 item 4) は crate-topology
-//! 判断待ちで bd raikiri-spike-iest に分離済み。
+//! 判断待ちで将来の作業に分離済み。
 
 use crate::PageDrawables;
 use crate::entries::{BlockEntry, ParagraphEntry};
@@ -64,21 +62,21 @@ use std::collections::BTreeMap;
 /// Fulgur units::Pt (下流 consumer の point 型) と同じ underlying を持たせ、
 /// consumer が Length / coordinate を conversion なしで扱えるようにする。
 /// Newtype ではなく alias とし、arithmetic は Rust の primitive f32 operator
-/// を直接使えるようにする (Sprint 22 の minimal surface 判断、future で
+/// を直接使えるようにする (初期の minimal surface 判断、将来
 /// unit-safety を強化する場合は newtype 化が別 decision)。
 ///
-/// # Sprint 23 (bkkm) unit contract issue — bd raikiri-spike-v0zm
+/// # Unit contract issue: `Pt` currently carries CSS px, not PDF pt
 ///
-/// `build_page_scene` は Sprint 23 で `PageMetadata.size` / [`Fragment`] fields
+/// `build_page_scene` は `PageMetadata.size` / [`Fragment`] fields
 /// (本 `Pt` 型) に **CSS px** 値 (1/96 in、PageBox / taffy `unrounded_layout`
 /// 由来) を populate している。本 doc は "PDF point 1/72 in" を promise する
 /// ため fulgur consumer が pt として読むと約 33% の geometry drift を起こす
 /// (byte-identical raster path は影響なし — paint は Node arena を CSS px で
-/// 再 walk する)。unit 変換 or type rename の resolution は bd raikiri-spike-v0zm
-/// (wall/umbrella)。Sprint 23 は byte-identical maintenance が primary scope の
-/// ため coordinator 判断で defer、Sprint 24+ で resolve 予定。
+/// 再 walk する)。unit 変換 or type rename の resolution は今後の作業に
+/// 持ち越し (byte-identical maintenance が primary scope だったため defer、
+/// 将来 resolve 予定)。
 ///
-/// Sprint 24 (raikiri-spike-4hp1) の `crate::entries` 群 (`BlockEntry` の
+/// 後続の `crate::entries` 群 (`BlockEntry` の
 /// `layout_size` / `border_widths` 等) も同じ `Pt` alias を再利用し、同じ
 /// CSS-px-in-Pt debt を意図的に踏襲する (新たな別種の unit debt を作らない
 /// ための選択、`crate::entries` module doc参照)。
@@ -87,7 +85,7 @@ pub type Pt = f32;
 /// Page 向きを示す enum。
 ///
 /// CSS Paged Media の `size: portrait | landscape` を反映する consumer-facing
-/// property。future sprint で `size: <named-size>` (A4 / Letter etc.) を
+/// property。将来 `size: <named-size>` (A4 / Letter etc.) を
 /// [`PageMetadata::page_name`] と組み合わせて解釈する時の primary axis。
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -126,11 +124,10 @@ pub struct PageMetadata {
 /// # Note on `PageFragment`
 ///
 /// raikiri umbrella には別途 [`raikiri::PageFragment`](crate::PageFragment)
-/// (raikiri-traits 由来、m1.23 landed) が re-export 済で shape が異なる。
+/// (raikiri-traits 由来) が re-export 済で shape が異なる。
 /// `Fragment` (本 struct、per-node per-fragment 座標) と `PageFragment`
 /// (page 全体を sink に渡す container 型) は role が異なるが、名前の類似は
-/// consumer confusion risk。reviewer:spec の判断で future sprint に rename
-/// する余地あり (raikiri-spike-os52 escalation comment §non-blocking flag)。
+/// consumer confusion risk。将来 rename する余地あり。
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct Fragment {
@@ -157,7 +154,7 @@ pub struct Fragment {
 /// - [`fragments`](PageScene::fragments): NodeId ごとの per-fragment 座標。
 ///   単一 node が page 内で 1 fragment に収まる場合は `Vec` 長 1
 /// - [`drawables`](PageScene::drawables): per-attribute node map ([`PageDrawables`]
-///   参照)、raikiri-spike-0icy Axis 2 の ECS 風 shape
+///   参照)、ECS 風 shape
 /// - [`root_id`](PageScene::root_id) / [`body_id`](PageScene::body_id):
 ///   `<html>` / `<body>` node の NodeId、consumer が root-level styling
 ///   (background / opacity) を lookup する時の entry point
@@ -191,8 +188,8 @@ impl PageScene {
     ///
     /// # なぜ snapshot が `dom` + `cascade` を param に取るのか
     ///
-    /// [`PageDrawables`] entries (BlockEntry / ParagraphEntry) は Sprint 24
-    /// (raikiri-spike-4hp1) で minimal field を populate されたが、paint 消費
+    /// [`PageDrawables`] entries (BlockEntry / ParagraphEntry) は
+    /// minimal field を populate されているが、paint 消費
     /// 側はまだ切り替わっていない — glyph run 自体 (実 shape / position) は
     /// 依然 `parley::Layout` 型そのものであり `crate::entries` の field type
     /// 方針 (raikiri-style/parley 型を持たない) の対象外なので、真の paint
@@ -202,11 +199,10 @@ impl PageScene {
     /// thread して既存 paint pipeline を verbatim reuse する。`paint_single_page`
     /// を `PageDrawables` 消費に rework する話 (真の snapshot semantics へ
     /// 到達し `dom` / `cascade` param を drop する) は crate-topology 判断待ちで
-    /// bd raikiri-spike-iest に分離済み (param drop 自体は bd
-    /// raikiri-spike-dmoo、iest に blocked-on)。
+    /// 将来の作業に分離済み。
     ///
     /// # 内部
-    /// 1. `page_box.{width,height}.ceil() as u32` で pixel buffer 寸法を得る (M1.14 と同一)
+    /// 1. `page_box.{width,height}.ceil() as u32` で pixel buffer 寸法を得る (html_to_png と同一)
     /// 2. `anyrender::render_to_buffer::<VelloCpuImageRenderer, _>` で `PaintScene` を build
     /// 3. `raikiri_paint::paint_single_page(scene, dom, cascade, page_box)` を verbatim call
     /// 4. `encode_png` (`tiny_skia::Pixmap::encode_png`) で RGBA8 → PNG serialize
@@ -221,7 +217,7 @@ impl PageScene {
     /// (undefined、caller は `layout_single_page` 完了後に呼ぶ責任)。
     #[must_use]
     pub fn rasterize(&self, dom: &Document, cascade: &CascadeResult, page_box: PageBox) -> Vec<u8> {
-        // PageBox = 793.7008 × 1122.5197 CSS px → 794 × 1123 u32 buffer (M1.14 と同一 rounding)
+        // PageBox = 793.7008 × 1122.5197 CSS px → 794 × 1123 u32 buffer (html_to_png と同一 rounding)
         let width = page_box.width.ceil() as u32;
         let height = page_box.height.ceil() as u32;
 
@@ -238,21 +234,20 @@ impl PageScene {
 /// Post-layout Document から metadata + fragments + drawables を抽出し
 /// [`PageScene`] を construct する。
 ///
-/// Sprint 23 (raikiri-spike-bkkm) の internal wiring — `html_to_png_impl` から
-/// `layout_single_page` 完了後に呼ばれる。Sprint 24 (raikiri-spike-4hp1) で
-/// `cascade` param が live 化し (旧 `_cascade`)、DFS walk 中に Element node を
+/// Internal wiring — `html_to_png_impl` から
+/// `layout_single_page` 完了後に呼ばれる。`cascade` param が live 化し
+/// (旧 `_cascade`)、DFS walk 中に Element node を
 /// [`BlockEntry`]、Text node を [`ParagraphEntry`] として `drawables` へ
-/// insert する (§module doc の Sprint 24 landing scope 参照)。他 9 Entry 型は
+/// insert する (§module doc の landing scope 参照)。他 9 Entry 型は
 /// 対応する pipeline stage が無いため insert されない (`crate::entries`
 /// module doc参照)。
 ///
 /// # NodeId identity mapping
 ///
 /// raikiri-dom arena index (`usize`) を `raikiri_traits::NodeId(u64)` に
-/// `NodeId::new(idx as u64)` で 1:1 射影する (raikiri-spike-0icy / shc6 で
-/// promise した "同一 NodeId 空間")。M4+ で真の PageDrawables 経由 paint に
-/// 切り替わる時に本 mapping の correctness が effective になる、現状は
-/// paint に影響しない cosmetic 属性。
+/// `NodeId::new(idx as u64)` で 1:1 射影する ("同一 NodeId 空間" を promise)。
+/// 将来 真の PageDrawables 経由 paint に切り替わる時に本 mapping の
+/// correctness が effective になる、現状は paint に影響しない cosmetic 属性。
 ///
 /// # Fragment coordinate semantics
 ///
@@ -261,10 +256,10 @@ impl PageScene {
 /// [`raikiri_paint::walk::paint_document`] と同じ DFS stack 順で
 /// `parent_abs + node.unrounded_layout.location` を積算した body-relative 座標。
 ///
-/// `body_offset_pt` は page-absolute origin における body 位置 — M1 は @page
+/// `body_offset_pt` は page-absolute origin における body 位置 — 現状 @page
 /// margin なしで body_id が taffy root として (0, 0) から compute されるため
-/// 常に `(0.0, 0.0)`。M4+ で @page margin が導入された時点で cascade から
-/// 引き出す予定 (bd raikiri-spike-pie2、raikiri-spike-m4 discovered-from)。
+/// 常に `(0.0, 0.0)`。将来 @page margin が導入された時点で cascade から
+/// 引き出す予定。
 pub(crate) fn build_page_scene(
     dom: &Document,
     cascade: &CascadeResult,
@@ -371,8 +366,8 @@ pub(crate) fn build_page_scene(
         }
     }
 
-    // M1: @page margin なし、body は page origin (0, 0) 起点。
-    // M4+ で cascade @page margin から引き出す: bd raikiri-spike-pie2。
+    // 現状: @page margin なし、body は page origin (0, 0) 起点。
+    // 将来 cascade @page margin から引き出す予定。
     let body_offset_pt: (Pt, Pt) = (0.0, 0.0);
 
     PageScene {
@@ -406,7 +401,7 @@ fn element_id(dom: &Document, node_id: NodeId) -> Option<String> {
 /// 抽出用の internal helper。`raikiri_paint::walk::find_body` と同じ contract
 /// (inert subtree skip、tag 一致で確定) を tag 汎化した shape。
 /// 本 helper は find_body-shaped pattern の 3rd copy — consolidation 判断は
-/// bd raikiri-spike-94wp (wall-respecting duplication として retro-accept 済)。
+/// 意図的に見送り済み (duplication として容認)。
 fn find_first_element_by_tag(dom: &Document, tag: &str) -> Option<usize> {
     let mut stack: Vec<usize> = vec![dom.root_index()];
     while let Some(idx) = stack.pop() {
@@ -474,9 +469,9 @@ mod tests {
     }
 
     /// build_page_scene が hello-world post-layout Document から metadata + fragments を
-    /// populate する — advisor consult で recommended integration assertion
-    /// (node_ids non-empty + body_id/root_id populated)。reviewer:debt に対する
-    /// dead-untested 防止 pin。
+    /// populate する — recommended integration assertion
+    /// (node_ids non-empty + body_id/root_id populated)。dead-untested
+    /// 防止 pin。
     #[test]
     fn build_page_scene_populates_metadata_from_hello_world() {
         let (dom, cascade) = hello_world_post_layout();
@@ -507,7 +502,7 @@ mod tests {
                 "fragments must have at least one entry for each id in node_ids ({id:?})",
             );
         }
-        // M1: @page margin なし、body_offset_pt = (0, 0)
+        // 現状: @page margin なし、body_offset_pt = (0, 0)
         assert_eq!(scene.body_offset_pt, (0.0, 0.0));
         // Page metadata reflects A4
         assert_eq!(
@@ -518,9 +513,9 @@ mod tests {
     }
 
     /// build_page_scene が Element node → `BlockEntry` / Text node →
-    /// `ParagraphEntry` を `drawables` へ populate する (raikiri-spike-4hp1
-    /// item 2/3 の regression pin — `TrackedMap::insert` の非-test call site が
-    /// この production path 経由で exercise されることも同時に確認する)。
+    /// `ParagraphEntry` を `drawables` へ populate する (regression pin —
+    /// `TrackedMap::insert` の非-test call site がこの production path
+    /// 経由で exercise されることも同時に確認する)。
     #[test]
     fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
         let (dom, cascade) = hello_world_post_layout();
@@ -582,8 +577,8 @@ mod tests {
     }
 
     /// PageScene::rasterize が html_to_png と同じ PNG bytes を返す
-    /// (byte-identical triple の verbatim reuse pin — Sprint 23 raikiri-spike-bkkm
-    /// primary regression signal を module scope でも local に固定する)。
+    /// (byte-identical triple の verbatim reuse pin — primary regression
+    /// signal を module scope でも local に固定する)。
     #[test]
     fn rasterize_matches_html_to_png_bytes() {
         let (dom, cascade) = hello_world_post_layout();

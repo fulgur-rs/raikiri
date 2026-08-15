@@ -7,8 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-# NB: this crate is the leaf of raikiri's Stylo-pattern DOM abstraction
-# (raikiri-spike-94e Phase B). Its consumers depend on it; it does not
+# NB: this crate is the leaf of raikiri's Stylo-pattern DOM abstraction.
+# Its consumers depend on it; it does not
 # depend on any raikiri sub-crate. The reverse edge to the foundation
 # crate exists in that crate's own Cargo.toml.
 cssparser  = { workspace = true }
@@ -26,13 +26,12 @@ precomputed-hash = "0.1"
 
 [dev-dependencies]
 # `criterion` backs `benches/cascade.rs` — the regression detector for the
-# *per-declaration constant* of the cascade hot loop (bd raikiri-spike-zpui,
-# origin raikiri-spike-nqkj where a +22% regression was invisible to both
-# `cargo test` and `cargo clippy`).
+# *per-declaration constant* of the cascade hot loop (a +22% regression
+# that was invisible to both `cargo test` and `cargo clippy`).
 #
-# Promoted to `[workspace.dependencies]` by bd raikiri-spike-vvf6, which is
-# exactly the trigger this comment used to name in advance: raikiri-bench now
-# legitimately grows a second `[[bench]]` target, so the version pin, feature
+# Promoted to `[workspace.dependencies]` once raikiri-bench legitimately
+# grew a second `[[bench]]` target — the exact trigger anticipated here in
+# advance — so the version pin, feature
 # selection, and Pure Rust / WASM rationale (0.7.x vs 0.8+'s native `alloca.c`
 # edge, wasm32 compile-but-doesn't-run status, gnuplot external-binary caveat)
 # live once in the root manifest instead of drifting between crates. See root

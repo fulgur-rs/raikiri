@@ -1,12 +1,12 @@
-//! M1 determinism test (raikiri-spike-m1.13)。
+//! determinism test。
 //!
 //! spec §12.3 / §12.6 acceptance criteria: `raikiri::html_to_png` を同一 process
 //! 内で 10 回連続実行し、全 output が byte-identical であることを verify。
-//! 同一 input が同一 output に決定論的に mapping されることを保証する M1 acceptance
+//! 同一 input が同一 output に決定論的に mapping されることを保証する acceptance
 //! criteria の一部。
 //!
 //! spec §12.8 の他次元 (Rayon threads, Process, Arch/OS, Fonts, Dep upgrade) は
-//! M8 の cross-thread-cross-arch-cross-os-determinism-tests task で full matrix
+//! 将来の cross-thread-cross-arch-cross-os-determinism-tests task で full matrix
 //! 化する設計。この test は same-process の base-case のみ担う。
 
 use std::fs;

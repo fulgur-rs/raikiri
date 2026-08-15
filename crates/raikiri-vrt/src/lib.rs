@@ -115,7 +115,7 @@ mod tests {
     }
 
     /// Pixels outside the drawn shape must be transparent-black; the historical
-    /// `rasterize(&mut R, ...)` API (deleted in raikiri-spike-2xu) could leak
+    /// `rasterize(&mut R, ...)` API (since removed) could leak
     /// prior renders' pixels into that region across calls sharing one renderer.
     /// `anyrender::render_to_buffer` constructs a fresh renderer per call, so
     /// the leaked-pixel scenario is structurally impossible at this API surface.
@@ -157,7 +157,7 @@ mod tests {
         );
     }
 
-    /// M1 spec §5.2 — pinning rayon worker count and verifying byte-identity.
+    /// Spec §5.2 — pinning rayon worker count and verifying byte-identity.
     ///
     /// `anyrender_vello_cpu::VelloCpuImageRenderer` internally constructs
     /// `vello_cpu::RenderContext::new(w, h)` which uses `RenderSettings::default()`

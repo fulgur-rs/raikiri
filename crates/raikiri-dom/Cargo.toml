@@ -20,9 +20,8 @@ tempfile = { workspace = true }
 
 # rustix backs `check_open_handle_containment`'s Apple-platform arm
 # (crates/raikiri-dom/src/fonts.rs, `fcntl(fd, F_GETPATH, ..)` via
-# `rustix::fs::getpath`) — bd raikiri-spike-0nww, PMO decision
-# 2026-08-07 17:37. Target-gated to the same platform set as the code
-# `cfg` that uses it (macOS/iOS/tvOS/watchOS/visionOS; `rustix::fs::getpath`
+# `rustix::fs::getpath`). Target-gated to the same platform set as the
+# code `cfg` that uses it (macOS/iOS/tvOS/watchOS/visionOS; `rustix::fs::getpath`
 # is itself `#[cfg(apple)]`-gated internally, see rustix's own build.rs)
 # so Linux/Windows/non-Apple-BSD builds do not gain a dependency they
 # never compile against. Already present transitively at v1.1.4 via

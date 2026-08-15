@@ -1,17 +1,18 @@
 //! raikiri-paint — Document + CascadeResult → anyrender::PaintScene walker.
 //!
-//! nzv.11 の refute 結果 (docs/feasibility-report.md §3.4) に従い、bridge trait
-//! を挟まず `impl anyrender::PaintScene` を直接消費する。M1 は単一 A4 ページ +
-//! text glyphs のみ、element background / border / decoration は M4+ に defer。
+//! この crate の設計は docs/feasibility-report.md §3.4 の refute 結果に従い、
+//! bridge trait を挟まず `impl anyrender::PaintScene` を直接消費する。現状は
+//! 単一 A4 ページ + text glyphs のみ、element background / border /
+//! decoration は将来 defer。
 //!
 //! ## Contract
 //!
-//! - `document` は m1.6 `layout_single_page` を呼び終えた post-layout 状態を前提
+//! - `document` は `layout_single_page` を呼び終えた post-layout 状態を前提
 //!   (Node.unrounded_layout / Node.text_layout populate 済)
 //! - `cascade.computed.len() == document.node_count()` を前提 (caller 責任)
 //! - `scene.reset()` の呼び出しは caller 責任 (blitz-paint と同じ convention)
 //! - infallible — raikiri-traits::RenderError に Paint variant はない
-//!   (m1.6 で pre-shape / layout 済の Document 消費が原理的 infallible)
+//!   (pre-shape / layout 済の Document 消費が原理的 infallible)
 
 use anyrender::PaintScene;
 use raikiri_dom::Document;
@@ -24,16 +25,16 @@ mod walk;
 /// 単一 A4 (or 指定 PageBox) ページに Document + CascadeResult を paint する。
 ///
 /// # 呼び出し順序
-/// 1. `walk::paint_canvas_background` — canvas 背景 fill site (M1.4 no-op、M4 で発火)
+/// 1. `walk::paint_canvas_background` — canvas 背景 fill site (現状 no-op、将来発火予定)
 /// 2. `walk::paint_document` — body から始まる DFS walk、Text node で glyph draw
 ///
-/// # Non-goals (M1.7 scope)
-/// - Multi-page pagination → M2
-/// - Element background-color / border / box-shadow → M4+
-/// - Text decoration (underline / line-through) → M3
-/// - z-index / stacking context → M4+
-/// - CSS transform (rotate/scale/skew) → M4+
-/// - DPI scaling → m1.14 or m8 (`paint_single_page_scaled` 別関数で拡張)
+/// # Non-goals (current scope)
+/// - Multi-page pagination
+/// - Element background-color / border / box-shadow
+/// - Text decoration (underline / line-through)
+/// - z-index / stacking context
+/// - CSS transform (rotate/scale/skew)
+/// - DPI scaling (`paint_single_page_scaled` 別関数で将来拡張予定)
 pub fn paint_single_page(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -56,8 +57,8 @@ mod tests {
     use taffy::{Dimension, Display, Size, Style};
 
     /// hello-world (`<html><head></head><body><p style="color:red">Hi</p></body></html>`) を
-    /// m1.6 layout_single_page まで完了させた Document + CascadeResult を返す。
-    /// m1.7 test 全ての共通 setup。
+    /// layout_single_page まで完了させた Document + CascadeResult を返す。
+    /// このモジュールの test 全ての共通 setup。
     fn hello_world_paint_setup() -> (Document, raikiri_style::CascadeResult) {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -87,15 +88,16 @@ mod tests {
 
     #[test]
     fn paint_single_page_canvas_background_site_is_noop_at_m1_4() {
-        // canvas fill site が M1.4 で命令を積まないことを pin。
-        // M4 で background-color が cascade に入った時にこの test が反転する
-        // ("commands should be non-empty" で fail する)、その時に M4 実装完了の合図。
+        // canvas fill site が現状 no-op で命令を積まないことを pin。
+        // 将来 background-color が cascade に入った時にこの test が反転する
+        // ("commands should be non-empty" で fail する)、その時に実装完了の合図。
         let (doc, cr) = hello_world_paint_setup();
         let mut scene = Scene::new();
         // canvas fill 単体を呼ぶ相当の効果を得るため、paint_single_page 全体 - text glyph の
         // 差分で判定 (canvas site が emit すれば Fill command が glyph より前に来る)。
-        // Task 4 完了までは text も stub なので、全体 commands 0 でも OK。
-        // Task 4 完了後にこの test は "GlyphRun のみ、Fill (canvas) は無い" に精緻化予定。
+        // text が stub の間は全体 commands 0 でも OK。
+        // 将来 text 実装が進んだ後、この test は "GlyphRun のみ、Fill (canvas)
+        // は無い" に精緻化予定。
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
         let fill_commands: Vec<_> = scene
             .commands
@@ -104,7 +106,7 @@ mod tests {
             .collect();
         assert!(
             fill_commands.is_empty(),
-            "M1.4 canvas site should emit no Fill, got {:?}",
+            "canvas site should emit no Fill yet, got {:?}",
             fill_commands.len()
         );
     }
@@ -112,7 +114,7 @@ mod tests {
     #[test]
     fn paint_single_page_without_body_returns_early() {
         // fragment (Document → <p> 直子、no <body>) → paint は何も emit しない。
-        // m1.6 layout_single_page は fragment で Err を返すが、paint 側は
+        // layout_single_page は fragment で Err を返すが、paint 側は
         // defensive に silent return する契約 (early return without touching scene)。
         let mut doc = Document::new();
         let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
@@ -133,7 +135,7 @@ mod tests {
     fn paint_single_page_skips_zero_size_subtree() {
         // display:none 相当を模した zero-size element (display: None, size 明示) が
         // walk されないことを pin。paint_element の early return が正しく発火する
-        // regression pin (m1.6 の layout side でも empty_display_none_leaf... で pin 済)。
+        // regression pin (layout side でも empty_display_none_leaf... で pin 済)。
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -159,7 +161,7 @@ mod tests {
         );
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
-        // Task 4 完了までは text も stub、Task 4 後は glyph run 0 個 (hidden 配下の text は skip)
+        // text が stub の間も、実装後も glyph run は 0 個のはず (hidden 配下の text は skip)
         let glyph_commands: Vec<_> = scene
             .commands
             .iter()
@@ -174,7 +176,7 @@ mod tests {
 
     #[test]
     fn paint_single_page_paints_zero_size_display_block_subtree() {
-        // roborev job 227 finding 対応: display:none test 単独では、旧
+        // display:none test 単独では、旧
         // "size == 0 で skip" の実装でも pass するため、修正 (is_display_none 判定
         // への切替) の regression protection にならない。この test は逆側 —
         // display:block だが size=0 の container の中に text 子供を置き、
@@ -183,7 +185,7 @@ mod tests {
         // 現行 is_display_none 判定では container は Display::Block なので walk
         // 継続 → 子 text の GlyphRun が emit される。
         //
-        // raikiri-spike-ggig (Sprint 18 Wave 2): `apply_computed_to_style` が
+        // `apply_computed_to_style` が
         // bridge_size (width component) を dispatch するようになった。fixture の
         // 手構築 `taffy::Style { size.width = length(0) }` は `cv.width` = Auto
         // 初期値で上書きされる (`<container>` に author width なしのため)。
@@ -191,12 +193,11 @@ mod tests {
         // `size.width == 0.0` sanity assert が失敗する。修正: inline に
         // `"width: 0px; height: 0px"` を与え cv.{width,height} =
         // ComputedLengthPercentageOrAuto::Px(0.0) を bridge が翻訳するようにする。
-        // **height は Wave 3 (raikiri-spike-01up) まで bridge されない**ため、
+        // 当初 height は bridge されておらず、
         // `zero_block_style.size.height = length(0.0)` の手構築値を **保持** して
-        // sanity assert を維持する (Wave 3 landing 後は inline `height: 0px` が
-        // bridge_size で反映されるので手構築値は冗長になる)。
+        // sanity assert を維持していた。
         //
-        // raikiri-spike-01up (Sprint 18 Wave 3) 以降: bridge_size が
+        // その後 bridge_size が
         // `style.size = Size { width, height }` の struct literal を書くように
         // なり、height も bridge 対象になった。上記 `zero_block_style` の
         // `size.height = length(0.0)` 手構築値は inline `height: 0px` 由来の
@@ -217,7 +218,7 @@ mod tests {
             "container",
             zero_block_style,
             // width / height とも bridge が clobber するため inline で明示
-            // (height は raikiri-spike-01up で bridge 対象に加わった)。
+            // (height も bridge 対象)。
             Some("width: 0px; height: 0px"),
         );
         let _text = doc.append_text(container, "visible");
@@ -307,7 +308,7 @@ mod tests {
     #[test]
     fn paint_single_page_positions_glyphs_via_absolute_offset() {
         // body / p / text の accumulate location が draw_glyphs の transform に
-        // 正しく反映されることを exact-match で pin (roborev job 223 finding 対応)。
+        // 正しく反映されることを exact-match で pin する。
         //
         // 従来 `translation >= 0` の弱い assertion では identity transform (=
         // accumulation を丸ごと忘れた実装) でも pass してしまう。<p> に非ゼロの
@@ -315,7 +316,7 @@ mod tests {
         // logic を実 exercise する。expected = body.location + p.location +
         // text.location (block layout の flow 累積)。
         //
-        // raikiri-spike-j5rz (Sprint 18) 以降 `apply_computed_to_style` が
+        // `apply_computed_to_style` が
         // `bridge_margin` で cascade → taffy 変換を行うため、hand-set した
         // taffy `Style { margin: ... }` は cascade の initial 0 で上書きされる。
         // 従って margin は CSS inline (`style="margin: ..."`) 経路で与える —
@@ -462,8 +463,7 @@ mod tests {
         assert_eq!(glyph_count1, 1, "hello world must emit exactly 1 GlyphRun");
     }
 
-    /// raikiri-spike-d9y.5 (SEC MED, Codex Cloud Security finding) +
-    /// raikiri-spike-s8w (§15.3.1 完全化): HTML の hidden elements
+    /// HTML の hidden elements
     /// (`<style>` / `<script>` / `<noscript>` / `<datalist>` / `<noembed>` /
     /// `<noframes>` / `<rp>` 等) 内の text が rendered artifact に混入しない
     /// ことを pin する。
@@ -514,7 +514,7 @@ mod tests {
              Any extra run indicates inert-element text leaked into paint.",
             glyph_commands.len()
         );
-        // codex final review finding #3: 2-of-3 selection (before + inert
+        // 2-of-3 selection (before + inert
         // survived、after 落ちた) でも count==2 で pass する余地を封じる。
         // 総 glyph 数を "before" (6 chars) + "after" (5 chars) = 11 の
         // exact match で pin。inert content が leak なら len が増える、
@@ -565,8 +565,8 @@ mod tests {
         );
     }
 
-    // raikiri-spike-s8w: §15.3.1 完全化 4 element (datalist / noembed /
-    // noframes / rp)。d9y.5 の style / script / noscript / template fixture と
+    // §15.3.1 完全化 4 element (datalist / noembed /
+    // noframes / rp)。style / script / noscript / template fixture と
     // 同じ 3-way discriminant (`before` + `after` = 11 glyphs、inert 内 text
     // leak なら total_glyphs > 11) を継承する。
     //
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
-        // raikiri-spike-37c: UA CSS の template { display: none } rule 存在に
+        // UA CSS の template { display: none } rule 存在に
         // 依存せず、template subtree の paint を is_in_document() predicate gate で
         // 明示的に skip する contract 回帰 pin。silent bug fix regression。
         //
@@ -685,7 +685,7 @@ mod tests {
     }
 }
 
-/// bd raikiri-spike-3653 point 3 — empirical + source-verified characterization of
+/// Empirical + source-verified characterization of
 /// what the CPU rasterizer (`anyrender_vello_cpu` → `vello_cpu` → `glifo`, all
 /// third-party, none of them Stylo) does when an extreme (`+Inf` or far beyond
 /// the production clamp) glyph scale reaches
@@ -695,12 +695,12 @@ mod tests {
 ///
 /// `font_size` here is passed to `draw_glyphs` directly, **bypassing**
 /// `raikiri_dom::layout`'s `MAX_FONT_SIZE_PX` clamp (installed at the
-/// `preshape_text` boundary by bd raikiri-spike-2ui0's site 5). Production
+/// `preshape_text` boundary). Production
 /// code always shapes through that guard first, so today this input is not
 /// reachable via `raikiri_paint::paint_single_page`. The probe exists to
 /// characterize the **rasterizer's own** robustness independent of whether an
-/// upstream guard currently prevents the input — bd raikiri-spike-2ui0's own
-/// framing was that "an input guard exists" is not the same claim as "every
+/// upstream guard currently prevents the input — "an input guard exists" is
+/// not the same claim as "every
 /// downstream sink is safe if that guard is ever bypassed, loosened, or a new
 /// call path is added that skips it".
 ///
@@ -751,10 +751,10 @@ mod tests {
 /// rasterizer for an extreme/`+Inf` scale reaching `draw_glyphs`, for the
 /// translate-only-transform / no-`glyph_transform` calling convention
 /// `raikiri_paint::text::draw_text_node` actually uses (this probe matches it
-/// exactly). This is a *stronger* result than bd raikiri-spike-2ui0's
-/// "PLAUSIBLE, uncharacterized" framing assumed was likely — the "glyph bbox
-/// 比例の scanline buffer" failure shape that motivated point 3 does not
-/// exist in this backend. Every extreme-`font_size` case also draws **zero**
+/// exactly). This is a *stronger* result than the "PLAUSIBLE, uncharacterized"
+/// framing this probe started from assumed was likely — the "glyph bbox
+/// 比例の scanline buffer" failure shape that motivated this characterization
+/// does not exist in this backend. Every extreme-`font_size` case also draws **zero**
 /// visible ink into the probe canvas, which by itself would be uninformative
 /// (indistinguishable from "this call never reaches rasterization at all")
 /// were it not for
@@ -771,7 +771,7 @@ mod tests {
 /// (rotation/skew, which *would* route through a different `glifo` code path
 /// per `supports_atlas_caching`'s skew check) is equally safe — raikiri does
 /// not use those today (`paint_single_page`'s doc lists "CSS transform" as
-/// M4+ non-goal, and the VRT/production backend is CPU-only per
+/// a non-goal for now, and the VRT/production backend is CPU-only per
 /// `raikiri::html_to_png`), so they're out of this probe's scope, not
 /// asserted safe.
 #[cfg(test)]
@@ -929,7 +929,7 @@ mod nonfinite_rasterizer_probe {
         // failure, which doesn't happen while this test passes.
         assert!(
             nonzero > 0,
-            "control: draw_glyphs(font_size={natural_font_size}) — the run's own natural size, no override — drew zero non-zero bytes into a {CANVAS_W}x{CANVAS_H} canvas at Affine::IDENTITY. If this control ever fails, the extreme-value tests below are vacuous (they'd pass whether or not the rasterizer is actually robust) and bd raikiri-spike-3653 point 3's conclusion is unsupported until this is fixed — do not just delete the assertion"
+            "control: draw_glyphs(font_size={natural_font_size}) — the run's own natural size, no override — drew zero non-zero bytes into a {CANVAS_W}x{CANVAS_H} canvas at Affine::IDENTITY. If this control ever fails, the extreme-value tests below are vacuous (they'd pass whether or not the rasterizer is actually robust) and this module's conclusion is unsupported until this is fixed — do not just delete the assertion"
         );
     }
 
@@ -957,8 +957,8 @@ mod nonfinite_rasterizer_probe {
 
     /// worker thread + `recv_timeout` — the same bounding pattern
     /// `crates/raikiri-dom/src/layout.rs`'s
-    /// `nonfinite_font_size_is_clamped_before_parley` (bd raikiri-spike-2ui0
-    /// site 5) uses for parley. Necessary here for the same reason: if the
+    /// `nonfinite_font_size_is_clamped_before_parley` uses for parley.
+    /// Necessary here for the same reason: if the
     /// rasterizer *did* hang, an un-bounded `cargo test` run would eat the
     /// CI job timeout and take the rest of the test binary's results with it
     /// (indistinguishable from infra flake). A caught panic is fine to run
@@ -990,7 +990,7 @@ mod nonfinite_rasterizer_probe {
             },
             Ok(Err(_panic_payload)) => ProbeOutcome::Panicked,
             Err(RecvTimeoutError::Timeout) => panic!(
-                "draw_glyphs(font_size={font_size}) did not return within 30s — possible CPU rasterizer hang (bd raikiri-spike-3653 point 3); note the worker thread is leaked (not joined) on this path, same caveat as the parley bound in layout.rs"
+                "draw_glyphs(font_size={font_size}) did not return within 30s — possible CPU rasterizer hang; note the worker thread is leaked (not joined) on this path, same caveat as the parley bound in layout.rs"
             ),
             Err(RecvTimeoutError::Disconnected) => ProbeOutcome::Panicked,
         }
@@ -1034,7 +1034,7 @@ mod nonfinite_rasterizer_probe {
                 );
             }
             ProbeOutcome::Panicked => panic!(
-                "draw_glyphs(f32::INFINITY) panicked — this module's characterization (uncached direct-fill path is used above the 128px glifo atlas-cache threshold, and it's canvas-bounded, not glyph-scale-bounded) no longer holds; re-characterize bd raikiri-spike-3653 point 3 rather than deleting this test"
+                "draw_glyphs(f32::INFINITY) panicked — this module's characterization (uncached direct-fill path is used above the 128px glifo atlas-cache threshold, and it's canvas-bounded, not glyph-scale-bounded) no longer holds; re-characterize this test rather than deleting it"
             ),
         }
     }
@@ -1063,11 +1063,11 @@ mod nonfinite_rasterizer_probe {
                 );
                 assert_eq!(
                     nonzero_bytes, 0,
-                    "draw_glyphs(i32::MAX as f32) drew {nonzero_bytes} non-zero bytes — re-characterize bd raikiri-spike-3653 point 3, see module doc"
+                    "draw_glyphs(i32::MAX as f32) drew {nonzero_bytes} non-zero bytes — re-characterize this test, see module doc"
                 );
             }
             ProbeOutcome::Panicked => panic!(
-                "draw_glyphs(i32::MAX as f32) panicked — re-characterize bd raikiri-spike-3653 point 3, see module doc"
+                "draw_glyphs(i32::MAX as f32) panicked — re-characterize this test, see module doc"
             ),
         }
     }
@@ -1075,7 +1075,7 @@ mod nonfinite_rasterizer_probe {
     /// Sanity / headroom check at the production clamp boundary itself
     /// (`MAX_FONT_SIZE_PX = 1e6`, `crates/raikiri-dom/src/layout.rs`) — this
     /// value must also complete normally (no panic, no timeout), confirming
-    /// the existing bd raikiri-spike-2ui0 guard's chosen bound lands
+    /// the existing input guard's chosen bound lands
     /// comfortably inside the region this module found safe (in fact, `1e6`
     /// is already ~7800x past `glifo`'s own 128px atlas-cache-eligibility
     /// cutoff, so production text has *never* exercised that caching path
@@ -1108,7 +1108,7 @@ mod nonfinite_rasterizer_probe {
                 );
             }
             ProbeOutcome::Panicked => panic!(
-                "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) panicked — this would mean bd raikiri-spike-2ui0's guard has a residual gap against this specific sink, escalate rather than widen this test's expectation"
+                "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) panicked — this would mean the input guard has a residual gap against this specific sink, escalate rather than widen this test's expectation"
             ),
         }
     }

@@ -1,3 +1,3 @@
 //! raikiri-net — NetworkProvider / ReplacedResolver base implementations.
 //!
-//! M0 stub. Populated in M4 sandboxed-net-provider-impl and related tasks.
+//! Stub. Populated as part of the sandboxed-net-provider-impl work and related tasks.

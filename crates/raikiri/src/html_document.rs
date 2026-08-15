@@ -1,13 +1,12 @@
-//! `HtmlDocument`: M1 assembled document type (raikiri-spike-m1.11)。
+//! `HtmlDocument`: assembled document type。
 //!
 //! HTML を parse して cascade まで完了した document unit。Consumer 視点で
-//! 「layout/paint に投入できる状態」を単一 handle で表現する。M2+ で
+//! 「layout/paint に投入できる状態」を単一 handle で表現する。将来
 //! raikiri-dom に `Document::assemble` が生えた時点で `pub use raikiri_dom::
 //! Document` に透過的に置換される (Consumer surface 不変)。
 //!
 //! blitz `HtmlDocument` の analog (spec §L1134 blitz-compat 対応)。名前のみ
-//! 一致、shape / code / UA CSS の持ち込みなし (memory
-//! `raikiri-implementation-independence` 準拠)。
+//! 一致、shape / code / UA CSS の持ち込みなし (cleanroom implementation)。
 
 use raikiri_html::UncascadedDocument;
 use raikiri_style::CascadeResult;
@@ -32,8 +31,8 @@ impl HtmlDocument {
     }
 
     /// Parse 時に head 配下から集約された `<style>` element の source list
-    /// (M1 契約、[`UncascadedDocument::stylesheet_sources`] に一致)。
-    /// `<body>` 内 `<style>` は M1 未対応 (M2+ で拡張予定、m1.23 契約継承)。
+    /// ([`UncascadedDocument::stylesheet_sources`] に一致)。
+    /// `<body>` 内 `<style>` は現状未対応 (将来拡張予定)。
     pub fn stylesheet_sources(&self) -> &[String] {
         &self.uncascaded.stylesheet_sources
     }

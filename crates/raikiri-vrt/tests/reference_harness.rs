@@ -1,4 +1,4 @@
-//! Self-tests for raikiri_vrt::reference harness (m1.10).
+//! Self-tests for raikiri_vrt::reference harness.
 //!
 //! Uses synthetic PNG fixtures constructed via encode_png and tempfile-backed
 //! directories. Verifies the harness independently of any real pipeline.

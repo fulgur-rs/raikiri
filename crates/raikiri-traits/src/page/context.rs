@@ -2,15 +2,14 @@
 //!
 //! **Promotion history.** Design §7.2
 //! (`docs/superpowers/specs/2026-07-13-raikiri-rebuild-design.md` lines
-//! 1940-1965) gives `PageContext`'s canonical 6-field shape. Until bd
-//! raikiri-spike-8ejw.1, this was an empty `#[non_exhaustive]` placeholder
-//! (M1.1) while the walk algorithm (nested counter scopes, named-string
-//! 4-snapshot timing, running-binding rebind) was built and unit tested
-//! dom-locally at `raikiri_dom::gcpm::PhaseBWalkState` (bd raikiri-spike-8ejw)
-//! — see that module's doc for why: populating this struct's fields requires
-//! new raikiri-traits `pub` accessor/mutator methods, a genuine `wall/traits`
-//! crossing. This module is that promotion, landed per the human decision
-//! recorded on bd raikiri-spike-8ejw.1 (2026-08-11 comment):
+//! 1940-1965) gives `PageContext`'s canonical 6-field shape. Previously this
+//! was an empty `#[non_exhaustive]` placeholder while the walk algorithm
+//! (nested counter scopes, named-string 4-snapshot timing, running-binding
+//! rebind) was built and unit tested dom-locally at
+//! `raikiri_dom::gcpm::PhaseBWalkState` — see that module's doc for why:
+//! populating this struct's fields requires new raikiri-traits `pub`
+//! accessor/mutator methods, a genuine `wall/traits` crossing. This module is
+//! that promotion:
 //!
 //! 1. The 4 `HashMap`-shaped fields (`counters` / `strings` / `running` /
 //!    `targets`) are encapsulated behind the single
@@ -20,30 +19,29 @@
 //! 2. `page_index` / `page_name` are plain `pub` fields — copy-cheap
 //!    scalars with no invariant to protect.
 //!
-//! **Type-promotion design decision** (bd raikiri-spike-8ejw.1 step 2): the
-//! dom-local `raikiri_dom::gcpm::CounterStack` /
-//! `raikiri_dom::gcpm::NamedStringState` *shapes* are promoted
-//! (moved) here, matching the `super::target` precedent (`TargetRegistry`
-//! / `TargetInfo` canonical impl lives in raikiri-traits, raikiri-dom only
-//! hosts producers). `raikiri_dom::gcpm`'s own dom-local mirror types are
-//! **deliberately left in place**, not deleted: no production driver in
-//! raikiri-dom calls `PageContext::apply_directive` yet (wiring a real
-//! DOM-tree-walking driver — `CounterStack::pop_scope` / `NamedStringState`
-//! page-boundary call sites — is bd raikiri-spike-si32, explicitly out of
-//! this task's scope) — `raikiri_dom::gcpm::PhaseBWalkState` remains the
-//! *only* currently-exercised implementation reachable from raikiri-dom's
-//! actual code path (`apply_running_template_directives`). Deleting it here
-//! would strand that call site with nothing to call until si32 lands.
-//! `raikiri_dom::gcpm`'s module doc is updated to point here instead of
-//! carrying a stale "not yet landed" note (bd raikiri-spike-8ejw.1 step 8).
+//! **Type-promotion design decision**: the dom-local
+//! `raikiri_dom::gcpm::CounterStack` / `raikiri_dom::gcpm::NamedStringState`
+//! *shapes* are promoted (moved) here, matching the `super::target`
+//! precedent (`TargetRegistry` / `TargetInfo` canonical impl lives in
+//! raikiri-traits, raikiri-dom only hosts producers). `raikiri_dom::gcpm`'s
+//! own dom-local mirror types are **deliberately left in place**, not
+//! deleted: no production driver in raikiri-dom calls
+//! `PageContext::apply_directive` yet (wiring a real DOM-tree-walking driver
+//! — `CounterStack::pop_scope` / `NamedStringState` page-boundary call sites
+//! — remains future work, explicitly out of this promotion's scope) —
+//! `raikiri_dom::gcpm::PhaseBWalkState` remains the *only*
+//! currently-exercised implementation reachable from raikiri-dom's actual
+//! code path (`apply_running_template_directives`). Deleting it here would
+//! strand that call site with nothing to call until the DOM-tree-walking
+//! driver lands. `raikiri_dom::gcpm`'s module doc is updated to point here
+//! instead of carrying a stale "not yet landed" note.
 //!
 //! **Field-shape divergence from the dom-local mirror, now resolved**: the
 //! dom-local `NamedStringState` stores `Option<StringSnapshot>` (a
 //! `ContentSource` + a raw counter-values snapshot) instead of design §7.2's
 //! canonical `Option<String>`, because `raikiri_dom::gcpm` could not reach
 //! `super::target`'s private `format_counter` / `join_counter_stack`
-//! helpers (a documented gap, flagged on bd raikiri-spike-8ejw.1's
-//! 2026-08-11 04:00 comment). Now that this promotion lives *inside*
+//! helpers (a documented gap). Now that this promotion lives *inside*
 //! raikiri-traits, that gap dissolves for the `Named`-counter-style half of
 //! it: [`NamedStringState`] here matches the design doc's `Option<String>`
 //! shape exactly, and `resolve_content_source` does eager resolution at
@@ -61,8 +59,8 @@
 //! `raikiri_dom::gcpm`'s documented no-op (that module doesn't own
 //! `TargetRegistry` at all). See [`PageContext::apply_directive`]'s doc for
 //! what it can and cannot populate from a bare directive, and
-//! [`PageContext::set_targets`] for the complementary bulk-wiring path bd
-//! raikiri-spike-0nyv's register-site walker uses.
+//! [`PageContext::set_targets`] for the complementary bulk-wiring path the
+//! register-site walker uses.
 
 use std::collections::HashMap;
 
@@ -85,7 +83,7 @@ use crate::dom::Symbol;
 /// — reset = push a new frame, increment/set = mutate the top frame — is the
 /// natural fit design §7.2 names.
 ///
-/// Promoted from `raikiri_dom::gcpm::CounterStack` (bd raikiri-spike-8ejw.1)
+/// Promoted from `raikiri_dom::gcpm::CounterStack`
 /// — same algorithm, now `pub` (design §7.2 gives `PageContext.counters:
 /// HashMap<Symbol, CounterStack>` with no `pub` on the field itself, so the
 /// *value type* returned by [`PageContext::counter`] must be nameable from
@@ -98,8 +96,8 @@ use crate::dom::Symbol;
 /// [`Self::pop_scope`] exists for a future DOM-tree-driven walker to call at
 /// the right point (subtree exit, matching the real CSS scoping rule where
 /// two *sibling* elements each resetting the same counter get independent,
-/// same-depth scopes, not accumulating nesting) — bd raikiri-spike-si32, not
-/// yet landed.
+/// same-depth scopes, not accumulating nesting) — that future walker has not
+/// landed yet.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CounterStack {
@@ -125,8 +123,7 @@ impl CounterStack {
     /// increment, which is equivalent to starting the new frame at `delta`
     /// directly.
     ///
-    /// **Saturating, not wrapping/panicking, on overflow** (security lens
-    /// finding on bd raikiri-spike-8ejw.1, user-confirmed 2026-08-11):
+    /// **Saturating, not wrapping/panicking, on overflow**:
     /// `counter-reset: c 2147483647` followed by `counter-increment: c 1` is
     /// spec-legal CSS (CSS Lists 3 places no range limit on
     /// `<integer>`/`<counter-name>` values) and would panic on `+=`'s debug
@@ -134,11 +131,9 @@ impl CounterStack {
     /// rendered counter value jumping to `i32::MIN`). `i32::saturating_add`
     /// clamps to `i32::MAX`/`i32::MIN` instead, matching the "fail-closed,
     /// not fail-silent-wrong" discipline this crate already applies
-    /// elsewhere (原則3). A second, lower-severity finding from the same
-    /// review pass (unbounded frame growth via unbounded nested
-    /// `counter-reset`) is tracked separately as bd raikiri-spike-pc7z,
-    /// gated behind bd raikiri-spike-si32's not-yet-built driver — no fix
-    /// needed here.
+    /// elsewhere (原則3). A second, lower-severity finding (unbounded frame
+    /// growth via unbounded nested `counter-reset`) is tracked separately,
+    /// gated behind that same not-yet-built driver — no fix needed here.
     pub fn increment(&mut self, delta: i32) {
         match self.frames.last_mut() {
             Some(top) => *top = top.saturating_add(delta),
@@ -159,8 +154,8 @@ impl CounterStack {
 
     /// Exit the innermost nested scope, returning its value (`None` if the
     /// stack was already empty). See the type-level "Caller invariant" note
-    /// — no driver currently calls this (bd raikiri-spike-si32, not yet
-    /// landed); exposed for that future DOM-tree-driven walker.
+    /// — no driver currently calls this yet; exposed for that future
+    /// DOM-tree-driven walker.
     pub fn pop_scope(&mut self) -> Option<i32> {
         self.frames.pop()
     }
@@ -184,8 +179,8 @@ impl CounterStack {
 /// CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set> /
 /// §1.1.2 <https://www.w3.org/TR/css-gcpm-3/#string-first>).
 ///
-/// Promoted from `raikiri_dom::gcpm::NamedStringState` (bd
-/// raikiri-spike-8ejw.1) — same 4-snapshot timing rules, but with the
+/// Promoted from `raikiri_dom::gcpm::NamedStringState` — same 4-snapshot
+/// timing rules, but with the
 /// design-doc-canonical `Option<String>` field type (fully resolved text)
 /// instead of that module's dom-local `Option<StringSnapshot>` deferral; see
 /// module-level doc "Field-shape divergence" for why this promotion can do
@@ -246,7 +241,7 @@ impl NamedStringState {
     /// trackers (a fresh page starts with no assignments of its own).
     ///
     /// No production driver calls this yet — the per-page walk that would
-    /// call it is bd raikiri-spike-si32, not yet landed.
+    /// call it has not landed yet.
     pub fn begin_page(&mut self) {
         self.on_page_start = self.running.clone();
         self.on_page_first_use = None;
@@ -393,8 +388,8 @@ fn resolve_content_source(
 /// (design §7.0 "runtime side") builds up as it applies [`GcpmDirective`]s
 /// and reads back for `content` resolution.
 ///
-/// See module-level doc for the promotion history and the human decision
-/// (bd raikiri-spike-8ejw.1) this shape implements:
+/// See module-level doc for the promotion history and the design decision
+/// this shape implements:
 ///
 /// - `counters` / `strings` / `running` / `targets` are private, mutated
 ///   *only* via [`Self::apply_directive`] (single entry point — no per-field
@@ -417,8 +412,8 @@ pub struct PageContext {
     /// arm, or in bulk via [`Self::set_targets`] — see both methods' docs.
     targets: TargetRegistry,
     /// 0-based index of the page this context describes (design §7.2).
-    /// Plain `pub` field — copy-cheap scalar, no invariant to protect (human
-    /// decision, bd raikiri-spike-8ejw.1 2026-08-11 comment).
+    /// Plain `pub` field — copy-cheap scalar, no invariant to protect
+    /// (deliberate design decision).
     pub page_index: u32,
     /// `@page` named-page association in effect for this page, if any
     /// (design §7.2). Plain `pub` field — same rationale as `page_index`.
@@ -426,8 +421,8 @@ pub struct PageContext {
 }
 
 impl PageContext {
-    /// Construct an empty `PageContext` (stable across the M1.1 → M4
-    /// promotion — `crates/raikiri/tests/external_consumer.rs` and
+    /// Construct an empty `PageContext` (stable across the placeholder →
+    /// populated-struct promotion — `crates/raikiri/tests/external_consumer.rs` and
     /// `crates/raikiri-traits/src/strategy.rs`'s `TargetResolver` already
     /// depend on this constructor and `Default` continuing to work).
     pub fn new() -> Self {
@@ -435,8 +430,8 @@ impl PageContext {
     }
 
     /// Apply one [`GcpmDirective`] to this context — the single entry point
-    /// for mutating `counters` / `strings` / `running` / `targets` (human
-    /// decision, bd raikiri-spike-8ejw.1). Mirrors
+    /// for mutating `counters` / `strings` / `running` / `targets` (a
+    /// deliberate design decision). Mirrors
     /// `raikiri_dom::gcpm::PhaseBWalkState::apply_directive`'s dispatch, with
     /// two differences documented on the relevant arms below:
     /// `StringSet` resolves text where possible and otherwise skips the
@@ -474,16 +469,16 @@ impl PageContext {
                 // any prior tracked state for `name` is left untouched (see
                 // resolve_content_source's doc "Skipping, not fabricating").
                 //
-                // Convention departure (quality lens, bd raikiri-spike-8ejw.1):
-                // `super::target`'s `ResolveOutcome::Pending` pattern makes
-                // "can't resolve yet" observable to the caller; this arm's
-                // silent skip does not — `apply_directive` returns `()`, so
-                // there is no signal that a StringSet was dropped. Left as-is
-                // deliberately (no driver exists yet to consume a richer
-                // return type — building one now would be speculative), but
-                // this is where the `attr()`/`content()` gap tracked by bd
-                // raikiri-spike-eaaq would need reconsidering if a future
-                // consumer needs to observe silently-dropped assignments.
+                // Convention departure: `super::target`'s
+                // `ResolveOutcome::Pending` pattern makes "can't resolve yet"
+                // observable to the caller; this arm's silent skip does not
+                // — `apply_directive` returns `()`, so there is no signal
+                // that a StringSet was dropped. Left as-is deliberately (no
+                // driver exists yet to consume a richer return type —
+                // building one now would be speculative), but this is where
+                // the `attr()`/`content()` gap would need reconsidering if a
+                // future consumer needs to observe silently-dropped
+                // assignments.
                 if let Some(resolved) = resolve_content_source(source, &self.counters) {
                     self.strings
                         .entry(name.clone())
@@ -522,8 +517,8 @@ impl PageContext {
                 // registered only through this arm therefore returns
                 // `Resolved("")`, not `Pending` — a known, accepted
                 // imprecision (widening `ResolveOutcome` to distinguish
-                // "resolved empty" from "text genuinely unavailable" is bd
-                // raikiri-spike-oqpc's non-goal territory, not this task's).
+                // "resolved empty" from "text genuinely unavailable" is
+                // future, out-of-scope work).
                 //
                 // TargetRegistry::register is first-wins (entry().or_insert)
                 // by design, so IF set_targets already populated this
@@ -534,8 +529,8 @@ impl PageContext {
                 // safe: set_targets is a wholesale replace (see its own
                 // doc), so calling it AFTER this arm has registered
                 // fragments discards every one of them, not just this
-                // fragment_id. Callers driving both paths (a future si32
-                // driver) must call set_targets first.
+                // fragment_id. Callers driving both paths (a future
+                // DOM-tree-walking driver) must call set_targets first.
                 let counters = self
                     .counters
                     .iter()
@@ -552,10 +547,10 @@ impl PageContext {
 
     /// Page-boundary hook — forwards to every tracked [`NamedStringState`].
     /// See [`NamedStringState::begin_page`] for why this has no production
-    /// caller yet (bd raikiri-spike-si32).
+    /// caller yet.
     ///
-    /// **Lifetime contract** (spec lens, bd raikiri-spike-8ejw.1): only
-    /// `strings` resets here — `counters`, `targets`, `page_index`, and
+    /// **Lifetime contract**: only `strings` resets here — `counters`,
+    /// `targets`, `page_index`, and
     /// `page_name` are deliberately left untouched, since `TargetRegistry`
     /// is per-*document* (not per-page) and `counters`/`page_index`/
     /// `page_name` carry forward across the page boundary by design (CSS
@@ -566,8 +561,8 @@ impl PageContext {
     /// `PageContext` per page would incorrectly discard `targets` and
     /// `counters` state that must persist.
     ///
-    /// **`targets` still has its own, separate page-boundary obligation**
-    /// (bd raikiri-spike-oqpc): `TargetRegistry` being per-document (`resolved`
+    /// **`targets` still has its own, separate page-boundary obligation**:
+    /// `TargetRegistry` being per-document (`resolved`
     /// / `pending_slots` persist across pages, per the contract above) is
     /// orthogonal to its *internal* slot-id sequence numbering, which design
     /// §7.6 defines as page-local. This method does not cover it — see
@@ -580,8 +575,8 @@ impl PageContext {
     }
 
     /// Replace `targets` wholesale with a pre-built [`TargetRegistry`] — the
-    /// bulk-wiring path for bd raikiri-spike-0nyv's
-    /// `raikiri_dom::target::build_target_registry` register-site walker,
+    /// bulk-wiring path for
+    /// `raikiri_dom::target::build_target_registry`'s register-site walker,
     /// which produces a complete registry (counters *and* descendant text)
     /// from a dedicated DOM walk rather than from a `GcpmDirective` stream
     /// (see that function's module doc — `RegisterTarget` is synthesized,
@@ -594,25 +589,22 @@ impl PageContext {
     /// `RegisterTarget`. `&mut self`, matching this type's other mutators,
     /// rather than a consuming builder.
     ///
-    /// **Not a violation of the "no per-field accessor" human decision** —
-    /// bd raikiri-spike-8ejw.1's 2026-08-11 06:34 "Human clarification —
-    /// set_targets scope" comment addresses this exact question (raised by
-    /// reviewer:quality against the 03:46 decision's literal text) and
-    /// authorizes `set_targets` as a deliberate, narrower exception:
-    /// "`counters`/`strings`/`running` are built up incrementally,
-    /// directive-by-directive, and the 'single apply_directive entry point'
+    /// **Not a violation of the "no per-field accessor" rule** —
+    /// `set_targets` is a deliberate, narrower exception:
+    /// `counters`/`strings`/`running` are built up incrementally,
+    /// directive-by-directive, and the "single apply_directive entry point"
     /// rule exists to protect `PageContext`'s internal accumulation
     /// semantics (counter-stack nesting, 4-snapshot timing) from being
     /// corrupted by ad-hoc external pokes. `TargetRegistry` is different in
     /// kind — it's a separately-produced, already-fully-encapsulated type
-    /// (its own pub methods, its own invariants) built in bulk by bd
-    /// raikiri-spike-0nyv's dom-side walker, not incrementally accumulated
-    /// by `PageContext` itself. A bulk transfer method for it doesn't create
-    /// the same risk the no-per-field-accessor rule was written to
-    /// prevent." Also narrower in purpose than a general mutable accessor
-    /// like `targets_mut` (which [`Self::targets`]'s doc explains was
-    /// rejected), since it only ever *replaces the whole value*, never
-    /// exposes the live registry for arbitrary external mutation.
+    /// (its own pub methods, its own invariants) built in bulk by the
+    /// dom-side register-site walker, not incrementally accumulated by
+    /// `PageContext` itself. A bulk transfer method for it doesn't create
+    /// the same risk the no-per-field-accessor rule was written to prevent.
+    /// Also narrower in purpose than a general mutable accessor like
+    /// `targets_mut` (which [`Self::targets`]'s doc explains was rejected),
+    /// since it only ever *replaces the whole value*, never exposes the live
+    /// registry for arbitrary external mutation.
     pub fn set_targets(&mut self, targets: TargetRegistry) {
         self.targets = targets;
     }
@@ -691,8 +683,7 @@ mod tests {
 
         #[test]
         fn increment_saturates_instead_of_panicking_or_wrapping_on_overflow() {
-            // Security lens regression pin (bd raikiri-spike-8ejw.1,
-            // user-confirmed 2026-08-11): `counter-reset: c 2147483647;
+            // Regression pin: `counter-reset: c 2147483647;
             // counter-increment: c 1` is spec-legal CSS. Must saturate at
             // i32::MAX, not panic (debug builds) or wrap to i32::MIN
             // (release builds).
@@ -857,8 +848,8 @@ mod tests {
         #[test]
         fn counter_item_named_style_reaches_format_counter() {
             // Regression pin for the format_counter/join_counter_stack
-            // pub(crate) visibility widening (bd raikiri-spike-8ejw.1 step
-            // 7): CounterStyle::Decimal alone would exercise only
+            // pub(crate) visibility widening: CounterStyle::Decimal alone
+            // would exercise only
             // format_decimal, never touching the widened-visibility path. A
             // Named style forces resolve_content_source through
             // format_named_counter, proving the widening actually pays off
@@ -1220,8 +1211,8 @@ mod tests {
 
         #[test]
         fn set_targets_after_register_target_wipes_the_earlier_registration() {
-            // Spec lens regression pin (bd raikiri-spike-8ejw.1): the
-            // apply_directive RegisterTarget arm's doc documents that
+            // Regression pin: the apply_directive RegisterTarget arm's doc
+            // documents that
             // set_targets called AFTER a prior RegisterTarget directive is a
             // wholesale wipe, not an order-independent merge — only the
             // reverse ordering (set_targets first) had a test. This pins the

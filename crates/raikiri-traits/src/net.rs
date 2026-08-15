@@ -16,7 +16,7 @@ use crate::policy::{PolicyViolation, ResourceKind};
 /// HTTP header の list。同名 header の複数値も表現可能。
 ///
 /// 軽量 shape に留めるため `http::HeaderMap` を採用せず `Vec<(String, String)>`。
-/// M6 blitz-compat 実装時に必要なら再検討。
+/// blitz-compat 実装時に必要なら再検討。
 pub type HeaderMap = Vec<(String, String)>;
 
 /// Consumer が実装する sync-return の network provider trait。
@@ -25,15 +25,15 @@ pub type HeaderMap = Vec<(String, String)>;
 /// Consumer が自身の async runtime / thread pool で管理する。
 ///
 /// Finding #6 対応 (round 7 未対応 finding: byte enforcement 戦略確定は
-/// M4 sandboxed-net-provider-impl 前)。
+/// sandboxed-net-provider-impl 実装前)。
 pub trait NetworkProvider: Send + Sync {
     /// 1 fetch を同期実行し、結果か error を返す。
     ///
     /// `NetworkError` は spec §4 で `PolicyViolation(PolicyViolation)` variant を
     /// 直接持つため約 144 bytes となり、clippy::result_large_err の閾値 (128 bytes)
-    /// を超える。API shape は §4 authoritative のため M1.1 では lint を suppress し、
-    /// Box wrapper 化 (`PolicyViolation(Box<PolicyViolation>)`) の適用可否は M4
-    /// sandboxed-net-provider-impl 段階で NetworkError 実利用と併せて再判断する。
+    /// を超える。API shape は §4 authoritative のため現時点では lint を suppress し、
+    /// Box wrapper 化 (`PolicyViolation(Box<PolicyViolation>)`) の適用可否は
+    /// sandboxed-net-provider-impl 実装段階で NetworkError 実利用と併せて再判断する。
     #[allow(clippy::result_large_err)]
     fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError>;
 }
@@ -85,10 +85,10 @@ pub enum Body {
 /// HTTP method (拡張余地あり、round 3 review #3 訂正: HTTP method は仕様上
 /// 拡張可能なため `#[non_exhaustive]`)。
 ///
-/// M1.1 では GET / POST のみ (fulgur の primary use case)。PUT / DELETE / PATCH /
-/// HEAD / OPTIONS は M4 sandboxed-net-provider-impl / Consumer 実 use case 発生時
-/// に追加。`#[non_exhaustive]` により Consumer 側 exhaustive match の accidental
-/// break を防ぐ。
+/// 現状は GET / POST のみ (fulgur の primary use case)。PUT / DELETE / PATCH /
+/// HEAD / OPTIONS は sandboxed-net-provider-impl 実装 / Consumer 実 use case
+/// 発生時に追加。`#[non_exhaustive]` により Consumer 側 exhaustive match の
+/// accidental break を防ぐ。
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Method {

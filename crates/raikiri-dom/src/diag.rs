@@ -3,14 +3,13 @@
 //!
 //! # Origin
 //!
-//! [`crate::fonts::FontWarn`] (bd raikiri-spike-1uq) established the shape
-//! first: an `Option<&mut dyn FnMut(&W)>` observer that a caller may supply
-//! to consume diagnostic events programmatically, with a default
-//! `eprintln!` fallback when `None` so CLI/test use keeps seeing the same
-//! output it always has. `crates/raikiri-dom/src/layout.rs`'s
-//! `sanitize_finite` silent-clamp site needed the same shape (bd
-//! raikiri-spike-7t1t §"残余リスク") — this module extracts the one part of
-//! the pattern that both sites can actually share.
+//! [`crate::fonts::FontWarn`] established the shape first: an
+//! `Option<&mut dyn FnMut(&W)>` observer that a caller may supply to consume
+//! diagnostic events programmatically, with a default `eprintln!` fallback
+//! when `None` so CLI/test use keeps seeing the same output it always has.
+//! `crates/raikiri-dom/src/layout.rs`'s `sanitize_finite` silent-clamp site
+//! needed the same shape — this module extracts the one part of the pattern
+//! that both sites can actually share.
 //!
 //! # Why a macro, not a generic function (`Observer<W>` was tried and rejected)
 //!
@@ -44,8 +43,8 @@
 //! HRTB) unchanged; `layout.rs` uses a plain non-lifetime `LayoutWarnObserver`
 //! (owned event, no HRTB needed). Both route through the same macro, so the
 //! "if Some, call it; otherwise eprintln with a prefix" behavior lives in
-//! exactly one place, per bd raikiri-spike-7t1t's ask to stop having two
-//! independent answers to the same need.
+//! exactly one place, rather than having two independent answers to the
+//! same need.
 //!
 //! # Scope
 //!

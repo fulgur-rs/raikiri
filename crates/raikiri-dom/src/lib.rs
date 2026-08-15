@@ -1,7 +1,7 @@
 //! raikiri-dom — DOM data model + layout engine (taffy + parley) + GCPM runtime side.
 //!
-//! M1.5 で node arena + taffy 6 trait impl + raikiri_traits::Dom co-design を
-//! 実装。詳細は bd raikiri-spike-m1 (design 由来の §4 raikiri-dom scope) 参照。
+//! node arena + taffy 6 trait impl + raikiri_traits::Dom co-design を実装。
+//! 詳細は design 由来の §4 raikiri-dom scope 参照。
 
 // Public module rustdoc cross-links some crate-private helpers (e.g.
 // `crate::layout::preshape_text`, `Document::flags_dirty`) which resolve fine
@@ -30,15 +30,15 @@
 //!   transient な detached node
 //!
 //! 維持: raikiri-html sink `finish()` が
-//! [`Document::mark_in_document_flags`] を single pass で呼ぶ。M1 spike は
-//! parse-only なので finish 後は固定。M2+ で runtime mutation を導入する時に
-//! blitz `process_added_subtree` / `process_removed_subtree` 相当を追加する
-//! 予定。
+//! [`Document::mark_in_document_flags`] を single pass で呼ぶ。現状の spike
+//! 実装は parse-only なので finish 後は固定。将来 runtime mutation を導入する
+//! 時に blitz `process_added_subtree` / `process_removed_subtree` 相当を
+//! 追加する予定。
 //!
 //! Traversal が inert subtree を skip したい場合、
 //! [`Node::is_in_document`] を各 iteration で呼ぶ。string 比較 (tag_name ==
 //! "template" 等) で個別判定するのは禁止 — 概念が implicit になり、shadow DOM
-//! 追加時に漏れる。設計判断: bd raikiri-spike-37c。
+//! 追加時に漏れる。
 
 mod diag;
 mod gcpm;
@@ -198,9 +198,10 @@ mod tests {
 
     #[test]
     fn child_ids_returns_empty_on_invalid_nodeid() {
-        // raikiri-spike-ajy: child_ids は node() と対称に、範囲外 NodeId で
-        // panic せず empty iter を返す。M6 blitz-compat で Consumer が
-        // document rebuild を挟んで NodeId を stash する pattern に備える。
+        // child_ids は node() と対称に、範囲外 NodeId で
+        // panic せず empty iter を返す。将来の blitz-compat integration で
+        // Consumer が document rebuild を挟んで NodeId を stash する pattern に
+        // 備える。
         let mut doc = Document::new();
         doc.append_element(Some(0), "p", Style::default(), None::<&str>);
 
@@ -237,7 +238,7 @@ mod tests {
         assert_eq!(d_elem.inline_style_source(), None);
     }
 
-    // ── Element trait extension (raikiri-spike-blg) ─────────────
+    // ── Element trait extension ─────────────
 
     #[test]
     fn element_ref_reflects_namespace_uri_when_set() {
@@ -346,9 +347,9 @@ mod tests {
         doc.set_element_attributes(0, vec![(SmolStr::new("id"), SmolStr::new("bad"))]);
     }
 
-    // ── TreeSink support APIs (M1.3) ────────────────────────────
-    // NB: append_element gains a 4th `inline_style_source: Option<impl Into<SmolStr>>`
-    // argument in M1.4. These tests don't exercise inline style, so pass `None::<&str>`.
+    // ── TreeSink support APIs ────────────────────────────
+    // NB: append_element takes a 4th `inline_style_source: Option<impl Into<SmolStr>>`
+    // argument. These tests don't exercise inline style, so pass `None::<&str>`.
 
     #[test]
     fn attach_child_appends_to_parent_children() {
@@ -641,7 +642,7 @@ mod tests {
         );
     }
 
-    // ── raikiri-spike-m1.7 pub 化 smoke test ─────────────
+    // ── pub 化 smoke test ─────────────
 
     #[test]
     fn document_get_node_returns_some_for_valid_id_and_none_for_out_of_range() {
@@ -675,10 +676,10 @@ mod tests {
 
     #[test]
     fn node_accessors_are_callable_from_external_call_site() {
-        // raikiri-spike-37c: Node が NodeData tagged union に refactor された
+        // Node が NodeData tagged union に refactor された
         // 後の pub_surface pin。旧 pub field (kind / tag_name / text_layout)
         // が accessor method 化されたことを super::* から見えることで regression
-        // pin する。M1.15 external consumer 契約は無影響
+        // pin する。external consumer 契約は無影響
         // (crates/raikiri/tests/external_consumer.rs は Node/Element field
         // access 0 件、こちらは raikiri-dom 内部 pub_surface)。
         let mut doc = Document::new();
@@ -695,38 +696,37 @@ mod tests {
         assert_eq!(tn.kind(), NodeKind::Text);
     }
 
-    /// bd raikiri-spike-3653 point 1 — does taffy's own block layout algorithm
-    /// hang (infinite loop) when the `taffy::Style` geometry it's driven with
-    /// is non-finite?
+    /// Does taffy's own block layout algorithm hang (infinite loop) when the
+    /// `taffy::Style` geometry it's driven with is non-finite?
     ///
     /// This bypasses cascade / `raikiri_style::resolve` / `raikiri_dom::layout`'s
     /// bridge helpers **on the input side** — including the `sanitize_taffy` /
-    /// `sanitize_finite` guards bd raikiri-spike-2ui0 installed in those
-    /// bridge functions — by constructing the `taffy::Style` directly and
-    /// handing it to `Document::append_element` (the same raw-`Style`
-    /// escape hatch `build_document` above already uses for non-cascade
-    /// layout tests), then driving `compute_root_layout` straight from this
-    /// test. That characterizes **taffy's own** block layout algorithm (the
-    /// sink named in the task), independent of whether raikiri's input guard
-    /// currently prevents the input from reaching it — the same "characterize
-    /// the sink, not just the guard" approach used for the parley probe in
+    /// `sanitize_finite` guards installed in those bridge functions — by
+    /// constructing the `taffy::Style` directly and handing it to
+    /// `Document::append_element` (the same raw-`Style` escape hatch
+    /// `build_document` above already uses for non-cascade layout tests),
+    /// then driving `compute_root_layout` straight from this test. That
+    /// characterizes **taffy's own** block layout algorithm — the sink under
+    /// test here — independent of whether raikiri's input guard currently
+    /// prevents the input from reaching it — the same "characterize the
+    /// sink, not just the guard" approach used for the parley probe in
     /// `crates/raikiri-dom/src/layout.rs`
     /// (`parley_break_all_lines_hangs_on_raw_infinite_font_size_bypassing_the_guard`)
     /// and the rasterizer probe in `crates/raikiri-paint/src/lib.rs`
     /// (`nonfinite_rasterizer_probe`).
     ///
-    /// **What this does *not* bypass**: bd raikiri-spike-r8ew's output-side
-    /// guard, `sanitize_taffy_layout`, called unconditionally from
+    /// **What this does *not* bypass**: the output-side guard,
+    /// `sanitize_taffy_layout`, called unconditionally from
     /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
     /// (`crates/raikiri-dom/src/taffy_impl.rs`). `compute_root_layout` invokes
     /// that trait method itself as part of committing every node's computed
     /// layout, regardless of how the `Style` it started from was constructed
     /// — there is no code path through `compute_root_layout` that skips it.
     /// So this test's `Document.nodes[..].unrounded_layout` values are
-    /// guaranteed finite by r8ew's guard even though this test's *input*
-    /// bypasses 2ui0's guard; the assertion below on the child's layout
-    /// confirms exactly that (finite, non-default output), rather than
-    /// silently relying on it.
+    /// guaranteed finite by the output-side guard even though this test's
+    /// *input* bypasses the input-side guard; the assertion below on the
+    /// child's layout confirms exactly that (finite, non-default output),
+    /// rather than silently relying on it.
     ///
     /// # Finding
     ///
@@ -735,19 +735,19 @@ mod tests {
     /// padding/margin/border mixing `NaN`, `+Inf`, `-Inf`, and a `+Inf`
     /// percentage) — and it isn't a silently-skipped no-op either, since the
     /// child's `unrounded_layout` is asserted below to be both non-default
-    /// and (per r8ew's live output guard) finite. This is consistent with —
+    /// and (per the output-side guard) finite. This is consistent with —
     /// and now formalizes as an automated regression pin, rather than leaving
     /// it as prose — the manual observation already recorded on
     /// `MAX_FONT_SIZE_PX` in `crates/raikiri-dom/src/layout.rs`: "site 1-4 の
     /// taffy 側 test は即座に assert 失敗する (値が壊れるだけ)". This test
     /// does not assert anything about *which specific* values taffy produces
-    /// (bd raikiri-spike-ntxy / raikiri-spike-y3yx already track the "finite
-    /// garbage" semantic-validity concern separately); it pins the **timing**
-    /// (no livelock) and the **finiteness invariant** (r8ew's guard holds
-    /// even under directly-adversarial input, not just cascade-derived
-    /// input) — taffy's block layout is not a livelock/hang surface for
-    /// non-finite `Style` geometry, whether or not raikiri's own input guard
-    /// is in the picture.
+    /// (a separate, still-open concern about the "finite garbage"
+    /// semantic-validity of taffy's output is tracked elsewhere); it pins the
+    /// **timing** (no livelock) and the **finiteness invariant** (the
+    /// output-side guard holds even under directly-adversarial input, not
+    /// just cascade-derived input) — taffy's block layout is not a
+    /// livelock/hang surface for non-finite `Style` geometry, whether or not
+    /// raikiri's own input guard is in the picture.
     #[test]
     fn taffy_block_layout_does_not_hang_on_raw_nonfinite_style_geometry() {
         use std::sync::mpsc::RecvTimeoutError;
@@ -847,13 +847,13 @@ mod tests {
         match rx.recv_timeout(Duration::from_secs(10)) {
             Ok(Ok(non_vacuous)) => assert!(
                 non_vacuous,
-                "compute_root_layout completed but child 'a' (pathological, non-finite Style) has a default-sized or non-finite unrounded_layout — either taffy silently skipped it (this test would be vacuous re: 'no hang', since a skipped node also 'completes' instantly) or bd raikiri-spike-r8ew's sanitize_taffy_layout output guard (set_unrounded_layout, crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — re-characterize bd raikiri-spike-3653 point 1 rather than deleting this assertion"
+                "compute_root_layout completed but child 'a' (pathological, non-finite Style) has a default-sized or non-finite unrounded_layout — either taffy silently skipped it (this test would be vacuous re: 'no hang', since a skipped node also 'completes' instantly) or the sanitize_taffy_layout output guard (set_unrounded_layout, crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — re-characterize this test rather than deleting this assertion"
             ),
             Ok(Err(_panic_payload)) => panic!(
-                "taffy::compute_root_layout (or the post-layout assertion) panicked on non-finite Style geometry — re-characterize bd raikiri-spike-3653 point 1 (this test previously pinned 'completes without panic or hang')"
+                "taffy::compute_root_layout (or the post-layout assertion) panicked on non-finite Style geometry — re-characterize this test (it previously pinned 'completes without panic or hang')"
             ),
             Err(RecvTimeoutError::Timeout) => panic!(
-                "taffy::compute_root_layout did not return within 10s on non-finite Style geometry — possible taffy block layout hang/livelock found (bd raikiri-spike-3653 point 1); this would be a new finding, not a regression of a previously-passing guarantee, since this test is the first automated characterization of this input"
+                "taffy::compute_root_layout did not return within 10s on non-finite Style geometry — possible taffy block layout hang/livelock found; this would be a new finding, not a regression of a previously-passing guarantee, since this test is the first automated characterization of this input"
             ),
             Err(RecvTimeoutError::Disconnected) => panic!(
                 "worker thread panicked before catch_unwind could report it cleanly — see stderr above"

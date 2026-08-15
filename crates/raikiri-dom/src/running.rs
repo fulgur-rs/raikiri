@@ -39,22 +39,22 @@
 //! ```
 //!
 //! **"2-tier" is one cache today** — the design's tier-1 is
-//! `parsed_templates` (this module); tier-2 is a post-M8 layout-result cache
+//! `parsed_templates` (this module); tier-2 is a future layout-result cache
 //! for fully-static templates (`dynamic_flags = all false`) and is
-//! **explicitly deferred** (§7.3 lines 2014-2016 "M1〜M8 は常に re-layout").
-//! Per-page re-layout via [`layout_running_template`] is the M1〜M8 flow
-//! (§7.3 lines 2007-2012).
+//! **explicitly deferred** (§7.3 lines 2014-2016: always re-layout for now,
+//! no result cache). Per-page re-layout via [`layout_running_template`] is
+//! the current flow (§7.3 lines 2007-2012).
 //!
 //! **Divergence from canonical shape** — same "pub(crate) local until
-//! traits reconciliation decision" convention that the pre-bsi
+//! traits reconciliation decision" convention that the
 //! `crate::target` (removed) module previously held (that reconciliation has
-//! since landed via raikiri-spike-bsi Option C — the TargetRegistry /
+//! since landed — the TargetRegistry /
 //! TargetInfo / ResolveOutcome / PendingResolution / resolve_content_component
 //! API now lives at [`raikiri_traits::TargetRegistry`] and friends). This module
 //! currently writes `pub(crate)` and does NOT re-export through the crate
 //! root; a later reconciliation task will decide whether any of these types
-//! need to cross wall/traits or wall/dom-paint (bd raikiri-spike-96u.4 has
-//! since landed the [`raikiri_traits::GcpmDirective`] variant populate; a
+//! need to cross wall/traits or wall/dom-paint (the
+//! [`raikiri_traits::GcpmDirective`] variant populate has already landed; a
 //! parallel promotion for RunningTemplate is not yet scheduled).
 //!
 //! **`RunningTemplateId` = subtree_root [`NodeId`]** (canonical: per-element
@@ -73,7 +73,7 @@
 //! PageStream / paint driver side — a later, separate wall/dom-paint task
 //! (see `MarginBoxGeometry` / `layout_running_template` below for the
 //! dom-internal boundary that task will consume). That paint-side driver
-//! doesn't exist yet and isn't ready to be tracked as a bd issue — see
+//! doesn't exist yet — see
 //! [`RunningTemplateStore::resolve_first`]'s doc for the closest dom-side
 //! landing (pool-order lookup, explicitly NOT the spec's page-relative
 //! keyword semantics) and why the gap stops there.
@@ -86,9 +86,9 @@
 //! to promote a placeholder (wall/traits crossing), this module defines
 //! [`CascadeSubset`] as a `pub(crate)` local. This is the same "carry a
 //! concrete local type until a cross-crate reconciliation is scheduled"
-//! shape that [`raikiri_traits::TargetInfo`] previously held pre-bsi —
-//! that reconciliation has since landed (raikiri-spike-bsi Option C
-//! wall/traits merge), CascadeSubset awaits a similar promotion.
+//! shape that [`raikiri_traits::TargetInfo`] previously held before its own
+//! reconciliation landed (a wall/traits merge) — CascadeSubset awaits a
+//! similar promotion.
 //!
 //! **`ContentComponent::Element { name }` upstream gap** — the css-engine
 //! side of `content: element(name)` (parsing the `element(<name>)`
@@ -97,7 +97,7 @@
 //! enum has no `Element` arm. Adding it is a css-engine concern
 //! (wall/css-engine, not this task's walls). This module therefore lands the
 //! **dom-side deliverable** — name→pool→[`ParsedRunningTemplate`] lookup, via
-//! [`RunningTemplateStore::resolve_first`] (bd raikiri-spike-e81n) —
+//! [`RunningTemplateStore::resolve_first`] —
 //! which is the actual "element(name) resolve" once the caller has extracted
 //! the name from wherever. `resolve_first` composes
 //! [`RunningTemplateStore::resolve_element_pool`] +
@@ -108,12 +108,11 @@
 //! `ContentComponent::Element` variant, a driver similar to
 //! [`raikiri_traits::resolve_content_component`] can wire ContentComponent →
 //! `resolve_first` (or the full pool, for keyword-aware callers) in a single
-//! call. Tracked as bd raikiri-spike-6z0 (filed by this task, blocked on
-//! css-engine sprint).
+//! call — this remains blocked on that css-engine-side variant landing.
 //!
 //! **Registration order == document order** — the store assumes the caller
 //! invokes [`RunningTemplateStore::register`] in DOM tree order.
-//! [`build_running_template_store`] (bd raikiri-spike-e81n) walks the arena
+//! [`build_running_template_store`] walks the arena
 //! in document order, so this assumption holds automatically; if it is ever
 //! violated, per-page pool selection (any selector-keyword variant) would
 //! emit the wrong element and visible layout would drift. Regression pin:
@@ -148,8 +147,8 @@ use raikiri_traits::{
 use crate::document::Document;
 
 // `RunningTemplateId` is the shared identifier from raikiri-traits
-// (design §7.0 line 1904 "shared types → raikiri-traits"). Landed by bd
-// raikiri-spike-96u.4 together with the `GcpmDirective` populate — the
+// (design §7.0 line 1904 "shared types → raikiri-traits"). Landed together
+// with the `GcpmDirective` populate — the
 // `RegisterRunning` variant references it (§7.1 line 1918). Previously this
 // module carried a `pub(crate)` local mirror; that mirror is dropped now that
 // the traits-side canonical location exists.
@@ -170,10 +169,10 @@ pub(crate) struct CascadeSubset {
     /// walk from `subtree_root`, matching `CascadeResult::computed`'s layout).
     #[allow(
         dead_code,
-        reason = "Written by collect_running_template (bd raikiri-spike-e81n); \
+        reason = "Written by collect_running_template; \
                   read by the per-page PageStream / paint driver \
                   (layout_running_template's future real body), a later \
-                  wall/dom-paint task — see bd raikiri-spike-e81n's \
+                  wall/dom-paint task — see collect_running_template's \
                   Non-goals section."
     )]
     pub(crate) styles: Vec<raikiri_style::ComputedValues>,
@@ -184,7 +183,7 @@ pub(crate) struct CascadeSubset {
 /// 1989-1993).
 ///
 /// A template whose flags are all `false` is fully static and would qualify
-/// for the post-M8 layout-result cache; today (M1〜M8) every template is
+/// for a future layout-result cache; today every template is
 /// re-laid-out per page regardless, so the flags are captured as
 /// **observability** for the eventual optimization — not consulted by
 /// [`layout_running_template`].
@@ -197,7 +196,7 @@ pub(crate) struct CascadeSubset {
 /// `string()`, `target-*`) — so `content(before)` transitively depends on
 /// per-page state. `content(text)` and `content(first-letter)` are NOT
 /// flipped: they read the element's own text content, which is fixed per
-/// running-element. Since post-M8 static-template layout caching would key
+/// running-element. Since a future static-template layout cache would key
 /// on `(template_id, effective margin-box geometry)`, distinct running
 /// elements (chapter-1's `<h1>` vs chapter-2's `<h1>`) naturally miss the
 /// cache via distinct `template_id`s — the `content(text)` axis does not
@@ -224,7 +223,7 @@ pub(crate) struct DynamicFlags {
 
 impl DynamicFlags {
     /// `true` iff every axis is `false` — the template is fully static and
-    /// would qualify for the post-M8 layout-result cache.
+    /// would qualify for a future layout-result cache.
     pub(crate) fn is_fully_static(self) -> bool {
         !self.has_counter && !self.has_string && !self.has_target && !self.has_content_variant
     }
@@ -239,9 +238,8 @@ impl DynamicFlags {
 /// per-page re-layout runs via [`layout_running_template`].
 ///
 /// **`directives` field** — [`raikiri_traits::GcpmDirective`] was uninhabited
-/// through raikiri-spike-96u.3; the variant populate landed with
-/// raikiri-spike-96u.4 (canonical 6-variant shape per design doc §7.1
-/// line 1913-1920). [`collect_running_template`] (bd raikiri-spike-e81n)
+/// until the variant populate landed (canonical 6-variant shape per design
+/// doc §7.1 line 1913-1920). [`collect_running_template`]
 /// populates the field with `CounterIncrement` / `CounterReset` /
 /// `CounterSet` / `StringSet` records read off every node's
 /// [`raikiri_style::ComputedValues`] in the subtree. It does **not** emit
@@ -263,27 +261,27 @@ pub(crate) struct ParsedRunningTemplate {
     /// order). See [`CascadeSubset`].
     #[allow(
         dead_code,
-        reason = "Written by collect_running_template (bd raikiri-spike-e81n); \
+        reason = "Written by collect_running_template; \
                   read by the per-page PageStream / paint driver, a later \
-                  wall/dom-paint task — see bd raikiri-spike-e81n's \
+                  wall/dom-paint task — see collect_running_template's \
                   Non-goals section."
     )]
     pub(crate) computed_styles: Arc<CascadeSubset>,
     /// GCPM directives that live inside the template subtree
     /// (`counter-increment`, `counter-reset`, `counter-set`, `string-set`,
     /// nested `running()` seeds if the spec/impl allows). Populated by
-    /// [`collect_running_template`] (bd raikiri-spike-e81n); see the
+    /// [`collect_running_template`]; see the
     /// type-level `directives` field note for exactly what is (and isn't)
     /// emitted.
     #[allow(
         dead_code,
-        reason = "Written by collect_running_template (bd raikiri-spike-e81n); \
+        reason = "Written by collect_running_template; \
                   read by crate::gcpm::PhaseBWalkState::apply_directive via \
-                  crate::gcpm::apply_running_template_directives (bd \
-                  raikiri-spike-8ejw, landed — the dom-local Phase B walk \
+                  crate::gcpm::apply_running_template_directives (landed — \
+                  the dom-local Phase B walk \
                   state/algorithm; promotion onto raikiri_traits::PageContext \
-                  is a separate follow-up, bd raikiri-spike-8ejw.1, blocked/ \
-                  human). No production per-page driver invokes that walk \
+                  is a separate, still-blocked follow-up). No production \
+                  per-page driver invokes that walk \
                   yet (a later, separate wall/dom-paint task) — exercised via \
                   unit tests until then."
     )]
@@ -297,8 +295,8 @@ pub(crate) struct ParsedRunningTemplate {
 /// resolves.
 ///
 /// Design doc §7.3 lines 1976-1980. Layout results are NOT cached; per-page
-/// re-layout is unconditional in the M1〜M8 window
-/// ([`layout_running_template`]). A future post-M8 tier-2 layout-result cache
+/// re-layout is unconditional today
+/// ([`layout_running_template`]). A future tier-2 layout-result cache
 /// would slot in alongside — this file does not implement it.
 ///
 /// **Keying rationale**: `parsed_templates` is keyed by [`RunningTemplateId`]
@@ -467,9 +465,9 @@ impl RunningTemplateStore {
     #[allow(
         dead_code,
         reason = "Real (non-test) caller of resolve_element_pool + get, \
-                  landed by bd raikiri-spike-e81n; no production call site \
+                  already landed; no production call site \
                   yet — the css-engine ContentComponent::Element variant \
-                  (bd raikiri-spike-6z0) is the still-open blocker for one."
+                  is the still-open blocker for one."
     )]
     pub(crate) fn resolve_first(&self, name: &Symbol) -> Option<&ParsedRunningTemplate> {
         let id = *self.resolve_element_pool(name).first()?;
@@ -499,15 +497,15 @@ impl RunningTemplateStore {
 ///
 /// **`#[non_exhaustive]` handling**: [`ContentComponent`] is
 /// `#[non_exhaustive]`; the future `ContentComponent::Element { name }`
-/// variant (tracked as bd raikiri-spike-6z0) is NOT a dynamic-content signal
+/// variant is NOT a dynamic-content signal
 /// on its own — `element()` retrieves a static/dynamic template whose
 /// dynamism is already captured in that template's own flags. The catch-all
 /// arm therefore adds no flag. A downstream variant that would legitimately
-/// flip a flag should be handled explicitly here — reviewer:spec should
-/// challenge silent catch-all coverage of new variants.
+/// flip a flag should be handled explicitly here rather than silently
+/// falling through the catch-all.
 ///
-/// **`Image` / `Contents` / `Quote` / `Leader`** (raikiri-spike-1us,
-/// CSS Content 3 §2.2 / §2.3 / §2.4.2 / §2.5.1): each now has an explicit
+/// **`Image` / `Contents` / `Quote` / `Leader`**
+/// (CSS Content 3 §2.2 / §2.3 / §2.4.2 / §2.5.1): each now has an explicit
 /// no-op arm (parallel to `Literal`/`Attr`) rather than falling through the
 /// catch-all — `<image>`'s `url` is fixed per declaration, quote nesting
 /// depth is document-structural, and a `leader()` glyph/string is fixed;
@@ -531,14 +529,14 @@ impl RunningTemplateStore {
 /// `Literal`/`Attr`, not `Content { keyword: Before | After }`.
 ///
 /// `Leader`'s rendered fill length does vary with available inline space,
-/// but that's a layout-geometry input, not a content-dynamism axis — the
-/// post-M8 cache key is `(template_id, effective margin-box geometry)`
+/// but that's a layout-geometry input, not a content-dynamism axis — a
+/// future cache key would be `(template_id, effective margin-box geometry)`
 /// (see the [`DynamicFlags`] type-level note), so geometry variance is
 /// already covered by the cache key and doesn't need a flag here.
 ///
-/// **reviewer:spec sign-off pending** on this "no dynamic flag" call (bd
-/// raikiri-spike-5hp8) — the semantic read above is the implementer's, not
-/// yet a spec-lens-confirmed classification.
+/// **Spec confirmation still pending** on this "no dynamic flag" call —
+/// the semantic read above is the implementer's, not yet a
+/// spec-verified classification.
 pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags {
     // Fold into local booleans and build the struct at the end — avoids the
     // `field_reassign_with_default` clippy trap that would fire on
@@ -570,15 +568,15 @@ pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags
                 }
                 ContentTextKeyword::Text | ContentTextKeyword::FirstLetter => {
                     // Element's own text / first-letter — fixed per running
-                    // element; the post-M8 layout cache would key on
+                    // element; a future layout cache would key on
                     // template_id, and distinct running elements naturally
                     // miss the cache without any dynamic-flag help.
                 }
                 // ContentTextKeyword is #[non_exhaustive]; a future variant
                 // may or may not carry per-page dynamism. Over-mark for
-                // safety (§7.3 line 2005 "correctness 優先"); reviewer:spec
-                // should challenge whether a new keyword deserves an
-                // explicit arm.
+                // safety (§7.3 line 2005 "correctness 優先"); a new keyword
+                // should be checked against spec to see whether it deserves
+                // an explicit arm.
                 _ => {
                     has_content_variant = true;
                 }
@@ -590,19 +588,19 @@ pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags
             | ContentComponent::Contents
             | ContentComponent::Quote(_)
             | ContentComponent::Leader(_) => {
-                // Static — page-independent per raikiri-spike-1us's semantic
+                // Static — page-independent per this function's semantic
                 // read (image url() / quote nesting depth / leader glyph
                 // resolve without per-page runtime state; `Contents`' own
                 // descendants will be separately-walked arena nodes the
                 // register-site walker is contracted to OR-fold on their
                 // own account once that producer lands — see the type-level
                 // doc note above for why this does NOT parallel the earlier
-                // `Content { keyword: Before | After }` arm). reviewer:spec
-                // sign-off pending on this classification (bd
-                // raikiri-spike-5hp8).
+                // `Content { keyword: Before | After }` arm). Spec
+                // confirmation is still pending on this classification.
             }
-            // Non-exhaustive catch-all: reviewer:spec must challenge any new
-            // ContentComponent variant that shouldn't fall through here.
+            // Non-exhaustive catch-all: any new ContentComponent variant
+            // should be checked against spec before being allowed to fall
+            // through here.
             _ => {}
         }
     }
@@ -614,7 +612,7 @@ pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags
     }
 }
 
-// ── register-site walker (producer, bd raikiri-spike-e81n) ─────────────
+// ── register-site walker (producer) ─────────────
 
 /// Document-order arena walk that registers every `position: running(name)`
 /// element into a fresh [`RunningTemplateStore`] — the "register-site
@@ -647,10 +645,10 @@ pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags
 /// run against the very `cascade` output produced from `doc`.
 #[allow(
     dead_code,
-    reason = "Register-site walker landed by bd raikiri-spike-e81n; no \
+    reason = "Register-site walker already landed; no \
               production driver calls it yet (that's the per-page \
               PageStream / paint integration, a later wall/dom-paint task — \
-              see bd raikiri-spike-e81n's Non-goals section). Exercised via \
+              see this function's Non-goals section). Exercised via \
               unit tests until then, same status the pieces it wires \
               together previously carried individually."
 )]
@@ -716,8 +714,8 @@ pub(crate) fn build_running_template_store(
 /// register policy" note).
 #[allow(
     dead_code,
-    reason = "Helper for build_running_template_store (bd \
-              raikiri-spike-e81n); same not-yet-production-driven status."
+    reason = "Helper for build_running_template_store; \
+              same not-yet-production-driven status."
 )]
 fn collect_running_template(
     doc: &Document,
@@ -742,7 +740,7 @@ fn collect_running_template(
             // <https://www.w3.org/TR/css-lists-3/#auto-numbering>, §4.2's
             // note that counter-set is applied after counter-increment).
             // No consumer walks this Vec yet (see this function's doc), but
-            // the future Phase B walk (bd raikiri-spike-8ejw) is expected to
+            // the future Phase B walk is expected to
             // apply it front-to-back rather than re-sort by directive kind,
             // so getting push order right now avoids baking in a
             // same-element `counter-reset: c 0; counter-increment: c 1`
@@ -837,7 +835,7 @@ fn collect_running_template(
 /// `convert_string_set_source_skips_entry_on_url_conversion_failure`.
 #[allow(
     dead_code,
-    reason = "Helper for collect_running_template (bd raikiri-spike-e81n); \
+    reason = "Helper for collect_running_template; \
               same not-yet-production-driven status."
 )]
 fn convert_string_set_source(content_list: &[ContentComponent]) -> Option<ContentSource> {
@@ -862,7 +860,7 @@ fn convert_string_set_source(content_list: &[ContentComponent]) -> Option<Conten
 #[allow(
     dead_code,
     reason = "Consumed by layout_running_template; producer is the PageStream \
-              driver landing post-96u.4."
+              driver landing with a future paint integration."
 )]
 pub(crate) struct MarginBoxGeometry {
     /// The `@page` selector name that resolved to this page
@@ -881,31 +879,31 @@ pub(crate) struct MarginBoxGeometry {
 /// the paint side, and populating it now would cross wall/dom-paint. This
 /// dom-internal placeholder carries the id and geometry the paint side
 /// already knows how to fetch; the actual fragment tree lands with the paint
-/// integration (post-96u.4).
+/// integration.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(
     dead_code,
     reason = "Return shape of layout_running_template; consumer landing with \
-              the paint integration (post-96u.4)."
+              the paint integration."
 )]
 pub(crate) struct MarginBoxLayoutResult {
     /// The template that was laid out.
     pub(crate) template_id: RunningTemplateId,
     /// The geometry it was laid out against (for cache-key parity if a
-    /// future post-M8 tier-2 static-template cache lands).
+    /// future tier-2 static-template cache lands).
     pub(crate) geometry: MarginBoxGeometry,
     /// Whether the source template was `dynamic_flags.is_fully_static()`.
-    /// Post-M8 layout-result cache decision key — captured here so the
+    /// Future layout-result cache decision key — captured here so the
     /// eventual cache doesn't need to re-open the [`ParsedRunningTemplate`].
     pub(crate) source_was_static: bool,
 }
 
 /// Per-page re-layout entry point (design §7.3 lines 2007-2012).
 ///
-/// **Always per-page** — the M1〜M8 flow is "no layout-result cache, always
+/// **Always per-page** — the current flow is "no layout-result cache, always
 /// re-layout" (§7.3 line 1979, 2000, 2014-2016). Fully-static templates
 /// (`parsed.dynamic_flags.is_fully_static()`) are annotated on the return so
-/// a post-M8 caller can decide whether to memoize; this function itself does
+/// a future caller can decide whether to memoize; this function itself does
 /// no caching.
 ///
 /// **Stub for this task** — the return type is
@@ -923,7 +921,7 @@ pub(crate) fn layout_running_template(
     parsed: &ParsedRunningTemplate,
     geometry: MarginBoxGeometry,
 ) -> MarginBoxLayoutResult {
-    // Per-page re-layout is unconditional in M1〜M8; when the tier-2 cache
+    // Per-page re-layout is unconditional today; when the tier-2 cache
     // lands, its key will need at least (template_id, page_name, effective
     // margin-box size). The source_was_static bit is captured so the cache
     // can gate on it without re-touching `parsed`.
@@ -972,7 +970,7 @@ mod tests {
         assert_eq!(parsed.subtree_root, NodeId::new(42));
         assert!(parsed.computed_styles.styles.is_empty());
         // Default empty (populated by the later register-site walker; the
-        // enum shape landed with raikiri-spike-96u.4).
+        // enum shape has already landed).
         assert!(parsed.directives.is_empty());
         assert_eq!(parsed.dynamic_flags, DynamicFlags::default());
     }
@@ -991,7 +989,7 @@ mod tests {
     fn dynamic_flags_is_fully_static_flips_on_any_axis() {
         // Regression pin: is_fully_static must be `all four false`, not just
         // "any" false — sloppy `!self.has_X || ...` would let a single-axis
-        // template mis-qualify for the post-M8 static cache.
+        // template mis-qualify for a future static cache.
         assert!(DynamicFlags::default().is_fully_static());
         assert!(
             !DynamicFlags {
@@ -1393,10 +1391,10 @@ mod tests {
     fn detect_dynamic_flags_content_text_and_first_letter_are_static() {
         // Matches design §7.3 line 1993 "content(before/after) 参照あり":
         // content(text) reads the element's own string value, which is fixed
-        // per running element; a post-M8 layout cache keyed on template_id
+        // per running element; a future layout cache keyed on template_id
         // naturally misses across distinct elements. content(first-letter)
         // is derived from text and follows the same static classification.
-        // Regression pin — pre-Codex the arm blanket-flipped for any Content
+        // Regression pin — previously the arm blanket-flipped for any Content
         // variant (over-mark) and this test's assertion was inverted.
         for kw in [ContentTextKeyword::Text, ContentTextKeyword::FirstLetter] {
             let cs = vec![ContentComponent::Content { keyword: kw }];
@@ -1414,11 +1412,12 @@ mod tests {
 
     #[test]
     fn detect_dynamic_flags_image_contents_quote_leader_are_static() {
-        // raikiri-spike-1us's 4 new variants (CSS Content 3 §2.2 / §2.3 /
-        // §2.4.2 / §2.5.1) each get an explicit no-op arm now — pin that none
-        // of them flip a dynamic flag. reviewer:spec sign-off pending on this
-        // "no dynamic flag" classification (bd raikiri-spike-5hp8); this test
-        // pins current behavior, not a spec-confirmed final answer.
+        // The `Image` / `Contents` / `Quote` / `Leader` variants (CSS
+        // Content 3 §2.2 / §2.3 / §2.4.2 / §2.5.1) each get an explicit
+        // no-op arm now — pin that none of them flip a dynamic flag. Spec
+        // confirmation is still pending on this "no dynamic flag"
+        // classification; this test pins current behavior, not a
+        // spec-confirmed final answer.
         let cs = vec![
             ContentComponent::Image {
                 url: "cover.png".to_owned(),
@@ -1924,8 +1923,8 @@ mod tests {
     #[test]
     fn layout_running_template_returns_geometry_and_id_verbatim() {
         // Shape pin: the return threads through the input id/geometry unchanged.
-        // Real per-page layout wiring lands with the paint integration (post-
-        // 96u.4); the test verifies the invocation shape the design flow
+        // Real per-page layout wiring lands with the paint integration; the
+        // test verifies the invocation shape the design flow
         // (§7.3 lines 2007-2012) calls out.
         let parsed = make_parsed(11, DynamicFlags::default());
         let id = RunningTemplateId::new(NodeId::new(11));
@@ -1941,7 +1940,7 @@ mod tests {
 
     #[test]
     fn layout_running_template_reports_source_was_static_flag() {
-        // Static template → source_was_static = true. Post-M8 layout-result
+        // Static template → source_was_static = true. Future layout-result
         // cache decision key.
         let static_parsed = make_parsed(11, DynamicFlags::default());
         let geom = MarginBoxGeometry {
@@ -1961,7 +1960,7 @@ mod tests {
     fn layout_running_template_reports_source_was_static_false_for_dynamic() {
         // Any dynamic axis → source_was_static = false. Regression pin
         // against a mis-fold in is_fully_static (a broken || / && would let a
-        // dynamic template mis-qualify for the post-M8 static cache).
+        // dynamic template mis-qualify for a future static cache).
         let flags = DynamicFlags {
             has_counter: true,
             ..DynamicFlags::default()

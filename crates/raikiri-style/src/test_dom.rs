@@ -13,7 +13,7 @@ use crate::style_dom::{
 
 pub(crate) struct TestDoc {
     pub(crate) nodes: Vec<TestNode>,
-    /// Document-mode context (bd raikiri-spike-tqwi). Defaults to
+    /// Document-mode context. Defaults to
     /// `NoQuirks`, matching [`StyleDom::quirks_mode`]'s own default —
     /// callers assign this field directly for quirks-mode regression tests
     /// (no setter: no arena-indexing work to wrap, unlike
@@ -25,22 +25,19 @@ pub(crate) struct TestNode {
     pub(crate) kind: StyleNodeKind,
     pub(crate) tag: String,
     pub(crate) inline_style: Option<String>,
-    /// Null-namespace attributes other than `style` (bd raikiri-spike-5z86.7 —
+    /// Null-namespace attributes other than `style` —
     /// needed to exercise `StyleElement::attr()` lookups other than the
-    /// `id` / `class` / `style` ones the trait already special-cases; bd
-    /// raikiri-spike-flln.1 independently needed the same field for
-    /// class/id/attribute selector matching tests and added the post-hoc
-    /// [`TestDoc::set_attr`] setter as a second way to reach it — both
-    /// bd's tests read this one field). First-wins on duplicate names,
+    /// `id` / `class` / `style` ones the trait already special-cases, and
+    /// for class/id/attribute selector matching tests, which added the
+    /// post-hoc [`TestDoc::set_attr`] setter as a second way to reach it
+    /// (both sets of tests read this one field). First-wins on duplicate names,
     /// mirroring `ElementRef::attr()`'s contract in
     /// `crates/raikiri-dom/src/dom_impl.rs`.
     pub(crate) attrs: Vec<(String, String)>,
     /// Namespace URI; `None` = HTML default namespace (matches
-    /// `StyleElement::namespace_uri`'s "fast path" doc). bd
-    /// raikiri-spike-5z86.7 Codex final-review finding 1 needed this to
+    /// `StyleElement::namespace_uri`'s "fast path" doc). Needed to
     /// exercise the HTML-namespace gate on foreign-namespace elements that
-    /// happen to share a local name with an HTML element; bd
-    /// raikiri-spike-flln.1 independently needed it to exercise
+    /// happen to share a local name with an HTML element, and to exercise
     /// `resolve_case_sensitivity`'s non-HTML-namespace branch (via the
     /// post-hoc [`TestDoc::set_namespace`] setter).
     pub(crate) namespace: Option<String>,
@@ -76,7 +73,7 @@ impl TestDoc {
     }
 
     /// [`Self::push_element`] に加えて `style`/`id`/`class` 以外の任意 null-
-    /// namespace attribute も設定できる版 (bd raikiri-spike-5z86.7)。既存
+    /// namespace attribute も設定できる版。既存
     /// call site を壊さないよう `push_element` はこの関数への空 slice 委譲
     /// にした。
     pub(crate) fn push_element_with_attrs(
@@ -103,8 +100,7 @@ impl TestDoc {
         id
     }
 
-    /// Non-HTML-namespace element (bd raikiri-spike-5z86.7 Codex
-    /// final-review finding 1's regression test — a foreign-namespace
+    /// Non-HTML-namespace element (regression test — a foreign-namespace
     /// element sharing an HTML local name must not pick up HTML's
     /// presentational hints).
     pub(crate) fn push_element_with_namespace(
@@ -146,7 +142,7 @@ impl TestDoc {
         id
     }
 
-    /// Comment node (bd raikiri-spike-flln.5 — needed to exercise
+    /// Comment node (needed to exercise
     /// `:empty`'s "comments... must not affect whether an element is
     /// considered empty" clause, CSS Selectors L3 §6.6.4 verbatim, see
     /// `cascade.rs`'s `matches_empty` doc).
@@ -166,7 +162,7 @@ impl TestDoc {
     }
 
     /// Set a null-namespace attribute (e.g. `class`, `id`, `data-foo`) on an
-    /// already-pushed element (bd raikiri-spike-flln.1) — a post-hoc
+    /// already-pushed element — a post-hoc
     /// alternative to [`Self::push_element_with_attrs`]'s constructor-time
     /// form, for call sites that only decide which attrs to add after
     /// already having the element's id. `name` should already be
@@ -179,8 +175,8 @@ impl TestDoc {
             .push((name.to_string(), value.to_string()));
     }
 
-    /// Override an already-pushed element's namespace URI (bd
-    /// raikiri-spike-flln.1) — a post-hoc alternative to
+    /// Override an already-pushed element's namespace URI — a post-hoc
+    /// alternative to
     /// [`Self::push_element_with_namespace`]'s constructor-time form.
     /// Exercises `resolve_case_sensitivity`'s non-HTML-namespace branch,
     /// which the default `None` (HTML) never reaches.
@@ -222,7 +218,7 @@ impl StyleDom for TestDoc {
 
     fn child_ids(&self, id: StyleNodeId) -> Self::ChildIter<'_> {
         let idx = id.0 as usize;
-        // Contract-align with `node()`: invalid StyleNodeId → empty iter (raikiri-spike-ajy).
+        // Contract-align with `node()`: invalid StyleNodeId → empty iter.
         let slice = self
             .nodes
             .get(idx)
@@ -232,7 +228,7 @@ impl StyleDom for TestDoc {
     }
 
     fn node_count(&self) -> usize {
-        // raikiri-spike-37c: cascade が out.resize() の pre-allocation で消費する。
+        // cascade が out.resize() の pre-allocation で消費する。
         self.nodes.len()
     }
 
@@ -266,9 +262,8 @@ impl<'a> StyleElement for TestElementRef<'a> {
     /// `.filter(|s| !s.is_empty())`: matches the `StyleElement::inline_style_source`
     /// trait doc contract ("`None` if unset or empty") and the real
     /// `ElementRef::inline_style_source()` (`crates/raikiri-dom/src/dom_impl.rs`)
-    /// it mirrors. Fixed alongside the `attr()` override below during the
-    /// bd raikiri-spike-flln.1 / bd raikiri-spike-5z86.7 test_dom.rs
-    /// reconciliation (Codex §8.3 finding): both branches of `attr()` — the
+    /// it mirrors. Fixed alongside the `attr()` override below during a
+    /// test_dom.rs reconciliation: both branches of `attr()` — the
     /// `"style"` delegation and the generic attrs lookup — must normalise
     /// empty to `None`, and this is the one place that normalisation
     /// belongs, since `attr("style")` delegates here.

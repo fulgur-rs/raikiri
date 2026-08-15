@@ -3,13 +3,13 @@
 //! Shared defense stack for filesystem input taken from consumer-controlled
 //! locations (WPT fixture tree, WPT bundled font dir).  Intended to consolidate
 //! the two prior hand-rolls at `raikiri_dom::fonts::build_wpt_font_ctx`
-//! (raikiri-spike-d9y.4) and `raikiri_vrt::reference::load_fixture`
-//! (raikiri-spike-d9y.6) via the `+1-probe` TOCTOU-grow pattern.
+//! and `raikiri_vrt::reference::load_fixture`
+//! via the `+1-probe` TOCTOU-grow pattern.
 //!
-//! **fe1 migration status**: raikiri-dom side is migrated; raikiri-vrt side
-//! is deferred to raikiri-spike-7xw (walls.md §2 crate-list implications —
+//! **Migration status**: raikiri-dom side is migrated; raikiri-vrt side
+//! is deferred (walls.md §2 crate-list implications —
 //! raikiri-vrt has never depended on raikiri-traits, adding the dep would
-//! implicitly extend the wall/traits implementor list).  Until 7xw lands the
+//! implicitly extend the wall/traits implementor list).  Until that lands the
 //! raikiri-vrt hand-roll and this helper coexist with the same defense shape.
 //!
 //! Downstream-crate paths are shown as plain code (not intra-doc links)
@@ -134,7 +134,7 @@ impl std::error::Error for RejectReason {
 ///   attacker with concurrent-write access to the path can swap a regular
 ///   file for a symlink between step 1 and step 4.  Callers needing this
 ///   defense must use `O_NOFOLLOW` (unix) or an inode-verify-after-open
-///   pattern.  Tracked in raikiri-spike-8yu.
+///   pattern.  Not yet implemented here.
 /// - **Aggregate caps across multiple files**: per-file only.  Callers doing
 ///   directory-walk aggregation (fixture-tree pages) must track running
 ///   totals themselves.
