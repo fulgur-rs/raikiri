@@ -1559,14 +1559,16 @@ mod tests {
         //   small { font-size: smaller; }
         //   mark { background: yellow; color: black; }
         //   ins, u { text-decoration: underline; }
-        // all landed. The rest of §phrasing-content-3 — the 5-element
-        // `cite, dfn, em, i, var { font-style: italic; }` rule and both
-        // sub/sup rules — is deliberately not landed here; see minimal.css
-        // for the per-rule rationale (sub/sup's `line-height: normal;
-        // font-size: smaller` half is NOT itself blocked, it's held back
-        // deliberately, not "blocked" like the rest). Same "survives real
-        // parse+cascade, not just literal text in MINIMAL_UA_CSS" concern as
-        // the hr / a[href] tests above.
+        // all landed. The 5-element `cite, dfn, em, i, var { font-style:
+        // italic; }` rule also landed — see
+        // `font_style_ua_rule_survives_real_parse_and_cascade` below for its
+        // dedicated real-parse+cascade coverage. Both sub/sup rules remain
+        // deliberately not landed here; see minimal.css for the per-rule
+        // rationale (sub/sup's `line-height: normal; font-size: smaller`
+        // half is NOT itself blocked, it's held back deliberately, not
+        // "blocked" like the rest). Same "survives real parse+cascade, not
+        // just literal text in MINIMAL_UA_CSS" concern as the hr / a[href]
+        // tests above.
         use raikiri_style::Origin;
         use raikiri_style::property::{CssColor, TextDecoration};
 
@@ -1660,6 +1662,55 @@ mod tests {
             cascade.computed[u_id].text_decoration,
             TextDecoration::Underline,
             "u's UA rule text-decoration: underline must reach computed.text_decoration through real parse+cascade"
+        );
+    }
+
+    #[test]
+    fn font_style_ua_rule_survives_real_parse_and_cascade() {
+        // HTML LS §phrasing-content-3's 5-element
+        //   cite, dfn, em, i, var { font-style: italic; }
+        // Same "survives real parse+cascade, not just literal text in
+        // MINIMAL_UA_CSS" concern as the hr / a[href] /
+        // `phrasing_content_ua_rules_survive_real_parse_and_cascade` tests
+        // above — a separate test function (rather than folded into that
+        // one) so this rule's coverage doesn't collide with concurrent
+        // edits to the same shared test.
+        use raikiri_style::Origin;
+        use raikiri_style::property::FontStyle;
+
+        let html = b"<html><body><cite>x</cite><dfn>x</dfn><em>x</em><i>x</i>\
+                     <var>x</var><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        for tag in ["cite", "dfn", "em", "i", "var"] {
+            let id = find_first_by_tag(&uncascaded.dom, tag)
+                .unwrap_or_else(|| panic!("<{tag}> should exist"))
+                .0 as usize;
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                cascade.computed[id].font_style,
+                FontStyle::Italic,
+                "{tag}'s UA rule font-style: italic must reach computed.font_style through real parse+cascade"
+            );
+        }
+
+        // Contrast: an element the UA rule does not target must stay at
+        // CSS-initial `normal` (HTML LS §phrasing-content-3's selector is
+        // exactly the 5 elements above, not every element).
+        let p_id = find_first_by_tag(&uncascaded.dom, "p")
+            .expect("<p> should exist")
+            .0 as usize;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[p_id].font_style,
+            FontStyle::Normal,
+            "p must stay at CSS-initial font-style: normal, not the cite/dfn/em/i/var UA rule's italic"
         );
     }
 

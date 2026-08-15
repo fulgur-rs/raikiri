@@ -30,8 +30,8 @@ use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
-    CssColor, Direction, DisplayValue, Length, LengthOrAuto, LineHeight, OverflowValue, OverflowXY,
-    Sides, TextAlign, TextDecoration, empty_content_list, empty_counter_entries,
+    CssColor, Direction, DisplayValue, FontStyle, Length, LengthOrAuto, LineHeight, OverflowValue,
+    OverflowXY, Sides, TextAlign, TextDecoration, empty_content_list, empty_counter_entries,
     empty_string_set_entries, initial_font_family, resolve_overflow,
     resolve_text_align_match_parent,
 };
@@ -57,7 +57,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration` / `font_style` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -183,6 +183,9 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::text_decoration`] の staging。層は computed-equivalent
     /// (`TextDecoration` は length を運ばない)。
     pub text_decoration: TextDecoration,
+    /// [`ComputedValues::font_style`] の staging。層は computed-equivalent
+    /// (`FontStyle` は length を運ばない — この crate の scope では)。
+    pub font_style: FontStyle,
 }
 
 impl SpecifiedValues {
@@ -236,6 +239,8 @@ impl SpecifiedValues {
             // CSS Text Decoration Module Level 3 §2: text-decoration-line
             // initial は `none`。
             text_decoration: TextDecoration::None,
+            // CSS Fonts 4 §2.4: font-style initial は `normal`。
+            font_style: FontStyle::Normal,
         }
     }
 
@@ -289,6 +294,8 @@ impl SpecifiedValues {
             // "D5 と同型ではない" 節)。
             text_align: parent.text_align,
             direction: parent.direction,
+            // CSS Fonts 4 §2.4: font-style は inherited。
+            font_style: parent.font_style,
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
             display: DisplayValue::Inline,
@@ -627,6 +634,10 @@ impl SpecifiedValues {
             // computed value = specified keyword (`TextDecoration` doc 参照、
             // length を運ばないため相対解決なし)。
             text_decoration: self.text_decoration,
+            // computed value = specified keyword (`FontStyle` doc 参照、
+            // この crate の scope では angle-bearing branch が unreachable
+            // なため相対解決なし) — 自 node の winner 適用結果をそのまま素通し。
+            font_style: self.font_style,
         }
     }
 }
@@ -768,6 +779,7 @@ mod tests {
                 y: OverflowValue::Scroll,
             },
             text_decoration: TextDecoration::Underline,
+            font_style: FontStyle::Italic,
         }
     }
 
@@ -786,6 +798,8 @@ mod tests {
         assert_eq!(child.text_align, TextAlign::Center);
         // CSS Writing Modes 4 §2.1: direction は inherited。
         assert_eq!(child.direction, Direction::Rtl);
+        // CSS Fonts 4 §2.4: font-style は inherited。
+        assert_eq!(child.font_style, FontStyle::Italic);
         // computed → specified の lift (px 表現)。
         assert_eq!(child.font_size, Length::Px(24.0));
         assert_eq!(child.line_height, LineHeight::Number(1.5));

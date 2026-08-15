@@ -1467,7 +1467,12 @@ fn absolutize_in_page_context(
         // `text-decoration` carries no length and computed value = specified
         // keyword (see `TextDecoration`'s doc) — nothing
         // for phase 3 to absolutize.
-        | PropertyValue::TextDecoration(_)) => v,
+        | PropertyValue::TextDecoration(_)
+        // `font-style` carries no length at this crate's scope (only
+        // `normal`/`italic` implemented, see `FontStyle`'s doc) and
+        // computed value = specified keyword — nothing for phase 3 to
+        // absolutize.
+        | PropertyValue::FontStyle(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -1760,8 +1765,8 @@ mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
-        BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontWeightValue, Length,
-        LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
+        BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
+        Length, LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
         TextDecoration,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
@@ -3483,11 +3488,14 @@ mod tests {
     /// 持たないため pass-through 側に加わる — `TextAlign` 自身は元々こちら側)。
     /// 23 → 24 (`TextDecoration` も同じ理由で
     /// pass-through 側 — length を運ばないため phase 3 に変換対象が無い)。
+    /// 24 → 25 (`FontStyle` も同じ理由 — この crate の scope
+    /// (`normal`/`italic` のみ) では length を運ばないため phase 3 に変換対象が
+    /// 無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 24;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 25;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -3672,6 +3680,11 @@ mod tests {
         // "worst case" (`Direction` sibling comment
         // above uses the same reasoning).
         TextDecoration => PropertyValue::TextDecoration(TextDecoration::Underline),
+        // No specified/computed distinction for `font-style` at this
+        // crate's scope (computed value = specified keyword, `FontStyle`
+        // doc) — any value is "worst case" (`Direction` sibling comment
+        // above uses the same reasoning).
+        FontStyle => PropertyValue::FontStyle(FontStyle::Italic),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -3830,6 +3843,7 @@ mod tests {
         OverflowY,
         Overflow,
         TextDecoration,
+        FontStyle,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4057,7 +4071,10 @@ mod tests {
             | PropertyValue::OverflowY(_)
             | PropertyValue::Overflow(_)
             // `TextDecoration` carries no length either.
-            | PropertyValue::TextDecoration(_) => None,
+            | PropertyValue::TextDecoration(_)
+            // `FontStyle` carries no length either, at this crate's scope
+            // (only `normal`/`italic` implemented).
+            | PropertyValue::FontStyle(_) => None,
         }
     }
 
@@ -4411,7 +4428,7 @@ mod tests {
         let result = page(
             "@page { color: red; font-weight: bolder; display: block; \
              box-sizing: border-box; border-top-color: red; text-align: center; \
-             direction: rtl }",
+             direction: rtl; font-style: italic }",
             &root,
         );
         assert_eq!(color_of(&result), Some(RED));
@@ -4432,6 +4449,10 @@ mod tests {
         assert_eq!(
             result.declarations().get(&PropertyKey::Direction),
             Some(&PropertyValue::Direction(Direction::Rtl)),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::FontStyle),
+            Some(&PropertyValue::FontStyle(FontStyle::Italic)),
         );
     }
 

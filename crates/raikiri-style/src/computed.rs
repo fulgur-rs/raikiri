@@ -13,7 +13,7 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
-    OverflowValue, OverflowXY, Sides, TextAlign, TextDecoration, empty_content_list,
+    FontStyle, OverflowValue, OverflowXY, Sides, TextAlign, TextDecoration, empty_content_list,
     empty_counter_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -507,6 +507,20 @@ pub struct ComputedValues {
     /// (`crates/raikiri-paint/src/lib.rs`'s module doc lists "Text
     /// decoration (underline / line-through)" as a future milestone).
     pub text_decoration: TextDecoration,
+    /// `font-style`. **inherited**, initial: [`FontStyle::Normal`] (CSS
+    /// Fonts Module Level 4 §2.4 "Font style: the font-style property"
+    /// <https://www.w3.org/TR/css-fonts-4/#font-style-prop>, "Initial:
+    /// normal" / "Inherited: yes"). Computed value = specified keyword —
+    /// see [`FontStyle`] doc's "Scope carving" section (the spec's
+    /// angle-bearing computed-value branch is unreachable at this crate's
+    /// scope, since `oblique <angle>?` is not implemented).
+    ///
+    /// # Scope carving (minimal scope)
+    ///
+    /// This field holds only the `normal | italic` subset of the
+    /// property's full `normal | italic | left | right | oblique <angle
+    /// [-90deg,90deg]>?` grammar — see [`FontStyle`] doc.
+    pub font_style: FontStyle,
 }
 
 impl ComputedValues {
@@ -585,6 +599,8 @@ impl ComputedValues {
             // CSS Text Decoration Module Level 3 §2: text-decoration-line
             // initial は `none`。
             text_decoration: TextDecoration::None,
+            // CSS Fonts 4 §2.4: font-style initial は `normal`。
+            font_style: FontStyle::Normal,
         }
     }
 
@@ -596,7 +612,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration)。
     ///
@@ -693,6 +709,8 @@ mod tests {
         assert_eq!(cv.text_align, TextAlign::Start);
         // CSS Writing Modes 4 §2.1: direction initial は `ltr`。
         assert_eq!(cv.direction, Direction::Ltr);
+        // CSS Fonts 4 §2.4: font-style initial は `normal`。
+        assert_eq!(cv.font_style, FontStyle::Normal);
         // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
         // CSS Box 3 §3.1: margin initial は 0 on each side。
@@ -805,13 +823,16 @@ mod tests {
             // `Underline` — initial (`None`) と異なる
             // 値 (non_initial_parent の趣旨どおり全 field を非 initial に)。
             text_decoration: TextDecoration::Underline,
+            // CSS Fonts 4 §2.4: `Italic` — initial (`Normal`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            font_style: FontStyle::Italic,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 23 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 24 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -829,6 +850,8 @@ mod tests {
         assert_eq!(child.text_align, parent.text_align);
         // CSS Writing Modes 4 §2.1: direction は inherited。
         assert_eq!(child.direction, parent.direction);
+        // CSS Fonts 4 §2.4: font-style は inherited。
+        assert_eq!(child.font_style, parent.font_style);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);

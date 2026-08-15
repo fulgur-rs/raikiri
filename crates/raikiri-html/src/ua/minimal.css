@@ -221,10 +221,11 @@ a[href] { color: #0000EE; text-decoration: underline; }
  * properties here either), so there is nothing for the shorthand to reset
  * that plain `background-color` wouldn't already leave at its own initial.
  *
- * em/i are part of a 5-element spec selector, `cite, dfn, em, i, var {
- * font-style: italic; }` — not added here at all (not just em/i): font-style
- * is not yet a raikiri-style property (0 hits across property.rs),
- * out of scope for this task, left for a follow-up once it lands.
+ * `cite, dfn, em, i, var { font-style: italic; }` lands verbatim below —
+ * font-style: normal | italic is a raikiri-style property (`FontStyle` in
+ * property.rs; CSS Fonts 4 §2.4's full propdef grammar also has an
+ * optional `oblique <angle>` form and `left`/`right` slant-direction
+ * keywords, both out of scope, see that type's doc).
  *
  * sub/sup get two separate spec rules. `sub { vertical-align: sub; } sup {
  * vertical-align: super; }` is genuinely blocked — vertical-align is not
@@ -246,3 +247,4 @@ b, strong { font-weight: bolder; }
 small { font-size: smaller; }
 mark { background-color: yellow; color: black; }
 ins, u { text-decoration: underline; }
+cite, dfn, em, i, var { font-style: italic; }

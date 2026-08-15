@@ -474,7 +474,8 @@ fn workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
          different rule count"
     );
 
-    let probe = cascade(&doc, &tree).expect("cascade never returns Err in the current implementation");
+    let probe =
+        cascade(&doc, &tree).expect("cascade never returns Err in the current implementation");
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -589,7 +590,10 @@ fn bench_cascade(c: &mut Criterion) {
         // at the `832500e` baseline). Only the *delta* is comparable.
         group.throughput(Throughput::Elements(declarations));
         group.bench_function(name, |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect("cascade never returns Err in the current implementation"));
+            b.iter_with_large_drop(|| {
+                cascade(&doc, &tree)
+                    .expect("cascade never returns Err in the current implementation")
+            });
         });
     }
 
