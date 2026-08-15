@@ -59,8 +59,8 @@ mod tests {
 
         // html > body > p > "Hello" の tree を assert。
         // 注意: html5ever tokenizer は text を複数 AppendText に分割する可能性
-        // があるため、Text children を concat して assert する (M1 では
-        // adjacent Text の auto-merge を実装しない spike 上限)。
+        // があるため、Text children を concat して assert する (現状 adjacent
+        // Text の auto-merge は未実装、spike 範囲の上限)。
         let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p element exists");
         let mut collected = String::new();
         for c in uncascaded.dom.child_ids(p_id) {
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn parse_skips_link_stylesheet_when_no_network_provider() {
-        // raikiri-spike-5z86.6: 外部 <link rel="stylesheet"> の fetch は
+        // 外部 <link rel="stylesheet"> の fetch は
         // `ParseOptions::network` が `Some` の時のみ行われる opt-in 機能。
         // `network: None` (empty_options()) の場合は href の解決すら試みず、
         // stylesheet_sources は空のまま — Consumer が network capability を
@@ -111,8 +111,9 @@ mod tests {
         // `<!DOCTYPE html>`) already triggers an unrelated html5ever
         // `HtmlParseError` ("Unexpected token", spec-conformant per HTML5
         // §13.2.6.4.1 initial insertion mode) regardless of the `<link>`
-        // element. The assertion below targets only what raikiri-spike-5z86.6
-        // could plausibly add: no fetch-related warning without a provider.
+        // element. The assertion below targets only what the external
+        // stylesheet fetch feature could plausibly add: no fetch-related
+        // warning without a provider.
         // cov:ignore: assert! message args only evaluate when the condition
         // is false; this assertion passes in every run.
         assert!(
@@ -126,7 +127,7 @@ mod tests {
         );
     }
 
-    /// raikiri-spike-5z86.6: `<link rel="stylesheet">` fetch → CSS text →
+    /// `<link rel="stylesheet">` fetch → CSS text →
     /// `UncascadedDocument.stylesheet_sources` の wiring を、mock
     /// `NetworkProvider` を使って end-to-end で検証する (実 CSS parsing /
     /// cascade 統合は raikiri-style / raikiri umbrella crate 側、ここでは
@@ -224,7 +225,7 @@ mod tests {
             // doc comment), a <!-- comment --> node *is* reachable via normal
             // child_ids() traversal from <head> and still gets its
             // IS_IN_DOCUMENT bit cleared (Comment/ProcessingInstruction kind
-            // gate, raikiri-spike-84y) — so this is the one case that
+            // gate) — so this is the one case that
             // genuinely walks into the `if !node.is_in_document() { continue }`
             // branch during a real parse.
             let provider = EchoUrlProvider;
@@ -402,7 +403,7 @@ mod tests {
             // resolved (`Url::join("   ")` on a base URL resolves to that
             // *base URL itself*, which would otherwise cause raikiri to
             // fetch the page's own URL and feed the resulting HTML to the
-            // CSS parser — reviewer-spec finding, bd raikiri-spike-5z86.6).
+            // CSS parser).
             let provider = PanicIfCalledProvider;
             let opts = ParseOptions {
                 extra_stylesheets: &[],
@@ -890,17 +891,17 @@ mod tests {
 
     #[test]
     fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit() {
-        // raikiri-spike-84y contract rewrite (旧 84y 前: pseudo-tag "#comment"
-        // Element を strip する契約 — 84y で `NodeData::Comment` variant として
+        // Contract rewrite (以前: pseudo-tag "#comment"
+        // Element を strip する契約 — 現在は `NodeData::Comment` variant として
         // 恒久 tree 内保持 + `mark_in_document_flags` step 2 で
         // IS_IN_DOCUMENT bit clear + Element でないので cascade/paint の Element
-        // gate で skip、の 2 段 gate に置換)。
+        // gate で skip、の 2 段 gate に置換済み)。
         //
         // 旧 test 名 `parse_strips_comment_nodes_from_dom_tree` は "#comment"
-        // pseudo-tag Element の非存在を scan していたが、84y 後は Comment が
+        // pseudo-tag Element の非存在を scan していたが、契約変更後は Comment が
         // Element でない → as_element() == None → scan は自動で "見つからない"
         // → vacuously pass するため active positive assertion に rewrite する
-        // (advisor 指摘: run-and-see-pass に頼らない coverage)。
+        // (run-and-see-pass に頼らない coverage を確保するため)。
         use raikiri_traits::{Dom, Node};
 
         let html = b"<html><body><!-- a comment --><p>hi</p></body></html>";
@@ -933,7 +934,7 @@ mod tests {
         );
 
         // (c) sink.finish() 後 mark_in_document_flags は Comment の
-        //     IS_IN_DOCUMENT bit を clear している (advisor step-6 (i))。
+        //     IS_IN_DOCUMENT bit を clear している。
         assert!(
             !comment_node.is_in_document(),
             "Comment's IS_IN_DOCUMENT bit must be cleared after parse"
@@ -1072,8 +1073,9 @@ mod tests {
     #[test]
     fn parse_skips_style_inside_template_element() {
         // <template> contents are inert per spec — <style> inside must not
-        // appear in stylesheet_sources. Minimum m1.3 fix (skip template subtree
-        // during extraction). Full template-fragment isolation tracked as bd-xno.
+        // appear in stylesheet_sources. Minimal fix (skip template subtree
+        // during extraction). Full template-fragment isolation is a
+        // separate, still-open task.
         let html = b"<html><head>\
                      <template><style>p{color:red}</style></template>\
                      <style>p{color:blue}</style>\
@@ -1089,7 +1091,7 @@ mod tests {
 
     #[test]
     fn parse_marks_template_descendants_out_of_document() {
-        // raikiri-spike-37c: <template> element 自身は flat tree の一員なので
+        // <template> element 自身は flat tree の一員なので
         // is_in_document()=true、その descendants (子孫の element / text) は
         // false であることを parse 経路の bit populate で pin する。
         //
@@ -1148,7 +1150,7 @@ mod tests {
 
     #[test]
     fn parse_marks_body_children_in_document() {
-        // raikiri-spike-37c: normal HTML (template 無し) を parse すると全 node が
+        // normal HTML (template 無し) を parse すると全 node が
         // is_in_document()=true。default true が保たれる regression pin。
         let html = b"<html><head></head><body><p>hi</p></body></html>";
         let opts = empty_options();
@@ -1168,7 +1170,7 @@ mod tests {
 
     #[test]
     fn parse_wires_template_contents_to_detached_fragment_root() {
-        // raikiri-spike-xno Part 2: sink が `<template>` を作った時 fragment
+        // sink が `<template>` を作った時 fragment
         // root を eager allocate し、template element の `template_contents`
         // slot に arena index を wire する。html5ever は以降
         // `get_template_contents(template_handle)` の戻り値を append parent と
@@ -1179,9 +1181,9 @@ mod tests {
         // 1. template_contents は Some(idx) を返し、idx != template arena index
         //    (別 arena slot に fragment root が実在する)
         // 2. template element の arena children は空 (children は fragment root
-        //    へ流れた: 旧 M1 挙動では template 直下に <span> が居た)
+        //    へ流れた: 以前の挙動では template 直下に <span> が居た)
         // 3. fragment root の arena children に <span> が含まれる (reshape 到達点)
-        // 4. 37c invariant: template 自身は is_in_document()=true、fragment root
+        // 4. template 自身は is_in_document()=true、fragment root
         //    と <span>、その text は is_in_document()=false (Document root から
         //    reachable でないため mark_in_document_flags で clear される)
         let html = b"<html><body><template><span>x</span></template></body></html>";
@@ -1228,7 +1230,7 @@ mod tests {
         );
 
         // (3) fragment root は NodeKind::DocumentFragment として存在する
-        //     (raikiri-spike-84y — 旧: "#document-fragment" pseudo-tag Element)。
+        //     (以前は "#document-fragment" pseudo-tag Element だった)。
         //     as_element() == None、tag_name() == None (pseudo-tag pollution 廃止)、
         //     しかし children slot は使えて <span> を保持する。
         let frag_root = doc
@@ -1237,7 +1239,7 @@ mod tests {
         assert_eq!(
             frag_root.kind(),
             NodeKind::DocumentFragment,
-            "fragment root must be NodeKind::DocumentFragment (84y contract, replaces '#document-fragment' pseudo-tag)"
+            "fragment root must be NodeKind::DocumentFragment (replaces the old '#document-fragment' pseudo-tag)"
         );
         assert_eq!(
             frag_root.tag_name(),
@@ -1261,7 +1263,7 @@ mod tests {
             frag_root.children
         );
 
-        // (4) 37c invariant: template 自身は in_document、fragment root と
+        // (4) template 自身は in_document、fragment root と
         // <span> はどちらも out-of-document (Document root から reachable
         // でないため `mark_in_document_flags` step 2 が set しない)。
         assert!(
@@ -1289,7 +1291,7 @@ mod tests {
 
     #[test]
     fn parse_marks_nested_template_descendants_out_of_document() {
-        // raikiri-spike-37c: 深いネスト (template > div > span > text) でも
+        // 深いネスト (template > div > span > text) でも
         // in_document bit が subtree 全体に伝播する。single-pass DFS で
         // in_template state が正しく引き継がれることを pin。
         let html = b"<html><body>\
@@ -1322,16 +1324,16 @@ mod tests {
 
     #[test]
     fn parse_then_cascade_skips_template_descendants() {
-        // raikiri-spike-37c: cascade が template subtree を skip する silent bug fix
+        // cascade が template subtree を skip する silent bug fix
         // regression pin。詳細な cascaded map の shape reflection は raikiri-style
-        // 内部の unit test で担保するのが正道 (未存在なら Task 4 で追加)、この
+        // 内部の unit test で担保するのが正道 (未存在なら別途追加)、この
         // integration test は "parse → cascade の chain が template 内 element を
         // 触っても error / panic しない" ことと、bit populate が cascade 呼び出し
         // 前後で保たれることを pin する。
         //
-        // 追加 pin (roborev-equivalent advisor 指摘): resolve_inheritance の
+        // 追加 pin: resolve_inheritance の
         // is_in_document() gate 実装ミスは `cascade.computed.len() ==
-        // dom.node_count()` という m1.23 contract (raikiri/src/lib.rs
+        // dom.node_count()` という contract (raikiri/src/lib.rs
         // `html_document_cascade_populated_after_construct` が非-template
         // document でのみ pin していた) を template を含む document で破り得る
         // — raikiri-dom::layout::preshape_text / raikiri-paint::text::draw_text_node
@@ -1350,20 +1352,20 @@ mod tests {
         let cascade = raikiri_style::cascade(&uncascaded.dom, &tree)
             .expect("cascade must not error / panic on template subtree");
 
-        // m1.23 contract: cascade.computed.len() == dom.node_count() でなければ
+        // Contract: cascade.computed.len() == dom.node_count() でなければ
         // ならない — たとえ template 子孫が cascade gate で skip されても、
         // index 契約 (raikiri-dom / raikiri-paint が node_id で直接 index) を
         // 破ってはいけない。
         assert_eq!(
             cascade.computed.len(),
             uncascaded.dom.node_count(),
-            "cascade.computed.len() must equal node_count() even with template descendants (m1.23 contract)"
+            "cascade.computed.len() must equal node_count() even with template descendants"
         );
 
         // cascade 呼び出し後も inner <p> は out-of-document のまま (cascade が bit
         // を触ることは無いという contract の pin)。
         //
-        // roborev job 293 L1 finding: 加えて outer <p> と inner <p> の ComputedValues
+        // 加えて outer <p> と inner <p> の ComputedValues
         // を実際に検証する。gate が動いていれば outer には `p { color: red }` rule
         // が適用され CssColor { r:255, g:0, b:0 } となり、inner には rule が適用
         // されず initial (CssColor::BLACK = { r:0, g:0, b:0 }) が残る。もし cascade
@@ -1417,7 +1419,7 @@ mod tests {
 
     #[test]
     fn hr_ua_rule_overflow_hidden_survives_real_parse_and_cascade() {
-        // bd raikiri-spike-cmd3 spec-lens finding: no test anywhere pinned
+        // No test anywhere pinned
         // that `hr`'s new `overflow: hidden;` UA rule (HTML LS
         // §the-hr-element-2) actually survives real cssparser parsing and
         // cascade, as opposed to just being literal text in
@@ -1469,7 +1471,7 @@ mod tests {
 
     #[test]
     fn a_ua_rule_color_and_text_decoration_survives_real_parse_and_cascade() {
-        // bd raikiri-spike-5z86.3: HTML LS §phrasing-content-3's
+        // HTML LS §phrasing-content-3's
         // `a:link, a:visited { color: #0000EE; text-decoration: underline; }`
         // is approximated here as `a[href] { color: #0000EE; text-decoration:
         // underline; }` (no `:link`/`:visited` — Non-Goal, see the UA rule's
@@ -1479,8 +1481,7 @@ mod tests {
         // text" concern as the `hr` test above. Also pins the `[href]` gate
         // itself: a bare `<a id="anchor">` with no `href` (e.g. a fragment
         // target, not a link at all per spec) must stay at CSS-initial
-        // (spec-lens/debt-lens finding on the original unconditional `a { }`
-        // rule, bd raikiri-spike-5z86.3 review round).
+        // (the original unconditional `a { }` rule had this gap).
         use raikiri_style::Origin;
         use raikiri_style::property::{CssColor, TextDecoration};
 
@@ -1553,7 +1554,7 @@ mod tests {
 
     #[test]
     fn phrasing_content_ua_rules_survive_real_parse_and_cascade() {
-        // bd raikiri-spike-5z86.4: HTML LS §phrasing-content-3's
+        // HTML LS §phrasing-content-3's
         //   b, strong { font-weight: bolder; }
         //   small { font-size: smaller; }
         //   mark { background: yellow; color: black; }
@@ -1677,7 +1678,7 @@ mod tests {
         );
     }
 
-    // ── Attribute / namespace wiring (raikiri-spike-blg) ────────
+    // ── Attribute / namespace wiring ────────
 
     #[test]
     fn parse_wires_style_attribute_to_inline_style_source() {
@@ -1802,7 +1803,7 @@ mod tests {
         assert_eq!(p.inline_style_source(), Some("color:red"));
     }
 
-    // ── MathML annotation-xml integration point (raikiri-spike-eil) ─────
+    // ── MathML annotation-xml integration point ─────
     //
     // HTML5 §13.2.5 tree construction: MathML `annotation-xml` element は
     // `encoding` attribute の value が ASCII case-insensitive で `text/html`
@@ -2023,13 +2024,13 @@ mod tests {
 
     #[test]
     fn parse_persists_bulk_comments_and_filters_them_from_taffy_child_count() {
-        // raikiri-spike-84y contract rewrite (旧: 100 個の "#comment" pseudo-tag
+        // Contract rewrite (旧: 100 個の "#comment" pseudo-tag
         // Element が strip されるか、を "#comment" tag の非存在で確認)。
-        // 84y 後は Comment kind node が 100 個 arena に存在し、taffy child_count
+        // 現在は Comment kind node が 100 個 arena に存在し、taffy child_count
         // からは 100 個すべて filter され、body の taffy child は <p> の 1 個のみ、
         // という bulk invariant を positive に pin する。旧 form は Comment が
         // Element でないため as_element() == None → scan は空振り → vacuously
-        // pass するため content 保証にならない (advisor).
+        // pass するため content 保証にならない。
         use raikiri_traits::{Dom, Node};
 
         // 100 comments under body — verifies mark_in_document_flags handles bulk
@@ -2079,44 +2080,43 @@ mod tests {
         );
     }
 
-    // ── UA CSS bundle (M1.4a、raikiri-spike-m1.22) ──────────────
+    // ── UA CSS bundle ──────────────
 
     #[test]
     fn minimal_ua_css_covers_required_display_block_selectors() {
-        // spec §M1.4a Scope: html, body, div, p, h1-h6 が display: block を持つ。
+        // Scope: html, body, div, p, h1-h6 が display: block を持つ。
         //
         // 各 tag について、rule 行の存在を検査する — 「行を trim_start した後
         // `{tag}` で始まり、その直後 whitespace を挟んで `{` が来る」ケースだけ
         // 選択子と扱う。素の contains() だと `p` が comment 内の `Appendix` /
-        // `paragraph` / `display` の一部に match してしまう (roborev job 217 low
-        // 対応)。
-        // bd raikiri-spike-5z86.1: article/section/nav/aside/header/footer/
+        // `paragraph` / `display` の一部に match してしまうのを防ぐため。
+        //
+        // article/section/nav/aside/header/footer/
         // main/figure/figcaption/blockquote 追加 (block-level sectioning /
         // grouping elements)。cascade まで通した非-vacuous な検証は
         // `crates/raikiri/tests/build_cascaded.rs`
         // `sectioning_and_grouping_elements_are_display_block_via_ua_css` 側。
-        // bd raikiri-spike-5z86.2: ol/ul/li 追加 (block-level list
-        // treatment、marker/list-style は Epic 4 へ defer)。li は spec の
+        // ol/ul/li 追加 (block-level list
+        // treatment、marker/list-style は将来 defer)。li は spec の
         // `display: list-item` が raikiri-style で未実装のため display:
-        // block に fallback、list-item 実装は bd raikiri-spike-uhzy で
-        // track (詳細は minimal.css のコメント参照)。cascade まで通した
-        // 非-vacuous な検証は `crates/raikiri/tests/build_cascaded.rs`
+        // block に fallback (詳細は minimal.css のコメント参照)。cascade
+        // まで通した非-vacuous な検証は `crates/raikiri/tests/build_cascaded.rs`
         // `list_elements_are_display_block_via_ua_css` 側。
-        // bd raikiri-spike-5z86.5: hr 追加 (display: block は §flow-content-3
+        // hr 追加 (display: block は §flow-content-3
         // (15.3.3) の flow-content グループ側の rule に相乗り。border/color/
         // margin の hr 固有 rule は別 group、詳細は minimal.css のコメント
         // 参照)。cascade まで通した非-vacuous な検証は
         // `crates/raikiri/tests/build_cascaded.rs`
         // `hr_is_display_block_border_inset_and_margin_via_ua_css` 側。
-        // bd raikiri-spike-xhgn: hgroup 追加 (article/aside/nav/section と
+        // hgroup 追加 (article/aside/nav/section と
         // 同じ §sections-and-headings (15.3.6) selector group の一員、
-        // 5z86.1 の scope からは漏れていた)。cascade まで通した非-vacuous
+        // 元の scope からは漏れていた)。cascade まで通した非-vacuous
         // な検証は `crates/raikiri/tests/build_cascaded.rs`
         // `sectioning_and_grouping_elements_are_display_block_via_ua_css`
         // 側 (既存 loop に追加)。
-        // bd raikiri-spike-cfbo: address/center/listing/plaintext/search/xmp
+        // address/center/listing/plaintext/search/xmp
         // 追加 (§flow-content-3 (15.3.3) の display:block selector の残り、
-        // bd raikiri-spike-5z86.1 の audit で未追跡と判明した7要素のうち6つ)。
+        // 未追跡と判明した7要素のうち6つ)。
         // center/listing/plaintext/xmp は HTML LS §16.2 上は
         // "entirely obsolete" 分類だが、その分類は authoring conformance の
         // 話であって UA rendering の話ではない (詳細は minimal.css のコメント
@@ -2124,16 +2124,16 @@ mod tests {
         // まだ本ファイルに rule 自体が無い (deliberately deferred、詳細は
         // minimal.css のコメント参照)。当初 `dialog { display: none; }` /
         // `dialog[open] { display: block; }` の2 rule ペアで追加していたが、
-        // reviewer:spec が regression を発見し amend で削除した:
+        // レビューで regression が発見され amend で削除した:
         // `raikiri_dom::ElementRef::attr()` が空文字列属性値を `None` に
-        // 正規化する bug (bd raikiri-spike-kxki) により、canonical form の
+        // 正規化する bug により、canonical form の
         // 素の `<dialog open>` では `dialog[open]` が発火せず、無条件の
         // `dialog { display: none; }` だけが効いてしまう —
         // rule 追加前 (no-rule → CSS-initial `inline`、box type は誤りだが
         // content は見える) より悪化する (`display: none` で content が
-        // 完全に不可視になる) regression だったため。bd raikiri-spike-wezw
-        // (kxki 解消後に再導入する followup) で追跡する。cascade まで通した非-vacuous な検証は
-        // 追加した6要素分は
+        // 完全に不可視になる) regression だったため。上記 attr() の bug が
+        // 解消され次第再導入する予定 (followup として追跡中)。cascade まで
+        // 通した非-vacuous な検証は追加した6要素分は
         // `crates/raikiri/tests/build_cascaded.rs`
         // `flow_content_3_residue_elements_are_display_block_via_ua_css` 側。
         for tag in [
@@ -2225,7 +2225,7 @@ mod tests {
         };
         let doc = parse(&html[..], &opts).expect("parse ok");
 
-        // bd raikiri-spike-d7h3: extra_stylesheets は StylesheetKind::User
+        // extra_stylesheets は StylesheetKind::User
         // としてタグされる (以前は Author に混ぜていた — regression trap
         // だったため独立 variant に分離した)。
         let user_entries: Vec<&str> = doc

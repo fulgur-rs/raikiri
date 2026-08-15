@@ -1,15 +1,15 @@
 //! DOM abstraction trait + identifier newtypes.
 //!
-//! `Dom` / `Element` / `Node` は M1.5 (`dom-model` task) で
-//! associated type + method を確定する予定。M1.1 では shell として trait だけ
-//! 用意し、raikiri-dom 側の実装検討と co-design する。
+//! `Dom` / `Element` / `Node` は今後 associated type + method を確定する予定。
+//! 現時点では shell として trait だけ用意し、raikiri-dom 側の実装検討と
+//! co-design する。
 
 use smol_str::SmolStr;
 
 /// String identifier for GCPM fragments / running templates / named strings /
 /// target-* references.
 ///
-/// SmolStr newtype で inline 最適化を効かせる。M4 GCPM で本格利用開始。
+/// SmolStr newtype で inline 最適化を効かせる。GCPM で本格利用開始予定。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Symbol(pub SmolStr);
 
@@ -48,12 +48,12 @@ impl NodeId {
 /// DOM node の種別 (Element / Text / Document root / Comment /
 /// ProcessingInstruction / DocumentFragment)。
 ///
-/// M1.5 で raikiri-dom node arena の kind field と対応する。
-/// raikiri-spike-84y (Sprint 20) で `Comment` / `ProcessingInstruction` /
-/// `DocumentFragment` を追加 (WHATWG DOM §4 で列挙された NodeType のうち
-/// paged-media rendering に関係する 3 種)。`#[non_exhaustive]` により変更は
-/// non-breaking (existing callers は wildcard arm または `matches!(_, Element)`
-/// 形式で match するため影響なし)。
+/// raikiri-dom node arena の kind field と対応する。
+/// `Comment` / `ProcessingInstruction` / `DocumentFragment` は WHATWG DOM
+/// §4 で列挙された NodeType のうち paged-media rendering に関係する 3 種と
+/// して追加された。`#[non_exhaustive]` により変更は non-breaking (existing
+/// callers は wildcard arm または `matches!(_, Element)` 形式で match する
+/// ため影響なし)。
 ///
 /// Two-way invariant ([`Node::kind`] / [`Node::as_element`]):
 /// `kind() == NodeKind::Element` iff `as_element().is_some()`。追加された
@@ -71,18 +71,17 @@ pub enum NodeKind {
     /// HTML / XML comment node (`<!-- ... -->`)。character data を保持する
     /// が Element ではない (`as_element() == None`)。cascade / paint / layout
     /// traversal は typically `is_in_document()` gate で skip されるが、DOM
-    /// mutation API の対象としては存在する。raikiri-spike-84y で追加。
+    /// mutation API の対象としては存在する。
     Comment,
     /// Processing instruction node (`<?target data?>`、HTML では実質発生
     /// しないが XML / XHTML では有効)。target + data を保持する。
-    /// raikiri-spike-84y で追加。
     ProcessingInstruction,
     /// Document fragment root (`<template>` の contents fragment root や
     /// createDocumentFragment 相当の detached subtree の virtual root)。
     /// arena 内に detached 状態で存在し、Document root からは reachable
     /// でない (mark_in_document_flags 後 `is_in_document() == false`)。
-    /// raikiri-spike-84y で `<template>` fragment root の shape 修正のため
-    /// 追加 (旧: `"#document-fragment"` pseudo-tag な Element)。
+    /// `<template>` fragment root の shape 修正のため追加 (旧:
+    /// `"#document-fragment"` pseudo-tag な Element)。
     DocumentFragment,
 }
 
@@ -90,9 +89,9 @@ pub enum NodeKind {
 /// (umbrella) が消費する generic navigation interface。
 ///
 /// **Object-safety**: GAT (`type NodeRef<'a>`) を含むため non-object-safe。
-/// M1 では generic dispatch (`fn walk<D: Dom>(dom: &D)`) を前提。dyn 化が
-/// 必要な場合 (M6 blitz-compat 経由の runtime abstraction 等) は erased
-/// wrapper trait を別途用意する。
+/// 現状は generic dispatch (`fn walk<D: Dom>(dom: &D)`) を前提。dyn 化が
+/// 必要な場合 (blitz-compat 経由の runtime abstraction 等、将来対応) は
+/// erased wrapper trait を別途用意する。
 pub trait Dom {
     /// Node reference (borrowed) type。
     type NodeRef<'a>: Node
@@ -119,7 +118,7 @@ pub trait Dom {
     fn child_ids(&self, id: NodeId) -> Self::ChildIter<'_>;
 
     /// Arena 内の総 node 数 (Document root および detached / unreachable node
-    /// を含む) (raikiri-spike-37c, roborev job 293 M1 finding 対応)。
+    /// を含む)。
     ///
     /// cascade などの traversal が `Vec<T>` を pre-allocate する用途で使う。
     /// **契約**: すべての `NodeId(0..node_count as u64)` が [`node`](Self::node)
@@ -136,9 +135,9 @@ pub trait Dom {
 
 /// DOM node abstraction。kind ごとの dispatch と共通 API を提供。
 ///
-/// **Lifetime elision** (raikiri-spike-yxq): 過去は `Node<'a>` の form を持って
-/// いたが、method signature で `'a` を使用しないため M1.5 whole-branch review で
-/// drop。borrowed Node value 自体の lifetime は `Dom::NodeRef<'a>` の `'a` で
+/// **Lifetime elision**: 過去は `Node<'a>` の form を持って
+/// いたが、method signature で `'a` を使用しないため drop された。
+/// borrowed Node value 自体の lifetime は `Dom::NodeRef<'a>` の `'a` で
 /// 表現されるため trait param 側は不要。GAT `Element<'b>` は borrowed element
 /// reference の型として残る。
 pub trait Node {
@@ -153,18 +152,18 @@ pub trait Node {
     /// kind が Element の場合 Element reference を返す。それ以外 (Text /
     /// Document / Comment / ProcessingInstruction / DocumentFragment) は
     /// `None` — Two-way invariant で pinned (`kind() == NodeKind::Element` iff
-    /// `as_element().is_some()`)。raikiri-spike-84y で新 3 variant 追加。
+    /// `as_element().is_some()`)。
     fn as_element(&self) -> Option<Self::Element<'_>>;
 
     /// kind が Text の場合 character data。それ以外 (Element / Document /
     /// Comment / ProcessingInstruction / DocumentFragment) は `None`。
     /// Comment / PI が character data 相当を持つ場合でも本 method は Text
-    /// variant のみを返す (kind 分岐で明示区別、raikiri-spike-84y)。
+    /// variant のみを返す (kind 分岐で明示区別)。
     fn text_content(&self) -> Option<&str>;
 
     /// この Node が flat tree に含まれるかを返す。`<template>` element の子孫
     /// は `false`、Document root から flat-tree-parent 経由で到達可能な node
-    /// は `true` (raikiri-spike-37c)。
+    /// は `true`。
     ///
     /// Traversal 側 (cascade / paint / stylesheet extract) はこの predicate
     /// で inert subtree を統一的に skip する。個別の tag_name 判定
@@ -200,13 +199,13 @@ pub trait Node {
 
 /// DOM element abstraction。
 ///
-/// `tag_name` は M1.5 で確定。`inline_style_source` / `namespace_uri` /
-/// `id` / `has_class` / `attr` は raikiri-spike-blg で追加。attribute lookup は
-/// null-namespace attr のみ (namespaced attr = xlink:href 等は M2+ に defer)。
+/// `inline_style_source` / `namespace_uri` / `id` / `has_class` / `attr` が
+/// 追加された。attribute lookup は null-namespace attr のみ (namespaced
+/// attr = xlink:href 等は将来 defer)。
 ///
-/// **Lifetime elision** (raikiri-spike-yxq): 過去は `Element<'a>` の form を
-/// 持っていたが、method signature で `'a` を使用しないため M1.5 whole-branch
-/// review で drop。borrowed Element value 自体の lifetime は `Dom::ElementRef<'a>`
+/// **Lifetime elision**: 過去は `Element<'a>` の form を
+/// 持っていたが、method signature で `'a` を使用しないため drop された。
+/// borrowed Element value 自体の lifetime は `Dom::ElementRef<'a>`
 /// の `'a` で表現されるため trait param 側は不要。
 pub trait Element {
     /// HTML / XML tag name (例: `"p"`, `"div"`)。
@@ -216,7 +215,7 @@ pub trait Element {
     /// 未設定または該当 attribute が空文字列 (`style=""`) の場合 `None`。
     ///
     /// raikiri-style::cascade が cssparser の declaration-list parser でこの
-    /// 文字列を消費する (M1.4)。`self.attr("style")` の shorthand として
+    /// 文字列を消費する。`self.attr("style")` の shorthand として
     /// 別 method を維持。
     ///
     /// Default impl は `None` — style を持たない Node kind や未対応 impl は
@@ -280,8 +279,8 @@ pub trait Element {
     }
 }
 
-/// HTML5 quirks mode. m1.3 で raikiri-html が set し、UncascadedDocument
-/// を経由して cascade (m1.4) が参照する。html5ever `QuirksMode` の raikiri
+/// HTML5 quirks mode. raikiri-html が set し、UncascadedDocument
+/// を経由して cascade が参照する。html5ever `QuirksMode` の raikiri
 /// 面ミラー (cleanroom: html5ever を trait layer に持ち込まない)。
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -297,7 +296,6 @@ pub enum QuirksMode {
 
 // ─────────────────────────────────────────────────────────────
 // StylesheetKind — Document に associate される stylesheet の kind。
-// (M1.4a、raikiri-spike-m1.22)
 // ─────────────────────────────────────────────────────────────
 
 /// Document に associate される stylesheet の kind。
@@ -306,13 +304,13 @@ pub enum QuirksMode {
 /// nominal tag。cascade phase (raikiri umbrella crate) で
 /// `raikiri_style::Origin` にマップされる。
 ///
-/// M1 では `UserAgent` + `Author` の 2 段のみだった。bd raikiri-spike-d7h3 で
-/// `User` variant を追加し、Consumer が `extra_stylesheets` 経由で提供する
-/// CSS を独立した user origin として route できるようにした。旧実装は
-/// `Author` に混ぜて扱う暫定 (spec §M1.4a Non-goals) だったが、将来 real
-/// author-origin stylesheet (`<link rel=stylesheet>` 等) がこの経路に
-/// 乗ってきたときに誤って user origin 扱いになる regression trap があった
-/// ため、独立 variant として切り離した。
+/// 当初は `UserAgent` + `Author` の 2 段のみだった。`User` variant を追加し、
+/// Consumer が `extra_stylesheets` 経由で提供する CSS を独立した user origin
+/// として route できるようにした。旧実装は `Author` に混ぜて扱う暫定
+/// (design doc の Non-goals として明記) だったが、将来 real author-origin
+/// stylesheet (`<link rel=stylesheet>` 等) がこの経路に乗ってきたときに
+/// 誤って user origin 扱いになる regression trap があったため、独立
+/// variant として切り離した。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StylesheetKind {
@@ -325,8 +323,7 @@ pub enum StylesheetKind {
     /// User origin (CSS Cascading L4 §6.2
     /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>)。Consumer
     /// が `ParseOptions::extra_stylesheets` 経由で提供する CSS はここに tag
-    /// される (`raikiri-html/src/parse.rs`、bd raikiri-spike-d7h3 で
-    /// `Author` から分離)。
+    /// される (`raikiri-html/src/parse.rs`、`Author` から分離)。
     User,
     /// Author origin (HTML `<style>` element、`<link rel=stylesheet>` 等)。
     Author,
@@ -338,7 +335,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     /// `Symbol` の `Ord` / `PartialOrd` 実装が SmolStr (= &str) 由来の
-    /// lexicographic order を継承していることを確認する。M4 target-* /
+    /// lexicographic order を継承していることを確認する。target-* /
     /// fragment-id で `BTreeMap<Symbol, _>` の deterministic iteration
     /// order を根拠にした logic を書く前提の unit contract。
     #[test]
@@ -358,7 +355,7 @@ mod tests {
         assert_eq!(collected, ["alpha", "bravo", "charlie"]);
     }
 
-    /// raikiri-spike-84y: `NodeKind` に追加された `Comment` /
+    /// `NodeKind` に追加された `Comment` /
     /// `ProcessingInstruction` / `DocumentFragment` variant が pattern-match
     /// で discriminate 可能かつ `Element` と PartialEq で区別できることを
     /// pin する (Two-way invariant の trait 側 constraint)。
@@ -372,7 +369,7 @@ mod tests {
             NodeKind::ProcessingInstruction,
             NodeKind::DocumentFragment,
         ] {
-            // 84y 3 variant はすべて Element とは PartialEq 上区別される。
+            // 追加された 3 variant はすべて Element とは PartialEq 上区別される。
             if !matches!(kind, NodeKind::Element) {
                 assert_ne!(
                     kind,

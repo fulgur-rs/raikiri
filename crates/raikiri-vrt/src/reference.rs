@@ -10,7 +10,7 @@
 //! Golden-update mode: setting `RAIKIRI_UPDATE_GOLDENS=1` in the environment
 //! recreates `expected/` from the pipeline output instead of comparing.
 
-// d9y.6 threat-model docs cross-link `FIXTURE_SIZE_CAP` / `MAX_EXPECTED_PAGES`
+// Threat-model docs cross-link `FIXTURE_SIZE_CAP` / `MAX_EXPECTED_PAGES`
 // / `FIXTURE_AGGREGATE_BYTES_CAP` / `read_bounded_fixture_file` (module-private
 // items) from public `FixtureError` variants and `load_fixture` docstring, so
 // the links resolve under `--document-private-items` but trip `-D warnings` on
@@ -45,9 +45,8 @@ use std::path::{Path, PathBuf};
 ///   on a FIFO succeeds even with no writer), letting the post-open fstat
 ///   inspect the fd and reject non-regular kinds. Regular file semantics
 ///   are unaffected: POSIX specifies `O_NONBLOCK` has no effect on regular
-///   files, and Linux/macOS both honor that. bd raikiri-spike-z719 (ports
-///   `raikiri_dom::fonts::safe_open`'s O_NONBLOCK, added there by bd
-///   raikiri-spike-f4j — 61l Codex §8.3 finding #2).
+///   files, and Linux/macOS both honor that (ports
+///   `raikiri_dom::fonts::safe_open`'s O_NONBLOCK defense to this crate).
 ///
 /// The Windows impl takes a different route to the same guarantee, because
 /// Win32 has no direct `O_NOFOLLOW` equivalent: `CreateFile` normally
@@ -97,11 +96,9 @@ use std::path::{Path, PathBuf};
 /// Any other platform (neither unix nor windows) keeps the plain
 /// `File::open` follow-at-open default; no leaf-swap defense is applied
 /// there.
-///
-/// bd raikiri-spike-8yu (O_NOFOLLOW), raikiri-spike-z719 (O_NONBLOCK).
-// Callsite-local defense: sharing this stack with raikiri-dom is deferred to
-// raikiri-spike-7xw for walls.md §2 crate-list PMO judgment. Do not lift
-// into raikiri-traits::io without that judgment.
+// Callsite-local defense: sharing this stack with raikiri-dom is deferred
+// pending a walls.md §2 crate-list placement decision. Do not lift
+// into raikiri-traits::io without that decision.
 #[cfg(unix)]
 fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -155,8 +152,7 @@ fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
 /// input.html payloads are a few KiB, so 100 MiB leaves ample headroom while
 /// still bounding attacker-supplied huge files.
 ///
-/// **Threat surface coverage** (raikiri-spike-d9y.6, Codex security finding
-/// `0f198c3daa8c8191a18c1a9f16171669`):
+/// **Threat surface coverage**:
 ///
 /// - **symlink → sensitive file / `/dev/zero`**: `symlink_metadata` +
 ///   `is_symlink()` reject on both `input.html` and each
@@ -165,7 +161,8 @@ fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
 ///   input.html` or `mkfifo expected/page-0000.png`): `!is_file()` gate
 ///   rejects non-regular files.  `metadata.len()` is unreliable for devices,
 ///   so this check is load-bearing and cannot be replaced by the size cap
-///   alone (mirrors d9y.4's stated `is_file()` reasoning).  The related
+///   alone (mirrors the same `is_file()` reasoning used elsewhere in this
+///   defense family).  The related
 ///   `expected/`-as-symlink-to-`/dev` vector is closed by a separate
 ///   `expected/` pre-check in [`load_fixture`], not by this gate.
 /// - **oversized regular file** (memory exhaustion): `metadata.len() >
@@ -184,7 +181,7 @@ fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
 ///   so `expected/page-0000.png` resolves outside the fixture root):
 ///   `canonicalize` + `starts_with(canonical_root)` prefix check
 /// - **mid-read grow (TOCTOU)**: `File::open + take(cap + 1) + read_to_end`
-///   +1-probe pattern (per raikiri-spike-d9y.3) catches files that grow
+///   +1-probe pattern catches files that grow
 ///   between the `metadata.len()` check and the actual read
 const FIXTURE_SIZE_CAP: u64 = 100 * 1024 * 1024;
 
@@ -199,14 +196,13 @@ const FIXTURE_SIZE_CAP: u64 = 100 * 1024 * 1024;
 ///
 /// The `expected/page-{N:04}.png` name form limits N to 4 decimal digits
 /// (0000-9999); 1 024 is comfortably above realistic fixture sizes (real
-/// M1 fixtures are single-digit pages, paged-media exports are hundreds)
+/// fixtures are single-digit pages, paged-media exports are hundreds)
 /// while low enough to reject in tests without a 10 000-file test setup.
 const MAX_EXPECTED_PAGES: usize = 1_024;
 
 /// Maximum total bytes across all `expected/page-*.png` entries.
 ///
-/// Load-bearing aggregate-memory defense (raikiri-spike-d9y.6, Codex gate
-/// final review round 2).  Without this, [`MAX_EXPECTED_PAGES`] alone
+/// Load-bearing aggregate-memory defense.  Without this, [`MAX_EXPECTED_PAGES`] alone
 /// still admits `1 024 * FIXTURE_SIZE_CAP` = ~102 GiB.  Cap set at
 /// 256 MiB: 2.5× the per-file cap (a single max-size page must still
 /// load), above realistic fixture aggregates (real fixtures are
@@ -245,8 +241,8 @@ pub struct Fixture {
 /// - `TIER2` = Tier 2 (Linux aarch64, macOS), max_delta=1, max_diff=0.1%.
 /// - `TIER3` = Tier 3 (Windows), max_delta=2, max_diff=0.5%.
 ///
-/// M1 verifies only `EXACT` — TIER2/TIER3 fields are shaped for M2+ platform
-/// matrix but the slow path is not exercised in M1 tests.
+/// Only `EXACT` is currently verified — TIER2/TIER3 fields are shaped for a
+/// future platform matrix but the slow path is not currently exercised in tests.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tolerance {
@@ -343,11 +339,11 @@ impl fmt::Display for DiffReport {
 pub enum FixtureError {
     /// An I/O operation on the fixture directory failed.
     ///
-    /// Kept as `IoError` (not `Io`) for public API stability across d9y.6;
+    /// Kept as `IoError` (not `Io`) for public API stability;
     /// the sibling workspace convention (`FontError::Io`, `ParseError::Io`)
     /// would prefer bare `Io`, but renaming this variant is a public API
-    /// break for `raikiri-vrt` consumers.  A follow-up bd captures the
-    /// desired rename bundled with the next coordinated API-break window.
+    /// break for `raikiri-vrt` consumers.  The desired rename is tracked as
+    /// follow-up work, bundled with the next coordinated API-break window.
     IoError {
         /// Path being accessed when the error occurred.
         path: PathBuf,
@@ -369,8 +365,7 @@ pub enum FixtureError {
     /// A fixture-tree entry (`input.html`, `expected/`, or an
     /// `expected/page-*.png`) is a symlink.  We refuse to follow it so an
     /// attacker-controlled fixture cannot exfiltrate arbitrary local files.
-    /// See [`FIXTURE_SIZE_CAP`] for the full threat model
-    /// (raikiri-spike-d9y.6, Codex finding `0f198c3daa8c8191a18c1a9f16171669`).
+    /// See [`FIXTURE_SIZE_CAP`] for the full threat model.
     SymlinkRejected {
         /// Path of the rejected symlink.
         path: PathBuf,
@@ -390,8 +385,8 @@ pub enum FixtureError {
     /// file that gets swapped for a FIFO/device before `safe_open` runs;
     /// this check instead consults the inode already bound to the opened
     /// descriptor, so no second path lookup can be raced. Mirrors
-    /// `raikiri_dom::fonts::FontReadReject::NotRegularFilePostOpen` (bd
-    /// raikiri-spike-f4j, ported here via bd raikiri-spike-y92o).
+    /// `raikiri_dom::fonts::FontReadReject::NotRegularFilePostOpen` (ported
+    /// to this crate from that source pattern).
     ///
     /// Shape divergence from the fonts.rs original, intentional: fonts.rs's
     /// `FontReadReject::NotRegularFilePostOpen` is a bare unit variant
@@ -435,13 +430,11 @@ pub enum FixtureError {
     /// TOCTOU-vulnerable to a second swap before `safe_open` runs), this
     /// variant is derived from the fd `safe_open` actually returned — on
     /// Linux via `/proc/self/fd/<fd>`, on Apple platforms via
-    /// `fcntl(fd, F_GETPATH, ..)` (bd raikiri-spike-895r) — so firing here
+    /// `fcntl(fd, F_GETPATH, ..)` — so firing here
     /// means an intermediate-directory swap happened inside the pre-open
     /// canonicalize→safe_open re-resolution window itself. Mirrors
-    /// `raikiri_dom::fonts::FontReadReject::PathEscapePostOpen` (bd
-    /// raikiri-spike-1ef, source of this pattern; ported here via bd
-    /// raikiri-spike-y92o — 1ef's close reason named this file as the
-    /// same-shape follow-up).
+    /// `raikiri_dom::fonts::FontReadReject::PathEscapePostOpen` (source of
+    /// this pattern; ported here as the same-shape follow-up).
     PathEscapePostOpen {
         /// fd-derived canonical path (post-open) that fell outside the root.
         canonical: PathBuf,
@@ -462,7 +455,7 @@ pub enum FixtureError {
     /// [`FIXTURE_AGGREGATE_BYTES_CAP`].  Load-bearing defense against
     /// aggregate memory exhaustion — the per-file cap alone allows
     /// `MAX_EXPECTED_PAGES × FIXTURE_SIZE_CAP` = ~102 GiB before this cap
-    /// (raikiri-spike-d9y.6, Codex gate final review concern #1).
+    /// kicks in.
     OversizedFixtureAggregate {
         /// Fixture directory that was searched.
         fixture_dir: PathBuf,
@@ -670,16 +663,16 @@ pub fn compare_png(
 /// check.
 ///
 /// This crate's [`safe_open`] pairs `O_NOFOLLOW` with `O_NONBLOCK` — the
-/// same pairing `raikiri_dom::fonts::safe_open` carries (bd
-/// raikiri-spike-f4j) — so a swapped-in writer-less FIFO returns
+/// same pairing `raikiri_dom::fonts::safe_open` carries — so a swapped-in
+/// writer-less FIFO returns
 /// immediately from `open()` instead of blocking before this fstat is
 /// reached. This function closes the *kind*-detection half for all swap
 /// classes reachable via `safe_open` — FIFOs, character devices, and block
 /// devices alike.
 ///
-/// Mirrors `raikiri_dom::fonts::check_open_handle_regular` (bd
-/// raikiri-spike-f4j, source of this pattern; ported here via bd
-/// raikiri-spike-y92o; `O_NONBLOCK` pairing added via bd raikiri-spike-z719).
+/// Mirrors `raikiri_dom::fonts::check_open_handle_regular` (source of this
+/// pattern, ported to this crate, with the `O_NONBLOCK` pairing added here
+/// too).
 fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), FixtureError> {
     // cov:ignore: fstat on a descriptor this function's caller just opened
     // failing (e.g. underlying storage unmounted mid-call) is an
@@ -743,8 +736,8 @@ fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), Fi
 /// support the authoritative containment check is treated as a hard error.
 /// Concretely, on a Linux host without procfs mounted this recheck now
 /// hard-fails VRT fixture loading that previously succeeded under the
-/// pre-y92o pre-open-only containment check — this environment has
-/// `/proc/self/fd/` available (verified while implementing this task), but
+/// prior pre-open-only containment check — this environment has
+/// `/proc/self/fd/` available, but
 /// future readers deploying this crate's tests inside a minimal
 /// container/chroot should expect that dependency.
 ///
@@ -759,9 +752,8 @@ fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), Fi
 /// - **Apple platforms** (macOS/iOS/tvOS/watchOS/visionOS, see the
 ///   `#[cfg(any(target_os = "macos", ...))]` impl below): `fcntl(fd,
 ///   F_GETPATH, ..)` via [`rustix::fs::getpath`], a safe wrapper — added
-///   as a direct dependency in bd raikiri-spike-895r per PMO decision
-///   (2026-08-10 14:30), mirroring `raikiri_dom::fonts`'s identical arm
-///   (bd raikiri-spike-0nww): Pure Rust, already transitively vetted in
+///   as a direct dependency for this fix,
+///   mirroring `raikiri_dom::fonts`'s identical arm: Pure Rust, already transitively vetted in
 ///   this dependency tree (`Cargo.lock` carried rustix v1.1.4 via this
 ///   crate's own `tempfile` dev-dependency before this change), keeps
 ///   raikiri-vrt's own `unsafe` surface at zero for this fix. `F_GETPATH`
@@ -774,16 +766,13 @@ fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), Fi
 ///   (below) that leaves the pre-open canonicalize check as the only
 ///   containment gate there — no worse than before this change.
 ///   `raikiri_dom::fonts`'s analogous non-Linux, non-Apple gap was
-///   researched in bd raikiri-spike-7cz5 (closed, research-only,
-///   decomposed per a wall/build PMO-decision escalation); this file's
+///   researched but not acted on; this file's
 ///   residual on that same platform set remains untracked, same as
 ///   `fonts.rs`'s.
 ///
-/// Mirrors `raikiri_dom::fonts::check_open_handle_containment` (bd
-/// raikiri-spike-1ef, source of this pattern; ported here via bd
-/// raikiri-spike-y92o — 1ef's close reason named this file as the
-/// same-shape follow-up; Apple-platform arm ported via bd
-/// raikiri-spike-895r, mirroring bd raikiri-spike-0nww).
+/// Mirrors `raikiri_dom::fonts::check_open_handle_containment` (source of
+/// this pattern, ported to this crate as the same-shape follow-up; the
+/// Apple-platform arm mirrors that crate's identical arm).
 #[cfg(target_os = "linux")]
 fn check_open_handle_containment(
     file: &std::fs::File,
@@ -822,7 +811,7 @@ fn check_open_handle_containment(
 /// can still change if an ancestor directory is renamed, or go stale
 /// after the last hard link to the file is unlinked; what cannot happen
 /// is a second, attacker-steerable *pathname lookup* of `path` — the
-/// class of swap this task closes.)
+/// class of swap this check closes.)
 ///
 /// A `getpath` failure is mapped through `From<rustix::io::Errno> for
 /// std::io::Error` into `FixtureError::IoError` (using `path`, the
@@ -857,24 +846,22 @@ fn check_open_handle_containment(
 /// path is not reachable through any input this codebase controls (`file`
 /// / `canonical_root` do not influence whether the kernel honors its own
 /// `F_GETPATH` contract), so it sits outside this function's own
-/// fail-closed contract rather than inside it. Identified as PLAUSIBLE
-/// non-blocking by the security lens on bd raikiri-spike-0nww (gate 8.2,
-/// 2026-08-08) for `raikiri_dom::fonts`'s identical dependency and
-/// deferred here to bd raikiri-spike-895r; documented, not mitigated
-/// (upstreaming a `rustix` fix is out of this task's scope). Re-verify
+/// fail-closed contract rather than inside it. Identified as a plausible
+/// but non-blocking risk (the same dependency `raikiri_dom::fonts` relies
+/// on identically) and accepted as documented, not mitigated
+/// (upstreaming a `rustix` fix is out of this crate's scope). Re-verify
 /// against the then-current `rustix` version if this dependency is ever
 /// bumped past 1.x.
 ///
 /// # Untested in CI
 ///
-/// No CI target for any Apple platform exists in this repo as of
-/// 2026-08-10. The unit tests mirroring
+/// No CI target for any Apple platform exists in this repo currently.
+/// The unit tests mirroring
 /// `check_open_handle_containment_accepts_file_within_root` /
 /// `_rejects_file_outside_root` above are compiled and pinned under this
 /// same `cfg` below but have never executed against a real toolchain.
-/// Accepted per PMO decision on bd raikiri-spike-895r (2026-08-10 14:30),
-/// same acceptance shape as `raikiri_dom::fonts`'s sibling arm (bd
-/// raikiri-spike-0nww, 2026-08-07 17:37): document untested-status rather
+/// Accepted, same acceptance shape as `raikiri_dom::fonts`'s sibling arm:
+/// document untested-status rather
 /// than block on standing up Apple CI. If a future Apple CI run fails
 /// these tests, the first suspect should be `F_GETPATH`'s path *form*
 /// rather than the containment logic — Darwin resolves several common
@@ -887,9 +874,7 @@ fn check_open_handle_containment(
 /// would resolve consistently), but a mismatch here is the first thing to
 /// check before suspecting the containment check proper.
 ///
-/// bd raikiri-spike-895r, mirrors `raikiri_dom::fonts`'s Apple-platform
-/// arm (bd raikiri-spike-0nww), follow-up to raikiri-spike-1ef /
-/// raikiri-spike-y92o / raikiri-spike-7cz5.
+/// Mirrors `raikiri_dom::fonts`'s Apple-platform arm.
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",
@@ -920,9 +905,10 @@ fn check_open_handle_containment(
 /// Fallback for every other platform (non-Apple BSDs, Windows, ...): no
 /// portable fd-to-path primitive is wired up (see the Portability section
 /// on the `target_os = "linux"` impl above). No-op so behavior on these
-/// platforms is unchanged by this task — the pre-open `canonicalize` +
+/// platforms is unchanged — the pre-open `canonicalize` +
 /// `starts_with` gate in [`read_bounded_fixture_file`] remains the only
-/// containment check, exactly as it was before bd raikiri-spike-y92o.
+/// containment check, exactly as it was before this fd-based defense was
+/// added.
 #[cfg(not(any(
     target_os = "linux",
     target_os = "macos",
@@ -953,15 +939,14 @@ fn check_open_handle_containment(
 /// bounded `take(cap + 1)` read that also catches TOCTOU-grow.
 ///
 /// The open-time leaf-swap race between the pre-open `symlink_metadata`
-/// check and the actual open is closed on unix (`O_NOFOLLOW`, raikiri-spike-8yu)
+/// check and the actual open is closed on unix (`O_NOFOLLOW`)
 /// and on Windows (reparse-point-aware open + same-handle attribute check,
 /// see [`safe_open`]'s doc comment). Platforms outside that pair keep
 /// follow-at-open semantics with no defense against this specific race.
 ///
 /// The two post-open rechecks port `raikiri_dom::fonts::read_bounded_font_file`'s
-/// equivalent stack (bd raikiri-spike-f4j / raikiri-spike-1ef) to this
-/// crate via bd raikiri-spike-y92o — 1ef's close reason named this
-/// function as the same-shape follow-up that had not yet received them.
+/// equivalent stack to this
+/// crate, as the same-shape follow-up that had not yet received them.
 ///
 /// See [`FIXTURE_SIZE_CAP`] for the threat model these layers cover.
 fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u8>, FixtureError> {
@@ -1014,7 +999,7 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // symlink_metadata check and this open call cannot cause a fresh
     // symlink target to be followed.  The Err arm's inline comments below
     // document the platform-specific reject-detection and the portable
-    // fallback each uses.  bd raikiri-spike-8yu.
+    // fallback each uses.
     let mut file = match safe_open(path) {
         Ok(f) => f,
         Err(e) => {
@@ -1069,11 +1054,10 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // does not resolve to a regular file. Closes the *kind*-detection half
     // of the FIFO/device swap TOCTOU window that the pre-open path-based
     // `symlink_metadata` + `is_file()` gate above cannot cover; `safe_open`'s
-    // `O_NONBLOCK` (bd raikiri-spike-z719) closes the open-time-block half,
+    // `O_NONBLOCK` closes the open-time-block half,
     // so a writer-less FIFO swapped into this window cannot hang `open()`
     // before this fstat runs. See `check_open_handle_regular`'s doc for the
-    // full rationale. bd raikiri-spike-f4j (source pattern), raikiri-spike-y92o
-    // (this port), raikiri-spike-z719 (O_NONBLOCK closing the residual gap).
+    // full rationale.
     check_open_handle_regular(&file, path)?;
     // Post-open fd-bound containment recheck: verify the descriptor
     // `safe_open` bound still resolves under `canonical_root`, derived from
@@ -1082,31 +1066,27 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
     // `canonicalize`. Closes the intermediate-dir-swap TOCTOU window
     // between the pre-open `canonicalize` above and `safe_open`'s own
     // pathname re-resolution. See `check_open_handle_containment`'s doc
-    // for the full rationale and the remaining no-op fallback. bd
-    // raikiri-spike-1ef (source pattern), raikiri-spike-y92o (this port),
-    // raikiri-spike-895r (Apple-platform arm).
+    // for the full rationale and the remaining no-op fallback.
     check_open_handle_containment(&file, path, canonical_root)?;
     read_bounded_from_open_file(&mut file, path, FIXTURE_SIZE_CAP)
 }
 
 /// Bounded read on an already-opened file (`+1-probe` post-read length gate,
-/// raikiri-spike-d9y.3 pattern, factored out in raikiri-spike-t19 for
-/// injectable-cap testing).
+/// factored out for injectable-cap testing).
 ///
 /// Reads at most `size_cap + 1` bytes and returns `OversizedFixture` when
 /// the buffer grew past `size_cap`.  The `+1-probe` is the load-bearing
 /// defense that turns a TOCTOU-grow (file grew past the cap between the
 /// caller's metadata check and this read) into a hard error instead of a
-/// silently truncated buffer.  The t19 regression tests exercise the
+/// silently truncated buffer.  Regression tests exercise the
 /// post-read length gate in isolation via a static oversized file with a
-/// small cap; simulating an actual TOCTOU-grow race remains bd
-/// raikiri-spike-51n scope.
+/// small cap; simulating an actual TOCTOU-grow race remains future work.
 ///
 /// `size_cap` is a `u64` parameter (rather than the hard-coded
 /// [`FIXTURE_SIZE_CAP`] const) so tests can pass a small cap against tiny
 /// test files.  `saturating_add(1)` guards against callers passing
-/// `u64::MAX` — the same regression pattern fe1's
-/// `raikiri_traits::io::read_bounded_regular_file` codifies.
+/// `u64::MAX` — the same regression pattern
+/// `raikiri_traits::io::read_bounded_regular_file` codifies elsewhere.
 fn read_bounded_from_open_file(
     file: &mut std::fs::File,
     path: &Path,
@@ -1142,7 +1122,7 @@ fn read_bounded_from_open_file(
 /// # Security
 ///
 /// See [`FIXTURE_SIZE_CAP`] and [`read_bounded_fixture_file`] for the
-/// defense stack against untrusted fixture trees (raikiri-spike-d9y.6).
+/// defense stack against untrusted fixture trees.
 /// Briefly: fixture-root-symlink reject, leaf-symlink reject, `!is_file()`
 /// reject, per-file 100 MiB size cap, [`MAX_EXPECTED_PAGES`] enumeration
 /// count cap, [`FIXTURE_AGGREGATE_BYTES_CAP`] aggregate bytes cap,
@@ -1333,7 +1313,7 @@ pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
 /// exact syntax `RAIKIRI_UPDATE_GOLDENS=1` is the documented convention.
 ///
 /// Corresponds to spec §12.7's `cargo test -- --update-goldens` intent;
-/// the env-var mechanism is the M1 implementation (see spec §13 drift).
+/// the env-var mechanism is the current implementation (see spec §13 drift).
 pub const UPDATE_GOLDENS_ENV: &str = "RAIKIRI_UPDATE_GOLDENS";
 
 /// Load a fixture, invoke `pipeline` on its input, and compare or update
@@ -1560,8 +1540,8 @@ mod type_tests {
         assert_error::<FixtureError>();
     }
 
-    /// `Display` for the two post-open recheck variants added by bd
-    /// raikiri-spike-y92o. Constructed directly (no filesystem I/O) since
+    /// `Display` for the two post-open recheck variants. Constructed
+    /// directly (no filesystem I/O) since
     /// these are pure formatting checks — the variants' actual construction
     /// sites are pinned by `defense_tests`'s `check_open_handle_regular_*`
     /// / `check_open_handle_containment_*` tests.
@@ -1587,9 +1567,8 @@ mod type_tests {
     }
 }
 
-/// Regression tests for the `load_fixture` defense stack introduced in
-/// raikiri-spike-d9y.6 (Codex security finding
-/// `0f198c3daa8c8191a18c1a9f16171669`).  See [`FIXTURE_SIZE_CAP`] for the
+/// Regression tests for the `load_fixture` defense stack.
+/// See [`FIXTURE_SIZE_CAP`] for the
 /// full threat-model breakdown.
 ///
 /// Symlink-based tests are gated on `#[cfg(unix)]` because
@@ -1698,7 +1677,7 @@ mod defense_tests {
 
     #[test]
     fn size_cap_boundary_is_accepted() {
-        // Silent over-reject canary (mirrors d9y.4 boundary test): a file
+        // Silent over-reject canary (mirrors a similar boundary test elsewhere): a file
         // whose size is exactly FIXTURE_SIZE_CAP must load — the check is
         // `>` cap, not `>=`.  Sparse file keeps disk usage minimal.
         let tmp = tempfile::tempdir().unwrap();
@@ -1722,7 +1701,7 @@ mod defense_tests {
 
     #[test]
     fn read_bounded_from_open_file_trips_plus1_probe_on_oversized_read() {
-        // raikiri-spike-t19: pins the +1-probe post-read reject in
+        // Pins the +1-probe post-read reject in
         // `read_bounded_from_open_file`, AND pins the `+1` bound itself.
         //
         // The file is deliberately much larger than `cap + 1` (20 bytes
@@ -1738,8 +1717,7 @@ mod defense_tests {
         //      read 20 bytes into `bytes`, still trigger the reject,
         //      but with `size = 20 ≠ cap + 1` → the equality assert
         //      fails.  A cap+1-sized file would let both regressions
-        //      pass the reject arm silently (bd raikiri-spike-t19
-        //      §8.3 codex round 1 finding).
+        //      pass the reject arm silently.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("many_bytes.bin");
         std::fs::File::create(&path)
@@ -1772,7 +1750,7 @@ mod defense_tests {
 
     #[test]
     fn read_bounded_from_open_file_accepts_at_boundary_cap() {
-        // raikiri-spike-t19 companion pin: silent over-reject canary for
+        // Companion pin: silent over-reject canary for
         // the injectable-cap helper.  A file of exactly `cap` bytes must
         // load successfully — the post-read check is `>` cap, not `>=`,
         // and the `take(cap + 1)` read yields exactly `cap` bytes when
@@ -2287,10 +2265,9 @@ mod defense_tests {
     }
 
     // ------------------------------------------------------------------
-    // Post-open fd-based fstat + fd-bound containment tests (bd
-    // raikiri-spike-y92o, porting raikiri_dom::fonts's check_open_handle_regular
-    // / check_open_handle_containment — bd raikiri-spike-f4j /
-    // raikiri-spike-1ef — to this crate's read_bounded_fixture_file)
+    // Post-open fd-based fstat + fd-bound containment tests (porting
+    // raikiri_dom::fonts's check_open_handle_regular
+    // / check_open_handle_containment to this crate's read_bounded_fixture_file)
     // ------------------------------------------------------------------
     //
     // As with the fonts.rs sibling, the actual TOCTOU swap windows these
@@ -2312,8 +2289,7 @@ mod defense_tests {
     // on a kind that opens immediately even without `O_NONBLOCK`.
 
     /// `check_open_handle_regular` accepts a regular file opened via
-    /// `safe_open` — the primitive-level happy-path regression pin. bd
-    /// raikiri-spike-y92o.
+    /// `safe_open` — the primitive-level happy-path regression pin.
     #[test]
     fn check_open_handle_regular_accepts_regular_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -2333,7 +2309,6 @@ mod defense_tests {
     /// exercises the fd-based fstat's non-regular-kind rejection without
     /// needing `O_NONBLOCK`. Mirrors
     /// `raikiri_dom::fonts::check_open_handle_regular_rejects_char_device`.
-    /// bd raikiri-spike-y92o.
     #[cfg(unix)]
     #[test]
     fn check_open_handle_regular_rejects_char_device() {
@@ -2360,7 +2335,7 @@ mod defense_tests {
     /// asserts pin the composite defense:
     ///
     /// 1. `safe_open` returns `Ok` (without hanging) — proves the
-    ///    `O_NONBLOCK` addition (bd raikiri-spike-z719) prevents `open()`
+    ///    `O_NONBLOCK` addition prevents `open()`
     ///    from blocking on a writer-less FIFO. Without `O_NONBLOCK`,
     ///    `open(O_RDONLY)` on a writer-less FIFO blocks indefinitely at the
     ///    syscall itself and the test would deadlock (never reach the
@@ -2378,8 +2353,7 @@ mod defense_tests {
     /// same isolation fonts.rs's sibling test uses — to exercise the
     /// post-open detection path that only fires on a real TOCTOU race in
     /// the composed pipeline. Mirrors
-    /// `raikiri_dom::fonts::check_open_handle_regular_rejects_fifo`. bd
-    /// raikiri-spike-z719.
+    /// `raikiri_dom::fonts::check_open_handle_regular_rejects_fifo`.
     #[cfg(unix)]
     #[test]
     fn check_open_handle_regular_rejects_fifo() {
@@ -2420,7 +2394,6 @@ mod defense_tests {
     /// that the `/proc/self/fd/<fd>` readlink does not spuriously reject
     /// files that are, in fact, inside the root. Mirrors
     /// `raikiri_dom::fonts::check_open_handle_containment_accepts_file_within_root`.
-    /// bd raikiri-spike-y92o.
     #[cfg(target_os = "linux")]
     #[test]
     fn check_open_handle_containment_accepts_file_within_root() {
@@ -2446,7 +2419,6 @@ mod defense_tests {
     /// check does not trust a path string, only the fd's own resolved
     /// target. Mirrors
     /// `raikiri_dom::fonts::check_open_handle_containment_rejects_file_outside_root`.
-    /// bd raikiri-spike-y92o.
     #[cfg(target_os = "linux")]
     #[test]
     fn check_open_handle_containment_rejects_file_outside_root() {
@@ -2479,19 +2451,19 @@ mod defense_tests {
     }
 
     // ------------------------------------------------------------------
-    // Apple-platform post-open fd-bound containment tests (bd
-    // raikiri-spike-895r — Apple-platform arm of the same defense the
+    // Apple-platform post-open fd-bound containment tests — Apple-platform
+    // arm of the same defense the
     // Linux tests above pin, via `fcntl(fd, F_GETPATH, ..)` instead of
     // `/proc/self/fd/<fd>` readlink; mirrors
-    // `raikiri_dom::fonts`'s sibling tests from bd raikiri-spike-0nww).
+    // `raikiri_dom::fonts`'s sibling tests.
     // ------------------------------------------------------------------
     //
     // These mirror `check_open_handle_containment_accepts_file_within_root`
     // / `_rejects_file_outside_root` above structurally (same setup, same
     // assertions) — only the underlying platform primitive differs. They
     // do not run in this repo's Linux CI and have never executed against
-    // a real Apple toolchain (no Apple CI target exists here as of
-    // 2026-08-10; see the "Untested in CI" section on the
+    // a real Apple toolchain (no Apple CI target exists here currently;
+    // see the "Untested in CI" section on the
     // `check_open_handle_containment` Apple-platform impl above for the
     // accepted-risk rationale and the `F_GETPATH` path-form caveat to
     // check first if either of these ever fails on real Apple CI).
@@ -2501,7 +2473,6 @@ mod defense_tests {
     /// regression pin that `fcntl(fd, F_GETPATH, ..)` does not spuriously
     /// reject files that are, in fact, inside the root. Mirrors
     /// `raikiri_dom::fonts::check_open_handle_containment_accepts_file_within_root`.
-    /// bd raikiri-spike-895r.
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -2533,7 +2504,6 @@ mod defense_tests {
     /// check does not trust a path string, only the fd's own resolved
     /// target. Mirrors
     /// `raikiri_dom::fonts::check_open_handle_containment_rejects_file_outside_root`.
-    /// bd raikiri-spike-895r.
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -2571,8 +2541,7 @@ mod defense_tests {
         }
     }
 
-    /// **Race regression** (raikiri-spike-51n, follow-up to raikiri-spike-8yu):
-    /// races a writer against a reader across the exact TOCTOU window
+    /// **Race regression**: races a writer against a reader across the exact TOCTOU window
     /// `safe_open` closes — the pre-open `symlink_metadata` check vs. the
     /// real open — and asserts the reader can never observe the symlink
     /// target's ("evil") contents.
@@ -2606,7 +2575,7 @@ mod defense_tests {
     /// `Ok(bytes)` must always equal `REGULAR_CONTENTS` exactly;
     /// `Ok(bytes) == EVIL_CONTENTS` is an immediate hard failure — the
     /// property this test exists to guard. Any `Err` is accepted: by
-    /// 8yu's design the pre-open `symlink_metadata` rejection and the
+    /// design, the pre-open `symlink_metadata` rejection and the
     /// open-time `O_NOFOLLOW` rejection both map to the same
     /// `SymlinkRejected` variant (intentionally indistinguishable to the
     /// caller), so this test does not attempt to prove which of the two
@@ -2641,7 +2610,7 @@ mod defense_tests {
     /// ```
     ///
     /// `ITERATIONS` was sized empirically: with `safe_open`'s `O_NOFOLLOW`
-    /// temporarily reverted to a plain `File::open` (bd raikiri-spike-51n),
+    /// temporarily reverted to a plain `File::open`,
     /// 8 repeated runs observed the first `Ok(evil contents)` at iteration
     /// 6, 7, 7, 8, 8, 49, 82, and 171 — worst case 171. `ITERATIONS = 20_000`
     /// here is ~100x that worst-observed margin, so a regression

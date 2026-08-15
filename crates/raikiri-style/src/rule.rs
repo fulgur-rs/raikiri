@@ -1,4 +1,4 @@
-//! CSS rule と declaration の shape。M1.4 では type/universal selector を含む
+//! CSS rule と declaration の shape。type/universal selector を含む
 //! qualified rule (StyleRule) のみサポート。at-rule (@page / @media 等) は
 //! ruletree.rs 側で skip。
 
@@ -16,11 +16,11 @@ use crate::property::{
 /// 1 property declaration = value + `!important` flag。
 ///
 /// `value` が私有なので、crate 外からは struct literal / functional-update
-/// のいずれでも構築できない (bd raikiri-spike-qzn3)。
+/// のいずれでも構築できない。
 ///
-/// # write 経路が無いことの compile-fail pin (bd raikiri-spike-ejia)
+/// # write 経路が無いことの compile-fail pin
 ///
-/// qzn3 は `value` を `pub(crate)` に絞ったが、そのことは prose の主張のまま
+/// `value` は `pub(crate)` に絞ってあるが、そのことは prose の主張のまま
 /// だった — read 経路 (`value()`) が届くことは
 /// `crates/raikiri/tests/external_consumer.rs` の実行時 test が pin するが、
 /// 「write 経路が無い」ことは compile する code では表現できないので、それだけ
@@ -40,8 +40,8 @@ use crate::property::{
 /// reject される。
 ///
 /// ⚠️ **上 2 fence (struct literal / functional-update) は `value` 単独の
-/// visibility を独立には discriminate できない** — reviewer:quality が実測で
-/// 指摘 (bd raikiri-spike-ejia gate finding)。今 `Declaration` に
+/// visibility を独立には discriminate できない** — 実測で判明した点である。
+/// 今 `Declaration` に
 /// `#[non_exhaustive]` が付いておらず `important` が `pub` だから、この 2
 /// fence の失敗理由はたまたま「`value` が private」だけになっている。だが
 /// 将来 (a) `Declaration` に `#[non_exhaustive]` が付く、または (b)
@@ -144,7 +144,7 @@ pub struct Declaration {
 }
 
 impl Declaration {
-    /// resolved property value への read-only accessor (bd raikiri-spike-qzn3)。
+    /// resolved property value への read-only accessor。
     pub fn value(&self) -> &PropertyValue {
         &self.value
     }
@@ -154,27 +154,27 @@ impl Declaration {
 ///
 /// `source_order` は同一 `RuleTree` 内で 0 から通し番号。cascade tie-break
 /// (同 specificity 時に「後勝ち」) に使う。
-/// `origin` は CSS Cascading L4 §6.2 の origin (M1.4a、m1.22)。cascade tuple
+/// `origin` は CSS Cascading L4 §6.2 の origin。cascade tuple
 /// の rank 化 (`!important` 反転扱い) に使用。
-/// Future field (specificity cache / invalidation hint 等) は M4+ で追加、
+/// Future field (specificity cache / invalidation hint 等) は将来追加予定、
 /// `#[non_exhaustive]` の恩恵で non-breaking。
 #[non_exhaustive]
 pub struct StyleRule {
-    /// Parse 済 selector list。M1.4 では type + universal のみ受理 (他は build 段で drop)。
+    /// Parse 済 selector list。type + universal のみ受理 (他は build 段で drop)。
     pub selectors: SelectorList<RaikiriSelectorImpl>,
     /// このルールの declaration list (invalid は含まない)。
     pub(crate) declarations: Vec<Declaration>,
     /// RuleTree 全体を通した 0-indexed source order。
     pub source_order: u32,
-    /// この rule が属する cascade origin (raikiri-spike-m1.22)。
+    /// この rule が属する cascade origin。
     pub origin: crate::ruletree::Origin,
 }
 
 impl StyleRule {
     /// このルールの declaration list への read-only accessor
-    /// (invalid は含まない、bd raikiri-spike-qzn3)。
+    /// (invalid は含まない)。
     ///
-    /// # `declarations` field 自体への到達不能性 (bd raikiri-spike-ejia)
+    /// # `declarations` field 自体への到達不能性
     ///
     /// `declarations` field は `pub(crate)` — external crate から届くのは
     /// この accessor だけである。`StyleRule` は `Clone` を derive していない
@@ -204,7 +204,7 @@ impl StyleRule {
 /// declaration-list を消費して `Vec<Declaration>` を produce。
 /// 認識できない property name / invalid value は silently drop。
 ///
-/// # Shorthand expansion (raikiri-spike-0vv.5)
+/// # Shorthand expansion
 ///
 /// spec CSS Cascading L4 §3 "Shorthand Properties"
 /// <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim: "A shorthand
@@ -233,26 +233,25 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// path は [`expand_none`] に分離してあるが、これは perf 上の hot/cold split
 /// であって分岐の追加ではない — **4 helper のいずれも `match` を持たない**)。
 /// 本関数の match は exhaustive であり (下の「wildcard arm を置かない理由
-/// (契約)」節、bd raikiri-spike-ez7b)、下の 3 call site が同時にその
+/// (契約)」節)、下の 3 call site が同時にその
 /// compile-time 保証を継承する:
 ///
 /// 1. [`parse_declaration_block`] — parse 出口。author CSS / inline style / UA
 ///    stylesheet が通る。
 /// 2. [`mod@crate::cascade`] の `collect_cascaded` — **[`crate::ruletree::RuleTree`]
-///    の declaration が element cascade candidate になる境界**
-///    (bd raikiri-spike-nqkj)。
+///    の declaration が element cascade candidate になる境界**。
 /// 3. [`crate::page::cascade_page`] — **`RuleTree::page_rules` の declaration が
-///    `@page` cascade candidate になる境界** (bd raikiri-spike-3svx)。
+///    `@page` cascade candidate になる境界**。
 ///
 /// 2 と 3 が要るのは、`add_stylesheet` の**後**に declaration を shorthand
-/// variant へ書き戻す post-parse mutation 経路が存在するからである
-/// (bd raikiri-spike-nqkj / bd raikiri-spike-3svx)。parse 出口の guard は parse
+/// variant へ書き戻す post-parse mutation 経路が存在するからである。
+/// parse 出口の guard は parse
 /// 出口しか見ないのでこの経路を守らない。両 cascade 入口で同じ等価変換を通すことで、
 /// **declaration がどこから来たかに依らず** 下の不変が成立する。
 ///
-/// bd raikiri-spike-qzn3 で [`crate::ruletree::RuleTree::style_rules()`] /
-/// [`StyleRule::declarations()`] / [`Declaration::value()`] を `pub(crate)` +
-/// read-only accessor に絞ったので、2 / 3 は現在 **crate 内 invariant guard**
+/// [`crate::ruletree::RuleTree::style_rules()`] /
+/// [`StyleRule::declarations()`] / [`Declaration::value()`] は `pub(crate)` +
+/// read-only accessor に絞ってあるので、2 / 3 は現在 **crate 内 invariant guard**
 /// である。ただし **2 と 3 で閉じている範囲が違う**:
 ///
 /// - **2 (element)** は可視性だけで閉じる。Consumer が到達できるのは read-only な
@@ -268,13 +267,13 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///   functional-update 構築が不可、(b) `Clone` 元になりうる declaration が
 ///   longhand しか無いのは [`parse_declaration_block`] が shorthand key を
 ///   emit しないため (`tests::declaration_block_never_emits_shorthand_keys` と
-///   本関数の exhaustive match = bd raikiri-spike-ez7b が pin)。**(a) か (b) が
+///   本関数の exhaustive match が pin)。**(a) か (b) が
 ///   破れると 3 の経路は crate 外から再び開く** — `Declaration` に公開 ctor を
 ///   足す変更は本節を再導出してから行うこと。
 ///
 /// docs.rs 読者向けの summary (本節の結論だけを抜いたもの) は
 /// [`crate::page::PageRule::declarations`] の doc の「Why this field ... is
-/// still `pub`」節にある (bd raikiri-spike-ykee)。本関数は `pub(crate)` なので
+/// still `pub`」節にある。本関数は `pub(crate)` なので
 /// この doc 自体は docs.rs に出ない — 全 3 call site を跨ぐ完全な導出はここが
 /// canonical のまま。
 ///
@@ -300,7 +299,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// ある。
 ///
 /// [`crate::page::PageCascadeResult`] の `declarations` を private + accessor に
-/// 絞る bd raikiri-spike-dyxj は cascade の**出力**側の話であり、3 (入力側) とは
+/// 絞ってあるのは cascade の**出力**側の話であり、3 (入力側) とは
 /// 別 struct・別 gap である。
 ///
 /// sink を取る形にしてあるのは call site 2 / 3 の受け皿が
@@ -309,7 +308,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// `Vec<Declaration>` ではないためで、`Vec` 返しにすると declaration ごとの
 /// 一時 alloc か scratch buffer の状態管理を強いられる。call site 1 は
 /// `Vec` へ push するだけの closure を渡す。sink 化そのものは alloc 中立〜改善
-/// と実測されている (§8.2 reviewer:perf) — hot loop の regression 要因は sink
+/// と実測されている — hot loop の regression 要因は sink
 /// ではなく引数の受け方だった。下の「signature は perf 要件である」節を参照。
 ///
 /// # Rationale (per-key cascade determinism)
@@ -355,7 +354,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// その旨を開示してある)、[`crate::page`] の `post_parse_page_*` test 群
 /// (call site 3、6 本 — こちらは shorthand が独立 key に park するかどうかを
 /// 直接 assert するので **6 本とも展開の有無を区別する**。hunk-revert 実測で
-/// 6/6 fail を確認済 — bd raikiri-spike-3svx gate §8.2)。
+/// 6/6 fail を確認済)。
 ///
 /// # wildcard arm を置かない理由 (契約)
 ///
@@ -365,7 +364,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// shorthand が黙って cascade 段へ流れる**。上の不変 (「cascade 段には longhand
 /// のみが伝わる」) は per-key cascade determinism の前提なので、黙って破れる形に
 /// はしない。同 crate の [`mod@crate::cascade`] `resolve_against_inherited` が同じ理由
-/// で同じ契約を持つ (bd raikiri-spike-ygl0 —『`_` があると素通りして未解決値が
+/// で同じ契約を持つ (『`_` があると素通りして未解決値が
 /// public な結果に漏れた』regression が precedent)。
 ///
 /// ## この guard が守らない範囲 (明示)
@@ -394,7 +393,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///
 /// caller の sink に直接 push する — 従来の
 /// `flat_map + vec![d].into_iter()` は non-shorthand path で per-decl の 1-slot
-/// heap Vec を alloc していた (common case regression、reviewer:quality F6)、
+/// heap Vec を alloc していた (common case regression)、
 /// in-place push で除去。shorthand path は 4 longhand を 4 回 push (同 alloc
 /// budget、shape のみ変更)。sink 化で call site 2 / 3 (受け皿が
 /// `Vec<Declaration>` ではない両 cascade 入口) も中間 buffer 無しになるので、
@@ -402,8 +401,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///
 /// # ⚠️ signature は perf 要件である (単純化しないこと)
 ///
-/// 以下の 3 点は好みではなく **cascade hot loop の実測に基づく要件**である
-/// (§8.2 reviewer:perf 実測、bd raikiri-spike-nqkj):
+/// 以下の 3 点は好みではなく **cascade hot loop の実測に基づく要件**である:
 ///
 /// 1. **`d: &Declaration` (by-value にしないこと)** — call site 2 は
 ///    [`mod@crate::cascade`] の `collect_cascaded` の per-declaration loop
@@ -431,8 +429,8 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// call site 1 (parse) の non-shorthand path は owned move から `d.clone()` に
 /// 変わったので、declaration あたり `PropertyValue::clone()` が 1 回増える。
 /// 本 comment 執筆時点では `FontFamily(Vec<Atom>)` がここでの実 heap alloc の
-/// 具体例だったが、raikiri-spike-no7b (d9y.1/d9y.2 pattern踏襲) で
-/// `Arc<Vec<Atom>>` 化されたため、現時点で `PropertyValue` に生 `Vec` payload
+/// 具体例だったが、その後 `Arc<Vec<Atom>>` 化されたため、現時点で
+/// `PropertyValue` に生 `Vec` payload
 /// を持つ variant は残っていない (`Arc::clone` は bump のみ)。parse は
 /// stylesheet あたり 1 回 = `O(declaration 数)`、cascade は毎回
 /// `O(element × match した rule × declaration)` なので trade は cascade 側に
@@ -545,8 +543,8 @@ fn expand_padding(sides: Sides<Length>, important: bool, mut push: impl FnMut(De
 
 /// `border` shorthand (CSS Backgrounds 3 §3.4 "Border Shorthand Properties"
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>) を 12 longhand
-/// (4 side × 3 sub-property = width / style / color) に展開する
-/// (raikiri-spike-0vv.12)。margin / padding shorthand precedent と同 pattern。
+/// (4 side × 3 sub-property = width / style / color) に展開する。
+/// margin / padding shorthand precedent と同 pattern。
 /// spec `border` grammar は 4 side 共通 (`Sides::all(border)`) だが、cascade
 /// 段では per-side longhand として書き込むことで、`border: 1px solid red;
 /// border-top-color: blue;` のような longhand override が per-side
@@ -605,8 +603,8 @@ fn expand_border(sides: Sides<Border>, important: bool, mut push: impl FnMut(Dec
 
 /// `overflow` shorthand (CSS Overflow 3 §3.1
 /// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>) を
-/// `overflow-x` / `overflow-y` の 2 longhand に展開する cold helper
-/// (raikiri-spike-cmd3)。margin / padding / border shorthand precedent と
+/// `overflow-x` / `overflow-y` の 2 longhand に展開する cold helper。
+/// margin / padding / border shorthand precedent と
 /// 同 pattern — 2-axis なので push は 2 回のみ。
 #[inline(never)]
 fn expand_overflow(pair: OverflowXY, important: bool, mut push: impl FnMut(Declaration)) {
@@ -645,14 +643,14 @@ impl<'i> DeclarationParser<'i> for DeclParser {
     }
 }
 
-// At-rule parser は M1.4 では no-op (block 内で @rule が現れた場合は drop)。
+// At-rule parser は no-op (block 内で @rule が現れた場合は drop)。
 impl<'i> AtRuleParser<'i> for DeclParser {
     type Prelude = ();
     type AtRule = Declaration;
     type Error = ();
 }
 
-// Qualified-rule parser (nested rule) も no-op — block 内 nested rule は M1.4 では drop。
+// Qualified-rule parser (nested rule) も no-op — block 内 nested rule は drop。
 impl<'i> QualifiedRuleParser<'i> for DeclParser {
     type Prelude = ();
     type QualifiedRule = Declaration;
@@ -687,23 +685,22 @@ mod tests {
     /// `parse_declaration_block` の出口に shorthand key が 1 つも残らないこと。
     ///
     /// この不変は cascade 段の正しさに load-bearing である
-    /// (`crate::cascade` の `apply_winners` doc): shorthand key が cascade に // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// (`crate::cascade` の `apply_winners` doc): shorthand key が cascade に // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// 届くと `PropertyKey` 宣言順で longhand より後に適用され、declaration の
     /// 並び方によっては longhand winner を潰して spec と食い違う。
     ///
     /// 「展開 arm の書き忘れ」形の壊れ方は `expand_shorthand_into` の
     /// **exhaustive match** が compile error にするので、本 test が走るより前に
-    /// 落ちる (bd raikiri-spike-ez7b)。本 test は一次 guard ではなく
+    /// 落ちる。本 test は一次 guard ではなく
     /// defense-in-depth である — 同関数 doc の「この guard が守らない範囲」節を
     /// 参照。
     ///
     /// ⚠️ 本 test が見るのは `expand_shorthand_into` の **call site 1 (parse
-    /// 出口) だけ**である。post-parse mutation 経路 (bd raikiri-spike-qzn3 以降は
-    /// crate 内からのみ到達可能) は本 test を素通りする
-    /// (bd raikiri-spike-nqkj)。call site 2 (element cascade 入口) の guard は
-    /// `crate::cascade` の `post_parse_*` test 群 (6 本) が、call site 3 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
-    /// (`@page` cascade 入口) の guard は `crate::page` の `post_parse_page_*` // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
-    /// test 群 (6 本) が持つ (bd raikiri-spike-3svx)。
+    /// 出口) だけ**である。post-parse mutation 経路 (crate 内からのみ
+    /// 到達可能) は本 test を素通りする。call site 2 (element cascade 入口) の
+    /// guard は `crate::cascade` の `post_parse_*` test 群 (6 本) が、call site 3 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+    /// (`@page` cascade 入口) の guard は `crate::page` の `post_parse_page_*` // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+    /// test 群 (6 本) が持つ。
     #[test]
     fn declaration_block_never_emits_shorthand_keys() {
         use crate::property::PropertyKey;
@@ -760,12 +757,11 @@ mod tests {
 
     #[test]
     fn drops_invalid_property_and_value() {
-        // float: 未対応 property → drop (0vv.5 以前は `margin`、0vv.10 直前は
-        // `width` を dropped 例に使っていたが、それぞれ 0vv.5 / 0vv.10 で認識
-        // 対象になったため差し替え。`float` は現行 milestone subset 外)。
-        // font-size: math → g04 (b) milestone subset (MathML scaling algorithm
-        // 未実装、bd raikiri-spike-0vv.18) → drop (raikiri-spike-4rmu 以前は
-        // `medium` を dropped 例に使っていたが、同 task で `<absolute-size>` /
+        // float: 未対応 property → drop (`margin` / `width` は以前 dropped 例に
+        // 使っていたが、その後認識対象になったため差し替え。`float` は現状
+        // unsupported)。
+        // font-size: math → MathML scaling algorithm が未実装のため drop
+        // (`medium` を以前 dropped 例に使っていたが、`<absolute-size>` /
         // `<relative-size>` keyword が認識対象になったため差し替え —
         // property.rs `PropertyValue` doc の「例を差し替えるときは…揃えること」
         // 節参照)。
@@ -837,7 +833,7 @@ mod tests {
         assert!(decls[0].important);
     }
 
-    // ── margin shorthand expansion (CSS Cascading L4 §3、raikiri-spike-0vv.5) ──
+    // ── margin shorthand expansion (CSS Cascading L4 §3) ──
     //
     // `parse_declaration_block` は shorthand `margin` を 4 longhand
     // (`MarginTop` / `MarginRight` / `MarginBottom` / `MarginLeft`) に展開する。
@@ -908,12 +904,12 @@ mod tests {
         );
     }
 
-    // ── padding shorthand expansion (CSS Cascading L4 §3、raikiri-spike-5nc) ──
+    // ── padding shorthand expansion (CSS Cascading L4 §3) ──
 
     #[test]
     fn padding_shorthand_expands_into_four_longhand_declarations() {
         // `padding: 10px 20px` → 4 longhand (top=10, right=20, bottom=10, left=20)。
-        // (margin 0vv.5 の parse-time expansion model を padding に migrate: raikiri-spike-5nc)
+        // (margin の parse-time expansion model を padding に migrate)
         let decls = parse_block("padding: 10px 20px;");
         assert_eq!(decls.len(), 4, "shorthand must expand to 4 longhand decls");
         assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
@@ -947,20 +943,20 @@ mod tests {
         assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
     }
 
-    // ── border shorthand expansion (CSS Cascading L4 §3、raikiri-spike-0vv.12) ──
+    // ── border shorthand expansion (CSS Cascading L4 §3) ──
     //
     // `parse_declaration_block` は shorthand `border` を 12 longhand
     // (4 side × 3 sub-property: width / style / color) に展開する。
     // spec §3 "Shorthand Properties" の "sets all of its longhand sub-properties,
     // exactly as if expanded in place" 準拠、cascade 段に shorthand key を
-    // 届かせない不変を parse-time で担保する。margin (0vv.5) / padding (5nc)
+    // 届かせない不変を parse-time で担保する。margin / padding
     // precedent を 12 longhand shape に拡張。
 
     #[test]
     fn border_shorthand_expands_into_twelve_longhand_declarations() {
         // `border: 1px solid red` → 12 longhand (4 side × {width, style, color})。
         // order: top-w / top-s / top-c / right-w / right-s / right-c / bottom-* /
-        // left-* (advisor calibration — `expand_shorthand_into` の hand-written
+        // left-* (`expand_shorthand_into` の hand-written
         // order を pin することでcopy-paste regression を検知)。
         let decls = parse_block("border: 1px solid red;");
         assert_eq!(
@@ -974,7 +970,7 @@ mod tests {
             b: 0,
             a: 255,
         };
-        // raikiri-spike-0vv.17: color longhand は `BorderColor::Resolved(red)`
+        // color longhand は `BorderColor::Resolved(red)`
         // で cascade に届く (shorthand の author-specified color slot は
         // Resolved variant を渡す — hazard case 3 の pin)。
         let red_bc = BorderColor::Resolved(red);
@@ -1055,8 +1051,7 @@ mod tests {
         );
     }
 
-    // ── overflow shorthand expansion (CSS Overflow 3 §3.1,
-    // raikiri-spike-cmd3) ──
+    // ── overflow shorthand expansion (CSS Overflow 3 §3.1) ──
 
     #[test]
     fn overflow_shorthand_expands_into_two_longhand_declarations() {

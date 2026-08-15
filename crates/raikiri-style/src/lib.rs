@@ -1,14 +1,15 @@
 //! raikiri-style — CSS engine (cssparser + selectors + cascade + GCPM static side).
 //!
-//! # M1.4 status
+//! # Implementation status
 //!
-//! - `Atom` / `RaikiriSelectorImpl` / `parse_selector_list` — M0 seed
-//! - [`property`] / [`rule`] / [`ruletree`] / [`computed`] / [`mod@cascade`] — M1.4
+//! - `Atom` / `RaikiriSelectorImpl` / `parse_selector_list` — initial seed
+//!   implementation
+//! - [`property`] / [`rule`] / [`ruletree`] / [`computed`] / [`mod@cascade`] —
 //!   cascade minimum (type + universal selector、color / font-family / font-size /
 //!   font-weight、specificity + !important + source order + inheritance)
 //!
 //! GCPM static side、@page / @media / @supports、L4 selectors、class/id/attribute
-//! selector、combinator は M4+ で追加予定。
+//! selector、combinator は将来追加予定。
 //!
 //! `precomputed-hash` is encapsulated as a direct dep of this crate only. It
 //! is intentionally NOT promoted to `[workspace.dependencies]` — see the
@@ -20,9 +21,9 @@
 // and `raikiri-vrt`. `rustdoc::broken_intra_doc_links` is untouched, so an
 // unresolved or ambiguous path still warns (and hard-errors under the
 // `-D warnings` this repo's doc commands pass). 規約は AGENTS.md の
-// 「`crate::…` pointer は intra-doc link で書く」節 (bd raikiri-spike-ulzv)。
+// 「`crate::…` pointer は intra-doc link で書く」節。
 #![allow(rustdoc::private_intra_doc_links)]
-#![allow(missing_docs)] // M0 seed; docs come with M1
+#![allow(missing_docs)] // seed phase; docs come later
 
 pub mod error;
 pub use error::CascadeError;
@@ -155,7 +156,7 @@ impl ToCss for AttrValue {
 }
 
 // ---------------------------------------------------------------------------
-// Pseudo-class / pseudo-element enums (minimal M0 set).
+// Pseudo-class / pseudo-element enums (minimal initial set).
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,8 +181,8 @@ pub enum PseudoClass {
 /// Explicit directionality value accepted by [`PseudoClass::Dir`] (CSS
 /// Selectors L4 §7.1 <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>,
 /// CSSWG bikeshed source `selectors-4/Overview.bs` §"The Directionality
-/// Pseudo-class: :dir()", 2026-08-12 direct fetch — the published TR page
-/// truncated before reaching this section for this crate's WebFetch tool,
+/// Pseudo-class: :dir()" — the published TR page
+/// truncates before reaching this section for this crate's WebFetch tool,
 /// same truncation `mod@crate::cascade`'s combinator doc already notes for
 /// this spec):
 ///
@@ -208,7 +209,7 @@ pub enum PseudoClass {
 /// plain 2-variant enum instead of needing a third "other identifier,
 /// never matches" variant.
 ///
-/// # Scope: explicit values only, `auto` not resolved (bd raikiri-spike-flln.6)
+/// # Scope: explicit values only, `auto` not resolved
 ///
 /// The HTML directionality algorithm
 /// (<https://html.spec.whatwg.org/multipage/dom.html#the-directionality>)
@@ -216,7 +217,7 @@ pub enum PseudoClass {
 /// content for the first character with strong bidirectional type (a
 /// simplified form of the Unicode Bidirectional Algorithm's paragraph-level
 /// determination) — a substantial undertaking on its own, and out of this
-/// task's scope per its bd description's explicit recommendation.
+/// crate's current scope.
 /// [`crate::cascade::resolve_directionality`] folds `dir="auto"` into the
 /// same bucket as a missing/invalid `dir` attribute (HTML's "Undefined"
 /// state) and defers to the nearest ancestor's directionality — see that
@@ -394,8 +395,8 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
 
 /// Parse a selector list from CSS source using raikiri's SelectorImpl.
 ///
-/// M0 seed helper — returns a `SelectorList<RaikiriSelectorImpl>` and stringifies
-/// errors for the feasibility spike. M1 will replace the `Result<_, String>` shape
+/// Seed helper — returns a `SelectorList<RaikiriSelectorImpl>` and stringifies
+/// errors for the feasibility spike. A future pass will replace the `Result<_, String>` shape
 /// with a proper structured error type.
 pub fn parse_selector_list(input: &str) -> Result<SelectorList<RaikiriSelectorImpl>, String> {
     let mut parser_input = ParserInput::new(input);
@@ -405,7 +406,7 @@ pub fn parse_selector_list(input: &str) -> Result<SelectorList<RaikiriSelectorIm
 }
 
 // ---------------------------------------------------------------------------
-// Tests — smoke coverage for the seed. Real cascade / matching tests come in M1.
+// Tests — smoke coverage for the seed. Real cascade / matching tests come later.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

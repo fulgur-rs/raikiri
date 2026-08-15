@@ -1,9 +1,6 @@
 //! Cascade winner の **staging 表現** ([`SpecifiedValues`]) と、そこから
 //! [`ComputedValues`] への絶対化 (phase 2 + phase 2.5 + phase 3 —
-//! phase 2.5 は line-height の絶対化、bd raikiri-spike-vxha で追加)。
-//!
-//! bd decision raikiri-spike-082k (Option A) / bd task raikiri-spike-zls8
-//! (Phase 2 = atomic swap)。
+//! phase 2.5 は line-height の絶対化、後から追加)。
 //!
 //! # なぜ staging 表現が要るのか
 //!
@@ -17,11 +14,11 @@
 //! 適用し終えた後にしか確定しない。winner を 1 つ適用するたびに絶対化する実装は
 //! 適用順に依存してしまい成立しない (`font-size` が最後に適用されれば、それ以前に
 //! 絶対化した `2em` は古い基準で焼き付いている)。**絶対化を winner 適用とは別
-//! phase に分けることは decision 082k の拘束事項**である。
+//! phase に分けることは必須の制約**である。
 //!
 //! なお cascade 段の winner 適用順そのものは **決定的**である —
 //! `PropertyKey` discriminant を index にした slot 配列を昇順に走査するため
-//! (bd raikiri-spike-8kn8 以前は `HashMap` iteration 順で非決定的だった)。
+//! (以前は `HashMap` iteration 順で非決定的だった)。
 //! 上の拘束は適用順の決定性とは独立に成り立つ: どの順に適用しようと
 //! 「全 winner 適用後」でなければ基準 `font-size` は確定しない。
 
@@ -51,7 +48,7 @@ use crate::resolve::{
 /// specified value 層の型 ([`Length`] / [`LengthOrAuto`] / [`LineHeight`] /
 /// [`Border`]) のままになっている。
 ///
-/// # property → 層の対応表 (bd raikiri-spike-ygl0 の帰結)
+/// # property → 層の対応表
 ///
 /// raikiri の cascade は property ごとに「どの層まで解決済か」が異なる。一律に
 /// 「この struct は specified 型」と言えないので、対応表を型で表現したものが本
@@ -68,7 +65,7 @@ use crate::resolve::{
 /// (下記「D5 invariant」節)。
 ///
 /// `font_size` は「specified 層のまま」に留まるが、`larger` / `smaller`
-/// (`<relative-size>`、raikiri-spike-4rmu) は同じ D5 invariant を使って
+/// (`<relative-size>`) は同じ D5 invariant を使って
 /// **同じ書き込み時点**で親基準の絶対値に解決される — 結果は `Length::Px`
 /// (specified 層の型としては通常の author px 指定と区別できない値) になるので
 /// 表の分類は変わらない。詳細は下記「D5 invariant」節と
@@ -76,9 +73,8 @@ use crate::resolve::{
 ///
 /// page 経路には本 struct に相当する staging 型が無い —
 /// [`crate::page::cascade_page`] は同じ 2 phase を `PropertyValue` の bag の上で
-/// 直接走らせるので、中間状態は関数 local に閉じており public には出ない
-/// (bd raikiri-spike-sshp)。両経路の phase 3 は [`crate::resolve`] の同じ関数群へ
-/// funnel する。
+/// 直接走らせるので、中間状態は関数 local に閉じており public には出ない。
+/// 両経路の phase 3 は [`crate::resolve`] の同じ関数群へ funnel する。
 ///
 /// # D5 invariant — inherited field は**親の computed 値**で seed すること
 ///
@@ -89,11 +85,11 @@ use crate::resolve::{
 /// `self.font_weight` が**親の computed font-weight である**ことに依拠して
 /// `bolder` / `lighter` を解決する。[`Self::initial`] から seed すると
 /// `bolder` が常に 400 起点になり、**compile error にも既存 test の失敗にも
-/// ならずに**壊れる (bd raikiri-spike-i5bs §8.2 debt lens D5)。
+/// ならずに**壊れる。
 /// pin: `bolder_resolves_against_parent_computed_weight_through_staging`。
 ///
-/// `font_size` も同じ invariant に依拠する (raikiri-spike-4rmu で
-/// `FontSizeRelative` arm が加わった) — [`Self::inherit_from`] は
+/// `font_size` も同じ invariant に依拠する (`FontSizeRelative` arm が
+/// 加わった) — [`Self::inherit_from`] は
 /// `font_size` を [`crate::resolve::lift_font_size`] 経由で seed し、この
 /// 関数は常に `Length::Px` を返す (`Px` は絶対化の不動点、同関数 doc 参照)。
 /// [`Self::initial`] も `font_size: Length::Px(INITIAL_FONT_SIZE_PX)` で
@@ -104,7 +100,7 @@ use crate::resolve::{
 /// [`Self::initial`] から seed する実装に変えると `larger` が常に
 /// `INITIAL_FONT_SIZE_PX` (16px) 起点になり、`bolder` と同じ壊れ方をする。
 ///
-/// # `text_align: match-parent` は D5 と**同型ではない** (raikiri-spike-l3wg)
+/// # `text_align: match-parent` は D5 と**同型ではない**
 ///
 /// `text-align: match-parent` も継承元依存の解決を要する点は `bolder` /
 /// `lighter` と同じだが、D5 の read-before-write パターンは**使わない**。
@@ -137,8 +133,8 @@ pub struct SpecifiedValues {
     /// **親の** computed font-size を基準に絶対化される。
     pub font_size: Length,
     /// [`ComputedValues::font_weight`] の staging。**既に computed-equivalent**
-    /// — 上記 D5 invariant を参照。型は `f32` (bd raikiri-spike-e52s で `u16`
-    /// から格上げ、fractional weight を保持する)。
+    /// — 上記 D5 invariant を参照。型は `f32` (`u16` から格上げ、fractional
+    /// weight を保持する)。
     pub font_weight: f32,
     /// `line-height` の **specified** value。phase 3 ([`resolve_line_height`]) で
     /// 自 node の computed font-size を基準に絶対化される。
@@ -161,8 +157,7 @@ pub struct SpecifiedValues {
     /// `match-parent` はここでは**解決されない** — [`Self`] doc の
     /// "`text_align: match-parent` は D5 と同型ではない" 節参照。
     pub text_align: TextAlign,
-    /// [`ComputedValues::direction`] の staging。層は computed-equivalent
-    /// (raikiri-spike-l3wg)。
+    /// [`ComputedValues::direction`] の staging。層は computed-equivalent。
     pub direction: Direction,
     /// `padding` の **specified** value。phase 3
     /// ([`resolve_length_percentage`]) で絶対化される (percentage は素通し)。
@@ -183,11 +178,10 @@ pub struct SpecifiedValues {
     /// (`OverflowValue` は length を運ばない) だが、cross-axis の
     /// computed-value coupling は**ここでは解決されない** — [`Self`] doc の
     /// "`text_align: match-parent` は D5 と同型ではない" 節と同じ理由で、
-    /// [`resolve_overflow`] は phase 3 ([`Self::absolutize_with`]) が呼ぶ
-    /// (raikiri-spike-cmd3)。
+    /// [`resolve_overflow`] は phase 3 ([`Self::absolutize_with`]) が呼ぶ。
     pub overflow: OverflowXY,
     /// [`ComputedValues::text_decoration`] の staging。層は computed-equivalent
-    /// (bd raikiri-spike-5z86.3、`TextDecoration` は length を運ばない)。
+    /// (`TextDecoration` は length を運ばない)。
     pub text_decoration: TextDecoration,
 }
 
@@ -206,8 +200,8 @@ impl SpecifiedValues {
         Self {
             color: CssColor::BLACK,
             background_color: CssColor::TRANSPARENT,
-            // d9y.1/d9y.2 pattern踏襲 (raikiri-spike-no7b): shared Arc slot —
-            // per-node allocation 回避 (`initial_font_family` doc 参照)。
+            // shared Arc slot — per-node allocation 回避 (`initial_font_family`
+            // doc 参照)。
             font_family: initial_font_family(),
             // CSS Fonts 4 §2.5: initial は `medium` (本実装では 16px)。
             font_size: Length::Px(crate::computed::INITIAL_FONT_SIZE_PX),
@@ -221,27 +215,26 @@ impl SpecifiedValues {
             string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
             text_align: TextAlign::Start,
-            // CSS Writing Modes 4 §2.1: direction initial は `ltr` (raikiri-spike-l3wg)。
+            // CSS Writing Modes 4 §2.1: direction initial は `ltr`。
             direction: Direction::Ltr,
             padding: Sides::all(Length::Px(0.0)),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             // CSS Backgrounds 3 §3.3 / §3.2 / §3.1: width=medium (3px) /
             // style=none / color=currentcolor。computed 層では style gating に
             // より width が 0px に潰れる (`resolve_border`)。
-            // (§ 番号は spec の `data-level` 実測値 — bd raikiri-spike-zls8
-            // §8.2 spec lens SPEC-5 で 5.x から訂正。crate 全域の一括 sweep は
-            // bd raikiri-spike-bcmu / raikiri-spike-xpd4 で完了しており、
-            // Backgrounds 3 の §5.x は border-image の節なので
-            // 「一貫性のため」本 file を 5.x に戻してはならない。)
+            // (§ 番号は spec の `data-level` 実測値に基づき 5.x から訂正済み。
+            // crate 全域で一貫して 3.x を使う — Backgrounds 3 の §5.x は
+            // border-image の節なので「一貫性のため」本 file を 5.x に
+            // 戻してはならない。)
             border: Sides::all(INITIAL_BORDER),
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
             // CSS Overflow 3 §3.1: overflow-x/overflow-y initial は
-            // `visible` (raikiri-spike-cmd3)。
+            // `visible`。
             overflow: OverflowXY::both(OverflowValue::Visible),
             // CSS Text Decoration Module Level 3 §2: text-decoration-line
-            // initial は `none` (bd raikiri-spike-5z86.3)。
+            // initial は `none`。
             text_decoration: TextDecoration::None,
         }
     }
@@ -261,8 +254,7 @@ impl SpecifiedValues {
     ///
     /// **分類の実装は本関数 1 箇所だけである** — public な
     /// [`ComputedValues::inherit_from`] は本関数 + [`Self::finalize`] へ delegate
-    /// する thin wrapper なので、そちらに分類を写す必要はない
-    /// (bd raikiri-spike-zls8)。
+    /// する thin wrapper なので、そちらに分類を写す必要はない。
     ///
     /// [`ComputedValues::inherit_from`]: crate::computed::ComputedValues::inherit_from
     ///
@@ -271,10 +263,10 @@ impl SpecifiedValues {
     pub fn inherit_from(parent: &ComputedValues) -> Self {
         // **直接 struct literal で初期化する** — `..Self::initial()` 経由に
         // 「簡約」すると `font_family` の `Vec` を 1 度 allocate → drop してから
-        // parent から clone し直すことになり無駄 (roborev job 217 medium 対応。
-        // 本 comment は `ComputedValues::inherit_from` から bd raikiri-spike-zls8
-        // で移設したもの)。raikiri-spike-no7b で `font_family` は
-        // `Arc<Vec<Atom>>` 化されたため、この特定の malloc→drop は解消済み
+        // parent から clone し直すことになり無駄
+        // (本 comment は `ComputedValues::inherit_from` から移設したもの)。
+        // `font_family` は `Arc<Vec<Atom>>` 化されたため、この特定の
+        // malloc→drop は解消済み
         // (`initial_font_family()` は shared slot の bump のみ) —
         // ただし本 directive (下記) はそれとは独立に立つ (per-field 網羅列挙が
         // 新規 property 追加時の audit friendliness を担う、将来 field が同種の
@@ -294,7 +286,7 @@ impl SpecifiedValues {
             // `match-parent` はここでは解決しない (素朴なコピー) — 解決は
             // `finalize` / `finalize_as_root` が全 winner 適用後に親の
             // `ComputedValues` を明示的に受け取って行う (`Self` doc の
-            // "D5 と同型ではない" 節、raikiri-spike-l3wg)。
+            // "D5 と同型ではない" 節)。
             text_align: parent.text_align,
             direction: parent.direction,
             // ── non-inherited: initial 値 ───────────────────────────────
@@ -312,9 +304,9 @@ impl SpecifiedValues {
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
-            // non-inherited (raikiri-spike-cmd3、CSS Overflow 3 §3.1)。
+            // non-inherited (CSS Overflow 3 §3.1)。
             overflow: OverflowXY::both(OverflowValue::Visible),
-            // non-inherited (bd raikiri-spike-5z86.3、CSS Text Decoration
+            // non-inherited (CSS Text Decoration
             // Module Level 3 §2 "Inherited: no")。
             text_decoration: TextDecoration::None,
         }
@@ -325,13 +317,13 @@ impl SpecifiedValues {
     ///
     /// `parent` は親要素の [`ComputedValues`] (font-size は phase 2 の基準、
     /// `text_align` + `direction` は `match-parent` 解決の基準 —
-    /// raikiri-spike-l3wg で `parent_font_size: ComputedLength` から `&ComputedValues`
+    /// `parent_font_size: ComputedLength` から `&ComputedValues`
     /// に広げた、下記「引数を広げた理由」節参照)。`ctx.root_font_size` は
     /// root element の computed font-size。root element 自身には
     /// [`Self::finalize_as_root`] を使うこと (`rem` の基準が違う上、
     /// `match-parent` も "computes to start" の別ルールになる)。
     ///
-    /// # 引数を `&ComputedValues` に広げた理由 (raikiri-spike-l3wg)
+    /// # 引数を `&ComputedValues` に広げた理由
     ///
     /// 当初 `parent_font_size: ComputedLength` だけを受け取っていたが、
     /// `text-align: match-parent` の解決 (CSS Text 3 §6.1) が親の
@@ -351,7 +343,7 @@ impl SpecifiedValues {
     /// doc が説明する「なぜ `apply_value` ではなく `finalize` か」の根拠は
     /// まさにこの分離にある。
     ///
-    /// # phase 順序の担保 (bd raikiri-spike-i5bs §8.2 quality lens F2 への回答)
+    /// # phase 順序の担保
     ///
     /// phase 2 と phase 3 は基準が違う (親の font-size vs. 自 node の font-size)
     /// にもかかわらず両方 [`ComputedLength`] なので、型検査だけでは取り違えを
@@ -365,8 +357,7 @@ impl SpecifiedValues {
     ///    `font_size` はどちらも [`ComputedLength`] として同一 scope に居るので
     ///    `self.absolutize_with(parent.font_size, ..., ctx)` のような取り違えは
     ///    compile する。「取り違えは書けない」という capability claim は本関数には
-    ///    成り立たない (bd raikiri-spike-zls8 §8.2 quality lens Q6 で訂正。前例は
-    ///    bd raikiri-spike-i5bs の F2)。`text_align` 解決も同型の risk を持つ —
+    ///    成り立たない。`text_align` 解決も同型の risk を持つ —
     ///    `resolve_text_align_match_parent(self.text_align, parent.text_align,
     ///    parent.direction)` の 2 番目と 3 番目の引数は異なる型
     ///    (`TextAlign` / `Direction`) なので取り違えれば compile error になるが、
@@ -388,7 +379,7 @@ impl SpecifiedValues {
     /// その doctest の signature churn を伴うため。
     pub fn finalize(self, parent: &ComputedValues, ctx: &ResolveContext) -> ComputedValues {
         // `parent` の line-height 基準 (CSS Values 4 §6.1.1 の自己参照条項、
-        // bd raikiri-spike-yh3w で font-size (phase 2) の `lh` にも要るように
+        // font-size (phase 2) の `lh` にも要るように
         // なった — line-height (phase 2.5) の `lh` と**同じ**基準を使い回す)。
         // `parent` はこの `finalize` 呼び出しに入る**前**に (tree walk の親→子
         // 順で) 既に確定済みなので、font-size (phase 2) より先に求めても
@@ -413,10 +404,10 @@ impl SpecifiedValues {
         // 分岐 — root element の "computes to start" は `finalize_as_root` 側。
         let text_align =
             resolve_text_align_match_parent(self.text_align, parent.text_align, parent.direction);
-        // phase 2.5 (bd raikiri-spike-vxha): line-height を絶対化する。
+        // phase 2.5: line-height を絶対化する。
         // `lh` (自己参照、親基準) / `rlh` (tree-global、`ctx.root_line_height`
-        // 基準) の判断根拠は `resolve_line_height` doc が canonical
-        // (roborev-refine iter 1 quality lens 1)。この基準は自 node の
+        // 基準) の判断根拠は `resolve_line_height` doc が canonical。
+        // この基準は自 node の
         // padding 等 (phase 3) には使わない — それらは `absolutize_with` 内で
         // 改めて**自 node の**基準 (`used_line_height_length(line_height,
         // font_size)`) を求める。
@@ -462,8 +453,8 @@ impl SpecifiedValues {
     /// against the element's own metrics when used in line-height." により
     /// `em` 等は自 font-size 基準のまま (phase 2.5、`finalize` 側と同じ)。
     /// **`lh` / `rlh` だけが例外** — spec 原文と両者の非対称の判断根拠は
-    /// [`resolve_line_height`] doc が canonical (roborev-refine iter 1
-    /// quality lens 1、bd raikiri-spike-awjx の drift 前例により要約に留める)。
+    /// [`resolve_line_height`] doc が canonical (既知の drift 前例により
+    /// 要約に留める)。
     /// 結論だけ述べると、root element には親が無いので `line-height: 1lh`
     /// / `1rlh` は常に「initial values」(`line-height: normal`) 基準に
     /// 帰着し、`normal` は font metrics が無い限り絶対長化できない
@@ -477,7 +468,7 @@ impl SpecifiedValues {
     /// 確定させてから [`ResolveContext::with_root_line_height`] を組み立てる
     /// (下記 body 参照)。
     ///
-    /// # `text-align: match-parent` on the root element (raikiri-spike-l3wg)
+    /// # `text-align: match-parent` on the root element
     ///
     /// CSS Text 3 §6.1 `#valdef-text-align-match-parent` verbatim continues
     /// past the parent-direction clause with: "Computes to start when
@@ -512,13 +503,13 @@ impl SpecifiedValues {
         // <https://www.w3.org/TR/css-fonts-4/#font-size-prop> の
         // "Percentages: refer to parent element's font size" と「親が居ない場合は
         // initial values を基準にする」の**組み合わせによる導出**であって、
-        // どちらの § の明文でもない (bd raikiri-spike-zls8 §8.2 spec lens
-        // SPEC-6。page 経路の同型の導出は `cascade::resolve_against_inherited`
-        // の `FontSize` arm comment に同じ区別で書いてある)。
+        // どちらの § の明文でもない (page 経路の同型の導出は
+        // `cascade::resolve_against_inherited` の `FontSize` arm comment に
+        // 同じ区別で書いてある)。
         //
         // 結果として 3 unit すべて 16px 基準になる。
         //
-        // `lh` (bd raikiri-spike-yh3w): root element には親が無いので
+        // `lh`: root element には親が無いので
         // self-reference basis は常に `None` (= "initial values" =
         // `line-height: normal` = 解決不能、下記 phase 2.5 の `lh`/`rlh` と
         // 同じ判断)。`rlh` は `ResolveContext::initial()` の
@@ -539,7 +530,7 @@ impl SpecifiedValues {
             TextAlign::MatchParent => TextAlign::Start,
             other => other,
         };
-        // phase 2.5 (bd raikiri-spike-vxha): root element には親が無いので
+        // phase 2.5: root element には親が無いので
         // `line-height` 自身の値に現れる `lh`/`rlh` の自己参照基準は常に
         // `None` (= "initial values" = `normal`、上記 doc 節)。それ以外の
         // font-relative unit (`em` 等) は自 font-size 基準のまま (`finalize`
@@ -576,7 +567,7 @@ impl SpecifiedValues {
     /// [`ComputedLineHeight`] — 本関数は
     /// それを [`used_line_height_length`] で絶対長へ変換し、
     /// `padding`/`margin`/`border`/`width`/`height` の `lh` 解決基準
-    /// (`own_line_height`) として使う (bd raikiri-spike-vxha)。呼び手が
+    /// (`own_line_height`) として使う。呼び手が
     /// `line_height` を自分で計算する (本関数の内部で
     /// `resolve_line_height` を呼ばない) のは、`padding: 1lh` 等が
     /// **既に確定した**自 node の line-height を必要とし、`font_size` と
@@ -590,7 +581,7 @@ impl SpecifiedValues {
         ctx: &ResolveContext,
     ) -> ComputedValues {
         // `padding`/`margin`/`border`/`width`/`height` の `1lh` 解決基準
-        // (bd raikiri-spike-vxha) — `rlh` は `ctx.root_line_height` (tree-global)
+        // — `rlh` は `ctx.root_line_height` (tree-global)
         // を使うので、本 local はここでしか要らない。
         let own_line_height = used_line_height_length(line_height, font_size);
         ComputedValues {
@@ -617,7 +608,7 @@ impl SpecifiedValues {
                 .map(|l| resolve_length_percentage(l, font_size, own_line_height, ctx)),
             // `margin` は `width`/`height` と型を共有するが、`Lh`/`Rlh`
             // 解決不能時の fallback は違う (`resolve_margin_length_or_auto`
-            // doc 参照 — roborev-refine iter 1 Finding A)。
+            // doc 参照 — Finding A)。
             margin: self
                 .margin
                 .map(|l| resolve_margin_length_or_auto(l, font_size, own_line_height, ctx)),
@@ -628,13 +619,13 @@ impl SpecifiedValues {
             height: resolve_length_percentage_or_auto(self.height, font_size, own_line_height, ctx),
             box_sizing: self.box_sizing,
             // CSS Overflow 3 §3.1 cross-axis computed-value coupling
-            // (raikiri-spike-cmd3) — same-node sibling dependency, resolved
+            // — same-node sibling dependency, resolved
             // here (phase 3) once both `overflow-x`/`overflow-y` winners are
             // known, mirroring the `border-*-style` -> `border-*-width` gate
             // a few fields up (`resolve_border`). See `resolve_overflow` doc.
             overflow: resolve_overflow(self.overflow),
             // computed value = specified keyword (`TextDecoration` doc 参照、
-            // length を運ばないため相対解決なし、bd raikiri-spike-5z86.3)。
+            // length を運ばないため相対解決なし)。
             text_decoration: self.text_decoration,
         }
     }
@@ -657,8 +648,8 @@ impl SpecifiedValues {
 /// ([`ComputedValues::initial`] 参照)。
 ///
 /// `pub(crate)` なのは page 経路の phase 3 ([`crate::page::cascade_page`]) が
-/// `border-*-style` **未宣言**時の gating 基準として `.style` を読むため
-/// (bd raikiri-spike-sshp)。CSS Paged Media 3 §6 "Page Properties"
+/// `border-*-style` **未宣言**時の gating 基準として `.style` を読むため。
+/// CSS Paged Media 3 §6 "Page Properties"
 /// <https://www.w3.org/TR/css-page-3/#page-properties> の "both the page context
 /// and the margin context have a computed value for every property" により、
 /// 未宣言 property の computed value は initial 値であり、`border-*-style` は
@@ -666,7 +657,7 @@ impl SpecifiedValues {
 /// **「initial の border-style は `none`」を page.rs 側で literal 再掲しない**
 /// ための共有である。width の `3.0` は独立 literal ではなく
 /// [`crate::property::BORDER_WIDTH_MEDIUM_PX`] を参照する — 単一 source の
-/// 詳細は同 const の doc 参照 (bd raikiri-spike-fy89)。
+/// 詳細は同 const の doc 参照。
 pub(crate) const INITIAL_BORDER: Border = Border {
     width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
     style: BorderStyle::None,
@@ -689,8 +680,7 @@ mod tests {
     };
 
     /// `finalize` の `parent: &ComputedValues` として渡す、font-size だけ
-    /// 差し替えた fixture (raikiri-spike-l3wg — 旧 `PARENT_FS: ComputedLength`
-    /// の後継)。`text_align` / `direction` は本 module の phase 2/3 length 系
+    /// 差し替えた fixture (旧 `PARENT_FS: ComputedLength` の後継)。`text_align` / `direction` は本 module の phase 2/3 length 系
     /// test では無関係なので initial (`Start` / `Ltr`) のまま。
     fn parent_with_font_size(px: f32) -> ComputedValues {
         ComputedValues {
@@ -706,9 +696,8 @@ mod tests {
     /// specified 層の initial を絶対化すると computed 層の initial に一致する。
     ///
     /// 両辺は独立に literal を持つ 2 本の struct literal なので自己参照ではない
-    /// — 片方だけを書き換える drift を捕らえる。bd raikiri-spike-jaww が
-    /// `resolve.rs` に置いていた drift test (本 task で完全 tautology 化したため
-    /// 削除) の後継。
+    /// — 片方だけを書き換える drift を捕らえる。以前 `resolve.rs` に
+    /// 置かれていた drift test (完全 tautology 化したため削除) の後継。
     #[test]
     fn initial_specified_finalizes_to_initial_computed() {
         assert_eq!(
@@ -788,15 +777,14 @@ mod tests {
         let child = SpecifiedValues::inherit_from(&parent);
         assert_eq!(child.color, parent.color);
         assert_eq!(child.font_family, parent.font_family);
-        // raikiri-spike-no7b (d9y.1/d9y.2 pattern踏襲): `inherit_from` の
-        // `parent.font_family.clone()` は Arc bump — deep-clone regression
-        // なら ptr_eq が false になる (d9y.1 `Arc::ptr_eq` behavioral-proxy
-        // methodology、`mod@crate::cascade` test 群と同型)。
+        // `inherit_from` の `parent.font_family.clone()` は Arc bump —
+        // deep-clone regression なら ptr_eq が false になる (`Arc::ptr_eq`
+        // behavioral-proxy methodology、`mod@crate::cascade` test 群と同型)。
         assert!(Arc::ptr_eq(&child.font_family, &parent.font_family));
         assert_eq!(child.font_weight, 700.0);
         // CSS Text 3 §6.1: text-align は inherited。
         assert_eq!(child.text_align, TextAlign::Center);
-        // CSS Writing Modes 4 §2.1: direction は inherited (raikiri-spike-l3wg)。
+        // CSS Writing Modes 4 §2.1: direction は inherited。
         assert_eq!(child.direction, Direction::Rtl);
         // computed → specified の lift (px 表現)。
         assert_eq!(child.font_size, Length::Px(24.0));
@@ -822,10 +810,10 @@ mod tests {
         assert_eq!(child.width, LengthOrAuto::Auto);
         assert_eq!(child.height, LengthOrAuto::Auto);
         assert_eq!(child.box_sizing, BoxSizing::ContentBox);
-        // CSS Overflow 3 §3.1 (raikiri-spike-cmd3): overflow-x/overflow-y は
+        // CSS Overflow 3 §3.1: overflow-x/overflow-y は
         // non-inherited。
         assert_eq!(child.overflow, initial.overflow);
-        // CSS Text Decoration Module Level 3 §2 (bd raikiri-spike-5z86.3):
+        // CSS Text Decoration Module Level 3 §2:
         // text-decoration は non-inherited。
         assert_eq!(child.text_decoration, initial.text_decoration);
     }
@@ -866,7 +854,7 @@ mod tests {
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
     }
 
-    /// bd raikiri-spike-2x8 で追加した `ex` も `em` と同じ parent/own 非対称を
+    /// 追加した `ex` も `em` と同じ parent/own 非対称を
     /// 持つ (unknown-metric fallback `0.5em`、`Length::Ex` doc)。数値は
     /// `finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest`
     /// と揃える (`32px` / `32px`) — multiplier を変えて `ex` の `0.5` 係数を
@@ -884,8 +872,8 @@ mod tests {
     }
 
     /// `padding: 1lh` needs the **already-resolved own** line-height as its
-    /// basis (bd raikiri-spike-vxha) — this is exactly the phase-3 reordering
-    /// the issue's §1 describes: `absolutize_with` must capture `line_height`
+    /// basis — this is exactly the phase-3 reordering
+    /// this design describes: `absolutize_with` must capture `line_height`
     /// into a local *before* resolving `padding`/`margin`/`border`/`width`/
     /// `height`, or this would be unable to read it at all.
     #[test]
@@ -901,7 +889,7 @@ mod tests {
     /// When the own line-height is unresolvable (`normal`, the initial value
     /// — the common case, not an edge case), `1lh` falls back to padding's
     /// own spec initial `0` rather than a fabricated length (cleanroom: see
-    /// `crate::resolve::resolve_length_percentage` doc for why). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// `crate::resolve::resolve_length_percentage` doc for why). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     #[test]
     fn finalize_resolves_lh_falls_back_to_zero_when_line_height_normal() {
         let mut sv = SpecifiedValues::initial(); // line_height stays `normal`
@@ -945,7 +933,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // finalize — text-align: match-parent (CSS Text 3 §6.1、raikiri-spike-l3wg)
+    // finalize — text-align: match-parent (CSS Text 3 §6.1)
     // -----------------------------------------------------------------
 
     #[test]
@@ -973,7 +961,7 @@ mod tests {
     ///
     /// Spec citation: CSS Text 3 §6.1 `#valdef-text-align-match-parent`
     /// says "interpreted against **the parent's** direction value" — not the
-    /// element's own. See `crate::property::resolve_text_align_match_parent` // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
+    /// element's own. See `crate::property::resolve_text_align_match_parent` // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// doc for why this can't be resolved in `cascade::apply_value` (the
     /// same-node winner-order hazard between the `direction` and `text-align`
     /// `PropertyKey` slots).
@@ -1086,7 +1074,7 @@ mod tests {
     }
 
     /// root element の **box property** の `1rlh` は自分の確定済 line-height
-    /// を基準にする (bd raikiri-spike-vxha — `rem_on_root_element_box_property_uses_own_font_size`
+    /// を基準にする (`rem_on_root_element_box_property_uses_own_font_size`
     /// の `rem` と同じ非対称の `rlh` 版。self-reference 条項の対象は
     /// `line-height` 自身の値だけで、`padding` はその対象外)。
     /// `finalize_as_root` は own line-height を phase 2.5 で確定させてから

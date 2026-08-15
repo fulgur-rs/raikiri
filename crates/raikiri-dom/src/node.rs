@@ -12,7 +12,7 @@ use raikiri_traits::NodeKind;
 
 bitflags::bitflags! {
     /// Node に付随する per-node boolean 属性。blitz `NodeFlags` と **raw bit
-    /// 値まで完全一致** (raikiri-spike-37c, roborev job 292 L1 finding 対応)。
+    /// 値まで完全一致**。
     ///
     /// blitz reference (blitz-dom/src/node/node.rs:50-58):
     /// ```text
@@ -21,16 +21,17 @@ bitflags::bitflags! {
     /// const IS_IN_DOCUMENT = 0b00000100;   // = 1 << 2
     /// ```
     ///
-    /// M1 spike では `IS_IN_DOCUMENT` のみ使用。`IS_INLINE_ROOT` (M3 inline
-    /// formatting root)、`IS_TABLE_ROOT` (M3+ table formatting root) は blitz
-    /// と同 bit 位置で予約定義するのみ (今は誰も set/clear しないが、bit 位置
-    /// を確保することで raw-bit 変換 `NodeFlags::from_bits(blitz_flags.bits())`
-    /// が M6 blitz-compat で正しく動く)。
+    /// 現状は `IS_IN_DOCUMENT` のみ使用。`IS_INLINE_ROOT` (将来の inline
+    /// formatting root 用)、`IS_TABLE_ROOT` (将来の table formatting root 用)
+    /// は blitz と同 bit 位置で予約定義するのみ (今は誰も set/clear しないが、
+    /// bit 位置を確保することで raw-bit 変換
+    /// `NodeFlags::from_bits(blitz_flags.bits())` が将来の blitz-compat 変換で
+    /// 正しく動く)。
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct NodeFlags: u32 {
-        /// Inline formatting context root。M3 で使用予定 (blitz と同 bit 位置)。
+        /// Inline formatting context root。将来使用予定 (blitz と同 bit 位置)。
         const IS_INLINE_ROOT = 1 << 0;
-        /// Table formatting context root。M3+ で使用予定 (blitz と同 bit 位置)。
+        /// Table formatting context root。将来使用予定 (blitz と同 bit 位置)。
         const IS_TABLE_ROOT = 1 << 1;
         /// この Node が flat tree に含まれるか。`<template>` element の子孫は
         /// clear、Document root から flat-tree-parent 経由で到達可能な node は
@@ -41,15 +42,15 @@ bitflags::bitflags! {
         /// 維持タイミング:
         /// - parse: `raikiri-html::sink::finish` の `mark_in_document_flags`
         ///   phase で single-pass DFS が set/clear
-        /// - mutation runtime (M2+): mutator の `process_added_subtree` /
+        /// - mutation runtime (将来): mutator の `process_added_subtree` /
         ///   `process_removed_subtree` 相当が set/unset
         const IS_IN_DOCUMENT = 1 << 2;
     }
 }
 
-/// Element attribute (null namespace only for M1)。
+/// Element attribute (null namespace only, for now)。
 ///
-/// namespaced attribute (`xlink:href` on SVG 等) は M2+ に defer。html5ever の
+/// namespaced attribute (`xlink:href` on SVG 等) は将来に defer。html5ever の
 /// `Attribute.name.ns` が null namespace (`ns!("")`) の attr のみここに格納する。
 /// `raikiri-html::sink::finish` が side-table から wire する。
 #[derive(Debug, Clone)]
@@ -58,10 +59,10 @@ pub(crate) struct Attr {
     pub(crate) value: SmolStr,
 }
 
-/// NodeData: kind 固有 field を集約した tagged union (raikiri-spike-37c)。
+/// NodeData: kind 固有 field を集約した tagged union。
 ///
-/// blitz `blitz-dom::node::node::NodeData` に対応する shape。M6 blitz-compat
-/// で nominal 変換 (`match data { NodeData::Element(e) => BlitzElement { ... }, ... }`)
+/// blitz `blitz-dom::node::node::NodeData` に対応する shape。将来の
+/// blitz-compat で nominal 変換 (`match data { NodeData::Element(e) => BlitzElement { ... }, ... }`)
 /// できるように field 名を揃える。`Element` variant のみ `Box` で indirection
 /// を挟むのは blitz と同じ選択 (Element の field 数が多く、Text / Document 側の
 /// サイズに Element を引きずられさせないため)。
@@ -88,17 +89,17 @@ pub enum NodeData {
     Text(TextData),
     /// Document root (arena index 0 の virtual node)。
     Document,
-    /// HTML / XML comment node (`<!-- ... -->`)。raikiri-spike-84y で追加
-    /// (旧 M1: `"#comment"` tag な Element として保持後 sink.finish() で strip
-    /// → 恒久 variant 化)。character data を保持するが Element ではない
+    /// HTML / XML comment node (`<!-- ... -->`)。以前は `"#comment"` tag な
+    /// Element として保持後 sink.finish() で strip していたが、恒久 variant
+    /// 化した。character data を保持するが Element ではない
     /// (`kind() == NodeKind::Comment`、`as_element() == None`)。
     /// `mark_in_document_flags` が明示的に `IS_IN_DOCUMENT` bit を clear するため、
     /// cascade / paint / layout / stylesheet extraction の全 traversal は
     /// `is_in_document()` gate で自動的に skip する (defense-in-depth: 追加の
     /// `matches!(kind, Comment)` gate を traversal 側に散らさない)。
     Comment(SmolStr),
-    /// Processing instruction node (`<?target data?>`)。raikiri-spike-84y で
-    /// 追加。target + data の pair を保持。同上、`IS_IN_DOCUMENT` bit を clear
+    /// Processing instruction node (`<?target data?>`)。target + data の
+    /// pair を保持。同上、`IS_IN_DOCUMENT` bit を clear
     /// することで traversal から自然に消える。
     ProcessingInstruction {
         /// PI target (`<?xml-stylesheet ...?>` の `xml-stylesheet` 部分)。
@@ -107,9 +108,9 @@ pub enum NodeData {
         data: SmolStr,
     },
     /// Document fragment root (`<template>` contents 等の detached subtree の
-    /// 仮想 root)。raikiri-spike-84y で追加 (xno Part 2 で
-    /// `"#document-fragment"` pseudo-tag な Element として実装した shape を
-    /// 恒久 variant 化)。`kind() == NodeKind::DocumentFragment`、
+    /// 仮想 root)。以前 `"#document-fragment"` pseudo-tag な Element として
+    /// 実装していた shape を恒久 variant 化したもの。
+    /// `kind() == NodeKind::DocumentFragment`、
     /// `as_element() == None`。Document root からは reachable でないため
     /// `mark_in_document_flags` は自然に `IS_IN_DOCUMENT` bit を clear する。
     DocumentFragment,
@@ -135,10 +136,10 @@ impl NodeData {
     }
 }
 
-/// Element-only data (raikiri-spike-37c)。blitz `ElementData` に対応。
+/// Element-only data。blitz `ElementData` に対応。
 ///
 /// `template_contents` は `<template>` element の contents fragment root への
-/// arena index を保持する slot。raikiri-spike-xno Part 2 で live 化され、
+/// arena index を保持する slot。live 化され、
 /// raikiri-html sink が `create_element` の `ElementFlags::template=true` を
 /// 観測した時 [`crate::Document::allocate_template_fragment_root`] 経由で
 /// populate する。詳細は field 側の doc comment を参照。
@@ -159,8 +160,8 @@ pub struct ElementData {
     /// 含めない。
     pub(crate) attributes: Vec<Attr>,
     /// `<template>` element の contents fragment root への arena index
-    /// (raikiri-spike-xno Part 2、raikiri-spike-84y で fragment root shape を
-    /// `NodeData::DocumentFragment` variant 化)。
+    /// (fragment root shape を `NodeData::DocumentFragment` variant として
+    /// 実装)。
     ///
     /// raikiri-html sink が `create_element` で html5ever の
     /// `ElementFlags::template = true` を観測した時、[`crate::Document::allocate_template_fragment_root`]
@@ -171,34 +172,34 @@ pub struct ElementData {
     ///
     /// blitz `blitz-dom::node::element::ElementData::template_contents` と
     /// 同名・同 shape。sink が populate しなかった (template 判定を経ずに
-    /// 直接組み立てる test / M2+ manual construction) 場合は `None` のまま。
+    /// 直接組み立てる test / 将来の manual construction) 場合は `None` のまま。
     pub(crate) template_contents: Option<usize>,
 }
 
-/// Text-only data (raikiri-spike-37c)。blitz `TextNodeData` (nominally) に対応。
+/// Text-only data。blitz `TextNodeData` (nominally) に対応。
 #[derive(Debug)]
 pub struct TextData {
     /// Character data。
     pub(crate) text_content: SmolStr,
     /// Text node の pre-shaped parley Layout。
     ///
-    /// - Populated by [`crate::layout::preshape_text`] (M1.6)
-    /// - Consumed by taffy leaf measure closure (intrinsic size) と m1.7 paint
+    /// - Populated by [`crate::layout::preshape_text`]
+    /// - Consumed by taffy leaf measure closure (intrinsic size) と paint
     ///   (glyph 位置)
-    /// - Brush type `()` は M1.6 の choice: color / decoration は持たせない
+    /// - Brush type `()` は意図的な choice: color / decoration は持たせない
     /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア + 再走
     pub text_layout: Option<parley::Layout<()>>,
 }
 
-/// Arena node (raikiri-spike-37c refactor: NodeData tagged union に移行)。
+/// Arena node (NodeData tagged union として実装)。
 ///
 /// paint / cascade / layout に必要な kind 非依存の field (children /
 /// unrounded_layout) は Node に残し、kind 固有 field は [`NodeData`] variant
-/// に集約する。raikiri-spike-m1.7 で pub 化した 5 field のうち `kind` /
+/// に集約する。かつて pub 化していた 5 field のうち `kind` /
 /// `tag_name` / `text_layout` は accessor method 経由に移行 (`node.kind()` /
 /// `node.tag_name()` / `node.text_layout()`)、`children` / `unrounded_layout`
-/// は pub field 継続。M1.15 external contract は Node/Element field access 0
-/// 件なので無影響、raikiri-dom 内部 pub_surface pin のみ accessor 経由に再 pin。
+/// は pub field 継続。external contract は Node/Element field access 0 件
+/// なので無影響、raikiri-dom 内部 pub_surface pin のみ accessor 経由に再 pin。
 #[derive(Debug)]
 pub struct Node {
     /// Taffy layout style。
@@ -209,8 +210,7 @@ pub struct Node {
     pub(crate) cache: Cache,
     /// Taffy layout 結果 (compute_root_layout が populate)。
     ///
-    /// # 値域契約: 全 `f32` field は有限・`[-1e7, 1e7]` に飽和 (bd
-    /// raikiri-spike-y3yx、親: raikiri-spike-2ui0 / raikiri-spike-r8ew)
+    /// # 値域契約: 全 `f32` field は有限・`[-1e7, 1e7]` に飽和
     ///
     /// `location.{x,y}` / `size.{width,height}` / `content_size.{width,height}`
     /// / `scrollbar_size.{width,height}` / `border.{left,right,top,bottom}` /
@@ -275,7 +275,7 @@ impl Node {
     /// [`crate::Document::set_element_attributes`] で populate する。
     /// `template_contents` は `<template>` element のみ、sink の `create_element`
     /// が [`crate::Document::allocate_template_fragment_root`] 経由で eager
-    /// populate する (raikiri-spike-xno Part 2)。
+    /// populate する。
     pub(crate) fn new_element(tag: SmolStr, style: Style, inline_style: Option<SmolStr>) -> Self {
         Self {
             style,
@@ -308,7 +308,7 @@ impl Node {
         }
     }
 
-    /// Comment node を character data と共に構築する (raikiri-spike-84y)。
+    /// Comment node を character data と共に構築する。
     /// `IS_IN_DOCUMENT` bit は default true で作られるが、
     /// [`crate::Document::mark_in_document_flags`] が step 2 の DFS で必ず
     /// clear する契約 (blitz-compat: comment は flat-tree 上不可視、layout /
@@ -324,8 +324,8 @@ impl Node {
         }
     }
 
-    /// Processing instruction node を target + data と共に構築する
-    /// (raikiri-spike-84y)。Comment と同じく `IS_IN_DOCUMENT` bit は
+    /// Processing instruction node を target + data と共に構築する。
+    /// Comment と同じく `IS_IN_DOCUMENT` bit は
     /// [`crate::Document::mark_in_document_flags`] で clear される。
     pub(crate) fn new_processing_instruction(target: SmolStr, data: SmolStr) -> Self {
         Self {
@@ -338,7 +338,7 @@ impl Node {
         }
     }
 
-    /// Document fragment root を構築する (raikiri-spike-84y)。detached 状態で
+    /// Document fragment root を構築する。detached 状態で
     /// arena に置くのが典型 (parent なし)、`<template>` contents の virtual
     /// root として使用する。`IS_IN_DOCUMENT` bit は default true で作られるが、
     /// Document root から reachable でないため `mark_in_document_flags` で
@@ -354,11 +354,11 @@ impl Node {
         }
     }
 
-    // ─── inherent accessor methods (raikiri-spike-37c) ─────────────────
+    // ─── inherent accessor methods ─────────────────
 
     /// この Node の [`NodeKind`] を返す。
     ///
-    /// 旧 `pub kind: NodeKind` field の accessor 版 (raikiri-spike-37c refactor)。
+    /// 旧 `pub kind: NodeKind` field の accessor 版。
     /// 呼び出し側は `node.kind` → `node.kind()` の syntax 変更のみ。
     #[inline]
     pub fn kind(&self) -> NodeKind {
@@ -374,8 +374,8 @@ impl Node {
 
     /// Element の場合 tag_name を、それ以外は `None` を返す。
     ///
-    /// 旧 `pub tag_name: Option<SmolStr>` field の accessor 版
-    /// (raikiri-spike-37c refactor)。`Option<&str>` に射影する
+    /// 旧 `pub tag_name: Option<SmolStr>` field の accessor 版。
+    /// `Option<&str>` に射影する
     /// (SmolStr の内部 view で Copy 相当のコスト)。
     #[inline]
     pub fn tag_name(&self) -> Option<&str> {
@@ -387,8 +387,8 @@ impl Node {
 
     /// Text の場合 text_layout を、それ以外は `None` を返す。
     ///
-    /// 旧 `pub text_layout: Option<parley::Layout<()>>` field の accessor 版
-    /// (raikiri-spike-37c refactor)。paint hot path から呼ばれるため `#[inline]`。
+    /// 旧 `pub text_layout: Option<parley::Layout<()>>` field の accessor 版。
+    /// paint hot path から呼ばれるため `#[inline]`。
     #[inline]
     pub fn text_layout(&self) -> Option<&parley::Layout<()>> {
         match &self.data {
@@ -401,7 +401,7 @@ impl Node {
     ///
     /// paint 段で display:none subtree を skip する目的の predicate。size 0
     /// による代理判定は overflow: visible の legitimate な zero-size 要素を
-    /// silent drop するため誤り (roborev job 223 finding 対応)。style field
+    /// silent drop するため誤り。style field
     /// は crate-private のまま維持し、paint に必要な最小の boolean 述語のみ
     /// pub で公開する (gradual exposure)。
     #[inline]
@@ -409,15 +409,14 @@ impl Node {
         self.style.display == taffy::Display::None
     }
 
-    /// この Node が flat tree の一員かを返す (raikiri-spike-37c)。
+    /// この Node が flat tree の一員かを返す。
     #[inline]
     pub fn is_in_document(&self) -> bool {
         self.flags.contains(NodeFlags::IS_IN_DOCUMENT)
     }
 
-    /// `<template>` element の contents fragment root への arena index
-    /// (raikiri-spike-xno Part 2)。Element 以外 / fragment root 未 wire の場合
-    /// は `None`。
+    /// `<template>` element の contents fragment root への arena index。
+    /// Element 以外 / fragment root 未 wire の場合は `None`。
     ///
     /// html5ever `TreeSink::get_template_contents` 実装が sink 経由で消費する。
     /// blitz `blitz-dom::node::element::ElementData::template_contents` field
@@ -454,8 +453,7 @@ impl Node {
     /// §15.3.1 hidden-elements rule には `<area>` / `<basefont>` / `<param>`
     /// も列挙されているが、これらは通常 child content を持たない (`<area>` は
     /// void、`<basefont>` は obsolete-void、`<param>` は object 内の attribute
-    /// 相当) ため content leak 経路が存在せず本 predicate では扱わない
-    /// (raikiri-spike-s8w bd task に enumerate 済)。
+    /// 相当) ため content leak 経路が存在せず本 predicate では扱わない。
     ///
     /// # 動機
     ///
@@ -463,14 +461,13 @@ impl Node {
     /// author / user CSS で override 可能なため、attacker-controlled HTML +
     /// override CSS で `<style>` `<script>` 内 text が rendered artifact に
     /// 混入する security surface が残る。paint 側で cascade-independent に
-    /// gate することで defense-in-depth 保証する (raikiri-spike-d9y.5、
-    /// Codex Cloud Security finding severity: medium、raikiri-spike-s8w で
-    /// datalist / noembed / noframes / rp を §15.3.1 完全化のため追加)。
+    /// gate することで defense-in-depth 保証する (datalist / noembed /
+    /// noframes / rp は §15.3.1 完全化のため後から追加)。
     ///
     /// # Non-goals
     ///
     /// - `[hidden]` attribute / `inert` attribute の filter は本 predicate
-    ///   scope 外 (M4+ で `is_display_none()` 側の cascade 経路)
+    ///   scope 外 (将来 `is_display_none()` 側の cascade 経路で扱う予定)
     /// - `<template>` は既に `is_in_document() == false` の gate で
     ///   redundant に skip されるが、defense-in-depth で本 predicate にも
     ///   含める (両 gate 独立に fail-close する)
@@ -487,9 +484,9 @@ impl Node {
             _ => return false,
         }
         // HTML tag name は html5ever が lowercase 化済 (QualName.local)。
-        // Ordering: d9y.5 の既存 arms を先頭、s8w で §15.3.1 完全化のために
-        // 追加した 4 arms を末尾にグループ化 (sibling convention 37n:
-        // 既存 style を preserve しつつ差分の由来を明示)。
+        // Ordering: 元からあった arms を先頭、§15.3.1 完全化のために追加した
+        // 4 arms を末尾にグループ化 (既存 style を preserve しつつ差分の由来を
+        // 明示するため)。
         matches!(
             e.tag_name.as_str(),
             "head"
@@ -501,7 +498,7 @@ impl Node {
                 | "script"
                 | "style"
                 | "template"
-                // raikiri-spike-s8w (§15.3.1 完全化):
+                // §15.3.1 完全化のため追加:
                 | "datalist"
                 | "noembed"
                 | "noframes"
@@ -511,7 +508,7 @@ impl Node {
 
     /// [`NodeFlags::IS_IN_DOCUMENT`] bit を明示的に上書きする (crate-private)。
     ///
-    /// raikiri-spike-37c: `Document::mark_in_document_flags` (sink.finish() から
+    /// `Document::mark_in_document_flags` (sink.finish() から
     /// 呼ばれる single-pass DFS) が消費する。
     #[inline]
     pub(crate) fn set_in_document(&mut self, v: bool) {
@@ -559,7 +556,7 @@ mod flags_tests {
 
     #[test]
     fn node_new_comment_kind_and_default_flag_state() {
-        // raikiri-spike-84y: Comment constructor は kind = NodeKind::Comment、
+        // Comment constructor は kind = NodeKind::Comment、
         // IS_IN_DOCUMENT は default true (mark_in_document_flags で後段 clear
         // される optimistic 初期値、Element / Text と同じ posture)。
         let n = Node::new_comment(SmolStr::new("hello"));
@@ -599,11 +596,11 @@ mod flags_tests {
 
     #[test]
     fn node_flags_bit_values_match_blitz_raw() {
-        // raikiri-spike-37c roborev job 292 L1 finding pin。blitz `NodeFlags`
+        // Regression pin。blitz `NodeFlags`
         // (blitz-dom/src/node/node.rs:50-58) と raw bit 値まで一致:
         //   IS_INLINE_ROOT = 0b001, IS_TABLE_ROOT = 0b010, IS_IN_DOCUMENT = 0b100
         //
-        // これにより M6 blitz-compat の変換が `NodeFlags::from_bits(x)` の
+        // これにより将来の blitz-compat の変換が `NodeFlags::from_bits(x)` の
         // trivial cast で成立する。将来 bit を追加する際は blitz と同 bit
         // 位置に揃えること。
         assert_eq!(NodeFlags::IS_INLINE_ROOT.bits(), 0b001);
@@ -614,7 +611,7 @@ mod flags_tests {
 
 #[cfg(test)]
 mod is_non_rendered_html_element_tests {
-    //! d9y.5 codex final review finding #2: `<template>` 経路 test は
+    //! `<template>` 経路 test は
     //! `is_in_document()` が先に発火するため、predicate 自体の direct
     //! coverage が薄い。DOM predicate を builder + namespace mutation で
     //! namespace 分岐まで含めて直接 pin する。
@@ -668,7 +665,7 @@ mod is_non_rendered_html_element_tests {
     fn predicate_false_for_svg_namespace_same_named_elements() {
         // SVG <title>, <style>, <script> は rendered / effective in SVG context。
         // predicate は HTML namespace のみ filter するのが契約 (paint 側は
-        // SVG rendering を M2+ で別 pipeline)。
+        // SVG rendering を将来別 pipeline で扱う)。
         for tag in ["title", "style", "script"] {
             let mut n = html_element(tag);
             set_ns(&mut n, "http://www.w3.org/2000/svg");

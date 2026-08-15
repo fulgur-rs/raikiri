@@ -1,7 +1,7 @@
 //! Document arena — Vec-backed node arena that implements taffy layout traits
 //! (in `taffy_impl.rs`) and raikiri-traits::Dom (in `dom_impl.rs`).
 //!
-//! # Flat tree membership contract (raikiri-spike-37c)
+//! # Flat tree membership contract
 //!
 //! 全 tree mutation primitive (`append_*` / `attach_child` /
 //! `insert_child_before` / `detach_from_parent` / `reparent_children` /
@@ -34,8 +34,8 @@ use crate::node::{Attr, Node, NodeData};
 /// DOM Document (root + Vec-backed node arena)。
 ///
 /// `nodes` は arena indices を key とする flat storage。index 0 は Document
-/// kind の virtual root。HTML の `<html>` element は M1.3 html-parse-basic が
-/// index 1 以降に append する想定 (root = 0 の子として)。
+/// kind の virtual root。HTML の `<html>` element は raikiri-html の基本
+/// parse 経路が index 1 以降に append する想定 (root = 0 の子として)。
 #[derive(Debug)]
 pub struct Document {
     pub(crate) nodes: Vec<Node>,
@@ -47,24 +47,24 @@ pub struct Document {
     /// する。O(1) per-mutation cost + O(N) per-layout-batch cost で
     /// invalidation の amortized O(1) を実現。
     pub(crate) layout_dirty: bool,
-    /// IS_IN_DOCUMENT bit dirty flag (raikiri-spike-37c, roborev job 294 M1
-    /// finding 対応)。任意の tree-mutation primitive (append_* / attach_child
-    /// / insert_child_before / detach_from_parent / reparent_children /
-    /// retain_children) で set される。observation-side API (cascade / paint /
-    /// extract) は生の bit を信じる前に [`Document::mark_in_document_flags`]
-    /// を呼ぶことで dirty check + lazy recompute を強制する contract。
+    /// IS_IN_DOCUMENT bit dirty flag。任意の tree-mutation primitive
+    /// (append_* / attach_child / insert_child_before / detach_from_parent /
+    /// reparent_children / retain_children) で set される。observation-side
+    /// API (cascade / paint / extract) は生の bit を信じる前に
+    /// [`Document::mark_in_document_flags`] を呼ぶことで dirty check + lazy
+    /// recompute を強制する contract。
     ///
-    /// M1 parse-only では `sink.finish()` が明示的に呼ぶため無視できるが、
-    /// 手動で `append_*` を呼んで Document を組み立てる code path (raikiri-dom
-    /// 内 test / raikiri-paint hello-world setup / 将来の M2+ mutation runtime)
-    /// では本 dirty flag が correctness の contract を担う。
+    /// 現状の parse-only 経路では `sink.finish()` が明示的に呼ぶため無視できる
+    /// が、手動で `append_*` を呼んで Document を組み立てる code path
+    /// (raikiri-dom 内 test / raikiri-paint hello-world setup / 将来の
+    /// mutation runtime) では本 dirty flag が correctness の contract を担う。
     pub(crate) flags_dirty: bool,
-    /// Document に associate されている stylesheet の list (M1.4a、
-    /// raikiri-spike-m1.22)。lazy: parse は cascade phase で行う。
+    /// Document に associate されている stylesheet の list。
+    /// lazy: parse は cascade phase で行う。
     /// 呼び出し順で同 kind 内の cascade source_order が決まる。
     stylesheets: Vec<(Cow<'static, str>, StylesheetKind)>,
     /// Buffered [`LayoutWarn`] diagnostic events for the current (or most
-    /// recent) `layout_single_page` pass (bd raikiri-spike-7t1t, generalizing
+    /// recent) `layout_single_page` pass (generalizing
     /// the `fonts.rs` `FontWarn` observer pattern to this crate's other
     /// "silent clamp" site).
     ///
@@ -128,9 +128,9 @@ impl Document {
     /// 属さない fragment、後で attach する用途)。
     ///
     /// `inline_style` は HTML `style="..."` attribute の生 string を渡す
-    /// (`None` = 属性なし)。raikiri-style::cascade (M1.4) が消費する。
+    /// (`None` = 属性なし)。raikiri-style::cascade が消費する。
     ///
-    /// # Contract (raikiri-spike-37c)
+    /// # Contract
     ///
     /// 本 method は [`flags_dirty`](Self#structfield.flags_dirty) を `true` に
     /// set する。`Node::is_in_document()` を観測する caller (raikiri-style::cascade
@@ -175,22 +175,22 @@ impl Document {
         id
     }
 
-    /// Comment node を arena に追加する (raikiri-spike-84y)。
+    /// Comment node を arena に追加する。
     ///
     /// `parent` が `Some(idx)` の場合その node の children に append される。
     /// `None` の場合 detached (html5ever `TreeSink::create_comment` の primitive
     /// と対応 — html5ever は comment を detached に作ってから後で
     /// `append(parent, AppendNode(c))` する)。
     ///
-    /// # Flat tree semantics (advisor step-6 (i))
+    /// # Flat tree semantics
     ///
     /// Comment は `NodeKind::Element` ではなく `NodeKind::Comment` なので
     /// cascade / paint / stylesheet extraction は Element gate で自動 skip する。
     /// 追加で [`Document::mark_in_document_flags`] が Comment / PI variant を
     /// 観測すると `IS_IN_DOCUMENT` bit を clear する contract により、Taffy layout
-    /// tree (is_in_document filter) からも自動的に消える。旧 M1 の
+    /// tree (is_in_document filter) からも自動的に消える。旧来の
     /// `strip_non_element_stubs` (arena children Vec からの physical 除去) は
-    /// この 2 段 gate に置き換わったため raikiri-html sink から廃止 (84y)。
+    /// この 2 段 gate に置き換わったため raikiri-html sink から廃止した。
     ///
     /// Returns: 追加された node の arena index。
     pub fn append_comment(&mut self, parent: Option<usize>, text: impl Into<SmolStr>) -> usize {
@@ -204,7 +204,7 @@ impl Document {
         id
     }
 
-    /// Processing instruction node を arena に追加する (raikiri-spike-84y)。
+    /// Processing instruction node を arena に追加する。
     ///
     /// `parent` は Comment と同じ semantics (Some で attach、None で detached)。
     /// HTML では実質発生しないが XML / XHTML では有効な NodeType (WHATWG DOM §4)。
@@ -238,7 +238,7 @@ impl Document {
     /// 場合は事前に [`Document::detach_from_parent`] で detach しておくこと
     /// (tree の重複配置を防ぐため raikiri-dom は自動 detach しない)。
     ///
-    /// # Fragment-aware semantics (raikiri-spike-84y、WHATWG DOM §4.2.3 Mutation algorithms)
+    /// # Fragment-aware semantics (WHATWG DOM §4.2.3 Mutation algorithms)
     ///
     /// `child` が [`NodeData::DocumentFragment`] variant の場合、fragment node
     /// 自身は `parent.children` に append せず、fragment の全 children を parent
@@ -263,8 +263,8 @@ impl Document {
     ///
     /// - `parent` / `child` が arena 範囲外 (`nodes[..]` indexing による)。
     /// - `parent == child` の場合 (spec HierarchyRequestError 相当) は現状
-    ///   detect しない (M1 spike 範囲では発生しない、M4+ で spec-conformant
-    ///   mutation API 化する時 raise 判定)。
+    ///   detect しない (spike 範囲では発生しない、将来 spec-conformant
+    ///   mutation API 化する時に raise 判定する予定)。
     pub fn attach_child(&mut self, parent: usize, child: usize) {
         // Fragment-aware branch: WHATWG DOM insert algorithm steps 1 + 4.1 + 7.2
         // (§4.2.3 Mutation algorithms) の効果と一致 — fragment 自身は
@@ -288,7 +288,7 @@ impl Document {
     /// および foster parenting の primitive。`before` が `parent` の子でない場合
     /// は末尾に append する (defensive: TreeSink 規約上発生しない想定)。
     ///
-    /// # Fragment-aware semantics (raikiri-spike-3blp、WHATWG DOM §4.2.3 Mutation algorithms)
+    /// # Fragment-aware semantics (WHATWG DOM §4.2.3 Mutation algorithms)
     ///
     /// `child` が [`NodeData::DocumentFragment`] variant の場合、fragment node
     /// 自身は `parent.children` に挿入せず、fragment の全 children を parent の
@@ -306,8 +306,8 @@ impl Document {
     /// new_node として渡すことはない (fragment は `get_template_contents` の返り値
     /// になる parent 側のみで child 側では現れない) ため、この分岐は raikiri-dom
     /// を直接 driving する consumer (test / 将来の DOM Mutation API) のためのもの
-    /// (84y 時点で latent な asymmetry として観測、3blp で
-    /// [`Document::attach_child`] と整合)。
+    /// (以前 latent な asymmetry として観測されていたが、後に
+    /// [`Document::attach_child`] と整合するよう修正済み)。
     pub fn insert_child_before(&mut self, parent: usize, before: usize, child: usize) {
         // Fragment-aware branch: WHATWG DOM insert algorithm steps 1 + 4.1 + 7.3
         // (§4.2.3 Mutation algorithms) の効果と一致 — fragment 自身は
@@ -383,21 +383,21 @@ impl Document {
         self.flags_dirty = true;
     }
 
-    /// Element node に non-HTML namespace URI を紐付ける
-    /// (raikiri-spike-blg)。`ns` が `None` = HTML default namespace / element
+    /// Element node に non-HTML namespace URI を紐付ける。
+    /// `ns` が `None` = HTML default namespace / element
     /// でない場合の効果無し。HTML default は `None` を fast path とする
     /// (memory saving + `Element::namespace_uri()` の O(1) 判定)。
     ///
     /// raikiri-html sink が `finish()` 時に qual_names side-table から呼び出す。
     /// tree mutation ではないので `invalidate_layout_cache` は call しない。
     ///
-    /// Panics (debug + release 共通、raikiri-spike-37c): `id` が Element kind
+    /// Panics (debug + release 共通): `id` が Element kind
     /// でない場合。Text / Document node に attribute-family setter を呼ぶのは
     /// caller bug なので early fail させる (旧 `debug_assert_eq!` から
     /// `NodeData::as_element_mut().expect(...)` に移行、release でも panic する
     /// ようになったのは意図的な strictness 向上)。
     pub fn set_element_namespace(&mut self, id: usize, ns: Option<SmolStr>) {
-        // raikiri-spike-37c roborev job 295 M2 finding: namespace の変更は
+        // namespace の変更は
         // `<template>` 判定 (`namespace.is_none()` は HTML default fast path) を
         // 変え得るため、tag_name が "template" の場合は flags_dirty を set する。
         // これがないと HTML template → SVG template への変更 (あるいは逆) の後
@@ -406,7 +406,7 @@ impl Document {
         //
         // template 以外の element では namespace 変更は本 bit に無関係なので
         // flag は set しない (invalidate_layout_cache も呼ばない: pure metadata
-        // 変更で layout 結果を変えない、既存 blg 契約と一貫)。
+        // 変更で layout 結果を変えない、既存の attribute-setter 契約と一貫)。
         let ns_changed_for_template = {
             let e = self.nodes[id]
                 .data
@@ -422,7 +422,7 @@ impl Document {
         }
     }
 
-    /// Element node に attribute list を紐付ける (raikiri-spike-blg)。
+    /// Element node に attribute list を紐付ける。
     /// `attrs` は null-namespace attribute の `(local, value)` 列。html5ever の
     /// source order を保持する必要があるので Vec で受ける。`style` attribute は
     /// [`Document::set_element_inline_style`] で別途 wire するため呼び出し側で
@@ -431,7 +431,7 @@ impl Document {
     /// raikiri-html sink が `finish()` 時に attributes side-table から呼び出す。
     /// tree mutation ではないので `invalidate_layout_cache` は call しない。
     ///
-    /// Panics (debug + release 共通、raikiri-spike-37c): `id` が Element kind
+    /// Panics (debug + release 共通): `id` が Element kind
     /// でない場合。
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
         let e = self.nodes[id]
@@ -446,14 +446,14 @@ impl Document {
 
     /// `<template>` element の contents fragment root を新規 allocate し、
     /// その arena index を template element の `template_contents` slot に
-    /// wire する (raikiri-spike-xno Part 2、raikiri-spike-84y で恒久 shape 化)。
+    /// wire する。
     ///
-    /// # Fragment root の shape (raikiri-spike-84y、NodeData::DocumentFragment)
+    /// # Fragment root の shape (NodeData::DocumentFragment)
     ///
     /// Fragment root は `Document.nodes` arena に detached 状態で allocate される
-    /// (parent なし、Document root からも reachable でない)。旧 xno Part 2 は
+    /// (parent なし、Document root からも reachable でない)。以前は
     /// `"#document-fragment"` pseudo-tag な Element として実装していたが、
-    /// 84y で [`NodeData::DocumentFragment`] variant に恒久化:
+    /// [`NodeData::DocumentFragment`] variant として恒久化した:
     /// - `NodeKind::DocumentFragment` として存在 (Element ではない)、
     ///   `as_element() == None` — CSS selector / cascade はそもそも Element gate
     ///   で自動 skip
@@ -484,13 +484,12 @@ impl Document {
     ///   [`ElementFlags::template`](https://docs.rs/markup5ever/latest/markup5ever/interface/tree_builder/struct.ElementFlags.html#structfield.template)
     ///   が true になるのは HTML namespace の `<template>` element のみ、
     ///   したがってこの entry point は template element 限定。誤って通常
-    ///   element を渡すのは caller bug (codex final review 2026-07-19 で
-    ///   surface)。
+    ///   element を渡すのは caller bug。
     /// - `template_id` の `template_contents` slot が既に populate されている
     ///   場合 (debug のみ)。sink は template element ごとに 1 度だけこの
     ///   method を呼ぶ契約で、二重呼び出しは古い fragment root を silently
     ///   orphan するため debug で fail。release では上書きを許容
-    ///   (M2+ mutation runtime での再 wire を想定した保守的挙動)。
+    ///   (将来の mutation runtime での再 wire を想定した保守的挙動)。
     ///
     /// Returns: 新規 allocate された fragment root の arena index。
     pub fn allocate_template_fragment_root(&mut self, template_id: usize) -> usize {
@@ -517,7 +516,7 @@ impl Document {
             );
         }
         // Step 1: fragment root を detached DocumentFragment として allocate
-        // (raikiri-spike-84y、旧 append_element(None, "#document-fragment", ...)
+        // (旧 append_element(None, "#document-fragment", ...)
         // pseudo-tag を廃止)。flags_dirty を明示的に set することで、後段
         // mark_in_document_flags が step 1 で default IS_IN_DOCUMENT bit を
         // clear する。
@@ -536,14 +535,14 @@ impl Document {
         frag_root
     }
 
-    /// Element node の `inline_style` を後付けで更新する
-    /// (raikiri-spike-blg)。sink が `finish()` 時に side-table から
+    /// Element node の `inline_style` を後付けで更新する。
+    /// sink が `finish()` 時に side-table から
     /// `style="..."` を抽出して呼び出す。値は生 string でよく、`style=""`
     /// の空文字列 → `None` 正規化は Element trait 実装側
     /// ([`raikiri_traits::Element::inline_style_source`]) が行う。
     /// 二重正規化を避けるため storage 層はここで判定しない。
     ///
-    /// Panics (debug + release 共通、raikiri-spike-37c): `id` が Element kind
+    /// Panics (debug + release 共通): `id` が Element kind
     /// でない場合。
     pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
         let e = self.nodes[id]
@@ -559,12 +558,12 @@ impl Document {
     /// な多量 mutation で quadratic を防ぐ)。tree mutation なので
     /// `invalidate_layout_cache` も call する。
     ///
-    /// **Historical note (raikiri-spike-84y)**: 旧 raikiri-html sink の
+    /// **Historical note**: 旧 raikiri-html sink の
     /// `strip_non_element_stubs` が Comment / PI stub Element の bulk 除去に
-    /// 消費していたが、84y で Comment / ProcessingInstruction が
+    /// 消費していたが、Comment / ProcessingInstruction が
     /// [`NodeData`] variant として恒久 tree 保持 + `mark_in_document_flags`
     /// による IS_IN_DOCUMENT clear の 2 段 gate に置換されたため、この primitive
-    /// の parse 経路での使用は無くなった。現在は将来の M2+ mutation runtime /
+    /// の parse 経路での使用は無くなった。現在は将来の mutation runtime /
     /// 直接組み立てを行う consumer 向けの汎用 helper として存置。
     /// [`flags_dirty`](Self#structfield.flags_dirty) `true` を tree topology
     /// 変更時に set する契約は他 mutation primitive と一致。
@@ -584,34 +583,33 @@ impl Document {
     }
 
     /// Flat tree membership bit (`IS_IN_DOCUMENT`) を全 arena node について
-    /// dirty flag ベースで recompute する (raikiri-spike-37c、raikiri-spike-84y で
-    /// Comment / PI kind への拡張)。sink.finish() および mutation batch 後に呼ばれる。
+    /// dirty flag ベースで recompute する (Comment / PI kind への拡張を含む)。
+    /// sink.finish() および mutation batch 後に呼ばれる。
     ///
     /// **どの node が clear されるか** (post-condition):
     /// - Document root から reachable でない (detached / unreachable) node
     /// - `<template>` element の子孫 (element 自身は set、その中身は clear)
     /// - `NodeData::Comment` / `NodeData::ProcessingInstruction` variant
-    ///   (**reachable でも unconditionally clear**、raikiri-spike-84y advisor
-    ///   step-6 option (i) — flat tree 上 unrendered な kind として rendering
-    ///   traversal から統一 skip)
+    ///   (**reachable でも unconditionally clear** — flat tree 上 unrendered な
+    ///   kind として rendering traversal から統一 skip)
     ///
     /// `NodeData::DocumentFragment` は typically detached なので step 2 の DFS
     /// が届かず step 1 の clear が残る (kind-based clear は不要)。
     ///
-    /// アルゴリズム (roborev job 292 findings + 84y advisor step-6 (i) 対応):
+    /// アルゴリズム:
     /// 1. 全 arena node の bit を先に clear (detached / unreachable node を
     ///    default true のまま残さないため)
     /// 2. Document root から iterative DFS で bit set。template element 自身
     ///    は set、その descendants は skip (bit clear の状態が残る)。
-    ///    Comment / PI variant は reachable でも set しない (kind gate、84y)
+    ///    Comment / PI variant は reachable でも set しない (kind gate)
     ///
-    /// 補足 (raikiri-spike-xno Part 2 併存): sink 経由の parse では template
+    /// 補足: sink 経由の parse では template
     /// contents は fragment root subtree に流れ、Document root から reachable
     /// でなくなる → step 2 の DFS は自動的に届かない (in_template branch は
     /// 走らない)。だが本 step 2 の "template 判定 → descendants skip" logic は
     /// 残す: 手動で `append_element(Some(tmpl), ...)` を呼ぶ code path (raikiri-dom
-    /// 内 test / raikiri-paint hello-world setup / 将来の M2+ mutation runtime
-    /// で fragment root を経由しない contents 追加) は template 直下に子を積む
+    /// 内 test / raikiri-paint hello-world setup / 将来の mutation runtime で
+    /// fragment root を経由しない contents 追加) は template 直下に子を積む
     /// ため、その inert 保証を defense-in-depth として維持する。
     ///
     /// 実装上の細かい contract:
@@ -626,19 +624,19 @@ impl Document {
     ///   全 node を clear するため、そうした node が in_document=true として
     ///   残ることは無い。
     /// - iterative Vec stack で深い DOM での stack overflow を回避。
-    /// - roborev job 293 M2 finding: 本 method は taffy の effective child tree
+    /// - 本 method は taffy の effective child tree
     ///   (`TaffyChildIter` が `is_in_document()` で filter する) を変更する。
     ///   post-condition として layout cache も無効化する — さもなくば次回
     ///   `compute_child_layout` が古い child ordering で cached result を再利用
     ///   してしまう。
-    /// - roborev job 294 M1 finding: `flags_dirty` が false のときは no-op
+    /// - `flags_dirty` が false のときは no-op
     ///   (idempotent + O(1))。mutation primitive が dirty mark するため、
     ///   observation-side は毎回本 method を呼んでも overhead が amortize される。
     ///   Consumer は「mutation batch → mark → observation」の contract を守る
     ///   ことでどこかの primitive で flag 更新を忘れた場合の regression を回避
     ///   できる。
     pub fn mark_in_document_flags(&mut self) {
-        // roborev job 294 M1 finding: dirty check で cheap early return。
+        // dirty check で cheap early return。
         // parse.finish() 直後 (dirty) → 明示的 recompute。以降 mutation 無しで
         // 複数回呼ばれても再計算しない。
         if !self.flags_dirty {
@@ -653,7 +651,7 @@ impl Document {
         }
         // Step 2: Document root から reachable な node を DFS で set。
         //
-        // raikiri-spike-84y (advisor step-6 option (i)): Comment /
+        // Comment /
         // ProcessingInstruction は flat tree 上 unrendered なので、reachable
         // でも `IS_IN_DOCUMENT` bit は clear のままにする。これにより
         // TaffyChildIter の is_in_document filter で自動的に skip され、
@@ -686,7 +684,7 @@ impl Document {
             }
         }
         // Step 3: taffy が観測する effective child tree が変わり得るため、
-        // layout cache を dirty mark する (roborev job 293 M2 finding)。
+        // layout cache を dirty mark する。
         self.invalidate_layout_cache();
     }
 
@@ -722,13 +720,12 @@ impl Document {
         self.layout_dirty = true;
     }
 
-    // ─── stylesheets (M1.4a、raikiri-spike-m1.22) ───────────────────
+    // ─── stylesheets ───────────────────
 
     /// Stylesheet を Document に associate する。
     ///
     /// - lazy: parse は行わない。cascade phase で一括処理される。
-    /// - 呼び出し順で同一 `kind` 内の cascade source_order が決まる
-    ///   (spec §M1.4a)。
+    /// - 呼び出し順で同一 `kind` 内の cascade source_order が決まる。
     /// - `Cow<'static, str>` により、bundled UA CSS 等 static &str は
     ///   borrow のまま保持され allocation なし。Consumer 提供の
     ///   `String` は Cow::Owned で消費される。
@@ -817,7 +814,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn mark_in_document_flags_clears_detached_arena_nodes() {
-        // raikiri-spike-37c roborev job 292 M2 finding pin。arena に存在するが
+        // Regression pin: arena に存在するが
         // Document root から reachable でない node (foster-parenting transient
         // state / stub 除去後の孤児 等) は mark 後 is_in_document=false に落ちる
         // (Node::new_* の default true を step 1 の全 clear が上書きする)。
@@ -845,7 +842,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn mark_in_document_flags_keeps_template_element_but_clears_descendants() {
-        // Regression pin for the existing contract Task 3 pinned: template element
+        // Regression pin for the existing contract: template element
         // itself stays in_document=true, its descendants get cleared. Redundant
         // with the raikiri-html integration test but locally verifies the DFS
         // shape (in_template state propagation) without going through parse.
@@ -873,7 +870,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn append_operations_set_flags_dirty() {
-        // roborev job 294 M1 finding pin: mutation primitives が flags_dirty を
+        // Regression pin: mutation primitives が flags_dirty を
         // set することで、observation-side が mark_in_document_flags を呼ぶ contract
         // に依存できる。fresh Document は dirty=false からスタート。
         let mut doc = Document::new();
@@ -920,7 +917,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn mark_in_document_flags_is_noop_when_clean() {
-        // roborev job 294 M1 finding: mark_in_document_flags は !flags_dirty のとき
+        // mark_in_document_flags は !flags_dirty のとき
         // 何もしない。invariant: 一度 mark した後 mutation が無ければ再 mark は
         // 高速で idempotent。
         let mut doc = Document::new();
@@ -936,7 +933,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn set_element_namespace_dirties_flags_for_template_only() {
-        // roborev job 295 M2 finding pin: `set_element_namespace` は
+        // Regression pin: `set_element_namespace` は
         // `<template>` element の namespace を変更した場合のみ flags_dirty を
         // set する。template 以外は set しない (pure metadata、layout 無影響)。
         let mut doc = Document::new();
@@ -968,7 +965,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn post_mark_attach_under_template_becomes_out_of_document_after_remark() {
-        // roborev job 294 M1 finding: mutation → 再 mark で正しい bit 状態が復元
+        // Regression pin: mutation → 再 mark で正しい bit 状態が復元
         // されることを end-to-end で pin。post-parse mutation の contract。
         let mut doc = Document::new();
         let root = doc.root_index();
@@ -993,7 +990,7 @@ mod mark_in_document_flags_tests {
 
 #[cfg(test)]
 mod find_body_flat_tree_tests {
-    // roborev job 295 M3 finding pin: find_body (both layout and paint impls)
+    // Regression pin: find_body (both layout and paint impls)
     // must not select a <body> that lives inside an inert subtree
     // (<template>...<body>ghost</body>...</template>).
     use super::*;
@@ -1026,7 +1023,7 @@ mod taffy_filter_tests {
 
     #[test]
     fn taffy_child_ids_and_count_filter_out_template_descendants() {
-        // raikiri-spike-37c roborev job 292 M1 finding pin。taffy layout tree
+        // Regression pin。taffy layout tree
         // (= web spec flat tree) から template descendants を除外する。
         // template 自身は in_document=true なので body の child 数に含まれる、
         // その内側の <p> は in_document=false なので template の taffy child
@@ -1066,7 +1063,7 @@ mod taffy_filter_tests {
 
     #[test]
     fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
-        // raikiri-spike-84y regression pin (advisor caveat step-6 (i)):
+        // Regression pin:
         // Comment / ProcessingInstruction variant を body 直下に attach した後
         // mark_in_document_flags を経由すると、TaffyChildIter は
         // is_in_document filter でこれらを skip する。旧 strip_non_element_stubs
@@ -1075,7 +1072,7 @@ mod taffy_filter_tests {
         // IS_IN_DOCUMENT clear → TaffyChildIter が filter」の chain に置き換わって
         // いることを end-to-end で pin。
         //
-        // 特に advisor 指摘の「Comment/PI が layout child count に leak する」
+        // 特に「Comment/PI が layout child count に leak する」
         // failure mode を stress する: body 直下に Comment 3 個 + PI 2 個 + <p>、
         // という mix で、body の taffy child_count == 1 (<p> only) を要求する。
         let mut doc = Document::new();
@@ -1100,7 +1097,7 @@ mod taffy_filter_tests {
                     assert!(
                         !n.is_in_document(),
                         "Comment/PI at arena idx {i} must have IS_IN_DOCUMENT cleared \
-                         after mark_in_document_flags (advisor step-6 (i) contract)"
+                         after mark_in_document_flags"
                     );
                 }
                 _ => {}
@@ -1129,7 +1126,7 @@ mod taffy_filter_tests {
 
 #[cfg(test)]
 mod attach_child_fragment_tests {
-    //! raikiri-spike-84y bundled Codex xno §8.3 finding #2: attach_child が
+    //! attach_child が
     //! `NodeData::DocumentFragment` を child に受け取った時、WHATWG DOM §4.2.3
     //! Mutation algorithms — insert algorithm steps 1 + 4.1 + 7.2 と一致する
     //! fragment-aware semantics で動作する契約を pin (append が positional
@@ -1264,19 +1261,19 @@ mod attach_child_fragment_tests {
 
 #[cfg(test)]
 mod insert_child_before_fragment_tests {
-    //! raikiri-spike-3blp: `insert_child_before` が
+    //! `insert_child_before` が
     //! [`NodeData::DocumentFragment`] を child に受け取った時、fragment の
     //! children を parent.children の `before` position から source order で
     //! splice する fragment-aware semantics (WHATWG DOM §4.2.3 Mutation
     //! algorithms — insert algorithm steps 1 + 4.1 + 7.3) を pin。
-    //! attach_child (tail append) の positional 対応で、84y 時点で latent
+    //! attach_child (tail append) の positional 対応で、これまで latent
     //! だった asymmetry を解消する。
     //!
     //! Spec ref:
     //! - <https://dom.spec.whatwg.org/#concept-node-pre-insert>
     //! - <https://dom.spec.whatwg.org/#concept-node-insert>
     //!
-    //! 契約 (test 5 分割 = 84y `attach_child_fragment_tests` の mirror):
+    //! 契約 (test 5 分割 = `attach_child_fragment_tests` の mirror):
     //! (a) parent.children が fragment の children で `before` position から
     //!     source order で splice される
     //! (b) fragment の children Vec が empty 化される (move、not clone)

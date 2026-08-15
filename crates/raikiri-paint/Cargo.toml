@@ -18,10 +18,10 @@ parley         = { workspace = true }
 [dev-dependencies]
 taffy                = { workspace = true }
 raikiri-html         = { workspace = true }
-# bd raikiri-spike-3653 point 3 probe only (rasterizer memory/panic
-# characterization) — real CPU rasterizer backend, not used by production
-# code (production stays anyrender-backend-agnostic via the `PaintScene`
-# trait, per this crate's module doc).
+# Probe-only dependency (rasterizer memory/panic characterization) — real
+# CPU rasterizer backend, not used by production code (production stays
+# anyrender-backend-agnostic via the `PaintScene` trait, per this crate's
+# module doc).
 #
 # 原則 5 Pure Rust / WASM check (walls.md 壁 7): this is not a new package in
 # the dependency graph. `anyrender_vello_cpu` is already a workspace

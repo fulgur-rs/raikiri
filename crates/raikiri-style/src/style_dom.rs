@@ -1,5 +1,6 @@
 //! Style-owned DOM abstraction — cleanroom decoupling of raikiri-style from
-//! raikiri-traits (raikiri-spike-3ps Phase A + 94e Phase B).
+//! raikiri-traits (a two-part decoupling — Phase A introduced this trait
+//! surface, Phase B dropped the Cargo dependency on raikiri-traits entirely).
 //!
 //! # Why a style-owned trait surface
 //!
@@ -48,7 +49,7 @@ impl StyleNodeId {
 
 /// Document-mode context: HTML5 quirks mode. Mirror of
 /// `raikiri_traits::QuirksMode` for the style-owned trait surface (Phase B
-/// decoupling, raikiri-spike-3ps + 94e) — same rationale as
+/// decoupling) — same rationale as
 /// [`StyleNodeKind`] mirroring `raikiri_traits::NodeKind` just below:
 /// raikiri-style does not depend on raikiri-traits (see this module's
 /// header), so it carries its own copy of the 3-way state rather than
@@ -56,7 +57,7 @@ impl StyleNodeId {
 ///
 /// Consumed by [`StyleDom::quirks_mode`], which [`mod@crate::cascade`]'s
 /// id/class selector matching reads to decide whether to ASCII-case-fold
-/// (CSS Selectors L4 quirks-mode case-insensitivity — bd raikiri-spike-tqwi).
+/// (CSS Selectors L4 quirks-mode case-insensitivity).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum StyleQuirksMode {
@@ -71,17 +72,16 @@ pub enum StyleQuirksMode {
     /// <https://dom.spec.whatwg.org/#concept-document-quirks>, verbatim: "A
     /// document is said to be in no-quirks mode if its mode is 'no-quirks',
     /// **quirks mode** if its mode is 'quirks', and **limited-quirks mode**
-    /// if its mode is 'limited-quirks'" — three separate named dfns,
-    /// confirmed via direct fetch, bd raikiri-spike-tqwi).
+    /// if its mode is 'limited-quirks'" — three separate named dfns).
     LimitedQuirks,
     /// Full quirks mode (missing / obsolete DOCTYPE).
     Quirks,
 }
 
 /// DOM node kind — mirror of `raikiri_traits::NodeKind` for the style-owned
-/// trait surface (Phase B decoupling, raikiri-spike-3ps + 94e).
+/// trait surface (Phase B decoupling).
 ///
-/// raikiri-spike-84y (Sprint 20) で `Comment` / `ProcessingInstruction` /
+/// 後から `Comment` / `ProcessingInstruction` /
 /// `DocumentFragment` を追加。`#[non_exhaustive]` により変更は non-breaking。
 ///
 /// Two-way invariant ([`StyleNode::kind`] / [`StyleNode::as_element`]):
@@ -99,14 +99,14 @@ pub enum StyleNodeKind {
     /// Document root (virtual node at arena index 0 by contract).
     Document,
     /// Comment node (`<!-- ... -->`)。cascade は skip する (Element でない)。
-    /// raikiri-spike-84y で追加。
+    /// 後から追加。
     Comment,
     /// Processing instruction node (`<?target data?>`)。cascade は skip する。
-    /// raikiri-spike-84y で追加。
+    /// 後から追加。
     ProcessingInstruction,
     /// Document fragment root (`<template>` contents 等)。detached subtree の
     /// virtual root、Document root から reachable でない。cascade は
-    /// `is_in_document()` gate で skip する。raikiri-spike-84y で追加。
+    /// `is_in_document()` gate で skip する。後から追加。
     DocumentFragment,
 }
 
@@ -158,15 +158,14 @@ pub trait StyleDom {
     /// (e.g. `raikiri_traits::QuirksMode`, set by raikiri-html's sink and
     /// carried through `UncascadedDocument`) should override this to report
     /// the true value. [`mod@crate::cascade`]'s id/class selector matching
-    /// reads this to decide ASCII-case-folding (CSS Selectors L4 — bd
-    /// raikiri-spike-tqwi).
+    /// reads this to decide ASCII-case-folding (CSS Selectors L4).
     ///
-    /// **Not yet overridden by raikiri-dom** as of bd raikiri-spike-tqwi:
+    /// **Not yet overridden by raikiri-dom**:
     /// `raikiri-dom::Document` does not carry a quirks-mode field, and
     /// `impl StyleDom for Document` (`crates/raikiri-dom/src/dom_impl.rs`)
     /// still relies on this default — so real parsed HTML documents take the
     /// `NoQuirks` path today regardless of their actual doctype. Tracked as a
-    /// dom-scope follow-up, bd raikiri-spike-wolu.
+    /// dom-scope follow-up.
     fn quirks_mode(&self) -> StyleQuirksMode {
         StyleQuirksMode::NoQuirks
     }
@@ -174,7 +173,7 @@ pub trait StyleDom {
 
 /// DOM node abstraction — kind dispatch and common API.
 ///
-/// **Lifetime elision** (raikiri-spike-2ng): method signatures do not
+/// **Lifetime elision**: method signatures do not
 /// reference `'a`; the borrowed node value's lifetime is expressed via
 /// `StyleDom::NodeRef<'a>`, so the trait itself needs no lifetime
 /// parameter. GAT `Element<'b>` remains as the borrowed element reference
@@ -210,9 +209,9 @@ pub trait StyleNode {
 /// DOM element abstraction.
 ///
 /// Attribute lookup covers only null-namespace attrs (namespaced attrs like
-/// `xlink:href` are out of scope for M1).
+/// `xlink:href` are currently out of scope).
 ///
-/// **Lifetime elision** (raikiri-spike-2ng): method signatures do not
+/// **Lifetime elision**: method signatures do not
 /// reference `'a`; the borrowed element value's lifetime is expressed via
 /// `StyleDom::NodeRef<'a>` and `StyleNode::Element<'b>`, so the trait
 /// itself needs no lifetime parameter.
@@ -247,7 +246,7 @@ pub trait StyleElement {
     /// HTML-spec ASCII whitespace split (space / tab / LF / CR / FF), exact
     /// (case-sensitive) per-token comparison. Empty query always `false`.
     /// See [`Self::has_class_ascii_case_insensitive`] for the quirks-mode
-    /// counterpart (CSS Selectors L4 class-html — bd raikiri-spike-tqwi).
+    /// counterpart (CSS Selectors L4 class-html).
     fn has_class(&self, class: &str) -> bool {
         if class.is_empty() {
             return false;
@@ -257,7 +256,7 @@ pub trait StyleElement {
     }
 
     /// Whether `class` attribute contains the given token, matched ASCII
-    /// case-insensitively (bd raikiri-spike-tqwi — CSS Selectors L4
+    /// case-insensitively (CSS Selectors L4
     /// <https://www.w3.org/TR/selectors-4/#class-html>, verbatim: "When
     /// matching against a document which is in quirks mode, class names must
     /// be matched ASCII case-insensitively; class selectors are otherwise
@@ -280,7 +279,7 @@ pub trait StyleElement {
     /// Default handles `"style"` by delegating to
     /// [`Self::inline_style_source`]; overrides must preserve that contract.
     ///
-    /// **Known gap vs. CSS Selectors L4** (bd raikiri-spike-pp4a): the
+    /// **Known gap vs. CSS Selectors L4**: the
     /// attribute-presence selector form `[foo]`
     /// (<https://www.w3.org/TR/selectors-4/#attribute-selectors>) is defined
     /// to match on attribute *presence* alone, independent of value — an
@@ -307,7 +306,7 @@ pub trait StyleElement {
     /// There is no other `StyleElement` method that exposes raw
     /// presence-independent-of-value attribute information, so this cannot
     /// be worked around from within `raikiri-style` alone. Accepted as a
-    /// permanent M1.4+ simplification rather than fixed, because fixing it
+    /// permanent simplification rather than fixed, because fixing it
     /// would require changing this trait's contract (e.g. splitting out a
     /// `has_attr()` that distinguishes absent from present-but-empty, or
     /// widening `attr()`'s return type) — a `StyleElement` signature change
@@ -317,16 +316,17 @@ pub trait StyleElement {
     /// known real-world content in this repo's test corpus currently relies
     /// on presence-with-empty-value matching.
     ///
-    /// The decision to accept this spec divergence as a permanent M1.4+
-    /// baseline (rather than fix it immediately) is formally recorded in
-    /// **bd raikiri-spike-k5y3** (g04 accept/reject category (c),
-    /// "intentional stricter") — this is an accepted-baseline call, not a
-    /// bug being silently tolerated; see that decision for the full
-    /// rationale. Regression-pinned by
+    /// The decision to accept this spec divergence as a permanent
+    /// baseline (rather than fix it immediately) reflects a deliberate
+    /// accept/reject call — "intentional stricter" divergence (this trait's
+    /// `attr()` contract collapses `foo=""` into absent, which makes
+    /// matching stricter than spec requires, not looser) — this is an
+    /// accepted-baseline call, not a
+    /// bug being silently tolerated. Regression-pinned by
     /// `cascade::tests::attribute_exists_selector_does_not_match_empty_value_attr`
     /// (the `[foo]` form) and
     /// `cascade::tests::attribute_exact_match_selector_does_not_match_empty_value_attr`
-    /// (the `[foo=""]` form) — both tests cite bd raikiri-spike-k5y3 too.
+    /// (the `[foo=""]` form).
     fn attr(&self, local: &str) -> Option<&str> {
         if local == "style" {
             self.inline_style_source()

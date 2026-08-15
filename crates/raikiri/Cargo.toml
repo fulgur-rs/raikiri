@@ -15,19 +15,18 @@ raikiri-html   = { workspace = true }
 raikiri-paint  = { workspace = true }
 # Re-export `Url` so Consumers can name `raikiri::Url` when constructing
 # `raikiri::ParseOptions { base_url: Some(Url::parse(...)), ... }` without
-# adding `url` as a direct dep (roborev-refine job 228, AC #6 完結).
+# adding `url` as a direct dep.
 url            = { workspace = true }
 # Re-export `Bytes` for `NetworkProvider` implementations: `FetchedResource`
-# の `bytes` field と `Body::Bytes(Bytes)` の construction 用 (roborev-refine
-# job 230)。
+# の `bytes` field と `Body::Bytes(Bytes)` の construction 用。
 bytes          = { workspace = true }
-# m1.14 html_to_png: raster pipeline 用 (anyrender_vello_cpu で render_to_buffer)。
+# html_to_png: raster pipeline 用 (anyrender_vello_cpu で render_to_buffer)。
 anyrender           = { workspace = true }
 anyrender_vello_cpu = { workspace = true }
-# encode_png 実装用 (raikiri-spike-e6w で raikiri-vrt から inline)。
+# encode_png 実装用 (raikiri-vrt から inline)。
 # reference::decode_png は raikiri-vrt に残るため tiny-skia は両 crate で使う。
 tiny-skia           = { workspace = true }
-# html_to_png_with_fonts の FontContext 型 (raikiri-spike-e93)。umbrella crate
+# html_to_png_with_fonts の FontContext 型。umbrella crate
 # として `pub use parley::FontContext` を提供するため direct dep。
 parley              = { workspace = true }
 

@@ -1,4 +1,4 @@
-//! CSS parse / cascade 段階の terminal error (raikiri-spike-94e Phase B)。
+//! CSS parse / cascade 段階の terminal error (Phase B decoupling で移設)。
 //!
 //! Ownership moved from `raikiri-traits::error` to `raikiri-style` as part of
 //! the Stylo-pattern decoupling — raikiri-style now owns its cascade error
@@ -10,7 +10,7 @@
 //! 型は raikiri-style 内部に閉じ込め、この enum は raikiri-style が明示的
 //! に fail-hard を選択した場合の signal のみ露出する。
 //!
-//! M1.2 で `Internal` variant のみ populate。CSS 実装詳細 (property /
+//! 現状 `Internal` variant のみ populate。CSS 実装詳細 (property /
 //! value / source location 等) を trait layer に漏らさない。必要になった
 //! 時点で `#[non_exhaustive]` の恩恵で追加する。
 #[non_exhaustive]

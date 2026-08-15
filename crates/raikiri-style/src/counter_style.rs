@@ -10,18 +10,18 @@
 //! spec-derived branch below cites its own anchor; this header only states
 //! the two top-level sections the rest of the module hangs off of.
 //!
-//! # Scope (bd raikiri-spike-r7r1)
+//! # Scope
 //!
-//! This issue is scope (a) of a 2-way split (bd raikiri-spike-og2's
-//! 2026-07-27 comment). Scope (b) — wiring a formatted custom-counter string
-//! into `raikiri-traits::TargetRegistry`'s resolution flow — is deferred to
-//! bd raikiri-spike-cvxe; this module has **no dependency on raikiri-traits
+//! This module implements `@counter-style` parsing, the registry, and the
+//! `generate a counter` algorithm. Wiring a formatted custom-counter string
+//! into `raikiri-traits::TargetRegistry`'s resolution flow is deferred;
+//! this module has **no dependency on raikiri-traits
 //! and is not wired into that crate**. See [`resolve_custom_counter`]'s doc
 //! for exactly what a caller gets back and why.
 //!
 //! What's implemented:
 //!
-//! - Full descriptor grammar per the bd issue's descriptor list: `system`,
+//! - Full descriptor grammar: `system`,
 //!   `negative`, `prefix`, `suffix`, `range`, `pad`, `fallback`, `symbols`,
 //!   `additive-symbols`. `speak-as` is deliberately **not** in that list
 //!   (audio-rendering concern, no bearing on the text-formatting use case
@@ -34,7 +34,7 @@
 //!   parsed and stored (so a rule using it still round-trips through the
 //!   registry) but composition against the extended style is **not**
 //!   implemented — see [`CounterStyleSystem::Extends`]'s doc for the
-//!   citation and rationale. This matches the bd issue's own guidance:
+//!   citation and rationale, following the general guidance to
 //!   "start with whatever subset proves the parser + registry +
 //!   generate-a-counter algorithm … widen from there."
 //! - `<symbol> = <string> | <image> | <custom-ident>`
@@ -51,9 +51,9 @@
 //!
 //! What's out of scope, beyond the bullet above:
 //!
-//! - `speak-as` (not in the bd issue's descriptor list; see above).
+//! - `speak-as` (see above).
 //!
-//! # RuleTree wiring (bd raikiri-spike-gce8, origin-aware since bd raikiri-spike-f7vg)
+//! # RuleTree wiring (origin-aware)
 //!
 //! [`crate::ruletree::RuleTree`] now owns a `counter_styles`
 //! [`CounterStyleRegistry`], populated by every call to
@@ -81,7 +81,7 @@
 //! caller to pre-filter by origin: a standalone `Origin::UserAgent`
 //! `@counter-style` with no same-name `Origin::Author` rule is now available
 //! (previously dropped unconditionally by an Author-only gate at the
-//! `add_stylesheet` call site — bd raikiri-spike-f7vg), while a same-name
+//! `add_stylesheet` call site), while a same-name
 //! `Origin::Author` rule still wins over any `Origin::UserAgent` rule
 //! irrespective of which was inserted first.
 //!
@@ -91,8 +91,8 @@
 //! it is still one layer short of `counter()`/`counters()` actually
 //! resolving during layout/paint: routing a matched [`CounterStyleRegistry`]
 //! entry through [`resolve_custom_counter`] into
-//! `raikiri-traits::TargetRegistry`'s resolution flow remains bd
-//! raikiri-spike-cvxe's scope, unchanged by this issue (see the "Scope"
+//! `raikiri-traits::TargetRegistry`'s resolution flow remains out of
+//! scope, unchanged by this module (see the "Scope"
 //! section above) — [`resolve_custom_counter`] itself is still exercised by
 //! this module's own tests only.
 
@@ -176,8 +176,8 @@ pub enum CounterStyleSystem {
     /// inherits the extended style's algorithm and any unspecified
     /// descriptors.
     ///
-    /// **Composition is not implemented** (scope-cut, bd raikiri-spike-r7r1
-    /// "start with whatever subset … widen from there"). A rule using
+    /// **Composition is not implemented** (scope-cut, following the general
+    /// guidance to "start with whatever subset … widen from there"). A rule using
     /// `extends` parses successfully (round-trips through
     /// [`CounterStyleRegistry`] with the extended name stored here) but
     /// [`resolve_custom_counter`] always falls through to the rule's
@@ -350,7 +350,7 @@ fn parse_pad(input: &mut Parser<'_, '_>) -> Option<PadDescriptor> {
 /// than one "cluster" here, over-padding slightly. `unicode-segmentation`
 /// (true grapheme clustering) is not a workspace dependency; the ASCII/BMP
 /// case this crate's tests exercise is unaffected, and true clustering is
-/// deferred per "start with subset, widen from there" (bd raikiri-spike-r7r1)
+/// deferred per "start with subset, widen from there"
 /// rather than adding a dependency for it now.
 fn apply_pad(pad: &PadDescriptor, repr: String, negative_reserved: i64) -> String {
     let len = repr.chars().count() as i64;
@@ -992,7 +992,7 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 /// field-by-field. "Standard cascade rules" (origin first, then source
 /// order within an origin) is implemented by recording, per name, which
 /// [`Origin`] the currently-stored rule came from
-/// (bd raikiri-spike-f7vg; this field was origin-blind before — see
+/// (this field was origin-blind before — see
 /// [`Self::insert`]'s doc for the one remaining origin-blind entry point)
 /// and consulting that origin on every subsequent insert of the same name:
 ///
@@ -1002,17 +1002,17 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 ///   unless it is itself outranked by the currently-stored one. Concretely,
 ///   for the origins every current in-repo call site of
 ///   [`crate::ruletree::RuleTree::add_stylesheet`] actually passes it
-///   (`Origin::UserAgent` / `Origin::Author` / `Origin::User` as of bd
-///   raikiri-spike-d7h3 — `@counter-style` never comes from the
+///   (`Origin::UserAgent` / `Origin::Author` / `Origin::User` —
+///   `@counter-style` never comes from the
 ///   crate-private HTML presentational-hint path
 ///   (`push_img_dimension_hints`, `crates/raikiri-style/src/cascade.rs`),
 ///   so [`Origin::AuthorPresentationalHint`] does not reach here via any
 ///   caller in this crate today, even though [`Origin`] itself has 4
-///   variants as of bd raikiri-spike-pdta). [`Origin::User`] (added by
-///   pdta, alongside [`Origin::AuthorPresentationalHint`] added earlier by
-///   bd raikiri-spike-wo36) was likewise unreachable here at pdta-landing
-///   time — no caller anywhere routed to `Origin::User` yet. bd
-///   raikiri-spike-d7h3 changed that: consumer-provided `extra_stylesheets`
+///   variants). [`Origin::User`] (added
+///   alongside [`Origin::AuthorPresentationalHint`]) was likewise
+///   unreachable here at the time it was added —
+///   no caller anywhere routed to `Origin::User` yet. That later changed:
+///   consumer-provided `extra_stylesheets`
 ///   is now tagged `Origin::User` end-to-end (via raikiri-html's retag +
 ///   umbrella's `stylesheet_kind_to_origin`), and
 ///   [`crate::ruletree::RuleTree::add_stylesheet`] runs
@@ -1037,8 +1037,8 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 ///   (<https://www.w3.org/TR/css-cascade-4/#cascade-origin>)). Reuses
 ///   [`crate::cascade::cascade_rank`] rather than a local rank fn — same
 ///   sibling-arm convention [`crate::page::cascade_page`] already follows
-///   for `@page` (that function's doc, "Sibling arm convention"
-///   raikiri-spike-37n): `@counter-style` and style-rule origin ordering are
+///   for `@page` (that function's doc, "Sibling arm convention"):
+///   `@counter-style` and style-rule origin ordering are
 ///   the same CSS Cascading L4 mechanism, so a second copy of the
 ///   `Origin -> u8` mapping would just be drift risk. The call always fixes
 ///   `important` to `false`: CSS Counter Styles L3 §3's "standard cascade
@@ -1046,7 +1046,7 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 ///   all, so there's nothing to pass through — but `false` isn't an
 ///   arbitrary placeholder either, it's specifically the *non-important*
 ///   half of [`crate::cascade::cascade_rank`]'s ranking (UA < User <
-///   AuthorPresentationalHint < Author as of bd raikiri-spike-pdta,
+///   AuthorPresentationalHint < Author,
 ///   `cascade_rank` doc has the exact values), which is the half that
 ///   actually matches §3's origin order;
 ///   the other half ([`crate::cascade::cascade_rank`] with
@@ -1055,14 +1055,14 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 ///   specifically so adding a variant to [`Origin`] (`#[non_exhaustive]`)
 ///   is a compile error at [`crate::cascade::cascade_rank`]'s own `match`
 ///   — not a silently-wrong precedence here. This has now happened twice:
-///   bd raikiri-spike-wo36 added [`Origin::AuthorPresentationalHint`], and
-///   bd raikiri-spike-pdta added [`Origin::User`] (which bd
-///   raikiri-spike-d7h3 later gave a production producer, [`Origin::User`]'s
+///   once when [`Origin::AuthorPresentationalHint`] was added, and once
+///   when [`Origin::User`] was added (which later gained a production
+///   producer, [`Origin::User`]'s
 ///   doc has the status) — both times `cascade_rank`'s `match` had to be
 ///   updated to stay exhaustive, but this function's logic needed no
 ///   change (rank-based, not per-variant — see above).
 /// - [`Self::insert`] (the `pub` entry point, unchanged since before
-///   bd raikiri-spike-f7vg) stays origin-blind: it always overwrites,
+///   origin-awareness was added) stays origin-blind: it always overwrites,
 ///   exactly as it did when this type had no origin concept at all — safe
 ///   regardless of what an external crate does with it, since `insert` is
 ///   the only origin-tagging entry point external code can reach (
@@ -1337,17 +1337,16 @@ fn additive_repr(tuples: &[(i32, CounterSymbol)], value: i64) -> Option<String> 
 /// already does `use raikiri_style::property::{..., CounterStyle}`) — and
 /// the predefined-style formatting logic (`decimal-leading-zero` /
 /// `*-roman` / `*-alpha` / `*-latin` / `disc` / `circle` / `square`) already
-/// lives there, in `format_counter` / `format_named_counter` (landed by bd
-/// raikiri-spike-og2). Reimplementing it here would create exactly the kind
+/// lives there, in `format_counter` / `format_named_counter`. Reimplementing
+/// it here would create exactly the kind
 /// of duplicated-source-of-truth drift this project has hit before (see
-/// e.g. [`crate::page::PageCascadeResult::declarations`]'s doc, "bd
-/// raikiri-spike-ygl0 / raikiri-spike-sshp, twice"). `None` is this
+/// e.g. [`crate::page::PageCascadeResult::declarations`]'s doc for a
+/// repeated instance of the same drift). `None` is this
 /// function's honest boundary: it is `raikiri-traits::format_counter`
 /// (today unconditionally decimal-formatting any `CounterStyle::Named` it
 /// doesn't itself recognize) that is expected to treat `None` from this
-/// function the same way. Actually wiring that call is the deferred design
-/// question tracked by bd raikiri-spike-cvxe (this issue's split-off) — not
-/// this function's job.
+/// function the same way. Actually wiring that call is a deferred design
+/// question — not this function's job.
 pub fn resolve_custom_counter(
     registry: &CounterStyleRegistry,
     name: &str,
@@ -1924,7 +1923,7 @@ mod tests {
 
     #[test]
     fn insert_with_origin_rejects_invalid_rule_constructed_directly() {
-        // insert_with_origin (bd raikiri-spike-f7vg) has its own is_valid
+        // insert_with_origin has its own is_valid
         // gate, same enforcement point as insert() above — but every
         // production caller (RuleTree::add_stylesheet) only ever feeds it
         // rules that already passed parse_counter_style_rules's own

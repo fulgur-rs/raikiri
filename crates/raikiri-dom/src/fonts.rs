@@ -4,7 +4,7 @@
 //! - Fetch は `scripts/wpt/fetch.sh` (dev prerequisite)、本 module は
 //!   fetch 済 `target/wpt/fonts/` を Path で受けるだけ
 //! - production runtime は `parley::FontContext::new()` を今のまま使う
-//! - M1 scope: `.ttf` / `.otf` のみ、WOFF/WOFF2 は M4+ (raikiri-spike-2sb)
+//! - 現状 scope: `.ttf` / `.otf` のみ、WOFF/WOFF2 は将来対応
 //!
 //! 参考実装:
 //! - fulgur `crates/fulgur-wpt/src/fonts.rs::load_fonts_dir` (walker + sort)
@@ -16,8 +16,7 @@
 //! (walker + read-time TOCTOU + fontique register-empty). The signature-
 //! preserving [`build_wpt_font_ctx`] delegates to it with `None`, keeping
 //! the CLI-facing `eprintln!` shape for external consumers pinned by
-//! `crates/raikiri/tests/external_consumer.rs`. bd raikiri-spike-1uq
-//! (fe1 §8.2 Angle B/G observability follow-up).
+//! `crates/raikiri/tests/external_consumer.rs`.
 
 use parley::FontContext;
 use std::io::Read;
@@ -28,11 +27,10 @@ use std::path::{Path, PathBuf};
 /// 十分な余裕を残しつつ、attacker が用意した巨大 regular file による memory
 /// exhaustion を弾く閾値。
 ///
-/// **Threat surface coverage** (raikiri-spike-d9y.4, Codex security finding
-/// `ffe1f9c7027c8191a8f8812a6456c7d9`):
+/// **Threat surface coverage**:
 ///
 /// - **symlink → /dev/zero**: `collect_recursive` 側の
-///   `file_type.is_symlink()` skip (roborev e93 round 4) で既に closed
+///   `file_type.is_symlink()` skip で既に closed
 /// - **FIFO / device / socket** (indefinite block): `collect_recursive` 側の
 ///   `file_type.is_file()` gate で walk 段階で closed。`Read::take(N)` は memory を
 ///   bound するが writer 未定の FIFO に対して time は bound しないので、walk 段階で
@@ -43,13 +41,13 @@ use std::path::{Path, PathBuf};
 /// - **mid-read grow (TOCTOU)**: `read_bounded_font_file` の callsite-local
 ///   `+1-probe` (`take(FONT_SIZE_CAP + 1) + post-read bytes.len > cap` reject)
 ///   が silent truncation を防ぎ、TOCTOU-grow を `OversizedDuringRead` として
-///   surface (fe1 で raikiri-traits helper 経由へ切替、pre-fe1 の
-///   `take(FONT_SIZE_CAP)` silent-truncation window は closed。raikiri-spike-61l
-///   で helper から離脱し 8yu 同型の callsite-local pipeline に戻したため、
-///   `+1-probe` は本 module 内に再度存在する)
+///   surface する (この silent-truncation window は早期に closed 済み。一時
+///   raikiri-traits 側の共有 helper 経由に切り替えたが、後に同型の
+///   callsite-local pipeline へ戻したため、`+1-probe` は本 module 内に
+///   再度存在する)
 /// - **leaf-swap (TOCTOU)**: walker と `read_bounded_font_file` の pre-open
 ///   `symlink_metadata` の間で regular file が symlink に差し替わる vector は、
-///   `safe_open` (unix: `O_NOFOLLOW`) で closed (raikiri-spike-61l、8yu sibling)。
+///   `safe_open` (unix: `O_NOFOLLOW`) で closed。
 ///   ELOOP (POSIX 準拠 Linux / macOS / modern FreeBSD) or 事後 `symlink_metadata`
 ///   recheck (legacy BSD の EMLINK / EFTYPE) を「leaf-swap symlink 相当」として
 ///   warn+skip し、Ahem の drop は下流の aggregate `PreferredFontUnavailable`
@@ -64,9 +62,9 @@ use std::path::{Path, PathBuf};
 ///   post-open `File::metadata().file_type().is_file()` の fd-based check が
 ///   非 regular kind を race-free に reject する (`NotRegularFilePostOpen`)。
 ///   pre-open path-based check と違い fd 発行後の stat なので path-swap TOCTOU
-///   では bypass 不可能。raikiri-spike-f4j (61l Codex §8.3 finding #2)。
+///   では bypass 不可能。
 ///
-/// TODO(raikiri-spike-d9y.3): Wave 0 の RenderLimits と連動させる。
+/// TODO: 将来 RenderLimits と連動させる。
 const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 
 /// Open a regular file with the leaf-swap TOCTOU defense stack.
@@ -93,16 +91,13 @@ const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 ///   on a FIFO succeeds even with no writer), letting the post-open fstat
 ///   inspect the fd and reject non-regular kinds. Regular file semantics
 ///   are unaffected: POSIX specifies `O_NONBLOCK` has no effect on regular
-///   files, and Linux/macOS both honor that. bd raikiri-spike-f4j
-///   (61l Codex §8.3 finding #2).
+///   files, and Linux/macOS both honor that.
 ///
 /// The non-unix fallback keeps the current default `File::open` semantics.
-/// Windows equivalent tracked in raikiri-spike-akk.
-///
-/// bd raikiri-spike-61l (8yu sibling), raikiri-spike-f4j (O_NONBLOCK).
+/// A Windows equivalent is not yet implemented.
 // Callsite-local defense: sharing this stack with raikiri-vrt via
-// raikiri-traits is deferred to raikiri-spike-7xw for walls.md §2 crate-list
-// PMO judgment. Do not lift into raikiri-traits::io without that judgment.
+// raikiri-traits is deferred pending a walls.md §2 crate-list judgment
+// call. Do not lift into raikiri-traits::io without that judgment.
 #[cfg(unix)]
 fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -114,8 +109,8 @@ fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
 
 #[cfg(not(unix))]
 fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
-    // Follow-symlink-at-open is unresolved on non-unix; tracked in
-    // raikiri-spike-akk.  Regain parity when the follow-up lands.
+    // Follow-symlink-at-open is unresolved on non-unix.
+    // Regain parity when a follow-up lands.
     std::fs::File::open(path)
 }
 
@@ -123,10 +118,11 @@ fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
 ///
 /// Mirrors the shape of `raikiri_traits::io::RejectReason` so the callsite
 /// policy (`Io` → propagate, other reasons → warn+skip) reads the same as
-/// pre-61l fe1.  A local enum is used instead of the traits helper's
-/// `RejectReason` because the callsite bypasses the traits helper on this
-/// path — safe_open with `O_NOFOLLOW` is applied at the callsite until
-/// raikiri-spike-7xw lifts safe_open into `raikiri_traits::io` (walls.md §2).
+/// before this module's own defense stack existed.  A local enum is used
+/// instead of the traits helper's `RejectReason` because the callsite
+/// bypasses the traits helper on this path — safe_open with `O_NOFOLLOW` is
+/// applied at the callsite until a future change lifts safe_open into
+/// `raikiri_traits::io` (walls.md §2).
 #[derive(Debug)]
 enum FontReadReject {
     /// `symlink_metadata().file_type().is_symlink()` returned true, **or**
@@ -150,8 +146,7 @@ enum FontReadReject {
     /// callsite (pre-open vs post-open) rather than reusing `NotRegularFile`
     /// so the TOCTOU signal — regular at walk, non-regular at read — remains
     /// distinguishable to observers (same philosophy as [`FontWarn`]'s
-    /// per-stage split).  bd raikiri-spike-f4j, closes 61l Codex §8.3
-    /// finding #2.
+    /// per-stage split).  Closes the FIFO/device leaf-swap gap.
     NotRegularFilePostOpen,
     /// Pre-open `metadata.len() > cap` reject.  The file was never opened.
     /// `cap` carries the configured cap (rather than deferring to
@@ -169,9 +164,9 @@ enum FontReadReject {
     /// the walker's `is_symlink()` skip on directory entries this branch is
     /// only reachable if the tree changed between walk and read, but the
     /// containment check is what makes that safe.  Mirrors
-    /// `raikiri_vrt::reference::FixtureError::PathEscape` (bd raikiri-spike-d9y.6);
-    /// re-consolidation with the traits helper tracked in raikiri-spike-7xw
-    /// (walls.md §2).  bd raikiri-spike-zr8, closes 61l Codex §8.3 finding #1.
+    /// `raikiri_vrt::reference::FixtureError::PathEscape`;
+    /// re-consolidation with the traits helper is still to be done
+    /// (walls.md §2).  Closes the intermediate-directory-swap PathEscape gap.
     PathEscape {
         /// Canonicalized target path that fell outside the root.
         canonical: PathBuf,
@@ -184,13 +179,13 @@ enum FontReadReject {
     /// itself TOCTOU-vulnerable to a second swap before `safe_open` runs),
     /// this variant is derived from the fd `safe_open` actually returned —
     /// on Linux via `/proc/self/fd/<fd>`, on Apple platforms via
-    /// `fcntl(fd, F_GETPATH, ..)` (bd raikiri-spike-0nww) — so firing here
+    /// `fcntl(fd, F_GETPATH, ..)` — so firing here
     /// means the intermediate-directory swap happened inside the pre-open
     /// canonicalize→safe_open re-resolution window itself (the exact gap
-    /// fe1/61l Codex §8.3 flagged as surviving zr8+f4j). Split by
+    /// left surviving the earlier fixes). Split by
     /// pre-open-vs-post-open callsite for the same reason
     /// `NotRegularFile`/`NotRegularFilePostOpen` are split: the distinction
-    /// is the TOCTOU signal. bd raikiri-spike-1ef.
+    /// is the TOCTOU signal.
     PathEscapePostOpen {
         /// fd-derived canonical path (post-open) that fell outside the root.
         canonical: PathBuf,
@@ -259,7 +254,7 @@ impl std::fmt::Display for FontReadReject {
 /// Ok so non-unix builds get the defense-in-depth too, even where
 /// `safe_open`'s `O_NOFOLLOW`/`O_NONBLOCK` custom flags are absent.
 ///
-/// bd raikiri-spike-f4j, closes 61l Codex §8.3 finding #2.
+/// Closes the FIFO/device leaf-swap gap.
 fn check_open_handle_regular(file: &std::fs::File) -> Result<(), FontReadReject> {
     let metadata = file.metadata().map_err(FontReadReject::Io)?;
     if !metadata.file_type().is_file() {
@@ -286,8 +281,8 @@ fn check_open_handle_regular(file: &std::fs::File) -> Result<(), FontReadReject>
 /// binds the fd to a different, outside-root object. The leaf is still a
 /// regular file either way, so neither `check_open_handle_regular` (kind
 /// only) nor the pre-open gate (already-passed, stale) catches the swap.
-/// This is exactly the residual gap fe1/61l's Codex §8.3 review flagged
-/// as surviving f4j (bd raikiri-spike-1ef).
+/// This is exactly the residual gap the earlier leaf-swap and
+/// FIFO/device-swap fixes left in place.
 ///
 /// The fix is to derive the containment check from the **same fd** that
 /// will be read, so there is no second pathname resolution after the
@@ -329,8 +324,7 @@ fn check_open_handle_regular(file: &std::fs::File) -> Result<(), FontReadReject>
 /// - **Apple platforms** (macOS/iOS/tvOS/watchOS/visionOS, see the
 ///   `#[cfg(any(target_os = "macos", ...))]` impl below): `fcntl(fd,
 ///   F_GETPATH, ..)` via [`rustix::fs::getpath`], a safe wrapper — added
-///   as a direct dependency in bd raikiri-spike-0nww per PMO decision
-///   (2026-08-07 17:37): Pure Rust, already transitively vetted in this
+///   as a direct dependency: Pure Rust, already transitively vetted in this
 ///   dependency tree (`Cargo.lock` carried rustix v1.1.4 via `tempfile`
 ///   before this change), keeps raikiri-dom's own `unsafe` surface at
 ///   zero for this fix. `F_GETPATH` is a Darwin/XNU-specific `fcntl`
@@ -340,12 +334,12 @@ fn check_open_handle_regular(file: &std::fs::File) -> Result<(), FontReadReject>
 ///   exactly this platform set, so this fix covers Apple platforms only.
 /// - **Everything else** (non-Apple BSDs, Windows, ...): no-op fallback
 ///   (below) that leaves the pre-open canonicalize check as the only
-///   containment gate there — no worse than before bd raikiri-spike-1ef.
+///   containment gate there — no worse than before this fix landed.
 ///   Non-Apple BSDs remain an untracked residual as of this change.
-///   Windows' *separate* `O_NOFOLLOW`-at-open gap is tracked in bd
-///   raikiri-spike-akk.
+///   Windows' *separate* `O_NOFOLLOW`-at-open gap remains a separate,
+///   not-yet-addressed gap.
 ///
-/// bd raikiri-spike-1ef, closes 61l Codex §8.3 residual on zr8/f4j.
+/// Closes the intermediate-directory-swap PathEscape residual.
 #[cfg(target_os = "linux")]
 fn check_open_handle_containment(
     file: &std::fs::File,
@@ -392,13 +386,13 @@ fn check_open_handle_containment(
 ///
 /// # Untested in CI
 ///
-/// No CI target for any Apple platform exists in this repo as of
-/// 2026-08-08. The unit tests mirroring
+/// No CI target for any Apple platform exists in this repo yet. The unit
+/// tests mirroring
 /// `check_open_handle_containment_accepts_file_within_root` /
 /// `_rejects_file_outside_root` are compiled and pinned under this same
-/// `cfg` below but have never executed against a real toolchain. Accepted
-/// per PMO decision on bd raikiri-spike-0nww (2026-08-07 17:37): document
-/// untested-status rather than block on standing up Apple CI. If a future
+/// `cfg` below but have never executed against a real toolchain. This is a
+/// deliberate tradeoff: document untested-status rather than block on
+/// standing up Apple CI. If a future
 /// Apple CI run fails these tests, the first suspect should be
 /// `F_GETPATH`'s path *form* rather than the containment logic — Darwin
 /// resolves several common temp-dir prefixes to a different canonical
@@ -410,8 +404,6 @@ fn check_open_handle_containment(
 /// `starts_with` comparison would resolve consistently), but a mismatch
 /// here is the first thing to check before suspecting the containment
 /// check proper.
-///
-/// bd raikiri-spike-0nww, follow-up to raikiri-spike-1ef / raikiri-spike-7cz5.
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",
@@ -441,7 +433,8 @@ fn check_open_handle_containment(
 /// `target_os = "linux"` impl above). No-op so behavior on these
 /// platforms is unchanged by this task — the pre-open `canonicalize` +
 /// `starts_with` gate in `read_bounded_font_file` remains the only
-/// containment check, exactly as it was before bd raikiri-spike-1ef.
+/// containment check, exactly as it was before the post-open containment
+/// recheck existed.
 #[cfg(not(any(
     target_os = "linux",
     target_os = "macos",
@@ -472,12 +465,12 @@ fn check_open_handle_containment(
 ///
 /// Callsite-local variant of `raikiri_traits::io::read_bounded_regular_file`.
 /// The traits helper's `File::open` follows symlinks, leaving a leaf-swap
-/// TOCTOU window between its `symlink_metadata` check and its open call
-/// (bd raikiri-spike-61l).  This function closes that window by holding the
+/// TOCTOU window between its `symlink_metadata` check and its open call.
+/// This function closes that window by holding the
 /// file descriptor `safe_open` returns and reading from it directly, so the
 /// pre-open gates and the actual read are one uninterrupted protected
-/// sequence.  Re-consolidation with the traits helper is tracked in
-/// raikiri-spike-7xw (walls.md §2 escalation).
+/// sequence.  Re-consolidation with the traits helper is still to be done
+/// (walls.md §2 escalation).
 ///
 /// Pre-open gates are load-bearing beyond what `O_NOFOLLOW` covers:
 /// - `!is_file()` rejects direct FIFO / device placements at pre-open —
@@ -487,13 +480,13 @@ fn check_open_handle_containment(
 ///   and `safe_open`) is caught by the post-open fd-based fstat in
 ///   [`check_open_handle_regular`], paired with `O_NONBLOCK` in
 ///   `safe_open` (unix) so a writer-less FIFO cannot block `open()`
-///   before the fstat is reached (raikiri-spike-f4j).
+///   before the fstat is reached.
 /// - `metadata.len() > cap` is the up-front oversized reject; the
 ///   `+1-probe` bounded read below catches the TOCTOU-grow subclass where
 ///   the file expanded between the metadata check and the read.
 ///
 /// Non-unix `safe_open` retains the follow-symlink `File::open` fallback
-/// (Windows equivalent tracked in raikiri-spike-akk); the pre-open
+/// (a Windows equivalent is not yet implemented); the pre-open
 /// `symlink_metadata` check still rejects the common shape there.
 ///
 /// # `canonical_root` containment
@@ -507,18 +500,17 @@ fn check_open_handle_containment(
 /// intermediate components and only refuses to follow the final component —
 /// so an intermediate-symlink escape produces `is_symlink() == false` on the
 /// leaf and would slip past every existing gate.  Mirrors
-/// `raikiri_vrt::reference::read_bounded_fixture_file`
-/// (bd raikiri-spike-d9y.6); re-consolidation with the traits helper
-/// tracked in raikiri-spike-7xw (walls.md §2).
-/// bd raikiri-spike-zr8, closes 61l Codex §8.3 finding #1.
+/// `raikiri_vrt::reference::read_bounded_fixture_file`;
+/// re-consolidation with the traits helper is still to be done
+/// (walls.md §2). Closes the intermediate-directory-swap PathEscape gap.
 ///
 /// This pre-open gate is **not** race-free by itself: `canonicalize` and
 /// `safe_open` are two independent pathname resolutions of a mutable
 /// tree, so an intermediate directory can be swapped again between them.
 /// [`check_open_handle_containment`] closes that residual window
 /// post-open, deriving the containment check from the fd `safe_open`
-/// actually returned instead of a second path-based lookup. bd
-/// raikiri-spike-1ef, closes 61l Codex §8.3 residual on zr8/f4j.
+/// actually returned instead of a second path-based lookup. Closes the
+/// intermediate-directory-swap PathEscape residual.
 fn read_bounded_font_file(
     path: &Path,
     canonical_root: &Path,
@@ -544,9 +536,9 @@ fn read_bounded_font_file(
     // (e.g. `fonts_dir/subdir/` swapped into a symlink to `/tmp/evil/`
     // between walk and read, with `subdir/Ahem.ttf` still a regular file
     // leaf so `is_symlink()` on the leaf does not fire).  Mirrors
-    // `raikiri_vrt::reference::read_bounded_fixture_file` (bd raikiri-spike-d9y.6);
-    // walls.md §2 re-consolidation deferred to raikiri-spike-7xw.
-    // bd raikiri-spike-zr8, closes 61l Codex §8.3 finding #1.
+    // `raikiri_vrt::reference::read_bounded_fixture_file`;
+    // walls.md §2 re-consolidation is still to be done.
+    // Closes the intermediate-directory-swap PathEscape gap.
     // NOTE: this canonicalize + safe_open pair below are two independent
     // pathname resolutions of a mutable tree, not one atomic check-then-use
     // on one object — an intermediate-dir swap between them can make this
@@ -554,8 +546,8 @@ fn read_bounded_font_file(
     // different, outside-root object. This pre-open gate is therefore
     // "belt" only; the fd-bound `check_open_handle_containment` call below
     // (post-open, derived from the fd `safe_open` actually returns) is what
-    // closes the window. bd raikiri-spike-1ef, closes 61l Codex §8.3
-    // residual on zr8/f4j.
+    // closes the window, including its own intermediate-directory-swap
+    // PathEscape residual.
     let canonical = std::fs::canonicalize(path).map_err(FontReadReject::Io)?;
     if !canonical.starts_with(canonical_root) {
         return Err(FontReadReject::PathEscape {
@@ -565,7 +557,7 @@ fn read_bounded_font_file(
     }
     // safe_open adds O_NOFOLLOW on unix so a leaf-symlink swapped in between
     // the above symlink_metadata check and this open call cannot cause a
-    // fresh symlink target to be followed.  bd raikiri-spike-61l (8yu sibling).
+    // fresh symlink target to be followed.
     //
     // cov:ignore: the safe_open `Err` arm here needs a leaf-swap race (or a
     // transient stat failure) to fire on a path that already passed the
@@ -604,8 +596,7 @@ fn read_bounded_font_file(
     // FIFO between pre-open metadata and open; `O_NOFOLLOW` does not
     // filter file kind).  Paired with `O_NONBLOCK` in `safe_open` on
     // unix so the swapped-in writer-less FIFO cannot block `open()`
-    // before this check runs.  bd raikiri-spike-f4j, closes 61l Codex
-    // §8.3 finding #2.
+    // before this check runs.  Closes the FIFO/device leaf-swap gap.
     //
     // cov:ignore: the swap window between pre-open `symlink_metadata` and
     // `safe_open` is not deterministically unit-testable.  The
@@ -620,11 +611,10 @@ fn read_bounded_font_file(
     // `fcntl(fd, F_GETPATH, ..)`) rather than a fresh path-based
     // `canonicalize`. Closes the intermediate-dir-swap TOCTOU window
     // between the pre-open `canonicalize` above and `safe_open`'s own
-    // pathname re-resolution — the residual fe1/61l Codex §8.3 flagged as
-    // surviving zr8+f4j. See `check_open_handle_containment` doc for the
+    // pathname re-resolution — the residual left by the earlier fixes.
+    // See `check_open_handle_containment` doc for the
     // full rationale and the remaining no-op fallback for platforms
-    // without a wired-up primitive. bd raikiri-spike-1ef, Apple-platform
-    // arm added in raikiri-spike-0nww.
+    // without a wired-up primitive.
     check_open_handle_containment(&file, canonical_root)?;
     // Preallocate against the known-good `metadata.len()` upper bound (mirrors
     // raikiri_traits::io helper's happy-path allocation to avoid log2(N)
@@ -660,18 +650,18 @@ fn read_bounded_font_file(
 /// # Design
 ///
 /// Sibling convention: `#[non_exhaustive]` mirrors the taxonomy enums in
-/// `crates/raikiri-traits/src/error.rs` (bd raikiri-spike-37n).  Variants are
+/// `crates/raikiri-traits/src/error.rs`.  Variants are
 /// **split by callsite** (walker vs read) rather than sharing a single
 /// [`FontReadReject`]-shaped taxonomy because the walker-vs-read distinction
-/// is the exact TOCTOU signal fe1 §8.2 wants: a walker `Symlink` is a
+/// is the exact TOCTOU signal that matters here: a walker `Symlink` is a
 /// mundane cycle-safe skip, whereas a read-time `Symlink` means the tree
 /// changed between walk and read (leaf-swap TOCTOU).  Collapsing them would
-/// destroy that signal.  bd raikiri-spike-1uq.
+/// destroy that signal.
 ///
 /// # Not surfaced
 ///
 /// `FontReadReject::Io(_)` never becomes a `FontWarn` variant.  It is
-/// hard-propagated as [`FontError::Io`] (preserves the roborev e93 round 3
+/// hard-propagated as [`FontError::Io`] (preserves the
 /// "Ahem.ttf silent-fallback prevention" guarantee), never warn+skip, so an
 /// observer never sees it.
 #[non_exhaustive]
@@ -686,7 +676,7 @@ pub enum FontWarn<'a> {
     /// Walker skipped a non-regular entry (FIFO / device / socket /
     /// block-or-char device).  `open(O_RDONLY)` on a writer-less FIFO would
     /// block indefinitely; the pre-read `file_type.is_file()` gate is the
-    /// time-DoS defense (raikiri-spike-d9y.4).
+    /// time-DoS defense.
     WalkerSkippedNonRegular {
         /// Absolute (or `fonts_dir`-relative) path of the skipped entry.
         path: &'a Path,
@@ -706,7 +696,7 @@ pub enum FontWarn<'a> {
     },
     /// Read stage rejected a candidate as a symlink.  The walker had already
     /// accepted the path as a regular file, so surfacing here signals a
-    /// **leaf-swap TOCTOU race** between walk and read (raikiri-spike-61l).
+    /// **leaf-swap TOCTOU race** between walk and read.
     ReadRejectedSymlink {
         /// Path that was a regular file at walk time and a symlink at read.
         path: &'a Path,
@@ -727,7 +717,7 @@ pub enum FontWarn<'a> {
     /// bound to the fd.  Firing here means the swap happened inside the
     /// pre-open→open window; paired with `O_NONBLOCK` in `safe_open` (unix)
     /// so a writer-less FIFO cannot block `open()` before this fstat runs.
-    /// bd raikiri-spike-f4j, closes 61l Codex §8.3 finding #2.
+    /// Closes the FIFO/device leaf-swap gap.
     ReadRejectedNotRegularFilePostOpen {
         /// Path whose opened fd resolved to a non-regular kind
         /// (swap window between pre-open metadata and open).
@@ -746,8 +736,8 @@ pub enum FontWarn<'a> {
     },
     /// Read stage caught a **TOCTOU-grow** race via the `+1-probe` pattern:
     /// the file grew past the cap between the pre-open metadata check and
-    /// the bounded read.  The load-bearing observability signal fe1 §8.2
-    /// Angle B/G was designed for.
+    /// the bounded read.  The load-bearing observability signal this
+    /// enum was designed for.
     ReadRejectedOversizedDuringRead {
         /// Path that grew past the cap during the bounded read.
         path: &'a Path,
@@ -761,8 +751,8 @@ pub enum FontWarn<'a> {
     /// resolved (via `canonicalize` then `starts_with(canonical_root)`)
     /// outside the walker's canonical root after an intermediate directory
     /// was swapped into a symlink between walk and read.  Mirror of
-    /// `raikiri_vrt::reference::FixtureError::PathEscape`.  bd
-    /// raikiri-spike-zr8, closes 61l Codex §8.3 finding #1.
+    /// `raikiri_vrt::reference::FixtureError::PathEscape`.
+    /// Closes the intermediate-directory-swap PathEscape gap.
     ReadRejectedPathEscape {
         /// Walker-observed candidate path (pre-canonicalization).
         path: &'a Path,
@@ -781,8 +771,8 @@ pub enum FontWarn<'a> {
     /// recheck (Linux: `/proc/self/fd/<fd>` readlink; Apple platforms:
     /// `fcntl(fd, F_GETPATH, ..)`) is derived from the fd `safe_open`
     /// actually returned, so firing here means the swap happened inside
-    /// that canonicalize→safe_open window itself. bd raikiri-spike-1ef,
-    /// closes 61l Codex §8.3 residual on zr8/f4j.
+    /// that canonicalize→safe_open window itself. Closes the
+    /// intermediate-directory-swap PathEscape residual.
     ReadRejectedPathEscapePostOpen {
         /// Walker-observed candidate path (pre-canonicalization).
         path: &'a Path,
@@ -805,7 +795,8 @@ pub enum FontWarn<'a> {
 impl<'a> std::fmt::Display for FontWarn<'a> {
     /// Reproduces the pre-observer `eprintln!` message bodies verbatim so
     /// swapping between observer-Some and observer-None does not change what
-    /// operators see on stderr (fe1 §8.2 "behavior-change" caution).  The
+    /// operators see on stderr (message wording is a "behavior-change"
+    /// surface, so it's held stable deliberately).  The
     /// callsite prefixes `[raikiri-dom::fonts] warn: `.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -889,7 +880,7 @@ type FontWarnObserver<'o> = Option<&'o mut dyn FnMut(&FontWarn<'_>)>;
 /// Delegates to the crate-common [`crate::diag::emit_warn_via`] macro so this
 /// site and `layout.rs`'s [`crate::layout::LayoutWarn`] silent-clamp
 /// diagnostics share one mechanism instead of two independent answers to the
-/// same need (bd raikiri-spike-7t1t). See that module's doc for why this is
+/// same need. See that module's doc for why this is
 /// a macro rather than a generic `Observer<W>` type — `FontWarn`'s observer
 /// is higher-ranked over `FontWarn`'s own borrowed lifetime, which a
 /// monomorphic generic parameter cannot express.
@@ -959,9 +950,9 @@ fn read_reject_to_warn<'a>(path: &'a Path, reject: &'a FontReadReject) -> FontWa
 ///
 /// Delegates to [`build_wpt_font_ctx_with_observer`] with a `None` observer,
 /// preserving the CLI-facing `eprintln!` warn output.  Consumers wanting a
-/// structured observer callback for TOCTOU-swap/grow anomalies (fe1 §8.2
-/// Angle B/G) should call `_with_observer` directly.  Signature preserved
-/// for the `crates/raikiri/tests/external_consumer.rs` pin (bd raikiri-spike-e93).
+/// structured observer callback for TOCTOU-swap/grow anomalies
+/// should call `_with_observer` directly.  Signature preserved
+/// for the `crates/raikiri/tests/external_consumer.rs` pin.
 ///
 /// # Errors
 ///
@@ -977,8 +968,7 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
 /// The `observer` receives a [`FontWarn`] for every warn+skip site — walker
 /// (symlink / non-regular / oversized), read-time TOCTOU (`ReadRejected*`),
 /// and fontique register-empty.  When `None`, warn output falls back to the
-/// legacy `eprintln!` shape so CLI use is unaffected.  bd raikiri-spike-1uq
-/// (fe1 §8.2 Angle B/G observability follow-up).
+/// legacy `eprintln!` shape so CLI use is unaffected.
 ///
 /// # Errors
 /// - [`FontError::DirNotFound`] — `fonts_dir` が存在しない
@@ -1008,7 +998,7 @@ pub fn build_wpt_font_ctx_with_observer(
     // fully-resolved prefix.  `fonts_dir.exists()` cleared the DirNotFound
     // path above; a canonicalize failure here would be a TOCTOU race (dir
     // unlinked between check and canonicalize) — propagate as Io rather than
-    // panic.  bd raikiri-spike-zr8 (closes 61l Codex §8.3 finding #1).
+    // panic.
     let canonical_root = std::fs::canonicalize(fonts_dir).map_err(|source|
         // cov:ignore: the Err arm here needs a TOCTOU race (fonts_dir
         // unlinked between the `.exists()` check above and canonicalize)
@@ -1037,7 +1027,7 @@ pub fn build_wpt_font_ctx_with_observer(
     // Register 順 = fallback 順。walker が PREFERRED_FIRST を先頭に置く。
     //
     // File read failure は **hard error として propagate**する
-    // (roborev Medium finding e93 round 3): 従来の eprintln! warn skip では、
+    // (Ahem.ttf の silent drop を防ぐため): 従来の eprintln! warn skip では、
     // Ahem.ttf (PREFERRED_FIRST`[0]`) が read failed 時に silently 次候補
     // (CSSTest 等) が register され、cascade "serif" が想定外の font に解決
     // されてしまう。walker が返した path は既に存在確認済 (read_dir で
@@ -1047,26 +1037,26 @@ pub fn build_wpt_font_ctx_with_observer(
     // aggregate check (`family_ids.is_empty` → NoFontsRegistered) が catch する
     // ので warn+skip のまま維持。
     let mut family_ids = Vec::new();
-    // PREFERRED_FIRST invariant tracking (roborev Medium finding e93 round 5):
+    // PREFERRED_FIRST invariant tracking:
     // path が PREFERRED_FIRST member かつ register 成功したものを basename
     // 単位で記録。loop 後にこの set と PREFERRED_FIRST を照合し、欠落 or
     // register-empty があれば PreferredFontUnavailable。silent fallback を防ぐ。
     let mut registered_preferred_basenames: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for path in paths {
-        // Bounded read via callsite-local `read_bounded_font_file`
-        // (raikiri-spike-61l).  fe1 initially routed through the shared
+        // Bounded read via callsite-local `read_bounded_font_file`. This
+        // pipeline initially routed through the shared
         // `raikiri_traits::io::read_bounded_regular_file`, but the traits
         // helper's `File::open` follows symlinks and leaves a leaf-swap TOCTOU
-        // window between its `symlink_metadata` check and the open.  61l
-        // closes that window here by holding the descriptor `safe_open`
-        // returns (unix `O_NOFOLLOW`) and reading from it directly.
-        // Re-consolidating with the traits helper is deferred to
-        // raikiri-spike-7xw (walls.md §2).
+        // window between its `symlink_metadata` check and the open. This
+        // module's own pipeline closes that window here by holding the
+        // descriptor `safe_open` returns (unix `O_NOFOLLOW`) and reading
+        // from it directly. Re-consolidating with the traits helper is
+        // still to be done (walls.md §2).
         //
-        // Callsite policy (preserved from fe1):
+        // Callsite policy:
         // - `Io(_)` -> hard-error propagate.  Preserves the "Ahem.ttf
-        //   silent-fallback prevention" guarantee (roborev e93 round 3): an
+        //   silent-fallback prevention" guarantee: an
         //   unexpected Io error at read time aborts the build directly, so
         //   the registry cannot silently drop the preferred font without a
         //   caller-visible error.  `PreferredFontUnavailable` is not the
@@ -1082,25 +1072,25 @@ pub fn build_wpt_font_ctx_with_observer(
         //   is affected, `PreferredFontUnavailable` fires downstream on the
         //   aggregate `registered_preferred_basenames` check.
         //   `OversizedDuringRead` closes the silent-truncation window the
-        //   prior `take(FONT_SIZE_CAP)` had (fe1 fix; the `+1-probe` surfaces
+        //   prior `take(FONT_SIZE_CAP)` had (the `+1-probe` surfaces
         //   TOCTOU-grow instead of returning a truncated buffer).  `Symlink`
         //   covers the leaf-swap TOCTOU class: safe_open's `O_NOFOLLOW`
         //   ELOOP or the post-error `symlink_metadata` recheck surface a
-        //   mid-walk swap-in (raikiri-spike-61l).  `PathEscape` covers the
+        //   mid-walk swap-in.  `PathEscape` covers the
         //   intermediate-symlink-swap class (walker recorded
         //   `subdir/font.ttf`, attacker swapped `subdir/` into a symlink to
         //   `/tmp/evil/` between walk and read; the leaf still stats as a
         //   regular file so `is_symlink()` does not fire but canonicalize
-        //   resolves outside `canonical_root`).  bd raikiri-spike-zr8,
-        //   closes 61l Codex §8.3 finding #1.  `NotRegularFilePostOpen`
+        //   resolves outside `canonical_root`) — this closes the
+        //   intermediate-directory-swap PathEscape gap.  `NotRegularFilePostOpen`
         //   covers the FIFO/character device / block device swap TOCTOU
         //   class (walker + pre-open metadata saw a regular file, attacker
         //   swapped it for a FIFO / device between pre-open metadata and
         //   `safe_open`).  `O_NONBLOCK` in `safe_open` prevents the
         //   writer-less FIFO from blocking `open()`, and the fd-based
         //   `File::metadata()` fstat inspects the inode already bound to the
-        //   descriptor (race-free by construction).  bd raikiri-spike-f4j,
-        //   closes 61l Codex §8.3 finding #2.  `PathEscapePostOpen` covers
+        //   descriptor (race-free by construction) — this closes the
+        //   FIFO/device leaf-swap gap.  `PathEscapePostOpen` covers
         //   the intermediate-dir-swap subclass that survives even
         //   `PathEscape`'s pre-open canonicalize check: an attacker swaps
         //   the intermediate directory again between that check and
@@ -1108,8 +1098,8 @@ pub fn build_wpt_font_ctx_with_observer(
         //   `check_open_handle_containment` recheck (Linux: `/proc/self/fd/
         //   <fd>` readlink; Apple platforms: `fcntl(fd, F_GETPATH, ..)`) is
         //   derived from the fd `safe_open` actually returned, so it is
-        //   race-free against that second swap by construction.  bd
-        //   raikiri-spike-1ef, closes 61l Codex §8.3 residual on zr8/f4j.
+        //   race-free against that second swap by construction — this
+        //   closes the intermediate-directory-swap PathEscape residual.
         //
         // Trade-offs recorded:
         // - The walker's symlink_metadata / is_symlink / is_file /
@@ -1155,7 +1145,7 @@ pub fn build_wpt_font_ctx_with_observer(
         family_ids.extend(registered.iter().map(|(id, _)| *id));
     }
 
-    // PREFERRED_FIRST invariant enforce (roborev Medium finding e93 round 5):
+    // PREFERRED_FIRST invariant enforce:
     // PREFERRED_FIRST 全 member が register 成功したことを確認。missing (walker
     // で拾えなかった) or register-empty (fontique reject) の場合、他の valid
     // font が silent fallback として cascade "serif" に解決されないよう
@@ -1208,7 +1198,7 @@ pub enum FontError {
     /// `PREFERRED_FIRST` が空の future 想定でのみ到達する defensive backstop。
     NoFontsRegistered(PathBuf),
     /// `PREFERRED_FIRST` に list された font が dir に存在しない、または
-    /// fontique が register を拒否した (roborev finding e93 round 5)。
+    /// fontique が register を拒否した。
     /// silent fallback で cascade 決定性を破壊しないよう dedicated Err。
     PreferredFontUnavailable {
         /// 期待されたが register 成功しなかった font の basename
@@ -1298,8 +1288,8 @@ fn walk_fonts(dir: &Path, observer: &mut FontWarnObserver<'_>) -> Result<Vec<Pat
     // 同一 basename が複数 subdir に存在するケース (例: 将来の WPT pin で
     // Ahem.ttf が fonts/ と fonts/CSSTest/ 両方に存在) では **全 match** を
     // drain する — `.find()` を 1 回だけ呼ぶと最初の match 以外が
-    // ordered_preferred からも rest からも silently drop されてしまう
-    // (M1 finding)。`Vec::retain` で target にマッチする要素を全部
+    // ordered_preferred からも rest からも silently drop されてしまう。
+    // `Vec::retain` で target にマッチする要素を全部
     // 抜き取ることで、複数 match を取りこぼさない。
     let mut ordered_preferred: Vec<PathBuf> = Vec::new();
     let mut remaining_preferred = preferred;
@@ -1318,7 +1308,7 @@ fn walk_fonts(dir: &Path, observer: &mut FontWarnObserver<'_>) -> Result<Vec<Pat
     // 4. preferred + rest を結合。remaining_preferred は理論上 empty
     // (partition の条件が PREFERRED_FIRST.contains と一致する為) だが、
     // 万一 unmatched な要素が残っても rest 側に足すことで silent drop を
-    // 防ぐ (M1 finding の根本対策)。
+    // 防ぐための対策。
     let mut result = ordered_preferred;
     result.extend(rest);
     result.extend(remaining_preferred);
@@ -1334,8 +1324,8 @@ fn collect_recursive(
         path: dir.to_path_buf(),
         source,
     })?;
-    // 各 DirEntry を preserve して `file_type()` で kind を照会する
-    // (roborev Medium finding e93 round 4)。過去の `Path::is_dir()` 経由は:
+    // 各 DirEntry を preserve して `file_type()` で kind を照会する。
+    // 過去の `Path::is_dir()` 経由は:
     // (a) symlink を follow するため `fonts/loop -> .` の cycle で無限再帰
     //     → stack overflow abort、
     // (b) metadata error を silently `false` として扱い entry を落とす、
@@ -1374,7 +1364,6 @@ fn collect_recursive(
         // /dev/zero symlink 経路が閉じられた後の直接配置 attack vector。
         // `Read::take(N)` は memory bound しか担保しないので、時間軸の DoS
         // (blocking read) は walk 段階で file_type filter するのが load-bearing。
-        // raikiri-spike-d9y.4, Codex finding `ffe1f9c7027c8191a8f8812a6456c7d9`。
         if !file_type.is_file() {
             emit_warn(
                 observer,
@@ -1398,7 +1387,7 @@ fn collect_recursive(
             continue;
         }
         // Size cap: attacker が用意した巨大 regular font file による memory
-        // exhaustion を弾く (raikiri-spike-d9y.4)。境界値 (== FONT_SIZE_CAP) は
+        // exhaustion を弾く。境界値 (== FONT_SIZE_CAP) は
         // 通す (build_wpt_font_ctx 側の `take(FONT_SIZE_CAP)` bounded read が
         // 完全 consume するので truncation は起きない)。
         let metadata = std::fs::symlink_metadata(&path).map_err(|source| FontError::Io {
@@ -1498,7 +1487,7 @@ mod tests {
         // "AAA-non-preferred.ttf" は plain alphabetical sort だと Ahem.ttf
         // より前に来る ('A' == 'A' だが "AAA" < "Ahem" byte-wise: 'A' < 'h').
         // これを混ぜることで、PREFERRED_FIRST の explicit reorder が本当に
-        // 効いていることを検証する (M2 finding: これが無いと Ahem が
+        // 効いていることを検証する (これが無いと Ahem が
         // alphabetically 先頭なだけの偶然と reorder 適用が区別できない)。
         write_fake_ttf(tmp.path(), "AAA-non-preferred.ttf");
         write_fake_ttf(tmp.path(), "Ahem.ttf");
@@ -1525,7 +1514,7 @@ mod tests {
 
     #[test]
     fn walker_handles_duplicate_preferred_basename_in_subdirs() {
-        // M1 regression pin: 同一 basename (Ahem.ttf) が top-level と
+        // Regression pin: 同一 basename (Ahem.ttf) が top-level と
         // subdir 両方に存在するケース (将来の WPT pin で fonts/Ahem.ttf +
         // fonts/CSSTest/Ahem.ttf のような構成があり得る)。旧実装は
         // `.find()` を 1 回しか呼ばない為、2 個目以降の match が
@@ -1576,7 +1565,7 @@ mod tests {
         // NB: `parley::FontContext` doesn't impl `Debug` (parley 0.10), so
         // `Result::unwrap_err` (which requires `T: Debug`) can't be used
         // here. `match` sidesteps that bound.
-        let bogus = Path::new("/definitely/does/not/exist/raikiri-spike-e93");
+        let bogus = Path::new("/definitely/does/not/exist/raikiri-dom-fonts-test");
         match build_wpt_font_ctx(bogus) {
             Err(FontError::DirNotFound(p)) => assert_eq!(p, bogus),
             Err(other) => panic!("expected DirNotFound, got {:?}", other),
@@ -1597,8 +1586,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn walker_skips_named_pipe_font_entry() {
-        // raikiri-spike-d9y.4 regression pin (Codex finding
-        // `ffe1f9c7027c8191a8f8812a6456c7d9`): 攻撃者が制御下 fonts dir に
+        // Regression pin: 攻撃者が制御下 fonts dir に
         // `evil.ttf` という名前の FIFO を配置した場合、`std::fs::read` が
         // writer 未定の FIFO で無限 block してしまう。walk 段階で
         // `file_type.is_file()` filter が named pipe を弾くことを pin する。
@@ -1628,7 +1616,7 @@ mod tests {
 
     #[test]
     fn walker_skips_oversized_font_file() {
-        // raikiri-spike-d9y.4 regression pin: FONT_SIZE_CAP + 1 byte の
+        // Regression pin: FONT_SIZE_CAP + 1 byte の
         // sparse regular file (実際には zero-block、`set_len` で logical size
         // のみ膨らむ) を walker が skip することを pin する。
         // sparse file を使うのは、テスト実行時に 100 MiB+ の実 block 消費を
@@ -1655,14 +1643,14 @@ mod tests {
 
     #[test]
     fn walker_accepts_regular_file_at_size_cap_boundary() {
-        // raikiri-spike-d9y.4: filter が silently over-reject していないことを
+        // Regression pin: filter が silently over-reject していないことを
         // pin する (境界値 == FONT_SIZE_CAP は通す — build_wpt_font_ctx 側の
         // `take(FONT_SIZE_CAP)` bounded read は境界を全 consume する)。
         // boundary.ttf: `File::set_len(FONT_SIZE_CAP)` で sparse file を作り、
         // 境界値ちょうど (`metadata.len() == FONT_SIZE_CAP`) が accept 側に
         // 落ちる (`>` cap で skip、`<= cap` で accept) ことを直接 pin する
-        // (codex final review 軽微 finding fix — tiny file では境界を実際に
-        // 触れず silent over-reject を捕捉できない)。
+        // (tiny file では境界を実際に触れず silent over-reject を
+        // 捕捉できないため)。
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("boundary.ttf");
         let f = std::fs::File::create(&path).expect("create boundary.ttf");
@@ -1680,7 +1668,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn walker_skips_symlink_dirs_no_cycle_overflow() {
-        // roborev Medium finding e93 round 4 regression pin: `Path::is_dir()`
+        // Regression pin: `Path::is_dir()`
         // が symlink を follow して recursion loop に入る問題。`fonts/loop → .`
         // のような self-cycle でも walker が有限時間で return することを pin。
         let tmp = tempfile::tempdir().unwrap();
@@ -1702,7 +1690,7 @@ mod tests {
 
     #[test]
     fn preferred_font_missing_from_disk_returns_err() {
-        // roborev Medium finding e93 round 5 regression pin: PREFERRED_FIRST
+        // Regression pin: PREFERRED_FIRST
         // font (Ahem.ttf) が dir に存在しない場合、他の valid font (Other.ttf)
         // が silent fallback として cascade "serif" に解決されてはならない。
         let tmp = tempfile::tempdir().unwrap();
@@ -1726,11 +1714,11 @@ mod tests {
 
     #[test]
     fn preferred_font_register_failure_returns_err() {
-        // roborev Medium finding e93 round 5 regression pin: PREFERRED_FIRST
+        // Regression pin: PREFERRED_FIRST
         // font (Ahem.ttf) が disk に存在するが fontique に reject された場合、
         // 他の valid font が silent fallback として cascade "serif" に解決
-        // されてはならない (Round 3 の read failure fix と同じ精神で、
-        // register failure も dedicated Err に昇格)。
+        // されてはならない (read failure を hard-error に昇格させたのと
+        // 同じ精神で、register failure も dedicated Err に昇格)。
         let tmp = tempfile::tempdir().unwrap();
         // Ahem.ttf: garbage bytes → fontique が register 拒否
         std::fs::write(tmp.path().join("Ahem.ttf"), b"not a valid font").unwrap();
@@ -1781,10 +1769,10 @@ mod tests {
 
         let ctx = build_wpt_font_ctx(&fonts_dir).expect("build Ok with Ahem present");
         // parley 0.10 の resolution API 経由で "serif" generic が非空 family
-        // に解決されることを assert する完全な検証は Task 8 の end-to-end VRT
+        // に解決されることを assert する完全な検証は将来の end-to-end VRT
         // が担保する。ここでは build_wpt_font_ctx が real WPT font dir
         // (Ahem.ttf 含む) に対して panic せず Ok を返すことのみを smoke
-        // check する (M1 scope、controller ambiguity resolution 済)。
+        // check する (spike scope。controller ambiguity は解決済み)。
         let _ = ctx;
     }
 
@@ -1795,7 +1783,6 @@ mod tests {
     /// symlink regardless of the exact errno. The Ok arm is the regression
     /// pin — an implementation that drops custom_flags(O_NOFOLLOW) would
     /// silently follow the link and return Ok(file), failing this test.
-    /// bd raikiri-spike-61l (8yu sibling).
     #[cfg(unix)]
     #[test]
     fn safe_open_rejects_symlink_at_open_time() {
@@ -1831,7 +1818,6 @@ mod tests {
     /// short-circuits) — that unit is covered by
     /// `safe_open_rejects_symlink_at_open_time`.  Kept to pin the full-path
     /// behavior against future refactors that might reorder the checks.
-    /// bd raikiri-spike-61l (8yu sibling).
     #[cfg(unix)]
     #[test]
     fn read_bounded_font_file_rejects_symlink_via_pre_open_check() {
@@ -1855,7 +1841,6 @@ mod tests {
     /// legitimate regular file.  Without this test, an implementation that
     /// broke the safe_open fallback (e.g. accidentally always returning
     /// ELOOP) would be missed by the symlink-only tests.
-    /// bd raikiri-spike-61l (8yu sibling).
     #[test]
     fn read_bounded_font_file_accepts_regular_file_with_nofollow() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1880,7 +1865,6 @@ mod tests {
     /// (structural coverage for the `!file_type.is_file()` branch — the same
     /// arm also fires on FIFO / device / socket paths, whose behavior is
     /// pinned separately by `walker_skips_named_pipe_font_entry`).
-    /// bd raikiri-spike-61l.
     #[test]
     fn read_bounded_font_file_rejects_directory_as_not_regular_file() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1895,7 +1879,6 @@ mod tests {
     /// pre-open metadata check (`metadata.len() > cap`).  Uses a small cap
     /// against a tiny file so the test doesn't need `set_len(FONT_SIZE_CAP + 1)`
     /// (that alternative is exercised by `walker_skips_oversized_font_file`).
-    /// bd raikiri-spike-61l.
     #[test]
     fn read_bounded_font_file_rejects_oversized_pre_open() {
         let cap = 4u64;
@@ -1921,7 +1904,7 @@ mod tests {
     /// without this, an implementation that made the `starts_with`
     /// comparison too strict (e.g. required byte-identical paths after
     /// canonicalization but not before) would fail silently on tmpdir
-    /// layouts with symlinked prefixes. bd raikiri-spike-zr8.
+    /// layouts with symlinked prefixes.
     #[test]
     fn read_bounded_font_file_accepts_regular_file_inside_canonical_root() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1946,8 +1929,8 @@ mod tests {
     /// non-regular-file, and size gates all pass. The containment check
     /// is the load-bearing defense: canonicalize resolves the leaf to
     /// `outside/font.ttf`, which does not `starts_with(canonical_root)`,
-    /// producing `FontReadReject::PathEscape`. Closes 61l Codex §8.3
-    /// finding #1. bd raikiri-spike-zr8.
+    /// producing `FontReadReject::PathEscape`. Closes the
+    /// intermediate-directory-swap PathEscape gap.
     #[cfg(unix)]
     #[test]
     fn read_bounded_font_file_rejects_intermediate_symlink_escape() {
@@ -2004,7 +1987,7 @@ mod tests {
     /// that reordered the canonicalize call before the pre-open gate
     /// would silently reclassify NotFound as an Io-under-canonicalize
     /// (still Io, but with confusing provenance) or worse, the pre-open
-    /// error message would move. bd raikiri-spike-zr8.
+    /// error message would move.
     #[test]
     fn read_bounded_font_file_returns_io_for_nonexistent_path() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2020,8 +2003,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Post-open fd-based fstat tests (bd raikiri-spike-f4j — 61l Codex
-    // §8.3 finding #2 FIFO/device swap TOCTOU defense)
+    // Post-open fd-based fstat tests (FIFO/device swap TOCTOU defense)
     // ------------------------------------------------------------------
     //
     // The FIFO/device swap window between the pre-open `symlink_metadata`
@@ -2040,7 +2022,6 @@ mod tests {
     /// specifies `O_NONBLOCK` has no effect on regular files (Linux honors
     /// this), so `safe_open` returns immediately and `File::metadata()`
     /// resolves via fd-based fstat to `is_file() == true`.
-    /// bd raikiri-spike-f4j.
     #[test]
     fn check_open_handle_regular_accepts_regular_file() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2072,7 +2053,7 @@ mod tests {
     /// `read_bounded_font_file` — that isolation is intentional so the
     /// test exercises the post-open detection path, which in the composed
     /// pipeline only fires on a real TOCTOU race (cov:ignore in the loop).
-    /// bd raikiri-spike-f4j, closes 61l Codex §8.3 finding #2.
+    /// Closes the FIFO/device leaf-swap gap.
     #[cfg(unix)]
     #[test]
     fn check_open_handle_regular_rejects_fifo() {
@@ -2109,7 +2090,7 @@ mod tests {
     ///
     /// Uses `/dev/null` directly rather than a tempdir path because
     /// `safe_open` performs no containment check (containment is
-    /// `read_bounded_font_file`'s responsibility).  bd raikiri-spike-f4j.
+    /// `read_bounded_font_file`'s responsibility).
     #[cfg(unix)]
     #[test]
     fn check_open_handle_regular_rejects_char_device() {
@@ -2125,9 +2106,9 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Post-open fd-bound containment tests (bd raikiri-spike-1ef — 61l
-    // Codex §8.3 residual: intermediate-dir-swap TOCTOU between the
-    // pre-open canonicalize and safe_open's own pathname re-resolution)
+    // Post-open fd-bound containment tests (intermediate-dir-swap TOCTOU
+    // between the pre-open canonicalize and safe_open's own pathname
+    // re-resolution)
     // ------------------------------------------------------------------
     //
     // Like the FIFO/device swap window above, the actual intermediate-dir
@@ -2144,7 +2125,7 @@ mod tests {
     /// `check_open_handle_containment` accepts a file whose fd resolves
     /// under the given `canonical_root` — the happy-path regression pin
     /// that the `/proc/self/fd/<fd>` readlink does not spuriously reject
-    /// files that are, in fact, inside the root. bd raikiri-spike-1ef.
+    /// files that are, in fact, inside the root.
     #[cfg(target_os = "linux")]
     #[test]
     fn check_open_handle_containment_accepts_file_within_root() {
@@ -2171,8 +2152,8 @@ mod tests {
     /// target. Simulates what an intermediate-dir-swap attacker would
     /// achieve: an fd bound to a location outside `canonical_root`, opened
     /// via a pathname that (at a *different* point in time, e.g. the
-    /// pre-open `canonicalize` above) resolved inside it. bd
-    /// raikiri-spike-1ef, closes 61l Codex §8.3 residual on zr8/f4j.
+    /// pre-open `canonicalize` above) resolved inside it. Closes the
+    /// intermediate-directory-swap PathEscape residual.
     #[cfg(target_os = "linux")]
     #[test]
     fn check_open_handle_containment_rejects_file_outside_root() {
@@ -2200,8 +2181,8 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Apple-platform post-open fd-bound containment tests (bd
-    // raikiri-spike-0nww — Apple-platform arm of the same defense the
+    // Apple-platform post-open fd-bound containment tests (the
+    // Apple-platform arm of the same defense the
     // Linux tests above pin, via `fcntl(fd, F_GETPATH, ..)` instead of
     // `/proc/self/fd/<fd>` readlink).
     // ------------------------------------------------------------------
@@ -2210,8 +2191,8 @@ mod tests {
     // / `_rejects_file_outside_root` above structurally (same setup, same
     // assertions) — only the underlying platform primitive differs. They
     // do not run in this repo's Linux CI and have never executed against
-    // a real Apple toolchain (no Apple CI target exists here as of
-    // 2026-08-08; see the "Untested in CI" section on the
+    // a real Apple toolchain (no Apple CI target exists here yet; see the
+    // "Untested in CI" section on the
     // `check_open_handle_containment` Apple-platform impl above for the
     // accepted-risk rationale and the `F_GETPATH` path-form caveat to
     // check first if either of these ever fails on real Apple CI).
@@ -2219,8 +2200,7 @@ mod tests {
     /// `check_open_handle_containment` (Apple-platform arm) accepts a file
     /// whose fd resolves under the given `canonical_root` — the happy-path
     /// regression pin that `fcntl(fd, F_GETPATH, ..)` does not spuriously
-    /// reject files that are, in fact, inside the root. bd
-    /// raikiri-spike-0nww.
+    /// reject files that are, in fact, inside the root.
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -2250,7 +2230,7 @@ mod tests {
     /// expected root), the fd-derived `F_GETPATH` path fails
     /// `starts_with(canonical_root)` and the recheck rejects — proving the
     /// check does not trust a path string, only the fd's own resolved
-    /// target. bd raikiri-spike-0nww.
+    /// target.
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -2284,7 +2264,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Observer tests (bd raikiri-spike-1uq — fe1 §8.2 Angle B/G follow-up)
+    // Observer tests
     // ------------------------------------------------------------------
     //
     // Structural coverage for `build_wpt_font_ctx_with_observer`:
@@ -2293,7 +2273,7 @@ mod tests {
     // - Default None-observer path still writes to eprintln! and does not
     //   panic.
     // - The `read_reject_to_warn` mapping covers all non-Io variants
-    //   (including `NotRegularFilePostOpen` from raikiri-spike-f4j)
+    //   (including `NotRegularFilePostOpen`)
     //   without needing a TOCTOU race (that path is cov:ignore in the loop).
 
     /// Owned copy of a [`FontWarn`] event for observer test assertions.
@@ -2358,7 +2338,7 @@ mod tests {
     /// Observer fires `WalkerSkippedSymlink` when a symlink entry sits
     /// alongside real fonts.  Regression pin: the walker's cycle-safe skip
     /// must route through the shared observer, not just the legacy
-    /// eprintln!.  bd raikiri-spike-1uq.
+    /// eprintln!.
     #[cfg(unix)]
     #[test]
     fn observer_fires_walker_skipped_symlink() {
@@ -2386,7 +2366,6 @@ mod tests {
     /// Observer fires `WalkerSkippedNonRegular` when a FIFO poses as a
     /// `.ttf` file.  Complements `walker_skips_named_pipe_font_entry`
     /// (pre-observer) by pinning that the same skip is now structured.
-    /// bd raikiri-spike-1uq.
     #[cfg(unix)]
     #[test]
     fn observer_fires_walker_skipped_non_regular() {
@@ -2416,7 +2395,7 @@ mod tests {
     /// Observer fires `WalkerSkippedOversized` when a `.ttf` grows past
     /// `FONT_SIZE_CAP`.  Sparse `set_len(FONT_SIZE_CAP + 1)` avoids
     /// consuming 100 MiB of test disk; `metadata.len()` returns the logical
-    /// size regardless.  bd raikiri-spike-1uq.
+    /// size regardless.
     #[test]
     fn observer_fires_walker_skipped_oversized() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2447,7 +2426,7 @@ mod tests {
     /// Observer fires `RegisterEmpty` when a non-preferred `.ttf` contains
     /// garbage bytes that fontique rejects.  Uses `Other.ttf` (not
     /// `Ahem.ttf`) so `PreferredFontUnavailable` does not preempt the
-    /// event.  bd raikiri-spike-1uq.
+    /// event.
     #[test]
     fn observer_fires_register_empty() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2475,7 +2454,6 @@ mod tests {
     /// classification even when warn+skip sites fire.  Regression pin: the
     /// observer plumbing must not divert the `FontError` return channel or
     /// change the eprintln! fallback in a way that breaks CLI use.
-    /// bd raikiri-spike-1uq.
     #[cfg(unix)]
     #[test]
     fn observer_none_path_still_falls_back_to_eprintln_and_does_not_panic() {
@@ -2503,7 +2481,7 @@ mod tests {
     /// walker pre-filters symlink/non-regular/oversized, so the arm only
     /// fires on a real TOCTOU race), which would otherwise leave the
     /// TOCTOU-observability deliverable untested.  This unit test closes
-    /// that coverage gap deterministically.  bd raikiri-spike-1uq.
+    /// that coverage gap deterministically.
     #[test]
     fn read_reject_to_warn_maps_all_non_io_variants() {
         let path = Path::new("/tmp/fake.ttf");
@@ -2519,7 +2497,6 @@ mod tests {
         // NotRegularFilePostOpen: the read-time arm is cov:ignore
         // (pre-open+O_NONBLOCK+fstat window race required to fire), so
         // this is the sole deterministic pin of the new mapping.
-        // bd raikiri-spike-f4j.
         assert!(matches!(
             read_reject_to_warn(path, &FontReadReject::NotRegularFilePostOpen),
             FontWarn::ReadRejectedNotRegularFilePostOpen { path: p } if p == path
@@ -2546,7 +2523,6 @@ mod tests {
         // PathEscape: since the loop's read-time arm is cov:ignore
         // (walker pre-filter + intermediate-symlink race required to fire),
         // this is the sole deterministic pin of the new mapping.
-        // bd raikiri-spike-zr8.
         let canonical = PathBuf::from("/tmp/outside/font.ttf");
         let root = PathBuf::from("/tmp/fonts");
         assert!(matches!(
@@ -2567,7 +2543,6 @@ mod tests {
         // between the pre-open canonicalize and safe_open's own pathname
         // resolution (cov:ignore in the loop, same shape as PathEscape
         // above), so this is the sole deterministic pin of the mapping.
-        // bd raikiri-spike-1ef.
         assert!(matches!(
             read_reject_to_warn(
                 path,
@@ -2585,15 +2560,15 @@ mod tests {
     }
 
     /// `FontWarn`'s `Display` output must reproduce the pre-observer
-    /// `eprintln!` message bodies verbatim.  fe1 §8.2 flagged fonts.rs
-    /// warn-message wording as a behavior-change surface; this test pins
+    /// `eprintln!` message bodies verbatim.  Warn-message wording is a
+    /// behavior-change surface; this test pins
     /// that the None-observer fallback is byte-identical (modulo the
-    /// callsite prefix `[raikiri-dom::fonts] warn: `).  bd raikiri-spike-1uq.
+    /// callsite prefix `[raikiri-dom::fonts] warn: `).
     #[test]
     fn font_warn_display_reproduces_legacy_message_bodies() {
         let p = Path::new("/tmp/fake.ttf");
 
-        // Walker sites — bodies from the pre-1uq eprintln! calls in
+        // Walker sites — bodies from the original eprintln! calls in
         // collect_recursive (symlink / non-regular / oversized).  The
         // {file_type:?} formatting on non-regular uses a locally-inferred
         // FileType via `symlink_metadata` on the tempdir root so the test
@@ -2614,7 +2589,7 @@ mod tests {
             "skipping oversized font /tmp/fake.ttf (200 bytes > cap 100)"
         );
 
-        // Read-time sites — bodies mirror the pre-1uq eprintln! wording
+        // Read-time sites — bodies mirror the original eprintln! wording
         // "skipping <path> (<FontReadReject Display>)".
         assert_eq!(
             format!("{}", FontWarn::ReadRejectedSymlink { path: p }),
@@ -2624,10 +2599,9 @@ mod tests {
             format!("{}", FontWarn::ReadRejectedNotRegularFile { path: p }),
             "skipping /tmp/fake.ttf (path is not a regular file)"
         );
-        // NotRegularFilePostOpen: new variant (bd raikiri-spike-f4j).
-        // Message body pins the TOCTOU-swap wording so operators can
-        // grep for "TOCTOU-swap" and distinguish this from a mundane
-        // pre-open non-regular reject.
+        // NotRegularFilePostOpen: message body pins the TOCTOU-swap
+        // wording so operators can grep for "TOCTOU-swap" and distinguish
+        // this from a mundane pre-open non-regular reject.
         assert_eq!(
             format!(
                 "{}",
@@ -2657,7 +2631,7 @@ mod tests {
             ),
             "skipping /tmp/fake.ttf (file grew past cap during read: 101 bytes read, cap 100 bytes (TOCTOU-grow))"
         );
-        // PathEscapePostOpen: new variant (bd raikiri-spike-1ef). Message
+        // PathEscapePostOpen: message
         // body pins the TOCTOU-swap wording (mirroring
         // NotRegularFilePostOpen above) so operators can grep for
         // "TOCTOU-swap" and distinguish this fd-bound, race-free reject
@@ -2674,7 +2648,7 @@ mod tests {
             "skipping /tmp/fake.ttf (opened fd resolves to /tmp/outside/font.ttf which escapes fonts root /tmp/fonts (TOCTOU-swap between pre-open canonicalize and safe_open))"
         );
 
-        // Register-empty site — body from the pre-1uq eprintln! after the
+        // Register-empty site — body from the original eprintln! after the
         // fontique register_fonts empty branch.
         assert_eq!(
             format!("{}", FontWarn::RegisterEmpty { path: p }),

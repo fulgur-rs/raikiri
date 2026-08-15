@@ -20,7 +20,7 @@ use crate::types::{ParseOptions, UncascadedDocument};
 ///
 /// `input` は UTF-8 の byte stream として扱う。Read 失敗は
 /// [`ParseError::Io`]、UTF-8 として invalid な入力は [`ParseError::Encoding`]
-/// を返す (M1 spike scope、encoding_rs 導入は M2+ で予定)。
+/// を返す (spike scope。encoding_rs 導入は将来予定)。
 ///
 /// # Example
 ///
@@ -45,12 +45,12 @@ pub fn parse<R: Read>(
 /// `type Output = UncascadedDocument` を宣言し、`finish(self)` で inner
 /// sink の finish 結果を bubble させる契約。
 ///
-/// M1.4a (m1.22) 以降、parse 完了時に既定 UA CSS + `options.extra_stylesheets`
-/// を [`raikiri_dom::Document::add_stylesheet`] 経由で Document 状態に注入する
-/// (spec §M1.4a、UA=UserAgent/extra=Author kind)。M2 (raikiri-spike-5z86.6)
-/// 以降、続けて `<head>` 内 `<link rel="stylesheet">` を `options.network` /
-/// `options.base_url` 経由で fetch し、成功分を `UncascadedDocument.stylesheet_sources`
-/// に Author として追加する (`fetch_external_stylesheets` doc 参照)。
+/// parse 完了時に既定 UA CSS + `options.extra_stylesheets` を
+/// [`raikiri_dom::Document::add_stylesheet`] 経由で Document 状態に注入する
+/// (UA=UserAgent/extra=Author kind)。続けて `<head>` 内
+/// `<link rel="stylesheet">` を `options.network` / `options.base_url`
+/// 経由で fetch し、成功分を `UncascadedDocument.stylesheet_sources` に
+/// Author として追加する (`fetch_external_stylesheets` doc 参照)。
 pub fn parse_with_sink<R, S>(
     mut input: R,
     sink: S,
@@ -73,15 +73,15 @@ where
     let parser = parse_document(sink, ParseOpts::default());
     let mut doc = parser.one(buf.as_str());
 
-    // spec §M1.4a: 既定 UA CSS を Document に注入 (raikiri-spike-m1.22)
+    // 既定 UA CSS を Document に注入。
     doc.dom.add_stylesheet(
         Cow::Borrowed(crate::ua::MINIMAL_UA_CSS),
         StylesheetKind::UserAgent,
     );
 
-    // Consumer 提供の extra_stylesheets を User origin として追加 (spec §M1
-    // ParseOptions::extra_stylesheets の実 consume 経路)。bd raikiri-spike-d7h3
-    // で StylesheetKind::Author retag から独立 StylesheetKind::User へ移行 —
+    // Consumer 提供の extra_stylesheets を User origin として追加
+    // (ParseOptions::extra_stylesheets の実 consume 経路)。
+    // StylesheetKind::Author retag から独立 StylesheetKind::User へ移行済み —
     // real author-origin stylesheet (`<link rel=stylesheet>` 等) が将来
     // Author として届く経路と混同しないため。
     for extra in options.extra_stylesheets {
@@ -89,9 +89,9 @@ where
             .add_stylesheet(Cow::Owned((*extra).to_string()), StylesheetKind::User);
     }
 
-    // spec §M2 (raikiri-spike-5z86.6): <link rel="stylesheet" href="..."> を
-    // 検出し、ParseOptions::network 経由で fetch、CSS text を Author
-    // stylesheet source として doc.stylesheet_sources に統合する。
+    // <link rel="stylesheet" href="..."> を検出し、ParseOptions::network
+    // 経由で fetch、CSS text を Author stylesheet source として
+    // doc.stylesheet_sources に統合する。
     fetch_external_stylesheets(&mut doc, options);
 
     Ok(doc)
@@ -114,7 +114,7 @@ where
 /// して parse 全体は継続する (html5ever の forgiving-parsing の精神、および
 /// 既存の `HtmlParseError` warning 降格パターンに合わせる)。
 ///
-/// # 既知の scope 制限 (raikiri-spike-5z86.6)
+/// # 既知の scope 制限
 ///
 /// - **順序**: `doc.stylesheet_sources` には既に (`<style>` 抽出由来の) head
 ///   内 `<style>` テキストが document order で入っている。ここで fetch した
@@ -129,7 +129,7 @@ where
 ///   `sink::collect_external_stylesheet_hrefs` doc 参照。
 /// - **encoding**: HTML body の parse と同様 UTF-8 前提
 ///   (`String::from_utf8_lossy`)、非 UTF-8 CSS は文字化けする。encoding_rs
-///   導入は本 crate の `parse()` 全体で M2+ に defer 済み (`parse()` doc 参照)。
+///   導入は本 crate の `parse()` 全体で将来に defer 済み (`parse()` doc 参照)。
 fn fetch_external_stylesheets(doc: &mut UncascadedDocument, options: &ParseOptions<'_>) {
     let Some(network) = options.network else {
         return;
@@ -181,8 +181,8 @@ fn fetch_external_stylesheets(doc: &mut UncascadedDocument, options: &ParseOptio
                 // が失敗しこの資源を諦めた」という broad な読みで再利用する
                 // 判断— 詳細メッセージは details に載せて可観測性を保つ)。
                 //
-                // Semantic gap (reviewer-spec finding, bd raikiri-spike-5z86.8
-                // tracks a dedicated fix): `NetworkFallback`'s doc comment
+                // Semantic gap (a dedicated fix is still pending):
+                // `NetworkFallback`'s doc comment
                 // ("Consumer の network が fallback を返した") reads most
                 // naturally as `ResolverFallback`'s sibling — "the fetch
                 // succeeded with an explicit substitute", i.e. degraded-but-

@@ -16,7 +16,7 @@ pub struct DocumentPlan {
     pub total_pages: u32,
     /// hint: render 時は再計算される (Finding #5)。
     pub target_registry: TargetRegistry,
-    /// target 定義 list (M4 で populate)。
+    /// target 定義 list (将来 populate 予定)。
     pub target_definitions: Vec<TargetDefinition>,
     /// 未解決 target list。
     pub unresolved_targets: Vec<UnresolvedTarget>,
@@ -41,9 +41,9 @@ pub struct PageSummary {
     pub content_height: f32,
 }
 
-/// `page-break-*` / auto-fill 等、ページ break の理由 (M2 で variant を populate)。
+/// `page-break-*` / auto-fill 等、ページ break の理由 (将来 variant を populate)。
 ///
-/// M1.1 では uninhabited。想定 variant:
+/// 現時点では uninhabited。想定 variant:
 ///   - `PageBreakBefore { property: BreakProperty }`
 ///   - `PageBreakAfter { property: BreakProperty }`
 ///   - `PageBreakInside`
@@ -52,17 +52,17 @@ pub struct PageSummary {
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum BreakReason {
-    // M2 で populate。
+    // 将来 populate 予定。
 }
 
 /// target-* の定義側情報 (`target-counter` などが参照する source location)。
 ///
-/// M4 で fields を populate。M1.1 では opaque。
+/// 将来 fields を populate。現時点では opaque。
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct TargetDefinition {
-    // M4 で populate:
+    // 将来 populate 予定:
     //   pub fragment_id: Symbol,
     //   pub page_index: u32,
     //   pub kind: TargetKind,
@@ -71,7 +71,7 @@ pub struct TargetDefinition {
 }
 
 impl TargetDefinition {
-    /// M1.1 placeholder constructor.
+    /// Placeholder constructor (not yet populated).
     pub fn new() -> Self {
         Self::default()
     }

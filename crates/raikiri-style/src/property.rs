@@ -19,10 +19,9 @@ use crate::Atom;
 /// initial / inherit_from の default 値を per-node 新規 allocate せず、
 /// 単一 heap slot を bump-share するための helper。
 ///
-/// `raikiri-spike-d9y.1` (SEC HIGH cascade memory DoS fix) の副作用として
-/// `ComputedValues.content` / `.string_set` は `Arc<Vec<..>>` に wrap したが、
-/// `Arc::new(Vec::new())` を every node で呼ぶと N-node document あたり
-/// 2N の small heap allocation regression になる (advisor calibration)。
+/// cascade memory DoS 対策として `ComputedValues.content` / `.string_set` は
+/// `Arc<Vec<..>>` に wrap したが、`Arc::new(Vec::new())` を every node で呼ぶと
+/// N-node document あたり 2N の small heap allocation regression になる。
 /// `OnceLock` で **process 全体で 1 個** の empty Arc を保持し、
 /// [`empty_content_list`] / [`empty_string_set_entries`] が各 initial spot で
 /// clone (Arc bump only) する。
@@ -40,7 +39,7 @@ pub(crate) fn empty_content_list() -> Arc<Vec<ContentComponent>> {
 pub(crate) type StringSetEntry = (SmolStr, Vec<ContentComponent>);
 
 /// 空 `string-set` entries を表す shared Arc — [`empty_content_list`] と同じ
-/// pattern (per-node empty allocation regression 回避、d9y.1)。
+/// pattern (per-node empty allocation regression 回避)。
 pub(crate) fn empty_string_set_entries() -> Arc<Vec<StringSetEntry>> {
     static EMPTY: OnceLock<Arc<Vec<StringSetEntry>>> = OnceLock::new();
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
@@ -50,21 +49,20 @@ pub(crate) fn empty_string_set_entries() -> Arc<Vec<StringSetEntry>> {
 /// (`counter-reset` / `counter-increment` / `counter-set`) 全てで単一 slot を
 /// 共有する ([`Vec<(SmolStr, i32)>`] は同一型のため helper を分ける必要無し)。
 ///
-/// `raikiri-spike-d9y.2` (SEC HIGH cascade memory DoS fix) の副作用 helper。
+/// cascade memory DoS 対策の副作用 helper。
 /// counter-* は non-inherited (CSS Lists 3 §4、`counter-reset` を含む全 3 property)
 /// のため、`SpecifiedValues::inherit_from` が child stack entry のたびに empty 値で
 /// 初期化する。生 `Vec::new()` を使うと per-node で 3 個の `Vec` struct
 /// (24 bytes × 3) が生まれ N-node document あたり O(N) の overhead になるため、
 /// [`empty_content_list`] / [`empty_string_set_entries`] と同じ `OnceLock` 保持の
-/// shared Arc を使う (advisor calibration precedent)。
+/// shared Arc を使う。
 pub(crate) fn empty_counter_entries() -> Arc<Vec<(SmolStr, i32)>> {
     static EMPTY: OnceLock<Arc<Vec<(SmolStr, i32)>>> = OnceLock::new();
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
 /// `font-family` の initial value を表す shared Arc — [`empty_content_list`]
-/// 等と同じ `OnceLock` 保持の shared-slot pattern (raikiri-spike-no7b、d9y.1 /
-/// d9y.2 pattern の踏襲)。
+/// 等と同じ `OnceLock` 保持の shared-slot pattern (同種の DoS 対策 fix の踏襲)。
 ///
 /// CSS Fonts 4 §2.1 "Font Family: the font-family property"
 /// (<https://www.w3.org/TR/css-fonts-4/#font-family-prop>) の spec 上の
@@ -162,7 +160,7 @@ impl CssColor {
     /// # Invalid input
     ///
     /// 他 length (0/1/2/5/7/9+) や non-hex byte を含む場合は `None` を返す
-    /// (g04 category (a) spec-invalid → drop)。leading `#` は tokenizer
+    /// (spec-invalid → drop)。leading `#` は tokenizer
     /// (`Token::Hash`) 側で剥がされて渡ってくるため、本 helper は expect しない
     /// (parser 経由でない直接呼び出しは caller 責務で `#` を落とすこと)。
     pub fn from_hex(payload: &str) -> Option<Self> {
@@ -225,7 +223,7 @@ fn expand_hex_nibble(n: u8) -> u8 {
     (n << 4) | n
 }
 
-/// CSS length or length-percentage value (Author CSS seed for m4+ box model).
+/// CSS length or length-percentage value (box model 実装の足がかりとなる author CSS 型).
 ///
 /// 各 variant は authored value (raw number as written) を保持する。sibling arm
 /// convention (37n): [`Length::Px`] が `Px(16.0)` = `16px` の pattern を確立、
@@ -237,26 +235,25 @@ fn expand_hex_nibble(n: u8) -> u8 {
 /// element 経路では絶対化の結果が [`crate::resolve`] の `Computed*` 型になるので
 /// 本型 = specified 層で読んでよい。**page 経路は違う** —
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
-/// は `PropertyValue` の bag なので computed 値も本型で運ばれる (bd
-/// raikiri-spike-sshp)。したがって「`Length` が見えたから未解決」と判断しては
-/// ならない。
+/// は `PropertyValue` の bag なので computed 値も本型で運ばれる。したがって
+/// 「`Length` が見えたから未解決」と判断してはならない。
 ///
 /// **本節が「型は層を表明しない」規則の canonical な記述である。**
 /// 一方、page 経路が具体的に何を保証するか (どの値が computed 層に居るのか、
 /// 例外は何か) は
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
 /// の doc が canonical であり、その内容は `page::tests` の
-/// `page_declarations_carry_no_specified_layer_residue` (raikiri-spike-l3wg
-/// 以前の名前は `page_declarations_carry_exactly_one_specified_layer_residue`)
+/// `page_declarations_carry_no_specified_layer_residue` (以前の名前は
+/// `page_declarations_carry_exactly_one_specified_layer_residue`)
 /// が機械的に pin している。**ここに保証の中身を書き足して重複させないこと**
-/// — 手で 2 site を揃える運用は既に 2 度 drift した (bd raikiri-spike-awjx)。
+/// — 手で 2 site を揃える運用は既に 2 度 drift した。
 ///
 /// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
 /// 変数追加が既存 pattern-match を break しない forward-compat 契約)。
 ///
-/// **訂正 (bd raikiri-spike-2x8)**: 本節は以前 `crates/raikiri-dom/src/
+/// **訂正**: 本節は以前 `crates/raikiri-dom/src/
 /// layout.rs:143` の `preshape_text` を「wildcard arm を持つ既存 sibling」と
-/// して挙げていたが、これは bd raikiri-spike-zls8 の Option A 層分離
+/// して挙げていたが、これは Option A 層分離
 /// (`crate::resolve` 参照) で崩れた — `preshape_text` が消費する
 /// `cv.font_size` は現在 [`crate::resolve::ComputedLength`] (px scalar) で
 /// あり、`Length` を直接 match しないため wildcard arm ごと削除済
@@ -267,8 +264,8 @@ fn expand_hex_nibble(n: u8) -> u8 {
 /// `ComputedLengthPercentage` / `ComputedLengthPercentageOrAuto` /
 /// `ComputedBorder`) を経由するため。上記の wildcard-arm 契約は
 /// **`Length` を直接 match する将来の downstream code に対して有効**であり、
-/// 現時点でこの契約を exercise している既存 site は無い (bd raikiri-spike-2x8
-/// で `crates/` 全体を再 grep して確認)。
+/// 現時点でこの契約を exercise している既存 site は無い (`crates/` 全体を
+/// 再 grep して確認済み)。
 ///
 /// # Primary sources (§ title + anchor)
 ///
@@ -322,8 +319,7 @@ pub enum Length {
     /// CSS Values 4 §6.1.1 Font-relative Lengths
     /// (<https://www.w3.org/TR/css-values-4/#ex>) verbatim: "In the cases
     /// where it is impossible or impractical to determine the x-height, a
-    /// value of 0.5em must be assumed." Resolve は `0.5 * font-size`
-    /// (bd raikiri-spike-2x8)。
+    /// value of 0.5em must be assumed." Resolve は `0.5 * font-size`。
     Ex(f32),
     /// Font-relative length: `rex` — root element の `ex` (root font の
     /// x-height fallback) に対する倍率。`1rex` → `Rex(1.0)`。
@@ -345,7 +341,7 @@ pub enum Length {
     /// vertical-lr and text-orientation is upright)." raikiri-style は
     /// `writing-mode` / `text-orientation` を未実装 (horizontal-tb 前提のみ)
     /// なので upright 分岐は到達不能 — resolve は常に `0.5 * font-size`。
-    /// `writing-mode` 実装時に本判断の見直しが要る (bd raikiri-spike-2x8)。
+    /// `writing-mode` 実装時に本判断の見直しが要る。
     Ch(f32),
     /// Font-relative length: `rch` — root element の `ch` に対する倍率。
     /// `1rch` → `Rch(1.0)`。
@@ -412,7 +408,7 @@ pub enum Length {
     /// is used, converting normal to an absolute length by using only the
     /// metrics of the first available font."
     ///
-    /// # `normal` の resolve — `cap`/`rcap` と同じ wall (bd raikiri-spike-vxha)
+    /// # `normal` の resolve — `cap`/`rcap` と同じ wall
     ///
     /// `normal` は `line-height` の **initial value** なので、この
     /// unknown-metric branch は edge case ではなく common case — real font
@@ -429,11 +425,11 @@ pub enum Length {
     /// it is used" が常に使用要素自身を指すため、**あらゆる要素**で自己参照
     /// になる) — spec 原文と `rlh` との非対称の判断根拠は
     /// [`crate::resolve::resolve_line_height`] doc が canonical
-    /// (roborev-refine iter 1 quality lens 1、bd raikiri-spike-awjx の
-    /// drift 前例により、本節では要約に留め全文を再掲しない)。
+    /// (内容の重複による drift を避けるため、本節では要約に留め全文を
+    /// 再掲しない)。
     /// `font-size: 1lh` も同条項の対象で自己参照になる (font-size は
     /// font-\* property) — 親の used line-height を基準に解決する
-    /// (bd raikiri-spike-yh3w、[`crate::resolve::resolve_font_size`] doc の
+    /// ([`crate::resolve::resolve_font_size`] doc の
     /// 「`lh` / `rlh` の自己参照」節が canonical)。
     Lh(f32),
     /// Font-relative length: `rlh` — root element の `lh` に対する倍率。
@@ -449,7 +445,7 @@ pub enum Length {
     /// `rlh` も解決不能になる — [`Length::Lh`] doc の「`normal` の resolve」
     /// 節と同じ wall (`cap`/`rcap` と同じ、real font instance が要る)。
     ///
-    /// # `Length::Lh` と非対称 — 自己参照として扱わない (bd raikiri-spike-vxha)
+    /// # `Length::Lh` と非対称 — 自己参照として扱わない
     ///
     /// `rlh` の素の定義は宣言要素の位置に依存しない tree-global な定数
     /// (root element の値を常に指す) であり、**`lh` と違って自己参照には
@@ -467,12 +463,12 @@ pub enum Length {
     /// 上記の非対称により `font-size` 上でも自己参照として扱わない —
     /// 宣言要素が root element のとき以外は tree-global な
     /// `ResolveContext::root_line_height` を直接使う
-    /// (bd raikiri-spike-yh3w、[`crate::resolve::resolve_font_size`] doc 参照)。
+    /// ([`crate::resolve::resolve_font_size`] doc 参照)。
     Rlh(f32),
 }
 
 /// `<length-percentage> | auto` — margin / width で共有される Author CSS seed
-/// (最初は 0vv.5 で margin longhand 用に導入、0vv.10 で `width` からも reuse)。
+/// (margin longhand 用に導入し、後に `width` からも reuse)。
 ///
 /// margin property は spec で `<length-percentage> | auto` を取る (CSS Box 3
 /// §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。`auto` は spec
@@ -486,7 +482,7 @@ pub enum Length {
 /// property-specific に解釈する。
 ///
 /// NB: padding (CSS Box 3 §4) の grammar は `<length-percentage>` のみで `auto`
-/// を含まないため、0vv.6 padding は本 type を **使わず** [`Sides<Length>`] を
+/// を含まないため、padding は本 type を **使わず** [`Sides<Length>`] を
 /// 直接使う (`Sides<T>` のみ reuse、詳細は [`Sides`] doc の再利用先 section)。
 ///
 /// `#[non_exhaustive]` は future variant (例: `<flex>` `auto-vs-fill-available`
@@ -524,9 +520,9 @@ pub enum LengthOrAuto {
 /// 4-side box-model value holder。field 順は CSS Box 3 §4.2 shorthand の
 /// 4-value form `top right bottom left` に一致 (clockwise from top)。
 ///
-/// Sprint 12 で padding shorthand が最初の consumer (raikiri-spike-0vv.6)、
-/// sibling raikiri-spike-0vv.5 (margin) は `Sides<LengthOrAuto>` として reuse
-/// する — 型パラメータで per-property の value type 差を吸収する。
+/// padding shorthand が最初の consumer、sibling の margin は
+/// `Sides<LengthOrAuto>` として reuse する — 型パラメータで per-property の
+/// value type 差を吸収する。
 ///
 /// `Copy` は `where T: Copy` conditional bound として transparent に伝わり、
 /// `Sides<Length>` の per-node write は bit-copy になる。
@@ -592,10 +588,10 @@ impl<T> Sides<T> {
 /// `parse_border_style_side` が ident と照合する (CSS Values 3 §3.1 "Pre-defined
 /// Keywords" <https://www.w3.org/TR/css-values-3/#keywords>)。
 ///
-/// # Non-goals (g04 3-category labels)
+/// # Non-goals
 ///
-/// - **(b) milestone subset**: paint side での visual 差 (double stroke / 3D
-///   groove/ridge/inset/outset の shading) は paint scope で defer、cascade
+/// - **(b) 非対応**: paint side での visual 差 (double stroke / 3D
+///   groove/ridge/inset/outset の shading) は paint scope の責務、cascade
 ///   static side では spec value を保持するのみ。
 /// - **(a) spec-invalid**: 未知 keyword (`wavy` / `wave` 等 CSS Text Decoration
 ///   4 の `<text-decoration-style>` 由来 keyword は本 property では invalid) は
@@ -609,8 +605,6 @@ impl<T> Sides<T> {
 /// `#[non_exhaustive]` は future variant (Draft CSS Backgrounds 4 拡張、または
 /// author-defined `border-image` 相当の new line style) の non-breaking 追加のため —
 /// 37n sibling [`DisplayValue`] / [`TextAlign`] / [`Length`] と同 pattern。
-///
-/// (raikiri-spike-0vv.12)
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BorderStyle {
@@ -656,7 +650,7 @@ pub enum BorderStyle {
 /// <https://www.w3.org/TR/css-color-3/#currentColor-def> — "The used value of
 /// the `currentColor` keyword is the computed value of the `color` property"。
 /// used-value resolution (currentcolor → 同 node の computed `color` property
-/// lookup) は paint scope 責務 (bd raikiri-spike-q7qf、border 描画実装との
+/// lookup) は paint scope 責務 (border 描画実装との
 /// 合流で end-to-end 疎通)。
 ///
 /// # なぜ cascade static side で enum 保持するか (Option A / B の A 採用理由)
@@ -680,14 +674,12 @@ pub enum BorderStyle {
 /// 同 pattern — future variant 追加 (例: CSS Color 4 §6.2 "System Colors"
 /// <https://www.w3.org/TR/css-color-4/#css-system-colors> の system-color keyword)
 /// の forward-compat 契約 (37n sibling convention)。
-///
-/// (raikiri-spike-0vv.17)
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BorderColor {
     /// `currentcolor` keyword — border-*-color の spec-mandated initial value
     /// (CSS Backgrounds 3 §3.1)。used-value は paint scope で node の computed
-    /// `color` property を lookup して確定する (bd raikiri-spike-q7qf)。
+    /// `color` property を lookup して確定する。
     CurrentColor,
     /// Resolved `<color>` value — author が hex / named / `rgb(a)` /
     /// `transparent` で明示指定した場合、または `border` / `border-color`
@@ -705,8 +697,8 @@ pub enum BorderColor {
 /// - `color`: [`BorderColor`] — `parse_border_color` (spec §3.1 の `<color>`
 ///   grammar に加え `currentcolor` keyword を先取り) が返す enum。initial
 ///   [`BorderColor::CurrentColor`] は paint scope が `color` property で
-///   resolve する (raikiri-spike-0vv.17 で `CssColor::BLACK` placeholder から
-///   格上げ、CSS Backgrounds 3 §3.1 の initial 契約準拠)。
+///   resolve する (`CssColor::BLACK` placeholder から格上げ、CSS Backgrounds 3
+///   §3.1 の initial 契約準拠)。
 ///
 /// # `<line-width>` keyword mapping (§3.3)
 ///
@@ -728,10 +720,8 @@ pub enum BorderColor {
 /// per-side longhand を direct-write するため apply 順に依存せず、shorthand
 /// `border: ...` は parse-time で 12 longhand (4 side × 3 sub-property) に
 /// 展開される (spec CSS Cascading L4 §3 "Shorthand Properties"
-/// <https://www.w3.org/TR/css-cascade-4/#shorthand> 準拠、raikiri-spike-0vv.5
-/// margin precedent の踏襲)。
-///
-/// (raikiri-spike-0vv.12)
+/// <https://www.w3.org/TR/css-cascade-4/#shorthand> 準拠、margin precedent
+/// の踏襲)。
 ///
 /// # `Eq` non-derive rationale
 ///
@@ -745,21 +735,20 @@ pub struct Border {
     /// border-width (CSS Backgrounds 3 §3.3)。initial `medium` = `Length::Px(3.0)`。
     /// grammar は `<length [0,∞]>` — non-negative 制約は
     /// `parse_border_width_side` が parse-time で enforce。`<percentage>` は spec
-    /// に含まれない (padding とは違う grammar、advisor calibration)。
+    /// に含まれない (padding とは違う grammar)。
     pub width: Length,
     /// border-style (CSS Backgrounds 3 §3.2)。initial `none`。
     pub style: BorderStyle,
     /// border-color (CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color>)。
     /// initial は `currentcolor` keyword — [`BorderColor::CurrentColor`] を
     /// enum variant として保持し、used-value resolution (currentcolor →
-    /// 同 node の computed `color` property) は paint scope で確定する
-    /// (bd raikiri-spike-q7qf)。raikiri-spike-0vv.17 で `CssColor` から
-    /// [`BorderColor`] enum へ格上げ (spec initial 契約 fidelity)。
+    /// 同 node の computed `color` property) は paint scope で確定する。
+    /// `CssColor` から [`BorderColor`] enum へ格上げ (spec initial 契約 fidelity)。
     pub color: BorderColor,
 }
 
 /// `#[non_exhaustive]` は crate 外からの struct-literal 構築を `E0639` で塞ぐ
-/// (bd raikiri-spike-eow8 が umbrella (`raikiri` crate) へ [`Border`]
+/// (umbrella (`raikiri` crate) へ [`Border`]
 /// 自体を re-export した際に踏んだ制約 — その時点では埋め合わせの
 /// constructor が無く、型は名指しできても値を得る public な経路が無かった)。
 ///
@@ -767,13 +756,11 @@ pub struct Border {
 /// `#[non_exhaustive]` かつ umbrella re-export 対象の struct が共通して使う
 /// 「zero-arg `new()` (= `Default::default()`) + 全 field `pub` による
 /// mutation」の 2-pattern 構築契約 (`crates/raikiri/tests/external_consumer.rs`
-/// の M1.15 "3 pattern" acceptance criteria の pattern 1 + pattern 2) を
+/// の "3 pattern" acceptance criteria の pattern 1 + pattern 2) を
 /// [`Border`] にも適用する。3 field のみの単純な値なので builder
 /// (pattern 3) は他の類似 struct (`PageBox` / `PageContext` 等) と同様に
 /// 見送り — 複数 setter を持つ多 field config struct 向けの pattern であり、
 /// このためだけの builder は無駄な surface になる。
-///
-/// (bd raikiri-spike-x0dq)
 impl Border {
     /// CSS Backgrounds 3 の初期値
     /// (`width` = medium = 3px §3.3 / `style` = `none` §3.2 / `color` = `currentcolor` §3.1)
@@ -815,7 +802,7 @@ impl Default for Border {
     /// [`PadDescriptor`](crate::counter_style::PadDescriptor) (どちらも
     /// hand-written `impl Default`、derive ではない) — 同じ判断基準
     /// (「呼ばれるかどうか」) の適用であり、本 impl はその convention への
-    /// 違反ではなくむしろ一致 (bd raikiri-spike-x0dq)。
+    /// 違反ではなくむしろ一致。
     fn default() -> Self {
         Self {
             width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
@@ -864,7 +851,7 @@ impl Default for Border {
 /// variant 追加が既存 pattern-match を break しない forward-compat 契約、sibling
 /// [`LineHeight`] / [`DisplayValue`] と同 pattern)。
 ///
-/// # `Eq` を derive しない (bd raikiri-spike-e52s)
+/// # `Eq` を derive しない
 ///
 /// [`Absolute`](Self::Absolute) の payload が `f32` になった (旧 `u16`) ため
 /// `Eq` は derive できない (`f32: !Eq`、NaN が反射性を満たさないため)。比較は
@@ -877,7 +864,7 @@ pub enum FontWeightValue {
     /// `<number [1,1000]>` を単一の絶対 weight に畳んだもの。CSS Fonts 4 §2.2.2
     /// "Missing weights" (<https://www.w3.org/TR/css-fonts-4/#missing-weights>)
     /// "Fractional weights are valid" どおり fraction を保持する `f32` (旧
-    /// `u16`、bd raikiri-spike-e52s で格上げ — 詳細は [`parse_font_weight`] doc)。
+    /// `u16`、fraction 保持のため格上げ — 詳細は [`parse_font_weight`] doc)。
     Absolute(f32),
     /// `bolder` — 継承値より 1 段太い weight。cascade 時に
     /// [`crate::cascade::resolve_relative_weight`] が spec §2.2.1 table で
@@ -911,7 +898,7 @@ pub enum RelativeFontSize {
     Smaller,
 }
 
-/// `line-height` property の value (Author CSS seed for m4+ inline layout)。
+/// `line-height` property の value (inline layout 実装の足がかりとなる author CSS 型)。
 ///
 /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
 /// (<https://www.w3.org/TR/css-inline-3/#line-height-property>)、value grammar
@@ -934,9 +921,9 @@ pub enum RelativeFontSize {
 /// # Non-negative constraint
 ///
 /// spec grammar `<number [0,∞]>` / `<length-percentage [0,∞]>` により負値は
-/// invalid → parser 側で drop (`parse_line_height` の post-filter)。g04
-/// category (a) spec-invalid → drop: spec grammar が range を parse-time で
-/// 制約しているため、reject 自体が spec 準拠 (stricter ではなく match)。
+/// invalid → parser 側で drop (`parse_line_height` の post-filter、
+/// spec-invalid → drop)。spec grammar が range を parse-time で制約している
+/// ため、reject 自体が spec 準拠 (stricter ではなく match)。
 ///
 /// # Primary source
 ///
@@ -972,7 +959,7 @@ pub enum LineHeight {
 /// で `target-counter()` / `target-counters()` の optional 末尾引数として現れる。
 /// spec default = `decimal` (`counter-style?` omitted 時)。
 ///
-/// M5 static-side scope では named style を SmolStr で pass-through する
+/// static-side scope では named style を SmolStr で pass-through する
 /// (`decimal-leading-zero`, `upper-alpha`, `lower-roman` 等の解釈は下流責務、
 /// runtime resolve で counter tree を format する際に効く)。
 #[non_exhaustive]
@@ -1021,8 +1008,7 @@ pub enum StringFetchMode {
 /// [`Content`](Self::Content) の意味 (対象要素自身の string value) と一致
 /// する。keyword 省略時に [`Content`](Self::Content) を採用する根拠はこの
 /// semantic correspondence であり、spec が "default" と明言した文の
-/// verbatim quote ではない (bd raikiri-spike-x8i6 で発見された同一
-/// overclaim class、bd raikiri-spike-nncs で本 site を訂正)。
+/// verbatim quote ではない (同種の overclaim を後で発見し、本 site を訂正済み)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ContentPart {
@@ -1052,14 +1038,13 @@ pub enum ContentPart {
 /// 依らない — 同 section の grammar には `?` が無く (content() の唯一の
 /// 引数が構文上 optional でない)、`text` dt/dd は "This is the default
 /// value" と述べるものの、同じ section に "default をどう定義するか" 自体が
-/// 未解決の WG issue として残っており、TR 上安定した根拠ではない (bd
-/// raikiri-spike-x8i6 で発見された同一 overclaim class、bd
-/// raikiri-spike-83r2 で本 site を訂正)。
+/// 未解決の WG issue として残っており、TR 上安定した根拠ではない (同種の
+/// overclaim を後で発見し、本 site を訂正済み)。
 ///
 /// NB: sibling [`ContentPart`] (target-text() 用) と keyword 集合が重なるが、
 /// `text` vs `content` の spec spelling divergence があるため型を分ける
-/// (StringFetchMode / ContentPart と同じ per-function 専用 enum 慣行、
-/// reviewer:spec: `content(content)` を silently accept してはならない)。
+/// (StringFetchMode / ContentPart と同じ per-function 専用 enum 慣行 —
+/// `content(content)` を silently accept してはならない)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ContentTextKeyword {
@@ -1120,7 +1105,7 @@ pub enum QuoteKeyword {
 /// precedent) — 3 keyword を個別 variant に保持し、実際の leader glyph
 /// 文字列への解決 (`Dotted` → `"."` 等) は downstream (paint) の rendering
 /// 責務とする。[`String`](Self::String) variant の custom leader 文字列は
-/// [`SmolStr`] で保持 ([`ContentComponent::Literal`] の d9y.1 SmolStr 化
+/// [`SmolStr`] で保持 ([`ContentComponent::Literal`] の SmolStr 化
 /// precedent と同じ、短寿命 clone を bump にする)。
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1144,16 +1129,16 @@ pub enum LeaderType {
 /// `<content-list> = [ <string> | <counter()> | <counters()> | <content()> |
 /// <attr()> ]+` を dfn する)。property ごとに受理される function 集合が違うため、
 /// dispatch 時に mode で分岐する ([`StringFetchMode`] / [`ContentPart`] /
-/// [`ContentTextKeyword`] と同じ per-context 専用 enum 慣行、raikiri-spike-6s1)。
+/// [`ContentTextKeyword`] と同じ per-context 専用 enum 慣行)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ContentListMode {
     /// CSS Content 3 §2 broad `<content-list>` — `content` property 用。
     /// 受理: `<string>` bare literal / `counter()` / `counters()` / `string()` /
     /// `attr()` / `target-counter()` / `target-counters()` / `target-text()` /
-    /// `content()` / `<image>` (`url()` alternative のみ、raikiri-spike-1us) /
+    /// `content()` / `<image>` (`url()` alternative のみ) /
     /// `contents` keyword / `<quote>` (`open-quote` 等) / `leader()`。10 alt
-    /// full set (raikiri-spike-1us で image/contents/quote/leader を追加、
-    /// m5.1 由来の under-accept を解消)。
+    /// full set (image/contents/quote/leader を追加し、旧実装の
+    /// under-accept を解消)。
     CssContent3,
     /// CSS GCPM 3 §1.1.1 narrow local `<content-list>` — `string-set` 用。
     /// 受理: `<string>` bare literal / `counter()` / `counters()` / `content()` /
@@ -1168,8 +1153,8 @@ enum ContentListMode {
 ///
 /// design doc §7.1 の `raikiri_traits::ContentValueItem` に 1:1 mapping する
 /// (下流 raikiri-dom が runtime resolve 時に翻訳)。raikiri-style は raikiri-traits
-/// に依存しない leaf crate = 94e/3ps Phase B により、counter-* wire-through
-/// pattern (raikiri-spike-s85) と同様に **local** な intermediate type で保持し、
+/// に依存しない leaf crate であるため、counter-* wire-through
+/// pattern と同様に **local** な intermediate type で保持し、
 /// downstream 側で shared trait type にマッピングする。
 ///
 /// Variants は spec の function grammar 順:
@@ -1183,15 +1168,13 @@ enum ContentListMode {
 ///   <https://www.w3.org/TR/css-content-3/#target-counters>,
 ///   <https://www.w3.org/TR/css-content-3/#target-text>
 /// - Content: CSS GCPM 3 §1.1.1.1
-///   <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> (raikiri-spike-5ri)
+///   <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>
 /// - Image / Contents / Quote / Leader: CSS Content 3 §2.2 / §2.3 / §2.4.2 /
-///   §2.5.1 (raikiri-spike-1us、m5.1 由来 under-accept の fix — 末尾に追加、
-///   既存 variant の並びは互換性のため保持)
+///   §2.5.1 (under-accept fix として末尾に追加、既存 variant の並びは
+///   互換性のため保持)
 ///
 /// URL は raw `String` として保持 (raikiri-style は `url` crate に依存しない —
 /// runtime resolve 段で `url::Url` へ parse する consumer 責務)。
-///
-/// (raikiri-spike-m5.1)
 ///
 /// # `#[non_exhaustive]` semantics (fulgur / downstream consumer 向け verbatim)
 ///
@@ -1200,9 +1183,8 @@ enum ContentListMode {
 /// の tuple constructor 呼び出しは block しない**。ゆえに既存 variant の
 /// payload **type** 変更は downstream の constructor を compile-break させる。
 ///
-/// Sprint 9 hardening (bd raikiri-spike-d9y.1、SEC HIGH cascade memory DoS fix)
-/// では [`Literal`](Self::Literal) の payload を `String` → [`SmolStr`] に
-/// 変更した (bd raikiri-spike-q3f wall/umbrella formal declare)。SmolStr は
+/// cascade memory DoS 対策の一環として、[`Literal`](Self::Literal) の
+/// payload を `String` → [`SmolStr`] に変更した。SmolStr は
 /// `Deref<Target = str>` を提供するため、pattern-match で payload を **読む**
 /// consumer は `match cc { ContentComponent::Literal(s) => &*s, .. }` や
 /// `s.as_str()` / `s.len()` などの `&str` API がそのまま動作する。**construct**
@@ -1215,12 +1197,12 @@ pub enum ContentComponent {
     /// `<string>` bare literal (`content: "hello"`)。
     ///
     /// [`SmolStr`] は 22 bytes 以下を inline、超過分は内部 `Arc<str>` 保存で
-    /// clone が O(1) bump になる (raikiri-spike-d9y.1 の DoS 直系 attack vector
+    /// clone が O(1) bump になる (DoS 直系 attack vector
     /// `content: "<large>"` に対する secondary defense、primary は outer
     /// [`PropertyValue::Content`] の [`Arc<Vec<..>>`] wrap)。
     ///
-    /// **Consumer 向け** (bd raikiri-spike-q3f wall/umbrella formal declare):
-    /// pre-d9y.1 の payload は `String` だった。SmolStr は `Deref<Target = str>`
+    /// **Consumer 向け**:
+    /// 変更前の payload は `String` だった。SmolStr は `Deref<Target = str>`
     /// を提供するので、read-side (`&*s` / `s.as_str()` / `s.len()` / `for c in s.chars()`)
     /// は透過的に継続動作する。construct-side のみ `SmolStr::new("foo")` (または
     /// `SmolStr::from(String)`) へ書き換える。enum-level docstring
@@ -1239,7 +1221,7 @@ pub enum ContentComponent {
         name: SmolStr,
         fetch: StringFetchMode,
     },
-    /// `attr(<attribute-name>)` (§2.1、type/fallback は M5+ scope)。
+    /// `attr(<attribute-name>)` (§2.1、type/fallback は未実装、将来対応)。
     Attr { name: SmolStr },
     /// `target-counter([<string>|<url>], <custom-ident>, <counter-style>?)`。
     /// CSS Content 3 §2.6.1 <https://www.w3.org/TR/css-content-3/#target-counter>。
@@ -1287,9 +1269,8 @@ pub enum ContentComponent {
     /// `<content-list>` の一員として `string-set` および `content` property の
     /// content-list 内で受理される。keyword 省略時は [`ContentTextKeyword::Text`]
     /// をフォールバック値として使う (根拠は spec の "default" 宣言ではない —
-    /// [`ContentTextKeyword`] の doc comment 参照、bd raikiri-spike-x8i6 /
-    /// raikiri-spike-83r2)。runtime resolve は raikiri-dom 責務 (m5.1
-    /// wire-through pattern)。
+    /// [`ContentTextKeyword`] の doc comment 参照)。runtime resolve は
+    /// raikiri-dom 責務 (wire-through pattern)。
     Content { keyword: ContentTextKeyword },
     /// `<image>` (CSS Images 3 <https://www.w3.org/TR/css-images-3/#typedef-image>
     /// `<image> = <url> | <gradient>`) — CSS Content 3 §2.2 "2D Images: the
@@ -1299,7 +1280,7 @@ pub enum ContentComponent {
     /// image, this value instead represents nothing" (rendering 側の
     /// fallback は downstream 責務)。
     ///
-    /// **`<content-replacement>` との関係 (未反映、raikiri-spike-5hp8 送り)**:
+    /// **`<content-replacement>` との関係 (未反映、将来 task 送り)**:
     /// `content` property 全体の value definition (CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>) は `normal |
     /// none | [ <content-replacement> | <content-list> ] […]?` で、
@@ -1316,15 +1297,15 @@ pub enum ContentComponent {
     /// semantics 自体の実装 (pseudo-element 抑制含む) は本 crate の
     /// static-side scope 外。
     ///
-    /// **milestone subset (g04 category (b))**: `<url>` alternative のみ実装
+    /// **(b) 非対応 (spec-valid)**: `<url>` alternative のみ実装
     /// (`url(...)` / `url("...")`)。`<gradient>` (`linear-gradient()` /
     /// `repeating-linear-gradient()` / `radial-gradient()` /
     /// `repeating-radial-gradient()`、CSS Images 3 §3.1-2) は gradient stop /
-    /// color-interpolation infra が本 crate に無く defer — raikiri-spike-1us
-    /// scope 外、追跡は follow-up task。CSS Images 4 で追加された `image()` /
+    /// color-interpolation infra が本 crate に無く defer (scope 外、追跡は
+    /// follow-up task)。CSS Images 4 で追加された `image()` /
     /// `image-set()` / `element()` / `cross-fade()` / `paint()` は参照した
-    /// CSS Images **3** の `<image>` production に含まれないため g04 category
-    /// (a) spec-invalid (Level 3 準拠) — これらは function 名が
+    /// CSS Images **3** の `<image>` production に含まれないため spec-invalid
+    /// (Level 3 準拠) — これらは function 名が
     /// `parse_content_function` の match arm と一致せず自動的に drop される
     /// ため追加コード不要。
     ///
@@ -1371,14 +1352,14 @@ pub enum ContentComponent {
 /// <display-internal> | <display-box> | <display-legacy>`、initial value
 /// は `inline`、not inherited。
 ///
-/// 現状受理する keyword は Sprint 12 scope: `block` / `inline` / `inline-block`
-/// / `none` の 4 値 (raikiri-spike-0vv.4)。`flex` / `grid` / `table*` /
+/// 現状受理する keyword は `block` / `inline` / `inline-block`
+/// / `none` の 4 値。`flex` / `grid` / `table*` /
 /// `list-item` / `flow-root` (standalone) / `contents` 等 spec-valid だが
-/// milestone defer 対象の keyword は `parse_display` が `None` を返し、
+/// 未実装 (将来対応) の keyword は `parse_display` が `None` を返し、
 /// declaration が silent drop される (rule.rs 側 invalid-value drop path)。
 ///
-/// `#[non_exhaustive]`: variant 追加を non-breaking にする (Sprint 12 の
-/// InlineBlock / None 追加は本 attribute 経由で forward-compatible)。
+/// `#[non_exhaustive]`: variant 追加を non-breaking にする (InlineBlock /
+/// None 追加は本 attribute 経由で forward-compatible)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayValue {
@@ -1423,11 +1404,11 @@ pub enum DisplayValue {
 ///   ("The specified padding and border of the element are laid out and drawn
 ///   inside this specified width and height").
 ///
-/// # Scope carving (g04 3-category)
+/// # Scope carving
 ///
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
+///   が canonical)。
 /// - **(a) spec-invalid**: 未知 keyword (`padding-box` — CSS UI 3 draft 相当
 ///   だが css-sizing-3 では削除、`margin-box` 等) は silent drop = `None`。
 ///
@@ -1435,8 +1416,7 @@ pub enum DisplayValue {
 ///
 /// [`ComputedValues.box_sizing`] は cascade static side seed のみ保持し、
 /// `apply_computed_to_style` bridge (dom scope、`taffy::Style::box_sizing`
-/// への翻訳) は future cross-scope task に defer (bd raikiri-spike-0vv.13
-/// Non-goals)。
+/// への翻訳) は future cross-scope task に defer。
 ///
 /// `#[non_exhaustive]` は 37n sibling [`DisplayValue`] / [`TextAlign`] /
 /// [`PositionValue`] と同じ forward-compat 契約。
@@ -1462,17 +1442,17 @@ pub enum BoxSizing {
 ///
 /// Value grammar: `start | end | left | right | center | justify | match-parent | justify-all`。
 ///
-/// # Scope carving (g04 3-category)
+/// # Scope carving
 ///
-/// - **(b) milestone subset**: 本 crate は Sprint 12 seed として shorthand を expand
+/// - **(b) 非対応**: 本 crate は shorthand を expand
 ///   せず、`ComputedValues.text_align` 単一 field に保持する — margin (`Sides<T>`) や
 ///   `content` (`normal`/`none` → 空 list) と同じ「shorthand as single field」
 ///   convention。text-align-all / text-align-last longhand 分離 (§6.2 / §6.3) は
-///   future task (Epic 5 or Epic 7 相当) で拡張。
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+///   future task で拡張。
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
-/// - **実装済み** (raikiri-spike-l3wg): `match-parent` の **computed-value 時解決**
+///   が canonical)。
+/// - **実装済み**: `match-parent` の **computed-value 時解決**
 ///   (spec §6.1 `#valdef-text-align-match-parent` verbatim: "This value behaves
 ///   the same as inherit (computes to its parent's computed value) except that
 ///   an inherited value of start or end is interpreted against the parent's
@@ -1485,13 +1465,10 @@ pub enum BoxSizing {
 ///   [`crate::specified::SpecifiedValues::finalize_as_root`]、page 経路は
 ///   [`crate::cascade::resolve_against_inherited`] が、どちらも
 ///   [`resolve_text_align_match_parent`] へ funnel する。解決には親要素の
-///   computed `direction` ([`Direction`]、CSS Writing Modes 4 §2.1) を要する
-///   — この 2 property の組がなぜ resolve 出来なかったかは
-///   raikiri-spike-l3wg の origin (raikiri-spike-ygl0 §8.2 spec lens F1) 参照。
+///   computed `direction` ([`Direction`]、CSS Writing Modes 4 §2.1) を要する。
 ///   [`crate::computed::ComputedValues::text_align`] に残る値は常に解決済 —
-///   `MatchParent` が computed 値として観測されることは無い (bd
-///   raikiri-spike-l3wg 以降の invariant、`resolve_text_align_match_parent`
-///   の debug_assert が pin する)。
+///   `MatchParent` が computed 値として観測されることは無い
+///   (`resolve_text_align_match_parent` の debug_assert が pin する不変条件)。
 /// - **(a) spec-invalid**: CSS Text 3 §6.1 grammar は上記 8 keyword のみ。それ以外
 ///   の ident (`middle`, `baseline` 等、および CSS Text 4 draft 相当の `<string>`
 ///   character alignment は本 crate が引用する CSS Text 3 では未定義) は silent
@@ -1549,9 +1526,9 @@ pub enum TextAlign {
 /// all elements、Inherited: **yes**、Computed value: specified value (= keyword
 /// をそのまま保持、他 property に対する相対解決は無い)。
 ///
-/// # なぜこの property が要るか (raikiri-spike-l3wg)
+/// # なぜこの property が要るか
 ///
-/// 本 crate は raikiri-spike-ygl0 まで `direction` を computed 層に持たなかった
+/// 本 crate は以前 `direction` を computed 層に持たなかった
 /// (`ComputedValues` に field が無い)。CSS Text 3 §6.1
 /// `#valdef-text-align-match-parent` の `text-align: match-parent` 解決 — "an
 /// inherited value of start or end is interpreted against the parent's
@@ -1562,11 +1539,11 @@ pub enum TextAlign {
 /// `direction` 自体が挙げられている (verbatim 確認済) ので、`@page { direction:
 /// rtl }` 単体でも page context の computed value として意味を持つ。
 ///
-/// # Scope carving (g04 3-category)
+/// # Scope carving
 ///
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3。37n sibling [`TextAlign`] と同 convention)。
+///   が canonical。37n sibling [`TextAlign`] と同 convention)。
 /// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
 ///   spec には旧 draft 相当の `auto` 値は無い (現行 §2.1 grammar は 2 keyword のみ)。
 /// - **Non-goal**: HTML `dir` attribute → UA-level `direction` mapping
@@ -1586,13 +1563,13 @@ pub enum Direction {
     Rtl,
 }
 
-/// `overflow-x` / `overflow-y` の共通 value type (raikiri-spike-cmd3)。
+/// `overflow-x` / `overflow-y` の共通 value type。
 ///
 /// CSS Overflow Module Level 3 §3.1 "Overflow: the overflow-x, overflow-y,
 /// overflow-block, overflow-inline, and overflow properties"
 /// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>。
 ///
-/// propdef (spec 確認済み、2026-08-11 WebFetch verbatim): Value: `visible |
+/// propdef (spec verbatim): Value: `visible |
 /// hidden | clip | scroll | auto`、Initial: `visible`、Inherited: **no**、
 /// Computed value: "usually specified value, but see text" — 本 crate は
 /// text が指す cross-axis coupling を [`resolve_overflow`] で実装する
@@ -1614,11 +1591,11 @@ pub enum Direction {
 /// - [`Auto`](Self::Auto) — "Like scroll when the box has scrollable
 ///   overflow; like hidden otherwise."
 ///
-/// # Scope carving (g04 3-category)
+/// # Scope carving
 ///
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
+///   が canonical)。
 /// - **(a) spec-invalid**: 未知 keyword は silent drop = `None`。
 /// - **Non-goal**: `overflow-block` / `overflow-inline` logical longhand
 ///   (spec §3.1 propdef が同時に定義するが、raikiri-style は writing-mode
@@ -1645,7 +1622,7 @@ pub enum OverflowValue {
     Auto,
 }
 
-/// `overflow-x` + `overflow-y` の pair holder (raikiri-spike-cmd3)。
+/// `overflow-x` + `overflow-y` の pair holder。
 ///
 /// [`Sides<T>`] (4-side box-model holder) の 2-axis sibling。`overflow`
 /// shorthand の 1-2 value expansion (CSS Overflow 3 §3.1
@@ -1680,8 +1657,7 @@ impl OverflowXY {
 }
 
 /// `overflow-x` / `overflow-y` の cross-axis computed-value coupling を解決する
-/// (raikiri-spike-cmd3、CSS Overflow 3 §3.1、2026-08-11 WebFetch 確認済み
-/// verbatim):
+/// (CSS Overflow 3 §3.1 verbatim):
 ///
 /// > The visible/clip values of overflow compute to auto/hidden
 /// > (respectively) if one of overflow-x or overflow-y is neither visible nor
@@ -1762,7 +1738,7 @@ pub(crate) fn resolve_overflow(specified: OverflowXY) -> OverflowXY {
 /// ではないので、page 経路は常に本関数 (親あり分岐) を通る
 /// ([`crate::page::PageCascadeResult::declarations`] doc の trap 注記参照)。
 ///
-/// # 呼び出し元 (raikiri-spike-l3wg、resolve_relative_weight と同型の contract)
+/// # 呼び出し元 (resolve_relative_weight と同型の contract)
 ///
 /// - Element 経路: [`crate::specified::SpecifiedValues::finalize`] /
 ///   [`crate::specified::SpecifiedValues::finalize_as_root`]。
@@ -1771,7 +1747,7 @@ pub(crate) fn resolve_overflow(specified: OverflowXY) -> OverflowXY {
 /// 両経路とも本関数へ funnel するので、"start/end を親の direction で
 /// left/right に解決する" table の実装は 1 箇所にしか無い (CSS Fonts 4
 /// bolder/lighter table を `resolve_relative_weight` 1 箇所に集約した
-/// raikiri-spike-ygl0 の precedent を踏襲)。
+/// precedent を踏襲)。
 ///
 /// **なぜ element 経路の呼び手が `apply_value` ではないか**: `apply_value`
 /// は同一 node 上の他 winner (`direction` 自身を含む) が [`PropertyKey`]
@@ -1798,7 +1774,7 @@ pub(crate) fn resolve_text_align_match_parent(
             debug_assert_ne!(
                 parent_text_align,
                 TextAlign::MatchParent,
-                "invariant violated: 親の computed text-align が MatchParent のまま — 親側の解決が漏れている (raikiri-spike-l3wg invariant)"
+                "invariant violated: 親の computed text-align が MatchParent のまま — 親側の解決が漏れている"
             );
             match parent_text_align {
                 TextAlign::Start => match parent_direction {
@@ -1822,7 +1798,7 @@ pub(crate) fn resolve_text_align_match_parent(
     }
 }
 
-/// `position` property の value — M5 static-side scope では `static` (default) と
+/// `position` property の value — static-side scope では `static` (default) と
 /// GCPM `running(<custom-ident>)` のみ受理する。
 ///
 /// CSS GCPM 3 §1.2.1 "The running() value"
@@ -1830,7 +1806,7 @@ pub(crate) fn resolve_text_align_match_parent(
 /// は element を normal flow から取り除き、`element()` 経由で page margin box に
 /// 配置可能な template として登録する。
 ///
-/// `relative` / `absolute` / `fixed` / `sticky` は M5+ scope 外、silent drop
+/// `relative` / `absolute` / `fixed` / `sticky` は未実装 (将来対応)、silent drop
 /// (parse_position が `None`)。`static` を明示的に variant 化しているのは、
 /// 先行の `position: running(x)` を later cascade で上書き無効化する用途
 /// (`.foo { position: running(hdr) } .foo.reset { position: static }` の
@@ -1864,15 +1840,15 @@ pub enum PositionValue {
 /// cascade の inherited/non-inherited 分類には効かない)、Computed value:
 /// specified keyword(s)。
 ///
-/// # Scope carving (minimal scope、bd raikiri-spike-5z86.3)
+/// # Scope carving (minimal scope)
 ///
 /// 本 crate は `text-decoration` を `text-decoration-line` /
 /// `-style` / `-color` の 3 longhand に分解しない。`||` (any-order,
 /// each-at-most-once) の combination grammar も実装しない — `none` /
 /// `underline` の 2 keyword のみを受理する単一 property として扱う。これは
 /// HTML LS §phrasing-content-3 の UA default (`a:link, a:visited {
-/// text-decoration: underline; }`) を満たすのに必要十分な最小 scope
-/// (bd raikiri-spike-5z86.3 issue body の Scope 節 item 1)。`overline` /
+/// text-decoration: underline; }`) を満たすのに必要十分な最小 scope。
+/// `overline` /
 /// `line-through` / `blink`、combination grammar、longhand 分解は明示的な
 /// follow-up。
 ///
@@ -1892,34 +1868,33 @@ pub enum TextDecoration {
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
-/// 認識できない property (例: `float` — 現行 milestone subset 外) や
-/// invalid value (例: `font-size: math` — MathML scaling algorithm 未実装、
-/// bd raikiri-spike-0vv.18) は parser 段で `None` に落として rule から
+/// 認識できない property (例: `float` — 現行 scope 外) や
+/// invalid value (例: `font-size: math` — MathML scaling algorithm 未実装) は
+/// parser 段で `None` に落として rule から
 /// silently 除外される。
 ///
 /// unit 側の「現在何が未対応か」は本節では例示しない — 具体例を挙げると
-/// その unit が受理側へ移った時点で本節だけが取り残される (bd
-/// raikiri-spike-hif0 実測: `cm` の例がこの経路で 1 度 drift した)。
+/// その unit が受理側へ移った時点で本節だけが取り残される (実際に `cm`
+/// の例がこの経路で 1 度 drift した)。
 /// canonical は [`parse_length_value`] の `Token::Dimension` match arm
 /// (`_` arm 直前 comment) と `parse_length_value_rejects_unsupported_unit`
 /// test。
 ///
-/// # CSS-wide keyword (canonical、bd raikiri-spike-rzv3)
+/// # CSS-wide keyword (canonical)
 ///
 /// CSS-wide keyword (`inherit` / `initial` / `unset` / `revert` — CSS
 /// Cascade 4 §7.3 "Explicit Defaulting"
 /// <https://www.w3.org/TR/css-cascade-4/#defaulting-keywords>、`revert-layer`
 /// — CSS Cascade 5 §7.3.5 "Rolling Back Cascade Layers: the revert-layer
 /// keyword" <https://www.w3.org/TR/css-cascade-5/#revert-layer>) の support は
-/// 本 crate ではまだ実装されていない (crate 内の informal な milestone 通称で
-/// "Epic 7")。
+/// 本 crate ではまだ実装されていない。
 ///
 /// unit 側と違い、この不対応には単一の code arm が無い — 各 `parse_*` 関数は
 /// これらの ident を単に認識せず、他の spec-invalid keyword と同じ「未知
 /// keyword」rejection 経路 (各関数自身の `_ => None` 等) へ落ちる、という
 /// **実装しないことによる不作為の一致**。したがって本節でも個々の property
 /// doc でも 5 keyword の enumeration を反復しない — 反復は property が増える
-/// たびに drift する (bd raikiri-spike-rzv3 実測: property.rs 内 16 箇所で
+/// たびに drift する (実際に property.rs 内 16 箇所で
 /// 独立に再記述され、うち border-width / border-style / box-sizing の 3 箇所は
 /// pinning test を伴わずに存在していた)。canonical はこの 1 段落と、
 /// `rejects_css_wide_keyword` 命名の代表 pinning test 群
@@ -1930,18 +1905,18 @@ pub enum TextDecoration {
 /// `position: running()` の引数) は不作為ではなく **明示的な** reject list
 /// ([`is_reserved_counter_name`] / [`is_reserved_custom_ident`]) を持つ — CSS
 /// Values 4 §4.2 <https://www.w3.org/TR/css-values-4/#custom-idents> の
-/// permanent な spec 除外規定であり、Epic 7 の実装状況とは無関係 (Epic 7 が
-/// landing しても変わらない) — 上の「不作為の一致」と混同しないこと。
+/// permanent な spec 除外規定であり、CSS-wide keyword の実装状況とは無関係
+/// (CSS-wide keyword が実装されても変わらない) — 上の「不作為の一致」と
+/// 混同しないこと。
 ///
 /// **box property は「認識できない」側ではない** — `margin` / `padding` /
-/// `border-*` / `width` / `height` はいずれも認識対象で、下記に variant を持つ
-/// (bd raikiri-spike-0vv.5 / .6 / .10 / .11 / .12)。`font-size: 1em` /
-/// `font-size: medium` / `font-size: larger` も bd raikiri-spike-zls8 /
-/// raikiri-spike-4rmu 以降は valid である。
+/// `border-*` / `width` / `height` はいずれも認識対象で、下記に variant を持つ。
+/// `font-size: 1em` / `font-size: medium` / `font-size: larger` も valid で
+/// ある。
 /// **例を差し替えるときは sibling の [`crate::rule`] の
-/// `drops_invalid_property_and_value` と揃えること** — 両者は同じ milestone
-/// subset を説明しており、あちらだけ更新されて本 doc が取り残される drift が
-/// 実際に起きた (bd raikiri-spike-sshp §8.3)。
+/// `drops_invalid_property_and_value` と揃えること** — 両者は同じ内容を
+/// 説明しており、あちらだけ更新されて本 doc が取り残される drift が
+/// 実際に起きた。
 ///
 /// # `#[non_exhaustive]` semantics (fulgur / downstream consumer 向け verbatim)
 ///
@@ -1950,24 +1925,21 @@ pub enum TextDecoration {
 /// tuple constructor 呼び出しは block しない**。したがって variant の payload
 /// **type** が変わると constructor 側は普通に compile-break する。
 ///
-/// Sprint 9 hardening (bd raikiri-spike-d9y.1、SEC HIGH cascade memory DoS fix)
-/// では正にこの break が発生し、Sprint 10 wall/umbrella formal declare
-/// (bd raikiri-spike-q3f) で以下を fulgur consumer 向け migration 対象として
-/// 表明する:
+/// cascade memory DoS 対策の一環でまさにこの break が発生し、以下を
+/// fulgur consumer 向け migration 対象として表明する:
 ///
 /// - [`Content`](Self::Content): `Content(Vec<ContentComponent>)` →
 ///   `Content(Arc<Vec<ContentComponent>>)`
 /// - [`StringSet`](Self::StringSet): payload の outer `Vec<..>` を `Arc<Vec<..>>` に
 ///
-/// Sprint 9 Wave 2 hardening (bd raikiri-spike-d9y.2、同 SEC HIGH の counter-*
-/// 拡張) は Sprint 10 時点で consumer live impact 0 だが同 pattern:
+/// 同じ cascade memory DoS 対策の counter-* への拡張は、当時 consumer への
+/// live impact 0 だったが同 pattern:
 ///
 /// - [`CounterReset`](Self::CounterReset) / [`CounterIncrement`](Self::CounterIncrement) /
 ///   [`CounterSet`](Self::CounterSet): `Vec<(SmolStr, i32)>` → `Arc<Vec<(SmolStr, i32)>>`
 ///
-/// Sprint 18 hardening (bd raikiri-spike-no7b、d9y.1/d9y.2 pattern の踏襲 — perf
-/// lens、out-of-diff pre-existing finding、SEC 分類ではない) は同 pattern を
-/// 最後の non-Arc `Vec` payload に適用する:
+/// 同種の Arc-wrap パターンの踏襲 (目的は perf 改善であり、security 対策では
+/// ない) は同 pattern を最後の non-Arc `Vec` payload に適用する:
 ///
 /// - [`FontFamily`](Self::FontFamily): `FontFamily(Vec<Atom>)` →
 ///   `FontFamily(Arc<Vec<Atom>>)`
@@ -1978,8 +1950,6 @@ pub enum TextDecoration {
 /// **透過的に継続動作** する (`&Arc<Vec<T>>` は autoderef で `&[T]` として使える)。
 /// 一方、`PropertyValue::Content(vec![...])` のように payload を **construct** する
 /// 場合は `PropertyValue::Content(Arc::new(vec![...]))` への書き換えが必要。
-/// 詳細は bd raikiri-spike-q3f (`Content`/`StringSet` の `Arc<Vec<_>>` 化 +
-/// Deref chain 透過性の wall/umbrella declare) を参照。
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyValue {
@@ -1988,22 +1958,21 @@ pub enum PropertyValue {
     /// `background-color: <color>` — **non-inherited**、initial: `transparent`。
     /// CSS Backgrounds 3 §2.2 "Base Color: the background-color property"
     /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>。
-    /// (raikiri-spike-0vv.7)
     BackgroundColor(CssColor),
     /// `font-family: <family-name>#` — inherited。CSS Fonts 4 §2.1
     /// <https://www.w3.org/TR/css-fonts-4/#font-family-prop> の spec 上の
     /// initial は "depends on user agent"。本実装は `[Atom::from("serif")]`
     /// を採る ([`crate::property::initial_font_family`] doc 参照)。
     ///
-    /// [`Arc<Vec<..>>`] wrap (raikiri-spike-no7b、d9y.1/d9y.2 pattern踏襲):
+    /// [`Arc<Vec<..>>`] wrap (同種の DoS 対策 fix の pattern 踏襲):
     /// cascade winner move (`apply_value`) と inheritance walk clone
     /// (`SpecifiedValues::inherit_from` の `parent.font_family.clone()`) が
     /// **shallow (Arc bump)** になる。`font-family` は inherited property なので
     /// non-inherited な counter-* / content / string-set とはコストの形が違う —
     /// 「毎 node で initial にリセットする」コストではなく「inheritance walk が
     /// 毎 node で親の値を運ぶ」コストで、N-node document あたり O(N) の
-    /// 1-element `Vec` malloc になっていた (origin: raikiri-spike-zpui §8.2
-    /// perf lens、out-of-diff pre-existing)。`Arc<Vec<T>>: Deref<Target = Vec<T>>`
+    /// 1-element `Vec` malloc になっていた (以前から存在した perf 上の課題)。
+    /// `Arc<Vec<T>>: Deref<Target = Vec<T>>`
     /// により downstream の `.iter()` / `.len()` / `.is_empty()` は既存 pattern
     /// そのままで通る (dom/paint consumer 波及 0、`crates/raikiri-dom/src/layout.rs`
     /// の `cv.font_family.iter()` 含む)。
@@ -2015,12 +1984,12 @@ pub enum PropertyValue {
     /// `<absolute-size>` (`xx-small` … `xxx-large`、`medium`) は親に依存しない
     /// 固定値なので、[`parse_font_size`] が §2.5.1 の scaling-factor table
     /// (<https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping>) を parse
-    /// 時点で `medium` (16px) 基準の `Length::Px` へ解決し尽くす
-    /// (raikiri-spike-4rmu)。`<relative-size>` (`larger` / `smaller`) は
+    /// 時点で `medium` (16px) 基準の `Length::Px` へ解決し尽くす。
+    /// `<relative-size>` (`larger` / `smaller`) は
     /// 継承先依存のため別 variant ([`Self::FontSizeRelative`]) を持つ —
-    /// 理由は同 variant の doc を参照。`math` keyword は g04 category (b)
-    /// milestone subset (bd raikiri-spike-0vv.18、MathML scaling algorithm が
-    /// 丸ごと未実装) として `parse_font_size` が `None` に落とす。
+    /// 理由は同 variant の doc を参照。`math` keyword は spec-valid だが
+    /// 未実装 (MathML scaling algorithm が丸ごと未対応) として
+    /// `parse_font_size` が `None` に落とす。
     FontSize(Length),
     /// `font-size: <relative-size>` (`larger` / `smaller`) — inherited、
     /// [`Self::FontSize`] と同じ `font-size` property の一部。CSS Fonts 4 §2.5
@@ -2038,9 +2007,8 @@ pub enum PropertyValue {
     /// **意図的に compile-time pin** している (umbrella re-export list の
     /// rationale、`crates/raikiri/src/lib.rs` 該当 comment 参照)。
     /// `FontSize` の payload 型を変えるとこの pin が割れ、
-    /// `crates/raikiri` 側の修正を要求する = wall/umbrella 相当の破壊的変更に
-    /// なる (bd raikiri-spike-q3f の `Content`/`StringSet` payload 変更が
-    /// 同種の前例)。
+    /// `crates/raikiri` 側の修正を要求する = umbrella crate に対する破壊的変更に
+    /// なる (`Content`/`StringSet` payload 変更が同種の前例)。
     ///
     /// `PropertyValue` は `#[non_exhaustive]` なので **新 variant の追加**は
     /// 既存 tuple constructor 呼び出しを一切壊さない (enum-level
@@ -2071,9 +2039,9 @@ pub enum PropertyValue {
     /// `lighter` は継承値依存の relative weight なので parse 段では解けず、
     /// [`crate::cascade::apply_value`] が親の computed weight から絶対値に
     /// 解決して [`crate::computed::ComputedValues::font_weight`] (`f32`) に
-    /// 格納する (raikiri-spike-17s8)。
+    /// 格納する。
     ///
-    /// **page context 側も解決される** (raikiri-spike-ygl0)。
+    /// **page context 側も解決される**。
     /// [`crate::page::cascade_page`] は winner を
     /// [`crate::cascade::resolve_against_inherited`] (`apply_value` の sibling、
     /// 同じ relative-weight table を共有) に通してから
@@ -2094,13 +2062,13 @@ pub enum PropertyValue {
     LineHeight(LineHeight),
     /// `display: <ident>` — non-inherited、initial: `inline` (CSS Display
     /// 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>)。
-    /// Sprint 12 scope: `block` / `inline` / `inline-block` / `none`
-    /// (raikiri-spike-0vv.4、詳細は [`DisplayValue`] doc)。
+    /// 現状受理する keyword: `block` / `inline` / `inline-block` / `none`
+    /// (詳細は [`DisplayValue`] doc)。
     Display(DisplayValue),
     /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited。spec initial は `none` (CSS Lists 3 §4.1)、本 impl はそれを
     /// 空 list で表現する。
-    /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
+    /// missing integer は 0 に default (spec default)。
     ///
     /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`apply_winners` の drain での
     /// `value.clone()`) + inheritance walk clone (`resolve_inheritance` の
@@ -2109,36 +2077,33 @@ pub enum PropertyValue {
     /// child は inherit_from で shared empty slot に落ちるが、winner までの経路
     /// (parent stack entry + cascaded candidates 蓄積) は deep-clone 経由だった。
     /// `* { counter-reset: c0 c1 ... cN }` × M element で O(N × M) → O(N + M)
-    /// (raikiri-spike-d9y.2 SEC HIGH、d9y.1 Content/StringSet pattern の踏襲)。
+    /// (cascade memory DoS 対策、Content/StringSet pattern の踏襲)。
     CounterReset(Arc<Vec<(SmolStr, i32)>>),
     /// `counter-increment: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited。spec initial は `none` (CSS Lists 3 §4.2)、本 impl はそれを
     /// 空 list で表現する。
-    /// missing integer は 1 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
+    /// missing integer は 1 に default (spec default)。
     ///
-    /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
-    /// (raikiri-spike-d9y.2)。
+    /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale。
     CounterIncrement(Arc<Vec<(SmolStr, i32)>>),
     /// `counter-set: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited。spec initial は `none` (CSS Lists 3 §4.2)、本 impl はそれを
     /// 空 list で表現する。
-    /// missing integer は 0 に default (spec default)。M5 pre-work (raikiri-spike-s85)。
+    /// missing integer は 0 に default (spec default)。
     ///
-    /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
-    /// (raikiri-spike-d9y.2)。
+    /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale。
     CounterSet(Arc<Vec<(SmolStr, i32)>>),
     /// `content: normal | none | <content-list>` — non-inherited。spec initial は
     /// `normal`、本 impl は `normal` / `none` をどちらも空 list で表現する
-    /// (pseudo-element 生成判断は下流 layer)。M5 gcpm-directive-emit static-side
-    /// (raikiri-spike-m5.1)、CSS Content 3 §1
+    /// (pseudo-element 生成判断は下流 layer)。CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>。
     ///
     /// [`Arc<Vec<..>>`] wrap: cascade winner clone + inheritance walk stack
     /// entry clone + per-node write が **shallow (Arc bump only)** になる。
     /// `* { content: "<large>" }` × N element の O(N × M) memory blow-up を
-    /// 単一 heap slot 共有で塞ぐ (raikiri-spike-d9y.1 SEC HIGH)。
+    /// 単一 heap slot 共有で塞ぐ (cascade memory DoS 対策)。
     ///
-    /// **Consumer 向け** (bd raikiri-spike-q3f wall/umbrella formal declare):
+    /// **Consumer 向け**:
     /// pattern-match で payload を **読む** 場合は `Arc<Vec<T>>` の deref chain
     /// (Vec → slice) により従来の `PropertyValue::Content(components) =>
     /// components.iter().for_each(..)` がそのまま動作する。**construct** する
@@ -2149,34 +2114,34 @@ pub enum PropertyValue {
     /// spec initial は `none`、本 impl はそれを空 list で表現する。各 entry は
     /// `(name, content-list)` pair。
     /// CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>、
-    /// `<content-list>` は CSS Content 3 §2 (m5.1 で parser 実装済)。
+    /// `<content-list>` は CSS Content 3 §2 (parser 実装済)。
     /// 名前解決と runtime string() 参照は下流 (raikiri-dom) 責務。
     ///
     /// [`Arc<Vec<..>>`] wrap は [`Self::Content`] と同じ理由 —
-    /// `* { string-set: name "<large>" }` × N element 経路の同種 DoS を塞ぐ
-    /// (raikiri-spike-d9y.1)。
+    /// `* { string-set: name "<large>" }` × N element 経路の同種 DoS を塞ぐ。
     ///
-    /// **Consumer 向け** (bd raikiri-spike-q3f wall/umbrella formal declare):
+    /// **Consumer 向け**:
     /// [`Self::Content`] と同じく outer `Arc` は read-side は deref 透過、
     /// construct-side (`PropertyValue::StringSet(vec![(name, items)])`) のみ
     /// `PropertyValue::StringSet(Arc::new(vec![..]))` に書き換える。inner
     /// `Vec<ContentComponent>` は Arc 化しない (per-entry share の hit率 が
-    /// 想定できないため、outer 単段で d9y.1 の攻撃経路を塞ぐ設計)。
+    /// 想定できないため、outer 単段で攻撃経路を塞ぐ設計)。
     StringSet(Arc<Vec<(SmolStr, Vec<ContentComponent>)>>),
     /// `position: static | running(<custom-ident>)` — non-inherited、initial:
-    /// `static`。M5 static-side ε (raikiri-spike-m5.4)。
+    /// `static`。
     /// CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>。
-    /// M5 scope では `running()` seed emit のみが下流に伝わる —
+    /// 現状 scope では `running()` seed emit のみが下流に伝わる —
     /// `Static` は `apply_value` で no-op (先行 `running()` を上書き suppress
     /// する discriminant 用途、spec default に相当)。
-    /// `relative` / `absolute` / `fixed` / `sticky` は M5+ scope 外、parser 段で drop。
+    /// `relative` / `absolute` / `fixed` / `sticky` は未実装 (将来対応)、
+    /// parser 段で drop。
     Position(PositionValue),
     /// `text-align: start | end | left | right | center | justify | match-parent
     /// | justify-all` — **inherited**、initial: [`TextAlign::Start`]
     /// (CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
     /// <https://www.w3.org/TR/css-text-3/#text-align-property>)。
-    /// spec 上 shorthand (text-align-all + text-align-last) だが Sprint 12 seed
-    /// では単一 field に保持 (**g04 (b) milestone subset**、longhand 分離は
+    /// spec 上 shorthand (text-align-all + text-align-last) だが
+    /// 単一 field に保持 (**(b) 非対応**、longhand 分離は
     /// 後続 task で defer)。詳細は [`TextAlign`] doc-comment。
     TextAlign(TextAlign),
     /// `padding-top: <length-percentage [0,∞]>` — non-inherited、initial: `0`。
@@ -2185,16 +2150,12 @@ pub enum PropertyValue {
     /// `parse_padding_side` が parse-time enforce (負値は None 返し → declaration drop)、
     /// `auto` keyword は grammar に含まれないため `parse_length_value` の
     /// Dimension / Percentage arm fall-through で自然 reject。
-    /// (raikiri-spike-0vv.6)
     PaddingTop(Length),
     /// `padding-right: <length-percentage [0,∞]>` — [`Self::PaddingTop`] と同 grammar。
-    /// (raikiri-spike-0vv.6)
     PaddingRight(Length),
     /// `padding-bottom: <length-percentage [0,∞]>` — [`Self::PaddingTop`] と同 grammar。
-    /// (raikiri-spike-0vv.6)
     PaddingBottom(Length),
     /// `padding-left: <length-percentage [0,∞]>` — [`Self::PaddingTop`] と同 grammar。
-    /// (raikiri-spike-0vv.6)
     PaddingLeft(Length),
     /// `padding: <'padding-top'>{1,4}` shorthand — non-inherited、initial:
     /// `Sides::all(Length::Px(0.0))`。CSS Box 3 §4.2
@@ -2219,28 +2180,24 @@ pub enum PropertyValue {
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
     /// 成立する)。到達経路が無いのは上記の展開保証によるものであり、万一到達
     /// した場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
-    /// (bd raikiri-spike-8kn8 で framing 訂正) — `ComputedValues.padding` field
+    /// (framing を訂正済み) — `ComputedValues.padding` field
     /// 全 4 side を無条件に上書きし、4 longhand winner を必ず破壊する。到達した
     /// 時点で既に bug であり、穏当に degrade はしない (canonical な記述は
     /// [`crate::cascade::apply_value`] の `Margin`/`Border` arm doc、および
     /// [`crate::rule::expand_shorthand_into`] doc 参照)。
-    /// raikiri-spike-5nc (margin 0vv.5 の parse-time expansion model に migrate)。
+    /// margin と同じ parse-time expansion model への migrate を検討 (follow-up task)。
     Padding(Sides<Length>),
     /// `margin-top: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
-    /// raikiri-spike-0vv.5。
     MarginTop(LengthOrAuto),
     /// `margin-right: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
-    /// raikiri-spike-0vv.5。
     MarginRight(LengthOrAuto),
     /// `margin-bottom: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
-    /// raikiri-spike-0vv.5。
     MarginBottom(LengthOrAuto),
     /// `margin-left: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
-    /// raikiri-spike-0vv.5。
     MarginLeft(LengthOrAuto),
     /// `margin: <'margin-top'>{1,4}` shorthand — 4-side quad の一括指定
     /// (CSS Box 3 §3.2 <https://www.w3.org/TR/css-box-3/#margin-shorthand>)。
@@ -2257,45 +2214,36 @@ pub enum PropertyValue {
     /// exactly as if expanded in place." 準拠、cascade の per-side 勝ち抜けが自然に
     /// 成立する)。到達経路が無いのは上記の展開保証によるものであり、万一到達
     /// した場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
-    /// (bd raikiri-spike-8kn8 で framing 訂正) — `ComputedValues.margin` field
+    /// (framing を訂正済み) — `ComputedValues.margin` field
     /// 全 4 side を無条件に上書きし、4 longhand winner を必ず破壊する。到達した
     /// 時点で既に bug であり、穏当に degrade はしない (canonical な記述は
     /// [`crate::cascade::apply_value`] の `Margin` arm doc、および
     /// [`crate::rule::expand_shorthand_into`] doc 参照)。
-    /// raikiri-spike-0vv.5。
     Margin(Sides<LengthOrAuto>),
     /// `border-top-width: <line-width>` — non-inherited、initial: `medium`
     /// = `Length::Px(3.0)` (CSS Backgrounds 3 §3.3
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。
     /// `<line-width>` = `<length [0,∞]> | thin | medium | thick`。
-    /// `<percentage>` は grammar に含まれない (padding とは違う点、advisor
-    /// calibration)。keyword mapping は spec 規定値: thin=1px、medium=3px、
+    /// `<percentage>` は grammar に含まれない (padding とは違う点)。keyword
+    /// mapping は spec 規定値: thin=1px、medium=3px、
     /// thick=5px (`parse_border_width_side` doc 参照)。
-    /// (raikiri-spike-0vv.12)
     BorderTopWidth(Length),
     /// `border-right-width: <line-width>` — [`Self::BorderTopWidth`] と同 grammar。
-    /// (raikiri-spike-0vv.12)
     BorderRightWidth(Length),
     /// `border-bottom-width: <line-width>` — [`Self::BorderTopWidth`] と同 grammar。
-    /// (raikiri-spike-0vv.12)
     BorderBottomWidth(Length),
     /// `border-left-width: <line-width>` — [`Self::BorderTopWidth`] と同 grammar。
-    /// (raikiri-spike-0vv.12)
     BorderLeftWidth(Length),
     /// `border-top-style: <line-style>` — non-inherited、initial: `none`
     /// (CSS Backgrounds 3 §3.2
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-style>)。10 keyword は
     /// [`BorderStyle`] variant を参照。
-    /// (raikiri-spike-0vv.12)
     BorderTopStyle(BorderStyle),
     /// `border-right-style: <line-style>` — [`Self::BorderTopStyle`] と同 grammar。
-    /// (raikiri-spike-0vv.12)
     BorderRightStyle(BorderStyle),
     /// `border-bottom-style: <line-style>` — [`Self::BorderTopStyle`] と同 grammar。
-    /// (raikiri-spike-0vv.12)
     BorderBottomStyle(BorderStyle),
     /// `border-left-style: <line-style>` — [`Self::BorderTopStyle`] と同 grammar。
-    /// (raikiri-spike-0vv.12)
     BorderLeftStyle(BorderStyle),
     /// `border-top-color: <color>` — non-inherited、initial: `currentcolor`
     /// keyword ([`BorderColor::CurrentColor`]、CSS Backgrounds 3 §3.1
@@ -2304,18 +2252,14 @@ pub enum PropertyValue {
     /// specified value (currentcolor vs. resolved `<color>`) を保持し、
     /// used-value resolution (currentcolor → 同 node computed `color` property
     /// lookup、CSS Color 3 §4.4 <https://www.w3.org/TR/css-color-3/#currentColor-def>)
-    /// は paint scope 責務 (bd raikiri-spike-q7qf)。
-    /// (raikiri-spike-0vv.12 initial seed、raikiri-spike-0vv.17 で
-    /// `CssColor` から [`BorderColor`] へ格上げ)
+    /// は paint scope 責務。
+    /// (`CssColor` から [`BorderColor`] へ格上げ済み)
     BorderTopColor(BorderColor),
     /// `border-right-color: <color>` — [`Self::BorderTopColor`] と同 grammar。
-    /// (raikiri-spike-0vv.12、raikiri-spike-0vv.17)
     BorderRightColor(BorderColor),
     /// `border-bottom-color: <color>` — [`Self::BorderTopColor`] と同 grammar。
-    /// (raikiri-spike-0vv.12、raikiri-spike-0vv.17)
     BorderBottomColor(BorderColor),
     /// `border-left-color: <color>` — [`Self::BorderTopColor`] と同 grammar。
-    /// (raikiri-spike-0vv.12、raikiri-spike-0vv.17)
     BorderLeftColor(BorderColor),
     /// `border: <line-width> || <line-style> || <color>` shorthand — 4 side
     /// 全てに同一の [`Border`] を配る (CSS Backgrounds 3 §3.4
@@ -2324,7 +2268,7 @@ pub enum PropertyValue {
     /// spec grammar は `||` (any-order、each component at most once、at least
     /// 1 必須) — `parse_border_shorthand` が unfilled slot loop で peel する。
     /// 省略成分は initial: width=`Length::Px(3.0)` (medium)、style=`BorderStyle::None`、
-    /// color=[`BorderColor::CurrentColor`] (spec §3.1 initial、raikiri-spike-0vv.17)。
+    /// color=[`BorderColor::CurrentColor`] (spec §3.1 initial)。
     ///
     /// **element cascade 段でこの variant は観測されない**:
     /// [`crate::rule::expand_shorthand_into`] が parse 出口
@@ -2337,8 +2281,8 @@ pub enum PropertyValue {
     /// in place." 準拠、cascade の per-side / per-sub-property 勝ち抜けが自然に
     /// 成立する — margin / padding shorthand precedent 踏襲)。到達経路が無いのは
     /// 上記の展開保証によるものであり、万一到達した場合の
-    /// [`crate::cascade::apply_value`] の挙動は **safety net ではない** (bd
-    /// raikiri-spike-8kn8 で framing 訂正) — `ComputedValues.border` field 全
+    /// [`crate::cascade::apply_value`] の挙動は **safety net ではない**
+    /// (framing を訂正済み) — `ComputedValues.border` field 全
     /// 4 side × 3 sub-property を無条件に上書きし、12 longhand winner を必ず
     /// 破壊する。到達した時点で既に bug であり、穏当に degrade はしない
     /// (canonical な記述は [`crate::cascade::apply_value`] の `Border` arm doc、
@@ -2354,31 +2298,30 @@ pub enum PropertyValue {
     /// spec §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
     /// では border shorthand が **border-image-* も reset** する (spec verbatim は
     /// `parse_border_shorthand` doc に 1 site だけ置く) が、本 crate は
-    /// border-image を milestone defer (未実装、bd raikiri-spike-0vv Epic の
-    /// (b) milestone subset)。future 統合 task で border-image longhand と併せて
+    /// border-image を実装しておらず、未対応 (spec-valid だが本 crate の
+    /// scope 外)。future 統合 task で border-image longhand と併せて
     /// 対応。
-    /// (raikiri-spike-0vv.12)
     Border(Sides<Border>),
     /// `width: auto | <length-percentage [0,∞]>` — non-inherited、initial: `auto`
     /// (CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
     ///
     /// spec value grammar は `auto | <length-percentage [0,∞]> | min-content |
     /// max-content | fit-content(<length-percentage>)` だが、min-content /
-    /// max-content / fit-content() は g04 (b) milestone subset として本 milestone
-    /// では silent drop、`auto` と non-negative `<length-percentage>` のみ受理。
+    /// max-content / fit-content() は未実装 (将来対応) として現状
+    /// silent drop、`auto` と non-negative `<length-percentage>` のみ受理。
     /// 負値は spec grammar `[0,∞]` violation として drop。
     ///
     /// `auto` の resolution は下流 layout (raikiri-dom apply_computed_to_style
-    /// bridge、taffy::Style::size.width 反映) 責務。raikiri-spike-0vv.10。
+    /// bridge、taffy::Style::size.width 反映) 責務。
     Width(LengthOrAuto),
     /// `height: <length-percentage [0,∞]> | auto` — **non-inherited**、initial:
     /// `auto` (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
     /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
     ///
-    /// Sprint 17 seed scope (raikiri-spike-0vv.11) は `auto` + 非負
+    /// 現状 scope では `auto` + 非負
     /// `<length-percentage>` の 2 分岐のみ受理。`min-content` / `max-content` /
-    /// `fit-content(<length-percentage>)` は spec-valid だが milestone subset
-    /// (g04 (b)) として parser 段で silent drop する — `parse_height` doc 参照。
+    /// `fit-content(<length-percentage>)` は spec-valid だが未実装
+    /// (将来対応) として parser 段で silent drop する — `parse_height` doc 参照。
     ///
     /// margin (`<length-percentage> | auto`) の non-negative constraint が違うだけの
     /// grammar のため、payload 型は sibling [`Self::Width`] と同じ
@@ -2392,7 +2335,6 @@ pub enum PropertyValue {
     /// `box-sizing: content-box | border-box` — **non-inherited**、initial:
     /// `content-box` (CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing
     /// property" <https://www.w3.org/TR/css-sizing-3/#box-sizing>)。
-    /// (raikiri-spike-0vv.13)
     BoxSizing(BoxSizing),
     /// `direction: ltr | rtl` — **inherited**、initial: [`Direction::Ltr`]
     /// (CSS Writing Modes 4 §2.1 "Specifying Directionality: the direction
@@ -2401,7 +2343,7 @@ pub enum PropertyValue {
     /// 唯一の consumer は [`resolve_text_align_match_parent`] だが、property
     /// 自体は CSS Paged Media 3 Appendix A page-property-list にも独立に
     /// 現れる ([`Direction`] doc の verbatim 確認済み引用参照)。
-    /// (raikiri-spike-l3wg、末尾に追加 — 既存 variant の discriminant を
+    /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照)
     Direction(Direction),
@@ -2411,13 +2353,13 @@ pub enum PropertyValue {
     /// computed value は同一 node の `overflow-y` に依存しうる —
     /// [`resolve_overflow`] 参照 (単純代入ではない、[`crate::cascade::apply_value`]
     /// の本 variant arm doc も参照)。
-    /// (raikiri-spike-cmd3、末尾に追加 — 既存 variant の discriminant を
+    /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照)
     OverflowX(OverflowValue),
     /// `overflow-y: visible | hidden | clip | scroll | auto` —
     /// [`Self::OverflowX`] と同 grammar / initial / non-inherited、逆 axis。
-    /// (raikiri-spike-cmd3、末尾配置は [`Self::OverflowX`] と同理由)
+    /// (末尾配置は [`Self::OverflowX`] と同理由)
     OverflowY(OverflowValue),
     /// `overflow: <'overflow-block'>{1,2}` shorthand — CSS Overflow 3 §3.1
     /// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>。1 value
@@ -2434,14 +2376,14 @@ pub enum PropertyValue {
     /// <https://www.w3.org/TR/css-cascade-4/#shorthand> 準拠)。万一到達した
     /// 場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
     /// — [`Self::Padding`] doc と同じ framing、詳細は同 doc 参照。
-    /// (raikiri-spike-cmd3、末尾配置は [`Self::OverflowX`] と同理由)
+    /// (末尾配置は [`Self::OverflowX`] と同理由)
     Overflow(OverflowXY),
     /// `text-decoration: none | underline` — **non-inherited**、initial:
     /// [`TextDecoration::None`] (CSS Text Decoration Module Level 3 §2
     /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>、
     /// "Inherited: no")。computed value = specified keyword ([`TextDecoration`]
     /// doc 参照、length を運ばないため相対解決なし)。
-    /// (bd raikiri-spike-5z86.3、末尾に追加 — 既存 variant の discriminant を
+    /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     TextDecoration(TextDecoration),
@@ -2452,10 +2394,10 @@ pub enum PropertyValue {
 /// cascade.rs の per-node winner selection、および page.rs の
 /// [`cascade_page`](crate::page::cascade_page) が [`PageCascadeResult`] の
 /// map key に使う。`PropertyValue` の variant tag を stateless に抜き出したもので
-/// 追加情報を持たないため public に露出する (raikiri-spike-m4.1、[`PageCascadeResult`]
+/// 追加情報を持たないため public に露出する ([`PageCascadeResult`]
 /// が `pub` 型を要求するため — clippy `private_interfaces` 対応)。
 ///
-/// # ⚠️ variant の**宣言順は load-bearing** (bd raikiri-spike-8kn8)
+/// # ⚠️ variant の**宣言順は load-bearing**
 ///
 /// element cascade は本 enum の discriminant (`key as usize`) を scratch buffer
 /// の slot index に使い、**slot を index 昇順に走査して winner を適用する**
@@ -2468,10 +2410,10 @@ pub enum PropertyValue {
 ///   だけで、いずれも longhand より後ろに置かれている。ただし
 ///   [`crate::rule::expand_shorthand_into`] が parse 出口と element cascade 入口の
 ///   両方で shorthand を longhand に展開するため、**shorthand key は element
-///   cascade 段には到達しない** (bd raikiri-spike-nqkj)。`@page` cascade
+///   cascade 段には到達しない**。`@page` cascade
 ///   ([`crate::page::cascade_page`]) も入口側で同じ展開を通すので、`PageRule` の
 ///   `pub declarations` を post-parse mutation された場合の同 shape の gap も
-///   塞がっている (bd raikiri-spike-3svx)。
+///   塞がっている。
 ///
 /// **並び順を「直す」ことで shorthand/longhand の cascade を修正しようとしない
 /// こと** — 順序任せの解は `margin: 0; margin-top: 10px` と
@@ -2479,7 +2421,7 @@ pub enum PropertyValue {
 /// (詳細は `apply_winners` の doc)。正しい解は既に採られている
 /// 「shorthand を cascade 段に到達させない」方向であり、その展開 arm の
 /// 書き忘れは [`crate::rule::expand_shorthand_into`] の exhaustive match により
-/// compile-time に排除されている (bd raikiri-spike-ez7b)。
+/// compile-time に排除されている。
 ///
 /// 新しい variant を足すときは、それが既存 variant と同じ `SpecifiedValues`
 /// field に書くかどうかを確認すること。書かないなら (= 1:1 disjoint なら)
@@ -2487,7 +2429,7 @@ pub enum PropertyValue {
 ///
 /// [`Direction`] / [`TextAlign`] は 1:1 disjoint (`SpecifiedValues::direction`
 /// / `SpecifiedValues::text_align` の別 field) — `text-align: match-parent`
-/// が `direction` の**親**の computed 値を要する件 (raikiri-spike-l3wg) は
+/// が `direction` の**親**の computed 値を要する件は
 /// この `PropertyKey` の並び順とは**無関係**。その解決は
 /// [`crate::property::resolve_text_align_match_parent`] の呼び手
 /// ([`crate::specified::SpecifiedValues::finalize`]) が全 winner 適用後に
@@ -2524,13 +2466,13 @@ pub enum PropertyKey {
     /// syntactic sugar として畳むことを意味するので、独立 winner を持つこと自体は
     /// deviation。[`crate::rule::expand_shorthand_into`] が parse 出口と element
     /// cascade 入口の両方で shorthand を畳むため本 variant は element cascade 段に
-    /// 到達せず (bd raikiri-spike-nqkj)、observable な divergence は無い
+    /// 到達せず、observable な divergence は無い
     /// (`@page` 経路の同 shape gap も [`crate::page::cascade_page`] の入口側展開で
-    /// 塞がれている — bd raikiri-spike-3svx)。その担保のうち「展開 arm の
+    /// 塞がれている)。その担保のうち「展開 arm の
     /// 書き忘れ」は [`crate::rule::expand_shorthand_into`] の exhaustive match により
-    /// compile-time に排除されている (bd raikiri-spike-ez7b)。
+    /// compile-time に排除されている。
     Padding,
-    // margin longhand + shorthand — raikiri-spike-0vv.5 (semantics on the
+    // margin longhand + shorthand (semantics on the
     // matching PropertyValue::Margin* variants; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
     MarginTop,
@@ -2538,7 +2480,7 @@ pub enum PropertyKey {
     MarginBottom,
     MarginLeft,
     Margin,
-    // border longhand + shorthand — raikiri-spike-0vv.12 (semantics on the
+    // border longhand + shorthand (semantics on the
     // matching PropertyValue::Border* variants; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
     BorderTopWidth,
@@ -2554,29 +2496,29 @@ pub enum PropertyKey {
     BorderBottomColor,
     BorderLeftColor,
     Border,
-    // width — raikiri-spike-0vv.10 (CSS Sizing 3 §3.1.1)。
+    // width (CSS Sizing 3 §3.1.1)。
     Width,
-    // height — raikiri-spike-0vv.11 (CSS Sizing 3 §3.1.1、semantics on the
+    // height (CSS Sizing 3 §3.1.1、semantics on the
     // matching PropertyValue::Height variant; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
     Height,
-    // box-sizing — raikiri-spike-0vv.13 (CSS Sizing 3 §3.3、semantics on the
+    // box-sizing (CSS Sizing 3 §3.3、semantics on the
     // matching PropertyValue::BoxSizing variant; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
     BoxSizing,
-    // direction — raikiri-spike-l3wg (CSS Writing Modes 4 §2.1、semantics on
+    // direction (CSS Writing Modes 4 §2.1、semantics on
     // the matching PropertyValue::Direction variant; sibling PropertyKey
     // variants carry no per-variant docs per crate convention). 末尾配置の
     // 理由は PropertyValue::Direction の doc 参照。
     Direction,
-    // overflow-x / overflow-y longhand + overflow shorthand — raikiri-spike-cmd3
+    // overflow-x / overflow-y longhand + overflow shorthand
     // (CSS Overflow 3 §3.1、semantics on the matching PropertyValue::Overflow*
     // variants; sibling PropertyKey variants carry no per-variant docs per
     // crate convention). 末尾配置の理由は PropertyValue::OverflowX の doc 参照。
     OverflowX,
     OverflowY,
     Overflow,
-    // text-decoration — bd raikiri-spike-5z86.3 (CSS Text Decoration Module
+    // text-decoration (CSS Text Decoration Module
     // Level 3 §2、semantics on the matching PropertyValue::TextDecoration
     // variant; sibling PropertyKey variants carry no per-variant docs per
     // crate convention). 末尾配置の理由は PropertyValue::TextDecoration の
@@ -2655,27 +2597,26 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Backgrounds 3 §2.2 <https://www.w3.org/TR/css-backgrounds-3/#background-color>
         // "Base Color: the background-color property"。value grammar は `<color>`、
         // 直上 sibling `color` arm と同じ parse_color reuse pattern。
-        // (raikiri-spike-0vv.7)
         "background-color" => parse_color(input).map(PropertyValue::BackgroundColor),
-        // Arc wrap は raikiri-spike-no7b の cascade memory 削減 (d9y.1/d9y.2
-        // pattern の踏襲、SEC 分類ではない perf lens)。`parse_font_family` は
+        // Arc wrap は cascade memory 削減 (同種の DoS 対策 fix の
+        // pattern 踏襲、perf 目的で security 対策ではない)。`parse_font_family` は
         // grammar 上 empty Vec を返さない (`<family-name>#` は 1 要素以上必須、
         // 同関数の `if families.is_empty() { None }` 参照) ため、counter-* /
         // content / string-set と異なり shared-empty-slot 分岐は不要。
         "font-family" => parse_font_family(input).map(|v| PropertyValue::FontFamily(Arc::new(v))),
         "font-size" => parse_font_size(input),
         "font-weight" => parse_font_weight(input).map(PropertyValue::FontWeight),
-        // CSS Inline 3 §5.1 line-height (raikiri-spike-0vv.9)。
+        // CSS Inline 3 §5.1 line-height。
         // `normal` / `<number [0,∞]>` / `<length-percentage [0,∞]>` を受理、
         // 負値と其他 keyword は spec grammar 違反として drop。
         "line-height" => parse_line_height(input).map(PropertyValue::LineHeight),
         "display" => parse_display(input).map(PropertyValue::Display),
-        // CSS Lists 3 §4 counter properties (raikiri-spike-s85、M5 pre-work)。
+        // CSS Lists 3 §4 counter properties。
         // spec default: reset = 0、increment = 1、set = 0。
-        // Arc wrap は raikiri-spike-d9y.2 の cascade memory DoS fix (per-element
+        // Arc wrap は cascade memory DoS 対策 (per-element
         // clone を shallow bump 化)、空 list は 3 property 共通 shared Arc slot
         // (`empty_counter_entries`) に落として per-node allocation regression を
-        // 避ける (d9y.1 Content/StringSet precedent と同 pattern)。
+        // 避ける (Content/StringSet の precedent と同 pattern)。
         "counter-reset" => parse_counter_property(input, 0).map(|v| {
             if v.is_empty() {
                 PropertyValue::CounterReset(empty_counter_entries())
@@ -2697,10 +2638,10 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
                 PropertyValue::CounterSet(Arc::new(v))
             }
         }),
-        // CSS Content 3 §1 content property (raikiri-spike-m5.1、M5 gcpm-directive-emit static side)。
-        // Arc wrap は raikiri-spike-d9y.1 の cascade memory DoS fix (per-element clone を
+        // CSS Content 3 §1 content property。
+        // Arc wrap は cascade memory DoS 対策 (per-element clone を
         // shallow bump 化)、empty list は shared Arc slot に落として per-node allocation
-        // regression を避ける (advisor calibration)。
+        // regression を避ける。
         "content" => parse_content(input).map(|v| {
             if v.is_empty() {
                 PropertyValue::Content(empty_content_list())
@@ -2708,8 +2649,8 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
                 PropertyValue::Content(Arc::new(v))
             }
         }),
-        // CSS GCPM 3 §1.1.1 string-set (raikiri-spike-m5.3、M5 static-side β)。
-        // Arc wrap は raikiri-spike-d9y.1、同 rationale。
+        // CSS GCPM 3 §1.1.1 string-set。
+        // Arc wrap は同種の DoS 対策 fix と同 rationale。
         "string-set" => parse_string_set(input).map(|v| {
             if v.is_empty() {
                 PropertyValue::StringSet(empty_string_set_entries())
@@ -2717,15 +2658,15 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
                 PropertyValue::StringSet(Arc::new(v))
             }
         }),
-        // CSS GCPM 3 §1.2.1 position: running() (raikiri-spike-m5.4、M5 static-side ε)。
-        // M5 scope では `static` + `running(<custom-ident>)` のみ受理、
-        // `relative` / `absolute` / `fixed` / `sticky` は silent drop (M5+ scope 外)。
+        // CSS GCPM 3 §1.2.1 position: running()。
+        // 現状 scope では `static` + `running(<custom-ident>)` のみ受理、
+        // `relative` / `absolute` / `fixed` / `sticky` は未実装 (将来対応) につき silent drop。
         "position" => parse_position(input).map(PropertyValue::Position),
-        // CSS Text 3 §6.1 text-align (raikiri-spike-0vv.8、Sprint 12 seed)。
+        // CSS Text 3 §6.1 text-align。
         // spec 上 shorthand (text-align-all + text-align-last) だが単一 field で保持
-        // (g04 (b) milestone subset、`TextAlign` doc-comment 参照)。
+        // ((b) 非対応、`TextAlign` doc-comment 参照)。
         "text-align" => parse_text_align(input).map(PropertyValue::TextAlign),
-        // CSS Box 3 §4.1 padding physical longhand (raikiri-spike-0vv.6)。
+        // CSS Box 3 §4.1 padding physical longhand。
         // grammar: <length-percentage `[0,∞]`> — non-negative constraint は
         // parse_padding_side が enforce (parse-time drop、spec-invalid → None)。
         // `auto` keyword は spec grammar に含まれず parse_length_value の Dimension /
@@ -2738,22 +2679,22 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
         // 1-4 value expansion は parse_padding_shorthand が spec verbatim で適用。
         "padding" => parse_padding_shorthand(input).map(PropertyValue::Padding),
-        // CSS Box 3 §3.1 margin-* physical longhand (raikiri-spike-0vv.5).
+        // CSS Box 3 §3.1 margin-* physical longhand.
         // <length-percentage> | auto の grammar、negative 許容 (spec 準拠、layout
         // 側で負値の意味付け)。
         "margin-top" => parse_margin_side(input).map(PropertyValue::MarginTop),
         "margin-right" => parse_margin_side(input).map(PropertyValue::MarginRight),
         "margin-bottom" => parse_margin_side(input).map(PropertyValue::MarginBottom),
         "margin-left" => parse_margin_side(input).map(PropertyValue::MarginLeft),
-        // CSS Box 3 §3.2 margin shorthand (raikiri-spike-0vv.5). 1-4 value
+        // CSS Box 3 §3.2 margin shorthand. 1-4 value
         // expansion。cascade 段では `PropertyValue::Margin` は `parse_declaration_block`
         // 内で 4 longhand に展開されるため通常観測しない (詳細は
         // `PropertyValue::Margin` doc + `crate::rule::expand_shorthand_into`)。
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
-        // CSS Backgrounds 3 §3.3 border-width physical longhand
-        // (raikiri-spike-0vv.12)。grammar: `<line-width>` = `<length [0,∞]> |
-        // thin | medium | thick`。`<percentage>` は含まれない (advisor
-        // calibration、padding とは違う点)。keyword mapping は spec 規定値:
+        // CSS Backgrounds 3 §3.3 border-width physical longhand。grammar:
+        // `<line-width>` = `<length [0,∞]> |
+        // thin | medium | thick`。`<percentage>` は含まれない (padding とは違う点)。
+        // keyword mapping は spec 規定値:
         // thin=1px、medium=3px、thick=5px。負値は spec grammar 違反 → drop
         // (`parse_border_width_side` が enforce)。
         "border-top-width" => parse_border_width_side(input).map(PropertyValue::BorderTopWidth),
@@ -2762,8 +2703,8 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
             parse_border_width_side(input).map(PropertyValue::BorderBottomWidth)
         }
         "border-left-width" => parse_border_width_side(input).map(PropertyValue::BorderLeftWidth),
-        // CSS Backgrounds 3 §3.2 border-style physical longhand
-        // (raikiri-spike-0vv.12)。grammar: `<line-style>` = 10 alternative
+        // CSS Backgrounds 3 §3.2 border-style physical longhand。grammar:
+        // `<line-style>` = 10 alternative
         // (none / hidden / dotted / dashed / solid / double / groove / ridge /
         // inset / outset)。他 keyword は silent drop。
         "border-top-style" => parse_border_style_side(input).map(PropertyValue::BorderTopStyle),
@@ -2773,11 +2714,10 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         }
         "border-left-style" => parse_border_style_side(input).map(PropertyValue::BorderLeftStyle),
         // CSS Backgrounds 3 §3.1 border-color physical longhand
-        // (raikiri-spike-0vv.12 initial seed、raikiri-spike-0vv.17 で
-        // `parse_border_color` 経由に格上げ)。grammar: `<color>` に加え
+        // (`parse_border_color` 経由)。grammar: `<color>` に加え
         // `currentcolor` keyword を先取り (CSS Color 3 §4.4)。`BorderColor` enum
         // で specified value distinction を保持し、used-value resolution は
-        // paint scope 責務 (bd raikiri-spike-q7qf)。
+        // paint scope 責務。
         "border-top-color" => parse_border_color(input).map(PropertyValue::BorderTopColor),
         "border-right-color" => parse_border_color(input).map(PropertyValue::BorderRightColor),
         "border-bottom-color" => parse_border_color(input).map(PropertyValue::BorderBottomColor),
@@ -2789,40 +2729,40 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // (4 side × 3 sub-property) に展開されるため通常観測しない (詳細は
         // `PropertyValue::Border` doc + `crate::rule::expand_shorthand_into`)。
         "border" => parse_border_shorthand(input).map(PropertyValue::Border),
-        // CSS Sizing 3 §3.1.1 preferred size property (raikiri-spike-0vv.10)。
+        // CSS Sizing 3 §3.1.1 preferred size property。
         // grammar: `auto | <length-percentage [0,∞]> | min-content | max-content
         // | fit-content(<length-percentage>)` のうち `auto` + non-negative
         // `<length-percentage>` のみ受理、min-content / max-content / fit-content()
-        // は g04 (b) milestone subset として silent drop、負値は spec `[0,∞]`
+        // は未実装 (将来対応) として silent drop、負値は spec `[0,∞]`
         // violation として drop (parse_width が enforce)。
         "width" => parse_width(input).map(PropertyValue::Width),
-        // CSS Sizing 3 §3.1.1 preferred size — height (raikiri-spike-0vv.11)。
-        // grammar: `auto | <length-percentage [0,∞]>` + spec-valid だが本 milestone
+        // CSS Sizing 3 §3.1.1 preferred size — height。
+        // grammar: `auto | <length-percentage [0,∞]>` + spec-valid だが現状
         // scope 外の `min-content` / `max-content` / `fit-content()` は silent drop
         // (parse_height 内で ident branch が auto のみ受理して他 keyword 落とし)。
         "height" => parse_height(input).map(PropertyValue::Height),
-        // CSS Sizing 3 §3.3 box-sizing (raikiri-spike-0vv.13)。
+        // CSS Sizing 3 §3.3 box-sizing。
         // value grammar `content-box | border-box`、initial `content-box`、
         // not inherited、computed value = specified keyword。
         "box-sizing" => parse_box_sizing(input).map(PropertyValue::BoxSizing),
-        // CSS Writing Modes 4 §2.1 direction (raikiri-spike-l3wg)。
+        // CSS Writing Modes 4 §2.1 direction。
         // value grammar `ltr | rtl`、initial `ltr`、inherited、
         // computed value = specified keyword (`Direction` doc 参照)。
         "direction" => parse_direction(input).map(PropertyValue::Direction),
-        // CSS Overflow 3 §3.1 overflow-x/overflow-y physical longhand
-        // (raikiri-spike-cmd3). grammar: visible | hidden | clip | scroll |
+        // CSS Overflow 3 §3.1 overflow-x/overflow-y physical longhand.
+        // grammar: visible | hidden | clip | scroll |
         // auto, initial visible, not inherited. cross-axis computed-value
         // coupling is applied in phase 3 (`resolve_overflow`), not here —
         // this only carries the specified keyword.
         "overflow-x" => parse_overflow_value(input).map(PropertyValue::OverflowX),
         "overflow-y" => parse_overflow_value(input).map(PropertyValue::OverflowY),
-        // CSS Overflow 3 §3.1 overflow shorthand: `<'overflow-block'>{1,2}`
-        // (raikiri-spike-cmd3). 1-2 value expansion via
+        // CSS Overflow 3 §3.1 overflow shorthand: `<'overflow-block'>{1,2}`.
+        // 1-2 value expansion via
         // parse_overflow_shorthand (mapped to physical x/y — `OverflowValue`
         // doc's Non-goal note).
         "overflow" => parse_overflow_shorthand(input).map(PropertyValue::Overflow),
         // CSS Text Decoration Module Level 3 §2 text-decoration-line grammar,
-        // restricted to `none` / `underline` (bd raikiri-spike-5z86.3, minimal
+        // restricted to `none` / `underline` (minimal
         // scope — `TextDecoration` doc's "Scope carving" section). initial
         // `none`, not inherited, computed value = specified keyword.
         "text-decoration" => parse_text_decoration(input).map(PropertyValue::TextDecoration),
@@ -2835,15 +2775,14 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
 /// cssparser 0.37 は (0.36 までと異なり) 汎用 `Color` enum / `Color::parse` を
 /// 提供しない — それは別 crate `cssparser-color` 側に移った。ここでは
 /// 各 form の parse を自前 (cleanroom) で組み立て、hex / named / rgb() の
-/// 3 形式をカバーする (m1.4 scope):
+/// 3 形式をカバーする:
 ///
 /// - **Hex** (`#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa`) は
 ///   [`CssColor::from_hex`] を呼び出す — CSS Color 4 §5.2 準拠の cleanroom 実装。
 ///   `Token::Hash` / `Token::IDHash` の payload は leading `#` を含まないため
-///   そのまま渡す (raikiri-spike-0vv.14)。
-/// - **Named color** は `parse_named_color` (Sprint 12 style-7 precedent、
-///   Non-goals defer 対象の 140+ CSS Color L3 keyword table を再実装しない
-///   ため cssparser の table を暫定利用)。
+///   そのまま渡す。
+/// - **Named color** は `parse_named_color` (140+ CSS Color L3 keyword table を
+///   再実装しない方針のため cssparser の table を暫定利用)。
 /// - **`rgb()` / `rgba()` function form** は [`parse_rgb_function`] で
 ///   `parse_nested_block` 経由の手動 parse。
 ///
@@ -2851,7 +2790,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
 /// <https://www.w3.org/TR/css-color-4/#transparent-color> で
 /// `rgba(0, 0, 0, 0)` の shorthand と規定される — `parse_named_color` の
 /// (r, g, b) は alpha を返さないため、Ident arm 手前で明示 branch して
-/// [`CssColor::TRANSPARENT`] を返す (raikiri-spike-0vv.7)。
+/// [`CssColor::TRANSPARENT`] を返す。
 fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
     let token = input.next().ok()?.clone();
     match token {
@@ -2879,16 +2818,13 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
 /// の border-*-color grammar は `<color>` そのもの、`<color>` production は
 /// CSS Color 3 §4.4 <https://www.w3.org/TR/css-color-3/#currentColor-def>
 /// `currentcolor` keyword を含む。しかし本 crate の [`parse_color`] は
-/// cssparser の `parse_named_color` (RGB triple mapping、Sprint 12 precedent)
+/// cssparser の `parse_named_color` (RGB triple mapping)
 /// 経由のため `currentcolor` は named-color table 未収載として `None` 側に
 /// 落ちる — 本 helper が Ident 段で先取りする必要がある。resolution 委譲の
-/// rationale は [`BorderColor`] enum doc 参照 (bd raikiri-spike-q7qf paint
-/// scope 責務)。
+/// rationale は [`BorderColor`] enum doc 参照 (paint scope 責務)。
 ///
 /// 5 call site (4 longhand + [`parse_border_shorthand`] color slot) が本
 /// helper を経由する (37n sibling-arm convention consistency)。
-///
-/// (raikiri-spike-0vv.17)
 fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
     // `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、
     // sibling `parse_margin_side` line 1892 と同 shape の keyword intercept)。
@@ -2938,14 +2874,14 @@ fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
 /// - `<alpha-value>` は `<number>` 0..=1 または `<percentage>` 0%..=100% —
 ///   どちらも [`clamp_unit_f32`] で単一 formula に統合
 ///
-/// # Milestone subset (g04 category (b))
+/// # Non-goals
 ///
 /// - Modern (space + slash) syntax `rgb(R G B / A)` は本 task 対象外。legacy
 ///   と modern の mix は spec で禁止だが、本 helper は最初の channel の直後で
 ///   `expect_comma` を要求するため modern syntax は fall-through で reject。
 /// - Fractional number channel (`rgb(127.5, 0, 0)`) は spec grammar 上 valid
 ///   だが、`expect_integer` (整数 `int_value` 必須) を採用しているため drop
-///   — category (b) milestone subset、future task で `<number>` に緩める余地。
+///   — 未実装 (将来対応)、future task で `<number>` に緩める余地。
 /// - Alpha の `none` component は modern syntax でのみ許容 — 本 task 対象外。
 fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<CssColor, ParseError<'i, ()>> {
     // 1st channel: try percentage first、fail → integer number。
@@ -3062,7 +2998,7 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// of truth として扱う」と同じ convention、`_` arm 直前 comment が未対応側の
 /// 代表例を持つ) と `parse_length_value_rejects_unsupported_unit` test が
 /// canonical。**ここに一覧を書き足す運用は受理 unit が増えるたびに drift
-/// した** (bd raikiri-spike-hif0 実測: `cm` を筆頭に、`ch` / `ex` / `ic` /
+/// した** (実際に `cm` を筆頭に、`ch` / `ex` / `ic` /
 /// `mm` / `in` / `pc` / `Q` / `lh` / `rlh` の一括拡張のたびに本節の一覧全体が
 /// stale 化していた)。
 ///
@@ -3095,15 +3031,14 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// [`parse_margin_side`] / [`parse_padding_side`] / [`parse_width`] /
 /// [`parse_height`] / [`parse_line_height`] / [`parse_font_size`]。いずれも
 /// grammar が spec で `<length-percentage>` を含む
-/// (bd raikiri-spike-0vv.5 / .6 / .9 / .10 / .11、`font-size` は
-/// bd raikiri-spike-zls8 で `<length>` 限定から拡張)。共通 helper 化により
+/// (`font-size` は元は `<length>` 限定だったが後に拡張)。共通 helper 化により
 /// 重複 dimension unit dispatch を回避している。
 ///
 /// `allow_percentage=false` (= `<length>` mode) の caller は
 /// [`parse_border_width_side`] のみ — CSS Backgrounds 3 §3.3 の
 /// `<line-width>` grammar が `<percentage>` を含まないため。
 ///
-/// # Percentage overflow (bd raikiri-spike-3gee)
+/// # Percentage overflow
 ///
 /// `Token::Percentage.unit_value` は f64→f32 変換済 (cssparser 0.37
 /// tokenizer が `value / 100.0` を emit) だが、[`Length::Percent`] は
@@ -3117,15 +3052,14 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// converted to the closest value supported by the implementation" に従い、
 /// `±Inf` になった場合のみ、符号を保持しつつ `f32::MAX` へ寄せる。
 ///
-/// bd raikiri-spike-2ui0 の sink-guard precedent (「guard は sink 境界に
+/// 既存の sink-guard precedent (「guard は sink 境界に
 /// 置く、parse/resolve 層には置かない」) はここには適用しない —
-/// bd raikiri-spike-3gee の判断: 本件は guard ではなく変換の正確さの問題
+/// 本件は guard ではなく変換の正確さの問題
 /// (specified 層の値そのものが CSS Values 4 §5 の要求から外れている)
 /// であり、precedent とは別軸。`raikiri-dom::layout::sanitize_finite`
 /// (resolve 後の geometry に対する sink guard) は本変更後も引き続き必要。
 ///
-/// **`NaN` はこの saturation の対象外**(reviewer:spec 指摘、agent
-/// a4beb897ae3457dcd, CONFIRMED medium)。`is_finite()` は `NaN` に対しても
+/// **`NaN` はこの saturation の対象外**。`is_finite()` は `NaN` に対しても
 /// `false` を返すため、当初の実装は `NaN` も `±f32::MAX` へ saturate して
 /// いたが、それは誤り: 例えば `0e999%` は cssparser 側の `0.0 * 10^999`
 /// (`f64::powf` が `+Inf` を返す) で `NaN` になる、**真の数学的値は 0**
@@ -3141,8 +3075,8 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             "em" => Some(Length::Em(*value)),
             "rem" => Some(Length::Rem(*value)),
             "pt" => Some(Length::Pt(*value)),
-            // Additional font-relative units (CSS Values 4 §6.1.1) —
-            // bd raikiri-spike-2x8. `ex`/`ch`/`ic` の real-metric variant は
+            // Additional font-relative units (CSS Values 4 §6.1.1).
+            // `ex`/`ch`/`ic` の real-metric variant は
             // style 層に font metrics が無いため常に spec fallback を使う
             // (`Length::Ex` / `Length::Ch` / `Length::Ic` の doc 参照)。
             "ex" => Some(Length::Ex(*value)),
@@ -3151,35 +3085,33 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
             "rch" => Some(Length::Rch(*value)),
             "ic" => Some(Length::Ic(*value)),
             "ric" => Some(Length::Ric(*value)),
-            // Additional absolute units (CSS Values 4 §6.2) —
-            // bd raikiri-spike-2x8. `unit` は `to_ascii_lowercase()` 済 —
+            // Additional absolute units (CSS Values 4 §6.2).
+            // `unit` は `to_ascii_lowercase()` 済 —
             // `Q` トークンも `"q"` として届く。
             "cm" => Some(Length::Cm(*value)),
             "mm" => Some(Length::Mm(*value)),
             "q" => Some(Length::Q(*value)),
             "in" => Some(Length::In(*value)),
             "pc" => Some(Length::Pc(*value)),
-            // `lh` / `rlh` (CSS Values 4 §6.1.1) — bd raikiri-spike-vxha.
+            // `lh` / `rlh` (CSS Values 4 §6.1.1).
             // Accepted generally here for every consumer, `font-size` included
-            // (bd raikiri-spike-yh3w lifted `parse_font_size`'s former
+            // (moved out of `parse_font_size`'s former
             // post-filter — see that function's doc "`lh` / `rlh` は受理し、
             // 親基準で解決する" section for the self-reference resolution).
             "lh" => Some(Length::Lh(*value)),
             "rlh" => Some(Length::Rlh(*value)),
-            // (b) milestone subset — viewport-relative unit (`vw`/`vh`/…) と
+            // (b) 非対応 — viewport-relative unit (`vw`/`vh`/…) と
             // `cap`/`rcap` は未対応、silent drop。両者とも specified 層だけ
             // では正しく resolve できない (viewport size / font ascent が
-            // style 層に存在しない) ため follow-up bd issue へ spinout 済
-            // (bd raikiri-spike-wnpb、raikiri-spike-2x8 discovered-from)。
+            // style 層に存在しない) ため follow-up task へ切り出し済。
             //
             // この arm はそれ以外の全 unrecognized unit (例:
             // container-query unit `cqw`/`cqh`/`cqi`/`cqb`/`cqmin`/`cqmax` —
             // CSS Contain 3 §6 <https://www.w3.org/TR/css-contain-3/#container-lengths>、
             // container size も viewport size 同様 style 層に存在しない)
-            // も等しく drop する。**個別に bd issue 化
-            // 済とは限らない** — 本 comment が「未対応 unit の一覧」の
-            // canonical source になった以上 (bd raikiri-spike-hif0)、
-            // 明示的な spinout の有無をこの一覧に混同しないこと。
+            // も等しく drop する。本 comment が「未対応 unit の一覧」の
+            // canonical source になった以上、この一覧を書き足す形の
+            // 重複記述はしないこと。
             _ => None,
         },
         Token::Percentage { unit_value, .. } if allow_percentage => {
@@ -3208,15 +3140,15 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
 /// doc 参照)。
 ///
 /// 本 helper 導入前は 6 call site それぞれが `Length::Px(v) | Length::Em(v) |
-/// … => v` の OR-pattern を個別に持っていた。bd raikiri-spike-2x8 で
+/// … => v` の OR-pattern を個別に持っていた。
 /// [`Length`] が 5 → 16 variant に増える際、6 site 全てを手で拡張すると
 /// 1 か所でも変数を書き漏らした variant が非負チェックを素通りする
 /// (実際 2 site — `parse_border_width_side` / `parse_line_height` — は
 /// `_ => None` catch-all を持っていたため、拡張漏れは compile error にならず
 /// 黙って新 unit を reject し続ける fail-quiet になっていた)。本 helper は
 /// **exhaustive match を 1 か所に集約**することで、新 variant 追加時に
-/// compile error で全 call site の見直しを強制する — bd raikiri-spike-ier4
-/// §4.5 が指摘した「拡張のたびに N site 分の負債が乗る」パターンをこの関数の
+/// compile error で全 call site の見直しを強制する —
+/// 「拡張のたびに N site 分の負債が乗る」パターンをこの関数の
 /// 内側だけに閉じ込める。
 fn length_payload(length: Length) -> f32 {
     match length {
@@ -3334,10 +3266,10 @@ fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<LengthOrAu
 /// `auto | <length-percentage [0,∞]> | min-content | max-content |
 /// fit-content(<length-percentage>)`"、"Initial: auto"、"Inherited: no"。
 ///
-/// # Milestone subset (g04 (b))
+/// # 非対応 (spec-valid、将来対応)
 ///
 /// `min-content` / `max-content` / `fit-content()` は intrinsic sizing keyword
-/// で Epic 未着手 — 本 helper では受理せず自然に `None` に落ちる (`auto` ident
+/// で未実装 — 本 helper では受理せず自然に `None` に落ちる (`auto` ident
 /// 分岐で `expect_ident_matching("auto")` が fail、続く `parse_length_value` が
 /// keyword / function token を Dimension / Percentage arm fall-through で drop)。
 /// 負値 (`width: -10px`) は spec grammar `[0,∞]` violation として drop する。
@@ -3363,7 +3295,7 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     }
     let length = parse_length_value(input, true)?;
     // spec §3.1.1 grammar `<length-percentage [0,∞]>` の non-negative constraint
-    // (padding と同 pattern、`length_payload` 経由、raikiri-spike-0vv.6
+    // (padding と同 pattern、`length_payload` 経由の
     // precedent)。
     (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
@@ -3383,8 +3315,8 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 ///   [`crate::cascade::apply_value`] / [`crate::cascade::resolve_against_inherited`]
 ///   に委ねる (詳細は同 variant の doc)。
 /// - `<length-percentage [0,∞]>` — 本関数の後半、[`parse_length_value`] 経由。
-/// - `math` — g04 category (b) milestone subset (bd raikiri-spike-0vv.18、
-///   MathML scaling algorithm が丸ごと未実装) として `None` に落とす。
+/// - `math` — 未実装 (MathML scaling algorithm が丸ごと未対応) として
+///   `None` に落とす。
 ///
 /// # ident 分岐を先に `try_parse` する理由
 ///
@@ -3393,11 +3325,11 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// は内部で `input.next()` を unconditional に消費するため、ident 分岐は
 /// checkpoint 経由の rewind (`try_parse`) で先に試す必要がある。
 ///
-/// # `em` / `rem` / `%` / `pt` を受理するようになった経緯 (bd raikiri-spike-zls8)
+/// # `em` / `rem` / `%` / `pt` を受理するようになった経緯
 ///
-/// Sprint 18 までは `px` 以外を post-filter で drop していた。理由は「font-size
-/// context resolve 未実装」であり、その resolve が decision raikiri-spike-082k
-/// Phase 2 で実装された — cascade が phase 2 で
+/// 以前は `px` 以外を post-filter で drop していた。理由は「font-size
+/// context resolve 未実装」であり、その resolve が後に実装された —
+/// cascade が phase 2 で
 /// [`crate::resolve::resolve_font_size`] を呼び、`em` は**親の** computed
 /// font-size、`rem` は root element の computed font-size、`%` は同 §2.5
 /// "Percentages: refer to parent element's font size" に従って絶対化する。
@@ -3411,7 +3343,7 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// `<relative-size>` は grammar 上そもそも符号を持たないので本 constraint の
 /// 対象外 (ident 分岐は `parse_length_value` に達する前に return する)。
 ///
-/// # `lh` / `rlh` は受理し、親基準で解決する (bd raikiri-spike-yh3w)
+/// # `lh` / `rlh` は受理し、親基準で解決する
 ///
 /// [`Length::Lh`] doc の「自己参照」節: CSS Values 4 §6.1.1 は `lh`/`rlh` が
 /// `line-height` **または font-\* property** の値として、それが指す要素自身に
@@ -3422,7 +3354,7 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// <length-percentage [0,∞]>` の `<length-percentage>` は `<length>` を含み、
 /// CSS Values 4 §6.1.1 の `<length>` production は `lh`/`rlh` を除外しない)。
 ///
-/// bd raikiri-spike-vxha の時点では、この解決 (「親の computed line-height」を
+/// 当初は、この解決 (「親の computed line-height」を
 /// font-size 解決の基準として渡す) が `line-height`
 /// (`finalize`/`finalize_as_root` が既に持つ `parent: &ComputedValues` を
 /// そのまま使える) より高コストに見えたため drop していたが、実際に実装した
@@ -3430,8 +3362,7 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// `self_reference_basis` 引数、および [`crate::specified::SpecifiedValues::finalize`]
 /// 内の 2, 3 行の並べ替えで足りる (`parent` は本関数の呼び出しに入る前に
 /// tree walk で既に確定済みのため、cross-node な phase 順序の変更は不要 —
-/// [`mod@crate::resolve`] module doc の「想定される 4 段階」節、
-/// bd raikiri-spike-yh3w 完了報告参照)。
+/// [`mod@crate::resolve`] module doc の「想定される 4 段階」節参照)。
 fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
         return parse_font_size_keyword(&ident);
@@ -3469,7 +3400,7 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
 ///
 /// # `math`
 ///
-/// bd raikiri-spike-0vv.18 (g04 category (b))。
+/// 未実装 (spec-valid だが対応外)。
 fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
     const MEDIUM_PX: f32 = crate::computed::INITIAL_FONT_SIZE_PX;
     let px = match ident.to_ascii_lowercase().as_str() {
@@ -3483,7 +3414,7 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
         "xxx-large" => MEDIUM_PX * (3.0 / 1.0),
         "larger" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger)),
         "smaller" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Smaller)),
-        // `math` はここに落ちる (spec-valid だが g04 (b) 未対応、bd raikiri-spike-0vv.18)。
+        // `math` はここに落ちる (spec-valid だが未対応)。
         // 未知 ident も同じく drop。
         _ => return None,
     };
@@ -3512,14 +3443,14 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
 /// なった後の tail) と同形 — どちらも `allow_percentage=true` で
 /// [`parse_length_value`] を呼び、[`length_payload`] で全 [`Length`] variant の
 /// payload を抽出して `>= 0.0` を post-filter する (tail 部分の body は
-/// identical)。`parse_font_size` は raikiri-spike-4rmu で `<absolute-size>` /
+/// identical)。`parse_font_size` は後に `<absolute-size>` /
 /// `<relative-size>` / `math` の ident 分岐 (`parse_font_size_keyword`) が
 /// 前段に付いたため関数全体としては同形ではなくなったが、この tail 部分の
 /// ロジックは identical。
 ///
-/// 両者が非対称だった時期 (font-size が `<length>` px-only milestone で、padding
+/// 両者が非対称だった時期 (font-size が `<length>` px-only scope で、padding
 /// だけが `<length-percentage>` の 5 variant を受けていた頃) の記述は
-/// bd raikiri-spike-zls8 の font-relative unit 対応で解消済み。
+/// font-relative unit 対応で解消済み。
 fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
     // spec (CSS Box 3) §4.1: "Negative values for padding properties are invalid."。
@@ -3596,13 +3527,13 @@ fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, Pars
 /// **spec が規範的に定める厳密値**であり、raikiri の選択ではない。
 ///
 /// **非 test code で `3.0` (border-width `medium`) を書く単一 source**
-/// (bd raikiri-spike-fy89、[`INITIAL_FONT_SIZE_PX`](crate::computed::INITIAL_FONT_SIZE_PX)
+/// ([`INITIAL_FONT_SIZE_PX`](crate::computed::INITIAL_FONT_SIZE_PX)
 /// と同じ pattern) — [`parse_border_width_side`] の `medium` keyword 分岐と、
 /// [`parse_border_shorthand`] の width 省略成分デフォルトが参照する。
 /// [`crate::specified::INITIAL_BORDER`] の `width` field も本 const を参照する
 /// (property → specified の既存依存方向 — `specified` は既に
 /// `use crate::property::{..}` で本 module の型を import している。逆方向の
-/// edge を作らないこと、raikiri-spike-jaww §8.2 iter 1 の教訓)。
+/// edge を作らないこと)。
 ///
 /// 一方「initial の border-width が **3px そのものである**」ことの pin は
 /// test 側が literal で持つ。**これらを「一貫性のため」本 const への参照に
@@ -3617,7 +3548,7 @@ fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, Pars
 /// にしか現れず (border shorthand の省略成分デフォルトは spec 上も `medium`
 /// のみが initial value)、複数 site 間の drift 余地がない。const 化するのは
 /// 独立 literal が 2 箇所以上に分散している `medium` のみで十分
-/// (bd raikiri-spike-fy89 の scope: `medium` の重複、thin/thick への一般化は
+/// (`medium` の重複を解消する scope、thin/thick への一般化は
 /// non-goal)。
 pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
 
@@ -3625,7 +3556,7 @@ pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
 ///
 /// Grammar: `<line-width>` = `<length [0,∞]> | thin | medium | thick`
 /// (CSS Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。
-/// **`<percentage>` は含まれない** — padding とは違う (advisor calibration、
+/// **`<percentage>` は含まれない** — padding とは違う (
 /// `parse_length_value(input, false)` = `<length>` mode を渡す)。
 ///
 /// # Keyword mapping (spec 規定値)
@@ -3647,16 +3578,14 @@ pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
 /// post-filter pattern だが、`Length::Percent` variant は生成されない
 /// (`allow_percentage=false` により Percentage token 自体が reject される)。
 ///
-/// # Non-goals (g04 3-category labels)
+/// # Non-goals
 ///
 /// - **(a) spec-invalid → drop**: 負値 (`-1px`)、未知 keyword (`fat` 等)、
 ///   spec-invalid unit (`%` は grammar に含まれない → drop)。
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
-/// - **(b) milestone subset**: `calc()` / `var()` は Epic 5、silent drop。
-///
-/// (raikiri-spike-0vv.12)
+///   が canonical)。
+/// - **(b) 非対応**: `calc()` / `var()` は未実装 (将来対応)、silent drop。
 fn parse_border_width_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     // 1. keyword branch (thin / medium / thick) を先に try — `parse_length_value`
     //    は unconditional に token を consume するため、`try_parse` で rewind を
@@ -3701,14 +3630,12 @@ fn parse_border_width_side_res<'i>(
 /// ASCII case-insensitive で ident と照合 (37n sibling
 /// [`parse_display`] / [`parse_text_align`] と同 flavor)。
 ///
-/// # Non-goals (g04 3-category labels)
+/// # Non-goals
 ///
 /// - **(a) spec-invalid → drop**: 未知 keyword (`wavy` 等) は silent drop。
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
-///
-/// (raikiri-spike-0vv.12)
+///   が canonical)。
 fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -3759,15 +3686,15 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 /// - width 省略 → `Length::Px(3.0)` (medium initial)
 /// - style 省略 → `BorderStyle::None` (initial、spec §3.2)
 /// - color 省略 → [`BorderColor::CurrentColor`] (spec §3.1 initial、used-value
-///   resolution は paint scope 責務、raikiri-spike-0vv.17)
+///   resolution は paint scope 責務)
 ///
 /// # Non-goals (spec deviation 明示)
 ///
 /// spec §3.4 では border shorthand が **border-image-* も reset** する (spec
 /// verbatim: "The border shorthand also resets border-image to its initial
-/// value.") が、本 crate は border-image を milestone defer で実装しないため
+/// value.") が、本 crate は border-image を実装していないため
 /// reset side effect を省略。
-/// bd raikiri-spike-0vv (Epic) の border-image longhand 実装時に統合する。
+/// border-image longhand 実装時に統合する。
 ///
 /// # Sibling pattern
 ///
@@ -3775,8 +3702,6 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
 /// multiplier (順序固定、side ごとに違う値) だが、本 shorthand は `||` (any-order、
 /// side は 4 side 共通) — 別 pattern。sibling は `try_parse` 経由の rewind と
 /// initial fill の点で共通 principle を持つ。
-///
-/// (raikiri-spike-0vv.12)
 fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
     let mut width: Option<Length> = None;
     let mut style: Option<BorderStyle> = None;
@@ -3824,7 +3749,7 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
         // transparent の全 alternative + `currentcolor` keyword (CSS Color 3
         // §4.4) を受理。4 longhand parse site (border-{top,right,bottom,left}-color)
         // と同じ helper を経由することで 37n sibling convention consistency を
-        // 担保 (raikiri-spike-0vv.17)。
+        // 担保。
         if color.is_none()
             && let Ok(c) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
                 parse_border_color(i).ok_or_else(|| i.new_custom_error(()))
@@ -3852,7 +3777,7 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
         width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)), // medium
         style: style.unwrap_or(BorderStyle::None),
         // §3.1 initial "currentcolor" — used-value resolution は paint scope
-        // 責務 (bd raikiri-spike-q7qf、raikiri-spike-0vv.17)。
+        // 責務。
         color: color.unwrap_or(BorderColor::CurrentColor),
     };
     Some(Sides::all(border))
@@ -3865,23 +3790,23 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
 /// grammar は `auto | <length-percentage [0,∞]> | min-content | max-content |
 /// fit-content(<length-percentage>)`、initial value `auto`、Inheritance `No`。
 ///
-/// # Scope carving (g04 3-category)
+/// # Scope carving
 ///
 /// - **(a) spec-invalid → drop**: 負値 (`height: -10px`) は grammar `[0,∞]` 違反、
 ///   全 [`Length`] variant の payload に対し `>= 0.0` post-filter で reject
 ///   ([`parse_padding_side`] の非負フィルタ pattern と同 shape)。
-/// - **(b) milestone subset — 未対応 sizing keyword**: `min-content` /
-///   `max-content` / `fit-content(<length-percentage>)` は Sprint 17 seed scope
+/// - **(b) 非対応 — 未対応 sizing keyword**: `min-content` /
+///   `max-content` / `fit-content(<length-percentage>)` は現状 scope
 ///   外、silent drop (auto ident branch から外れる他 keyword は
 ///   `expect_ident_matching("auto")` が失敗 → length parser の Dimension /
 ///   Percentage arm でも受理されず None に落ちる)。
-/// - **(b) milestone subset — CSS-wide keyword**: Epic 7、silent drop
+/// - **(b) 非対応 — CSS-wide keyword**: 未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3。同 ident 経路で他 keyword と同じく
+///   が canonical。同 ident 経路で他 keyword と同じく
 ///   落ちる。旧稿は `all` を CSS-wide keyword の一つとして誤って列挙していた
 ///   — `all` は shorthand property 名であって値ではなく、この訂正も
 ///   consolidation の一部)。
-/// - **calc() / var()**: Epic 5 対象、本 task scope 外
+/// - **calc() / var()**: 未実装、本 task scope 外
 ///   (`Token::Function` は `parse_length_value` が Dimension / Percentage 以外を
 ///   silent drop)。
 ///
@@ -3948,16 +3873,16 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// - Number branch: `n >= 0.0` guard、負なら `None` = declaration drop
 /// - Length branch: 全 payload の inner f32 に `>= 0.0` guard、負なら drop
 ///
-/// g04 category (a) spec-invalid → drop: spec grammar が range を parse-time
-/// で制約するため、reject 自体が spec 準拠 (下段 Non-goals arm と同 label)。
+/// spec-invalid → drop: spec grammar が range を parse-time
+/// で制約するため、reject 自体が spec 準拠。
 ///
-/// # Non-goals (g04 3-category labels)
+/// # Non-goals
 ///
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7 対象、silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
-/// - **(b) milestone subset**: `calc()` / `var()` は Epic 5 (css-variables-and-math)
-///   対象、silent drop
+///   が canonical)。
+/// - **(b) 非対応**: `calc()` / `var()` は未実装 (css-variables-and-math)、
+///   silent drop
 /// - **(a) spec-invalid → drop**: `<number>` / `<length-percentage>` の負値、
 ///   `auto` / `medium` 等 spec-invalid keyword は spec grammar 違反、drop
 fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
@@ -3975,7 +3900,7 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
     //    `try_parse` は `Ok` の path で cursor を戻さないため、外側 `&& n >= 0.0`
     //    で reject すると consumed cursor のまま Length branch に落ち、
     //    `line-height: -0.5 20px` が `20px` として silently accept される
-    //    (spec-invalid CSS を通す correctness bug、raikiri-spike-0vv.9 quality)。
+    //    (spec-invalid CSS を通す correctness bug)。
     if let Ok(n) = input.try_parse(|i| i.expect_number()) {
         // spec `<number [0,∞]>` 違反 → declaration drop (Length branch へ落とさない)。
         return (n >= 0.0).then_some(LineHeight::Number(n));
@@ -4001,13 +3926,13 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
 /// - `bolder` / `lighter` は継承値依存の relative weight。parse 段では解けない
 ///   ため sentinel variant ([`FontWeightValue::Bolder`] /
 ///   [`FontWeightValue::Lighter`]) で保持し、[`crate::cascade::apply_value`]
-///   が親の computed weight から解決する (raikiri-spike-17s8)。
+///   が親の computed weight から解決する。
 ///
 /// ASCII case-insensitive matching は CSS Values 3 §3.1 "Pre-defined Keywords"
 /// <https://www.w3.org/TR/css-values-3/#keywords> 準拠 (37n sibling
 /// `parse_display` / `parse_content_*` と同 convention)。
 ///
-/// # Range (g04 category (a) — spec grammar)
+/// # Range (spec grammar)
 ///
 /// spec §2.2: "Only values greater than or equal to 1, and less than or equal
 /// to 1000, are valid, and all other values are invalid"。したがって `0` /
@@ -4016,7 +3941,7 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
 /// "values" は author が書いた `<number>` を指すため、`0.6` や `1000.4` は
 /// 丸めれば範囲内になるが invalid)。
 ///
-/// # Fractional weight は丸めずそのまま保持する (bd raikiri-spike-e52s で解消)
+/// # Fractional weight は丸めずそのまま保持する
 ///
 /// **spec は fraction を落としてよいとは述べていない。** §2.2 の property table
 /// は `Computed value: a number, see below` と規定し、§2.2.2 "Missing weights"
@@ -4026,8 +3951,8 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
 /// specified) がこれを直接 pin している。
 ///
 /// payload ([`FontWeightValue::Absolute`]) と
-/// [`crate::computed::ComputedValues::font_weight`] は共に `f32` (bd
-/// raikiri-spike-e52s で `u16` から格上げ) なので、parse 時に整数化する必要が
+/// [`crate::computed::ComputedValues::font_weight`] は共に `f32` (以前は
+/// `u16` だったが格上げ) なので、parse 時に整数化する必要が
 /// ない — `<number>` の `value` をそのまま保持する。旧実装は computed side が
 /// `u16` だったため round-half-away-from-zero で整数化しており、その丸めが
 /// §2.2.1 "Relative Weights" relative-weight table の*行選択*を変える 2 次被害
@@ -4065,8 +3990,8 @@ fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
 /// `display: <ident>` を parse する。
 ///
 /// CSS Display 3 §2 "Box Layout Modes: the display property"
-/// <https://www.w3.org/TR/css-display-3/#propdef-display>。Sprint 12 scope
-/// (raikiri-spike-0vv.4) では 4 keyword を受理:
+/// <https://www.w3.org/TR/css-display-3/#propdef-display>。現状受理する
+/// keyword は 4 つ:
 ///
 /// - `block` — `<display-outside>` (block flow)
 /// - `inline` — `<display-outside>` (inline flow、initial value)
@@ -4074,7 +3999,7 @@ fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
 /// - `none` — `<display-box>` (subtree omitted from box tree)
 ///
 /// 他 keyword (`flex` / `grid` / `table*` / `list-item` / `flow-root` /
-/// `contents` 等) は spec-valid だが milestone defer で silent drop
+/// `contents` 等) は spec-valid だが未実装のため silent drop
 /// (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
 /// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
 /// keyword は ASCII case-insensitive)。
@@ -4099,11 +4024,11 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
 /// case-insensitive で ident を比較する (CSS Values 3 §3.1 "Pre-defined
 /// Keywords"、37n sibling [`parse_display`] / [`parse_text_align`] と同 flavor)。
 ///
-/// # Scope carving (g04 3-category、[`BoxSizing`] doc-comment に詳述)
+/// # Scope carving ([`BoxSizing`] doc-comment に詳述)
 ///
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7 で silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
+///   が canonical)。
 /// - **(a) spec-invalid**: 他 keyword (`padding-box` — CSS-UI 3 draft 相当
 ///   だが css-sizing-3 では削除、`margin-box` 等) は silent drop = `None`。
 fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
@@ -4123,16 +4048,16 @@ fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
 /// (CSS spec 慣行、37n sibling [`parse_string_fetch`] / [`parse_content_part`] /
 /// [`parse_content_text_keyword`] と同 flavor)。
 ///
-/// # Scope carving (g04 3-category、[`TextAlign`] doc-comment に詳述)
+/// # Scope carving ([`TextAlign`] doc-comment に詳述)
 ///
-/// - **(b) milestone subset**: `<string>` value は silent drop。CSS Text 3
+/// - **(b) 非対応**: `<string>` value は silent drop。CSS Text 3
 ///   §6.1 の grammar には無く、CSS Text 4 §7.1
 ///   <https://www.w3.org/TR/css-text-4/#text-align-property> で追加された
 ///   alternative (semantics は同 §7.2 "Character-based Alignment in a Table
 ///   Column")。
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7 で silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
+///   が canonical)。
 /// - **(a) spec-invalid**: 未知 keyword (`middle` 等) は silent drop = `None`。
 fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
     let ident = input.expect_ident().ok()?.clone();
@@ -4155,11 +4080,11 @@ fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
 /// Spec value grammar (§2.1): `ltr | rtl`。ASCII case-insensitive で ident を
 /// 比較する (37n sibling [`parse_text_align`] と同 flavor)。
 ///
-/// # Scope carving (g04 3-category、[`Direction`] doc-comment に詳述)
+/// # Scope carving ([`Direction`] doc-comment に詳述)
 ///
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
+///   が canonical)。
 /// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
 fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
     let ident = input.expect_ident().ok()?.clone();
@@ -4170,19 +4095,19 @@ fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
     }
 }
 
-/// `overflow-x` / `overflow-y: <ident>` を parse する (raikiri-spike-cmd3、
+/// `overflow-x` / `overflow-y: <ident>` を parse する (
 /// CSS Overflow 3 §3.1 <https://www.w3.org/TR/css-overflow-3/#overflow-properties>)。
 ///
 /// Spec value grammar (§3.1): `visible | hidden | clip | scroll | auto`。
 /// ASCII case-insensitive で ident を比較する (37n sibling [`parse_box_sizing`] /
 /// [`parse_direction`] と同 flavor)。
 ///
-/// # Scope carving (g04 3-category、[`OverflowValue`] doc-comment に詳述)
+/// # Scope carving ([`OverflowValue`] doc-comment に詳述)
 ///
 /// - **(a) spec-invalid**: 上記 5 keyword 以外の ident は silent drop = `None`。
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
+///   が canonical)。
 fn parse_overflow_value(input: &mut Parser<'_, '_>) -> Option<OverflowValue> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -4195,8 +4120,7 @@ fn parse_overflow_value(input: &mut Parser<'_, '_>) -> Option<OverflowValue> {
     }
 }
 
-/// `overflow: <'overflow-block'>{1,2}` shorthand — 1-2 value expansion
-/// (raikiri-spike-cmd3)。
+/// `overflow: <'overflow-block'>{1,2}` shorthand — 1-2 value expansion。
 ///
 /// grammar reference: CSS Overflow 3 §3.1
 /// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>。
@@ -4229,7 +4153,7 @@ fn parse_overflow_shorthand(input: &mut Parser<'_, '_>) -> Option<OverflowXY> {
     Some(OverflowXY { x: v1, y: v2 })
 }
 
-/// `text-decoration: <ident>` を parse する (bd raikiri-spike-5z86.3、CSS Text
+/// `text-decoration: <ident>` を parse する (CSS Text
 /// Decoration Module Level 3 §2
 /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>)。
 ///
@@ -4239,13 +4163,13 @@ fn parse_overflow_shorthand(input: &mut Parser<'_, '_>) -> Option<OverflowXY> {
 ///
 /// # Scope carving (minimal scope、[`TextDecoration`] doc-comment に詳述)
 ///
-/// - **(b) milestone subset**: `overline` / `line-through` / `blink`、および
+/// - **(b) 非対応**: `overline` / `line-through` / `blink`、および
 ///   `||` combination grammar (`text-decoration: underline overline` 等の
 ///   複数 keyword 同時指定) は silent drop = `None` — `text-decoration-line`
 ///   longhand 分解と合わせて follow-up ([`TextDecoration`] doc 参照)。
-/// - **(b) milestone subset**: CSS-wide keyword — Epic 7、silent drop
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical、bd raikiri-spike-rzv3)。
+///   が canonical)。
 /// - **(a) spec-invalid**: `none` / `underline` 以外の ident は silent drop
 ///   = `None`。
 fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDecoration> {
@@ -4318,9 +4242,9 @@ fn parse_counter_property(
 /// CSS-wide keyword + `default` (Counter Styles L3) + `none` (top-level alternative)
 /// を弾く。case-insensitive 比較。
 ///
-/// これは CSS Values 4 §4.2 の permanent な spec 除外規定であり、**Epic 7 の
-/// 実装状況とは無関係** — [`PropertyValue`] doc の「CSS-wide keyword」節
-/// (bd raikiri-spike-rzv3) が説明する「property value としては未実装」claim
+/// これは CSS Values 4 §4.2 の permanent な spec 除外規定であり、**CSS-wide
+/// keyword の実装状況とは無関係** — [`PropertyValue`] doc の「CSS-wide keyword」節
+/// が説明する「property value としては未実装」claim
 /// とは別の話なので混同しないこと。
 fn is_reserved_counter_name(ident: &str) -> bool {
     matches!(
@@ -4335,13 +4259,13 @@ fn is_reserved_counter_name(ident: &str) -> bool {
 /// `normal` / `none` は spec で意味が異なる (pseudo-element の生成/非生成) が、
 /// 本 crate は cascade static side に留まり生成判断は下流に委ねるため、両者を
 /// 空 `Vec` に落として区別を持たない (§7.1 downstream mapping で必要になれば
-/// 変異させる)。counter-* precedent (raikiri-spike-s85) と同じ shape。
+/// 変異させる)。counter-* precedent と同じ shape。
 ///
 /// items+ loop は `<string>` literal と function token (`counter(...)` 等) を
 /// 順次 peel する。認識できない token に当たった時点で loop を break、caller
 /// の `expect_exhausted` (rule.rs) が leftover を検知して declaration ごと drop。
 ///
-/// `alt text` (spec `... [/ <string>...]?`) は M5 pre-work scope 外、`/` 以降は
+/// `alt text` (spec `... [/ <string>...]?`) は現状 scope 外、`/` 以降は
 /// unconsumed のまま caller に返す (現状 rule.rs の `expect_exhausted` により
 /// declaration drop、alt text 対応時に本関数を extend)。
 fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
@@ -4374,8 +4298,8 @@ fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
 /// `mode` パラメータで受理 alternative 集合を分岐する:
 /// - [`ContentListMode::CssContent3`] — content property (CSS Content 3 §2
 ///   <https://www.w3.org/TR/css-content-3/#content-values>)。10 alt full set
-///   を受理 (raikiri-spike-1us で `<image>` / `contents` / `<quote>` /
-///   `leader()` を追加)。
+///   を受理 (`<image>` / `contents` / `<quote>` /
+///   `leader()` は後に追加)。
 /// - [`ContentListMode::GcpmStringSet`] — string-set property (CSS GCPM 3
 ///   §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>)。`string()` /
 ///   `target-counter()` / `target-counters()` / `target-text()` / `<image>` /
@@ -4389,8 +4313,8 @@ fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
 /// を必ず rewind するため、branch の試行順序は正しさに影響しない
 /// (どの順で並べても等価)。
 ///
-/// (raikiri-spike-m5.1 で導入、raikiri-spike-6s1 で mode-parameterize、
-/// raikiri-spike-1us で `<image>` / `contents` / `<quote>` / `leader()` 追加)
+/// (導入後、mode-parameterize を経て `<image>` / `contents` / `<quote>` /
+/// `leader()` を追加)
 fn parse_content_list_items(
     input: &mut Parser<'_, '_>,
     mode: ContentListMode,
@@ -4403,7 +4327,7 @@ fn parse_content_list_items(
             continue;
         }
         // `<image>` の `<url>` alternative — CSS Images 3 <url> production
-        // (`url(...)` / `url("...")`) のみ (`<gradient>` は milestone subset
+        // (`url(...)` / `url("...")`) のみ (`<gradient>` は未実装として
         // defer、`ContentComponent::Image` doc 参照)。`expect_url` は bare
         // quoted string を受理しない (`<url> = <url()> | <src()>`) ので上の
         // literal 分岐との誤 overlap は無い。CssContent3 mode 限定
@@ -4470,7 +4394,7 @@ fn parse_content_bare_keyword(ident: &str) -> Option<ContentComponent> {
 /// <https://www.w3.org/TR/css-values-4/#custom-idents> が将来の CSS-wide
 /// keyword 用に予約) + `none` (top-level alt、gcpm-3 §1.1.1) を弾く。
 ///
-/// ## Entry separator の strict 化 (raikiri-spike-1ll)
+/// ## Entry separator の strict 化
 ///
 /// `#` (comma-separated multiplier、CSS Values 4 §2.3
 /// <https://www.w3.org/TR/css-values-4/#mult-comma>) は entry 間に comma を
@@ -4481,7 +4405,7 @@ fn parse_content_bare_keyword(ident: &str) -> Option<ContentComponent> {
 /// 初回 iteration で name parse が失敗する case (`string-set: ,`,
 /// `string-set: "x"` 等 name 不在) も含めて `.ok()?` で一律に `None` 上位伝播
 /// する。この strict `?` propagation は sibling
-/// [`parse_optional_counter_style`] (raikiri-spike-zik) と同 principle。
+/// [`parse_optional_counter_style`] と同 principle。
 ///
 /// `<content-list>` は 1+ items 必須 (CSS Content 3 §2)。name の後に 1 item も
 /// peel できなければ malformed → `None` (declaration drop)。
@@ -4495,7 +4419,7 @@ fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<Cont
     loop {
         // <custom-ident> — CSS-wide keyword + `default` + `none` を弾く。
         // 既存 `is_reserved_custom_ident` (css-wide + default) と、property-specific
-        // top-level alternative の `none` reject を組み合わせる (m5.1 の
+        // top-level alternative の `none` reject を組み合わせる (
         // `is_reserved_custom_ident` docstring の想定 usage)。
         //
         // `.ok()?` で strict 上位伝播: (a) 初回 iteration で name 不在 = `#`
@@ -4513,7 +4437,7 @@ fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<Cont
             .ok()?;
         // <content-list> は 1+ items 必須。0 items → declaration drop。
         // GCPM 3 §1.1.1 narrow local <content-list> = `string()` と `target-*()`
-        // を受理しない (raikiri-spike-6s1、詳細は `ContentListMode` doc)。
+        // を受理しない (詳細は `ContentListMode` doc)。
         let items = parse_content_list_items(input, ContentListMode::GcpmStringSet);
         if items.is_empty() {
             return None;
@@ -4597,7 +4521,7 @@ fn parse_content_function(
 /// ([`parse_target_counter_fn`] / [`parse_target_counters_fn`])。いずれも spec 上
 /// `<custom-ident>` を取り `none` は valid。
 ///
-/// bd raikiri-spike-r7r1 で `pub(crate)` に広げ、`counter_style` module が
+/// 後に `pub(crate)` に広げ、`counter_style` module が
 /// `<counter-style-name>` (CSS Counter Styles L3 §3
 /// <https://www.w3.org/TR/css-counter-styles-3/#typedef-counter-style-name> —
 /// `<custom-ident>` に `none` 追加除外を足した production、`<symbol>` の
@@ -4628,14 +4552,14 @@ pub(crate) fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> 
 /// より狭い grammar (`<counter-name>` 等) の追加除外は個別の predicate
 /// (例 [`is_reserved_counter_name`]) で行う。case-insensitive 比較。
 ///
-/// `pub(crate)`: bd raikiri-spike-r7r1 の `counter_style` module が
+/// `pub(crate)`: `counter_style` module が
 /// `<counter-style-name>` 系 production (rule name / `fallback` / `system:
 /// extends`) の除外 predicate を組み立てる際にこの base list を再利用する
 /// ([`parse_custom_ident`] の doc 参照)。
 ///
-/// これは CSS Values 4 §4.2 の permanent な spec 除外規定であり、**Epic 7 の
-/// 実装状況とは無関係** — [`PropertyValue`] doc の「CSS-wide keyword」節
-/// (bd raikiri-spike-rzv3) が説明する「property value としては未実装」claim
+/// これは CSS Values 4 §4.2 の permanent な spec 除外規定であり、**CSS-wide
+/// keyword の実装状況とは無関係** — [`PropertyValue`] doc の「CSS-wide keyword」節
+/// が説明する「property value としては未実装」claim
 /// とは別の話なので混同しないこと。
 pub(crate) fn is_reserved_custom_ident(ident: &str) -> bool {
     matches!(
@@ -4677,8 +4601,7 @@ fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
 /// counter-reset / counter-increment / counter-set property
 /// (§4.1 / §4.2) の name 引数で使う。後者は既に [`parse_counter_property`] が
 /// [`is_reserved_counter_name`]
-/// 経由で reject 済 — 本 helper は前者を同じ predicate に揃えるための wrapper
-/// (raikiri-spike-afv — codex final for m5.1)。
+/// 経由で reject 済 — 本 helper は前者を同じ predicate に揃えるための wrapper。
 fn parse_counter_name(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
     let ident = input.expect_ident().ok()?.clone();
     if is_reserved_counter_name(&ident) {
@@ -4726,7 +4649,7 @@ fn parse_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
 /// `,` を consume 後に ident 不在 (`counter(chapter,)` 等の trailing-comma)
 /// は spec-invalid、`None` 上位伝播で declaration ごと drop する
 /// (sibling [`parse_string_fetch`] / [`parse_content_part`] と同じ strict
-/// `?` propagation、raikiri-spike-zik で silent Decimal fallback を除去)。
+/// `?` propagation、silent Decimal fallback は撤去済み)。
 fn parse_optional_counter_style(input: &mut Parser<'_, '_>) -> Option<CounterStyle> {
     if input.try_parse(|i| i.expect_comma()).is_ok() {
         // comma consumed — ident 必須。失敗は None として上位伝播。
@@ -4748,7 +4671,7 @@ fn counter_style_from_ident(ident: &str) -> CounterStyle {
 /// `attr(<attribute-name>)`。CSS Content 3 §2.1
 /// <https://www.w3.org/TR/css-content-3/#strings>。
 ///
-/// M5 static-side scope: type / fallback (attr(x string, "default") 等) は defer。
+/// static-side scope: type / fallback (attr(x string, "default") 等) は defer。
 fn parse_attr_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let name = input.expect_ident().ok()?.clone();
     Some(ContentComponent::Attr {
@@ -4808,24 +4731,24 @@ fn parse_target_text_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> 
 /// `position: static | running(<custom-ident>)` を parse する
 /// (CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>)。
 ///
-/// M5 static-side ε (raikiri-spike-m5.4) の scope:
+/// 現状 scope:
 /// - `static` — [`PositionValue::Static`]、`inherit_from` の初期状態と一致するため
 ///   apply_value が no-op でも問題ない。cascade winner selection では
 ///   先行 `running(...)` を上書き suppress する identity 用途
-///   (advisor calibration: standalone-static test だけでは実効性が問えない)。
+///   (standalone-static test だけでは実効性が問えない点に注意)。
 /// - `running(<custom-ident>)` — [`PositionValue::Running`]、apply_value が
 ///   1-item `RunningTemplate` を computed.running_templates に seed する。
-/// - 他 keyword (`relative` / `absolute` / `fixed` / `sticky`) は M5+ scope 外、
+/// - 他 keyword (`relative` / `absolute` / `fixed` / `sticky`) は未実装、
 ///   silent drop = `None`。
 ///
-/// `<custom-ident>` の除外は m5.3 string-set と同じ規約:
+/// `<custom-ident>` の除外は string-set と同じ規約:
 /// [`is_reserved_custom_ident`] (CSS-wide keyword + `default`) に加えて
 /// `none` を弾く。`none` は position property の他 spec-defined keyword
 /// では無いが、custom-ident としては予約 alternative の慣行を残しつつ、
 /// runtime resolve で `element(none)` 参照を誤って matching させないためのガード
-/// (reviewer:spec interpretation point、m5.3 の `none` reject と同じ扱い)。
+/// (string-set の `none` reject と同じ扱い)。
 fn parse_position(input: &mut Parser<'_, '_>) -> Option<PositionValue> {
-    // `static` は M5 scope で唯一受理する non-running keyword。
+    // `static` は現状 scope で唯一受理する non-running keyword。
     if input
         .try_parse(|i| i.expect_ident_matching("static"))
         .is_ok()
@@ -4870,22 +4793,21 @@ fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
 /// CSS Content 3 §2.7.3 <https://www.w3.org/TR/css-content-3/#funcdef-content>
 /// が別途 `?` 付き 5 keyword (`marker` 含む) で定義しており、この関数が
 /// content property 側でどちらの grammar に従うべきかは未解決
-/// (bd raikiri-spike-9dsh で PMO 判断待ち)。
+/// (要判断、追跡は follow-up task)。
 ///
 /// bare `content()` (spec 例 `h2 { string-set: heading content() }`、
 /// string-set/GCPM3 側の文脈) では [`ContentTextKeyword::Text`] を
 /// フォールバック値として使う (根拠は GCPM 3 側の spec "default" 宣言では
-/// ない — 詳細は [`ContentTextKeyword`] の doc comment 参照、bd
-/// raikiri-spike-x8i6 / raikiri-spike-83r2)。target-text() の第 2 引数と
+/// ない — 詳細は [`ContentTextKeyword`] の doc comment 参照)。target-text()
+/// の第 2 引数と
 /// 違い、keyword は paren 直下に置かれる (comma を先行させない)。
 ///
 /// GCPM 3 §1.1.1 の narrow `<content-list>` (string-set 側) と CSS Content 3
 /// §2 の broad `<content-list>` (content property 側) の **両方** に対し
 /// unconditional に受理される ([`ContentListMode`] mode gate なし、
-/// raikiri-spike-6s1 で mode dispatch を導入した後もこの arm は両 mode で
+/// mode dispatch 導入後もこの arm は両 mode で
 /// unconditional のまま) — ただし content property 側を governor する
-/// grammar が GCPM 3 か CSS Content 3 §2.7.3 かは上記の通り未確定
-/// (bd raikiri-spike-9dsh)。
+/// grammar が GCPM 3 か CSS Content 3 §2.7.3 かは上記の通り未確定。
 fn parse_content_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let keyword = if input.is_exhausted() {
         ContentTextKeyword::default()
@@ -5017,14 +4939,14 @@ mod tests {
 
     #[test]
     fn color_parse_hex_invalid_char_returns_none() {
-        // spec-invalid: `g` は hex digit ではない (g04 category (a) → drop)。
+        // spec-invalid: `g` は hex digit ではない (→ drop)。
         assert_eq!(parse("#gggggg", "color"), None);
     }
 
     #[test]
     fn color_parse_hex_invalid_length_returns_none() {
         // spec-invalid: hex-notation grammar は 3/4/6/8 digit のみ。
-        // 5-digit は spec に無い (g04 category (a) → drop)。
+        // 5-digit は spec に無い (→ drop)。
         assert_eq!(parse("#12345", "color"), None);
         // 7-digit も同様に spec-invalid。
         assert_eq!(parse("#1234567", "color"), None);
@@ -5056,7 +4978,7 @@ mod tests {
         );
     }
 
-    // ── rgb() / rgba() function form (raikiri-spike-0vv.15) ──
+    // ── rgb() / rgba() function form ──
     //
     // CSS Color 4 §5.1 legacy comma syntax の追加 form covers。
     // 1 sample あたり CssColor 値まで pin (loose `Some(_)` は mix reject 系
@@ -5155,7 +5077,7 @@ mod tests {
     #[test]
     fn color_parse_rgb_modern_syntax_returns_none() {
         // §5.1 modern (space + slash) syntax `rgb(R G B / A)` は本 task
-        // 対象外 (Non-goals category (b) milestone subset)。1 番目 channel
+        // 対象外 (Non-goals、非対応)。1 番目 channel
         // (255) の後で `expect_comma` を要求するため、space separator は
         // fall-through で reject。
         assert_eq!(parse("rgb(255 0 0)", "color"), None);
@@ -5222,17 +5144,17 @@ mod tests {
         // CSS Color 4 §6.3 "The transparent keyword": `transparent`
         // = rgba(0, 0, 0, 0)。Ident arm hardcodes a=255、明示 branch が無ければ
         // transparent が到達しても opaque black (`{0,0,0,255}`) になる bug の
-        // regression pin (raikiri-spike-0vv.7、advisor calibration)。
+        // regression pin。
         assert_eq!(
             parse("transparent", "color"),
             Some(PropertyValue::Color(CssColor::TRANSPARENT))
         );
     }
 
-    // ── CssColor::from_hex (raikiri-spike-0vv.14) direct helper contract ──
+    // ── CssColor::from_hex direct helper contract ──
     //
     // parse_color 経由の integration test は上で網羅済み。以下は helper 自体の
-    // API contract を pin する direct call test — 0vv.15 (rgb() function form)
+    // API contract を pin する direct call test — rgb() function form
     // や future property (border-*-color 等) が同じ primitive を消費するため、
     // 内部形状の regression を早く捕まえる目的。
 
@@ -5303,13 +5225,13 @@ mod tests {
         assert_eq!(CssColor::from_hex("f0z"), None);
     }
 
-    // ── background-color (CSS Backgrounds 3 §2.2、raikiri-spike-0vv.7) ──
+    // ── background-color (CSS Backgrounds 3 §2.2) ──
     //
     // 5-sample accept pin (task description Verification #4):
     // named / hex / rgb() / rgba() / transparent が
     // `Some(PropertyValue::BackgroundColor(<exact RGBA>))` を返す。
     //
-    // exact RGBA assert は advisor calibration: `Some(_)` の loose form だと
+    // exact RGBA assert が必要な理由: `Some(_)` の loose form だと
     // `parse_color` の Ident arm が transparent に a=255 を返す regression
     // (opaque black に落ちる bug) を silent pass してしまうため、
     // 5 sample 全て CssColor 値まで pin する。
@@ -5381,10 +5303,10 @@ mod tests {
     #[test]
     fn background_color_parse_invalid_returns_none() {
         // `none` は <color> grammar に含まれない spec-invalid keyword (task
-        // Non-goals category (a) spec-invalid → drop)。
+        // Non-goals: spec-invalid → drop)。
         assert_eq!(parse("none", "background-color"), None);
-        // hsl() は CSS Color 4 spec-valid だが Sprint 12 では未対応 (task
-        // Non-goals category (b) milestone subset、CSS Color 4 拡張は defer)。
+        // hsl() は CSS Color 4 spec-valid だが現状未対応 (task
+        // Non-goals: 非対応、CSS Color 4 拡張は defer)。
         assert_eq!(parse("hsl(0, 100%, 50%)", "background-color"), None);
     }
 
@@ -5405,8 +5327,8 @@ mod tests {
     }
 
     /// CSS Fonts 4 §2.5 の grammar `<length-percentage [0,∞]>` は font-relative
-    /// unit と percentage を含む。bd raikiri-spike-zls8 で cascade の phase 2
-    /// (絶対化) が入ったので、これらを parse 段で drop しなくなった。
+    /// unit と percentage を含む。cascade の phase 2 (絶対化) が入ったので、
+    /// これらを parse 段で drop しなくなった。
     #[test]
     fn font_size_accepts_font_relative_and_percentage() {
         assert_eq!(
@@ -5427,9 +5349,9 @@ mod tests {
         );
     }
 
-    /// `math` は spec-valid だが g04 category (b) milestone subset
-    /// (bd raikiri-spike-0vv.18、MathML scaling algorithm 未実装) として drop。
-    /// `<absolute-size>` / `<relative-size>` は raikiri-spike-4rmu で受理済み —
+    /// `math` は spec-valid だが未実装
+    /// (MathML scaling algorithm 未対応) として drop。
+    /// `<absolute-size>` / `<relative-size>` は受理済み —
     /// 別 test (`font_size_accepts_absolute_size_keywords` /
     /// `font_size_accepts_relative_size_keywords`) 参照。
     #[test]
@@ -5483,8 +5405,7 @@ mod tests {
     /// `<relative-size>` (`larger` / `smaller`) は parse 段では解決せず
     /// `PropertyValue::FontSizeRelative` をそのまま返す — 解決 (親の
     /// computed font-size に対する read-modify-write) は
-    /// `crate::cascade` の責務 (`bolder` / `lighter` と同型、 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
-    /// bd raikiri-spike-4rmu)。
+    /// `crate::cascade` の責務 (`bolder` / `lighter` と同型)。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     #[test]
     fn font_size_accepts_relative_size_keywords() {
         assert_eq!(
@@ -5525,7 +5446,7 @@ mod tests {
         assert_eq!(parse("-2rem", "font-size"), None);
         assert_eq!(parse("-12pt", "font-size"), None);
         assert_eq!(parse("-50%", "font-size"), None);
-        // bd raikiri-spike-2x8 で追加した unit も `length_payload` 経由で同じ
+        // 追加した unit も `length_payload` 経由で同じ
         // non-negative check を通ることを pin。
         assert_eq!(parse("-1ex", "font-size"), None);
         assert_eq!(parse("-1cm", "font-size"), None);
@@ -5533,7 +5454,7 @@ mod tests {
 
     #[test]
     fn font_size_accepts_additional_units() {
-        // CSS Fonts 4 §2.5 `<length-percentage [0,∞]>` — bd raikiri-spike-2x8 で
+        // CSS Fonts 4 §2.5 `<length-percentage [0,∞]>` —
         // 追加した font-relative / absolute unit も `font-size` 上で受理される
         // (`parse_length_value` の dispatch に mode 差は無い)。
         assert_eq!(
@@ -5548,13 +5469,13 @@ mod tests {
 
     #[test]
     fn font_size_accepts_lh_and_rlh() {
-        // bd raikiri-spike-yh3w: CSS Fonts 4's `font-size` grammar
+        // CSS Fonts 4's `font-size` grammar
         // (`<absolute-size> | <relative-size> | <length-percentage [0,∞]>`)
         // has no carve-out excluding `lh`/`rlh` from `<length-percentage>`'s
         // `<length>` component (CSS Values 4 §6.1.1) — `font-size: 1lh` /
         // `font-size: 1rlh` are spec-valid and must survive parsing so the
         // cascade can pick them as a winner (dropping at parse time, as this
-        // crate previously did per bd raikiri-spike-vxha, can change *which
+        // crate previously did, can change *which
         // declaration wins* the cascade — a stronger effect than an
         // incorrectly-resolved value). Resolution against the parent's used
         // line-height is `crate::resolve::resolve_font_size`'s concern, not
@@ -5583,7 +5504,7 @@ mod tests {
     #[test]
     fn font_size_accepts_zero() {
         // spec `[0,∞]` の閉区間下端。`0px` は Dimension arm、bare `0` は
-        // CSS Values 3 §5 unitless-zero clause の Number arm を通し (raikiri-spike-fnqx)、
+        // CSS Values 3 §5 unitless-zero clause の Number arm を通し、
         // parse_font_size の非負 Px post-filter を pass。
         assert_eq!(
             parse("0px", "font-size"),
@@ -5618,7 +5539,7 @@ mod tests {
 
     /// `initial_font_family()` は呼び出しごとに独立した call site でも
     /// **同一** underlying `Vec` allocation を指す (`Arc::ptr_eq` = true) —
-    /// `OnceLock` 経由の shared slot であることの直接 pin (raikiri-spike-no7b)。
+    /// `OnceLock` 経由の shared slot であることの直接 pin。
     ///
     /// この pin は cascade level の test (`mod@crate::cascade` の
     /// `initial_font_family_shares_arc_slot_across_independent_cascade_runs`
@@ -5628,7 +5549,7 @@ mod tests {
     /// `initial_font_family()` が実質 1 回しか呼ばれないことを意味し、
     /// ここで `OnceLock` を外して per-call `Arc::new(..)` に戻す regression を
     /// 混入させても、その cascade level test は green のままになる
-    /// (実際に perturbation で確認済み — bd raikiri-spike-no7b 実装ログ)。
+    /// (実際に perturbation で確認済み)。
     /// 本 test は `initial_font_family()` を直接 2 回呼ぶことで、この
     /// inheritance-sharing の死角を回避する。
     #[test]
@@ -5671,7 +5592,7 @@ mod tests {
     fn font_weight_accepts_full_spec_range() {
         // CSS Fonts 4 §2.2 `<font-weight-absolute> = [ normal | bold |
         // <number [1,1000]> ]`。旧実装は `[100, 900]` に絞っていたが spec は
-        // `[1, 1000]` (raikiri-spike-5iy)。bd Verification #1 / #2 / #3。
+        // `[1, 1000]`。
         assert_eq!(parse("1", "font-weight"), fw(1.0));
         assert_eq!(parse("1000", "font-weight"), fw(1000.0));
         assert_eq!(parse("50", "font-weight"), fw(50.0));
@@ -5682,9 +5603,9 @@ mod tests {
 
     #[test]
     fn font_weight_rejects_out_of_range_number() {
-        // g04 category (a) — spec grammar。§2.2 "Only values greater than or
+        // spec-invalid — spec grammar。§2.2 "Only values greater than or
         // equal to 1, and less than or equal to 1000, are valid, and all other
-        // values are invalid"。bd Verification #5 / #6 / #7。
+        // values are invalid"。
         assert_eq!(parse("0", "font-weight"), None);
         assert_eq!(parse("1001", "font-weight"), None);
         assert_eq!(parse("-100", "font-weight"), None);
@@ -5710,7 +5631,7 @@ mod tests {
         // は "Fractional weights are valid" と明言する。旧実装 (computed side が
         // `u16`) は parse 時に round-half-away-from-zero で整数化しており、
         // これは spec 沈黙点の選択ではなく表現上の制約による既知 divergence
-        // だった (bd raikiri-spike-e52s)。payload / `ComputedValues.font_weight`
+        // だった。payload / `ComputedValues.font_weight`
         // を `f32` に格上げしたことで丸め自体が不要になり、本 test はその
         // 解消を pin する — もはや丸めていないことの regression guard。
         // 全て 2 進数で厳密表現可能な小数 (`.5` / `.25`) — parse 側と期待値の
@@ -5729,8 +5650,7 @@ mod tests {
         // computed === specified を pin する。parse 結果 (specified-equivalent
         // な `PropertyValue`) がそのまま `150.25` を保持することを確認する。
         // cascade を経由した computed 側の同値 pin は
-        // `crate::cascade::tests::font_weight_wpt_font_weight_computed_150_25`
-        // (bd raikiri-spike-e52s)。
+        // `crate::cascade::tests::font_weight_wpt_font_weight_computed_150_25`。
         assert_eq!(parse("150.25", "font-weight"), fw(150.25));
     }
 
@@ -5738,7 +5658,7 @@ mod tests {
     fn font_weight_accepts_scientific_notation_number() {
         // `int_value` matcher から `value` (f32) 参照に変えた副次効果。
         // `1e3` は CSS Values 3 の `<number>` production として spec-valid
-        // なので受理が正しい (g04 category (a))。
+        // なので受理が正しい。
         assert_eq!(parse("1e3", "font-weight"), fw(1000.0));
     }
 
@@ -5746,8 +5666,7 @@ mod tests {
     fn font_weight_parses_relative_keywords_as_sentinels() {
         // CSS Fonts 4 §2.2: `bolder` / `lighter` は継承値依存の relative
         // weight。parse 段では解けないので sentinel variant を返し、cascade が
-        // 親の computed weight から解決する (raikiri-spike-17s8)。
-        // bd 17s8 Verification #1 / #2。
+        // 親の computed weight から解決する。
         assert_eq!(
             parse("bolder", "font-weight"),
             Some(PropertyValue::FontWeight(FontWeightValue::Bolder))
@@ -5769,21 +5688,21 @@ mod tests {
 
     #[test]
     fn font_weight_rejects_unknown_ident() {
-        // g04 category (a) — spec-invalid keyword → declaration drop。
+        // spec-invalid keyword → declaration drop。
         assert_eq!(parse("normal-ish", "font-weight"), None);
         assert_eq!(parse("super-bold", "font-weight"), None);
     }
 
     #[test]
     fn unknown_property_returns_none() {
-        // `background-color` (0vv.7)、`padding` (0vv.6)、`margin` (0vv.5)、
-        // `width` (0vv.10)、`height` (0vv.11) が順次実装済 = ここから除外。
+        // `background-color` / `padding` / `margin` /
+        // `width` / `height` が順次実装済 = ここから除外。
         // `float` は現時点で parse_value dispatch に未登録 → fall-through で
-        // None が返る canonical unknown-property canary (Epic 7 future)。
+        // None が返る canonical unknown-property canary。
         assert_eq!(parse("left", "float"), None);
     }
 
-    // ── Display (CSS Display 3 §2、raikiri-spike-m1.22) ─────────────
+    // ── Display (CSS Display 3 §2) ─────────────
 
     #[test]
     fn display_parse_block() {
@@ -5821,10 +5740,10 @@ mod tests {
 
     #[test]
     fn display_rejects_unknown_ident() {
-        // Sprint 12 scope: block / inline / inline-block / none 以外は spec-valid
-        // でも milestone defer で silent drop (raikiri-spike-0vv.4)。
-        // flex / grid / table* / list-item / flow-root / contents は M6+ layout
-        // epic で対応予定。
+        // block / inline / inline-block / none 以外は spec-valid
+        // でも未実装のため silent drop。
+        // flex / grid / table* / list-item / flow-root / contents は将来の
+        // layout 対応で扱う予定。
         assert_eq!(parse("flex", "display"), None);
         assert_eq!(parse("grid", "display"), None);
         assert_eq!(parse("table", "display"), None);
@@ -5869,9 +5788,9 @@ mod tests {
         );
     }
 
-    // ── box-sizing (CSS Sizing 3 §3.3、raikiri-spike-0vv.13) ────────
+    // ── box-sizing (CSS Sizing 3 §3.3) ────────
     //
-    // Verification anchors (bd raikiri-spike-0vv.13):
+    // Verification anchors:
     //   #1 content-box → Some(BoxSizing::ContentBox)
     //   #2 border-box  → Some(BoxSizing::BorderBox)
     //   #3 padding-box → None (spec 外、CSS UI 3 draft の削除済 keyword)
@@ -5897,7 +5816,7 @@ mod tests {
 
     #[test]
     fn box_sizing_rejects_unknown_ident() {
-        // spec-invalid (category (a) → drop):
+        // spec-invalid (→ drop):
         // - `padding-box` は CSS-UI 3 draft 相当だが css-sizing-3 では削除済み
         //   (spec note "supersedes the one in `[CSS-UI-3]`")、
         // - `margin-box` は grammar 外の任意 ident。
@@ -5908,8 +5827,8 @@ mod tests {
 
     #[test]
     fn box_sizing_rejects_css_wide_keyword() {
-        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
-        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
+        // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
+        // canonical: PropertyValue doc「CSS-wide keyword」節。
         assert_eq!(parse("inherit", "box-sizing"), None);
         assert_eq!(parse("initial", "box-sizing"), None);
         assert_eq!(parse("unset", "box-sizing"), None);
@@ -5945,11 +5864,11 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::BoxSizing);
     }
 
-    // ── counter-* (CSS Lists 3 §4、raikiri-spike-s85 M5 pre-work) ──
+    // ── counter-* (CSS Lists 3 §4) ──
 
-    // d9y.2: `PropertyValue::Counter*(Arc<Vec<..>>)` に wrap したため、
+    // `PropertyValue::Counter*(Arc<Vec<..>>)` に wrap したため、
     // literal test 比較用に Arc<Vec<..>> を返す helper に切り替え
-    // (d9y.1 content/string_set helper と同 pattern)。
+    // (content/string_set helper と同 pattern)。
     fn counter_pairs(pairs: &[(&str, i32)]) -> Arc<Vec<(SmolStr, i32)>> {
         Arc::new(
             pairs
@@ -5985,7 +5904,7 @@ mod tests {
     #[test]
     fn counter_reset_none_returns_empty_vec() {
         // spec: `none` は空リストと同等 (top-level alternative)
-        // d9y.2: empty case は shared Arc slot (`empty_counter_entries`) を使う。
+        // empty case は shared Arc slot (`empty_counter_entries`) を使う。
         assert_eq!(
             parse("none", "counter-reset"),
             Some(PropertyValue::CounterReset(empty_counter_entries()))
@@ -6035,7 +5954,7 @@ mod tests {
 
     #[test]
     fn counter_increment_none_returns_empty_vec() {
-        // d9y.2: empty case は shared Arc slot を使う。
+        // empty case は shared Arc slot を使う。
         assert_eq!(
             parse("none", "counter-increment"),
             Some(PropertyValue::CounterIncrement(empty_counter_entries()))
@@ -6056,7 +5975,7 @@ mod tests {
 
     #[test]
     fn counter_set_none_returns_empty_vec() {
-        // d9y.2: empty case は shared Arc slot を使う。
+        // empty case は shared Arc slot を使う。
         assert_eq!(
             parse("none", "counter-set"),
             Some(PropertyValue::CounterSet(empty_counter_entries()))
@@ -6066,7 +5985,7 @@ mod tests {
     #[test]
     fn counter_reset_is_case_insensitive_on_none() {
         // CSS spec: keyword `none` は ASCII case-insensitive
-        // d9y.2: empty case は shared Arc slot を使う。
+        // empty case は shared Arc slot を使う。
         assert_eq!(
             parse("NONE", "counter-reset"),
             Some(PropertyValue::CounterReset(empty_counter_entries()))
@@ -6106,17 +6025,17 @@ mod tests {
         );
     }
 
-    // ── content property (CSS Content 3 §2、raikiri-spike-m5.1) ──
+    // ── content property (CSS Content 3 §2) ──
     //
-    // task 9 verification items = spec-derived (9y9(a))。task 記述の
+    // task の verification items は spec-derived。task 記述の
     // `raikiri_traits::ContentValueItem` は下流 (raikiri-dom) mapping 先。
-    // raikiri-style は raikiri-traits に依存しない leaf crate (94e/3ps Phase B)
-    // のため、s85 counter-* precedent に倣い local `ContentComponent` を emit
+    // raikiri-style は raikiri-traits に依存しない leaf crate
+    // のため、counter-* precedent に倣い local `ContentComponent` を emit
     // する (原則 1: 前例主義)。Symbol → SmolStr、Url → String へ substitution。
 
     fn content_items(source: &str) -> Vec<ContentComponent> {
         match parse(source, "content") {
-            // d9y.1: PropertyValue::Content(Arc<Vec<..>>) を expose するため
+            // PropertyValue::Content(Arc<Vec<..>>) を expose するため
             // (*v).clone() で Vec を deref-clone。tests は既存 shape のまま検証。
             Some(PropertyValue::Content(v)) => (*v).clone(),
             other => panic!("expected PropertyValue::Content, got {other:?}"),
@@ -6209,8 +6128,8 @@ mod tests {
         //
         // NB: task description の "content-first-letter" は spec (§2.6.3
         // `[ content | before | after | first-letter ]?`) と食い違うため、
-        // spec-correct な `first-letter` を採用 (reviewer:spec 9y9(c) の
-        // task-own-claim verification で task 側の書き振りが訂正対象)。
+        // spec-correct な `first-letter` を採用 (task 側の記述が誤りと
+        // 判明したための訂正)。
         let items = content_items(r##"target-text(url("#anchor"), first-letter)"##);
         assert_eq!(items.len(), 1);
         assert_eq!(
@@ -6273,8 +6192,7 @@ mod tests {
     }
 
     // ── content property: image / contents / <quote> / leader() (CSS Content 3
-    // §2.2 / §2.3 / §2.4.2 / §2.5.1、raikiri-spike-1us — m5.1 由来の
-    // under-accept fix、6s1 CssContent3 mode arm) ──
+    // §2.2 / §2.3 / §2.4.2 / §2.5.1 — under-accept fix、CssContent3 mode arm) ──
 
     #[test]
     fn content_parse_image_url_quoted_form() {
@@ -6455,7 +6373,7 @@ mod tests {
     }
 
     // ── string-set narrow <content-list> gate: image / contents / quote /
-    // leader() (CSS GCPM 3 §1.1.1 L82、raikiri-spike-1us) ──
+    // leader() (CSS GCPM 3 §1.1.1 L82) ──
     //
     // GCPM 3 §1.1.1 narrow list には `<image>` / `contents` / `<quote>` /
     // `leader()` のいずれも含まれない (既存の string_set_rejects_* group と
@@ -6520,8 +6438,7 @@ mod tests {
     fn content_target_text_default_part_is_content() {
         // target-text() の第 2 引数省略時、raikiri は ContentPart::Content を
         // フォールバック値として使う (根拠は spec の "default" 宣言ではない —
-        // CSS Content 3 §2.6.3 は第 2 引数省略時の値を規定していない。bd
-        // raikiri-spike-x8i6 / raikiri-spike-83r2)。
+        // CSS Content 3 §2.6.3 は第 2 引数省略時の値を規定していない)。
         let items = content_items(r##"target-text(url("#a"))"##);
         assert_eq!(
             items,
@@ -6539,7 +6456,6 @@ mod tests {
         // is invalid as a <counter-name>". §4.7 counter() の first argument が
         // <counter-name> production のため `counter(none)` は declaration drop。
         // counter-reset/increment/set (property.rs 既存) と一貫、Chrome/FF と一致。
-        // (raikiri-spike-afv — codex final for m5.1)
         assert_eq!(parse("counter(none)", "content"), None);
     }
 
@@ -6547,7 +6463,6 @@ mod tests {
     fn content_counters_rejects_none_name() {
         // spec CSS Lists 3 §4 / §4.7: counters() の first argument も
         // <counter-name> production、`none` は invalid。
-        // (raikiri-spike-afv — codex final for m5.1)
         assert_eq!(parse(r#"counters(none, ".")"#, "content"), None);
     }
 
@@ -6593,7 +6508,7 @@ mod tests {
         assert_eq!(cv.key(), PropertyKey::Content);
     }
 
-    // ── parse_optional_counter_style trailing-comma strict reject (raikiri-spike-zik) ──
+    // ── parse_optional_counter_style trailing-comma strict reject ──
     //
     // CSS Lists 3 §4.7 `counter(<counter-name>, <counter-style>?)` /
     // CSS Content 3 §2.6.1-2 `target-counter()` / `target-counters()` は
@@ -6664,16 +6579,16 @@ mod tests {
         );
     }
 
-    // ── string-set (CSS GCPM 3 §1.1.1、raikiri-spike-m5.3) ──
+    // ── string-set (CSS GCPM 3 §1.1.1) ──
     //
     // grammar: `none | [ <custom-ident> <content-list> ]#` — 各 entry は
-    // (name, content-list) pair、m5.1 の `ContentComponent` + `parse_content_list_items`
+    // (name, content-list) pair、`ContentComponent` + `parse_content_list_items`
     // を reuse。task description の "4-item Vec" は entry name の分を content 側に
     // 誤って含めた結果、実態は 3-item (name は tuple の第 1 要素)。
 
     fn string_set_entries(source: &str) -> Vec<(SmolStr, Vec<ContentComponent>)> {
         match parse(source, "string-set") {
-            // d9y.1: PropertyValue::StringSet(Arc<Vec<..>>)、content_items と同 pattern。
+            // PropertyValue::StringSet(Arc<Vec<..>>)、content_items と同 pattern。
             Some(PropertyValue::StringSet(v)) => (*v).clone(),
             other => panic!("expected PropertyValue::StringSet, got {other:?}"),
         }
@@ -6694,15 +6609,15 @@ mod tests {
 
     #[test]
     fn string_set_mixed_content_list_preserves_order() {
-        // Verification 2 (raikiri-spike-6s1 で adjust):
+        // Verification 2:
         // string-set: chapter_title counter(chapter) ": " attr(title)
         //
         // 先頭 `chapter_title` は entry name (tuple 第 1 要素)。content-list は
         // 残りの `counter(chapter) ": " attr(title)` = 3 items。
         //
-        // NB: m5.3 の原 test は末尾に `string(chapter_title)` を置いていたが、
+        // NB: 原 test は末尾に `string(chapter_title)` を置いていたが、
         // GCPM 3 §1.1.1 narrow list は `string()` function を含まないため
-        // raikiri-spike-6s1 で `attr()` (GCPM narrow list の 5 alt の 1 つ) に
+        // `attr()` (GCPM narrow list の 5 alt の 1 つ) に
         // swap。テストの主意 (mixed content-list の order 保持) は保つ。
         let entries = string_set_entries(r#"chapter_title counter(chapter) ": " attr(title)"#);
         assert_eq!(entries.len(), 1);
@@ -6763,7 +6678,7 @@ mod tests {
         // NB: 先頭が `none` の場合は top-level alternative の branch を先に
         // 通って `Some(empty)` を返し、leftover は下流 `expect_exhausted` で
         // declaration drop (rule.rs level)。この case は parse_value 単体では
-        // 検証しない — advisor calibration。
+        // 検証しない。
         assert_eq!(parse("inherit \"x\"", "string-set"), None);
         assert_eq!(parse("initial \"x\"", "string-set"), None);
         assert_eq!(parse("unset \"x\"", "string-set"), None);
@@ -6795,17 +6710,17 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::StringSet);
     }
 
-    // ── string-set trailing-comma strict reject (raikiri-spike-1ll) ──
+    // ── string-set trailing-comma strict reject ──
     //
     // `#` (comma-separated multiplier、CSS Values 4 §2.3
     // <https://www.w3.org/TR/css-values-4/#mult-comma>) は trailing comma を
     // 許容しない。GCPM 3 §1.1.1 <string-set-value> = `[ <custom-ident>
     // <content-list> ]#` は entry 間 comma 必須 + trailing comma 禁止。
     //
-    // m5.3 の初期実装は separator loop で `try_parse(expect_comma).is_err() {
+    // 初期実装は separator loop で `try_parse(expect_comma).is_err() {
     // break }` していたため、trailing comma を silently 受理していた (comma を
     // consume 後 next iteration で name parse fail → break → 既存 entries を
-    // Some で返す)。zik と同 principle の `.ok()?` propagation で strict 化。
+    // Some で返す)。同じ principle の `.ok()?` propagation で strict 化。
 
     #[test]
     fn string_set_rejects_trailing_comma_single_entry() {
@@ -6854,7 +6769,7 @@ mod tests {
         );
     }
 
-    // ── string-set narrow <content-list> gate (CSS GCPM 3 §1.1.1、raikiri-spike-6s1) ──
+    // ── string-set narrow <content-list> gate (CSS GCPM 3 §1.1.1) ──
     //
     // GCPM 3 §1.1.1 L82 verbatim: <content-list> = [ <string> | <counter()> |
     // <counters()> | <content()> | <attr()> ]+ — CSS Content 3 §2 broad list を
@@ -6862,7 +6777,7 @@ mod tests {
     // および `target-counter()` / `target-counters()` / `target-text()` は
     // spec grammar に含まれず、`ContentListMode::GcpmStringSet` mode dispatch で
     // reject する (parse_content_list_items が 0 items → parse_string_set →
-    // None → declaration drop、bd description の cascade shadow 例
+    // None → declaration drop、cascade shadow 例
     // `p.hi { string-set: title target-counter(url("#x"), page); }` の spec 準拠
     // 挙動 = .hi rule drop → parser layer で確認)。
     //
@@ -6879,7 +6794,7 @@ mod tests {
     #[test]
     fn string_set_rejects_target_counter_fn() {
         // GCPM 3 §1.1.1 L82 は `target-counter()` を narrow list から除外。
-        // bd description の cascade shadow 主要例、declaration drop → cascade で
+        // cascade shadow の主要例、declaration drop → cascade で
         // 先行の spec-valid rule が winner になる shape。
         assert_eq!(
             parse(r##"title target-counter(url("#a"), page)"##, "string-set"),
@@ -6908,32 +6823,31 @@ mod tests {
         );
     }
 
-    // ── content() function (CSS GCPM 3 §1.1.1.1、raikiri-spike-5ri) ──
+    // ── content() function (CSS GCPM 3 §1.1.1.1) ──
     //
     // grammar (spec verbatim, line 758 of TR/css-gcpm-3/, string-set/GCPM3側の
     // grammar — content property側は下記の通り別spec相反あり):
     //   content() = content(`[text | before | after | first-letter]`)
     // 4 keyword。keyword 省略時は `text` をフォールバック値として使う (根拠は
     // GCPM 3 側の spec "default" 宣言ではない — grammar に `?` が無く、"default
-    // をどう定義するか" 自体が未解決の WG issue として残っている。bd
-    // raikiri-spike-x8i6 / raikiri-spike-83r2)。GCPM 3 §1.1.1 の narrow
-    // `<content-list>` と CSS Content 3 §2 の broad `<content-list>` の両方に
-    // 対し unconditional に受理されるため、string-set および content property
-    // 双方の content-list 内で受理される (raikiri-spike-6s1 で
-    // `ContentListMode` mode dispatch を導入した後も `content()` arm は両
+    // をどう定義するか" 自体が未解決の WG issue として残っている)。GCPM 3
+    // §1.1.1 の narrow `<content-list>` と CSS Content 3 §2 の broad
+    // `<content-list>` の両方に対し unconditional に受理されるため、
+    // string-set および content property 双方の content-list 内で受理される
+    // (`ContentListMode` mode dispatch 導入後も `content()` arm は両
     // mode で unconditional accept) — ただし CSS Content 3 §2.7.3 は
     // content() を `?` 付き 5 keyword (`marker` 含む) で別途定義しており、
     // content property 側がどちらの grammar に従うべきかは未解決
-    // (bd raikiri-spike-9dsh で PMO 判断待ち)。
+    // (要判断、追跡は follow-up task)。
     //
-    // pre-fix reproduction: `string-set: title content(text)` は m5.1/m5.3 で
+    // pre-fix reproduction: `string-set: title content(text)` は
     // silent drop していた (parse_content_function match arm 欠如 →
     // parse_content_list_items break → 0 items → parse_string_set None →
     // declaration drop)。arm 追加で Some を返すことを pin する。
 
     #[test]
     fn string_set_content_text_reproduces_pre_fix_drop() {
-        // bd raikiri-spike-5ri description の主要 repro case:
+        // description の主要 repro case:
         // pre-fix では declaration drop = None、post-fix では
         // (title, `[Content{keyword: Text}]`) を含む Some を返す。
         let entries = string_set_entries("title content(text)");
@@ -6965,9 +6879,8 @@ mod tests {
     fn content_content_fn_default_keyword_on_empty_parens() {
         // §1.1.1.1 の spec 例 `h2 { string-set: heading content() }` (string-set
         // /GCPM3側の文脈) — bare `content()` は `text` をフォールバック値として
-        // 使う (根拠は GCPM 3 側の spec "default" 宣言ではない。bd
-        // raikiri-spike-x8i6 / raikiri-spike-83r2 / raikiri-spike-9dsh —
-        // content property側でのgrammar相反は9dsh参照)。
+        // 使う (根拠は GCPM 3 側の spec "default" 宣言ではない。
+        // content property側でのgrammar相反は上記 parse_content_fn doc 参照)。
         let items = content_items("content()");
         assert_eq!(
             items,
@@ -7020,8 +6933,8 @@ mod tests {
         // parse_content_list_items が break、declaration drop = None。`marker`
         // はこの GCPM3 grammar には無いが、CSS Content 3 §2.7.3 は独自に
         // content() を `marker` 含む 5 keyword で定義しており、content
-        // property 側でこの実装が `marker` を reject し続けるべきかは未解決
-        // (bd raikiri-spike-9dsh)。本 test は現状の GCPM3-scoped 実装の挙動を
+        // property 側でこの実装が `marker` を reject し続けるべきかは未解決。
+        // 本 test は現状の GCPM3-scoped 実装の挙動を
         // pin するものであり、`marker` が spec に一切存在しないという主張では
         // ない。
         assert_eq!(parse("content(marker)", "content"), None);
@@ -7090,11 +7003,11 @@ mod tests {
         );
     }
 
-    // ── position: running() (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4) ──
+    // ── position: running() (CSS GCPM 3 §1.2.1) ──
     //
-    // Verification items 1-6 は task description 由来 (bd raikiri-spike-m5.4)、
-    // canonical shape は bd raikiri-spike-376 amended。sibling は s85 (counter)
-    // / m5.1 (content) / m5.3 (string-set) の SmolStr wire-through pattern。
+    // Verification items 1-6 は task description 由来、
+    // canonical shape は後に amended。sibling は counter-* /
+    // content / string-set の SmolStr wire-through pattern。
 
     #[test]
     fn position_parse_running_header() {
@@ -7147,8 +7060,8 @@ mod tests {
     fn position_running_rejects_none_custom_ident() {
         // Verification 6: `running(none)` reject。`none` は position property
         // spec-defined keyword ではないが、runtime resolve で `element(none)` 参照が
-        // silent match するのを避けるため custom-ident としても弾く (m5.3 string-set
-        // と同じ規約、reviewer:spec interpretation point)。
+        // silent match するのを避けるため custom-ident としても弾く (string-set
+        // と同じ規約)。
         assert_eq!(parse("running(none)", "position"), None);
     }
 
@@ -7173,7 +7086,7 @@ mod tests {
 
     #[test]
     fn position_rejects_out_of_scope_keywords() {
-        // M5+ scope: relative / absolute / fixed / sticky は本 crate では
+        // relative / absolute / fixed / sticky は本 crate では
         // 認識せず None を返す (spec-correct: invalid → drop)。
         assert_eq!(parse("relative", "position"), None);
         assert_eq!(parse("absolute", "position"), None);
@@ -7188,7 +7101,7 @@ mod tests {
         assert_eq!(parse("running(a, b)", "position"), None);
     }
 
-    // ── parse_length_value helper (raikiri-spike-0vv.3) ────────────────────
+    // ── parse_length_value helper ────────────────────
     //
     // helper 単体を叩く共通 fixture — property dispatcher (`parse_value`) を経由せず
     // 5 unit sample (`px` / `em` / `rem` / `%` / `pt`) の parse を直接 verify する。
@@ -7239,7 +7152,7 @@ mod tests {
 
     #[test]
     fn parse_length_value_extreme_percentage_saturates_to_f32_max_not_inf() {
-        // bd raikiri-spike-3gee: `1e40%` は cssparser tokenizer 側で
+        // `1e40%` は cssparser tokenizer 側で
         // `unit_value = 1e40 / 100.0 = 1e38` (f32 有限範囲 `3.4028235e38` 内)
         // になるが、authored number へ戻す本 helper の `× 100.0` 自体が
         // f32 overflow を起こし +Inf を作っていた (fix 前)。
@@ -7260,7 +7173,7 @@ mod tests {
 
     #[test]
     fn parse_length_value_nan_percentage_passes_through_unsaturated() {
-        // reviewer:spec finding (agent a4beb897ae3457dcd, CONFIRMED medium):
+        // finding:
         // `is_finite()` also catches NaN, a different failure class than the
         // `1e40%` overflow above. `0e999%` triggers it: cssparser's exponent
         // handling computes `0.0 * 10f64.powf(999.0)`, and
@@ -7291,9 +7204,8 @@ mod tests {
 
     #[test]
     fn parse_length_value_rejects_unsupported_unit() {
-        // (b) milestone subset — bd raikiri-spike-wnpb の spinout
-        // (viewport-relative unit / `cap` / `rcap`) は本 helper で引き続き
-        // silent drop。`lh` / `rlh` は bd raikiri-spike-vxha で受理側へ移った
+        // (b) 非対応 — viewport-relative unit / `cap` / `rcap` は本 helper で
+        // 引き続き silent drop。`lh` / `rlh` は受理側へ移った
         // (下記 `parse_length_value_accepts_lh` / `_rlh` を参照)。
         assert_eq!(parse_length("10vw", false), None);
         assert_eq!(parse_length("1cap", true), None);
@@ -7301,7 +7213,7 @@ mod tests {
         // 挙げる `cq*` 一覧をこの assertion で pin する。comment のみで
         // test 未網羅だと、将来 `cq*` 対応 arm が誤って追加されても
         // どの test も落ちず canonical comment が silent に stale 化する
-        // (bd raikiri-spike-hif0 spec-lens follow-up)。
+        // (spec-lens follow-up として追加)。
         assert_eq!(parse_length("10cqw", false), None);
     }
 
@@ -7317,7 +7229,7 @@ mod tests {
         assert_eq!(parse_length("2rlh", false), Some(Length::Rlh(2.0)));
     }
 
-    // ── 追加 font-relative unit (CSS Values 4 §6.1.1、bd raikiri-spike-2x8) ──
+    // ── 追加 font-relative unit (CSS Values 4 §6.1.1) ──
 
     #[test]
     fn parse_length_value_accepts_ex() {
@@ -7355,7 +7267,7 @@ mod tests {
         assert_eq!(parse_length("1.5ric", false), Some(Length::Ric(1.5)));
     }
 
-    // ── 追加 absolute unit (CSS Values 4 §6.2、bd raikiri-spike-2x8) ──
+    // ── 追加 absolute unit (CSS Values 4 §6.2) ──
 
     #[test]
     fn parse_length_value_accepts_cm() {
@@ -7422,7 +7334,7 @@ mod tests {
         assert_eq!(parse_length("14Pt", false), Some(Length::Pt(14.0)));
         // `unit.to_ascii_lowercase()` の dispatch key はすべて lowercase
         // (`"q"` / `"in"` 等) — uppercase 単位が正しく畳み込まれることを
-        // 個別に確認する (bd raikiri-spike-2x8、`Q` は特に取り違えやすい)。
+        // 個別に確認する (`Q` は特に取り違えやすい)。
         assert_eq!(parse_length("10IN", false), Some(Length::In(10.0)));
         assert_eq!(parse_length("40Q", false), Some(Length::Q(40.0)));
         assert_eq!(parse_length("2CM", false), Some(Length::Cm(2.0)));
@@ -7431,9 +7343,9 @@ mod tests {
         assert_eq!(parse_length("2IC", false), Some(Length::Ic(2.0)));
     }
 
-    // ── padding (CSS Box 3 §4.1 physical + §4.2 shorthand、raikiri-spike-0vv.6) ──
+    // ── padding (CSS Box 3 §4.1 physical + §4.2 shorthand) ──
     //
-    // Primary sources (WebFetch verified 2026-07-20):
+    // Primary sources:
     // - https://www.w3.org/TR/css-box-3/#padding-physical
     //   "Negative values for padding properties are invalid." — non-negative
     //   constraint を parse-time enforce (parse_padding_side が全 Length variant
@@ -7586,7 +7498,7 @@ mod tests {
     fn padding_top_accepts_zero() {
         // zero (bound の下端) は spec grammar `[0,∞]` の閉区間で有効。
         // `0px` は Dimension arm、bare `0` は CSS Values 3 §5 unitless-zero clause
-        // の Number arm を通し (raikiri-spike-fnqx)、非負 filter を pass。
+        // の Number arm を通し、非負 filter を pass。
         assert_eq!(
             parse("0px", "padding-top"),
             Some(PropertyValue::PaddingTop(Length::Px(0.0)))
@@ -7654,13 +7566,12 @@ mod tests {
         );
     }
 
-    // Verification #6 — spec grammar 外 unit の drop (vw / cap 等 milestone subset)。
+    // Verification #6 — spec grammar 外 unit の drop (vw / cap 等、非対応)。
     #[test]
     fn padding_top_rejects_unsupported_unit() {
-        // (b) milestone subset — vw / cap 等は spec-valid だが bd raikiri-spike-wnpb
-        // の spinout follow-up で未対応、parse_length_value 側で drop、`None`
-        // propagate → declaration drop。`ch` は bd raikiri-spike-2x8 で、
-        // `lh`/`rlh` は bd raikiri-spike-vxha でそれぞれ受理側へ移った
+        // (b) 非対応 — vw / cap 等は spec-valid だが
+        // 未対応、parse_length_value 側で drop、`None`
+        // propagate → declaration drop。`ch` / `lh` / `rlh` はそれぞれ受理側へ移った
         // (`padding_top_accepts_ch` / `padding_top_accepts_lh` 参照)。
         assert_eq!(parse("10vw", "padding-top"), None);
         assert_eq!(parse("5cap", "padding-top"), None);
@@ -7668,7 +7579,7 @@ mod tests {
 
     #[test]
     fn padding_top_accepts_lh() {
-        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。
+        // CSS Values 4 §6.1.1 `lh`/`rlh`。
         assert_eq!(
             parse("5lh", "padding-top"),
             Some(PropertyValue::PaddingTop(Length::Lh(5.0)))
@@ -7710,13 +7621,13 @@ mod tests {
     #[test]
     fn padding_top_rejects_negative_lh() {
         // 全 Length variant 経路の non-negative check pin (`lh`/`rlh`、
-        // bd raikiri-spike-vxha — `length_payload` の OR-pattern に `Lh`/`Rlh`
+        // `length_payload` の OR-pattern に `Lh`/`Rlh`
         // を足し忘れていないことの直接 pin)。
         assert_eq!(parse("-1lh", "padding-top"), None);
         assert_eq!(parse("-1rlh", "padding-top"), None);
     }
 
-    /// bd raikiri-spike-2x8 で追加した残り unit (`rex` / `rch` / `ic` / `ric` /
+    /// 追加した残り unit (`rex` / `rch` / `ic` / `ric` /
     /// `mm` / `Q`) を `length_payload` 経由で直接 exercise する — 他 call site
     /// (font-size / width / height / margin / border-width / line-height) の
     /// テストは Ex / Ch / Cm / In / Pc しか通さないため、`length_payload` の
@@ -7776,9 +7687,9 @@ mod tests {
         );
     }
 
-    // ── line-height (CSS Inline 3 §5.1、raikiri-spike-0vv.9) ────────────────
+    // ── line-height (CSS Inline 3 §5.1) ────────────────
     //
-    // Verification 5/6/7 の spec-derived (9y9(a) + wzj): grammar `normal |
+    // Verification 5/6/7 の spec-derived: grammar `normal |
     // <number [0,∞]> | <length-percentage [0,∞]>` — 4 accept branch + negative
     // reject + Number vs Length variant distinction を pin する。
     //
@@ -7853,7 +7764,7 @@ mod tests {
     #[test]
     fn line_height_accepts_length_em_rem_pt() {
         // 5 unit sample の length-percentage branch smoke — parse_length_value
-        // helper との integration を pin (Task 0vv.3 helper 経由の em/rem/pt)。
+        // helper との integration を pin (em/rem/pt helper 経由)。
         assert_eq!(
             parse("1.2em", "line-height"),
             Some(PropertyValue::LineHeight(LineHeight::Length(Length::Em(
@@ -7908,7 +7819,7 @@ mod tests {
         // property (such as line-height), it must parse as a `<number>`" —
         // parse_line_height は expect_number branch を parse_length_value より
         // 先に試すため、bare `0` は LineHeight::Number(0.0) として確定 (unitless-zero
-        // clause の Length 経路 raikiri-spike-fnqx が導入した Px(0.0) route ではない)。
+        // clause の Length 経路が導入した Px(0.0) route ではない)。
         assert_eq!(
             parse("0", "line-height"),
             Some(PropertyValue::LineHeight(LineHeight::Number(0.0)))
@@ -7942,7 +7853,7 @@ mod tests {
 
     #[test]
     fn line_height_rejects_negative_number_with_trailing_length() {
-        // Regression (reviewer:quality raikiri-spike-0vv.9): Number branch は
+        // Regression: Number branch は
         // Token::Number を commit した後 fallthrough すべきでない。fallthrough
         // していた旧実装では `-0.5 20px` が Length branch で `20px` を拾い
         // silently accept されていた (spec-invalid → 本来 declaration drop)。
@@ -7971,16 +7882,16 @@ mod tests {
     fn line_height_rejects_unknown_keyword() {
         // spec grammar 外の ident (`auto` / `medium` 等) は (a) spec-invalid、
         // silent drop。CSS-wide keyword は別 test
-        // (`line_height_rejects_css_wide_keyword`) — (a) ではなく (b)
-        // milestone subset なので混同しないこと。
+        // (`line_height_rejects_css_wide_keyword`) — (a) ではなく (b) の
+        // 非対応なので混同しないこと。
         assert_eq!(parse("auto", "line-height"), None);
         assert_eq!(parse("medium", "line-height"), None);
     }
 
     #[test]
     fn line_height_rejects_css_wide_keyword() {
-        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
-        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
+        // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
+        // canonical: PropertyValue doc「CSS-wide keyword」節。
         assert_eq!(parse("inherit", "line-height"), None);
         assert_eq!(parse("initial", "line-height"), None);
         assert_eq!(parse("unset", "line-height"), None);
@@ -7991,9 +7902,9 @@ mod tests {
     #[test]
     fn line_height_rejects_unsupported_unit() {
         // parse_length_value が silent drop する unit (`vw` / `cap` 等、
-        // bd raikiri-spike-wnpb の spinout follow-up) は helper 側で `None` →
-        // line-height parse も declaration drop。`ch` は bd raikiri-spike-2x8
-        // で、`lh`/`rlh` は bd raikiri-spike-vxha でそれぞれ受理側へ移った
+        // 現状未対応) は helper 側で `None` →
+        // line-height parse も declaration drop。`ch` / `lh` / `rlh` は
+        // それぞれ受理側へ移った
         // (`line_height_accepts_ch` / `line_height_accepts_lh` 参照)。
         assert_eq!(parse("10vw", "line-height"), None);
         assert_eq!(parse("10cap", "line-height"), None);
@@ -8001,7 +7912,7 @@ mod tests {
 
     #[test]
     fn line_height_accepts_lh() {
-        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha.
+        // CSS Values 4 §6.1.1 `lh`/`rlh`.
         // `line-height` itself is a valid context for `lh`/`rlh` at parse
         // time (unlike `font-size`, which `parse_font_size` post-filters —
         // see that function's doc for why) — the self-reference resolve
@@ -8067,19 +7978,19 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::Position);
     }
 
-    // ── text-align (CSS Text 3 §6.1、raikiri-spike-0vv.8) ──
+    // ── text-align (CSS Text 3 §6.1) ──
     //
     // Value grammar (§6.1 spec verbatim):
     //   start | end | left | right | center | justify | match-parent | justify-all
     // Initial: start / Inherited: yes / spec 上 shorthand (text-align-all +
-    // text-align-last、Sprint 12 seed は単一 field で保持 = g04 (b) milestone
-    // subset)。inheritance test は cascade.rs 側 (parent → child コピー、display
+    // text-align-last、単一 field で保持 = (b)
+    // 非対応)。inheritance test は cascade.rs 側 (parent → child コピー、display
     // non-inherited との対比)。
 
     #[test]
     fn text_align_parse_all_eight_keywords() {
         // Verification 5: 8 keyword が全て正しく TextAlign variant にマップされる。
-        // 1 test で全 arm coverage (patch coverage 100% 目標、§8.1.1)。
+        // 1 test で全 arm coverage (patch coverage 100% 目標)。
         assert_eq!(
             parse("start", "text-align"),
             Some(PropertyValue::TextAlign(TextAlign::Start))
@@ -8133,7 +8044,7 @@ mod tests {
 
     #[test]
     fn text_align_rejects_unknown_keyword() {
-        // spec §6.1 grammar に含まれない keyword は silent drop (g04 (a) spec-invalid)。
+        // spec §6.1 grammar に含まれない keyword は silent drop (spec-invalid)。
         // `middle` は typo/俗称、`text-align` spec に存在しない。
         assert_eq!(parse("middle", "text-align"), None);
         assert_eq!(parse("baseline", "text-align"), None);
@@ -8142,9 +8053,8 @@ mod tests {
 
     #[test]
     fn text_align_rejects_css_wide_keyword() {
-        // g04 (b) milestone subset — Epic 7、silent drop。5 keyword の一覧・
-        // 理由は `PropertyValue` doc の「CSS-wide keyword」節が canonical
-        // (bd raikiri-spike-rzv3)。
+        // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。5 keyword
+        // の一覧・理由は `PropertyValue` doc の「CSS-wide keyword」節が canonical。
         assert_eq!(parse("inherit", "text-align"), None);
         assert_eq!(parse("initial", "text-align"), None);
         assert_eq!(parse("unset", "text-align"), None);
@@ -8155,7 +8065,7 @@ mod tests {
     #[test]
     fn text_align_rejects_string_value() {
         // CSS Text 3 §6.1 grammar は 8 keyword のみ、`<string>` value は本 crate
-        // が引用する level では未定義 → g04 (a) spec-invalid、silent drop。
+        // が引用する level では未定義 → spec-invalid、silent drop。
         // (Text 4 draft では tabular-data character alignment 用に `<string>` が
         // 検討されているが本 crate は Text 3 pin。expect_ident が String token を
         // reject する経路で `None` を返す。)
@@ -8180,7 +8090,7 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::TextAlign);
     }
 
-    // ── direction (CSS Writing Modes 4 §2.1、raikiri-spike-l3wg) ──
+    // ── direction (CSS Writing Modes 4 §2.1) ──
     //
     // Value grammar (§2.1 spec verbatim): ltr | rtl
     // Initial: ltr / Inherited: yes / Computed value: specified value。
@@ -8218,9 +8128,8 @@ mod tests {
 
     #[test]
     fn direction_rejects_css_wide_keyword() {
-        // g04 (b) milestone subset — Epic 7、silent drop。5 keyword の一覧・
-        // 理由は `PropertyValue` doc の「CSS-wide keyword」節が canonical
-        // (bd raikiri-spike-rzv3)。
+        // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。5 keyword
+        // の一覧・理由は `PropertyValue` doc の「CSS-wide keyword」節が canonical。
         assert_eq!(parse("inherit", "direction"), None);
         assert_eq!(parse("initial", "direction"), None);
         assert_eq!(parse("unset", "direction"), None);
@@ -8242,8 +8151,7 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::Direction);
     }
 
-    // ── overflow-x / overflow-y / overflow (CSS Overflow 3 §3.1,
-    // raikiri-spike-cmd3) ──
+    // ── overflow-x / overflow-y / overflow (CSS Overflow 3 §3.1) ──
     //
     // Value grammar (§3.1 spec verbatim): visible | hidden | clip | scroll |
     // auto. Initial: visible / Inherited: no. `overflow` shorthand grammar:
@@ -8322,8 +8230,8 @@ mod tests {
 
     #[test]
     fn overflow_rejects_css_wide_keyword() {
-        // g04 (b) milestone subset — Epic 7, silent drop (bd raikiri-spike-rzv3,
-        // `PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
         for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
             assert_eq!(parse(kw, "overflow-x"), None);
             assert_eq!(parse(kw, "overflow-y"), None);
@@ -8400,8 +8308,7 @@ mod tests {
         );
     }
 
-    // ── text-decoration (CSS Text Decoration Module Level 3 §2,
-    // bd raikiri-spike-5z86.3) ──
+    // ── text-decoration (CSS Text Decoration Module Level 3 §2) ──
     //
     // Value grammar (minimal scope — `TextDecoration` doc's "Scope carving"
     // section): none | underline. Initial: none / Inherited: no / Computed
@@ -8433,7 +8340,7 @@ mod tests {
 
     #[test]
     fn text_decoration_rejects_unimplemented_line_keywords() {
-        // g04 (b) milestone subset — full `text-decoration-line` grammar
+        // (b) not supported — full `text-decoration-line` grammar
         // (`overline` / `line-through` / `blink`) is explicit follow-up
         // (`TextDecoration` doc's "Scope carving" section), not (a)
         // spec-invalid. The `||` combination syntax (e.g. `underline
@@ -8454,8 +8361,8 @@ mod tests {
 
     #[test]
     fn text_decoration_rejects_css_wide_keyword() {
-        // g04 (b) milestone subset — Epic 7, silent drop (bd raikiri-spike-rzv3,
-        // `PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
         for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
             assert_eq!(parse(kw, "text-decoration"), None);
         }
@@ -8476,7 +8383,7 @@ mod tests {
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value
-    // coupling, raikiri-spike-cmd3) ──
+    // coupling) ──
     //
     // Spec verbatim: "The visible/clip values of overflow compute to
     // auto/hidden (respectively) if one of overflow-x or overflow-y is
@@ -8570,7 +8477,7 @@ mod tests {
     }
 
     // ── resolve_text_align_match_parent (CSS Text 3 §6.1
-    // `#valdef-text-align-match-parent`、raikiri-spike-l3wg) ──
+    // `#valdef-text-align-match-parent`) ──
     //
     // This is the shared resolver both `SpecifiedValues::finalize` (element
     // path) and `cascade::resolve_against_inherited` (page path) funnel into
@@ -8660,9 +8567,9 @@ mod tests {
         }
     }
 
-    // ── margin longhand + shorthand (CSS Box 3 §3.1/§3.2、raikiri-spike-0vv.5) ──
+    // ── margin longhand + shorthand (CSS Box 3 §3.1/§3.2) ──
     //
-    // Primary source (WebFetch verified 2026-07-20):
+    // Primary source:
     // - #margin-physical (§3.1): `<length-percentage> | auto`, initial 0, non-inherited.
     // - #margin-shorthand (§3.2): `<'margin-top'>{1,4}` with 1/2/3/4 value expansion.
 
@@ -8726,8 +8633,8 @@ mod tests {
     #[test]
     fn margin_top_accepts_zero() {
         // spec `<length-percentage> | auto` — 0 は valid length。`0px` は Dimension arm、
-        // bare `0` は CSS Values 3 §5 unitless-zero clause の Number arm を通す
-        // (raikiri-spike-fnqx)。margin は non-negative filter を持たないため素通り。
+        // bare `0` は CSS Values 3 §5 unitless-zero clause の Number arm を通す。
+        // margin は non-negative filter を持たないため素通り。
         assert_eq!(
             parse("0px", "margin-top"),
             Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
@@ -8755,16 +8662,15 @@ mod tests {
 
     #[test]
     fn margin_side_rejects_unsupported_unit() {
-        // `cap` (§6.1.1 font-relative lengths) は bd raikiri-spike-wnpb の
-        // spinout follow-up で未対応 (parse_length_value 側で drop)。`cm` は
-        // bd raikiri-spike-2x8 で、`lh`/`rlh` は bd raikiri-spike-vxha で
+        // `cap` (§6.1.1 font-relative lengths) は現状
+        // 未対応 (parse_length_value 側で drop)。`cm` / `lh` / `rlh` は
         // それぞれ受理側へ移った — margin-side helper に非依存で波及ドロップを pin。
         assert_eq!(parse("1cap", "margin-top"), None);
     }
 
     #[test]
     fn margin_side_accepts_lh() {
-        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。
+        // CSS Values 4 §6.1.1 `lh`/`rlh`。
         assert_eq!(
             parse("1lh", "margin-top"),
             Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Lh(
@@ -8869,7 +8775,7 @@ mod tests {
         // horizontal centering の canonical form。top/bottom = 0px, right/left = auto。
         // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths> の
         // unitless-zero clause により bare `0` は Length::Px(0.0) 受理
-        // (raikiri-spike-fnqx で `parse_length_value` に arm 追加、`parse_length_value_accepts_unitless_zero_only`
+        // (`parse_length_value_accepts_unitless_zero_only`
         // で pin)。
         let want = Sides {
             top: LengthOrAuto::Length(Length::Px(0.0)),
@@ -8974,7 +8880,7 @@ mod tests {
         assert_eq!(s.left, LengthOrAuto::Length(Length::Px(3.5)));
     }
 
-    // ── border longhand + shorthand (CSS Backgrounds 3 §3、raikiri-spike-0vv.12) ──
+    // ── border longhand + shorthand (CSS Backgrounds 3 §3) ──
 
     #[test]
     fn border_top_width_parse_px() {
@@ -8986,16 +8892,16 @@ mod tests {
         );
     }
 
-    // ── width (CSS Sizing 3 §3.1.1、raikiri-spike-0vv.10) ────────────────────
+    // ── width (CSS Sizing 3 §3.1.1) ────────────────────────
     //
-    // Primary source (WebFetch verified 2026-07-23):
+    // Primary source:
     // https://www.w3.org/TR/css-sizing-3/#preferred-size-properties
     // Value: `auto | <length-percentage [0,∞]> | min-content | max-content |
     //         fit-content(<length-percentage>)`
     // Initial: auto、Inherited: no。
     //
     // 本 task では `auto` + non-negative `<length-percentage>` のみ受理、
-    // min-content / max-content / fit-content() は g04 (b) milestone subset。
+    // min-content / max-content / fit-content() は (b) 非対応。
 
     #[test]
     fn width_parse_auto_keyword() {
@@ -9073,7 +8979,7 @@ mod tests {
     fn border_top_width_accepts_zero() {
         // spec `<line-width>` = `<length [0,∞]>` — 0 は閉区間下端。`0px` は
         // Dimension arm、bare `0` は CSS Values 3 §5 unitless-zero clause の
-        // Number arm を通す (raikiri-spike-fnqx)。parse_border_width_side の
+        // Number arm を通す。parse_border_width_side の
         // `>= 0.0` 非負 filter を pass。
         assert_eq!(
             parse("0px", "border-top-width"),
@@ -9087,12 +8993,12 @@ mod tests {
 
     #[test]
     fn border_shorthand_accepts_bare_zero_width() {
-        // Follow-on coverage (raikiri-spike-fnqx bd comment 2026-07-23): `0 solid`
+        // Follow-on coverage: `0 solid`
         // は shorthand の width slot を bare-zero で埋めた canonical form。
         // parse_border_shorthand の width slot が parse_border_width_side_res 経由で
         // parse_length_value Number arm を通して Length::Px(0.0) を取り、
         // style slot は Solid、color slot は省略で spec initial =
-        // `BorderColor::CurrentColor` (CSS Backgrounds 3 §3.1、raikiri-spike-0vv.17)。
+        // `BorderColor::CurrentColor` (CSS Backgrounds 3 §3.1)。
         let border = Border {
             width: Length::Px(0.0),
             style: BorderStyle::Solid,
@@ -9107,7 +9013,7 @@ mod tests {
     #[test]
     fn border_width_rejects_percentage() {
         // `<line-width>` grammar は `<percentage>` を含まない (padding とは
-        // 違う点、advisor calibration)。`parse_length_value(input, false)` の
+        // 違う点)。`parse_length_value(input, false)` の
         // `<length>` mode で Percentage token 自体が reject される。
         assert_eq!(parse("50%", "border-top-width"), None);
     }
@@ -9121,8 +9027,8 @@ mod tests {
 
     #[test]
     fn border_width_rejects_css_wide_keyword() {
-        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
-        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
+        // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
+        // canonical: PropertyValue doc「CSS-wide keyword」節。
         assert_eq!(parse("inherit", "border-top-width"), None);
         assert_eq!(parse("initial", "border-top-width"), None);
         assert_eq!(parse("unset", "border-top-width"), None);
@@ -9133,7 +9039,7 @@ mod tests {
     #[test]
     fn border_width_accepts_absolute_unit() {
         // `<line-width>` の `<length [0,∞]>` half は `<percentage>` を含まないが
-        // 他 absolute unit は含む — bd raikiri-spike-2x8 で追加した `pc` を
+        // 他 absolute unit は含む — 追加した `pc` を
         // border-width 経路 (`allow_percentage=false`) でも pin する。
         assert_eq!(
             parse("1pc", "border-top-width"),
@@ -9149,7 +9055,7 @@ mod tests {
 
     #[test]
     fn border_width_accepts_lh() {
-        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。`<line-width>`
+        // CSS Values 4 §6.1.1 `lh`/`rlh`。`<line-width>`
         // grammar (`<length [0,∞]> | thin | medium | thick`) has no
         // self-reference concern the way `font-size` / `line-height` do
         // (`Length::Lh` doc), so `border-*-width` accepts them unfiltered.
@@ -9251,7 +9157,7 @@ mod tests {
             Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(0.0))))
         );
         // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths>
-        // unitless-zero clause 経由 (raikiri-spike-fnqx): bare `0` も同 Px(0.0)
+        // unitless-zero clause 経由: bare `0` も同 Px(0.0)
         // として受理 (width は `<length-percentage [0,∞]>`、helper が Number arm で
         // 拾い parse_width の非負 filter を pass)。
         assert_eq!(
@@ -9269,8 +9175,8 @@ mod tests {
 
     #[test]
     fn border_style_rejects_css_wide_keyword() {
-        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
-        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
+        // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
+        // canonical: PropertyValue doc「CSS-wide keyword」節。
         assert_eq!(parse("inherit", "border-top-style"), None);
         assert_eq!(parse("initial", "border-top-style"), None);
         assert_eq!(parse("unset", "border-top-style"), None);
@@ -9289,8 +9195,8 @@ mod tests {
 
     #[test]
     fn width_rejects_min_content_keyword() {
-        // Verification #5: (b) milestone subset — intrinsic sizing keyword は
-        // Epic 未着手、silent drop。auto ident 分岐は expect_ident_matching("auto")
+        // Verification #5: (b) 非対応 — intrinsic sizing keyword は
+        // 未実装、silent drop。auto ident 分岐は expect_ident_matching("auto")
         // で fail → parse_length_value に落ちて Dimension/Percentage arm 外の
         // Ident token として drop。
         assert_eq!(parse("min-content", "width"), None);
@@ -9310,10 +9216,10 @@ mod tests {
 
     #[test]
     fn width_rejects_unsupported_unit() {
-        // (b) milestone subset — vw / cap 等は spec-valid だが bd raikiri-spike-wnpb
-        // の spinout follow-up で未対応、parse_length_value 側で drop、None
-        // propagate。`ch` は bd raikiri-spike-2x8 で、`lh`/`rlh` は
-        // bd raikiri-spike-vxha でそれぞれ受理側へ移った
+        // (b) 非対応 — vw / cap 等は spec-valid だが
+        // 未対応、parse_length_value 側で drop、None
+        // propagate。`ch` / `lh` / `rlh` は
+        // それぞれ受理側へ移った
         // (`width_accepts_absolute_unit` / `width_accepts_lh` 参照)。
         assert_eq!(parse("10vw", "width"), None);
         assert_eq!(parse("5cap", "width"), None);
@@ -9321,7 +9227,7 @@ mod tests {
 
     #[test]
     fn width_accepts_lh() {
-        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。
+        // CSS Values 4 §6.1.1 `lh`/`rlh`。
         assert_eq!(
             parse("5lh", "width"),
             Some(PropertyValue::Width(LengthOrAuto::Length(Length::Lh(5.0))))
@@ -9356,8 +9262,7 @@ mod tests {
     fn border_top_color_parse_hex() {
         // border-*-color の hex form は `parse_color` (background-color と同じ
         // helper) が hex/named/rgb(a)/transparent を受理し、`parse_border_color`
-        // が `BorderColor::Resolved` で wrap して cascade static side に届く
-        // (raikiri-spike-0vv.17)。
+        // が `BorderColor::Resolved` で wrap して cascade static side に届く。
         assert_eq!(
             parse("#ff0000", "border-top-color"),
             Some(PropertyValue::BorderTopColor(BorderColor::Resolved(
@@ -9375,7 +9280,7 @@ mod tests {
     fn border_color_named_and_rgb() {
         // 4 side 各 arm の smoke + 3 color form (named / rgb / transparent) を
         // 分散して cross-arm regression 検知 (background-color test の pattern)。
-        // raikiri-spike-0vv.17: `BorderColor::Resolved` wrap。
+        // `BorderColor::Resolved` wrap。
         assert_eq!(
             parse("red", "border-right-color"),
             Some(PropertyValue::BorderRightColor(BorderColor::Resolved(
@@ -9411,8 +9316,8 @@ mod tests {
         // CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
         // "Initial: currentcolor" — author 明示 `border-*-color: currentcolor` が
         // `BorderColor::CurrentColor` variant として保持されることを pin する
-        // (0vv.17 hazard case 1 の cascade-side coverage、used-value resolution は
-        // bd raikiri-spike-q7qf の paint scope 責務)。
+        // (hazard case 1 の cascade-side coverage、used-value resolution は
+        // paint scope 責務)。
         assert_eq!(
             parse("currentcolor", "border-top-color"),
             Some(PropertyValue::BorderTopColor(BorderColor::CurrentColor))
@@ -9432,7 +9337,7 @@ mod tests {
     fn border_shorthand_all_three_components() {
         // Verification #5: parse("1px solid red", "border") = shorthand 経由で
         // 全 4 side の Border {width: 1px, style: Solid, color: red} を expand。
-        // raikiri-spike-0vv.17: color slot は `BorderColor::Resolved` に wrap。
+        // color slot は `BorderColor::Resolved` に wrap。
         let border = Border {
             width: Length::Px(1.0),
             style: BorderStyle::Solid,
@@ -9480,7 +9385,7 @@ mod tests {
         // spec §3.4 "Omitted values are set to their initial values" —
         // width 省略 → medium (3px)、style 省略 → None、color 省略 →
         // `currentcolor` keyword (`BorderColor::CurrentColor`、spec §3.1
-        // initial、raikiri-spike-0vv.17)。
+        // initial)。
         // 1 component only (color) — width と style は initial:
         let with_only_color = Border {
             width: Length::Px(3.0), // medium initial
@@ -9510,7 +9415,7 @@ mod tests {
 
     #[test]
     fn border_width_medium_is_consistent_across_its_independent_call_sites() {
-        // bd raikiri-spike-fy89: before this fix, `medium` = 3px was written
+        // Before this fix, `medium` = 3px was written
         // as 3 independent `Length::Px(3.0)` literals — the `medium` keyword
         // branch in `parse_border_width_side`, the border shorthand's
         // omitted-width default in `parse_border_shorthand`, and
@@ -9553,7 +9458,7 @@ mod tests {
 
     #[test]
     fn border_default_matches_initial_border() {
-        // bd raikiri-spike-x0dq: `Border::default()` (public, umbrella-facing
+        // `Border::default()` (public, umbrella-facing
         // constructor) and `crate::specified::INITIAL_BORDER` (`pub(crate)`,
         // cascade-internal fast path) encode the same CSS Backgrounds 3
         // initial value. Precision on what this actually catches (the sibling
@@ -9578,7 +9483,7 @@ mod tests {
 
     #[test]
     fn border_new_is_default() {
-        // bd raikiri-spike-x0dq: `Border::new()` is documented as a thin
+        // `Border::new()` is documented as a thin
         // `Self::default()` wrapper (same shape as
         // `raikiri_traits::page::PageBox::new`) — pin that the two stay
         // equivalent.
@@ -9589,7 +9494,7 @@ mod tests {
     fn border_shorthand_color_slot_accepts_currentcolor() {
         // 37n sibling: border shorthand の color slot は 4 longhand と同じ
         // `parse_border_color` を経由するため、`currentcolor` keyword も
-        // shorthand から受理される (0vv.17)。
+        // shorthand から受理される。
         let expected = Border {
             width: Length::Px(1.0),
             style: BorderStyle::Solid,
@@ -9630,7 +9535,7 @@ mod tests {
         let expected = Border {
             width: Length::Px(1.0),
             style: BorderStyle::None,
-            color: BorderColor::CurrentColor, // spec §3.1 initial (0vv.17)
+            color: BorderColor::CurrentColor, // spec §3.1 initial
         };
         let mut input = ParserInput::new("1px 2px");
         let mut parser = Parser::new(&mut input);
@@ -9696,7 +9601,7 @@ mod tests {
         let default_border = Border {
             width: Length::Px(3.0),
             style: BorderStyle::None,
-            color: BorderColor::CurrentColor, // spec §3.1 initial (0vv.17)
+            color: BorderColor::CurrentColor, // spec §3.1 initial
         };
         assert_eq!(
             PropertyValue::Border(Sides::all(default_border)).key(),
@@ -9718,18 +9623,18 @@ mod tests {
         );
     }
 
-    // ── height (CSS Sizing 3 §3.1.1、raikiri-spike-0vv.11) ─────────────
+    // ── height (CSS Sizing 3 §3.1.1) ─────────────
     //
-    // Primary source (WebFetch verified 2026-07-23):
+    // Primary source:
     // - #preferred-size-properties: `auto | <length-percentage [0,∞]> |
     //   min-content | max-content | fit-content(<length-percentage>)`,
     //   initial `auto`, Inheritance `No`.
     //
-    // Sprint 17 seed scope は `auto` + 非負 `<length-percentage>` の 2 分岐のみ、
+    // 現状 scope は `auto` + 非負 `<length-percentage>` の 2 分岐のみ、
     // 他 sizing keyword / global keyword / calc() / var() は silent drop
-    // (parse_height doc の g04 3-category 参照)。
+    // (parse_height doc の Scope carving 節参照)。
     //
-    // 37n sibling: sibling `width` (0vv.10) と同 shape の非負 `<length-percentage>` +
+    // 37n sibling: sibling `width` と同 shape の非負 `<length-percentage>` +
     // `auto` grammar、payload 型は共通 `LengthOrAuto`。
 
     #[test]
@@ -9771,7 +9676,7 @@ mod tests {
     #[test]
     fn height_rejects_negative_length() {
         // Verification 4 (task doc): `<length-percentage [0,∞]>` (§3.1.1) の
-        // 非負制約により `-10px` は spec-invalid → drop (g04 (a))。sibling
+        // 非負制約により `-10px` は spec-invalid → drop。sibling
         // padding の非負フィルタ pattern と同 shape、margin の `-10px` 受理
         // (§3.1) との対称的な reject を pin。
         assert_eq!(parse("-10px", "height"), None);
@@ -9780,8 +9685,8 @@ mod tests {
     #[test]
     fn height_accepts_zero() {
         // spec `<length-percentage [0,∞]>` — 0 は閉区間下端。`0px` は Dimension arm、
-        // bare `0` は CSS Values 3 §5 unitless-zero clause の Number arm を通す
-        // (raikiri-spike-fnqx)。parse_height の `>= 0.0` 非負 filter を pass。
+        // bare `0` は CSS Values 3 §5 unitless-zero clause の Number arm を通す。
+        // parse_height の `>= 0.0` 非負 filter を pass。
         assert_eq!(
             parse("0px", "height"),
             Some(PropertyValue::Height(LengthOrAuto::Length(Length::Px(0.0))))
@@ -9801,8 +9706,8 @@ mod tests {
 
     #[test]
     fn height_rejects_unsupported_sizing_keyword() {
-        // Non-goal (b) milestone subset: `min-content` / `max-content` /
-        // `fit-content()` は spec-valid だが本 milestone scope 外、silent drop。
+        // Non-goal (b) 非対応: `min-content` / `max-content` /
+        // `fit-content()` は spec-valid だが現状 scope 外、silent drop。
         // ident branch は `auto` matching のみ、length parser の Dimension /
         // Percentage arm でも受理されず None に落ちる pin。
         assert_eq!(parse("min-content", "height"), None);
@@ -9812,8 +9717,8 @@ mod tests {
 
     #[test]
     fn height_rejects_css_wide_keyword() {
-        // (b) milestone subset — Epic 7、silent drop。canonical: PropertyValue
-        // doc「CSS-wide keyword」節 (bd raikiri-spike-rzv3)。
+        // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
+        // canonical: PropertyValue doc「CSS-wide keyword」節。
         assert_eq!(parse("inherit", "height"), None);
         assert_eq!(parse("initial", "height"), None);
         assert_eq!(parse("unset", "height"), None);
@@ -9834,9 +9739,8 @@ mod tests {
 
     #[test]
     fn height_rejects_unsupported_unit() {
-        // `cap` (§6.1.1 font-relative lengths) は bd raikiri-spike-wnpb の
-        // spinout follow-up で未対応 (parse_length_value 側で drop)。`cm` は
-        // bd raikiri-spike-2x8 で、`lh`/`rlh` は bd raikiri-spike-vxha で
+        // `cap` (§6.1.1 font-relative lengths) は現状
+        // 未対応 (parse_length_value 側で drop)。`cm` / `lh` / `rlh` は
         // それぞれ受理側へ移った (`height_accepts_absolute_unit` /
         // `height_accepts_lh` 参照)。sibling
         // `margin_side_rejects_unsupported_unit` と同 pattern。
@@ -9845,7 +9749,7 @@ mod tests {
 
     #[test]
     fn height_accepts_lh() {
-        // CSS Values 4 §6.1.1 `lh`/`rlh` — bd raikiri-spike-vxha。
+        // CSS Values 4 §6.1.1 `lh`/`rlh`。
         assert_eq!(
             parse("1.5lh", "height"),
             Some(PropertyValue::Height(LengthOrAuto::Length(Length::Lh(1.5))))
@@ -9860,7 +9764,7 @@ mod tests {
 
     #[test]
     fn height_accepts_absolute_unit() {
-        // CSS Values 4 §6.2 absolute lengths — bd raikiri-spike-2x8。
+        // CSS Values 4 §6.2 absolute lengths。
         assert_eq!(
             parse("1cm", "height"),
             Some(PropertyValue::Height(LengthOrAuto::Length(Length::Cm(1.0))))

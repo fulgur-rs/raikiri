@@ -10,9 +10,8 @@
 //! CounterStack>`, `strings: HashMap<Symbol, NamedStringState>`,
 //! `running: HashMap<Symbol, RunningTemplateId>`.
 //!
-//! **Promotion landed** — bd raikiri-spike-8ejw.1 (human-reviewed
-//! wall/traits crossing) added the `pub` accessor/mutator surface this
-//! required and promoted this module's algorithm onto
+//! **Promotion landed** — the `pub` accessor/mutator surface required for
+//! this was added, and this module's algorithm was promoted onto
 //! `raikiri_traits::page::PageContext` (`crates/raikiri-traits/src/page/context.rs`):
 //! `PageContext::apply_directive` is now the canonical, single-entry-point
 //! implementation, with `CounterStack` / `NamedStringState` promoted
@@ -20,7 +19,7 @@
 //! retained, not deleted** — no production driver in raikiri-dom calls
 //! `PageContext::apply_directive` yet; wiring a real DOM-tree-walking driver
 //! (`CounterStack::pop_scope` / `NamedStringState` page-boundary call sites)
-//! is bd raikiri-spike-si32, not yet landed. Until si32 rewires
+//! is still to be done. Until that driver rewires
 //! [`apply_running_template_directives`] (this module's current caller) to
 //! target `raikiri_traits::PageContext` directly, this dom-local mirror
 //! remains the *only* currently-exercised implementation reachable from
@@ -37,16 +36,16 @@
 //! **Input source** — [`PhaseBWalkState::apply_directive`] consumes one
 //! [`GcpmDirective`] at a time; [`apply_running_template_directives`] is the
 //! current concrete caller, iterating
-//! [`crate::running::ParsedRunningTemplate::directives`] front-to-back (bd
-//! raikiri-spike-e81n's producer). That Vec is built by a flat preorder
+//! [`crate::running::ParsedRunningTemplate::directives`] front-to-back.
+//! That Vec is built by a flat preorder
 //! subtree walk with no subtree-*exit* markers (see
 //! `collect_running_template`'s doc) — see [`CounterStack`]'s type-level
 //! "Caller invariant" note for what that does and doesn't let this walk
 //! prove yet.
 //!
-//! **`RegisterTarget` is out of scope for *this* dom-local mirror** — bd
-//! raikiri-spike-0nyv owns the `TargetRegistry` producer
-//! (`crate::target::build_target_registry`); this module has no
+//! **`RegisterTarget` is out of scope for *this* dom-local mirror** — the
+//! `TargetRegistry` producer (`crate::target::build_target_registry`) is
+//! owned elsewhere; this module has no
 //! `TargetRegistry` field to wire it into, so
 //! [`PhaseBWalkState::apply_directive`] treats it as a documented no-op.
 //! **Unlike this mirror, the promoted `raikiri_traits::PageContext::apply_directive`
@@ -113,9 +112,8 @@ impl CounterStack {
     /// increment, which is equivalent to starting the new frame at `delta`
     /// directly.
     ///
-    /// **Saturating, not wrapping/panicking, on overflow** (security lens
-    /// finding on bd raikiri-spike-8ejw.1, user-confirmed 2026-08-11): same
-    /// finding, same fix, as `raikiri_traits::page::context::CounterStack::increment`
+    /// **Saturating, not wrapping/panicking, on overflow** — the same fix as
+    /// `raikiri_traits::page::context::CounterStack::increment`
     /// (`crates/raikiri-traits/src/page/context.rs`) — this dom-local mirror
     /// shares the exact same field shape and had the exact same unbounded
     /// `+=` bug. `counter-reset: c 2147483647` followed by
@@ -239,7 +237,7 @@ pub(crate) struct StringSnapshot {
 /// doc), which is worse than deferring resolution entirely (原則3,
 /// fail-closed).
 ///
-/// **Resolved by the promotion** (bd raikiri-spike-8ejw.1): those two
+/// **Resolved by the promotion**: those two
 /// helpers are now `pub(crate)` inside raikiri-traits, and the promoted
 /// `raikiri_traits::page::context::NamedStringState` matches design §7.2
 /// exactly (`Option<String>`, eagerly resolved at
@@ -378,11 +376,11 @@ impl NamedStringState {
 ///
 /// **Not `raikiri_traits::PageContext`.** This type is the dom-internal
 /// mirror of 3 of `PageContext`'s 6 §7.2 fields (`counters` / `strings` /
-/// `running` — `targets` is bd raikiri-spike-0nyv's `TargetRegistry`
-/// territory, `page_index` / `page_name` are per-page driver state neither
-/// task owns): the algorithm this module was scoped to build and unit test
-/// in isolation. **Promotion onto `PageContext` has landed** — bd
-/// raikiri-spike-8ejw.1, `raikiri_traits::page::context::PageContext`. This
+/// `running` — `targets` is `TargetRegistry` territory, owned elsewhere;
+/// `page_index` / `page_name` are per-page driver state this module doesn't
+/// own either): the algorithm this module was scoped to build and unit test
+/// in isolation. **Promotion onto `PageContext` has landed** —
+/// `raikiri_traits::page::context::PageContext`. This
 /// type is kept as the pre-promotion working area (module-level doc
 /// "Promotion landed" explains why it isn't deleted yet), *not* an
 /// unfinished duplicate — its `RegisterTarget` no-op and lack of a
@@ -398,9 +396,8 @@ pub(crate) struct PhaseBWalkState {
 impl PhaseBWalkState {
     /// Apply one [`GcpmDirective`] to this walk state.
     ///
-    /// `RegisterTarget` is explicitly **not** handled here — bd
-    /// raikiri-spike-0nyv owns `TargetRegistry` / `RegisterTarget` wiring
-    /// (a sibling, concurrently-dispatched task); this walk treats it as a
+    /// `RegisterTarget` is explicitly **not** handled here — `TargetRegistry`
+    /// / `RegisterTarget` wiring is owned elsewhere; this walk treats it as a
     /// documented no-op pass-through. [`GcpmDirective`] is
     /// `#[non_exhaustive]` cross-crate, so a trailing wildcard arm covers
     /// any future variant the same way (no-op, not a panic) until this walk
@@ -408,7 +405,7 @@ impl PhaseBWalkState {
     ///
     /// **`RegisterRunning` has no producer yet.** This arm's rebind
     /// semantics are handled and unit tested, but
-    /// `crate::running::collect_running_template` (bd raikiri-spike-e81n)
+    /// `crate::running::collect_running_template`
     /// deliberately does *not* emit `RegisterRunning` for nested
     /// `position: running(name)` seeds inside a template subtree — that
     /// "if the spec/impl allows" hedge is left open on purpose (fail-closed,
@@ -456,7 +453,7 @@ impl PhaseBWalkState {
                 self.running.insert(name.clone(), *template_id);
             }
             GcpmDirective::RegisterTarget { .. } => {
-                // Owned by bd raikiri-spike-0nyv (TargetRegistry producer) —
+                // Owned by the TargetRegistry producer —
                 // deliberately not built here, see this method's doc.
             }
             // cov:ignore: cross-crate `#[non_exhaustive]` catch-all — stable
@@ -513,8 +510,8 @@ impl PhaseBWalkState {
 /// Apply every directive in a [`crate::running::ParsedRunningTemplate`]'s
 /// `directives` list to `state`, front-to-back.
 ///
-/// "Front-to-back, not re-sorted" matters: `collect_running_template` (bd
-/// raikiri-spike-e81n) pushes same-element directives in CSS Lists 3 §4
+/// "Front-to-back, not re-sorted" matters: `collect_running_template`
+/// pushes same-element directives in CSS Lists 3 §4
 /// processing order (reset → increment → set, *not* property declaration
 /// order — see that function's doc comment), specifically so a consumer
 /// walking the Vec in push order gets correct same-element semantics without
@@ -602,8 +599,7 @@ mod tests {
 
         #[test]
         fn increment_saturates_instead_of_panicking_or_wrapping_on_overflow() {
-            // Security lens regression pin (bd raikiri-spike-8ejw.1,
-            // user-confirmed 2026-08-11): `counter-reset: c 2147483647;
+            // Regression pin: `counter-reset: c 2147483647;
             // counter-increment: c 1` is spec-legal CSS. Must saturate at
             // i32::MAX, not panic (debug builds) or wrap to i32::MIN
             // (release builds).

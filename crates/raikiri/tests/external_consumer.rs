@@ -1,6 +1,5 @@
 //! External consumer が `use raikiri::*;` のみで parse_html → plan (Err) →
-//! render_streaming (Err) の chain を書けることを compile + run で pin
-//! (raikiri-spike-m1.15 前哨、raikiri-spike-m1.11 で追加)。
+//! render_streaming (Err) の chain を書けることを compile + run で pin。
 
 use raikiri::*;
 
@@ -96,16 +95,16 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
 }
 
 /// 全 `#[non_exhaustive]` struct が external crate から X::default() / builder
-/// で constructable なことを pin (m1.15 acceptance criteria、design test #10)。
+/// で constructable なことを pin (acceptance criteria、design test #10)。
 ///
 /// 対象は umbrella `raikiri` から re-export される全 `#[non_exhaustive]` pub
 /// struct with `impl Default` (下記 new()-pin test と同じ coverage set)。
 ///
-/// `raikiri_style::property::Border` (bd raikiri-spike-eow8 で re-export 追加)
+/// `raikiri_style::property::Border` (後に re-export 追加)
 /// は当初 `impl Default` を持たず対象外だった — `Default` どころか `new()`
 /// も public constructor も一切無く、struct-literal も E0639 で塞がれていた
-/// (raikiri crate から `Border` 値を得る経路が無かった)。bd raikiri-spike-x0dq
-/// で `impl Default for Border` + `Border::new()` を追加し、この gap を
+/// (raikiri crate から `Border` 値を得る経路が無かった)。その後
+/// `impl Default for Border` + `Border::new()` を追加し、この gap を
 /// 埋めた — 下記 coverage に合流させる。
 #[test]
 fn external_consumer_can_construct_all_non_exhaustive_types() {
@@ -126,13 +125,13 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
     let _ = RunningTemplate::default();
     let _ = FormData::default();
 
-    // struct via Default — raikiri-style value 型 (bd raikiri-spike-x0dq)。
+    // struct via Default — raikiri-style value 型。
     // CSS Backgrounds 3 initial value (width=medium(3px)/style=none/
     // color=currentcolor) を返す。
     let _ = Border::default();
 
     // struct via Default — plan mode / resolver / strategy placeholder shape。
-    // これらは M4+ で populate 予定だが Default 契約は今から crate 外に露出。
+    // これらは将来 populate 予定だが Default 契約は今から crate 外に露出。
     let _ = TargetDefinition::default();
     let _ = IntrinsicBox::default();
     let _ = ResolverRequest::default();
@@ -148,7 +147,7 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
     let _ = RenderLimits::builder().build();
 
     // HtmlDocument は parse_html を経由 (private field なので direct construct 不可、
-    // これが M2+ で pub use raikiri_dom::Document に置換した際にも同じ制約)
+    // これが将来 pub use raikiri_dom::Document に置換した際にも同じ制約)
     let opts = ParseOptions {
         extra_stylesheets: &[],
         network: None,
@@ -159,11 +158,11 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
 
 /// `RuleTree` の read-only accessor chain (`style_rules()` → `declarations()`
 /// → `value()`) が external crate から通ることを compile + run で pin
-/// (bd raikiri-spike-qzn3、PMO 判断 (B) 可視性を絞る)。
+/// (可視性を絞る判断)。
 ///
 /// ⚠️ 本 test が pin するのは **read 経路が届くこと**だけである。「write 経路が
 /// 無い」ことは compile する code では表現できないので pin されていない —
-/// そちらは compile-fail doctest (bd raikiri-spike-ejia) が別途 pin する:
+/// そちらは compile-fail doctest が別途 pin する:
 /// `raikiri_style::rule::Declaration` の struct doc (struct literal /
 /// functional-update / clone 後の field 代入、計 3 fence)、
 /// `raikiri_style::rule::StyleRule::declarations` の doc (1 fence)、
@@ -209,9 +208,9 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// m1.15: public-api-compile-tests-lookaheadconfig (round 3 review #2 対応)
+// public-api-compile-tests-lookaheadconfig (round 3 review #2 対応)
 //
-// 設計仕様書 §L681-715 "struct construction pattern" (§M1 Acceptance criteria)
+// 設計仕様書 §L681-715 "struct construction pattern" (Acceptance criteria)
 // を external consumer 側で pin する。`#[non_exhaustive]` は crate 外での
 // literal construction を封じるため、Consumer は必ず以下 3 pattern のいずれか
 // を使わなければならない:
@@ -230,7 +229,7 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
 /// compile pin。umbrella `raikiri` から re-export される全 `#[non_exhaustive]`
 /// pub struct のうち zero-arg `new()` を持つもの全てを対象とする (§L703-704)。
 ///
-/// M4+ で populate 予定の placeholder struct (LayoutBuffer / TargetRegistry /
+/// 将来 populate 予定の placeholder struct (LayoutBuffer / TargetRegistry /
 /// RunningTemplate / FormData / TargetDefinition / IntrinsicBox / ResolverRequest
 /// / ProbeContext / TargetRequest) も現時点の zero-arg constructor を pin する
 /// ため含める — future populate 時に `new()` signature が非破壊拡張のまま維持
@@ -241,9 +240,9 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
 /// - `ResolvedIntrinsic` は `#[non_exhaustive]` でないため construction 契約が
 ///   `struct literal` 経由で crate 外から直接可能、この test の対象外
 ///
-/// `raikiri_style::property::Border` (bd raikiri-spike-eow8 で re-export
+/// `raikiri_style::property::Border` (後に re-export
 /// 追加) は当初 `new()` を持たず対象外だった (`Default` も struct-literal
-/// (E0639) も無かった)。bd raikiri-spike-x0dq で `Border::new()`
+/// (E0639) も無かった)。その後 `Border::new()`
 /// (= `Self::default()`) を追加し、下記 coverage に合流させた。
 #[test]
 fn external_consumer_can_use_new_constructor_on_all_types() {
@@ -264,7 +263,7 @@ fn external_consumer_can_use_new_constructor_on_all_types() {
     let _ = LookaheadConfig::new();
     let _ = RenderLimits::new();
 
-    // raikiri-style value 型 (bd raikiri-spike-x0dq)
+    // raikiri-style value 型
     let _ = Border::new();
 
     // plan-mode types (raikiri-traits::plan)
@@ -313,9 +312,9 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     let mut page_defaults = PageDefaults::default();
     page_defaults.page_box = PageBox::US_LETTER;
 
-    // raikiri-style value 型 (bd raikiri-spike-x0dq) — 全 3 field (width /
+    // raikiri-style value 型 — 全 3 field (width /
     // style / color) への直接代入を pin する。`style` / `color` の型
-    // (`BorderStyle` / `BorderColor`) も umbrella re-export に x0dq で追加
+    // (`BorderStyle` / `BorderColor`) も umbrella re-export に同時期に追加
     // されたので、ここで型付きに構築できることも合わせて確認する。
     let mut border = Border::default();
     border.width = Length::Px(2.0);
@@ -341,7 +340,7 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     stream_cfg.limits = limits.clone();
     stream_cfg.initial_registry = Some(TargetRegistry::new());
 
-    // `BatchConfig` は preset 上 unbounded lookahead 固定 (design §M2 / M6b) の
+    // `BatchConfig` は preset 上 unbounded lookahead 固定の
     // ため `lookahead` field を持たない。limits + initial_registry のみ pin。
     let mut batch_cfg = BatchConfig::default();
     batch_cfg.limits = limits;
@@ -421,15 +420,15 @@ fn external_consumer_can_chain_builder_fluent_setters() {
 
 /// External consumer が `use raikiri::*;` のみで VRT font pin API
 /// (`build_wpt_font_ctx`, `FontError`, `FontContext`, `html_to_png_with_fonts`)
-/// を chain できることを compile + run で pin (raikiri-spike-e93 roborev
-/// round 2 finding — raikiri-dom/parley を direct dep しなくて良い保証)。
+/// を chain できることを compile + run で pin (raikiri-dom/parley を
+/// direct dep しなくて良い保証)。
 #[test]
 fn external_consumer_can_reference_vrt_font_pin_api() {
     // 1. 型は全て `use raikiri::*;` で resolve できる
     let _ = std::marker::PhantomData::<(FontContext, FontError)>;
 
     // 2. build_wpt_font_ctx を呼び出せる (missing dir で DirNotFound Err を expect)
-    let bogus = std::path::Path::new("/definitely/does/not/exist/raikiri-spike-e93");
+    let bogus = std::path::Path::new("/definitely/does/not/exist/raikiri-vrt-fonts");
     let err = match build_wpt_font_ctx(bogus) {
         Err(e) => e,
         Ok(_) => panic!("expected Err from missing dir"),

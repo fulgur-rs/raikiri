@@ -1,14 +1,14 @@
 //! DOM walker — Document arena を DFS で walk し PaintScene に emit する。
 //!
 //! `paint_document` は iterative Vec<(node_id, parent_abs_x, parent_abs_y)>
-//! stack で walk する (roborev job 223 finding 対応、cascade / m1.6 find_body
-//! の pattern と一貫、深 DOM で stack overflow 回避)。kind 分岐は loop 内で
-//! inline に行い、Element は children を push、Text は draw_text_node を call、
-//! display:none は subtree ごと skip する。
+//! stack で walk する (cascade / find_body の pattern と一貫、深 DOM で
+//! stack overflow 回避)。kind 分岐は loop 内で inline に行い、Element は
+//! children を push、Text は draw_text_node を call、display:none は
+//! subtree ごと skip する。
 //!
-//! M3 で inline formatting context を実装する時は、Element 分岐内の children
+//! 将来 inline formatting context を実装する時は、Element 分岐内の children
 //! push を "self の inline layout を walk する" に置き換え、Text 分岐は
-//! unreachable 化する予定 (m1.6 の text_layout 選択が M1 限定妥協のため)。
+//! unreachable 化する予定 (現状の text_layout 選択は暫定的な妥協のため)。
 //!
 //! find_body は raikiri-dom::layout::find_body と重複するが、5 行の helper
 //! を crate 境界越境で pub 化するよりも paint 側で持つ方が clean。
@@ -20,30 +20,30 @@ use raikiri_traits::{NodeKind, PageBox};
 
 use crate::text;
 
-/// Canvas 背景 fill site。M1.4 では cascade に background-color 無しで実質 no-op、
-/// future-proof pin として存在。M4 で CSS Backgrounds L3 §2.11.2 "canvas
-/// propagation" (html の background-color を取得、TRANSPARENT なら body に
-/// fallback、Some なら PageBox 全域を fill) を実装する。
+/// Canvas 背景 fill site。現状は cascade に background-color が無く実質
+/// no-op で、future-proof pin として存在。将来 CSS Backgrounds L3 §2.11.2
+/// "canvas propagation" (html の background-color を取得、TRANSPARENT なら
+/// body に fallback、Some なら PageBox 全域を fill) を実装する予定。
 pub(crate) fn paint_canvas_background(
     _scene: &mut impl PaintScene,
     _document: &Document,
     _cascade: &CascadeResult,
     _page_box: PageBox,
 ) {
-    // M1.4: no-op site。M4 で発火。
+    // 現状は no-op site。将来ここで発火する。
 }
 
 /// Document arena を body から iterative DFS で walk する。fragment (no `<body>`)
-/// case は silent return (m1.6 layout_single_page が Err を返すので paint
+/// case は silent return (layout_single_page が Err を返すので paint
 /// 呼び出し前に検出済のはず、defensive)。
 ///
 /// Stack frame = `(node_id, parent_abs_x, parent_abs_y)`。children は
 /// `.rev()` で push し、pop 時に document order で処理する。Element の場合は
-/// `is_display_none` を先に判定し true なら subtree ごと skip (roborev job 223
-/// finding 対応: 従来の size == 0 判定は overflow: visible な legitimate zero-
-/// size 要素も silent drop するため誤り)。
+/// `is_display_none` を先に判定し true なら subtree ごと skip (旧来の
+/// size == 0 判定は overflow: visible な legitimate zero-size 要素も
+/// silent drop するため誤りだったための対応)。
 ///
-/// M4 で element background-color / border / box-shadow を Element arm 内で
+/// 将来 element background-color / border / box-shadow を Element arm 内で
 /// 描画する予定 (site だけ確保)。
 pub(crate) fn paint_document(
     scene: &mut impl PaintScene,
@@ -59,14 +59,13 @@ pub(crate) fn paint_document(
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
-        // raikiri-spike-37c: template 子孫 + 将来の inert subtree を統一 skip。
+        // template 子孫 + 将来の inert subtree を統一 skip。
         // UA CSS の display:none rule 有無に依存しない、明示的な gate。
         if !node.is_in_document() {
             continue;
         }
-        // raikiri-spike-d9y.5 (SEC MED, Codex finding) + raikiri-spike-s8w
-        // (§15.3.1 完全化): HTML の hidden elements (metadata / raw-text
-        // content / ruby parenthesis fallback) は subtree ごと描画対象外。
+        // HTML の hidden elements (metadata / raw-text content / ruby
+        // parenthesis fallback) は subtree ごと描画対象外。
         // 現在の対象 tag 集合は `Node::is_non_rendered_html_element` の
         // match arms を single source of truth とする。
         // UA CSS `display: none` は author / user CSS で override 可能なため
@@ -86,7 +85,7 @@ pub(crate) fn paint_document(
                 let layout = node.unrounded_layout;
                 let abs_x = parent_abs_x + layout.location.x;
                 let abs_y = parent_abs_y + layout.location.y;
-                // paint_element_background(scene, node, abs_x, abs_y, cascade) — M4 でここに挿入
+                // paint_element_background(scene, node, abs_x, abs_y, cascade) — 将来ここに挿入
                 // children を reverse push すると pop 時に document order で処理される。
                 for &child in node.children.iter().rev() {
                     stack.push((child, abs_x, abs_y));
@@ -101,18 +100,17 @@ pub(crate) fn paint_document(
             NodeKind::Document => {
                 // paint_document が body から start するので通常来ない。
                 // Document node は children を持ちうる (未 attach <html>) が
-                // M1.7 では扱わない。defensive: subtree を skip。
+                // 現状は扱わない。defensive: subtree を skip。
             }
             _ => {
-                // NodeKind is #[non_exhaustive]: raikiri-spike-84y で追加された
-                // `Comment` / `ProcessingInstruction` / `DocumentFragment` は
-                // ここに落ちる (paint 対象外)。実際には mark_in_document_flags が
-                // Comment/PI の IS_IN_DOCUMENT bit を clear しているため、この
-                // walker 到達前段の is_in_document() gate で先に filter される
-                // ことが expected — defense-in-depth の第 2 gate として本 arm を
-                // 保持 (kind gate と is_in_document gate の両方が failing した
-                // 場合でも subtree ごと skip)。M4+ で CDATA / DocumentType 等が
-                // 追加された場合も同じ扱い。
+                // NodeKind is #[non_exhaustive]: `Comment` / `ProcessingInstruction` /
+                // `DocumentFragment` はここに落ちる (paint 対象外)。実際には
+                // mark_in_document_flags が Comment/PI の IS_IN_DOCUMENT bit を
+                // clear しているため、この walker 到達前段の is_in_document()
+                // gate で先に filter されることが expected — defense-in-depth の
+                // 第 2 gate として本 arm を保持 (kind gate と is_in_document gate
+                // の両方が failing した場合でも subtree ごと skip)。将来 CDATA /
+                // DocumentType 等が追加された場合も同じ扱い。
             }
         }
     }
@@ -123,9 +121,9 @@ pub(crate) fn paint_document(
 /// iterative `Vec` stack で実装 (cascade §deep_nesting の pattern と一貫、
 /// 深 DOM で stack overflow を回避)。fragment parse (no `<body>`) では `None`。
 ///
-/// raikiri-spike-37c roborev job 295 M3 finding: `!is_in_document()` の
-/// subtree (`<template>` descendants など) を skip する。inert subtree 内の
-/// hypothetical `<body>` を選ばないため。paint 側の find_body と layout 側の
+/// `!is_in_document()` の subtree (`<template>` descendants など) を skip
+/// する。inert subtree 内の hypothetical `<body>` を選ばないため。paint 側の
+/// find_body と layout 側の
 /// find_body は独立実装 (crate 境界越境コスト回避)、同じ contract を持つ。
 fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root_index()];

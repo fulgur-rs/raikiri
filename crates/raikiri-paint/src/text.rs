@@ -1,8 +1,8 @@
 //! Text glyph draw — parley Layout の GlyphRun を anyrender::draw_glyphs に pipe。
 //!
-//! m1.6 で pre-shape 済 `parley::Layout<()>` を `Node::text_layout()` accessor
-//! (raikiri-spike-37c で `NodeData::Text(TextData)` 経由に refactor 済) から
-//! 取得する design に依拠。paint は line iteration + GlyphRun.positioned_glyphs()
+//! Pre-shape 済 `parley::Layout<()>` を `Node::text_layout()` accessor
+//! (`NodeData::Text(TextData)` 経由) から取得する design に依拠。paint は
+//! line iteration + GlyphRun.positioned_glyphs()
 //! を per-run 変換 (parley::Glyph → anyrender::Glyph) して scene に送る。
 //!
 //! 座標系: parley Layout origin (0,0) 左上、positioned_glyphs() が line 内
@@ -31,8 +31,8 @@ pub(crate) fn draw_text_node(
         return;
     };
 
-    // Text node の brush = cascade で親から inherit された color (M1.4 は color のみ)。
-    // ComputedValues.color は Text node 位置にも populate 済 (m1.4 inheritance walk)。
+    // Text node の brush = cascade で親から inherit された color (現状 color property のみ対応)。
+    // ComputedValues.color は Text node 位置にも populate 済 (inheritance walk 経由)。
     let cv = &cascade.computed[node_id];
     let brush = css_color_to_peniko(cv.color);
 
@@ -43,9 +43,9 @@ pub(crate) fn draw_text_node(
     for line in text_layout.lines() {
         for item in line.items() {
             let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                // M1.7 では InlineBox は生成されない (m1.6 preshape_text は inline box
-                // を push しない)。M3 で inline formatting context を実装する時に
-                // ここで image / replaced element 描画が入る。defensive: continue。
+                // InlineBox は現状生成されない (preshape_text は inline box を
+                // push しない)。将来 inline formatting context を実装する際に、
+                // ここで image / replaced element 描画が入る予定。defensive: continue。
                 continue;
             };
 
@@ -57,14 +57,14 @@ pub(crate) fn draw_text_node(
             scene.draw_glyphs(
                 font,
                 font_size,
-                true, // hint = true (blitz と揃え、m1.13 で判定 flip 余地)
+                true, // hint = true (blitz と揃えた値。将来的に判定を切り替える余地あり)
                 coords,
-                Vec2::ZERO, // embolden 無し (font-embolden feature は M6+)
+                Vec2::ZERO, // embolden 無し (font-embolden feature は未実装)
                 Fill::NonZero,
                 brush, // peniko::Color → PaintRef auto-convert
                 1.0,   // brush_alpha (color 自身が alpha 持つ)
                 base_transform,
-                None, // glyph_transform (rotate / skew は M4+)
+                None, // glyph_transform (rotate / skew は未実装)
                 glyph_run.positioned_glyphs().map(to_anyrender_glyph),
             );
         }
@@ -82,7 +82,7 @@ fn to_anyrender_glyph(g: ParleyGlyph) -> AnyrenderGlyph {
 
 /// raikiri-style の CssColor (r/g/b/a: u8) → peniko::Color。
 ///
-/// M3 で `peniko::AlphaColor` へ昇格する move に備えて helper を切り出しておく
+/// 将来 `peniko::AlphaColor` へ昇格する move に備えて helper を切り出しておく
 /// (今は 1 line だが grep しやすい)。
 fn css_color_to_peniko(c: CssColor) -> Color {
     Color::from_rgba8(c.r, c.g, c.b, c.a)

@@ -3,7 +3,7 @@
 //! **Ownership** (design §7.0 line 1904 "shared types → raikiri-traits"): this
 //! is the single canonical [`TargetRegistry`] shared across raikiri-dom,
 //! raikiri-paint, and consumer crates. raikiri-traits owns the type; the
-//! producer side (register-site directive walker, bd raikiri-spike-0nyv,
+//! producer side (register-site directive walker,
 //! feeding [`raikiri_traits::GcpmDirective::RegisterTarget`]) lives in
 //! raikiri-dom and calls [`TargetRegistry::register`] against this
 //! canonical instance.
@@ -11,10 +11,9 @@
 //! **History** — the impl and tests here were previously a `pub(crate)` shadow
 //! at `crates/raikiri-dom/src/target.rs` alongside an empty
 //! `#[non_exhaustive]` placeholder at `crates/raikiri-traits/src/page.rs`.
-//! bd raikiri-spike-bsi (Sprint 15 dom-3 Wave 1, Option C) merged the two:
-//! the dom-side shadow was deleted, the field layout / method surface was
-//! promoted from `pub(crate)` to `pub`, and this file now hosts the canonical
-//! type.
+//! These were merged: the dom-side shadow was deleted, the field layout /
+//! method surface was promoted from `pub(crate)` to `pub`, and this file
+//! now hosts the canonical type.
 //!
 //! **Canonical shape** (design §7.2 lines 1961-1964):
 //! ```text
@@ -27,8 +26,8 @@
 //! fields; §7.2 does not enumerate either. Together they stamp every
 //! pending slot with its stable handle,
 //! [`TargetSlotId`] = `(page_index, sequence)` (design §7.4 line 2098 /
-//! §7.6 lines 2312-2317, Finding #4, landed bd raikiri-spike-oqpc, paired
-//! with the `PageContext::page_index` field bd raikiri-spike-8ejw.1 landed).
+//! §7.6 lines 2312-2317, Finding #4, paired with the
+//! `PageContext::page_index` field).
 //! `page_index` defaults to 0 and advances via
 //! [`TargetRegistry::begin_page`], which also resets `next_sequence` to 0 —
 //! design §7.6 "Slot ID の安定性保証" states `sequence` is "page 内
@@ -37,10 +36,9 @@
 //! with a monotonically non-decreasing `page_index` (same-index calls are a
 //! no-op; a redundant same-page call is fine, a backward call is not),
 //! before the first `resolve_target_*` dispatch for that page — enforced at
-//! runtime by an `assert!` in [`TargetRegistry::begin_page`] (bd
-//! raikiri-spike-oqpc security-lens finding) since a backward `page_index`
-//! would silently mint a duplicate [`TargetSlotId`] for a still-pending
-//! slot from the earlier visit to that page.
+//! runtime by an `assert!` in [`TargetRegistry::begin_page`] since a
+//! backward `page_index` would silently mint a duplicate [`TargetSlotId`]
+//! for a still-pending slot from the earlier visit to that page.
 
 use std::collections::HashMap;
 
@@ -57,16 +55,15 @@ use crate::error::TargetSlotId;
 /// referenced a fragment before it was walked and must be resolved on a
 /// second pass ([`TargetRegistry::flush_pending`]).
 ///
-/// Producer / register-site walker (bd raikiri-spike-0nyv) lives in
-/// raikiri-dom; the canonical type (shape + resolve strategy) lives here
-/// (bd raikiri-spike-bsi Option C).
+/// Producer / register-site walker lives in
+/// raikiri-dom; the canonical type (shape + resolve strategy) lives here.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct TargetRegistry {
     /// Fragment identifier → resolved target metadata (counter snapshot,
     /// textual content parts). Populated as the runtime walk encounters
-    /// [`crate::GcpmDirective::RegisterTarget`] directives (populator: bd
-    /// raikiri-spike-0nyv register-site walker in raikiri-dom).
+    /// [`crate::GcpmDirective::RegisterTarget`] directives (populator: the
+    /// register-site walker in raikiri-dom).
     resolved: HashMap<Symbol, TargetInfo>,
     /// Content-value sites (`target-counter(...)`, `target-counters(...)`,
     /// `target-text(...)`, and future `element(name)`) that referenced a
@@ -106,15 +103,15 @@ pub struct TargetRegistry {
 /// the hierarchical join `"1.1"` is literally unrepresentable. This module
 /// therefore carries the full stack per counter; when the §11.2
 /// `TargetDefinition` public shape is reconciled with the runtime side, the
-/// reconciliation must widen `counter_snapshot` to a stack — and the bd
-/// raikiri-spike-0nyv register-site directive walker must populate the
-/// stack rather than the leaf value.
+/// reconciliation must widen `counter_snapshot` to a stack — and the
+/// register-site directive walker must populate the stack rather than the
+/// leaf value.
 ///
 /// **Text parts**: keyed by the same
 /// [`raikiri_style::property::ContentPart`] variants that
 /// `target-text(url, part)` accepts. Missing parts resolve to an empty
 /// string (CSS Content 3 §2.6.3 defers text extraction — populating each
-/// entry is the responsibility of the register site, bd raikiri-spike-0nyv).
+/// entry is the responsibility of the register site).
 ///
 /// **Storage note**: `text_parts` is a `Vec<(ContentPart, String)>`, not a
 /// `HashMap`, because [`ContentPart`] does not implement `Hash`
@@ -227,17 +224,15 @@ pub(crate) enum TargetRequest {
 /// [`PendingResolution::slot_id`].
 ///
 /// **Stable handle = `TargetSlotId = (page_index, sequence)`** (design §7.4
-/// line 2098 / §7.6 lines 2312-2317, Finding #4, landed bd
-/// raikiri-spike-oqpc — not §11.2, whose `TargetSlot` is a distinct,
-/// not-yet-built public paint-layer type with a different shape `{ id,
-/// fragment_id, kind, rect, resolved, fallback_text }`): pairing the
-/// sequence with `page_index` keeps (a) slot ids byte-identical across
-/// streaming/batch iterations and (b) lets sinks address a slot by its
-/// owning page.
+/// line 2098 / §7.6 lines 2312-2317, Finding #4 — not §11.2, whose
+/// `TargetSlot` is a distinct, not-yet-built public paint-layer type with a
+/// different shape `{ id, fragment_id, kind, rect, resolved, fallback_text
+/// }`): pairing the sequence with `page_index` keeps (a) slot ids
+/// byte-identical across streaming/batch iterations and (b) lets sinks
+/// address a slot by its owning page.
 /// `page_index` comes from [`TargetRegistry::begin_page`] (paired with the
-/// `PageContext::page_index` field bd raikiri-spike-8ejw.1 landed) — see the
-/// module doc's "Canonical shape" note for the page-local `sequence` reset
-/// this implies.
+/// `PageContext::page_index` field) — see the module doc's "Canonical shape"
+/// note for the page-local `sequence` reset this implies.
 #[derive(Debug, Clone)]
 pub(crate) struct TargetSlot {
     pub(crate) id: TargetSlotId,
@@ -288,14 +283,13 @@ pub struct PendingResolution {
 
 impl TargetRegistry {
     /// Construct an empty `TargetRegistry` (canonical zero-arg constructor,
-    /// stable across the promotion from the M1.1 opaque placeholder).
+    /// stable across the promotion from the earlier opaque placeholder).
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Record a resolved target — called from the register-site directive
-    /// walker (bd raikiri-spike-0nyv) once an element with an `id`
-    /// attribute is fully seen.
+    /// walker once an element with an `id` attribute is fully seen.
     ///
     /// **First-wins on duplicate fragment id.** Uses `entry().or_insert` so
     /// a second `register(id, info)` for the same fragment is a no-op. This
@@ -303,9 +297,9 @@ impl TargetRegistry {
     /// spec'd id-based lookup resolves to the **first element in tree
     /// order** when multiple elements share an id (which is invalid HTML in
     /// the first place — HTML §3.2.6.1 "id attribute" — but the resolution
-    /// behavior is still well-defined). The register-site walker (M6, bd
-    /// raikiri-spike-0nyv) is expected to invoke `register()` in tree
-    /// order, so `or_insert` preserves the spec's first-in-tree-order
+    /// behavior is still well-defined). The register-site walker is
+    /// expected to invoke `register()` in tree order, so `or_insert`
+    /// preserves the spec's first-in-tree-order
     /// semantics without the walker having to check for duplicates.
     pub fn register(&mut self, fragment_id: Symbol, info: TargetInfo) {
         self.resolved.entry(fragment_id).or_insert(info);
@@ -474,14 +468,14 @@ impl TargetRegistry {
     /// stood at the *last* page of the prior run), the monotonic guard above
     /// now turns that same re-run's `begin_page(0)` into a **panic** rather
     /// than a silent reset. No current production code reads
-    /// `initial_registry` (M1.1 placeholder configs), so neither shape is
+    /// `initial_registry` (placeholder configs only), so neither shape is
     /// reachable today; a future consumer of it is now *required* (not
     /// merely advised) to either reset the seed registry's `page_index` /
     /// `next_sequence` independently before the re-run, or `begin_page` must
     /// gain a force-reset variant — tracked as a follow-up, not fixed here.
     ///
     /// No production driver calls this yet — the per-page walk that would
-    /// call it is bd raikiri-spike-si32, not yet landed (same gap
+    /// call it has not landed yet (same gap
     /// `PageContext::begin_page`'s doc already flags). Until a driver calls
     /// it, every slot is tagged to page 0 — correct for a single-page
     /// document, harmless (just uninformative) for a multi-page one.
@@ -511,7 +505,7 @@ impl TargetRegistry {
 
 /// Drive a [`TargetRegistry`] from a
 /// [`raikiri_style::property::ContentComponent`] — the "working conversion
-/// path" for the M6 directive-apply pass (bd raikiri-spike-0nyv).
+/// path" for the directive-apply pass.
 ///
 /// Returns `Some(outcome)` for the three target-* variants
 /// (`TargetCounter`, `TargetCounters`, `TargetText`), `None` for every
@@ -571,10 +565,9 @@ fn parse_fragment(url: &str) -> Option<&str> {
 /// Landed in two passes: `decimal-leading-zero`, `lower-roman` /
 /// `upper-roman`, `lower-alpha` / `upper-alpha` (+ the `lower-latin` /
 /// `upper-latin` aliases §6 defines with identical symbol tables), `disc` /
-/// `circle` / `square` on **bd raikiri-spike-og2** (P4, scope/dom,
-/// discovered-from:96u.2); the remainder — §6.1 Numeric, §6.2 Alphabetic,
-/// §6.4 Fixed, §7.1 Longhand East Asian, §7.2 Ethiopic Numeric — on **bd
-/// raikiri-spike-ce3k** (discovered-from bd raikiri-spike-nu9z). See
+/// `circle` / `square` in an earlier pass; the remainder — §6.1 Numeric,
+/// §6.2 Alphabetic, §6.4 Fixed, §7.1 Longhand East Asian, §7.2 Ethiopic
+/// Numeric — in a later pass. See
 /// [`format_named_counter`]'s doc for the full per-family breakdown and
 /// citations. ("Implemented" here means implementation coverage, not a
 /// registry boundary: every §6/§7 predefined style is a UA-stylesheet rule,
@@ -591,11 +584,10 @@ fn parse_fragment(url: &str) -> Option<&str> {
 ///    all. Step 1 applies verbatim; decimal is spec-correct here.
 /// 2. **A custom `@counter-style` rule** — a valid `<custom-ident>` per
 ///    spec, but *unreachable* today: raikiri-style has no `@counter-style`
-///    parser/registry to resolve it against (og2 comment 2026-07-27 scope
-///    (b); follow-up bd raikiri-spike-r7r1).
+///    parser/registry to resolve it against (tracked as a follow-up).
 /// 3. **`disclosure-open` / `disclosure-closed`** — the only §6/§7
-///    predefined styles still unimplemented after ce3k. Deliberately
-///    deferred (ce3k session, not a fallback bug): §6.3
+///    predefined styles still unimplemented. Deliberately
+///    deferred, not a fallback bug: §6.3
 ///    <https://www.w3.org/TR/css-counter-styles-3/#simple-symbolic>'s
 ///    normative stylesheet fragment leaves their `symbols` descriptor
 ///    unset ("for symbols, see normative text below"), and the referenced
@@ -606,12 +598,10 @@ fn parse_fragment(url: &str) -> Option<&str> {
 ///    no single normative codepoint to pin, and `format_named_counter`'s
 ///    signature (`value: i32, name: &str`) has no writing-mode/direction
 ///    input to pick a directional variant with. Landing a guessed glyph
-///    here would be exactly the "complete but wrong" outcome ce3k's task
-///    description asked to avoid; tracked as a residual scope item in bd
-///    raikiri-spike-jvzx (filed separately from ce3k so this pointer
-///    doesn't dangle once ce3k itself closes).
+///    here would be exactly the "complete but wrong" outcome this work was
+///    meant to avoid; tracked as a residual scope item for follow-up.
 ///
-/// **Visibility**: `pub(crate)` since bd raikiri-spike-8ejw.1 — see
+/// **Visibility**: `pub(crate)` (widened from private) — see
 /// [`join_counter_stack`]'s doc for why (sibling `page::context` module
 /// needs this for real `string-set` text resolution).
 pub(crate) fn format_counter(value: i32, style: &CounterStyle) -> String {
@@ -2009,17 +1999,16 @@ fn format_ethiopic_numeric(value: i32) -> Option<String> {
 /// Join a nested counter stack with `separator`, formatting each level via
 /// [`format_counter`].
 ///
-/// **Visibility**: `pub(crate)` (not private) since bd raikiri-spike-8ejw.1 —
+/// **Visibility**: `pub(crate)` (not private) —
 /// sibling `page::context` module needs both this and [`format_counter`] to
 /// fully resolve a `string-set` content-list's `counter()`/`counters()`
-/// items (design §7.2's `NamedStringState`, which — unlike this crate's own
-/// pre-8ejw.1 placeholder — needs real text, not a deferred snapshot).
+/// items (design §7.2's `NamedStringState`, which — unlike this crate's
+/// earlier placeholder — needs real text, not a deferred snapshot).
 /// `pub(crate)` rather than full `pub`: no cross-crate caller needs either
 /// helper directly (raikiri-dom only calls through
 /// [`crate::page::PageContext::apply_directive`]), so crate-internal
-/// visibility is the minimal fix (bd raikiri-spike-8ejw.1's carried-forward
-/// 2026-08-11 comment flagged this gap; resolved here rather than
-/// duplicating the formatting logic elsewhere).
+/// visibility is the minimal fix (resolved here rather than duplicating the
+/// formatting logic elsewhere).
 pub(crate) fn join_counter_stack(stack: &[i32], separator: &str, style: &CounterStyle) -> String {
     stack
         .iter()
@@ -2034,13 +2023,13 @@ mod tests {
 
     use smol_str::SmolStr;
 
-    // ── Skeleton pins (carried from bd raikiri-spike-96u.1) ─────────
+    // ── Skeleton pins ─────────
 
     #[test]
     fn target_registry_default_is_empty() {
         // Constructibility pin: `TargetRegistry::default()` yields an empty
-        // registry. The M6 directive-apply driver (bd raikiri-spike-0nyv)
-        // will consume this constructor.
+        // registry. The directive-apply driver will consume this
+        // constructor.
         let reg = TargetRegistry::default();
         assert!(reg.resolved.is_empty());
         assert!(reg.pending_slots.is_empty());
@@ -2053,10 +2042,10 @@ mod tests {
         // Canonical shape pin (design §7.2, lines 1961-1964):
         //   resolved: HashMap<Symbol, TargetInfo>
         //   pending_slots: Vec<TargetSlot>
-        // If this test breaks, the type has drifted from the design and the
-        // coordinator should reconcile before landing follow-up work.
+        // If this test breaks, the type has drifted from the design and
+        // that must be reconciled before landing follow-up work.
         // `TargetSlot.id` is the design's `TargetSlotId` (§7.4 line 2098 /
-        // §7.6 lines 2312-2317, Finding #4, landed bd raikiri-spike-oqpc) —
+        // §7.6 lines 2312-2317, Finding #4) —
         // a break here means that pairing drifted, not just the two
         // enumerated fields above.
         let mut reg = TargetRegistry::default();
@@ -3081,9 +3070,8 @@ mod tests {
         // DOM id resolution is first-in-tree-order (HTML §3.2.6.1 —
         // duplicate ids are invalid HTML but `getElementById` still resolves
         // to the first element in tree order). register() is expected to be
-        // called in tree order by the M6 register-site walker (bd
-        // raikiri-spike-0nyv); last-wins would cause target-* to resolve
-        // against a later duplicate.
+        // called in tree order by the register-site walker; last-wins would
+        // cause target-* to resolve against a later duplicate.
         let mut reg = TargetRegistry::default();
         reg.register(Symbol::new("dup"), make_info(&[("chapter", &[1])], &[]));
         // Second register call for the same fragment must be a no-op.
@@ -3218,7 +3206,7 @@ mod tests {
         assert_eq!(resolutions[0].value.as_deref(), Some("1-2-3"));
     }
 
-    // ── TargetSlotId pairing / begin_page (bd raikiri-spike-oqpc) ────
+    // ── TargetSlotId pairing / begin_page ────
 
     #[test]
     fn begin_page_resets_sequence_and_advances_page_index() {
@@ -3295,8 +3283,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "page_index must be monotonically non-decreasing")]
     fn begin_page_backward_call_panics_instead_of_duplicating_slot_id() {
-        // Security-lens finding (bd raikiri-spike-oqpc): without a
-        // monotonicity guard, a backward begin_page() call resets
+        // Without a monotonicity guard, a backward begin_page() call resets
         // next_sequence to 0 while an earlier page's slot is still
         // unresolved in pending_slots (unresolved slots are retained across
         // flushes forever — see flush_pending_retains_unregistered_slots).
@@ -3359,7 +3346,7 @@ mod tests {
         assert!(set.contains(&b));
     }
 
-    // ── ContentComponent wire-through (M5 → M6 conversion path) ─────
+    // ── ContentComponent wire-through (conversion path) ─────
 
     #[test]
     fn resolve_content_component_drives_target_counter() {

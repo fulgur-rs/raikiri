@@ -11,18 +11,17 @@ use crate::page::TargetRegistry;
 /// resource / cost 上限 (Finding #5 + round 4 review #1)。
 ///
 /// 妥当な defaults は fulgur 想定: pages=10_000, nodes=1M, slots=100k,
-/// buffer=10k, bytes=1GB (§4 §M0 section 参照)。
+/// buffer=10k, bytes=1GB (§4 参照)。
 ///
-/// # Sprint 10 promotion (raikiri-spike-4kw)
+/// # `max_input_bytes` promotion
 ///
-/// `max_input_bytes` field は Sprint 9 Wave 3 (bd raikiri-spike-d9y.3) で
-/// SEC-HIGH `parse_html` unbounded-read DoS を close するために導入された
-/// hard-coded 32 MiB input cap を `RenderLimits` 上に昇格させたもの (Option A、
-/// bd raikiri-spike-sve decision)。
+/// `max_input_bytes` field は、SEC-HIGH `parse_html` unbounded-read DoS を
+/// close するために導入された hard-coded 32 MiB input cap を
+/// `RenderLimits` 上の configurable field へ昇格させたもの。
 ///
-/// **Migration**: Wave 3 Option B stopgap を利用していた consumer (`parse_html`
+/// **Migration**: 旧 stopgap を利用していた consumer (`parse_html`
 /// / `parse_html_with_limits` を呼ぶ側) は、`RenderLimits::default()` を渡す
-/// 限り behavior 不変 (default `Some(32 * 1024 * 1024)` は d9y.3 の hard-coded
+/// 限り behavior 不変 (default `Some(32 * 1024 * 1024)` は元の hard-coded
 /// 値と一致)。cap を調整したい場合は [`RenderLimitsBuilder::max_input_bytes`]
 /// (または field への直接代入)、無効化したい場合は `None` を設定する
 /// (**cap 無効化の security 上の含意は `max_input_bytes` field doc を参照**)。
@@ -39,14 +38,14 @@ pub struct RenderLimits {
     pub max_layout_buffer_entries: Option<u32>,
     /// approximate memory footprint 上限。
     pub max_aggregate_bytes: Option<u64>,
-    /// parse 前に読み込む raw input byte 数上限 (bd raikiri-spike-4kw、
-    /// Sprint 10 Option A promotion)。超過 → `LimitExceeded { kind: InputBytes }`。
+    /// parse 前に読み込む raw input byte 数上限。超過 →
+    /// `LimitExceeded { kind: InputBytes }`。
     ///
-    /// Default は `Some(32 * 1024 * 1024)` (32 MiB)、d9y.3 stopgap の
+    /// Default は `Some(32 * 1024 * 1024)` (32 MiB)、旧 stopgap の
     /// hard-coded 値を継承。
     ///
-    /// **Security**: `None` は cap を無効化し、SEC-HIGH d9y.3 で close した
-    /// `parse_html` unbounded-read DoS を **再暴露する** (attacker が任意
+    /// **Security**: `None` は cap を無効化し、SEC-HIGH の `parse_html`
+    /// unbounded-read DoS を **再暴露する** (attacker が任意
     /// サイズの HTML を送り込み OOM を誘発可能)。明示的な opt-out としてのみ
     /// 使用し、default (`Some(32 MiB)`) から離れる場合は upstream で別途
     /// bound を設ける前提であること。
@@ -190,7 +189,7 @@ impl RenderLimitsBuilder {
 
 /// LayoutBuffer の lookahead 幅 config。
 ///
-/// M1.1 seed value (blitz 慣習ベース、M2/M3 で refine 予定)。
+/// 初期 seed value (blitz 慣習ベース、将来 refine 予定)。
 ///
 /// spec §4 "[対象 struct]" list に含まれるため `#[non_exhaustive]` を付与
 /// (round 3 Missing #6 対応)。
@@ -211,7 +210,7 @@ pub struct LookaheadConfig {
 
 impl Default for LookaheadConfig {
     fn default() -> Self {
-        // M1.1 seed value, refined in M2/M3.
+        // Initial seed value, refined over time.
         Self {
             widow_line_buffer: 2,
             orphan_line_buffer: 2,

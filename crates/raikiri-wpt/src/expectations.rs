@@ -26,7 +26,7 @@ use time::{Date, macros::format_description};
 /// ```no_run
 /// use raikiri_wpt::expectations::ExpectationSet;
 /// let set = ExpectationSet::load_from_workspace_root().unwrap();
-/// // baseline is runner-generated at M3 kickoff (see raikiri-baseline.txt
+/// // baseline is runner-generated once a future runner task lands (see raikiri-baseline.txt
 /// // header). quarantine/deprecated stay empty until a developer PR
 /// // adds an entry — flakes for quarantine (§12.10 procedure) and
 /// // crashers for deprecated. tracked/known_issues are populated
@@ -584,7 +584,7 @@ impl Quarantine {
     }
 }
 
-// ── ExpectError (m1.2 pattern: hand-written Display + Error + From) ────────
+// ── ExpectError (hand-written Display + Error + From) ────────
 
 /// Errors from parsing or loading expectations files.
 #[derive(Debug)]
@@ -1124,7 +1124,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
             ],
         );
 
-        // baseline is populated by an M3-kickoff runner PR; quarantine and
+        // baseline is populated once a future runner PR lands; quarantine and
         // deprecated stay empty until a developer PR adds a flake or crasher.
         assert!(set.baseline.is_empty());
         assert!(set.quarantine.is_empty());

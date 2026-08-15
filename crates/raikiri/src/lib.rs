@@ -1,10 +1,9 @@
 //! raikiri — umbrella crate: primary consumer API and re-exports.
 //!
-//! M1 の umbrella-facade slice。Consumer が単一 `raikiri` crate だけを dep に
+//! umbrella-facade slice。Consumer が単一 `raikiri` crate だけを dep に
 //! 追加すれば HTML parse → cascade された ComputedValues まで得られるように
 //! sub-crate から必要な type / trait / function を re-export し、cascade
-//! orchestration entry point `build_cascaded` を提供する
-//! (spec §M1、raikiri-spike-m1.23)。
+//! orchestration entry point `build_cascaded` を提供する。
 //!
 //! # Example
 //!
@@ -31,12 +30,11 @@ pub use stubs::{plan, render_streaming};
 mod html_to_png;
 pub use html_to_png::{html_to_png, html_to_png_with_fonts};
 
-// ── M2 kickoff seed: PageScene + PageDrawables consumer surface ────────
-// raikiri-spike-os52 (Sprint 22)。実装 body は placeholder (empty struct + Default)、
+// ── PageScene + PageDrawables consumer surface ────────
+// 実装 body は placeholder (empty struct + Default)、
 // consumer facade の pub type surface のみを landing する。
-// `NodeId` は既存 `raikiri_traits::NodeId` (m1.23 landed re-export) を再利用し
-// PageScene と Document 間で node identity を統一する (coord Option A on
-// raikiri-spike-os52、bd comment 参照)。
+// `NodeId` は既存 `raikiri_traits::NodeId` (re-export 済み) を再利用し
+// PageScene と Document 間で node identity を統一する。
 mod page_scene;
 pub use page_scene::{Fragment, Orientation, PageMetadata, PageScene, Pt};
 
@@ -49,11 +47,11 @@ pub use entries::{
     ParagraphEntry, SemanticEntry, SvgEntry, TableEntry, TransformEntry,
 };
 
-// ── VRT font pin API (raikiri-spike-e93) ────────────────────────────────
+// ── VRT font pin API ────────────────────────────────────────────────────
 // External consumer が `raikiri` 単独 dep で pinned `FontContext` を build
 // できるように、`html_to_png_with_fonts` の依存型を umbrella 経由で公開。
 // これが無いと consumer は raikiri-dom / parley を direct dep しなければ
-// ならず、実装 crate 依存が漏れる (roborev Medium finding e93 round 2)。
+// ならず、実装 crate 依存が漏れる。
 pub use parley::FontContext;
 pub use raikiri_dom::{FontError, build_wpt_font_ctx};
 
@@ -61,11 +59,10 @@ pub use raikiri_dom::{FontError, build_wpt_font_ctx};
 // Network API (Request / FetchedResource / NetworkError / Method / Body /
 // HeaderMap / AbortSignal / AbortController / ResourceKind) は `NetworkProvider`
 // を Consumer 側で implement する際に必須 (fetch signature の param / return type)。
-// これらを揃えて re-export することで sub-crate 直接 dep 不要にする (roborev-refine
-// job 230)。
+// これらを揃えて re-export することで sub-crate 直接 dep 不要にする。
 #[rustfmt::skip]
 pub use raikiri_traits::{
-    // ── 既存 (m1.23) ──
+    // ── 既存 ──
     AbortController, AbortSignal, Body, CascadeError, Dom, Element,
     FetchedResource, HeaderMap, Method, NetworkError, NetworkProvider,
     Node, NodeId, NodeKind, ParseError, QuirksMode, RenderError, RenderWarning,
@@ -117,15 +114,13 @@ pub use raikiri_traits::{
 pub use raikiri_html::{MINIMAL_UA_CSS, ParseOptions, UncascadedDocument, parse};
 
 // ── raikiri-dom: Document (raikiri-html::UncascadedDocument.dom の実体型) ──
-// Consumer が `&raikiri::Document` を名指しで受けたい場合に必要
-// (roborev-refine job 228 medium 対応、AC #6 spirit)。
+// Consumer が `&raikiri::Document` を名指しで受けたい場合に必要。
 pub use raikiri_dom::Document;
 
 // ── raikiri-style: cascade pipeline output + value 型 ──────────────────
 // ComputedValues field の型は Consumer が読み書きに直接名指しするため、value 系も
-// re-export (roborev-refine job 228)。
+// re-export する。
 //
-// bd raikiri-spike-zls8 (decision raikiri-spike-082k Phase 2) で
 // `ComputedValues` の length 系 field が **computed value 層**の型になったため、
 // `Computed*` 5 型を追加した。これらは computed 層の leaf 型である
 // (`ComputedBorder` のみ width/style/color の 3-field struct で scalar ではない):
@@ -136,13 +131,13 @@ pub use raikiri_dom::Document;
 // - `ComputedLineHeight`              — `line_height`
 // - `ComputedBorder`                  — `border` の各 side の leaf 型
 //
-// **訂正 (bd raikiri-spike-eow8)**: 上記 5 型は leaf 型に過ぎず、`padding` /
+// **訂正**: 上記 5 型は leaf 型に過ぎず、`padding` /
 // `margin` / `border` の実 field 型は `Sides<ComputedLengthPercentage>` 等の
-// 4-side container だった。zls8 時点では `Sides<T>` 自体が re-export されて
-// いなかったため、この 3 field は leaf 型を揃えても依然として型付きで名指し
-// できていなかった — zls8 はこれを承知の上で `Sides` を approved surface の
-// 外と判定し、意図的に見送っている (debt lens 追認済み)。eow8 で `Sides` を
-// 追加し、この gap を閉じた (下記)。
+// 4-side container だった。この最初の re-export 時点では `Sides<T>` 自体が
+// re-export されていなかったため、この 3 field は leaf 型を揃えても依然として
+// 型付きで名指しできていなかった — その時点ではこれを承知の上で `Sides` を
+// approved surface の外と判定し、意図的に見送っていた。後続の修正で
+// `Sides` を追加し、この gap を閉じた (下記)。
 //
 // `Length` (specified 層) は**残す** — `ComputedValues` の field 型ではなくなった
 // が、同じく re-export している `PropertyValue` は variant payload に `Length` を
@@ -151,8 +146,8 @@ pub use raikiri_dom::Document;
 // 孤立する。
 //
 // `Length` が payload に居ることは「その値が specified 層である」ことを意味しない
-// — **どの層かは PropertyValue をどこから受け取ったかで決まる** (bd
-// raikiri-spike-sshp)。この規則自体の canonical な記述は
+// — **どの層かは PropertyValue をどこから受け取ったかで決まる**。この規則
+// 自体の canonical な記述は
 // `raikiri_style::Length` の doc の「本型は『specified 層』を意味しない —
 // 層は出所で決まる」節にある (`Length` は下で re-export しているので Consumer
 // から到達可能)。出所ごとの内訳:
@@ -163,14 +158,14 @@ pub use raikiri_dom::Document;
 //   **computed 層** — `Length` はその computed 値の運搬 shape として使われて
 //   いる。**何が保証され例外が何かの canonical な記述は
 //   `raikiri_style::page::PageCascadeResult::declarations` の doc** であり、
-//   ここで再掲しない (再掲は既に 2 度 drift した — bd raikiri-spike-awjx)。
+//   ここで再掲しない (過去に再掲した記述が実装から drift した経緯がある
+//   ため)。
 //   (`cascade_page` 自体は umbrella が re-export していないので、この経路に
 //   届く Consumer は raikiri-style へ直接 dep している場合のみ。)
 //
-// `Sides<T>` / `LengthOrAuto` / `LineHeight` / `Border` — bd raikiri-spike-eow8
-// (2026-08-07 PMO approve、wall/umbrella add 方向) で追加。**この 4 型追加が
-// 上の「zls8 時点では見送った」判断を上書きする** — 旧文面をそのまま残すと
-// 「追加しない」という嘘が残るため書き換えた。役割:
+// `Sides<T>` / `LengthOrAuto` / `LineHeight` / `Border` — 追加された。**この
+// 4 型追加が上の「最初の re-export 時点では見送った」判断を上書きする** —
+// 旧文面をそのまま残すと「追加しない」という嘘が残るため書き換えた。役割:
 //
 // - `Sides<T>` — layer-agnostic な 4-side container (padding / margin /
 //   border の top/right/bottom/left)。specified 層
@@ -188,8 +183,8 @@ pub use raikiri_dom::Document;
 //   経由でのみ public なため、下の一括 `pub use` block には含めず、直後の別
 //   `pub use` 文でその path から明示 import する (`LineHeight` も同じ理由で同居)。
 //
-// **bd raikiri-spike-x0dq (2026-08-09 PMO 承認、wall/umbrella + wall/style)**:
-// 上の eow8 時点の記述には 2 つの gap があった。(1) `Border` 自体が
+// **さらなる修正**: 上の Sides / Border 追加時点の記述には 2 つの gap が
+// あった。(1) `Border` 自体が
 // `#[non_exhaustive]` struct のため raikiri crate から struct-literal 構築が
 // できず (E0639)、再 export しても値を得る public な経路が無かった —
 // `Sides::all` は既存の `Border` 値を 4 面に複製するだけで、その入力自体
@@ -197,14 +192,14 @@ pub use raikiri_dom::Document;
 // `color: BorderColor` (`Border` の残り 2 field の型) が re-export されて
 // おらず、Consumer が `Border::width` 以外の field を型付きで読めなかった。
 //
-// x0dq は両方を埋めた:
+// この修正で両方を埋めた:
 //
 // - `raikiri_style::property::Border` に `pub fn new() -> Self`
 //   (= `Self::default()` の thin wrapper) + `impl Default for Border`
 //   (CSS Backgrounds 3 初期値: `width` = medium(3px) / `style` = `none` /
 //   `color` = `currentcolor`) を追加。`raikiri_traits::page::PageBox::new`
 //   と同じ「zero-arg `new()` + 全 field `pub` による mutation」の 2-pattern
-//   契約 (`crates/raikiri/tests/external_consumer.rs` の M1.15 "3 pattern"
+//   契約 (`crates/raikiri/tests/external_consumer.rs` の "3 pattern"
 //   acceptance criteria の pattern 1 + pattern 2) — 3 field のみの単純な値
 //   なので pattern 3 (builder) は他の類似 struct 同様見送り。これで
 //   `raikiri::Border::new()` (+ 必要なら pub field への直接代入) が
@@ -239,7 +234,7 @@ pub use raikiri_style::{
 // crate root では re-export されておらず
 // (`raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight}`
 // 経由でのみ public)、上の一括 block には含められない (理由は上のコメント
-// 参照)。`BorderColor` / `BorderStyle` は bd raikiri-spike-x0dq で追加
+// 参照)。`BorderColor` / `BorderStyle` は追加された
 // (`Border` の残り 2 field の型を Consumer に型付きで公開する)。
 pub use raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight};
 
@@ -252,38 +247,38 @@ pub use bytes::Bytes;
 /// UA + Consumer 提供 stylesheet を Document から取り出し、Origin を割り当てて
 /// RuleTree を組み、raikiri-html が parse 時に集約した head 配下の `<style>`
 /// element の text を Author として追加した上で cascade を実行する umbrella
-/// orchestration entry point (spec §M1.4a、raikiri-spike-m1.23)。
+/// orchestration entry point。
 ///
-/// M1 では `raikiri_style::cascade` は常に `Ok` を返すため、内部で `expect` する
-/// (M2+ で Result 反映を検討)。
+/// 現状 `raikiri_style::cascade` は常に `Ok` を返すため、内部で `expect` する
+/// (将来 Result 反映を検討)。
 ///
 /// Consumer は `raikiri_html::parse` → `raikiri::build_cascaded` の 2 step だけで
 /// per-node ComputedValues を得られる。
 ///
-/// # DOM `<style>` の集約 scope (M1 contract)
+/// # DOM `<style>` の集約 scope
 ///
 /// `UncascadedDocument::stylesheet_sources` を Author として消費する。
 /// この Vec は parse 時に [`raikiri_html::parse`] 内の `extract_inline_stylesheets`
 /// が **head 配下** の `<style>` element の text を document order で集約し、
 /// `<template>` subtree は spec §14.1 の inertness に従って skip 済み。
-/// `<body>` 内の `<style>` は position-aware semantics が必要なため M1 では
-/// 未対応 (M2+ で拡張予定、`raikiri-html/src/sink.rs::extract_inline_stylesheets`
-/// の invariant に一致、roborev-refine job 226 参照)。
+/// `<body>` 内の `<style>` は position-aware semantics が必要なため現状
+/// 未対応 (将来拡張予定、`raikiri-html/src/sink.rs::extract_inline_stylesheets`
+/// の invariant に一致)。
 ///
 /// # DOM `<style>` (Author) vs `extra_stylesheets` (User)
 ///
 /// `Document.stylesheets()` (parse 時に注入された UA + `extra_stylesheets`) が
 /// 先に RuleTree に流し込まれ、次に `stylesheet_sources` (head 配下 `<style>`)
-/// が Author として追加される。bd raikiri-spike-d7h3 より前は `extra_stylesheets`
+/// が Author として追加される。従来は `extra_stylesheets`
 /// も `Author` としてタグされており、DOM `<style>` との勝敗は同一 origin 内の
-/// source_order tie-break (後から来た方が勝つ) に依存していた。bd
-/// raikiri-spike-d7h3 で `extra_stylesheets` は [`Origin::User`] に retag された
+/// source_order tie-break (後から来た方が勝つ) に依存していた。その後
+/// `extra_stylesheets` は [`Origin::User`] に retag された
 /// ため、両者はもはや同一 origin ではない — 勝敗は origin rank の差で
 /// specificity / source_order を問わず決まる。
 ///
 /// **normal 同士なら** [`Origin::Author`] (normal rank 3) > [`Origin::User`]
 /// (normal rank 1) なので **DOM `<style>` が `extra_stylesheets` を上書きする**
-/// — 旧 M1 実装判断 (raikiri-spike-m1.23) が偶然同一 origin tie-break で
+/// — 旧実装判断が偶然同一 origin tie-break で
 /// 実現していたのと同じ勝敗だが、根拠が「同 origin tie-break」から「別
 /// origin の rank 差」に変わった。
 ///
@@ -300,7 +295,7 @@ pub use bytes::Bytes;
 ///
 /// `StylesheetKind → Origin` の翻訳は raikiri-html にも raikiri-style にも置かず、
 /// umbrella (本 crate) 内で明示的に書く。これにより下位 crate 間の逆依存を発生
-/// させない (raikiri-spike-m1.23 Acceptance #2)。
+/// させない。
 pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
     let mut tree = RuleTree::empty();
 
@@ -312,13 +307,12 @@ pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
     }
 
     // raikiri-html が parse 時に head 配下 / template-inert filter 越しに集約した
-    // `<style>` element の text を Author として追加。<body> style は M1 未対応
-    // (roborev-refine job 226 medium 対応)。
+    // `<style>` element の text を Author として追加。<body> style は現状未対応。
     for source in &doc.stylesheet_sources {
         tree.add_stylesheet(source, Origin::Author);
     }
 
-    cascade(&doc.dom, &tree).expect("m1 では cascade は常に Ok")
+    cascade(&doc.dom, &tree).expect("cascade は常に Ok のはず")
 }
 
 /// dom-level の [`StylesheetKind`] (raikiri-traits) を cascade-level の
@@ -326,14 +320,14 @@ pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
 ///
 /// `StylesheetKind` は他 crate の `#[non_exhaustive]` enum のため exhaustive match
 /// はできないが、将来 variant が追加された場合の silent misroute を防ぐため
-/// `_` arm は `unreachable!` で loud fail させる (bd raikiri-spike-d7h3 時点で
+/// `_` arm は `unreachable!` で loud fail させる (現時点で
 /// UserAgent / User / Author の 3 variant で網羅済み)。
 fn stylesheet_kind_to_origin(kind: StylesheetKind) -> Origin {
     match kind {
         StylesheetKind::UserAgent => Origin::UserAgent,
         StylesheetKind::User => Origin::User,
         StylesheetKind::Author => Origin::Author,
-        // `StylesheetKind` は `#[non_exhaustive]`。bd raikiri-spike-d7h3 時点で
+        // `StylesheetKind` は `#[non_exhaustive]`。現時点で
         // UserAgent / User / Author の 3 variant を上で網羅済み。将来別の variant が
         // 追加された時点で対応が漏れるとここに到達し、silent misroute を防ぐため
         // panic で loud fail する (dev が cascade origin map の更新に気付ける)。
@@ -342,7 +336,7 @@ fn stylesheet_kind_to_origin(kind: StylesheetKind) -> Origin {
         // only becomes reachable if a future variant is added upstream without a
         // corresponding arm here (the panic message tells the dev to add one).
         _ => unreachable!(
-            "StylesheetKind variant not yet mapped to Origin — update stylesheet_kind_to_origin in raikiri crate (bd raikiri-spike-d7h3)"
+            "StylesheetKind variant not yet mapped to Origin — update stylesheet_kind_to_origin in raikiri crate"
         ),
     }
 }
@@ -426,7 +420,7 @@ mod html_document_tests {
         assert_eq!(
             doc.cascade().computed.len(),
             doc.dom().node_count(),
-            "cascade.computed.len() must equal document.node_count() (m1.23 contract)"
+            "cascade.computed.len() must equal document.node_count()"
         );
     }
 }
@@ -626,7 +620,7 @@ mod stub_tests {
         parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse")
     }
 
-    /// M1 では replaced element なし → resolve が呼ばれない前提で unreachable。
+    /// 現状 replaced element なし → resolve が呼ばれない前提で unreachable。
     struct NoopResolver;
     impl ReplacedResolver for NoopResolver {
         fn resolve(
@@ -637,7 +631,7 @@ mod stub_tests {
         }
     }
 
-    /// M1 sink stub。accept_page / finish_render は No-op。stub は sink を呼ばない前提。
+    /// sink stub。accept_page / finish_render は No-op。stub は sink を呼ばない前提。
     struct NoopSink;
     impl RenderSink for NoopSink {
         fn accept_page(

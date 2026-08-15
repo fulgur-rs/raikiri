@@ -1,4 +1,4 @@
-//! raikiri umbrella integration tests (raikiri-spike-m1.23)。
+//! raikiri umbrella integration tests。
 //!
 //! Consumer が `use raikiri::…;` のみで parse → build_cascaded → display 判定を
 //! 完結できることを verify する。
@@ -20,7 +20,7 @@ fn parse_html(source: &str) -> raikiri::UncascadedDocument {
 /// Element の NodeId を返す。
 ///
 /// 深いネストで stack overflow しないよう explicit `Vec` stack で iterative
-/// (raikiri-style::ruletree::walk_and_collect と同 pattern、roborev job 199)。
+/// (raikiri-style::ruletree::walk_and_collect と同 pattern)。
 /// stack は LIFO なので、pre-order (sibling 間 document order) を保つため
 /// children を reverse push する。
 fn find_by_tag<D: Dom>(dom: &D, tag: &str) -> Option<NodeId> {
@@ -58,7 +58,7 @@ fn p_without_author_style_is_display_block_via_ua_css() {
 
 #[test]
 fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
-    // bd raikiri-spike-5z86.1 Acceptance: <article><h2>...</h2><p>...</p>
+    // Acceptance: <article><h2>...</h2><p>...</p>
     // </article> が block box として render される (article 自体が inline化
     // して子要素と混線しない)。article を含む、同じ UA CSS 追加を受けた 11
     // 要素すべてを real parse → build_cascaded パイプラインで直接検証する —
@@ -67,8 +67,8 @@ fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
     // `MINIMAL_UA_CSS` の生テキストを走査するだけで実際に cssparser で
     // parse されるとは限らない (comment 構文の誤りなどを検出できない)。
     // この test は cascade まで通した computed value を見るので非-vacuous。
-    // bd raikiri-spike-xhgn: hgroup 追加 (article/aside/nav/section と同じ
-    // §sections-and-headings (15.3.6) selector group の一員、5z86.1 の
+    // hgroup 追加 (article/aside/nav/section と同じ
+    // §sections-and-headings (15.3.6) selector group の一員、当初の
     // scope からは漏れていた)。
     for tag in [
         "article",
@@ -99,14 +99,13 @@ fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
 
 #[test]
 fn list_elements_are_display_block_via_ua_css() {
-    // bd raikiri-spike-5z86.2 Acceptance: <ul><li>...</li><li>...</li></ul>
-    // の各 <li> が縦に積まれた block として表示される (marker記号は Epic 4
-    // 待ちで出なくてよい)。ol/ul は spec通り display: block、li は spec の
+    // Acceptance: <ul><li>...</li><li>...</li></ul>
+    // の各 <li> が縦に積まれた block として表示される (marker記号は将来
+    // 対応待ちで出なくてよい)。ol/ul は spec通り display: block、li は spec の
     // `display: list-item` が raikiri-style で未実装 (parse_display /
     // display_rejects_unknown_ident test) なため display: block に
-    // interim fallback している。list-item 実装は bd raikiri-spike-uhzy
-    // で track (詳細は crates/raikiri-html/src/ua/minimal.css のコメント
-    // 参照)。sectioning test と同様、cascade まで通した computed value を
+    // interim fallback している (詳細は crates/raikiri-html/src/ua/minimal.css の
+    // コメント参照)。sectioning test と同様、cascade まで通した computed value を
     // 見るので非-vacuous。
     for tag in ["ol", "ul", "li"] {
         let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
@@ -163,7 +162,7 @@ fn li_block_fallback_stacks_siblings_as_boxes() {
 
 #[test]
 fn author_inline_style_overrides_ua_display_block() {
-    // NB: m1.4 cascade は class/id selector を drop するので inline style を使う
+    // NB: cascade は class/id selector を drop するので inline style を使う
     let doc = parse_html("<html><body><p style=\"display:inline\">Hi</p></body></html>");
     let result = build_cascaded(&doc);
 
@@ -179,7 +178,7 @@ fn author_inline_style_overrides_ua_display_block() {
 #[test]
 fn dom_style_element_author_rule_overrides_ua() {
     // 明示的な <style> Author rule が UA を上回ることを verify。
-    // m1.4 cascade は type selector のみサポートするため p{...} を使う。
+    // cascade は type selector のみサポートするため p{...} を使う。
     let html = "<html><head><style>p { display: inline }</style></head>\
                 <body><p>Hi</p></body></html>";
     let doc = parse_html(html);
@@ -196,13 +195,13 @@ fn dom_style_element_author_rule_overrides_ua() {
 
 #[test]
 fn lang_pseudo_class_inherits_from_html_lang_attribute_through_real_parse_pipeline() {
-    // bd raikiri-spike-flln.6 acceptance, exercised through the *real*
+    // Acceptance test, exercised through the *real*
     // html5ever parse -> raikiri-dom -> build_cascaded pipeline (not the
     // raikiri-style-internal `TestDoc` mock other coverage for this feature
-    // uses) — this is the actual shape the bd description's example gives:
+    // uses):
     // `<html lang="ja">` with a `<p>` descendant that carries no `lang`
     // attribute of its own must still match `:lang(ja)`. This also pins
-    // that bd raikiri-spike-blg's `lang` attribute wiring
+    // that the `lang` attribute wiring
     // (`raikiri-html`'s sink -> `raikiri-dom::Node.attributes` ->
     // `ElementRef::attr`) actually surfaces `lang` where
     // `raikiri-style::StyleElement::attr("lang")` reads it end to end.
@@ -226,9 +225,8 @@ fn lang_pseudo_class_inherits_from_html_lang_attribute_through_real_parse_pipeli
 fn extra_stylesheets_user_rule_overrides_ua_via_umbrella() {
     // Consumer が opts.extra_stylesheets 経由で渡した CSS が User origin として
     // build_cascaded 経路に到達することを verify (parse 時 Document.stylesheets
-    // に User kind として push される、bd raikiri-spike-d7h3 で Author retag から
-    // 分離)。normal User (rank 1) は normal UserAgent (rank 0) より強いため UA
-    // CSS を上書きする。
+    // に User kind として push される、Author retag から分離済み)。normal User
+    // (rank 1) は normal UserAgent (rank 0) より強いため UA CSS を上書きする。
     let extra: &[&str] = &["p { display: inline }"];
     let opts = raikiri::ParseOptions {
         extra_stylesheets: extra,
@@ -268,16 +266,16 @@ fn user_important_beats_normal_ua_via_umbrella() {
     // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Origin and
     // Importance 段 (`!important` による反転は §6.3
     // <https://www.w3.org/TR/css-cascade-4/#importance>)。raikiri-style の full
-    // cascade_rank ordering (bd raikiri-spike-pdta で 4-tier 化、8-arm total):
+    // cascade_rank ordering (4-tier 化、8-arm total):
     //   Normal UA(0) < Normal User(1) < Normal Hint(2) < Normal Author(3) <
     //   Important Author(4) < Important Hint(5) < Important User(6) < Important UA(7)。
-    // bundled UA CSS (spec §M1.4a minimal.css) は !important を含まないため、
+    // bundled UA CSS (minimal.css) は !important を含まないため、
     // Important UA との反転検証は本 test では直接行えない。
     // ここで verify するのは "Important User が Normal UA を破る" leg で、これは
-    // umbrella の StylesheetKind → Origin map (extra_stylesheets → `Origin::User`、
-    // bd raikiri-spike-d7h3) が正しく機能していることを end-to-end で確認する最小
+    // umbrella の StylesheetKind → Origin map (extra_stylesheets → `Origin::User`) が
+    // 正しく機能していることを end-to-end で確認する最小
     // case。extra_stylesheets で渡す (parse 時 User kind として Document に注入
-    // される、bd raikiri-spike-d7h3 で Author retag から分離)。
+    // される、Author retag から分離済み)。
     let extra: &[&str] = &["p { display: inline !important }"];
     let opts = raikiri::ParseOptions {
         extra_stylesheets: extra,
@@ -290,7 +288,7 @@ fn user_important_beats_normal_ua_via_umbrella() {
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let display = result.computed[p_id.0 as usize].display;
 
-    // NB: この test 段階では bundled UA CSS は !important を含まない (spec §M1.4a の minimal.css)。
+    // NB: この test 段階では bundled UA CSS は !important を含まない (minimal.css)。
     // User !important があると User が勝つ (Normal UA 0 < ... < Important User 6)。
     // したがって p の display は inline になる。この test は "Important User > Normal UA"
     // の origin-rank ordering が umbrella wiring 越しに保存されることを confirm する。
@@ -308,7 +306,6 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     // Atom)、Document (UncascadedDocument.dom の型)、NetworkProvider (ParseOptions.network の
     // 型)、Url (ParseOptions.base_url の型)。sub-crate を direct dep せずに ParseOptions を
     // 完全構築、ComputedValues field を型付き binding できることを compile-time で verify。
-    // (roborev-refine job 228 medium finding regression)
     use raikiri::{
         Atom, ComputedLength, CssColor, Document, Length, NetworkProvider, ParseOptions,
         PropertyValue, Url, build_cascaded, parse,
@@ -334,12 +331,12 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
 
     // ComputedValues field を型付き binding で受け、value 型が名指しできることを verify。
     let _color: CssColor = computed.color;
-    // bd raikiri-spike-zls8: `font_size` は computed 層の `ComputedLength`。
+    // `font_size` は computed 層の `ComputedLength`。
     let _font_size: ComputedLength = computed.font_size;
     // specified 層の `Length` は `PropertyValue` の payload 型として引き続き
     // Consumer から名指しできる必要がある (umbrella re-export list の rationale)。
     let _specified_font_size: PropertyValue = PropertyValue::FontSize(Length::Px(12.0));
-    // raikiri-spike-no7b (d9y.1/d9y.2 pattern踏襲) 以降、実 field 型は
+    // 実 field 型は
     // `Arc<Vec<Atom>>` — 下記 binding は `Arc<Vec<T>>: Deref<Target = Vec<T>>`
     // による deref coercion 経由で通る (Content/StringSet 等 sibling field と
     // 同じ「read-side consumer は無改修で継続動作」設計、
@@ -354,9 +351,9 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
 
 #[test]
 fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
-    // bd raikiri-spike-eow8: `PropertyValue` の Sides<T> 系 payload
+    // `PropertyValue` の Sides<T> 系 payload
     // (Padding/Margin/Border) と LineHeight を umbrella から型付きで名指し
-    // できることを compile-time で証明する。zls8 が
+    // できることを compile-time で証明する。既存の
     // `PropertyValue::FontSize(Length::Px(12.0))` で入れた「実際に construct
     // して確認する」形と同じ shape を、直接 construct できる 3 variant
     // (Padding/Margin/LineHeight) には踏襲する。
@@ -377,15 +374,15 @@ fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
     // 既存 variant の construct 自体は (`Length` 同様) 外部 crate から可能。
     let _specified_line_height: PropertyValue = PropertyValue::LineHeight(LineHeight::Normal);
 
-    // `Border(Sides<Border>)` — bd raikiri-spike-x0dq より前は `Border` struct
+    // `Border(Sides<Border>)` — 以前は `Border` struct
     // 自体が `#[non_exhaustive]` のため raikiri crate から `Border { .. }`
     // struct-literal 構築ができず (E0639)、tuple-variant constructor を fn
     // pointer に coerce する形で型だけ pin していた (値そのものは作れなかった)。
-    // x0dq で `Border::new()` (= `Self::default()`) を追加したので、
+    // `Border::new()` (= `Self::default()`) の追加で、
     // FontSize/Padding/Margin/LineHeight と同じ「実際に値を construct する」
-    // 形に揃える。全 field が `pub` なので `Border::new()` の後に non-initial
+    // 形に揃った。全 field が `pub` なので `Border::new()` の後に non-initial
     // 値へ mutation することも確認する (`BorderStyle` / `BorderColor` も
-    // x0dq で umbrella re-export に追加、その2型も型付きで construct できる
+    // 同時期に umbrella re-export に追加、その2型も型付きで construct できる
     // ことを合わせて pin する)。
     let mut border = Border::new();
     assert_eq!(
@@ -408,11 +405,11 @@ fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
 
 #[test]
 fn umbrella_re_exports_cover_computed_sides_container_fields() {
-    // bd raikiri-spike-eow8: zls8 が re-export した Computed* 5 型は leaf 型に
+    // 最初に re-export した Computed* 5 型は leaf 型に
     // 過ぎず、`ComputedValues.padding` / `.margin` / `.border` の実 field 型
     // `Sides<Computed*>` は `Sides<T>` 自体が re-export されていなかったため
-    // 名指しできなかった (zls8 以前からの gap、`crates/raikiri-style/src/
-    // computed.rs` の field 定義で実測)。eow8 の `Sides` 追加でこの 3 field も
+    // 名指しできなかった (`crates/raikiri-style/src/
+    // computed.rs` の field 定義で実測)。後続の `Sides` 追加でこの 3 field も
     // 型付きで受けられることを、実際の cascade 出力を使って verify する。
     use raikiri::{
         ComputedBorder, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ParseOptions,
@@ -442,7 +439,6 @@ fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
     // (Method / Body / HeaderMap / ResourceKind) を全て raikiri から import して
     // struct 実装。round-trip 動作までは要求しない (fetch 内で NetworkError::Aborted 即返却)
     // — 目的は trait impl の name resolution 完結性の証明。
-    // (roborev-refine job 230 medium finding regression)
     use raikiri::{Bytes, FetchedResource, NetworkError, NetworkProvider, Request, Url};
 
     struct DummyProvider;
@@ -470,7 +466,7 @@ fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
 
 #[test]
 fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade() {
-    // bd raikiri-spike-5z86.6: <link rel="stylesheet" href="..."> の
+    // <link rel="stylesheet" href="..."> の
     // 検出→fetch (NetworkProvider::fetch, ResourceKind::ExternalStylesheet)
     // →CSS text 化までは raikiri-html 単体 unit test 済み。この umbrella
     // test はその先 — raikiri-html が `UncascadedDocument.stylesheet_sources`
@@ -528,12 +524,11 @@ fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade()
 
 #[test]
 fn body_style_element_is_not_applied_per_m1_head_only_contract() {
-    // spec §M1: raikiri-html は現状 head 配下の <style> のみ stylesheet_sources
-    // に集約する (<body> 内 <style> の position-aware semantics は M2+)。
+    // raikiri-html は現状 head 配下の <style> のみ stylesheet_sources
+    // に集約する (<body> 内 <style> の position-aware semantics は将来対応)。
     // umbrella build_cascaded は stylesheet_sources を Author として消費するため、
     // <body> 内 <style> は cascade に流れず、<p> は UA CSS の display: block を得る。
-    // (roborev-refine job 226 medium finding regression、
-    //  raikiri-html/src/sink.rs::extract_inline_stylesheets の invariant と一致)
+    // (raikiri-html/src/sink.rs::extract_inline_stylesheets の invariant と一致)
     let html = "<html><head></head>\
                 <body><style>p { display: inline }</style><p>Hi</p></body></html>";
     let doc = parse_html(html);
@@ -544,15 +539,15 @@ fn body_style_element_is_not_applied_per_m1_head_only_contract() {
     assert_eq!(
         display,
         DisplayValue::Block,
-        "<body> 内の <style> は M1 では未対応、<p> は UA CSS 経由で display: block を得る",
+        "<body> 内の <style> は現状未対応、<p> は UA CSS 経由で display: block を得る",
     );
 }
 
 #[test]
 fn img_width_height_html_attributes_reach_computed_style_through_real_parse_path() {
-    // bd raikiri-spike-5z86.7: raikiri-style crate 内 (`crate::cascade::
+    // raikiri-style crate 内 (`crate::cascade::
     // push_img_dimension_hints`) の実装だけで足りる、という scope-narrowing
-    // 判定 ("wall/sink label dropped after re-verification") の根拠は
+    // 判定の根拠は
     // `crates/raikiri-html/src/sink.rs::wire_side_tables` が null-namespace
     // 属性を汎用的に `Node.attributes` へ配線済み、という **static code
     // reading** だった (実行して確かめてはいない)。この umbrella test は
@@ -561,7 +556,7 @@ fn img_width_height_html_attributes_reach_computed_style_through_real_parse_path
     // (`RaikiriTreeSink`) → `Document.set_element_attributes` →
     // `ElementRef::attr()` → `StyleElement::attr()`」という配線の
     // **実行時**証拠を、raikiri crate 公開 API のみを使って与える
-    // (m1.23 の "consumer は `use raikiri::…;` のみで完結" contract と同じ形)。
+    // ("consumer は `use raikiri::…;` のみで完結" contract と同じ形)。
     let doc = parse_html(r#"<html><body><img src="x.png" width="100" height="50"></body></html>"#);
     let result = build_cascaded(&doc);
 
@@ -602,11 +597,11 @@ fn img_width_html_attribute_overridable_by_real_author_stylesheet_through_real_p
 
 #[test]
 fn img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrella() {
-    // Consumer-visible behavior change from bd raikiri-spike-d7h3: `extra_stylesheets`
+    // Consumer-visible behavior change: `extra_stylesheets`
     // is now tagged `StylesheetKind::User` (→ `Origin::User`, normal rank 1), which
     // CSS Cascading L5 §6.5 places *below* `Origin::AuthorPresentationalHint` (normal
     // rank 2) — so `<img width>`'s presentational hint now beats an
-    // `extra_stylesheets` rule regardless of specificity. Before d7h3, `extra_stylesheets`
+    // `extra_stylesheets` rule regardless of specificity. Previously, `extra_stylesheets`
     // was tagged `Author` (rank 3), which beat the hint — contrast with
     // `img_width_html_attribute_overridable_by_real_author_stylesheet_through_real_parse_path`
     // above, where a *real* Author-origin rule (in-document `<style>`) still beats the
@@ -637,8 +632,8 @@ fn img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrell
         computed.width,
         raikiri::ComputedLengthPercentageOrAuto::Px(100.0),
         "img width presentational hint (Origin::AuthorPresentationalHint, rank 2) must \
-         beat extra_stylesheets (Origin::User, rank 1) — this ranking flipped in bd \
-         raikiri-spike-d7h3 (extra_stylesheets used to be tagged Author, rank 3)"
+         beat extra_stylesheets (Origin::User, rank 1) — this ranking flipped \
+         (extra_stylesheets used to be tagged Author, rank 3)"
     );
     assert_eq!(
         computed.height,
@@ -651,31 +646,31 @@ fn img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrell
 
 #[test]
 fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
-    // bd raikiri-spike-5z86.5 Acceptance: <hr> が水平線として render される。
-    // HTML Living Standard §the-hr-element-2 (15.3.11、WebFetch 2026-08-11
-    // 確認) は `hr { color: gray; border-style: inset; border-width: 1px;
+    // Acceptance: <hr> が水平線として render される。
+    // HTML Living Standard §the-hr-element-2 (15.3.11) は `hr { color: gray;
+    // border-style: inset; border-width: 1px;
     // margin-block: 0.5em; margin-inline: auto; overflow: hidden; }` を
     // 規定し、`display: block` は別の §flow-content-3 (15.3.3) flow-content
     // group 側から来る。raikiri-style には border-style / border-width の
     // 独立 multi-side property、margin-block / margin-inline logical
     // property のいずれも実装がない (overflow property 自体は
-    // bd raikiri-spike-cmd3 で実装済み — 詳細は minimal.css のコメント参照)
+    // 実装済み — 詳細は minimal.css のコメント参照)
     // — 本 test は「minimal.css が実際に宣言
     // している *置換後* の rule」の cascade 出力を pin する (border
     // shorthand + margin shorthand + color)。spec 原文
     // そのものを pin しているわけではない点に注意。
     //
-    // NB: `computed.overflow` (raikiri-style `OverflowValue`/`OverflowXY`,
-    // bd raikiri-spike-cmd3) is deliberately **not** asserted here — this
+    // NB: `computed.overflow` (raikiri-style `OverflowValue`/`OverflowXY`)
+    // is deliberately **not** asserted here — this
     // module's own doc states its purpose is verifying `use raikiri::…;`
     // alone suffices, and `OverflowValue`/`OverflowXY` are not (yet)
     // re-exported at the umbrella crate root (`crates/raikiri/src/lib.rs`
     // re-exports `Border`/`BorderColor`/`BorderStyle`/`LineHeight` from
     // `raikiri_style::property` for the same "consumer needs the payload
-    // type to match on this `PropertyValue` variant" reason bd
-    // raikiri-spike-x0dq added those; `OverflowValue`/`OverflowXY` would be
+    // type to match on this `PropertyValue` variant" reason those were
+    // added; `OverflowValue`/`OverflowXY` would be
     // the same shape of follow-up, but deciding the umbrella's public
-    // surface is out of scope here — wall/umbrella).
+    // surface is out of scope here).
     // `sectioning_and_grouping_elements_are_display_block_via_ua_css` /
     // `list_elements_are_display_block_via_ua_css` と同様、実 parse ->
     // build_cascaded を通すので非-vacuous (raikiri-html::lib の textual
@@ -772,10 +767,9 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
 
 #[test]
 fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
-    // bd raikiri-spike-cfbo Acceptance: the 6 §flow-content-3 (15.3.3)
-    // display:block selector members that were untracked by any existing
-    // milestone-gap-audit category (found by bd raikiri-spike-5z86.1's
-    // reviewer:spec audit) now resolve to display: block end-to-end.
+    // Acceptance: the 6 §flow-content-3 (15.3.3)
+    // display:block selector members that were previously untracked
+    // now resolve to display: block end-to-end.
     // center/listing/plaintext/xmp are HTML LS §16.2 "entirely obsolete"
     // elements, but that classification governs authoring conformance,
     // not UA rendering — §flow-content-3 itself still lists them in the
@@ -784,15 +778,15 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
     // deliberately NOT in this list — minimal.css has no rule for it at
     // all yet. An earlier version of this change added a
     // `dialog { display: none; } dialog[open] { display: block; }` pair
-    // (plus a test here), but reviewer:spec found it was a regression:
+    // (plus a test here), but review found it was a regression:
     // `raikiri_dom::ElementRef::attr()` normalizes any empty-value
-    // attribute to `None` (bd raikiri-spike-kxki), so `dialog[open]`
+    // attribute to `None`, so `dialog[open]`
     // never fires for the canonical bare `<dialog open>` form, leaving
     // only the unconditional `dialog { display: none; }` in effect — a
     // real open dialog's content went from visible-but-wrong-box
     // (CSS-initial `inline`, no rule) to fully invisible (`none`). Pulled
-    // out in the amend; dialog's UA CSS is deferred as a whole unit to
-    // bd raikiri-spike-wezw, a followup blocked on kxki (see minimal.css's
+    // out in the amend; dialog's UA CSS is deferred as a whole unit,
+    // blocked on a raikiri-dom empty-value-attribute bug (see minimal.css's
     // comment). Same
     // non-vacuous real parse -> build_cascaded pattern as
     // `sectioning_and_grouping_elements_are_display_block_via_ua_css` /

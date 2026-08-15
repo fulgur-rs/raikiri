@@ -1,7 +1,7 @@
-//! raikiri-wpt — WPT harness with blitz oracle (M1 skeleton).
+//! raikiri-wpt — WPT harness with blitz oracle (initial skeleton).
 //!
-//! M1 scaffold: module structure + expectations parsers + type stubs.
-//! Actual reftest execution and oracle diff aggregation land in M3
+//! Current scaffold: module structure + expectations parsers + type stubs.
+//! Actual reftest execution and oracle diff aggregation are future work
 //! (see design spec §12.9 / §12.10).
 
 pub mod expectations;

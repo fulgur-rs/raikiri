@@ -1,4 +1,4 @@
-//! CSS cascade + inheritance walk (M1.4)。
+//! CSS cascade + inheritance walk。
 //!
 //! 2 phase:
 //! 1. per-node "cascaded values" 決定 — matching rule + inline style の候補集合から
@@ -6,8 +6,7 @@
 //! 2. inheritance walk — top-down DFS で親の computed value を継承 + 自 node の
 //!    cascaded value で override
 //!
-//! # inheritance walk 内部の 4 段階 (bd decision raikiri-spike-082k、
-//! # phase 2.5 は bd raikiri-spike-vxha で追加)
+//! # inheritance walk 内部の 4 段階
 //!
 //! 上記 phase 2 の per-node 処理は、さらに 4 段に分かれる (順に phase 1 /
 //! 2 / 2.5 / 3 と呼ぶ):
@@ -52,12 +51,12 @@ use crate::{Direction, RaikiriSelectorImpl};
 
 /// Cascade 結果。
 ///
-/// M1.4 では `computed` のみ populate。M5 static-side (raikiri-spike-m5.1 /
-/// m5.3 / m5.4) は per-node ComputedValues 内で content / string_set /
-/// running_templates を保持する canonical taxonomy に落ち着き
-/// (bd raikiri-spike-376 amended)、CascadeResult-level の `gcpm_directives` /
-/// `running_templates` は下流 (raikiri-dom) で per-document に concatenate される
-/// 責務に移った。`#[non_exhaustive]` は将来 field 追加のために維持。
+/// 現時点では `computed` のみ populate。将来の GCPM (paged media generated
+/// content) static-side 実装では、per-node ComputedValues 内で content /
+/// string_set / running_templates を保持する canonical taxonomy に落ち着く見込みで、
+/// CascadeResult-level の `gcpm_directives` / `running_templates` は下流
+/// (raikiri-dom) で per-document に concatenate される責務に移る。
+/// `#[non_exhaustive]` は将来 field 追加のために維持。
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct CascadeResult {
@@ -68,7 +67,7 @@ pub struct CascadeResult {
 
 /// DOM + RuleTree から per-node ComputedValues を produce。
 ///
-/// M1.4 では常に `Ok` を返す (invalid CSS は既に build_rule_tree 段で silently
+/// 現時点では常に `Ok` を返す (invalid CSS は既に build_rule_tree 段で silently
 /// drop されており、cascade は construct され得ない)。`Result` signature は
 /// 将来 fail-hard mode 用に維持。
 ///
@@ -81,7 +80,7 @@ pub struct CascadeResult {
 ///
 /// # fn demo<D: raikiri_style::StyleDom>(dom: &D) {
 /// let rule_tree = build_rule_tree(dom);
-/// let result = cascade(dom, &rule_tree).expect("m1.4 では常に Ok");
+/// let result = cascade(dom, &rule_tree).expect("現時点では常に Ok");
 /// let root_style: &ComputedValues = &result.computed[0];
 /// # }
 /// ```
@@ -93,14 +92,14 @@ pub fn cascade<D: StyleDom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResu
 
     // Phase 2: inheritance walk。
     //
-    // raikiri-spike-37c roborev job 293 M1 finding: computed を Dom::node_count()
-    // で pre-allocate する。resolve_inheritance の DFS は root reachable な node
-    // のみを訪問するため、detached / unreachable node (foster-parenting transient、
-    // strip 後の孤児 stub 等) には entry を作らない。しかし raikiri-spike-m1.23
-    // contract `computed.len() == document.node_count()` は arena 全体を要求する
-    // (`raikiri-dom::layout::preshape_text` / `raikiri-paint::text::draw_text_node`
-    // が node_id で `computed[idx]` に直接 index する)。事前に initial() で埋めて
-    // おき、DFS で visited slot を上書きする実装。
+    // computed を Dom::node_count() で pre-allocate する。resolve_inheritance の
+    // DFS は root reachable な node のみを訪問するため、detached / unreachable
+    // node (foster-parenting transient、strip 後の孤児 stub 等) には entry を
+    // 作らない。しかし `computed.len() == document.node_count()` という contract
+    // は arena 全体を要求する (`raikiri-dom::layout::preshape_text` /
+    // `raikiri-paint::text::draw_text_node` が node_id で `computed[idx]` に
+    // 直接 index する)。事前に initial() で埋めておき、DFS で visited slot を
+    // 上書きする実装。
     let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
     resolve_inheritance(
         dom,
@@ -125,8 +124,7 @@ type Specificity = u32;
 /// `1 << 30` はその packed 空間のどの selector 由来 specificity よりも大きいので、
 /// 上記 "higher than any selector" を満たす。**この margin はちょうど 1** であり
 /// upstream が packing 幅を広げると反転しうる不変条件 — pin は
-/// `tests::inline_specificity_exceeds_max_reachable_packed_specificity` を参照
-/// (bd raikiri-spike-nvhy)。
+/// `tests::inline_specificity_exceeds_max_reachable_packed_specificity` を参照。
 const INLINE_SPECIFICITY: Specificity = 1 << 30;
 /// inline style の source_order — 全 stylesheet rule より後 (最終出現扱い)。
 const INLINE_SOURCE_ORDER: u32 = u32::MAX;
@@ -145,9 +143,8 @@ const PRESENTATIONAL_HINT_SPECIFICITY: Specificity = 0;
 /// 同 hint の source_order。`0` — 実 stylesheet の最初の rule
 /// ([`crate::ruletree::RuleTree::add_stylesheet`] は空 `RuleTree` への
 /// 最初の rule に `source_order = 0` を採番する) と数値上 tie し得る値だが、
-/// bd raikiri-spike-wo36 で hint 専用の `cascade_rank` tier
-/// ([`Origin::AuthorPresentationalHint`]) を導入して以降、この tie は
-/// 実際には発生しない — rank 差が specificity/source_order より先に
+/// hint 専用の `cascade_rank` tier ([`Origin::AuthorPresentationalHint`]) を
+/// 導入して以降、この tie は実際には発生しない — rank 差が specificity/source_order より先に
 /// tuple compare で決着するため ([`push_img_dimension_hints`] doc の
 /// "Cascade origin" 節参照)。`0` という値自体は「他候補と衝突しない値」を
 /// 意図したものではなく、単に real stylesheet rule の source_order と同じ
@@ -156,40 +153,35 @@ const PRESENTATIONAL_HINT_SOURCE_ORDER: u32 = 0;
 
 /// 1 candidate declaration = `(value, important, origin, specificity, source_order)`。
 /// `collect_cascaded` が populate、`pick_winners` が rank 化して winner を選ぶ
-/// (raikiri-spike-m1.22 で `Origin` を追加、clippy::type_complexity 回避のため alias 化)。
+/// (`Origin` を含む — clippy::type_complexity 回避のため alias 化)。
 type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
 
 /// [`collect_cascaded`] の出力 — 全 node 分の candidate を単一 flat `Vec` に
-/// 積み、node ごとの部分区間を [`Range`] で引く (bd raikiri-spike-gerj、
-/// raikiri-spike-8kn8 の follow-up)。
+/// 積み、node ごとの部分区間を [`Range`] で引く。
 ///
 /// # 何を置換したか
 ///
 /// 旧実装は `HashMap<StyleNodeId, Vec<CascadedDecl>>` — per-node に `Vec` を
 /// 1 本ずつ確保していた。n=1000 node の cascade で **collect_cascaded 単体
-/// 4,030 allocs / 2,439,940 bytes** (bd raikiri-spike-gerj 実測、着手時
-/// 再計測。8kn8 起票時の「collect_cascaded 他 rest」バケツは
-/// `resolve_inheritance` の clone chain と合算されていたため、それとは別数値)。
-/// ただしこの 4,030 のうち **1,020 allocs / 64,744 bytes は本 struct が
-/// 触れていない `dom.child_ids(id).collect()` 行**に由来していた (同じ doc で
-/// その行だけを単独実行して確認、gerj 当時は bd raikiri-spike-75ch の管轄で
-/// 本 struct の対象外)。この残差は 75ch が [`collect_cascaded`] /
-/// [`resolve_inheritance`] 双方の呼び出し箇所を「捨て `Vec` へ `collect` して
-/// `rev()`」から「`stack` へ直接 `extend` してから追加分だけ in-place
-/// `reverse()`」に書き換えて解消済み — 中間 allocation はもう存在しない
-/// (同じ形の第 3 の call site だった `crates/raikiri-style/src/ruletree.rs` の
-/// `walk_style_elements` も bd raikiri-spike-o53w が同じ技法で解消済み、本
-/// module の対象外)。per-node `Vec` の growth chain 自体が担っていたのは残り
-/// **3,010 allocs / 2,375,196 bytes** — push のたび geometric に再確保する
-/// その growth chain が丸ごと allocation cost だった。単一 arena にすると
-/// growth chain は文書全体で 1 本になり (n=1000 で 23 allocs まで低下、
-/// -99.2%)、chain 長は `O(log 総 candidate 数)` に潰れる。
+/// 4,030 allocs / 2,439,940 bytes** (実測値)。ただしこの 4,030 のうち
+/// **1,020 allocs / 64,744 bytes は本 struct が触れていない
+/// `dom.child_ids(id).collect()` 行**に由来していた (同じ doc でその行だけを
+/// 単独実行して確認、当時は本 struct の対象外)。この残差は、
+/// [`collect_cascaded`] / [`resolve_inheritance`] 双方の呼び出し箇所を「捨て
+/// `Vec` へ `collect` して `rev()`」から「`stack` へ直接 `extend` してから
+/// 追加分だけ in-place `reverse()`」に書き換えることで解消済み — 中間
+/// allocation はもう存在しない (同じ形の第 3 の call site だった
+/// `crates/raikiri-style/src/ruletree.rs` の `walk_style_elements` も同じ
+/// 技法で解消済み、本 module の対象外)。per-node `Vec` の growth chain 自体が
+/// 担っていたのは残り **3,010 allocs / 2,375,196 bytes** — push のたび
+/// geometric に再確保するその growth chain が丸ごと allocation cost だった。
+/// 単一 arena にすると growth chain は文書全体で 1 本になり (n=1000 で 23
+/// allocs まで低下、-99.2%)、chain 長は `O(log 総 candidate 数)` に潰れる。
 ///
 /// # なぜ struct で wrap するか (bare `(Vec<_>, HashMap<_, Range<usize>>)` にしないか)
 ///
 /// [`pick_winners`] の `winner.idx` は「渡された **その** slice 内の位置」で
-/// あり、bd raikiri-spike-8kn8 のドキュメントが警告する通り **範囲外にならず
-/// 静かに別 node の宣言を読む** 経路がある。arena 化で新たに生まれる同型の
+/// あり、**範囲外にならず静かに別 node の宣言を読む** 経路がある。arena 化で新たに生まれる同型の
 /// 危険は「[`candidates`](Self::candidates) を経由せず、`decls` 全体や
 /// `decls[range.start..]` のような**部分的に間違ったスライス**を
 /// [`apply_winners`] に渡してしまう」こと — この場合も範囲外にはならず、
@@ -232,8 +224,7 @@ impl CascadedArena {
 
 /// [`pick_winners`] の scratch slot — 1 property key の暫定勝者。
 ///
-/// [`idx`](Self::idx) が [`PropertyValue`] 本体ではなく **index** なのが要点
-/// (bd raikiri-spike-8kn8):
+/// [`idx`](Self::idx) が [`PropertyValue`] 本体ではなく **index** なのが要点:
 ///
 /// - slot が `Copy` になり `Drop` を持たないので、slot の reset が
 ///   [`Option::take`] だけで済む (buffer 全体を drop / 再確保しなくてよい)。
@@ -258,10 +249,11 @@ struct RankedDecl {
     idx: usize,
 }
 
-/// Cascade origin + `!important` flag に基づく優先度 rank (raikiri-spike-m1.22、
-/// 3rd origin tier は bd raikiri-spike-wo36、4th origin tier ([`Origin::User`])
-/// は bd raikiri-spike-pdta — pdta で 4-tier 全体を re-derive した、単純な
-/// 番号ずらしではない点に注意、下記参照)。
+/// Cascade origin + `!important` flag に基づく優先度 rank。
+/// [`Origin::AuthorPresentationalHint`] と [`Origin::User`] の 2 origin は
+/// 当初の UA/Author 2-origin 実装に後から追加されたものであり、特に
+/// [`Origin::User`] の追加時には単純な番号ずらしではなく 4-tier 全体を
+/// re-derive している (下記参照)。
 ///
 /// 高いほど勝つ。CSS Cascading L4 §6.1 "Cascade Sorting Order"
 /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Origin and Importance
@@ -327,9 +319,8 @@ struct RankedDecl {
 /// 独立 origin tier ([`Origin::AuthorPresentationalHint`]) に置くという本
 /// crate の判断 ([`push_img_dimension_hints`] doc 参照) は、したがって
 /// **spec が直接指定する結論ではなく**、"author-level" という HTML LS の
-/// 言葉遣いと上記引用群を突き合わせた this crate の解釈 (bd
-/// raikiri-spike-5z86.7 / bd raikiri-spike-wo36 で reviewer:spec が
-/// defensible と判定済みの judgment call)。
+/// 言葉遣いと上記引用群を突き合わせた this crate の解釈 (spec 上の直接の
+/// 裏付けがない defensible な judgment call)。
 ///
 /// 上記 §6.5 の引用が直接定めるのは **Normal 段の位置**だけ: hint は
 /// "between the regular user origin and the author origin" — Normal User
@@ -351,7 +342,7 @@ struct RankedDecl {
 /// ただし spec 自身の reversal 機構をそのまま延長しただけで、恣意的な
 /// 選択の余地は無い)。
 ///
-/// # 4-tier 全体の rank 表 (pdta の re-derivation)
+/// # 4-tier 全体の rank 表 (re-derivation)
 ///
 /// 上記 2 節を合成すると、Normal / Important 各 4 origin の順序は:
 /// - Normal   : UA < User < AuthorPresentationalHint < Author (spec-verbatim
@@ -378,10 +369,10 @@ struct RankedDecl {
 ///
 /// `(AuthorPresentationalHint, true)` の arm は現状
 /// [`push_img_dimension_hints`] から到達しない (常に `important = false` で
-/// push する)。`(User, false)` / `(User, true)` の 2 arm は bd
-/// raikiri-spike-pdta 時点ではどの production 呼び出し元からも到達しな
-/// かったが、bd raikiri-spike-d7h3 で consumer 提供 `extra_stylesheets` が
-/// [`Origin::User`] へ route されるようになったため、今は両方とも到達する
+/// push する)。`(User, false)` / `(User, true)` の 2 arm は当初どの
+/// production 呼び出し元からも到達しなかったが、consumer 提供
+/// `extra_stylesheets` が [`Origin::User`] へ route されるようになったため、
+/// 今は両方とも到達する
 /// ([`Origin::User`] の doc 参照) — [`crate::page::cascade_page`] も同じ
 /// [`Origin`] を経由するため、これらも `unreachable!()` にはせず total
 /// function として値を返す (この判断自体は producer の有無に関わらず
@@ -390,10 +381,10 @@ struct RankedDecl {
 /// `revert` keyword carve-out (上記 4 番目の引用: "it is considered part of
 /// the author origin" — `revert-layer` は対象外) は本 crate に現状影響しない
 /// — `revert`/`revert-layer` CSS-wide keyword 自体がまだ未実装
-/// ([`crate::property`] の "CSS-wide keyword (canonical)" 節、"Epic 7"
-/// milestone 参照)。実装時にこの carve-out の special-case が必要になる。
+/// ([`crate::property`] の "CSS-wide keyword (canonical)" 節参照)。実装時に
+/// この carve-out の special-case が必要になる。
 ///
-/// `@page` cascade (raikiri-spike-m4.1) も同じ origin ordering を共有するため
+/// `@page` cascade も同じ origin ordering を共有するため
 /// `pub(crate)` で公開し [`crate::page::cascade_page`] から reuse。
 pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
     match (origin, important) {
@@ -408,20 +399,19 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
     }
 }
 
-/// `collect_cascaded` は DFS で node を訪れる。bd raikiri-spike-flln.1 以前
-/// (combinator 非対応) は「per-node の処理は他の node の状態に依存しないため
-/// 訪問順は無関係」だった。descendant/child combinator (bd
-/// raikiri-spike-flln.2) の追加でこの前提は**もう成り立たない** — 各 element
-/// の selector matching は本関数 local の `ancestor_path`（「これまでに
-/// 訪れた祖先 element の id 列」）を参照するため、**祖先を子孫より先に処理する
-/// pre-order 訪問が正しさの前提**になった (祖先が先に積まれていなければ
-/// descendant/child の ancestor 参照が空振りする)。overflow 回避のため
-/// explicit `Vec` stack で iterative に書く方針 (roborev job 199) 自体は
-/// 変わらないが、stack の要素は素の `StyleNodeId` ではなく `(StyleNodeId,
-/// usize)` — 後者は「この node を処理する直前に ancestor path を truncate
-/// すべき長さ」。詳細は本関数の実装コメント参照。
+/// `collect_cascaded` は DFS で node を訪れる。descendant/child combinator に
+/// 未対応だった頃は「per-node の処理は他の node の状態に依存しないため
+/// 訪問順は無関係」だった。descendant/child combinator の追加でこの前提は
+/// **もう成り立たない** — 各 element の selector matching は本関数 local の
+/// `ancestor_path`（「これまでに訪れた祖先 element の id 列」）を参照するため、
+/// **祖先を子孫より先に処理する pre-order 訪問が正しさの前提**になった (祖先が
+/// 先に積まれていなければ descendant/child の ancestor 参照が空振りする)。
+/// overflow 回避のため explicit `Vec` stack で iterative に書く方針
+/// 自体は変わらないが、stack の要素は素の `StyleNodeId`
+/// ではなく `(StyleNodeId, usize)` — 後者は「この node を処理する直前に
+/// ancestor path を truncate すべき長さ」。詳細は本関数の実装コメント参照。
 ///
-/// # flat arena への書き込み (bd raikiri-spike-gerj)
+/// # flat arena への書き込み
 ///
 /// 1 node 分の candidate は `out.decls` に**連続して**積まれる —
 /// stylesheet rule matching (rule/declaration の source order) → inline
@@ -430,20 +420,20 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
 /// 割り込まないことが「区間が連続」の根拠であり、
 /// [`CascadedArena::candidates`] が返す slice の index が
 /// [`pick_winners`]/[`apply_winners`] にとって**その node 自身の**
-/// `candidates` 内 index であり続ける前提そのもの (raikiri-spike-8kn8 の
-/// 「global index space を渡すと壊れる」警告を参照)。
+/// `candidates` 内 index であり続ける前提そのもの (global index space を
+/// そのまま渡すと壊れる、という点に注意)。
 fn collect_cascaded<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
     rule_tree: &RuleTree,
     out: &mut CascadedArena,
 ) {
-    // Document-wide constant (bd raikiri-spike-tqwi) — read once rather than
+    // Document-wide constant — read once rather than
     // per (node, rule) pair inside the loop below.
     let quirks_mode = dom.quirks_mode();
     // Stack entries pair a node id with the `ancestor_path` length it should
-    // be truncated to *before* that node is processed (bd
-    // raikiri-spike-flln.2). `stack` itself interleaves the pending work of
+    // be truncated to *before* that node is processed.
+    // `stack` itself interleaves the pending work of
     // multiple subtrees in one flat `Vec` (sibling branches, cousins, ...),
     // so a plain push/pop can't recover "the current node's actual ancestor
     // chain" by itself — truncating `ancestor_path` to the depth recorded
@@ -468,7 +458,7 @@ fn collect_cascaded<D: StyleDom>(
     while let Some((id, depth)) = stack.pop() {
         ancestor_path.truncate(depth);
         if let Some(node) = dom.node(id) {
-            // raikiri-spike-37c: <template> 子孫 + 将来の inert subtree を統一 skip。
+            // <template> 子孫 + 将来の inert subtree を統一 skip。
             // silent bug fix: 従来 template 内 element にも rule matching が走り
             // arena (旧実装では per-node Vec<CascadedDecl>) が waste で膨らんで
             // いた。
@@ -479,9 +469,9 @@ fn collect_cascaded<D: StyleDom>(
                 && let Some(elem) = node.as_element()
             {
                 let start = out.decls.len();
-                // HTML presentational hints (bd raikiri-spike-5z86.7,
-                // retagged to `Origin::AuthorPresentationalHint` by bd
-                // raikiri-spike-wo36). This push is kept ahead of
+                // HTML presentational hints (later retagged to
+                // `Origin::AuthorPresentationalHint`, distinct from plain
+                // `Origin::Author`). This push is kept ahead of
                 // stylesheet-rule matching / inline style below for
                 // historical/document-order reasons, but it is no longer a
                 // *correctness* requirement: since the hint has its own
@@ -490,16 +480,16 @@ fn collect_cascaded<D: StyleDom>(
                 // origin" section), rank alone decides against any real
                 // Author-origin declaration regardless of specificity,
                 // source_order, or push order — no tie can occur (that was
-                // only possible before wo36, when hint and real Author
+                // only possible earlier, when hint and real Author
                 // declarations shared the same `Origin::Author` rank).
-                // Re-verified after bd raikiri-spike-pdta inserted the 4th
-                // `Origin::User` tier: the hint's `cascade_rank` value moved
-                // (see `cascade_rank`'s rank table) but stayed strictly
-                // between `Origin::User` and `Origin::Author` — never equal
-                // to the real `Author` rank in either the Normal or the
-                // Important half of the table — so this reasoning still
-                // holds unchanged; no test pins the push order itself
-                // (nothing here is order-*dependent* left to pin), but
+                // Re-verified after the 4th `Origin::User` tier was inserted:
+                // the hint's `cascade_rank` value moved (see `cascade_rank`'s
+                // rank table) but stayed strictly between `Origin::User` and
+                // `Origin::Author` — never equal to the real `Author` rank in
+                // either the Normal or the Important half of the table — so
+                // this reasoning still holds unchanged; no test pins the push
+                // order itself (nothing here is order-*dependent* left to
+                // pin), but
                 // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
                 // continues to pin the outcome this comment claims.
                 push_img_dimension_hints(&elem, &mut out.decls);
@@ -516,9 +506,9 @@ fn collect_cascaded<D: StyleDom>(
                         for decl in &rule.declarations {
                             // shorthand を longhand に展開してから candidate に
                             // 積む (parse 出口の展開だけでは `RuleTree` の
-                            // post-parse mutation 経路を守れないため —
-                            // bd raikiri-spike-nqkj)。rationale は
-                            // `crate::rule::expand_shorthand_into` doc に集約。
+                            // post-parse mutation 経路を守れないため)。
+                            // rationale は `crate::rule::expand_shorthand_into`
+                            // doc に集約。
                             expand_shorthand_into(decl, |d| {
                                 out.decls.push((
                                     d.value,
@@ -551,24 +541,24 @@ fn collect_cascaded<D: StyleDom>(
                 }
                 // This element becomes an ancestor for its own children
                 // (pushed just below with `ancestor_path.len()` as their
-                // truncation depth) — bd raikiri-spike-flln.2.
+                // truncation depth).
                 ancestor_path.push(id);
             }
             // stack は LIFO なので document order で push するため reverse。
             // `child_ids` イテレータを直接 `stack` へ `extend` し、今回追加した
             // 末尾スライスだけを in-place `reverse()` する — 都度捨てる中間
-            // `Vec` を経由しない (bd raikiri-spike-75ch)。`stack` 自体の
+            // `Vec` を経由しない。`stack` 自体の
             // capacity growth は元の `for .. { stack.push(..) }` と同じ
             // amortized pattern のままで、ここで削れるのは「今回だけの捨て
             // Vec」1 本分のみ。
             //
-            // なぜ document order (pre-order) を保つ**必要がある**か (bd
-            // raikiri-spike-flln.2 でここの結論が反転): 本関数冒頭のコメント
+            // なぜ document order (pre-order) を保つ**必要がある**か (descendant/
+            // child combinator 対応の追加でここの結論が反転): 本関数冒頭のコメント
             // の通り、descendant/child combinator matching は
             // `ancestor_path` — DFS の訪問順そのもの — に依存する。子を
             // 親より先に訪れると `ancestor_path` にまだ親が積まれておらず、
             // 子の combinator matching が誤って不一致になる。旧
-            // (raikiri-spike-flln.1 以前) の「訪問順は無関係、
+            // (combinator 非対応時代) の「訪問順は無関係、
             // 挙動一致のためだけに維持している」という位置づけはここで終わり
             // — 現在は正しさ上の要請。
             let child_depth = ancestor_path.len();
@@ -585,10 +575,10 @@ fn collect_cascaded<D: StyleDom>(
 /// [`match_complex_selector_list`] が右端 compound を `elem` 自身に対して
 /// 判定する最初の 1 手と、combinator 越しの祖先/兄弟候補判定
 /// ([`match_combinator_chain`] / [`match_from_element`] — descendant/child
-/// 越しの祖先判定は bd raikiri-spike-flln.2、NextSibling/LaterSibling 越しの
-/// 兄弟判定は同じ関数へ bd raikiri-spike-flln.3 で統合) の両方がこの関数を
-/// 共有する — bd raikiri-spike-flln.1 時点の (当時の) `match_simple_selectors`
-/// 本体をそのまま抽出しただけで、per-component の判定ロジック自体に変更は無い。
+/// 越しの祖先判定と、NextSibling/LaterSibling 越しの兄弟判定は同じ関数に
+/// 統合されている) の両方がこの関数を共有する — 元々の
+/// `match_simple_selectors` 本体をそのまま抽出しただけで、per-component の
+/// 判定ロジック自体に変更は無い。
 ///
 /// `iter: &mut SelectorIter` を `for component in iter` で回すと、
 /// `selectors` crate 自身の contract (`Selector::iter` の doc, verbatim:
@@ -614,14 +604,14 @@ fn collect_cascaded<D: StyleDom>(
 ///   case-sensitive")。`quirks_mode` 引数が
 ///   [`StyleQuirksMode::Quirks`] のときのみ `eq_ignore_ascii_case`、それ以外
 ///   ([`StyleQuirksMode::NoQuirks`] / [`StyleQuirksMode::LimitedQuirks`]) は
-///   厳密一致 (bd raikiri-spike-tqwi — "limited-quirks" は DOM Standard上
+///   厳密一致 ("limited-quirks" は DOM Standard上
 ///   "quirks mode" と別 dfn、fold の対象外)
 /// - `Component::Class` — `elem.has_class()` / `elem.has_class_ascii_case_insensitive()`
 ///   (CSS Selectors L4 <https://www.w3.org/TR/selectors-4/#class-html>、
 ///   verbatim: "When matching against a document which is in quirks mode,
 ///   class names must be matched ASCII case-insensitively; class selectors
-///   are otherwise case-sensitive")。ID と同じ `quirks_mode` 分岐 (bd
-///   raikiri-spike-tqwi)。both variants share the same HTML-spec ASCII
+///   are otherwise case-sensitive")。ID と同じ `quirks_mode` 分岐。
+///   both variants share the same HTML-spec ASCII
 ///   whitespace tokenisation — [`StyleElement::has_class`] の doc 参照
 /// - `Component::AttributeInNoNamespaceExists` / `Component::AttributeInNoNamespace`
 ///   — `elem.attr()` (CSS Selectors L4
@@ -631,12 +621,12 @@ fn collect_cascaded<D: StyleDom>(
 ///   コメント)。値付き形態の case-sensitivity 解決は
 ///   [`resolve_case_sensitivity`] 参照
 /// - `Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_))`
-///   (bd raikiri-spike-flln.6) — [`language_range_matches`] /
+///   — [`language_range_matches`] /
 ///   [`resolve_directionality`] 経由、`dom` + `ancestors` (自身の祖先 chain)
 ///   を使って ancestor-inherited な effective language / directionality を
 ///   解決する。`PseudoClass::Hover` / `PseudoClass::Active` はこの arm 内で
-///   引き続き `false` (bd raikiri-spike-flln.1 の scope 外のまま)。
-/// - `Component::Root` (`:root`, bd raikiri-spike-flln.5, CSS Selectors L4
+///   引き続き `false` (dynamic pseudo-class の対応は本実装の scope 外のまま)。
+/// - `Component::Root` (`:root`, CSS Selectors L4
 ///   §13.1 <https://www.w3.org/TR/selectors-4/#the-root-pseudo>) — matches
 ///   iff `ancestors.is_empty()`. Both call sites
 ///   ([`match_complex_selector_list`] for the rightmost compound,
@@ -651,18 +641,18 @@ fn collect_cascaded<D: StyleDom>(
 ///   "Spec provenance note"; what loaded is the summary-table one-liner,
 ///   "an E element, root of the document", 2026-08-12 direct fetch —
 ///   sufficient to pin this simple a definition).
-/// - `Component::Empty` (`:empty`, bd raikiri-spike-flln.5, CSS Selectors
+/// - `Component::Empty` (`:empty`, CSS Selectors
 ///   L4 §13.2 <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — see
 ///   [`matches_empty`] doc for the verbatim spec text and its L4-vs-L3
 ///   whitespace-handling correction history.
 /// - `Component::Nth(data)` (`:first-child`/`:last-child`/`:only-child`/
 ///   `:nth-child()`/`:nth-last-child()` and their `-of-type` counterparts,
-///   bd raikiri-spike-flln.5, CSS Selectors L4 §13.3/§13.4) — see
+///   CSS Selectors L4 §13.3/§13.4) — see
 ///   [`matches_nth`] doc for the sibling-position algorithm and its spec
 ///   citation. Reuses `ancestors.last().copied().unwrap_or_else(||
 ///   dom.root_id())` for its sibling-list parent — the exact same
 ///   root-fallback idiom [`match_combinator_chain`]'s `NextSibling`/
-///   `LaterSibling` arms already established (bd raikiri-spike-flln.3) for
+///   `LaterSibling` arms already established for
 ///   an unrelated reason (sibling lookup key, not a compound-match
 ///   target); both fall back for the same underlying reason ("the root
 ///   element's parent-in-tree is the Document node, not an `Element`, but
@@ -695,11 +685,11 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
             | Component::ExplicitAnyNamespace
             | Component::ExplicitNoNamespace
             | Component::DefaultNamespace(_) => {
-                // 常に match / namespace は m1.4 では常に true 扱い
+                // 常に match / namespace は現時点では常に true 扱い
                 true
             }
-            // CSS Selectors L4 id-selectors / class-html (bd
-            // raikiri-spike-tqwi, verbatim quoted on the function doc
+            // CSS Selectors L4 id-selectors / class-html (verbatim
+            // quoted on the function doc
             // above): ASCII-case-fold only under full quirks mode.
             // `LimitedQuirks` is a *separate* DOM Standard dfn from
             // "quirks mode" (confirmed via direct fetch of
@@ -782,8 +772,8 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
                 crate::PseudoClass::Dir(dir) => {
                     resolve_directionality(dom, elem, ancestors) == *dir
                 }
-                // `:hover` / `:active` — bd raikiri-spike-flln.1 の scope 外
-                // のまま。`is_supported_selector_list` が rule tree 構築時点で
+                // `:hover` / `:active` — dynamic pseudo-class は本実装の
+                // scope 外のまま。`is_supported_selector_list` が rule tree 構築時点で
                 // drop する契約 (`ruletree::tests::pseudo_class_selector_still_dropped`
                 // で pin) だが、`match_complex_selector_list_rejects_unsupported_component_via_safety_net`
                 // がこの関数を直接呼んで safety net を確認する — 同じ姿勢を
@@ -806,7 +796,7 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
                 // container" for a root element that in the DOM tree has no
                 // element parent at all. Same root-fallback idiom
                 // `match_combinator_chain`'s `NextSibling`/`LaterSibling`
-                // arms already use (bd raikiri-spike-flln.3).
+                // arms already use.
                 let sibling_parent = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
                 matches_nth(dom, sibling_parent, elem_id, elem.tag_name(), data)
             }
@@ -833,11 +823,11 @@ fn is_document_white_space(c: char) -> bool {
     matches!(c, '\u{0020}' | '\u{0009}' | '\u{000A}' | '\u{000D}')
 }
 
-/// `:empty` (bd raikiri-spike-flln.5, CSS Selectors L4 §13.2
+/// `:empty` (CSS Selectors L4 §13.2
 /// <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — whether
 /// `elem_id` has no children that count toward emptiness.
 ///
-/// # Spec provenance and correction (reviewer:spec, 2026-08-12)
+/// # Spec provenance and correction
 ///
 /// L4's own TR anchor repeatedly truncated on WebFetch before reaching
 /// normative prose — same failure mode [`match_combinator_chain`]'s "Spec
@@ -891,9 +881,9 @@ fn is_document_white_space(c: char) -> bool {
 /// stated explicitly — twice — as exactly {space, tab, segment break/line
 /// feed}, no fourth category. This is narrower than an earlier relayed
 /// characterization of the set as "U+000A/U+000D/U+000C family" — flagged
-/// as a discrepancy for `reviewer:spec` to confirm or correct with a
-/// citation, since this function currently follows the directly-verified
-/// primary source over the relayed one where they disagree.
+/// here as a discrepancy to confirm or correct with a citation, since this
+/// function currently follows the directly-verified primary source over
+/// the relayed one where they disagree.
 ///
 /// # Node-kind coverage
 ///
@@ -935,7 +925,7 @@ fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
 /// 1-based sibling position of `elem_id` among `parent_id`'s **element**
 /// children, both from the start and from the end, plus the total count of
 /// such siblings — shared arithmetic behind every `Component::Nth` variant
-/// (bd raikiri-spike-flln.5, [`matches_nth`]).
+/// ([`matches_nth`]).
 ///
 /// `of_type == false` (`:nth-child`/`:first-child`/`:last-child`/
 /// `:only-child`) counts **all** element siblings regardless of tag; CSS
@@ -950,8 +940,8 @@ fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
 /// — same source, verbatim: "an+b−1 siblings with the same expanded
 /// element name". "Expanded element name" is tag name **and** namespace;
 /// this crate's `compound_matches` already treats namespace matching as
-/// always-true at M1.4 (`Component::DefaultNamespace(_) => true`, "常に
-/// match / namespace は m1.4 では常に true 扱い") for the equivalent
+/// always-true (`Component::DefaultNamespace(_) => true`, "常に
+/// match / namespace は現時点では常に true 扱い") for the equivalent
 /// selector-vs-element case, so restricting this sibling-vs-sibling
 /// comparison to `tag_name` equality inherits that existing scope
 /// simplification rather than introducing a new one. Plain `==` (not
@@ -1070,19 +1060,18 @@ fn matches_nth<D: StyleDom>(
 /// / `elem_id` から辿る兄弟 element 列) と selector list を突き合わせる
 /// トップレベル matcher。
 ///
-/// # Combinator 対応 (bd raikiri-spike-flln.2 / flln.3)
+/// # Combinator 対応
 ///
-/// bd raikiri-spike-flln.1 時点は single-element (compound-only) matching
-/// のみで、combinator を含む selector は `ruletree.rs`
-/// `is_supported_selector_list` の gate で rule tree に乗る前に drop されて
-/// いた。bd raikiri-spike-flln.2 で descendant (space, CSS Selectors L4
-/// <https://www.w3.org/TR/selectors-4/#descendant-combinators>) と child
-/// (`>`, <https://www.w3.org/TR/selectors-4/#child-combinators>) の 2
-/// combinator を追加、bd raikiri-spike-flln.3 で adjacent sibling (`+`,
+/// 当初は single-element (compound-only) matching のみで、combinator を
+/// 含む selector は `ruletree.rs` `is_supported_selector_list` の gate で
+/// rule tree に乗る前に drop されていた。その後 descendant (space, CSS
+/// Selectors L4 <https://www.w3.org/TR/selectors-4/#descendant-combinators>)
+/// と child (`>`, <https://www.w3.org/TR/selectors-4/#child-combinators>)
+/// の 2 combinator を追加し、続けて adjacent sibling (`+`,
 /// <https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>) と
 /// general sibling (`~`,
 /// <https://www.w3.org/TR/selectors-4/#general-sibling-combinators>) を追加
-/// (4 combinator 全対応、詳細は [`match_combinator_chain`] doc)。complex
+/// した (4 combinator 全対応、詳細は [`match_combinator_chain`] doc)。complex
 /// selector の一般的な match 条件は CSSWG Editor's Draft
 /// <https://drafts.csswg.org/selectors-4/#complex> (verbatim, 2026-08-12
 /// 直接 fetch 確認 — provenance の詳細は [`match_combinator_chain`] doc の
@@ -1105,12 +1094,12 @@ fn matches_nth<D: StyleDom>(
 ///
 /// `ancestors` は root 側が先頭、直近の親が末尾の順 (`ancestors.last()` ==
 /// `elem` の親) — [`collect_cascaded`] の DFS 訪問順から構築される
-/// (同関数の doc 参照)。`elem_id` は `elem` 自身の id — bd raikiri-spike-flln.3
-/// で sibling combinator が「`elem` の親の子リストの中で `elem` より前にいる
+/// (同関数の doc 参照)。`elem_id` は `elem` 自身の id — sibling combinator
+/// が「`elem` の親の子リストの中で `elem` より前にいる
 /// のは誰か」を [`StyleDom::child_ids`] から直接求める際の探索終端として
 /// 導入され ([`match_combinator_chain`] の `NextSibling`/`LaterSibling` arm
-/// 参照)、bd raikiri-spike-flln.5 で [`compound_matches`] 自身にも渡すよう
-/// 拡張 — `:root`/`:empty`/`:nth-child()` 等の構造的 pseudo-class が
+/// 参照)、その後 [`compound_matches`] 自身にも渡すよう
+/// 拡張された — `:root`/`:empty`/`:nth-child()` 等の構造的 pseudo-class が
 /// `dom`/`elem_id`/`ancestors.last()` (= `elem` の親) を必要とするため、
 /// `elem` の借用値だけでは表現できない情報として渡す。
 ///
@@ -1172,10 +1161,10 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 ///   満たしながら何らかの element に一致すること」という再帰的な定義を
 ///   そのまま素直に実装したもの。
 ///
-///   **この再試行は load-bearing — 省略すると壊れる** (2026-08-12 訂正:
-///   以前ここには「祖先チェーンは分岐の無い単一の直線なので retry は
-///   冗長」という誤った一般化があった。reviewer:spec / reviewer:quality /
-///   reviewer:debt 3 lens が独立に同型の反例を構築して指摘 — 以下は
+///   **この再試行は load-bearing — 省略すると壊れる** (訂正: 以前ここには
+///   「祖先チェーンは分岐の無い単一の直線なので retry は
+///   冗長」という誤った一般化があった。独立したレビューが複数、
+///   同型の反例を構築して指摘 — 以下は
 ///   その反例)。誤りだった論法は「直近候補を選んだ場合の残り
 ///   `ancestors` は、より遠い候補を選んだ場合の残り `ancestors` を
 ///   必ず包含する superset になる」という主張だったが、これは**残りが
@@ -1204,7 +1193,7 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 ///
 ///   sibling combinator (`+`/`~`) のような非祖先チェーン型 combinator が
 ///   同じ complex selector 内に混在するとさらに事情が変わりうる — ただし
-///   bd raikiri-spike-flln.3 で判明した通り「事情が変わる」というのは
+///   「事情が変わる」というのは
 ///   「不正確になる」ではなく「別の軸で load-bearing になる」だった:
 ///   sibling ジャンプは `ancestors` を不変のまま引き継ぐため、そこから
 ///   さらに左へ [`Combinator::Descendant`] が続く場合もこの retry は
@@ -1215,7 +1204,7 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 ///   自体は正しさに影響しない — いずれの順で候補を試しても最終的な
 ///   一致/不一致の結果 (「一致する候補が存在するか」という真偽値) は
 ///   変わらない。
-/// - [`Combinator::NextSibling`] (bd raikiri-spike-flln.3, CSS Selectors L4
+/// - [`Combinator::NextSibling`] (CSS Selectors L4
 ///   <https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>
 ///   §14.3, verbatim: "The elements represented by the two compound
 ///   selectors share the same parent in the document tree and the element
@@ -1227,7 +1216,7 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 ///   の**直前**の element 1 つだけ ([`immediate_preceding_sibling`])。
 ///   バックトラックは無い — `+` は「直前の兄弟」を一意に指すため
 ///   ([`Combinator::Child`] と同じ形)。
-/// - [`Combinator::LaterSibling`] (bd raikiri-spike-flln.3, CSS Selectors L4
+/// - [`Combinator::LaterSibling`] (CSS Selectors L4
 ///   <https://www.w3.org/TR/selectors-4/#general-sibling-combinators> §14.4,
 ///   verbatim: "The elements represented by the two compound selectors
 ///   share the same parent in the document tree and the element
@@ -1240,7 +1229,7 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 ///   影響しない。ここでは `child_ids` が返す自然な順序 (先頭 = 最も遠い兄弟)
 ///   のまま辿る)。
 ///
-/// # 親の解決: `ancestors.last()` の空スライス fallback (bd raikiri-spike-flln.3)
+/// # 親の解決: `ancestors.last()` の空スライス fallback
 ///
 /// `ancestor_path` は **Element kind の node のみ**を積む
 /// ([`collect_cascaded`] doc 参照) ので、`current_id` の親が
@@ -1262,12 +1251,12 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 /// これら 3 つは pseudo-element 専用の combinator で、本 crate の
 /// `parse_selector_list` (`RaikiriSelectorImpl`) がそもそも pseudo-element
 /// 構文自体を `Custom(UnsupportedPseudoClassOrElement(..))` として parse
-/// error にする (bd raikiri-spike-flln.3 で `a::before` を直接 parse させて
-/// 実地確認、2026-08-12) ため、この crate 内で生成された `SelectorList` から
-/// 到達することは無い。[`compound_matches`] の `_ => false` safety net と
+/// error にする (`a::before` を直接 parse させて実地確認済み) ため、この
+/// crate 内で生成された `SelectorList` から到達することは無い。
+/// [`compound_matches`] の `_ => false` safety net と
 /// 同じ姿勢で、ここでも到達したら match fail 扱いにする。
 ///
-/// # Spec provenance note (bd raikiri-spike-flln.2 / flln.3, 2026-08-12)
+/// # Spec provenance note
 ///
 /// この doc および [`match_complex_selector_list`] / [`collect_cascaded`]
 /// が引用する verbatim 文言はすべて、`https://www.w3.org/TR/selectors-4/`
@@ -1291,9 +1280,9 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 /// (descendant, child, adjacent-sibling, general-sibling — 2026-08-12
 /// 直接確認) から数えたもの。
 ///
-/// # Implementation: explicit `Vec` stack, not native recursion (bd raikiri-spike-8r16)
+/// # Implementation: explicit `Vec` stack, not native recursion
 ///
-/// Prior to bd raikiri-spike-8r16 this function and [`match_from_element`]
+/// Prior to this fix, this function and [`match_from_element`]
 /// mutually recursed on the native Rust call stack — one stack frame pair
 /// per combinator actually walked while matching successively along the
 /// ancestor/sibling chain, with no selector-length/complexity cap anywhere
@@ -1351,9 +1340,9 @@ fn match_combinator_chain<D: StyleDom>(
         /// `iter.clone()`; `Child`/`NextSibling` are newly cloned here too,
         /// for uniform frame handling across all four combinators — each
         /// has exactly one candidate, so the pre-fix code moved `iter`
-        /// instead of cloning it. Negligible cost, no heap allocation; see
-        /// perf lens's bd raikiri-spike-bj4p follow-up for the broader
-        /// allocation picture).
+        /// instead of cloning it. Negligible cost, no heap allocation; the
+        /// broader allocation picture may be revisited in future perf
+        /// work).
         iter: SelectorIter<'s, RaikiriSelectorImpl>,
     }
 
@@ -1411,7 +1400,7 @@ fn match_combinator_chain<D: StyleDom>(
 
 /// Not-yet-tried candidates for one [`match_combinator_chain`] choice point
 /// — the iterative counterpart of that function's four `match combinator`
-/// arms' candidate-generation logic (bd raikiri-spike-8r16). Each variant
+/// arms' candidate-generation logic. Each variant
 /// corresponds 1:1 to a [`Combinator`] arm; see [`pending_candidates_for`]
 /// for the construction side and [`match_combinator_chain`]'s "Implementation"
 /// doc for why this needs to be a resumable cursor rather than a one-shot
@@ -1503,7 +1492,7 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
 
 /// Builds the [`PendingCandidates`] cursor for one combinator, mirroring
 /// [`match_combinator_chain`]'s pre-fix per-combinator candidate-generation
-/// logic exactly (bd raikiri-spike-8r16) — this function does no matching
+/// logic exactly — this function does no matching
 /// itself, only candidate enumeration setup. The `_ => ..` safety-net arm
 /// (unsupported combinators, see this module's "他 combinator" doc note)
 /// yields an already-exhausted `Child(None)` cursor, the same "no candidate
@@ -1533,7 +1522,7 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
             }
         }
         // cov:ignore: `Combinator::PseudoElement`/`SlotAssignment`/`Part`
-        // are structurally unconstructible here (bd raikiri-spike-2neb).
+        // are structurally unconstructible here.
         // The `selectors` crate only ever pushes each of these 3
         // combinators from behind its own `Parser` trait hook (parser.rs
         // `parse_one_simple_selector`), and `RaikiriSelectorParser`
@@ -1542,7 +1531,7 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
         //     `Err`; also `RaikiriSelectorImpl::PseudoElement = PseudoElem`
         //     is an uninhabited enum, so no value could exist even if the
         //     hook were overridden to accept (verified via direct
-        //     `a::before` parse, bd raikiri-spike-flln.3 2026-08-12).
+        //     `a::before` parse).
         //   - `Part`: gated by `parse_part()`, default `false`.
         //   - `SlotAssignment`: gated by `parse_slotted()`, default
         //     `false`.
@@ -1552,7 +1541,7 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
         // overriding any of the three voids this exemption. See this
         // module's "他 combinator" doc note, above `match_combinator_chain`,
         // for the full argument. Yields an already-exhausted `Child(None)`
-        // cursor (bd raikiri-spike-8r16) — same "no candidate ever
+        // cursor — same "no candidate ever
         // succeeds" outcome the pre-fix `_ => false` arm produced.
         _ => PendingCandidates::Child(None),
     }
@@ -1564,7 +1553,7 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
 /// `LaterSibling` arm の両方から使う — [`collect_cascaded`] が
 /// `ancestor_path` に積む前に行う `!node.is_in_document() => continue` gate
 /// (同関数の doc 参照) と同じ基準を、sibling 側の候補選定でも揃えるための
-/// 抽出 (bd raikiri-spike-flln.3) — 揃えないと `<template>` 子孫のような
+/// 抽出 — 揃えないと `<template>` 子孫のような
 /// inert element が sibling combinator の候補として拾われてしまう。
 fn is_in_document_element<D: StyleDom>(dom: &D, id: StyleNodeId) -> bool {
     dom.node(id)
@@ -1574,8 +1563,8 @@ fn is_in_document_element<D: StyleDom>(dom: &D, id: StyleNodeId) -> bool {
 /// `parent_id` の直接の子のうち、`current_id` の**直前**にいる element の id
 /// ([`Combinator::NextSibling`] 用)。[`StyleDom::child_ids`] を先頭から 1
 /// パス走査し、`current_id` に達した時点でそれまでに見た最後の element
-/// candidate を返す — 割り当ては行わない (`Vec` 不使用、bd
-/// raikiri-spike-75ch の「使い捨て `Vec` を経由しない」方針を踏襲)。
+/// candidate を返す — 割り当ては行わない (`Vec` 不使用、他 helper と
+/// 同じ「使い捨て `Vec` を経由しない」方針を踏襲)。
 ///
 /// Non-element node (text 等) は候補から除外 — CSS Selectors L4
 /// next-sibling combinator 自身の verbatim: "Non-element nodes (e.g. text
@@ -1610,14 +1599,14 @@ fn immediate_preceding_sibling<D: StyleDom>(
 /// compound をそれに対して判定する。祖先候補 (`Child`/`Descendant`) と
 /// 兄弟候補 (`NextSibling`/`LaterSibling`) の両方がこの 1 つの関数を共有する
 /// — 「id を解決して compound を照合する」というロジック自体は候補がどちらの
-/// combinator 由来かに依存しない (bd raikiri-spike-flln.3: `ancestors` は
+/// combinator 由来かに依存しない (`ancestors` は
 /// 兄弟ジャンプでは不変のまま引き継がれる — 兄弟は親を共有するため — ことが
 /// この共有を成立させる。祖先ジャンプでは従来通り `split_last`/バックトラック
 /// で truncate 済みの残り `ancestors` を渡す)。旧名 `match_from_ancestor`
-/// (bd raikiri-spike-flln.2) — 兄弟候補にも使われるようになったため
-/// bd raikiri-spike-flln.3 で `match_from_element` に rename。
+/// — 兄弟候補にも使われるようになったため
+/// `match_from_element` に rename。
 ///
-/// bd raikiri-spike-8r16 より前は、compound が一致した後さらに左の
+/// 以前は、compound が一致した後さらに左の
 /// combinator へ**自分で再帰**していた ([`match_combinator_chain`] との
 /// 相互再帰、native stack を消費する側)。現在は compound 一致後の `iter`
 /// (次の compound の手前まで進んだ状態) を `Some` で返すだけに変わり、
@@ -1677,11 +1666,11 @@ fn match_from_element<'s, D: StyleDom>(
     // arms hand out `rest`/`further` (everything left after popping
     // `elem_id` itself off the end), so `ancestors.last()` is `elem_id`'s
     // parent, exactly mirroring `match_complex_selector_list`'s own use of
-    // `ancestors` for the rightmost compound (bd raikiri-spike-flln.5) —
+    // `ancestors` for the rightmost compound —
     // needed so a structural pseudo-class in a non-rightmost compound
     // (e.g. `body > div:only-child p`) resolves against the right parent,
     // not `elem`'s (the search's original caller's) parent. Sibling jumps
-    // (bd raikiri-spike-flln.3) pass `ancestors` through unchanged (siblings
+    // pass `ancestors` through unchanged (siblings
     // share a parent), so this holds for those candidates too.
     if !compound_matches(dom, &mut iter, &elem, elem_id, ancestors, quirks_mode) {
         return None;
@@ -1690,7 +1679,7 @@ fn match_from_element<'s, D: StyleDom>(
 }
 
 // ---------------------------------------------------------------------------
-// `:lang()` / `:dir()` (bd raikiri-spike-flln.6).
+// `:lang()` / `:dir()`.
 //
 // Both pseudo-classes resolve a property of the element that is NOT a plain
 // own-attribute lookup — CSS Selectors L4 explicitly distinguishes them from
@@ -1700,7 +1689,7 @@ fn match_from_element<'s, D: StyleDom>(
 // concretely, ancestor inheritance. Both therefore reuse the same
 // `ancestors: &[StyleNodeId]` (root-first, immediate-parent-last) that
 // `compound_matches` already threads through for descendant/child combinator
-// matching (bd raikiri-spike-flln.2) — self is checked first, then
+// matching — self is checked first, then
 // `ancestors` is walked from `.last()` (immediate parent) toward `.first()`
 // (document root).
 // ---------------------------------------------------------------------------
@@ -1756,7 +1745,7 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 /// step gates on `elem.namespace_uri()` — but a 2-element allowlist (HTML
 /// *or* SVG) rather than `dir`'s HTML-only 1-element one, per the quoted
 /// step's explicit "an HTML element or an element in the SVG namespace"
-/// wording (reviewer:spec finding, 2026-08-12: an earlier version of this
+/// wording (an earlier version of this
 /// function read `lang` unconditionally, which is wrong for any other
 /// foreign-namespace element — MathML concretely: `<math lang="ja">` nested
 /// under `<html lang="en">` must resolve to `"en"`, not `"ja"`, since MathML
@@ -1782,13 +1771,13 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 ///   attribute at all", which would keep walking to the parent). This
 ///   function cannot observe that distinction: [`StyleElement::attr`]'s
 ///   contract already collapses `foo=""` to `None` uniformly (documented on
-///   that trait method, bd raikiri-spike-k5y3 — an existing accepted M1.4+
-///   baseline, not something newly introduced here), so `lang=""` and "no
+///   that trait method — an existing accepted baseline, not something newly
+///   introduced here), so `lang=""` and "no
 ///   `lang` attribute" are indistinguishable at this crate's DOM boundary —
 ///   both fall through to the parent-element walk below. Fixing this would
 ///   require widening `StyleElement::attr`'s contract, which is
-///   `raikiri-style`-only-change out of scope the same way k5y3 already
-///   reasons about `[foo=""]` attribute-selector matching.
+///   a `raikiri-style`-only change out of scope for the same reason
+///   `[foo=""]` attribute-selector matching already accepts this limitation.
 fn effective_language<D: StyleDom, E: StyleElement>(
     dom: &D,
     elem: &E,
@@ -2064,8 +2053,8 @@ fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direction> {
 /// upstream `selectors::matching::to_unconditional_case_sensitivity` と同じ
 /// 3-way 分岐を model 化しているが、その関数は tree-walk 込みの重い
 /// `selectors::Element` trait を要求するため呼べない (raikiri の
-/// `StyleElement` は single-element matching 用の縮小 trait — bd
-/// raikiri-spike-flln.1 scope、`wall/traits` を跨がない private helper として
+/// `StyleElement` は single-element matching 用の縮小 trait —
+/// `wall/traits` を跨がない private helper として
 /// 再実装)。raikiri は現時点で HTML document のみ対象 (XML/XHTML 未対応) の
 /// ため「in html document」は常に true 扱い。「is html element」は
 /// [`StyleElement::namespace_uri`] の既存 contract
@@ -2081,7 +2070,7 @@ fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direction> {
 /// spec 上別概念 — 混同しないこと。raikiri-html は HTML5 tree builder のみで
 /// XML document を生成する経路が無いため、この軸は現状 unconditionally true
 /// で正しい。XML document parsing が入るときに、document-language 信号を
-/// この関数へ渡す配線が必要になる (bd raikiri-spike-tqwi)。
+/// この関数へ渡す配線が必要になる。
 fn resolve_case_sensitivity<E: StyleElement>(
     parsed: ParsedCaseSensitivity,
     elem: &E,
@@ -2106,8 +2095,7 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
     selector.specificity()
 }
 
-/// `<img width>` / `<img height>` の HTML presentational-hint 昇格
-/// (bd raikiri-spike-5z86.7)。
+/// `<img width>` / `<img height>` の HTML presentational-hint 昇格。
 ///
 /// # Spec mapping (verbatim, 2026-08-10 直接 fetch した live HTML Standard)
 ///
@@ -2143,12 +2131,12 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 ///   `<picture>` source 選択を未実装なので、この関数は常に `img` 要素自身の
 ///   属性を読む — 上記 default と一致する straightforward な subset。
 /// - **`embed` / `iframe` / `object` / `video` / `input[type=image]`**: 同じ
-///   spec 段落の後続文が他要素にも同じ mapping を適用するが、bd
-///   raikiri-spike-5z86.7 の scope narrowing は `img` のみに限定 (最小実装、
-///   将来 task の土台という位置づけ)。
+///   spec 段落の後続文が他要素にも同じ mapping を適用するが、本関数の
+///   scope narrowing は `img` のみに限定している (最小実装、将来の拡張の
+///   土台という位置づけ)。
 ///
-/// # Cascade origin (retagged `Origin::AuthorPresentationalHint` 2026-08-11
-/// — bd raikiri-spike-wo36, spec text 再確認済み)
+/// # Cascade origin (`Origin::AuthorPresentationalHint` へ retag 済み、
+/// spec text 再確認済み)
 ///
 /// CSS Cascading L5 §6.5 "Precedence of Non-CSS Presentational Hints"
 /// (<https://drafts.csswg.org/css-cascade-5/#preshint>, verbatim) はこの種の
@@ -2159,25 +2147,24 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 /// can be overridden by author-origin styles, but not by non-important
 /// user-origin styles" と続ける。本関数は専用 variant
 /// [`Origin::AuthorPresentationalHint`] を採る — [`cascade_rank`] はこれを
-/// `(User, false) => 1` より上、`(Author, false) => 3` より下に置く (bd
-/// raikiri-spike-pdta で [`Origin::User`] 挿入後の値 — [`cascade_rank`] doc
+/// `(User, false) => 1` より上、`(Author, false) => 3` より下に置く
+/// ([`Origin::User`] 挿入後の値 — [`cascade_rank`] doc
 /// 参照)。この rank 差は `beats` の tuple compare `(rank, specificity, source_order)` の
 /// **第一要素**なので、真の UA-origin rule には specificity/source_order を
 /// 問わず常に勝ち、real author-origin 宣言 (stylesheet rule でも inline
 /// style でも) には specificity/source_order を問わず常に負ける — かつて
-/// (2026-08-10 retag 時点、旧版は hint も real 宣言も同じ `Origin::Author`
+/// (retag 前、旧版は hint も real 宣言も同じ `Origin::Author`
 /// に tag していた) は後者の保証を「hint の specificity を 0 に固定し、
 /// real 宣言が zero-specificity かつ stylesheet 先頭 rule の場合に限り
 /// 発生する exact tie を push 順序 (hint を先に push) で決着させる」という
 /// 同一 origin 内 tie-break に依存していた — 3rd tier 導入によりその依存は
-/// 解消され、origin rank だけで無条件に決着する。[`Origin::User`] の挿入
-/// (bd raikiri-spike-pdta) はこの結論を変えない — hint の rank は挿入後も
+/// 解消され、origin rank だけで無条件に決着する。[`Origin::User`] の挿入は
+/// この結論を変えない — hint の rank は挿入後も
 /// 依然として real `Author` rank と等しくなることが無い (`AuthorPresentationalHint`
 /// と `Author` は常に隣接する別 rank 値のまま、[`cascade_rank`] doc の rank
 /// 表参照) ため、[`collect_cascaded`] が今も stylesheet rule matching /
 /// inline style より先にこの関数を push する呼び出し順は残っているが、
-/// 上記の通りもう correctness の必要条件ではない (無害な残置、pdta で
-/// re-verify 済み)。
+/// 上記の通りもう correctness の必要条件ではない (無害な残置、re-verify 済み)。
 ///
 /// テスト
 /// `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
@@ -2186,8 +2173,7 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 /// 挿入後も rank 差の大小関係は変わらないため、この test は無変更で pin
 /// し続ける)。
 ///
-/// `Origin::User` no-producer 残差の解消 (旧: bd raikiri-spike-wo36 item 4、
-/// 続き bd raikiri-spike-pdta): bd raikiri-spike-pdta で raikiri-style 内の
+/// `Origin::User` no-producer 残差の解消: raikiri-style 内の
 /// [`Origin::User`] variant 自体を追加した時点 ([`cascade_rank`] の 4-tier
 /// 化) では、consumer が渡す `extra_stylesheets` を実際に [`Origin::User`]
 /// へ route する producer がまだ無く、今も `StylesheetKind::Author` 経由で
@@ -2198,7 +2184,7 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 /// 一致していたが (`Author` rank は hint より常に上)、独立した User origin
 /// へ実際に route されていない分、モデルの精度としては不完全だった。
 ///
-/// bd raikiri-spike-d7h3 で raikiri-traits 側の `StylesheetKind` に独立
+/// raikiri-traits 側の `StylesheetKind` に独立
 /// `User` variant を追加し raikiri-html で retag、umbrella 側の
 /// `stylesheet_kind_to_origin` を拡張する genuine multi-crate diff
 /// (raikiri-style 単体では完結しない) が着地し、この残差は解消された —
@@ -2228,10 +2214,8 @@ fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDe
     // `namespace_uri()` returns `None` for the HTML default namespace
     // (`style_dom.rs`'s "fast path" doc) — same check/shape as
     // `ruletree.rs`'s `<template>` HTML-only gate
-    // (`tag.eq_ignore_ascii_case("template") && elem.namespace_uri().is_none()`,
-    // roborev job 292 L2 finding) and the same principle bd
-    // raikiri-spike-flln.1 applies to attribute-selector matching this
-    // sprint.
+    // (`tag.eq_ignore_ascii_case("template") && elem.namespace_uri().is_none()`)
+    // and the same principle applies to attribute-selector matching.
     if !elem.tag_name().eq_ignore_ascii_case("img") || elem.namespace_uri().is_some() {
         return;
     }
@@ -2274,9 +2258,9 @@ fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDe
 /// `embedded-content-other.html#dimension-attributes` にある**著者向け**
 /// conformance 要件 ("must have values that are valid non-negative
 /// integers") とは別物で、UA 側の実際の parse 規則はこちら (dimension
-/// value 一般、非負整数だけでなく小数・percentage も受理) — bd
-/// raikiri-spike-5z86.7 dispatch prompt の "非負整数" という要約は
-/// 説明の簡略化であり、実装はこの spec 本文の algorithm に忠実にした
+/// value 一般、非負整数だけでなく小数・percentage も受理) —
+/// "非負整数" という短い要約だけでは誤解を招きうるため、実装はこの
+/// spec 本文の algorithm に忠実にした
 /// (percentage / 小数を含む)。負値を作る分岐 (`-`/`+` の読み取り) は
 /// algorithm 自体に存在しないため、別途の負値拒否は不要。
 fn parse_html_dimension_value(input: &str) -> Option<Length> {
@@ -2318,7 +2302,7 @@ fn parse_html_dimension_value(input: &str) -> Option<Length> {
 /// Top-down inheritance walk。子 node は親の computed value を必要とするため
 /// (再帰の call stack で暗黙に運んでいた context)、iterative 化には各 stack
 /// entry に `(StyleNodeId, 親の computed value, rem context)` を明示的に持たせる —
-/// Approach A (roborev job 199 対応)。clone は各 entry ごとに発生するが m1.4
+/// Approach A。clone は各 entry ごとに発生するが現時点の
 /// scope では許容 (hot path 化した場合は将来 `Arc<ComputedValues>` で削減を検討)。
 ///
 /// # `rem` context の threading (設計文書 §6.3)
@@ -2337,7 +2321,7 @@ fn parse_html_dimension_value(input: &str) -> Option<Length> {
 /// - `Some(ctx)` — element 祖先が居る。その最上位 element (= root element) の
 ///   computed font-size が `ctx.root_font_size`、`lh` の値 (`rlh` の参照値、
 ///   `used_line_height_length` で絶対長化したもの。`normal` で解決不能なら
-///   `None`) が `ctx.root_line_height` (bd raikiri-spike-vxha)。
+///   `None`) が `ctx.root_line_height`。
 ///
 /// [`StyleDom::root_id`] は Document node であって root element ではない
 /// ([`crate::style_dom`] の Contract 節) ため、Document / Comment / Text の
@@ -2360,18 +2344,18 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     let mut stack: Vec<(StyleNodeId, ComputedValues, Option<ResolveContext>)> =
         vec![(id, parent_computed.clone(), None)];
     // `apply_winners` の scratch buffer。walk loop の**外**で確保して全 node で
-    // 使い回す (bd raikiri-spike-8kn8) — per-node の `HashMap` 2 個が
+    // 使い回す — per-node の `HashMap` 2 個が
     // n=1000 node で 3,667 allocs / 3.0 MB = cascade 全 heap traffic の 56.7%
     // を占めていた。buffer は最初の数 node で最大 `PropertyKey` index まで
     // 育ち、以降は 0 alloc。fill と drain は `apply_winners` に閉じており、
     // walk loop 側は「使い回す入れ物を貸す」以上の責務を持たない。
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     while let Some((id, parent_computed, root_ctx)) = stack.pop() {
-        // raikiri-spike-37c roborev job 294 M2 finding: is_in_document()==false
+        // is_in_document()==false
         // の node は subtree ごと早期 continue する。
         //
         // 以前は resize + write + children push を unconditional に行い computed
-        // 長を node_count() に揃えていた (m1.23 contract)。今 `cascade()` が
+        // 長を node_count() に揃えていた。今 `cascade()` が
         // `dom.node_count()` で `computed` を pre-allocate + initial() で埋める
         // ように変わったため、visited しないままの slot は自然に initial()
         // として残る。これにより:
@@ -2389,8 +2373,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 
         // phase 1: 親からの inheritance walk 開始値 (inherited のみ親の computed
         // からコピー、非継承は initial) に自 node の cascaded winner を適用する。
-        // 適用対象は staging 表現なので winner の適用順に依存しない
-        // (spec §M1.4a、raikiri-spike-m1.22 / raikiri-spike-082k)。
+        // 適用対象は staging 表現なので winner の適用順に依存しない。
         let mut specified = SpecifiedValues::inherit_from(&parent_computed);
         if let Some(candidates) = cascaded.candidates(id) {
             apply_winners(candidates, &mut winners, &mut specified);
@@ -2431,8 +2414,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 
         // 子へ渡す rem/rlh context。root element の phase 2 + 2.5 が終わった
         // 時点で `root_font_size` / `root_line_height` が確定するので、ここで
-        // 初めて `Some` になる (bd raikiri-spike-vxha で `root_line_height`
-        // を追加)。`used_line_height_length` は
+        // 初めて `Some` になる。`used_line_height_length` は
         // `crate::specified::SpecifiedValues::finalize_as_root` が自分の
         // `ctx` を組み立てるのに使う導出と同一 — 両者の一致は
         // `rlh_on_root_element_matches_child_root_line_height_basis` が pin する。
@@ -2459,13 +2441,13 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // stack は LIFO なので document order で push するため reverse。
         // `child_ids` イテレータを直接 `stack` へ `extend` し、今回追加した
         // 末尾スライスだけを in-place `reverse()` する — 都度捨てる中間
-        // `Vec` を経由しない (bd raikiri-spike-75ch)。`child_ctx` は `Copy`
+        // `Vec` を経由しない。`child_ctx` は `Copy`
         // (`ResolveContext` の derive) なので closure 内で複数回使い回せる。
         //
         // なぜ document order を保つか: resolve_inheritance 自体の正しさも
         // 訪問順には依存しない — 各 node の computed 値は push 時点で既に
         // 確定している parent_computed / child_ctx だけから決まり、`winners`
-        // scratch buffer は各 node の処理前後で完全に drain される (8kn8) の
+        // scratch buffer は各 node の処理前後で完全に drain されるの
         // で兄弟の処理順に左右されない。ここで document order を維持して
         // いるのは refactor 前との**挙動の完全一致**のためであり、加えて
         // `winner_does_not_leak_into_next_sibling` 自身の doc comment が
@@ -2482,8 +2464,8 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 
 /// 1 node 分の cascade winner を選び、staging 表現へ適用する (**phase 1**)。
 ///
-/// `winners` は caller が walk loop の外で確保した scratch buffer
-/// (bd raikiri-spike-8kn8)。本関数が fill ([`pick_winners`]) と drain を対で
+/// `winners` は caller が walk loop の外で確保した scratch buffer。
+/// 本関数が fill ([`pick_winners`]) と drain を対で
 /// 行い、抜けるときは全 slot が `None` に戻っている。
 ///
 /// # 適用順
@@ -2492,7 +2474,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// [`Option::take`] が slot を `None` に戻すので、この走査自体が次 node 用の
 /// reset を兼ねる。
 ///
-/// 8kn8 以前は `HashMap` iteration 順 (per-process random seed) だった。既存
+/// 以前は `HashMap` iteration 順 (per-process random seed) だった。既存
 /// property は key と [`SpecifiedValues`] の field が 1:1 disjoint なので、
 /// 決定的になったこと自体に観測可能な差は無い。
 ///
@@ -2521,9 +2503,9 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// - **inline style** — [`collect_cascaded`] が
 ///   [`crate::rule::parse_declaration_block`] を通すので parse 出口で展開済み。
 /// - **stylesheet rule** — [`collect_cascaded`] が candidate に積む直前に
-///   [`crate::rule::expand_shorthand_into`] を通す (bd raikiri-spike-nqkj)。
+///   [`crate::rule::expand_shorthand_into`] を通す。
 ///   parse 出口の展開だけでは post-parse mutation 経路を守れないため
-///   (bd raikiri-spike-qzn3 以降この経路は crate 内限定 — 根拠は
+///   (この経路は crate 内限定 — 根拠は
 ///   [`crate::rule::expand_shorthand_into`] doc が canonical)。**shorthand が
 ///   到達したら既に bug** なので削除可能な dead defensive code ではない。
 ///
@@ -2532,7 +2514,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// がそのまま成立する。
 ///
 /// 「展開 arm の書き忘れ」形の壊れ方は **compile-time に強制されている**
-/// (bd raikiri-spike-ez7b) — [`crate::rule::expand_shorthand_into`] の match は
+/// — [`crate::rule::expand_shorthand_into`] の match は
 /// exhaustive で、`PropertyValue` に variant を足すと同関数に arm を書くまで
 /// compile error になる。arm list は 1 関数に集約されているので上の 2 経路が
 /// 同時に保証を得る。**強制されるのは arm を書くことだけ**で、残る範囲は同関数
@@ -2557,7 +2539,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// in-bounds の二重適用である。leak に対する実効的な net は [`pick_winners`]
 /// 冒頭の debug_assert (**release build では消える**) と同 test の 2 つ。
 ///
-/// # `candidates` の出所 (bd raikiri-spike-gerj — flat arena 化後)
+/// # `candidates` の出所 (flat arena 化後)
 ///
 /// 唯一の呼び出し元 [`resolve_inheritance`] は `candidates` を
 /// [`CascadedArena::candidates`] からしか受け取らない。同メソッドは常に
@@ -2587,7 +2569,7 @@ fn apply_winners(
 /// そのまま index にした **direct-address table** で、`best[k as usize]` が
 /// key `k` の勝者 (= `candidates` 内 index) を持つ。
 ///
-/// # なぜ `HashMap` を返さないのか (bd raikiri-spike-8kn8)
+/// # なぜ `HashMap` を返さないのか
 ///
 /// [`PropertyKey`] は payload を持たない ~40 variant の 1-byte enum、すなわち
 /// **既に密な小整数**であり、hash して bucket を引く価値がない。従来実装は
@@ -2639,10 +2621,9 @@ fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option<RankedDecl
 
 fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
     // Tuple compare: (rank, specificity, source_order)
-    // - rank 高い方が勝つ (順序と正確な値は `cascade_rank` doc 参照 — bd
-    //   raikiri-spike-wo36 で UA/Author の 2 段から
-    //   UA/AuthorPresentationalHint/Author の 3 段に拡張、bd raikiri-spike-pdta
-    //   で UA/User/AuthorPresentationalHint/Author の 4 段に拡張済み)
+    // - rank 高い方が勝つ (順序と正確な値は `cascade_rank` doc 参照 — 当初の
+    //   UA/Author の 2 段から現在の UA/User/AuthorPresentationalHint/Author
+    //   の 4 段まで拡張済み)
     // - 同 rank なら specificity 高い方が勝つ
     // - 同 rank + spec なら source_order 大 (=後ろ) が勝つ
     // `>=` は同一 rule 内 duplicate property の後方勝ち (CSS Cascading L4 §6.1
@@ -2680,7 +2661,7 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 ///
 /// `min(w + 300, 900)` / `max(w - 300, 100)` のような近似は表の両端 2 行
 /// ("no change" 行) を落とす。`<number [1,1000]>` の全域が author から到達
-/// 可能になった今 (raikiri-spike-5iy)、その 2 行は実際に踏まれる:
+/// 可能になった今、その 2 行は実際に踏まれる:
 ///
 /// - 親 `font-weight: 1000` + 子 `bolder` → **1000** (`900 <= w` 行の no change)。
 ///   `min(1300, 900)` なら誤って 900 に落ちる。
@@ -2694,7 +2675,7 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 ///
 /// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で gate が red (規約 3)。
 ///
-/// `inherited` / 戻り値は `f32` (bd raikiri-spike-e52s で `u16` から格上げ)。
+/// `inherited` / 戻り値は `f32` (`u16` から格上げ済み)。
 /// table の境界値 (100 / 350 / 550 / 750 / 900) は全て整数だが、`inherited` は
 /// fractional weight (`349.5` 等) を保持したまま渡ってくる。丸めずに直接
 /// 比較するため行選択は spec §2.2.1 のとおり正確に決まる — 旧 `u16` 実装は
@@ -2703,8 +2684,8 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 ///
 /// # 非有限 `inherited` (`NaN` / `±Inf`) — 本関数は guard しない
 ///
-/// `u16` だった頃は非有限が型で構造的に排除されていたが、`f32` 化 (bd
-/// raikiri-spike-e52s) で finiteness は「型で保証」から「呼び出し元の値
+/// `u16` だった頃は非有限が型で構造的に排除されていたが、`f32` 化で
+/// finiteness は「型で保証」から「呼び出し元の値
 /// 検証で保証」に変わった。通常の cascade 経路は
 /// `crate::property::parse_font_weight` の `[1, 1000]` range guard により
 /// 常に finite だが、`ComputedValues` の field は全て `pub` で
@@ -2720,9 +2701,9 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// `Lighter` の catch-all は `_ => 700.0` なので `NaN` / `+Inf` は**700.0 に
 /// 丸められる** (`-Inf` は同じく最初の guard に一致しそのまま伝播する)。
 ///
-/// **本関数自体には runtime guard を追加しない** (bd raikiri-spike-sxd7、
-/// bd raikiri-spike-kfl7 precedent の「非有限 / 範囲外 f32 の guard は sink
-/// 境界に置く、resolve 層には置かない」を踏襲)。上記の非対称処理は
+/// **本関数自体には runtime guard を追加しない** (「非有限 / 範囲外 f32 の
+/// guard は sink 境界に置く、resolve 層には置かない」という既存方針を
+/// 踏襲)。上記の非対称処理は
 /// `resolve_relative_weight_non_finite_inherited_is_asymmetric` test で
 /// 現状の挙動として pin 済み。値が実際に `parley::FontWeight::new` へ渡る
 /// sink 側の guard は `crates/raikiri-dom/src/layout.rs` の
@@ -2755,7 +2736,7 @@ pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: f32
 
 /// `font-size` の `<relative-size>` (`larger` / `smaller`) を親の computed
 /// font-size に対して解決する。[`resolve_relative_weight`] の font-size 版
-/// (bolder/lighter と同型、raikiri-spike-4rmu)。
+/// (bolder/lighter と同型)。
 ///
 /// CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop> verbatim:
 ///
@@ -2815,8 +2796,8 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// pass-through 側は全 variant を明示列挙し `_ => value` を使わない。これは意図的な
 /// compile-time guard である: **継承元に依存する解決を持つ property を新しく足した
 /// とき、`_` があると本関数を素通りして未解決値が public な結果に漏れる**。
-/// bd raikiri-spike-ygl0 (`@page { font-weight: bolder }` が
-/// `FontWeightValue::Bolder` のまま park していた regression) がまさにこの形
+/// 実際に過去に起きた regression (`@page { font-weight: bolder }` が
+/// `FontWeightValue::Bolder` のまま park していた) がまさにこの形
 /// だった。exhaustive match なら variant 追加が本関数と [`apply_value`] の
 /// **両方**で compile error になり、2 経路を数え上げることが強制される。
 ///
@@ -2829,29 +2810,29 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    payload を `_` で捨てるので、`TextAlign` に `MatchParent` (CSS Text 3) が
 ///    増えても `PropertyValue::TextAlign(_)` を素通りする。これは `bolder` /
 ///    `lighter` と**同型**の解決を要するので、実装時は本関数の arm で payload を
-///    destructure して guard を payload 層に降ろすこと (`FontSize` は
-///    bd raikiri-spike-zls8、`TextAlign` は bd raikiri-spike-l3wg でそれを
-///    済ませた — 前者は payload を destructure して `resolve_font_size` に、
+///    destructure して guard を payload 層に降ろすこと (`FontSize` /
+///    `TextAlign` は既にそれを済ませてある — 前者は payload を destructure
+///    して `resolve_font_size` に、
 ///    後者は [`crate::property::resolve_text_align_match_parent`] に渡している)。
 ///    **page 経路の、かつ payload 型が
 ///    `Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
 ///    `TextAlign` の 5 つに限れば**、この形の漏れは `page::tests` の
 ///    `specified_layer_residue` が網羅 match しているので test compile 段で
-///    捕まる (bd raikiri-spike-awjx)。それ以外 (`BorderStyle` / `BorderColor`
+///    捕まる。それ以外 (`BorderStyle` / `BorderColor`
 ///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
-/// 2. **本関数を呼ばない新しい entry point** — ygl0 の regression はこの形
+/// 2. **本関数を呼ばない新しい entry point** — 過去の regression はこの形
 ///    だった (`cascade_page` が `apply_value` を通らなかった)。CSS Paged Media 3
 ///    §6 の margin-box cascade は page context を継承元とする第 3 の経路になる。
 ///    exhaustive match は「経路の数え上げ」を強制しない。
 ///
-///    bd raikiri-spike-7m33 でこの穴を **型で狭めた** (完全には塞いでいない)
+///    この穴を **型で狭めた** (完全には塞いでいない)
 ///    — 本関数の戻り値は生の [`PropertyValue`] ではなく
 ///    [`ResolvedAgainstInherited`]。その型の doc「narrowed, not closed」節が
-///    canonical な記述 (何を防ぎ、何を防がないか、残余が
-///    bd raikiri-spike-m4.2 に切り出されていること) を持つので、ここでは
+///    canonical な記述 (何を防ぎ、何を防がないか、残余は別途 margin-box
+///    cascade 側の課題として残ること) を持つので、ここでは
 ///    繰り返さない。
 ///
 /// # 本関数の pass-through は「解決済」ではない (phase 3 が要る)
@@ -2873,7 +2854,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// **その解決は呼び手の責務である。** 唯一の呼び手
 /// [`crate::page::cascade_page`] は本関数の直後に **phase 3**
 /// ([`crate::page`] の `absolutize_in_page_context`) を走らせ、そこで page context の
-/// font-size を基準に絶対化 + style gating を行う (bd raikiri-spike-sshp)。
+/// font-size を基準に絶対化 + style gating を行う。
 /// したがって
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
 /// に届く時点では computed 値になっている — **本関数の戻り値をそのまま public に
@@ -2885,16 +2866,15 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// ので、spec 規則 (`em` / `rem` の基準、percentage の素通し、border style
 /// gating) の実装は 1 本ずつしかない。
 ///
-/// # `TextAlign::MatchParent` は本関数が解決する (raikiri-spike-l3wg)
+/// # `TextAlign::MatchParent` は本関数が解決する
 ///
 /// [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) は `inherited`
 /// だけで解ける — CSS Text 3 §6.1 `#valdef-text-align-match-parent` の
 /// 「実の親を持つ」半分 (root element の "computes to start" は対象外、下記注記)
 /// — ので本関数の `TextAlign` arm が
 /// [`crate::property::resolve_text_align_match_parent`] へ `inherited.text_align` +
-/// `inherited.direction` を渡して解決する。以前 (raikiri-spike-l3wg 着手前) は raikiri
-/// が `direction` を computed 層に持たなかったため未実装だった (origin:
-/// raikiri-spike-ygl0 §8.2 spec lens F1)。
+/// `inherited.direction` を渡して解決する。以前は raikiri
+/// が `direction` を computed 層に持たなかったため未実装だった。
 ///
 /// ⚠️ **trap**: CSS Paged Media 3 §6 の "The page context inherits from the
 /// root element" は「page context に親が無い」ことを意味**しない** —
@@ -2908,7 +2888,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// 公開契約は
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
 /// が canonical。以前あった「public な結果に残る例外はこれ 1 つ」は
-/// raikiri-spike-l3wg で解消され、`page::tests` の
+/// 解消され、`page::tests` の
 /// `page_declarations_carry_no_specified_layer_residue` (旧
 /// `page_declarations_carry_exactly_one_specified_layer_residue`) が
 /// pin する。
@@ -2920,11 +2900,11 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///
 /// # 戻り値が生の [`PropertyValue`] ではなく [`ResolvedAgainstInherited`] な理由
 ///
-/// bd raikiri-spike-7m33 — 上記「この guard が守らない範囲」§2
+/// 上記「この guard が守らない範囲」§2
 /// (本関数を呼ばない新しい entry point) を型で狭めるため。詳細は
 /// [`ResolvedAgainstInherited`] の doc を参照。
 ///
-/// # `ctx` の caller contract (bd raikiri-spike-yh3w)
+/// # `ctx` の caller contract
 ///
 /// `ctx.root_line_height` は `inherited` から導出したもの
 /// (`used_line_height_length(inherited.line_height, inherited.font_size)`)
@@ -2947,8 +2927,8 @@ pub(crate) fn resolve_against_inherited(
         PropertyValue::FontWeight(fw) => PropertyValue::FontWeight(FontWeightValue::Absolute(
             resolve_relative_weight(fw, inherited.font_weight),
         )),
-        // `font-size` は継承元の computed font-size だけで解ける (bd
-        // raikiri-spike-zls8)。`crate::resolve::resolve_font_size` に funnel し、
+        // `font-size` は継承元の computed font-size だけで解ける。
+        // `crate::resolve::resolve_font_size` に funnel し、
         // 結果を `Length::Px` で包み直して computed-equivalent にする
         // (`FontWeight` arm が `Absolute(f32)` を返すのと同じ形)。
         //
@@ -2971,7 +2951,7 @@ pub(crate) fn resolve_against_inherited(
         //   基準は root element の font-size になる、という**導出**であって
         //   §6 の明文ではない。
         // - `px` / `pt`: 絶対単位なので context 非依存。
-        // - `lh` / `rlh` (bd raikiri-spike-yh3w): §6 は `lh`/`rlh` を規定して
+        // - `lh` / `rlh`: §6 は `lh`/`rlh` を規定して
         //   いない。上記 `%` と同型の**導出** — 「the page context inherits
         //   from the root element」+ CSS Values 4 §6.1.1 の自己参照条項を
         //   合わせると、page context の self-reference basis (`lh` の基準)
@@ -2998,7 +2978,7 @@ pub(crate) fn resolve_against_inherited(
             crate::resolve::resolve_font_size(len, inherited.font_size, ctx.root_line_height, ctx)
                 .px(),
         )),
-        // CSS Text 3 §6.1 `#valdef-text-align-match-parent` (raikiri-spike-l3wg)。
+        // CSS Text 3 §6.1 `#valdef-text-align-match-parent`。
         // `inherited` は page context の inheritance parent (root element、
         // または L3 legacy exception の initial values) — 常に「実の親」扱いで
         // 解決する (上記 doc の trap 注記: page context 自身が root element の
@@ -3009,8 +2989,8 @@ pub(crate) fn resolve_against_inherited(
             inherited.text_align,
             inherited.direction,
         )),
-        // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`、
-        // raikiri-spike-4rmu): `bolder` / `lighter` と同型、継承元の computed
+        // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`):
+        // `bolder` / `lighter` と同型、継承元の computed
         // font-size に対して解決する。`FontSize` variant に収束させる —
         // `PropertyValue::FontSizeRelative` doc の「解決タイミング」節が説明する
         // とおり、この variant は cascade winner の一時的な表現に留まり
@@ -3024,7 +3004,7 @@ pub(crate) fn resolve_against_inherited(
         //
         // `Direction` はここに属する — computed value = specified value
         // (相対解決なし、`crate::property::Direction` doc 参照)、`Color` /
-        // `FontFamily` と同型 (raikiri-spike-l3wg)。
+        // `FontFamily` と同型。
         v @ (PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
@@ -3069,22 +3049,19 @@ pub(crate) fn resolve_against_inherited(
         // there is nothing for this function (phase 2) to resolve. It is
         // applied in phase 3 instead (`crate::page::absolutize_in_page_context`,
         // mirroring the element path's `SpecifiedValues::absolutize_with`).
-        // (raikiri-spike-cmd3)
         | PropertyValue::OverflowX(_)
         | PropertyValue::OverflowY(_)
         | PropertyValue::Overflow(_)
         // `text-decoration` carries no length and does not depend on the
         // inheritance parent (computed value = specified keyword,
         // `TextDecoration` doc) — nothing for phase 2 to resolve.
-        // (bd raikiri-spike-5z86.3)
         | PropertyValue::TextDecoration(_)) => v,
     })
 }
 
 /// [`resolve_against_inherited`] (phase 2) を通過済であることを **型で**示す
 /// wrapper。tuple field は本 module (`cascade`) に private — 他 module は
-/// [`resolve_against_inherited`] を呼ぶ以外にこの型の値を作れない
-/// (bd raikiri-spike-7m33)。
+/// [`resolve_against_inherited`] を呼ぶ以外にこの型の値を作れない。
 ///
 /// [`crate::page`] の `absolutize_in_page_context` (phase 3) は引数にこの型を
 /// 要求するので、page 経路で phase 3 を再利用する限り、呼び手がどの module に
@@ -3098,8 +3075,8 @@ pub(crate) fn resolve_against_inherited(
 /// 本 module (`cascade.rs`) 自身に新しい経路が追加された場合はこの限りでは
 /// ない (tuple field は定義 module 内では直接見える) し、margin-box cascade
 /// が phase 3 を再利用せず独自の絶対化ロジックを書けばこの型は何も強制しない
-/// — 残る「経路の数え上げ」不能性は bd raikiri-spike-m4.2 (margin-box cascade
-/// 実装 task の acceptance criteria) に切り出した。[`resolve_against_inherited`]
+/// — 残る「経路の数え上げ」不能性は、別途 margin-box cascade 実装の
+/// acceptance criteria として切り出してある。[`resolve_against_inherited`]
 /// の doc「この guard が守らない範囲」§2 も参照。
 ///
 /// # test 用の裏口 (`Self::for_test`)
@@ -3109,8 +3086,7 @@ pub(crate) fn resolve_against_inherited(
 /// `absolutize_in_page_context_shorthand_fall_throughs` /
 /// `absolutize_in_page_context_font_size_relative_safety_net` —
 /// いずれも「structurally unreachable だが `pub(crate)` 関数は直接駆動できる」
-/// という既存の defense-in-depth 方針、bd raikiri-spike-ez7b / raikiri-spike-4rmu
-/// 系列の precedent)。これらが本型導入後も raw payload を直接検査できるよう、
+/// という既存の defense-in-depth 方針の precedent)。これらが本型導入後も raw payload を直接検査できるよう、
 /// `#[cfg(test)]` 限定の直接 constructor を用意する。production build には
 /// 存在しないので、上記の「他 module は本関数を呼ぶ以外に値を作れない」
 /// production guarantee は弱めない。
@@ -3146,7 +3122,7 @@ impl ResolvedAgainstInherited {
 ///
 /// length を運ぶ property は **specified 表現のまま**格納する — 絶対化は
 /// [`SpecifiedValues::finalize`] (phase 2 + phase 3) の責務であり、本関数の中で
-/// 行うことは decision raikiri-spike-082k により禁じられている (`padding: 2em` の
+/// 行うことは意図的に禁じられている (`padding: 2em` の
 /// 基準となる font-size は**その node の全 winner を適用し終える**まで確定せず、
 /// 本関数は winner 1 つ分しか見ていないため)。
 ///
@@ -3159,13 +3135,13 @@ impl ResolvedAgainstInherited {
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,
-        // CSS Backgrounds 3 §2.2 (raikiri-spike-0vv.7)。sibling `Color` と対称的な
+        // CSS Backgrounds 3 §2.2。sibling `Color` と対称的な
         // 単純代入 (non-inherited、per-node で cascade winner を直接反映)。
         PropertyValue::BackgroundColor(c) => target.background_color = c,
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
-        // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`、
-        // raikiri-spike-4rmu)。`font-weight` の `bolder` / `lighter` arm
+        // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`)。
+        // `font-weight` の `bolder` / `lighter` arm
         // (次項) と同型の read-modify-write だが、継承値の出所は D5 invariant
         // (`font_weight: u16`) とは少し違う形で成立する:
         //
@@ -3178,15 +3154,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //   font-size」の px 表現である。
         // - `font_size` の他の値 (`em` / `rem` / `%`) は絶対化を
         //   `SpecifiedValues::finalize` (phase 2) に **意図的に遅延**する
-        //   (decision raikiri-spike-082k、本関数冒頭の doc 参照) が、
+        //   (本関数冒頭の doc 参照) が、
         //   `larger` / `smaller` は基準が「親の computed font-size」のみで
         //   自 node の他 winner に依存しないため、`font-weight` と同じく
         //   ここ (phase 1) で解決してよい。解決結果は `Length::Px` — 通常の
         //   author 指定 px 値と区別が付かなくなり、phase 2 (`resolve_font_size`
         //   の `Px` arm は identity) を通しても二重適用にならない。
         // - 全 `Length` variant を OR-pattern で受ける下の抽出は
-        //   「実際には常に `Px`」を panic-free に表現したもの — reviewer-security
-        //   の panic surface 排除方針 (`Margin` shorthand fall-through arm と同じ
+        //   「実際には常に `Px`」を panic-free に表現したもの — panic surface を
+        //   作らない方針 (`Margin` shorthand fall-through arm と同じ
         //   理由) により `unreachable!` は採らない。
         //
         // `FontSize` と同じ `PropertyKey` を共有するため (`PropertyValue::key()`
@@ -3199,10 +3175,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             // to make this extraction panic-free (no `unreachable!`), not
             // because any test constructs a non-Px font_size here.
             //
-            // Re-examined for bd raikiri-spike-yh3w (which made `font-size:
-            // 1lh` / `1rlh` parse-accepted, removing the *previous* reason
+            // Re-examined after `font-size: 1lh` / `1rlh` became
+            // parse-accepted, removing the *previous* reason
             // this was unreachable — that `parse_font_size` dropped them at
-            // parse time). The `Lh`/`Rlh` arms remain unreachable, but for a
+            // parse time. The `Lh`/`Rlh` arms remain unreachable, but for a
             // different, still-true reason: `FontSize` and `FontSizeRelative`
             // share one `PropertyKey::FontSize` slot per node
             // (`PropertyValue::key()`), so at most one of them is the winner
@@ -3239,9 +3215,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             };
             target.font_size = Length::Px(resolve_relative_font_size(rel, inherited_px));
         }
-        // CSS Fonts 4 §2.2 (raikiri-spike-5iy + raikiri-spike-17s8)。specified
+        // CSS Fonts 4 §2.2。specified
         // value は `FontWeightValue` (relative keyword を保持)、computed value
-        // は resolve 済み `f32` (raikiri-spike-e52s で `u16` から格上げ) —
+        // は resolve 済み `f32` (`u16` から格上げ済み) —
         // `bolder` / `lighter` はここで絶対値に落とす。
         //
         // 継承値の出所: `target` は直前に `SpecifiedValues::inherit_from(parent)`
@@ -3251,7 +3227,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `font_weight: f32` を「既に computed-equivalent」として持つのはこの
         // invariant のため — `SpecifiedValues::initial()` から seed する実装に
         // 変えると `bolder` が常に 400 起点になり、compile error にも既存 test の
-        // 失敗にもならずに壊れる (bd raikiri-spike-i5bs §8.2 debt lens D5)。
+        // 失敗にもならずに壊れる (D5 invariant)。
         // さらに `pick_winners` は
         // `PropertyKey` ごとに slot を 1 つだけ埋めるため `FontWeight` arm が同一
         // node で 2 回走ることはなく、winner の適用順にも依存しない
@@ -3259,15 +3235,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // する — 二重適用は 400 → 700 → 900 と複合するので観測可能)。
         // この 2 つが relative-weight resolution の正しさを支える invariant。
         //
-        // なお本 arm は `apply_value` 中の read-modify-write の 1 つ (raikiri-spike-4rmu
-        // で `FontSizeRelative` arm が 2 つ目に加わった。それ以外はすべて冪等な
+        // なお本 arm は `apply_value` 中の read-modify-write の 1 つ (`FontSizeRelative`
+        // arm が 2 つ目に加わった。それ以外はすべて冪等な
         // 単純代入)。`Padding` / `Margin` / `Border` shorthand fall-through arm
         // のような二重適用経路を font-weight に足すと `bolder` が 400 → 700 → 900
         // と複合するため、上記 2 invariant を崩す変更は不可。`FontSizeRelative` も
         // 同じ理由で二重適用経路を持たない (`FontSize` と同一 `PropertyKey`
         // を共有し slot は 1 つ、詳細は該当 arm の comment)。
         //
-        // **契約 (raikiri-spike-ygl0)**: 継承元依存の解決を持つ property を新しく
+        // **契約**: 継承元依存の解決を持つ property を新しく
         // 追加するときは、本 arm だけでなく sibling の
         // `resolve_against_inherited` にも arm を足すこと — そちらは
         // `PropertyValue` を返す形で同じ解決を提供し、
@@ -3275,7 +3251,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // entry point) が使う。両者とも wildcard 無しの exhaustive match なので
         // variant 追加時は compiler が 2 経路を数え上げさせる。
         //
-        // **例外 (raikiri-spike-l3wg)**: `text-align: match-parent` は
+        // **例外**: `text-align: match-parent` は
         // `resolve_against_inherited` に arm があるが、**本 arm (`apply_value`)
         // には無い** — 下の `TextAlign` arm のコメント参照。この property の
         // 解決は `self.font_weight` のような自 field の read-modify-write では
@@ -3289,26 +3265,26 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         // CSS Inline 3 §5.1: line-height は inherited、cascade winner が
         // raw value (Normal / Number / Length) を保持。number-vs-length
-        // distinction は下流 (paint) の resolve context で意味を持つ
-        // (raikiri-spike-0vv.9)。
+        // distinction は下流 (paint) の resolve context で意味を持つ。
         PropertyValue::LineHeight(lh) => target.line_height = lh,
         PropertyValue::Display(d) => target.display = d,
-        // counter-* は M5 pre-work (raikiri-spike-s85) — parse 結果をそのまま
-        // computed value に格納。counter tree resolve は M5 本編。
+        // counter-* は将来の GCPM (paged media generated content) 対応に
+        // 向けた足場 — parse 結果をそのまま computed value に格納。counter
+        // tree の実際の resolve は将来の本実装で行う。
         PropertyValue::CounterReset(v) => target.counter_reset = v,
         PropertyValue::CounterIncrement(v) => target.counter_increment = v,
         PropertyValue::CounterSet(v) => target.counter_set = v,
-        // content は M5 gcpm-directive-emit static-side (raikiri-spike-m5.1)。
+        // content は将来の GCPM directive-emit の static-side 実装。
         // 下流 (raikiri-dom) runtime resolve が counter()/string()/target-*() の
         // 実値を組み立てる際に本 field を参照。
         PropertyValue::Content(v) => target.content = v,
-        // string-set は M5 static-side β (raikiri-spike-m5.3、CSS GCPM 3 §1.1.1)。
+        // string-set は将来の GCPM static-side 実装の一部 (CSS GCPM 3 §1.1.1)。
         // Named-string runtime resolve は下流 (raikiri-dom) 責務。
         PropertyValue::StringSet(v) => target.string_set = v,
-        // position は M5 static-side ε (raikiri-spike-m5.4、CSS GCPM 3 §1.2.1)。
+        // position は将来の GCPM static-side 実装の一部 (CSS GCPM 3 §1.2.1)。
         // - `Static` は no-op: `inherit_from` が running_templates を空で初期化
         //   するため、`position: static` が cascade winner のとき running_templates
-        //   は空のままで正しい (advisor calibration: 先行 running(hdr) を上書きして
+        //   は空のままで正しい (先行 running(hdr) を上書きして
         //   template 登録を suppress する用途)。
         // - `Running(name)` は 1-item seed を push。per-node で常に 0/1 要素
         //   (position は spec 上 単一値)、per-document 集約は下流 (raikiri-dom)
@@ -3319,12 +3295,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 target.running_templates.push(RunningTemplate { name });
             }
         },
-        // text-align は Sprint 12 seed (raikiri-spike-0vv.8、CSS Text 3 §6.1)。
+        // text-align (CSS Text 3 §6.1) の初期実装。
         // inherited property のため cascade winner が無い child は inherit_from で
         // 親値を引き継ぐ (color / font_family / font_size / font_weight と同じ
         // handling)。TextAlign は Copy、by-value 代入で十分。
         //
-        // **`match-parent` はここでは解決しない** (raikiri-spike-l3wg) — この
+        // **`match-parent` はここでは解決しない** — この
         // 単純代入は他 arm と同じく素朴なコピーのままにしてある。解決は
         // `crate::specified::SpecifiedValues::finalize` /
         // `finalize_as_root` が全 winner 適用**後**に、明示的な親
@@ -3337,19 +3313,19 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // invariant への違反になる。詳細は
         // `crate::property::resolve_text_align_match_parent` の doc。
         PropertyValue::TextAlign(t) => target.text_align = t,
-        // direction は CSS Writing Modes 4 §2.1 (raikiri-spike-l3wg)。
+        // direction は CSS Writing Modes 4 §2.1。
         // inherited property、computed value = specified value (相対解決なし) —
         // text-align と同じく単純代入で十分。
         PropertyValue::Direction(d) => target.direction = d,
         // CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>
-        // padding physical longhand (raikiri-spike-0vv.6)。
+        // padding physical longhand。
         // 4 side を独立に上書き。shorthand `PropertyValue::Padding` は
         // `crate::rule::expand_shorthand_into` により parse 出口と element cascade 入口
         // (`collect_cascaded`) の両方で 4 longhand に展開されるため、cascade 段に
         // 届く declaration は per-side longhand
         // のみ = shorthand/longhand の cross-key dependency が消え、winner の
         // 適用順に依存しない per-key determinism が成立する
-        // (raikiri-spike-5nc、margin 0vv.5 の parse-time expansion model に migrate)。
+        // (margin の parse-time expansion model と同じ設計に migrate 済み)。
         PropertyValue::PaddingTop(v) => target.padding.top = v,
         PropertyValue::PaddingRight(v) => target.padding.right = v,
         PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
@@ -3360,7 +3336,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 到達すれば 4 longhand winner を破壊し spec と食い違う。
         // Sides<Length>: Copy のため move で `target.padding` に代入。
         PropertyValue::Padding(sides) => target.padding = sides,
-        // 4 longhand margin sides (raikiri-spike-0vv.5、CSS Box 3 §3.1)。
+        // 4 longhand margin sides (CSS Box 3 §3.1)。
         // shorthand `PropertyValue::Margin` は `crate::rule::expand_shorthand_into`
         // により parse 出口と element cascade 入口の両方で 4 longhand に展開されるため、
         // cascade 段に届く declaration
@@ -3370,10 +3346,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MarginRight(v) => target.margin.right = v,
         PropertyValue::MarginBottom(v) => target.margin.bottom = v,
         PropertyValue::MarginLeft(v) => target.margin.left = v,
-        // ⚠️ **これは "safety" net ではない** (bd raikiri-spike-8kn8 で framing 訂正)。
+        // ⚠️ **これは "safety" net ではない**。
         // element cascade 経由では到達不能 — `collect_cascaded` が candidate を
         // 積む前に、stylesheet rule は `expand_shorthand_into` で、inline style は
-        // `parse_declaration_block` (内部で同関数を呼ぶ) で展開されるため (nqkj)。
+        // `parse_declaration_block` (内部で同関数を呼ぶ) で展開されるため。
         // 残る到達手段は crate 内から `apply_value` を直接呼ぶことだけである。
         // 仮に到達すると、`PropertyKey` 宣言順では `Margin` が `MarginTop` 等より
         // **後**に適用される。したがってこの atomic 上書きは **longhand winner を
@@ -3382,17 +3358,17 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 食い違う。net は degraded ではなく **deterministic に spec 違反**。
         // 到達した時点で既に bug であり、本 arm はそれを穏当に見せない。
         //
-        // それでも `unreachable!` を採らないのは reviewer-security の panic
-        // surface 排除方針による。cascade 経路で unreachable なのは
+        // それでも `unreachable!` を採らないのは panic surface を作らない
+        // 方針による。cascade 経路で unreachable なのは
         // `crate::rule::expand_shorthand_into` の call site 1 / 2 (parse 出口と
         // element cascade 入口) が担保しており、その担保のうち「展開 arm の
         // 書き忘れ」は同関数の exhaustive match で compile-time に排除されている
-        // (bd raikiri-spike-ez7b。残る範囲は同関数 doc の
+        // (残る範囲は同関数 doc の
         // 「この guard が守らない範囲」節)。振る舞い自体は
         // `apply_value_direct_margin_shorthand_fall_through` test が直接叩いて pin。
         PropertyValue::Margin(sides) => target.margin = sides,
-        // CSS Backgrounds 3 §3.3/§3.2/§3.1 border physical longhand
-        // (raikiri-spike-0vv.12)。4 side × 3 sub-property の 12 arm。shorthand
+        // CSS Backgrounds 3 §3.3/§3.2/§3.1 border physical longhand。
+        // 4 side × 3 sub-property の 12 arm。shorthand
         // `PropertyValue::Border` は `crate::rule::expand_shorthand_into` により
         // parse 出口と element cascade 入口の両方で 12 longhand に展開されるため、
         // cascade 段に届く declaration
@@ -3415,26 +3391,26 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 同じく **safety net ではない** — 到達すれば 12 longhand winner を一括で
         // 破壊し spec と食い違う。cascade 経路では unreachable
         // (`expand_shorthand_into` が 12 longhand に展開する)。詳細な framing と
-        // その unreachability の compile-time 強制 (bd raikiri-spike-ez7b) は
+        // その unreachability の compile-time 強制は
         // `Margin` arm の comment 参照。
         PropertyValue::Border(sides) => target.border = sides,
-        // CSS Sizing 3 §3.1.1 width (raikiri-spike-0vv.10)。single-value property、
+        // CSS Sizing 3 §3.1.1 width。single-value property、
         // `LengthOrAuto` は Copy shape (Length variant は Copy)。sibling
         // `PropertyValue::TextAlign` と対称的な単純代入 (non-inherited、cascade
         // winner を直接反映)。`auto` は下流 layout の automatic size calculation
         // (CSS Sizing 3 §5) で解決される — margin `auto` の余白分配とは別意味。
         PropertyValue::Width(v) => target.width = v,
-        // CSS Sizing 3 §3.1.1 height (raikiri-spike-0vv.11)。sibling `Width` /
+        // CSS Sizing 3 §3.1.1 height。sibling `Width` /
         // `Padding*` / `Margin*` と同じ per-node winner 直接代入 (non-inherited、
         // `LengthOrAuto` は Copy)。resolve (`Percent` / `Auto` の実 layout 高さ
         // 計算) は下流責務。
         PropertyValue::Height(v) => target.height = v,
-        // CSS Sizing 3 §3.3 box-sizing (raikiri-spike-0vv.13)。non-inherited、
+        // CSS Sizing 3 §3.3 box-sizing。non-inherited、
         // cascade winner が specified keyword をそのまま computed value に反映。
         // BoxSizing は Copy、by-value 代入で十分。
         PropertyValue::BoxSizing(bs) => target.box_sizing = bs,
-        // CSS Overflow 3 §3.1 overflow-x/overflow-y physical longhand
-        // (raikiri-spike-cmd3)。non-inherited、per-axis winner を staging の
+        // CSS Overflow 3 §3.1 overflow-x/overflow-y physical longhand。
+        // non-inherited、per-axis winner を staging の
         // `overflow.x`/`overflow.y` へ直接代入。cross-axis の computed-value
         // coupling (`resolve_overflow`) はここでは**適用しない** —
         // `target.overflow` は winner 適用の途中経過であり、まだ他方の axis の
@@ -3449,9 +3425,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // を一括で破壊し spec と食い違う。cascade 経路では unreachable
         // (`expand_shorthand_into` が 2 longhand に展開する)。詳細な framing
         // とその unreachability の compile-time 強制は `Margin` arm の
-        // comment 参照。(raikiri-spike-cmd3)
+        // comment 参照。
         PropertyValue::Overflow(pair) => target.overflow = pair,
-        // CSS Text Decoration Module Level 3 §2 (bd raikiri-spike-5z86.3)。
+        // CSS Text Decoration Module Level 3 §2。
         // non-inherited、cascade winner が specified keyword をそのまま
         // computed value に反映。`TextDecoration` は Copy、by-value 代入で
         // 十分 (`BoxSizing` arm と同型)。
@@ -3521,7 +3497,7 @@ mod tests {
         assert_eq!(cv.color, BLUE);
     }
 
-    // ── class / id / attribute selector matching (bd raikiri-spike-flln.1) ──
+    // ── class / id / attribute selector matching ──
     //
     // Spec: CSS Selectors Level 4 — class selector
     // <https://www.w3.org/TR/selectors-4/#class-html>, ID selector
@@ -3534,7 +3510,7 @@ mod tests {
 
     #[test]
     fn class_selector_applies_declaration() {
-        // Acceptance (bd raikiri-spike-flln.1): `.chapter-title { font-weight:
+        // Acceptance: `.chapter-title { font-weight:
         // bold }` applied to `<p class="chapter-title">` — `font-weight: bold`
         // computes to 700.0 (property.rs `parse_font_weight`).
         let mut doc = TestDoc::new();
@@ -3602,7 +3578,7 @@ mod tests {
         );
     }
 
-    /// bd raikiri-spike-tqwi acceptance: quirks-mode 3 状態 × class-selector
+    /// Acceptance: quirks-mode 3 状態 × class-selector
     /// case variation の regression matrix. CSS Selectors L4 class-html
     /// (<https://www.w3.org/TR/selectors-4/#class-html>, verbatim): "When
     /// matching against a document which is in quirks mode, class names must
@@ -3695,7 +3671,7 @@ mod tests {
 
     #[test]
     fn id_selector_applies_declaration() {
-        // Acceptance (bd raikiri-spike-flln.1): `#header { ... }` applied to
+        // Acceptance: `#header { ... }` applied to
         // `<div id="header">`.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
@@ -3721,7 +3697,7 @@ mod tests {
         assert_eq!(r.computed[div].color, ComputedValues::initial().color);
     }
 
-    /// bd raikiri-spike-tqwi acceptance: quirks-mode 3 状態 × id-selector case
+    /// Acceptance: quirks-mode 3 状態 × id-selector case
     /// variation の regression matrix — [`class_selector_case_sensitivity_across_quirks_modes`]
     /// の id-selector 版。CSS Selectors L4 id-selectors
     /// (<https://www.w3.org/TR/selectors-4/#id-selectors>, verbatim): "When
@@ -3795,7 +3771,7 @@ mod tests {
 
     #[test]
     fn attribute_exists_selector_applies_declaration() {
-        // Acceptance (bd raikiri-spike-flln.1): `[data-foo]` matches any
+        // Acceptance: `[data-foo]` matches any
         // element carrying that attribute, regardless of its value.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
@@ -3831,10 +3807,9 @@ mod tests {
         //
         // This is an **intentional accepted-baseline pin, not a silently
         // tolerated bug**: the decision to accept this CSS Selectors L4
-        // divergence as a permanent M1.4+ simplification is formally
-        // recorded in bd raikiri-spike-k5y3 (g04 accept/reject category (c),
-        // "intentional stricter") — see `StyleElement::attr`'s doc comment
-        // and that decision for the full rationale.
+        // divergence as a permanent simplification is formally
+        // recorded as project policy ("intentional stricter") — see
+        // `StyleElement::attr`'s doc comment for the full rationale.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "[data-foo] { color: red }");
@@ -3865,10 +3840,9 @@ mod tests {
         //
         // This is an **intentional accepted-baseline pin, not a silently
         // tolerated bug**: the decision to accept this CSS Selectors L4
-        // divergence as a permanent M1.4+ simplification is formally
-        // recorded in bd raikiri-spike-k5y3 (g04 accept/reject category (c),
-        // "intentional stricter") — see `StyleElement::attr`'s doc comment
-        // and that decision for the full rationale.
+        // divergence as a permanent simplification is formally
+        // recorded as project policy ("intentional stricter") — see
+        // `StyleElement::attr`'s doc comment for the full rationale.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "[data-foo=\"\"] { color: red }");
@@ -3945,7 +3919,7 @@ mod tests {
 
     #[test]
     fn attribute_value_exact_match_selector_applies_declaration() {
-        // Acceptance (bd raikiri-spike-flln.1): `[data-foo="bar"]` exact-match
+        // Acceptance: `[data-foo="bar"]` exact-match
         // variant.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
@@ -4010,8 +3984,8 @@ mod tests {
     fn attribute_selector_style_local_name_matches_element_with_inline_style() {
         // `StyleElement::attr`'s doc contract requires overrides to keep
         // handling `local == "style"` by delegating to
-        // `inline_style_source()`; `TestElementRef::attr` (bd
-        // raikiri-spike-flln.1) does this, so `[style]` — an ordinary
+        // `inline_style_source()`; `TestElementRef::attr`
+        // does this, so `[style]` — an ordinary
         // existence attribute selector whose local name happens to be
         // `style` — must match any element carrying an inline `style="…"`.
         // `font-weight` (not touched by the inline `color: blue`) is the
@@ -4091,7 +4065,7 @@ mod tests {
         );
     }
 
-    // --- descendant / child combinator (bd raikiri-spike-flln.2) ---
+    // --- descendant / child combinator ---
     //
     // CSS Selectors L4 descendant combinator
     // (<https://www.w3.org/TR/selectors-4/#descendant-combinators>, verbatim:
@@ -4104,7 +4078,7 @@ mod tests {
 
     #[test]
     fn descendant_combinator_applies_declaration_to_direct_child() {
-        // Acceptance (bd raikiri-spike-flln.2): `.chapter h2` applied to
+        // Acceptance: `.chapter h2` applied to
         // `<div class="chapter"><h2>...</h2></div>`.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
@@ -4156,7 +4130,7 @@ mod tests {
 
     #[test]
     fn child_combinator_applies_declaration_to_direct_child_only() {
-        // Acceptance (bd raikiri-spike-flln.2): `ol > li` applies to a
+        // Acceptance: `ol > li` applies to a
         // direct `<li>` child of `<ol>`, but NOT to a grandchild `<li>`
         // reached through an intervening `<ul>` (`<ol><li><ul><li>...`).
         //
@@ -4205,15 +4179,15 @@ mod tests {
 
     #[test]
     fn next_sibling_combinator_does_not_match_parent_child_relationship() {
-        // bd raikiri-spike-flln.3: `div + p` requires `div`/`p` to be
+        // `div + p` requires `div`/`p` to be
         // *siblings* (CSS Selectors L4 adjacent-sibling-combinators,
         // "share the same parent"). Here `p` is instead a *child* of
         // `div` — the ancestor relationship must NOT satisfy the sibling
         // combinator, even though `div` is literally `ancestors.last()`.
         // Directly exercises `match_combinator_chain`'s `NextSibling` arm
-        // (this test predates flln.3 as
+        // (this test predates sibling-combinator support, when it was named
         // `match_combinator_chain_rejects_unsupported_combinator_via_safety_net`,
-        // when `+` fell through the `_ => false` safety net for a different
+        // and `+` fell through the `_ => false` safety net for a different
         // reason — repurposed now that `+` is supported).
         let list = crate::parse_selector_list("div + p").expect("selector parses");
         let mut doc = TestDoc::new();
@@ -4305,11 +4279,11 @@ mod tests {
         assert_eq!(r.computed[p].color, ComputedValues::initial().color);
     }
 
-    // ── Sibling combinators (bd raikiri-spike-flln.3) ──
+    // ── Sibling combinators ──
 
     #[test]
     fn adjacent_sibling_combinator_applies_only_to_immediately_following_sibling() {
-        // bd raikiri-spike-flln.3 acceptance: `h2 + p` applies to the `<p>`
+        // Acceptance: `h2 + p` applies to the `<p>`
         // immediately following an `<h2>`, but NOT to a second/third `<p>`
         // further along — CSS Selectors L4 next-sibling combinator
         // (<https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>
@@ -4348,7 +4322,7 @@ mod tests {
 
     #[test]
     fn general_sibling_combinator_applies_to_every_following_sibling() {
-        // bd raikiri-spike-flln.3 acceptance: `h2 ~ p` applies to every
+        // Acceptance: `h2 ~ p` applies to every
         // `<p>` that follows an `<h2>`, not just the immediate one — CSS
         // Selectors L4 general-sibling combinator
         // (<https://www.w3.org/TR/selectors-4/#general-sibling-combinators>
@@ -4381,7 +4355,7 @@ mod tests {
 
     #[test]
     fn adjacent_and_general_sibling_combinator_are_distinguished_on_the_same_dom() {
-        // bd raikiri-spike-flln.3 acceptance, literal form: both `h2 + p`
+        // Acceptance, literal form: both `h2 + p`
         // and `h2 ~ p` active on the same `<h2><p><p><p>` DOM, using two
         // independent non-inherited properties (`background-color`, CSS
         // Backgrounds 3 §2.2; `box-sizing`, CSS Box Sizing dfn "Inherited:
@@ -4498,8 +4472,8 @@ mod tests {
     #[test]
     fn later_sibling_choice_point_resumes_live_iterator_across_backtrack() {
         // Discriminator for `PendingCandidates::LaterSibling`'s *live,
-        // resumable* `D::ChildIter` (bd raikiri-spike-8r16 review probe,
-        // reviewer:spec) - not covered by any existing test: doubling `~`
+        // resumable* `D::ChildIter` - not covered by any existing test:
+        // doubling `~`
         // is required to exercise one `LaterSibling` choice point being
         // popped-into-and-resumed by a stack.pop() backtrack from a
         // *different, nested* `LaterSibling` choice point (a single `~`
@@ -4595,7 +4569,7 @@ mod tests {
         // be a direct child of `.x`. Exercises the "sibling jump keeps
         // `ancestors` unchanged, so a further-left Child/Descendant combinator
         // composes for free" path documented on
-        // `is_supported_selector_list` (bd raikiri-spike-flln.3).
+        // `is_supported_selector_list`.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, ".x > .y ~ .z { background-color: red }");
@@ -4756,9 +4730,9 @@ mod tests {
         // exercise `compound_matches`'s `_ => false` safety-net arm
         // defensively, per its own doc comment. `p:hover` has no combinator,
         // so `ancestors`/`elem_id` are irrelevant here — `&[]` / `p`'s own id
-        // (bd raikiri-spike-flln.2 renamed this test alongside the function
-        // and added `dom`/`ancestors` args; bd raikiri-spike-flln.3 added
-        // the `elem_id` arg the current signature requires).
+        // (this test was renamed alongside the function when `dom`/
+        // `ancestors` args were added; the `elem_id` arg was added later,
+        // matching the current signature).
         let list = crate::parse_selector_list("p:hover").expect("selector parses");
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", None);
@@ -4780,9 +4754,9 @@ mod tests {
         );
     }
 
-    // ── `:lang()` / `:dir()` (bd raikiri-spike-flln.6) ──
+    // ── `:lang()` / `:dir()` ──
 
-    /// bd acceptance: `:lang(ja) { font-family: serif-ja }` applies to an
+    /// Acceptance: `:lang(ja) { font-family: serif-ja }` applies to an
     /// element that has `lang="ja"` **directly on itself**.
     #[test]
     fn lang_matches_own_lang_attribute() {
@@ -4797,11 +4771,11 @@ mod tests {
         assert_eq!(r.computed[p].font_family[0].to_string(), "serif-ja");
     }
 
-    /// bd acceptance (the actual "top gap" this task closes): `:lang(ja)`
+    /// Acceptance (the actual "top gap" this closes): `:lang(ja)`
     /// must apply to an element with **no lang attribute of its own**, whose
-    /// language is inherited from an ancestor (`<html lang="ja">` in the bd
-    /// description's own example) — the ancestor-walk this task reuses from
-    /// bd raikiri-spike-flln.2's descendant/child combinator matching.
+    /// language is inherited from an ancestor (`<html lang="ja">` in the
+    /// example below) — the ancestor-walk this reuses from the
+    /// descendant/child combinator matching.
     #[test]
     fn lang_matches_via_ancestor_inherited_language() {
         let mut doc = TestDoc::new();
@@ -4863,12 +4837,12 @@ mod tests {
         assert_eq!(r.computed[p].font_family[0].to_string(), "serif-en");
     }
 
-    /// reviewer:spec finding (2026-08-12): HTML LS §3.2.6.2's own-`lang`
+    /// HTML LS §3.2.6.2's own-`lang`
     /// step is scoped to "an HTML element or an element in the SVG
     /// namespace" (quoted in full on `effective_language`'s doc) — a MathML
     /// element's own `lang` attribute must NOT be consulted, unlike SVG's
     /// (`own_html_or_svg_lang_attribute`'s 2-element allowlist). Concrete
-    /// spec example from the finding: `<html lang="en"><math lang="ja">…`
+    /// spec example: `<html lang="en"><math lang="ja">…`
     /// — `<math>`'s own `lang="ja"` is ignored, so its effective language
     /// falls through to the `<html>` ancestor's `"en"`.
     #[test]
@@ -4899,8 +4873,8 @@ mod tests {
         );
     }
 
-    /// reviewer:spec backlog finding 3 (2026-08-12, low severity, optional):
-    /// `:lang()`/`:dir()` on a non-rightmost compound — the left side of a
+    /// `:lang()`/`:dir()` on a non-rightmost compound (low severity, optional) —
+    /// the left side of a
     /// combinator, matched via `match_from_ancestor` rather than the
     /// rightmost-element entry point in `match_complex_selector_list` — was
     /// reviewed by hand and judged structurally correct but untested.
@@ -5122,7 +5096,7 @@ mod tests {
         assert!(language_range_matches("*", "und"));
     }
 
-    // --- structural pseudo-classes (bd raikiri-spike-flln.5) ---
+    // --- structural pseudo-classes ---
     //
     // `:root` (CSS Selectors L4 §13.1
     // <https://www.w3.org/TR/selectors-4/#the-root-pseudo>), `:empty`
@@ -5254,8 +5228,8 @@ mod tests {
 
     #[test]
     fn empty_pseudo_class_matches_whitespace_only_text_child() {
-        // Acceptance-pinning test for the reviewer:spec correction
-        // (`matches_empty` doc's "Spec provenance and correction" note):
+        // Acceptance-pinning test for the correction documented in
+        // `matches_empty` doc's "Spec provenance and correction" note:
         // CSS Selectors L4 *deliberately changed* `:empty` from L3 so that
         // whitespace-only content — "given white space is largely
         // collapsible in HTML and is therefore used for source code
@@ -5392,7 +5366,7 @@ mod tests {
 
     #[test]
     fn nth_child_zebra_striping_acceptance() {
-        // Acceptance (bd raikiri-spike-flln.5): `:nth-child(2n+1)` zebra
+        // Acceptance: `:nth-child(2n+1)` zebra
         // striping. Rows 1/3/5 (1-based) get the declaration, 2/4 don't.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
@@ -5615,9 +5589,8 @@ mod tests {
 
     #[test]
     fn section_gt_p_first_child_acceptance() {
-        // Acceptance (bd raikiri-spike-flln.5, audit doc top gap example
-        // verbatim): `.section > p:first-child { font-weight: bold }`.
-        // Combines the child combinator (bd raikiri-spike-flln.2) with a
+        // Acceptance: `.section > p:first-child { font-weight: bold }`.
+        // Combines the child combinator with a
         // structural pseudo-class on the *rightmost* compound.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
@@ -5744,7 +5717,7 @@ mod tests {
     /// `INLINE_SPECIFICITY` (cascade.rs doc, CSS Cascading L4 §6.1
     /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort>: "declarations that
     /// do not belong to a style rule ... are considered to have a specificity
-    /// higher than any selector") pin — bd raikiri-spike-nvhy.
+    /// higher than any selector") pin.
     ///
     /// # なぜ hardcoded 算術 assert ではなく実 parse なのか
     ///
@@ -5766,27 +5739,27 @@ mod tests {
     /// こうすれば upstream が将来 field 幅を広げても (例: issue 本文が挙げる
     /// 11-bit 化)、本 test は**その時点の upstream 実装が実際に返す値**を
     /// 再測定し続けるので、`INLINE_SPECIFICITY` を超えた瞬間に fail する —
-    /// 「今の幅を前提にした算術の pin」より頑丈 (bd raikiri-spike-nvhy 提案の
-    /// うち、hardcoded const assert ではなく実測 test を採る方の案)。
+    /// 「今の幅を前提にした算術の pin」より頑丈 (hardcoded const assert では
+    /// なく実測 test を採る設計)。
     ///
-    /// # 未 cover: cascade 経由の end-to-end pin (M1.4 執筆時点では実装不可だった)
+    /// # 未 cover: cascade 経由の end-to-end pin (本 test 執筆時点では実装不可だった)
     ///
-    /// bd issue が挙げるもう 1 案 (`<p id class>` に対する高 specificity
+    /// もう 1 つの選択肢 (`<p id class>` に対する高 specificity
     /// selector と inline style を実際に cascade させ、inline が勝つことを
-    /// 見る e2e test) は M1.4 執筆時点では構築できなかった: 当時の
+    /// 見る e2e test) は本 test 執筆時点では構築できなかった: 当時の
     /// `ruletree.rs` `is_type_or_universal_only` が id/class を含む selector
     /// を rule tree 構築時点で drop し、当時の `match_by_tag` も
     /// type/universal 以外の component を持つ selector を一致させなかった
-    /// (M1.4 は type + universal selector のみ対応)。したがって本 test は
-    /// 「numeric な不変条件そのもの」を `crate::parse_selector_list` 経由で // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
+    /// (当時は type + universal selector のみ対応だった)。したがって本 test は
+    /// 「numeric な不変条件そのもの」を `crate::parse_selector_list` 経由で // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// 直接 pin するに留めた。
     ///
-    /// bd raikiri-spike-flln.1 で class/id/attribute selector matching が
-    /// 実装され (`is_type_or_universal_only` → `is_supported_selector_list`
+    /// class/id/attribute selector matching の実装後
+    /// (`is_type_or_universal_only` → `is_supported_selector_list`
     /// rename、`match_by_tag` → `match_simple_selectors` rename +
     /// `StyleElement` 対応)、上記の e2e test を阻んでいたブロッカーは解消
-    /// 済み。e2e test 自体の追加は本 test の scope 外のまま —
-    /// bd raikiri-spike-7ejc に残す。
+    /// 済み。e2e test 自体の追加は本 test の scope 外のまま、将来の課題
+    /// として残す。
     ///
     /// selector 内の class / pseudo-class 数も併せて増やし
     /// (class_like_selectors field)、id field 単独ではなく複数 field が
@@ -5795,7 +5768,7 @@ mod tests {
     /// 1 つしか持てないが、descendant combinator で compound を連結すれば
     /// compound ごとに `Component::LocalName` が積み上がるため、この field も
     /// 公開 API 経由で飽和させられる (`RaikiriSelectorParser` は
-    /// pseudo-element 未サポート — `crate::PseudoElem` は uninhabited — // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
+    /// pseudo-element 未サポート — `crate::PseudoElem` は uninhabited — // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// だが combinator 連結には無関係)。3 field 全てを飽和させると理論上の
     /// packed 最大値 `0x3FFF_FFFF` (margin 1、実測値) に一致する — これは
     /// 本 const 直上の doc の「margin はちょうど 1」と整合する。
@@ -5837,8 +5810,8 @@ mod tests {
              公開 API (Selector::specificity) で実測した到達可能最大値 \
              ({measured_specificity:#x}) を上回らなければならない — CSS Cascading L4 \
              §6.1 の 'higher than any selector' 要件。selectors crate の \
-             packed-specificity field 幅が変わった signal (bd raikiri-spike-nvhy \
-             参照、cascade.rs INLINE_SPECIFICITY doc)。"
+             packed-specificity field 幅が変わった signal (cascade.rs \
+             INLINE_SPECIFICITY doc 参照)。"
         );
     }
 
@@ -5878,7 +5851,7 @@ mod tests {
     }
 
     /// `pick_winners` の scratch buffer は walk loop の外で確保され全 node で
-    /// 共有される (bd raikiri-spike-8kn8)。**この共有が持ち込む唯一の新しい
+    /// 共有される。**この共有が持ち込む唯一の新しい
     /// 失敗様式が「前 node の winner slot が drain されずに残り、次 node へ
     /// 漏れる」**であり、本 test がそれを pin する。
     ///
@@ -5939,7 +5912,7 @@ mod tests {
         );
     }
 
-    /// bd raikiri-spike-gerj: `collect_cascaded` の出力が per-node
+    /// `collect_cascaded` の出力が per-node
     /// `HashMap<StyleNodeId, Vec<CascadedDecl>>` から flat arena +
     /// `HashMap<StyleNodeId, Range<usize>>` (`CascadedArena`) に変わったあと、
     /// per-node grouping / 内部順序 / 「候補 0 件なら entry 無し」の 3 つが
@@ -5956,8 +5929,8 @@ mod tests {
     /// ranges の非重複性は flat arena 特有の新しい不変条件 — 個別 `Vec` には
     /// 存在しなかった「他 node の区間と重なってはいけない」という要求で、
     /// `CascadedArena::candidates` が正しい slice を返す前提そのもの
-    /// (raikiri-spike-8kn8 が警告する「global index space を渡すと壊れる」
-    /// ハザードの、arena 版の再発防止)。2 つの assertion で役割が分かれる:
+    /// (「global index space を渡すと壊れる」という既知のハザードの、
+    /// arena 版の再発防止)。2 つの assertion で役割が分かれる:
     /// `windows(2)` が三者間の pairwise overlap を検査し、末尾の
     /// `assert_eq!` (arena 全長 == 3 区間長の和) が「どの named range にも
     /// 属さない迷子 slot」の有無を検査する — 前者だけでは後者は捕まらない。
@@ -6018,7 +5991,7 @@ mod tests {
         // that per-node `Vec`s never needed to: if two nodes' ranges ever
         // overlapped, `candidates(id)` would silently hand `pick_winners` a
         // slice containing another node's declarations too
-        // (raikiri-spike-8kn8's "global index space" hazard, arena-shaped).
+        // (a known "global index space" hazard, arena-shaped).
         //
         // The `windows(2)` loop below only checks pairwise overlap among the
         // three explicitly-named nodes (p1/p2/p3) — it would miss a stray
@@ -6086,10 +6059,10 @@ mod tests {
         assert_send::<CascadeResult>();
     }
 
-    // ── 絶対化 (082k Phase 2 / bd raikiri-spike-zls8) ───────────────────
+    // ── 絶対化 (Phase 2) ───────────────────
     //
     // ここから下の test 群は「cascade を抜けた時点で length が px に解決されて
-    // いる」ことを pin する。従来 (Sprint 18 まで) は specified value が
+    // いる」ことを pin する。従来は specified value が
     // `ComputedValues` に素通りし、`em` / `rem` は下流 (raikiri-dom layout.rs)
     // で黙って 0px に潰れていた。
 
@@ -6112,7 +6085,7 @@ mod tests {
         (r.computed[parent].clone(), r.computed[child].clone())
     }
 
-    /// decision raikiri-spike-082k Rationale 1 — **本 task の存在理由**。
+    /// Rationale 1 — **本 task の存在理由**。
     ///
     /// 従来はどちらの `<span>` も `font_size == Length::Em(1.5)` になり、
     /// 「宣言由来の `em`」と「inherit 由来の値」が区別できなかった (下流から
@@ -6239,7 +6212,7 @@ mod tests {
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(40.0)));
     }
 
-    // ── `lh` / `rlh` (CSS Values 4 §6.1.1, bd raikiri-spike-vxha) ──────────
+    // ── `lh` / `rlh` (CSS Values 4 §6.1.1) ──────────
 
     /// `padding: 1lh` は **自 node の** used line-height (own font-size ×
     /// `<number>`) を基準にする — CSS Values 4 §6.1.1 `lh`。
@@ -6257,7 +6230,7 @@ mod tests {
 
     /// `line-height: normal` (initial value) の下で `1lh` を使うのは common
     /// case — real font metrics が無いので padding の spec initial `0` に
-    /// 倒す (`crate::resolve::resolve_length_percentage` doc、cleanroom: // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
+    /// 倒す (`crate::resolve::resolve_length_percentage` doc、cleanroom: // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// 比率を捏造しない)。
     #[test]
     fn lh_falls_back_to_zero_when_own_line_height_is_normal() {
@@ -6266,13 +6239,13 @@ mod tests {
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
     }
 
-    /// roborev-refine iter 1 Finding A regression pin: `margin-top: 1lh`
+    /// Regression pin: `margin-top: 1lh`
     /// under the extremely common `line-height: normal` configuration must
     /// compute to `Px(0.0)` — margin's true spec initial (CSS Box 3 §3.1) —
     /// **not** `Auto`. `Auto` would silently trigger real taffy auto-margin
     /// layout (space distribution / centering) with no spec basis, which is
-    /// the concrete failure mode the fix (`resolve_margin_length_or_auto`,
-    /// bd raikiri-spike-vxha) closes.
+    /// the concrete failure mode the fix (`resolve_margin_length_or_auto`)
+    /// closes.
     #[test]
     fn margin_lh_falls_back_to_zero_not_auto_when_line_height_normal() {
         let cv = cascade_doc("", "div", Some("margin-top: 1lh"));
@@ -6339,7 +6312,7 @@ mod tests {
 
     /// `line-height: 1lh` is self-referential (CSS Values 4 §6.1.1, spec
     /// quote canonically documented on
-    /// `crate::resolve::resolve_line_height`) — it must use the **parent's** // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// `crate::resolve::resolve_line_height`) — it must use the **parent's** // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// used line-height, not the declaring element's own font-size. The
     /// child's own font-size (50px) is deliberately different from the
     /// parent's (16px, initial) so a bug that leaks the child's own metrics
@@ -6372,10 +6345,10 @@ mod tests {
     }
 
     /// `line-height: 1rlh`, unlike `1lh` above, is **not** self-referential
-    /// in this crate (bd raikiri-spike-vxha — `rlh`'s own definition, "the
+    /// in this crate (`rlh`'s own definition, "the
     /// lh unit on the root element", is a tree-global constant that does not
     /// depend on the declaring element's position; see
-    /// `crate::resolve::resolve_line_height`'s doc for why the literal // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-hrau)
+    /// `crate::resolve::resolve_line_height`'s doc for why the literal // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// "Similarly, lh or rlh" spec wording is not followed for `rlh` on
     /// non-root elements). Three levels (root / middle / leaf) with
     /// **different** line-heights at the root and the immediate parent
@@ -6418,7 +6391,7 @@ mod tests {
         assert_eq!(cv.line_height, ComputedLineHeight::Normal);
     }
 
-    // ── `font-size: 1lh` / `1rlh` (CSS Values 4 §6.1.1, bd raikiri-spike-yh3w) ──
+    // ── `font-size: 1lh` / `1rlh` (CSS Values 4 §6.1.1) ──
 
     /// **The core bug this issue tracks.** Before the fix, `parse_font_size`
     /// dropped `font-size: 1lh` at *parse* time — not merely computing it
@@ -6477,8 +6450,8 @@ mod tests {
     /// (cleanroom), and not `0px` either: unlike `border-width: 1lh` /
     /// `padding: 1lh` under `line-height: normal`
     /// (`lh_falls_back_to_zero_when_own_line_height_is_normal` above, which
-    /// share a *generic* resolver with a known `0px` compromise tracked by
-    /// bd raikiri-spike-k05m), `resolve_font_size` is a dedicated
+    /// share a *generic* resolver with a known `0px` compromise),
+    /// `resolve_font_size` is a dedicated
     /// single-property resolver and falls back to its own true initial
     /// directly (`resolve_font_size` doc, "`lh` / `rlh` の自己参照" section).
     #[test]
@@ -6602,7 +6575,7 @@ mod tests {
         );
     }
 
-    /// **D5 invariant** (bd raikiri-spike-i5bs §8.2 debt lens D5)。
+    /// **D5 invariant**。
     ///
     /// `bolder` は `SpecifiedValues` の staging 上で解決されるが、その基準は
     /// **親の computed font-weight** でなければならない (CSS Fonts 4 §2.2.1
@@ -6649,7 +6622,7 @@ mod tests {
         assert_eq!(r.computed[c].font_weight, 900.0);
     }
 
-    /// **D5 invariant** — `font-size` 版 (raikiri-spike-4rmu、`bolder` の
+    /// **D5 invariant** — `font-size` 版 (`bolder` の
     /// `bolder_resolves_against_parent_computed_weight_through_staging` と同型)。
     ///
     /// `larger` / `smaller` は `SpecifiedValues` の staging 上で解決されるが、
@@ -6703,7 +6676,7 @@ mod tests {
     }
 
     /// root element の `font-size: larger` — 親が無いので initial (16px) 基準
-    /// (`crate::specified::SpecifiedValues::finalize_as_root` doc の // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる (bd raikiri-spike-o9h6)
+    /// (`crate::specified::SpecifiedValues::finalize_as_root` doc の // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// "if the element has no parent" 条項、SPEC-6 derivation と同じ pattern)。
     #[test]
     fn larger_on_root_element_resolves_against_initial_font_size() {
@@ -6808,7 +6781,7 @@ mod tests {
         (doc, parent)
     }
 
-    /// roborev job 199 (medium): `collect_cascaded` and `resolve_inheritance`
+    /// `collect_cascaded` and `resolve_inheritance`
     /// were recursive DFS — a deeply nested DOM could stack-overflow the
     /// process. 5000-level linear chain must cascade without overflow and
     /// produce a correct (non-initial) computed value at the deepest node.
@@ -6848,16 +6821,16 @@ mod tests {
     /// instead of a single compound (`div`). Child combinator is chosen over
     /// descendant here because `Combinator::Child` has exactly one candidate
     /// per level (`ancestors.split_last()`, no backtracking), so cost is
-    /// O(`depth`) — this isolates the pure *stack-depth* question bd
-    /// raikiri-spike-8r16 asks. A descendant-combinator version was tried
-    /// first and rejected for an unrelated reason, not stack depth: see bd
-    /// raikiri-spike-3p3h (`Combinator::Descendant`'s backtracking is
+    /// O(`depth`) — this isolates the pure *stack-depth* question this test
+    /// answers. A descendant-combinator version was tried
+    /// first and rejected for an unrelated reason, not stack depth:
+    /// `Combinator::Descendant`'s backtracking is
     /// separately exponential on uniformly-matching chains — discovered by
-    /// that attempt).
+    /// that attempt.
     ///
-    /// Before bd raikiri-spike-8r16's fix, this forced the
+    /// Before this fix, this forced the
     /// `match_combinator_chain`/`match_from_element` mutual recursion
-    /// (renamed from `match_from_ancestor`, bd raikiri-spike-flln.3) to a
+    /// (renamed from `match_from_ancestor`) to a
     /// depth of `depth - 1` (one combinator per ancestor level), 2 native
     /// stack frames per level, independently of `collect_cascaded`'s own
     /// (already-iterative, job 199) DOM-DFS depth. Post-fix, this same
@@ -6876,7 +6849,7 @@ mod tests {
         (doc, parent)
     }
 
-    /// Empirical answer for bd raikiri-spike-8r16: does a long, uniformly-
+    /// Empirical answer to the question: does a long, uniformly-
     /// matching child-combinator chain stack-overflow
     /// `match_combinator_chain`/`match_from_element`'s mutual recursion? Same
     /// small-fixed-stack technique as [`deep_nesting_small_stack_no_overflow`]
@@ -6894,8 +6867,8 @@ mod tests {
     /// its stack` / SIGABRT, the same crash shape
     /// [`deep_nesting_small_stack_no_overflow`]'s doc describes for
     /// `collect_cascaded` pre-job-199 — i.e. this was a real, not
-    /// hypothetical, overflow risk, matching the bd raikiri-spike-8r16
-    /// concern. After converting the recursion to the explicit-stack form
+    /// hypothetical, overflow risk. After converting the recursion to the
+    /// explicit-stack form
     /// below, this test completes cleanly and returns the correct computed
     /// color.
     #[test]
@@ -6918,7 +6891,7 @@ mod tests {
         assert_eq!(color, RED);
     }
 
-    // ── UA origin + display cascade (M1.4a、raikiri-spike-m1.22) ──
+    // ── UA origin + display cascade ──
 
     fn cascade_with_ua(
         ua_css: &str,
@@ -6935,12 +6908,12 @@ mod tests {
         }
         let e = doc.push_element(0, target_tag, inline);
 
-        // build_rule_tree (Author 集約) + UA add_stylesheet (m1.22 経路)
+        // build_rule_tree (Author 集約) + UA add_stylesheet
         let mut tree = build_rule_tree(&doc);
         // UA CSS を先頭に inject するのではなく、既存の Author rule の後ろに
         // add してから rank 化で origin 順序を担保する (source_order より rank
         // が優位)
-        // ただし M1.4a では add_stylesheet の呼び出し順で source_order が振られ
+        // ただし現状 add_stylesheet の呼び出し順で source_order が振られ
         // Author が先 (source_order 小)、UA が後 (source_order 大) となる。
         // rank 化により Origin::UserAgent の Normal は Origin::Author の
         // Normal より常に低い rank になる (`cascade_rank` doc に正確な値
@@ -6980,9 +6953,9 @@ mod tests {
         assert_eq!(cv.display, DisplayValue::Block);
     }
 
-    // ── cascade_rank 4-tier ordering (3rd tier: bd raikiri-spike-wo36, CSS
-    // Cascading L5 §6.5 "author presentational hint origin"; 4th tier: bd
-    // raikiri-spike-pdta, CSS Cascading L4 §6.2 "user origin") ──
+    // ── cascade_rank 4-tier ordering (3rd tier: CSS
+    // Cascading L5 §6.5 "author presentational hint origin"; 4th tier:
+    // CSS Cascading L4 §6.2 "user origin") ──
 
     #[test]
     fn cascade_rank_orders_ua_user_hint_author_normal_then_reverses_for_important() {
@@ -7020,8 +6993,8 @@ mod tests {
         // `important = false`), so `(AuthorPresentationalHint, true)`
         // stays production-unreached. `(User, false)` / `(User, true)`
         // used to be production-unreached too (no code path routed any
-        // declaration to `Origin::User`) until bd raikiri-spike-d7h3 wired
-        // consumer `extra_stylesheets` to it — this test remains the only
+        // declaration to `Origin::User`) until consumer `extra_stylesheets`
+        // was wired to it — this test remains the only
         // place `(AuthorPresentationalHint, true)` is exercised, but the
         // two `User` arms now also have real end-to-end coverage via
         // `crates/raikiri/tests/build_cascaded.rs`'s
@@ -7114,7 +7087,7 @@ mod tests {
         assert_eq!(r.computed[span].display, DisplayValue::Inline);
     }
 
-    // ── background-color wire-through (CSS Backgrounds 3 §2.2、raikiri-spike-0vv.7) ──
+    // ── background-color wire-through (CSS Backgrounds 3 §2.2) ──
 
     #[test]
     fn background_color_wired_through_cascade_from_inline_style() {
@@ -7130,8 +7103,8 @@ mod tests {
     fn background_color_is_non_inherited_child_starts_from_initial_transparent() {
         // CSS Backgrounds 3 §2.2 "Inheritance: no"。<p style='background-color:red'>
         // の子 <span> は自身 rule がなく、background_color は initial (transparent)。
-        // 37n sibling pattern (display / counter-* / content / string-set /
-        // position の non-inheritance test 群を踏襲、raikiri-spike-0vv.7)。
+        // sibling pattern (display / counter-* / content / string-set /
+        // position の non-inheritance test 群を踏襲)。
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", Some("background-color: red"));
         let span = doc.push_element(p, "span", None);
@@ -7153,13 +7126,13 @@ mod tests {
         // CSS Color 4 §6.3 "The transparent keyword": `transparent`
         // = rgba(0, 0, 0, 0)。CssColor::TRANSPARENT が cascade winner として
         // per-node に到達することを pin (parse_color の transparent Ident branch
-        // と CssColor::TRANSPARENT const の regression canary、raikiri-spike-0vv.7)。
+        // と CssColor::TRANSPARENT const の regression canary)。
         let cv = cascade_doc("", "div", Some("background-color: transparent"));
         assert_eq!(cv.background_color, CssColor::TRANSPARENT);
         assert_eq!(cv.background_color.a, 0);
     }
 
-    // ── line-height wire-through (CSS Inline 3 §5.1、raikiri-spike-0vv.9) ──
+    // ── line-height wire-through (CSS Inline 3 §5.1) ──
 
     #[test]
     fn line_height_wired_through_cascade_from_inline_style() {
@@ -7190,14 +7163,14 @@ mod tests {
         );
     }
 
-    // ── counter-* wire-through (CSS Lists 3 §4、raikiri-spike-s85 M5 pre-work) ──
+    // ── counter-* wire-through (CSS Lists 3 §4、将来の GCPM 対応に向けた足場) ──
 
     #[test]
     fn counter_reset_wired_through_cascade_from_inline_style() {
         // <div style="counter-reset: chapter"> → ComputedValues.counter_reset
         // に `[("chapter", 0)]` が届く。parser → PropertyValue → apply_value →
         // ComputedValues の end-to-end 疎通 smoke。
-        // d9y.2: counter_reset は Arc<Vec<..>>、`*cv.counter_reset` で deref-compare。
+        // counter_reset は Arc<Vec<..>>、`*cv.counter_reset` で deref-compare。
         let cv = cascade_doc("", "div", Some("counter-reset: chapter"));
         assert_eq!(*cv.counter_reset, vec![(SmolStr::new("chapter"), 0)]);
         // 他 counter property は non-inherited の initial (empty) のまま
@@ -7205,15 +7178,15 @@ mod tests {
         assert!(cv.counter_set.is_empty());
     }
 
-    // ── content wire-through (CSS Content 3 §2、raikiri-spike-m5.1) ──
+    // ── content wire-through (CSS Content 3 §2) ──
 
     #[test]
     fn content_wired_through_cascade_from_inline_style() {
         // <p style='content: "hello"'> → ComputedValues.content に
         // `[Literal("hello")]` が届く。parser → PropertyValue::Content →
         // apply_value → ComputedValues の end-to-end 疎通 smoke。
-        // s85 counter-* wire-through pattern を踏襲。
-        // d9y.1: content は Arc<Vec<..>>、`*cv.content` で deref-compare。
+        // counter-* wire-through pattern を踏襲。
+        // content は Arc<Vec<..>>、`*cv.content` で deref-compare。
         // Literal は SmolStr payload (owned String → SmolStr conversion)。
         use crate::property::ContentComponent;
         use smol_str::SmolStr;
@@ -7224,15 +7197,15 @@ mod tests {
         );
     }
 
-    // ── string-set wire-through (CSS GCPM 3 §1.1.1、raikiri-spike-m5.3) ──
+    // ── string-set wire-through (CSS GCPM 3 §1.1.1) ──
 
     #[test]
     fn string_set_wired_through_cascade_from_inline_style() {
         // <p style='string-set: chapter_title "hello"'> → ComputedValues.string_set
         // に `[(chapter_title, [Literal("hello")])]` が届く。
         // parser → PropertyValue::StringSet → apply_value → ComputedValues の
-        // end-to-end 疎通 smoke。s85 / m5.1 wire-through pattern を踏襲。
-        // d9y.1: string_set は Arc<Vec<..>>、Literal は SmolStr。indexing +
+        // end-to-end 疎通 smoke。counter-* / content wire-through pattern を踏襲。
+        // string_set は Arc<Vec<..>>、Literal は SmolStr。indexing +
         // field access は Arc<Vec<T>> の Deref chain (`&[T]`) 経由でそのまま
         // 通る (dom/paint consumer 波及 0)。
         use crate::property::ContentComponent;
@@ -7286,14 +7259,14 @@ mod tests {
         );
     }
 
-    // ── position: running() wire-through (CSS GCPM 3 §1.2.1、raikiri-spike-m5.4) ──
+    // ── position: running() wire-through (CSS GCPM 3 §1.2.1) ──
 
     #[test]
     fn running_template_wired_through_cascade_from_inline_style() {
         // <div style="position: running(header)"> → ComputedValues.running_templates
         // に `[RunningTemplate{name:"header"}]` が届く。parser → PropertyValue::Position
         // → apply_value → ComputedValues の end-to-end 疎通 smoke。
-        // s85 / m5.1 / m5.3 wire-through pattern を踏襲。
+        // counter-* / content / string-set wire-through pattern を踏襲。
         use crate::computed::RunningTemplate;
         let cv = cascade_doc("", "div", Some("position: running(header)"));
         assert_eq!(
@@ -7310,7 +7283,7 @@ mod tests {
         // Positioned Layout 3 §2 <https://www.w3.org/TR/css-position-3/#position-property>
         // の propdef "Inherited: no"。<div style="position: running(hdr)"> の
         // 子 <span> は自身の rule がなく running_templates は initial (empty)。
-        // 37n sibling: string_set / content non-inherited と同じ shape。
+        // sibling: string_set / content non-inherited と同じ shape。
         let mut doc = TestDoc::new();
         let div = doc.push_element(0, "div", Some("position: running(hdr)"));
         let span = doc.push_element(div, "span", None);
@@ -7337,7 +7310,7 @@ mod tests {
 
     #[test]
     fn static_position_wins_over_running_via_source_order() {
-        // advisor calibration: `Static` variant の load-bearing 検証。
+        // `Static` variant の load-bearing 検証。
         // 同一 declaration block 内で `position: running(hdr); position: static`
         // → CSS Cascading L4 §6.1 "Order of Appearance"
         // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> で後方
@@ -7352,14 +7325,14 @@ mod tests {
         );
     }
 
-    // ── text-align wire-through + inheritance (CSS Text 3 §6.1、raikiri-spike-0vv.8) ──
+    // ── text-align wire-through + inheritance (CSS Text 3 §6.1) ──
 
     #[test]
     fn text_align_wired_through_cascade_from_inline_style() {
         // <p style="text-align: center"> → ComputedValues.text_align に
         // TextAlign::Center が届く。parser → PropertyValue::TextAlign →
         // apply_value → ComputedValues の end-to-end 疎通 smoke。
-        // s85 counter-* / m5.1 content / m5.3 string-set / m5.4 position wire-through
+        // counter-* / content / string-set / position wire-through
         // pattern を踏襲 (原則 1 前例主義)。
         use crate::property::TextAlign;
         let cv = cascade_doc("", "p", Some("text-align: center"));
@@ -7398,8 +7371,8 @@ mod tests {
         use crate::property::TextAlign;
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
-        // p に UA-like rule として display: block を Author 側で置く (M1.4a scope
-        // では UA rule も同 rank に居るので、child が inherit しない性質だけを見る)
+        // p に UA-like rule として display: block を Author 側で置く (現状
+        // UA rule も同 rank に居るので、child が inherit しない性質だけを見る)
         doc.push_text(s, "p { display: block; text-align: right }");
         let p = doc.push_element(0, "p", None);
         let span = doc.push_element(p, "span", None);
@@ -7436,7 +7409,7 @@ mod tests {
         assert_eq!(r.computed[span].text_align, TextAlign::Left);
     }
 
-    // ── direction wire-through (CSS Writing Modes 4 §2.1、raikiri-spike-l3wg) ──
+    // ── direction wire-through (CSS Writing Modes 4 §2.1) ──
 
     #[test]
     fn direction_wired_through_cascade_from_inline_style() {
@@ -7476,9 +7449,9 @@ mod tests {
         assert_eq!(r.computed[span].direction, Direction::Ltr);
     }
 
-    // ── text-align: match-parent (CSS Text 3 §6.1、raikiri-spike-l3wg) ──
+    // ── text-align: match-parent (CSS Text 3 §6.1) ──
     //
-    // origin: raikiri-spike-ygl0 §8.2 spec lens F1 → raikiri-spike-l3wg. Before
+    // Before
     // this, `TextAlign::MatchParent` reached `ComputedValues.text_align`
     // unresolved (raikiri had no `direction` in the computed layer). These
     // tests exercise the *full* `cascade()` pipeline end-to-end, complementing
@@ -7604,14 +7577,14 @@ mod tests {
         );
     }
 
-    // ── box-sizing wire-through (CSS Sizing 3 §3.3、raikiri-spike-0vv.13) ──
+    // ── box-sizing wire-through (CSS Sizing 3 §3.3) ──
 
     #[test]
     fn box_sizing_wired_through_cascade_from_inline_style() {
         // <p style="box-sizing: border-box"> → ComputedValues.box_sizing に
         // BoxSizing::BorderBox が届く。parser → PropertyValue::BoxSizing →
         // apply_value → ComputedValues の end-to-end 疎通 smoke。
-        // 37n sibling (background-color / line-height / counter-* / content /
+        // sibling (background-color / line-height / counter-* / content /
         // string-set / position / text-align) の wire-through pattern を踏襲
         // (原則 1 前例主義)。
         use crate::property::BoxSizing;
@@ -7619,13 +7592,14 @@ mod tests {
         assert_eq!(cv.box_sizing, BoxSizing::BorderBox);
     }
 
-    // ── font-weight keyword + inheritance (CSS Fonts 4 §2.2、raikiri-spike-0vv.16) ──
+    // ── font-weight keyword + inheritance (CSS Fonts 4 §2.2) ──
 
     #[test]
     fn font_weight_keyword_bold_wired_through_cascade_from_inline_style() {
         // <p style="font-weight: bold"> → ComputedValues.font_weight = 700。
         // parser Ident arm → PropertyValue::FontWeight(Absolute(700)) → apply_value →
-        // ComputedValues の end-to-end 疎通 smoke (0vv.8 / 0vv.9 pattern を踏襲)。
+        // ComputedValues の end-to-end 疎通 smoke (既存 wire-through test と同じ
+        // pattern を踏襲)。
         let cv = cascade_doc("", "p", Some("font-weight: bold"));
         assert_eq!(cv.font_weight, 700.0);
     }
@@ -7641,7 +7615,7 @@ mod tests {
     fn font_weight_is_inherited_child_carries_parent_bold() {
         // CSS Fonts 4 §2.2 "Inheritance: Yes"。<p style="font-weight: bold"> の
         // 子 <span> は自身 rule 無しでも parent の 700 を継承する。
-        // Verification #7 (bd 0vv.16): parent bold + child 未指定 = child 700。
+        // Verification #7: parent bold + child 未指定 = child 700。
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", Some("font-weight: bold"));
         let span = doc.push_element(p, "span", None);
@@ -7655,14 +7629,14 @@ mod tests {
         );
     }
 
-    // ── font-weight bolder / lighter (CSS Fonts 4 §2.2、raikiri-spike-17s8) ──
+    // ── font-weight bolder / lighter (CSS Fonts 4 §2.2) ──
 
     /// `<p style="font-weight: {parent}"><span style="font-weight: {child}">` を
     /// cascade して span の computed font-weight を返す。
     ///
     /// **親の computed value** を経由することが本 helper の主眼 — child は
     /// literal な spec 値ではなく、親が cascade を通して確定させた weight に
-    /// 対して relative resolution される (bd 17s8 Verification #7)。
+    /// 対して relative resolution される (Verification #7)。
     fn relative_weight_through_cascade(parent_decl: &str, child_decl: &str) -> f32 {
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", Some(parent_decl));
@@ -7724,8 +7698,8 @@ mod tests {
     fn font_weight_table_no_change_rows_are_not_clamps() {
         // 表の両端 2 行は "no change" であって clamp ではない。算術近似
         // (`min(w + 300, 900)` / `max(w - 300, 100)`) を書くとここが壊れる。
-        // この 2 行は raikiri-spike-5iy が range を `[1,1000]` に広げて初めて
-        // author から到達可能になったため、bundle 固有の regression guard。
+        // この 2 行は `font-weight` の受理 range を `[1,1000]` に広げて初めて
+        // author から到達可能になったため、regression guard として置いている。
         assert_eq!(
             resolve_relative_weight(FontWeightValue::Bolder, 1000.0),
             1000.0,
@@ -7748,11 +7722,10 @@ mod tests {
     }
 
     /// `resolve_relative_weight` の doc 「非有限 `inherited` — 本関数は
-    /// guard しない」節が記述する非対称処理を pin する (bd
-    /// raikiri-spike-sxd7)。
+    /// guard しない」節が記述する非対称処理を pin する。
     ///
-    /// bd raikiri-spike-kfl7 precedent (「guard は sink 境界に置く、resolve
-    /// 層には置かない」) に従い、**本関数自体は変更しない** — 非対称は
+    /// 「guard は sink 境界に置く、resolve
+    /// 層には置かない」という既存方針に従い、**本関数自体は変更しない** — 非対称は
     /// バグとして修正されるものではなく、非有限 `inherited` (通常経路では
     /// 型/parse guard により到達しないが `ComputedValues` の直接構築からは
     /// 到達しうる) に対する現状の table 分岐の帰結として、以降の regression
@@ -7798,8 +7771,7 @@ mod tests {
 
     /// `resolve_relative_font_size` を unit 関数として直接叩く — cascade
     /// harness に依存せず ratio (1.2) の適用を検証する
-    /// (`font_weight_bolder_lighter_table_all_six_rows` の font-size 版、
-    /// raikiri-spike-4rmu)。
+    /// (`font_weight_bolder_lighter_table_all_six_rows` の font-size 版)。
     #[test]
     fn resolve_relative_font_size_applies_1_2_ratio() {
         assert_eq!(
@@ -7828,7 +7800,7 @@ mod tests {
 
     /// `resolve_against_inherited` の戻り値 `ResolvedAgainstInherited` が
     /// 中身を無損失で運ぶこと — 型を足したことで解決結果そのものが変わって
-    /// いないことの pin (bd raikiri-spike-7m33)。`as_property_value` (覗き見)
+    /// いないことの pin。`as_property_value` (覗き見)
     /// と `into_property_value` (消費) の両方を、resolve 対象・pass-through
     /// 対象の 2 パターンで確認する。
     #[test]
@@ -7866,7 +7838,7 @@ mod tests {
 
     #[test]
     fn font_weight_bolder_wired_through_cascade_from_parent_computed() {
-        // bd 17s8 Verification #3 / #4 / #5。親の **computed** weight に対して
+        // Verification #3 / #4 / #5。親の **computed** weight に対して
         // resolve される (parse → PropertyValue::FontWeight(Bolder) →
         // apply_value → ComputedValues の end-to-end 疎通)。
         assert_eq!(
@@ -7886,7 +7858,7 @@ mod tests {
 
     #[test]
     fn font_weight_lighter_wired_through_cascade_from_parent_computed() {
-        // bd 17s8 Verification #6。
+        // Verification #6。
         assert_eq!(
             relative_weight_through_cascade("font-weight: 100", "font-weight: lighter"),
             100.0,
@@ -7900,7 +7872,7 @@ mod tests {
 
     #[test]
     fn font_weight_relative_resolves_against_computed_not_literal_parent_value() {
-        // bd 17s8 Verification #7 の核心。親の declaration は `bold` keyword
+        // Verification #7 の核心。親の declaration は `bold` keyword
         // (literal な spec 値は "bold" であって数値ではない) だが、resolution は
         // 親の **computed** 700 に対して行われる → bolder(700) = 900。
         assert_eq!(
@@ -7939,7 +7911,7 @@ mod tests {
 
     #[test]
     fn font_weight_full_range_wired_through_cascade() {
-        // raikiri-spike-5iy: spec range `[1,1000]` の両端が cascade まで届く。
+        // spec range `[1,1000]` の両端が cascade まで届く。
         assert_eq!(
             cascade_doc("", "p", Some("font-weight: 1")).font_weight,
             1.0
@@ -7949,7 +7921,7 @@ mod tests {
             1000.0
         );
         // fractional は f32 格上げ以降、丸めずそのまま computed value まで届く
-        // (bd raikiri-spike-e52s — 旧実装は round-half-away-from-zero で 101 に
+        // (旧実装は round-half-away-from-zero で 101 に
         // 丸めていた)。
         assert_eq!(
             cascade_doc("", "p", Some("font-weight: 100.5")).font_weight,
@@ -7971,8 +7943,8 @@ mod tests {
 
     #[test]
     fn bolder_lighter_resolve_against_unrounded_fractional_parent_weight() {
-        // bd raikiri-spike-e52s の origin failure scenario (3 件、issue 本文の
-        // "Failure scenario" 節をそのまま pin)。丸めが `u16` computed 表現に
+        // 実際に起きていた origin failure scenario (3 件、以下そのまま pin)。
+        // 丸めが `u16` computed 表現に
         // 起因していた頃は、350 単位の relative-weight table 行選択そのものが
         // ずれていた:
         //
@@ -8031,13 +8003,13 @@ mod tests {
         );
     }
 
-    // ── Cascade memory DoS regression (raikiri-spike-d9y.1、SEC HIGH) ──
+    // ── Cascade memory DoS regression (SEC HIGH) ──
     //
-    // Codex Cloud Security finding: 従来 `PropertyValue::Content(Vec<ContentComponent>)` /
+    // 従来 `PropertyValue::Content(Vec<ContentComponent>)` /
     // `ComputedValues.content: Vec<ContentComponent>` は cascade 段の `decl.value.clone()`、
     // `apply_winners` の drain の `value.clone()`、`resolve_inheritance` の stack push + write と
     // 段階ごとに deep-clone を経由し、`* { content: "<large>" }` × N element で
-    // O(N × M) 相当の heap 消費を招いていた。d9y.1 で outer `Vec` を
+    // O(N × M) 相当の heap 消費を招いていた。この修正で outer `Vec` を
     // `Arc<Vec<ContentComponent>>` に wrap、全 clone 経路が Arc bump に落ちた。
     //
     // 実 heap 計測は環境依存 (allocator hook が必要) のため、behavioral proxy として
@@ -8065,12 +8037,12 @@ mod tests {
         assert!(
             std::sync::Arc::ptr_eq(&r.computed[p1].content, &r.computed[p2].content),
             "cascade must Arc-share content across universal-selector matches \
-             (raikiri-spike-d9y.1 SEC HIGH DoS regression)"
+             (SEC HIGH DoS regression)"
         );
     }
 
     /// `string-set` も content と同じ cascade path を辿るため、同種 Arc 共有が
-    /// 成立している必要がある (d9y.1 で `PropertyValue::StringSet` も Arc wrap)。
+    /// 成立している必要がある (同じ修正で `PropertyValue::StringSet` も Arc wrap)。
     #[test]
     fn cascade_shares_string_set_arc_across_universal_selector_matches() {
         let mut doc = TestDoc::new();
@@ -8084,22 +8056,21 @@ mod tests {
         assert_eq!(r.computed[p2].string_set.len(), 1);
         assert!(
             std::sync::Arc::ptr_eq(&r.computed[p1].string_set, &r.computed[p2].string_set),
-            "cascade must Arc-share string_set across universal-selector matches \
-             (raikiri-spike-d9y.1)"
+            "cascade must Arc-share string_set across universal-selector matches"
         );
     }
 
-    // ── Cascade memory DoS regression (raikiri-spike-d9y.2、SEC HIGH) ──
+    // ── Cascade memory DoS regression (SEC HIGH) ──
     //
-    // Codex Cloud Security finding (finding hash 12128875): `counter-reset` /
-    // `counter-increment` / `counter-set` は d9y.1 の Content/StringSet と同じ
+    // `counter-reset` /
+    // `counter-increment` / `counter-set` は content/string-set と同じ
     // 3 段 clone 経路 (`decl.value.clone`、`apply_winners` の drain の `value.clone`、
     // `resolve_inheritance` の stack push + write) を辿るため
     // `PropertyValue::Counter*(Vec<..>)` × universal selector × N element で
-    // O(N × M) 相当の heap 消費を招いていた。d9y.2 で全 3 property の outer
+    // O(N × M) 相当の heap 消費を招いていた。この修正で全 3 property の outer
     // `Vec` を `Arc<Vec<(SmolStr, i32)>>` に wrap、clone 経路が Arc bump に
     // 落ちた (asymptotic は O(N + M))。short-circuit (child stack entry で
-    // counter-* を skip) は **意図的に採用せず** — d9y.1 の Content/StringSet も
+    // counter-* を skip) は **意図的に採用せず** — content/string-set の修正も
     // 同じ non-inherited Arc field でありながら short-circuit していないため、
     // counter-* のみ特別扱いすると仕上げが非対称になる。Arc wrap 単独で DoS は
     // 塞がる (stack 上に転がるのは Arc bump 1 個ずつだけで、直後の
@@ -8126,12 +8097,12 @@ mod tests {
         assert!(
             std::sync::Arc::ptr_eq(&r.computed[p1].counter_reset, &r.computed[p2].counter_reset),
             "cascade must Arc-share counter_reset across universal-selector matches \
-             (raikiri-spike-d9y.2 SEC HIGH DoS regression)"
+             (SEC HIGH DoS regression)"
         );
     }
 
     /// `counter-increment` も counter-reset と同じ cascade path を辿るため、
-    /// 同種 Arc 共有が成立している必要がある (d9y.2)。
+    /// 同種 Arc 共有が成立している必要がある (同じ修正)。
     #[test]
     fn cascade_shares_counter_increment_arc_across_universal_selector_matches() {
         let mut doc = TestDoc::new();
@@ -8148,12 +8119,11 @@ mod tests {
                 &r.computed[p1].counter_increment,
                 &r.computed[p2].counter_increment
             ),
-            "cascade must Arc-share counter_increment across universal-selector matches \
-             (raikiri-spike-d9y.2)"
+            "cascade must Arc-share counter_increment across universal-selector matches"
         );
     }
 
-    /// `counter-set` も同じ cascade path を辿るため Arc 共有が必要 (d9y.2)。
+    /// `counter-set` も同じ cascade path を辿るため Arc 共有が必要 (同じ修正)。
     #[test]
     fn cascade_shares_counter_set_arc_across_universal_selector_matches() {
         let mut doc = TestDoc::new();
@@ -8167,15 +8137,14 @@ mod tests {
         assert_eq!(r.computed[p2].counter_set.len(), 3);
         assert!(
             std::sync::Arc::ptr_eq(&r.computed[p1].counter_set, &r.computed[p2].counter_set),
-            "cascade must Arc-share counter_set across universal-selector matches \
-             (raikiri-spike-d9y.2)"
+            "cascade must Arc-share counter_set across universal-selector matches"
         );
     }
 
     /// counter-* は non-inherited — 親 element に counter 値があっても child は
     /// inherit_from で shared empty Arc slot に落ちる。この pin が「Arc wrap 単独
     /// (short-circuit 無し) でも child stack entry の parent Arc bump が即 empty
-    /// slot に置換される」ことを保証する。d9y.2 short-circuit 不採用の正当化
+    /// slot に置換される」ことを保証する。short-circuit 不採用の正当化
     /// assertion。
     ///
     /// CSS Lists 3 §4: 3 property とも property table が `Inherited: no`。
@@ -8195,18 +8164,18 @@ mod tests {
         // slot 再利用の behavioral proxy)。ここが false になる regression:
         // (a) inherit_from が parent の Arc をそのまま渡してしまう
         // (b) inherit_from が per-node `Arc::new(Vec::new())` を alloc する
-        // どちらも d9y.2 の memory 目標を破る。
+        // どちらも上記の memory 目標を破る。
         let shared = crate::property::empty_counter_entries();
         assert!(
             std::sync::Arc::ptr_eq(&r.computed[child].counter_reset, &shared),
             "child counter_reset must point to shared empty Arc slot \
-             (raikiri-spike-d9y.2 non-inherited short-circuit-equivalent canary)"
+             (non-inherited short-circuit-equivalent canary)"
         );
     }
 
     /// Empty (initial / inherit_from) の content/string_set も **shared Arc slot**
     /// を再利用する — cascade fix の副作用で「per-node empty Arc allocation
-    /// regression」に陥っていないことを pin (advisor calibration)。
+    /// regression」に陥っていないことを pin する。
     #[test]
     fn initial_empty_content_and_string_set_share_arc_slot() {
         let mut doc = TestDoc::new();
@@ -8227,24 +8196,24 @@ mod tests {
         assert!(
             std::sync::Arc::ptr_eq(&r.computed[p1].content, &r.computed[p2].content),
             "empty content must reuse shared Arc slot — per-node empty Arc \
-             allocation regression detected (raikiri-spike-d9y.1 side-effect canary)"
+             allocation regression detected (side-effect canary)"
         );
         assert!(
             std::sync::Arc::ptr_eq(&r.computed[p1].string_set, &r.computed[p2].string_set),
-            "empty string_set must reuse shared Arc slot (raikiri-spike-d9y.1 side-effect canary)"
+            "empty string_set must reuse shared Arc slot (side-effect canary)"
         );
     }
 
-    // ── font-family per-node malloc regression (raikiri-spike-no7b) ──
+    // ── font-family per-node malloc regression ──
     //
-    // reviewer:perf finding (origin: raikiri-spike-zpui §8.2、out-of-diff
-    // pre-existing): `ComputedValues.font_family` は本 crate で最後に
-    // Arc-share されていなかった `Vec` payload (d9y.1 が Content/StringSet、
-    // d9y.2 が counter-* を対応済み)。あちら (non-inherited) と違い
+    // pre-existing finding (out-of-diff, unrelated to this change):
+    // `ComputedValues.font_family` は本 crate で最後に
+    // Arc-share されていなかった `Vec` payload (前述の修正群が Content/StringSet
+    // と counter-* を対応済み)。あちら (non-inherited) と違い
     // `font-family` は **inherited** なので、支配的な per-node cost は
     // 「毎 node で initial にリセットする」コストではなく inheritance walk
     // (`SpecifiedValues::inherit_from` の `parent.font_family.clone()`) の
-    // コスト — 同じ `Arc` fix でもコストの形が違う。d9y.1/d9y.2 と同じ
+    // コスト — 同じ `Arc` fix でもコストの形が違う。上記と同じ
     // behavioral-proxy methodology: `heap` 計測は allocator hook 依存なので、
     // `Arc::ptr_eq` を deep-clone regression の canary として使う。
 
@@ -8260,7 +8229,7 @@ mod tests {
     /// その walk を seed するために `cascade()` 1 回あたり高々 1 回しか
     /// 呼ばれない。そのため同一 document 版の test では、
     /// `initial_font_family()` 内の `OnceLock` を削除しても green のまま
-    /// になってしまう (raikiri-spike-no7b 実装時に perturbation で確認済み —
+    /// になってしまう (この test の実装時に perturbation で確認済み —
     /// 同一 document 形は下記
     /// `resolve_inheritance_shares_font_family_arc_from_parent_when_child_has_no_declaration`
     /// を再度 test しているだけで、shared slot 自体は pin していない)。
@@ -8288,13 +8257,13 @@ mod tests {
         assert!(
             std::sync::Arc::ptr_eq(&r_a.computed[a].font_family, &r_b.computed[b].font_family),
             "initial font_family must reuse the shared `initial_font_family()` Arc \
-             slot across independent cascade() runs (raikiri-spike-no7b)"
+             slot across independent cascade() runs"
         );
     }
 
     /// `* { font-family: ... }` × N element で、matching 全 element の
     /// `Vec` は勝者 declaration の Arc を共有しなければならない — mirrors
-    /// `cascade_shares_content_arc_across_universal_selector_matches` (d9y.1)。
+    /// `cascade_shares_content_arc_across_universal_selector_matches`。
     #[test]
     fn cascade_shares_font_family_arc_across_universal_selector_matches() {
         let mut doc = TestDoc::new();
@@ -8308,15 +8277,14 @@ mod tests {
         assert_eq!(r.computed[p2].font_family.len(), 2);
         assert!(
             std::sync::Arc::ptr_eq(&r.computed[p1].font_family, &r.computed[p2].font_family),
-            "cascade must Arc-share font_family across universal-selector matches \
-             (raikiri-spike-no7b)"
+            "cascade must Arc-share font_family across universal-selector matches"
         );
     }
 
     /// `font-family` declaration を持たない child は、親と**同一**の Arc を
     /// (`Arc::ptr_eq`) 継承しなければならない — 中身を再 clone したものでは
-    /// ならない。これは bd issue がこの (inherited) field の支配的コストと
-    /// 名指しした inheritance-walk cost そのものであり、d9y.2 の
+    /// ならない。これはこの (inherited) field の支配的コストである
+    /// inheritance-walk cost そのものであり、前述の
     /// non-inherited「shared empty slot にリセットする」形とは異なる。
     #[test]
     fn resolve_inheritance_shares_font_family_arc_from_parent_when_child_has_no_declaration() {
@@ -8333,11 +8301,11 @@ mod tests {
                 &r.computed[child].font_family
             ),
             "child with no font-family declaration must inherit the parent's \
-             Arc by identity, not a re-cloned Vec (raikiri-spike-no7b)"
+             Arc by identity, not a re-cloned Vec"
         );
     }
 
-    // ── padding wire-through (CSS Box 3 §4.1 + §4.2、raikiri-spike-0vv.6) ──
+    // ── padding wire-through (CSS Box 3 §4.1 + §4.2) ──
     //
     // Verification #7 (cascade wire-through + non-inheritance):
     // <div style="padding: 10px 5%"> の cascade 結果が populate、initial value 0
@@ -8347,7 +8315,7 @@ mod tests {
     fn padding_shorthand_wired_through_cascade_from_inline_style() {
         // Verification #7: `padding: 10px 5%` → 2-value form expansion で
         // top/bottom=10px, left/right=5% を pin。counter-* / content / string_set
-        // wire-through pattern を踏襲 (s85 / m5.1 / m5.3、raikiri-spike-0vv.6)。
+        // wire-through pattern を踏襲。
         use crate::property::Sides;
         let cv = cascade_doc("", "div", Some("padding: 10px 5%"));
         assert_eq!(
@@ -8428,8 +8396,7 @@ mod tests {
         // parse-time で longhand に expand してから cascade する。
         // `padding: 10px; padding-top: 5px;` →
         // top=5, others=10 (source-order-independent、spec-correct)。
-        // (margin 0vv.5 で実装済みの parse-time expansion model に migtate:
-        // raikiri-spike-5nc)
+        // (margin で実装済みの parse-time expansion model に migrate 済み)
         let cv = cascade_doc("", "div", Some("padding: 10px; padding-top: 5px"));
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(5.0));
         assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
@@ -8443,7 +8410,6 @@ mod tests {
         // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
         // 逆順で pin: `padding-top: 5px; padding: 10px;`
         // → 全 side = 10px (後段 shorthand が top も含めて上書き)。
-        // (raikiri-spike-5nc)
         let cv = cascade_doc("", "div", Some("padding-top: 5px; padding: 10px"));
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(10.0));
         assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
@@ -8451,7 +8417,7 @@ mod tests {
         assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(10.0));
     }
 
-    // ── margin longhand + shorthand cascade (CSS Box 3 §3.1/§3.2、raikiri-spike-0vv.5) ──
+    // ── margin longhand + shorthand cascade (CSS Box 3 §3.1/§3.2) ──
 
     #[test]
     fn margin_shorthand_wired_through_cascade_two_value_expansion() {
@@ -8559,14 +8525,14 @@ mod tests {
         assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(-5.0));
     }
 
-    // ── height wire-through (CSS Sizing 3 §3.1.1、raikiri-spike-0vv.11) ──
+    // ── height wire-through (CSS Sizing 3 §3.1.1) ──
 
     #[test]
     fn height_wired_through_cascade_from_inline_style() {
         // <div style="height: 100px"> → ComputedValues.height に
         // LengthOrAuto::Length(Length::Px(100)) が届く。parser →
         // PropertyValue::Height → apply_value → ComputedValues の end-to-end
-        // 疎通 smoke (0vv.5 margin / 0vv.6 padding wire-through pattern を踏襲)。
+        // 疎通 smoke (margin / padding wire-through pattern を踏襲)。
         let cv = cascade_doc("", "div", Some("height: 100px"));
         assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Px(100.0));
     }
@@ -8594,9 +8560,8 @@ mod tests {
     fn height_non_inherited_child_starts_from_initial() {
         // Verification 6 (task doc): CSS Sizing 3 §3.1.1 "Inherited: no"。
         // <div style="height: 100px"> の子 <span> は自身 rule 無しで
-        // height = initial (`LengthOrAuto::Auto`)。37n sibling: margin / padding
-        // / display / string_set / content non-inherited と同 shape
-        // (raikiri-spike-0vv.11)。
+        // height = initial (`LengthOrAuto::Auto`)。sibling: margin / padding
+        // / display / string_set / content non-inherited と同 shape。
         let mut doc = TestDoc::new();
         let div = doc.push_element(0, "div", Some("height: 100px"));
         let span = doc.push_element(div, "span", None);
@@ -8627,12 +8592,12 @@ mod tests {
         );
     }
 
-    // ── <img width>/<img height> presentational hint (bd raikiri-spike-5z86.7,
-    // HTML LS https://html.spec.whatwg.org/multipage/rendering.html#dimRendering) ──
+    // ── <img width>/<img height> presentational hint
+    // (HTML LS https://html.spec.whatwg.org/multipage/rendering.html#dimRendering) ──
 
     #[test]
     fn img_width_and_height_attributes_promoted_to_computed_style() {
-        // Acceptance (bd raikiri-spike-5z86.7): `<img width="100"
+        // Acceptance: `<img width="100"
         // height="50">` の HTML attribute が author CSS 無しでも computed
         // width/height に届く。
         let mut doc = TestDoc::new();
@@ -8682,7 +8647,7 @@ mod tests {
 
     #[test]
     fn img_width_attribute_percentage_and_decimal_accepted() {
-        // bd raikiri-spike-5z86.7 dispatch prompt は "非負整数" と要約したが、
+        // "非負整数" とだけ要約すると誤解を招くが、
         // spec 本文の "rules for parsing dimension values" は percentage /
         // 小数も受理する — 実装はその本文どおり (`parse_html_dimension_value`
         // doc 参照)。
@@ -8765,7 +8730,7 @@ mod tests {
 
     #[test]
     fn non_img_element_width_height_attributes_not_promoted() {
-        // bd raikiri-spike-5z86.7 scope narrowing: mapping は `img` のみ。
+        // scope narrowing: mapping は `img` のみ。
         // 同じ attribute を持つ `div` は影響を受けない。
         let mut doc = TestDoc::new();
         let div =
@@ -8778,7 +8743,7 @@ mod tests {
 
     #[test]
     fn img_width_attribute_overridable_by_inline_author_style() {
-        // Cascade-origin pin (bd raikiri-spike-wo36): presentational hint は
+        // Cascade-origin pin: presentational hint は
         // `Origin::AuthorPresentationalHint`、inline style は `Origin::Author`
         // (`push_img_dimension_hints` doc の "Cascade origin" 節) — 別 origin
         // tier なので `cascade_rank` の rank 差だけで無条件に決着し、
@@ -8811,12 +8776,12 @@ mod tests {
 
     #[test]
     fn img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity() {
-        // Origin-rank pin (bd raikiri-spike-wo36, `push_img_dimension_hints`
+        // Origin-rank pin (`push_img_dimension_hints`
         // doc's "Cascade origin" section): the hint is
         // `Origin::AuthorPresentationalHint` (rank below `Origin::Author`
         // per `cascade_rank`), while this `* { width: 30px }` rule is a
         // real `Origin::Author` rule with zero specificity (universal
-        // selector). Before bd raikiri-spike-wo36 both sides shared
+        // selector). Before this, both sides shared
         // `Origin::Author` and this exact zero-specificity/zero-source-order
         // case only resolved via `collect_cascaded`'s push-order (hint
         // pushed first, so the later-scanned real rule won the `beats` tie).
@@ -8844,8 +8809,8 @@ mod tests {
     fn img_tag_name_match_is_ascii_case_insensitive() {
         // `push_img_dimension_hints` 自身の `elem.tag_name().eq_ignore_ascii_case`
         // 判定を確認 — `compound_matches` の `Component::LocalName` 判定
-        // (bd raikiri-spike-flln.1、旧名 `match_by_tag`; bd raikiri-spike-flln.2
-        // で `match_simple_selectors` → `compound_matches`/
+        // (旧名 `match_by_tag`、その後
+        // `match_simple_selectors` → `compound_matches`/
         // `match_complex_selector_list` に分割 rename) と同じ寛容さの、独立
         // した別実装。real DOM (html5ever) は tag name を常に lowercase に
         // 正規化するので実運用では観測されないが、`StyleElement` は特定 DOM
@@ -8889,8 +8854,8 @@ mod tests {
     #[test]
     fn test_dom_attr_style_matches_inline_style_source_contract() {
         // `push_img_dimension_hints` は `elem.attr("width")`/`attr("height")`
-        // 経由で `TestElementRef::attr()` の override (`crate::test_dom`,
-        // bd raikiri-spike-5z86.7 で追加) を叩く。`StyleElement::attr` の
+        // 経由で `TestElementRef::attr()` の override (`crate::test_dom`
+        // に追加済み) を叩く。`StyleElement::attr` の
         // trait doc ("Default handles `style` by delegating to
         // `inline_style_source`; overrides must preserve that contract")
         // をこの override が守っていることを直接確認する — real DOM
@@ -8969,7 +8934,7 @@ mod tests {
     fn apply_value_direct_margin_shorthand_fall_through() {
         // `apply_value` の `PropertyValue::Margin(sides)` arm は cascade 経路
         // では unreachable (`collect_cascaded` が 4 longhand に展開する)。**これは
-        // safety net ではない** (bd raikiri-spike-8kn8 で framing 訂正) — 万一
+        // safety net ではない** — 万一
         // regression / bypass 経路で到達すると `target.margin = sides` の
         // atomic 上書きが 4 longhand winner を必ず破壊する。到達した時点で
         // 既に bug であり、本 test は arm を直接叩いて `unreachable!` 化 or
@@ -8988,7 +8953,7 @@ mod tests {
     #[test]
     fn apply_value_direct_overflow_shorthand_fall_through() {
         // Sibling of `apply_value_direct_margin_shorthand_fall_through`
-        // above (bd raikiri-spike-cmd3): `apply_value`'s
+        // above: `apply_value`'s
         // `PropertyValue::Overflow(pair)` arm is unreachable via the
         // cascade path (`expand_shorthand_into` expands it to the 2
         // `OverflowX`/`OverflowY` longhands before `apply_value` ever
@@ -9003,7 +8968,7 @@ mod tests {
         assert_eq!(cv.overflow, pair);
     }
 
-    // ── border longhand + shorthand cascade (raikiri-spike-0vv.12) ──
+    // ── border longhand + shorthand cascade ──
 
     #[test]
     fn border_shorthand_then_longhand_later_longhand_wins() {
@@ -9014,7 +8979,7 @@ mod tests {
         // `border: 1px solid red; border-top-width: 10px;` →
         // top.width=10、他 side の width=1、top.style=Solid、top.color=red 保持。
         //
-        // 本 test は本 architecture の load-bearing case (advisor calibration):
+        // 本 test は本 architecture の load-bearing case:
         // expansion 前 shorthand を単一 key で cascade してしまうと、`PropertyKey`
         // 宣言順では `Border` が `BorderTopWidth` より後に来るため `border` が
         // 必ず後勝ちし top.width=1 に上書きされる (spec と逆)。expand_shorthand_into
@@ -9038,7 +9003,7 @@ mod tests {
             a: 255,
         };
         assert_eq!(cv.border.top.style, BorderStyle::Solid);
-        // raikiri-spike-0vv.17: border.color は `BorderColor` enum、shorthand
+        // border.color は `BorderColor` enum、shorthand
         // 由来の author-specified red は `Resolved` variant で cascade に届く。
         assert_eq!(cv.border.top.color, BorderColor::Resolved(red));
         assert_eq!(cv.border.right.style, BorderStyle::Solid);
@@ -9070,8 +9035,8 @@ mod tests {
         // CSS Backgrounds 3 §3 "Borders" — border-* propdef は "Inherited: no"。
         // <div style="border: 5px solid red"> の子 <span> は自身 rule 無しで
         // border = initial (medium / none / currentcolor)。
-        // 37n sibling: margin / padding non-inherited test
-        // を踏襲。raikiri-spike-0vv.17: color は `BorderColor` enum で保持。
+        // sibling: margin / padding non-inherited test
+        // を踏襲。color は `BorderColor` enum で保持。
         let mut doc = TestDoc::new();
         let div = doc.push_element(0, "div", Some("border: 5px solid red"));
         let span = doc.push_element(div, "span", None);
@@ -9107,13 +9072,13 @@ mod tests {
     fn apply_value_direct_border_shorthand_fall_through() {
         // `apply_value` の `PropertyValue::Border(sides)` arm は cascade 経路
         // では unreachable (`collect_cascaded` が 12 longhand に展開する)。**これは
-        // safety net ではない** (bd raikiri-spike-8kn8 で framing 訂正、margin
+        // safety net ではない** (margin
         // fall-through と対称) — 万一 regression / bypass 経路で到達すると
         // `target.border = sides` の atomic 上書きが 12 longhand winner を必ず
         // 破壊する。到達した時点で既に bug であり、本 test は arm を直接叩いて
         // `unreachable!` 化 or 空 arm regression を捕捉する canary。
         let mut cv = SpecifiedValues::initial();
-        // raikiri-spike-0vv.17: `BorderColor::CurrentColor` を明示 fixture 化
+        // `BorderColor::CurrentColor` を明示 fixture 化
         // (fall-through arm は payload の shape を保持することを pin する)。
         let sides = Sides {
             top: Border {
@@ -9146,7 +9111,7 @@ mod tests {
         // Verification #7: `div { width: 100px }` が `ComputedValues.width` に
         // Length(Px(100)) として届く。parser → PropertyValue::Width → apply_value
         // → ComputedValues の end-to-end 疎通 smoke (sibling padding/margin と
-        // 同 pattern)。raikiri-spike-0vv.10。
+        // 同 pattern)。
         let cv = cascade_doc("", "div", Some("width: 100px"));
         assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(100.0));
     }
@@ -9195,7 +9160,7 @@ mod tests {
 
     #[test]
     fn cascade_with_ua_deterministic_across_10_runs() {
-        // determinism regression (spec §M1 acceptance criteria)
+        // determinism regression (acceptance criteria for this stage of work)
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "p { color: red }");
@@ -9218,12 +9183,12 @@ mod tests {
         }
     }
 
-    // ── post-parse shorthand injection (bd raikiri-spike-nqkj) ──────────────
+    // ── post-parse shorthand injection ──────────────
     //
     // `add_stylesheet` の**後**に declaration を shorthand variant へ書き戻す
     // post-parse mutation 経路 — `crate::rule::parse_declaration_block` の
     // parse-time 展開はこの経路を守らない (`declaration_block_never_emits_
-    // shorthand_keys` は parse 出口しか見ない)。bd raikiri-spike-qzn3 以降この
+    // shorthand_keys` は parse 出口しか見ない)。この
     // 経路は crate 内からのみ到達可能なので `collect_cascaded` 入口の展開は
     // crate 内 invariant guard である。根拠は
     // `crate::rule::expand_shorthand_into` doc が canonical。

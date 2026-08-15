@@ -1,15 +1,16 @@
-//! `html_to_png` — dogfooding helper: HTML → single-page A4 PNG bytes (raikiri-spike-m1.14)。
+//! `html_to_png` — dogfooding helper: HTML → single-page A4 PNG bytes。
 //!
-//! spec §L1118 の convenience wrapper。VRT (m1.14 hello-world) / examples 用途。
+//! spec §L1118 の convenience wrapper。VRT (hello-world) / examples 用途。
 //! Consumer が multi-page / custom PageBox / streaming を要する場合は
-//! `parse_html` + `render_streaming` (M2+) を chain する。
+//! `parse_html` + `render_streaming` (将来対応) を chain する。
 //!
-//! # M1 契約
-//! - PageBox は `PageBox::A4` 固定 (spec §M1.6)。custom PageBox は M2+ で
+//! # 現状の契約
+//! - PageBox は `PageBox::A4` 固定。custom PageBox は将来
 //!   `html_to_png_with(input, PageBox, PageDefaults)` variant を追加予定
-//! - `ReplacedResolver` 不要 (M1 replaced element 非対応)
-//! - 単一ページのみ。overflow の 2 ページ目 clip は M2 pagestream-state-machine
-//! - 内部 pipeline (Sprint 23 raikiri-spike-bkkm):
+//! - `ReplacedResolver` 不要 (replaced element 非対応)
+//! - 単一ページのみ。overflow の 2 ページ目 clip は将来の pagestream state
+//!   machine で対応
+//! - 内部 pipeline:
 //!   `parse_html` → `layout_single_page` → `build_page_scene` →
 //!   `PageScene::rasterize` (`raikiri_paint::paint_single_page` +
 //!   `anyrender::render_to_buffer::<VelloCpuImageRenderer>` + `encode_png` を
@@ -26,7 +27,7 @@ use crate::parse::parse_html;
 
 /// `html_to_png` / `html_to_png_with_fonts` の共通実装。VRT test 経路 (pinned
 /// `FontContext`) と production 経路 (`FontContext::new()`) の layout logic を
-/// 1 箇所に集約し、drift を構造的に防止する (raikiri-spike-e93 Task 6)。
+/// 1 箇所に集約し、drift を構造的に防止する。
 ///
 /// # Errors
 /// - `RenderError::Parse(_)` — `parse_html` からの伝播 (IO / UTF-8 / html5ever)
@@ -37,7 +38,7 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     input: R,
     font_ctx: FontContext,
 ) -> Result<Vec<u8>, RenderError> {
-    // ParseOptions は default 相当 (M1 fixture は extra stylesheet / network / base_url 不要)
+    // ParseOptions は default 相当 (extra stylesheet / network / base_url 不要)
     let opts = ParseOptions {
         extra_stylesheets: &[],
         network: None,
@@ -52,11 +53,11 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     // で LayoutError → RenderError::Layout に自動変換される。
     raikiri_dom::layout_single_page(&mut doc.uncascaded.dom, &doc.cascade, page_box, font_ctx)?;
 
-    // Sprint 23 raikiri-spike-bkkm: post-layout Document から PageScene snapshot を
+    // post-layout Document から PageScene snapshot を
     // 抽出し、byte-identical な raster + encode triple は PageScene::rasterize に
     // 集約された。dom / cascade は rasterize に thread されて既存 paint pipeline
-    // が verbatim reuse される (Finding 1: Sprint 23 では PageDrawables 経由 paint
-    // 再導出は byte-identical を破るため defer、rasterize が真の snapshot に至る
+    // が verbatim reuse される (PageDrawables 経由 paint 再導出は
+    // byte-identical を破るため defer、rasterize が真の snapshot に至る
     // までの過渡形として dom + cascade を param に受ける)。
     let dom = &doc.uncascaded.dom;
     let cascade = &doc.cascade;
@@ -64,7 +65,7 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     Ok(scene.rasterize(dom, cascade, page_box))
 }
 
-/// HTML byte stream を単一 A4 ページの PNG に raster する (M1.14 pub API)。
+/// HTML byte stream を単一 A4 ページの PNG に raster する。
 ///
 /// System font resolver 経由 (`FontContext::new()`) で `html_to_png_impl` に
 /// delegate する。production runtime 用の経路。
@@ -75,7 +76,7 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
 ///   parley shape / taffy internal)
 ///
 /// spec §L1118 の signature literal は `(html: &str)` だが、既存 `parse_html<R: Read>`
-/// と signature を統一するため `impl Read` を採用 (m1.14 design 決定)。
+/// と signature を統一するため `impl Read` を採用 (design 決定)。
 #[allow(clippy::result_large_err)]
 pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
     html_to_png_impl(input, FontContext::new())
@@ -83,13 +84,13 @@ pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
 
 /// Font-aware 版。渡された `FontContext` がそのまま layout に使われる。
 ///
-/// cross-machine 決定性が必要な VRT test 向け (raikiri-spike-e93)。
+/// cross-machine 決定性が必要な VRT test 向け。
 /// `font_ctx` が pin 済み (`build_wpt_font_ctx` 経由) の場合、system font
 /// resolver は完全 bypass される。
 ///
-/// # M1 scope
+/// # Scope
 /// - VRT test 向け。production runtime は既存 [`html_to_png`] を使う
-/// - M4+ で `@font-face` 対応時に production consumer にも展開検討
+/// - 将来 `@font-face` 対応時に production consumer にも展開検討
 ///
 /// # Errors
 /// [`html_to_png`] と同じ (`RenderError::Parse` / `RenderError::Layout`)。

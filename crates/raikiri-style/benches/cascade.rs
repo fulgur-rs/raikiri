@@ -2,7 +2,7 @@
 //!
 //! # Why this benchmark exists
 //!
-//! bd raikiri-spike-nqkj added a shorthand-expansion guard to
+//! A shorthand-expansion guard was added to
 //! `cascade::collect_cascaded` and, in doing so, started moving a
 //! `Declaration` (72 bytes) by value once per declaration. The declaration
 //! *count* did not change — `collect_cascaded` is a single whole-tree walk
@@ -10,16 +10,15 @@
 //! per-declaration figures, which differ by source). That is
 //! a regression class neither `cargo test` nor `cargo clippy` can see: the
 //! output is bit-identical and no lint fires. It was caught only because a
-//! reviewer hand-rolled a throwaway timing harness (raikiri-spike-nqkj gate
-//! §8.2, reviewer:perf, CONFIRMED at +22% / +16%).
+//! reviewer hand-rolled a throwaway timing harness (confirmed at +22% / +16%).
 //!
 //! This file makes that harness a repo artifact so the same class is
 //! measurable on demand instead of by luck.
 //!
 //! # Reference numbers
 //!
-//! From the nqkj gate §8.2 review, default release profile, wall-clock per
-//! `cascade()` call. Note nqkj recorded the harness **twice**: this table is
+//! From that review, default release profile, wall-clock per
+//! `cascade()` call. Note that review recorded the harness **twice**: this table is
 //! the review's run, and the landing commit (`7ae92e9`) reports a re-run at
 //! min-of-30 × 2 rounds giving +25% / +14% for the same two configs. Both are
 //! the origin's; neither closes the gap discussed below, since which pairing
@@ -100,7 +99,7 @@
 //! # Does it actually catch the thing? (validated, not assumed)
 //!
 //! A benchmark whose sensitivity was never tested is decoration. This one was
-//! checked by reintroducing the nqkj regression — `expand_shorthand_into`
+//! checked by reintroducing the original regression — `expand_shorthand_into`
 //! back to `d: Declaration` by value, `expand_none` likewise, call sites
 //! passing `decl.clone()` — and running the protocol above, n = 8
 //! interleaved:
@@ -127,8 +126,8 @@
 //! 500 rules × 500 elements × 1 declaration — which holds *declarations*
 //! fixed at 250k against rule_heavy while multiplying *rule-matches* by 10,
 //! so a per-match cost would show up as a ~10× larger delta and a
-//! per-declaration cost as an unchanged one. Not implemented (bd
-//! raikiri-spike-0z68, which owns it); until it is, read the ≈4 ns as
+//! per-declaration cost as an unchanged one. Not implemented yet;
+//! until it is, read the ≈4 ns as
 //! *consistent with* a per-declaration constant rather than as proof of one.
 //! Note it is not a drop-in. `DECLS_PER_RULE` is read by the per-rule parse
 //! assertion and by the throughput denominator, and is *duplicated* as a
@@ -140,7 +139,7 @@
 //! the stylesheet never set, so the probe does not merely weaken — it fails.
 //! Every one of those sites has to move together.
 //!
-//! Gate integration (bd raikiri-spike-iebo) has to solve the noise problem
+//! Gate integration has to solve the noise problem
 //! before any threshold means anything; a naive 10% trigger on this machine
 //! fires on an unmodified tree.
 //!
@@ -208,8 +207,8 @@
 //!
 //! Nothing in the merge gate runs this: `cargo test` does not build the bench
 //! target and `cargo clippy --all-targets` compiles it without executing it.
-//! Wiring it into the discipline is bd raikiri-spike-iebo (a rules change, so
-//! it goes through retro → bd decision → human approve).
+//! Wiring it into the discipline is future work (a process change, requiring
+//! review and approval before adoption).
 
 use criterion::{Criterion, Throughput};
 use raikiri_style::{
@@ -445,7 +444,7 @@ fn workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
     tree.add_stylesheet(&css, Origin::Author);
 
     // Accessors, not fields: a bench is a separate compilation unit, so the
-    // `pub(crate)` fields do not resolve here (bd raikiri-spike-qzn3).
+    // `pub(crate)` fields do not resolve here.
     assert_eq!(
         tree.style_rules().len(),
         n_rules,
@@ -475,7 +474,7 @@ fn workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
          different rule count"
     );
 
-    let probe = cascade(&doc, &tree).expect("cascade is infallible in M1");
+    let probe = cascade(&doc, &tree).expect("cascade never returns Err in the current implementation");
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -590,7 +589,7 @@ fn bench_cascade(c: &mut Criterion) {
         // at the `832500e` baseline). Only the *delta* is comparable.
         group.throughput(Throughput::Elements(declarations));
         group.bench_function(name, |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect("cascade is infallible in M1"));
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect("cascade never returns Err in the current implementation"));
         });
     }
 

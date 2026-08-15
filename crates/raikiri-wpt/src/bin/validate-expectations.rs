@@ -1,7 +1,7 @@
 //! Validate `expectations/*.txt` files (spec §12.10).
 //!
 //! Detects Malformed / Duplicate / Conflicting (CI-blocking) and Expired
-//! (warning) issues. Runs in CI on every PR via the m1.12 GitHub Actions
+//! (warning) issues. Runs in CI on every PR via the GitHub Actions
 //! workflow.
 //!
 //! Exit codes:

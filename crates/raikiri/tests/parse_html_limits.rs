@@ -1,6 +1,6 @@
 //! Regression tests for `parse_html` / `parse_html_with_limits` input byte
-//! cap enforcement (raikiri-spike-4kw、Sprint 10 Option A promotion of the
-//! Sprint 9 Wave 3 d9y.3 stopgap)。
+//! cap enforcement (promotion of an earlier hard-coded stopgap to a
+//! configurable field)。
 //!
 //! `parse_html` は [`RenderLimits::default().max_input_bytes`] = 32 MiB
 //! input byte cap を持ち、cap 超過は
@@ -31,15 +31,15 @@ fn opts() -> ParseOptions<'static> {
     }
 }
 
-/// `RenderLimits::default().max_input_bytes` は SEC-HIGH d9y.3 の stopgap
-/// と一致する 32 MiB を継承していることを pin (Sprint 10 Option A promotion
+/// `RenderLimits::default().max_input_bytes` は SEC-HIGH の旧 stopgap
+/// と一致する 32 MiB を継承していることを pin (promotion
 /// が behavior 不変であることの regression guard)。
 #[test]
 fn render_limits_default_input_cap_matches_d9y3_stopgap() {
     assert_eq!(
         RenderLimits::default().max_input_bytes,
         Some(DEFAULT_INPUT_BYTES_CAP),
-        "Sprint 10 Option A の default は d9y.3 stopgap の hard-coded 32 MiB を継承"
+        "default は旧 stopgap の hard-coded 32 MiB を継承"
     );
 }
 
@@ -104,7 +104,7 @@ fn parse_html_accepts_input_exactly_at_cap() {
 }
 
 /// Input が cap + 1 byte のとき、`LimitExceeded { kind: InputBytes, .. }`
-/// を返す。SEC-HIGH d9y.3 core assertion (Sprint 10 で kind が InputBytes に昇格)。
+/// を返す。SEC-HIGH core assertion (kind が InputBytes に昇格済み)。
 ///
 /// `std::io::repeat` で streaming 生成し、over-cap の 32 MiB 超 alloc を
 /// test source 側では避ける (parse_html_with_limits 内部の read_to_end は
@@ -125,7 +125,7 @@ fn parse_html_rejects_input_one_byte_over_cap() {
             assert_eq!(
                 kind,
                 LimitKind::InputBytes,
-                "Sprint 10 Option A 昇格で kind は InputBytes (d9y.3 Option B stopgap の AggregateBytes からの migration)"
+                "kind は InputBytes (旧 stopgap の AggregateBytes からの migration)"
             );
             assert_eq!(
                 limit, DEFAULT_INPUT_BYTES_CAP,
@@ -141,7 +141,7 @@ fn parse_html_rejects_input_one_byte_over_cap() {
 }
 
 /// Custom cap の enforcement pin: `Some(N)` を渡すと N byte で reject される
-/// (Sprint 10 Option A で `limits.max_input_bytes` が実際に consult されている
+/// (`limits.max_input_bytes` が実際に consult されている
 /// ことを cheap な small input で証明)。
 ///
 /// Cap = 100, input = 101 byte → reject。
@@ -237,7 +237,7 @@ fn render_limits_builder_max_input_bytes_roundtrip() {
     assert_eq!(via_builder.max_input_bytes, Some(64 * 1024 * 1024));
 
     // Direct field write pattern (`with_*` ergonomic を持たない sibling
-    // convention に揃えている、bd raikiri-spike-4kw 内 review)。
+    // convention に揃えている)。
     let mut via_field = RenderLimits::default();
     via_field.max_input_bytes = Some(64 * 1024 * 1024);
     assert_eq!(via_field.max_input_bytes, Some(64 * 1024 * 1024));

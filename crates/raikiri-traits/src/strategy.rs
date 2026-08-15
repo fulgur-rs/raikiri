@@ -45,7 +45,7 @@ pub trait EmissionPolicy {
 
 /// probe 限界到達時の挙動、および dirty tracking の余地。
 ///
-/// M1〜M8 は `AggressiveCommit` のみ実装、`DirtyDeferred` / `FullReflow` は
+/// 現状は `AggressiveCommit` のみ実装、`DirtyDeferred` / `FullReflow` は
 /// Future Work (§4 参照)。
 pub trait ReflowPolicy {
     /// probe 限界到達時に "即 fallback commit" するか "dirty flag で defer" するか。
@@ -61,7 +61,7 @@ pub trait ReflowPolicy {
 pub enum ReflowAction {
     /// 即 fallback で commit、取り消し不可 (Streaming preset default)。
     CommitWithFallback(ContainerOverflowFallback),
-    /// dirty flag で defer、後続情報で reflow (post-M8 Future Work)。
+    /// dirty flag で defer、後続情報で reflow (Future Work)。
     DeferAsDirty {
         /// defer の deadline。
         deadline: DirtyDeadline,
@@ -94,14 +94,14 @@ pub enum DirtyDeadline {
     DocumentEnd,
 }
 
-/// ReflowPolicy が受け取る probe context (M2 で populate)。
+/// ReflowPolicy が受け取る probe context (将来 populate 予定)。
 ///
-/// M1.1 では opaque placeholder。
+/// 現時点では opaque placeholder。
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct ProbeContext {
-    // M2 で populate:
+    // 将来 populate 予定:
     //   pub node_id: NodeId,
     //   pub probed_pages: u32,
     //   pub container_kind: ContainerKind,
@@ -109,7 +109,7 @@ pub struct ProbeContext {
 }
 
 impl ProbeContext {
-    /// M1.1 placeholder constructor.
+    /// Placeholder constructor (not yet populated).
     pub fn new() -> Self {
         Self::default()
     }
@@ -117,15 +117,14 @@ impl ProbeContext {
 
 /// TargetResolver が受け取る request。
 ///
-/// M6+ consumer (raikiri-dom / raikiri-paint) 実装時に field を populate
-/// (raikiri-spike-376 amended taxonomy、2026-07-19 PMO)。
+/// 将来、consumer (raikiri-dom / raikiri-paint) 実装時に field を populate。
 ///
-/// M1.1〜M5 では opaque placeholder。
+/// 現時点では opaque placeholder。
 #[allow(missing_docs)]
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct TargetRequest<'a> {
-    // M4 で populate:
+    // 将来 populate 予定:
     //   pub fragment_id: Symbol,
     //   pub kind: TargetKind,
     //   pub source_page: u32,
@@ -133,7 +132,7 @@ pub struct TargetRequest<'a> {
 }
 
 impl<'a> TargetRequest<'a> {
-    /// M1.1 placeholder constructor.
+    /// Placeholder constructor (not yet populated).
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
@@ -149,14 +148,13 @@ impl<'a> Default for TargetRequest<'a> {
 
 /// TargetResolver が返す resolved 情報。
 ///
-/// M6+ consumer (raikiri-dom / raikiri-paint) 実装時に variant を populate
-/// (raikiri-spike-376 amended taxonomy、2026-07-19 PMO)。
+/// 将来、consumer (raikiri-dom / raikiri-paint) 実装時に variant を populate。
 ///
-/// M1.1〜M5 では uninhabited。
+/// 現時点では uninhabited。
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ResolvedTarget {
-    // M4 で populate:
+    // 将来 populate 予定:
     //   Placeholder { slot_id: TargetSlotId },
     //   Immediate { text: String, kind: TargetKind },
     //   Deferred { fragment_id: Symbol },

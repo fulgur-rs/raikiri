@@ -1,17 +1,17 @@
 //! `target-*()` / `element()` register-site walker — cascade-time producer
 //! that populates a dom-local [`raikiri_traits::TargetRegistry`].
 //!
-//! bd raikiri-spike-0nyv. Companion to [`crate::running`]'s register-site
-//! walker (bd raikiri-spike-e81n, already landed) — same document-order
+//! Companion to [`crate::running`]'s register-site
+//! walker (already landed) — same document-order
 //! arena-walk shape, different [`GcpmDirective`] variant. `running`'s
 //! [`crate::running::collect_running_template`] already *emits*
 //! `CounterIncrement`/`CounterReset`/`CounterSet`/`StringSet` (and
 //! `RegisterRunning` is emitted by [`crate::running::build_running_template_store`]
 //! itself) into each `position: running(name)` template's own
-//! `directives: Vec<GcpmDirective>` — a dom-local Phase B walk (bd
-//! raikiri-spike-8ejw, landed as [`crate::gcpm`]) is what *applies* those
-//! emitted directives to dom-local counter/string/running state, and (bd
-//! raikiri-spike-8ejw.1, also landed) `raikiri_traits::page::context::PageContext::apply_directive`
+//! `directives: Vec<GcpmDirective>` — a dom-local Phase B walk (landed as
+//! [`crate::gcpm`]) is what *applies* those emitted directives to
+//! dom-local counter/string/running state, and (also landed)
+//! `raikiri_traits::page::context::PageContext::apply_directive`
 //! is the promoted, canonical counterpart. This module's `RegisterTarget`
 //! variant has no emit-step counterpart in either of those (see "synthesized
 //! here" below) — it *does* now have a real apply-step counterpart on the
@@ -19,25 +19,25 @@
 //! counts-only `TargetInfo` from live counter state; see that method's
 //! doc), separate from and complementary to this module's own richer
 //! text-carrying [`build_target_registry`] walk (wired in via
-//! `PageContext::set_targets`, see below). The tasks are scoped
-//! non-overlapping at the `GcpmDirective`-variant level: `running`/8ejw/
-//! 8ejw.1 own every other variant's emit+apply, this module owns only
-//! `RegisterTarget`'s *emit* (there is no `RegisterTarget` producer on the
-//! cascade side to begin with — see next section).
+//! `PageContext::set_targets`, see below). The responsibilities are scoped
+//! non-overlapping at the `GcpmDirective`-variant level: `running` and its
+//! promoted counterpart own every other variant's emit+apply, this module
+//! owns only `RegisterTarget`'s *emit* (there is no `RegisterTarget`
+//! producer on the cascade side to begin with — see next section).
 //!
 //! **Ownership boundary.** [`raikiri_traits::TargetRegistry`] is the
-//! canonical shared type (raikiri-traits owns shape + resolve strategy, bd
-//! raikiri-spike-bsi Option C); this module owns only the **producer** —
-//! walking the arena and calling [`TargetRegistry::register`]. The
-//! `TargetRegistry` instance built here is **dom-local**: [`build_target_registry`]
-//! returns an owned `TargetRegistry` to its caller (test harness or a future
-//! per-document driver), and that caller wires it into
+//! canonical shared type (raikiri-traits owns shape + resolve strategy);
+//! this module owns only the **producer** — walking the arena and calling
+//! [`TargetRegistry::register`]. The `TargetRegistry` instance built here
+//! is **dom-local**: [`build_target_registry`] returns an owned
+//! `TargetRegistry` to its caller (test harness or a future per-document
+//! driver), and that caller wires it into
 //! `raikiri_traits::page::context::PageContext.targets` via
-//! `PageContext::set_targets` (bd raikiri-spike-8ejw.1, landed) — a bulk
-//! replace, not a `GcpmDirective`-mediated apply, since this walk never goes
-//! through the directive stream in the first place (see "synthesized here"
-//! below). No production per-document driver calls `set_targets` yet; that
-//! wiring is part of the DOM-tree-walking driver bd raikiri-spike-si32 owns.
+//! `PageContext::set_targets` (already landed) — a bulk replace, not a
+//! `GcpmDirective`-mediated apply, since this walk never goes through the
+//! directive stream in the first place (see "synthesized here" below). No
+//! production per-document driver calls `set_targets` yet; that wiring is
+//! part of a DOM-tree-walking driver that is still to be built.
 //!
 //! # `GcpmDirective::RegisterTarget` is synthesized here, not consumed
 //!
@@ -57,7 +57,7 @@
 //! ([`synthesize_register_target`]) and immediately applies it
 //! ([`apply_register_target`]) — this is what makes the variant live
 //! (previously constructed only in raikiri-traits's own round-trip unit
-//! test, per bd raikiri-spike-0nyv's originating investigation).
+//! test).
 //!
 //! # Counter-stack scope model (deliberately narrowed — see divergence note)
 //!
@@ -114,10 +114,10 @@
 //! `counter_increment_without_ancestor_reset_does_not_persist_across_siblings`).
 //! This is a fail-closed narrowing (原則 3), not a silent divergence — the
 //! full cross-subtree accounting is `raikiri_traits::PageContext.counters`'s
-//! job (design doc §7.2, `HashMap<Symbol, CounterStack>`; `PageContext`
-//! promotion itself landed, bd raikiri-spike-8ejw.1) once a later Phase B
-//! walk actually drives it — tracked as bd raikiri-spike-133x, which depends
-//! on bd raikiri-spike-si32's DOM-tree-walking driver.
+//! job (design doc §7.2, `HashMap<Symbol, CounterStack>`; the `PageContext`
+//! promotion itself has already landed) once a later Phase B walk actually
+//! drives it — which in turn depends on the DOM-tree-walking driver still
+//! being built.
 //!
 //! # Text parts — `ContentPart::Content` only
 //!
@@ -210,9 +210,8 @@ impl CounterScopes {
             let sym = Symbol::new(name.clone());
             let stack = self.stacks.entry(sym.clone()).or_default();
             match stack.last_mut() {
-                // Saturating, not wrapping/panicking, on overflow (security
-                // lens finding on bd raikiri-spike-8ejw.1, user-confirmed
-                // 2026-08-11): same finding, same fix, as
+                // Saturating, not wrapping/panicking, on overflow — the
+                // same fix as
                 // `raikiri_traits::page::context::CounterStack::increment`
                 // and `crate::gcpm::CounterStack::increment` — this walker's
                 // top-of-stack increment shared the exact same unbounded
@@ -294,7 +293,7 @@ fn element_id(doc: &Document, idx: usize) -> Option<String> {
 /// accepts for its own per-template subtree walk.
 #[allow(
     dead_code,
-    reason = "Helper for build_target_registry (bd raikiri-spike-0nyv); \
+    reason = "Helper for build_target_registry; \
               same not-yet-production-driven status."
 )]
 fn collect_descendant_text(doc: &Document, root_idx: usize) -> String {
@@ -356,7 +355,7 @@ fn apply_register_target(
 /// module doc "Text parts").
 #[allow(
     dead_code,
-    reason = "Helper for build_target_registry (bd raikiri-spike-0nyv); \
+    reason = "Helper for build_target_registry; \
               same not-yet-production-driven status."
 )]
 fn build_target_info(doc: &Document, idx: usize, scopes: &CounterScopes) -> TargetInfo {
@@ -369,11 +368,11 @@ fn build_target_info(doc: &Document, idx: usize, scopes: &CounterScopes) -> Targ
 
 /// Document-order arena walk that registers every in-document element with a
 /// non-empty `id` attribute into a fresh, **dom-local**
-/// [`TargetRegistry`] — the "register-site walker" bd raikiri-spike-0nyv
+/// [`TargetRegistry`] — the "register-site walker" this module
 /// builds (design doc §7.2's `TargetRegistry`/`TargetInfo` canonical shape;
 /// see module doc for the full ownership boundary — this function itself
 /// does NOT wire the returned registry into `raikiri_traits::PageContext`;
-/// bd raikiri-spike-8ejw.1 added `PageContext::set_targets` for that, to be
+/// `PageContext::set_targets` was added for that, to be
 /// called by this function's future per-document caller).
 ///
 /// Walks `doc` from its root in document order (iterative DFS with explicit
@@ -411,11 +410,11 @@ fn build_target_info(doc: &Document, idx: usize, scopes: &CounterScopes) -> Targ
 /// to run against the very `cascade` output produced from `doc`.
 #[allow(
     dead_code,
-    reason = "Register-site walker landed by bd raikiri-spike-0nyv; \
-              PageContext::set_targets (bd raikiri-spike-8ejw.1) exists to \
+    reason = "Register-site walker landed; \
+              PageContext::set_targets exists to \
               receive this fn's output, but no production per-document \
-              driver calls either one yet — that driver is bd \
-              raikiri-spike-si32, not yet landed (see module doc's \
+              driver calls either one yet — that driver is still to be \
+              built (see module doc's \
               ownership boundary). Exercised via unit tests until then, \
               same not-yet-production-driven status \
               crate::running::build_running_template_store carries."
@@ -715,8 +714,7 @@ mod tests {
 
     #[test]
     fn build_target_registry_increment_saturates_instead_of_panicking_or_wrapping_on_overflow() {
-        // Security lens regression pin (bd raikiri-spike-8ejw.1,
-        // user-confirmed 2026-08-11): spec-legal CSS driving
+        // Regression pin: spec-legal CSS driving
         // counter-increment past i32::MAX must saturate, not panic (debug
         // builds) or wrap to i32::MIN (release builds). Same finding, same
         // fix, as `CounterStack::increment` in `raikiri-traits`'s
