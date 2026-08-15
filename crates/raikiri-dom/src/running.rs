@@ -143,8 +143,10 @@ use raikiri_style::property::{ContentComponent, ContentTextKeyword};
 use raikiri_traits::{
     ContentSource, ContentValueItem, GcpmDirective, NodeId, NodeKind, RunningTemplateId, Symbol,
 };
+use smol_str::SmolStr;
 
 use crate::document::Document;
+use crate::node::NodeData;
 
 // `RunningTemplateId` is the shared identifier from raikiri-traits
 // (design §7.0 line 1904 "shared types → raikiri-traits"). Landed together
@@ -700,8 +702,11 @@ pub(crate) fn build_running_template_store(
 ///   3 §4.1), so it emits at most one directive per distinct name — see the
 ///   dedup step's own comment;
 /// - `string-set` entries as [`GcpmDirective::StringSet`], via
-///   [`convert_string_set_source`] — see that function's doc for the
-///   skip-whole-entry-on-conversion-failure policy.
+///   [`resolve_string_set_component`] (per-item `attr()`/bare `content()`
+///   resolution against this element, the one point in the pipeline that
+///   still has DOM access — see that function's doc) followed by
+///   [`convert_string_set_source`] — see both functions' docs for the
+///   skip-whole-entry-on-failure policy.
 /// - the node's `content` list, folded (OR) into the template's aggregate
 ///   [`DynamicFlags`] via [`detect_dynamic_flags`] — the "real invocation
 ///   site" this task adds (previously exercised only by unit tests calling
@@ -792,14 +797,30 @@ fn collect_running_template(
                 });
             }
             for (name, content_list) in cv.string_set.iter() {
-                if let Some(source) = convert_string_set_source(content_list) {
+                // Resolve attr()/bare content() against `idx` (this
+                // element) before the content-list ever leaves raikiri-dom
+                // — see resolve_string_set_component's doc for why this is
+                // the only point in the pipeline with DOM element access.
+                let resolved: Option<Vec<ContentComponent>> = content_list
+                    .iter()
+                    .cloned()
+                    .map(|component| resolve_string_set_component(doc, idx, component))
+                    .collect();
+                if let Some(resolved) = resolved
+                    && let Some(source) = convert_string_set_source(&resolved)
+                {
                     directives.push(GcpmDirective::StringSet {
                         name: Symbol::new(name.clone()),
                         source,
                     });
                 }
-                // Conversion failure → skip this string-set entry entirely;
-                // see convert_string_set_source's doc comment.
+                // Resolution failure (content(before)/content(after)/
+                // content(first-letter), still unresolvable here — see
+                // resolve_string_set_component's doc) or conversion failure
+                // → skip this string-set entry entirely. Note attr() on a
+                // missing attribute is NOT a resolution failure — it
+                // resolves to Literal("") (see resolve_string_set_component's
+                // Attr-arm doc), same as the present-but-empty case.
             }
 
             let node_flags = detect_dynamic_flags(&cv.content);
@@ -874,6 +895,154 @@ fn convert_string_set_source(content_list: &[ContentComponent]) -> Option<Conten
         .collect::<Result<Vec<_>, _>>()
         .ok()
         .map(ContentSource::new)
+}
+
+/// Resolve an `attr()` / bare `content()` item from a `string-set`
+/// content-list against the DOM element the declaration is on (`doc.nodes
+/// [idx]`) — the one point in the pipeline that still has that element in
+/// hand. `PageContext::apply_directive`'s `resolve_content_source`
+/// (`raikiri-traits`) cannot reach it: by the time a `string-set` value
+/// becomes a flat [`GcpmDirective::StringSet`], the originating element is
+/// gone (see that function's doc, "DOM element access ... this
+/// directive-only resolution path structurally cannot have"). Resolving
+/// here, before [`convert_string_set_source`] ever builds the
+/// [`ContentSource`], turns these items into plain
+/// [`ContentComponent::Literal`]s so the later resolve pass treats them
+/// like any other literal text — no `raikiri-traits` change needed.
+///
+/// **Resolving here (collection time) is equivalent to CSS GCPM 3
+/// §1.1.1's "assigned at the point when the content box of the element is
+/// first created"**, unlike `counter()`/`counters()`, which
+/// [`raikiri_dom::gcpm::StringSnapshot`]'s doc explains must be frozen at
+/// *directive-apply* time because their value drifts as later siblings
+/// mutate shared counter state. An attribute value and an element's own
+/// descendant text don't have that per-page drift — they're fixed
+/// per-element, which is exactly why this module's own
+/// [`detect_dynamic_flags`] already classifies `Attr` and `content(text)`
+/// as static (no per-page dependency), so resolving them once, here,
+/// carries no staleness risk the later apply-time resolve would have
+/// avoided.
+///
+/// - [`ContentComponent::Attr`] (CSS Values and Units 5 §7.7.1
+///   <https://www.w3.org/TR/css-values-5/#attr-notation>): if the element
+///   carries the named attribute — even `""` — the attribute's value
+///   substitutes verbatim. If the element does not carry the attribute,
+///   this resolves to `Literal("")` too, not a dropped assignment — §7.7.1's
+///   own prose (immediately preceding "To resolve an attr() function"):
+///   "If the `<syntax>` argument is omitted, the fallback defaults to the
+///   empty string if omitted; otherwise, it defaults to the
+///   guaranteed-invalid value if omitted." raikiri's `attr()` parser only
+///   accepts the bare 1-argument form (no `<syntax>`, no explicit fallback —
+///   see `raikiri_style::property::parse_attr_fn`'s doc, "type / fallback
+///   ... defer"), which is exactly the "`<syntax>` omitted" branch, so the
+///   applicable default is the empty string, not the guaranteed-invalid
+///   value. (The algorithm's own step 4 states the guaranteed-invalid
+///   default unconditionally, without threading the `<syntax>`-presence
+///   branch the prose describes — read literally in isolation that step
+///   would make the prose's "if `<syntax>` is omitted" clause vacuous for
+///   every input, which is more likely a drafting gap in an active Working
+///   Draft than the intended rule. GCPM 3's own `<content-list>` grammar for
+///   `string-set` cites the older untyped-only `[CSS-VALUES-3]` `attr()`
+///   for its `<attr()>` term, not this typed Values 5 form, and legacy
+///   `content: attr(x)` — CSS 2.1 §12.2 — has resolved a missing attribute
+///   to the empty string since the property existed, both consistent with
+///   treating a missing attribute as "empty string, assignment still
+///   occurs" here.) This converges with the present-but-empty-attribute
+///   case above on the same `Literal("")` outcome, which matters because
+///   CSS GCPM 3 §1.1.1 fixes *that an assignment occurs* at content-box
+///   creation independent of what it resolves to, and `string()`'s
+///   `first-except` keyword (§1.1.2) is defined by whether an assignment
+///   occurred at all — not by what it resolved to.
+/// - [`ContentComponent::Content`] with the default/`text` keyword (CSS
+///   GCPM 3 §1.1.1.1 <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>,
+///   "The string value of the element, determined as if `white-space:
+///   normal` had been set"): resolved via [`element_text_string_value`].
+/// - [`ContentComponent::Content`] with `before` / `after` / `first-letter`:
+///   left untouched, i.e. still unresolvable past this point (same
+///   fail-closed skip as before this fix) — `before`/`after` need the
+///   target pseudo-element's own content-list, and `first-letter` needs a
+///   `::first-letter` segmentation pass; neither is available to this
+///   per-node collection walk.
+/// - every other variant passes through unchanged.
+#[allow(
+    dead_code,
+    reason = "Helper for collect_running_template; \
+              same not-yet-production-driven status."
+)]
+fn resolve_string_set_component(
+    doc: &Document,
+    idx: usize,
+    component: ContentComponent,
+) -> Option<ContentComponent> {
+    match component {
+        ContentComponent::Attr { name } => match &doc.nodes[idx].data {
+            NodeData::Element(e) => Some(ContentComponent::Literal(
+                e.attributes
+                    .iter()
+                    .find(|a| a.local == name)
+                    .map(|a| a.value.clone())
+                    .unwrap_or_default(),
+            )),
+            _ => None,
+        },
+        ContentComponent::Content {
+            keyword: ContentTextKeyword::Text,
+        } => Some(ContentComponent::Literal(SmolStr::new(
+            element_text_string_value(doc, idx),
+        ))),
+        other => Some(other),
+    }
+}
+
+/// Approximate CSS GCPM 3 §1.1.1.1's "the string value of the element,
+/// determined as if `white-space: normal` had been set" for `content()` /
+/// `content(text)`. The spec gives no normative algorithm for "string
+/// value" beyond that sentence, so this concatenates every descendant
+/// [`NodeData::Text`] node's character data in document order (skipping any
+/// subtree with `IS_IN_DOCUMENT` cleared, same convention as this module's
+/// other walks) and collapses runs of **ASCII** whitespace (space / tab /
+/// LF / CR / FF) to a single space with both ends trimmed —
+/// [`str::split_ascii_whitespace`] already implements exactly that
+/// collapsing. Deliberately not [`str::split_whitespace`] (Unicode
+/// `White_Space`, which would also swallow U+00A0 NO-BREAK SPACE): CSS
+/// Text 3 §4.1 <https://www.w3.org/TR/css-text-3/#white-space-processing>
+/// scopes `white-space: normal` collapsing to "spaces (U+0020), tabs
+/// (U+0009), and segment breaks", explicitly carving out no-break space —
+/// collapsing it here would be wrong, not just imprecise.
+///
+/// Does not include generated content (`::before`/`::after`) — that's
+/// `content(before)` / `content(after)`'s job, out of scope here (see
+/// [`resolve_string_set_component`]'s doc).
+#[allow(
+    dead_code,
+    reason = "Helper for resolve_string_set_component; \
+              same not-yet-production-driven status."
+)]
+fn element_text_string_value(doc: &Document, idx: usize) -> String {
+    let mut raw = String::new();
+    collect_descendant_text(doc, idx, &mut raw);
+    raw.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// DFS accumulator for [`element_text_string_value`] — appends every
+/// descendant [`NodeData::Text`] node's raw character data (pre-whitespace-
+/// collapse) to `out`, in document order.
+#[allow(
+    dead_code,
+    reason = "Helper for element_text_string_value; \
+              same not-yet-production-driven status."
+)]
+fn collect_descendant_text(doc: &Document, idx: usize, out: &mut String) {
+    let node = &doc.nodes[idx];
+    if !node.is_in_document() {
+        return;
+    }
+    if let NodeData::Text(t) = &node.data {
+        out.push_str(t.text_content.as_str());
+    }
+    for &child in &node.children {
+        collect_descendant_text(doc, child, out);
+    }
 }
 
 /// Per-page margin box geometry — the input to [`layout_running_template`].
@@ -2012,6 +2181,316 @@ mod tests {
             style: CounterStyle::Decimal,
         }];
         assert!(convert_string_set_source(&content).is_none());
+    }
+
+    // ── resolve_string_set_component / element_text_string_value ──────
+
+    #[test]
+    fn resolve_string_set_component_resolves_attr_from_element_attribute() {
+        // CSS Values and Units 5 §7.7.1: the attribute's value substitutes
+        // verbatim when the element carries it.
+        let mut doc = Document::new();
+        let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        doc.set_element_attributes(
+            h1,
+            vec![(SmolStr::new("data-title"), SmolStr::new("Intro"))],
+        );
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            h1,
+            ContentComponent::Attr {
+                name: SmolStr::new("data-title"),
+            },
+        );
+        assert_eq!(
+            resolved,
+            Some(ContentComponent::Literal(SmolStr::new("Intro")))
+        );
+    }
+
+    #[test]
+    fn resolve_string_set_component_resolves_attr_to_empty_literal_when_attribute_value_is_empty() {
+        // Empty attribute value ("") is a valid empty <string>, distinct
+        // from a missing attribute — must resolve to Literal(""), not skip
+        // (see resolve_string_set_component's doc).
+        let mut doc = Document::new();
+        let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        doc.set_element_attributes(h1, vec![(SmolStr::new("data-title"), SmolStr::new(""))]);
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            h1,
+            ContentComponent::Attr {
+                name: SmolStr::new("data-title"),
+            },
+        );
+        assert_eq!(resolved, Some(ContentComponent::Literal(SmolStr::new(""))));
+    }
+
+    #[test]
+    fn resolve_string_set_component_resolves_attr_to_empty_literal_when_attribute_missing() {
+        // CSS Values and Units 5 §7.7.1's prose (preceding "To resolve an
+        // attr() function"): fallback defaults to the empty string when
+        // <syntax> is omitted, which is raikiri's only supported attr()
+        // form (no <syntax>, no explicit fallback). Converges with the
+        // present-but-empty-attribute case: Literal(""), not a dropped
+        // assignment — see resolve_string_set_component's Attr-arm doc.
+        let mut doc = Document::new();
+        let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            h1,
+            ContentComponent::Attr {
+                name: SmolStr::new("data-title"),
+            },
+        );
+        assert_eq!(resolved, Some(ContentComponent::Literal(SmolStr::new(""))));
+    }
+
+    #[test]
+    fn resolve_string_set_component_resolves_bare_content_to_element_text_value() {
+        // GCPM 3 §1.1.1.1: content() / content(text) = "the string value of
+        // the element, determined as if white-space: normal had been set".
+        let mut doc = Document::new();
+        let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        doc.append_text(h1, "  Loomings   Ch.  1  ");
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            h1,
+            ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            },
+        );
+        assert_eq!(
+            resolved,
+            Some(ContentComponent::Literal(SmolStr::new("Loomings Ch. 1")))
+        );
+    }
+
+    #[test]
+    fn resolve_string_set_component_content_text_preserves_no_break_space() {
+        // CSS Text 3 §4.1 scopes white-space:normal collapsing to space /
+        // tab / segment-break, explicitly excluding U+00A0 NO-BREAK SPACE —
+        // regression pin against using str::split_whitespace (Unicode
+        // White_Space, which would wrongly collapse/trim it too).
+        let mut doc = Document::new();
+        let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        doc.append_text(h1, "A\u{A0}\u{A0}B");
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            h1,
+            ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            },
+        );
+        assert_eq!(
+            resolved,
+            Some(ContentComponent::Literal(SmolStr::new("A\u{A0}\u{A0}B")))
+        );
+    }
+
+    #[test]
+    fn resolve_string_set_component_content_text_concatenates_across_descendant_elements() {
+        // "String value of the element" reaches through descendant
+        // elements, not just direct-child text nodes.
+        let mut doc = Document::new();
+        let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        let em = doc.append_element(Some(h1), "em", Style::default(), None::<&str>);
+        doc.append_text(em, "Moby");
+        doc.append_text(h1, " Dick");
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            h1,
+            ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            },
+        );
+        assert_eq!(
+            resolved,
+            Some(ContentComponent::Literal(SmolStr::new("Moby Dick")))
+        );
+    }
+
+    #[test]
+    fn resolve_string_set_component_leaves_content_before_after_first_letter_unresolved() {
+        // Resolving these needs the target pseudo-element's own
+        // content-list (before/after) or a ::first-letter segmentation
+        // pass — neither is available here, so they must pass through
+        // unchanged (still unresolvable downstream, same as before this
+        // fix), not silently coerced to some placeholder text.
+        let doc = Document::new();
+        for kw in [
+            ContentTextKeyword::Before,
+            ContentTextKeyword::After,
+            ContentTextKeyword::FirstLetter,
+        ] {
+            let component = ContentComponent::Content { keyword: kw };
+            assert_eq!(
+                resolve_string_set_component(&doc, 0, component.clone()),
+                Some(component),
+                "content({kw:?}) must pass through unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_string_set_component_passes_through_literal_and_counter_unchanged() {
+        let doc = Document::new();
+        let literal = ContentComponent::Literal(SmolStr::new("hello"));
+        assert_eq!(
+            resolve_string_set_component(&doc, 0, literal.clone()),
+            Some(literal)
+        );
+        let counter = ContentComponent::Counter {
+            name: SmolStr::new("chapter"),
+            style: CounterStyle::Decimal,
+        };
+        assert_eq!(
+            resolve_string_set_component(&doc, 0, counter.clone()),
+            Some(counter)
+        );
+    }
+
+    // ── collect_running_template: attr() / content() integration ──────
+
+    #[test]
+    fn collect_running_template_resolves_string_set_attr_from_element() {
+        // Concrete GCPM running-header idiom from the bug report:
+        // <h1 data-title="Intro"> with `string-set: chapter
+        // attr(data-title)` must resolve to Literal("Intro"), not be
+        // silently dropped.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        let h1 = doc.append_element(
+            Some(root),
+            "h1",
+            Style::default(),
+            Some("string-set: chapter attr(data-title)"),
+        );
+        doc.set_element_attributes(
+            h1,
+            vec![(SmolStr::new("data-title"), SmolStr::new("Intro"))],
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        assert!(template.directives.contains(&GcpmDirective::StringSet {
+            name: Symbol::new("chapter"),
+            source: ContentSource::new(vec![ContentValueItem::Literal("Intro".to_owned())]),
+        }));
+    }
+
+    #[test]
+    fn collect_running_template_resolves_string_set_bare_content_from_descendant_text() {
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        let h1 = doc.append_element(
+            Some(root),
+            "h1",
+            Style::default(),
+            Some("string-set: chapter content()"),
+        );
+        doc.append_text(h1, "  Loomings   Ch.  1  ");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        assert!(template.directives.contains(&GcpmDirective::StringSet {
+            name: Symbol::new("chapter"),
+            source: ContentSource::new(vec![ContentValueItem::Literal(
+                "Loomings Ch. 1".to_owned()
+            )]),
+        }));
+    }
+
+    #[test]
+    fn collect_running_template_resolves_string_set_entry_to_empty_when_attr_missing() {
+        // CSS Values and Units 5 §7.7.1's <syntax>-omitted default is the
+        // empty string, not the guaranteed-invalid value — an assignment
+        // still occurs (CSS GCPM 3 §1.1.1's "assigned at the point when the
+        // content box of the element is first created" applies regardless
+        // of what the content-list resolves to), with empty content. See
+        // resolve_string_set_component's Attr-arm doc.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        doc.append_element(
+            Some(root),
+            "h1",
+            Style::default(),
+            Some("string-set: chapter attr(data-title)"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        assert!(
+            template.directives.contains(&GcpmDirective::StringSet {
+                name: Symbol::new("chapter"),
+                source: ContentSource::new(vec![ContentValueItem::Literal(String::new())]),
+            }),
+            "attr() on a missing attribute must register the assignment \
+             with Literal(\"\"), not drop it"
+        );
+    }
+
+    #[test]
+    fn collect_running_template_still_resolves_string_set_literal_strings() {
+        // Regression pin: the plain <string> literal case (unaffected by
+        // this fix) must keep working exactly as before.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        doc.append_element(
+            Some(root),
+            "h1",
+            Style::default(),
+            Some(r#"string-set: chapter "Chapter One""#),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        assert!(template.directives.contains(&GcpmDirective::StringSet {
+            name: Symbol::new("chapter"),
+            source: ContentSource::new(vec![ContentValueItem::Literal("Chapter One".to_owned())]),
+        }));
     }
 
     #[test]
