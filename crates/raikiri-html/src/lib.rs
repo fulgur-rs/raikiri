@@ -1258,44 +1258,112 @@ mod tests {
         assert_eq!(uncascaded.quirks_mode, QuirksMode::NoQuirks);
     }
 
-    /// End-to-end regression: html5ever's quirks-mode detection
-    /// (`UncascadedDocument.quirks_mode`, asserted by
-    /// `parse_captures_quirks_mode_for_missing_doctype` above) must also
-    /// reach `raikiri_dom::Document` itself (`RaikiriTreeSink::finish`
-    /// calling `Document::set_quirks_mode`) and, through
-    /// `impl raikiri_style::StyleDom for Document`, `StyleDom::quirks_mode()`
-    /// — the accessor `raikiri-style`'s cascade actually reads for id/class
-    /// selector ASCII-case-folding (CSS Selectors L4). Previously
-    /// `Document` carried no quirks-mode field at all, so this path always
-    /// fell back to `StyleDom::quirks_mode`'s default (`NoQuirks`)
-    /// regardless of the parsed document's real doctype.
+    /// End-to-end regression, doctype-less (quirks-triggering) side: html5ever's
+    /// quirks-mode detection (`UncascadedDocument.quirks_mode`, asserted by
+    /// `parse_captures_quirks_mode_for_missing_doctype` above) must reach
+    /// `raikiri_dom::Document` itself (`RaikiriTreeSink::finish` calling
+    /// `Document::set_quirks_mode`) and, through `impl raikiri_style::StyleDom
+    /// for Document`, `StyleDom::quirks_mode()` — the accessor
+    /// `raikiri-style`'s cascade actually reads for id/class selector
+    /// ASCII-case-folding (CSS Selectors L4,
+    /// <https://www.w3.org/TR/selectors-4/#the-css-qualified-name>'s "In
+    /// quirks mode, ... matching of the ID and class attributes for the
+    /// purposes of selector matching must be done in an ASCII case-insensitive
+    /// manner"). Previously `Document` carried no quirks-mode field at all,
+    /// so this path always fell back to `StyleDom::quirks_mode`'s `NoQuirks`
+    /// default regardless of the parsed document's real doctype — meaning
+    /// `raikiri-style`'s quirks-mode ASCII-fold matching logic, though
+    /// correctly implemented, was unreachable from any real parsed document.
+    ///
+    /// Asserting `StyleDom::quirks_mode()` alone would only prove the value
+    /// arrives at the accessor, not that cascade reads it and changes
+    /// matching behavior — so this test drives a real `build_rule_tree` +
+    /// `cascade` over an uppercase `class`/`id` attribute matched by a
+    /// lowercase selector, and checks the *computed style*, mirroring the
+    /// real-parse-survives-to-cascade idiom the `hr` / `a[href]` UA-rule
+    /// tests above use for UA CSS.
     #[test]
-    fn parse_wires_quirks_mode_through_document_to_style_dom() {
-        use raikiri_style::{StyleDom, StyleQuirksMode};
+    fn parse_wires_quirks_mode_through_document_to_cascade_ascii_fold() {
+        use raikiri_style::property::CssColor;
+        use raikiri_style::{Origin, StyleDom, StyleQuirksMode};
         use raikiri_traits::QuirksMode;
 
-        let html = b"<html><body>x</body></html>";
+        let html = b"<html><head><style>.foo { color: #00ff00 } \
+                     #bar { color: #0000ff }</style></head><body>\
+                     <p class=\"FOO\">a</p><span id=\"BAR\">b</span></body></html>";
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
 
+        // Accessor-level: the value reaches Document and StyleDom.
         assert_eq!(uncascaded.quirks_mode, QuirksMode::Quirks);
         assert_eq!(uncascaded.dom.quirks_mode(), QuirksMode::Quirks);
         assert_eq!(
             StyleDom::quirks_mode(&uncascaded.dom),
             StyleQuirksMode::Quirks
         );
+
+        // Behavior-level: cascade actually reads it and ASCII-folds
+        // `.foo`/`#bar` against `class="FOO"`/`id="BAR"`.
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let p_id = find_first_by_tag(&uncascaded.dom, "p")
+            .expect("<p> should exist")
+            .0 as usize;
+        let span_id = find_first_by_tag(&uncascaded.dom, "span")
+            .expect("<span> should exist")
+            .0 as usize;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[p_id].color,
+            CssColor {
+                r: 0,
+                g: 0xFF,
+                b: 0,
+                a: 255,
+            },
+            "quirks mode: .foo must ASCII-fold-match class=\"FOO\" through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[span_id].color,
+            CssColor {
+                r: 0,
+                g: 0,
+                b: 0xFF,
+                a: 255,
+            },
+            "quirks mode: #bar must ASCII-fold-match id=\"BAR\" through real parse+cascade"
+        );
     }
 
     /// Standards-mode counterpart of
-    /// `parse_wires_quirks_mode_through_document_to_style_dom`: an explicit
-    /// `<!DOCTYPE html>` must reach `StyleDom::quirks_mode()` as `NoQuirks`
-    /// end-to-end, not just as the (indistinguishable) trait default.
+    /// `parse_wires_quirks_mode_through_document_to_cascade_ascii_fold`: an
+    /// explicit `<!DOCTYPE html>` must reach `StyleDom::quirks_mode()` as
+    /// `NoQuirks` end-to-end, and — the claim that actually matters —
+    /// cascade's id/class matching must stay case-sensitive, so the same
+    /// `.foo`/`#bar` selectors must NOT match `class="FOO"`/`id="BAR"` and
+    /// the elements must stay at CSS-initial `color` (black). This is the
+    /// load-bearing half: it is the only assertion that can distinguish
+    /// "cascade read the real (`NoQuirks`) value" from "cascade fell back
+    /// to `StyleDom::quirks_mode`'s `NoQuirks` default and happened to
+    /// agree" — both bugs would incorrectly produce this document's Quirks
+    /// counterpart matching case-sensitively too, but only a real bug (not
+    /// wiring `Document::quirks_mode` at all) would make *this* document's
+    /// case stay unmatched by coincidence, so the pair of tests together
+    /// is what actually pins the wiring.
     #[test]
-    fn parse_wires_no_quirks_through_document_to_style_dom() {
-        use raikiri_style::{StyleDom, StyleQuirksMode};
+    fn parse_wires_no_quirks_through_document_to_cascade_case_sensitive() {
+        use raikiri_style::property::CssColor;
+        use raikiri_style::{Origin, StyleDom, StyleQuirksMode};
         use raikiri_traits::QuirksMode;
 
-        let html = b"<!DOCTYPE html><html><body>x</body></html>";
+        let html = b"<!DOCTYPE html><html><head><style>.foo { color: #00ff00 } \
+                     #bar { color: #0000ff }</style></head><body>\
+                     <p class=\"FOO\">a</p><span id=\"BAR\">b</span></body></html>";
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
 
@@ -1304,6 +1372,31 @@ mod tests {
         assert_eq!(
             StyleDom::quirks_mode(&uncascaded.dom),
             StyleQuirksMode::NoQuirks
+        );
+
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let p_id = find_first_by_tag(&uncascaded.dom, "p")
+            .expect("<p> should exist")
+            .0 as usize;
+        let span_id = find_first_by_tag(&uncascaded.dom, "span")
+            .expect("<span> should exist")
+            .0 as usize;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[p_id].color,
+            CssColor::BLACK,
+            "no-quirks mode: .foo must NOT match class=\"FOO\" (case-sensitive) through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[span_id].color,
+            CssColor::BLACK,
+            "no-quirks mode: #bar must NOT match id=\"BAR\" (case-sensitive) through real parse+cascade"
         );
     }
 
