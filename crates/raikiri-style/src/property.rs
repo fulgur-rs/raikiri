@@ -5314,23 +5314,31 @@ fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
 /// `content([ text | before | after | first-letter ]?)` (`?` は raikiri の
 /// 受理済み記法であり、GCPM 3 の grammar 自体には無い formal optional
 /// marker ではない)。CSS GCPM 3 §1.1.1.1 "The content() function"
-/// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> の 4-keyword grammar
-/// (`text | before | after | first-letter`) をそのまま実装する。
+/// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> の keyword 集合
+/// (`text | before | after | first-letter` の 4 種) をそのまま実装する。
 ///
 /// **grammar 選択の根拠**: `content()` は GCPM 3 §1.1.1.1 と CSS Content 3
 /// §2.7.3 <https://www.w3.org/TR/css-content-3/#funcdef-content> の 2 つの
-/// spec に別々に定義されており、両者の grammar は一致しない — CSS Content 3
-/// は `marker` を加えた 5 keyword を `?` 付き (省略時 `text` 扱い) で定義する。
-/// この実装は GCPM 3 §1.1.1.1 に従い、`marker` および CSS Content 3 のみが
-/// 追加受理する keyword を意図的に reject する。これは spec 間の grammar
-/// 相反を解決した結果の選択であり、実装漏れではない。
+/// spec に別々に定義されており、2 つの軸で食い違う。(1) keyword 集合 — GCPM 3
+/// は 4 keyword のみ、CSS Content 3 はそこに `marker` を加えた 5 keyword。
+/// (2) 引数の省略可否 — GCPM 3 の production 自体には `?` が無く引数は形式上
+/// 必須だが、CSS Content 3 は `?` 付きで、省略時は `text` を暗黙採用すると
+/// 明記する。この実装は (1) の keyword 集合では GCPM 3 §1.1.1.1 に従い、
+/// `marker` を意図的に reject する。(2) の引数省略可否については逆に
+/// CSS Content 3 §2.7.3 の `?` 付き grammar と同じ挙動 (省略時 `text`
+/// フォールバック) を採用しており、GCPM 3 の厳密な grammar (引数必須) には
+/// 従っていない — 「GCPM 3 に従う」と言えるのは keyword 集合の軸のみである。
+/// これは spec 間の grammar 相反を軸ごとに解決した結果の選択であり、
+/// 実装漏れではない。
 ///
 /// **既知の feature gap**: `content` property 側の `<content-list>` は
 /// CSS Content 3 §2 governance (broad grammar、[`ContentListMode::CssContent3`]
-/// 参照) だが、この `content()` 内部 grammar だけは両 property 呼び出し元で
-/// GCPM 3 §1.1.1.1 の 4-keyword 版のまま unconditional に適用される (下記
-/// mode dispatch の節参照)。CSS Content 3 §2.7.3 の広い grammar
-/// (`marker` 対応) を優先実装する必要が生じた場合、この関数が変更対象。
+/// 参照) だが、この `content()` 内部の keyword 集合だけは両 property 呼び出し
+/// 元で GCPM 3 §1.1.1.1 の 4-keyword 版のまま unconditional に適用される
+/// (下記 mode dispatch の節参照)。引数省略時の `text` フォールバック挙動は
+/// 既に CSS Content 3 §2.7.3 の記述と一致しているため、CSS Content 3 §2.7.3
+/// の広い grammar を優先実装する必要が生じた場合、残る差分は `marker`
+/// keyword の受理のみ。
 ///
 /// bare `content()` (spec 例 `h2 { string-set: heading content() }`、
 /// string-set/GCPM3 側の文脈) では [`ContentTextKeyword::Text`] を
@@ -5344,8 +5352,8 @@ fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
 /// unconditional に受理される ([`ContentListMode`] mode gate なし、
 /// mode dispatch 導入後もこの arm は両 mode で unconditional のまま、
 /// [`parse_content_function`] の match arm 参照) — 上記の通り、この
-/// unconditional な適用自体が「`content()` は常に GCPM 3 §1.1.1.1 grammar に
-/// 従う」という選択の実装箇所である。
+/// unconditional な適用自体が「受理 keyword 集合は両 property とも
+/// GCPM 3 §1.1.1.1 の 4 種」という選択の実装箇所である。
 fn parse_content_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let keyword = if input.is_exhausted() {
         ContentTextKeyword::default()
@@ -7376,11 +7384,11 @@ mod tests {
     // mode で unconditional accept)。
     //
     // CSS Content 3 §2.7.3 は content() を `?` 付き 5 keyword (`marker` 含む)
-    // で別途定義しており、GCPM 3 §1.1.1.1 と grammar が食い違う。この実装は
-    // GCPM 3 §1.1.1.1 に従うと決めており、content property 側でも `marker` は
-    // 意図的に reject する (詳細・根拠は `parse_content_fn` の doc comment
-    // 参照)。CSS Content 3 §2.7.3 の広い grammar は既知の feature gap として
-    // 残る。
+    // で別途定義しており、GCPM 3 §1.1.1.1 と keyword 集合が食い違う。この
+    // 実装は keyword 集合について GCPM 3 §1.1.1.1 に従うと決めており、content
+    // property 側でも `marker` は意図的に reject する (詳細・根拠は
+    // `parse_content_fn` の doc comment 参照)。CSS Content 3 §2.7.3 の
+    // `marker` keyword は既知の feature gap として残る。
     //
     // pre-fix reproduction: `string-set: title content(text)` は
     // silent drop していた (parse_content_function match arm 欠如 →
@@ -7475,8 +7483,9 @@ mod tests {
         // parse_content_list_items が break、declaration drop = None。`marker`
         // はこの GCPM3 grammar には無い。CSS Content 3 §2.7.3 は独自に
         // content() を `marker` 含む 5 keyword で定義しているが、この実装は
-        // GCPM 3 §1.1.1.1 に従うと決めており (parse_content_fn の doc comment
-        // 参照)、`marker` reject は意図した挙動であって未解決の問題ではない。
+        // keyword 集合について GCPM 3 §1.1.1.1 に従うと決めており
+        // (parse_content_fn の doc comment 参照)、`marker` reject は意図した
+        // 挙動であって未解決の問題ではない。
         // 本 test は現状の GCPM3-scoped 実装の挙動を
         // pin するものであり、`marker` が spec に一切存在しないという主張では
         // ない。
