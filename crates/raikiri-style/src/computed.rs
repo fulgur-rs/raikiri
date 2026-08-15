@@ -13,7 +13,7 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
-    OverflowValue, OverflowXY, Sides, TextAlign, TextDecoration, empty_content_list,
+    OverflowValue, OverflowXY, Sides, TextAlign, TextDecoration, VerticalAlign, empty_content_list,
     empty_counter_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -65,7 +65,8 @@ pub struct RunningTemplate {
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
 /// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
 /// non-inherited: background-color / display / counter-* / content / string-set /
-/// running_templates / padding / margin / border / width / height / box_sizing)。
+/// running_templates / padding / margin / border / width / height / box_sizing /
+/// overflow / text_decoration / vertical_align)。
 ///
 /// # 層
 ///
@@ -507,6 +508,29 @@ pub struct ComputedValues {
     /// (`crates/raikiri-paint/src/lib.rs`'s module doc lists "Text
     /// decoration (underline / line-through)" as a future milestone).
     pub text_decoration: TextDecoration,
+    /// `vertical-align`. **non-inherited**, initial:
+    /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1 "Vertical alignment: the
+    /// 'vertical-align' property"
+    /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>,
+    /// "Initial: baseline" / "Inherited: no"). Computed value = specified
+    /// keyword ([`VerticalAlign`] doc — no length payload in this minimal
+    /// scope, so no relative resolution is needed).
+    ///
+    /// # Scope carving (minimal scope)
+    ///
+    /// This field holds only the 3-keyword subset described on
+    /// [`VerticalAlign`] (`baseline` / `sub` / `super`) — the `top` /
+    /// `text-top` / `middle` / `bottom` / `text-bottom` keywords and the
+    /// `<percentage>` / `<length>` value forms are explicit follow-up, not
+    /// represented by this field.
+    ///
+    /// # Downstream handoff (future scope, style-scope confined)
+    ///
+    /// This field carries the cascade static side seed only, mirroring
+    /// [`Self::text_decoration`] — the actual baseline-shift amount
+    /// calculation and glyph rendering for `sub`/`super` is raikiri-paint
+    /// scope and not yet wired.
+    pub vertical_align: VerticalAlign,
 }
 
 impl ComputedValues {
@@ -585,6 +609,8 @@ impl ComputedValues {
             // CSS Text Decoration Module Level 3 §2: text-decoration-line
             // initial は `none`。
             text_decoration: TextDecoration::None,
+            // CSS 2.1 §10.8.1: vertical-align initial は `baseline`。
+            vertical_align: VerticalAlign::Baseline,
         }
     }
 
@@ -598,7 +624,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration)。
+    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration / vertical_align)。
     ///
     /// # 実装 (delegation)
     ///
@@ -805,13 +831,16 @@ mod tests {
             // `Underline` — initial (`None`) と異なる
             // 値 (non_initial_parent の趣旨どおり全 field を非 initial に)。
             text_decoration: TextDecoration::Underline,
+            // `Sub` — initial (`Baseline`) と異なる値 (non_initial_parent の
+            // 趣旨どおり全 field を非 initial に)。
+            vertical_align: VerticalAlign::Sub,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 23 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 24 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -858,6 +887,8 @@ mod tests {
         // CSS Text Decoration Module Level 3 §2:
         // text-decoration は non-inherited。
         assert_eq!(child.text_decoration, initial.text_decoration);
+        // CSS 2.1 §10.8.1: vertical-align は non-inherited。
+        assert_eq!(child.vertical_align, initial.vertical_align);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。

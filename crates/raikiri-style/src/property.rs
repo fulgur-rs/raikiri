@@ -1865,6 +1865,66 @@ pub enum TextDecoration {
     Underline,
 }
 
+/// `vertical-align` property の value。
+///
+/// CSS 2.1 §10.8.1 "Vertical alignment: the 'vertical-align' property"
+/// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>。
+///
+/// propdef (spec verbatim): Value: `baseline | sub | super | top | text-top
+/// | middle | bottom | text-bottom | <percentage> | <length> | inherit`、
+/// Initial: `baseline`、Applies to: inline-level and 'table-cell' elements、
+/// Inherited: **no**、Percentages: refer to the 'line-height' of the element
+/// itself、Computed value: "for `<percentage>` and `<length>` the absolute
+/// length, otherwise as specified".
+///
+/// # なぜ CSS 2.1 を primary source に採るか
+///
+/// CSS Inline Layout Module Level 3
+/// <https://www.w3.org/TR/css-inline-3/#vertical-align> は `vertical-align`
+/// を `alignment-baseline` / `baseline-source` / `baseline-shift` 3
+/// longhand の shorthand として再定義するが、classic keyword grammar
+/// (`baseline` / `sub` / `super` / `top` / ... ) 全体への互換 mapping 節を
+/// 持たない。classic keyword grammar の完全かつ一貫した定義を持つのは
+/// CSS 2.1 §10.8.1 のみであるため、本 crate はそちらを primary source に
+/// 採る。
+///
+/// # Scope carving
+///
+/// - **実装済み**: `baseline` (spec initial value) / `sub` / `super` の 3
+///   keyword。いずれも percentage / length を運ばないため、computed value =
+///   specified keyword そのまま (相対解決なし)。
+/// - **(b) 非対応**: `top` / `text-top` / `middle` / `bottom` /
+///   `text-bottom` keyword、および `<percentage>` / `<length>` value は
+///   spec-valid だが未実装、silent drop (`None`) — line-height 基準の
+///   percentage 解決・box alignment 計算を要する、将来 follow-up。
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(a) spec-invalid**: 上記以外の ident は silent drop = `None`。
+/// - **Non-goal**: `sub` / `super` が指す実際の baseline shift 量計算・
+///   glyph 描画は raikiri-paint scope。本 crate は computed-style plumbing
+///   のみを担う。
+///
+/// `Default` は derive しない — 37n sibling [`TextDecoration`] と同じ
+/// convention (spec default は初期化側
+/// [`crate::computed::ComputedValues::initial`] が直接指定する)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerticalAlign {
+    /// `baseline` — spec initial value。box の baseline を親の baseline に
+    /// 揃える (追加のシフトなし、§10.8.1 spec verbatim: "Align the baseline
+    /// of the box with the baseline of the parent box.")。
+    Baseline,
+    /// `sub` — "Lower the baseline of the box to the proper position for
+    /// subscripts of the parent's box. (This value has no effect on the
+    /// font size of the element's text.)" (§10.8.1 spec verbatim)。
+    Sub,
+    /// `super` — "Raise the baseline of the box to the proper position for
+    /// superscripts of the parent's box. (This value has no effect on the
+    /// font size of the element's text.)" (§10.8.1 spec verbatim)。
+    Super,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -2387,6 +2447,15 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     TextDecoration(TextDecoration),
+    /// `vertical-align: baseline | sub | super` — **non-inherited**、initial:
+    /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1
+    /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>)。
+    /// computed value = specified keyword ([`VerticalAlign`] doc 参照、
+    /// percentage/length を運ばないため相対解決なし)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    VerticalAlign(VerticalAlign),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -2524,6 +2593,11 @@ pub enum PropertyKey {
     // crate convention). 末尾配置の理由は PropertyValue::TextDecoration の
     // doc 参照。
     TextDecoration,
+    // vertical-align (CSS 2.1 §10.8.1、semantics on the matching
+    // PropertyValue::VerticalAlign variant; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention). 末尾配置の理由は
+    // PropertyValue::TextDecoration の doc と同じ (1:1 disjoint な新 field)。
+    VerticalAlign,
 }
 
 impl PropertyValue {
@@ -2583,6 +2657,7 @@ impl PropertyValue {
             PropertyValue::OverflowY(_) => PropertyKey::OverflowY,
             PropertyValue::Overflow(_) => PropertyKey::Overflow,
             PropertyValue::TextDecoration(_) => PropertyKey::TextDecoration,
+            PropertyValue::VerticalAlign(_) => PropertyKey::VerticalAlign,
         }
     }
 }
@@ -2766,6 +2841,11 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // scope — `TextDecoration` doc's "Scope carving" section). initial
         // `none`, not inherited, computed value = specified keyword.
         "text-decoration" => parse_text_decoration(input).map(PropertyValue::TextDecoration),
+        // CSS 2.1 §10.8.1 vertical-align, restricted to `baseline` / `sub` /
+        // `super` (minimal scope — `VerticalAlign` doc's "Scope carving"
+        // section). initial `baseline`, not inherited, computed value =
+        // specified keyword.
+        "vertical-align" => parse_vertical_align(input).map(PropertyValue::VerticalAlign),
         _ => None,
     }
 }
@@ -4177,6 +4257,32 @@ fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDecoration> {
     match ident.to_ascii_lowercase().as_str() {
         "none" => Some(TextDecoration::None),
         "underline" => Some(TextDecoration::Underline),
+        _ => None,
+    }
+}
+
+/// `vertical-align: <ident>` を parse する (CSS 2.1 §10.8.1
+/// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>)。
+///
+/// ASCII case-insensitive で ident を比較する (37n sibling [`parse_direction`]
+/// / [`parse_text_decoration`] と同 flavor)。
+///
+/// # Scope carving (minimal scope、[`VerticalAlign`] doc-comment に詳述)
+///
+/// - **(b) 非対応**: `top` / `text-top` / `middle` / `bottom` /
+///   `text-bottom` keyword、`<percentage>` / `<length>` value は silent
+///   drop = `None` — [`VerticalAlign`] doc 参照。
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(a) spec-invalid**: `baseline` / `sub` / `super` 以外の ident は
+///   silent drop = `None`。
+fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlign> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "baseline" => Some(VerticalAlign::Baseline),
+        "sub" => Some(VerticalAlign::Sub),
+        "super" => Some(VerticalAlign::Super),
         _ => None,
     }
 }
@@ -8380,6 +8486,85 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::TextDecoration);
         let v = PropertyValue::TextDecoration(TextDecoration::Underline);
         assert_eq!(v.key(), PropertyKey::TextDecoration);
+    }
+
+    // ── vertical-align (CSS 2.1 §10.8.1) ──
+    //
+    // Value grammar (minimal scope — `VerticalAlign` doc's "Scope carving"
+    // section): baseline | sub | super. Initial: baseline / Inherited: no /
+    // Computed value: specified keyword.
+
+    #[test]
+    fn vertical_align_parse_all_keywords() {
+        assert_eq!(
+            parse("baseline", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Baseline))
+        );
+        assert_eq!(
+            parse("sub", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Sub))
+        );
+        assert_eq!(
+            parse("super", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Super))
+        );
+    }
+
+    #[test]
+    fn vertical_align_is_case_insensitive() {
+        assert_eq!(
+            parse("BASELINE", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Baseline))
+        );
+        assert_eq!(
+            parse("Sub", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Sub))
+        );
+        assert_eq!(
+            parse("SUPER", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Super))
+        );
+    }
+
+    #[test]
+    fn vertical_align_rejects_unimplemented_keywords() {
+        // (b) not supported — `top` / `text-top` / `middle` / `bottom` /
+        // `text-bottom` and the `<percentage>`/`<length>` value forms are
+        // explicit follow-up (`VerticalAlign` doc's "Scope carving"
+        // section), not (a) spec-invalid.
+        for kw in ["top", "text-top", "middle", "bottom", "text-bottom"] {
+            assert_eq!(parse(kw, "vertical-align"), None);
+        }
+    }
+
+    #[test]
+    fn vertical_align_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "vertical-align"), None);
+    }
+
+    #[test]
+    fn vertical_align_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "vertical-align"), None);
+        }
+    }
+
+    #[test]
+    fn vertical_align_rejects_non_ident() {
+        assert_eq!(parse("16px", "vertical-align"), None);
+        assert_eq!(parse("50%", "vertical-align"), None);
+    }
+
+    #[test]
+    fn vertical_align_key_maps_to_vertical_align_property_key() {
+        let v = PropertyValue::VerticalAlign(VerticalAlign::Baseline);
+        assert_eq!(v.key(), PropertyKey::VerticalAlign);
+        let v = PropertyValue::VerticalAlign(VerticalAlign::Sub);
+        assert_eq!(v.key(), PropertyKey::VerticalAlign);
+        let v = PropertyValue::VerticalAlign(VerticalAlign::Super);
+        assert_eq!(v.key(), PropertyKey::VerticalAlign);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value
