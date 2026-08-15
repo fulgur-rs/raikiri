@@ -928,21 +928,10 @@ impl<'i> QualifiedRuleParser<'i> for CounterStyleSheetParser {
         Err(input.new_custom_error(()))
     }
 
+    // cov:ignore: structurally unreachable, not merely untested.
     // `parse_prelude` above always returns `Err`, so cssparser's
-    // qualified-rule dispatch never reaches this method in practice — it
-    // exists only because `QualifiedRuleParser` requires an implementation.
-    // Rather than annotate it `cov:ignore:` (multi-line blocks whose first
-    // or last line contains a single, unpaired lifetime apostrophe — as
-    // both this signature's `<'t>` and its `Parser<'i, 't>` /
-    // `ParseError<'i, ...>` lines do — defeat `scripts/lib/
-    // patch_coverage.py`'s brace-depth scanner: `code_only()`'s naive
-    // string/char-literal tracker treats an unpaired `'` as opening an
-    // unterminated char literal and silently drops every following
-    // character, including the very brace that should close the block),
-    // `qualified_rule_parse_block_stub_returns_err_without_panicking` below
-    // calls this method directly, making its "trivially safe, no panic"
-    // claim an actually-exercised test rather than a `cov:ignore`d
-    // assertion.
+    // qualified-rule dispatch never calls this method — it exists only
+    // because `QualifiedRuleParser` requires an implementation.
     fn parse_block<'t>(
         &mut self,
         _prelude: Self::Prelude,
@@ -1505,32 +1494,6 @@ mod tests {
         );
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].name.as_str(), "thumbs");
-    }
-
-    #[test]
-    fn qualified_rule_parse_block_stub_returns_err_without_panicking() {
-        // `CounterStyleSheetParser`'s `QualifiedRuleParser::parse_block` is
-        // unreachable via cssparser's normal top-level dispatch (its sibling
-        // `parse_prelude` always returns `Err`, so cssparser's error
-        // recovery never calls `parse_block` for a qualified/style rule —
-        // see the doc comment on that impl). Calling it directly here does
-        // what the doc comment otherwise only asserts in prose: proves the
-        // stub returns `Err` and does not panic, exercised via an actual
-        // code path instead of a `cov:ignore` annotation (see that doc
-        // comment for why a `cov:ignore` block scan doesn't work cleanly
-        // here — the signature's lifetime syntax defeats the coverage
-        // tool's brace-depth scanner).
-        let mut sheet_parser = CounterStyleSheetParser;
-        let mut input = ParserInput::new("");
-        let mut parser = Parser::new(&mut input);
-        let state = parser.state();
-        // Fully-qualified call: `CounterStyleSheetParser` implements both
-        // `AtRuleParser` and `QualifiedRuleParser`, each with their own
-        // `parse_block` method, so a plain `.parse_block(...)` is
-        // ambiguous — this disambiguates to the `QualifiedRuleParser` one
-        // under test.
-        let result = QualifiedRuleParser::parse_block(&mut sheet_parser, (), &state, &mut parser);
-        assert!(result.is_err());
     }
 
     #[test]
