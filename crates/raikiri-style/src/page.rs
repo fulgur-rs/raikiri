@@ -1467,7 +1467,11 @@ fn absolutize_in_page_context(
         // `text-decoration` carries no length and computed value = specified
         // keyword (see `TextDecoration`'s doc) — nothing
         // for phase 3 to absolutize.
-        | PropertyValue::TextDecoration(_)) => v,
+        | PropertyValue::TextDecoration(_)
+        // `vertical-align` (minimal scope: `baseline`/`sub`/`super`) carries
+        // no length either and computed value = specified keyword (see
+        // `VerticalAlign`'s doc) — nothing for phase 3 to absolutize.
+        | PropertyValue::VerticalAlign(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -1762,7 +1766,7 @@ mod tests {
     use crate::property::{
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontWeightValue, Length,
         LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
-        TextDecoration,
+        TextDecoration, VerticalAlign,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -3483,11 +3487,13 @@ mod tests {
     /// 持たないため pass-through 側に加わる — `TextAlign` 自身は元々こちら側)。
     /// 23 → 24 (`TextDecoration` も同じ理由で
     /// pass-through 側 — length を運ばないため phase 3 に変換対象が無い)。
+    /// 24 → 25 (`VerticalAlign` — minimal scope の `baseline`/`sub`/`super` —
+    /// も同じ理由で pass-through 側)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 24;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 25;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -3672,6 +3678,11 @@ mod tests {
         // "worst case" (`Direction` sibling comment
         // above uses the same reasoning).
         TextDecoration => PropertyValue::TextDecoration(TextDecoration::Underline),
+        // No specified/computed distinction for `vertical-align` in this
+        // minimal scope (computed value = specified keyword, `VerticalAlign`
+        // doc) — any value is "worst case" (`Direction`/`TextDecoration`
+        // sibling comments above use the same reasoning).
+        VerticalAlign => PropertyValue::VerticalAlign(VerticalAlign::Sub),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -3830,6 +3841,7 @@ mod tests {
         OverflowY,
         Overflow,
         TextDecoration,
+        VerticalAlign,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4057,7 +4069,10 @@ mod tests {
             | PropertyValue::OverflowY(_)
             | PropertyValue::Overflow(_)
             // `TextDecoration` carries no length either.
-            | PropertyValue::TextDecoration(_) => None,
+            | PropertyValue::TextDecoration(_)
+            // `VerticalAlign` (minimal scope: `baseline`/`sub`/`super`)
+            // carries no length either.
+            | PropertyValue::VerticalAlign(_) => None,
         }
     }
 

@@ -226,23 +226,25 @@ a[href] { color: #0000EE; text-decoration: underline; }
  * is not yet a raikiri-style property (0 hits across property.rs),
  * out of scope for this task, left for a follow-up once it lands.
  *
- * sub/sup get two separate spec rules. `sub { vertical-align: sub; } sup {
- * vertical-align: super; }` is genuinely blocked — vertical-align is not
- * yet a raikiri-style property either (0 hits). `sub, sup {
- * line-height: normal; font-size: smaller; }` is NOT blocked on
- * its own — line-height: normal is implemented (property.rs L3964-3970,
- * parse_line_height's `normal` branch) and font-size: smaller is the same
- * already-implemented RelativeFontSize::Smaller used for `small` above. It
- * is still deliberately NOT added here: landing only the font-size/
- * line-height half would shrink `sub`/`sup` text without lowering/raising
- * its baseline, which reads as a font-size bug rather than a
- * subscript/superscript, and would need undoing once vertical-align lands
- * — a milder version of the "half a rule can read worse than no rule"
- * concern this file already raises for `dialog` above (unlike dialog's
- * case, nothing here is hidden or broken, it's cosmetic-only smaller
- * same-baseline text, so the two aren't equally severe). Deferred as a
- * whole unit alongside vertical-align. */
+ * sub/sup get two separate spec rules, both landed below as a single unit.
+ * `vertical-align: sub` / `vertical-align: super` reach raikiri-style's
+ * `VerticalAlign` property (CSS 2.1 §10.8.1 is the primary source there —
+ * see that type's doc for why CSS Inline Layout Module Level 3's shorthand
+ * redefinition of `vertical-align` is not used instead). `sub, sup {
+ * line-height: normal; font-size: smaller; }` reuses the same
+ * already-implemented `line-height: normal` / `font-size: smaller` as
+ * `small` above. All three declarations land together rather than the
+ * font-size/line-height half alone: that half by itself would shrink
+ * `sub`/`sup` text without shifting its baseline, which reads as a
+ * font-size bug rather than a subscript/superscript — the same "half a
+ * rule can read worse than no rule" concern this file raises for `dialog`
+ * above. The actual baseline-shift amount calculation and glyph rendering
+ * for `sub`/`super` remains raikiri-paint scope and is not yet wired —
+ * this rule only reaches the computed-style layer. */
 b, strong { font-weight: bolder; }
 small { font-size: smaller; }
 mark { background-color: yellow; color: black; }
 ins, u { text-decoration: underline; }
+sub { vertical-align: sub; }
+sup { vertical-align: super; }
+sub, sup { line-height: normal; font-size: smaller; }

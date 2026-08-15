@@ -1560,13 +1560,12 @@ mod tests {
         //   mark { background: yellow; color: black; }
         //   ins, u { text-decoration: underline; }
         // all landed. The rest of §phrasing-content-3 — the 5-element
-        // `cite, dfn, em, i, var { font-style: italic; }` rule and both
-        // sub/sup rules — is deliberately not landed here; see minimal.css
-        // for the per-rule rationale (sub/sup's `line-height: normal;
-        // font-size: smaller` half is NOT itself blocked, it's held back
-        // deliberately, not "blocked" like the rest). Same "survives real
-        // parse+cascade, not just literal text in MINIMAL_UA_CSS" concern as
-        // the hr / a[href] tests above.
+        // `cite, dfn, em, i, var { font-style: italic; }` rule — is
+        // deliberately not landed here; see minimal.css for the per-rule
+        // rationale. sub/sup's two rules are covered separately by
+        // `sub_sup_ua_rules_survive_real_parse_and_cascade` below. Same
+        // "survives real parse+cascade, not just literal text in
+        // MINIMAL_UA_CSS" concern as the hr / a[href] tests above.
         use raikiri_style::Origin;
         use raikiri_style::property::{CssColor, TextDecoration};
 
@@ -1660,6 +1659,111 @@ mod tests {
             cascade.computed[u_id].text_decoration,
             TextDecoration::Underline,
             "u's UA rule text-decoration: underline must reach computed.text_decoration through real parse+cascade"
+        );
+    }
+
+    #[test]
+    fn sub_sup_ua_rules_survive_real_parse_and_cascade() {
+        // HTML LS §phrasing-content-3:
+        //   sub { vertical-align: sub; }
+        //   sup { vertical-align: super; }
+        //   sub, sup { line-height: normal; font-size: smaller; }
+        // (`minimal.css`'s sub/sup comment has the full per-declaration
+        // rationale, including why `vertical-align` is scoped to
+        // `sub`/`super` only.)
+        //
+        // `line-height: normal` is also the CSS-initial value, so asserting
+        // it directly on a bare `<sub>`/`<sup>` under an all-initial
+        // ancestor chain would pass whether or not the UA rule actually
+        // fired. Wrapping both in an author-styled `line-height: 3`
+        // container makes the assertion discriminating instead: CSS
+        // Cascading L4 has any declared value (any origin) beat an
+        // inherited one, so the UA rule's `normal` must win over the
+        // inherited `3` on `sub`/`sup`, while a plain `<span>` sibling with
+        // no matching UA rule keeps the inherited `3` (negative control).
+        use raikiri_style::Origin;
+        use raikiri_style::property::VerticalAlign;
+        use raikiri_style::resolve::ComputedLineHeight;
+
+        let html = b"<html><body><div style=\"line-height: 3\">\
+                     <sub>x</sub><sup>x</sup><span>x</span></div></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let sub_id = find_first_by_tag(&uncascaded.dom, "sub")
+            .expect("<sub> should exist")
+            .0 as usize;
+        let sup_id = find_first_by_tag(&uncascaded.dom, "sup")
+            .expect("<sup> should exist")
+            .0 as usize;
+        let span_id = find_first_by_tag(&uncascaded.dom, "span")
+            .expect("<span> should exist")
+            .0 as usize;
+
+        // sub { vertical-align: sub; } / sup { vertical-align: super; }
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[sub_id].vertical_align,
+            VerticalAlign::Sub,
+            "sub's UA rule vertical-align: sub must reach computed.vertical_align through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[sup_id].vertical_align,
+            VerticalAlign::Super,
+            "sup's UA rule vertical-align: super must reach computed.vertical_align through real parse+cascade"
+        );
+
+        // sub, sup { line-height: normal; ... } must override the inherited
+        // line-height: 3 from the wrapper div.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[sub_id].line_height,
+            ComputedLineHeight::Normal,
+            "sub's UA rule line-height: normal must override the inherited line-height: 3 through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[sup_id].line_height,
+            ComputedLineHeight::Normal,
+            "sup's UA rule line-height: normal must override the inherited line-height: 3 through real parse+cascade"
+        );
+        // negative control: a sibling with no matching UA rule keeps the
+        // inherited line-height: 3 — proves the wrapper's declaration
+        // actually propagates, so the two overrides above are
+        // discriminating and not vacuously true.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[span_id].line_height,
+            ComputedLineHeight::Number(3.0),
+            "span (no UA rule) must inherit line-height: 3 from the wrapper div"
+        );
+
+        // sub, sup { font-size: smaller; } — same simple-ratio (1.2) branch
+        // as `small` above, applied against the inherited initial 16px
+        // (the wrapper div's line-height declaration does not affect
+        // font-size).
+        let sub_font_size = cascade.computed[sub_id].font_size.0;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (sub_font_size - 16.0 / 1.2).abs() < 0.0001,
+            "sub's UA rule font-size: smaller must resolve to 16px / 1.2 through real parse+cascade, got {sub_font_size}"
+        );
+        let sup_font_size = cascade.computed[sup_id].font_size.0;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (sup_font_size - 16.0 / 1.2).abs() < 0.0001,
+            "sup's UA rule font-size: smaller must resolve to 16px / 1.2 through real parse+cascade, got {sup_font_size}"
         );
     }
 

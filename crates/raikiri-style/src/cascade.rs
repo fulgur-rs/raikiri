@@ -2819,7 +2819,8 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    `TextAlign` の 5 つに限れば**、この形の漏れは `page::tests` の
 ///    `specified_layer_residue` が網羅 match しているので test compile 段で
 ///    捕まる。それ以外 (`BorderStyle` / `BorderColor`
-///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`)
+///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`
+///    / `OverflowValue` / `TextDecoration` / `VerticalAlign`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
@@ -3055,7 +3056,14 @@ pub(crate) fn resolve_against_inherited(
         // `text-decoration` carries no length and does not depend on the
         // inheritance parent (computed value = specified keyword,
         // `TextDecoration` doc) — nothing for phase 2 to resolve.
-        | PropertyValue::TextDecoration(_)) => v,
+        | PropertyValue::TextDecoration(_)
+        // `vertical-align: sub`/`super` describe a shift *relative to the
+        // parent's baseline*, but that relation is a used-value/layout
+        // concern (raikiri-paint scope, `VerticalAlign` doc's Non-goal
+        // note) — CSS 2.1 §10.8.1's computed value is still the bare
+        // specified keyword, so there is nothing for this function (phase
+        // 2, computed-value resolution) to resolve here either.
+        | PropertyValue::VerticalAlign(_)) => v,
     })
 }
 
@@ -3432,6 +3440,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // computed value に反映。`TextDecoration` は Copy、by-value 代入で
         // 十分 (`BoxSizing` arm と同型)。
         PropertyValue::TextDecoration(td) => target.text_decoration = td,
+        // CSS 2.1 §10.8.1 vertical-align。non-inherited、cascade winner が
+        // specified keyword をそのまま computed value に反映。
+        // `VerticalAlign` は Copy、by-value 代入で十分 (`BoxSizing` /
+        // `TextDecoration` arm と同型)。
+        PropertyValue::VerticalAlign(va) => target.vertical_align = va,
     }
 }
 
