@@ -786,10 +786,13 @@ fn collect_running_template(
                         source,
                     });
                 }
-                // Resolution failure (e.g. attr() on a missing attribute)
-                // or conversion failure → skip this string-set entry
-                // entirely; see resolve_string_set_component's and
-                // convert_string_set_source's doc comments.
+                // Resolution failure (content(before)/content(after)/
+                // content(first-letter), still unresolvable here — see
+                // resolve_string_set_component's doc) or conversion failure
+                // → skip this string-set entry entirely. Note attr() on a
+                // missing attribute is NOT a resolution failure — it
+                // resolves to Literal("") (see resolve_string_set_component's
+                // Attr-arm doc), same as the present-but-empty case.
             }
 
             let node_flags = detect_dynamic_flags(&cv.content);
@@ -895,16 +898,33 @@ fn convert_string_set_source(content_list: &[ContentComponent]) -> Option<Conten
 /// - [`ContentComponent::Attr`] (CSS Values and Units 5 §7.7.1
 ///   <https://www.w3.org/TR/css-values-5/#attr-notation>): if the element
 ///   carries the named attribute — even `""` — the attribute's value
-///   substitutes verbatim (an empty attribute is a valid empty `<string>`,
-///   distinct from a missing one). If the element does not carry the
-///   attribute, this is the "no fallback" case (raikiri's `attr()` parser
-///   only accepts the bare 1-argument form — see
-///   `raikiri_style::property::parse_attr_fn`'s doc, "type / fallback ...
-///   defer"), so per that section's rule the substitution is the
-///   guaranteed-invalid value: `None` here, which the caller treats the
-///   same as any other resolution/conversion failure — the whole
-///   `string-set` assignment for this name is dropped, matching what a CSS
-///   declaration going invalid at computed-value time would do.
+///   substitutes verbatim. If the element does not carry the attribute,
+///   this resolves to `Literal("")` too, not a dropped assignment — §7.7.1's
+///   own prose (immediately preceding "To resolve an attr() function"):
+///   "If the `<syntax>` argument is omitted, the fallback defaults to the
+///   empty string if omitted; otherwise, it defaults to the
+///   guaranteed-invalid value if omitted." raikiri's `attr()` parser only
+///   accepts the bare 1-argument form (no `<syntax>`, no explicit fallback —
+///   see `raikiri_style::property::parse_attr_fn`'s doc, "type / fallback
+///   ... defer"), which is exactly the "`<syntax>` omitted" branch, so the
+///   applicable default is the empty string, not the guaranteed-invalid
+///   value. (The algorithm's own step 4 states the guaranteed-invalid
+///   default unconditionally, without threading the `<syntax>`-presence
+///   branch the prose describes — read literally in isolation that step
+///   would make the prose's "if `<syntax>` is omitted" clause vacuous for
+///   every input, which is more likely a drafting gap in an active Working
+///   Draft than the intended rule. GCPM 3's own `<content-list>` grammar for
+///   `string-set` cites the older untyped-only `[CSS-VALUES-3]` `attr()`
+///   for its `<attr()>` term, not this typed Values 5 form, and legacy
+///   `content: attr(x)` — CSS 2.1 §12.2 — has resolved a missing attribute
+///   to the empty string since the property existed, both consistent with
+///   treating a missing attribute as "empty string, assignment still
+///   occurs" here.) This converges with the present-but-empty-attribute
+///   case above on the same `Literal("")` outcome, which matters because
+///   CSS GCPM 3 §1.1.1 fixes *that an assignment occurs* at content-box
+///   creation independent of what it resolves to, and `string()`'s
+///   `first-except` keyword (§1.1.2) is defined by whether an assignment
+///   occurred at all — not by what it resolved to.
 /// - [`ContentComponent::Content`] with the default/`text` keyword (CSS
 ///   GCPM 3 §1.1.1.1 <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>,
 ///   "The string value of the element, determined as if `white-space:
@@ -928,11 +948,13 @@ fn resolve_string_set_component(
 ) -> Option<ContentComponent> {
     match component {
         ContentComponent::Attr { name } => match &doc.nodes[idx].data {
-            NodeData::Element(e) => e
-                .attributes
-                .iter()
-                .find(|a| a.local == name)
-                .map(|a| ContentComponent::Literal(a.value.clone())),
+            NodeData::Element(e) => Some(ContentComponent::Literal(
+                e.attributes
+                    .iter()
+                    .find(|a| a.local == name)
+                    .map(|a| a.value.clone())
+                    .unwrap_or_default(),
+            )),
             _ => None,
         },
         ContentComponent::Content {
@@ -2084,10 +2106,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve_string_set_component_skips_attr_when_attribute_missing() {
-        // No fallback grammar is implemented for attr() — a missing
-        // attribute is the guaranteed-invalid-value case (CSS Values and
-        // Units 5 §7.7.1's "no fallback" rule), so this resolves to `None`.
+    fn resolve_string_set_component_resolves_attr_to_empty_literal_when_attribute_missing() {
+        // CSS Values and Units 5 §7.7.1's prose (preceding "To resolve an
+        // attr() function"): fallback defaults to the empty string when
+        // <syntax> is omitted, which is raikiri's only supported attr()
+        // form (no <syntax>, no explicit fallback). Converges with the
+        // present-but-empty-attribute case: Literal(""), not a dropped
+        // assignment — see resolve_string_set_component's Attr-arm doc.
         let mut doc = Document::new();
         let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
 
@@ -2098,7 +2123,7 @@ mod tests {
                 name: SmolStr::new("data-title"),
             },
         );
-        assert_eq!(resolved, None);
+        assert_eq!(resolved, Some(ContentComponent::Literal(SmolStr::new(""))));
     }
 
     #[test]
@@ -2278,11 +2303,13 @@ mod tests {
     }
 
     #[test]
-    fn collect_running_template_skips_string_set_entry_when_attr_missing() {
-        // No fallback grammar for attr() (see
-        // resolve_string_set_component's doc) — a missing attribute drops
-        // the whole assignment for this name, same fail-closed policy the
-        // literal-string case already relied on.
+    fn collect_running_template_resolves_string_set_entry_to_empty_when_attr_missing() {
+        // CSS Values and Units 5 §7.7.1's <syntax>-omitted default is the
+        // empty string, not the guaranteed-invalid value — an assignment
+        // still occurs (CSS GCPM 3 §1.1.1's "assigned at the point when the
+        // content box of the element is first created" applies regardless
+        // of what the content-list resolves to), with empty content. See
+        // resolve_string_set_component's Attr-arm doc.
         let mut doc = Document::new();
         let root = doc.append_element(
             Some(0),
@@ -2304,12 +2331,12 @@ mod tests {
         let template = store.get(pool[0]).expect("registered");
 
         assert!(
-            !template.directives.iter().any(|d| matches!(
-                d,
-                GcpmDirective::StringSet { name, .. } if *name == Symbol::new("chapter")
-            )),
-            "attr() on a missing attribute must drop the assignment, not \
-             fabricate Literal(\"\")"
+            template.directives.contains(&GcpmDirective::StringSet {
+                name: Symbol::new("chapter"),
+                source: ContentSource::new(vec![ContentValueItem::Literal(String::new())]),
+            }),
+            "attr() on a missing attribute must register the assignment \
+             with Literal(\"\"), not drop it"
         );
     }
 
