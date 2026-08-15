@@ -483,6 +483,68 @@ fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
     None
 }
 
+/// `<head>` 内で最初に現れる、非空 `href` 属性を持つ `<base>` element の
+/// href 値を document order (tree order) で探す。見つからなければ `None`。
+///
+/// HTML Standard の "document base URL" algorithm
+/// (§4.2.7 The base element / §urls-and-fetching "document base URL") は
+/// "文書内で href 属性を**持つ**最初の `<base>` element" の frozen base URL
+/// を document base URL とする — 値が空文字列であっても「href 属性を持つ」
+/// 判定には数える。本実装はそれを厳密には満たせない:
+/// `raikiri_traits::Element::attr` は空文字列の属性値を `None` に正規化する
+/// 契約 (`collect_external_stylesheet_hrefs` の `disabled` 属性コメント参照)
+/// のため、`href=""` を持つ `<base>` と href 属性自体が無い `<base>` をこの
+/// trait surface からは区別できない (`has_attribute` 相当が無く、追加は
+/// raikiri-traits の public surface 拡張になるため本変更の範囲外)。そのため
+/// 厳密な spec 挙動 (`<base href=""><base
+/// href="https://cdn.example/">` のような文書で、1 つ目の空 href base が
+/// document base URL を確定させ 2 つ目が無視される) ではなく、非空 href を
+/// 持つ最初の `<base>` を採用する — 実務上の文書ではほぼ同じ結果になる
+/// (空 href の base 単体なら、どのみち fallback base URL への self-join に
+/// 帰着し無視した場合と同じ URL になる)。
+///
+/// 探索範囲は `collect_external_stylesheet_hrefs` と同じ head-only DFS —
+/// `<body>` 内の `<base>` は同じ理由で defer (今の scope では `<head>` 外の
+/// stylesheet link 自体を扱っていないので、`<body>` 内 `<base>` を見ても
+/// 適用対象が無い)。
+///
+/// href 値は trim する: `Element::attr` は truly-empty (`""`) のみ filter
+/// する契約なので、空白のみの `href="   "` はここに届く。trim しないと
+/// `resolve_url` の `Url::join("   ")` が (`collect_external_stylesheet_hrefs`
+/// の link href コメントと同じ理由で) base URL 自身に解決されてしまい、
+/// 「href 属性はあるが実質空」なケースを誤って override として扱う。
+pub(crate) fn find_document_base_href(doc: &Document) -> Option<String> {
+    use raikiri_traits::{Dom, Element, Node};
+
+    let head_id = find_head_element(doc)?;
+
+    let mut stack: Vec<raikiri_traits::NodeId> = vec![head_id];
+    while let Some(id) = stack.pop() {
+        let Some(node) = doc.node(id) else {
+            // cov:ignore: unreachable in practice, mirrors the identical
+            // defensive branch in `collect_external_stylesheet_hrefs` below.
+            continue;
+        };
+        if !node.is_in_document() {
+            continue;
+        }
+        if let Some(el) = node.as_element()
+            && el.tag_name() == "base"
+            && let Some(href) = el.attr("href")
+        {
+            let trimmed = href.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+        let kids: Vec<_> = doc.child_ids(id).collect();
+        for c in kids.into_iter().rev() {
+            stack.push(c);
+        }
+    }
+    None
+}
+
 /// `<head>` 内の `<link rel="stylesheet" href="...">` を document order で
 /// 収集する。
 ///
@@ -503,13 +565,11 @@ fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
 /// 変更 = wall/traits 対象であり、本 task 単独で unilateral に広げない
 /// (follow-up は別途追跡する)。
 ///
-/// `<base href>` は考慮しない: href の相対 URL 解決は常に静的な
-/// `ParseOptions::base_url` に対して行われ、文書内 `<base>` element は一切
-/// 見ない。HTML Standard の外部 resource link 処理は "document base URL"
-/// (`<base href>` があればそれが override する) に対して解決する契約なので、
-/// これは既知の spec 逸脱 (`<base href="https://cdn.
-/// example/">` + `<link href="a.css">` が誤って `options.base_url` 側の host
-/// で解決される)。Full fix は html-parser の scope 判断待ちで、現状は未実装。
+/// ここで収集する href はまだ `<base>` element を反映していない生の
+/// attribute 値: `<head>` 内の `<base href>` の探索・resolve は
+/// [`find_document_base_href`] が別途担い、実際に "どの base URL に対して
+/// href を解決するか" の合成は `parse.rs::fetch_external_stylesheets` が行う
+/// (この関数自体は URL 解決を一切しない、収集のみの純粋関数のまま)。
 ///
 /// `title` 属性付き `rel="alternate stylesheet"` の preferred/selected
 /// stylesheet set semantics は未実装 — 非空 title を持つ alternate link を
@@ -560,7 +620,7 @@ pub(crate) fn collect_external_stylesheet_hrefs(
             // surrounded by spaces" — `Element::attr` only filters a truly
             // empty (`""`) value, so a whitespace-only `href="   "` still
             // reaches here. Trim before checking emptiness; without this,
-            // `resolve_stylesheet_url`'s `Url::join("   ")` resolves to the
+            // `resolve_url`'s `Url::join("   ")` resolves to the
             // *page's own URL* (verified empirically against the `url`
             // crate), causing the page's own HTML to be fetched and fed to
             // the CSS parser as a stylesheet.
@@ -863,5 +923,24 @@ mod collect_external_stylesheet_hrefs_tests {
         // is pub(crate) and doesn't need the full parse pipeline).
         let doc = Document::new();
         assert!(collect_external_stylesheet_hrefs(&doc).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod find_document_base_href_tests {
+    use super::find_document_base_href;
+    use raikiri_dom::Document;
+
+    #[test]
+    fn document_without_a_head_element_yields_no_base_href() {
+        // Mirrors collect_external_stylesheet_hrefs_tests's identical case:
+        // find_head_element's None branch, only reachable via a hand-built
+        // Document (html5ever's tree construction always synthesizes a
+        // <head>). Full document-order / trim / empty-href / <template>
+        // behavior is exercised at the `parse()` level in lib.rs, where a
+        // mock `NetworkProvider` can observe which URL was actually
+        // resolved and requested.
+        let doc = Document::new();
+        assert!(find_document_base_href(&doc).is_none());
     }
 }

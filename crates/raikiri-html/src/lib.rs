@@ -268,6 +268,228 @@ mod tests {
         }
 
         #[test]
+        fn parse_resolves_link_href_against_base_element_when_present() {
+            // HTML Standard §4.2.7 "The base element": a <base href> in
+            // <head> overrides options.base_url as the base for resolving
+            // every subsequent relative URL in the document, including
+            // <link href> — even though options.base_url ("the page's own
+            // URL") points at a completely different host.
+            let provider = EchoUrlProvider;
+            let base_url = url::Url::parse("https://page.example/").expect("valid base url");
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(base_url),
+            };
+            let html = br#"<html><head>
+                           <base href="https://cdn.example/">
+                           <link rel="stylesheet" href="a.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://cdn.example/a.css */")],
+                "<link href> must resolve against the <base> override, not options.base_url"
+            );
+        }
+
+        #[test]
+        fn parse_resolves_relative_base_href_against_options_base_url() {
+            // The <base>'s own href can itself be relative per spec — it is
+            // resolved against options.base_url (document's fallback base
+            // URL) first, and *that* result becomes the effective base for
+            // <link href>.
+            let provider = EchoUrlProvider;
+            let base_url =
+                url::Url::parse("https://page.example/dir/page.html").expect("valid base url");
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(base_url),
+            };
+            let html = br#"<html><head>
+                           <base href="/assets/">
+                           <link rel="stylesheet" href="a.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://page.example/assets/a.css */")]
+            );
+        }
+
+        #[test]
+        fn parse_uses_first_base_element_in_document_order() {
+            let provider = EchoUrlProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head>
+                           <base href="https://first.example/">
+                           <base href="https://second.example/">
+                           <link rel="stylesheet" href="a.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://first.example/a.css */")],
+                "the first <base> in document order wins, later ones are ignored"
+            );
+        }
+
+        #[test]
+        fn parse_applies_base_override_to_a_link_that_precedes_it_in_source_order() {
+            // Known scope divergence from the HTML Standard's actual
+            // processing model (documented on
+            // `parse.rs::fetch_external_stylesheets`, "<base> と <link> の
+            // 相対順序" bullet): per spec, a browser's streaming parser
+            // fetches each <link>'s resource against the document base URL
+            // *at the moment the <link> is inserted*, so a <link> before
+            // the <base> in source order should resolve against
+            // options.base_url, unaffected by a <base> that appears later.
+            // This crate instead fetches every <head> <link> in one
+            // post-parse pass using the document's *final* base URL, so a
+            // <link> before <base> is (incorrectly, relative to spec, but
+            // intentionally per the single-pass architecture) still
+            // affected by the override. This test pins that as a known,
+            // deliberate behavior rather than an untested edge case.
+            let provider = EchoUrlProvider;
+            let base_url = url::Url::parse("https://page.example/").expect("valid base url");
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(base_url),
+            };
+            let html = br#"<html><head>
+                           <link rel="stylesheet" href="a.css">
+                           <base href="https://cdn.example/">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://cdn.example/a.css */")]
+            );
+        }
+
+        #[test]
+        fn parse_skips_base_element_with_no_href_attribute_in_document_order_search() {
+            // A <base> with no href attribute at all doesn't "count" (it
+            // can't override anything), so the search continues past it to
+            // the next <base> in document order.
+            let provider = EchoUrlProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head>
+                           <base>
+                           <base href="https://cdn.example/">
+                           <link rel="stylesheet" href="a.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://cdn.example/a.css */")]
+            );
+        }
+
+        #[test]
+        fn parse_falls_back_to_options_base_url_when_base_href_is_empty() {
+            let provider = EchoUrlProvider;
+            let base_url = url::Url::parse("https://page.example/dir/").expect("valid base url");
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(base_url),
+            };
+            let html = br#"<html><head>
+                           <base href="">
+                           <link rel="stylesheet" href="a.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://page.example/dir/a.css */")],
+                "an empty <base href> must not shadow a real base further down; \
+                 options.base_url is used as if there were no <base> at all"
+            );
+        }
+
+        #[test]
+        fn parse_falls_back_to_options_base_url_when_base_href_is_whitespace_only() {
+            let provider = EchoUrlProvider;
+            let base_url = url::Url::parse("https://page.example/dir/").expect("valid base url");
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(base_url),
+            };
+            let html = br#"<html><head>
+                           <base href="   ">
+                           <link rel="stylesheet" href="a.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://page.example/dir/a.css */")]
+            );
+        }
+
+        #[test]
+        fn parse_falls_back_to_options_base_url_when_base_href_is_data_scheme() {
+            // Per the base element's "frozen base URL" algorithm, a
+            // <base href> that resolves to a `data:` or `javascript:` URL
+            // is explicitly excluded from ever becoming the document base
+            // URL — it falls back to the document's fallback base URL
+            // (`options.base_url` here), exactly as if no <base> with a
+            // usable href were present.
+            let provider = EchoUrlProvider;
+            let base_url = url::Url::parse("https://page.example/dir/").expect("valid base url");
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(base_url),
+            };
+            let html = br#"<html><head>
+                           <base href="data:text/html,ignored">
+                           <link rel="stylesheet" href="a.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://page.example/dir/a.css */")]
+            );
+        }
+
+        #[test]
+        fn parse_skips_base_element_inside_template() {
+            // <template> contents are inert per spec (mirrors
+            // `parse_skips_link_stylesheet_inside_template_element` above) —
+            // a <base> nested inside <template> in <head> must not be
+            // treated as the document's base element.
+            let provider = EchoUrlProvider;
+            let base_url = url::Url::parse("https://page.example/").expect("valid base url");
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(base_url),
+            };
+            let html = br#"<html><head>
+                           <template><base href="https://cdn.example/"></template>
+                           <link rel="stylesheet" href="a.css">
+                           </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![String::from("/* https://page.example/a.css */")],
+                "a <base> inert inside <template> must not override options.base_url"
+            );
+        }
+
+        #[test]
         fn parse_skips_relative_href_without_base_url() {
             let provider = PanicIfCalledProvider;
             let opts = ParseOptions {
