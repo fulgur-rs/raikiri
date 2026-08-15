@@ -1483,7 +1483,7 @@ mod tests {
         // target, not a link at all per spec) must stay at CSS-initial
         // (the original unconditional `a { }` rule had this gap).
         use raikiri_style::Origin;
-        use raikiri_style::property::{CssColor, TextDecoration};
+        use raikiri_style::property::{CssColor, TextDecorationLine};
 
         let html = b"<html><body><a href=\"x\">link</a><a id=\"anchor\">bare</a></body></html>";
         let opts = empty_options();
@@ -1528,9 +1528,9 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            computed.text_decoration,
-            TextDecoration::Underline,
-            "a[href]'s UA rule text-decoration: underline must reach computed.text_decoration through real parse+cascade"
+            computed.text_decoration_line,
+            TextDecorationLine::UNDERLINE,
+            "a[href]'s UA rule text-decoration: underline must reach computed.text_decoration_line through real parse+cascade"
         );
 
         // HTML LS §selector-link: an `a` with no `href` is not `:link` at
@@ -1546,8 +1546,8 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            bare_computed.text_decoration,
-            TextDecoration::None,
+            bare_computed.text_decoration_line,
+            TextDecorationLine::NONE,
             "a without href must stay at CSS-initial text-decoration, not the a[href] UA rule's underline"
         );
     }
@@ -1568,7 +1568,7 @@ mod tests {
         // parse+cascade, not just literal text in MINIMAL_UA_CSS" concern as
         // the hr / a[href] tests above.
         use raikiri_style::Origin;
-        use raikiri_style::property::{CssColor, TextDecoration};
+        use raikiri_style::property::{CssColor, TextDecorationLine};
 
         let html = b"<html><body><strong>x</strong><b>x</b><small>x</small>\
                      <mark>x</mark><ins>x</ins><u>x</u></body></html>";
@@ -1650,16 +1650,135 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            cascade.computed[ins_id].text_decoration,
-            TextDecoration::Underline,
-            "ins's UA rule text-decoration: underline must reach computed.text_decoration through real parse+cascade"
+            cascade.computed[ins_id].text_decoration_line,
+            TextDecorationLine::UNDERLINE,
+            "ins's UA rule text-decoration: underline must reach computed.text_decoration_line through real parse+cascade"
         );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            cascade.computed[u_id].text_decoration,
-            TextDecoration::Underline,
-            "u's UA rule text-decoration: underline must reach computed.text_decoration through real parse+cascade"
+            cascade.computed[u_id].text_decoration_line,
+            TextDecorationLine::UNDERLINE,
+            "u's UA rule text-decoration: underline must reach computed.text_decoration_line through real parse+cascade"
+        );
+    }
+
+    #[test]
+    fn del_s_strike_and_abbr_acronym_ua_rules_survive_real_parse_and_cascade() {
+        // HTML LS §phrasing-content-3's
+        //   del, s, strike { text-decoration: line-through; }
+        //   `abbr[title], acronym[title] { text-decoration: dotted underline; }`
+        // Same "survives real parse+cascade, not just literal text in
+        // MINIMAL_UA_CSS" concern as the sibling UA rule tests above. A
+        // separate test rather than folding into
+        // `phrasing_content_ua_rules_survive_real_parse_and_cascade` above,
+        // to keep this addition to `minimal.css`'s `ins, u` group
+        // self-contained.
+        use raikiri_style::Origin;
+        use raikiri_style::property::{
+            TextDecorationColor, TextDecorationLine, TextDecorationStyle,
+        };
+
+        let html = b"<html><body><del>x</del><s>x</s><strike>x</strike>\
+                     <abbr title=\"x\">x</abbr><abbr>x</abbr>\
+                     <acronym title=\"x\">x</acronym></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let del_id = find_first_by_tag(&uncascaded.dom, "del")
+            .expect("<del> should exist")
+            .0 as usize;
+        let s_id = find_first_by_tag(&uncascaded.dom, "s")
+            .expect("<s> should exist")
+            .0 as usize;
+        let strike_id = find_first_by_tag(&uncascaded.dom, "strike")
+            .expect("<strike> should exist")
+            .0 as usize;
+        let acronym_id = find_first_by_tag(&uncascaded.dom, "acronym")
+            .expect("<acronym> should exist")
+            .0 as usize;
+        let abbr_id = (0..uncascaded.dom.node_count())
+            .find(|&id_u| {
+                uncascaded
+                    .dom
+                    .node(raikiri_traits::NodeId::new(id_u as u64))
+                    .unwrap()
+                    .as_element()
+                    .is_some_and(|el| el.tag_name() == "abbr" && el.attr("title").is_some())
+            })
+            .expect("<abbr title> should exist") as usize;
+
+        // del, s, strike { text-decoration: line-through; }
+        for (name, id) in [("del", del_id), ("s", s_id), ("strike", strike_id)] {
+            assert_eq!(
+                cascade.computed[id].text_decoration_line,
+                TextDecorationLine::LINE_THROUGH,
+                "{name}'s UA rule text-decoration: line-through must reach \
+                 computed.text_decoration_line through real parse+cascade"
+            );
+        }
+
+        // `abbr[title], acronym[title] { text-decoration: dotted underline; }`
+        // — both line and style components must land, and color stays at
+        // its own initial (`currentcolor`, the shorthand didn't mention it).
+        // Both selector branches are exercised independently (not just the
+        // shared declaration via one tag) in case an attribute-selector
+        // match behaves differently per tag name.
+        assert_eq!(
+            cascade.computed[abbr_id].text_decoration_line,
+            TextDecorationLine::UNDERLINE,
+            "abbr[title]'s UA rule text-decoration: dotted underline must \
+             reach computed.text_decoration_line through real parse+cascade"
+        );
+        assert_eq!(
+            cascade.computed[abbr_id].text_decoration_style,
+            TextDecorationStyle::Dotted,
+            "abbr[title]'s UA rule text-decoration: dotted underline must \
+             reach computed.text_decoration_style through real parse+cascade"
+        );
+        assert_eq!(
+            cascade.computed[abbr_id].text_decoration_color,
+            TextDecorationColor::CurrentColor
+        );
+        assert_eq!(
+            cascade.computed[acronym_id].text_decoration_line,
+            TextDecorationLine::UNDERLINE,
+            "acronym[title]'s UA rule text-decoration: dotted underline must \
+             reach computed.text_decoration_line through real parse+cascade"
+        );
+        assert_eq!(
+            cascade.computed[acronym_id].text_decoration_style,
+            TextDecorationStyle::Dotted,
+            "acronym[title]'s UA rule text-decoration: dotted underline must \
+             reach computed.text_decoration_style through real parse+cascade"
+        );
+        assert_eq!(
+            cascade.computed[acronym_id].text_decoration_color,
+            TextDecorationColor::CurrentColor
+        );
+
+        // HTML LS §phrasing-content-3's `[title]` gate: an `abbr` with no
+        // `title` attribute is not matched by `abbr[title]` at all — must
+        // stay at CSS-initial, same "attribute gate must actually gate"
+        // concern as the `a[href]` test above.
+        let bare_abbr_id = (0..uncascaded.dom.node_count())
+            .find(|&id_u| {
+                uncascaded
+                    .dom
+                    .node(raikiri_traits::NodeId::new(id_u as u64))
+                    .unwrap()
+                    .as_element()
+                    .is_some_and(|el| el.tag_name() == "abbr" && el.attr("title").is_none())
+            })
+            .expect("<abbr> without title should exist");
+        assert_eq!(
+            cascade.computed[bare_abbr_id].text_decoration_line,
+            TextDecorationLine::NONE,
+            "abbr without title must stay at CSS-initial text-decoration, \
+             not the abbr[title] UA rule's dotted underline"
         );
     }
 

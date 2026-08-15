@@ -1464,9 +1464,20 @@ fn absolutize_in_page_context(
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::BoxSizing(_)
-        // `text-decoration` carries no length and computed value = specified
-        // keyword (see `TextDecoration`'s doc) — nothing
-        // for phase 3 to absolutize.
+        // `text-decoration-line`/`-style`/`-color` carry no length and
+        // computed value = specified keyword(s)/color (see
+        // `TextDecorationLine`/`TextDecorationStyle`/`TextDecorationColor`
+        // docs) — nothing for phase 3 to absolutize. The `text-decoration`
+        // shorthand joins the same bucket as identity pass-through: none of
+        // its 3 components need absolutizing either, so there is nothing
+        // gained by giving it its own transform arm (unlike `Margin`/
+        // `Border`/`Overflow` above, whose shorthand fall-through *does*
+        // resolve lengths/coupling if ever reached) — it is structurally
+        // unreachable here regardless (`expand_shorthand_into` expands it
+        // before this function runs), same as every other shorthand.
+        | PropertyValue::TextDecorationLine(_)
+        | PropertyValue::TextDecorationStyle(_)
+        | PropertyValue::TextDecorationColor(_)
         | PropertyValue::TextDecoration(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
@@ -1762,7 +1773,7 @@ mod tests {
     use crate::property::{
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontWeightValue, Length,
         LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
-        TextDecoration,
+        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -3483,11 +3494,16 @@ mod tests {
     /// 持たないため pass-through 側に加わる — `TextAlign` 自身は元々こちら側)。
     /// 23 → 24 (`TextDecoration` も同じ理由で
     /// pass-through 側 — length を運ばないため phase 3 に変換対象が無い)。
+    /// 24 → 27 (`text-decoration` の longhand 分解で `TextDecorationLine` /
+    /// `TextDecorationStyle` / `TextDecorationColor` が新 variant として
+    /// 加わり、3 つとも同じ理由 — length を運ばないため — で pass-through 側に
+    /// 加わる。旧 `TextDecoration` はそのまま pass-through に残る、
+    /// `absolutize_in_page_context` のバケット comment 参照)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 24;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 27;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -3667,11 +3683,20 @@ mod tests {
             x: OverflowValue::Visible,
             y: OverflowValue::Hidden,
         }),
-        // No specified/computed distinction for `text-decoration` (computed
-        // value = specified keyword, `TextDecoration` doc) — any value is
-        // "worst case" (`Direction` sibling comment
+        // No specified/computed distinction for `text-decoration-line`/
+        // `-style`/`-color` (computed value = specified keyword(s)/color,
+        // `TextDecorationLine`/`TextDecorationStyle`/`TextDecorationColor`
+        // docs) — any value is "worst case" (`Direction` sibling comment
         // above uses the same reasoning).
-        TextDecoration => PropertyValue::TextDecoration(TextDecoration::Underline),
+        TextDecorationLine => PropertyValue::TextDecorationLine(TextDecorationLine::UNDERLINE),
+        TextDecorationStyle => PropertyValue::TextDecorationStyle(TextDecorationStyle::Wavy),
+        TextDecorationColor =>
+            PropertyValue::TextDecorationColor(TextDecorationColor::CurrentColor),
+        TextDecoration => PropertyValue::TextDecoration(TextDecorationShorthand {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Wavy,
+            color: TextDecorationColor::CurrentColor,
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -3829,6 +3854,9 @@ mod tests {
         OverflowX,
         OverflowY,
         Overflow,
+        TextDecorationLine,
+        TextDecorationStyle,
+        TextDecorationColor,
         TextDecoration,
     }
 
@@ -4056,7 +4084,11 @@ mod tests {
             | PropertyValue::OverflowX(_)
             | PropertyValue::OverflowY(_)
             | PropertyValue::Overflow(_)
-            // `TextDecoration` carries no length either.
+            // `TextDecorationLine`/`TextDecorationStyle`/`TextDecorationColor`
+            // (and the `text-decoration` shorthand) carry no length either.
+            | PropertyValue::TextDecorationLine(_)
+            | PropertyValue::TextDecorationStyle(_)
+            | PropertyValue::TextDecorationColor(_)
             | PropertyValue::TextDecoration(_) => None,
         }
     }

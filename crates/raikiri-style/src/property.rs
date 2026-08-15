@@ -593,8 +593,8 @@ impl<T> Sides<T> {
 /// - **(b) 非対応**: paint side での visual 差 (double stroke / 3D
 ///   groove/ridge/inset/outset の shading) は paint scope の責務、cascade
 ///   static side では spec value を保持するのみ。
-/// - **(a) spec-invalid**: 未知 keyword (`wavy` / `wave` 等 CSS Text Decoration
-///   4 の `<text-decoration-style>` 由来 keyword は本 property では invalid) は
+/// - **(a) spec-invalid**: 未知 keyword (`wavy` / `wave` 等 [`TextDecorationStyle`]
+///   由来 keyword は本 property では invalid) は
 ///   `parse_border_style_side` が `None` を返し、declaration ごと drop。
 ///
 /// `Default` は derive しない — 本 crate の convention は "derive `Default` iff
@@ -1826,43 +1826,175 @@ pub enum PositionValue {
     Running(SmolStr),
 }
 
-/// `text-decoration: none | underline` の keyword payload。
+/// `text-decoration-line` の keyword payload。
 ///
-/// CSS Text Decoration Module Level 3 §1 "Text Decoration Lines: the
-/// text-decoration property"
-/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-property> は
-/// `text-decoration` を `<'text-decoration-line'> || <'text-decoration-style'>
-/// || <'text-decoration-color'>` の shorthand と定める。`text-decoration-line`
-/// 自体の value grammar (同 §2
-/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>)
-/// は `none | [ underline || overline || line-through || blink ]`、
+/// CSS Text Decoration Module Level 3 §2.1 "Text Decoration Lines: the
+/// text-decoration-line property"
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>
+/// value grammar: `none | [ underline || overline || line-through || blink ]`、
 /// Initial: `none`、Inherited: **no** (draw 段の伝播規則は別途 prose にあるが、
 /// cascade の inherited/non-inherited 分類には効かない)、Computed value:
 /// specified keyword(s)。
 ///
-/// # Scope carving (minimal scope)
+/// # `||` (any-order) grammar と bool flag 表現
 ///
-/// 本 crate は `text-decoration` を `text-decoration-line` /
-/// `-style` / `-color` の 3 longhand に分解しない。`||` (any-order,
-/// each-at-most-once) の combination grammar も実装しない — `none` /
-/// `underline` の 2 keyword のみを受理する単一 property として扱う。これは
-/// HTML LS §phrasing-content-3 の UA default (`a:link, a:visited {
-/// text-decoration: underline; }`) を満たすのに必要十分な最小 scope。
-/// `overline` /
-/// `line-through` / `blink`、combination grammar、longhand 分解は明示的な
-/// follow-up。
+/// spec CSS Values 4 §2.2 "Component Value Combinators"
+/// <https://www.w3.org/TR/css-values-4/#component-combinators> の `||`
+/// semantics (each component 最大 1 回、at least 1 個必須、順序自由) は
+/// [`parse_border_shorthand`] の `||` (width || style || color) と同型 —
+/// 詳細な rationale は同関数 doc 参照。4 keyword が独立に on/off なので
+/// 16 通りの組み合わせを持つが、CSS Values 4 の `||` は「同じ component の
+/// 2 回目の出現」を許さない (各 alternative は集合として高々 1 回) だけで
+/// あり、16 通りの组み合わせ自体は grammar 上すべて valid。よって専用
+/// enum (16 variant) ではなく 4 independent `bool` field の struct で表現する
+/// — `none` は全 flag `false` (spec 上 `none` と「4 keyword とも
+/// 不使用」は同じ状態)。
+///
+/// `#[non_exhaustive]` を付けない — sibling [`OverflowXY`] と同じ判断
+/// (umbrella (`raikiri` crate) へ再 export されておらず、CSS spec が
+/// 定める 4 keyword は Level 4 時点でも増えていないため、将来 field 追加の
+/// 蓋然性が [`Border`] ほど高くない)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextDecorationLine {
+    /// `underline` — テキストの under edge に沿って装飾線を引く。
+    pub underline: bool,
+    /// `overline` — テキストの over edge に沿って装飾線を引く。
+    pub overline: bool,
+    /// `line-through` — テキストの中央を貫く装飾線を引く。
+    pub line_through: bool,
+    /// `blink` — 装飾線を点滅させる (spec note: UA は本 keyword を無視してよい、
+    /// paint 側の実装判断)。
+    pub blink: bool,
+}
+
+impl TextDecorationLine {
+    /// `none` — spec initial value。装飾線なし (4 flag 全て `false`)。
+    pub const NONE: Self = Self {
+        underline: false,
+        overline: false,
+        line_through: false,
+        blink: false,
+    };
+    /// `underline` 単独。
+    pub const UNDERLINE: Self = Self {
+        underline: true,
+        overline: false,
+        line_through: false,
+        blink: false,
+    };
+    /// `overline` 単独。
+    pub const OVERLINE: Self = Self {
+        underline: false,
+        overline: true,
+        line_through: false,
+        blink: false,
+    };
+    /// `line-through` 単独。
+    pub const LINE_THROUGH: Self = Self {
+        underline: false,
+        overline: false,
+        line_through: true,
+        blink: false,
+    };
+    /// `blink` 単独。
+    pub const BLINK: Self = Self {
+        underline: false,
+        overline: false,
+        line_through: false,
+        blink: true,
+    };
+}
+
+/// `text-decoration-style` の keyword payload。
+///
+/// CSS Text Decoration Module Level 3 §2.2 "Text Decoration Style: the
+/// text-decoration-style property"
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-style-property>、
+/// value grammar: `solid | double | dotted | dashed | wavy`、Initial: `solid`、
+/// Inherited: no、Computed value: specified keyword。
 ///
 /// `Default` は derive しない — 37n sibling [`DisplayValue`] / [`Direction`] と
 /// 同じ convention (spec default は初期化側
 /// [`crate::computed::ComputedValues::initial`] が直接指定する)。
+///
+/// `#[non_exhaustive]` — sibling [`BorderStyle`] と同じ判断 (line-style 系
+/// keyword enum の 37n 慣行、future variant の non-breaking 追加)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextDecoration {
-    /// `none` — spec initial value。装飾線なし。
-    None,
-    /// `underline` — テキストの under edge に沿って装飾線を引く
-    /// (`text-decoration-line` の 4 keyword のうち本 crate が受理する 1 つ)。
-    Underline,
+pub enum TextDecorationStyle {
+    /// `solid` — spec initial value。
+    Solid,
+    /// `double`。
+    Double,
+    /// `dotted`。
+    Dotted,
+    /// `dashed`。
+    Dashed,
+    /// `wavy`。
+    Wavy,
+}
+
+/// `text-decoration-color` computed value — [`BorderColor`] と同型の
+/// `currentcolor` keyword / resolved `<color>` distinction。
+///
+/// CSS Text Decoration Module Level 3 §2.3 "Text Decoration Color: the
+/// text-decoration-color property"
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-color-property>、
+/// value grammar: `<color>`、Initial: `currentcolor`、Inherited: no、
+/// Computed value: computed color。used-value resolution (currentcolor →
+/// 同 node の computed `color` property) は paint scope 責務 — rationale は
+/// [`BorderColor`] doc の「なぜ cascade static side で enum 保持するか」節と
+/// 同型 (`text-decoration` shorthand も `color` winner 確定前に構築されうる)。
+///
+/// `#[non_exhaustive]` — sibling [`BorderColor`] と同じ判断。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextDecorationColor {
+    /// `currentcolor` keyword — spec-mandated initial value。
+    CurrentColor,
+    /// Resolved `<color>` value — author が hex / named / `rgb(a)` /
+    /// `transparent` で明示指定した場合の payload。
+    Resolved(CssColor),
+}
+
+/// `text-decoration` shorthand の parse 結果を一時的に保持する carrier。
+///
+/// CSS Text Decoration Module Level 3 §2.4 "Text Decoration Shorthand: the
+/// text-decoration property"
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-property> verbatim:
+/// "This property is a shorthand for setting text-decoration-line,
+/// text-decoration-color, and text-decoration-style in one declaration.
+/// Omitted values are set to their initial values." — grammar
+/// `<'text-decoration-line'> || <'text-decoration-style'> ||
+/// <'text-decoration-color'>`。
+///
+/// [`PropertyValue::TextDecoration`] の payload としてのみ存在し、
+/// [`crate::rule::expand_shorthand_into`] が
+/// [`PropertyValue::TextDecorationLine`] / [`PropertyValue::TextDecorationStyle`] /
+/// [`PropertyValue::TextDecorationColor`] の 3 longhand へ展開した後は捨てられる
+/// — margin/padding/border/overflow shorthand precedent と同じ「parse-time
+/// expansion, never reaches cascade」設計 (詳細は同関数 doc)。[`ComputedValues`]
+/// / [`SpecifiedValues`] は本型を **field として持たない** — 3 longhand が
+/// 互いに computed-value coupling を持たないため、[`OverflowXY`] のような
+/// bundling の根拠 (同型 doc の「cross-axis coupling」節) が本 shorthand には
+/// 無い (詳細は 3 longhand 各 field の doc)。
+///
+/// `#[non_exhaustive]` を付けない — sibling [`TextDecorationLine`] と同じ判断
+/// (shorthand-only carrier で umbrella 再 export 対象外)。
+///
+/// [`ComputedValues`]: crate::computed::ComputedValues
+/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextDecorationShorthand {
+    /// `text-decoration-line` 成分 — 省略時は [`TextDecorationLine::NONE`]
+    /// (spec initial)。
+    pub line: TextDecorationLine,
+    /// `text-decoration-style` 成分 — 省略時は [`TextDecorationStyle::Solid`]
+    /// (spec initial)。
+    pub style: TextDecorationStyle,
+    /// `text-decoration-color` 成分 — 省略時は [`TextDecorationColor::CurrentColor`]
+    /// (spec initial)。
+    pub color: TextDecorationColor,
 }
 
 /// 現サポート property の resolved value (variant 一覧は下記、
@@ -2378,15 +2510,45 @@ pub enum PropertyValue {
     /// — [`Self::Padding`] doc と同じ framing、詳細は同 doc 参照。
     /// (末尾配置は [`Self::OverflowX`] と同理由)
     Overflow(OverflowXY),
-    /// `text-decoration: none | underline` — **non-inherited**、initial:
-    /// [`TextDecoration::None`] (CSS Text Decoration Module Level 3 §2
+    /// `text-decoration-line` — **non-inherited**、initial:
+    /// [`TextDecorationLine::NONE`] (CSS Text Decoration Module Level 3 §2.1
     /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>、
-    /// "Inherited: no")。computed value = specified keyword ([`TextDecoration`]
-    /// doc 参照、length を運ばないため相対解決なし)。
+    /// "Inherited: no")。computed value = specified keyword(s)
+    /// ([`TextDecorationLine`] doc 参照、length を運ばないため相対解決なし)。
     /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
-    TextDecoration(TextDecoration),
+    TextDecorationLine(TextDecorationLine),
+    /// `text-decoration-style` — **non-inherited**、initial:
+    /// [`TextDecorationStyle::Solid`] (CSS Text Decoration Module Level 3
+    /// §2.2 <https://www.w3.org/TR/css-text-decor-3/#text-decoration-style-property>、
+    /// "Inherited: no")。computed value = specified keyword
+    /// ([`TextDecorationStyle`] doc 参照)。(末尾配置は [`Self::TextDecorationLine`]
+    /// と同理由)
+    TextDecorationStyle(TextDecorationStyle),
+    /// `text-decoration-color` — **non-inherited**、initial:
+    /// [`TextDecorationColor::CurrentColor`] (CSS Text Decoration Module
+    /// Level 3 §2.3
+    /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-color-property>、
+    /// "Inherited: no")。computed value = computed color
+    /// ([`TextDecorationColor`] doc 参照、used-value resolution は paint
+    /// scope 責務)。(末尾配置は [`Self::TextDecorationLine`] と同理由)
+    TextDecorationColor(TextDecorationColor),
+    /// `text-decoration` shorthand ([`TextDecorationShorthand`] 参照)。
+    ///
+    /// **element cascade 段でこの variant は観測されない**:
+    /// [`Self::Padding`] と同型、[`crate::rule::expand_shorthand_into`] が
+    /// parse 出口と element cascade 入口の両方で
+    /// [`TextDecorationLine`](Self::TextDecorationLine) /
+    /// [`TextDecorationStyle`](Self::TextDecorationStyle) /
+    /// [`TextDecorationColor`](Self::TextDecorationColor) の 3 longhand に
+    /// 展開するため (CSS Cascading L4 §3 "Shorthand Properties"
+    /// <https://www.w3.org/TR/css-cascade-4/#shorthand> 準拠)。万一到達した
+    /// 場合の [`crate::cascade::apply_value`] の挙動は **safety net ではない**
+    /// — [`Self::Padding`] doc と同じ framing、詳細は同 doc 参照。
+    /// (shorthand key は longhand の後に置く既存 convention — [`Self::Padding`] /
+    /// [`Self::Margin`] / [`Self::Border`] / [`Self::Overflow`] と同じ並び)
+    TextDecoration(TextDecorationShorthand),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -2518,11 +2680,14 @@ pub enum PropertyKey {
     OverflowX,
     OverflowY,
     Overflow,
-    // text-decoration (CSS Text Decoration Module
-    // Level 3 §2、semantics on the matching PropertyValue::TextDecoration
-    // variant; sibling PropertyKey variants carry no per-variant docs per
-    // crate convention). 末尾配置の理由は PropertyValue::TextDecoration の
-    // doc 参照。
+    // text-decoration-line / -style / -color longhand + text-decoration
+    // shorthand (CSS Text Decoration Module Level 3 §2.1-§2.4、semantics on
+    // the matching PropertyValue::TextDecoration* variants; sibling
+    // PropertyKey variants carry no per-variant docs per crate convention).
+    // 末尾配置の理由は PropertyValue::TextDecorationLine の doc 参照。
+    TextDecorationLine,
+    TextDecorationStyle,
+    TextDecorationColor,
     TextDecoration,
 }
 
@@ -2582,6 +2747,9 @@ impl PropertyValue {
             PropertyValue::OverflowX(_) => PropertyKey::OverflowX,
             PropertyValue::OverflowY(_) => PropertyKey::OverflowY,
             PropertyValue::Overflow(_) => PropertyKey::Overflow,
+            PropertyValue::TextDecorationLine(_) => PropertyKey::TextDecorationLine,
+            PropertyValue::TextDecorationStyle(_) => PropertyKey::TextDecorationStyle,
+            PropertyValue::TextDecorationColor(_) => PropertyKey::TextDecorationColor,
             PropertyValue::TextDecoration(_) => PropertyKey::TextDecoration,
         }
     }
@@ -2761,11 +2929,25 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // parse_overflow_shorthand (mapped to physical x/y — `OverflowValue`
         // doc's Non-goal note).
         "overflow" => parse_overflow_shorthand(input).map(PropertyValue::Overflow),
-        // CSS Text Decoration Module Level 3 §2 text-decoration-line grammar,
-        // restricted to `none` / `underline` (minimal
-        // scope — `TextDecoration` doc's "Scope carving" section). initial
-        // `none`, not inherited, computed value = specified keyword.
-        "text-decoration" => parse_text_decoration(input).map(PropertyValue::TextDecoration),
+        // CSS Text Decoration Module Level 3 §2.1 text-decoration-line
+        // grammar: `none | [ underline || overline || line-through || blink ]`.
+        "text-decoration-line" => {
+            parse_text_decoration_line(input).map(PropertyValue::TextDecorationLine)
+        }
+        // §2.2 text-decoration-style grammar: `solid | double | dotted |
+        // dashed | wavy`.
+        "text-decoration-style" => {
+            parse_text_decoration_style(input).map(PropertyValue::TextDecorationStyle)
+        }
+        // §2.3 text-decoration-color grammar: `<color>`.
+        "text-decoration-color" => {
+            parse_text_decoration_color(input).map(PropertyValue::TextDecorationColor)
+        }
+        // §2.4 text-decoration shorthand: `<'text-decoration-line'> ||
+        // <'text-decoration-style'> || <'text-decoration-color'>`.
+        "text-decoration" => {
+            parse_text_decoration_shorthand(input).map(PropertyValue::TextDecoration)
+        }
         _ => None,
     }
 }
@@ -4153,32 +4335,187 @@ fn parse_overflow_shorthand(input: &mut Parser<'_, '_>) -> Option<OverflowXY> {
     Some(OverflowXY { x: v1, y: v2 })
 }
 
-/// `text-decoration: <ident>` を parse する (CSS Text
-/// Decoration Module Level 3 §2
+/// `text-decoration-line: none | [ underline || overline || line-through ||
+/// blink ]` を parse する (CSS Text Decoration Module Level 3 §2.1
 /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>)。
 ///
-/// Spec `text-decoration-line` value grammar: `none | [ underline || overline
-/// || line-through || blink ]`。ASCII case-insensitive で ident を比較する
-/// (37n sibling [`parse_direction`] / [`parse_overflow_value`] と同 flavor)。
+/// # top-level alternative (`none` vs. `||` combination)
 ///
-/// # Scope carving (minimal scope、[`TextDecoration`] doc-comment に詳述)
+/// grammar は `none | [ ... ]` — `none` は他 4 keyword と併記不可能な
+/// **別 alternative** (`none underline` は spec-invalid) であり、`none` 自体が
+/// `||` combination の一員ではない。よって `none` を最初に単独で試し、
+/// 一致すれば即 return する。
 ///
-/// - **(b) 非対応**: `overline` / `line-through` / `blink`、および
-///   `||` combination grammar (`text-decoration: underline overline` 等の
-///   複数 keyword 同時指定) は silent drop = `None` — `text-decoration-line`
-///   longhand 分解と合わせて follow-up ([`TextDecoration`] doc 参照)。
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
-/// - **(a) spec-invalid**: `none` / `underline` 以外の ident は silent drop
-///   = `None`。
-fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDecoration> {
+/// # `||` (any-order, each-at-most-once) loop
+///
+/// `none` に一致しなければ、[`parse_border_shorthand`] の per-slot
+/// `try_parse` loop と同じ shape で 4 keyword を順不同・重複無しに peel する
+/// (詳細な rationale は同関数 doc 参照)。4 keyword の ident 集合は互いに
+/// disjoint (border shorthand の width/style/color 3 slot が disjoint なのと
+/// 同じ理由 — 単純に別々の語)。
+///
+/// - unfilled flag (未 true の bool field) のみ試行
+/// - 埋まっている flag に対する 2 回目の同一 keyword は、その flag の
+///   `try_parse` を試さない (falls through) ので match せず loop を抜ける —
+///   caller ([`mod@crate::rule`] の `DeclParser`) の `expect_exhausted` が
+///   leftover token を検知して declaration ごと drop する
+///   (`text-decoration-line: underline underline` は 0 decl になる)
+/// - 4 flag とも埋まった、またはどの keyword にも match しなくなったら break
+/// - 1 個も flag が立たなければ (`none` でもなく、`||` combination も 0 個)
+///   `None` — spec `||` grammar の "one or more of them must occur" 違反
+fn parse_text_decoration_line(input: &mut Parser<'_, '_>) -> Option<TextDecorationLine> {
+    // top-level alternative: `none`。`||` combination とは併記不可 (上記 doc)。
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(TextDecorationLine::NONE);
+    }
+
+    let mut line = TextDecorationLine::NONE;
+    loop {
+        if !line.underline
+            && input
+                .try_parse(|i| i.expect_ident_matching("underline"))
+                .is_ok()
+        {
+            line.underline = true;
+            continue;
+        }
+        if !line.overline
+            && input
+                .try_parse(|i| i.expect_ident_matching("overline"))
+                .is_ok()
+        {
+            line.overline = true;
+            continue;
+        }
+        if !line.line_through
+            && input
+                .try_parse(|i| i.expect_ident_matching("line-through"))
+                .is_ok()
+        {
+            line.line_through = true;
+            continue;
+        }
+        if !line.blink
+            && input
+                .try_parse(|i| i.expect_ident_matching("blink"))
+                .is_ok()
+        {
+            line.blink = true;
+            continue;
+        }
+        break;
+    }
+
+    if line == TextDecorationLine::NONE {
+        // `none` は上で既に処理済み — ここに来るのは 0 keyword しか
+        // match しなかった場合のみ (未知 ident、または value 自体が空)。
+        return None;
+    }
+    Some(line)
+}
+
+/// `text-decoration-style: solid | double | dotted | dashed | wavy` を
+/// parse する (CSS Text Decoration Module Level 3 §2.2
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-style-property>)。
+/// ASCII case-insensitive で ident を比較する (37n sibling
+/// [`parse_border_style_side`] と同 flavor)。
+fn parse_text_decoration_style(input: &mut Parser<'_, '_>) -> Option<TextDecorationStyle> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(TextDecoration::None),
-        "underline" => Some(TextDecoration::Underline),
+        "solid" => Some(TextDecorationStyle::Solid),
+        "double" => Some(TextDecorationStyle::Double),
+        "dotted" => Some(TextDecorationStyle::Dotted),
+        "dashed" => Some(TextDecorationStyle::Dashed),
+        "wavy" => Some(TextDecorationStyle::Wavy),
         _ => None,
     }
+}
+
+/// `text-decoration-color: <color>` を parse する (CSS Text Decoration Module
+/// Level 3 §2.3
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-color-property>)。
+///
+/// [`parse_border_color`] と同型 — `currentcolor` keyword (CSS Color 3 §4.4)
+/// を先取りしてから [`parse_color`] (hex / named / `rgb(a)` / `transparent`)
+/// に委譲する。独立した helper にしてあるのは、両 property が異なる
+/// payload 型 ([`TextDecorationColor`] / [`BorderColor`]) を持つため —
+/// [`parse_border_color`] 自体は border-*-color 専用のまま変更しない。
+fn parse_text_decoration_color(input: &mut Parser<'_, '_>) -> Option<TextDecorationColor> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("currentcolor"))
+        .is_ok()
+    {
+        return Some(TextDecorationColor::CurrentColor);
+    }
+    parse_color(input).map(TextDecorationColor::Resolved)
+}
+
+/// `text-decoration: <'text-decoration-line'> || <'text-decoration-style'> ||
+/// <'text-decoration-color'>` shorthand を parse する (CSS Text Decoration
+/// Module Level 3 §2.4
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-property>)。
+///
+/// [`parse_border_shorthand`] と同じ 3-slot `||` loop (line / style / color)
+/// — 詳細な rationale・loop 構造・initial value fill の判断根拠は同関数 doc
+/// 参照。3 slot の ident/token 集合は互いに disjoint: line keyword
+/// (`none`/`underline`/`overline`/`line-through`/`blink`) と style keyword
+/// (`solid`/`double`/`dotted`/`dashed`/`wavy`) はどちらも named CSS color
+/// ではなく ([`parse_named_color`] のテーブルに無い)、[`parse_color`] の
+/// Ident 分岐に誤って吸われることはない。
+///
+/// # Initial value fill (省略成分)
+///
+/// spec §2.4 verbatim: "Omitted values are set to their initial values."
+/// - line 省略 → [`TextDecorationLine::NONE`] (§2.1 initial)
+/// - style 省略 → [`TextDecorationStyle::Solid`] (§2.2 initial)
+/// - color 省略 → [`TextDecorationColor::CurrentColor`] (§2.3 initial)
+fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDecorationShorthand> {
+    let mut line: Option<TextDecorationLine> = None;
+    let mut style: Option<TextDecorationStyle> = None;
+    let mut color: Option<TextDecorationColor> = None;
+
+    loop {
+        if line.is_some() && style.is_some() && color.is_some() {
+            break;
+        }
+        if line.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<TextDecorationLine, ParseError<'_, ()>> {
+                parse_text_decoration_line(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            line = Some(v);
+            continue;
+        }
+        if style.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<TextDecorationStyle, ParseError<'_, ()>> {
+                parse_text_decoration_style(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            style = Some(v);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<TextDecorationColor, ParseError<'_, ()>> {
+                parse_text_decoration_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            color = Some(v);
+            continue;
+        }
+        break;
+    }
+
+    // spec `||` grammar: at least 1 component 必須。0 component は `None` =
+    // declaration drop (`parse_border_shorthand` と同じ判断)。
+    if line.is_none() && style.is_none() && color.is_none() {
+        return None;
+    }
+
+    Some(TextDecorationShorthand {
+        line: line.unwrap_or(TextDecorationLine::NONE),
+        style: style.unwrap_or(TextDecorationStyle::Solid),
+        color: color.unwrap_or(TextDecorationColor::CurrentColor),
+    })
 }
 
 /// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
@@ -8308,78 +8645,390 @@ mod tests {
         );
     }
 
-    // ── text-decoration (CSS Text Decoration Module Level 3 §2) ──
-    //
-    // Value grammar (minimal scope — `TextDecoration` doc's "Scope carving"
-    // section): none | underline. Initial: none / Inherited: no / Computed
-    // value: specified keyword.
+    // ── text-decoration-line (CSS Text Decoration Module Level 3 §2.1) ──
 
     #[test]
-    fn text_decoration_parse_both_keywords() {
+    fn text_decoration_line_parses_none() {
         assert_eq!(
-            parse("none", "text-decoration"),
-            Some(PropertyValue::TextDecoration(TextDecoration::None))
-        );
-        assert_eq!(
-            parse("underline", "text-decoration"),
-            Some(PropertyValue::TextDecoration(TextDecoration::Underline))
+            parse("none", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(TextDecorationLine::NONE))
         );
     }
 
     #[test]
-    fn text_decoration_is_case_insensitive() {
+    fn text_decoration_line_parses_each_single_keyword() {
         assert_eq!(
-            parse("NONE", "text-decoration"),
-            Some(PropertyValue::TextDecoration(TextDecoration::None))
+            parse("underline", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(
+                TextDecorationLine::UNDERLINE
+            ))
         );
         assert_eq!(
-            parse("Underline", "text-decoration"),
-            Some(PropertyValue::TextDecoration(TextDecoration::Underline))
+            parse("overline", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(
+                TextDecorationLine::OVERLINE
+            ))
+        );
+        assert_eq!(
+            parse("line-through", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(
+                TextDecorationLine::LINE_THROUGH
+            ))
+        );
+        assert_eq!(
+            parse("blink", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(TextDecorationLine::BLINK))
         );
     }
 
     #[test]
-    fn text_decoration_rejects_unimplemented_line_keywords() {
-        // (b) not supported — full `text-decoration-line` grammar
-        // (`overline` / `line-through` / `blink`) is explicit follow-up
-        // (`TextDecoration` doc's "Scope carving" section), not (a)
-        // spec-invalid. The `||` combination syntax (e.g. `underline
-        // overline`) is a separate, already-covered concern — this single-
-        // ident parser consumes only the first token and leaves the rest
-        // for the caller's `expect_exhausted` check (`rule.rs`'s
-        // `rejects_trailing_garbage_after_value` pins that end-to-end for
-        // single-value properties generically; not repeated per property).
-        assert_eq!(parse("overline", "text-decoration"), None);
-        assert_eq!(parse("line-through", "text-decoration"), None);
-        assert_eq!(parse("blink", "text-decoration"), None);
+    fn text_decoration_line_parses_combination_in_any_order() {
+        // `||` grammar: order-independent. Both orderings of the same pair
+        // must produce the same flag set.
+        assert_eq!(
+            parse("underline overline", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(TextDecorationLine {
+                underline: true,
+                overline: true,
+                line_through: false,
+                blink: false,
+            }))
+        );
+        assert_eq!(
+            parse("overline underline", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(TextDecorationLine {
+                underline: true,
+                overline: true,
+                line_through: false,
+                blink: false,
+            }))
+        );
     }
 
     #[test]
-    fn text_decoration_rejects_unknown_keyword() {
-        assert_eq!(parse("bogus", "text-decoration"), None);
+    fn text_decoration_line_parses_all_four_combined() {
+        assert_eq!(
+            parse(
+                "underline overline line-through blink",
+                "text-decoration-line"
+            ),
+            Some(PropertyValue::TextDecorationLine(TextDecorationLine {
+                underline: true,
+                overline: true,
+                line_through: true,
+                blink: true,
+            }))
+        );
     }
 
     #[test]
-    fn text_decoration_rejects_css_wide_keyword() {
+    fn text_decoration_line_is_case_insensitive() {
+        assert_eq!(
+            parse("NONE", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(TextDecorationLine::NONE))
+        );
+        assert_eq!(
+            parse("Underline", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(
+                TextDecorationLine::UNDERLINE
+            ))
+        );
+    }
+
+    #[test]
+    fn text_decoration_line_two_underlines_leaves_leftover_for_caller_exhausted_check() {
+        // Each `||` component at most once (CSS Values 4 §2.2). The 2nd
+        // `underline` is left unconsumed by `parse_text_decoration_line`
+        // (its flag is already set) — `parse_border_shorthand`'s sibling
+        // `border_shorthand_two_widths_leaves_leftover_for_caller_exhausted_check`
+        // test pattern: the helper itself still returns `Some` (1st token
+        // consumed), and rejection is the caller's (`rule.rs`'s
+        // `DeclParser::parse_value`'s `expect_exhausted`) responsibility —
+        // pinned end-to-end by `rule.rs`'s
+        // `text_decoration_line_duplicate_and_none_combination_declarations_dropped`
+        // sibling test.
+        let mut input = ParserInput::new("underline underline");
+        let mut parser = Parser::new(&mut input);
+        assert_eq!(
+            parse_text_decoration_line(&mut parser),
+            Some(TextDecorationLine::UNDERLINE)
+        );
+        assert!(!parser.is_exhausted());
+    }
+
+    #[test]
+    fn text_decoration_line_none_combined_with_a_keyword_leaves_leftover() {
+        // `none | [ ... ]` — `none` is a separate top-level alternative, not
+        // a member of the `||` combination, so it cannot co-occur with the
+        // other keywords in either order. Same "helper returns `Some`,
+        // leftover is the caller's `expect_exhausted` responsibility" shape
+        // as the duplicate-keyword sibling test above.
+        let mut input = ParserInput::new("none underline");
+        let mut parser = Parser::new(&mut input);
+        assert_eq!(
+            parse_text_decoration_line(&mut parser),
+            Some(TextDecorationLine::NONE)
+        );
+        assert!(!parser.is_exhausted());
+
+        let mut input = ParserInput::new("underline none");
+        let mut parser = Parser::new(&mut input);
+        assert_eq!(
+            parse_text_decoration_line(&mut parser),
+            Some(TextDecorationLine::UNDERLINE)
+        );
+        assert!(!parser.is_exhausted());
+    }
+
+    #[test]
+    fn text_decoration_line_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "text-decoration-line"), None);
+    }
+
+    #[test]
+    fn text_decoration_line_rejects_css_wide_keyword() {
         // (b) not supported — CSS-wide keyword is unimplemented (future work),
         // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "text-decoration-line"), None);
+        }
+    }
+
+    #[test]
+    fn text_decoration_line_rejects_non_ident() {
+        assert_eq!(parse("16px", "text-decoration-line"), None);
+        assert_eq!(parse(r#""underline""#, "text-decoration-line"), None);
+    }
+
+    // ── text-decoration-style (CSS Text Decoration Module Level 3 §2.2) ──
+
+    #[test]
+    fn text_decoration_style_parses_all_five_keywords() {
+        for (kw, expected) in [
+            ("solid", TextDecorationStyle::Solid),
+            ("double", TextDecorationStyle::Double),
+            ("dotted", TextDecorationStyle::Dotted),
+            ("dashed", TextDecorationStyle::Dashed),
+            ("wavy", TextDecorationStyle::Wavy),
+        ] {
+            assert_eq!(
+                parse(kw, "text-decoration-style"),
+                Some(PropertyValue::TextDecorationStyle(expected))
+            );
+        }
+    }
+
+    #[test]
+    fn text_decoration_style_is_case_insensitive() {
+        assert_eq!(
+            parse("WAVY", "text-decoration-style"),
+            Some(PropertyValue::TextDecorationStyle(
+                TextDecorationStyle::Wavy
+            ))
+        );
+    }
+
+    #[test]
+    fn text_decoration_style_rejects_unknown_keyword() {
+        // `underline` is a `text-decoration-line` keyword, not a
+        // `text-decoration-style` one — the two properties' keyword sets are
+        // disjoint.
+        assert_eq!(parse("underline", "text-decoration-style"), None);
+        assert_eq!(parse("bogus", "text-decoration-style"), None);
+    }
+
+    // ── text-decoration-color (CSS Text Decoration Module Level 3 §2.3) ──
+
+    #[test]
+    fn text_decoration_color_parses_currentcolor() {
+        assert_eq!(
+            parse("currentcolor", "text-decoration-color"),
+            Some(PropertyValue::TextDecorationColor(
+                TextDecorationColor::CurrentColor
+            ))
+        );
+        assert_eq!(
+            parse("CurrentColor", "text-decoration-color"),
+            Some(PropertyValue::TextDecorationColor(
+                TextDecorationColor::CurrentColor
+            ))
+        );
+    }
+
+    #[test]
+    fn text_decoration_color_parses_resolved_color() {
+        assert_eq!(
+            parse("red", "text-decoration-color"),
+            Some(PropertyValue::TextDecorationColor(
+                TextDecorationColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                })
+            ))
+        );
+        assert_eq!(
+            parse("#00ff00", "text-decoration-color"),
+            Some(PropertyValue::TextDecorationColor(
+                TextDecorationColor::Resolved(CssColor {
+                    r: 0,
+                    g: 255,
+                    b: 0,
+                    a: 255,
+                })
+            ))
+        );
+    }
+
+    #[test]
+    fn text_decoration_color_rejects_unknown_ident() {
+        assert_eq!(parse("bogus", "text-decoration-color"), None);
+    }
+
+    // ── text-decoration shorthand (CSS Text Decoration Module Level 3
+    // §2.4) ──
+    //
+    // `<'text-decoration-line'> || <'text-decoration-style'> ||
+    // <'text-decoration-color'>`. Omitted components fill with their
+    // longhand's initial value (verbatim: "Omitted values are set to their
+    // initial values.").
+
+    #[test]
+    fn text_decoration_shorthand_line_only_fills_other_two_with_initial() {
+        assert_eq!(
+            parse("underline", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::UNDERLINE,
+                style: TextDecorationStyle::Solid,
+                color: TextDecorationColor::CurrentColor,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_style_only_fills_other_two_with_initial() {
+        // A bare style keyword is a spec-valid shorthand value under `||`
+        // (`text-decoration: wavy;`) — this was previously unreachable
+        // (pre-longhand-decomposition `text-decoration` only accepted
+        // `none`/`underline`).
+        assert_eq!(
+            parse("wavy", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::NONE,
+                style: TextDecorationStyle::Wavy,
+                color: TextDecorationColor::CurrentColor,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_color_only_fills_other_two_with_initial() {
+        // Likewise a bare color (`text-decoration: red;`) was rejected
+        // wholesale pre-decomposition; `||` makes it valid on its own.
+        assert_eq!(
+            parse("red", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::NONE,
+                style: TextDecorationStyle::Solid,
+                color: TextDecorationColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }),
+            }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_parses_all_three_in_any_order() {
+        let expected = Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Wavy,
+            color: TextDecorationColor::Resolved(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }),
+        }));
+        assert_eq!(parse("underline wavy red", "text-decoration"), expected);
+        assert_eq!(parse("red wavy underline", "text-decoration"), expected);
+        assert_eq!(parse("wavy red underline", "text-decoration"), expected);
+    }
+
+    #[test]
+    fn text_decoration_shorthand_line_combination_plus_style_and_color() {
+        assert_eq!(
+            parse("underline overline wavy red", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine {
+                    underline: true,
+                    overline: true,
+                    line_through: false,
+                    blink: false,
+                },
+                style: TextDecorationStyle::Wavy,
+                color: TextDecorationColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }),
+            }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_rejects_empty_value() {
+        assert_eq!(parse("", "text-decoration"), None);
+    }
+
+    #[test]
+    fn text_decoration_shorthand_two_style_components_leaves_leftover_for_caller_exhausted_check() {
+        // Each `||` component at most once — a 2nd style keyword ("wavy")
+        // doesn't match any unfilled slot (style already filled by "solid";
+        // it isn't a line keyword or a `<color>`) so it's left unconsumed.
+        // Same "helper returns `Some`, caller's `expect_exhausted` drops the
+        // whole declaration" shape as `parse_border_shorthand`'s
+        // `border_shorthand_two_widths_leaves_leftover_for_caller_exhausted_check`
+        // — end-to-end rejection is pinned by `rule.rs`'s
+        // `text_decoration_shorthand_two_style_components_declaration_dropped`.
+        let mut input = ParserInput::new("solid wavy");
+        let mut parser = Parser::new(&mut input);
+        assert_eq!(
+            parse_text_decoration_shorthand(&mut parser),
+            Some(TextDecorationShorthand {
+                line: TextDecorationLine::NONE,
+                style: TextDecorationStyle::Solid,
+                color: TextDecorationColor::CurrentColor,
+            })
+        );
+        assert!(!parser.is_exhausted());
+    }
+
+    #[test]
+    fn text_decoration_shorthand_rejects_css_wide_keyword() {
         for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
             assert_eq!(parse(kw, "text-decoration"), None);
         }
     }
 
     #[test]
-    fn text_decoration_rejects_non_ident() {
-        assert_eq!(parse("16px", "text-decoration"), None);
-        assert_eq!(parse(r#""underline""#, "text-decoration"), None);
-    }
-
-    #[test]
     fn text_decoration_key_maps_to_text_decoration_property_key() {
-        let v = PropertyValue::TextDecoration(TextDecoration::None);
-        assert_eq!(v.key(), PropertyKey::TextDecoration);
-        let v = PropertyValue::TextDecoration(TextDecoration::Underline);
-        assert_eq!(v.key(), PropertyKey::TextDecoration);
+        let line = PropertyValue::TextDecorationLine(TextDecorationLine::UNDERLINE);
+        assert_eq!(line.key(), PropertyKey::TextDecorationLine);
+        let style = PropertyValue::TextDecorationStyle(TextDecorationStyle::Wavy);
+        assert_eq!(style.key(), PropertyKey::TextDecorationStyle);
+        let color = PropertyValue::TextDecorationColor(TextDecorationColor::CurrentColor);
+        assert_eq!(color.key(), PropertyKey::TextDecorationColor);
+        let shorthand = PropertyValue::TextDecoration(TextDecorationShorthand {
+            line: TextDecorationLine::NONE,
+            style: TextDecorationStyle::Solid,
+            color: TextDecorationColor::CurrentColor,
+        });
+        assert_eq!(shorthand.key(), PropertyKey::TextDecoration);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value

@@ -246,3 +246,22 @@ b, strong { font-weight: bolder; }
 small { font-size: smaller; }
 mark { background-color: yellow; color: black; }
 ins, u { text-decoration: underline; }
+
+/* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.4) also
+ * specifies these two further text-decoration rules in the same group as
+ * `ins, u` above:
+ *   del, s, strike { text-decoration: line-through; }
+ *   abbr[title], acronym[title] { text-decoration: dotted underline; }
+ *
+ * Both were previously blocked on raikiri-style's `text-decoration` only
+ * accepting the `none`/`underline` keywords: `line-through` needed the full
+ * `text-decoration-line` keyword set, and `dotted underline` additionally
+ * needed the `text-decoration-style` longhand plus the `||` combination
+ * grammar that lets a `text-decoration` shorthand declaration carry both a
+ * style and a line component at once. Both landed together with that work,
+ * so both rules land here together too. `abbr[title]`/`acronym[title]` use
+ * the same `[href]`-style attribute-exists selector as the `a[href]` rule
+ * above — an `abbr`/`acronym` without a `title` attribute keeps no
+ * decoration, matching the spec's `[title]` gate. */
+del, s, strike { text-decoration: line-through; }
+abbr[title], acronym[title] { text-decoration: dotted underline; }

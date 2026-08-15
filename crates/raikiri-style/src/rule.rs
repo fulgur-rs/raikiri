@@ -10,7 +10,8 @@ use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
 use crate::property::{
-    Border, Length, LengthOrAuto, OverflowXY, PropertyValue, Sides, parse_value,
+    Border, Length, LengthOrAuto, OverflowXY, PropertyValue, Sides, TextDecorationShorthand,
+    parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -444,6 +445,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         PropertyValue::Padding(sides) => expand_padding(sides, d.important, push),
         PropertyValue::Border(sides) => expand_border(sides, d.important, push),
         PropertyValue::Overflow(pair) => expand_overflow(pair, d.important, push),
+        PropertyValue::TextDecoration(shorthand) => {
+            expand_text_decoration(shorthand, d.important, push)
+        }
         // 展開先の longhand variant を持たない — そのまま 1 個 push。
         // `_` に潰さないこと (上の「wildcard arm を置かない理由 (契約)」節)。
         // ここへ variant を足すことは「展開先が無い」という主張である。
@@ -488,7 +492,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::Direction(_)
         | PropertyValue::OverflowX(_)
         | PropertyValue::OverflowY(_)
-        | PropertyValue::TextDecoration(_) => expand_none(d, push),
+        | PropertyValue::TextDecorationLine(_)
+        | PropertyValue::TextDecorationStyle(_)
+        | PropertyValue::TextDecorationColor(_) => expand_none(d, push),
     }
 }
 
@@ -618,6 +624,39 @@ fn expand_overflow(pair: OverflowXY, important: bool, mut push: impl FnMut(Decla
     });
 }
 
+/// `text-decoration` shorthand (CSS Text Decoration Module Level 3 §2.4
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-property>) を
+/// `text-decoration-line` / `-style` / `-color` の 3 longhand に展開する cold
+/// helper。margin / padding / border / overflow shorthand precedent と同
+/// pattern — 3 longhand は互いに 1:1 disjoint field (`TextDecorationShorthand`
+/// doc の「cross-axis coupling が無い」節参照) なので push は 3 回のみ。
+///
+/// shorthand parser (`property.rs` の `parse_text_decoration_shorthand`、
+/// private fn のため直接 link 不可) が既に省略成分を spec initial value で
+/// 埋めているため ([`TextDecorationShorthand`] doc の "Initial value fill"
+/// 節)、本関数は 3 field をそのまま 3 declaration に分配するだけでよい —
+/// margin/padding/border の各 side にも既に initial fill 済みの値が入って
+/// いるのと同じ形。
+#[inline(never)]
+fn expand_text_decoration(
+    shorthand: TextDecorationShorthand,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::TextDecorationLine(shorthand.line),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::TextDecorationStyle(shorthand.style),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::TextDecorationColor(shorthand.color),
+        important,
+    });
+}
+
 /// Per-declaration parser for cssparser::RuleBodyParser。
 struct DeclParser;
 
@@ -708,7 +747,7 @@ mod tests {
         let decls = parse_block(
             "margin: 1px; padding: 2px; border: 3px solid red; \
              margin-top: 4px; padding-left: 5px; border-top-width: 6px; \
-             color: red; font-size: 10px",
+             text-decoration: underline overline; color: red; font-size: 10px",
         );
         assert!(
             !decls.is_empty(),
@@ -720,7 +759,10 @@ mod tests {
             assert!(
                 !matches!(
                     key,
-                    PropertyKey::Margin | PropertyKey::Padding | PropertyKey::Border
+                    PropertyKey::Margin
+                        | PropertyKey::Padding
+                        | PropertyKey::Border
+                        | PropertyKey::TextDecoration
                 ),
                 "shorthand key {key:?} が cascade 段へ漏れている — \
                  `expand_shorthand_into` の展開 arm は exhaustive match により \
@@ -1123,5 +1165,143 @@ mod tests {
             decls[0].value,
             PropertyValue::OverflowX(OverflowValue::Hidden)
         );
+    }
+
+    // ── text-decoration shorthand expansion (CSS Text Decoration Module
+    // Level 3 §2.4) ──
+    //
+    // `parse_declaration_block` は shorthand `text-decoration` を 3 longhand
+    // (`TextDecorationLine` / `TextDecorationStyle` / `TextDecorationColor`)
+    // に展開する。margin / padding / border / overflow precedent と同じ
+    // parse-time expansion model。
+
+    #[test]
+    fn text_decoration_shorthand_expands_into_three_longhand_declarations() {
+        use crate::property::{TextDecorationColor, TextDecorationLine, TextDecorationStyle};
+
+        // `text-decoration: underline` → 3 longhand、省略成分
+        // (style/color) は spec initial で埋まる (property.rs
+        // `parse_text_decoration_shorthand` の "Initial value fill" 節)。
+        let decls = parse_block("text-decoration: underline;");
+        assert_eq!(decls.len(), 3, "shorthand must expand to 3 longhand decls");
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::TextDecorationLine(TextDecorationLine::UNDERLINE)
+        );
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::TextDecorationStyle(TextDecorationStyle::Solid)
+        );
+        assert_eq!(
+            decls[2].value,
+            PropertyValue::TextDecorationColor(TextDecorationColor::CurrentColor)
+        );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_important_flag_propagates_to_all_longhand() {
+        // spec CSS Cascading L4 §3: shorthand `!important` は全 longhand に copy
+        // される (margin / padding / border / overflow important 拡張と同
+        // pattern)。
+        let decls = parse_block("text-decoration: underline !important;");
+        assert_eq!(decls.len(), 3);
+        for d in &decls {
+            assert!(d.important, "important must propagate to every longhand");
+        }
+    }
+
+    #[test]
+    fn text_decoration_shorthand_two_style_components_declaration_dropped() {
+        // property.rs
+        // `text_decoration_shorthand_two_style_components_leaves_leftover_for_caller_exhausted_check`
+        // の end-to-end 側 pin: 2nd style keyword は leftover token として
+        // expect_exhausted に検知され、declaration 全体が drop される (0 decl)。
+        let decls = parse_block("text-decoration: solid wavy;");
+        assert!(
+            decls.is_empty(),
+            "2 style components must be dropped by expect_exhausted, got {decls:?}"
+        );
+    }
+
+    #[test]
+    fn text_decoration_longhand_declarations_not_expanded() {
+        use crate::property::{TextDecorationColor, TextDecorationLine, TextDecorationStyle};
+
+        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl
+        // のまま)。shorthand-only expansion の scope を pin する negative test
+        // (margin / padding / border / overflow sibling と同 pattern)。
+        let decls = parse_block("text-decoration-line: underline;");
+        assert_eq!(decls.len(), 1);
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::TextDecorationLine(TextDecorationLine::UNDERLINE)
+        );
+
+        let decls = parse_block("text-decoration-style: wavy;");
+        assert_eq!(decls.len(), 1);
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::TextDecorationStyle(TextDecorationStyle::Wavy)
+        );
+
+        let decls = parse_block("text-decoration-color: red;");
+        assert_eq!(decls.len(), 1);
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::TextDecorationColor(TextDecorationColor::Resolved(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_always_overwrites_all_three_longhand() {
+        // Shorthand-resets-omitted-longhands: per CSS Cascading L4 §3's
+        // "exactly as if expanded in place", `text-decoration: underline`
+        // (style/color omitted) still emits a `TextDecorationStyle::Solid` /
+        // `TextDecorationColor::CurrentColor` declaration alongside the
+        // line one — it does not "leave the other two alone". This is what
+        // lets a later bare `text-decoration: underline` reset an earlier
+        // `text-decoration-style: wavy` back to `solid` through ordinary
+        // cascade order-of-appearance (see
+        // `crate::cascade::tests::text_decoration_shorthand_resets_earlier_longhand_declarations` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+        // for the end-to-end cascade pin).
+        use crate::property::{TextDecorationColor, TextDecorationStyle};
+
+        let decls = parse_block("text-decoration-style: wavy; text-decoration: underline;");
+        assert_eq!(decls.len(), 4, "1 longhand + 3 expanded, in source order");
+        assert_eq!(
+            decls[0].value,
+            PropertyValue::TextDecorationStyle(TextDecorationStyle::Wavy)
+        );
+        // The 2nd declaration is the shorthand's TextDecorationLine — the
+        // 3rd is the discriminating one: the shorthand's own Solid,
+        // appearing *after* the earlier explicit Wavy.
+        assert_eq!(
+            decls[2].value,
+            PropertyValue::TextDecorationStyle(TextDecorationStyle::Solid)
+        );
+        assert_eq!(
+            decls[3].value,
+            PropertyValue::TextDecorationColor(TextDecorationColor::CurrentColor)
+        );
+    }
+
+    #[test]
+    fn text_decoration_line_duplicate_and_none_combination_declarations_dropped() {
+        // End-to-end pin for the leftover-token cases property.rs's
+        // `text_decoration_line_two_underlines_leaves_leftover_for_caller_exhausted_check`
+        // and `text_decoration_line_none_combined_with_a_keyword_leaves_leftover`
+        // exercise at the `parse_text_decoration_line` helper level: the
+        // leftover token they leave unconsumed is caught here by
+        // `expect_exhausted` (`rule.rs`'s `DeclParser`), dropping the whole
+        // declaration (0 decl), same shape as
+        // `rejects_trailing_garbage_after_value`.
+        assert!(parse_block("text-decoration-line: underline underline;").is_empty());
+        assert!(parse_block("text-decoration-line: none underline;").is_empty());
+        assert!(parse_block("text-decoration-line: underline none;").is_empty());
     }
 }
