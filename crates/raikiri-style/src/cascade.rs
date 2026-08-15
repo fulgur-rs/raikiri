@@ -1878,7 +1878,7 @@ fn match_from_element<'s, D: StyleDom>(
 /// <https://www.w3.org/TR/selectors-4/#the-lang-pseudo>: "represents an
 /// element whose content language is one of the languages listed in its
 /// argument" (bikeshed source verbatim, see [`language_range_matches`] doc
-/// for the fetch note). `ranges` is empty-or-more per [`PseudoClass::Lang`]
+/// for the fetch note). `ranges` is empty-or-more per [`crate::PseudoClass::Lang`]
 /// grammar (`parse_comma_separated` never actually returns an empty `Vec`
 /// for a non-empty `:lang(...)` argument list, but this function does not
 /// special-case emptiness — `ranges.iter().any(..)` is vacuously `false` on
