@@ -218,25 +218,13 @@ fn fetch_external_stylesheets(doc: &mut UncascadedDocument, options: &ParseOptio
             }
             Err(err) => {
                 // Aborted / Io / Http / Other: どれも「この stylesheet は諦めて
-                // 続行する」という結果は同じなので NetworkFallback に統一する
-                // (raikiri-traits に新 WarningKind variant を追加すると
-                // wall/traits 対象になるため、既存 variant の意味論を「fetch
-                // が失敗しこの資源を諦めた」という broad な読みで再利用する
-                // 判断— 詳細メッセージは details に載せて可観測性を保つ)。
-                //
-                // Semantic gap (a dedicated fix is still pending):
-                // `NetworkFallback`'s doc comment
-                // ("Consumer の network が fallback を返した") reads most
-                // naturally as `ResolverFallback`'s sibling — "the fetch
-                // succeeded with an explicit substitute", i.e. degraded-but-
-                // present content. This use is different: the fetch returned
-                // `Err`, and no CSS is applied *at all* for this `<link>` —
-                // a total skip, not a substitution. Warning consumers must
-                // not infer "some (possibly stale/placeholder) stylesheet
-                // content was applied" from this variant here the way they
-                // reasonably could for a true fallback-substitution use of
-                // `NetworkFallback` elsewhere; the correct reading for THIS
-                // call site is "nothing was applied for this stylesheet".
+                // 続行する」という結果は同じなので NetworkFallback に統一する。
+                // これは content が一切適用されない Err-disposition の使用
+                // であり、`WarningKind::NetworkFallback` のドキュメントが
+                // 明示的に扱う 2 つの disposition のうちの一方 (詳細は
+                // raikiri-traits 側の doc 参照)。個々の `NetworkError` variant
+                // の区別自体は失わず、details に元の error の Display 出力を
+                // 埋め込んで可観測性を保つ。
                 doc.warnings.push(RenderWarning {
                     kind: WarningKind::NetworkFallback { url },
                     node_id: Some(node_id),

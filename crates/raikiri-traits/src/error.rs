@@ -225,7 +225,29 @@ pub enum WarningKind {
         /// 対象 fragment id。
         fragment_id: Symbol,
     },
-    /// Consumer の network が fallback を返した。
+    /// この URL の resource について、意図した完全な fetch が得られず degrade
+    /// した。二種類の disposition を一つの variant に包含する:
+    ///
+    /// - Consumer の network provider が明示的に代替 content を返した場合
+    ///   (`ResolverFallback` と同様の Ok-disposition。ただし
+    ///   `NetworkProvider::fetch` の戻り値には現時点で disposition channel
+    ///   が無く、この経路は未使用)。
+    /// - fetch 自体が `Err` になり (timeout / I/O error / HTTP error 等)、
+    ///   呼び出し側がそれを fatal にせず該当 resource なしで処理を継続した
+    ///   場合。この場合 content は一切適用されていない。
+    ///
+    /// 現時点の実装で実際に生成されるのは Err-disposition のみ
+    /// (Ok-disposition は channel 自体が未実装のため到達不能)。それでも
+    /// **consumer はこの variant だけから「何らかの content が適用された」
+    /// と推論してはならない**。ただし `RenderWarning::details` は人間可読な
+    /// 自由記述であり、disposition を判別するための構造化された contract
+    /// ではない — 現状 details に "fetch failed" 等 Err らしく読める文字列
+    /// が入っているのは呼び出し側 (`raikiri-html`) が手で書いているからに
+    /// 過ぎず、この variant 自体が保証する形式ではない。将来
+    /// Ok-disposition が実装されこの variant から両方の disposition が
+    /// 実際に生成されるようになる時点で、判別手段 (details を構造化した
+    /// contract にする、または別 variant に分離する) を別途設計する必要が
+    /// ある。
     NetworkFallback {
         /// 対象 URL。
         url: Url,

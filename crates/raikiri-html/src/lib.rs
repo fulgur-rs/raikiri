@@ -750,6 +750,24 @@ mod tests {
                 "details should carry the underlying NetworkError message, got: {}",
                 warning.details
             );
+            // `WarningKind::NetworkFallback` covers two dispositions (content
+            // substituted vs. fetch failed with nothing applied), but
+            // `RenderWarning::details` is documented as unstructured
+            // free-form prose, not a discrimination contract. This assertion
+            // isn't claiming `details` is a reliable disposition signal — it
+            // just pins today's specific error-formatting string
+            // (`format!("... fetch failed: {err}")` in
+            // `fetch_external_stylesheets`) as failure-shaped, so a future
+            // change to that string is a visible, deliberate decision rather
+            // than a silent drift.
+            // cov:ignore: assert! message args only evaluate when the
+            // condition is false; this assertion passes in every run.
+            assert!(
+                warning.details.contains("fetch failed"),
+                "details should read as a failure (no content applied), not a \
+                 substitution, got: {}",
+                warning.details
+            );
         }
 
         #[test]
