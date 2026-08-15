@@ -1886,22 +1886,32 @@ fn match_from_element<'s, D: StyleDom>(
 /// should have, so no explicit guard is needed even if that upstream
 /// guarantee ever changes).
 ///
-/// An element with **no resolvable content language, or a content language
-/// that resolves to the empty string**, never matches, regardless of
-/// `ranges`. [`effective_language`] returns `None` when there is no `lang`
-/// anywhere in the ancestor chain, and `Some("")` when the element (or an
-/// ancestor) has an explicit `lang=""` — HTML LS's "the primary language is
-/// unknown" terminal state, distinct from "absent" but identical to it for
-/// matching purposes here (see [`effective_language`]'s doc). Both must be
-/// treated as "no content language" per CSS Selectors L4 §7.2's own
-/// wildcard special case: "if the document language specifies a null/empty
-/// value for the default language ... the `:lang(*)` selector will only
-/// match elements that have a non-empty language declared via markup."
-/// [`language_range_matches`]'s first-subtag step would otherwise let a
-/// bare `*` range match the empty content language vacuously (splitting
-/// `""` on `-` yields one empty subtag, and `*` matches any subtag), so
-/// this function gates on non-empty content language itself rather than
-/// relying on [`language_range_matches`] to reject it.
+/// An element with no resolvable content language at all (`None` — no
+/// `lang` anywhere in the ancestor chain) never matches, regardless of
+/// `ranges`.
+///
+/// An element whose content language resolves to the empty string
+/// (`Some("")` — an explicit `lang=""` somewhere in the chain, HTML LS's
+/// "the primary language is unknown" terminal state; see
+/// [`effective_language`]'s doc) is a narrower case: it does not match a
+/// bare wildcard range, but it does match other ranges, notably the
+/// literal empty-string range `:lang("")`. CSS Selectors L4 §7.2, bikeshed
+/// source `selectors-4/Overview.bs` `#the-lang-pseudo` (direct raw fetch of
+/// `raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/Overview.bs`,
+/// bypassing WebFetch's truncation on this TR page the same way
+/// [`matches_empty`]'s `:empty` doc note does), verbatim: "For this
+/// purpose, a wildcard language range (\"*\") does not match elements
+/// whose language is not tagged (e.g. `lang=\"\"`), but does match elements
+/// whose language is tagged as undetermined (`lang=und`). A language range
+/// consisting of an empty string (`:lang(\"\")`) matches (only) elements
+/// whose language is not tagged." [`language_range_matches`]'s first-subtag
+/// step would otherwise let a bare `*` range match the empty content
+/// language vacuously (splitting `""` on `-` yields one empty subtag, and
+/// `*` matches any subtag per RFC4647), so this function special-cases
+/// exactly `(lang.is_empty(), range == "*")` rather than gating on
+/// `lang.is_empty()` alone — a broader gate would incorrectly also reject
+/// `:lang("")` (and any other literal range) against `lang=""`, when the
+/// quoted spec text says `:lang("")` must match that case.
 fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
     ranges: &[String],
     dom: &D,
@@ -1909,10 +1919,14 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
 ) -> bool {
     match effective_language(dom, elem, ancestors) {
-        Some(lang) if !lang.is_empty() => ranges
-            .iter()
-            .any(|range| language_range_matches(range, &lang)),
-        _ => false,
+        Some(lang) => ranges.iter().any(|range| {
+            if lang.is_empty() && range == "*" {
+                false
+            } else {
+                language_range_matches(range, &lang)
+            }
+        }),
+        None => false,
     }
 }
 
