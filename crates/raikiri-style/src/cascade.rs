@@ -4022,18 +4022,21 @@ mod tests {
 
     #[test]
     fn attribute_exists_selector_does_not_match_empty_value_attr() {
-        // `StyleElement::attr` 契約 ("Empty string is normalised to `None`",
-        // style_dom.rs doc) の帰結を明示的に pin する — 実 DOM 上は
-        // `data-foo=""` も「属性は存在する」が、raikiri の `attr()` 契約は
-        // 空文字を無指定と同一視するため `[data-foo]` はここでは match しない。
-        // これは本 task が導入した挙動ではなく、既存の `StyleElement` 契約を
-        // そのまま matcher に伝播させた結果 (`elem.attr(...).is_some()`)。
+        // Pins `TestDoc`'s own `StyleElement::attr` override
+        // (`test_dom.rs`), which deliberately keeps the older, stricter
+        // "empty value is normalised to `None`" behavior as a
+        // simplification local to this mock. Against `TestDoc`,
+        // `data-foo=""` reads back as attribute-absent, so `[data-foo]`
+        // does not match here.
         //
-        // This is an **intentional accepted-baseline pin, not a silently
-        // tolerated bug**: the decision to accept this CSS Selectors L4
-        // divergence as a permanent simplification is formally
-        // recorded as project policy ("intentional stricter") — see
-        // `StyleElement::attr`'s doc comment for the full rationale.
+        // **This is `TestDoc`-only, not the real DOM's behavior.**
+        // `raikiri-dom::dom_impl::ElementRef::attr` (the real DOM impl)
+        // tracks attribute presence independent of value, so
+        // `data-foo=""` does match `[data-foo]` there — this test's name
+        // and outcome describe the mock's narrower contract, not a general
+        // engine-level accepted-baseline divergence from CSS Selectors L4.
+        // See `StyleElement::attr`'s trait doc (style_dom.rs) for the full
+        // contract and this divergence's rationale.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "[data-foo] { color: red }");
@@ -4050,23 +4053,24 @@ mod tests {
         // Same root cause as
         // `attribute_exists_selector_does_not_match_empty_value_attr` above,
         // pinned separately because it goes through a different
-        // `compound_matches` arm (`Component::AttributeInNoNamespace`,
-        // not `..Exists`): the `StyleElement::attr` contract ("Empty string
-        // is normalised to `None`", style_dom.rs doc) collapses `foo=""`
-        // into `None` before the with-value arm's `match elem.attr(...) {
-        // Some(..) => .., None => false }` ever runs, so it takes the
-        // `None => false` branch regardless of the selector's own value
-        // operand. Per CSS Selectors L4
-        // (<https://www.w3.org/TR/selectors-4/#attribute-selectors>),
-        // `[data-foo=""]` should match an element whose `data-foo` value is
-        // exactly the empty string — it does not here, for the same
-        // documented reason `[data-foo]` doesn't.
+        // `compound_matches` arm (`Component::AttributeInNoNamespace`, not
+        // `..Exists`): `TestDoc`'s own `StyleElement::attr` override
+        // (`test_dom.rs`) collapses `foo=""` into `None` before the
+        // with-value arm's `match elem.attr(...) { Some(..) => ..,
+        // None => false }` ever runs, so it takes the `None => false`
+        // branch regardless of the selector's own value operand.
         //
-        // This is an **intentional accepted-baseline pin, not a silently
-        // tolerated bug**: the decision to accept this CSS Selectors L4
-        // divergence as a permanent simplification is formally
-        // recorded as project policy ("intentional stricter") — see
-        // `StyleElement::attr`'s doc comment for the full rationale.
+        // **This is `TestDoc`-only, not the real DOM's behavior.** Per CSS
+        // Selectors L4 (<https://www.w3.org/TR/selectors-4/#attribute-selectors>),
+        // `[data-foo=""]` should match an element whose `data-foo` value is
+        // exactly the empty string, and `raikiri-dom::dom_impl::ElementRef::attr`
+        // (the real DOM impl) does support that — it tracks presence
+        // independent of value. Only `TestDoc`'s deliberately-simplified
+        // mock still collapses `foo=""` to absent; this test's name and
+        // outcome describe that mock, not a general engine-level
+        // accepted-baseline divergence. See `StyleElement::attr`'s trait
+        // doc (style_dom.rs) for the full contract and this divergence's
+        // rationale.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "[data-foo=\"\"] { color: red }");
