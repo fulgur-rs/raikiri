@@ -692,9 +692,13 @@ pub(crate) fn build_running_template_store(
 ///   (walk order, per that field's doc);
 /// - `counter-reset` / `counter-increment` / `counter-set` entries as
 ///   [`GcpmDirective::CounterReset`] / [`GcpmDirective::CounterIncrement`] /
-///   [`GcpmDirective::CounterSet`] (one directive per `(name, value)` pair),
-///   pushed in that CSS Lists 3 §4 processing order (not property
-///   declaration order) — see the loop's own comment;
+///   [`GcpmDirective::CounterSet`], pushed in that CSS Lists 3 §4 processing
+///   order (not property declaration order) — see the loop's own comment.
+///   `counter-increment` / `counter-set` emit one directive per raw
+///   `(name, value)` pair; `counter-reset` first deduplicates same-name
+///   pairs within the declaration to the last occurrence's value (CSS Lists
+///   3 §4.1), so it emits at most one directive per distinct name — see the
+///   dedup step's own comment;
 /// - `string-set` entries as [`GcpmDirective::StringSet`], via
 ///   [`convert_string_set_source`] — see that function's doc for the
 ///   skip-whole-entry-on-conversion-failure policy.
@@ -745,11 +749,35 @@ fn collect_running_template(
             // so getting push order right now avoids baking in a
             // same-element `counter-reset: c 0; counter-increment: c 1`
             // ordering bug that nothing here would catch.
+            //
+            // CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>:
+            // "If multiple instances of the same <counter-name> occur in the
+            // property value, only the last one is honored." `cv.counter_reset`
+            // is the raw parsed `(name, value)` pair list (one entry per
+            // `<counter-name> <integer>?` occurrence in the declaration,
+            // duplicates included) — reduce to one pair per distinct name,
+            // keeping the *last* occurrence's value via `HashMap::insert`'s
+            // overwrite-on-reinsert semantics, before emitting a directive.
+            // Consumers (`PhaseBWalkState::apply_directive`,
+            // `PageContext::apply_directive`) process one `GcpmDirective` at
+            // a time and unconditionally push a new nested-scope frame per
+            // `CounterReset` received, so a duplicate name reaching them as
+            // two directives would produce two frames instead of one —
+            // dedup has to happen here, at the producer, since the "these
+            // came from the same declaration" information doesn't survive
+            // past this point. `order` preserves first-occurrence position
+            // among distinct names only; it has no bearing on correctness.
+            let mut reset_values: HashMap<Symbol, i32> = HashMap::new();
+            let mut order: Vec<Symbol> = Vec::new();
             for (name, value) in cv.counter_reset.iter() {
-                directives.push(GcpmDirective::CounterReset {
-                    name: Symbol::new(name.clone()),
-                    value: *value,
-                });
+                let sym = Symbol::new(name.clone());
+                if reset_values.insert(sym.clone(), *value).is_none() {
+                    order.push(sym);
+                }
+            }
+            for sym in order {
+                let value = reset_values[&sym];
+                directives.push(GcpmDirective::CounterReset { name: sym, value });
             }
             for (name, delta) in cv.counter_increment.iter() {
                 directives.push(GcpmDirective::CounterIncrement {
@@ -1831,6 +1859,101 @@ mod tests {
             ],
             "must emit reset, then increment, then set — declaration order \
              in the inline style was set/increment/reset, the opposite"
+        );
+    }
+
+    #[test]
+    fn collect_running_template_dedupes_duplicate_counter_reset_names_to_last_value() {
+        // CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>:
+        // "If multiple instances of the same <counter-name> occur in the
+        // property value, only the last one is honored." A single
+        // `counter-reset: a 1 a 2` declaration must produce exactly one
+        // `GcpmDirective::CounterReset` for `a`, carrying the *last*
+        // occurrence's value (2) — not two directives, and not the first
+        // occurrence's value.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("counter-reset: a 1 a 2"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        let resets: Vec<_> = template
+            .directives
+            .iter()
+            .filter(|d| matches!(d, GcpmDirective::CounterReset { .. }))
+            .collect();
+        assert_eq!(
+            resets,
+            vec![&GcpmDirective::CounterReset {
+                name: Symbol::new("a"),
+                value: 2,
+            }],
+            "duplicate counter-reset names within one declaration must \
+             collapse to a single directive carrying the last occurrence's \
+             value, not one directive per raw (name, value) pair"
+        );
+    }
+
+    #[test]
+    fn collect_running_template_counter_reset_dedup_closes_gap_through_page_context() {
+        // Integration-level pin (module doc's producer/consumer split):
+        // `PageContext::apply_directive`'s `CounterReset` arm unconditionally
+        // pushes a new `CounterStack` frame per directive it receives, with
+        // no cross-directive name tracking of its own — so this only stays
+        // spec-correct end-to-end because the producer
+        // (`collect_running_template`) now hands it exactly one directive
+        // per distinct counter name. Feed the directives this walker
+        // produces for `counter-reset: a 1 a 2` through a fresh
+        // `PageContext` and confirm the counter ends up with a single frame
+        // at the last occurrence's value (2), not two nested frames.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("counter-reset: a 1 a 2"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        let mut ctx = raikiri_traits::PageContext::new();
+        for directive in &template.directives {
+            ctx.apply_directive(directive);
+        }
+
+        let counter = ctx
+            .counter(&Symbol::new("a"))
+            .expect("counter-reset must instantiate the counter");
+        assert_eq!(
+            counter.values(),
+            &[2],
+            "a single counter-reset declaration with a duplicate name must \
+             leave exactly one nested scope frame (the last occurrence's \
+             value), not one frame per raw (name, value) pair"
         );
     }
 
