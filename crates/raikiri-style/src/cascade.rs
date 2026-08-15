@@ -1884,9 +1884,24 @@ fn match_from_element<'s, D: StyleDom>(
 /// special-case emptiness — `ranges.iter().any(..)` is vacuously `false` on
 /// an empty slice, the same "never matches" outcome an empty argument list
 /// should have, so no explicit guard is needed even if that upstream
-/// guarantee ever changes). An element with no resolvable content language
-/// never matches, regardless of `ranges` (this also implements the spec's
-/// wildcard-range special case for free, see [`effective_language`] doc).
+/// guarantee ever changes).
+///
+/// An element with **no resolvable content language, or a content language
+/// that resolves to the empty string**, never matches, regardless of
+/// `ranges`. [`effective_language`] returns `None` when there is no `lang`
+/// anywhere in the ancestor chain, and `Some("")` when the element (or an
+/// ancestor) has an explicit `lang=""` — HTML LS's "the primary language is
+/// unknown" terminal state, distinct from "absent" but identical to it for
+/// matching purposes here (see [`effective_language`]'s doc). Both must be
+/// treated as "no content language" per CSS Selectors L4 §7.2's own
+/// wildcard special case: "if the document language specifies a null/empty
+/// value for the default language ... the `:lang(*)` selector will only
+/// match elements that have a non-empty language declared via markup."
+/// [`language_range_matches`]'s first-subtag step would otherwise let a
+/// bare `*` range match the empty content language vacuously (splitting
+/// `""` on `-` yields one empty subtag, and `*` matches any subtag), so
+/// this function gates on non-empty content language itself rather than
+/// relying on [`language_range_matches`] to reject it.
 fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
     ranges: &[String],
     dom: &D,
@@ -1894,10 +1909,10 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
 ) -> bool {
     match effective_language(dom, elem, ancestors) {
-        Some(lang) => ranges
+        Some(lang) if !lang.is_empty() => ranges
             .iter()
             .any(|range| language_range_matches(range, &lang)),
-        None => false,
+        _ => false,
     }
 }
 
@@ -1945,19 +1960,23 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 ///   (`StyleDom::quirks_mode` doc / `resolve_case_sensitivity` doc: "raikiri
 ///   は現時点で HTML document のみ対象") — there is no XML-namespace
 ///   attribute surface to read.
-/// - **`lang=""` stopping inheritance** — per the quoted algorithm, an
-///   empty-string `lang` attribute is itself a *found* value ("the primary
-///   language is unknown", a distinct terminal state from "no `lang`
-///   attribute at all", which would keep walking to the parent). This
-///   function cannot observe that distinction: [`StyleElement::attr`]'s
-///   contract already collapses `foo=""` to `None` uniformly (documented on
-///   that trait method — an existing accepted baseline, not something newly
-///   introduced here), so `lang=""` and "no
-///   `lang` attribute" are indistinguishable at this crate's DOM boundary —
-///   both fall through to the parent-element walk below. Fixing this would
-///   require widening `StyleElement::attr`'s contract, which is
-///   a `raikiri-style`-only change out of scope for the same reason
-///   `[foo=""]` attribute-selector matching already accepts this limitation.
+///
+/// # `lang=""` stopping inheritance
+///
+/// Per the quoted algorithm, an empty-string `lang` attribute is itself a
+/// *found* value ("the primary language is unknown", a distinct terminal
+/// state from "no `lang` attribute at all", which keeps walking to the
+/// parent). [`StyleElement::attr`] tracks attribute presence independent of
+/// value, so [`own_html_or_svg_lang_attribute`] observes an explicit
+/// `lang=""` as `Some("")`, not `None` — the `if let Some(lang) = ...`
+/// branch below returns `Some(String::new())` immediately for that case
+/// rather than falling through to the ancestor walk, matching the quoted
+/// algorithm's step order. Callers must still treat this returned `Some("")`
+/// as "no content language" for their own purposes if that is what they
+/// need (CSS Selectors L4's `:lang()` does — see [`lang_pseudo_matches`]'s
+/// doc); [`effective_language`] itself only resolves the language per HTML
+/// LS's algorithm, it does not decide what an empty result means to a
+/// particular consumer.
 fn effective_language<D: StyleDom, E: StyleElement>(
     dom: &D,
     elem: &E,
@@ -9165,11 +9184,20 @@ mod tests {
             ComputedLengthPercentageOrAuto::Auto
         );
         // Independently pin the *other* rejection layer for the empty-
-        // string case: `TestElementRef::attr()` itself normalises `""` to
-        // `None` (matching the `StyleElement::attr` trait contract and the
-        // real `ElementRef::attr()`), so `push_img_dimension_hints` never
-        // even calls `parse_html_dimension_value` for `width=""` — the
-        // `Auto` result above isn't (only) a parse-failure outcome.
+        // string case: `TestDoc`'s own `TestElementRef::attr()` override
+        // normalises `""` to `None` as a simplification local to that mock
+        // — unlike the real `ElementRef::attr()` (`raikiri-dom::dom_impl`),
+        // which returns `Some("")` for a present-but-empty attribute (see
+        // `StyleElement::attr`'s trait doc). Against `TestDoc`,
+        // `push_img_dimension_hints` never even calls
+        // `parse_html_dimension_value` for `width=""`, so the `Auto` result
+        // above is `TestDoc`-only "attribute absent" behavior here, not
+        // (only) a parse-failure outcome. Against the real DOM the same
+        // `Auto` result still holds, but for a different reason:
+        // `attr("width")` returns `Some("")`, and
+        // `parse_html_dimension_value("")` itself rejects the empty string
+        // at its first-digit check (both DOM implementations agree on the
+        // end result here, just not on why).
         let node = doc
             .node(StyleNodeId::new(empty as u64))
             .expect("node exists");

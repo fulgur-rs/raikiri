@@ -273,8 +273,9 @@ impl CounterScopes {
 /// [`crate::layout`] / [`crate::document`] do for their own internal needs)
 /// specifically to reuse [`raikiri_traits::Element::id`]'s already-tested
 /// empty-value filter (`crates/raikiri-dom/src/lib.rs`'s
-/// `element_id_and_attr_treat_empty_value_as_none` pins the same contract at
-/// the trait-impl layer) instead of re-deriving it here.
+/// `element_id_treats_empty_value_as_none_while_attr_preserves_presence`
+/// pins the same contract at the trait-impl layer) instead of re-deriving
+/// it here.
 fn element_id(doc: &Document, idx: usize) -> Option<String> {
     let node = doc.node(NodeId::new(idx as u64))?;
     let element = node.as_element()?;
@@ -590,7 +591,7 @@ mod tests {
     #[test]
     fn element_id_returns_none_for_empty_id_attribute() {
         // Empty id="" must not register — mirrors
-        // element_id_and_attr_treat_empty_value_as_none
+        // element_id_treats_empty_value_as_none_while_attr_preserves_presence
         // (crates/raikiri-dom/src/lib.rs) at the walker level. Asserted
         // directly against `element_id` (not through a resolve() round trip
         // — an empty id would key the registry under `Symbol::new("")`,
