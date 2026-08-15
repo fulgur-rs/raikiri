@@ -235,8 +235,16 @@ pub trait StyleElement {
 
     /// `id` attribute value (empty `id=""` returns `None`).
     ///
-    /// Default delegates to `attr("id")` so overriding `attr` alone keeps
-    /// `id()` consistent.
+    /// This empty-is-absent normalization is `id()`'s own contract — CSS
+    /// Selectors L4 ID selectors (`#foo`) don't match an empty ID token —
+    /// and is narrower than [`Self::attr`]'s general contract, which tracks
+    /// attribute presence independent of value (see [`Self::attr`]'s doc).
+    /// Default delegates to `attr("id")` verbatim, so it only inherits this
+    /// normalization for free when the concrete `attr()` impl happens to
+    /// collapse empty values to `None` itself; an impl whose `attr()`
+    /// preserves presence (as `raikiri-dom`'s does, per [`Self::attr`]'s
+    /// contract) must override `id()` separately to keep this rule, which
+    /// `raikiri-dom::dom_impl::ElementRef` does.
     fn id(&self) -> Option<&str> {
         self.attr("id")
     }
@@ -274,59 +282,51 @@ pub trait StyleElement {
             .is_some_and(|value| class_token_matches(value, class, true))
     }
 
-    /// Null-namespace attribute lookup. Empty string is normalised to `None`.
+    /// Null-namespace attribute lookup.
     ///
-    /// Default handles `"style"` by delegating to
-    /// [`Self::inline_style_source`]; overrides must preserve that contract.
+    /// **Attribute presence and value are tracked independently**: `None`
+    /// only when the attribute is genuinely absent; `Some("")` when the
+    /// attribute is present with an empty value. CSS Selectors L4's
+    /// attribute-presence selector `[foo]`
+    /// (<https://www.w3.org/TR/selectors-4/#attribute-selectors>) and its
+    /// exact-value form `[foo=""]` both depend on this: an element with
+    /// `foo=""` still "has a `foo` attribute" per spec and must match
+    /// `[foo]` / `[foo=""]`, and HTML boolean attributes (`disabled`,
+    /// `open`, `hidden`, …) rely on the same presence-independent-of-value
+    /// reading. `Component::AttributeInNoNamespaceExists` and
+    /// `Component::AttributeInNoNamespace` matching
+    /// (`cascade.rs::compound_matches`) are built directly on
+    /// `elem.attr(...)`, so both selector forms match correctly against any
+    /// `StyleElement` impl that honors this contract.
     ///
-    /// **Known gap vs. CSS Selectors L4**: the
-    /// attribute-presence selector form `[foo]`
-    /// (<https://www.w3.org/TR/selectors-4/#attribute-selectors>) is defined
-    /// to match on attribute *presence* alone, independent of value — an
-    /// element with `foo=""` still "has a `foo` attribute" per spec and must
-    /// match `[foo]`. This trait's `attr()` contract collapses `foo=""` into
-    /// `None`, identically to `foo` being wholly absent (both the mock
-    /// (`test_dom.rs`) and the real DOM impl
-    /// (`raikiri-dom::dom_impl::ElementRef::attr`) honor this uniformly), so
-    /// `Component::AttributeInNoNamespaceExists` matching
-    /// (`cascade.rs::compound_matches`), which is built directly on
-    /// `elem.attr(...).is_some()`, cannot observe the distinction: `[foo]`
-    /// will not match `<div foo="">`.
+    /// `raikiri-dom::dom_impl::ElementRef` — the real DOM's impl — honors
+    /// this contract. This trait's own default body below does not
+    /// distinguish the two cases in any interesting way: it has no
+    /// attribute storage to consult, so it simply returns `None` for
+    /// anything but `"style"` regardless of what a hypothetical caller
+    /// means by "absent" vs "empty" — that is a consequence of the default
+    /// having no backing storage, not an endorsement of collapsing empty
+    /// values to absent.
     ///
-    /// Same root cause, same blast radius: the exact-value form `[foo=""]`
-    /// is affected identically, and for the same reason. Per spec `[foo=""]`
-    /// should match an element carrying `foo=""` (attribute value compares
-    /// equal to the empty string), but `Component::AttributeInNoNamespace`'s
-    /// `compound_matches` arm (`cascade.rs`, the `elem.attr(local_name)
-    /// => None => false` branch) already sees `None` for `foo=""` — it
-    /// cannot distinguish "value is empty" from "attribute absent" any more
-    /// than the `Exists` arm above can, so `[foo=""]` will not match
-    /// `<div foo="">` either.
-    ///
-    /// There is no other `StyleElement` method that exposes raw
-    /// presence-independent-of-value attribute information, so this cannot
-    /// be worked around from within `raikiri-style` alone. Accepted as a
-    /// permanent simplification rather than fixed, because fixing it
-    /// would require changing this trait's contract (e.g. splitting out a
-    /// `has_attr()` that distinguishes absent from present-but-empty, or
-    /// widening `attr()`'s return type) — a `StyleElement` signature change
-    /// that crosses into DOM-impl crate territory (`raikiri-dom`'s
-    /// `impl StyleElement for ElementRef` in `dom_impl.rs`, which owns the
-    /// filtering) and is out of scope for a `raikiri-style`-only change. No
-    /// known real-world content in this repo's test corpus currently relies
-    /// on presence-with-empty-value matching.
-    ///
-    /// The decision to accept this spec divergence as a permanent
-    /// baseline (rather than fix it immediately) reflects a deliberate
-    /// accept/reject call — "intentional stricter" divergence (this trait's
-    /// `attr()` contract collapses `foo=""` into absent, which makes
-    /// matching stricter than spec requires, not looser) — this is an
-    /// accepted-baseline call, not a
-    /// bug being silently tolerated. Regression-pinned by
+    /// This crate's own mock (`test_dom.rs`) intentionally keeps the older,
+    /// stricter "empty value collapses to `None`" behavior as a
+    /// simplification local to that mock (see its own doc comment) — it no
+    /// longer represents the real DOM's behavior.
     /// `cascade::tests::attribute_exists_selector_does_not_match_empty_value_attr`
-    /// (the `[foo]` form) and
+    /// and
     /// `cascade::tests::attribute_exact_match_selector_does_not_match_empty_value_attr`
-    /// (the `[foo=""]` form).
+    /// pin that mock-only behavior; they describe matching against
+    /// `TestDoc`, not against a real `Document`.
+    ///
+    /// `id`'s own empty-is-absent normalization ([`Self::id`]) is a
+    /// narrower, separate contract layered on top of this method — it does
+    /// not apply to `attr()` itself.
+    ///
+    /// `style` is the one exception to the presence/value-independence rule
+    /// above: the return value for `local == "style"` always matches
+    /// [`Self::inline_style_source`], which has its own, different "empty
+    /// `style=""` is `None`" contract (see its doc) — overrides must
+    /// preserve that redirect.
     fn attr(&self, local: &str) -> Option<&str> {
         if local == "style" {
             self.inline_style_source()

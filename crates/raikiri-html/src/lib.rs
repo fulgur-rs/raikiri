@@ -1955,6 +1955,217 @@ mod tests {
     }
 
     #[test]
+    fn a_href_empty_value_ua_rule_color_and_text_decoration_survives_real_parse_and_cascade() {
+        // HTML LS §selector-link: "All a elements that have an href
+        // attribute ... must match ... :link" — an empty `href=""` still
+        // satisfies "have an href attribute" (presence, not a non-empty
+        // value, is the gate), so `<a href="">` is spec-`:link` and must
+        // pick up the same `a[href]` UA rule as a non-empty href. This is
+        // the `[href]` attribute-presence-selector counterpart to the
+        // `a[href]` test above, isolating the previously-broken case:
+        // `Component::AttributeInNoNamespaceExists` matching depends on
+        // `elem.attr("href").is_some()` distinguishing "present with empty
+        // value" from "absent" — real DOM `attr()` now does.
+        use raikiri_style::Origin;
+        use raikiri_style::property::{CssColor, TextDecorationLine};
+
+        let html = b"<html><body><a href=\"\">empty href link</a></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let a_id = (0..uncascaded.dom.node_count())
+            .find(|&id_u| {
+                uncascaded
+                    .dom
+                    .node(raikiri_traits::NodeId::new(id_u as u64))
+                    .unwrap()
+                    .as_element()
+                    .is_some_and(|el| el.tag_name() == "a")
+            })
+            .expect("<a> should exist");
+        let computed = &cascade.computed[a_id];
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            computed.color,
+            CssColor {
+                r: 0x00,
+                g: 0x00,
+                b: 0xEE,
+                a: 255,
+            },
+            "a[href='']'s UA rule color: #0000EE must reach computed.color through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            computed.text_decoration_line,
+            TextDecorationLine::UNDERLINE,
+            "a[href='']'s UA rule text-decoration: underline must reach computed.text_decoration_line through real parse+cascade"
+        );
+    }
+
+    #[test]
+    fn lang_wildcard_selector_does_not_match_explicit_empty_lang_attribute_via_real_dom() {
+        // HTML LS §3.2.6.2 "determine the language of a node": an explicit
+        // `lang=""` resolves to "the primary language is unknown" — a
+        // terminal state, distinct from "no lang attribute at all" (see
+        // `raikiri_style::cascade::effective_language`'s doc). CSS Selectors
+        // L4 §7.2, bikeshed source `selectors-4/Overview.bs`
+        // `#the-lang-pseudo`, verbatim: "For this purpose, a wildcard
+        // language range (\"*\") does not match elements whose language is
+        // not tagged (e.g. `lang=\"\"`), but does match elements whose
+        // language is tagged as undetermined (`lang=und`)." — an element
+        // whose resolved content language is the empty string must NOT
+        // match the wildcard range specifically (see the sibling test
+        // below for the literal empty-string range `:lang("")`, which the
+        // same quote's next sentence says MUST match this case).
+        //
+        // This can only be exercised through the real DOM: `TestDoc` (the
+        // mock `raikiri-style` uses for its own unit tests) still collapses
+        // `lang=""` to attribute-absent by design, so it can never produce
+        // the `Some("")` resolved-language state this regression is about.
+        // Only `raikiri-dom::dom_impl::ElementRef`, which tracks attribute
+        // presence independent of value, can.
+        //
+        // The wildcard range must be **quoted** (`:lang("*")`, not bare
+        // `:lang(*)`) — `*` is a CSS delimiter token, not a valid `<ident>`
+        // character, so the unquoted form fails to parse as a `:lang()`
+        // argument (verified empirically: an unquoted `:lang(*)` rule here
+        // is simply dropped as an invalid selector, so this test uses the
+        // quoted form that's this crate's `:lang()` argument parser
+        // actually accepts, per `expect_ident_or_string()`).
+        use raikiri_style::property::CssColor;
+
+        let html = b"<html><body>\
+                     <style>:lang(\"*\") { color: #FF0000; }</style>\
+                     <div lang=\"ja\">has lang</div>\
+                     <div lang=\"\">empty lang</div>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let find_div_with_lang = |lang_value: &str| {
+            (0..uncascaded.dom.node_count())
+                .find(|&id_u| {
+                    uncascaded
+                        .dom
+                        .node(raikiri_traits::NodeId::new(id_u as u64))
+                        .unwrap()
+                        .as_element()
+                        .is_some_and(|el| {
+                            el.tag_name() == "div" && el.attr("lang") == Some(lang_value)
+                        })
+                })
+                .unwrap_or_else(|| panic!("<div lang=\"{lang_value}\"> should exist"))
+        };
+
+        let has_lang_id = find_div_with_lang("ja");
+        let empty_lang_id = find_div_with_lang("");
+
+        // Positive control: a real, non-empty lang must match :lang("*") —
+        // without this, a silently-dropped/unparsed rule would make the
+        // negative assertion below pass vacuously.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[has_lang_id].color,
+            CssColor {
+                r: 0xFF,
+                g: 0x00,
+                b: 0x00,
+                a: 255,
+            },
+            ":lang(\"*\") must match an element with a real, non-empty lang attribute"
+        );
+        // The regression under test: explicit lang="" must NOT match
+        // :lang("*").
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[empty_lang_id].color,
+            CssColor::BLACK,
+            "explicit lang=\"\" (HTML LS: primary language unknown) must not match :lang(\"*\")"
+        );
+    }
+
+    #[test]
+    fn lang_empty_string_range_matches_explicit_empty_lang_attribute_via_real_dom() {
+        // Complements the wildcard test above with the other half of the
+        // same spec sentence (CSS Selectors L4 §7.2, bikeshed source
+        // `selectors-4/Overview.bs` `#the-lang-pseudo`, verbatim,
+        // immediately following the wildcard sentence quoted there): "A
+        // language range consisting of an empty string (`:lang(\"\")`)
+        // matches (only) elements whose language is not tagged." — unlike
+        // the wildcard range `"*"`, the literal empty-string range `""`
+        // MUST match an element whose resolved content language is the
+        // empty string (explicit `lang=""`). Real-DOM for the same reason
+        // as the wildcard test: `TestDoc` can't produce the `Some("")`
+        // resolved-language state this exercises.
+        use raikiri_style::property::CssColor;
+
+        let html = b"<html><body>\
+                     <style>:lang(\"\") { color: #FF0000; }</style>\
+                     <div lang=\"ja\">has lang</div>\
+                     <div lang=\"\">empty lang</div>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let find_div_with_lang = |lang_value: &str| {
+            (0..uncascaded.dom.node_count())
+                .find(|&id_u| {
+                    uncascaded
+                        .dom
+                        .node(raikiri_traits::NodeId::new(id_u as u64))
+                        .unwrap()
+                        .as_element()
+                        .is_some_and(|el| {
+                            el.tag_name() == "div" && el.attr("lang") == Some(lang_value)
+                        })
+                })
+                .unwrap_or_else(|| panic!("<div lang=\"{lang_value}\"> should exist"))
+        };
+
+        let has_lang_id = find_div_with_lang("ja");
+        let empty_lang_id = find_div_with_lang("");
+
+        // Negative control: a real, non-empty lang must NOT match
+        // :lang("") — without this, an over-broad match (e.g. a bug that
+        // treated "" as matching everything) would make the assertion
+        // below pass vacuously.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[has_lang_id].color,
+            CssColor::BLACK,
+            ":lang(\"\") must not match an element with a real, non-empty lang attribute"
+        );
+        // The regression under test: explicit lang="" MUST match
+        // :lang("") — the element's language is "not tagged" per the
+        // quoted spec text, which is exactly what :lang("") selects for.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[empty_lang_id].color,
+            CssColor {
+                r: 0xFF,
+                g: 0x00,
+                b: 0x00,
+                a: 255,
+            },
+            "explicit lang=\"\" (HTML LS: primary language unknown) must match :lang(\"\")"
+        );
+    }
+
+    #[test]
     fn phrasing_content_ua_rules_survive_real_parse_and_cascade() {
         // HTML LS §phrasing-content-3's
         //   b, strong { font-weight: bolder; }

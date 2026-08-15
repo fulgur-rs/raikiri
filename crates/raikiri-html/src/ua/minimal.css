@@ -84,15 +84,17 @@ xmp       { display: block; }
  * `dialog { display: block; } dialog:not([open]) { display: none; }`
  * needs reproducing without `:not()` support (`is_supported_selector_list`
  * in ruletree.rs), which is reachable via specificity as `dialog {
- * display: none; }` overridden by `dialog[open] { display: block; }` —
- * but `raikiri_dom::ElementRef::attr()` currently normalizes any
- * empty-value attribute (including the canonical bare `<dialog open>`
- * HTML5 boolean-attribute form) to `None`, so `dialog[open]` would never
- * fire for real documents while the unconditional `dialog { display:
- * none; }` half still would — net regression vs. today's no-rule-at-all
- * (CSS-initial `inline`, at least visible) for the common open-dialog
- * case. Deferred as a whole unit, blocked on a raikiri-dom
- * empty-value-attribute bug, rather than landed half-correct. */
+ * display: none; }` overridden by `dialog[open] { display: block; }`.
+ * `raikiri_dom::ElementRef::attr()` previously normalized any empty-value
+ * attribute (including the canonical bare `<dialog open>` HTML5
+ * boolean-attribute form) to `None`, which would have made `dialog[open]`
+ * never fire for real documents while the unconditional `dialog {
+ * display: none; }` half still would — a net regression vs. today's
+ * no-rule-at-all (CSS-initial `inline`, at least visible) for the common
+ * open-dialog case. That attr() bug is now fixed (`attr()` returns
+ * `Some("")` for a present-but-empty attribute, so `dialog[open]` does
+ * fire for `<dialog open>`); the two-rule pair is still deferred here as
+ * a separate, not-yet-landed addition rather than an active blocker. */
 
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
  * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,
@@ -183,12 +185,11 @@ hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
  * (`Component::AttributeInNoNamespaceExists`, already exercised in this
  * same file by the `dialog[open]` deferral note above).
  *
- * Note: `raikiri_dom::ElementRef::attr()` currently filters out empty-
- * value attributes, so `<a href="">` (an href-having-but-empty link,
- * still spec-`:link` per the same clause) will not match `[href]` here
- * until that's fixed (same underlying bug the `dialog[open]` deferral
- * above cites). Still strictly more correct than the unconditional
- * `a { ... }` this replaces. */
+ * `<a href="">` (an href-having-but-empty link, still spec-`:link` per
+ * the same clause) does match `[href]` here: `raikiri_dom::ElementRef::attr()`
+ * tracks attribute presence independent of value, returning `Some("")`
+ * for a present-but-empty attribute rather than collapsing it to `None`
+ * (same fix the `dialog[open]` deferral note above references). */
 a[href] { color: #0000EE; text-decoration: underline; }
 
 /* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.4) also

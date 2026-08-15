@@ -233,12 +233,19 @@ pub trait Element {
         None
     }
 
-    /// `id` attribute の値。空文字列 `id=""` は `None` を返す (attr lookup と
-    /// 同じ boundary)。複数 token は spec 上 invalid だが raw value をそのまま
-    /// 返す (tokenize しない)。
+    /// `id` attribute の値。空文字列 `id=""` は `None` を返す — CSS
+    /// Selectors L4 の ID selector (`#foo`) は空の ID token と一致しないため、
+    /// この empty-is-absent 正規化は `id()` 固有の contract であり、
+    /// [`Element::attr`] 自体の一般契約ではない (`attr()` は attribute の
+    /// 有無と値を独立に追跡し、空文字列値でも `Some("")` を返す — 詳細は
+    /// [`Element::attr`] の doc 参照)。複数 token は spec 上 invalid だが raw
+    /// value をそのまま返す (tokenize しない)。
     ///
-    /// Default impl は [`Element::attr`]`("id")` に delegate。impl 側は attr
-    /// だけ override すれば id() も追従する (DRY / consistency 契約)。
+    /// Default impl は [`Element::attr`]`("id")` にそのまま delegate するため、
+    /// `attr()` だけを override した impl では `id()` はこの empty-is-absent
+    /// 正規化を自動的には満たさない。空 `id=""` を `None` として扱う必要が
+    /// ある impl (例: `raikiri-dom::dom_impl::ElementRef`) は `id()` 自体を
+    /// 個別に override すること。
     fn id(&self) -> Option<&str> {
         self.attr("id")
     }
@@ -261,13 +268,24 @@ pub trait Element {
     }
 
     /// null-namespace attribute の value を local name で lookup。
-    /// 未設定または空文字列は `None` を返す (spec 上 attribute 有無と empty
-    /// value を区別する scenario が cascade / selector には無いため boundary
-    /// で正規化)。
+    /// **attribute の有無と値は独立に追跡する**: 属性が未設定の場合のみ
+    /// `None`、属性が存在すれば値が空文字列であっても `Some("")` を返す。
+    /// CSS Selectors L4 の attribute-presence selector (`[foo]`) や
+    /// exact-value selector (`[foo=""]`)、および HTML の boolean 属性
+    /// (`disabled` / `open` / `hidden` 等) はいずれも値と無関係な「属性の
+    /// 有無」で判定されるため、空文字列を absent と同一視してはならない。
+    /// (`id` だけが持つ empty-is-absent 正規化は [`Element::id`] 側の個別
+    /// contract であり、この一般 `attr()` には適用されない — 詳細は
+    /// [`Element::id`] の doc 参照。)
     ///
     /// `style` を渡した場合の返り値は [`Element::inline_style_source`] と一致
-    /// する (両者は同じ side を参照する view)。Default impl は "style" のみ
-    /// [`inline_style_source`](Element::inline_style_source) を返し、他は
+    /// する (両者は同じ side を参照する view)。`inline_style_source` 自体は
+    /// 「空の `style=""` は `None`」という別の独自 contract を持つ
+    /// ([`Element::inline_style_source`] の doc 参照) — `style` はこの一般
+    /// `attr()` の有無/値分離ルールの例外として、常に
+    /// `inline_style_source()` へそのまま redirect される。Default impl は
+    /// "style" のみ [`inline_style_source`](Element::inline_style_source) を
+    /// 返し、他は (default 実装には attribute storage が無いため) 常に
     /// `None`。impl 側で `attr` を override する場合も "style" 特別扱いを
     /// 忘れないよう `self.inline_style_source()` へ redirect すること。
     fn attr(&self, local: &str) -> Option<&str> {
