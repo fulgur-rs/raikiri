@@ -16,8 +16,13 @@
 //!    [`PageContext::apply_directive`] entry point — no per-field
 //!    accessor/mutator methods for these 4 (read accessors are narrower and
 //!    separate, see below).
-//! 2. `page_index` / `page_name` are plain `pub` fields — copy-cheap
-//!    scalars with no invariant to protect.
+//! 2. `page_name` is a plain `pub` field — a copy-cheap scalar with no
+//!    invariant to protect. `page_index` is also `pub` (direct writes still
+//!    compile and are still supported), but [`PageContext::begin_page`] is
+//!    now the coordinated way to advance it: it updates `page_index` *and*
+//!    the `targets` registry's own page-local slot-sequence numbering
+//!    together, so the two never drift apart on a page transition — see
+//!    that method's doc for the full contract.
 //!
 //! **Type-promotion design decision**: the dom-local
 //! `raikiri_dom::gcpm::CounterStack` / `raikiri_dom::gcpm::NamedStringState`
@@ -412,11 +417,19 @@ pub struct PageContext {
     /// arm, or in bulk via [`Self::set_targets`] — see both methods' docs.
     targets: TargetRegistry,
     /// 0-based index of the page this context describes (design §7.2).
-    /// Plain `pub` field — copy-cheap scalar, no invariant to protect
-    /// (deliberate design decision).
+    /// Plain `pub` field, directly settable — but [`Self::begin_page`] is
+    /// the preferred way to advance it: it updates this field *and* the
+    /// `targets` registry's own page-local slot-sequence numbering together
+    /// (design §7.2 names `PageContext` as sole owner of both `page_index`
+    /// and `targets` as sibling fields). A direct write here leaves the
+    /// registry's sequence numbering un-advanced — see [`Self::begin_page`]'s
+    /// doc for what that desync looks like.
     pub page_index: u32,
     /// `@page` named-page association in effect for this page, if any
-    /// (design §7.2). Plain `pub` field — same rationale as `page_index`.
+    /// (design §7.2). Plain `pub` field, copy-cheap scalar with no
+    /// invariant to protect — unlike `page_index`, nothing else in this
+    /// context derives from `page_name`, so there is no coordinating method
+    /// for it.
     pub page_name: Option<Symbol>,
 }
 
@@ -545,30 +558,87 @@ impl PageContext {
         }
     }
 
-    /// Page-boundary hook — forwards to every tracked [`NamedStringState`].
-    /// See [`NamedStringState::begin_page`] for why this has no production
-    /// caller yet.
+    /// Page-boundary hook — the coordinated way to advance to a new page.
+    /// Updates three things together: `page_index` itself, every tracked
+    /// [`NamedStringState`] (via [`NamedStringState::begin_page`]), and the
+    /// `targets` registry's own page-local slot-sequence numbering (via
+    /// [`TargetRegistry::begin_page`]). Design §7.2 names `PageContext` as
+    /// sole owner of `page_index` and `targets` as sibling fields; this
+    /// method is what actually keeps the two paired on a transition. No
+    /// production caller exists yet — the per-page walk that would call it
+    /// has not landed yet (same gap [`TargetRegistry::begin_page`]'s doc
+    /// flags).
     ///
-    /// **Lifetime contract**: only `strings` resets here — `counters`,
-    /// `targets`, `page_index`, and
-    /// `page_name` are deliberately left untouched, since `TargetRegistry`
-    /// is per-*document* (not per-page) and `counters`/`page_index`/
-    /// `page_name` carry forward across the page boundary by design (CSS
-    /// Lists 3 §4's counters are document-scoped, not reset per page). This
-    /// implies a single `PageContext` instance must live for the **whole
-    /// document**, mutated in place across pages (this method plus
-    /// reassigning `page_index`/`page_name` per page) — constructing a fresh
-    /// `PageContext` per page would incorrectly discard `targets` and
-    /// `counters` state that must persist.
+    /// **The sole sanctioned way to advance `page_index` from here on.**
+    /// `page_index` remains a directly-writable `pub` field (see its own
+    /// doc) for callers with no need for registry coordination (e.g.
+    /// constructing a `PageContext` for a single, already-known page), but a
+    /// direct write during an in-progress multi-page walk leaves the
+    /// registry's slot-sequence numbering stale — this method exists so a
+    /// driver never has to hand-coordinate the two mechanisms itself.
     ///
-    /// **`targets` still has its own, separate page-boundary obligation**:
-    /// `TargetRegistry` being per-document (`resolved`
-    /// / `pending_slots` persist across pages, per the contract above) is
-    /// orthogonal to its *internal* slot-id sequence numbering, which design
-    /// §7.6 defines as page-local. This method does not cover it — see
-    /// [`TargetRegistry::begin_page`] for the obligation and how a driver
-    /// reaches it.
-    pub fn begin_page(&mut self) {
+    /// **Call order inside this method is registry-first, deliberately.**
+    /// [`TargetRegistry::begin_page`] asserts `page_index` is monotonically
+    /// non-decreasing (design §7.6) and panics otherwise — see its own doc
+    /// "Panics". Calling it before mutating `self.page_index` / `self.strings`
+    /// means a panic here leaves every field untouched (still paired with
+    /// the *previous* page), rather than leaving `page_index` advanced while
+    /// `targets` is stuck on the old page — exactly the desync this method
+    /// exists to rule out.
+    ///
+    /// **Lifetime contract, otherwise unchanged from before this method
+    /// coordinated `targets`**: `counters` carries forward across the page
+    /// boundary untouched (CSS Lists 3 §4's counters are document-scoped,
+    /// not reset per page), and `targets`'s own `resolved` / `pending_slots`
+    /// maps persist across pages too (`TargetRegistry` is per-*document*,
+    /// only its internal sequence numbering is page-local). This implies a
+    /// single `PageContext` instance must live for the **whole document**,
+    /// mutated in place across pages via repeated calls to this method —
+    /// constructing a fresh `PageContext` per page would incorrectly
+    /// discard `targets` and `counters` state that must persist.
+    ///
+    /// **`page_name` is not touched here** — nothing else in this context
+    /// derives from it, so unlike `page_index` there is no coordinating
+    /// obligation; callers still assign it directly (see its own field
+    /// doc).
+    ///
+    /// **Idempotence asymmetry on a same-`page_index` call.**
+    /// [`TargetRegistry::begin_page`] treats a same-index call as a no-op
+    /// (redundant same-page calls don't corrupt an in-progress page's
+    /// sequence count — see its own doc), but
+    /// [`NamedStringState::begin_page`] is not similarly guarded: calling
+    /// this method twice with the same `page_index` re-snapshots `running`
+    /// into `on_page_start` and clears the first/last-use trackers a second
+    /// time. A driver must still call this once per genuine page
+    /// transition, not defensively on every dispatch.
+    ///
+    /// **Residual gap this method does not close: [`Self::set_targets`].**
+    /// Calling `set_targets` *after* this method replaces `targets`
+    /// wholesale with whatever page-index state the incoming
+    /// `TargetRegistry` already carries — if that registry is freshly
+    /// constructed (page index 0) or otherwise behind, the desync this
+    /// method exists to prevent reappears, just through the bulk-replace
+    /// path instead of a bare field write. The `RegisterTarget` arm of
+    /// [`Self::apply_directive`] already documents a call-order convention
+    /// requiring `set_targets` before directive-driven registration for an
+    /// unrelated reason; this adds a second, page-boundary-shaped reason to
+    /// call `set_targets` before, not after, this method's call for a given
+    /// page.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `page_index` is less than the value most recently passed
+    /// to this method — forwarded from [`TargetRegistry::begin_page`]'s own
+    /// monotonic invariant (design §7.6: `page_index` must advance in
+    /// emitted order). See that method's doc "Panics" for the full
+    /// rationale.
+    pub fn begin_page(&mut self, page_index: u32) {
+        // Registry first — its `assert!` runs before either of the other
+        // two mutations below, so a panic here leaves this whole call a
+        // no-op rather than a partially-applied page transition. See this
+        // method's doc "Call order inside this method is registry-first".
+        self.targets.begin_page(page_index);
+        self.page_index = page_index;
         for state in self.strings.values_mut() {
             state.begin_page();
         }
@@ -1103,7 +1173,7 @@ mod tests {
                 source: ContentSource::new(vec![ContentValueItem::Literal("A".into())]),
             });
 
-            ctx.begin_page();
+            ctx.begin_page(1);
 
             assert!(ctx.string_state(&a).unwrap().on_page_start().is_some());
             assert!(ctx.string_state(&a).unwrap().on_page_first_use().is_none());
@@ -1181,6 +1251,103 @@ mod tests {
                 out,
                 crate::page::ResolveOutcome::Resolved("Real Title".to_owned()),
                 "set_targets's richer TargetInfo must survive the later counts-only RegisterTarget"
+            );
+        }
+    }
+
+    // ── PageContext::begin_page ────────────────────────────
+
+    mod begin_page_tests {
+        use super::*;
+
+        #[test]
+        fn begin_page_updates_the_page_index_field() {
+            let mut ctx = PageContext::default();
+            assert_eq!(ctx.page_index, 0);
+            ctx.begin_page(3);
+            assert_eq!(ctx.page_index, 3);
+        }
+
+        #[test]
+        fn begin_page_forwards_page_index_to_the_targets_registry() {
+            // The coordination this method exists for: a slot minted after
+            // begin_page(7) must be stamped with page_index 7, not the
+            // registry's stale prior value — that staleness is exactly the
+            // desync a bare `ctx.page_index = 7` write (with no registry
+            // call) would leave behind.
+            let mut ctx = PageContext::default();
+            ctx.begin_page(7);
+
+            let mut registry = ctx.targets().clone();
+            let out = registry.resolve_target_counter(
+                "#not-yet-registered",
+                Symbol::new("chapter"),
+                CounterStyle::Decimal,
+            );
+            assert_eq!(
+                out,
+                crate::page::ResolveOutcome::Pending(crate::error::TargetSlotId {
+                    page_index: 7,
+                    sequence: 0,
+                }),
+                "a slot minted after begin_page(7) must be stamped with page_index 7"
+            );
+        }
+
+        #[test]
+        fn begin_page_resets_the_registrys_page_local_sequence_counter() {
+            let mut ctx = PageContext::default();
+
+            // Mint a slot on page 0 to advance next_sequence past 0.
+            let mut registry = ctx.targets().clone();
+            registry.resolve_target_counter("#a", Symbol::new("c"), CounterStyle::Decimal);
+            ctx.set_targets(registry);
+
+            ctx.begin_page(1);
+
+            let mut registry = ctx.targets().clone();
+            let out =
+                registry.resolve_target_counter("#b", Symbol::new("c"), CounterStyle::Decimal);
+            assert_eq!(
+                out,
+                crate::page::ResolveOutcome::Pending(crate::error::TargetSlotId {
+                    page_index: 1,
+                    sequence: 0,
+                }),
+                "the page-local sequence must restart at 0 on a new page, not \
+                 continue from page 0's count"
+            );
+        }
+
+        #[test]
+        #[should_panic(expected = "monotonically")]
+        fn begin_page_backward_call_panics_through_page_context() {
+            // TargetRegistry::begin_page's own monotonic-page_index assert
+            // must be reachable through this coordinating method, not just
+            // when TargetRegistry is driven directly.
+            let mut ctx = PageContext::default();
+            ctx.begin_page(5);
+            ctx.begin_page(3);
+        }
+
+        #[test]
+        fn begin_page_backward_call_panic_leaves_page_index_unchanged() {
+            // Registry-first call order (see begin_page's doc "Call order
+            // inside this method is registry-first"): the assert! in
+            // TargetRegistry::begin_page fires before self.page_index is
+            // reassigned, so a caught panic must leave page_index paired
+            // with the *last successful* call, not torn (advanced) while
+            // targets stayed on the old page.
+            let mut ctx = PageContext::default();
+            ctx.begin_page(5);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                ctx.begin_page(3);
+            }));
+            assert!(result.is_err(), "backward begin_page call must panic");
+            assert_eq!(
+                ctx.page_index, 5,
+                "a panicking begin_page call must not partially apply — page_index \
+                 must remain paired with the last successful call"
             );
         }
     }
