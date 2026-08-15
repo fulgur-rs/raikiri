@@ -512,10 +512,14 @@ fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
 /// で解決される)。Full fix は html-parser の scope 判断待ちで、現状は未実装。
 ///
 /// `title` 属性付き `rel="alternate stylesheet"` の preferred/selected
-/// stylesheet set semantics も未実装: 空 title の扱いは CSSOM の algorithm
-/// 通り (無条件適用) だが、非空 title を持つ alternate link はこの crate に
-/// stylesheet-set concept が無いため常に適用されてしまう
-/// (future work として defer)。
+/// stylesheet set semantics は未実装 — 非空 title を持つ alternate link を
+/// 常に除外する挙動とその spec 上の根拠は `is_stylesheet_link` の doc
+/// 参照。逆方向の残存する spec 逸脱もここに書いておく (`is_stylesheet_link`
+/// 側ではカバーされていない点): 非 alternate な titled link (preferred
+/// stylesheet) は preferred set の追跡が無いため常に適用してしまい、spec
+/// 通りなら「複数の named stylesheet set のうち preferred set 以外は
+/// 無効化する」べきところを無視している。この逸脱は `<link>` /
+/// `<style>` 双方に共通する。
 pub(crate) fn collect_external_stylesheet_hrefs(
     doc: &Document,
 ) -> Vec<(raikiri_traits::NodeId, String)> {
@@ -549,7 +553,7 @@ pub(crate) fn collect_external_stylesheet_hrefs(
         }
         if let Some(el) = node.as_element()
             && el.tag_name() == "link"
-            && is_stylesheet_link(el.attr("rel"), el.attr("type"))
+            && is_stylesheet_link(el.attr("rel"), el.attr("type"), el.attr("title"))
             && let Some(href) = el.attr("href")
         {
             // `href`'s attribute type is "valid non-empty URL potentially
@@ -583,14 +587,52 @@ pub(crate) fn collect_external_stylesheet_hrefs(
 /// `type` 属性の比較は `;` 以降 (MIME parameter、例:
 /// `text/css; charset=utf-8`) を無視する — browser の実際の "type attribute
 /// gate" 挙動 (MIME parameter は無視、essence のみ比較) に合わせる。
-fn is_stylesheet_link(rel: Option<&str>, type_attr: Option<&str>) -> bool {
+///
+/// `rel` に `alternate` トークンも含み、かつ `title` 属性が非空の場合は
+/// 無条件に false を返す (適用しない)。CSSOM "add a CSS style sheet"
+/// (<https://drafts.csswg.org/cssom/#add-a-css-style-sheet>) の algorithm
+/// では、この種のスタイルシートは以下によってのみ有効になる:
+///
+/// - step 4: alternate flag が unset かつ preferred stylesheet set name が
+///   空文字列の場合に限り、そのシートの title で preferred set name を
+///   書き換える (= alternate なシートは preferred set name の決定に関与
+///   しない)。
+/// - step 5: disabled flag を unset するのは、title が空文字列 / title が
+///   preferred set name (last set name が null の場合) と一致 / title が
+///   last (= user が選択した) set name と一致、のいずれか。
+///
+/// つまり非空 title を持つ alternate stylesheet が有効になるかどうかは、
+/// 同一文書内の他の `<link>` の title (preferred set name の決定) や
+/// user のスタイルシートセット選択 (last set name) 次第であり、この
+/// crate には両方の追跡機構が一切無い。この関数は単一の `<link>` の
+/// 属性だけを見る stateless な predicate なので、この判定を行う手段が
+/// 無く、常に除外する — 「選択されている場合が spec 上あり得ない」の
+/// ではなく、「選択されているかどうかをこの predicate の情報だけでは
+/// 判定できない」が正確な理由。空 title の alternate stylesheet は
+/// step 5 の第一分岐 (title が空文字列) により無条件で disabled flag が
+/// unset されるので、従来通り適用対象のまま。
+fn is_stylesheet_link(rel: Option<&str>, type_attr: Option<&str>, title: Option<&str>) -> bool {
     let Some(rel) = rel else {
         return false;
     };
-    let has_stylesheet_token = rel
-        .split_ascii_whitespace()
-        .any(|token| token.eq_ignore_ascii_case("stylesheet"));
+    let mut has_stylesheet_token = false;
+    let mut has_alternate_token = false;
+    for token in rel.split_ascii_whitespace() {
+        if token.eq_ignore_ascii_case("stylesheet") {
+            has_stylesheet_token = true;
+        } else if token.eq_ignore_ascii_case("alternate") {
+            has_alternate_token = true;
+        }
+    }
     if !has_stylesheet_token {
+        return false;
+    }
+    // Titled alternate stylesheet: excluded unconditionally, see doc
+    // comment above. Checks non-emptiness directly (rather than relying on
+    // `Element::attr`'s empty-string-to-`None` normalization at the sole
+    // call site) so the predicate is self-consistent for any caller,
+    // including this module's own unit tests below.
+    if has_alternate_token && title.is_some_and(|t| !t.is_empty()) {
         return false;
     }
     type_attr.is_none_or(|t| {
@@ -676,42 +718,51 @@ mod stylesheet_link_tests {
 
     #[test]
     fn no_rel_attribute_is_not_a_stylesheet_link() {
-        assert!(!is_stylesheet_link(None, None));
+        assert!(!is_stylesheet_link(None, None, None));
     }
 
     #[test]
     fn rel_without_stylesheet_token_is_not_a_stylesheet_link() {
-        assert!(!is_stylesheet_link(Some("icon"), None));
+        assert!(!is_stylesheet_link(Some("icon"), None, None));
     }
 
     #[test]
     fn rel_stylesheet_token_is_case_insensitive() {
-        assert!(is_stylesheet_link(Some("StyleSheet"), None));
-        assert!(is_stylesheet_link(Some("STYLESHEET"), None));
+        assert!(is_stylesheet_link(Some("StyleSheet"), None, None));
+        assert!(is_stylesheet_link(Some("STYLESHEET"), None, None));
     }
 
     #[test]
     fn rel_stylesheet_among_multiple_space_separated_tokens_matches() {
-        assert!(is_stylesheet_link(Some("alternate stylesheet"), None));
-        assert!(is_stylesheet_link(Some("stylesheet next"), None));
+        assert!(is_stylesheet_link(Some("alternate stylesheet"), None, None));
+        assert!(is_stylesheet_link(Some("stylesheet next"), None, None));
     }
 
     #[test]
     fn absent_type_attribute_is_treated_as_stylesheet() {
-        assert!(is_stylesheet_link(Some("stylesheet"), None));
+        assert!(is_stylesheet_link(Some("stylesheet"), None, None));
     }
 
     #[test]
     fn type_text_css_case_insensitive_is_treated_as_stylesheet() {
-        assert!(is_stylesheet_link(Some("stylesheet"), Some("text/css")));
-        assert!(is_stylesheet_link(Some("stylesheet"), Some("Text/CSS")));
+        assert!(is_stylesheet_link(
+            Some("stylesheet"),
+            Some("text/css"),
+            None
+        ));
+        assert!(is_stylesheet_link(
+            Some("stylesheet"),
+            Some("Text/CSS"),
+            None
+        ));
     }
 
     #[test]
     fn non_css_type_attribute_is_not_treated_as_stylesheet() {
         assert!(!is_stylesheet_link(
             Some("stylesheet"),
-            Some("application/rss+xml")
+            Some("application/rss+xml"),
+            None
         ));
     }
 
@@ -722,11 +773,13 @@ mod stylesheet_link_tests {
         // matters.
         assert!(is_stylesheet_link(
             Some("stylesheet"),
-            Some("text/css; charset=utf-8")
+            Some("text/css; charset=utf-8"),
+            None
         ));
         assert!(is_stylesheet_link(
             Some("stylesheet"),
-            Some("TEXT/CSS;charset=UTF-8")
+            Some("TEXT/CSS;charset=UTF-8"),
+            None
         ));
     }
 
@@ -734,7 +787,64 @@ mod stylesheet_link_tests {
     fn non_css_essence_with_mime_parameter_is_not_treated_as_stylesheet() {
         assert!(!is_stylesheet_link(
             Some("stylesheet"),
-            Some("application/rss+xml; charset=utf-8")
+            Some("application/rss+xml; charset=utf-8"),
+            None
+        ));
+    }
+
+    #[test]
+    fn untitled_alternate_stylesheet_is_treated_as_stylesheet() {
+        // CSSOM "add a CSS style sheet" step 5: an empty title unsets the
+        // disabled flag unconditionally, regardless of the alternate flag.
+        assert!(is_stylesheet_link(Some("alternate stylesheet"), None, None));
+    }
+
+    #[test]
+    fn empty_string_title_on_alternate_stylesheet_is_treated_as_stylesheet() {
+        // Same as the `None` case above, but exercises `Some("")` directly
+        // rather than relying on the call site's `Element::attr` contract
+        // (which normalizes an empty attribute value to `None` before this
+        // function ever sees it) to collapse the two.
+        assert!(is_stylesheet_link(
+            Some("alternate stylesheet"),
+            None,
+            Some("")
+        ));
+    }
+
+    #[test]
+    fn titled_alternate_stylesheet_is_excluded() {
+        // CSSOM "add a CSS style sheet" step 4-6: a titled alternate
+        // stylesheet only has its disabled flag unset if it matches the
+        // page's preferred/selected stylesheet set. This crate tracks
+        // neither, so it can never legitimately be "selected" — excluded
+        // unconditionally rather than applied as if always preferred.
+        assert!(!is_stylesheet_link(
+            Some("alternate stylesheet"),
+            None,
+            Some("High Contrast")
+        ));
+    }
+
+    #[test]
+    fn titled_alternate_stylesheet_is_excluded_regardless_of_type_match() {
+        assert!(!is_stylesheet_link(
+            Some("stylesheet alternate"),
+            Some("text/css"),
+            Some("High Contrast")
+        ));
+    }
+
+    #[test]
+    fn titled_non_alternate_stylesheet_link_still_applies() {
+        // No `alternate` token in `rel` — a titled *non-alternate* link is
+        // the preferred stylesheet (its title becomes the page's preferred
+        // stylesheet set name, per CSSOM "add a CSS style sheet" step 4),
+        // so it's unaffected by the alternate-only exclusion.
+        assert!(is_stylesheet_link(
+            Some("stylesheet"),
+            None,
+            Some("Default")
         ));
     }
 }

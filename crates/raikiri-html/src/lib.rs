@@ -383,6 +383,26 @@ mod tests {
         }
 
         #[test]
+        fn parse_skips_titled_alternate_stylesheet_without_fetching() {
+            // CSSOM "add a CSS style sheet" only unsets the disabled flag
+            // for a titled alternate stylesheet when it matches the page's
+            // preferred/selected stylesheet set — a concept this crate does
+            // not track (`is_stylesheet_link` doc). Proves the `title`
+            // attribute actually reaches `is_stylesheet_link` through
+            // `collect_external_stylesheet_hrefs`'s `el.attr("title")` call,
+            // not just that the predicate itself is correct in isolation.
+            let provider = PanicIfCalledProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="alternate stylesheet" title="High Contrast" href="https://example.test/high-contrast.css"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert!(uncascaded.stylesheet_sources.is_empty());
+        }
+
+        #[test]
         fn parse_ignores_href_missing_link_stylesheet() {
             let provider = PanicIfCalledProvider;
             let opts = ParseOptions {
