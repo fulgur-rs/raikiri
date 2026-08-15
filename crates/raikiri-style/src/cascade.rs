@@ -27,6 +27,7 @@
 //! winner 適用の途中で絶対化することはできない)。
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ops::Range;
 
 use cssparser::{Parser, ParserInput};
@@ -1317,6 +1318,143 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 /// not this function's implementation technique; that logical recursion is
 /// realized here as the explicit stack's push/pop, never the native call
 /// stack.
+///
+/// # Memoization: bounding backtracking to polynomial time
+///
+/// The explicit-stack rewrite above removes the native-stack-overflow risk,
+/// but on its own does nothing about a second, independent problem: the
+/// backtracking itself. [`Combinator::Descendant`]'s retry (this doc's
+/// "load-bearing" note above) tries every remaining ancestor as a candidate,
+/// and — when a candidate's compound matches but everything further left
+/// ultimately fails to complete the match — falls back to the next
+/// (farther) candidate. When every remaining ancestor's compound matches
+/// (e.g. a `div`-only complex selector against a chain of `<div>`s) and the
+/// selector is ultimately unsatisfiable (typically: it needs more ancestor
+/// "slots" than the chain actually has, at that point in the search), every
+/// combination of candidates gets tried before the search can conclude
+/// failure. Writing `S(k)` for the number of [`match_from_element`] calls
+/// needed to *prove* failure with `k` ancestors available and always more
+/// remaining compounds than ancestors (the unsatisfiable case) gives the
+/// recurrence `S(0) = 1`, `S(k) = S(0) + S(1) + ... + S(k-1)` (one recursive
+/// call per candidate, ancestors-remaining shrinking from `k-1` down to `0`
+/// as the candidate gets farther from the target) — which solves to
+/// `S(k) = 2^(k-1)` for `k >= 1`. A `div`-only complex selector with exactly
+/// as many compounds as the ancestor chain is deep (the "exact fit" case —
+/// every compound has a slot, no unsatisfiable point is ever reached) does
+/// *not* hit this bound: it matches via the same greedy
+/// nearest-candidate-first path this doc's [`Combinator::Descendant`] note
+/// describes, and the retry loop is never actually exercised because the
+/// very first candidate at every level already leads to a full match. The
+/// same selector with **one extra compound** (so the chain is one ancestor
+/// short of what the selector needs, the minimal unsatisfiable case) is the
+/// one that hits `S(k) = 2^(k-1)` — confirmed empirically (this crate's
+/// `TestDoc` mock, `match_complex_selector_list` timed directly) to match
+/// this scaling. This is an untrusted-depth CPU-exhaustion vulnerability,
+/// not merely a slow path: a sufficiently deep DOM chain
+/// (attacker-controlled markup depth) matched against a same-shape selector
+/// (attacker-controlled stylesheet) makes `S(k)` explode long before any
+/// stack limit is reached — the *fixed* [`match_combinator_chain`] above
+/// still performed 2^(k-1) [`match_from_element`] calls, just on the heap
+/// instead of the native stack.
+///
+/// Content mismatch (not just a numeric shortfall) can trigger the exact
+/// same blowup: e.g. a selector whose leftmost compound is `span` matched
+/// against a chain where every ancestor is `div`, with the compound *count*
+/// otherwise exactly matching the ancestor count. The `span` compound never
+/// matches any candidate, so the search is just as unsatisfiable as the
+/// "one compound too many" case above, and every combination of candidates
+/// for the intervening `div` compounds still gets tried before the `span`
+/// failure is reached each time — choosing an ancestor at position `i`
+/// (instead of the nearest one) leaves `i - 1` ancestors for `m - 1`
+/// remaining compounds, and unless `i` happens to be exactly the position
+/// that keeps the count matching, this only defers the failure rather than
+/// pruning it. A fix that only compares compound and ancestor *counts*
+/// (rejecting whenever remaining compounds exceed remaining ancestors)
+/// would close the first shape but not this one — an attacker can always
+/// reach it with a one-token substitution in an otherwise-exact-fit
+/// selector, e.g. swapping one `div` for a compound the DOM never has.
+///
+/// The fix memoizes **candidates already proven to fail** — same
+/// motivation as memoized backtracking in text-pattern matching (the
+/// classic fix for the analogous `a?a?a?...aaa...a` vs `aaa...a`
+/// exponential-regex-backtracking shape), applied here to a fixed
+/// ancestor/sibling chain instead of a string. The key insight: at the
+/// point [`match_combinator_chain`]'s loop is about to try `candidate_id`
+/// against the compound `frame` (the current top of the explicit stack)
+/// introduces, "does `candidate_id` satisfy this compound *and* everything
+/// further left" is a pure function of exactly two things —
+///
+/// - `candidate_id` itself (which pins down its exact position in the
+///   fixed ancestor chain, and hence its own remaining-ancestors slice —
+///   see the soundness argument below), and
+/// - how many compounds are left to satisfy, i.e. how many frames are
+///   currently on `stack` (`stack.len()`, called `depth` below — every
+///   combinator, of all four kinds, pushes exactly one frame per level, so
+///   this is a stable position marker for "which compound in the fixed
+///   original chain are we about to test" regardless of how many
+///   backtracking attempts came before).
+///
+/// So `(candidate_id, depth)` is used as the memo key. **Soundness
+/// argument for why `depth` need not be paired with the ancestors slice
+/// itself**: every `ancestors`/`candidate_ancestors` value that ever
+/// appears anywhere in this search — whether produced by
+/// [`Combinator::Child`]/[`Combinator::Descendant`]'s `split_last`-based
+/// shrinking or inherited unchanged through a
+/// [`Combinator::NextSibling`]/[`Combinator::LaterSibling`] jump (siblings
+/// share a parent, hence share the same full ancestor chain — this doc's
+/// "load-bearing" retry note establishes this for the shrinking case, and
+/// [`match_from_element`]'s own doc establishes it for the sibling case) —
+/// is always *some prefix* of the one fixed root-to-target
+/// ancestor array this function's own `ancestors` parameter starts with
+/// (shrinking only ever drops the array's own tail, and passing it through
+/// unchanged is trivially still the same prefix). That original array has
+/// no repeated node (it is a single straight ancestor chain in a tree, and
+/// a tree has no cycles), so a specific node's position within it — and
+/// hence the length of the "everything above this node" prefix — is fixed
+/// once and for all by which node it is, independent of which backtracking
+/// path reached it. So `candidate_id` alone already determines the
+/// ancestors it will be evaluated against; there is no way for the same
+/// `(candidate_id, depth)` pair to legitimately mean two different
+/// sub-problems.
+///
+/// Recording: a candidate is memoized as failed either immediately (its
+/// compound didn't match at all) or once the frame it was pushed into (for
+/// its own further-left continuation) is fully exhausted without a match —
+/// at that point `(candidate_id, depth)` is a *proven* dead end, valid for
+/// every future backtracking path that might otherwise re-examine the same
+/// candidate at the same position. The one exception is `depth == 1` (the
+/// outermost frame, this function's own entry point): nothing ever pushes a
+/// *second* frame back down to `stack.len() == 1`, so that frame is visited
+/// exactly once per call regardless of how many of its own candidates get
+/// tried — a `depth == 1` failure can provably never be looked up again, so
+/// the immediate-mismatch recording below skips it rather than pay for an
+/// `insert` (and, on a query that never backtracks at all, the memo's first
+/// heap allocation) that nothing will ever read. Successes are never
+/// memoized either: finding one short-circuits the whole search immediately
+/// (`return true`), so there is never a later query for it to serve. Every
+/// other `(candidate_id, depth)` pair is thus fully resolved (real work,
+/// not a cache hit) at most once per [`match_combinator_chain`] call,
+/// bounding the total number of [`match_from_element`] calls to a
+/// low-degree polynomial in the ancestor/compound counts instead of
+/// `2^depth`. The memo (`HashSet`) is created fresh per call and never
+/// shared across calls — [`Combinator::Descendant`]'s search space for one
+/// element/selector pair has no bearing on any other — and `HashSet::new()`
+/// performs no heap allocation until the first `insert`, so the common
+/// shape of a shallow selector (few combinators, hence few distinct
+/// `depth` values) failing at its very first (`depth == 1`) combinator
+/// check — e.g. `nav > a` where `nav` itself doesn't match anything —
+/// touches the memo only via lookups against an empty set and pays nothing
+/// beyond the empty struct. Selectors with more combinators that still
+/// resolve without ever backtracking do perform a handful of `insert`s (at
+/// most one per combinator actually walked, not `2^depth` of them) even
+/// though nothing reads them back in that particular call.
+///
+/// This bound is not specific to [`Combinator::Descendant`]: the same memo
+/// applies uniformly to every candidate examined in this function's loop,
+/// regardless of which combinator produced it, so the identical
+/// pathological shape on a [`Combinator::LaterSibling`] chain (`* ~ * ~ *
+/// ~ ... ~ *` against a run of uniformly-matching siblings) is bounded the
+/// same way, as a direct consequence rather than a separate fix.
 fn match_combinator_chain<D: StyleDom>(
     dom: &D,
     combinator: Combinator,
@@ -1344,14 +1482,31 @@ fn match_combinator_chain<D: StyleDom>(
         /// broader allocation picture may be revisited in future perf
         /// work).
         iter: SelectorIter<'s, RaikiriSelectorImpl>,
+        /// `(candidate_id, depth)` memo key this frame was pushed *for* —
+        /// i.e. what to record as a proven dead end in `memo` once this
+        /// frame's own candidates are exhausted without a match (see this
+        /// function's "Memoization" doc). `None` only for the outermost
+        /// frame (pushed directly from this function's own arguments, not
+        /// from a candidate choice one level up — there is nothing to
+        /// record a failure *against* for it, and its own exhaustion is
+        /// this function's overall `false` return, not a sub-result any
+        /// other choice point could ever re-query).
+        origin: Option<(StyleNodeId, usize)>,
     }
 
+    let mut memo: HashSet<(StyleNodeId, usize)> = HashSet::new();
     let mut stack = vec![Frame {
         candidates: pending_candidates_for(dom, combinator, current_id, ancestors),
         ancestors_unchanged: ancestors,
         iter,
+        origin: None,
     }];
     loop {
+        // `stack.len()` at this point uniquely identifies "which compound
+        // in the fixed original chain the frame about to be examined
+        // introduced" — see this function's "Memoization" doc for why this
+        // is a stable position marker independent of backtracking history.
+        let depth = stack.len();
         let Some(frame) = stack.last_mut() else {
             // Outermost choice point exhausted with no full match found.
             return false;
@@ -1360,10 +1515,23 @@ fn match_combinator_chain<D: StyleDom>(
             frame.candidates.next(dom, frame.ancestors_unchanged)
         else {
             // This level's candidates are exhausted — backtrack to the
-            // parent choice point's next candidate.
-            stack.pop();
+            // parent choice point's next candidate. Everything this frame
+            // could have tried has failed, so the candidate that led here
+            // (if any — the outermost frame has none) is now a proven dead
+            // end for any other backtracking path that reaches it too.
+            let popped = stack.pop().expect("frame just borrowed via last_mut");
+            if let Some(key) = popped.origin {
+                memo.insert(key);
+            }
             continue;
         };
+        if memo.contains(&(candidate_id, depth)) {
+            // A different backtracking path already proved this exact
+            // candidate fails at this exact position in the chain — skip
+            // straight to this frame's next candidate without redoing the
+            // (possibly deep) exploration.
+            continue;
+        }
         let candidate_iter = frame.iter.clone();
         let Some(mut matched_iter) = match_from_element(
             dom,
@@ -1373,12 +1541,23 @@ fn match_combinator_chain<D: StyleDom>(
             quirks_mode,
         ) else {
             // Candidate's compound didn't match — try this frame's next
-            // candidate (loop back without push/pop).
+            // candidate (loop back without push/pop). Immediate failure,
+            // same as an exhausted pushed frame would record. Skipped at
+            // `depth == 1`: that's the outermost frame, visited exactly
+            // once per call (nothing ever pushes a second frame back down
+            // to `stack.len() == 1`), so a depth-1 entry can provably never
+            // be read back — recording it would just be a wasted `insert`
+            // (and, on an otherwise retry-free failure, the first heap
+            // allocation this memo would ever make).
+            if depth != 1 {
+                memo.insert((candidate_id, depth));
+            }
             continue;
         };
         match matched_iter.next_sequence() {
             // No further combinator to the left: the whole complex
-            // selector matched.
+            // selector matched. Short-circuits immediately — nothing to
+            // memoize, there is no later query this result could serve.
             None => return true,
             Some(next_combinator) => {
                 // Compound matched and more remains further left — descend
@@ -1392,6 +1571,7 @@ fn match_combinator_chain<D: StyleDom>(
                     ),
                     ancestors_unchanged: candidate_ancestors,
                     iter: matched_iter,
+                    origin: Some((candidate_id, depth)),
                 });
             }
         }
@@ -4718,6 +4898,153 @@ mod tests {
         );
     }
 
+    /// Builds a `depth`-deep uniformly-tagged `<div>` chain (root's first
+    /// child down to the deepest, returned as `(doc, deepest_id,
+    /// ancestors_of_deepest)`) and a `div`-only descendant-combinator
+    /// selector with `compounds` compounds — the shape
+    /// [`match_combinator_chain`]'s "Memoization" doc empirically measures.
+    /// `compounds == depth` is the "exact fit" case (every compound has an
+    /// ancestor slot; matches almost immediately via the greedy
+    /// nearest-candidate path). `compounds == depth + 1` is the minimal
+    /// *unsatisfiable* case (one ancestor short of what the selector
+    /// needs) — this is the one that drove `2^(depth-1)`
+    /// [`match_from_element`] calls before this test's fix (see that doc
+    /// for the derivation and measured pre-fix timings at smaller depths).
+    fn uniform_div_chain_and_selector(
+        depth: usize,
+        compounds: usize,
+    ) -> (
+        TestDoc,
+        StyleNodeId,
+        Vec<StyleNodeId>,
+        SelectorList<RaikiriSelectorImpl>,
+    ) {
+        let mut doc = TestDoc::new();
+        let mut parent = 0usize;
+        let mut ids = Vec::with_capacity(depth);
+        for _ in 0..depth {
+            parent = doc.push_element(parent, "div", None);
+            ids.push(parent);
+        }
+        let target_id = StyleNodeId::new(*ids.last().expect("depth > 0") as u64);
+        let ancestors: Vec<StyleNodeId> = ids[..ids.len() - 1]
+            .iter()
+            .map(|&id| StyleNodeId::new(id as u64))
+            .collect();
+        let selector = vec!["div"; compounds].join(" ");
+        let list = crate::parse_selector_list(&selector).expect("selector parses");
+        (doc, target_id, ancestors, list)
+    }
+
+    /// This is the DoS this branch fixes: an attacker-controlled markup
+    /// depth matched against an attacker-controlled (or even entirely
+    /// ordinary, e.g. deeply nested `<div>`s) stylesheet could drive
+    /// [`Combinator::Descendant`] backtracking to `2^(depth-1)`
+    /// [`match_from_element`] calls — CPU exhaustion with no crash, no
+    /// stack limit involved (distinct from `deep_child_combinator_chain_
+    /// small_stack_no_overflow`'s native-stack-overflow concern above,
+    /// which the explicit-`Vec`-stack rewrite already fixed independently
+    /// of this test). Depth 200 with the pre-fix (unmemoized) backtracking
+    /// search would need on the order of `2^198` `match_from_element`
+    /// calls to conclude "no match" — not slow, simply never finishing on
+    /// any real machine (`match_combinator_chain`'s "Memoization" doc has
+    /// the exact recurrence, confirmed empirically at smaller depths to
+    /// match `2^(k-1)` scaling).
+    ///
+    /// Post-fix (memoized), the same 200-deep unsatisfiable case is bounded
+    /// polynomially in the ancestor/compound counts and completes in a
+    /// small fraction of a second — asserted here with a generous 5s
+    /// bound (not a tight one) so this doesn't flake under a loaded gate
+    /// run; the point is "no longer exponential", not a precise benchmark
+    /// (formal benchmarking is out of scope for this change).
+    #[test]
+    fn descendant_combinator_deep_unsatisfiable_chain_does_not_explode() {
+        let depth = 200;
+        let (doc, target_id, ancestors, list) = uniform_div_chain_and_selector(depth, depth + 1);
+        let node = doc.node(target_id).unwrap();
+        let elem = node.as_element().unwrap();
+
+        let start = std::time::Instant::now();
+        let result = match_complex_selector_list(
+            &list,
+            &doc,
+            &elem,
+            target_id,
+            &ancestors,
+            StyleQuirksMode::NoQuirks,
+        );
+        let elapsed = start.elapsed();
+
+        assert_eq!(
+            result,
+            None,
+            "a {}-compound div-only selector against a {depth}-deep div chain is \
+             genuinely unsatisfiable (one compound more than there are ancestor \
+             slots) — must resolve to no match, not merely resolve fast",
+            depth + 1
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "match_combinator_chain's Descendant backtracking must be memoized \
+             to polynomial time — took {elapsed:?} for a {depth}-deep unsatisfiable \
+             chain, which the pre-fix exponential backtracking could never \
+             realistically finish at all"
+        );
+    }
+
+    /// Sibling case of the test directly above — same pathological shape
+    /// ([`match_combinator_chain`]'s "Memoization" doc notes the memo
+    /// bounds `Combinator::LaterSibling` backtracking identically, as a
+    /// consequence of being keyed generically rather than per-combinator).
+    /// `* ~ * ~ ... ~ *` (general-sibling combinators) against a run of
+    /// uniformly-matching siblings, with one compound more than there are
+    /// preceding siblings to satisfy them — the minimal unsatisfiable case
+    /// on the sibling axis instead of the ancestor axis.
+    #[test]
+    fn later_sibling_combinator_deep_unsatisfiable_run_does_not_explode() {
+        let sibling_count = 200;
+        let mut doc = TestDoc::new();
+        for _ in 0..sibling_count {
+            doc.push_element(0, "div", None);
+        }
+        let target = doc.push_element(0, "div", None);
+        let target_id = StyleNodeId::new(target as u64);
+        // `target` has `sibling_count` preceding `<div>` siblings and no
+        // ancestor element (root-level, same layout the existing sibling
+        // acceptance tests above use to exercise the `ancestors.last() ==
+        // None -> dom.root_id()` fallback).
+        let selector = vec!["div"; sibling_count + 2].join(" ~ ");
+        let list = crate::parse_selector_list(&selector).expect("selector parses");
+        let node = doc.node(target_id).unwrap();
+        let elem = node.as_element().unwrap();
+
+        let start = std::time::Instant::now();
+        let result = match_complex_selector_list(
+            &list,
+            &doc,
+            &elem,
+            target_id,
+            &[],
+            StyleQuirksMode::NoQuirks,
+        );
+        let elapsed = start.elapsed();
+
+        assert_eq!(
+            result,
+            None,
+            "a {}-compound div-only general-sibling selector against {sibling_count} \
+             preceding siblings is genuinely unsatisfiable (one compound more than \
+             there are preceding-sibling slots) — must resolve to no match",
+            sibling_count + 2
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "LaterSibling backtracking must be bounded by the same memo as \
+             Descendant — took {elapsed:?} for {sibling_count} unsatisfiable \
+             siblings"
+        );
+    }
+
     #[test]
     fn match_complex_selector_list_rejects_unsupported_component_via_safety_net() {
         // pseudo-class components never reach `match_complex_selector_list`
@@ -6824,9 +7151,12 @@ mod tests {
     /// O(`depth`) — this isolates the pure *stack-depth* question this test
     /// answers. A descendant-combinator version was tried
     /// first and rejected for an unrelated reason, not stack depth:
-    /// `Combinator::Descendant`'s backtracking is
-    /// separately exponential on uniformly-matching chains — discovered by
-    /// that attempt.
+    /// `Combinator::Descendant`'s backtracking was
+    /// separately exponential on uniformly-matching chains (discovered by
+    /// that attempt) — since fixed by memoization, see
+    /// [`match_combinator_chain`]'s "Memoization" doc and
+    /// `descendant_combinator_deep_unsatisfiable_chain_does_not_explode`
+    /// below for that fix and its regression test.
     ///
     /// Before this fix, this forced the
     /// `match_combinator_chain`/`match_from_element` mutual recursion
