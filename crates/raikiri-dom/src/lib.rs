@@ -293,8 +293,12 @@ mod tests {
 
         // attr generic lookup
         assert_eq!(elem.attr("data-x"), Some("42"));
-        // 空文字列 attribute は None (contract: attribute 有無ではなく空文字列同一視)
-        assert_eq!(elem.attr("empty"), None);
+        // 空文字列 attribute は Some("") (attribute の有無と値は独立に追跡する
+        // — CSS Selectors L4 の attribute-presence selector `[foo]` は値と
+        // 無関係に存在だけで match するため、空文字列を absent と同一視しては
+        // ならない contract)。id() 固有の empty-is-absent 正規化は id() 自身に
+        // 局所化されており、この generic attr() には適用されない。
+        assert_eq!(elem.attr("empty"), Some(""));
         // 未設定 attribute は None
         assert_eq!(elem.attr("missing"), None);
     }
@@ -316,7 +320,14 @@ mod tests {
     }
 
     #[test]
-    fn element_id_and_attr_treat_empty_value_as_none() {
+    fn element_id_treats_empty_value_as_none_while_attr_preserves_presence() {
+        // id="" is narrowly normalized to "no id" by `id()` (CSS Selectors L4
+        // ID-selector semantics: an empty ID token cannot match `#foo`), but
+        // the underlying `attr("id")` lookup must still report presence —
+        // that empty-is-absent normalization is scoped to `id()` alone, not
+        // to the general attribute-lookup path (see `ElementRef::attr`'s doc
+        // in dom_impl.rs for why `[foo]` / boolean-attribute matching depends
+        // on that distinction being preserved).
         use raikiri_traits::{Dom, Element as _, Node as _, NodeId};
         use smol_str::SmolStr;
 
@@ -332,6 +343,7 @@ mod tests {
         let el_node = doc.node(NodeId::new(el as u64)).expect("div exists");
         let elem = el_node.as_element().expect("div is element");
         assert_eq!(elem.id(), None);
+        assert_eq!(elem.attr("id"), Some(""));
         assert!(!elem.has_class("foo"));
     }
 
