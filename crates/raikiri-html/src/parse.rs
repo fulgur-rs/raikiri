@@ -127,6 +127,22 @@ where
 ///   既存 architecture の延長)。
 /// - **`disabled` / `media` / `crossorigin` / `integrity`**:
 ///   `sink::collect_external_stylesheet_hrefs` doc 参照。
+/// - **`<base>` の探索範囲と href="" の扱い**:
+///   `sink::find_document_base_href` doc 参照 (head-only DFS、非空 href を
+///   持つ最初の `<base>` を採用)。frozen base URL algorithm の "Is base
+///   allowed for Document?" チェック (Document 単位の security policy) は
+///   本 crate に相当する概念が無いため未実装 — `data:` / `javascript:`
+///   scheme の除外のみ実装する。
+/// - **`<base>` と `<link>` の相対順序**: HTML Standard の実際の処理モデル
+///   では、`<link>` の外部 resource fetch はパーサがその `<link>` を挿入
+///   した時点の document base URL に対して行われる — 同じ `<head>` 内で
+///   `<link>` が `<base>` より**前**にあれば、その `<link>` は override 前の
+///   `options.base_url` で解決されるべきで、後から出現する `<base>` は遡って
+///   適用されない。本実装は全 parse 完了後の単一 post-processing pass で
+///   `<head>` 内の全 `<link>` を一括 fetch するため、この出現順の違いを
+///   区別できず、`<head>` 内のどの `<link>` にも (前後を問わず) 同じ
+///   effective base を一律適用する (上記「順序」bullet と同じ single-pass
+///   architecture に起因する制約)。
 /// - **encoding**: HTML body の parse と同様 UTF-8 前提
 ///   (`String::from_utf8_lossy`)、非 UTF-8 CSS は文字化けする。encoding_rs
 ///   導入は本 crate の `parse()` 全体で将来に defer 済み (`parse()` doc 参照)。
@@ -135,9 +151,36 @@ fn fetch_external_stylesheets(doc: &mut UncascadedDocument, options: &ParseOptio
         return;
     };
 
+    // HTML Standard §4.2.7 "The base element" / "document base URL": a
+    // <base href> in <head>, if present, overrides options.base_url as the
+    // base for resolving <link href>. The <base>'s own href can itself be
+    // relative, so it is resolved against options.base_url first
+    // (`find_document_base_href` doc comment covers the head-only search
+    // scope and the empty-href edge case).
+    //
+    // Per the base element's "frozen base URL" algorithm, the resolved URL
+    // is discarded in favor of the fallback base URL (options.base_url,
+    // unchanged) when it: (a) fails to parse — e.g. a relative <base href>
+    // with no options.base_url to resolve against; or (b) has a `data:` or
+    // `javascript:` scheme. (The algorithm's third exclusion, "Is base
+    // allowed for Document?", is a Document-level security policy concept
+    // this crate has no equivalent of, and is not implemented here.)
+    //
+    // This applies uniformly to every <link> in <head>, regardless of
+    // whether it appears before or after the <base> in source order (this
+    // function's doc comment, "<base> と <link> の相対順序" bullet, covers
+    // why: a single post-parse fetch pass can't distinguish "before" from
+    // "after").
+    let effective_base: Option<Url> = match crate::sink::find_document_base_href(&doc.dom) {
+        Some(base_href) => resolve_url(&base_href, options.base_url.as_ref())
+            .filter(|url| !matches!(url.scheme(), "data" | "javascript"))
+            .or_else(|| options.base_url.clone()),
+        None => options.base_url.clone(),
+    };
+
     for (node_id, href) in crate::sink::collect_external_stylesheet_hrefs(&doc.dom) {
-        let Some(url) = resolve_stylesheet_url(&href, options.base_url.as_ref()) else {
-            // 解決不能な href (相対 URL なのに base_url 未提供、または href
+        let Some(url) = resolve_url(&href, effective_base.as_ref()) else {
+            // 解決不能な href (相対 URL なのに base 未提供、または href
             // 自体が invalid) — fetch しようがないので silent skip。
             continue;
         };
@@ -204,11 +247,16 @@ fn fetch_external_stylesheets(doc: &mut UncascadedDocument, options: &ParseOptio
     }
 }
 
-/// `href` を `base_url` に対して resolve する。`href` が既に absolute URL な
-/// ら `base_url` は無視される (`Url::join` の標準挙動)。`base_url` が無い
-/// 場合は `href` 自体が absolute な場合のみ成功する。
-fn resolve_stylesheet_url(href: &str, base_url: Option<&Url>) -> Option<Url> {
-    match base_url {
+/// `href` を `base` に対して resolve する。`href` が既に absolute URL なら
+/// `base` は無視される (`Url::join` の標準挙動)。`base` が無い場合は `href`
+/// 自体が absolute な場合のみ成功する。
+///
+/// 呼び出し元は 2 つ: `<link rel=stylesheet href>` の解決 (`base` は
+/// `<base>` element を織り込んだ effective base)、および `<base href>` 自身
+/// の解決 (`base` は `options.base_url` そのもの — spec 上 `<base>` の href
+/// は常に document の fallback base URL に対して解決される)。
+fn resolve_url(href: &str, base: Option<&Url>) -> Option<Url> {
+    match base {
         Some(base) => base.join(href).ok(),
         None => Url::parse(href).ok(),
     }
