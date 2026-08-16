@@ -627,11 +627,20 @@ impl PageContext {
     ///
     /// # Panics
     ///
-    /// Panics if `page_index` is less than the value most recently passed
-    /// to this method — forwarded from [`TargetRegistry::begin_page`]'s own
-    /// monotonic invariant (design §7.6: `page_index` must advance in
-    /// emitted order). See that method's doc "Panics" for the full
-    /// rationale.
+    /// Panics if `page_index` is less than [`TargetRegistry`]'s own internal
+    /// `page_index` — that is, `self.targets`'s private copy, not the
+    /// `page_index` field on this struct — forwarded from
+    /// [`TargetRegistry::begin_page`]'s monotonic invariant (design §7.6:
+    /// `page_index` must advance in emitted order). See that method's doc
+    /// "Panics" for the full rationale.
+    ///
+    /// This baseline coincides with "the value most recently passed to this
+    /// method" only when no [`Self::set_targets`] call has intervened — see
+    /// "Residual gap this method does not close" above. A `set_targets` call
+    /// in between can leave the registry's internal `page_index` behind or
+    /// ahead of what this method last saw, so a subsequent call here can
+    /// panic (or fail to panic) against a baseline other than this method's
+    /// own call history.
     pub fn begin_page(&mut self, page_index: u32) {
         // Registry first — its `assert!` runs before either of the other
         // two mutations below, so a panic here leaves this whole call a
