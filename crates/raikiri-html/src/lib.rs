@@ -2564,6 +2564,53 @@ mod tests {
     }
 
     #[test]
+    fn code_kbd_samp_tt_ua_rule_survives_real_parse_and_cascade() {
+        // HTML LS §phrasing-content-3's
+        //   code, kbd, samp, tt { font-family: monospace; }
+        // Same "survives real parse+cascade, not just literal text in
+        // MINIMAL_UA_CSS" concern as the hr / a[href] /
+        // `font_style_ua_rule_survives_real_parse_and_cascade` tests above —
+        // a separate test function, mirroring those sibling tests' own
+        // separate-function convention.
+        use raikiri_style::Origin;
+
+        let html = b"<html><body><code>x</code><kbd>x</kbd><samp>x</samp>\
+                     <tt>x</tt><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        for tag in ["code", "kbd", "samp", "tt"] {
+            let id = find_first_by_tag(&uncascaded.dom, tag)
+                .unwrap_or_else(|| panic!("<{tag}> should exist"))
+                .0 as usize;
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                cascade.computed[id].font_family[0].to_string(),
+                "monospace",
+                "{tag}'s UA rule font-family: monospace must reach computed.font_family through real parse+cascade"
+            );
+        }
+
+        // Contrast: an element the UA rule does not target must stay at
+        // CSS-initial `serif` (HTML LS §phrasing-content-3's selector is
+        // exactly the 4 elements above, not every element).
+        let p_id = find_first_by_tag(&uncascaded.dom, "p")
+            .expect("<p> should exist")
+            .0 as usize;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[p_id].font_family[0].to_string(),
+            "serif",
+            "p must stay at CSS-initial font-family: serif, not the code/kbd/samp/tt UA rule's monospace"
+        );
+    }
+
+    #[test]
     fn parse_ignores_body_style_in_m1_scope() {
         // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。
