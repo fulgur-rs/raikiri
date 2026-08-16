@@ -1293,6 +1293,8 @@ mod tests {
                 Symbol::new("chapter"),
                 CounterStyle::Decimal,
             );
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             assert_eq!(
                 out,
                 crate::page::ResolveOutcome::Pending(crate::error::TargetSlotId {
@@ -1317,6 +1319,8 @@ mod tests {
             let mut registry = ctx.targets().clone();
             let out =
                 registry.resolve_target_counter("#b", Symbol::new("c"), CounterStyle::Decimal);
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             assert_eq!(
                 out,
                 crate::page::ResolveOutcome::Pending(crate::error::TargetSlotId {
@@ -1353,6 +1357,8 @@ mod tests {
                 ctx.begin_page(3);
             }));
             assert!(result.is_err(), "backward begin_page call must panic");
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             assert_eq!(
                 ctx.page_index, 5,
                 "a panicking begin_page call must not partially apply — page_index \
