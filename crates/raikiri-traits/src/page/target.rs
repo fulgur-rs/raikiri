@@ -443,15 +443,24 @@ impl TargetRegistry {
     /// out.
     ///
     /// Same page-boundary role as the sibling
-    /// [`super::context::PageContext::begin_page`] hook (different
-    /// signature: that one has no driver-supplied index to advance, this one
-    /// does), but there is no path from one to the other — `PageContext`
-    /// exposes `targets` read-only (no `targets_mut`, see
-    /// [`super::context::PageContext::targets`]'s doc), so a driver must
-    /// call this directly on an *owned* registry (e.g. the one
-    /// `raikiri_dom::target::build_target_registry` returns) before wiring
-    /// it into a `PageContext` via
-    /// [`super::context::PageContext::set_targets`].
+    /// [`super::context::PageContext::begin_page`] hook, which now calls
+    /// this method directly on its own (already-owned) `targets` field. For
+    /// a `TargetRegistry` already wired into a `PageContext`, calling
+    /// `PageContext::begin_page` is sufficient — a driver does not need to
+    /// reach in and call this method separately.
+    ///
+    /// **The bulk-replace path via
+    /// [`super::context::PageContext::set_targets`] still needs a direct
+    /// call here.** A registry built externally (e.g. by
+    /// `raikiri_dom::target::build_target_registry`'s register-site walker)
+    /// is not yet owned by any `PageContext` — this method must be called
+    /// on it directly, before it is wired in via `set_targets`, if its
+    /// page-index/sequence state needs to be anything other than the
+    /// freshly-`Default`-constructed `(0, 0)`. See
+    /// `PageContext::begin_page`'s doc "Residual gap this method does not
+    /// close" for why calling `set_targets` *after* a
+    /// `PageContext::begin_page` call can otherwise reintroduce the same
+    /// desync this pairing exists to prevent.
     ///
     /// **Re-seeded registry caveat**: design §7.4's convergence flow seeds a
     /// re-run with a previously-converged registry
