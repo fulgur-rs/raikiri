@@ -259,14 +259,13 @@ impl<'a> StyleElement for TestElementRef<'a> {
     fn tag_name(&self) -> &str {
         &self.node.tag
     }
-    /// `.filter(|s| !s.is_empty())`: matches the `StyleElement::inline_style_source`
-    /// trait doc contract ("`None` if unset or empty") and the real
-    /// `ElementRef::inline_style_source()` (`crates/raikiri-dom/src/dom_impl.rs`)
-    /// it mirrors. Fixed alongside the `attr()` override below during a
-    /// test_dom.rs reconciliation: both branches of `attr()` — the
-    /// `"style"` delegation and the generic attrs lookup — must normalise
-    /// empty to `None`, and this is the one place that normalisation
-    /// belongs, since `attr("style")` delegates here.
+    /// `.filter(|s| !s.is_empty())`: mirrors the real
+    /// `ElementRef::inline_style_source()` (`crates/raikiri-dom/src/dom_impl.rs`),
+    /// which has its own "empty `style=""` is `None`" contract (see
+    /// `StyleElement::inline_style_source`'s trait doc). This field is
+    /// unaffected by the presence/value split `attr()` applies to other
+    /// attributes below — `style` is carved out as an exception to that
+    /// split on both the real DOM and this mock.
     fn inline_style_source(&self) -> Option<&str> {
         self.node.inline_style.as_deref().filter(|s| !s.is_empty())
     }
@@ -279,10 +278,18 @@ impl<'a> StyleElement for TestElementRef<'a> {
     /// (which delegate to `attr()`) exercise the same code path a real
     /// `StyleElement` impl would.
     ///
-    /// Preserves the `attr()` contract's "empty string is normalised to
-    /// `None`" clause (`StyleElement::attr` doc) — overrides must keep it.
-    /// The `"style"` branch gets this via `inline_style_source()`'s own
-    /// filter (above); the generic branch filters directly.
+    /// Deliberately keeps the older "empty value is normalised to `None`"
+    /// behavior as a simplification local to this mock, rather than
+    /// matching the real DOM's current presence/value-independent contract
+    /// (`StyleElement::attr`'s trait doc, and
+    /// `raikiri-dom::dom_impl::ElementRef::attr`, the impl that actually
+    /// honors it). This is a known, accepted divergence between `TestDoc`
+    /// and the real DOM: selector-matching behavior that depends on
+    /// empty-value attribute presence (`[foo]` / `[foo=""]` against
+    /// `foo=""`) must be exercised against the real DOM to be meaningful —
+    /// `cascade::tests::attribute_exists_selector_does_not_match_empty_value_attr`
+    /// and its `[foo=""]` counterpart pin this mock's own (narrower)
+    /// behavior specifically, not the real DOM's.
     fn attr(&self, local: &str) -> Option<&str> {
         if local == "style" {
             return self.inline_style_source();

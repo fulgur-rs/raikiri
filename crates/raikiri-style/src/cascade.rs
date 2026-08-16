@@ -842,7 +842,7 @@ fn is_document_white_space(c: char) -> bool {
 /// bikeshed source and grep it directly), `#the-empty-pseudo` section,
 /// verbatim: "The :empty pseudo-class represents an element that has no
 /// children except, optionally, [=document white space characters=]. ...
-/// only element nodes and content nodes (such as [[DOM]] text nodes, and
+/// only element nodes and content nodes (such as \[\[DOM\]\] text nodes, and
 /// entity references) whose data has a non-zero length must be considered
 /// as affecting emptiness; comments, processing instructions, and other
 /// nodes must not affect whether an element is considered empty or not."
@@ -1884,9 +1884,34 @@ fn match_from_element<'s, D: StyleDom>(
 /// special-case emptiness — `ranges.iter().any(..)` is vacuously `false` on
 /// an empty slice, the same "never matches" outcome an empty argument list
 /// should have, so no explicit guard is needed even if that upstream
-/// guarantee ever changes). An element with no resolvable content language
-/// never matches, regardless of `ranges` (this also implements the spec's
-/// wildcard-range special case for free, see [`effective_language`] doc).
+/// guarantee ever changes).
+///
+/// An element with no resolvable content language at all (`None` — no
+/// `lang` anywhere in the ancestor chain) never matches, regardless of
+/// `ranges`.
+///
+/// An element whose content language resolves to the empty string
+/// (`Some("")` — an explicit `lang=""` somewhere in the chain, HTML LS's
+/// "the primary language is unknown" terminal state; see
+/// [`effective_language`]'s doc) is a narrower case: it does not match a
+/// bare wildcard range, but it does match other ranges, notably the
+/// literal empty-string range `:lang("")`. CSS Selectors L4 §7.2, bikeshed
+/// source `selectors-4/Overview.bs` `#the-lang-pseudo` (direct raw fetch of
+/// `raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/Overview.bs`,
+/// bypassing WebFetch's truncation on this TR page the same way
+/// [`matches_empty`]'s `:empty` doc note does), verbatim: "For this
+/// purpose, a wildcard language range (\"*\") does not match elements
+/// whose language is not tagged (e.g. `lang=\"\"`), but does match elements
+/// whose language is tagged as undetermined (`lang=und`). A language range
+/// consisting of an empty string (`:lang(\"\")`) matches (only) elements
+/// whose language is not tagged." [`language_range_matches`]'s first-subtag
+/// step would otherwise let a bare `*` range match the empty content
+/// language vacuously (splitting `""` on `-` yields one empty subtag, and
+/// `*` matches any subtag per RFC4647), so this function special-cases
+/// exactly `(lang.is_empty(), range == "*")` rather than gating on
+/// `lang.is_empty()` alone — a broader gate would incorrectly also reject
+/// `:lang("")` (and any other literal range) against `lang=""`, when the
+/// quoted spec text says `:lang("")` must match that case.
 fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
     ranges: &[String],
     dom: &D,
@@ -1894,9 +1919,13 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
 ) -> bool {
     match effective_language(dom, elem, ancestors) {
-        Some(lang) => ranges
-            .iter()
-            .any(|range| language_range_matches(range, &lang)),
+        Some(lang) => ranges.iter().any(|range| {
+            if lang.is_empty() && range == "*" {
+                false
+            } else {
+                language_range_matches(range, &lang)
+            }
+        }),
         None => false,
     }
 }
@@ -1945,19 +1974,23 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 ///   (`StyleDom::quirks_mode` doc / `resolve_case_sensitivity` doc: "raikiri
 ///   は現時点で HTML document のみ対象") — there is no XML-namespace
 ///   attribute surface to read.
-/// - **`lang=""` stopping inheritance** — per the quoted algorithm, an
-///   empty-string `lang` attribute is itself a *found* value ("the primary
-///   language is unknown", a distinct terminal state from "no `lang`
-///   attribute at all", which would keep walking to the parent). This
-///   function cannot observe that distinction: [`StyleElement::attr`]'s
-///   contract already collapses `foo=""` to `None` uniformly (documented on
-///   that trait method — an existing accepted baseline, not something newly
-///   introduced here), so `lang=""` and "no
-///   `lang` attribute" are indistinguishable at this crate's DOM boundary —
-///   both fall through to the parent-element walk below. Fixing this would
-///   require widening `StyleElement::attr`'s contract, which is
-///   a `raikiri-style`-only change out of scope for the same reason
-///   `[foo=""]` attribute-selector matching already accepts this limitation.
+///
+/// # `lang=""` stopping inheritance
+///
+/// Per the quoted algorithm, an empty-string `lang` attribute is itself a
+/// *found* value ("the primary language is unknown", a distinct terminal
+/// state from "no `lang` attribute at all", which keeps walking to the
+/// parent). [`StyleElement::attr`] tracks attribute presence independent of
+/// value, so [`own_html_or_svg_lang_attribute`] observes an explicit
+/// `lang=""` as `Some("")`, not `None` — the `if let Some(lang) = ...`
+/// branch below returns `Some(String::new())` immediately for that case
+/// rather than falling through to the ancestor walk, matching the quoted
+/// algorithm's step order. Callers must still treat this returned `Some("")`
+/// as "no content language" for their own purposes if that is what they
+/// need (CSS Selectors L4's `:lang()` does — see [`lang_pseudo_matches`]'s
+/// doc); [`effective_language`] itself only resolves the language per HTML
+/// LS's algorithm, it does not decide what an empty result means to a
+/// particular consumer.
 fn effective_language<D: StyleDom, E: StyleElement>(
     dom: &D,
     elem: &E,
@@ -4022,18 +4055,21 @@ mod tests {
 
     #[test]
     fn attribute_exists_selector_does_not_match_empty_value_attr() {
-        // `StyleElement::attr` 契約 ("Empty string is normalised to `None`",
-        // style_dom.rs doc) の帰結を明示的に pin する — 実 DOM 上は
-        // `data-foo=""` も「属性は存在する」が、raikiri の `attr()` 契約は
-        // 空文字を無指定と同一視するため `[data-foo]` はここでは match しない。
-        // これは本 task が導入した挙動ではなく、既存の `StyleElement` 契約を
-        // そのまま matcher に伝播させた結果 (`elem.attr(...).is_some()`)。
+        // Pins `TestDoc`'s own `StyleElement::attr` override
+        // (`test_dom.rs`), which deliberately keeps the older, stricter
+        // "empty value is normalised to `None`" behavior as a
+        // simplification local to this mock. Against `TestDoc`,
+        // `data-foo=""` reads back as attribute-absent, so `[data-foo]`
+        // does not match here.
         //
-        // This is an **intentional accepted-baseline pin, not a silently
-        // tolerated bug**: the decision to accept this CSS Selectors L4
-        // divergence as a permanent simplification is formally
-        // recorded as project policy ("intentional stricter") — see
-        // `StyleElement::attr`'s doc comment for the full rationale.
+        // **This is `TestDoc`-only, not the real DOM's behavior.**
+        // `raikiri-dom::dom_impl::ElementRef::attr` (the real DOM impl)
+        // tracks attribute presence independent of value, so
+        // `data-foo=""` does match `[data-foo]` there — this test's name
+        // and outcome describe the mock's narrower contract, not a general
+        // engine-level accepted-baseline divergence from CSS Selectors L4.
+        // See `StyleElement::attr`'s trait doc (style_dom.rs) for the full
+        // contract and this divergence's rationale.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "[data-foo] { color: red }");
@@ -4050,23 +4086,24 @@ mod tests {
         // Same root cause as
         // `attribute_exists_selector_does_not_match_empty_value_attr` above,
         // pinned separately because it goes through a different
-        // `compound_matches` arm (`Component::AttributeInNoNamespace`,
-        // not `..Exists`): the `StyleElement::attr` contract ("Empty string
-        // is normalised to `None`", style_dom.rs doc) collapses `foo=""`
-        // into `None` before the with-value arm's `match elem.attr(...) {
-        // Some(..) => .., None => false }` ever runs, so it takes the
-        // `None => false` branch regardless of the selector's own value
-        // operand. Per CSS Selectors L4
-        // (<https://www.w3.org/TR/selectors-4/#attribute-selectors>),
-        // `[data-foo=""]` should match an element whose `data-foo` value is
-        // exactly the empty string — it does not here, for the same
-        // documented reason `[data-foo]` doesn't.
+        // `compound_matches` arm (`Component::AttributeInNoNamespace`, not
+        // `..Exists`): `TestDoc`'s own `StyleElement::attr` override
+        // (`test_dom.rs`) collapses `foo=""` into `None` before the
+        // with-value arm's `match elem.attr(...) { Some(..) => ..,
+        // None => false }` ever runs, so it takes the `None => false`
+        // branch regardless of the selector's own value operand.
         //
-        // This is an **intentional accepted-baseline pin, not a silently
-        // tolerated bug**: the decision to accept this CSS Selectors L4
-        // divergence as a permanent simplification is formally
-        // recorded as project policy ("intentional stricter") — see
-        // `StyleElement::attr`'s doc comment for the full rationale.
+        // **This is `TestDoc`-only, not the real DOM's behavior.** Per CSS
+        // Selectors L4 (<https://www.w3.org/TR/selectors-4/#attribute-selectors>),
+        // `[data-foo=""]` should match an element whose `data-foo` value is
+        // exactly the empty string, and `raikiri-dom::dom_impl::ElementRef::attr`
+        // (the real DOM impl) does support that — it tracks presence
+        // independent of value. Only `TestDoc`'s deliberately-simplified
+        // mock still collapses `foo=""` to absent; this test's name and
+        // outcome describe that mock, not a general engine-level
+        // accepted-baseline divergence. See `StyleElement::attr`'s trait
+        // doc (style_dom.rs) for the full contract and this divergence's
+        // rationale.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "[data-foo=\"\"] { color: red }");
@@ -9161,11 +9198,20 @@ mod tests {
             ComputedLengthPercentageOrAuto::Auto
         );
         // Independently pin the *other* rejection layer for the empty-
-        // string case: `TestElementRef::attr()` itself normalises `""` to
-        // `None` (matching the `StyleElement::attr` trait contract and the
-        // real `ElementRef::attr()`), so `push_img_dimension_hints` never
-        // even calls `parse_html_dimension_value` for `width=""` — the
-        // `Auto` result above isn't (only) a parse-failure outcome.
+        // string case: `TestDoc`'s own `TestElementRef::attr()` override
+        // normalises `""` to `None` as a simplification local to that mock
+        // — unlike the real `ElementRef::attr()` (`raikiri-dom::dom_impl`),
+        // which returns `Some("")` for a present-but-empty attribute (see
+        // `StyleElement::attr`'s trait doc). Against `TestDoc`,
+        // `push_img_dimension_hints` never even calls
+        // `parse_html_dimension_value` for `width=""`, so the `Auto` result
+        // above is `TestDoc`-only "attribute absent" behavior here, not
+        // (only) a parse-failure outcome. Against the real DOM the same
+        // `Auto` result still holds, but for a different reason:
+        // `attr("width")` returns `Some("")`, and
+        // `parse_html_dimension_value("")` itself rejects the empty string
+        // at its first-digit check (both DOM implementations agree on the
+        // end result here, just not on why).
         let node = doc
             .node(StyleNodeId::new(empty as u64))
             .expect("node exists");

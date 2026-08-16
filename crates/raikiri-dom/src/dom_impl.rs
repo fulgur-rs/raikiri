@@ -16,13 +16,15 @@
 //! decoupling — 詳細は crates/raikiri-style/src/style_dom.rs のヘッダ参照)。
 //! Bodies shared byte-identically across the two families
 //! (as_element / text_content / is_in_document / tag_name /
-//! inline_style_source / namespace_uri / attr) live once as private inherent
-//! methods on NodeRef / ElementRef; both trait families delegate via
+//! inline_style_source / namespace_uri / attr / id) live once as private
+//! inherent methods on NodeRef / ElementRef; both trait families delegate via
 //! `self.foo()`. `kind()` is excluded — it projects onto
 //! `NodeKind` vs `StyleNodeKind`.
 
-use raikiri_style::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
-use raikiri_traits::{NodeId, NodeKind};
+use raikiri_style::{
+    StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,
+};
+use raikiri_traits::{NodeId, NodeKind, QuirksMode};
 
 use crate::document::Document;
 use crate::node::Node;
@@ -95,6 +97,22 @@ impl<'a> ElementRef<'a> {
         }
     }
 
+    /// Null-namespace attribute lookup. Distinguishes "attribute absent"
+    /// (`None`) from "attribute present with an empty value" (`Some("")`).
+    ///
+    /// CSS Selectors L4 attribute-presence (`[foo]`) and exact-value
+    /// (`[foo=""]`) selectors, plus HTML boolean attributes (`disabled`,
+    /// `open`, `hidden`, …), all depend on presence being observable
+    /// independent of value — an element with `foo=""` still "has a `foo`
+    /// attribute" per spec. Normalizing empty-to-absent here would make
+    /// `[foo]` unable to match `<div foo="">` or `<dialog open>` (whose
+    /// parsed attribute value is the empty string in both its bare and
+    /// explicit-empty spellings).
+    ///
+    /// `id` has its own empty-is-absent contract (CSS Selectors L4 ID
+    /// selectors don't match an empty ID token); that normalization lives in
+    /// [`Self::id`] specifically, not here, so it doesn't leak into `[foo]` /
+    /// `has_class` / future `[foo=bar]` matching that share this method.
     fn attr(&self, local: &str) -> Option<&str> {
         if local == "style" {
             // Inherent-method resolution beats trait methods, so `self.` here
@@ -106,10 +124,18 @@ impl<'a> ElementRef<'a> {
                 .attributes
                 .iter()
                 .find(|a| a.local == local)
-                .map(|a| a.value.as_str())
-                .filter(|s| !s.is_empty()),
+                .map(|a| a.value.as_str()),
             _ => None,
         }
+    }
+
+    /// `id` attribute value, with an empty `id=""` normalized to `None`.
+    ///
+    /// Narrow override of the empty-is-absent rule, scoped to `id()` alone
+    /// (see [`Self::attr`]'s doc for why the general attribute lookup must
+    /// NOT apply this normalization).
+    fn id(&self) -> Option<&str> {
+        self.attr("id").filter(|s| !s.is_empty())
     }
 }
 
@@ -187,12 +213,18 @@ impl<'a> raikiri_traits::Element for ElementRef<'a> {
         self.namespace_uri()
     }
 
-    // NB: id() / has_class() は raikiri-traits::Element の default impl を
-    // 使用。default が self.attr(...) 経由で lookup するため、この impl は
-    // attr() だけ override すれば id/has_class も追従する (DRY / 契約準拠)。
+    // NB: has_class() は raikiri-traits::Element の default impl を使用。
+    // default が self.attr(...) 経由で lookup するため、attr() だけ override
+    // すれば has_class も追従する (DRY / 契約準拠)。id() は attr() と異なる
+    // 正規化契約 (空値 = absent) を持つため個別 override する
+    // (shared inherent `id()` above; see its doc).
 
     fn attr(&self, local: &str) -> Option<&str> {
         self.attr(local)
+    }
+
+    fn id(&self) -> Option<&str> {
+        self.id()
     }
 }
 
@@ -246,6 +278,29 @@ impl StyleDom for Document {
 
     fn node_count(&self) -> usize {
         Document::node_count(self)
+    }
+
+    fn quirks_mode(&self) -> StyleQuirksMode {
+        convert_quirks_mode(Document::quirks_mode(self))
+    }
+}
+
+/// [`raikiri_traits::QuirksMode`] (raikiri-html's parse-time mirror of
+/// html5ever's `QuirksMode`, carried on `Document` via
+/// [`Document::set_quirks_mode`]) → [`StyleQuirksMode`] (raikiri-style's own
+/// mirror, kept independent of raikiri-traits per this module's header).
+/// Variant-for-variant 1:1 mapping — both enums model the same DOM Standard
+/// 3-way quirks-mode state (<https://dom.spec.whatwg.org/#concept-document-quirks>).
+/// Both enums are `#[non_exhaustive]`, so a wildcard arm is required for this
+/// cross-crate match to compile; it falls back to `NoQuirks`, mirroring
+/// `StyleDom::quirks_mode`'s own documented safe default for any future
+/// `QuirksMode` variant this function doesn't yet know about.
+fn convert_quirks_mode(mode: QuirksMode) -> StyleQuirksMode {
+    match mode {
+        QuirksMode::NoQuirks => StyleQuirksMode::NoQuirks,
+        QuirksMode::LimitedQuirks => StyleQuirksMode::LimitedQuirks,
+        QuirksMode::Quirks => StyleQuirksMode::Quirks,
+        _ => StyleQuirksMode::NoQuirks,
     }
 }
 
@@ -302,11 +357,136 @@ impl<'a> StyleElement for ElementRef<'a> {
         self.namespace_uri()
     }
 
-    // NB: id() / has_class() は raikiri_style::StyleElement の default impl を
-    // 使用。default が self.attr(...) 経由で lookup するため、この impl は
-    // attr() だけ override すれば id/has_class も追従する (DRY / 契約準拠)。
+    // NB: has_class() は raikiri_style::StyleElement の default impl を使用。
+    // default が self.attr(...) 経由で lookup するため、attr() だけ override
+    // すれば has_class も追従する (DRY / 契約準拠)。id() は attr() と異なる
+    // 正規化契約 (空値 = absent) を持つため個別 override する
+    // (shared inherent `id()` above; see its doc).
 
     fn attr(&self, local: &str) -> Option<&str> {
         self.attr(local)
+    }
+
+    fn id(&self) -> Option<&str> {
+        self.id()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use taffy::Style;
+
+    /// Builds a `Document` with a single `<div>` element (child of root)
+    /// carrying one attribute, and returns the element's arena id.
+    fn doc_with_attr(local: &str, value: &str) -> (Document, usize) {
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let id = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+        doc.set_element_attributes(id, vec![(local.into(), value.into())]);
+        (doc, id)
+    }
+
+    fn element_ref(doc: &Document, id: usize) -> ElementRef<'_> {
+        ElementRef {
+            node: &doc.nodes[id],
+        }
+    }
+
+    // Exercise both trait families' `attr()` explicitly (not just the shared
+    // inherent method) so a missing/incorrect override in either `impl`
+    // block would be caught, not masked by inherent-method dot-call
+    // resolution.
+
+    #[test]
+    fn attr_present_with_empty_value_returns_some_empty_string() {
+        let (doc, id) = doc_with_attr("data-x", "");
+        let er = element_ref(&doc, id);
+        assert_eq!(raikiri_traits::Element::attr(&er, "data-x"), Some(""));
+        assert_eq!(StyleElement::attr(&er, "data-x"), Some(""));
+    }
+
+    #[test]
+    fn attr_absent_returns_none() {
+        let (doc, id) = doc_with_attr("data-x", "");
+        let er = element_ref(&doc, id);
+        assert_eq!(raikiri_traits::Element::attr(&er, "data-y"), None);
+        assert_eq!(StyleElement::attr(&er, "data-y"), None);
+    }
+
+    #[test]
+    fn attr_present_with_nonempty_value_returns_value() {
+        let (doc, id) = doc_with_attr("data-x", "foo");
+        let er = element_ref(&doc, id);
+        assert_eq!(raikiri_traits::Element::attr(&er, "data-x"), Some("foo"));
+        assert_eq!(StyleElement::attr(&er, "data-x"), Some("foo"));
+    }
+
+    #[test]
+    fn id_empty_value_normalizes_to_none() {
+        let (doc, id) = doc_with_attr("id", "");
+        let er = element_ref(&doc, id);
+        assert_eq!(raikiri_traits::Element::id(&er), None);
+        assert_eq!(StyleElement::id(&er), None);
+        // attr("id") itself still preserves presence (Some("")); only id()
+        // applies the empty-is-absent normalization.
+        assert_eq!(raikiri_traits::Element::attr(&er, "id"), Some(""));
+        assert_eq!(StyleElement::attr(&er, "id"), Some(""));
+    }
+
+    #[test]
+    fn id_present_nonempty_returns_value() {
+        let (doc, id) = doc_with_attr("id", "main");
+        let er = element_ref(&doc, id);
+        assert_eq!(raikiri_traits::Element::id(&er), Some("main"));
+        assert_eq!(StyleElement::id(&er), Some("main"));
+    }
+
+    #[test]
+    fn id_absent_returns_none() {
+        let (doc, id) = doc_with_attr("data-x", "y"); // no `id` attribute set
+        let er = element_ref(&doc, id);
+        assert_eq!(raikiri_traits::Element::id(&er), None);
+        assert_eq!(StyleElement::id(&er), None);
+    }
+}
+
+#[cfg(test)]
+mod quirks_mode_tests {
+    use super::*;
+    use crate::document::Document;
+
+    /// A freshly-constructed `Document` (no parse involved) defaults to
+    /// `QuirksMode::NoQuirks`, matching both the type's own `#[default]` and
+    /// `StyleDom::quirks_mode`'s documented safe default for shell
+    /// implementations — the two must agree when nothing has called
+    /// `Document::set_quirks_mode` yet (e.g. raikiri-dom unit tests /
+    /// raikiri-paint hello-world setup that build a `Document` by hand).
+    #[test]
+    fn document_default_quirks_mode_is_no_quirks() {
+        let doc = Document::new();
+        assert_eq!(doc.quirks_mode(), QuirksMode::NoQuirks);
+        assert_eq!(StyleDom::quirks_mode(&doc), StyleQuirksMode::NoQuirks);
+    }
+
+    /// All 3 `QuirksMode` variants round-trip through `Document::
+    /// set_quirks_mode` → `Document::quirks_mode` → `impl StyleDom for
+    /// Document`'s `quirks_mode()` override into the matching
+    /// `StyleQuirksMode` variant — this is the conversion
+    /// `RaikiriTreeSink::finish` (raikiri-html) relies on to carry
+    /// html5ever's parse-time quirks-mode detection all the way to
+    /// `raikiri-style`'s cascade.
+    #[test]
+    fn set_quirks_mode_round_trips_through_style_dom_for_all_variants() {
+        for (native, style) in [
+            (QuirksMode::NoQuirks, StyleQuirksMode::NoQuirks),
+            (QuirksMode::LimitedQuirks, StyleQuirksMode::LimitedQuirks),
+            (QuirksMode::Quirks, StyleQuirksMode::Quirks),
+        ] {
+            let mut doc = Document::new();
+            doc.set_quirks_mode(native);
+            assert_eq!(doc.quirks_mode(), native);
+            assert_eq!(StyleDom::quirks_mode(&doc), style);
+        }
     }
 }

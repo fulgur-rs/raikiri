@@ -44,7 +44,7 @@
 //! prove yet.
 //!
 //! **`RegisterTarget` is out of scope for *this* dom-local mirror** — the
-//! `TargetRegistry` producer (`crate::target::build_target_registry`) is
+//! `TargetRegistry` producer ([`crate::target::build_target_registry`]) is
 //! owned elsewhere; this module has no
 //! `TargetRegistry` field to wire it into, so
 //! [`PhaseBWalkState::apply_directive`] treats it as a documented no-op.
@@ -404,8 +404,8 @@ impl PhaseBWalkState {
     /// is deliberately extended to handle it.
     ///
     /// **`RegisterRunning` has no producer yet.** This arm's rebind
-    /// semantics are handled and unit tested, but
-    /// `crate::running::collect_running_template`
+    /// semantics are handled and unit tested, but [`crate::running`]'s
+    /// `collect_running_template`
     /// deliberately does *not* emit `RegisterRunning` for nested
     /// `position: running(name)` seeds inside a template subtree — that
     /// "if the spec/impl allows" hedge is left open on purpose (fail-closed,
@@ -520,7 +520,7 @@ impl PhaseBWalkState {
 /// Current caller: this module's own unit tests. No production per-page
 /// driver exists yet — a later, separate wall/dom-paint task (see
 /// module-level doc) — so this is exercised via unit tests until then, the
-/// same status [`crate::running::collect_running_template`] and its sibling
+/// same status `crate::running::collect_running_template` and its sibling
 /// helpers already carry.
 #[allow(
     dead_code,

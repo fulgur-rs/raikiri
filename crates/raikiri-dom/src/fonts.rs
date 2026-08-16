@@ -323,7 +323,7 @@ fn check_open_handle_regular(file: &std::fs::File) -> Result<(), FontReadReject>
 ///   FFI calls per autonomy.md 原則 5).
 /// - **Apple platforms** (macOS/iOS/tvOS/watchOS/visionOS, see the
 ///   `#[cfg(any(target_os = "macos", ...))]` impl below): `fcntl(fd,
-///   F_GETPATH, ..)` via [`rustix::fs::getpath`], a safe wrapper — added
+///   F_GETPATH, ..)` via `rustix::fs::getpath`, a safe wrapper — added
 ///   as a direct dependency: Pure Rust, already transitively vetted in this
 ///   dependency tree (`Cargo.lock` carried rustix v1.1.4 via `tempfile`
 ///   before this change), keeps raikiri-dom's own `unsafe` surface at
@@ -888,7 +888,7 @@ fn emit_warn(observer: &mut FontWarnObserver<'_>, event: FontWarn<'_>) {
     crate::diag::emit_warn_via!(observer, "[raikiri-dom::fonts]", event);
 }
 
-/// Map a non-`Io` [`FontReadReject`] to its [`FontWarn::ReadRejected*`]
+/// Map a non-`Io` [`FontReadReject`] to its `FontWarn::ReadRejected*`
 /// counterpart.  Extracted as a pure function so the observer-event shape
 /// can be unit-tested without needing to trigger a real TOCTOU race: the
 /// read-time `ReadRejected*` arms are cov:ignore in the callsite loop

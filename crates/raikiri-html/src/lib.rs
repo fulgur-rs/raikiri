@@ -1,4 +1,4 @@
-//! raikiri-html — html5ever wrapper (`RaikiriTreeSink`) + [`parse`] /
+//! raikiri-html — html5ever wrapper (`RaikiriTreeSink`) + [`parse()`] /
 //! [`parse_with_sink`] entrypoints。cascade 前の [`UncascadedDocument`] を produce
 //! する薄い parser layer (責務は parse だけ、cascade / layout は含まない)。
 
@@ -1258,6 +1258,148 @@ mod tests {
         assert_eq!(uncascaded.quirks_mode, QuirksMode::NoQuirks);
     }
 
+    /// End-to-end regression, doctype-less (quirks-triggering) side: html5ever's
+    /// quirks-mode detection (`UncascadedDocument.quirks_mode`, asserted by
+    /// `parse_captures_quirks_mode_for_missing_doctype` above) must reach
+    /// `raikiri_dom::Document` itself (`RaikiriTreeSink::finish` calling
+    /// `Document::set_quirks_mode`) and, through `impl raikiri_style::StyleDom
+    /// for Document`, `StyleDom::quirks_mode()` — the accessor
+    /// `raikiri-style`'s cascade actually reads for id/class selector
+    /// ASCII-case-folding (CSS Selectors L4,
+    /// <https://www.w3.org/TR/selectors-4/#the-css-qualified-name>'s "In
+    /// quirks mode, ... matching of the ID and class attributes for the
+    /// purposes of selector matching must be done in an ASCII case-insensitive
+    /// manner"). Previously `Document` carried no quirks-mode field at all,
+    /// so this path always fell back to `StyleDom::quirks_mode`'s `NoQuirks`
+    /// default regardless of the parsed document's real doctype — meaning
+    /// `raikiri-style`'s quirks-mode ASCII-fold matching logic, though
+    /// correctly implemented, was unreachable from any real parsed document.
+    ///
+    /// Asserting `StyleDom::quirks_mode()` alone would only prove the value
+    /// arrives at the accessor, not that cascade reads it and changes
+    /// matching behavior — so this test drives a real `build_rule_tree` +
+    /// `cascade` over an uppercase `class`/`id` attribute matched by a
+    /// lowercase selector, and checks the *computed style*, mirroring the
+    /// real-parse-survives-to-cascade idiom the `hr` / `a[href]` UA-rule
+    /// tests above use for UA CSS.
+    #[test]
+    fn parse_wires_quirks_mode_through_document_to_cascade_ascii_fold() {
+        use raikiri_style::property::CssColor;
+        use raikiri_style::{Origin, StyleDom, StyleQuirksMode};
+        use raikiri_traits::QuirksMode;
+
+        let html = b"<html><head><style>.foo { color: #00ff00 } \
+                     #bar { color: #0000ff }</style></head><body>\
+                     <p class=\"FOO\">a</p><span id=\"BAR\">b</span></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+
+        // Accessor-level: the value reaches Document and StyleDom.
+        assert_eq!(uncascaded.quirks_mode, QuirksMode::Quirks);
+        assert_eq!(uncascaded.dom.quirks_mode(), QuirksMode::Quirks);
+        assert_eq!(
+            StyleDom::quirks_mode(&uncascaded.dom),
+            StyleQuirksMode::Quirks
+        );
+
+        // Behavior-level: cascade actually reads it and ASCII-folds
+        // `.foo`/`#bar` against `class="FOO"`/`id="BAR"`.
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let p_id = find_first_by_tag(&uncascaded.dom, "p")
+            .expect("<p> should exist")
+            .0 as usize;
+        let span_id = find_first_by_tag(&uncascaded.dom, "span")
+            .expect("<span> should exist")
+            .0 as usize;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[p_id].color,
+            CssColor {
+                r: 0,
+                g: 0xFF,
+                b: 0,
+                a: 255,
+            },
+            "quirks mode: .foo must ASCII-fold-match class=\"FOO\" through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[span_id].color,
+            CssColor {
+                r: 0,
+                g: 0,
+                b: 0xFF,
+                a: 255,
+            },
+            "quirks mode: #bar must ASCII-fold-match id=\"BAR\" through real parse+cascade"
+        );
+    }
+
+    /// Standards-mode counterpart of
+    /// `parse_wires_quirks_mode_through_document_to_cascade_ascii_fold`: an
+    /// explicit `<!DOCTYPE html>` must reach `StyleDom::quirks_mode()` as
+    /// `NoQuirks` end-to-end, and — the claim that actually matters —
+    /// cascade's id/class matching must stay case-sensitive, so the same
+    /// `.foo`/`#bar` selectors must NOT match `class="FOO"`/`id="BAR"` and
+    /// the elements must stay at CSS-initial `color` (black). This is the
+    /// load-bearing half: it is the only assertion that can distinguish
+    /// "cascade read the real (`NoQuirks`) value" from "cascade fell back
+    /// to `StyleDom::quirks_mode`'s `NoQuirks` default and happened to
+    /// agree" — both bugs would incorrectly produce this document's Quirks
+    /// counterpart matching case-sensitively too, but only a real bug (not
+    /// wiring `Document::quirks_mode` at all) would make *this* document's
+    /// case stay unmatched by coincidence, so the pair of tests together
+    /// is what actually pins the wiring.
+    #[test]
+    fn parse_wires_no_quirks_through_document_to_cascade_case_sensitive() {
+        use raikiri_style::property::CssColor;
+        use raikiri_style::{Origin, StyleDom, StyleQuirksMode};
+        use raikiri_traits::QuirksMode;
+
+        let html = b"<!DOCTYPE html><html><head><style>.foo { color: #00ff00 } \
+                     #bar { color: #0000ff }</style></head><body>\
+                     <p class=\"FOO\">a</p><span id=\"BAR\">b</span></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+
+        assert_eq!(uncascaded.quirks_mode, QuirksMode::NoQuirks);
+        assert_eq!(uncascaded.dom.quirks_mode(), QuirksMode::NoQuirks);
+        assert_eq!(
+            StyleDom::quirks_mode(&uncascaded.dom),
+            StyleQuirksMode::NoQuirks
+        );
+
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let p_id = find_first_by_tag(&uncascaded.dom, "p")
+            .expect("<p> should exist")
+            .0 as usize;
+        let span_id = find_first_by_tag(&uncascaded.dom, "span")
+            .expect("<span> should exist")
+            .0 as usize;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[p_id].color,
+            CssColor::BLACK,
+            "no-quirks mode: .foo must NOT match class=\"FOO\" (case-sensitive) through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[span_id].color,
+            CssColor::BLACK,
+            "no-quirks mode: #bar must NOT match id=\"BAR\" (case-sensitive) through real parse+cascade"
+        );
+    }
+
     #[test]
     fn parse_survives_table_foster_parenting() {
         // <table> 直下 text の foster parenting は html5ever が
@@ -1809,6 +1951,217 @@ mod tests {
             bare_computed.text_decoration_line,
             TextDecorationLine::NONE,
             "a without href must stay at CSS-initial text-decoration, not the a[href] UA rule's underline"
+        );
+    }
+
+    #[test]
+    fn a_href_empty_value_ua_rule_color_and_text_decoration_survives_real_parse_and_cascade() {
+        // HTML LS §selector-link: "All a elements that have an href
+        // attribute ... must match ... :link" — an empty `href=""` still
+        // satisfies "have an href attribute" (presence, not a non-empty
+        // value, is the gate), so `<a href="">` is spec-`:link` and must
+        // pick up the same `a[href]` UA rule as a non-empty href. This is
+        // the `[href]` attribute-presence-selector counterpart to the
+        // `a[href]` test above, isolating the previously-broken case:
+        // `Component::AttributeInNoNamespaceExists` matching depends on
+        // `elem.attr("href").is_some()` distinguishing "present with empty
+        // value" from "absent" — real DOM `attr()` now does.
+        use raikiri_style::Origin;
+        use raikiri_style::property::{CssColor, TextDecorationLine};
+
+        let html = b"<html><body><a href=\"\">empty href link</a></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let a_id = (0..uncascaded.dom.node_count())
+            .find(|&id_u| {
+                uncascaded
+                    .dom
+                    .node(raikiri_traits::NodeId::new(id_u as u64))
+                    .unwrap()
+                    .as_element()
+                    .is_some_and(|el| el.tag_name() == "a")
+            })
+            .expect("<a> should exist");
+        let computed = &cascade.computed[a_id];
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            computed.color,
+            CssColor {
+                r: 0x00,
+                g: 0x00,
+                b: 0xEE,
+                a: 255,
+            },
+            "a[href='']'s UA rule color: #0000EE must reach computed.color through real parse+cascade"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            computed.text_decoration_line,
+            TextDecorationLine::UNDERLINE,
+            "a[href='']'s UA rule text-decoration: underline must reach computed.text_decoration_line through real parse+cascade"
+        );
+    }
+
+    #[test]
+    fn lang_wildcard_selector_does_not_match_explicit_empty_lang_attribute_via_real_dom() {
+        // HTML LS §3.2.6.2 "determine the language of a node": an explicit
+        // `lang=""` resolves to "the primary language is unknown" — a
+        // terminal state, distinct from "no lang attribute at all" (see
+        // `raikiri_style::cascade::effective_language`'s doc). CSS Selectors
+        // L4 §7.2, bikeshed source `selectors-4/Overview.bs`
+        // `#the-lang-pseudo`, verbatim: "For this purpose, a wildcard
+        // language range (\"*\") does not match elements whose language is
+        // not tagged (e.g. `lang=\"\"`), but does match elements whose
+        // language is tagged as undetermined (`lang=und`)." — an element
+        // whose resolved content language is the empty string must NOT
+        // match the wildcard range specifically (see the sibling test
+        // below for the literal empty-string range `:lang("")`, which the
+        // same quote's next sentence says MUST match this case).
+        //
+        // This can only be exercised through the real DOM: `TestDoc` (the
+        // mock `raikiri-style` uses for its own unit tests) still collapses
+        // `lang=""` to attribute-absent by design, so it can never produce
+        // the `Some("")` resolved-language state this regression is about.
+        // Only `raikiri-dom::dom_impl::ElementRef`, which tracks attribute
+        // presence independent of value, can.
+        //
+        // The wildcard range must be **quoted** (`:lang("*")`, not bare
+        // `:lang(*)`) — `*` is a CSS delimiter token, not a valid `<ident>`
+        // character, so the unquoted form fails to parse as a `:lang()`
+        // argument (verified empirically: an unquoted `:lang(*)` rule here
+        // is simply dropped as an invalid selector, so this test uses the
+        // quoted form that's this crate's `:lang()` argument parser
+        // actually accepts, per `expect_ident_or_string()`).
+        use raikiri_style::property::CssColor;
+
+        let html = b"<html><body>\
+                     <style>:lang(\"*\") { color: #FF0000; }</style>\
+                     <div lang=\"ja\">has lang</div>\
+                     <div lang=\"\">empty lang</div>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let find_div_with_lang = |lang_value: &str| {
+            (0..uncascaded.dom.node_count())
+                .find(|&id_u| {
+                    uncascaded
+                        .dom
+                        .node(raikiri_traits::NodeId::new(id_u as u64))
+                        .unwrap()
+                        .as_element()
+                        .is_some_and(|el| {
+                            el.tag_name() == "div" && el.attr("lang") == Some(lang_value)
+                        })
+                })
+                .unwrap_or_else(|| panic!("<div lang=\"{lang_value}\"> should exist"))
+        };
+
+        let has_lang_id = find_div_with_lang("ja");
+        let empty_lang_id = find_div_with_lang("");
+
+        // Positive control: a real, non-empty lang must match :lang("*") —
+        // without this, a silently-dropped/unparsed rule would make the
+        // negative assertion below pass vacuously.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[has_lang_id].color,
+            CssColor {
+                r: 0xFF,
+                g: 0x00,
+                b: 0x00,
+                a: 255,
+            },
+            ":lang(\"*\") must match an element with a real, non-empty lang attribute"
+        );
+        // The regression under test: explicit lang="" must NOT match
+        // :lang("*").
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[empty_lang_id].color,
+            CssColor::BLACK,
+            "explicit lang=\"\" (HTML LS: primary language unknown) must not match :lang(\"*\")"
+        );
+    }
+
+    #[test]
+    fn lang_empty_string_range_matches_explicit_empty_lang_attribute_via_real_dom() {
+        // Complements the wildcard test above with the other half of the
+        // same spec sentence (CSS Selectors L4 §7.2, bikeshed source
+        // `selectors-4/Overview.bs` `#the-lang-pseudo`, verbatim,
+        // immediately following the wildcard sentence quoted there): "A
+        // language range consisting of an empty string (`:lang(\"\")`)
+        // matches (only) elements whose language is not tagged." — unlike
+        // the wildcard range `"*"`, the literal empty-string range `""`
+        // MUST match an element whose resolved content language is the
+        // empty string (explicit `lang=""`). Real-DOM for the same reason
+        // as the wildcard test: `TestDoc` can't produce the `Some("")`
+        // resolved-language state this exercises.
+        use raikiri_style::property::CssColor;
+
+        let html = b"<html><body>\
+                     <style>:lang(\"\") { color: #FF0000; }</style>\
+                     <div lang=\"ja\">has lang</div>\
+                     <div lang=\"\">empty lang</div>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let find_div_with_lang = |lang_value: &str| {
+            (0..uncascaded.dom.node_count())
+                .find(|&id_u| {
+                    uncascaded
+                        .dom
+                        .node(raikiri_traits::NodeId::new(id_u as u64))
+                        .unwrap()
+                        .as_element()
+                        .is_some_and(|el| {
+                            el.tag_name() == "div" && el.attr("lang") == Some(lang_value)
+                        })
+                })
+                .unwrap_or_else(|| panic!("<div lang=\"{lang_value}\"> should exist"))
+        };
+
+        let has_lang_id = find_div_with_lang("ja");
+        let empty_lang_id = find_div_with_lang("");
+
+        // Negative control: a real, non-empty lang must NOT match
+        // :lang("") — without this, an over-broad match (e.g. a bug that
+        // treated "" as matching everything) would make the assertion
+        // below pass vacuously.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[has_lang_id].color,
+            CssColor::BLACK,
+            ":lang(\"\") must not match an element with a real, non-empty lang attribute"
+        );
+        // The regression under test: explicit lang="" MUST match
+        // :lang("") — the element's language is "not tagged" per the
+        // quoted spec text, which is exactly what :lang("") selects for.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[empty_lang_id].color,
+            CssColor {
+                r: 0xFF,
+                g: 0x00,
+                b: 0x00,
+                a: 255,
+            },
+            "explicit lang=\"\" (HTML LS: primary language unknown) must match :lang(\"\")"
         );
     }
 

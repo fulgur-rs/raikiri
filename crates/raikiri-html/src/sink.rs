@@ -115,6 +115,12 @@ impl TreeSink for RaikiriTreeSink {
         // attributes → Node.attributes (null-ns、style を除く) + Node.inline_style。
         wire_side_tables(&mut document, &qual_names, &attributes);
 
+        // html5ever が set_quirks_mode callback で報告した値を Document 自体
+        // に持たせる。cascade phase (raikiri-style の id/class selector
+        // matching) が `impl StyleDom for Document` 経由でこの値を読む。
+        let quirks_mode = convert_quirks(self.quirks_mode.get());
+        document.set_quirks_mode(quirks_mode);
+
         // 旧 strip_non_element_stubs (pseudo-tag な
         // "#comment" / "#pi" Element を tree から physical 除去) を廃止。
         // Comment / ProcessingInstruction は NodeData::Comment /
@@ -139,7 +145,7 @@ impl TreeSink for RaikiriTreeSink {
             dom: document,
             stylesheet_sources,
             warnings,
-            quirks_mode: convert_quirks(self.quirks_mode.get()),
+            quirks_mode,
         }
     }
 
@@ -638,13 +644,21 @@ pub(crate) fn collect_external_stylesheet_hrefs(
 }
 
 /// `rel` トークンリストに `stylesheet` (ASCII case-insensitive) が含まれ、
-/// かつ `type` 属性が無いか `text/css` (MIME パラメータを無視、ASCII
-/// case-insensitive) の場合のみ true。HTML Standard §4.2.4 (The link
-/// element) の外部 resource link 判定の該当部分のみを実装するサブセット —
-/// `media` / `crossorigin` / `integrity` / `disabled` は現状 scope 外
-/// (`collect_external_stylesheet_hrefs` doc 参照)。
+/// かつ `type` 属性が「無い」か「値が空文字列」か「`text/css` (MIME
+/// パラメータを無視、ASCII case-insensitive)」のいずれかの場合のみ true。
+/// HTML Standard §4.2.4 (The link element) の外部 resource link 判定の該当
+/// 部分のみを実装するサブセット — `media` / `crossorigin` / `integrity` /
+/// `disabled` は現状 scope 外 (`collect_external_stylesheet_hrefs` doc 参照)。
 ///
-/// `type` 属性の比較は `;` 以降 (MIME parameter、例:
+/// `type` 属性の空文字列 (`type=""`) は「属性なし」と同じ「type 未指定」
+/// 扱い — 属性が明示的に存在するかどうかではなく、MIME type の**値**が
+/// 指定されているかどうかが gate の意味だからで、値が空なら制約なし
+/// (stylesheet-compatible とみなす) になる。`Element::attr` は `type=""`
+/// を `Some("")` として返す (`""` を absent と区別する契約、
+/// `raikiri-dom::dom_impl::ElementRef::attr` 参照) ため、この関数側で
+/// 明示的に空文字列を「制約なし」扱いする。
+///
+/// `type` 属性の非空値の比較は `;` 以降 (MIME parameter、例:
 /// `text/css; charset=utf-8`) を無視する — browser の実際の "type attribute
 /// gate" 挙動 (MIME parameter は無視、essence のみ比較) に合わせる。
 ///
@@ -696,11 +710,12 @@ fn is_stylesheet_link(rel: Option<&str>, type_attr: Option<&str>, title: Option<
         return false;
     }
     type_attr.is_none_or(|t| {
-        t.split(';')
-            .next()
-            .unwrap_or(t)
-            .trim()
-            .eq_ignore_ascii_case("text/css")
+        t.is_empty()
+            || t.split(';')
+                .next()
+                .unwrap_or(t)
+                .trim()
+                .eq_ignore_ascii_case("text/css")
     })
 }
 
@@ -801,6 +816,16 @@ mod stylesheet_link_tests {
     #[test]
     fn absent_type_attribute_is_treated_as_stylesheet() {
         assert!(is_stylesheet_link(Some("stylesheet"), None, None));
+    }
+
+    #[test]
+    fn empty_type_attribute_is_treated_as_stylesheet_same_as_absent() {
+        // `type=""` is "type unspecified", not "type is the empty MIME
+        // essence" — it must gate identically to a wholly absent `type`
+        // attribute (both `Some("")` and `None` reach this predicate now
+        // that `Element::attr` distinguishes "present with empty value"
+        // from "absent"; see the doc comment above `is_stylesheet_link`).
+        assert!(is_stylesheet_link(Some("stylesheet"), Some(""), None));
     }
 
     #[test]
