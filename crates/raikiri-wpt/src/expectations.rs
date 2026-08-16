@@ -1073,6 +1073,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
                 "css/css-backgrounds/",
                 "css/css-values/",
                 "css/css-text/",
+                "css/css-text-decor/",
                 "css/css-writing-modes/",
                 "css/selectors/",
                 "html/rendering/",
