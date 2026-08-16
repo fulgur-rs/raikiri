@@ -1895,15 +1895,14 @@ fn match_from_element<'s, D: StyleDom>(
 /// should have, so no explicit guard is needed even if that upstream
 /// guarantee ever changes).
 ///
-/// An element with no resolvable content language at all (`None` — no
-/// `lang` anywhere in the ancestor chain) never matches, regardless of
-/// `ranges`.
+/// [`effective_language`] always resolves to a concrete (possibly empty)
+/// content language string — HTML LS §3.2.6.2's "determine the language of
+/// a node" algorithm is a total function (its own final "Otherwise" step is
+/// exactly [`effective_language`]'s fallback; see that function's doc), so
+/// there is no "unresolvable language" case to handle here.
 ///
-/// An element whose content language resolves to the empty string
-/// (`Some("")` — an explicit `lang=""` somewhere in the chain, HTML LS's
-/// "the primary language is unknown" terminal state; see
-/// [`effective_language`]'s doc) is a narrower case: it does not match a
-/// bare wildcard range, but it does match other ranges, notably the
+/// The empty string is a narrower case than a non-empty content language:
+/// it does not match a bare wildcard range, but it does match other ranges, notably the
 /// literal empty-string range `:lang("")`. CSS Selectors L4 §7.2, bikeshed
 /// source `selectors-4/Overview.bs` `#the-lang-pseudo` (direct raw fetch of
 /// `raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/Overview.bs`,
@@ -1927,16 +1926,14 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
     elem: &E,
     ancestors: &[StyleNodeId],
 ) -> bool {
-    match effective_language(dom, elem, ancestors) {
-        Some(lang) => ranges.iter().any(|range| {
-            if lang.is_empty() && range == "*" {
-                false
-            } else {
-                language_range_matches(range, &lang)
-            }
-        }),
-        None => false,
-    }
+    let lang = effective_language(dom, elem, ancestors);
+    ranges.iter().any(|range| {
+        if lang.is_empty() && range == "*" {
+            false
+        } else {
+            language_range_matches(range, &lang)
+        }
+    })
 }
 
 /// Resolves an element's **content language** per HTML Living Standard
@@ -1957,7 +1954,10 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 /// that has one; absent everywhere (no pragma-set default / protocol-level
 /// language either, both out of scope — this crate has no HTTP layer and
 /// does not parse `<meta http-equiv=content-language>`), the language is
-/// unknown.
+/// unknown — represented, per the quoted "the corresponding language tag is
+/// the empty string" fallback, as `String::new()` (see the "`lang=\"\"`
+/// stopping inheritance" section below for how this converges with the
+/// explicit-`lang=\"\"` case).
 ///
 /// Like [`own_explicit_direction`]'s `dir` reads, the **own**-attribute
 /// step gates on `elem.namespace_uri()` — but a 2-element allowlist (HTML
@@ -1972,8 +1972,8 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 /// attribute counts — the ancestor walk below still applies the same gate
 /// per ancestor (a MathML ancestor's `lang` is skipped too, same as its own
 /// element case), and a chain that bottoms out with no HTML/SVG element
-/// carrying `lang` still resolves to `None`, same as "absent everywhere"
-/// below.
+/// carrying `lang` still resolves to `String::new()`, same as "absent
+/// everywhere" below.
 ///
 /// # Deliberately out of scope
 ///
@@ -1992,21 +1992,27 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 /// parent). [`StyleElement::attr`] tracks attribute presence independent of
 /// value, so [`own_html_or_svg_lang_attribute`] observes an explicit
 /// `lang=""` as `Some("")`, not `None` — the `if let Some(lang) = ...`
-/// branch below returns `Some(String::new())` immediately for that case
-/// rather than falling through to the ancestor walk, matching the quoted
-/// algorithm's step order. Callers must still treat this returned `Some("")`
-/// as "no content language" for their own purposes if that is what they
-/// need (CSS Selectors L4's `:lang()` does — see [`lang_pseudo_matches`]'s
-/// doc); [`effective_language`] itself only resolves the language per HTML
-/// LS's algorithm, it does not decide what an empty result means to a
-/// particular consumer.
+/// branch below returns immediately for that case (yielding the empty
+/// string) rather than falling through to the ancestor walk, matching the
+/// quoted algorithm's step order. Callers must still treat this returned
+/// empty string as "no content language" for their own purposes if that is
+/// what they need (CSS Selectors L4's `:lang()` does — see
+/// [`lang_pseudo_matches`]'s doc); [`effective_language`] itself only
+/// resolves the language per HTML LS's algorithm, it does not decide what
+/// an empty result means to a particular consumer.
+///
+/// The ancestor-chain-exhausted terminal case below (no `lang` found
+/// anywhere) converges on this same empty-string representation, per the
+/// quoted algorithm's own final "the corresponding language tag is the
+/// empty string" fallback — even though it is reached via a different step
+/// (running out of ancestors, not an explicit `lang=""` short-circuit).
 fn effective_language<D: StyleDom, E: StyleElement>(
     dom: &D,
     elem: &E,
     ancestors: &[StyleNodeId],
-) -> Option<String> {
+) -> String {
     if let Some(lang) = own_html_or_svg_lang_attribute(elem) {
-        return Some(lang.to_owned());
+        return lang.to_owned();
     }
     for &ancestor_id in ancestors.iter().rev() {
         // `node`'s borrow must outlive `ancestor_elem`'s — a `.and_then`
@@ -2019,10 +2025,14 @@ fn effective_language<D: StyleDom, E: StyleElement>(
             && let Some(ancestor_elem) = node.as_element()
             && let Some(lang) = own_html_or_svg_lang_attribute(&ancestor_elem)
         {
-            return Some(lang.to_owned());
+            return lang.to_owned();
         }
     }
-    None
+    // Ancestor chain exhausted with no pragma-set default / protocol-level
+    // language available (both out of scope, see this function's doc).
+    // HTML LS §3.2.6.2's final fallback: "the language of the node is
+    // unknown, and the corresponding language tag is the empty string."
+    String::new()
 }
 
 /// The **own**-attribute half of HTML LS §3.2.6.2's "determine the language
@@ -5245,11 +5255,17 @@ mod tests {
     }
 
     /// Negative counterpart of the two tests above: neither the element nor
-    /// any ancestor carries a `lang` attribute at all — `:lang(ja)` must not
-    /// match (no content language to compare against, CSS Selectors L4 §7.2
-    /// — see `effective_language`'s doc).
+    /// any ancestor carries a `lang` attribute at all, so the content
+    /// language resolves to the empty string (`effective_language`'s
+    /// exhausted-ancestor-chain terminal case) — a non-empty range like
+    /// `ja` must not match that (`subtags_match`'s first-subtag comparison
+    /// step, CSS Selectors L4 §7.2 — see `effective_language`'s doc). This
+    /// is `:lang(ja)`-range-specific: contrast with
+    /// `lang_empty_string_range_matches_when_no_lang_anywhere_in_ancestor_chain`,
+    /// where the same no-lang-anywhere element correctly *does* match the
+    /// literal empty-string range `:lang("")`.
     #[test]
-    fn lang_does_not_match_when_no_lang_anywhere_in_ancestor_chain() {
+    fn lang_ja_range_does_not_match_when_no_lang_anywhere_in_ancestor_chain() {
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, ":lang(ja) { font-family: serif-ja }");
@@ -5535,13 +5551,112 @@ mod tests {
     #[test]
     fn language_range_matches_wildcard_matches_any_tagged_language() {
         // The CSS-spec-level "wildcard doesn't match untagged" rule
-        // (`effective_language` doc) is enforced by `lang_pseudo_matches`
-        // returning `false` on `None` before this function is ever called —
-        // this function itself just needs to accept any non-empty tag for a
-        // bare `*` range (RFC 4647 §3.3.2 step 2's wildcard-subtag clause).
+        // (`lang_pseudo_matches` doc) is enforced by that caller's own
+        // `(lang.is_empty(), range == "*")` special case before this
+        // function is ever reached for the untagged case — this function
+        // itself just needs to accept any non-empty tag for a bare `*`
+        // range (RFC 4647 §3.3.2 step 2's wildcard-subtag clause).
         assert!(language_range_matches("*", "ja"));
         assert!(language_range_matches("*", "en-US"));
         assert!(language_range_matches("*", "und"));
+    }
+
+    /// Selectors L4 §7.2 (quoted in full on `lang_pseudo_matches`'s doc): "A
+    /// language range consisting of an empty string (`:lang(\"\")`) matches
+    /// (only) elements whose language is not tagged." An element with no
+    /// `lang`/`xml:lang` anywhere in its ancestor chain is exactly that case
+    /// — `effective_language`'s exhausted-ancestor-chain terminal case
+    /// resolves to `String::new()` per HTML LS §3.2.6.2's own final fallback
+    /// ("the corresponding language tag is the empty string").
+    #[test]
+    fn lang_empty_string_range_matches_when_no_lang_anywhere_in_ancestor_chain() {
+        // `background-color`, not `font-family`: `font-family` is inherited
+        // (CSS Fonts 4 §2), so a rule that only matched `html` or `body`
+        // would still show up on `untagged` via ordinary inheritance,
+        // making font-family unable to distinguish "matched `untagged`
+        // itself" from "matched an ancestor and inherited down" (same
+        // pitfall `root_pseudo_class_matches_the_document_root_element_only`'s
+        // own comment documents). `background-color` is not inherited (CSS
+        // Backgrounds 3 §2.2), so red on `untagged` can only mean
+        // `:lang("")` matched `untagged` itself. `tagged` (an explicit
+        // `lang="en"` sibling) is the negative control proving the rule
+        // isn't matching unconditionally.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":lang(\"\") { background-color: red }");
+        let html = doc.push_element(0, "html", None); // no lang
+        let body = doc.push_element(html, "body", None); // no lang
+        let untagged = doc.push_element(body, "p", None); // no lang
+        let tagged = doc.push_element(body, "p", None);
+        doc.set_attr(tagged, "lang", "en");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[untagged].background_color, RED,
+            ":lang(\"\") must match an element with no lang/xml:lang anywhere \
+             in its ancestor chain, per Selectors L4 §7.2"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[tagged].background_color,
+            ComputedValues::initial().background_color,
+            ":lang(\"\") must not match an element with an explicit lang \
+             attribute in its own chain"
+        );
+    }
+
+    /// Companion regression pin for the previous test: `:lang(*)` must NOT
+    /// match the same no-lang-anywhere element (Selectors L4 §7.2: "a
+    /// wildcard language range (\"*\") does not match elements whose
+    /// language is not tagged"). Distinct from the existing
+    /// `language_range_matches_wildcard_matches_any_tagged_language` test,
+    /// which exercises `language_range_matches` directly as a Rust
+    /// function call — this one goes through the full CSS parse + cascade
+    /// path, exercising `effective_language`'s terminal
+    /// ancestor-chain-exhausted case directly, where the resolved content
+    /// language is the empty string.
+    ///
+    /// The range must be **quoted** (`:lang("*")`, not bare `:lang(*)`) —
+    /// `*` is a CSS delimiter token, not a valid `<ident>` character, so the
+    /// unquoted form fails `expect_ident_or_string()`
+    /// (`parse_non_ts_functional_pseudo_class`'s `:lang()` arm) and the
+    /// whole rule is dropped as an invalid selector.
+    #[test]
+    fn lang_wildcard_range_does_not_match_when_no_lang_anywhere_in_ancestor_chain() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ":lang(\"*\") { font-family: wildcard-font }");
+        let html = doc.push_element(0, "html", None); // no lang
+        let body = doc.push_element(html, "body", None); // no lang
+        let untagged = doc.push_element(body, "p", None); // no lang
+        let tagged = doc.push_element(body, "p", None);
+        doc.set_attr(tagged, "lang", "en");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[untagged].font_family,
+            ComputedValues::initial().font_family,
+            ":lang(*) must not match an element with no lang/xml:lang \
+             anywhere in its ancestor chain, per Selectors L4 §7.2"
+        );
+        // Positive control: without this, a silently-dropped/unparsed
+        // `:lang(*)` rule would make the negative assertion above pass
+        // vacuously.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[tagged].font_family[0].to_string(),
+            "wildcard-font",
+            ":lang(*) must match an element with a real, non-empty lang \
+             attribute"
+        );
     }
 
     // --- structural pseudo-classes ---
