@@ -842,7 +842,7 @@ fn is_document_white_space(c: char) -> bool {
 /// bikeshed source and grep it directly), `#the-empty-pseudo` section,
 /// verbatim: "The :empty pseudo-class represents an element that has no
 /// children except, optionally, [=document white space characters=]. ...
-/// only element nodes and content nodes (such as [[DOM]] text nodes, and
+/// only element nodes and content nodes (such as \[\[DOM\]\] text nodes, and
 /// entity references) whose data has a non-zero length must be considered
 /// as affecting emptiness; comments, processing instructions, and other
 /// nodes must not affect whether an element is considered empty or not."

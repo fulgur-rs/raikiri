@@ -520,7 +520,7 @@ impl PhaseBWalkState {
 /// Current caller: this module's own unit tests. No production per-page
 /// driver exists yet — a later, separate wall/dom-paint task (see
 /// module-level doc) — so this is exercised via unit tests until then, the
-/// same status [`crate::running::collect_running_template`] and its sibling
+/// same status `crate::running::collect_running_template` and its sibling
 /// helpers already carry.
 #[allow(
     dead_code,

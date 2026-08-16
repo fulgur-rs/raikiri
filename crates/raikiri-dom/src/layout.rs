@@ -86,7 +86,7 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///   。**border-style gating は本 bridge ではなく上流の
 ///   `raikiri_style::resolve_border` (computed 層) が持つ** — CSS Backgrounds 3
 ///   §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>。
-/// - [`bridge_box_sizing`] — [`raikiri_style::BoxSizing`] → [`taffy::BoxSizing`]
+/// - [`bridge_box_sizing`] — [`raikiri_style::property::BoxSizing`] → [`taffy::BoxSizing`]
 ///   (CSS Sizing 3 §7)
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
@@ -882,7 +882,7 @@ impl std::fmt::Display for LayoutWarn {
 type LayoutWarnObserver<'o> = Option<&'o mut dyn FnMut(&LayoutWarn)>;
 
 /// Emit a [`LayoutWarn`] event: call the observer if `Some`, otherwise
-/// `eprintln!` (matches [`crate::fonts::emit_warn`]'s shape exactly, via the
+/// `eprintln!` (matches `crate::fonts::emit_warn`'s shape exactly, via the
 /// shared [`crate::diag::emit_warn_via`] macro).
 fn emit_layout_warn(observer: &mut LayoutWarnObserver<'_>, event: LayoutWarn) {
     crate::diag::emit_warn_via!(observer, "[raikiri-dom::layout]", event);
@@ -1091,7 +1091,7 @@ pub(crate) fn sanitize_taffy_layout(
 ///    が、この変更以降は assert 自体は変わらず通る (この test の fixture が
 ///    たまたま「収まっている」ケースなので) ものの、conjunction の主張は
 ///    もう成立しない — 同 test の doc および対の regression pin
-///    ([`saturated_child_outside_parent_is_not_reset`]、
+///    (`saturated_child_outside_parent_is_not_reset`、
 ///    「明らかに収まっていない」fixture でも reset されないことを直接示す
 ///    ために追加/改名) を参照。
 ///
@@ -1167,7 +1167,7 @@ pub(crate) fn sanitize_taffy_layout(
 ///    確立したのと同じ理由で、正方向でも破綻の証拠にはならない。実際
 ///    `margin-left: 1e9%` (100px container 内) は `location.x` を正方向に
 ///    飽和させ、旧実装はこれを誤って reset していた — 実測は
-///    [`saturated_negative_margin_percentage_child_is_not_reset`] の正方向対
+///    `saturated_negative_margin_percentage_child_is_not_reset` の正方向対
 ///    である CSS パイプライン経由の regression test を参照。
 ///
 ///    根拠 (b) (「正方向の再検査には現に検出力がある」) はこの変更でも
@@ -1186,10 +1186,10 @@ pub(crate) fn sanitize_taffy_layout(
 ///
 ///    この変更で挙動が反転した regression pin: 旧
 ///    `saturated_child_outside_parent_resets_subtree_to_zero_layout` は
-///    [`saturated_child_outside_parent_is_not_reset`] に改名・反転し、旧
+///    `saturated_child_outside_parent_is_not_reset` に改名・反転し、旧
 ///    `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 ///    は
-///    [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+///    `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 ///    に改名・反転した — 詳細はそれぞれの doc を参照。
 ///
 ///    **別案として検討し却下したもの**: 「`parent.size` 自身も同じ axis で
@@ -1402,11 +1402,11 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// (同 test の doc 参照)。旧
 /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 /// (現
-/// [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`])
+/// `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`)
 /// は当初「`y` 軸の検出力」の pin だったが、この変更でその検出力
 /// 自体が失われたため reset されなくなった。旧
 /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`
-/// (現 [`saturated_child_outside_parent_is_not_reset`]) も同様 — 飽和した
+/// (現 `saturated_child_outside_parent_is_not_reset`) も同様 — 飽和した
 /// axis 自身が (かつては) 違反していても、この変更以降はもう検出されない。
 ///
 /// # 符号を問わず無条件 accept になった理由 (負方向 → 正方向の順で変更)
@@ -1444,7 +1444,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// だけで、正の margin をそれより厳しく縛る spec 上の対称な根拠にはなって
 /// いない。`margin-left: 1e9%` (`width: 100px` container 内) は
 /// `location.x` を正方向に飽和させ、旧実装はこれを誤って reset していた —
-/// [`saturated_positive_margin_percentage_child_is_not_reset`] が実際の
+/// `saturated_positive_margin_percentage_child_is_not_reset` が実際の
 /// CSS パイプライン経由でこれを pin する (`saturated_negative_margin_
 /// percentage_child_is_not_reset` の正方向対)。根拠 (b) (「検出力を失う」)
 /// は反証されていない — その損失は承知の上で受け入れられた: 既存 test
@@ -1458,10 +1458,10 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// 統一され、本関数は常に `true` を返す — containment を再検査
 /// する経路はもう存在しない。旧
 /// `saturated_child_outside_parent_resets_subtree_to_zero_layout` は
-/// [`saturated_child_outside_parent_is_not_reset`] に、旧
+/// `saturated_child_outside_parent_is_not_reset` に、旧
 /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 /// は
-/// [`saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`]
+/// `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 /// に、それぞれ改名・反転した (詳細は各 test の doc参照)。「この
 /// invariant check 自体を維持すべきか」は別途明示的に deferred
 /// とされた decision であり、この doc の時点では未解決。

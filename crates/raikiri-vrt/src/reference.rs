@@ -147,7 +147,7 @@ fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
 
 /// Maximum per-fixture-file size cap (input.html or expected/page-*.png).
 ///
-/// Mirrors [`raikiri_dom::fonts::FONT_SIZE_CAP`] (100 MiB) as a "large but
+/// Mirrors `raikiri_dom::fonts::FONT_SIZE_CAP` (100 MiB) as a "large but
 /// bounded" fixture size — real reference PNGs are well under 10 MiB and
 /// input.html payloads are a few KiB, so 100 MiB leaves ample headroom while
 /// still bounding attacker-supplied huge files.
@@ -751,7 +751,7 @@ fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), Fi
 ///   (pure Rust, no `unsafe`, no new dependency).
 /// - **Apple platforms** (macOS/iOS/tvOS/watchOS/visionOS, see the
 ///   `#[cfg(any(target_os = "macos", ...))]` impl below): `fcntl(fd,
-///   F_GETPATH, ..)` via [`rustix::fs::getpath`], a safe wrapper — added
+///   F_GETPATH, ..)` via `rustix::fs::getpath`, a safe wrapper — added
 ///   as a direct dependency for this fix,
 ///   mirroring `raikiri_dom::fonts`'s identical arm: Pure Rust, already transitively vetted in
 ///   this dependency tree (`Cargo.lock` carried rustix v1.1.4 via this
