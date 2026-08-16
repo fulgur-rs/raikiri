@@ -1495,12 +1495,21 @@ fn match_combinator_chain<D: StyleDom>(
     }
 
     let mut memo: HashSet<(StyleNodeId, usize)> = HashSet::new();
-    let mut stack = vec![Frame {
+    // The stack is seeded with one frame and gains one more per combinator
+    // crossed. Building it as `vec![frame]` (the previous form) allocates
+    // for exactly one element, so pushing a second frame — i.e. a selector
+    // with 2+ combinators — already forces a reallocate-and-copy of every
+    // frame so far. Reserving 4 slots up front covers up to 3 crossed
+    // combinators (stack length 1 through 4) without regrowing; a selector
+    // with 4 crossed combinators (5 frames) still regrows once, from
+    // capacity 4 to 8.
+    let mut stack = Vec::with_capacity(4);
+    stack.push(Frame {
         candidates: pending_candidates_for(dom, combinator, current_id, ancestors),
         ancestors_unchanged: ancestors,
         iter,
         origin: None,
-    }];
+    });
     loop {
         // `stack.len()` at this point uniquely identifies "which compound
         // in the fixed original chain the frame about to be examined
