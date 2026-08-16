@@ -11,10 +11,12 @@ use raikiri_traits::NodeKind;
 
 use crate::document::Document;
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, FontWeight, Layout, LayoutContext,
-    StyleProperty,
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, Layout,
+    LayoutContext, StyleProperty,
 };
-use raikiri_style::property::{BoxSizing as StyleBoxSizing, DisplayValue};
+use raikiri_style::property::{
+    BoxSizing as StyleBoxSizing, DisplayValue, FontStyle as StyleFontStyle,
+};
 use raikiri_style::{
     CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
     ComputedValues,
@@ -746,6 +748,29 @@ fn sanitize_font_weight(v: f32, diag: &mut Vec<LayoutWarn>) -> f32 {
         );
     }
     clamped
+}
+
+/// `raikiri_style::property::FontStyle` (`Normal | Italic`, `#[non_exhaustive]`)
+/// → parley's `FontStyle` (re-exported from the `parlance` crate: `Normal |
+/// Italic | Oblique(Option<f32>)`, CSS Fonts 4 §2.4
+/// <https://www.w3.org/TR/css-fonts-4/#font-style-prop>).
+///
+/// Only the first two variants have a raikiri-style counterpart today —
+/// `oblique` isn't parsed yet (see `raikiri_style::property::FontStyle`
+/// doc's "Scope carving" section) — so parley's third variant has no source
+/// value to map from. The wildcard arm exists purely for `StyleFontStyle`'s
+/// `#[non_exhaustive]` forward-compat contract (a downstream match must
+/// tolerate variants added to the source enum later) and is unreachable
+/// with the variant set that exists today.
+fn font_style_to_parley(v: StyleFontStyle) -> FontStyle {
+    match v {
+        StyleFontStyle::Normal => FontStyle::Normal,
+        StyleFontStyle::Italic => FontStyle::Italic,
+        // cov:ignore: unreachable while StyleFontStyle is Normal|Italic
+        // only; required for its #[non_exhaustive] contract (see doc
+        // above).
+        _ => FontStyle::Normal,
+    }
 }
 
 /// Structured warn event for this module's non-finite-clamp diagnostic sites
@@ -1640,7 +1665,8 @@ fn computed_length_to_taffy_length_percentage(
 /// 呼び出し側 (`layout_single_page`) は事前に全 `Node.text_layout = None` に
 /// clear 済であることを前提とする (re-entrance safety)。
 ///
-/// Font stack / size / weight は `cascade.computed[idx]` (親から inherit 済) を消費。
+/// Font stack / size / weight / style は `cascade.computed[idx]` (親から
+/// inherit 済) を消費。
 /// `max_advance` は行折り返し境界で、通常 `page_box.width`。
 ///
 /// # 失敗しない
@@ -1729,6 +1755,9 @@ pub(crate) fn preshape_text(
         // `sanitize_font_weight` の doc) parley に渡す直前で有限化する。
         let font_weight = sanitize_font_weight(cv.font_weight, &mut doc.layout_warnings);
         builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
+        builder.push_default(StyleProperty::FontStyle(font_style_to_parley(
+            cv.font_style,
+        )));
         let mut layout: Layout<()> = builder.build(&text);
         layout.break_all_lines(Some(max_advance));
         // API tuning: brief pseudo-code は `align(Some(max_advance), Alignment::Start,
@@ -3347,6 +3376,84 @@ mod tests {
         assert!(
             diag.is_empty(),
             "in-range value must not push a LayoutWarn: {diag:?}"
+        );
+    }
+
+    #[test]
+    fn font_style_to_parley_maps_normal_and_italic() {
+        assert_eq!(
+            font_style_to_parley(StyleFontStyle::Normal),
+            FontStyle::Normal
+        );
+        assert_eq!(
+            font_style_to_parley(StyleFontStyle::Italic),
+            FontStyle::Italic
+        );
+    }
+
+    #[test]
+    fn preshape_text_pushes_computed_font_style_into_parley_run_attrs() {
+        // `preshape_text` が `cv.font_style` を実際に RangedBuilder へ push して
+        // いることを、shape 済 `Run` の font-matching 属性から確認する。
+        //
+        // `GlyphRun::style()` (`parley::layout::Style<B>`) は brush /
+        // underline / strikethrough / 非公開 line_height 等のみで
+        // `font_style` field を持たないため使えない。代わりに
+        // `Run::font_attrs()` (`&fontique::Attributes`, `pub style: FontStyle`
+        // field を持つ) を使う — これは実際に選ばれた font file の属性では
+        // なく、font matching に**渡された** CSS-requested attribute
+        // そのもの (parley `shape` module が `RangedBuilder` へ push した
+        // `StyleProperty::FontStyle` から直接組み立てる) なので、実行環境に
+        // italic face を持つフォントがあるかどうかに関わらず決定的に検証できる。
+        use parley::{FontContext, LayoutContext, PositionedLayoutItem};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn shape_run_font_style(inline_style: &str) -> FontStyle {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+            let text = doc.append_text(p, "Hi");
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).unwrap();
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            let layout = doc.nodes[text].text_layout().unwrap();
+            let line = layout.lines().next().expect("shaped text has one line");
+            let item = line
+                .items()
+                .next()
+                .expect("shaped line has at least one item");
+            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                // cov:ignore: only reached if shaping produces an InlineBox
+                // instead of a GlyphRun — preshape_text (this file) never
+                // pushes an inline box, matching the same premise
+                // `crates/raikiri-paint/src/text.rs`'s glyph-draw walk
+                // relies on ("InlineBox は現状生成されない" there), so
+                // this is unreachable for plain text today.
+                panic!("expected shaped text to produce a GlyphRun, got an InlineBox");
+            };
+            glyph_run.run().font_attrs().style
+        }
+
+        assert_eq!(shape_run_font_style("font-style:normal"), FontStyle::Normal);
+        // cov:ignore: this multi-line assert_eq! is exempted as a whole
+        // block by patch_coverage.py's bracket-depth scoping rule (the
+        // marker's block starts at the open paren below and doesn't close
+        // until the matching `);`, so every line in between — including
+        // the always-executed call/comparison lines, not just the
+        // panic-message continuation lines below — reports exempted). The
+        // assertion itself is fully exercised on every run and would fail
+        // on a wiring regression; only the panic-message string (only
+        // "entered" on assertion failure, which doesn't happen while this
+        // test passes) is the actual reason for the coverage-attribution
+        // gap this marker works around.
+        assert_eq!(
+            shape_run_font_style("font-style:italic"),
+            FontStyle::Italic,
+            "font-style:italic must reach the shaped Run's font-matching attributes \
+             (wiring regression: StyleProperty::FontStyle push missing or dropped)"
         );
     }
 
