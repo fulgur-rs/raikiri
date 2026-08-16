@@ -30,6 +30,21 @@ css/css-color/
 css/css-backgrounds/
 css/css-values/
 css/css-text/
+# NOTE: `css/css-text-decor/` (WPT) targets the unversioned/Level 4
+# editor's draft (https://www.w3.org/TR/css-text-decor-4/), which
+# co-locates CSS Text Decoration Module Level 3
+# (https://www.w3.org/TR/css-text-decor-3/) tests with Level 4 property
+# tests in one directory. Only Level 3 §2.1-§2.4
+# (text-decoration-line/-style/-color and the text-decoration shorthand)
+# are implemented. Two separate, unparsed T3-informational gaps remain:
+# - Level 3: §2.5 text-underline-position, §3 text-emphasis-*
+#   (style/color/position/shorthand), §4 text-shadow.
+# - Level 4 properties co-located in the same WPT directory:
+#   text-decoration-thickness, text-underline-offset,
+#   text-decoration-skip-ink, text-decoration-skip-spaces.
+# Runner-observed failing test ids will be added to known-issues.txt once
+# a runner lands.
+css/css-text-decor/
 css/css-writing-modes/
 css/selectors/
 html/rendering/
