@@ -253,7 +253,7 @@ impl PageScene {
 ///
 /// [`Fragment`] は body-content-area-relative Pt。body 自身は
 /// `(x, y) = (0, 0)`、size は page dimensions。以降の descendant は
-/// [`raikiri_paint::walk::paint_document`] と同じ DFS stack 順で
+/// `raikiri_paint::walk::paint_document` と同じ DFS stack 順で
 /// `parent_abs + node.unrounded_layout.location` を積算した body-relative 座標。
 ///
 /// `body_offset_pt` は page-absolute origin における body 位置 — 現状 @page

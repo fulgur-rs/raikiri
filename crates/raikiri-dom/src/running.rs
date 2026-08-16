@@ -913,7 +913,7 @@ fn convert_string_set_source(content_list: &[ContentComponent]) -> Option<Conten
 /// **Resolving here (collection time) is equivalent to CSS GCPM 3
 /// §1.1.1's "assigned at the point when the content box of the element is
 /// first created"**, unlike `counter()`/`counters()`, which
-/// [`raikiri_dom::gcpm::StringSnapshot`]'s doc explains must be frozen at
+/// [`crate::gcpm::StringSnapshot`]'s doc explains must be frozen at
 /// *directive-apply* time because their value drifts as later siblings
 /// mutate shared counter state. An attribute value and an element's own
 /// descendant text don't have that per-page drift — they're fixed
@@ -1069,7 +1069,7 @@ pub(crate) struct MarginBoxGeometry {
     pub(crate) height: f32,
 }
 
-/// Result of a per-page running-template layout — the shape [`MarginBoxFragment`]
+/// Result of a per-page running-template layout — the shape `MarginBoxFragment`
 /// (paint-side) will eventually consume.
 ///
 /// **Deliberate stub** — the paint-observable `MarginBoxFragment` lives on

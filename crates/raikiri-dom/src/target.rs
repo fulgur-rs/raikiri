@@ -4,7 +4,7 @@
 //! Companion to [`crate::running`]'s register-site
 //! walker (already landed) — same document-order
 //! arena-walk shape, different [`GcpmDirective`] variant. `running`'s
-//! [`crate::running::collect_running_template`] already *emits*
+//! `crate::running::collect_running_template` already *emits*
 //! `CounterIncrement`/`CounterReset`/`CounterSet`/`StringSet` (and
 //! `RegisterRunning` is emitted by [`crate::running::build_running_template_store`]
 //! itself) into each `position: running(name)` template's own
@@ -44,7 +44,7 @@
 //! Every other producing [`GcpmDirective`] variant
 //! (`CounterIncrement`/`CounterReset`/`CounterSet`/`StringSet`) is a direct
 //! mirror of a CSS property cascade already resolved onto
-//! [`raikiri_style::ComputedValues`] (see [`crate::running::collect_running_template`]).
+//! [`raikiri_style::ComputedValues`] (see `crate::running::collect_running_template`).
 //! `RegisterTarget { fragment_id }` is different: it is **HTML
 //! `id`-attribute-driven, not CSS-property-driven** — there is no CSS
 //! property whose cascade could produce it, and `raikiri_style::CascadeResult`
@@ -166,7 +166,7 @@ impl CounterScopes {
     /// Apply one element's `counter-reset` / `counter-increment` /
     /// `counter-set` directives, in CSS Lists 3 §4 processing order (reset →
     /// increment → set — the same order
-    /// [`crate::running::collect_running_template`] already pins for the
+    /// `crate::running::collect_running_template` already pins for the
     /// sibling `GcpmDirective`-emit walk, and for the same reason: §4.2's
     /// note that `counter-set` is applied after `counter-increment`).
     ///
@@ -287,7 +287,7 @@ fn element_id(doc: &Document, idx: usize) -> Option<String> {
 /// text — only its descendants do).
 ///
 /// Same reverse-push-children iterative DFS shape as
-/// [`crate::running::collect_running_template`] (and, one level up,
+/// `crate::running::collect_running_template` (and, one level up,
 /// [`build_target_registry`] itself) — see that function's doc for the
 /// document-order rationale. Nested per register-site element, same
 /// per-subtree walk cost tradeoff `collect_running_template` already
@@ -407,7 +407,7 @@ fn build_target_info(doc: &Document, idx: usize, scopes: &CounterScopes) -> Targ
 /// Same as [`crate::running::build_running_template_store`]: `doc`'s
 /// `IS_IN_DOCUMENT` flags must be up to date (see
 /// [`Document::mark_in_document_flags`]), matching
-/// [`raikiri_style::cascade`]'s own precondition, since this walker is meant
+/// [`raikiri_style::cascade()`]'s own precondition, since this walker is meant
 /// to run against the very `cascade` output produced from `doc`.
 #[allow(
     dead_code,
