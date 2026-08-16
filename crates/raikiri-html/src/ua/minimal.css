@@ -10,8 +10,8 @@
  *
  * Scope: the minimal rule set required for a hello-world visual
  * regression test (<p style="color:red">Hi</p> → PNG) to succeed. Form
- * controls, margins, <pre>/<code>, and <table> presentation are
- * deliberately deferred.
+ * controls, margins, <pre>, and <table> presentation are deliberately
+ * deferred.
  */
 
 /* CSS 2.1 App.D — html and body form the initial containing block */
@@ -63,15 +63,19 @@ hr         { display: block; }
  * UA rendering: §flow-content-3 itself still lists all four in the same
  * display:block selector as address/search, because a conformant UA is
  * still expected to render existing documents that use them, not only
- * newly-authored ones. Their other §flow-content-3 rules — address's
- * `font-style: italic`, and listing/plaintext/xmp's shared
- * `margin-block: 1em` (with blockquote/figure/p/pre) and
- * `font-family: monospace; white-space: pre` (with pre) — are deferred
- * here, bucketed with this file's existing `<pre>`/`<code>` deferral (see
- * file header) since listing/plaintext/xmp are the historical
- * predecessors that HTML LS's own §16.2 obsoletion notice says to
- * replace with pre + code, and so share pre's deferred presentation
- * wholesale, not just its display value. */
+ * newly-authored ones.
+ *
+ * Their other §flow-content-3 rules are deferred here for different
+ * reasons. address's `font-style: italic` is not itself blocked on
+ * anything — the same `font-style: italic` machinery already lands via
+ * the `cite, dfn, em, i, var` rule below — it is simply not yet added to
+ * address's own selector, left for a follow-up. listing/plaintext/xmp's
+ * shared `margin-block: 1em` (with blockquote/figure/p/pre) and
+ * `font-family: monospace; white-space: pre` (with pre) are bucketed with
+ * this file's existing `<pre>` deferral (see file header) instead:
+ * listing/plaintext/xmp are the historical predecessors that HTML LS's own
+ * §16.2 obsoletion notice says to replace with pre + code, and so share
+ * pre's deferred presentation wholesale, not just its display value. */
 address   { display: block; }
 center    { display: block; }
 listing   { display: block; }
@@ -273,3 +277,19 @@ sub, sup { line-height: normal; font-size: smaller; }
  * decoration, matching the spec's `[title]` gate. */
 del, s, strike { text-decoration: line-through; }
 abbr[title], acronym[title] { text-decoration: dotted underline; }
+
+/* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.4) also
+ * specifies, for code-like text-level semantic elements:
+ *   code, kbd, samp, tt { font-family: monospace; }
+ *
+ * font-family (`ComputedValues.font_family`, parsed by `parse_font_family`
+ * in property.rs) is fully implemented end to end: raikiri-dom's layout.rs
+ * hands the computed family list to parley, which resolves the CSS keyword
+ * `monospace` as a generic family rather than looking up a font literally
+ * named "monospace", so this rule lands verbatim. This is distinct from
+ * `pre`'s own `font-family: monospace; white-space: pre` pairing noted in
+ * the §flow-content-3 deferral above: that one is deferred because it is
+ * bundled with `white-space: pre`'s pre-formatting model, which this file
+ * does not implement yet. code/kbd/samp/tt's rule has no such dependency
+ * — it is `font-family: monospace` on its own. */
+code, kbd, samp, tt { font-family: monospace; }
