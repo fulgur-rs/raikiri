@@ -2067,18 +2067,40 @@ pub struct TextDecorationShorthand {
 ///
 /// - **実装済み**: `baseline` (spec initial value) / `sub` / `super` の 3
 ///   keyword。いずれも percentage / length を運ばないため、computed value =
-///   specified keyword そのまま (相対解決なし)。
-/// - **(b) 非対応**: `top` / `text-top` / `middle` / `bottom` /
-///   `text-bottom` keyword、および `<percentage>` / `<length>` value は
-///   spec-valid だが未実装、silent drop (`None`) — line-height 基準の
-///   percentage 解決・box alignment 計算を要する、将来 follow-up。
+///   specified keyword そのまま (相対解決なし)。raikiri-paint がこの 3
+///   keyword を実際の glyph 描画位置へ反映する (下記「baseline shift 量の
+///   計算は raikiri-paint scope」節)。
+/// - **(b) 非対応、silent drop 継続**: `top` / `text-top` / `middle` /
+///   `bottom` / `text-bottom` keyword は spec-valid だが未実装。box
+///   alignment (line box 内の他 box との高さ比較) を要し、inline
+///   formatting context / line box model 抜きには計算できないため未実装
+///   — この 5 keyword を「parse は通すが raikiri-paint は shift 0 として
+///   扱う」形に緩めることは**しない**: そうすると、UA/author が `sub` /
+///   `super` (raikiri-paint が実際に shift する) より高い cascade priority
+///   で `top` 等を宣言した場合、cascade 上は正当に winner になるが
+///   raikiri-paint は無視するため、**現在は正しく shift している要素が
+///   silent に shift 0 へ後退する** — 今 silent-reject (`None`) のままなら
+///   その宣言自体が cascade に参加せず起きない regression である。5
+///   keyword 全てが raikiri-paint 側でも実装されるまでは、parse 側で先に
+///   受理しない方が安全。
+/// - **(b) 非対応**: `<percentage>` / `<length>` value も spec-valid だが
+///   未実装、silent drop (`None`)。上記 5 keyword と違い raikiri-paint 側の
+///   line box model 待ちではなく、raikiri-style 側の staging 層
+///   ([`crate::specified::SpecifiedValues`]) に「line-height 基準で
+///   percentage を絶対化する」新しい specified 層の型が要る
+///   (現状の `vertical_align` field は他の 3 keyword 同様
+///   computed-equivalent 層のまま、絶対化 phase を経ない) — 既存の
+///   `padding` / `margin` / `width` / `height` と同型の staging 追加であり、
+///   raikiri-paint 側の変更とは独立に着手できる将来 follow-up。
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
 /// - **(a) spec-invalid**: 上記以外の ident は silent drop = `None`。
-/// - **Non-goal**: `sub` / `super` が指す実際の baseline shift 量計算・
-///   glyph 描画は raikiri-paint scope。本 crate は computed-style plumbing
-///   のみを担う。
+/// - **baseline shift 量の計算は raikiri-paint scope**: `sub` / `super` が
+///   指す実際の shift 量計算 (parent's used font-size を基準にした px offset)
+///   と glyph 描画位置への反映は raikiri-paint 側の責務。本 crate はこの
+///   computed value (`Sub` / `Super` の bare keyword) を運ぶだけで、shift
+///   量の算出は行わない。
 ///
 /// `Default` は derive しない — 37n sibling [`TextDecorationShorthand`] と
 /// 同じ convention (spec default は初期化側
