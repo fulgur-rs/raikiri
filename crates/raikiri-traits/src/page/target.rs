@@ -4,7 +4,7 @@
 //! is the single canonical [`TargetRegistry`] shared across raikiri-dom,
 //! raikiri-paint, and consumer crates. raikiri-traits owns the type; the
 //! producer side (register-site directive walker,
-//! feeding [`raikiri_traits::GcpmDirective::RegisterTarget`]) lives in
+//! feeding [`crate::GcpmDirective::RegisterTarget`]) lives in
 //! raikiri-dom and calls [`TargetRegistry::register`] against this
 //! canonical instance.
 //!

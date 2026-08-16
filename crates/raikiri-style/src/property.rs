@@ -1714,7 +1714,7 @@ impl OverflowXY {
 /// `this` iff `other` is neither visible nor clip). The two readings agree:
 /// the whole-pair condition is "the axis being tested is visible/clip, AND
 /// the *other* axis is neither" (if the axis under test is itself neither
-/// visible nor clip, [`axis`] has nothing to rewrite regardless of what the
+/// visible nor clip, `axis` has nothing to rewrite regardless of what the
 /// condition evaluates to) — which is exactly the per-axis check applied
 /// independently to each of the two axes.
 ///
