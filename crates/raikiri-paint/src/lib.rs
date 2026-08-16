@@ -400,6 +400,266 @@ mod tests {
         );
     }
 
+    /// `<html><head></head><body><p><span style="{span_style}">Sub</span></p></body></html>`
+    /// を通した後、`<span>` 内の Text の (唯一の) GlyphRun の transform Y
+    /// 成分 (`as_coeffs()[5]`) を返す。`span_style` が `None` の場合
+    /// `style` 属性自体を省略する (author `vertical-align` なし、cascade は
+    /// `VerticalAlign::Baseline` の initial value へ落ちる)。
+    ///
+    /// `<p>` / `<span>` とも author font-size を与えないため、CSS initial
+    /// (16px) がそのまま used font-size になる — `vertical-align: sub`/
+    /// `super` の shift 量 (`crate::walk::vertical_align_shift_px`) の基準
+    /// である「`<span>` の親 (`<p>`) の used font-size」は全 test 共通で
+    /// 16px 固定。`paint_single_page_vertical_align_*` 系 test の共通
+    /// helper。
+    fn span_text_glyph_y(span_style: Option<&str>) -> f32 {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let span = doc.append_element(Some(p), "span", Style::default(), span_style);
+        let _text = doc.append_text(span, "Sub");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let RenderCommand::GlyphRun(glyph_cmd) = scene
+            .commands
+            .iter()
+            .find(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .expect("must have 1 GlyphRun")
+        else {
+            unreachable!()
+        };
+        glyph_cmd.transform.as_coeffs()[5] as f32
+    }
+
+    #[test]
+    fn paint_single_page_vertical_align_sub_shifts_glyph_down_by_one_fifth_parent_font_size() {
+        // Differential assertion (not an absolute coeffs[5] match) — the
+        // delta between the styled and unstyled fixture isolates exactly
+        // the vertical-align contribution, independent of whatever the
+        // baseline absolute position happens to be. CSS Inline Layout
+        // Module Level 3 §4.2.3 <https://www.w3.org/TR/css-inline-3/#baseline-shift-property>
+        // sub fallback: "dropping by one fifth of the parent's used
+        // font-size" — parent here is `<p>`, used font-size 16px (helper
+        // doc).
+        let baseline_y = span_text_glyph_y(None);
+        let sub_y = span_text_glyph_y(Some("vertical-align: sub"));
+        let expected_shift = 16.0 / 5.0;
+        let epsilon = 1e-4;
+        assert!(
+            (sub_y - baseline_y - expected_shift).abs() < epsilon,
+            "vertical-align: sub delta = {} (baseline {}, sub {}), expected {}",
+            sub_y - baseline_y,
+            baseline_y,
+            sub_y,
+            expected_shift
+        );
+    }
+
+    #[test]
+    fn paint_single_page_vertical_align_super_shifts_glyph_up_by_one_third_parent_font_size() {
+        // Same differential shape as the `sub` test above. CSS Inline 3
+        // §4.2.3 super fallback: "raising by one third of the parent's
+        // used font-size" — raikiri-paint's Y axis grows downward
+        // (`draw_text_node`'s `abs_y` convention), so "raise" is a
+        // negative delta.
+        let baseline_y = span_text_glyph_y(None);
+        let super_y = span_text_glyph_y(Some("vertical-align: super"));
+        let expected_shift = -(16.0 / 3.0);
+        let epsilon = 1e-4;
+        assert!(
+            (super_y - baseline_y - expected_shift).abs() < epsilon,
+            "vertical-align: super delta = {} (baseline {}, super {}), expected {}",
+            super_y - baseline_y,
+            baseline_y,
+            super_y,
+            expected_shift
+        );
+    }
+
+    #[test]
+    fn paint_single_page_vertical_align_explicit_baseline_matches_implicit_default() {
+        // `vertical-align: baseline` (explicit author value, spec initial)
+        // must contribute the same zero shift as no author declaration at
+        // all — pins that `VerticalAlign::Baseline` isn't accidentally
+        // routed into a nonzero arm.
+        let implicit_y = span_text_glyph_y(None);
+        let explicit_y = span_text_glyph_y(Some("vertical-align: baseline"));
+        assert_eq!(
+            implicit_y, explicit_y,
+            "explicit `vertical-align: baseline` must not shift relative to the implicit default"
+        );
+    }
+
+    #[test]
+    fn paint_single_page_vertical_align_sub_on_block_level_element_does_not_shift() {
+        // CSS 2.1 §10.8.1 "Applies to: inline-level and 'table-cell'
+        // elements" <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align> —
+        // a block-level box's `vertical-align: sub` must not shift its
+        // text, pinning `vertical_align_shift_px`'s `DisplayValue` gate.
+        let baseline_y = span_text_glyph_y(None); // <span> is inline by default (CSS initial)
+        let block_y = span_text_glyph_y(Some("display: block; vertical-align: sub"));
+        assert_eq!(
+            baseline_y, block_y,
+            "block-level vertical-align: sub must not contribute a shift"
+        );
+    }
+
+    #[test]
+    fn paint_single_page_vertical_align_nested_sub_composes_by_addition() {
+        // Two nested `<span vertical-align: sub>` levels, both with the
+        // same 16px parent-font-size basis — this crate's `shift_y`
+        // stack-frame accumulation (`crate::walk::paint_document`'s doc,
+        // "Nested vertical-align の合成" note on
+        // `vertical_align_shift_px`) sums each ancestor's own shift, so
+        // the total should be twice the single-level shift. This
+        // composition rule has no spec citation (documented as an
+        // approximation) — this test pins the *mechanical* accumulation
+        // behavior, not a spec requirement.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let outer = doc.append_element(
+            Some(p),
+            "span",
+            Style::default(),
+            Some("vertical-align: sub"),
+        );
+        let inner = doc.append_element(
+            Some(outer),
+            "span",
+            Style::default(),
+            Some("vertical-align: sub"),
+        );
+        let _text = doc.append_text(inner, "Sub");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let RenderCommand::GlyphRun(glyph_cmd) = scene
+            .commands
+            .iter()
+            .find(|c| matches!(c, RenderCommand::GlyphRun(_)))
+            .expect("must have 1 GlyphRun")
+        else {
+            unreachable!()
+        };
+        let nested_y = glyph_cmd.transform.as_coeffs()[5] as f32;
+
+        let baseline_y = span_text_glyph_y(None);
+        let single_shift = 16.0 / 5.0;
+        let expected = baseline_y + 2.0 * single_shift;
+        let epsilon = 1e-4;
+        assert!(
+            (nested_y - expected).abs() < epsilon,
+            "nested double-sub y = {nested_y}, expected {expected} (baseline {baseline_y} + 2 * {single_shift})"
+        );
+    }
+
+    /// `<p>H<sub>2</sub>O</p>` を `raikiri_html::parse` + the UA
+    /// stylesheet (`sub { vertical-align: sub }` + `sub, sup { font-size:
+    /// smaller; ... }`, `minimal.css`) を通し、`<sub>` の "2" text の
+    /// GlyphRun の transform Y 成分を返す。
+    ///
+    /// `build_rule_tree` は author `<style>` element だけを拾い、UA CSS を
+    /// 自動では含まない (`raikiri_style::ruletree::walk_style_elements` の
+    /// doc: "UA CSS は含まれない — raikiri-html::parse が
+    /// Document::add_stylesheet 経由で UA を注入しており、
+    /// Document::stylesheets() 経路で raikiri umbrella が別途消費する契約")
+    /// — このため呼び出し側で明示的に `rules.add_stylesheet(MINIMAL_UA_CSS,
+    /// Origin::UserAgent)` する。
+    ///
+    /// `extra_head_style` は `<head>` 内 `<style>` として追加される author
+    /// declaration (Origin::Author は同 specificity の UA 宣言に cascade
+    /// 上優先するため、`sub { vertical-align: baseline; }` を渡せば UA の
+    /// `sub { vertical-align: sub }` を上書きできる — `font-size: smaller`
+    /// は UA のまま残る)。
+    fn ua_sub_text_glyph_y(extra_head_style: &str) -> f32 {
+        use raikiri_html::{MINIMAL_UA_CSS, ParseOptions, parse};
+        use raikiri_style::Origin;
+
+        let html = format!(
+            "<html><head><style>{extra_head_style}</style></head>\
+             <body><p>H<sub>2</sub>O</p></body></html>"
+        );
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
+        let mut doc = uncascaded.dom;
+        let mut rules = build_rule_tree(&doc);
+        rules.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let glyph_commands: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                RenderCommand::GlyphRun(cmd) => Some(cmd),
+                _ => None,
+            })
+            .collect();
+        // "H", "2" (inside <sub>), "O" are 3 separate Text nodes and —
+        // absent an inline formatting context — each lays out as its own
+        // block row (`crate::walk` module doc), so each shapes to its own
+        // GlyphRun in document order: index 1 is <sub>'s "2".
+        assert_eq!(
+            glyph_commands.len(),
+            3,
+            "expected 3 GlyphRuns (H, <sub>'s 2, O), got {}",
+            glyph_commands.len()
+        );
+        glyph_commands[1].transform.as_coeffs()[5] as f32
+    }
+
+    #[test]
+    fn paint_single_page_ua_sub_shift_uses_parent_font_size_not_subs_own_shrunk_size() {
+        // Exercises the real path this task exists for — the UA rules
+        // `sub { vertical-align: sub }` + `sub, sup { font-size: smaller;
+        // ... }` (`minimal.css`) both apply to the same `<sub>` element,
+        // reached through `raikiri_html::parse`, not the inline-style
+        // shortcut the tests above use.
+        //
+        // This is the one case where the shift's font-size basis actually
+        // matters: `<sub>`'s own used font-size is shrunk by `font-size:
+        // smaller` (CSS Fonts 4 §2.2's `<relative-size>` table,
+        // `resolve_relative_font_size`'s `RATIO = 1.2` — ~13.33px here),
+        // but `vertical_align_shift_px`'s basis is `<sub>`'s *parent*'s
+        // (`<p>`'s) used font-size, 16px, untouched by that shrink. Both
+        // fixtures below share the same shrunk `<sub>` font-size (the
+        // override only touches `vertical-align`), isolating the shift
+        // contribution: if the implementation used `<sub>`'s own shrunk
+        // font-size as the basis instead, this delta would be
+        // (16.0/1.2)/5.0 ≈ 2.667 rather than 16.0/5.0 = 3.2 — a
+        // difference this exact-match assertion would catch.
+        let shifted_y = ua_sub_text_glyph_y(""); // UA `vertical-align: sub` applies
+        let unshifted_y = ua_sub_text_glyph_y("sub { vertical-align: baseline; }");
+        let expected_shift = 16.0 / 5.0;
+        let epsilon = 1e-3;
+        assert!(
+            (shifted_y - unshifted_y - expected_shift).abs() < epsilon,
+            "UA sub shift delta = {} (shifted {}, unshifted {}), expected {}",
+            shifted_y - unshifted_y,
+            shifted_y,
+            unshifted_y,
+            expected_shift
+        );
+    }
+
     #[test]
     fn paint_single_page_skips_empty_text() {
         // text_layout が None (empty text) の Text node は draw_glyphs を呼ばず

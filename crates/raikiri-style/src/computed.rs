@@ -538,12 +538,20 @@ pub struct ComputedValues {
     /// `<percentage>` / `<length>` value forms are explicit follow-up, not
     /// represented by this field.
     ///
-    /// # Downstream handoff (future scope, style-scope confined)
+    /// # Downstream handoff
     ///
-    /// This field carries the cascade static side seed only, mirroring
-    /// [`Self::text_decoration_line`] — the actual baseline-shift amount
+    /// This field carries the cascade static side value only, mirroring
+    /// [`Self::text_decoration_line`] — the baseline-shift amount
     /// calculation and glyph rendering for `sub`/`super` is raikiri-paint
-    /// scope and not yet wired.
+    /// scope, not this crate's. raikiri-paint does now consume this field
+    /// for `sub`/`super` (a used-font-size-relative pixel offset applied at
+    /// glyph draw time); the other recognized keyword, `baseline`,
+    /// continues to contribute no offset by definition. This does not by
+    /// itself make `sub`/`super` content appear inline with its
+    /// surrounding text — raikiri-dom has no inline formatting context yet
+    /// (every element, `inline` included, lays out as its own block row),
+    /// which is a separate, larger, pre-existing gap this field's wiring
+    /// does not close.
     pub vertical_align: VerticalAlign,
     /// `font-style`. **inherited**, initial: [`FontStyle::Normal`] (CSS
     /// Fonts Module Level 4 §2.4 "Font style: the font-style property"
