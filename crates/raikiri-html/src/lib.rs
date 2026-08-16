@@ -2104,13 +2104,42 @@ mod tests {
         // matches (only) elements whose language is not tagged." — unlike
         // the wildcard range `"*"`, the literal empty-string range `""`
         // MUST match an element whose resolved content language is the
-        // empty string (explicit `lang=""`). Real-DOM for the same reason
-        // as the wildcard test: `TestDoc` can't produce the `Some("")`
-        // resolved-language state this exercises.
+        // empty string (explicit `lang=""`). Real-DOM specifically for the
+        // explicit-`lang=\"\"` case: `TestDoc`'s `attr()` mock collapses any
+        // empty-value attribute to `None` (`raikiri_style::test_dom`'s
+        // `TestElementRef::attr` doc), so it can never observe an explicit
+        // `lang=""` as present — only `raikiri-dom::dom_impl::ElementRef`,
+        // which tracks attribute presence independent of value, can.
+        //
+        // `<body>` carries an explicit non-empty `lang=\"fr\"` (rather than
+        // being left untagged like the wildcard test above) to isolate what
+        // this test actually exercises. Left untagged, `<html>`/`<body>`
+        // would themselves resolve to the empty content language via
+        // `raikiri_style::cascade::effective_language`'s exhausted-chain
+        // terminal case — so if the real-DOM empty-value-attribute bug this
+        // test guards against ever regressed (making `<div lang=\"\">`'s own
+        // attribute read back as absent), that div would still fall through
+        // to the ancestor walk and land on the *same* empty-string result
+        // via `<body>`'s own absence, making the assertion below pass for
+        // the wrong reason. With `<body lang=\"fr\">`, that fallback path
+        // resolves to `\"fr\"` instead, so the assertion below only passes
+        // if the div's own explicit `lang=\"\"` attribute was read
+        // correctly.
+        //
+        // `background-color`, not `color`: `color` is inherited (CSS
+        // Cascade 5 §7.2 <https://www.w3.org/TR/css-cascade-5/#inheriting>,
+        // same citation `raikiri_style::computed::ComputedValues`'s own doc
+        // uses), so a `color: red` rule matched on an ancestor would reach
+        // the `lang=\"ja\"` div through ordinary inheritance regardless of
+        // whether `:lang(\"\")` matched that div itself — the same pitfall
+        // `raikiri_style::cascade`'s own
+        // `root_pseudo_class_matches_the_document_root_element_only` test
+        // comment documents. `background-color` is not inherited (CSS
+        // Backgrounds 3 §2.2), so it isolates each div's own match status.
         use raikiri_style::property::CssColor;
 
-        let html = b"<html><body>\
-                     <style>:lang(\"\") { color: #FF0000; }</style>\
+        let html = b"<html><body lang=\"fr\">\
+                     <style>:lang(\"\") { background-color: #FF0000; }</style>\
                      <div lang=\"ja\">has lang</div>\
                      <div lang=\"\">empty lang</div>\
                      </body></html>";
@@ -2144,8 +2173,8 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            cascade.computed[has_lang_id].color,
-            CssColor::BLACK,
+            cascade.computed[has_lang_id].background_color,
+            CssColor::TRANSPARENT,
             ":lang(\"\") must not match an element with a real, non-empty lang attribute"
         );
         // The regression under test: explicit lang="" MUST match
@@ -2154,7 +2183,7 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            cascade.computed[empty_lang_id].color,
+            cascade.computed[empty_lang_id].background_color,
             CssColor {
                 r: 0xFF,
                 g: 0x00,
