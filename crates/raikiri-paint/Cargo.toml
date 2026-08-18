@@ -18,6 +18,13 @@ parley         = { workspace = true }
 [dev-dependencies]
 taffy                = { workspace = true }
 raikiri-html         = { workspace = true }
+# Backs `benches/walk.rs` — the regression detector for `paint_document`'s
+# per-element DFS walk (`crates/raikiri-paint/src/walk.rs`), the paint-side
+# counterpart to `crates/raikiri-style/benches/cascade.rs`. Already promoted
+# to `[workspace.dependencies]` (see root `Cargo.toml`'s `criterion` entry
+# for the version pin + Pure Rust / WASM rationale — raikiri-paint is a
+# third consumer, not a reason to re-litigate that decision).
+criterion            = { workspace = true }
 # Probe-only dependency (rasterizer memory/panic characterization) — real
 # CPU rasterizer backend, not used by production code (production stays
 # anyrender-backend-agnostic via the `PaintScene` trait, per this crate's
@@ -33,6 +40,10 @@ raikiri-html         = { workspace = true }
 # dependency already has for the existing consumers is unchanged by this dev-
 # only edge; there is no new dep to evaluate.
 anyrender_vello_cpu  = { workspace = true }
+
+[[bench]]
+name = "walk"
+harness = false
 
 [lints]
 workspace = true
