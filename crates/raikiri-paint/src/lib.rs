@@ -35,12 +35,43 @@ mod walk;
 /// - z-index / stacking context
 /// - CSS transform (rotate/scale/skew)
 /// - DPI scaling (`paint_single_page_scaled` 別関数で将来拡張予定)
+///
+/// # Panics
+///
+/// - (debug build のみ) `cascade.computed.len() != document.node_count()` —
+///   この crate の module doc `## Contract` の caller-responsibility 契約
+///   違反 (`cascade` と `document` が同じ `cascade()` 呼び出しに由来しない)。
+///   release build ではこの `debug_assert!` 自体が消える。その場合の挙動は
+///   違反の方向で異なる: `cascade.computed.len() < document.node_count()`
+///   なら walk 中の raw index site (`walk::paint_document` /
+///   `text::draw_text_node` の `cascade.computed[node_id]`) が in-bounds を
+///   超えて "index out of bounds" で panic するが、逆方向
+///   (`cascade.computed.len() > document.node_count()`) は同じ index が
+///   常に in-bounds のまま残るため panic せず、別 document の computed
+///   values を silent に誤用したまま paint が完了する。
 pub fn paint_single_page(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
 ) {
+    // walk 本体 (`walk::paint_document` / `text::draw_text_node`) は
+    // `cascade.computed[node_id]` を raw index で読む複数 site を持ち、それぞれが
+    // この crate の module doc `## Contract` (`cascade.computed.len() ==
+    // document.node_count()`) を caller 責任として前提にしている。単一の
+    // enforcement point が無いと、契約違反時にどの raw-index site が最初に
+    // 踏むかで panic message が変わってしまう (generic な "index out of
+    // bounds")。walk 全体の入口であるここで一度だけ検査し、契約を名指しした
+    // message で fail-fast させる。
+    debug_assert!(
+        cascade.computed.len() == document.node_count(),
+        "cascade.computed.len() ({}) must equal document.node_count() ({}) — \
+         violates this crate's module doc \"## Contract\": `cascade` and \
+         `document` must come from the same `cascade()` call over the same \
+         `document` (caller responsibility, not checked outside debug builds)",
+        cascade.computed.len(),
+        document.node_count(),
+    );
     walk::paint_canvas_background(scene, document, cascade, page_box);
     walk::paint_document(scene, document, cascade);
 }
@@ -942,6 +973,23 @@ mod tests {
             "text inside <template> subtree should not paint (is_in_document gate), got {} glyph runs",
             glyph_commands.len()
         );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "must equal document.node_count()")]
+    fn paint_single_page_debug_asserts_cascade_document_length_match() {
+        // module doc `## Contract` の `cascade.computed.len() ==
+        // document.node_count()` を意図的に破り (cascade 後に arena へ
+        // node を 1 つ足して `cascade.computed` を置き去りにする)、
+        // `paint_single_page` 冒頭の debug_assert がその契約違反を捕まえて
+        // panic することを pin する。release build (debug_assertions off)
+        // では debug_assert 自体が消えるため #[cfg(debug_assertions)] で
+        // gate する — さもないと `cargo test --release` で失敗する。
+        let (mut doc, cr) = hello_world_paint_setup();
+        doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
     }
 }
 
