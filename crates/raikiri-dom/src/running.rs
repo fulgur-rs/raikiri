@@ -1000,15 +1000,21 @@ fn resolve_string_set_component(
 /// value" beyond that sentence, so this concatenates every descendant
 /// [`NodeData::Text`] node's character data in document order (skipping any
 /// subtree with `IS_IN_DOCUMENT` cleared, same convention as this module's
-/// other walks) and collapses runs of **ASCII** whitespace (space / tab /
-/// LF / CR / FF) to a single space with both ends trimmed —
-/// [`str::split_ascii_whitespace`] already implements exactly that
-/// collapsing. Deliberately not [`str::split_whitespace`] (Unicode
-/// `White_Space`, which would also swallow U+00A0 NO-BREAK SPACE): CSS
-/// Text 3 §4.1 <https://www.w3.org/TR/css-text-3/#white-space-processing>
-/// scopes `white-space: normal` collapsing to "spaces (U+0020), tabs
-/// (U+0009), and segment breaks", explicitly carving out no-break space —
-/// collapsing it here would be wrong, not just imprecise.
+/// other walks) and collapses runs of [`is_css_document_white_space`]
+/// characters to a single space with both ends trimmed.
+///
+/// Deliberately neither [`str::split_ascii_whitespace`] nor
+/// [`str::split_whitespace`]: the former's Rust-defined ASCII whitespace set
+/// additionally includes U+000C FORM FEED, and the latter's Unicode
+/// `White_Space` set additionally includes U+00A0 NO-BREAK SPACE. CSS Text 3
+/// §4.1 <https://www.w3.org/TR/css-text-3/#white-space-rules> scopes
+/// `white-space: normal` collapsing to "spaces (U+0020), tabs (U+0009), and
+/// segment breaks" only, and §4
+/// <https://www.w3.org/TR/css-text-3/#white-space-processing> requires every
+/// other control character — form feed included — to "be rendered as a
+/// visible glyph", not collapsed or stripped. See
+/// [`is_css_document_white_space`]'s doc for the full character set and its
+/// citations.
 ///
 /// Does not include generated content (`::before`/`::after`) — that's
 /// `content(before)` / `content(after)`'s job, out of scope here (see
@@ -1021,7 +1027,46 @@ fn resolve_string_set_component(
 fn element_text_string_value(doc: &Document, idx: usize) -> String {
     let mut raw = String::new();
     collect_descendant_text(doc, idx, &mut raw);
-    raw.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
+    raw.split(is_css_document_white_space)
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The predicate behind [`element_text_string_value`]'s whitespace
+/// collapsing: CSS Text 3's [document white space
+/// characters](https://www.w3.org/TR/css-text-3/#white-space-rules) —
+/// "spaces (U+0020), tabs (U+0009), and segment breaks" (§4.1) — plus
+/// carriage return (U+000D), which §4
+/// <https://www.w3.org/TR/css-text-3/#white-space-processing> states is
+/// "treated identically to spaces (U+0020) in all respects", even though CR
+/// is not itself a segment break (a segment break is line feed (U+000A) for
+/// HTML-parsed content, per the same section).
+///
+/// CR-inclusion is not dead weight against some non-HTML-normalized
+/// [`Document`]: an HTML parser folds a *literal* CR/CRLF byte in the source
+/// to LF during input-stream preprocessing, but a numeric character
+/// reference such as `&#x0D;` is decoded to U+000D during tokenization,
+/// *after* that normalization step, so a real DOM text node produced by a
+/// conformant parser can and does contain a literal U+000D. §4's own
+/// closing sentence on this point: "the character is preserved — and the
+/// above rule observable — when encoded using an escape sequence
+/// (`&#x0d;`)."
+///
+/// **Deliberately excludes form feed (U+000C)**, unlike
+/// [`char::is_ascii_whitespace`] / [`str::split_ascii_whitespace`]: §4's
+/// control-character rule requires every Unicode category `Cc` control
+/// character "other than tabs (U+0009), line feeds (U+000A), carriage
+/// returns (U+000D) and sequences that form a segment break" — form feed
+/// included — to "be rendered as a visible glyph", i.e. treated as ordinary
+/// text, not collapsed or trimmed away.
+#[allow(
+    dead_code,
+    reason = "Helper for element_text_string_value; \
+              same not-yet-production-driven status."
+)]
+fn is_css_document_white_space(c: char) -> bool {
+    matches!(c, '\u{0020}' | '\u{0009}' | '\u{000A}' | '\u{000D}')
 }
 
 /// DFS accumulator for [`element_text_string_value`] — appends every
@@ -2290,6 +2335,56 @@ mod tests {
         assert_eq!(
             resolved,
             Some(ContentComponent::Literal(SmolStr::new("A\u{A0}\u{A0}B")))
+        );
+    }
+
+    #[test]
+    fn resolve_string_set_component_content_text_collapses_tab_lf_and_cr() {
+        // CSS Text 3 §4.1: tab (U+0009) and segment breaks (line feed
+        // U+000A, per §4's HTML-DOM rule) are document white space and must
+        // collapse like ordinary spaces; §4 additionally states carriage
+        // return (U+000D) is "treated identically to spaces ... in all
+        // respects". Pins that is_css_document_white_space still collapses
+        // these three after narrowing away from split_ascii_whitespace's
+        // ASCII set (which also collapsed them, plus form feed).
+        let mut doc = Document::new();
+        let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        doc.append_text(h1, "A\t\t\u{A}\u{A}\u{D}\u{D}B");
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            h1,
+            ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            },
+        );
+        assert_eq!(
+            resolved,
+            Some(ContentComponent::Literal(SmolStr::new("A B")))
+        );
+    }
+
+    #[test]
+    fn resolve_string_set_component_content_text_preserves_form_feed() {
+        // CSS Text 3 §4 <https://www.w3.org/TR/css-text-3/#white-space-processing>:
+        // control characters other than tab/LF/CR/segment-break — form feed
+        // (U+000C) included — must render as a visible glyph, not collapse
+        // or trim away. Regression pin against str::split_ascii_whitespace,
+        // whose Rust-defined ASCII whitespace set wrongly includes U+000C.
+        let mut doc = Document::new();
+        let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        doc.append_text(h1, "A\u{C}\u{C}B");
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            h1,
+            ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            },
+        );
+        assert_eq!(
+            resolved,
+            Some(ContentComponent::Literal(SmolStr::new("A\u{C}\u{C}B")))
         );
     }
 
