@@ -2640,6 +2640,64 @@ mod tests {
     }
 
     #[test]
+    fn listing_plaintext_pre_xmp_font_family_ua_rule_survives_real_parse_and_cascade() {
+        // HTML LS §flow-content-3's
+        //   listing, plaintext, pre, xmp { font-family: monospace; white-space: pre; }
+        // Only the `font-family: monospace` half lands in MINIMAL_UA_CSS
+        // (see minimal.css's comment on this rule for why `white-space: pre`
+        // stays deferred) — same split, and same test shape, as
+        // `code_kbd_samp_tt_ua_rule_survives_real_parse_and_cascade` above.
+        //
+        // Each tag is parsed in its own isolated document rather than one
+        // shared document like the sibling test above: html5ever's tokenizer
+        // switches to the PLAINTEXT state on a `<plaintext>` start tag, after
+        // which every remaining byte of the document becomes literal text —
+        // no further element, including a following `<pre>`/`<xmp>`/`<p>`,
+        // would parse as an element at all.
+        use raikiri_style::Origin;
+
+        for tag in ["pre", "listing", "plaintext", "xmp"] {
+            let html = format!("<html><body><{tag}>x</{tag}></body></html>");
+            let opts = empty_options();
+            let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
+            let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+            tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+            let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+            let id = find_first_by_tag(&uncascaded.dom, tag)
+                .unwrap_or_else(|| panic!("<{tag}> should exist"))
+                .0 as usize;
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                cascade.computed[id].font_family[0].to_string(),
+                "monospace",
+                "{tag}'s UA rule font-family: monospace must reach computed.font_family through real parse+cascade"
+            );
+        }
+
+        // Contrast: an element the UA rule does not target must stay at
+        // CSS-initial `serif` (HTML LS §flow-content-3's selector is
+        // exactly the 4 elements above, not every element).
+        let html = "<html><body><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+        let p_id = find_first_by_tag(&uncascaded.dom, "p")
+            .expect("<p> should exist")
+            .0 as usize;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[p_id].font_family[0].to_string(),
+            "serif",
+            "p must stay at CSS-initial font-family: serif, not the pre/listing/plaintext/xmp UA rule's monospace"
+        );
+    }
+
+    #[test]
     fn parse_ignores_body_style_in_m1_scope() {
         // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。
