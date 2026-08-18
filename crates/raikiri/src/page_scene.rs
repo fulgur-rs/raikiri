@@ -212,6 +212,17 @@ impl PageScene {
     ///   (invalid `tiny_skia::IntSize`)
     /// - `anyrender_vello_cpu` 出力 buffer 長 != `width * height * 4` (invariant violation)
     /// - `tiny_skia::Pixmap::encode_png` 失敗 (well-formed pixmap では実際には起きない)
+    /// - (debug build のみ) `cascade` と `dom` が同じ `cascade()` 呼び出しに由来しない
+    ///   (`cascade.computed.len() != dom.node_count()`) —
+    ///   `raikiri_paint` の module doc `## Contract` の caller-responsibility 契約違反。
+    ///   [`raikiri_paint::paint_single_page`] 冒頭の `debug_assert!` が検査する。
+    ///   release build ではこの assert 自体が消える。その場合の挙動は違反の
+    ///   方向で異なる: `cascade.computed.len() < dom.node_count()` なら walk
+    ///   中の raw index site (`cascade.computed[node_id]`) が in-bounds を
+    ///   超えて "index out of bounds" で panic するが、逆方向
+    ///   (`cascade.computed.len() > dom.node_count()`) は同じ index が常に
+    ///   in-bounds のまま残るため panic せず、別 document の computed values
+    ///   を silent に誤用したまま raster が完了する。
     ///
     /// pre-layout Document を渡すと `Node.text_layout` が空で glyph 抜けの PNG が出る
     /// (undefined、caller は `layout_single_page` 完了後に呼ぶ責任)。
