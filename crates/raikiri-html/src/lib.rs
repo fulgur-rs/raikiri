@@ -2698,6 +2698,140 @@ mod tests {
     }
 
     #[test]
+    fn margin_block_ua_rule_survives_real_parse_and_cascade() {
+        // HTML LS §flow-content-3's
+        //   blockquote, figure, listing, p, plaintext, pre, xmp {
+        //     margin-block: 1em;
+        //   }
+        // lands in MINIMAL_UA_CSS as `margin-top: 1em; margin-bottom: 1em;`
+        // (see minimal.css's comment on this rule for why bare physical
+        // longhands are used instead of the `margin` shorthand). This test
+        // pins that the rule reaches `computed.margin.{top,bottom}` through
+        // real cssparser parsing and cascade, not just literal text in
+        // `MINIMAL_UA_CSS` — same "survives real parse+cascade" concern as
+        // the `hr` test above. 1em resolves to 16px against the UA-default
+        // inherited 16px font-size.
+        //
+        // margin-left/margin-right are also asserted, at CSS-initial 0px:
+        // this pins that the rule stays confined to the block axis. It
+        // would catch an accidental switch to the single-value `margin:
+        // 1em` shorthand (which fans out to all 4 sides, giving left/right
+        // 1em too) or to hr-style `margin: 1em auto` (which would give
+        // left/right `Auto` instead) — it would NOT distinguish today's
+        // longhand-only form from `margin: 1em 0`, since that 2-value
+        // shorthand computes to the same Px(0.0) on left/right that
+        // leaving them untouched already does.
+        //
+        // Each tag is parsed in its own isolated document, same reason as
+        // `listing_plaintext_pre_xmp_font_family_ua_rule_survives_real_parse_and_cascade`
+        // above: html5ever's tokenizer switches to the PLAINTEXT state on a
+        // `<plaintext>` start tag, after which no further element in the
+        // same document would parse.
+        //
+        // Every fixture below carries an explicit `<!DOCTYPE html>` to force
+        // standards mode. Without it these fixtures would parse in quirks
+        // mode (`parse_captures_quirks_mode_for_missing_doctype` pins that
+        // a missing doctype does exactly this), and six of the seven tags
+        // (all but figure) are on HTML LS §15.3.9 "Margin collapsing
+        // quirks"'s "elements with default margins" list: as each tag's
+        // only, substantial (non-blank) child of body, §15.3.9 would
+        // require `margin-block-start` (this crate's `margin-top`) to be
+        // UA-zeroed in quirks mode — a separate, currently-unimplemented
+        // rule (see minimal.css's comment on this UA rule). Forcing
+        // standards mode here keeps this test pinned to margin-block
+        // substitution alone, not an unrelated quirks-mode interaction.
+        use raikiri_style::{ComputedLengthPercentageOrAuto, Origin};
+
+        for tag in [
+            "blockquote",
+            "figure",
+            "listing",
+            "p",
+            "plaintext",
+            "pre",
+            "xmp",
+        ] {
+            let html = format!("<!DOCTYPE html><html><body><{tag}>x</{tag}></body></html>");
+            let opts = empty_options();
+            let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
+            let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+            tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+            let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+            let id = find_first_by_tag(&uncascaded.dom, tag)
+                .unwrap_or_else(|| panic!("<{tag}> should exist"))
+                .0 as usize;
+            let margin = cascade.computed[id].margin;
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                margin.top,
+                ComputedLengthPercentageOrAuto::Px(16.0),
+                "{tag}'s UA rule margin-top: 1em must reach computed.margin.top (16px at \
+                 default 16px font-size) through real parse+cascade"
+            );
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                margin.bottom,
+                ComputedLengthPercentageOrAuto::Px(16.0),
+                "{tag}'s UA rule margin-bottom: 1em must reach computed.margin.bottom (16px \
+                 at default 16px font-size) through real parse+cascade"
+            );
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                margin.left,
+                ComputedLengthPercentageOrAuto::Px(0.0),
+                "{tag}'s UA rule must not touch margin-left (stays CSS-initial 0) — the \
+                 rule stays confined to the block axis"
+            );
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                margin.right,
+                ComputedLengthPercentageOrAuto::Px(0.0),
+                "{tag}'s UA rule must not touch margin-right (stays CSS-initial 0) — the \
+                 rule stays confined to the block axis"
+            );
+        }
+
+        // Contrast: an element the UA rule does not target must stay at
+        // CSS-initial margin 0 on every side (HTML LS §flow-content-3's
+        // margin-block selector is exactly the 7 elements above, not every
+        // block-level element — e.g. div gets display: block from a
+        // separate rule but no margin rule at all).
+        let html = "<!DOCTYPE html><html><body><div>x</div></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+        let div_id = find_first_by_tag(&uncascaded.dom, "div")
+            .expect("<div> should exist")
+            .0 as usize;
+        let div_margin = cascade.computed[div_id].margin;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            (
+                div_margin.top,
+                div_margin.right,
+                div_margin.bottom,
+                div_margin.left
+            ),
+            (
+                ComputedLengthPercentageOrAuto::Px(0.0),
+                ComputedLengthPercentageOrAuto::Px(0.0),
+                ComputedLengthPercentageOrAuto::Px(0.0),
+                ComputedLengthPercentageOrAuto::Px(0.0),
+            ),
+            "div must stay at CSS-initial margin 0 on every side, not the \
+             blockquote/figure/listing/p/plaintext/pre/xmp UA rule's 1em top/bottom"
+        );
+    }
+
+    #[test]
     fn parse_ignores_body_style_in_m1_scope() {
         // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。
