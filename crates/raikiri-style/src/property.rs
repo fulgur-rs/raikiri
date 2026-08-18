@@ -2083,15 +2083,56 @@ pub struct TextDecorationShorthand {
 ///   その宣言自体が cascade に参加せず起きない regression である。5
 ///   keyword 全てが raikiri-paint 側でも実装されるまでは、parse 側で先に
 ///   受理しない方が安全。
-/// - **(b) 非対応**: `<percentage>` / `<length>` value も spec-valid だが
-///   未実装、silent drop (`None`)。上記 5 keyword と違い raikiri-paint 側の
-///   line box model 待ちではなく、raikiri-style 側の staging 層
-///   ([`crate::specified::SpecifiedValues`]) に「line-height 基準で
-///   percentage を絶対化する」新しい specified 層の型が要る
-///   (現状の `vertical_align` field は他の 3 keyword 同様
-///   computed-equivalent 層のまま、絶対化 phase を経ない) — 既存の
-///   `padding` / `margin` / `width` / `height` と同型の staging 追加であり、
-///   raikiri-paint 側の変更とは独立に着手できる将来 follow-up。
+/// - **(b) 非対応**: `<percentage>` value は spec-valid だが未実装、silent
+///   drop (`None`)。CSS 2.1 §10.8.1 はこの percentage を要素自身の
+///   `line-height` 基準で定義する (propdef の "Percentages: refer to the
+///   'line-height' of the element itself")。`line-height: normal` (spec
+///   initial value、宣言が無い要素の既定) の下では
+///   [`crate::resolve::used_line_height_length`] が `None` を返す —
+///   real font metrics を style 層に持たないため "normal" を絶対長化できない
+///   (同関数 doc の "normal" wall が canonical)。`sub`/`super` の shift 量
+///   (下記「baseline shift 量の計算は raikiri-paint scope」節) と違い、この
+///   percentage には spec 側の UA-default fallback (CSS Inline
+///   Layout Module Level 3 §4.2.3 の `baseline-shift` 相当記述) が存在しない
+///   ため、`line-height: normal` という最も一般的なケースを誠実に近似する
+///   手段が無い。汎用 length resolver
+///   ([`crate::resolve::resolve_length`]、`Length::Percent` を "grammar 上
+///   到達しない" 前提で `0px` に落とす) へそのまま通す実装は誤り —
+///   `0%` は spec 上 `baseline` と同義だが、非 0 の percentage まで一律
+///   `0px` に潰すのは近似ではなく誤変換になる。`padding` / `margin` が
+///   `<percentage>` に対して採る「絶対化せず computed 層まで素通しし、
+///   使用先で解決する」staging pattern もここでは借用先が無い —
+///   raikiri-dom / raikiri-paint のいずれも今日時点で
+///   [`crate::computed::ComputedValues::line_height`] を読む consumer を
+///   持たず (line-height 自体、`normal` を実解決する行き先が現状存在
+///   しない)、percentage 残滓を素通しして渡す先が無い。
+/// - **(b) 非対応**: `<length>` value も spec-valid だが未実装、silent drop
+///   (`None`)。percentage と異なりこちらは基準 (line-height / font
+///   metrics) を必要としない絶対値であり、既存の汎用 length resolver
+///   ([`crate::resolve::resolve_length`]、`border-*-width` /
+///   `line-height` の `<length>` 成分が既に使う) でそのまま近似なしに
+///   絶対化できる — 単体では tractable。それでも percentage と同じ bucket
+///   に留めて未実装のままにしているのは、この enum が
+///   [`PropertyValue::VerticalAlign`] の payload として `@page` 側の
+///   phase-3 pipeline ([`crate::page`] の `absolutize_in_page_context` /
+///   `specified_layer_residue`) にもそのまま流れるため。**両関数とも現状
+///   `PropertyValue::VerticalAlign(_)` を内側の `VerticalAlign` enum に
+///   対する wildcard として match している** — 新しい top-level
+///   `PropertyValue` variant の追加はどちらの関数の (それ自体は網羅的な)
+///   外側 match でも compile error として強制されるが、`VerticalAlign`
+///   内部への variant 追加だけではこの wildcard がそれを黙って吸収し、
+///   どちらの site も compile error を出さない。すなわち length を運ぶ
+///   variant を追加しても、この 2 箇所の分類更新を忘れたままビルドも既存
+///   test も素通りしうる — [`length_payload`] の doc が言う fail-quiet
+///   (catch-all が拡張漏れを compile error にせず黙って吸収する class) と
+///   同じ risk であり、単なる bookkeeping コストの話ではない
+///   ([`crate::page`] のテスト側 corpus 分類、詳細は同 module 参照)。
+///   `raikiri-style` 側の staging 追加 (既存の `padding` / `margin` /
+///   `width` / `height` と同型) 自体は raikiri-paint 側の変更と独立に
+///   着手できるが、この `@page` 側の fail-quiet gap を塞ぐ作業は独立ではなく
+///   同じ変更に付随する — `<percentage>` が単独では着手できない以上、
+///   `<length>` だけを切り出して先に landing するより、両者をまとめて
+///   1 つの follow-up として着手する方がこの gap を確実に塞ぎやすい。
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
