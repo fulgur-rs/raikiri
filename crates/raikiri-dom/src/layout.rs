@@ -1669,6 +1669,48 @@ fn computed_length_to_taffy_length_percentage(
 /// inherit 済) を消費。
 /// `max_advance` は行折り返し境界で、通常 `page_box.width`。
 ///
+/// # 未消費の `ComputedValues` field
+///
+/// `cascade.computed[idx]` には他にも `line_height` / `direction` /
+/// `text_align` が乗っているが、本関数はいずれも読まない:
+///
+/// - `line_height` — `text_align` と同じ「未消費だが機構的には配線可能」
+///   バケツ。parley は `StyleProperty::LineHeight(LineHeight)`
+///   (`MetricsRelative` / `FontSizeRelative` / `Absolute`) を公開しており、
+///   [`ComputedLineHeight`] の `Normal` / `Number` / `Length` と値レベルで
+///   ほぼ 1:1 対応する。他の 4 property (`FontFamily` / `FontSize` /
+///   `FontWeight` / `FontStyle`) と同じ `builder.push_default(...)` で
+///   push できる、という意味で下記の `direction` とは違う種類の gap。ただし
+///   「配線可能」は「今すぐ単純に配線できる」を意味しない —
+///   本関数は taffy の `compute_root_layout` より前に走るため、
+///   line height が preshape 時点で正しく適用されるかは (下記
+///   `text_align` の align 幅の懸念と同種の) 未検証の論点として残る。
+///   現状は parley 側の default (`LineHeight::MetricsRelative(1.0)`、
+///   フォント metrics 由来) がそのまま使われる。
+/// - `direction` — `line_height` とは異なり、配線先の API 自体が無い。
+///   `RangedBuilder` / `TreeBuilder` は base direction を受け取る public
+///   API を公開しておらず、parley 内部の bidi resolver は base level
+///   引数に常に `None` を渡して呼ばれる (段落内の文字列から Unicode
+///   Bidirectional Algorithm の P2/P3 first-strong-character heuristic
+///   で自動推定し、強い方向を持つ文字が無ければ LTR に fallback —
+///   Unicode Standard Annex #9 <https://www.unicode.org/reports/tr9/>)。
+///   つまり `cv.direction` を明示的に渡す先の API 自体が現状無い —
+///   LTR がハードコードされた default なのではない。
+/// - `text_align` — 末尾の `layout.align(...)` 呼び出し自体は live だが
+///   `Alignment::Start` に固定されており `cv.text_align` を読まない
+///   (経路が無いのではなく、initial value に pin された stub)。単純な
+///   enum mapping への置き換えでは不十分な点に注意: 本関数は
+///   `layout_single_page` 内で taffy の `compute_root_layout` より **前**に
+///   走るため、`align()` に渡せる幅は `max_advance` (= 通常
+///   `page_box.width`) のみで、taffy が確定させる実際の containing block
+///   幅ではない。`Start` は align 先の幅に依存しないため無害だが、
+///   `Center` / `Right` / `End` / `Justify` を素朴に渡すと、ページ全体の
+///   幅を基準にズレて align された glyph run を生む。加えて
+///   `parley::Alignment::Start` / `End` は layout 内の bidi 解析結果から
+///   physical 方向を解決するため、`direction` を配線せずに `text_align`
+///   だけ配線しても `Start`/`End` は正しく解決されない — この 2 つは
+///   独立した gap ではなく 1 セットとして扱う必要がある。
+///
 /// # 失敗しない
 ///
 /// 以前は `Result<(), LayoutError>` を返していた。唯一の `Err` 経路は
@@ -1678,6 +1720,7 @@ fn computed_length_to_taffy_length_percentage(
 /// narrowing は crate 内で完結する (外部影響 0)。
 ///
 /// [`ComputedLength`]: raikiri_style::ComputedLength
+/// [`ComputedLineHeight`]: raikiri_style::ComputedLineHeight
 pub(crate) fn preshape_text(
     doc: &mut Document,
     cascade: &CascadeResult,

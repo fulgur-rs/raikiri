@@ -31,7 +31,12 @@ mod walk;
 /// # Non-goals (current scope)
 /// - Multi-page pagination
 /// - Element background-color / border / box-shadow
-/// - Text decoration (underline / line-through)
+/// - Text decoration (underline / line-through) — `text_decoration_line` /
+///   `_style` / `_color`、raikiri-dom / raikiri-paint 双方とも未消費
+/// - `overflow: hidden` clip-rect application (paint 側で描画内容を
+///   node の box に clip する処理) — `overflow` は taffy layout 側
+///   (scroll container 化) でも raikiri-paint 側でも未消費。前者は
+///   layout 側の別軸の gap で、ここに挙げるのは後者のみ
 /// - z-index / stacking context
 /// - CSS transform (rotate/scale/skew)
 /// - DPI scaling (`paint_single_page_scaled` 別関数で将来拡張予定)
