@@ -10,8 +10,8 @@
  *
  * Scope: the minimal rule set required for a hello-world visual
  * regression test (<p style="color:red">Hi</p> → PNG) to succeed. Form
- * controls, margins, <pre>, and <table> presentation are deliberately
- * deferred.
+ * controls, margins, <pre>'s display, and <table> presentation are
+ * deliberately deferred.
  */
 
 /* CSS 2.1 App.D — html and body form the initial containing block */
@@ -70,12 +70,13 @@ hr         { display: block; }
  * anything — the same `font-style: italic` machinery already lands via
  * the `cite, dfn, em, i, var` rule below — it is simply not yet added to
  * address's own selector, left for a follow-up. listing/plaintext/xmp's
- * shared `margin-block: 1em` (with blockquote/figure/p/pre) and
- * `font-family: monospace; white-space: pre` (with pre) are bucketed with
- * this file's existing `<pre>` deferral (see file header) instead:
- * listing/plaintext/xmp are the historical predecessors that HTML LS's own
- * §16.2 obsoletion notice says to replace with pre + code, and so share
- * pre's deferred presentation wholesale, not just its display value. */
+ * shared `margin-block: 1em` (with blockquote/figure/p/pre) is still
+ * deferred, bucketed with this file's existing margins deferral (see file
+ * header). Their other shared rule, HTML LS §flow-content-3's
+ * `font-family: monospace; white-space: pre` (with pre), is no longer
+ * bucketed wholesale — see the `listing, plaintext, pre, xmp` rule near
+ * `code, kbd, samp, tt` below for the split between what now lands and
+ * what remains deferred. */
 address   { display: block; }
 center    { display: block; }
 listing   { display: block; }
@@ -300,10 +301,29 @@ abbr[title], acronym[title] { text-decoration: dotted underline; }
  * in property.rs) is fully implemented end to end: raikiri-dom's layout.rs
  * hands the computed family list to parley, which resolves the CSS keyword
  * `monospace` as a generic family rather than looking up a font literally
- * named "monospace", so this rule lands verbatim. This is distinct from
- * `pre`'s own `font-family: monospace; white-space: pre` pairing noted in
- * the §flow-content-3 deferral above: that one is deferred because it is
- * bundled with `white-space: pre`'s pre-formatting model, which this file
- * does not implement yet. code/kbd/samp/tt's rule has no such dependency
- * — it is `font-family: monospace` on its own. */
+ * named "monospace", so this rule lands verbatim. */
 code, kbd, samp, tt { font-family: monospace; }
+
+/* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) also
+ * specifies, for pre and its historical predecessors:
+ *   listing, plaintext, pre, xmp { font-family: monospace; white-space: pre; }
+ *
+ * `font-family: monospace` lands below, split out of that pair for the
+ * same reason `code, kbd, samp, tt` above lands verbatim: the property is
+ * an independent axis from `white-space` — a plain generic-family lookup
+ * through the same already-implemented path, complete on its own, not a
+ * fragment of some other declaration the way the `dialog` display pair or
+ * the `sub`/`sup` size+baseline pair above are. `white-space: pre` itself
+ * stays deferred: raikiri-style/raikiri-dom do not implement CSS Text
+ * Module Level 3's pre-formatting model (run preservation of literal
+ * spaces/tabs/line breaks, suppressing normal collapsing/wrapping). Same
+ * "land the implementable half, defer the rest" precedent as `hr`'s
+ * `overflow: hidden` (ahead of BFC/float-clearing, above) and `li`'s
+ * interim `display: block` (ahead of `display: list-item`, above).
+ *
+ * `pre` itself additionally still has no `display: block` rule anywhere
+ * in this file, unlike listing/plaintext/xmp (which got it from the
+ * §flow-content-3 selector above) — that is `pre`'s own pre-existing
+ * display deferral (see file header's `<pre>` scope note), unrelated to
+ * and not resolved by this rule. */
+listing, plaintext, pre, xmp { font-family: monospace; }
