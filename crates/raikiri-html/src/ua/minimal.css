@@ -65,18 +65,19 @@ hr         { display: block; }
  * still expected to render existing documents that use them, not only
  * newly-authored ones.
  *
- * Their other §flow-content-3 rules are deferred here for different
- * reasons. address's `font-style: italic` is not itself blocked on
- * anything — the same `font-style: italic` machinery already lands via
- * the `cite, dfn, em, i, var` rule below — it is simply not yet added to
- * address's own selector, left for a follow-up. listing/plaintext/xmp's
- * shared `margin-block: 1em` (with blockquote/figure/p/pre) is still
- * deferred, bucketed with this file's existing margins deferral (see file
- * header). Their other shared rule, HTML LS §flow-content-3's
- * `font-family: monospace; white-space: pre` (with pre), is no longer
- * bucketed wholesale — see the `listing, plaintext, pre, xmp` rule near
- * `code, kbd, samp, tt` below for the split between what now lands and
- * what remains deferred. */
+ * listing/plaintext/xmp's other §flow-content-3 rules are deferred here
+ * for different reasons. Their shared `margin-block: 1em` (with
+ * blockquote/figure/p/pre) is still deferred, bucketed with this file's
+ * existing margins deferral (see file header). Their other shared rule,
+ * HTML LS §flow-content-3's `font-family: monospace; white-space: pre`
+ * (with pre), is no longer bucketed wholesale — see the `listing,
+ * plaintext, pre, xmp` rule near `code, kbd, samp, tt` below for the
+ * split between what now lands and what remains deferred.
+ *
+ * address's separate §flow-content-3 rule, `address { font-style:
+ * italic; }`, now lands too — folded into the `address, cite, dfn, em, i,
+ * var` rule near `mark`/`ins, u` below, alongside the identical
+ * declaration HTML LS §phrasing-content-3 specifies for cite/dfn/em/i/var. */
 address   { display: block; }
 center    { display: block; }
 listing   { display: block; }
@@ -229,11 +230,15 @@ a[href] { color: #0000EE; text-decoration: underline; }
  * properties here either), so there is nothing for the shorthand to reset
  * that plain `background-color` wouldn't already leave at its own initial.
  *
- * `cite, dfn, em, i, var { font-style: italic; }` lands verbatim below —
- * font-style: normal | italic is a raikiri-style property (`FontStyle` in
- * property.rs; CSS Fonts 4 §2.4's full propdef grammar also has an
- * optional `oblique <angle>` form and `left`/`right` slant-direction
- * keywords, both out of scope, see that type's doc).
+ * `cite, dfn, em, i, var { font-style: italic; }` lands verbatim below,
+ * combined into one physical CSS rule with HTML LS §flow-content-3's
+ * separate `address { font-style: italic; }` rule (15.3.3) — the two spec
+ * rules specify an identical declaration for different selectors, so
+ * `address` is simply added alongside cite/dfn/em/i/var rather than given
+ * its own rule. font-style: normal | italic is a raikiri-style property
+ * (`FontStyle` in property.rs; CSS Fonts 4 §2.4's full propdef grammar
+ * also has an optional `oblique <angle>` form and `left`/`right`
+ * slant-direction keywords, both out of scope, see that type's doc).
  *
  * sub/sup get two separate spec rules, both landed below as a single unit.
  * `vertical-align: sub` / `vertical-align: super` reach raikiri-style's
@@ -269,7 +274,7 @@ big { font-size: larger; }
 small { font-size: smaller; }
 mark { background-color: yellow; color: black; }
 ins, u { text-decoration: underline; }
-cite, dfn, em, i, var { font-style: italic; }
+address, cite, dfn, em, i, var { font-style: italic; }
 sub { vertical-align: sub; }
 sup { vertical-align: super; }
 sub, sup { line-height: normal; font-size: smaller; }
