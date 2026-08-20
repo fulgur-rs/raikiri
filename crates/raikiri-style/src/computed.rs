@@ -12,11 +12,11 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
-    FontStyle, OverflowValue, OverflowWrap, OverflowXY, Sides, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
-    initial_font_family,
+    BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ContentComponent, CssColor,
+    Direction, DisplayValue, FontStyle, OverflowValue, OverflowWrap, OverflowXY, Sides, TextAlign,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign,
+    Visibility, WordBreak, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -686,6 +686,52 @@ pub struct ComputedValues {
     /// normal" / "Inherited: yes"). Same computed-value shape as
     /// [`Self::letter_spacing`] — see that field's doc.
     pub word_spacing: ComputedLength,
+    /// `break-before` (legacy shorthand: `page-break-before`).
+    /// **non-inherited**, initial: [`BreakBetween::Auto`] (CSS
+    /// Fragmentation Module Level 3 §3.1 "Breaks Between Boxes: the
+    /// break-before and break-after properties"
+    /// <https://www.w3.org/TR/css-break-3/#break-between>, "Initial: auto"
+    /// / "Inherited: no"). Computed value = specified keyword
+    /// ([`BreakBetween`] doc — no length payload, so no relative
+    /// resolution is needed).
+    ///
+    /// `page-break-before` is not a separate field — `parse_value`
+    /// dispatches both names to this same field's
+    /// [`PropertyKey::BreakBefore`] ([`BreakBetween`] doc's "legacy
+    /// shorthand" section).
+    ///
+    /// # Scope carving (minimal scope)
+    ///
+    /// This field holds only the `auto | avoid | avoid-page | page`
+    /// subset of the property's full 12-keyword grammar — see
+    /// [`BreakBetween`] doc's "Scope carving" section.
+    ///
+    /// [`PropertyKey::BreakBefore`]: crate::property::PropertyKey::BreakBefore
+    pub break_before: BreakBetween,
+    /// `break-after` (legacy shorthand: `page-break-after`). Same shape as
+    /// [`Self::break_before`] — see that field's doc (CSS Fragmentation
+    /// Module Level 3 §3.1, [`BreakBetween`] doc).
+    ///
+    /// [`PropertyKey::BreakAfter`]: crate::property::PropertyKey::BreakAfter
+    pub break_after: BreakBetween,
+    /// `break-inside` (legacy shorthand: `page-break-inside`).
+    /// **non-inherited**, initial: [`BreakInside::Auto`] (CSS Fragmentation
+    /// Module Level 3 §3.2 "Breaks Within Boxes: the break-inside
+    /// property" <https://www.w3.org/TR/css-break-3/#break-within>,
+    /// "Initial: auto" / "Inherited: no"). Computed value = specified
+    /// keyword ([`BreakInside`] doc — no length payload, so no relative
+    /// resolution is needed; a smaller, disjoint value set from
+    /// [`Self::break_before`]/[`Self::break_after`]'s [`BreakBetween`]).
+    ///
+    /// `page-break-inside` is not a separate field — same dispatch shape
+    /// as [`Self::break_before`]'s doc describes.
+    ///
+    /// # Scope carving (minimal scope)
+    ///
+    /// This field holds only the `auto | avoid | avoid-page` subset of the
+    /// property's full 5-keyword grammar — see [`BreakInside`] doc's
+    /// "Scope carving" section.
+    pub break_inside: BreakInside,
 }
 
 impl ComputedValues {
@@ -786,6 +832,11 @@ impl ComputedValues {
             // initial `normal` は computed 層で `0` (`ComputedLength::ZERO`)。
             letter_spacing: ComputedLength::ZERO,
             word_spacing: ComputedLength::ZERO,
+            // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
+            // break-after / break-inside initial は共に `auto`。
+            break_before: BreakBetween::Auto,
+            break_after: BreakBetween::Auto,
+            break_inside: BreakInside::Auto,
         }
     }
 
@@ -799,7 +850,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index)。
+    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
     ///
     /// # 実装 (delegation)
     ///
@@ -941,6 +992,11 @@ mod tests {
         assert_eq!(cv.box_sizing, BoxSizing::ContentBox);
         // CSS2 §9.9.1: z-index initial は `auto`。
         assert_eq!(cv.z_index, ZIndexValue::Auto);
+        // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
+        // break-after / break-inside initial は共に `auto`。
+        assert_eq!(cv.break_before, BreakBetween::Auto);
+        assert_eq!(cv.break_after, BreakBetween::Auto);
+        assert_eq!(cv.break_inside, BreakInside::Auto);
     }
 
     #[test]
@@ -1052,13 +1108,19 @@ mod tests {
             // 非 initial に)。
             letter_spacing: ComputedLength(2.0),
             word_spacing: ComputedLength(4.0),
+            // CSS Fragmentation Module Level 3 §3.1 / §3.2: initial
+            // (`Auto`) と異なる値 (non_initial_parent の趣旨どおり全 field
+            // を非 initial に)。
+            break_before: BreakBetween::Page,
+            break_after: BreakBetween::AvoidPage,
+            break_inside: BreakInside::AvoidPage,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 35 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 38 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1127,6 +1189,11 @@ mod tests {
         assert_eq!(child.vertical_align, initial.vertical_align);
         // CSS2 §9.9.1: z-index は non-inherited。
         assert_eq!(child.z_index, initial.z_index);
+        // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
+        // break-after / break-inside は non-inherited。
+        assert_eq!(child.break_before, initial.break_before);
+        assert_eq!(child.break_after, initial.break_after);
+        assert_eq!(child.break_inside, initial.break_inside);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。

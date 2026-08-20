@@ -2070,7 +2070,18 @@ fn absolutize_in_page_context(
         // `overflow-wrap` (legacy alias `word-wrap`, CSS Text 3 §5.4)
         // carries no length either (see `OverflowWrap`'s doc) — same as
         // `WordBreak` above.
-        | PropertyValue::OverflowWrap(_)) => v,
+        | PropertyValue::OverflowWrap(_)
+        // `break-before`/`break-after` (CSS Fragmentation Module Level 3
+        // §3.1, legacy shorthand `page-break-before`/`page-break-after`
+        // included) carry no length either (see `BreakBetween`'s doc) —
+        // nothing for phase 3 to absolutize.
+        | PropertyValue::BreakBefore(_)
+        | PropertyValue::BreakAfter(_)
+        // `break-inside` (CSS Fragmentation Module Level 3 §3.2, legacy
+        // shorthand `page-break-inside` included) carries no length
+        // either (see `BreakInside`'s doc) — same as `BreakBefore`/
+        // `BreakAfter` above.
+        | PropertyValue::BreakInside(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2391,10 +2402,11 @@ mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
-        BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
-        Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY,
-        PositionValue, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
-        TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak, ZIndexValue,
+        BoxSizing, BreakBetween, BreakInside, ContentComponent, CssColor, Direction, DisplayValue,
+        FontStyle, FontWeightValue, Length, LengthOrAuto, LengthOrNormal, LineHeight,
+        OverflowValue, OverflowWrap, OverflowXY, PositionValue, TextAlign, TextDecorationColor,
+        TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextTransform,
+        VerticalAlign, Visibility, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4135,11 +4147,15 @@ mod tests {
     /// length ではないため phase 3 に変換対象が無い)。
     /// 32 → 34 (`WordBreak` / `OverflowWrap` も同じ理由 — どちらも length を
     /// 運ばない keyword-only property のため phase 3 に変換対象が無い)。
+    /// 34 → 37 (`BreakBefore` / `BreakAfter` / `BreakInside` も同じ理由 —
+    /// CSS Fragmentation Module Level 3 の keyword-only property のため
+    /// length を運ばず phase 3 に変換対象が無い。legacy shorthand
+    /// `page-break-*` はこれらと同じ variant/key に落ちるので別枠にならない)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 34;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 37;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4378,6 +4394,17 @@ mod tests {
         // trivially round-tripping an already-absolute length.
         LetterSpacing => PropertyValue::LetterSpacing(LengthOrNormal::Length(Length::Em(0.1))),
         WordSpacing => PropertyValue::WordSpacing(LengthOrNormal::Length(Length::Rem(0.2))),
+        // No specified/computed distinction for `break-before`/
+        // `break-after` (computed value = specified keyword, `BreakBetween`
+        // doc) — any value is "worst case" (`Direction` sibling comment
+        // above uses the same reasoning). `AvoidPage`/`Page` chosen over
+        // `Auto` so the sample is not the initial value.
+        BreakBefore => PropertyValue::BreakBefore(BreakBetween::AvoidPage),
+        BreakAfter => PropertyValue::BreakAfter(BreakBetween::Page),
+        // No specified/computed distinction for `break-inside` either
+        // (computed value = specified keyword, `BreakInside` doc) — same
+        // reasoning.
+        BreakInside => PropertyValue::BreakInside(BreakInside::AvoidPage),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4549,6 +4576,9 @@ mod tests {
         OverflowWrap,
         LetterSpacing,
         WordSpacing,
+        BreakBefore,
+        BreakAfter,
+        BreakInside,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4810,7 +4840,16 @@ mod tests {
             | PropertyValue::WordBreak(_)
             // `OverflowWrap` (CSS Text 3 §5.4, legacy alias `word-wrap`)
             // carries no length either.
-            | PropertyValue::OverflowWrap(_) => None,
+            | PropertyValue::OverflowWrap(_)
+            // `BreakBetween` (CSS Fragmentation Module Level 3 §3.1,
+            // legacy shorthand `page-break-before`/`page-break-after`
+            // included) carries no length either.
+            | PropertyValue::BreakBefore(_)
+            | PropertyValue::BreakAfter(_)
+            // `BreakInside` (CSS Fragmentation Module Level 3 §3.2, legacy
+            // shorthand `page-break-inside` included) carries no length
+            // either.
+            | PropertyValue::BreakInside(_) => None,
         }
     }
 
