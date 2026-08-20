@@ -15,15 +15,32 @@
 //! `raikiri_traits::page::PageContext` (`crates/raikiri-traits/src/page/context.rs`):
 //! `PageContext::apply_directive` is now the canonical, single-entry-point
 //! implementation, with `CounterStack` / `NamedStringState` promoted
-//! alongside it as `pub` raikiri-traits types. **This module is deliberately
-//! retained, not deleted** — no production driver in raikiri-dom calls
-//! `PageContext::apply_directive` yet; wiring a real DOM-tree-walking driver
-//! (`CounterStack::pop_scope` / `NamedStringState` page-boundary call sites)
-//! is still to be done. Until that driver rewires
-//! [`apply_running_template_directives`] (this module's current caller) to
-//! target `raikiri_traits::PageContext` directly, this dom-local mirror
-//! remains the *only* currently-exercised implementation reachable from
-//! raikiri-dom's actual code path.
+//! alongside it as `pub` raikiri-traits types.
+//!
+//! **A DOM-tree-walking driver now exists** (`crate::phase_b`) and targets
+//! the promoted `raikiri_traits::PageContext` directly, not this dom-local
+//! mirror — it is the first driver built against the promoted type, though
+//! (like this mirror) it has no production caller of its own yet either. It
+//! applies every element's `CounterReset`/`CounterIncrement`/
+//! `CounterSet`/`StringSet` directive correctly for the "descendants" half of
+//! CSS Lists 3 §4.3's counter-reset scope (modulo one pre-existing,
+//! separately-tracked gap it inherits by matching `crate::target`'s own
+//! `display:none` handling: a `display:none` element's *own* box-generating
+//! descendants are still walked and applied, since `display` isn't
+//! inherited — CSS Lists 3 §4.5 withdraws counter effects only from
+//! elements that don't themselves generate a box), but the "following
+//! siblings" half
+//! (popping a pushed nested-scope frame at the resetting element's own
+//! *parent's* subtree exit) is not wired yet: `PageContext` has no way to
+//! reach a tracked counter stack and pop it from outside raikiri-traits (see
+//! `crate::phase_b`'s module doc "Counter-scope exit is not wired yet" for
+//! the full account). **This module is deliberately retained, not
+//! deleted** — collapsing it onto `crate::phase_b` is gated on that
+//! counter-scope-pop capability landing, since until then this dom-local
+//! mirror and the promoted type are equally unable to reproduce the correct
+//! parent-exit-pop scoping, and this module's [`CounterStack::pop_scope`] /
+//! [`PhaseBWalkState::begin_page`] remain the closest concrete reference for
+//! what that wiring will eventually need to do.
 //!
 //! **This module builds the algorithm + state dom-locally**, entirely inside
 //! raikiri-dom, so the walk's correctness (nested counter scopes, snapshot
@@ -74,20 +91,29 @@ use raikiri_traits::{ContentSource, GcpmDirective, RunningTemplateId, Symbol};
 /// [`Self::reset`] unconditionally *pushes* a new frame; it never replaces
 /// the innermost one. Popping that frame when the walk leaves the
 /// originating element's subtree is **not** done automatically here —
-/// [`Self::pop_scope`] exists for a future DOM-tree-driven walker to call at
-/// the right point (subtree exit), matching the real CSS scoping rule where
-/// two *sibling* elements each resetting the same counter get independent,
-/// same-depth scopes (not accumulating nesting). **No such driver exists
-/// yet** — [`apply_running_template_directives`] (this module's current
-/// caller) iterates a flat `Vec<GcpmDirective>` with no subtree-exit
-/// markers (see module-level doc), so nothing currently calls `pop_scope`.
-/// Applying two sibling `CounterReset`s through this walk today will
+/// [`Self::pop_scope`] exists for a DOM-tree-driven walker to call at the
+/// right point: not the resetting element's own subtree exit, but its
+/// *parent's* subtree exit (CSS Lists 3 §4.3 scopes a counter-reset to "the
+/// element's descendants and its following siblings with their
+/// descendants" — popping any earlier would hide the scope from the
+/// resetting element's own following siblings). `crate::phase_b`'s
+/// document-order walker (this module's promoted counterpart's driver — see
+/// module-level doc) applies every `CounterReset`/`CounterIncrement`/
+/// `CounterSet`/`StringSet` directive correctly, but does not yet call
+/// `pop_scope`'s promoted counterpart at all: the promoted
+/// `raikiri_traits::PageContext` has no way to reach a tracked counter stack
+/// and pop it from outside raikiri-traits (see `crate::phase_b`'s module doc
+/// "Counter-scope exit is not wired yet" for the full account of that gap).
+/// [`apply_running_template_directives`] (this dom-local mirror's own
+/// caller) has the identical limitation for the same underlying reason (its
+/// input, a flat `Vec<GcpmDirective>` with no subtree-exit markers, doesn't
+/// even carry the information `pop_scope` would need — see module-level
+/// doc). Applying two sibling `CounterReset`s through either walk today will
 /// therefore accumulate depth instead of resetting at the same level. This
-/// is a known, documented limitation of the *driver*, not a bug in the
+/// is a known, documented limitation of the *driver* side, not a bug in the
 /// push/pop primitives themselves — the unit tests below pin push/pop
-/// correctness directly (the primitives a future driver will call), not the
-/// "real DOM walk pops at the right points" integration, which is out of
-/// this task's scope.
+/// correctness directly, not the "real DOM walk pops at the right points"
+/// integration.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CounterStack {
     /// Nested scope frames, outermost first. Empty = the counter has not
@@ -304,14 +330,18 @@ impl NamedStringState {
     /// page's entry/start value, and clear the per-page first/last-use
     /// trackers (a fresh page starts with no assignments of its own).
     ///
-    /// No production driver calls this yet — no per-page walk exists (see
-    /// module-level doc); exposed for a future PageStream-driven walker and
-    /// exercised directly by this module's unit tests.
+    /// A per-page walk now exists (`crate::phase_b::drive_page`), but it
+    /// targets the promoted `raikiri_traits::NamedStringState::begin_page`
+    /// directly, not this dom-local mirror — no production driver calls
+    /// *this* method (see module-level doc); exercised directly by this
+    /// module's unit tests.
     #[allow(
         dead_code,
-        reason = "No production driver calls this yet — no per-page walk \
-                  exists (see module-level doc); exercised directly by this \
-                  module's unit tests."
+        reason = "No production driver calls this dom-local mirror — \
+                  crate::phase_b::drive_page targets the promoted \
+                  raikiri_traits::NamedStringState::begin_page instead (see \
+                  module-level doc). Exercised directly by this module's \
+                  unit tests."
     )]
     pub(crate) fn begin_page(&mut self) {
         self.on_page_start = self.running.clone();
@@ -466,12 +496,16 @@ impl PhaseBWalkState {
     }
 
     /// Page-boundary hook — forwards to every tracked [`NamedStringState`].
-    /// See [`NamedStringState::begin_page`] for why this has no production
-    /// caller yet.
+    /// See that method's doc for why this dom-local mirror has no
+    /// production caller — `crate::phase_b::drive_page` targets the
+    /// promoted `raikiri_traits::PageContext::begin_page` instead.
     #[allow(
         dead_code,
-        reason = "No production per-page driver exists yet (see module-level \
-                  doc) — exercised directly by this module's unit tests."
+        reason = "No production driver calls this dom-local mirror — \
+                  crate::phase_b::drive_page targets the promoted \
+                  raikiri_traits::PageContext::begin_page instead (see \
+                  module-level doc). Exercised directly by this module's \
+                  unit tests."
     )]
     pub(crate) fn begin_page(&mut self) {
         for state in self.strings.values_mut() {
@@ -511,23 +545,29 @@ impl PhaseBWalkState {
 /// `directives` list to `state`, front-to-back.
 ///
 /// "Front-to-back, not re-sorted" matters: `collect_running_template`
-/// pushes same-element directives in CSS Lists 3 §4
-/// processing order (reset → increment → set, *not* property declaration
-/// order — see that function's doc comment), specifically so a consumer
-/// walking the Vec in push order gets correct same-element semantics without
-/// re-sorting by directive kind. This function is that consumer.
+/// (via `crate::running::derive_element_directives`) pushes same-element
+/// directives in CSS Lists 3 §4 processing order (reset → increment → set,
+/// *not* property declaration order — see `derive_element_directives`'s own
+/// doc comment), specifically so a consumer walking the Vec in push order
+/// gets correct same-element semantics without re-sorting by directive
+/// kind. This function is that consumer.
 ///
-/// Current caller: this module's own unit tests. No production per-page
-/// driver exists yet — a later, separate wall/dom-paint task (see
-/// module-level doc) — so this is exercised via unit tests until then, the
-/// same status `crate::running::collect_running_template` and its sibling
-/// helpers already carry.
+/// Current caller: this module's own unit tests only. `crate::phase_b`'s
+/// per-page driver exists now, but it walks the DOM tree directly and
+/// applies directives to the promoted `raikiri_traits::PageContext` rather
+/// than consuming a pre-collected `ParsedRunningTemplate` through this
+/// dom-local mirror — so this function itself remains exercised via unit
+/// tests only, the same status `crate::running::collect_running_template`
+/// and its sibling helpers already carry.
 #[allow(
     dead_code,
-    reason = "No production per-page driver exists yet (a later, separate \
-              wall/dom-paint task) — exercised via unit tests until then, \
-              same status crate::running::collect_running_template and its \
-              siblings already carry."
+    reason = "No production driver calls this dom-local mirror — \
+              crate::phase_b's per-page driver applies directives to the \
+              promoted raikiri_traits::PageContext directly instead (see \
+              module-level doc) — exercised via unit tests until this \
+              module is collapsed onto that driver, same status \
+              crate::running::collect_running_template and its siblings \
+              already carry."
 )]
 pub(crate) fn apply_running_template_directives(
     state: &mut PhaseBWalkState,
