@@ -13,8 +13,8 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
-    FontStyle, OverflowValue, OverflowXY, Sides, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, VerticalAlign, empty_content_list,
+    FontStyle, OverflowValue, OverflowWrap, OverflowXY, Sides, TextAlign, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, VerticalAlign, WordBreak, empty_content_list,
     empty_counter_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -64,7 +64,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / word_break / overflow_wrap、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align)。
@@ -567,6 +567,35 @@ pub struct ComputedValues {
     /// property's full `normal | italic | left | right | oblique <angle
     /// [-90deg,90deg]>?` grammar — see [`FontStyle`] doc.
     pub font_style: FontStyle,
+    /// `word-break`. **inherited**, initial: [`WordBreak::Normal`] (CSS
+    /// Text Module Level 3 §5.1 "Breaking Rules for Letters: the
+    /// word-break property"
+    /// <https://www.w3.org/TR/css-text-3/#word-break-property>, "Initial:
+    /// normal" / "Inherited: yes"). Computed value = specified keyword
+    /// ([`WordBreak`] doc — no length payload, so no relative resolution
+    /// is needed).
+    ///
+    /// # Scope carving (minimal scope)
+    ///
+    /// This field holds only the `normal | keep-all | break-all` subset of
+    /// the property's full `normal | keep-all | break-all | break-word`
+    /// grammar — the deprecated `break-word` value is not represented, see
+    /// [`WordBreak`] doc's "Scope carving" section.
+    pub word_break: WordBreak,
+    /// `overflow-wrap` (legacy name alias: `word-wrap`). **inherited**,
+    /// initial: [`OverflowWrap::Normal`] (CSS Text Module Level 3 §5.4
+    /// "Overflow Wrapping: the overflow-wrap (word-wrap) property"
+    /// <https://www.w3.org/TR/css-text-3/#overflow-wrap-property>,
+    /// "Initial: normal" / "Inherited: yes"). Computed value = specified
+    /// keyword ([`OverflowWrap`] doc — no length payload, so no relative
+    /// resolution is needed).
+    ///
+    /// `word-wrap` is not a separate field — `parse_value` dispatches both
+    /// names to this same field's [`PropertyKey::OverflowWrap`]
+    /// ([`OverflowWrap`] doc's "legacy alias" section).
+    ///
+    /// [`PropertyKey::OverflowWrap`]: crate::property::PropertyKey::OverflowWrap
+    pub overflow_wrap: OverflowWrap,
 }
 
 impl ComputedValues {
@@ -651,6 +680,10 @@ impl ComputedValues {
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
             font_style: FontStyle::Normal,
+            // CSS Text 3 §5.1: word-break initial は `normal`。
+            word_break: WordBreak::Normal,
+            // CSS Text 3 §5.4: overflow-wrap initial は `normal`。
+            overflow_wrap: OverflowWrap::Normal,
         }
     }
 
@@ -662,7 +695,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / word_break / overflow_wrap、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align)。
     ///
@@ -761,6 +794,10 @@ mod tests {
         assert_eq!(cv.direction, Direction::Ltr);
         // CSS Fonts 4 §2.4: font-style initial は `normal`。
         assert_eq!(cv.font_style, FontStyle::Normal);
+        // CSS Text 3 §5.1: word-break initial は `normal`。
+        assert_eq!(cv.word_break, WordBreak::Normal);
+        // CSS Text 3 §5.4: overflow-wrap initial は `normal`。
+        assert_eq!(cv.overflow_wrap, OverflowWrap::Normal);
         // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
         // CSS Box 3 §3.1: margin initial は 0 on each side。
@@ -881,13 +918,19 @@ mod tests {
             // CSS Fonts 4 §2.4: `Italic` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             font_style: FontStyle::Italic,
+            // CSS Text 3 §5.1: `KeepAll` — initial (`Normal`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            word_break: WordBreak::KeepAll,
+            // CSS Text 3 §5.4: `Anywhere` — initial (`Normal`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            overflow_wrap: OverflowWrap::Anywhere,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 27 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 29 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -907,6 +950,10 @@ mod tests {
         assert_eq!(child.direction, parent.direction);
         // CSS Fonts 4 §2.4: font-style は inherited。
         assert_eq!(child.font_style, parent.font_style);
+        // CSS Text 3 §5.1: word-break は inherited。
+        assert_eq!(child.word_break, parent.word_break);
+        // CSS Text 3 §5.4: overflow-wrap は inherited。
+        assert_eq!(child.overflow_wrap, parent.overflow_wrap);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);

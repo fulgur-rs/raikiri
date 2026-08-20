@@ -2050,7 +2050,15 @@ fn absolutize_in_page_context(
         // `normal`/`italic` implemented, see `FontStyle`'s doc) and
         // computed value = specified keyword — nothing for phase 3 to
         // absolutize.
-        | PropertyValue::FontStyle(_)) => v,
+        | PropertyValue::FontStyle(_)
+        // `word-break` (CSS Text 3 §5.1) carries no length either and
+        // computed value = specified keyword (see `WordBreak`'s doc) —
+        // nothing for phase 3 to absolutize.
+        | PropertyValue::WordBreak(_)
+        // `overflow-wrap` (legacy alias `word-wrap`, CSS Text 3 §5.4)
+        // carries no length either (see `OverflowWrap`'s doc) — same as
+        // `WordBreak` above.
+        | PropertyValue::OverflowWrap(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2344,9 +2352,9 @@ mod tests {
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
-        Length, LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
-        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        VerticalAlign,
+        Length, LengthOrAuto, LineHeight, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
+        TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
+        TextDecorationStyle, VerticalAlign, WordBreak,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4078,11 +4086,13 @@ mod tests {
     /// 28 → 29 (`FontStyle` も同じ理由 — この crate の scope
     /// (`normal`/`italic` のみ) では length を運ばないため phase 3 に変換対象が
     /// 無い)。
+    /// 29 → 31 (`WordBreak` / `OverflowWrap` も同じ理由 — どちらも length を
+    /// 運ばない keyword-only property のため phase 3 に変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 29;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 31;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4286,6 +4296,16 @@ mod tests {
         // doc) — any value is "worst case" (`Direction` sibling comment
         // above uses the same reasoning).
         FontStyle => PropertyValue::FontStyle(FontStyle::Italic),
+        // No specified/computed distinction for `word-break` (computed
+        // value = specified keyword, `WordBreak` doc) — any value is
+        // "worst case" (`Direction` sibling comment above uses the same
+        // reasoning).
+        WordBreak => PropertyValue::WordBreak(WordBreak::BreakAll),
+        // No specified/computed distinction for `overflow-wrap` (computed
+        // value = specified keyword, `OverflowWrap` doc) — any value is
+        // "worst case" (`Direction` sibling comment above uses the same
+        // reasoning).
+        OverflowWrap => PropertyValue::OverflowWrap(OverflowWrap::Anywhere),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4449,6 +4469,8 @@ mod tests {
         TextDecoration,
         VerticalAlign,
         FontStyle,
+        WordBreak,
+        OverflowWrap,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4686,7 +4708,12 @@ mod tests {
             | PropertyValue::VerticalAlign(_)
             // `FontStyle` carries no length either, at this crate's scope
             // (only `normal`/`italic` implemented).
-            | PropertyValue::FontStyle(_) => None,
+            | PropertyValue::FontStyle(_)
+            // `WordBreak` (CSS Text 3 §5.1) carries no length either.
+            | PropertyValue::WordBreak(_)
+            // `OverflowWrap` (CSS Text 3 §5.4, legacy alias `word-wrap`)
+            // carries no length either.
+            | PropertyValue::OverflowWrap(_) => None,
         }
     }
 
@@ -5040,7 +5067,8 @@ mod tests {
         let result = page(
             "@page { color: red; font-weight: bolder; display: block; \
              box-sizing: border-box; border-top-color: red; text-align: center; \
-             direction: rtl; font-style: italic }",
+             direction: rtl; font-style: italic; word-break: break-all; \
+             overflow-wrap: anywhere }",
             &root,
         );
         assert_eq!(color_of(&result), Some(RED));
@@ -5065,6 +5093,14 @@ mod tests {
         assert_eq!(
             result.declarations().get(&PropertyKey::FontStyle),
             Some(&PropertyValue::FontStyle(FontStyle::Italic)),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::WordBreak),
+            Some(&PropertyValue::WordBreak(WordBreak::BreakAll)),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OverflowWrap),
+            Some(&PropertyValue::OverflowWrap(OverflowWrap::Anywhere)),
         );
     }
 
