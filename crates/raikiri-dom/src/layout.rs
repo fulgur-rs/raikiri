@@ -3678,7 +3678,7 @@ mod tests {
     #[test]
     fn sanitize_line_height_clamps_non_finite_and_out_of_range_number() {
         // site 7: `ComputedLineHeight::Number` — grammar `<number [0,∞]>`
-        // なので下限 0.0、上限 [`MAX_LINE_HEIGHT_NUMBER`]。NaN は他の length 系
+        // なので下限 0.0、上限 `MAX_LINE_HEIGHT_NUMBER`。NaN は他の length 系
         // site と同じ `sanitize_finite` の `0.0` fallback を継承する (font-weight
         // のような専用 fallback が要らない理由: line-height の unitless
         // number に `0` は grammar 上有効な値であり、font-weight の `400.0`
@@ -3725,7 +3725,7 @@ mod tests {
     fn sanitize_line_height_clamps_non_finite_and_out_of_range_length() {
         // site 8: `ComputedLineHeight::Length` — grammar
         // `<length-percentage [0,∞]>` の percentage は computed 層で既に
-        // px へ絶対化済み ([`ComputedLineHeight::Length`] の doc参照) なので
+        // px へ絶対化済み (`ComputedLineHeight::Length` の doc参照) なので
         // ここでは px の妥当域だけを見る。
         let mut diag = Vec::new();
         assert_eq!(

@@ -2209,7 +2209,7 @@ mod tests {
         // (`vertical-align: sub`/`super`) also landed — covered separately
         // by `sub_sup_ua_rules_survive_real_parse_and_cascade` below. Same
         // "survives real parse+cascade, not just literal text in
-        // MINIMAL_UA_CSS" concern as the hr / a[href] tests above.
+        // MINIMAL_UA_CSS" concern as the hr / `a[href]` tests above.
         use raikiri_style::Origin;
         use raikiri_style::property::{CssColor, TextDecorationLine};
 
@@ -2553,7 +2553,7 @@ mod tests {
         // the 5 elements this spec rule itself names; `address`'s coverage
         // is `address_font_style_ua_rule_survives_real_parse_and_cascade`
         // below. Same "survives real parse+cascade, not just literal text
-        // in MINIMAL_UA_CSS" concern as the hr / a[href] /
+        // in MINIMAL_UA_CSS" concern as the hr / `a[href]` /
         // `phrasing_content_ua_rules_survive_real_parse_and_cascade` tests
         // above — a separate test function (rather than folded into that
         // one) so this rule's coverage doesn't collide with concurrent
@@ -2650,7 +2650,7 @@ mod tests {
         // HTML LS §phrasing-content-3's
         //   code, kbd, samp, tt { font-family: monospace; }
         // Same "survives real parse+cascade, not just literal text in
-        // MINIMAL_UA_CSS" concern as the hr / a[href] /
+        // MINIMAL_UA_CSS" concern as the hr / `a[href]` /
         // `cite_dfn_em_i_var_font_style_ua_rule_survives_real_parse_and_cascade`
         // tests above — a separate test function, mirroring those sibling
         // tests' own separate-function convention.

@@ -9390,8 +9390,8 @@ mod tests {
 
     // ── font-style (CSS Fonts 4 §2.4) ──
     //
-    // Value grammar (§2.4 spec verbatim, full property grammar): normal |
-    // italic | left | right | oblique <angle [-90deg,90deg]>?. This crate
+    // Value grammar (§2.4 spec verbatim, full property grammar): `normal |
+    // italic | left | right | oblique <angle [-90deg,90deg]>?`. This crate
     // implements only normal / italic (`FontStyle` doc's "Scope carving"
     // section). Initial: normal / Inherited: yes / Computed value:
     // specified keyword (angle-bearing branch unreachable at this scope).

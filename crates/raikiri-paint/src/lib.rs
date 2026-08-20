@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn paint_single_page_vertical_align_sub_shifts_glyph_down_by_one_fifth_parent_font_size() {
-        // Differential assertion (not an absolute coeffs[5] match) — the
+        // Differential assertion (not an absolute `coeffs[5]` match) — the
         // delta between the styled and unstyled fixture isolates exactly
         // the vertical-align contribution, independent of whatever the
         // baseline absolute position happens to be. CSS Inline Layout
