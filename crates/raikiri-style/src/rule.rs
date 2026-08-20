@@ -477,6 +477,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::StringSet(_)
         | PropertyValue::Position(_)
         | PropertyValue::TextAlign(_)
+        | PropertyValue::TextIndent(_)
         | PropertyValue::PaddingTop(_)
         | PropertyValue::PaddingRight(_)
         | PropertyValue::PaddingBottom(_)
@@ -898,6 +899,17 @@ mod tests {
         // but reaches the same outcome: whole declaration dropped, not a
         // partial `uppercase` application.
         let decls = parse_block("text-transform: full-width uppercase;");
+        assert!(decls.is_empty());
+    }
+
+    #[test]
+    fn rejects_extra_ident_after_text_indent() {
+        // "2em hanging" — `hanging` is spec-valid (CSS Text 3 §8.1) but this
+        // crate's `PropertyValue::TextIndent` only carries the
+        // `<length-percentage>` component, so `hanging` is unconsumed
+        // garbage from `expect_exhausted`'s point of view and the whole
+        // declaration drops — mirrors `rejects_extra_length_after_font_size`.
+        let decls = parse_block("text-indent: 2em hanging;");
         assert!(decls.is_empty());
     }
 

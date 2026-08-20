@@ -64,7 +64,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / text_indent、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align)。
@@ -308,6 +308,35 @@ pub struct ComputedValues {
     /// page-property-list <https://www.w3.org/TR/css-page-3/#page-property-list>
     /// にも独立に載っており、`@page` context でも意味を持つ。
     pub direction: Direction,
+    /// `text-indent` — first-line indentation of a block container.
+    /// **inherited**、initial: [`ComputedLengthPercentage::Px`]`(0.0)` (CSS
+    /// Text 3 §8.1 "First Line Indentation: the text-indent property"
+    /// <https://www.w3.org/TR/css-text-3/#text-indent-property>: "Initial:
+    /// 0", "Applies to: block containers", "Inherited: yes", "Percentages:
+    /// refers to block container's own inline-axis inner size", "Computed
+    /// value: computed `<length-percentage>` value, plus any specified
+    /// keywords"). The full grammar is
+    /// `<length-percentage> && hanging? && each-line?`.
+    ///
+    /// This field carries **only** the `<length-percentage>` component of
+    /// the grammar — `hanging`/`each-line` are not implemented at this
+    /// crate's scope ([`crate::property::PropertyValue::TextIndent`] doc's
+    /// "Scope carving" section).
+    ///
+    /// Value shape mirrors [`Self::padding`] (`%` stays a computed
+    /// `<percentage>`, resolved only at the used-value layer — downstream
+    /// (taffy) responsibility, same [`ComputedLengthPercentage`] type) — but
+    /// **not** the reference quantity: `padding`'s `%` resolves against the
+    /// containing block's width (CSS Box 3 §4.1), while `text-indent`'s `%`
+    /// resolves against the block container's own inline-axis inner size
+    /// (the propdef's "Percentages" line above) — a different quantity, not
+    /// merely different terminology for the same one. The other difference
+    /// from `padding` is that this property **is** inherited: a node with no
+    /// `text-indent` declaration of its own gets this value copied from its
+    /// parent's already-absolutized computed value
+    /// ([`crate::specified::SpecifiedValues::inherit_from`]'s
+    /// `lift_length_percentage` seed), not reset to the initial `0`.
+    pub text_indent: ComputedLengthPercentage,
     /// `padding` — 4-side box-model padding。**non-inherited**、initial:
     /// `Sides::all(ComputedLengthPercentage::Px(0.0))` — CSS Box 3 §4.1
     /// <https://www.w3.org/TR/css-box-3/#padding-physical> initial "0"。
@@ -645,6 +674,8 @@ impl ComputedValues {
             text_align: TextAlign::Start,
             // CSS Writing Modes 4 §2.1: direction initial is `ltr`。
             direction: Direction::Ltr,
+            // CSS Text 3 §8.1: text-indent initial is `0`。
+            text_indent: ComputedLengthPercentage::Px(0.0),
             // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
             padding: Sides::all(ComputedLengthPercentage::Px(0.0)),
             // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
@@ -704,7 +735,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index)。
     ///
@@ -807,6 +838,8 @@ mod tests {
         assert_eq!(cv.text_transform, TextTransform::None);
         // CSS Display 3 §4: visibility initial は `visible`。
         assert_eq!(cv.visibility, Visibility::Visible);
+        // CSS Text 3 §8.1: text-indent initial は `0`。
+        assert_eq!(cv.text_indent, ComputedLengthPercentage::Px(0.0));
         // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
         // CSS Box 3 §3.1: margin initial は 0 on each side。
@@ -899,6 +932,9 @@ mod tests {
             // CSS Writing Modes 4 §2.1: `Rtl` — initial (`Ltr`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             direction: Direction::Rtl,
+            // CSS Text 3 §8.1: initial (`0`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            text_indent: ComputedLengthPercentage::Px(9.0),
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
             border: Sides::all(ComputedBorder {
@@ -969,6 +1005,8 @@ mod tests {
         assert_eq!(child.text_transform, parent.text_transform);
         // CSS Display 3 §4: visibility は inherited。
         assert_eq!(child.visibility, parent.visibility);
+        // CSS Text 3 §8.1: text-indent は inherited。
+        assert_eq!(child.text_indent, parent.text_indent);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);

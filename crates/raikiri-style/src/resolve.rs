@@ -1528,6 +1528,58 @@ pub fn lift_line_height(computed: ComputedLineHeight) -> LineHeight {
     }
 }
 
+/// 親の computed `<length-percentage>` を specified 表現に **lift** する
+/// (inheritance seed 用) — [`lift_font_size`] / [`lift_line_height`] と
+/// 同じ役目を [`ComputedLengthPercentage`] に対して果たす。
+///
+/// [`lift_font_size`] と同じ lossless 性が両 variant で成立する:
+///
+/// - `Px(v)` → `Length::Px(v)`。`Px` は絶対化の不動点
+///   ([`resolve_length_percentage`] の `Px` arm は identity) なので、lift
+///   した値を phase 3 に通しても二重適用にならない。
+/// - `Percent(p)` → `Length::Percent(p)`。[`resolve_length_percentage`] の
+///   `Percent` arm も identity ("the computed value of a percentage is the
+///   specified percentage", CSS Values 4 §5.5.1
+///   <https://www.w3.org/TR/css-values-4/#combine-percentages>) — 子は親の
+///   `%` をそのまま継承し、containing block 基準の再解決はしない (used
+///   value 層 = 下流 layout の責務、[`ComputedLengthPercentage`] doc 参照)。
+///
+/// 現在の唯一の consumer は `text-indent` (CSS Text 3 §8.1、**inherited**
+/// `<length-percentage>` property) — [`crate::specified::SpecifiedValues::inherit_from`]
+/// がこの関数で親の `ComputedValues::text_indent` を子の staging へ seed する。
+///
+/// ```
+/// use raikiri_style::{
+///     ComputedLength, ComputedLengthPercentage, ResolveContext, lift_length_percentage,
+///     resolve_length_percentage,
+/// };
+///
+/// let ctx = ResolveContext::initial();
+/// let inherited = ComputedLengthPercentage::Px(40.0);
+///
+/// // lift → 絶対化 の round trip は恒等 (Px が不動点)。
+/// let lifted = lift_length_percentage(inherited);
+/// assert_eq!(
+///     resolve_length_percentage(lifted, ComputedLength(10.0), None, &ctx),
+///     inherited
+/// );
+///
+/// // `Percent` も同じく恒等 — containing block 基準は used value 層まで
+/// // 再解決しない。
+/// let inherited_pct = ComputedLengthPercentage::Percent(10.0);
+/// let lifted_pct = lift_length_percentage(inherited_pct);
+/// assert_eq!(
+///     resolve_length_percentage(lifted_pct, ComputedLength(10.0), None, &ctx),
+///     inherited_pct
+/// );
+/// ```
+pub fn lift_length_percentage(computed: ComputedLengthPercentage) -> Length {
+    match computed {
+        ComputedLengthPercentage::Px(v) => Length::Px(v),
+        ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2522,6 +2574,32 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // lift_length_percentage (text-indent inheritance seed)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn lift_length_percentage_px_is_fixed_point_under_absolutization() {
+        let lifted = lift_length_percentage(ComputedLengthPercentage::Px(40.0));
+        assert_eq!(lifted, Length::Px(40.0));
+        assert_eq!(
+            resolve_length_percentage(lifted, ComputedLength(10.0), None, &CTX),
+            ComputedLengthPercentage::Px(40.0),
+        );
+    }
+
+    /// `%` は containing block 依存の used value 層まで再解決しない —
+    /// lift → 絶対化の round trip でも `%` のまま運ばれることを pin。
+    #[test]
+    fn lift_length_percentage_percent_does_not_resolve_against_child_font_size() {
+        let lifted = lift_length_percentage(ComputedLengthPercentage::Percent(10.0));
+        assert_eq!(lifted, Length::Percent(10.0));
+        assert_eq!(
+            resolve_length_percentage(lifted, ComputedLength(10.0), None, &CTX),
+            ComputedLengthPercentage::Percent(10.0),
+        );
+    }
+
+    // -----------------------------------------------------------------
     // specified initial → computed initial (per-function 粒度の drift 検出)
     // -----------------------------------------------------------------
 
@@ -2541,6 +2619,11 @@ mod tests {
         assert_eq!(initial.padding, Sides::all(Length::Px(0.0)));
         assert_eq!(
             resolve_length_percentage(initial.padding.top, fs, None, &CTX),
+            ComputedLengthPercentage::Px(0.0),
+        );
+        assert_eq!(initial.text_indent, Length::Px(0.0));
+        assert_eq!(
+            resolve_length_percentage(initial.text_indent, fs, None, &CTX),
             ComputedLengthPercentage::Px(0.0),
         );
         assert_eq!(

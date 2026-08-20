@@ -3615,6 +3615,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::StringSet(_)
         | PropertyValue::Position(_)
         | PropertyValue::Direction(_)
+        | PropertyValue::TextIndent(_)
         | PropertyValue::PaddingTop(_)
         | PropertyValue::PaddingRight(_)
         | PropertyValue::PaddingBottom(_)
@@ -3941,6 +3942,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // invariant への違反になる。詳細は
         // `crate::property::resolve_text_align_match_parent` の doc。
         PropertyValue::TextAlign(t) => target.text_align = t,
+        // CSS Text 3 §8.1 text-indent — **inherited**. `Length` is `Copy`,
+        // by-value assignment suffices (sibling `TextAlign`/`Direction`
+        // pattern). Absolutization (`em`/`rem`/`%` etc.) happens later in
+        // `SpecifiedValues::finalize` / `finalize_as_root`, mirroring
+        // `padding`'s phase-3 handling — the only difference from `padding`
+        // is that this field is inherited, so `SpecifiedValues::inherit_from`
+        // (not this function) is what seeds a child with no winner of its
+        // own.
+        PropertyValue::TextIndent(v) => target.text_indent = v,
         // direction は CSS Writing Modes 4 §2.1。
         // inherited property、computed value = specified value (相対解決なし) —
         // text-align と同じく単純代入で十分。
@@ -8362,6 +8372,94 @@ mod tests {
             r.computed[span].display,
             DisplayValue::Inline,
             "display must NOT inherit (CSS Display 3 §2 Inherited: no) — initial Inline"
+        );
+    }
+
+    // ── text-indent wire-through + inheritance (CSS Text 3 §8.1) ──
+
+    #[test]
+    fn text_indent_wired_through_cascade_from_inline_style() {
+        // <p style="text-indent: 20px"> → ComputedValues.text_indent に
+        // ComputedLengthPercentage::Px(20.0) が届く。parser →
+        // PropertyValue::TextIndent → apply_value → ComputedValues の
+        // end-to-end 疎通 smoke (`text_align_wired_through_cascade_from_inline_style`
+        // と同 pattern)。
+        let cv = cascade_doc("", "p", Some("text-indent: 20px"));
+        assert_eq!(cv.text_indent, ComputedLengthPercentage::Px(20.0));
+    }
+
+    #[test]
+    fn text_indent_percentage_stays_unresolved_in_computed_layer() {
+        // CSS Text 3 §8.1 "Computed value: computed <length-percentage>
+        // value, plus any specified keywords" — `%` は block container 自身の
+        // inline-axis inner size 依存 (used value 層) なので、この crate の
+        // computed 層では `Percent` のまま残る (`padding` / `width` と同じ
+        // 扱い、`ComputedValues::padding` doc 参照)。
+        let cv = cascade_doc("", "p", Some("text-indent: 10%"));
+        assert_eq!(cv.text_indent, ComputedLengthPercentage::Percent(10.0));
+    }
+
+    #[test]
+    fn text_indent_inherits_from_parent_element() {
+        // CSS Text 3 §8.1: text-indent は **inherited**。<p> の `2em` は親の
+        // font-size (20px) 基準で 40px に絶対化され、子 <span> はその**絶対化
+        // 済み 40px を再解決せず継承**する (`lift_line_height` doc が
+        // line-height について説明する挙動と同型 — 子が独自の font-size
+        // (10px) を持っていても 40px のままであることで、この
+        // "re-resolve しない" 性質を子の font-size を変えて pin する)。
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-size: 20px; text-indent: 2em"));
+        let span = doc.push_element(p, "span", Some("font-size: 10px"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].text_indent,
+            ComputedLengthPercentage::Px(40.0)
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].text_indent,
+            ComputedLengthPercentage::Px(40.0),
+            "child should inherit text-indent's already-absolutized 40px \
+             unchanged (CSS Text 3 §8.1 inherited property), not re-resolve \
+             `2em` against its own 10px font-size"
+        );
+    }
+
+    #[test]
+    fn text_indent_inheritance_contrasts_with_padding_non_inheritance() {
+        // Verification (contrast): text-indent (inherited) と padding-top
+        // (non-inherited) を同一 fixture で対比 —
+        // `text_align_inheritance_contrasts_with_display_non_inheritance` と
+        // 同 pattern。child は自身 rule 無し、text-indent のみ引き継ぎ、
+        // padding-top は initial (0) に落ちる。
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-indent: 15px; padding-top: 15px"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].text_indent,
+            ComputedLengthPercentage::Px(15.0)
+        );
+        assert_eq!(
+            r.computed[p].padding.top,
+            ComputedLengthPercentage::Px(15.0)
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].text_indent,
+            ComputedLengthPercentage::Px(15.0),
+            "text-indent must inherit (CSS Text 3 §8.1 Inherited: yes)"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].padding.top,
+            ComputedLengthPercentage::Px(0.0),
+            "padding-top must NOT inherit (CSS Box 3 §4.1 Inherited: no) — initial 0"
         );
     }
 

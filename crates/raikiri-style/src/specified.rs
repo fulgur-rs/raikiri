@@ -37,8 +37,8 @@ use crate::property::{
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
-    ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_line_height,
-    resolve_border, resolve_font_size, resolve_length_percentage,
+    ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_length_percentage,
+    lift_line_height, resolve_border, resolve_font_size, resolve_length_percentage,
     resolve_length_percentage_or_auto, resolve_line_height, resolve_margin_length_or_auto,
     used_line_height_length,
 };
@@ -57,7 +57,7 @@ use crate::resolve::{
 ///
 /// | 層 | field |
 /// |---|---|
-/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` |
+/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` |
 /// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
@@ -160,6 +160,14 @@ pub struct SpecifiedValues {
     pub text_align: TextAlign,
     /// [`ComputedValues::direction`] の staging。層は computed-equivalent。
     pub direction: Direction,
+    /// `text-indent` の **specified** value。phase 3
+    /// ([`resolve_length_percentage`]) で絶対化される (percentage は素通し) —
+    /// [`Self::padding`] と同じ絶対化 shape だが、こちらは **inherited**
+    /// なので `Self::inherit_from` は (`padding` のように initial へ
+    /// 再セットするのではなく) 親の computed 値を [`lift_length_percentage`]
+    /// で lift して seed する。CSS Text 3 §8.1
+    /// <https://www.w3.org/TR/css-text-3/#text-indent-property>。
+    pub text_indent: Length,
     /// `padding` の **specified** value。phase 3
     /// ([`resolve_length_percentage`]) で絶対化される (percentage は素通し)。
     pub padding: Sides<Length>,
@@ -241,6 +249,8 @@ impl SpecifiedValues {
             text_align: TextAlign::Start,
             // CSS Writing Modes 4 §2.1: direction initial は `ltr`。
             direction: Direction::Ltr,
+            // CSS Text 3 §8.1: text-indent initial は `0`。
+            text_indent: Length::Px(0.0),
             padding: Sides::all(Length::Px(0.0)),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             // CSS Backgrounds 3 §3.3 / §3.2 / §3.1: width=medium (3px) /
@@ -278,9 +288,10 @@ impl SpecifiedValues {
     /// 親 node の [`ComputedValues`] から child node の staging 開始値を作る。
     ///
     /// - **inherited** property は親の computed 値から seed する。length を運ぶ
-    ///   `font_size` / `line_height` は [`lift_font_size`] / [`lift_line_height`]
-    ///   で specified 表現に lift する (`Px` は絶対化の不動点なので、phase 2 /
-    ///   phase 3 を通しても二重適用にならない — 両関数の doc 参照)。
+    ///   `font_size` / `line_height` / `text_indent` は [`lift_font_size`] /
+    ///   [`lift_line_height`] / [`lift_length_percentage`] で specified 表現に
+    ///   lift する (`Px` / `Percent` は絶対化の不動点なので、phase 2 / phase 3
+    ///   を通しても二重適用にならない — 各関数の doc 参照)。
     /// - **non-inherited** property は [`Self::initial`] と同じ値。
     ///
     /// 分類の canonical source は [`ComputedValues`] の field doc comment。
@@ -325,6 +336,11 @@ impl SpecifiedValues {
             // "D5 と同型ではない" 節)。
             text_align: parent.text_align,
             direction: parent.direction,
+            // CSS Text 3 §8.1: text-indent は inherited。computed
+            // `<length-percentage>` → specified `Length` の lift (lossless、
+            // `Px` / `Percent` どちらも不動点、`lift_length_percentage` doc
+            // 参照)。
+            text_indent: lift_length_percentage(parent.text_indent),
             // CSS Fonts 4 §2.4: font-style は inherited。
             font_style: parent.font_style,
             // CSS Text Module Level 3 §2.1: text-transform は inherited。
@@ -651,6 +667,21 @@ impl SpecifiedValues {
             // computed value = specified value、相対解決なし (`Direction` doc
             // 参照) — 自 node の winner 適用結果をそのまま素通し。
             direction: self.direction,
+            // `text-indent` — same absolutization shape as `padding` (`%` is
+            // passed through, `em`/`rem`/`pt`/etc. resolve against the own
+            // `font_size`/`own_line_height` basis established above), but
+            // this field is **inherited** — a child with no winner of its
+            // own gets this value from `Self::inherit_from`'s
+            // `lift_length_percentage(parent.text_indent)` seed instead of
+            // resetting to the initial `0` (`Self::padding` is
+            // non-inherited and always resets, `Self::text_align` sibling
+            // comment above shows the inherited counterpart pattern).
+            text_indent: resolve_length_percentage(
+                self.text_indent,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             padding: self
                 .padding
                 .map(|l| resolve_length_percentage(l, font_size, own_line_height, ctx)),
@@ -824,6 +855,7 @@ mod tests {
             }],
             text_align: TextAlign::Center,
             direction: Direction::Rtl,
+            text_indent: ComputedLengthPercentage::Px(9.0),
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
             border: Sides::all(ComputedBorder {
@@ -870,6 +902,9 @@ mod tests {
         assert_eq!(child.text_transform, TextTransform::Uppercase);
         // CSS Display 3 §4: visibility は inherited。
         assert_eq!(child.visibility, Visibility::Hidden);
+        // CSS Text 3 §8.1: text-indent は inherited — computed → specified
+        // の lift (`lift_length_percentage`)。
+        assert_eq!(child.text_indent, Length::Px(9.0));
         // computed → specified の lift (px 表現)。
         assert_eq!(child.font_size, Length::Px(24.0));
         assert_eq!(child.line_height, LineHeight::Number(1.5));
