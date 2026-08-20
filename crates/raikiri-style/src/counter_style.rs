@@ -27,7 +27,7 @@
 //!   (audio-rendering concern, no bearing on the text-formatting use case
 //!   this module serves) and is silently dropped like any other unsupported
 //!   descriptor, per this crate's general convention (e.g. `@page`'s
-//!   `size`/`marks`, `crate::ruletree`'s `@media`/`@supports`).
+//!   `marks`/`bleed`, [`crate::ruletree`]'s `@media`/`@supports`).
 //! - The `generate a counter` algorithm (§2, quoted in full on
 //!   [`generate_counter`]) for six of `system`'s seven values: `cyclic`,
 //!   `numeric`, `alphabetic`, `symbolic`, `additive`, `fixed`. `extends` is

@@ -50,8 +50,8 @@ pub use counter_style::{
 
 pub mod page;
 pub use page::{
-    PageCascadeResult, PageContextQuery, PageInheritance, PagePseudo, PageRule, PageSelector,
-    PageSelectorEntry, cascade_page,
+    PageCascadeResult, PageContextQuery, PageInheritance, PageOrientation, PagePseudo, PageRule,
+    PageSelector, PageSelectorEntry, PageSize, PageSizeDeclaration, PageSizeKeyword, cascade_page,
 };
 
 pub mod ruletree;
