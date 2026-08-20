@@ -784,6 +784,26 @@ fn collect_running_template(
                 let value = reset_values[&sym];
                 directives.push(GcpmDirective::CounterReset { name: sym, value });
             }
+
+            // CSS Lists 3 §4.2
+            // <https://www.w3.org/TR/css-lists-3/#increment-set>: "If
+            // multiple instances of the same <counter-name> occur in the
+            // property value, they are all processed, in order. Thus
+            // increments will compound, but only the last set value will
+            // take effect." Unlike §4.1's counter-reset above, a
+            // same-declaration duplicate name in `counter-increment` /
+            // `counter-set` is deliberately *not* collapsed here — every raw
+            // `(name, value)` pair below is pushed as its own directive.
+            // That is correct (not an oversight mirroring the dedup above)
+            // because `PhaseBWalkState::apply_directive` /
+            // `PageContext::apply_directive` mutate the *existing*
+            // top-of-stack frame in place for `CounterIncrement`/`CounterSet`
+            // (`CounterStack::increment`/`::set`) rather than pushing a new
+            // nested-scope frame the way `CounterReset` does
+            // (`CounterStack::reset`) — so N directives for the same name,
+            // applied in order, already compound (increment) or
+            // overwrite-to-last (set) exactly as the spec text above requires,
+            // with no producer-side collapsing needed.
             for (name, delta) in cv.counter_increment.iter() {
                 directives.push(GcpmDirective::CounterIncrement {
                     name: Symbol::new(name.clone()),
@@ -2126,6 +2146,72 @@ mod tests {
             "duplicate counter-reset names within one declaration must \
              collapse to a single directive carrying the last occurrence's \
              value, not one directive per raw (name, value) pair"
+        );
+    }
+
+    #[test]
+    fn collect_running_template_does_not_dedupe_counter_reset_across_sibling_elements() {
+        // The `reset_values`/`order` dedup HashMap (see the comment above
+        // the loop that builds it) is declared fresh inside the walk's
+        // `while let Some(idx) = stack.pop()` body — i.e. scoped per node,
+        // not hoisted to span the whole subtree walk. Two sibling elements
+        // each carrying their own `counter-reset: a N` declaration are
+        // unrelated declarations (CSS Lists 3 §4.1's last-occurrence-wins
+        // rule applies *within* one declaration, not across elements) and
+        // must each still produce their own `GcpmDirective::CounterReset` —
+        // pin that here so a future refactor that accidentally hoists the
+        // dedup state out of the per-node loop (collapsing sibling resets
+        // into one directive) fails a test instead of shipping silently;
+        // every other dedup test in this module uses a single element.
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("position: running(header)"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("counter-reset: a 1"),
+        );
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("counter-reset: a 2"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let store = build_running_template_store(&doc, &cr);
+        let pool = store.resolve_element_pool(&Symbol::new("header"));
+        let template = store.get(pool[0]).expect("registered");
+
+        let resets: Vec<_> = template
+            .directives
+            .iter()
+            .filter(|d| matches!(d, GcpmDirective::CounterReset { .. }))
+            .collect();
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            resets,
+            vec![
+                &GcpmDirective::CounterReset {
+                    name: Symbol::new("a"),
+                    value: 1,
+                },
+                &GcpmDirective::CounterReset {
+                    name: Symbol::new("a"),
+                    value: 2,
+                },
+            ],
+            "two sibling elements each declaring their own counter-reset: \
+             a N must produce two separate directives — the dedup HashMap \
+             is per-node scope, not per-subtree, so sibling declarations \
+             must not collapse into one"
         );
     }
 
