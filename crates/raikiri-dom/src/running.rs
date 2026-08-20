@@ -721,6 +721,100 @@ pub(crate) fn build_running_template_store(
 /// emit `RegisterTarget` either — out of this task's scope (see the
 /// module-level "Divergence from `raikiri_traits::TargetRegistry`'s
 /// register policy" note).
+/// Derive every "producing" [`GcpmDirective`] a single element's computed
+/// style carries — `counter-reset` / `counter-increment` / `counter-set` /
+/// `string-set` — appending them to `out` in CSS Lists 3 §4 "Automatic
+/// Numbering With Counters" processing order (reset → increment → set —
+/// <https://www.w3.org/TR/css-lists-3/#auto-numbering>, §4.2's note that
+/// counter-set is applied after counter-increment).
+///
+/// Shared by [`collect_running_template`] (per running-template subtree) and
+/// [`crate::phase_b`]'s main-document walker (per page) — both need the same
+/// per-element derivation, so it lives here once rather than being
+/// re-derived twice with a risk of the two copies drifting apart.
+///
+/// **`counter-reset` dedup**: CSS Lists 3 §4.1
+/// <https://www.w3.org/TR/css-lists-3/#counter-reset>: "If multiple
+/// instances of the same `<counter-name>` occur in the property value, only
+/// the last one is honored." `cv.counter_reset` is the raw parsed `(name,
+/// value)` pair list (one entry per `<counter-name> <integer>?` occurrence
+/// in the declaration, duplicates included) — reduce to one pair per
+/// distinct name, keeping the *last* occurrence's value via
+/// `HashMap::insert`'s overwrite-on-reinsert semantics, before emitting a
+/// directive. Consumers (`PageContext::apply_directive`) process one
+/// `GcpmDirective` at a time and unconditionally push a new nested-scope
+/// frame per `CounterReset` received, so a duplicate name reaching them as
+/// two directives would produce two frames instead of one — dedup has to
+/// happen here, at the producer, since the "these came from the same
+/// declaration" information doesn't survive past this point. `order`
+/// preserves first-occurrence position among distinct names only; it has no
+/// bearing on correctness.
+///
+/// Does NOT derive `RegisterRunning` (synthesized by
+/// [`build_running_template_store`]'s own top-level walk, from a
+/// `position: running(name)` cascade seed, not from a single element's
+/// directive-bearing properties) or `RegisterTarget` (synthesized by
+/// [`crate::target::build_target_registry`] from the element's `id`
+/// attribute, likewise not one of the 4 directive-bearing properties this
+/// function reads).
+pub(crate) fn derive_element_directives(
+    doc: &Document,
+    idx: usize,
+    cv: &raikiri_style::ComputedValues,
+    out: &mut Vec<GcpmDirective>,
+) {
+    let mut reset_values: HashMap<Symbol, i32> = HashMap::new();
+    let mut order: Vec<Symbol> = Vec::new();
+    for (name, value) in cv.counter_reset.iter() {
+        let sym = Symbol::new(name.clone());
+        if reset_values.insert(sym.clone(), *value).is_none() {
+            order.push(sym);
+        }
+    }
+    for sym in order {
+        let value = reset_values[&sym];
+        out.push(GcpmDirective::CounterReset { name: sym, value });
+    }
+    for (name, delta) in cv.counter_increment.iter() {
+        out.push(GcpmDirective::CounterIncrement {
+            name: Symbol::new(name.clone()),
+            delta: *delta,
+        });
+    }
+    for (name, value) in cv.counter_set.iter() {
+        out.push(GcpmDirective::CounterSet {
+            name: Symbol::new(name.clone()),
+            value: *value,
+        });
+    }
+    for (name, content_list) in cv.string_set.iter() {
+        // Resolve attr()/bare content() against `idx` (this element) before
+        // the content-list ever leaves raikiri-dom — see
+        // resolve_string_set_component's doc for why this is the only point
+        // in the pipeline with DOM element access.
+        let resolved: Option<Vec<ContentComponent>> = content_list
+            .iter()
+            .cloned()
+            .map(|component| resolve_string_set_component(doc, idx, component))
+            .collect();
+        if let Some(resolved) = resolved
+            && let Some(source) = convert_string_set_source(&resolved)
+        {
+            out.push(GcpmDirective::StringSet {
+                name: Symbol::new(name.clone()),
+                source,
+            });
+        }
+        // Resolution failure (content(before)/content(after)/
+        // content(first-letter), still unresolvable here — see
+        // resolve_string_set_component's doc) or conversion failure → skip
+        // this string-set entry entirely. Note attr() on a missing
+        // attribute is NOT a resolution failure — it resolves to
+        // Literal("") (see resolve_string_set_component's Attr-arm doc),
+        // same as the present-but-empty case.
+    }
+}
+
 #[allow(
     dead_code,
     reason = "Helper for build_running_template_store; \
@@ -744,84 +838,11 @@ fn collect_running_template(
         if let Some(cv) = cascade.computed.get(idx) {
             styles.push(cv.clone());
 
-            // Pushed in CSS Lists 3 §4 "Automatic Numbering With Counters"
-            // processing order (reset → increment → set —
-            // <https://www.w3.org/TR/css-lists-3/#auto-numbering>, §4.2's
-            // note that counter-set is applied after counter-increment).
-            // No consumer walks this Vec yet (see this function's doc), but
-            // the future Phase B walk is expected to
-            // apply it front-to-back rather than re-sort by directive kind,
-            // so getting push order right now avoids baking in a
-            // same-element `counter-reset: c 0; counter-increment: c 1`
-            // ordering bug that nothing here would catch.
-            //
-            // CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>:
-            // "If multiple instances of the same <counter-name> occur in the
-            // property value, only the last one is honored." `cv.counter_reset`
-            // is the raw parsed `(name, value)` pair list (one entry per
-            // `<counter-name> <integer>?` occurrence in the declaration,
-            // duplicates included) — reduce to one pair per distinct name,
-            // keeping the *last* occurrence's value via `HashMap::insert`'s
-            // overwrite-on-reinsert semantics, before emitting a directive.
-            // Consumers (`PhaseBWalkState::apply_directive`,
-            // `PageContext::apply_directive`) process one `GcpmDirective` at
-            // a time and unconditionally push a new nested-scope frame per
-            // `CounterReset` received, so a duplicate name reaching them as
-            // two directives would produce two frames instead of one —
-            // dedup has to happen here, at the producer, since the "these
-            // came from the same declaration" information doesn't survive
-            // past this point. `order` preserves first-occurrence position
-            // among distinct names only; it has no bearing on correctness.
-            let mut reset_values: HashMap<Symbol, i32> = HashMap::new();
-            let mut order: Vec<Symbol> = Vec::new();
-            for (name, value) in cv.counter_reset.iter() {
-                let sym = Symbol::new(name.clone());
-                if reset_values.insert(sym.clone(), *value).is_none() {
-                    order.push(sym);
-                }
-            }
-            for sym in order {
-                let value = reset_values[&sym];
-                directives.push(GcpmDirective::CounterReset { name: sym, value });
-            }
-            for (name, delta) in cv.counter_increment.iter() {
-                directives.push(GcpmDirective::CounterIncrement {
-                    name: Symbol::new(name.clone()),
-                    delta: *delta,
-                });
-            }
-            for (name, value) in cv.counter_set.iter() {
-                directives.push(GcpmDirective::CounterSet {
-                    name: Symbol::new(name.clone()),
-                    value: *value,
-                });
-            }
-            for (name, content_list) in cv.string_set.iter() {
-                // Resolve attr()/bare content() against `idx` (this
-                // element) before the content-list ever leaves raikiri-dom
-                // — see resolve_string_set_component's doc for why this is
-                // the only point in the pipeline with DOM element access.
-                let resolved: Option<Vec<ContentComponent>> = content_list
-                    .iter()
-                    .cloned()
-                    .map(|component| resolve_string_set_component(doc, idx, component))
-                    .collect();
-                if let Some(resolved) = resolved
-                    && let Some(source) = convert_string_set_source(&resolved)
-                {
-                    directives.push(GcpmDirective::StringSet {
-                        name: Symbol::new(name.clone()),
-                        source,
-                    });
-                }
-                // Resolution failure (content(before)/content(after)/
-                // content(first-letter), still unresolvable here — see
-                // resolve_string_set_component's doc) or conversion failure
-                // → skip this string-set entry entirely. Note attr() on a
-                // missing attribute is NOT a resolution failure — it
-                // resolves to Literal("") (see resolve_string_set_component's
-                // Attr-arm doc), same as the present-but-empty case.
-            }
+            // Pushed in CSS Lists 3 §4 processing order — see
+            // derive_element_directives's own doc for the dedup/ordering
+            // rationale this call shares with the main-document Phase B
+            // walker.
+            derive_element_directives(doc, idx, cv, &mut directives);
 
             let node_flags = detect_dynamic_flags(&cv.content);
             dynamic_flags.has_counter |= node_flags.has_counter;
