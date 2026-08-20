@@ -13,7 +13,7 @@
 //!
 //! # Primary source
 //!
-//! Three anchors are cited, one per production the parser consumes:
+//! Four anchors are cited, one per production the parser consumes:
 //!
 //! - `<page-selector-list>` / `<page-selector>` grammar and the "No whitespace
 //!   is allowed between the productions" compound rule — CSS Paged Media
@@ -28,6 +28,10 @@
 //!   `<custom-ident>` and therefore case-sensitive even in ASCII (see
 //!   [`PageSelectorEntry::ident`] for the case-sensitivity citation chain):
 //!   <https://www.w3.org/TR/css-page-3/#using-named-pages>
+//! - `size` descriptor grammar (`<length>{1,2} | auto | [ <page-size> || [
+//!   portrait | landscape ] ]`) — CSS Paged Media Module Level 3, §7.1
+//!   "Page size: the size property":
+//!   <https://www.w3.org/TR/css-page-3/#page-size-prop>
 //!
 //! # Grammar coverage
 //!
@@ -74,7 +78,10 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use cssparser::{ParseError, Parser, Token, match_ignore_ascii_case};
+use cssparser::{
+    AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
+    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, Token, match_ignore_ascii_case,
+};
 
 use crate::Atom;
 use crate::cascade::{
@@ -83,7 +90,7 @@ use crate::cascade::{
 use crate::computed::ComputedValues;
 use crate::property::{
     Border, BorderColor, BorderStyle, Length, LengthOrAuto, OverflowValue, OverflowXY, PropertyKey,
-    PropertyValue, Sides, resolve_overflow,
+    PropertyValue, Sides, parse_non_negative_length, parse_value, resolve_overflow,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
@@ -158,6 +165,178 @@ pub enum PagePseudo {
     Blank,
 }
 
+/// One of the ten named paper sizes CSS Paged Media Level 3 §7.1 "Page size:
+/// the size property" enumerates as the `<page-size>` production
+/// (<https://www.w3.org/TR/css-page-3/#page-size-prop>):
+/// `A5 | A4 | A3 | B5 | B4 | JIS-B5 | JIS-B4 | letter | legal | ledger`.
+///
+/// This only stores *which* keyword was authored. The spec gives concrete
+/// dimensions in prose next to the grammar (e.g. "A4: 210 mm wide and 297 mm
+/// high") rather than in the grammar itself, so resolving a keyword to a
+/// physical width/height is a used-value computation, not a parse-time one —
+/// out of scope here (see [`PageRule::size_declarations`]).
+///
+/// ASCII case-insensitive on parse, matching every other keyword production
+/// in this module (`match_ignore_ascii_case!`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageSizeKeyword {
+    /// `A5` — "148mm wide and 210 mm high".
+    A5,
+    /// `A4` — "210 mm wide and 297 mm high".
+    A4,
+    /// `A3` — "297mm wide and 420mm high".
+    A3,
+    /// `B5` — "176mm wide by 250mm high".
+    B5,
+    /// `B4` — "250mm wide by 353mm high".
+    B4,
+    /// `JIS-B5` — "182mm wide by 257mm high".
+    JisB5,
+    /// `JIS-B4` — "257mm wide by 364mm high".
+    JisB4,
+    /// `letter` — "8.5 inches wide and 11 inches high".
+    Letter,
+    /// `legal` — "8.5 inches wide by 14 inches high".
+    Legal,
+    /// `ledger` — "11 inches wide by 17 inches high".
+    Ledger,
+}
+
+/// The `portrait | landscape` orientation keyword half of the `size`
+/// descriptor's third grammar alternative (CSS Paged Media Level 3 §7.1
+/// "Page size: the size property",
+/// <https://www.w3.org/TR/css-page-3/#page-size-prop>).
+///
+/// ASCII case-insensitive on parse (`match_ignore_ascii_case!`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageOrientation {
+    /// `portrait` — height ≥ width.
+    Portrait,
+    /// `landscape` — width ≥ height.
+    Landscape,
+}
+
+/// Parsed value of the `size` descriptor (CSS Paged Media Level 3 §7.1 "Page
+/// size: the size property", <https://www.w3.org/TR/css-page-3/#page-size-prop>).
+///
+/// Grammar (spec verbatim): `<length>{1,2} | auto | [ <page-size> || [
+/// portrait | landscape ] ]`. Each of the three top-level alternatives is a
+/// variant below; [`PageSize::Named`] additionally covers the third
+/// alternative's `||` combinator (at least one of the two sub-components
+/// present, either source order — see that variant's doc for the invariant
+/// this implies).
+///
+/// Resolving this into an actual page-box width/height (absolutizing
+/// `<length>`s, translating a [`PageSizeKeyword`] to millimetres, combining
+/// with orientation, applying the UA default when [`PageSize::Auto`]) is
+/// layout/used-value work that consumes this type; it is not performed here
+/// — see [`PageRule::size_declarations`] for the parse/cascade scope
+/// boundary this type sits on.
+///
+/// # Example
+///
+/// ```
+/// use raikiri_style::{Origin, PageOrientation, PageSize, PageSizeKeyword, RuleTree};
+///
+/// let mut tree = RuleTree::empty();
+/// tree.add_stylesheet("@page { size: A4 landscape }", Origin::Author);
+///
+/// let decl = &tree.page_rules[0].size_declarations[0];
+/// assert_eq!(
+///     decl.value,
+///     PageSize::Named {
+///         keyword: Some(PageSizeKeyword::A4),
+///         orientation: Some(PageOrientation::Landscape),
+///     }
+/// );
+/// assert!(!decl.important);
+/// ```
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PageSize {
+    /// `auto` — the descriptor's initial value (`Initial: auto` in the
+    /// descriptor definition table). Resolving it to a concrete page-box
+    /// size is UA-defined used-value behavior, not specified by this
+    /// parser.
+    Auto,
+    /// `<length>{1,2}` — one or two `<length>` values (no `<percentage>`;
+    /// the grammar's first alternative is `<length>`, not
+    /// `<length-percentage>`). Spec: "If only one length value is
+    /// specified, it sets both the width and height of the page box (i.e.,
+    /// the box is a square). If two length values are specified, the first
+    /// establishes the page box width, and the second the page box
+    /// height." — a lone authored length is therefore canonicalized here
+    /// into equal `width`/`height`, so a consumer never has to special-case
+    /// the 1-vs-2-length authored forms.
+    Lengths {
+        /// Page box width (authored first, or the sole authored length).
+        width: Length,
+        /// Page box height (authored second, or the sole authored length —
+        /// equal to `width` in that case).
+        height: Length,
+    },
+    /// The grammar's third alternative, `[ <page-size> || [ portrait |
+    /// landscape ] ]` — a [`PageSizeKeyword`] and/or a [`PageOrientation`],
+    /// at least one present (the `||` combinator), in either source order
+    /// (spec examples this alternative with `A4 landscape`; `landscape A4`
+    /// and either component alone are equally spec-legal under `||`).
+    ///
+    /// # Invariant: never both `None`
+    ///
+    /// [`parse_page_size_value`] never constructs this variant with both
+    /// fields `None` — that state is not reachable through this module's
+    /// parser (an empty match of neither sub-component is a parse error,
+    /// not a value). `#[non_exhaustive]` does not, and cannot, enforce this
+    /// invariant against a hand-built value from outside the crate — a
+    /// consumer building `PageSize::Named { keyword: None, orientation:
+    /// None }` directly is a caller bug, not a state this crate's parser
+    /// ever emits.
+    Named {
+        /// The `<page-size>` keyword, if authored.
+        keyword: Option<PageSizeKeyword>,
+        /// The `portrait | landscape` keyword, if authored.
+        orientation: Option<PageOrientation>,
+    },
+}
+
+/// One `size:` declaration from an `@page` block, in source order.
+///
+/// Same shape as [`Declaration`] (value + `!important`) but for the `size`
+/// descriptor's own value type — `size` is an `@page` descriptor (CSS Paged
+/// Media Level 3 §7.1), not a [`PropertyValue`] variant, so it cannot reuse
+/// [`Declaration`] itself (which is defined over [`PropertyValue`]).
+///
+/// # Why a `Vec`, not a single resolved value
+///
+/// [`PageRule::declarations`] (the sibling field for ordinary properties)
+/// keeps every declaration found in the block, in source order, and defers
+/// picking the cascade winner to [`cascade_page`] — within one block, origin
+/// and specificity are identical for every declaration, so a later
+/// `!important` declaration can still lose to an earlier one only if the
+/// earlier one is *also* `!important` (CSS Cascading L4 §6.1's "declarations
+/// … sorted by … importance, then … order" tie-break chain
+/// (<https://www.w3.org/TR/css-cascade-4/#cascade-sort>) applies
+/// importance *before* source order). A field that reduced to a single
+/// `PageSize` at parse time would have to invent that winner-selection logic
+/// ahead of the rest of the `size` cascade wiring, which is future scope —
+/// so this field mirrors [`PageRule::declarations`]'s shape instead of
+/// pre-empting it.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageSizeDeclaration {
+    /// The parsed `size` value.
+    pub value: PageSize,
+    /// `!important` flag. CSS Paged Media Level 3's "Cascading in the page
+    /// context" states declarations in page and margin contexts "cascade
+    /// just like declarations in style rule for elements" (cited in full on
+    /// [`PageRule::origin`]), so `!important` is spec-meaningful for `size`
+    /// too — accepted and retained here even though nothing consumes it yet
+    /// (no `size` cascade wiring exists — see [`PageRule::size_declarations`]).
+    pub important: bool,
+}
+
 /// Parsed `@page` rule — selector + declaration list + source order + origin.
 ///
 /// `source_order` numbers `@page` rules *independently* of style rules; the
@@ -166,24 +345,28 @@ pub enum PagePseudo {
 /// `StyleRule::source_order` semantics untouched. Cross-kind ordering can be
 /// reconstructed by future cascade code if needed.
 ///
-/// Field order (selector → declarations → source_order → origin) mirrors
-/// [`crate::StyleRule`] so both rule kinds present the same shape to the
-/// cascade code. Future fields (`@page`-specific descriptors like size /
-/// marks / bleed / margin-box, a cascade-origin cache, etc.) are expected to
-/// be added later; `#[non_exhaustive]` means that addition stays non-breaking.
+/// Field order (selector → declarations → size_declarations → source_order →
+/// origin) mirrors [`crate::StyleRule`]'s (selector → declarations →
+/// source_order → origin) as closely as an extra `@page`-only field allows,
+/// so both rule kinds present a similar shape to the cascade code. Future
+/// fields (other `@page`-specific descriptors like `marks` / `bleed` /
+/// margin-box, a cascade-origin cache, etc.) are expected to be added later;
+/// `#[non_exhaustive]` means that addition stays non-breaking.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct PageRule {
     /// Which pages this rule applies to.
     pub selector: PageSelector,
     /// Declarations from the block body — parsed with the same
-    /// `parse_declaration_block` used by qualified rules, so unsupported
-    /// properties are silently dropped (matching this crate's general
-    /// unsupported-property policy).
+    /// [`crate::property::parse_value`] dispatch qualified rules use (via
+    /// [`parse_page_declaration_block`]), so unsupported properties are
+    /// silently dropped (matching this crate's general unsupported-property
+    /// policy).
     ///
-    /// Note: `@page`-specific descriptors (`size`, `marks`, `bleed`, and the
-    /// margin-box at-rules `@top-left` etc. per L3 §5) are also dropped by
-    /// this reuse; wiring them is future scope.
+    /// Note: `@page`-specific descriptors other than `size` (`marks`,
+    /// `bleed`, and the margin-box at-rules `@top-left` etc. per L3 §5) are
+    /// still dropped here; wiring them is future scope. `size` itself is no
+    /// longer dropped — see [`PageRule::size_declarations`].
     ///
     /// # Why this field (and `RuleTree::page_rules`) is still `pub`
     ///
@@ -221,12 +404,46 @@ pub struct PageRule {
     ///   reopens from outside the crate — re-derive this section before
     ///   adding a public constructor to `Declaration`.
     ///
-    /// The full mechanical derivation (all three shorthand-expansion call
+    /// The full mechanical derivation (all four shorthand-expansion call
     /// sites, and why (a)/(b) above are each load-bearing) lives on
     /// [`crate::rule::expand_shorthand_into`]'s doc. That function is
     /// `pub(crate)`, so its doc does not render on docs.rs — this section is
     /// the summary a docs.rs reader can actually reach.
     pub declarations: Vec<Declaration>,
+    /// `size:` declarations from the block body, in source order — see
+    /// [`PageSizeDeclaration`] for the value shape and why this is a `Vec`
+    /// rather than a single resolved value. Parsed by
+    /// [`parse_page_declaration_block`] via a dedicated grammar
+    /// ([`parse_page_size_value`]), since `size` is an `@page` descriptor
+    /// (CSS Paged Media Level 3 §7.1 "Page size: the size property",
+    /// <https://www.w3.org/TR/css-page-3/#page-size-prop>), not a
+    /// [`PropertyValue`] the general [`crate::property::parse_value`]
+    /// dispatch recognizes. Empty when the block declares no `size`.
+    ///
+    /// Not yet consumed by [`cascade_page`] / [`PageCascadeResult`] —
+    /// wiring a `size` cascade winner across multiple matching `@page`
+    /// rules, and translating the winner into an actual page-box
+    /// width/height, are both future scope. Other `@page` descriptors
+    /// (`marks`, `bleed`, margin-box at-rules) remain unparsed and are
+    /// silently dropped, same as before.
+    ///
+    /// # `pub` surface — same shape as `declarations`, with one difference
+    ///
+    /// This is the same "still `pub`, outside the prior visibility-tightening
+    /// pass" surface [`PageRule::declarations`]'s doc analyzes in full — a
+    /// consumer can duplicate / remove / reorder an existing
+    /// [`PageSizeDeclaration`], flip `important`, or push one back onto a
+    /// cloned `PageRule`. It is **not** the same in one respect:
+    /// [`PageSizeDeclaration::value`] is `pub` (unlike `Declaration::value`,
+    /// which is private), so a consumer can also assign a [`PageSize`] the
+    /// parser itself would never construct — most notably
+    /// `PageSize::Named { keyword: None, orientation: None }`, the state
+    /// [`PageSize::Named`]'s own doc documents as parser-unreachable. Nothing
+    /// in this crate reads `size_declarations` yet (see the previous
+    /// paragraph), so that state has no observable effect today; whichever
+    /// change wires a `size` cascade winner should not assume the invariant
+    /// holds against a `pub`-field-constructed input.
+    pub size_declarations: Vec<PageSizeDeclaration>,
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
     pub source_order: u32,
@@ -393,6 +610,276 @@ fn parse_and_push_pseudo<'i>(
 }
 
 // ---------------------------------------------------------------------------
+// @page block body — declarations + the `size` descriptor
+//
+// CSS Paged Media Level 3, §7.1 "Page size: the size property" —
+//   <https://www.w3.org/TR/css-page-3/#page-size-prop>
+// ---------------------------------------------------------------------------
+
+/// Per-declaration parse result for an `@page` block body — either an
+/// ordinary property [`Declaration`] (routed through the same
+/// [`crate::property::parse_value`] dispatch qualified rules use) or the
+/// `size` descriptor's dedicated value ([`PageSize`]), which is not a
+/// [`PropertyValue`] variant and so cannot come out of that dispatch.
+enum PageBodyItem {
+    /// An ordinary property declaration.
+    Property(Declaration),
+    /// A `size:` declaration.
+    Size(PageSizeDeclaration),
+}
+
+/// Per-declaration parser for `@page` block bodies, driving
+/// [`RuleBodyParser`] the same way [`crate::rule`]'s (crate-private)
+/// `DeclParser` drives it for qualified style rules — see
+/// [`parse_page_declaration_block`] for the entry point and the
+/// `size`/ordinary-property dispatch this type implements.
+///
+/// The `AtRuleParser` / `QualifiedRuleParser` impls below are no-ops (all
+/// default-trait-method behavior, same shape as [`crate::rule`]'s
+/// `DeclParser`): a nested at-rule inside an `@page` block (e.g. a
+/// margin-box at-rule like `@top-left { … }`, CSS Paged Media Level 3 §5)
+/// makes `AtRuleParser::parse_prelude`'s default `Err` fire, and cssparser's
+/// error recovery silently skips just that nested block — declarations
+/// before and after it still parse (pinned by
+/// `ruletree::tests::page_margin_box_at_rule_body_is_skipped_declaration_survives`).
+/// Wiring margin-box at-rules is future scope, unrelated to the `size`
+/// descriptor this type exists for.
+struct PageDeclParser;
+
+impl<'i> DeclarationParser<'i> for PageDeclParser {
+    type Declaration = PageBodyItem;
+    type Error = ();
+
+    fn parse_value<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+        _declaration_start: &ParserState,
+    ) -> Result<PageBodyItem, ParseError<'i, Self::Error>> {
+        if name.eq_ignore_ascii_case("size") {
+            let value = parse_page_size_value(input)?;
+            // `!important` is spec-legal here too — CSS Paged Media Level 3's
+            // "Cascading in the page context" states page-context
+            // declarations "cascade just like declarations in style rule
+            // for elements" (cited in full on `PageRule::origin`) — so it is
+            // consumed (not left as trailing garbage) and retained on
+            // `PageSizeDeclaration`, exactly like the ordinary-property arm
+            // below does for `Declaration::important`.
+            let important = input.try_parse(cssparser::parse_important).is_ok();
+            // Exhaustive consumption, matching `crate::rule::DeclParser`:
+            // trailing garbage after the value (and optional `!important`)
+            // rejects the whole declaration.
+            input.expect_exhausted().map_err(
+                |e: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> { e.into() },
+            )?;
+            return Ok(PageBodyItem::Size(PageSizeDeclaration { value, important }));
+        }
+        let value = parse_value(name.as_ref(), input).ok_or_else(|| input.new_custom_error(()))?;
+        let important = input.try_parse(cssparser::parse_important).is_ok();
+        input.expect_exhausted().map_err(
+            |e: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> { e.into() },
+        )?;
+        Ok(PageBodyItem::Property(Declaration { value, important }))
+    }
+}
+
+// At-rule parser is a no-op — see `PageDeclParser`'s doc.
+impl<'i> AtRuleParser<'i> for PageDeclParser {
+    type Prelude = ();
+    type AtRule = PageBodyItem;
+    type Error = ();
+}
+
+// Qualified-rule parser (nested rule) is also a no-op — see `PageDeclParser`'s
+// doc.
+impl<'i> QualifiedRuleParser<'i> for PageDeclParser {
+    type Prelude = ();
+    type QualifiedRule = PageBodyItem;
+    type Error = ();
+}
+
+impl<'i> RuleBodyItemParser<'i, PageBodyItem, ()> for PageDeclParser {
+    fn parse_qualified(&self) -> bool {
+        false
+    }
+    fn parse_declarations(&self) -> bool {
+        true
+    }
+}
+
+/// Parse an `@page` block body (the `{ … }` contents), producing both the
+/// ordinary property declarations and the `size:` declarations (in source
+/// order — see [`PageRule::size_declarations`] for why duplicates within one
+/// block are kept rather than reduced here).
+///
+/// # Not a reuse of [`crate::rule::parse_declaration_block`]
+///
+/// Unlike qualified style rules, `@page` blocks are parsed by a dedicated
+/// [`PageDeclParser`] rather than [`crate::rule`]'s (crate-private)
+/// `DeclParser` — the `size` descriptor is not a [`PropertyValue`] variant
+/// [`crate::property::parse_value`] can produce, so it needs its own grammar
+/// ([`parse_page_size_value`]) rather than being silently dropped by the
+/// general property parser (the pre-existing behavior for *every* `@page`
+/// descriptor before this function existed — still true today for `marks` /
+/// `bleed` / margin-box, see
+/// `ruletree::tests::page_body_marks_dropped_size_parsed`).
+///
+/// # Shorthand expansion — this is call site 4 of `expand_shorthand_into`
+///
+/// The ordinary-property arm applies [`expand_shorthand_into`] before
+/// pushing into the returned `Vec<Declaration>`, exactly like
+/// [`crate::rule::parse_declaration_block`] does — this function *is* the
+/// parse-exit boundary for `@page` blocks (not a second copy of one), so it
+/// carries the same "no shorthand `PropertyValue` leaves this function"
+/// obligation that boundary has. See
+/// [`crate::rule::expand_shorthand_into`]'s doc for the full 4-call-site
+/// account and why each one is load-bearing.
+pub(crate) fn parse_page_declaration_block(
+    input: &mut Parser<'_, '_>,
+) -> (Vec<Declaration>, Vec<PageSizeDeclaration>) {
+    let mut parser = PageDeclParser;
+    let mut declarations = Vec::new();
+    let mut size_declarations = Vec::new();
+    for item in RuleBodyParser::new(input, &mut parser).flatten() {
+        match item {
+            PageBodyItem::Property(decl) => {
+                expand_shorthand_into(&decl, |d| declarations.push(d));
+            }
+            PageBodyItem::Size(decl) => size_declarations.push(decl),
+        }
+    }
+    (declarations, size_declarations)
+}
+
+/// Parse the `size` descriptor's value grammar — CSS Paged Media Level 3
+/// §7.1 "Page size: the size property"
+/// (<https://www.w3.org/TR/css-page-3/#page-size-prop>), grammar (spec
+/// verbatim): `<length>{1,2} | auto | [ <page-size> || [ portrait |
+/// landscape ] ]`. See [`PageSize`] for the parsed shape.
+///
+/// Called with the parser positioned right after `size` `:` (the same shape
+/// [`crate::property::parse_value`] callers expect) — consumes exactly the
+/// value tokens, leaving any trailing `!important` for the caller
+/// ([`PageDeclParser::parse_value`]).
+fn parse_page_size_value<'i>(input: &mut Parser<'i, '_>) -> Result<PageSize, ParseError<'i, ()>> {
+    // Alternative 2, `auto`, tried first via `try_parse` so a non-match
+    // rewinds cleanly (same `try_parse`-before-length ordering as
+    // `parse_margin_side` in property.rs, and for the same reason: the
+    // length branch below unconditionally consumes a token on its first
+    // step, so trying it before `auto` without a rewind would eat the
+    // `auto` ident and never reach this branch).
+    if input
+        .try_parse(|input| input.expect_ident_matching("auto"))
+        .is_ok()
+    {
+        return Ok(PageSize::Auto);
+    }
+
+    // Alternative 1, `<length>{1,2}`. `parse_page_length` enforces both the
+    // "`<length>`, not `<length-percentage>`" grammar restriction and the
+    // "Negative lengths are illegal" prose constraint.
+    if let Ok(first) = input.try_parse(parse_page_length) {
+        let second = input.try_parse(parse_page_length).ok();
+        return Ok(match second {
+            Some(height) => PageSize::Lengths {
+                width: first,
+                height,
+            },
+            // "If only one length value is specified, it sets both the
+            // width and height of the page box."
+            None => PageSize::Lengths {
+                width: first,
+                height: first,
+            },
+        });
+    }
+
+    // Alternative 3, `[ <page-size> || [ portrait | landscape ] ]`. `||`
+    // means each sub-component is independently optional but at least one
+    // must be present, in either source order — so both are tried,
+    // repeatedly, until neither matches (each can only match once: once
+    // `keyword`/`orientation` is `Some`, that branch is skipped, so a
+    // second `A4 A4` or `landscape landscape` does not loop forever nor
+    // silently accept the duplicate).
+    let mut keyword = None;
+    let mut orientation = None;
+    loop {
+        if keyword.is_none()
+            && let Ok(kw) = input.try_parse(parse_page_size_keyword)
+        {
+            keyword = Some(kw);
+            continue;
+        }
+        if orientation.is_none()
+            && let Ok(o) = input.try_parse(parse_page_orientation)
+        {
+            orientation = Some(o);
+            continue;
+        }
+        break;
+    }
+    match (keyword, orientation) {
+        // Neither sub-component matched — none of the three alternatives
+        // apply, so the whole `size` declaration is invalid.
+        (None, None) => Err(input.new_custom_error(())),
+        (keyword, orientation) => Ok(PageSize::Named {
+            keyword,
+            orientation,
+        }),
+    }
+}
+
+/// One `<length>` component of the `size` descriptor's `<length>{1,2}`
+/// alternative (CSS Paged Media Level 3 §7.1) — thin `Result`-returning
+/// wrapper around [`parse_non_negative_length`] so it can be passed directly
+/// as a function pointer to `Parser::try_parse` (both length components in
+/// [`parse_page_size_value`] share this one parser).
+fn parse_page_length<'i>(input: &mut Parser<'i, '_>) -> Result<Length, ParseError<'i, ()>> {
+    parse_non_negative_length(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// Parse a single `<page-size>` keyword. Grammar: `A5 | A4 | A3 | B5 | B4 |
+/// JIS-B5 | JIS-B4 | letter | legal | ledger` — CSS Paged Media Level 3 §7.1
+/// "Page size: the size property"
+/// (<https://www.w3.org/TR/css-page-3/#page-size-prop>). ASCII
+/// case-insensitive, matching every other keyword production in this module.
+fn parse_page_size_keyword<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<PageSizeKeyword, ParseError<'i, ()>> {
+    let ident = input.expect_ident()?.clone();
+    let keyword = match_ignore_ascii_case! { &ident,
+        "a5" => PageSizeKeyword::A5,
+        "a4" => PageSizeKeyword::A4,
+        "a3" => PageSizeKeyword::A3,
+        "b5" => PageSizeKeyword::B5,
+        "b4" => PageSizeKeyword::B4,
+        "jis-b5" => PageSizeKeyword::JisB5,
+        "jis-b4" => PageSizeKeyword::JisB4,
+        "letter" => PageSizeKeyword::Letter,
+        "legal" => PageSizeKeyword::Legal,
+        "ledger" => PageSizeKeyword::Ledger,
+        _ => return Err(input.new_custom_error(())),
+    };
+    Ok(keyword)
+}
+
+/// Parse a single `portrait | landscape` orientation keyword — the second
+/// half of the `size` descriptor's third grammar alternative (CSS Paged
+/// Media Level 3 §7.1, see [`parse_page_size_keyword`] for the shared
+/// anchor). ASCII case-insensitive.
+fn parse_page_orientation<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<PageOrientation, ParseError<'i, ()>> {
+    let ident = input.expect_ident()?.clone();
+    let orientation = match_ignore_ascii_case! { &ident,
+        "portrait" => PageOrientation::Portrait,
+        "landscape" => PageOrientation::Landscape,
+        _ => return Err(input.new_custom_error(())),
+    };
+    Ok(orientation)
+}
+
+// ---------------------------------------------------------------------------
 // @page cascade order 本実装
 //
 // CSS Paged Media Level 3, §"Cascading and page context" —
@@ -459,17 +946,23 @@ pub struct PageContextQuery {
 ///
 /// Contains one entry per property that at least one matching `@page` rule
 /// declared. `@page`-specific **descriptors** (`size`, `marks`, `bleed`) are
-/// absent — the current property parser silently drops them, and wiring
-/// them is future scope (see
-/// `ruletree::tests::page_body_unsupported_property_drops_declaration`).
+/// absent from this result. `marks` / `bleed` still have no parser at all
+/// (the current property dispatch silently drops them — see
+/// `ruletree::tests::page_body_marks_dropped_size_parsed`).
+/// `size` is different: it *is* parsed now (see [`PageRule::size_declarations`]
+/// / [`PageSize`]), but that parsed value is not yet folded into this
+/// cascade result — wiring a `size` cascade winner across multiple matching
+/// `@page` rules is still future scope, tracked separately from ordinary
+/// property cascading.
 ///
 /// The ordinary box properties are **not** in that category: `margin` /
 /// `padding` / `border-*` / `width` / `height` are parsed (the `margin`
 /// shorthand is expanded to longhands) and go
 /// through both resolution phases below. Downstream page-layout code is
-/// expected to translate this bag into its page-box model and future
-/// `@page`-descriptor fields once a descriptor property parser lands;
-/// raikiri-style remains a leaf crate.
+/// expected to translate this bag into its page-box model, plus
+/// [`PageRule::size_declarations`] and future `@page`-descriptor fields
+/// once those gain cascade wiring of their own; raikiri-style remains a
+/// leaf crate.
 ///
 /// Iteration order over `declarations` is `HashMap`-random; consumers that
 /// need a deterministic order should sort or look up by [`PropertyKey`]
@@ -1544,9 +2037,9 @@ fn absolutize_in_page_context(
         }
         // Shorthand fall-through — **unreachable through `cascade_page`**.
         // `crate::rule::expand_shorthand_into` runs at both boundaries that feed
-        // this function: the parse exit (`crate::rule::parse_declaration_block`,
-        // which `ruletree` reuses) and the `@page` cascade entry (the candidate
-        // loop in `cascade_page` itself — the sibling of
+        // this function: the parse exit (`parse_page_declaration_block`, this
+        // module's own `@page`-block parser) and the `@page` cascade entry
+        // (the candidate loop in `cascade_page` itself — the sibling of
         // `crate::cascade`'s `collect_cascaded`). The
         // entry-side expansion is what covers the post-parse mutation path
         // through the `pub` field `PageRule::declarations`.
@@ -2038,10 +2531,11 @@ mod tests {
     // ── Verification 5: named-page cascade produces named-page declarations ──
     // Verification target: `(page_name=Some("landscape_a3"), page_index=0,
     // is_first=true)` — the winning declarations must come from the named-page
-    // rule. Property proxy: `color` (already supported). `size` is an
-    // `@page` descriptor and is still not wired through the declaration parser
-    // (see `ruletree::tests::page_body_unsupported_property_drops_declaration`);
-    // `margin` *is* supported but `color` keeps this test
+    // rule. Property proxy: `color` (already supported, and cascaded through
+    // `PageCascadeResult`). `size` is parsed now (`PageRule::size_declarations`
+    // / `PageSize`) but has no cascade winner-selection wired yet, so it
+    // isn't a usable proxy for *this* test's specificity-tie-break target;
+    // `margin` *is* both parsed and cascaded but `color` keeps this test
     // focused on selector specificity rather than on length resolution, which
     // the phase 3 tests cover. The named-page
     // rule wins because its specificity `(1, 1, 0)` beats every non-named

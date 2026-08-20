@@ -226,29 +226,34 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// Shorthand declaration を対応する longhand declaration 列に展開して sink
 /// `push` に流す。non-shorthand はそのまま 1 個 push される。
 ///
-/// # どの variant が shorthand かの列挙はここ 1 箇所だけ (call site は 3 つ)
+/// # どの variant が shorthand かの列挙はここ 1 箇所だけ (call site は 4 つ)
 ///
-/// 呼ぶのは 3 箇所だが、**「どの `PropertyValue` variant が shorthand か」を
+/// 呼ぶのは 4 箇所だが、**「どの `PropertyValue` variant が shorthand か」を
 /// 列挙する match は本関数だけ**である (per-family の展開表は
 /// [`expand_margin`] / [`expand_padding`] / [`expand_border`] に、non-shorthand
 /// path は [`expand_none`] に分離してあるが、これは perf 上の hot/cold split
 /// であって分岐の追加ではない — **4 helper のいずれも `match` を持たない**)。
 /// 本関数の match は exhaustive であり (下の「wildcard arm を置かない理由
-/// (契約)」節)、下の 3 call site が同時にその
+/// (契約)」節)、下の 4 call site が同時にその
 /// compile-time 保証を継承する:
 ///
-/// 1. [`parse_declaration_block`] — parse 出口。author CSS / inline style / UA
-///    stylesheet が通る。
+/// 1. [`parse_declaration_block`] — 通常の qualified rule (style rule) の
+///    parse 出口。author CSS / inline style / UA stylesheet が通る。
 /// 2. [`mod@crate::cascade`] の `collect_cascaded` — **[`crate::ruletree::RuleTree`]
 ///    の declaration が element cascade candidate になる境界**。
 /// 3. [`crate::page::cascade_page`] — **`RuleTree::page_rules` の declaration が
 ///    `@page` cascade candidate になる境界**。
+/// 4. [`crate::page::parse_page_declaration_block`] — `@page` block の parse
+///    出口。1 の `@page` 版で、こちらは author CSS の `@page { … }` body が通る
+///    (`parse_declaration_block` そのものは `@page` body の parse には使われない
+///    — [`crate::page::parse_page_declaration_block`] の doc の「Not a reuse
+///    of [`parse_declaration_block`]」節参照)。
 ///
 /// 2 と 3 が要るのは、`add_stylesheet` の**後**に declaration を shorthand
 /// variant へ書き戻す post-parse mutation 経路が存在するからである。
-/// parse 出口の guard は parse
-/// 出口しか見ないのでこの経路を守らない。両 cascade 入口で同じ等価変換を通すことで、
-/// **declaration がどこから来たかに依らず** 下の不変が成立する。
+/// parse 出口の guard (1 と 4) は parse
+/// 出口しか見ないのでこの経路を守らない。両 cascade 入口 (2 と 3) で同じ等価変換を
+/// 通すことで、**declaration がどこから来たかに依らず** 下の不変が成立する。
 ///
 /// [`crate::ruletree::RuleTree::style_rules()`] /
 /// [`StyleRule::declarations()`] / [`Declaration::value()`] は `pub(crate)` +
@@ -266,16 +271,18 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///   閉じているのは **shorthand を載せた `Declaration` を新規に作れない**点だけで、
 ///   その根拠は 2 段ある: (a) `value` が私有なので struct literal /
 ///   functional-update 構築が不可、(b) `Clone` 元になりうる declaration が
-///   longhand しか無いのは [`parse_declaration_block`] が shorthand key を
-///   emit しないため (`tests::declaration_block_never_emits_shorthand_keys` と
-///   本関数の exhaustive match が pin)。**(a) か (b) が
+///   longhand しか無いのは、parse 直後の時点では [`crate::page::parse_page_declaration_block`]
+///   が (element 側の [`parse_declaration_block`] と同じく) shorthand key を
+///   emit しないため (`tests::declaration_block_never_emits_shorthand_keys`
+///   と `ruletree::tests::page_declaration_block_never_emits_shorthand_keys`、
+///   および本関数の exhaustive match が pin)。**(a) か (b) が
 ///   破れると 3 の経路は crate 外から再び開く** — `Declaration` に公開 ctor を
 ///   足す変更は本節を再導出してから行うこと。
 ///
 /// docs.rs 読者向けの summary (本節の結論だけを抜いたもの) は
 /// [`crate::page::PageRule::declarations`] の doc の「Why this field ... is
 /// still `pub`」節にある。本関数は `pub(crate)` なので
-/// この doc 自体は docs.rs に出ない — 全 3 call site を跨ぐ完全な導出はここが
+/// この doc 自体は docs.rs に出ない — 全 4 call site を跨ぐ完全な導出はここが
 /// canonical のまま。
 ///
 /// ⚠️ **2 と 3 で破れ方が違う**。2 (element) の winner は
@@ -307,10 +314,12 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// `Vec<(PropertyValue, bool, Origin, _, u32)>` (2 は `selectors` crate の
 /// `Specificity`、3 は [`crate::page`] の `PageSpecificity`) であって
 /// `Vec<Declaration>` ではないためで、`Vec` 返しにすると declaration ごとの
-/// 一時 alloc か scratch buffer の状態管理を強いられる。call site 1 は
-/// `Vec` へ push するだけの closure を渡す。sink 化そのものは alloc 中立〜改善
-/// と実測されている — hot loop の regression 要因は sink
-/// ではなく引数の受け方だった。下の「signature は perf 要件である」節を参照。
+/// 一時 alloc か scratch buffer の状態管理を強いられる。call site 1 と
+/// call site 4 ([`crate::page::parse_page_declaration_block`]) はどちらも
+/// `Vec<Declaration>` へ push するだけの closure を渡す (4 は
+/// `PageBodyItem::Property` arm のみ、`Size` arm は別 `Vec` へ)。sink 化
+/// そのものは alloc 中立〜改善と実測されている — hot loop の regression 要因は
+/// sink ではなく引数の受け方だった。下の「signature は perf 要件である」節を参照。
 ///
 /// # Rationale (per-key cascade determinism)
 ///
@@ -323,7 +332,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// spec CSS Cascading L4 §3 "Shorthand Properties"
 /// <https://www.w3.org/TR/css-cascade-4/#shorthand> は shorthand を "sets all
 /// of its longhand sub-properties, exactly as if expanded in place" と定義し
-/// shorthand を longhand の syntactic sugar と扱う。本関数は上記 3 つの境界で
+/// shorthand を longhand の syntactic sugar と扱う。本関数は上記 4 つの境界で
 /// spec のこの等価変換を実行することで、**cascade 段には longhand のみが伝わる**
 /// 不変を確立する。cross-key dependency 自体が消えるので、適用順は結果に
 /// 影響しなくなる (`static ordering after cascade` の deterministic な source
@@ -355,7 +364,9 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// その旨を開示してある)、[`crate::page`] の `post_parse_page_*` test 群
 /// (call site 3、6 本 — こちらは shorthand が独立 key に park するかどうかを
 /// 直接 assert するので **6 本とも展開の有無を区別する**。hunk-revert 実測で
-/// 6/6 fail を確認済)。
+/// 6/6 fail を確認済)、そして `crate::ruletree::tests::page_declaration_block_never_emits_shorthand_keys`
+/// (call site 4 — `@page` block の parse 出口自体が shorthand key を emit しない
+/// ことを、call site 1 の guard と同じ形で直接 assert する)。
 ///
 /// # wildcard arm を置かない理由 (契約)
 ///
@@ -381,7 +392,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 ///    と milestone carve-out は同 variant の doc が canonical)。longhand 分離が
 ///    入ったら本 match の arm も移すこと。
 /// 2. **本関数を呼ばない経路** — exhaustive match が強制するのは *arm を書く
-///    こと*であって *本関数が呼ばれること*ではない。既知の境界は上の 3 call site
+///    こと*であって *本関数が呼ばれること*ではない。既知の境界は上の 4 call site
 ///    に列挙してあり、そこから呼び出しを消しても compile は通る。
 ///
 /// # `important` flag propagation
@@ -736,12 +747,14 @@ mod tests {
     /// defense-in-depth である — 同関数 doc の「この guard が守らない範囲」節を
     /// 参照。
     ///
-    /// ⚠️ 本 test が見るのは `expand_shorthand_into` の **call site 1 (parse
-    /// 出口) だけ**である。post-parse mutation 経路 (crate 内からのみ
+    /// ⚠️ 本 test が見るのは `expand_shorthand_into` の **call site 1 (element
+    /// 側の parse 出口) だけ**である。post-parse mutation 経路 (crate 内からのみ
     /// 到達可能) は本 test を素通りする。call site 2 (element cascade 入口) の
     /// guard は `crate::cascade` の `post_parse_*` test 群 (6 本) が、call site 3 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// (`@page` cascade 入口) の guard は `crate::page` の `post_parse_page_*` // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
-    /// test 群 (6 本) が持つ。
+    /// test 群 (6 本) が、call site 4 (`@page` 側の parse 出口) の guard は
+    /// `crate::ruletree::tests::page_declaration_block_never_emits_shorthand_keys`
+    /// が持つ。
     #[test]
     fn declaration_block_never_emits_shorthand_keys() {
         use crate::property::PropertyKey;

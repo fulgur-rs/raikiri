@@ -3543,7 +3543,8 @@ fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Opt
 /// [`Length`] の authored payload (`f32`) を variant によらず取り出す。
 ///
 /// `parse_width` / `parse_font_size` / `parse_padding_side` /
-/// `parse_border_width_side` / `parse_height` / `parse_line_height` は grammar
+/// `parse_border_width_side` / `parse_height` / `parse_line_height` /
+/// [`parse_non_negative_length`] は grammar
 /// の `[0,∞]` non-negative constraint を "全 variant の payload を取り出して
 /// `>= 0.0` を確認" という同一 pattern で parse-time enforce する
 /// (`parse_length_value` 自体は sign check しない仕様 — 同関数の "Sign / range"
@@ -3581,6 +3582,25 @@ fn length_payload(length: Length) -> f32 {
         | Length::Lh(v)
         | Length::Rlh(v) => v,
     }
+}
+
+/// `<length [0,∞]>` — [`parse_length_value`] with `allow_percentage=false`
+/// (no `<percentage>` alternative), then the same `[0,∞]` non-negative
+/// filter [`length_payload`]'s doc describes (`(length_payload(length) >=
+/// 0.0).then_some(length)`), so [`crate::page`]'s `size` descriptor parser
+/// (the 7th caller in [`length_payload`]'s roster) doesn't have to
+/// re-enumerate [`Length`] variants by hand.
+///
+/// `pub(crate)` for the one caller outside this module: [`crate::page`]'s
+/// `size` descriptor parser. CSS Paged Media Level 3 §7.1 "Page size: the
+/// size property" (<https://www.w3.org/TR/css-page-3/#page-size-prop>)
+/// grammar is `<length>{1,2} | auto | …` — `<length>`, not
+/// `<length-percentage>` — and states "Negative lengths are illegal", the
+/// same `[0,∞]` shape this crate's box properties already enforce via
+/// [`length_payload`].
+pub(crate) fn parse_non_negative_length(input: &mut Parser<'_, '_>) -> Option<Length> {
+    let length = parse_length_value(input, false)?;
+    (length_payload(length) >= 0.0).then_some(length)
 }
 
 /// `<length-percentage> | auto` の共通 parser — margin longhand 1 side 分。

@@ -7,7 +7,9 @@ use cssparser::{Parser, ParserInput, StyleSheetParser};
 use selectors::parser::{ParseRelative, SelectorList};
 
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
-use crate::page::{PageRule, PageSelector, parse_page_prelude};
+use crate::page::{
+    PageRule, PageSelector, PageSizeDeclaration, parse_page_declaration_block, parse_page_prelude,
+};
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{PseudoClass, RaikiriSelectorImpl, RaikiriSelectorParser};
@@ -213,10 +215,11 @@ impl RuleTree {
                     });
                     style_order = style_order.wrapping_add(1);
                 }
-                ParsedRule::Page(selector, declarations) => {
+                ParsedRule::Page(selector, declarations, size_declarations) => {
                     self.page_rules.push(PageRule {
                         selector,
                         declarations,
+                        size_declarations,
                         source_order: page_order,
                         origin,
                     });
@@ -341,7 +344,7 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
 /// は default `parse_prelude` の `Err` に落ちて cssparser 側で silent drop。
 enum ParsedRule {
     Style(SelectorList<RaikiriSelectorImpl>, Vec<Declaration>),
-    Page(PageSelector, Vec<Declaration>),
+    Page(PageSelector, Vec<Declaration>, Vec<PageSizeDeclaration>),
 }
 
 /// StyleSheetParser 実装。qualified rule + `@page` を受理、他 at-rule は drop。
@@ -374,10 +377,14 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleRuleParser {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
-        // @page body = declaration list (margin-box at-rule は将来追加予定)。
-        // 未サポート property は既存の silent-drop で 0 declaration 化する。
-        let declarations = parse_declaration_block(input);
-        Ok(ParsedRule::Page(prelude, declarations))
+        // @page body = declaration list + `size` descriptor list — parsed by
+        // a dedicated `crate::page::parse_page_declaration_block` (not the
+        // generic `parse_declaration_block` qualified rules use below,
+        // see that function's doc for why). 未サポート property / descriptor
+        // (`marks` / `bleed` / margin-box at-rule 等) は既存の silent-drop で
+        // 0 declaration 化する。
+        let (declarations, size_declarations) = parse_page_declaration_block(input);
+        Ok(ParsedRule::Page(prelude, declarations, size_declarations))
     }
 }
 
@@ -1019,19 +1026,22 @@ mod tests {
     // <https://www.w3.org/TR/css-page-3/#syntax-page-selector>
     //
     // Test で使う body は property.rs でサポート済み (color / font-*) を
-    // 選ぶ — parse_declaration_block を reuse しているので @page descriptor
-    // (`size` / `marks` / `bleed` 等) や未サポート property は現時点で silent drop
-    // され declaration 0 個になる (下の
-    // page_body_unsupported_property_drops_declaration がその regression guard)。
+    // 選ぶ — `crate::page::parse_page_declaration_block` は `size` descriptor
+    // を専用 grammar で受理するが (下の page_size_* test 群参照)、`marks` /
+    // `bleed` / margin-box 等それ以外の @page descriptor や未サポート
+    // property は現時点で silent drop され declaration 0 個になる (下の
+    // page_body_marks_dropped_size_parsed がその regression guard)。
     //
     // NB: `margin` は author scope の supported property になった
-    // (parse_declaration_block 出口で 4 longhand に展開)。@page context での
-    // margin-box descriptor 挙動 (L3 §5) は依然未実装のまま — 通常の
+    // (`parse_page_declaration_block` 出口で 4 longhand に展開)。@page context
+    // での margin-box descriptor 挙動 (L3 §5) は依然未実装のまま — 通常の
     // longhand `margin-top` 等の parse は @page body 内でも成立するが
     // page-context specific な意味付けは持たない。
 
-    use crate::page::{PagePseudo, PageSelector, PageSelectorEntry};
-    use crate::{Atom, PageRule};
+    use crate::page::{
+        PageOrientation, PagePseudo, PageSelector, PageSelectorEntry, PageSize, PageSizeKeyword,
+    };
+    use crate::{Atom, Length, PageRule};
 
     /// Test helper — build a `PageSelector` with a single compound entry
     /// containing exactly the given ident and pseudo-page list. Reduces the
@@ -1253,12 +1263,13 @@ mod tests {
 
     #[test]
     fn page_margin_box_at_rule_body_is_skipped_declaration_survives() {
-        // regression guard: parse_declaration_block
-        // reuse は margin-box at-rules (`@top-left { … }` per L3 §5) を DeclParser
-        // の default AtRuleParser::parse_prelude が Err で返して cssparser の
-        // error-recovery で block ごと silent skip する。その前後の通常宣言は
-        // 生き残ることを pin する。将来 margin-box を wire するときは
-        // PageDeclParser に本物の AtRuleParser を実装する予定。
+        // regression guard: `crate::page::parse_page_declaration_block`
+        // (its `PageDeclParser`) は margin-box at-rules (`@top-left { … }`
+        // per L3 §5) を default `AtRuleParser::parse_prelude` が Err で
+        // 返して cssparser の error-recovery で block ごと silent skip
+        // する。その前後の通常宣言は生き残ることを pin する。`PageDeclParser`
+        // 自体は `size` descriptor 用に今 landing 済みだが、margin-box 用の
+        // 本物の `AtRuleParser` 実装は依然未着手 (別 scope)。
         let rules = page_rules("@page :first { @top-left { content: 'x' } color: red }");
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].declarations.len(), 1);
@@ -1306,11 +1317,17 @@ mod tests {
     }
 
     #[test]
-    fn page_body_unsupported_property_drops_declaration() {
-        // property.rs は size / marks 等 @page descriptor を未サポート。
-        // parse_declaration_block reuse により silent drop され declaration 0 個。
-        // @page descriptor 対応が入るまで cascade 側は空 declarations を扱える
-        // ことを保証する regression guard。
+    fn page_body_marks_dropped_size_parsed() {
+        // `marks` remains an unimplemented `@page` descriptor (CSS Paged
+        // Media Level 3 §5 crop/cross marks) — `crate::property::parse_value`
+        // doesn't recognize it, so `PageDeclParser`'s ordinary-property arm
+        // drops it, same as any other unsupported property/descriptor.
+        // `size`, by contrast, now has a dedicated grammar
+        // (`crate::page::parse_page_size_value`) and lands in
+        // `size_declarations` instead of being silently dropped — this test
+        // pins both halves in one fixture so a future regression in either
+        // direction (an unsupported descriptor stops dropping, or `size`
+        // regresses back to dropping) shows up here.
         //
         // NB: 以前は `margin: 1cm` を dropped 例に使っていたが (`margin`
         // property 自体が未認識だった)、その後 `margin` は author scope で
@@ -1321,7 +1338,313 @@ mod tests {
         let rules = page_rules("@page { size: A4; marks: crop }");
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].selector, ps_single(None, vec![]));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            rules[0].declarations.is_empty(),
+            "`marks` is still an unsupported descriptor and must keep dropping"
+        );
+        assert_eq!(rules[0].size_declarations.len(), 1);
+        assert_eq!(
+            rules[0].size_declarations[0].value,
+            PageSize::Named {
+                keyword: Some(PageSizeKeyword::A4),
+                orientation: None,
+            }
+        );
+        assert!(!rules[0].size_declarations[0].important);
+    }
+
+    #[test]
+    fn page_declaration_block_never_emits_shorthand_keys() {
+        // Call site 4 of `expand_shorthand_into` (see that function's doc in
+        // `crate::rule`) — `parse_page_declaration_block` must expand
+        // `margin`/`padding`/`border` shorthand the same way the
+        // qualified-rule parse exit does, so a consumer reading
+        // `PageRule::declarations` directly never observes a raw shorthand
+        // `PropertyValue` straight out of parsing (before `cascade_page`'s
+        // own defense-in-depth re-expansion even runs).
+        use crate::property::PropertyValue;
+
+        let rules = page_rules("@page { margin: 1cm 2cm 3cm 4cm }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].declarations.len(), 4);
+        for decl in &rules[0].declarations {
+            assert!(!matches!(decl.value(), PropertyValue::Margin(_)));
+        }
+    }
+
+    // ── `size` descriptor grammar ──
+    //
+    // Spec: CSS Paged Media Level 3, §7.1 "Page size: the size property"
+    // <https://www.w3.org/TR/css-page-3/#page-size-prop>. Grammar:
+    // `<length>{1,2} | auto | [ <page-size> || [ portrait | landscape ] ]`.
+
+    #[test]
+    fn page_size_auto() {
+        let rules = page_rules("@page { size: auto }");
+        assert_eq!(rules[0].size_declarations.len(), 1);
+        assert_eq!(rules[0].size_declarations[0].value, PageSize::Auto);
+    }
+
+    #[test]
+    fn page_size_two_lengths() {
+        let rules = page_rules("@page { size: 210mm 297mm }");
+        assert_eq!(
+            rules[0].size_declarations[0].value,
+            PageSize::Lengths {
+                width: Length::Mm(210.0),
+                height: Length::Mm(297.0),
+            }
+        );
+    }
+
+    #[test]
+    fn page_size_single_length_sets_both_width_and_height() {
+        // "If only one length value is specified, it sets both the width
+        // and height of the page box (i.e., the box is a square)."
+        let rules = page_rules("@page { size: 10em }");
+        assert_eq!(
+            rules[0].size_declarations[0].value,
+            PageSize::Lengths {
+                width: Length::Em(10.0),
+                height: Length::Em(10.0),
+            }
+        );
+    }
+
+    #[test]
+    fn page_size_unitless_zero() {
+        // CSS Values 3 §5 unitless-zero clause — reaches `size` the same
+        // way it reaches every other `<length>` consumer in this crate.
+        let rules = page_rules("@page { size: 0 }");
+        assert_eq!(
+            rules[0].size_declarations[0].value,
+            PageSize::Lengths {
+                width: Length::Px(0.0),
+                height: Length::Px(0.0)
+            }
+        );
+    }
+
+    #[test]
+    fn page_size_percentage_rejected() {
+        // Grammar alternative 1 is `<length>`, not `<length-percentage>` —
+        // `%` is outside the `size` descriptor grammar entirely.
+        let rules = page_rules("@page { size: 50% }");
+        assert!(rules[0].size_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_size_negative_length_rejected() {
+        // "Negative lengths are illegal."
+        let rules = page_rules("@page { size: -10px }");
+        assert!(rules[0].size_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_size_three_lengths_rejected() {
+        // Grammar caps at `{1,2}` — a third length is trailing garbage that
+        // must drop the whole declaration, not silently truncate to the
+        // first two.
+        let rules = page_rules("@page { size: 10px 20px 30px }");
+        assert!(rules[0].size_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_size_second_length_negative_drops_whole_declaration() {
+        // Non-obvious path: the second length fails
+        // `parse_non_negative_length` and `try_parse` rewinds, so
+        // `parse_page_size_value` falls through to the "only one length was
+        // authored" arm (`Lengths { width: 10px, height: 10px }`) — but the
+        // leftover `-5px` tokens are still unconsumed, so
+        // `PageDeclParser::parse_value`'s `expect_exhausted` call must
+        // reject the whole declaration rather than silently accepting that
+        // truncated-to-one-length reading.
+        let rules = page_rules("@page { size: 10px -5px }");
+        assert!(rules[0].size_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_size_named_keyword_alone() {
+        let rules = page_rules("@page { size: A4 }");
+        assert_eq!(
+            rules[0].size_declarations[0].value,
+            PageSize::Named {
+                keyword: Some(PageSizeKeyword::A4),
+                orientation: None,
+            }
+        );
+    }
+
+    #[test]
+    fn page_size_orientation_alone() {
+        // `||` combinator: the `<page-size>` half is optional as long as
+        // `portrait | landscape` is present.
+        let rules = page_rules("@page { size: landscape }");
+        assert_eq!(
+            rules[0].size_declarations[0].value,
+            PageSize::Named {
+                keyword: None,
+                orientation: Some(PageOrientation::Landscape),
+            }
+        );
+    }
+
+    #[test]
+    fn page_size_keyword_and_orientation_either_order() {
+        // `||` combinator: both sub-components may appear, in either source
+        // order (spec examples this with `A4 landscape`).
+        let forward = page_rules("@page { size: A4 landscape }");
+        let backward = page_rules("@page { size: landscape A4 }");
+        let expected = PageSize::Named {
+            keyword: Some(PageSizeKeyword::A4),
+            orientation: Some(PageOrientation::Landscape),
+        };
+        assert_eq!(forward[0].size_declarations[0].value, expected);
+        assert_eq!(backward[0].size_declarations[0].value, expected);
+    }
+
+    #[test]
+    fn page_size_duplicate_keyword_rejected() {
+        // Each of `<page-size>` / `portrait|landscape` may appear at most
+        // once under `||` — a second page-size keyword is not a second
+        // valid alternative, it's trailing garbage.
+        let rules = page_rules("@page { size: A4 A3 }");
+        assert!(rules[0].size_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_size_duplicate_orientation_rejected() {
+        let rules = page_rules("@page { size: A4 landscape portrait }");
+        assert!(rules[0].size_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_size_important() {
+        let rules = page_rules("@page { size: A4 !important }");
+        assert_eq!(rules[0].size_declarations.len(), 1);
+        assert!(rules[0].size_declarations[0].important);
+    }
+
+    #[test]
+    fn page_size_is_case_insensitive() {
+        // CSS keyword は ASCII case-insensitive (`page_pseudo_is_case_insensitive`
+        // と同じ規約) — `auto` は `expect_ident_matching` (内部で
+        // `eq_ignore_ascii_case`), `<page-size>` / orientation keyword は
+        // `match_ignore_ascii_case!` 経由で、どちらも大文字小文字を区別しない。
+        let auto = page_rules("@page { size: AUTO }");
+        assert_eq!(auto[0].size_declarations[0].value, PageSize::Auto);
+
+        let named = page_rules("@page { size: A4 LANDSCAPE }");
+        assert_eq!(
+            named[0].size_declarations[0].value,
+            PageSize::Named {
+                keyword: Some(PageSizeKeyword::A4),
+                orientation: Some(PageOrientation::Landscape),
+            }
+        );
+
+        // Spec writes this one as `JIS-B5` (mixed case) — lowercase must
+        // still match.
+        let jis = page_rules("@page { size: jis-b5 }");
+        assert_eq!(
+            jis[0].size_declarations[0].value,
+            PageSize::Named {
+                keyword: Some(PageSizeKeyword::JisB5),
+                orientation: None,
+            }
+        );
+    }
+
+    #[test]
+    fn page_size_all_10_keyword_variants_accepted() {
+        // All 10 `<page-size>` alternatives smoke-tested individually (arm
+        // deletion regression detector) — same pattern as
+        // `border_style_all_10_variants_accepted` in property.rs.
+        fn named(source: &str, keyword: PageSizeKeyword) {
+            let rules = page_rules(&format!("@page {{ size: {source} }}"));
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                rules[0].size_declarations[0].value,
+                PageSize::Named {
+                    keyword: Some(keyword),
+                    orientation: None,
+                },
+                "size: {source}"
+            );
+        }
+        named("A5", PageSizeKeyword::A5);
+        named("A4", PageSizeKeyword::A4);
+        named("A3", PageSizeKeyword::A3);
+        named("B5", PageSizeKeyword::B5);
+        named("B4", PageSizeKeyword::B4);
+        named("JIS-B5", PageSizeKeyword::JisB5);
+        named("JIS-B4", PageSizeKeyword::JisB4);
+        named("letter", PageSizeKeyword::Letter);
+        named("legal", PageSizeKeyword::Legal);
+        named("ledger", PageSizeKeyword::Ledger);
+    }
+
+    #[test]
+    fn page_size_both_orientation_variants_accepted() {
+        let portrait = page_rules("@page { size: portrait }");
+        assert_eq!(
+            portrait[0].size_declarations[0].value,
+            PageSize::Named {
+                keyword: None,
+                orientation: Some(PageOrientation::Portrait),
+            }
+        );
+        let landscape = page_rules("@page { size: landscape }");
+        assert_eq!(
+            landscape[0].size_declarations[0].value,
+            PageSize::Named {
+                keyword: None,
+                orientation: Some(PageOrientation::Landscape),
+            }
+        );
+    }
+
+    #[test]
+    fn page_body_ordinary_property_trailing_garbage_drops_declaration() {
+        // `PageDeclParser::parse_value`'s ordinary-property arm (the
+        // `crate::property::parse_value` dispatch, distinct from the `size`
+        // arm) has its own `expect_exhausted` guard — this exercises *that*
+        // copy specifically (the `size` arm's twin is already covered by
+        // `page_size_three_lengths_rejected` and friends): `color: red` on
+        // its own parses cleanly, but trailing garbage after the value must
+        // still drop the whole declaration, exactly like the qualified-rule
+        // path's `crate::rule::DeclParser` does.
+        let rules = page_rules("@page { color: red garbage }");
+        assert_eq!(rules.len(), 1);
         assert!(rules[0].declarations.is_empty());
+    }
+
+    #[test]
+    fn page_size_duplicate_declarations_kept_in_source_order() {
+        // `PageRule::size_declarations` mirrors `PageRule::declarations` —
+        // every declaration is kept in source order rather than reduced to
+        // a single winner at parse time (see that field's doc for why).
+        let rules = page_rules("@page { size: A4 !important; size: A5 }");
+        assert_eq!(rules[0].size_declarations.len(), 2);
+        assert_eq!(
+            rules[0].size_declarations[0].value,
+            PageSize::Named {
+                keyword: Some(PageSizeKeyword::A4),
+                orientation: None,
+            }
+        );
+        assert!(rules[0].size_declarations[0].important);
+        assert_eq!(
+            rules[0].size_declarations[1].value,
+            PageSize::Named {
+                keyword: Some(PageSizeKeyword::A5),
+                orientation: None,
+            }
+        );
+        assert!(!rules[0].size_declarations[1].important);
     }
 
     #[test]
