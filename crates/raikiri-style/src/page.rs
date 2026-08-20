@@ -245,7 +245,7 @@ pub enum PageOrientation {
 ///
 /// let decl = &tree.page_rules[0].size_declarations[0];
 /// assert_eq!(
-///     decl.value,
+///     decl.value(),
 ///     PageSize::Named {
 ///         keyword: Some(PageSizeKeyword::A4),
 ///         orientation: Some(PageOrientation::Landscape),
@@ -292,7 +292,19 @@ pub enum PageSize {
     /// invariant against a hand-built value from outside the crate — a
     /// consumer building `PageSize::Named { keyword: None, orientation:
     /// None }` directly is a caller bug, not a state this crate's parser
-    /// ever emits.
+    /// ever emits. That stays true regardless of `#[non_exhaustive]`: the
+    /// attribute is on the enum, not this variant, and `Named`'s two
+    /// fields are both `pub` — enum-level `#[non_exhaustive]` blocks
+    /// exhaustive external matching, not external struct-literal
+    /// construction of an already-public variant.
+    ///
+    /// [`PageSizeDeclaration::value`]'s doc narrows one specific
+    /// reachability path for this state: a hand-built
+    /// `PageSize::Named { keyword: None, orientation: None }` can no
+    /// longer be attached to a `PageSizeDeclaration`, so it can no longer
+    /// reach [`PageRule::size_declarations`] through this crate's public
+    /// surface — even though the bare `PageSize` value above remains
+    /// constructible on its own.
     Named {
         /// The `<page-size>` keyword, if authored.
         keyword: Option<PageSizeKeyword>,
@@ -327,7 +339,22 @@ pub enum PageSize {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PageSizeDeclaration {
     /// The parsed `size` value.
-    pub value: PageSize,
+    ///
+    /// `pub(crate)`, with the read-only accessor [`Self::value`] the only
+    /// path to it from outside the crate — the same narrowing
+    /// [`crate::rule::Declaration::value`] uses. [`parse_page_size_value`]
+    /// is this field's only producer.
+    ///
+    /// This does **not** make `PageSize::Named { keyword: None,
+    /// orientation: None }` (the state [`PageSize::Named`]'s own doc
+    /// documents as parser-unreachable) unconstructible outside the
+    /// crate — `Named`'s own fields stay `pub`, and that state remains a
+    /// buildable, standalone [`PageSize`] value (see that variant's doc).
+    /// What narrows here is one specific reachability path: such a value
+    /// can no longer be *attached* to a `PageSizeDeclaration` — a
+    /// consumer cannot assign it into this field — so it can no longer
+    /// reach [`PageRule::size_declarations`] through this type.
+    pub(crate) value: PageSize,
     /// `!important` flag. CSS Paged Media Level 3's "Cascading in the page
     /// context" states declarations in page and margin contexts "cascade
     /// just like declarations in style rule for elements" (cited in full on
@@ -335,6 +362,50 @@ pub struct PageSizeDeclaration {
     /// too — accepted and retained here even though nothing consumes it yet
     /// (no `size` cascade wiring exists — see [`PageRule::size_declarations`]).
     pub important: bool,
+}
+
+impl PageSizeDeclaration {
+    /// The parsed `size` value — read-only accessor.
+    ///
+    /// Returns by value: [`PageSize`] is `Copy`, so this follows
+    /// [`crate::resolve::ComputedBorder::width`] /
+    /// [`crate::resolve::ComputedBorder::style`]'s pattern rather than
+    /// [`crate::rule::Declaration::value`]'s (which returns
+    /// `&`[`crate::property::PropertyValue`], since that type is not
+    /// `Copy`).
+    ///
+    /// # write 経路が無いことの compile-fail pin
+    ///
+    /// `value` は `pub(crate)` に絞ってある (field doc参照)。
+    /// `PageSizeDeclaration` には既に `#[non_exhaustive]` が付いているため、
+    /// struct literal / functional-update 経由の fence は `value` 単独の
+    /// visibility を discriminate できない — 発生するエラーは常に
+    /// non_exhaustive 由来の `E0639` であり、`value` が将来 `pub` に戻っても
+    /// compile-fail し続けてしまう ([`crate::resolve::ComputedBorder`] の doc
+    /// が指摘する同種の vacuous pin と同じ構造)。そのため struct literal
+    /// fence は作らず、`PageSizeDeclaration` が `Copy` であることを使う —
+    /// `Vec` indexing で取り出した値は borrow を経由しない owned なコピーに
+    /// なるので、[`crate::rule::Declaration`] の doc が踏んだ `.clone()`
+    /// confound ([`crate::resolve::ComputedBorder`] の doc 参照) はここでも
+    /// 発生しない:
+    ///
+    /// ```compile_fail
+    /// use raikiri_style::{Origin, PageSize, RuleTree};
+    ///
+    /// let mut tree = RuleTree::empty();
+    /// tree.add_stylesheet("@page { size: A4 }", Origin::Author);
+    /// let mut decl = tree.page_rules[0].size_declarations[0];
+    /// decl.value = PageSize::Auto;
+    /// ```
+    ///
+    /// Non-vacuous control (successful compile via the accessor, plus a
+    /// direct `important` field read — still `pub`, so a future narrowing
+    /// of `important` shows up here first, same discipline as
+    /// [`crate::rule::Declaration`]'s doc): [`PageSize`]'s own doc example
+    /// exercises both, via `decl.value()` and `decl.important`.
+    pub fn value(&self) -> PageSize {
+        self.value
+    }
 }
 
 /// Parsed `@page` rule — selector + declaration list + source order + origin.
@@ -427,22 +498,21 @@ pub struct PageRule {
     /// (`marks`, `bleed`, margin-box at-rules) remain unparsed and are
     /// silently dropped, same as before.
     ///
-    /// # `pub` surface — same shape as `declarations`, with one difference
+    /// # `pub` surface — same shape as `declarations`
     ///
     /// This is the same "still `pub`, outside the prior visibility-tightening
     /// pass" surface [`PageRule::declarations`]'s doc analyzes in full — a
     /// consumer can duplicate / remove / reorder an existing
     /// [`PageSizeDeclaration`], flip `important`, or push one back onto a
-    /// cloned `PageRule`. It is **not** the same in one respect:
-    /// [`PageSizeDeclaration::value`] is `pub` (unlike `Declaration::value`,
-    /// which is private), so a consumer can also assign a [`PageSize`] the
-    /// parser itself would never construct — most notably
-    /// `PageSize::Named { keyword: None, orientation: None }`, the state
-    /// [`PageSize::Named`]'s own doc documents as parser-unreachable. Nothing
-    /// in this crate reads `size_declarations` yet (see the previous
-    /// paragraph), so that state has no observable effect today; whichever
-    /// change wires a `size` cascade winner should not assume the invariant
-    /// holds against a `pub`-field-constructed input.
+    /// cloned `PageRule`. [`PageSizeDeclaration::value`] is `pub(crate)`
+    /// (see that field's own doc), matching `Declaration::value`, so a
+    /// consumer cannot additionally assign a [`PageSize`] the parser itself
+    /// would never construct — most notably `PageSize::Named { keyword:
+    /// None, orientation: None }`, the state [`PageSize::Named`]'s own doc
+    /// documents as parser-unreachable. Nothing in this crate reads
+    /// `size_declarations` yet (see the previous paragraph); whichever
+    /// change wires a `size` cascade winner can rely on the invariant
+    /// holding for every `PageSizeDeclaration` it encounters.
     pub size_declarations: Vec<PageSizeDeclaration>,
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.

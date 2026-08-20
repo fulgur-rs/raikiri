@@ -1527,6 +1527,26 @@ mod tests {
         assert!(rules[0].size_declarations[0].important);
     }
 
+    // Runs the `value()` accessor body: doctests aren't covered by this
+    // repo's coverage toolchain, so the compile-fail pin on
+    // `PageSizeDeclaration`'s struct doc doesn't exercise it. Every other
+    // test above reaches into the same-crate `pub(crate)` field directly,
+    // which never calls the accessor at all. Asserted against a concrete
+    // expected value (not `decl.value`) so this can't degrade into a
+    // tautological "the accessor returns the field" pin.
+    #[test]
+    fn page_size_declaration_value_accessor_matches_the_field() {
+        let rules = page_rules("@page { size: A4 landscape }");
+        let decl = rules[0].size_declarations[0];
+        assert_eq!(
+            decl.value(),
+            PageSize::Named {
+                keyword: Some(PageSizeKeyword::A4),
+                orientation: Some(PageOrientation::Landscape),
+            }
+        );
+    }
+
     #[test]
     fn page_size_is_case_insensitive() {
         // CSS keyword は ASCII case-insensitive (`page_pseudo_is_case_insensitive`
