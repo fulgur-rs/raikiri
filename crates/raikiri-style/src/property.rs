@@ -2691,10 +2691,191 @@ pub enum BreakInside {
     AvoidPage,
 }
 
+/// `float` property の value。
+///
+/// CSS2 §9.5.1 "Positioning the float: the 'float' property"
+/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-float>. Value: `left |
+/// right | none | inherit`, Initial: `none`, Applies to: "all, but see 9.7",
+/// Inherited: **no**, Percentages: N/A, Media: visual, Computed value: "as
+/// specified".
+///
+/// Meanings of values (CSS2 §9.5.1 spec verbatim):
+/// - `left`: "The element generates a block box that is floated to the
+///   left. Content flows on the right side of the box, starting at the top
+///   (subject to the 'clear' property)."
+/// - `right`: "Similar to 'left', except the box is floated to the right,
+///   and content flows on the left side of the box, starting at the top."
+/// - `none`: "The box is not floated."
+///
+/// # Scope carving
+///
+/// - `position`'s `absolute` / `fixed` values are not implemented by this
+///   crate yet ([`PositionValue`] doc's "未実装" note). CSS2 §9.7's
+///   `display`/`position`/`float` algorithm forces the computed value of
+///   `float` to `none` on an absolutely positioned box, so that interaction
+///   currently has no observable effect on any element this crate can
+///   style.
+/// - CSS2 §9.7's mandated `display` recomputation when this value is not
+///   `none` **is** implemented (unlike most Scope carving notes in this
+///   file, this is not a cut) — see [`resolve_display_for_float`] doc.
+/// - Actual float positioning, shrink-to-fit width, and line-box
+///   shortening (CSS2 §9.5's exclusion-area algorithm) are layout-time
+///   behavior (raikiri-dom scope). This crate only carries the cascaded
+///   keyword through to [`crate::computed::ComputedValues::float`].
+///
+/// `Default` は derive しない — [`ZIndexValue`] と同じ convention (spec
+/// default は初期化側 [`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`] が直接指定する)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FloatValue {
+    /// `none` — spec initial value. "The box is not floated." (CSS2 §9.5.1
+    /// verbatim)
+    None,
+    /// `left` — "The element generates a block box that is floated to the
+    /// left. Content flows on the right side of the box, starting at the
+    /// top (subject to the 'clear' property)." (CSS2 §9.5.1 verbatim)
+    Left,
+    /// `right` — "Similar to 'left', except the box is floated to the
+    /// right, and content flows on the left side of the box, starting at
+    /// the top." (CSS2 §9.5.1 verbatim)
+    Right,
+}
+
+/// `clear` property の value。
+///
+/// CSS2 §9.5.2 "Controlling flow next to floats: the 'clear' property"
+/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>. Value: `none |
+/// left | right | both | inherit`, Initial: `none`, Applies to: block-level
+/// elements, Inherited: **no**, Percentages: N/A, Media: visual, Computed
+/// value: "as specified".
+///
+/// Meanings of values (CSS2 §9.5.2 spec verbatim, "Values have the
+/// following meanings when applied to non-floating block-level boxes"):
+/// - `left`: "Requires that the top border edge of the box be below the
+///   bottom outer edge of any left-floating boxes that resulted from
+///   elements earlier in the source document."
+/// - `right`: "Requires that the top border edge of the box be below the
+///   bottom outer edge of any right-floating boxes that resulted from
+///   elements earlier in the source document."
+/// - `both`: "Requires that the top border edge of the box be below the
+///   bottom outer edge of any right-floating and left-floating boxes that
+///   resulted from elements earlier in the source document."
+/// - `none`: "No constraint on the box's position with respect to floats."
+///
+/// # Scope carving
+///
+/// - The propdef's "Applies to: block-level elements" clause is not
+///   enforced by the parser — applicability gating by computed `display`
+///   is layout-time / consumer scope in this crate, the same split
+///   [`VerticalAlign`] doc's "Applies to: inline-level ... table-cell"
+///   note describes for that property.
+/// - Clearance computation (CSS2 §9.5.2's "Computing the clearance of an
+///   element on which 'clear' is set") and the vertical displacement it
+///   produces are layout-time behavior (raikiri-dom scope). This crate
+///   only carries the cascaded keyword through to
+///   [`crate::computed::ComputedValues::clear`].
+///
+/// `Default` は derive しない — [`FloatValue`] と同じ convention (spec
+/// default は初期化側 [`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`] が直接指定する)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClearValue {
+    /// `none` — spec initial value. "No constraint on the box's position
+    /// with respect to floats." (CSS2 §9.5.2 verbatim)
+    None,
+    /// `left` — "Requires that the top border edge of the box be below the
+    /// bottom outer edge of any left-floating boxes that resulted from
+    /// elements earlier in the source document." (CSS2 §9.5.2 verbatim)
+    Left,
+    /// `right` — "Requires that the top border edge of the box be below
+    /// the bottom outer edge of any right-floating boxes that resulted
+    /// from elements earlier in the source document." (CSS2 §9.5.2
+    /// verbatim)
+    Right,
+    /// `both` — "Requires that the top border edge of the box be below
+    /// the bottom outer edge of any right-floating and left-floating
+    /// boxes that resulted from elements earlier in the source document."
+    /// (CSS2 §9.5.2 verbatim)
+    Both,
+}
+
+/// `float` が `none` 以外のときに CSS2 §9.7 "Relationships between
+/// 'display', 'position', and 'float'"
+/// <https://www.w3.org/TR/CSS2/visuren.html#dis-pos-flo> が強制する
+/// `display` の computed-value 変換を解決する。spec verbatim:
+///
+/// > Otherwise, if 'float' has a value other than 'none', the box is
+/// > floated and 'display' is set according to the table below.
+///
+/// 同 §の表 (verbatim):
+///
+/// | Specified value | Computed value |
+/// |---|---|
+/// | `inline-table` | `table` |
+/// | `inline`, `table-row-group`, `table-column`, `table-column-group`, `table-header-group`, `table-footer-group`, `table-row`, `table-cell`, `table-caption`, `inline-block` | `block` |
+/// | others | same as specified |
+///
+/// この crate の [`DisplayValue`] scope (`block` / `inline` / `inline-block`
+/// / `none` / `flex` / `grid`) に絞ると、表の中段に該当するのは
+/// [`DisplayValue::Inline`] と [`DisplayValue::InlineBlock`] の 2 variant
+/// だけ ([`DisplayValue`] は table 系 keyword を実装していない)。
+/// [`DisplayValue::Flex`] / [`DisplayValue::Grid`] は表に**登場しない**
+/// ("others" 側、same as specified) — floated flex/grid container は
+/// float してもそのまま `flex`/`grid` の computed value を保つ。
+///
+/// # `display: none` は本関数の呼び出し前に別枝で処理される
+///
+/// §9.7 冒頭の verbatim: "If 'display' has the value 'none', then
+/// 'position' and 'float' do not apply." — この分岐は表より**前**にあり、
+/// 表を経由しない。したがって [`DisplayValue::None`] は明示的な
+/// early-return で守る (他の未知 variant と同じ「表に登場しない ==
+/// same as specified」の一般ルールには**委ねない** — `None` がその一般
+/// ルールと同じ結果になるのは偶然の一致であり、将来 [`resolve_overflow`]
+/// 型の fail-safe 拡張で意味が変わりうる区別を明示するため)。
+///
+/// # 同一 node の cross-field dependency
+///
+/// [`resolve_overflow`] と同型の same-node coupling (依存先は自 node 内の
+/// もう一方の property のみ、親の値には依存しない) — 呼び出し箇所も
+/// phase 3 (絶対化) の同じ場所
+/// ([`crate::specified::SpecifiedValues::finalize`] 内部の
+/// `absolutize_with`)。
+///
+/// # page 経路では呼ばれない
+///
+/// `@page` box は §9.7 が想定する「visual formatting context 内の
+/// element」ではない (page box 自体を float させる CSS 機構は存在しない)
+/// ため、[`crate::page::cascade_page`] の phase 3 はこの解決を行わず、
+/// `Float` / `Clear` を [`ZIndexValue`] と同じ opaque pass-through として
+/// 扱う (`crate::page::absolutize_in_page_context` の該当 arm 参照)。
+///
+/// `pub(crate)` — 呼び手は `specified` module のみ。
+pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue) -> DisplayValue {
+    if matches!(float, FloatValue::None) {
+        return display;
+    }
+    match display {
+        DisplayValue::None => DisplayValue::None,
+        DisplayValue::Inline | DisplayValue::InlineBlock => DisplayValue::Block,
+        // `DisplayValue::None` の doc 直上の rationale と同じ理由で、この
+        // arm もあえて `_` に潰さない — `Block` / `Flex` / `Grid` を明示
+        // 列挙することで、将来 `DisplayValue` に table-family variant
+        // (CSS2 §9.7 表の `inline-table` / `table-row-group` 等) が
+        // 追加された時、この match が非網羅になり compile error で
+        // 呼び出し元に再考を強制する (`#[non_exhaustive]` は crate 外部
+        // consumer 向けの属性であり、定義 crate 内部のこの match には
+        // 適用されない)。silent に「specified のまま」へ pass-through
+        // させてしまうと §9.7 表を under-apply する。
+        same @ (DisplayValue::Block | DisplayValue::Flex | DisplayValue::Grid) => same,
+    }
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
-/// 認識できない property (例: `float` — 現行 scope 外) や
+/// 認識できない property (例: `cursor` — 現行 scope 外) や
 /// invalid value (例: `font-size: math` — MathML scaling algorithm 未実装) は
 /// parser 段で `None` に落として rule から
 /// silently 除外される。
@@ -3393,6 +3574,24 @@ pub enum PropertyValue {
     /// set を持つ別 type)。
     /// (末尾に追加、[`Self::BreakBefore`] と同じ配置理由)
     BreakInside(BreakInside),
+    /// `float: none | left | right` — **non-inherited**、initial:
+    /// [`FloatValue::None`] (CSS2 §9.5.1 "Inherited: no"、[`FloatValue`]
+    /// doc 参照)。computed value = specified value ([`FloatValue`] doc
+    /// 参照、length を運ばないため相対解決なし)。この値が `none` 以外の
+    /// ときの `display` 強制変換は別途 [`resolve_display_for_float`] が
+    /// 解決する — 本 variant 自体は `float` の cascaded value のみを運ぶ。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    Float(FloatValue),
+    /// `clear: none | left | right | both` — **non-inherited**、initial:
+    /// [`ClearValue::None`] (CSS2 §9.5.2 "Inherited: no"、[`ClearValue`]
+    /// doc 参照)。computed value = specified value ([`ClearValue`] doc
+    /// 参照、length を運ばないため相対解決なし)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    Clear(ClearValue),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -3584,6 +3783,14 @@ pub enum PropertyKey {
     BreakBefore,
     BreakAfter,
     BreakInside,
+    // float (CSS2 §9.5.1、semantics on the matching PropertyValue::Float
+    // variant; sibling PropertyKey variants carry no per-variant docs per
+    // crate convention). 末尾配置の理由は PropertyValue::Float の doc 参照。
+    Float,
+    // clear (CSS2 §9.5.2、semantics on the matching PropertyValue::Clear
+    // variant; sibling PropertyKey variants carry no per-variant docs per
+    // crate convention). 末尾配置の理由は PropertyValue::Clear の doc 参照。
+    Clear,
 }
 
 impl PropertyValue {
@@ -3659,6 +3866,8 @@ impl PropertyValue {
             PropertyValue::BreakBefore(_) => PropertyKey::BreakBefore,
             PropertyValue::BreakAfter(_) => PropertyKey::BreakAfter,
             PropertyValue::BreakInside(_) => PropertyKey::BreakInside,
+            PropertyValue::Float(_) => PropertyKey::Float,
+            PropertyValue::Clear(_) => PropertyKey::Clear,
         }
     }
 }
@@ -3946,6 +4155,17 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "page-break-inside" => {
             parse_legacy_page_break_inside(input).map(PropertyValue::BreakInside)
         }
+        // CSS2 §9.5.1 float. grammar: `left | right | none` (`inherit` —
+        // the propdef's fourth alternative — is the CSS-wide keyword,
+        // unhandled here per the "CSS-wide keyword (canonical)" section
+        // above). initial `none`, not inherited, computed value =
+        // specified value; §9.7's forced `display` recomputation is
+        // applied separately at phase 3 (`resolve_display_for_float` doc).
+        "float" => parse_float(input).map(PropertyValue::Float),
+        // CSS2 §9.5.2 clear. grammar: `none | left | right | both`
+        // (`inherit` unhandled, same reason as `float` above). initial
+        // `none`, not inherited, computed value = specified value.
+        "clear" => parse_clear(input).map(PropertyValue::Clear),
         _ => None,
     }
 }
@@ -5371,6 +5591,41 @@ fn parse_overflow_wrap(input: &mut Parser<'_, '_>) -> Option<OverflowWrap> {
         "normal" => Some(OverflowWrap::Normal),
         "break-word" => Some(OverflowWrap::BreakWord),
         "anywhere" => Some(OverflowWrap::Anywhere),
+        _ => None,
+    }
+}
+
+/// `float: <ident>` を parse する (CSS2 §9.5.1
+/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-float>, [`FloatValue`]
+/// doc 参照)。
+///
+/// Value grammar: `left | right | none` (`inherit` は上記 "CSS-wide
+/// keyword (canonical)" 節により未対応)。ASCII case-insensitive matching
+/// は sibling `parse_word_break` と同 flavor。
+fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "none" => Some(FloatValue::None),
+        "left" => Some(FloatValue::Left),
+        "right" => Some(FloatValue::Right),
+        _ => None,
+    }
+}
+
+/// `clear: <ident>` を parse する (CSS2 §9.5.2
+/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>, [`ClearValue`]
+/// doc 参照)。
+///
+/// Value grammar: `none | left | right | both` (`inherit` は上記
+/// "CSS-wide keyword (canonical)" 節により未対応)。ASCII case-insensitive
+/// matching は sibling `parse_float` と同 flavor。
+fn parse_clear(input: &mut Parser<'_, '_>) -> Option<ClearValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "none" => Some(ClearValue::None),
+        "left" => Some(ClearValue::Left),
+        "right" => Some(ClearValue::Right),
+        "both" => Some(ClearValue::Both),
         _ => None,
     }
 }
@@ -7395,11 +7650,14 @@ mod tests {
 
     #[test]
     fn unknown_property_returns_none() {
-        // `background-color` / `padding` / `margin` /
-        // `width` / `height` が順次実装済 = ここから除外。
-        // `float` は現時点で parse_value dispatch に未登録 → fall-through で
-        // None が返る canonical unknown-property canary。
-        assert_eq!(parse("left", "float"), None);
+        // `background-color` / `padding` / `margin` / `width` / `height` /
+        // `float` が順次実装済 = ここから除外。
+        // `cursor` (CSS Basic User Interface Module Level 3
+        // <https://www.w3.org/TR/css-ui-3/#cursor>) は現時点で
+        // parse_value dispatch に未登録 → fall-through で None が返る
+        // canonical unknown-property canary。実装され次第、別の未実装
+        // property 名へ再び移設すること。
+        assert_eq!(parse("pointer", "cursor"), None);
     }
 
     // ── Display (CSS Display 3 §2) ─────────────
@@ -10814,6 +11072,207 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::ZIndex);
     }
 
+    // ── float (CSS2 §9.5.1) ──
+    //
+    // Value grammar (§9.5.1 spec verbatim): `left | right | none | inherit`.
+    // Initial: none / Inherited: no / Computed value: as specified.
+
+    #[test]
+    fn float_parse_all_keywords() {
+        assert_eq!(
+            parse("none", "float"),
+            Some(PropertyValue::Float(FloatValue::None))
+        );
+        assert_eq!(
+            parse("left", "float"),
+            Some(PropertyValue::Float(FloatValue::Left))
+        );
+        assert_eq!(
+            parse("right", "float"),
+            Some(PropertyValue::Float(FloatValue::Right))
+        );
+    }
+
+    #[test]
+    fn float_is_case_insensitive() {
+        assert_eq!(
+            parse("NONE", "float"),
+            Some(PropertyValue::Float(FloatValue::None))
+        );
+        assert_eq!(
+            parse("Left", "float"),
+            Some(PropertyValue::Float(FloatValue::Left))
+        );
+        assert_eq!(
+            parse("RIGHT", "float"),
+            Some(PropertyValue::Float(FloatValue::Right))
+        );
+    }
+
+    #[test]
+    fn float_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "float"), None);
+        // `clear`'s `both` keyword is not valid on `float`.
+        assert_eq!(parse("both", "float"), None);
+    }
+
+    #[test]
+    fn float_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "float"), None);
+        }
+    }
+
+    #[test]
+    fn float_rejects_non_ident() {
+        assert_eq!(parse("16px", "float"), None);
+        assert_eq!(parse(r#""left""#, "float"), None);
+    }
+
+    #[test]
+    fn float_key_maps_to_float_property_key() {
+        let v = PropertyValue::Float(FloatValue::None);
+        assert_eq!(v.key(), PropertyKey::Float);
+        let v = PropertyValue::Float(FloatValue::Left);
+        assert_eq!(v.key(), PropertyKey::Float);
+        let v = PropertyValue::Float(FloatValue::Right);
+        assert_eq!(v.key(), PropertyKey::Float);
+    }
+
+    // ── clear (CSS2 §9.5.2) ──
+    //
+    // Value grammar (§9.5.2 spec verbatim): `none | left | right | both |
+    // inherit`. Initial: none / Inherited: no / Computed value: as
+    // specified.
+
+    #[test]
+    fn clear_parse_all_keywords() {
+        assert_eq!(
+            parse("none", "clear"),
+            Some(PropertyValue::Clear(ClearValue::None))
+        );
+        assert_eq!(
+            parse("left", "clear"),
+            Some(PropertyValue::Clear(ClearValue::Left))
+        );
+        assert_eq!(
+            parse("right", "clear"),
+            Some(PropertyValue::Clear(ClearValue::Right))
+        );
+        assert_eq!(
+            parse("both", "clear"),
+            Some(PropertyValue::Clear(ClearValue::Both))
+        );
+    }
+
+    #[test]
+    fn clear_is_case_insensitive() {
+        assert_eq!(
+            parse("NONE", "clear"),
+            Some(PropertyValue::Clear(ClearValue::None))
+        );
+        assert_eq!(
+            parse("Both", "clear"),
+            Some(PropertyValue::Clear(ClearValue::Both))
+        );
+    }
+
+    #[test]
+    fn clear_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "clear"), None);
+    }
+
+    #[test]
+    fn clear_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "clear"), None);
+        }
+    }
+
+    #[test]
+    fn clear_rejects_non_ident() {
+        assert_eq!(parse("16px", "clear"), None);
+        assert_eq!(parse(r#""left""#, "clear"), None);
+    }
+
+    #[test]
+    fn clear_key_maps_to_clear_property_key() {
+        let v = PropertyValue::Clear(ClearValue::None);
+        assert_eq!(v.key(), PropertyKey::Clear);
+        let v = PropertyValue::Clear(ClearValue::Both);
+        assert_eq!(v.key(), PropertyKey::Clear);
+    }
+
+    // ── resolve_display_for_float (CSS2 §9.7) ──
+
+    #[test]
+    fn resolve_display_for_float_is_noop_when_float_is_none() {
+        for display in [
+            DisplayValue::Block,
+            DisplayValue::Inline,
+            DisplayValue::InlineBlock,
+            DisplayValue::None,
+            DisplayValue::Flex,
+            DisplayValue::Grid,
+        ] {
+            assert_eq!(
+                resolve_display_for_float(display, FloatValue::None),
+                display
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_display_for_float_forces_inline_and_inline_block_to_block() {
+        // §9.7 table: `inline` / `inline-block` → `block`.
+        for float in [FloatValue::Left, FloatValue::Right] {
+            assert_eq!(
+                resolve_display_for_float(DisplayValue::Inline, float),
+                DisplayValue::Block
+            );
+            assert_eq!(
+                resolve_display_for_float(DisplayValue::InlineBlock, float),
+                DisplayValue::Block
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_display_for_float_leaves_block_flex_grid_unchanged() {
+        // §9.7 table's "others" row — not in the forced-to-block list.
+        for float in [FloatValue::Left, FloatValue::Right] {
+            assert_eq!(
+                resolve_display_for_float(DisplayValue::Block, float),
+                DisplayValue::Block
+            );
+            assert_eq!(
+                resolve_display_for_float(DisplayValue::Flex, float),
+                DisplayValue::Flex
+            );
+            assert_eq!(
+                resolve_display_for_float(DisplayValue::Grid, float),
+                DisplayValue::Grid
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_display_for_float_leaves_none_as_none() {
+        // §9.7 leading clause: "If 'display' has the value 'none', then
+        // 'position' and 'float' do not apply" — this precedes the table,
+        // so `none` must not be affected even when `float` is not `none`.
+        for float in [FloatValue::Left, FloatValue::Right] {
+            assert_eq!(
+                resolve_display_for_float(DisplayValue::None, float),
+                DisplayValue::None
+            );
+        }
+    }
+
     // ── word-break (CSS Text 3 §5.1) ──
     //
     // Value grammar (§5.1 spec verbatim, full property grammar): `normal |
@@ -12050,8 +12509,8 @@ mod tests {
     fn width_parse_length_px() {
         // Verification #2: `width: 100px` → Width(Length(Px(100)))。
         // 従来 `unknown_property_returns_none` canary で `None` だった箇所が
-        // 実 variant を返すようになった transition pin (canary は `float` に
-        // 移設済み)。
+        // 実 variant を返すようになった transition pin (canary はその後
+        // `float` を経て `cursor` に移設済み)。
         assert_eq!(
             parse("100px", "width"),
             Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(

@@ -30,11 +30,11 @@ use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside,
-    ContentComponent, CssColor, Direction, DisplayValue, FontStyle, Length, LengthOrAuto,
-    LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, Sides, TextAlign,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign,
-    Visibility, WordBreak, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_string_set_entries, initial_font_family, resolve_overflow,
+    ClearValue, ContentComponent, CssColor, Direction, DisplayValue, FloatValue, FontStyle, Length,
+    LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, Sides,
+    TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform,
+    VerticalAlign, Visibility, WordBreak, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_string_set_entries, initial_font_family, resolve_display_for_float, resolve_overflow,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
@@ -59,7 +59,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -242,6 +242,12 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::break_inside`] の staging。層は computed-equivalent
     /// (`BreakInside` は length を運ばない)。
     pub break_inside: BreakInside,
+    /// [`ComputedValues::float`] の staging。層は computed-equivalent
+    /// (`FloatValue` は length を運ばない)。
+    pub float: FloatValue,
+    /// [`ComputedValues::clear`] の staging。層は computed-equivalent
+    /// (`ClearValue` は length を運ばない)。
+    pub clear: ClearValue,
 }
 
 impl SpecifiedValues {
@@ -322,6 +328,9 @@ impl SpecifiedValues {
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
+            // CSS2 §9.5.1 / §9.5.2: float / clear の initial は共に `none`。
+            float: FloatValue::None,
+            clear: ClearValue::None,
         }
     }
 
@@ -429,6 +438,9 @@ impl SpecifiedValues {
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
+            // non-inherited (CSS2 §9.5.1 / §9.5.2 "Inherited: no", both)。
+            float: FloatValue::None,
+            clear: ClearValue::None,
         }
     }
 
@@ -711,7 +723,11 @@ impl SpecifiedValues {
             font_size,
             font_weight: self.font_weight,
             line_height,
-            display: self.display,
+            // CSS2 §9.7: `float` の cascaded value に応じて `display` の
+            // computed value を強制変換する same-node coupling
+            // (`resolve_display_for_float` doc 参照、`overflow`
+            // cross-axis coupling と同じ phase 3 の位置)。
+            display: resolve_display_for_float(self.display, self.float),
             counter_reset: self.counter_reset,
             counter_increment: self.counter_increment,
             counter_set: self.counter_set,
@@ -816,6 +832,12 @@ impl SpecifiedValues {
             // computed value = specified keyword (`BreakInside` doc 参照、
             // 同上)。
             break_inside: self.break_inside,
+            // computed value = specified value (`FloatValue`/`ClearValue`
+            // doc 参照、length を運ばないため相対解決なし) — 自 node の
+            // winner 適用結果をそのまま素通し。`display` への影響は上の
+            // `display` field 自体の代入式が担う (`resolve_display_for_float`)。
+            float: self.float,
+            clear: self.clear,
         }
     }
 }
@@ -972,6 +994,8 @@ mod tests {
             break_before: BreakBetween::Page,
             break_after: BreakBetween::AvoidPage,
             break_inside: BreakInside::AvoidPage,
+            float: FloatValue::Left,
+            clear: ClearValue::Both,
         }
     }
 
@@ -1052,6 +1076,9 @@ mod tests {
         assert_eq!(child.break_before, initial.break_before);
         assert_eq!(child.break_after, initial.break_after);
         assert_eq!(child.break_inside, initial.break_inside);
+        // CSS2 §9.5.1 / §9.5.2: float / clear は共に non-inherited。
+        assert_eq!(child.float, initial.float);
+        assert_eq!(child.clear, initial.clear);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は

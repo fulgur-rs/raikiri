@@ -524,7 +524,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // longhand, not several).
         | PropertyValue::BreakBefore(_)
         | PropertyValue::BreakAfter(_)
-        | PropertyValue::BreakInside(_) => expand_none(d, push),
+        | PropertyValue::BreakInside(_)
+        | PropertyValue::Float(_)
+        | PropertyValue::Clear(_) => expand_none(d, push),
     }
 }
 
@@ -831,16 +833,19 @@ mod tests {
 
     #[test]
     fn drops_invalid_property_and_value() {
-        // float: 未対応 property → drop (`margin` / `width` は以前 dropped 例に
-        // 使っていたが、その後認識対象になったため差し替え。`float` は現状
-        // unsupported)。
+        // cursor: pointer → 未対応 property (CSS Basic User Interface
+        // Module Level 3 <https://www.w3.org/TR/css-ui-3/#cursor>) → drop
+        // (`margin` / `width` / `float` は以前 dropped 例に使っていたが、
+        // その後順次認識対象になったため差し替え。`cursor` は現状
+        // unsupported — property.rs `unknown_property_returns_none` の
+        // canary と同じ property を使う)。
         // font-size: math → MathML scaling algorithm が未実装のため drop
         // (`medium` を以前 dropped 例に使っていたが、`<absolute-size>` /
         // `<relative-size>` keyword が認識対象になったため差し替え —
         // property.rs `PropertyValue` doc の「例を差し替えるときは…揃えること」
         // 節参照)。
         // color: red → 残す
-        let decls = parse_block("float: left; font-size: math; color: red;");
+        let decls = parse_block("cursor: pointer; font-size: math; color: red;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
             decls[0].value,

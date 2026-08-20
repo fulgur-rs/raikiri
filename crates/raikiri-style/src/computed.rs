@@ -12,11 +12,11 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ContentComponent, CssColor,
-    Direction, DisplayValue, FontStyle, OverflowValue, OverflowWrap, OverflowXY, Sides, TextAlign,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign,
-    Visibility, WordBreak, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_string_set_entries, initial_font_family,
+    BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentComponent,
+    CssColor, Direction, DisplayValue, FloatValue, FontStyle, OverflowValue, OverflowWrap,
+    OverflowXY, Sides, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
+    TextTransform, VerticalAlign, Visibility, WordBreak, ZIndexValue, empty_content_list,
+    empty_counter_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -68,7 +68,7 @@ pub struct RunningTemplate {
 /// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
-/// overflow / text_decoration / vertical_align)。
+/// overflow / text_decoration / vertical_align / float / clear)。
 ///
 /// # 層
 ///
@@ -732,6 +732,38 @@ pub struct ComputedValues {
     /// property's full 5-keyword grammar — see [`BreakInside`] doc's
     /// "Scope carving" section.
     pub break_inside: BreakInside,
+    /// `float`. **non-inherited**, initial: [`FloatValue::None`] (CSS2
+    /// §9.5.1 "Positioning the float: the 'float' property"
+    /// <https://www.w3.org/TR/CSS2/visuren.html#propdef-float>, "Initial:
+    /// none" / "Inherited: no"). Computed value = specified value
+    /// ([`FloatValue`] doc — no length payload, so no relative resolution
+    /// is needed).
+    ///
+    /// CSS2 §9.7's forced `display` recomputation when this field is not
+    /// [`FloatValue::None`] has already been applied to [`Self::display`]
+    /// by the time this field is populated — see
+    /// [`crate::property::resolve_display_for_float`] doc.
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded value only. Actual float
+    /// positioning, shrink-to-fit width, and line-box shortening (CSS2
+    /// §9.5's exclusion-area algorithm) are layout-time behavior
+    /// (raikiri-dom scope) — [`FloatValue`] doc's "Scope carving" section.
+    pub float: FloatValue,
+    /// `clear`. **non-inherited**, initial: [`ClearValue::None`] (CSS2
+    /// §9.5.2 "Controlling flow next to floats: the 'clear' property"
+    /// <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>, "Initial:
+    /// none" / "Inherited: no"). Computed value = specified value
+    /// ([`ClearValue`] doc — no length payload, so no relative resolution
+    /// is needed).
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded value only. Clearance computation
+    /// and the vertical displacement it produces are layout-time behavior
+    /// (raikiri-dom scope) — [`ClearValue`] doc's "Scope carving" section.
+    pub clear: ClearValue,
 }
 
 impl ComputedValues {
@@ -837,6 +869,9 @@ impl ComputedValues {
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
+            // CSS2 §9.5.1 / §9.5.2: float / clear の initial は共に `none`。
+            float: FloatValue::None,
+            clear: ClearValue::None,
         }
     }
 
@@ -997,6 +1032,9 @@ mod tests {
         assert_eq!(cv.break_before, BreakBetween::Auto);
         assert_eq!(cv.break_after, BreakBetween::Auto);
         assert_eq!(cv.break_inside, BreakInside::Auto);
+        // CSS2 §9.5.1 / §9.5.2: float / clear の initial は共に `none`。
+        assert_eq!(cv.float, FloatValue::None);
+        assert_eq!(cv.clear, ClearValue::None);
     }
 
     #[test]
@@ -1114,13 +1152,18 @@ mod tests {
             break_before: BreakBetween::Page,
             break_after: BreakBetween::AvoidPage,
             break_inside: BreakInside::AvoidPage,
+            // CSS2 §9.5.1 / §9.5.2: `Left`/`Both` — initial (`None`/`None`)
+            // と異なる値 (non_initial_parent の趣旨どおり全 field を非
+            // initial に)。
+            float: FloatValue::Left,
+            clear: ClearValue::Both,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 38 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 40 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1194,6 +1237,9 @@ mod tests {
         assert_eq!(child.break_before, initial.break_before);
         assert_eq!(child.break_after, initial.break_after);
         assert_eq!(child.break_inside, initial.break_inside);
+        // CSS2 §9.5.1 / §9.5.2: float / clear は共に non-inherited。
+        assert_eq!(child.float, initial.float);
+        assert_eq!(child.clear, initial.clear);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
