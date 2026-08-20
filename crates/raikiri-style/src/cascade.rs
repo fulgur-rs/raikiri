@@ -3697,7 +3697,17 @@ pub(crate) fn resolve_against_inherited(
         // inheritance parent's — same shape as `Padding`/`Margin`/`Width`/
         // `Height` above, nothing for phase 2 to resolve here.
         | PropertyValue::LetterSpacing(_)
-        | PropertyValue::WordSpacing(_)) => v,
+        | PropertyValue::WordSpacing(_)
+        // `float` (CSS2 §9.5.1) carries no length and does not depend on
+        // the inheritance parent — nothing for phase 2 to resolve. The
+        // §9.7 `display` coupling this value drives is a same-node
+        // dependency, resolved in phase 3
+        // (`crate::specified::SpecifiedValues::absolutize_with`'s
+        // `resolve_display_for_float` call), not here.
+        | PropertyValue::Float(_)
+        // `clear` (CSS2 §9.5.2) carries no length either — same as
+        // `Float` above.
+        | PropertyValue::Clear(_)) => v,
     })
 }
 
@@ -4138,6 +4148,17 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::LetterSpacing(ls) => target.letter_spacing = ls,
         // CSS Text 3 §7.1。直上の LetterSpacing arm と同型。
         PropertyValue::WordSpacing(ws) => target.word_spacing = ws,
+        // CSS2 §9.5.1 float。non-inherited、cascade winner が specified
+        // value をそのまま格納する。`display` への §9.7 の強制変換は
+        // ここでは行わない — phase 3 (`SpecifiedValues::absolutize_with`)
+        // が両 field 確定後にまとめて解決する (`resolve_display_for_float`
+        // doc)。`FloatValue` は Copy、by-value 代入で十分 (`ZIndexValue`
+        // arm と同型)。
+        PropertyValue::Float(f) => target.float = f,
+        // CSS2 §9.5.2 clear。non-inherited、cascade winner が specified
+        // value をそのまま格納する — sibling `Float` arm と同じく単純代入で
+        // 十分。
+        PropertyValue::Clear(c) => target.clear = c,
     }
 }
 
@@ -11401,6 +11422,70 @@ mod tests {
             ComputedLengthPercentageOrAuto::Px(16.0),
             "a foreign-namespace container sharing the local name \"body\" must \
              not count as the real body/td/th for the quirk"
+        );
+    }
+
+    // ── float / clear wire-through (CSS2 §9.5, §9.5.2) ──
+
+    #[test]
+    fn float_wired_through_cascade_from_inline_style() {
+        // <p style="float: left"> → ComputedValues.float に FloatValue::Left
+        // が届く。parser → PropertyValue::Float → apply_value →
+        // ComputedValues の end-to-end 疎通 smoke。sibling (z-index) の
+        // wire-through pattern を踏襲。
+        use crate::property::FloatValue;
+        let cv = cascade_doc("", "p", Some("float: left"));
+        assert_eq!(cv.float, FloatValue::Left);
+    }
+
+    #[test]
+    fn float_non_inherited_child_starts_from_initial() {
+        // CSS2 §9.5.1 propdef: "Inherited: no". sibling:
+        // `z_index_non_inherited_child_starts_from_initial` と同じ pattern。
+        use crate::property::FloatValue;
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("float: right"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].float, FloatValue::Right);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].float,
+            FloatValue::None,
+            "float must not inherit from parent (CSS2 §9.5.1 Inherited: no)"
+        );
+    }
+
+    #[test]
+    fn clear_wired_through_cascade_from_inline_style() {
+        // <p style="clear: both"> → ComputedValues.clear に ClearValue::Both
+        // が届く。parser → PropertyValue::Clear → apply_value →
+        // ComputedValues の end-to-end 疎通 smoke。sibling (z-index) の
+        // wire-through pattern を踏襲。
+        use crate::property::ClearValue;
+        let cv = cascade_doc("", "p", Some("clear: both"));
+        assert_eq!(cv.clear, ClearValue::Both);
+    }
+
+    #[test]
+    fn clear_non_inherited_child_starts_from_initial() {
+        // CSS2 §9.5.2 propdef: "Inherited: no". sibling:
+        // `z_index_non_inherited_child_starts_from_initial` と同じ pattern。
+        use crate::property::ClearValue;
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("clear: left"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].clear, ClearValue::Left);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].clear,
+            ClearValue::None,
+            "clear must not inherit from parent (CSS2 §9.5.2 Inherited: no)"
         );
     }
 }

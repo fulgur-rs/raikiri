@@ -29,12 +29,13 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
-    BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
-    CssColor, Direction, DisplayValue, FontStyle, Length, LengthOrAuto, LengthOrNormal, LineHeight,
-    OverflowValue, OverflowWrap, OverflowXY, Sides, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
-    initial_font_family, resolve_overflow, resolve_text_align_match_parent,
+    BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ClearValue,
+    ContentComponent, CssColor, Direction, DisplayValue, FloatValue, FontStyle, Length,
+    LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, Sides,
+    TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform,
+    VerticalAlign, Visibility, WordBreak, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_string_set_entries, initial_font_family, resolve_display_for_float, resolve_overflow,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_length_or_normal,
@@ -58,7 +59,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `float` / `clear` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -232,6 +233,12 @@ pub struct SpecifiedValues {
     /// 同じ絶対化 phase・同じ分類理由 ([`LengthOrNormal`] を共有する
     /// sibling property、両者の spec 根拠は同 type の doc 参照)。
     pub word_spacing: LengthOrNormal,
+    /// [`ComputedValues::float`] の staging。層は computed-equivalent
+    /// (`FloatValue` は length を運ばない)。
+    pub float: FloatValue,
+    /// [`ComputedValues::clear`] の staging。層は computed-equivalent
+    /// (`ClearValue` は length を運ばない)。
+    pub clear: ClearValue,
 }
 
 impl SpecifiedValues {
@@ -307,6 +314,9 @@ impl SpecifiedValues {
             // initial は共に `normal`。
             letter_spacing: LengthOrNormal::Normal,
             word_spacing: LengthOrNormal::Normal,
+            // CSS2 §9.5.1 / §9.5.2: float / clear の initial は共に `none`。
+            float: FloatValue::None,
+            clear: ClearValue::None,
         }
     }
 
@@ -409,6 +419,9 @@ impl SpecifiedValues {
             vertical_align: VerticalAlign::Baseline,
             // non-inherited (CSS2 §9.9.1 "Inherited: no")。
             z_index: ZIndexValue::Auto,
+            // non-inherited (CSS2 §9.5.1 / §9.5.2 "Inherited: no", both)。
+            float: FloatValue::None,
+            clear: ClearValue::None,
         }
     }
 
@@ -691,7 +704,11 @@ impl SpecifiedValues {
             font_size,
             font_weight: self.font_weight,
             line_height,
-            display: self.display,
+            // CSS2 §9.7: `float` の cascaded value に応じて `display` の
+            // computed value を強制変換する same-node coupling
+            // (`resolve_display_for_float` doc 参照、`overflow`
+            // cross-axis coupling と同じ phase 3 の位置)。
+            display: resolve_display_for_float(self.display, self.float),
             counter_reset: self.counter_reset,
             counter_increment: self.counter_increment,
             counter_set: self.counter_set,
@@ -788,6 +805,12 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            // computed value = specified value (`FloatValue`/`ClearValue`
+            // doc 参照、length を運ばないため相対解決なし) — 自 node の
+            // winner 適用結果をそのまま素通し。`display` への影響は上の
+            // `display` field 自体の代入式が担う (`resolve_display_for_float`)。
+            float: self.float,
+            clear: self.clear,
         }
     }
 }
@@ -941,6 +964,8 @@ mod tests {
             overflow_wrap: OverflowWrap::Anywhere,
             letter_spacing: ComputedLength(2.0),
             word_spacing: ComputedLength(4.0),
+            float: FloatValue::Left,
+            clear: ClearValue::Both,
         }
     }
 
@@ -1016,6 +1041,9 @@ mod tests {
         assert_eq!(child.vertical_align, initial.vertical_align);
         // CSS2 §9.9.1: z-index は non-inherited。
         assert_eq!(child.z_index, initial.z_index);
+        // CSS2 §9.5.1 / §9.5.2: float / clear は共に non-inherited。
+        assert_eq!(child.float, initial.float);
+        assert_eq!(child.clear, initial.clear);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は

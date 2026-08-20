@@ -2070,7 +2070,16 @@ fn absolutize_in_page_context(
         // `overflow-wrap` (legacy alias `word-wrap`, CSS Text 3 §5.4)
         // carries no length either (see `OverflowWrap`'s doc) — same as
         // `WordBreak` above.
-        | PropertyValue::OverflowWrap(_)) => v,
+        | PropertyValue::OverflowWrap(_)
+        // `float`/`clear` (CSS2 §9.5.1/§9.5.2) carry no length either. The
+        // §9.7 `display` recomputation `float` drives on the element path
+        // (`crate::property::resolve_display_for_float`) is **not**
+        // applied here — a page box is not an element in a visual
+        // formatting context, so §9.7's clause has no subject in this
+        // path; `Float`/`Clear` are opaque pass-through values here, the
+        // same treatment `ZIndex` gets (see that arm's doc).
+        | PropertyValue::Float(_)
+        | PropertyValue::Clear(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2391,10 +2400,11 @@ mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
-        BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
-        Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY,
-        PositionValue, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
-        TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak, ZIndexValue,
+        BoxSizing, ClearValue, ContentComponent, CssColor, Direction, DisplayValue, FloatValue,
+        FontStyle, FontWeightValue, Length, LengthOrAuto, LengthOrNormal, LineHeight,
+        OverflowValue, OverflowWrap, OverflowXY, PositionValue, TextAlign, TextDecorationColor,
+        TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextTransform,
+        VerticalAlign, Visibility, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4135,11 +4145,15 @@ mod tests {
     /// length ではないため phase 3 に変換対象が無い)。
     /// 32 → 34 (`WordBreak` / `OverflowWrap` も同じ理由 — どちらも length を
     /// 運ばない keyword-only property のため phase 3 に変換対象が無い)。
+    /// 34 → 36 (`Float` / `Clear` も同じ理由 — どちらも length を運ばない
+    /// keyword-only property のため phase 3 に変換対象が無い。この path は
+    /// §9.7 の `display` 強制変換も行わない —
+    /// `absolutize_in_page_context` の `Float`/`Clear` arm doc 参照)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 34;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 36;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4378,6 +4392,14 @@ mod tests {
         // trivially round-tripping an already-absolute length.
         LetterSpacing => PropertyValue::LetterSpacing(LengthOrNormal::Length(Length::Em(0.1))),
         WordSpacing => PropertyValue::WordSpacing(LengthOrNormal::Length(Length::Rem(0.2))),
+        // No specified/computed distinction for `float` (computed value =
+        // specified value, `FloatValue` doc) — any value is "worst case"
+        // (`Direction` sibling comment above uses the same reasoning).
+        Float => PropertyValue::Float(FloatValue::Left),
+        // No specified/computed distinction for `clear` (computed value =
+        // specified value, `ClearValue` doc) — any value is "worst case"
+        // (`Direction` sibling comment above uses the same reasoning).
+        Clear => PropertyValue::Clear(ClearValue::Both),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4549,6 +4571,8 @@ mod tests {
         OverflowWrap,
         LetterSpacing,
         WordSpacing,
+        Float,
+        Clear,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4810,7 +4834,11 @@ mod tests {
             | PropertyValue::WordBreak(_)
             // `OverflowWrap` (CSS Text 3 §5.4, legacy alias `word-wrap`)
             // carries no length either.
-            | PropertyValue::OverflowWrap(_) => None,
+            | PropertyValue::OverflowWrap(_)
+            // `FloatValue`/`ClearValue` (CSS2 §9.5.1/§9.5.2) carry no
+            // length either.
+            | PropertyValue::Float(_)
+            | PropertyValue::Clear(_) => None,
         }
     }
 
