@@ -12,14 +12,14 @@ use raikiri_traits::NodeKind;
 use crate::document::Document;
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, Layout,
-    LayoutContext, StyleProperty,
+    LayoutContext, LineHeight, StyleProperty,
 };
 use raikiri_style::property::{
     BoxSizing as StyleBoxSizing, DisplayValue, FontStyle as StyleFontStyle,
 };
 use raikiri_style::{
     CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedValues,
+    ComputedLineHeight, ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
@@ -510,6 +510,29 @@ const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 /// 後続 test の結果もまとめて失われるため。
 const MAX_FONT_SIZE_PX: f32 = 1e6;
 
+/// parley に渡す `line-height` の unitless multiplier
+/// (`ComputedLineHeight::Number` → `parley::LineHeight::FontSizeRelative`)
+/// の上限。
+///
+/// # 値の決定 (1e6、実測による overflow 回避)
+///
+/// parley は `FontSizeRelative(value) * font_size` を計算する
+/// (`parley-0.10.0/src/layout/data.rs` の `push_run` 内 line height 計算)。
+/// `font_size` はここに渡る時点で [`MAX_FONT_SIZE_PX`] (`1e6`) 以下に
+/// clamp 済みなので、`value` 側も同じ `1e6` に抑えれば積は高々 `1e12` —
+/// `f32::MAX` (`≈3.4e38`) から 26 桁以上の余裕があり、finite × finite の
+/// 乗算で桁あふれして `+Inf` になることはない。
+///
+/// この余裕が必要な理由は実測済: `value = f32::MAX` を素通しすると
+/// `f32::MAX * font_size` (`font_size` が `1.0` を超える限り) が overflow して
+/// `+Inf` になり、`+Inf` な line height は [`sanitize_line_height`] の doc が
+/// 挙げる hang 経路に入る。`1e6` という具体的な数値自体に他の根拠はなく、
+/// 「桁あふれしないことが確認できる finite な上限」であれば足りる —
+/// [`MAX_FONT_SIZE_PX`] と同じ値を採ったのは、typographic に意味のある
+/// line-height multiplier (実用上せいぜい 1 桁台) から見て両方とも同程度に
+/// 過大な安全域だから。
+const MAX_LINE_HEIGHT_NUMBER: f32 = 1e6;
+
 /// parley に渡す `font-weight` の妥当域下限。
 ///
 /// CSS Fonts 4 §2.2 "Font weight: the font-weight property"
@@ -773,6 +796,108 @@ fn font_style_to_parley(v: StyleFontStyle) -> FontStyle {
     }
 }
 
+/// [`ComputedLineHeight`] (`cascade.computed[idx].line_height`,
+/// [`ComputedValues`] の全 field は `pub` なので非有限になり得る) を parley の
+/// 2 numeric sink (`ComputedLineHeight::Number` / `Length`) 直前で sanitize
+/// する。`Normal` は数値を持たないのでそのまま素通しする。
+///
+/// `[0.0, MAX]` の非対称 clamp (対称でない) は CSS Inline 3 §5.1
+/// "Line Spacing: the line-height property"
+/// (<https://www.w3.org/TR/css-inline-3/#propdef-line-height>) の grammar
+/// `normal | <number [0,∞]> | <length-percentage [0,∞]>` に合わせたもの —
+/// `font-size` / `font-weight` の既存 sanitize サイトと同じ理由 (負値は
+/// grammar 上そもそも妥当域外)。
+///
+/// # `+Inf` は他の site と違う経路で **hang** する
+///
+/// 実測 (直接 `RangedBuilder` に `StyleProperty::LineHeight` を push し、
+/// worker thread + `recv_timeout` で有界化): `parley::LineHeight::Absolute(f32::INFINITY)`
+/// と `FontSizeRelative(f32::INFINITY)` はいずれも `break_all_lines` を
+/// hang させる。機構は `font-size` の hang (`next_x <= max_advance` が
+/// `next_x = +Inf` で恒偽になる、[`MAX_FONT_SIZE_PX`] の doc参照) とは別:
+/// `parley-0.10.0/src/layout/line_break.rs` の
+/// `BreakerState::add_line_height` が `running_line_height =
+/// running_line_height.max(height)` を計算しており、`height` が `+Inf` だと
+/// `running_line_height` も `+Inf` になって `running_line_height >
+/// line_max_height` (`line_max_height` の default は `f32::MAX`) が
+/// 以後ずっと真になり続ける。この `max_height_exceeded` 分岐が前進しない
+/// ことで hang する。
+///
+/// `NaN` は hang **しない** — `f32::max` は NaN を捨てて他方の被演算子を返す
+/// (IEEE 754 の total-order ではなく Rust 標準の `f32::max` 挙動) ため
+/// `running_line_height` は有限のまま前進する。`font-size` の
+/// `NaN`/`-Inf`/巨大 finite が hang しないのと同じ非対称構造 (site 5 の
+/// `parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size`
+/// 参照)。
+///
+/// `FontSizeRelative` はさらに `value * font_size` の乗算で桁あふれし得る
+/// ([`MAX_LINE_HEIGHT_NUMBER`] の doc参照) — [`MAX_LINE_HEIGHT_NUMBER`] は
+/// この overflow を避ける上限。`Absolute` はそのまま渡るだけで乗算しないため
+/// `f32::MAX` 自体は overflow しない (`f32::MAX > f32::MAX` は偽) が、
+/// 同じ [`MAX_FONT_SIZE_PX`] を再利用して上限とする — 「巨大 finite を防ぐ」
+/// ためではなく「入力側で既に non-finite になっているケースを finite に倒す」
+/// ための clamp であり、typographic に意味のある line-height (px) から見て
+/// 過大という理由は font-size の値そのものと同種。
+fn sanitize_line_height(v: ComputedLineHeight, diag: &mut Vec<LayoutWarn>) -> ComputedLineHeight {
+    match v {
+        ComputedLineHeight::Normal => ComputedLineHeight::Normal,
+        ComputedLineHeight::Number(n) => ComputedLineHeight::Number(sanitize_finite(
+            n,
+            0.0,
+            MAX_LINE_HEIGHT_NUMBER,
+            "line-height (number)",
+            diag,
+        )),
+        ComputedLineHeight::Length(len) => {
+            ComputedLineHeight::Length(ComputedLength(sanitize_finite(
+                len.px(),
+                0.0,
+                MAX_FONT_SIZE_PX,
+                "line-height (length)",
+                diag,
+            )))
+        }
+    }
+}
+
+/// [`ComputedLineHeight`] (`Normal | Number | Length`) → parley's
+/// [`LineHeight`] (`MetricsRelative | FontSizeRelative | Absolute`,
+/// `parley-0.10.0/src/style/mod.rs`).
+///
+/// 呼び出し側は事前に [`sanitize_line_height`] で有限化した値を渡すこと —
+/// 本関数自体は値を変換するだけで sanitize しない ([`font_style_to_parley`]
+/// と同じ「mapping と sanitize は別関数」構造)。
+///
+/// # 値レベルの対応 (各 arm の根拠)
+///
+/// - [`ComputedLineHeight::Normal`] → `LineHeight::MetricsRelative(1.0)` —
+///   parley 自身の `Default` (`parley-0.10.0/src/style/mod.rs` の
+///   `impl Default for LineHeight`) と一致する。本関数を経由しても
+///   line-height 配線前の挙動 (parley default 依存) を変えない。
+/// - [`ComputedLineHeight::Number`] → `LineHeight::FontSizeRelative` —
+///   parley は `FontSizeRelative(value) * font_size` を計算する
+///   (`parley-0.10.0/src/layout/data.rs` の `push_run`)。ここでの
+///   `font_size` は `preshape_text` が同じ `RangedBuilder` へ push する
+///   **自要素の** computed font-size (`StyleProperty::FontSize`) そのもの
+///   なので、CSS Inline 3 §5.1 の「unitless number は子が自分の font-size に
+///   掛ける」と一致する。
+/// - [`ComputedLineHeight::Length`] → `LineHeight::Absolute` — computed 層で
+///   既に絶対化済みの px 値 ([`ComputedLineHeight::Length`] の doc参照) を
+///   そのまま渡す。parley 側も `LineHeight::Absolute(value) => value` と
+///   素通しするだけ (`data.rs`) なので、二重の解決は起きない。
+///
+/// [`ComputedLineHeight`] は `#[non_exhaustive]` を付けない判断がされている
+/// ([`raikiri_style::resolve`] module doc参照) ため、本関数も
+/// [`font_style_to_parley`] と異なり wildcard arm を持たない — 将来 variant が
+/// 追加されればここでコンパイルが落ちて気づける。
+fn line_height_to_parley(v: ComputedLineHeight) -> LineHeight {
+    match v {
+        ComputedLineHeight::Normal => LineHeight::MetricsRelative(1.0),
+        ComputedLineHeight::Number(n) => LineHeight::FontSizeRelative(n),
+        ComputedLineHeight::Length(len) => LineHeight::Absolute(len.px()),
+    }
+}
+
 /// Structured warn event for this module's non-finite-clamp diagnostic sites
 /// (`sanitize_finite` / `sanitize_taffy` / `sanitize_taffy_layout` /
 /// `sanitize_font_weight`). Sibling
@@ -799,7 +924,9 @@ pub(crate) enum LayoutWarn {
     /// sink boundaries: `taffy::Style` or the `Node.unrounded_layout` arena
     /// field (sites 1-5, `sanitize_finite` / `sanitize_taffy` /
     /// `sanitize_taffy_layout`),
-    /// or `parley::FontWeight::new` (site 6, `sanitize_font_weight`). Only
+    /// `parley::FontWeight::new` (site 6, `sanitize_font_weight`), or
+    /// `StyleProperty::LineHeight`'s two numeric sub-values (sites 7-8,
+    /// `sanitize_line_height`). Only
     /// emitted when clamping actually changed the
     /// value (not on every call) so ordinary in-range layouts stay silent —
     /// the "warn+skip" shape `FontWarn` uses, not a per-node trace.
@@ -1665,37 +1792,48 @@ fn computed_length_to_taffy_length_percentage(
 /// 呼び出し側 (`layout_single_page`) は事前に全 `Node.text_layout = None` に
 /// clear 済であることを前提とする (re-entrance safety)。
 ///
-/// Font stack / size / weight / style は `cascade.computed[idx]` (親から
-/// inherit 済) を消費。
+/// Font stack / size / weight / style / line-height は
+/// `cascade.computed[idx]` (親から inherit 済) を消費。
 /// `max_advance` は行折り返し境界で、通常 `page_box.width`。
+///
+/// # `line_height` は taffy の `compute_root_layout` より前でも正しく配線できる
+///
+/// 本関数は `layout_single_page` 内で taffy の `compute_root_layout` より
+/// **前**に走る (下記 `text_align` 参照)。これは一般に「taffy が確定させる
+/// 幅を必要とする property」には問題になるが、`line_height` はその種類の
+/// property ではない — 依存方向が逆であり、むしろこの順序が**必要**:
+///
+/// - parley は line height を `RunMetrics.line_height` として shape 時点
+///   (`builder.build(&text)` 内、`break_all_lines` より前) に計算する
+///   (`parley-0.10.0/src/layout/data.rs` の `push_run`)。入力はフォント
+///   metrics (ascent / descent / leading、shape 対象フォントから直接取得)
+///   と `font_size` (本関数がすでに push した自要素の computed font-size)、
+///   そして本関数が push する `StyleProperty::LineHeight` の値だけであり、
+///   taffy が確定させる containing block 幅や利用可能領域には一切依存しない
+///   (`parley-0.10.0/src/resolve/mod.rs` の対応 arm も `device pixel scale`
+///   の乗算のみ)。
+/// - 逆に、shape 済みの `Layout::height()` (line height を織り込み済み) は
+///   `taffy_impl.rs` の `compute_child_layout` が leaf node の intrinsic
+///   size として taffy に**渡す側**の入力になる。つまり line height は
+///   taffy の出力を必要とするのではなく、taffy の入力を作る側に立つ —
+///   `text_align` (taffy が確定させる幅を align の基準として必要とする、
+///   下記参照) とは依存の向きが逆であり、本関数がここで走ることは
+///   line height にとって「早すぎる」のではなくちょうど必要なタイミングである。
 ///
 /// # 未消費の `ComputedValues` field
 ///
-/// `cascade.computed[idx]` には他にも `line_height` / `direction` /
-/// `text_align` が乗っているが、本関数はいずれも読まない:
+/// `cascade.computed[idx]` には他にも `direction` / `text_align` が乗って
+/// いるが、本関数はいずれも読まない:
 ///
-/// - `line_height` — `text_align` と同じ「未消費だが機構的には配線可能」
-///   バケツ。parley は `StyleProperty::LineHeight(LineHeight)`
-///   (`MetricsRelative` / `FontSizeRelative` / `Absolute`) を公開しており、
-///   [`ComputedLineHeight`] の `Normal` / `Number` / `Length` と値レベルで
-///   ほぼ 1:1 対応する。他の 4 property (`FontFamily` / `FontSize` /
-///   `FontWeight` / `FontStyle`) と同じ `builder.push_default(...)` で
-///   push できる、という意味で下記の `direction` とは違う種類の gap。ただし
-///   「配線可能」は「今すぐ単純に配線できる」を意味しない —
-///   本関数は taffy の `compute_root_layout` より前に走るため、
-///   line height が preshape 時点で正しく適用されるかは (下記
-///   `text_align` の align 幅の懸念と同種の) 未検証の論点として残る。
-///   現状は parley 側の default (`LineHeight::MetricsRelative(1.0)`、
-///   フォント metrics 由来) がそのまま使われる。
-/// - `direction` — `line_height` とは異なり、配線先の API 自体が無い。
-///   `RangedBuilder` / `TreeBuilder` は base direction を受け取る public
-///   API を公開しておらず、parley 内部の bidi resolver は base level
-///   引数に常に `None` を渡して呼ばれる (段落内の文字列から Unicode
-///   Bidirectional Algorithm の P2/P3 first-strong-character heuristic
-///   で自動推定し、強い方向を持つ文字が無ければ LTR に fallback —
-///   Unicode Standard Annex #9 <https://www.unicode.org/reports/tr9/>)。
-///   つまり `cv.direction` を明示的に渡す先の API 自体が現状無い —
-///   LTR がハードコードされた default なのではない。
+/// - `direction` — 配線先の API 自体が無い。`RangedBuilder` / `TreeBuilder`
+///   は base direction を受け取る public API を公開しておらず、parley 内部の
+///   bidi resolver は base level 引数に常に `None` を渡して呼ばれる (段落内の
+///   文字列から Unicode Bidirectional Algorithm の P2/P3
+///   first-strong-character heuristic で自動推定し、強い方向を持つ文字が
+///   無ければ LTR に fallback — Unicode Standard Annex #9
+///   <https://www.unicode.org/reports/tr9/>)。つまり `cv.direction` を明示的
+///   に渡す先の API 自体が現状無い — LTR がハードコードされた default なの
+///   ではない。
 /// - `text_align` — 末尾の `layout.align(...)` 呼び出し自体は live だが
 ///   `Alignment::Start` に固定されており `cv.text_align` を読まない
 ///   (経路が無いのではなく、initial value に pin された stub)。単純な
@@ -1709,7 +1847,9 @@ fn computed_length_to_taffy_length_percentage(
 ///   `parley::Alignment::Start` / `End` は layout 内の bidi 解析結果から
 ///   physical 方向を解決するため、`direction` を配線せずに `text_align`
 ///   だけ配線しても `Start`/`End` は正しく解決されない — この 2 つは
-///   独立した gap ではなく 1 セットとして扱う必要がある。
+///   独立した gap ではなく 1 セットとして扱う必要がある (line_height とは
+///   異なり、taffy が確定させる幅を実際に必要とする依存方向のため、本関数
+///   より後 — `compute_root_layout` 後 — の再設計を要する)。
 ///
 /// # 失敗しない
 ///
@@ -1800,6 +1940,13 @@ pub(crate) fn preshape_text(
         builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
         builder.push_default(StyleProperty::FontStyle(font_style_to_parley(
             cv.font_style,
+        )));
+        // sites 7-8: `cv.line_height` も他の numeric field 同様
+        // 非有限になり得るので (`sanitize_line_height` の doc参照) parley に
+        // 渡す直前で有限化してから mapping する。
+        let line_height = sanitize_line_height(cv.line_height, &mut doc.layout_warnings);
+        builder.push_default(StyleProperty::LineHeight(line_height_to_parley(
+            line_height,
         )));
         let mut layout: Layout<()> = builder.build(&text);
         layout.break_all_lines(Some(max_advance));
@@ -3113,6 +3260,81 @@ mod tests {
         );
     }
 
+    /// sites 7-8 — `preshape_text` の `cv.line_height` → parley
+    /// `StyleProperty::LineHeight`。site 5 (`font-size`) と同じ「guard を
+    /// 外すと fail ではなく hang する」site だが、機構は別
+    /// (`sanitize_line_height` の doc参照 — `next_x <= max_advance` ではなく
+    /// `running_line_height > line_max_height` が恒真になる)。
+    ///
+    /// 通常の `cascade()` だけで非有限値を作れる — `line-height: 1e40`
+    /// (unitless number)、`line-height: 1e40px` (absolute length) はいずれも
+    /// cssparser の f64→f32 変換で `+Inf` に saturate する (site 5 の
+    /// `font-size: 1e40px` と同じ機構)。font-size と違い 2 element も
+    /// bypass も要らない。
+    #[test]
+    fn nonfinite_line_height_is_clamped_before_parley() {
+        fn shaped_height(inline_style: &str) -> f32 {
+            use parley::{FontContext, LayoutContext};
+            use raikiri_style::{build_rule_tree, cascade};
+
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+            let text = doc.append_text(p, "Hi");
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            doc.nodes[text].text_layout().unwrap().height()
+        }
+
+        /// guard 消失時の hang を有界時間の失敗に変える wrapper — site 5 の
+        /// `shaped_height_bounded` と同じ構造 (doc参照)。
+        fn shaped_height_bounded(inline_style: &str) -> f32 {
+            use std::sync::mpsc::RecvTimeoutError;
+
+            let owned = inline_style.to_owned();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(shaped_height(&owned));
+            });
+            // cov:ignore: every call site of this helper (both assertions
+            // below) completes normally within its 30s bound — the Err arms
+            // are diagnostics for failure modes (guard regression hang,
+            // worker panic) this test's passing runs never hit, same as
+            // `shape_raw_bounded`'s sibling match further down this file.
+            match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(h) => h,
+                Err(RecvTimeoutError::Timeout) => panic!(
+                    "parley shaping が 30 秒で終わらなかった — line-height の非有限 \
+                     guard (sanitize_line_height) が外れると BreakerState::add_line_height \
+                     の max_height_exceeded 分岐が spin する"
+                ),
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!("worker thread が panic した (hang ではない、上の stderr を参照)")
+                }
+            }
+        }
+
+        let number_inf = shaped_height_bounded("line-height: 1e40");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            number_inf.is_finite(),
+            "line-height +Inf (unitless number 由来) が parley に届いた: {number_inf}"
+        );
+
+        let length_inf = shaped_height_bounded("line-height: 1e40px");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            length_inf.is_finite(),
+            "line-height +Inf (absolute length 由来) が parley に届いた: {length_inf}"
+        );
+    }
+
     /// Shapes `"Hi"` via parley **directly**
     /// (bypassing `preshape_text` / `sanitize_finite` entirely, not just
     /// disabling them) with a raw `font_size`, bounded via worker-thread +
@@ -3423,6 +3645,125 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_line_height_passes_through_in_range_values() {
+        let mut diag = Vec::new();
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Normal, &mut diag),
+            ComputedLineHeight::Normal
+        );
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Number(0.0), &mut diag),
+            ComputedLineHeight::Number(0.0)
+        );
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Number(1.5), &mut diag),
+            ComputedLineHeight::Number(1.5)
+        );
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Length(ComputedLength(0.0)), &mut diag),
+            ComputedLineHeight::Length(ComputedLength(0.0))
+        );
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Length(ComputedLength(32.0)), &mut diag),
+            ComputedLineHeight::Length(ComputedLength(32.0))
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            diag.is_empty(),
+            "in-range value must not push a LayoutWarn: {diag:?}"
+        );
+    }
+
+    #[test]
+    fn sanitize_line_height_clamps_non_finite_and_out_of_range_number() {
+        // site 7: `ComputedLineHeight::Number` — grammar `<number [0,∞]>`
+        // なので下限 0.0、上限 [`MAX_LINE_HEIGHT_NUMBER`]。NaN は他の length 系
+        // site と同じ `sanitize_finite` の `0.0` fallback を継承する (font-weight
+        // のような専用 fallback が要らない理由: line-height の unitless
+        // number に `0` は grammar 上有効な値であり、font-weight の `400.0`
+        // 事情 — `0.0` が妥当域外 — が line-height には無い)。
+        let mut diag = Vec::new();
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Number(f32::NAN), &mut diag),
+            ComputedLineHeight::Number(0.0)
+        );
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Number(f32::INFINITY), &mut diag),
+            ComputedLineHeight::Number(MAX_LINE_HEIGHT_NUMBER)
+        );
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Number(f32::NEG_INFINITY), &mut diag),
+            ComputedLineHeight::Number(0.0)
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Number(-5.0), &mut diag),
+            ComputedLineHeight::Number(0.0),
+            "negative multiplier is out of the [0,∞] grammar range and must clamp to 0.0"
+        );
+        assert_eq!(diag.len(), 4);
+        for event in &diag {
+            match event {
+                LayoutWarn::NonFiniteClamped { site, .. } => {
+                    assert_eq!(*site, "line-height (number)");
+                }
+                // cov:ignore: `diag` in this test only ever accumulates
+                // `NonFiniteClamped` events pushed by `sanitize_line_height`
+                // above — `LayoutWarn::Truncated` is pushed elsewhere
+                // (the `layout_single_page` cap-limiting path), never by
+                // this function, so this arm is unreachable with this
+                // test's inputs; it exists only for the match's
+                // exhaustiveness.
+                other => panic!("unexpected LayoutWarn variant: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn sanitize_line_height_clamps_non_finite_and_out_of_range_length() {
+        // site 8: `ComputedLineHeight::Length` — grammar
+        // `<length-percentage [0,∞]>` の percentage は computed 層で既に
+        // px へ絶対化済み ([`ComputedLineHeight::Length`] の doc参照) なので
+        // ここでは px の妥当域だけを見る。
+        let mut diag = Vec::new();
+        assert_eq!(
+            sanitize_line_height(
+                ComputedLineHeight::Length(ComputedLength(f32::NAN)),
+                &mut diag
+            ),
+            ComputedLineHeight::Length(ComputedLength(0.0))
+        );
+        assert_eq!(
+            sanitize_line_height(
+                ComputedLineHeight::Length(ComputedLength(f32::INFINITY)),
+                &mut diag
+            ),
+            ComputedLineHeight::Length(ComputedLength(MAX_FONT_SIZE_PX))
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            sanitize_line_height(ComputedLineHeight::Length(ComputedLength(-10.0)), &mut diag),
+            ComputedLineHeight::Length(ComputedLength(0.0)),
+            "negative absolute line-height is out of the [0,∞] grammar range and must clamp to 0.0"
+        );
+        assert_eq!(diag.len(), 3);
+        for event in &diag {
+            match event {
+                LayoutWarn::NonFiniteClamped { site, .. } => {
+                    assert_eq!(*site, "line-height (length)");
+                }
+                // cov:ignore: same unreachable-exhaustiveness arm as the
+                // sibling `Number` test above — `diag` here never
+                // accumulates a `Truncated` event.
+                other => panic!("unexpected LayoutWarn variant: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn font_style_to_parley_maps_normal_and_italic() {
         assert_eq!(
             font_style_to_parley(StyleFontStyle::Normal),
@@ -3431,6 +3772,25 @@ mod tests {
         assert_eq!(
             font_style_to_parley(StyleFontStyle::Italic),
             FontStyle::Italic
+        );
+    }
+
+    #[test]
+    fn line_height_to_parley_maps_all_three_variants() {
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            line_height_to_parley(ComputedLineHeight::Normal),
+            LineHeight::MetricsRelative(1.0),
+            "Normal must map to parley's own default (MetricsRelative(1.0))"
+        );
+        assert_eq!(
+            line_height_to_parley(ComputedLineHeight::Number(1.5)),
+            LineHeight::FontSizeRelative(1.5)
+        );
+        assert_eq!(
+            line_height_to_parley(ComputedLineHeight::Length(ComputedLength(32.0))),
+            LineHeight::Absolute(32.0)
         );
     }
 
@@ -3497,6 +3857,90 @@ mod tests {
             FontStyle::Italic,
             "font-style:italic must reach the shaped Run's font-matching attributes \
              (wiring regression: StyleProperty::FontStyle push missing or dropped)"
+        );
+    }
+
+    #[test]
+    fn preshape_text_pushes_computed_line_height_into_parley_run_metrics() {
+        // `preshape_text` が `cv.line_height` を実際に RangedBuilder へ push
+        // していることを、shape 済 `Run` の `RunMetrics::line_height` から
+        // 確認する。`font_style` の兄弟 test と違い `Run::font_attrs()` では
+        // 検証できない (`fontique::Attributes` に line-height 相当の field は
+        // 無い) — 代わりに `Run::metrics()` (`&RunMetrics`, `pub line_height:
+        // f32` field を持つ) を使う。`Number` / `Length` はいずれも font
+        // metrics (ascent / descent / leading) に依存しない計算式
+        // (`parley-0.10.0/src/layout/data.rs` の `push_run` 内 `match
+        // style.line_height`) なので、実行環境のフォントに関わらず厳密な値で
+        // 決定的に検証できる。
+        use parley::{FontContext, LayoutContext, PositionedLayoutItem};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn shaped_run_line_height(inline_style: &str) -> f32 {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+            let text = doc.append_text(p, "Hi");
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).unwrap();
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            let layout = doc.nodes[text].text_layout().unwrap();
+            let line = layout.lines().next().expect("shaped text has one line");
+            let item = line
+                .items()
+                .next()
+                .expect("shaped line has at least one item");
+            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                // cov:ignore: preshape_text never produces an InlineBox for
+                // plain text — see the same premise in the font-style
+                // sibling test above.
+                panic!("expected shaped text to produce a GlyphRun, got an InlineBox");
+            };
+            glyph_run.run().metrics().line_height
+        }
+
+        // `Number` (unitless multiplier) — `data.rs`'s `FontSizeRelative(value)
+        // => value * font_size` is exact arithmetic on the pushed
+        // `StyleProperty::FontSize` value (`font-size: 16px` here), so the
+        // expected result is bit-computable, not just "taller than".
+        //
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            shaped_run_line_height("font-size: 16px; line-height: 3"),
+            48.0,
+            "line-height: 3 at font-size: 16px must reach the shaped Run's \
+             line_height as exactly 3.0 * 16.0 (wiring regression: \
+             StyleProperty::LineHeight push missing, dropped, or mismapped)"
+        );
+
+        // `Length` (absolute px) — `data.rs`'s `Absolute(value) => value` is a
+        // pure passthrough, so the expected result is the declared px value
+        // verbatim, independent of font-size.
+        //
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            shaped_run_line_height("font-size: 16px; line-height: 50px"),
+            50.0,
+            "line-height: 50px must reach the shaped Run's line_height as \
+             exactly 50.0 regardless of font-size (wiring regression: \
+             StyleProperty::LineHeight push missing, dropped, or mismapped)"
+        );
+
+        // `Normal` (the property's initial value, and the case this module
+        // used unconditionally before this wiring) must still resolve to a
+        // positive, finite metrics-derived value — pins that leaving
+        // line-height unset doesn't regress to 0 or a non-finite value.
+        let normal = shaped_run_line_height("font-size: 16px");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            normal.is_finite() && normal > 0.0,
+            "line-height: normal (default) must still produce a finite, \
+             positive line_height: {normal}"
         );
     }
 
