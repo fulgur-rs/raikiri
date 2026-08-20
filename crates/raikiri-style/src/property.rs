@@ -2534,6 +2534,163 @@ pub enum OverflowWrap {
     Anywhere,
 }
 
+/// `break-before` / `break-after` property の value ([`PropertyValue::BreakBefore`]
+/// / [`PropertyValue::BreakAfter`] が共有する — 両 property は同一 grammar を
+/// 持つ)。
+///
+/// CSS Fragmentation Module Level 3 §3.1 "Breaks Between Boxes: the
+/// break-before and break-after properties"
+/// <https://www.w3.org/TR/css-break-3/#break-between>。
+///
+/// propdef (spec verbatim): Value: `auto | avoid | avoid-page | page | left
+/// | right | recto | verso | avoid-column | column | avoid-region |
+/// region`, Initial: `auto`, Applies to: "block-level boxes, grid items,
+/// flex items, table row groups, table rows (but see prose)", Inherited:
+/// **no**, Computed value: "specified keyword".
+///
+/// # Scope carving
+///
+/// This type implements only 4 of the propdef's 12 keywords:
+///
+/// - `auto` / `avoid` — the "Generic Break Values" (§3.1): apply regardless
+///   of fragmentation context.
+/// - `avoid-page` / `page` — the "Page Break Values" (§3.1): the only
+///   fragmentation context this crate models is pagination, not
+///   multi-column or CSS Regions.
+///
+/// Excluded:
+///
+/// - `avoid-column` / `column` ("Column Break Values") and `avoid-region` /
+///   `region` ("Region Break Values") — this crate has no multi-column or
+///   CSS Regions fragmentation context to break within.
+/// - `left` / `right` / `recto` / `verso` — page-spread-parity forced
+///   breaks; this crate has no page-spread concept.
+/// - `always` / `all` — **not part of Level 3's spec grammar at all**.
+///   Level 3's own change log records "Dropped `any` and `always` values of
+///   `break-*`" (removed between the January 2015 Working Draft and the
+///   current text) — that entry does not mention `all`; both `always` and
+///   `all` instead reappear as forced-break values in CSS Fragmentation
+///   Module Level 4 <https://www.w3.org/TR/css-break-4/> (a First Public
+///   Working Draft as of this writing, with `all` itself marked at-risk
+///   there), a spec version this crate does not target. Of the two, only
+///   `always` has any path into this crate at all, and only indirectly:
+///   the CSS2.1 `page-break-before` / `page-break-after` legacy shorthand
+///   grammar below still has it, remapped to `page` — it is never a valid
+///   `break-before` / `break-after` value on its own. `all` has no path
+///   into this crate.
+///
+/// # `page-break-before` / `page-break-after` (CSS2.1 legacy shorthand)
+///
+/// CSS Fragmentation Module Level 3 §3.4 "Page Break Aliases"
+/// <https://www.w3.org/TR/css-break-3/#page-break-properties> defines the
+/// CSS2.1 `page-break-before` / `page-break-after` properties as **legacy
+/// shorthands** (the spec's own term, linking CSS Cascading Level 4's
+/// <https://www.w3.org/TR/css-cascade-4/#legacy-shorthand> "legacy
+/// shorthand" definition — not a plain name alias the way CSS Text 3
+/// words `word-wrap` / `overflow-wrap`, see [`OverflowWrap`] doc) for
+/// `break-before` / `break-after`, with an explicit non-identity value
+/// mapping (spec's own table, §3.4):
+///
+/// | `page-break-*` value | `break-*` value |
+/// |---|---|
+/// | `auto` | `auto` |
+/// | `avoid` | `avoid` |
+/// | `always` | `page` |
+///
+/// (The table's own first row also lists `left` / `right` as
+/// identity-mapped — out of scope here per the "Scope carving" section
+/// above, so `page-break-before: left` / `: right` are rejected the same
+/// way `break-before: left` is.) Unlike the `padding` / `border` /
+/// `text-decoration` shorthands elsewhere in this crate, this legacy
+/// shorthand expands to exactly **one** longhand with a 1:1 value mapping
+/// — there is no multi-longhand fan-out, so `parse_value` dispatches
+/// `page-break-before` / `page-break-after` directly to
+/// [`PropertyValue::BreakBefore`] / [`PropertyValue::BreakAfter`] (via a
+/// dedicated remapping parser) rather than going through
+/// [`crate::rule::expand_shorthand_into`]'s longhand-expansion machinery,
+/// which exists for shorthands that fan out to multiple independent
+/// cascade winners.
+///
+/// `Default` は derive しない — [`ZIndexValue`] と同じ convention (spec
+/// default は初期化側 [`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`] が直接指定する)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BreakBetween {
+    /// `auto` — spec initial value. "Neither force nor forbid a break
+    /// before/after the principal box." (§3.1 verbatim)
+    Auto,
+    /// `avoid` — "Avoid a break before/after the principal box." (§3.1
+    /// verbatim)
+    Avoid,
+    /// `avoid-page` — "Avoid a page break before/after the principal box."
+    /// (§3.1 verbatim, "Page Break Values" — only has an effect in
+    /// paginated contexts)
+    AvoidPage,
+    /// `page` — "Always force a page break before/after the principal
+    /// box." (§3.1 verbatim) — also the `page-break-before` /
+    /// `page-break-after` legacy shorthand's remap target for `always`
+    /// (this type's doc's "legacy shorthand" section).
+    Page,
+}
+
+/// `break-inside` property の value.
+///
+/// CSS Fragmentation Module Level 3 §3.2 "Breaks Within Boxes: the
+/// break-inside property" <https://www.w3.org/TR/css-break-3/#break-within>.
+///
+/// propdef (spec verbatim): Value: `auto | avoid | avoid-page |
+/// avoid-column | avoid-region`, Initial: `auto`, Applies to: "all elements
+/// except inline-level boxes, internal ruby boxes, table column boxes,
+/// table column group boxes, absolutely-positioned boxes", Inherited:
+/// **no**, Computed value: "specified keyword".
+///
+/// This is a **smaller, disjoint** value set from [`BreakBetween`] — only
+/// `avoid`-flavored keywords exist ("breaking within" has no start/end
+/// edge to force a break relative to, so the forced-break value `page`
+/// that [`BreakBetween`] carries has no `break-inside` counterpart at
+/// all). Sharing [`BreakBetween`] for both properties would silently
+/// over-accept `break-inside: page`, which the spec grammar above does not
+/// have — hence this separate type.
+///
+/// # Scope carving
+///
+/// This type implements only 3 of the propdef's 5 keywords — `auto` /
+/// `avoid` (apply regardless of fragmentation context) and `avoid-page`
+/// (the only fragmentation context this crate models). Excluded, same
+/// rationale as [`BreakBetween`] doc's "Scope carving" section: `avoid-column`
+/// (no multi-column fragmentation context) and `avoid-region` (no CSS
+/// Regions fragmentation context).
+///
+/// # `page-break-inside` (CSS2.1 legacy shorthand)
+///
+/// CSS Fragmentation Module Level 3 §3.4 "Page Break Aliases"
+/// <https://www.w3.org/TR/css-break-3/#page-break-properties> defines the
+/// CSS2.1 `page-break-inside` property as a legacy shorthand ([`BreakBetween`]
+/// doc's "legacy shorthand" section explains the spec's "legacy shorthand"
+/// vs. "legacy name alias" distinction) for `break-inside`. Unlike
+/// `page-break-before` / `page-break-after`, this shorthand's value
+/// mapping is **identity** — CSS2.1's own `page-break-inside` propdef
+/// grammar is just `auto | avoid` (no `always` / `left` / `right`), and
+/// both keywords already exist unchanged on `break-inside`. `parse_value`
+/// dispatches `page-break-inside` to a dedicated parser that only accepts
+/// this 2-keyword CSS2.1 grammar (not the fuller `break-inside` grammar
+/// above) — `page-break-inside: avoid-page` is rejected, since it is not
+/// valid CSS2.1 `page-break-inside` syntax.
+///
+/// `Default` は derive しない — [`ZIndexValue`] と同じ convention。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BreakInside {
+    /// `auto` — spec initial value. "Impose no additional breaking
+    /// constraints within the box." (§3.2 verbatim)
+    Auto,
+    /// `avoid` — "Avoid breaks within the box." (§3.2 verbatim)
+    Avoid,
+    /// `avoid-page` — "Avoid a page break within the box." (§3.2 verbatim)
+    AvoidPage,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -3209,6 +3366,33 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     WordSpacing(LengthOrNormal),
+    /// `break-before: auto | avoid | avoid-page | page` (legacy shorthand
+    /// `page-break-before`, [`BreakBetween`] doc の「legacy shorthand」節
+    /// 参照) — **non-inherited**、initial: [`BreakBetween::Auto`] (CSS
+    /// Fragmentation Module Level 3 §3.1 [`BreakBetween`] doc 参照)。
+    /// computed value = specified keyword ([`BreakBetween`] doc の Scope
+    /// carving 節参照)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    BreakBefore(BreakBetween),
+    /// `break-after: auto | avoid | avoid-page | page` (legacy shorthand
+    /// `page-break-after`, [`BreakBetween`] doc の「legacy shorthand」節
+    /// 参照) — **non-inherited**、initial: [`BreakBetween::Auto`] (CSS
+    /// Fragmentation Module Level 3 §3.1 [`BreakBetween`] doc 参照)。
+    /// computed value = specified keyword ([`BreakBetween`] doc の Scope
+    /// carving 節参照)。
+    /// (末尾に追加、[`Self::BreakBefore`] と同じ配置理由)
+    BreakAfter(BreakBetween),
+    /// `break-inside: auto | avoid | avoid-page` (legacy shorthand
+    /// `page-break-inside`, [`BreakInside`] doc の「legacy shorthand」節
+    /// 参照) — **non-inherited**、initial: [`BreakInside::Auto`] (CSS
+    /// Fragmentation Module Level 3 §3.2 [`BreakInside`] doc 参照)。
+    /// computed value = specified keyword ([`BreakInside`] doc の Scope
+    /// carving 節参照 — [`BreakBetween`] とは disjoint な、より小さい value
+    /// set を持つ別 type)。
+    /// (末尾に追加、[`Self::BreakBefore`] と同じ配置理由)
+    BreakInside(BreakInside),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -3391,6 +3575,15 @@ pub enum PropertyKey {
     // 参照。
     LetterSpacing,
     WordSpacing,
+    // break-before / break-after / break-inside + legacy shorthand
+    // page-break-* (CSS Fragmentation Module Level 3 §3.1 / §3.2 / §3.4、
+    // semantics on the matching PropertyValue::BreakBefore /
+    // PropertyValue::BreakAfter / PropertyValue::BreakInside variants;
+    // sibling PropertyKey variants carry no per-variant docs per crate
+    // convention). 末尾配置の理由は PropertyValue::BreakBefore の doc 参照。
+    BreakBefore,
+    BreakAfter,
+    BreakInside,
 }
 
 impl PropertyValue {
@@ -3463,6 +3656,9 @@ impl PropertyValue {
             PropertyValue::OverflowWrap(_) => PropertyKey::OverflowWrap,
             PropertyValue::LetterSpacing(_) => PropertyKey::LetterSpacing,
             PropertyValue::WordSpacing(_) => PropertyKey::WordSpacing,
+            PropertyValue::BreakBefore(_) => PropertyKey::BreakBefore,
+            PropertyValue::BreakAfter(_) => PropertyKey::BreakAfter,
+            PropertyValue::BreakInside(_) => PropertyKey::BreakInside,
         }
     }
 }
@@ -3721,6 +3917,35 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // <https://www.w3.org/TR/css-text-3/#word-spacing-property>. Same
         // `normal | <length>` grammar as `letter-spacing` above.
         "word-spacing" => parse_letter_or_word_spacing(input).map(PropertyValue::WordSpacing),
+        // CSS Fragmentation Module Level 3 §3.1 break-before / break-after.
+        // grammar (this crate's scope): `auto | avoid | avoid-page | page`
+        // (`BreakBetween` doc's "Scope carving" section). initial `auto`,
+        // not inherited, computed value = specified keyword.
+        "break-before" => parse_break_between(input).map(PropertyValue::BreakBefore),
+        "break-after" => parse_break_between(input).map(PropertyValue::BreakAfter),
+        // CSS Fragmentation Module Level 3 §3.2 break-inside. grammar (this
+        // crate's scope): `auto | avoid | avoid-page` (`BreakInside` doc's
+        // "Scope carving" section — a smaller, disjoint set from
+        // `break-before`/`break-after`). initial `auto`, not inherited,
+        // computed value = specified keyword.
+        "break-inside" => parse_break_inside(input).map(PropertyValue::BreakInside),
+        // CSS Fragmentation Module Level 3 §3.4 "Page Break Aliases" —
+        // CSS2.1 legacy shorthands for break-before / break-after, with a
+        // non-identity value remap (`BreakBetween` doc's "legacy
+        // shorthand" section: `always` -> `page`, `auto`/`avoid` identity).
+        // Both dispatch to the same `PropertyValue`/`PropertyKey` as
+        // break-before/break-after (one cascade winner, not two).
+        "page-break-before" => {
+            parse_legacy_page_break_between(input).map(PropertyValue::BreakBefore)
+        }
+        "page-break-after" => parse_legacy_page_break_between(input).map(PropertyValue::BreakAfter),
+        // CSS Fragmentation Module Level 3 §3.4 — CSS2.1 legacy shorthand
+        // for break-inside, identity value mapping (`BreakInside` doc's
+        // "legacy shorthand" section: CSS2.1's own `page-break-inside`
+        // grammar is just `auto | avoid`).
+        "page-break-inside" => {
+            parse_legacy_page_break_inside(input).map(PropertyValue::BreakInside)
+        }
         _ => None,
     }
 }
@@ -6143,6 +6368,90 @@ fn parse_z_index(input: &mut Parser<'_, '_>) -> Option<ZIndexValue> {
         .try_parse(|i| i.expect_integer())
         .ok()
         .map(ZIndexValue::Integer)
+}
+
+/// `break-before: <ident>` / `break-after: <ident>` を parse する (CSS
+/// Fragmentation Module Level 3 §3.1
+/// <https://www.w3.org/TR/css-break-3/#break-between>)。
+///
+/// この crate の scope で受理する 4 keyword ([`BreakBetween`] doc の Scope
+/// carving 節参照): `auto` / `avoid` / `avoid-page` / `page`。propdef の
+/// 残り 8 keyword (`left` / `right` / `recto` / `verso` / `avoid-column` /
+/// `column` / `avoid-region` / `region`) と、現行 spec grammar に無い
+/// `always` / `all` は他の未知 ident と同じく silent drop (`None`)。ASCII
+/// case-insensitive で ident を比較する ([`parse_word_break`] 等 sibling と
+/// 同 flavor)。
+fn parse_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBetween> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(BreakBetween::Auto),
+        "avoid" => Some(BreakBetween::Avoid),
+        "avoid-page" => Some(BreakBetween::AvoidPage),
+        "page" => Some(BreakBetween::Page),
+        _ => None,
+    }
+}
+
+/// `break-inside: <ident>` を parse する (CSS Fragmentation Module Level 3
+/// §3.2 <https://www.w3.org/TR/css-break-3/#break-within>)。
+///
+/// この crate の scope で受理する 3 keyword ([`BreakInside`] doc の Scope
+/// carving 節参照): `auto` / `avoid` / `avoid-page`。propdef の残り 2
+/// keyword (`avoid-column` / `avoid-region`) は他の未知 ident と同じく
+/// silent drop (`None`)。ASCII case-insensitive で ident を比較する
+/// ([`parse_break_between`] と同 flavor)。
+fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakInside> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(BreakInside::Auto),
+        "avoid" => Some(BreakInside::Avoid),
+        "avoid-page" => Some(BreakInside::AvoidPage),
+        _ => None,
+    }
+}
+
+/// `page-break-before: <ident>` / `page-break-after: <ident>` — CSS2.1
+/// legacy shorthand for `break-before` / `break-after` — を parse し、
+/// [`BreakBetween`] へ remap する (CSS Fragmentation Module Level 3 §3.4
+/// <https://www.w3.org/TR/css-break-3/#page-break-properties>,
+/// [`BreakBetween`] doc の「legacy shorthand」節の mapping table 参照)。
+///
+/// CSS2.1 自身の `page-break-before` / `page-break-after` propdef grammar
+/// (verbatim, <https://www.w3.org/TR/CSS2/page.html#propdef-page-break-before>)
+/// は `auto | always | avoid | left | right`。本 parser はそのうち
+/// `auto` / `avoid` / `always` の 3 keyword のみ受理する — `left` /
+/// `right` は `break-before`/`break-after` 側で未実装 ([`BreakBetween`] doc
+/// の Scope carving 節) の値へ remap されるため、この legacy shorthand
+/// 経由でも同じく受理しない。`always` は spec の mapping table どおり
+/// [`BreakBetween::Page`] へ remap する (identity ではない — `auto` /
+/// `avoid` は identity)。
+fn parse_legacy_page_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBetween> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(BreakBetween::Auto),
+        "avoid" => Some(BreakBetween::Avoid),
+        "always" => Some(BreakBetween::Page),
+        _ => None,
+    }
+}
+
+/// `page-break-inside: <ident>` — CSS2.1 legacy shorthand for
+/// `break-inside` — を parse する (CSS Fragmentation Module Level 3 §3.4,
+/// [`BreakInside`] doc の「legacy shorthand」節参照)。
+///
+/// CSS2.1 自身の `page-break-inside` propdef grammar (verbatim,
+/// <https://www.w3.org/TR/CSS2/page.html#propdef-page-break-inside>) は
+/// `avoid | auto` のみ (`always` / `left` / `right` は無い) — この 2
+/// keyword を [`BreakInside`] へ identity mapping する。`break-inside`
+/// 自身が持つ `avoid-page` は CSS2.1 の `page-break-inside` grammar には
+/// 無いため受理しない。
+fn parse_legacy_page_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakInside> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(BreakInside::Auto),
+        "avoid" => Some(BreakInside::Avoid),
+        _ => None,
+    }
 }
 
 fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
@@ -10676,6 +10985,340 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::OverflowWrap);
         let v = PropertyValue::OverflowWrap(OverflowWrap::Anywhere);
         assert_eq!(v.key(), PropertyKey::OverflowWrap);
+    }
+
+    // ── break-before / break-after (CSS Fragmentation Module Level 3
+    // §3.1) + page-break-before / page-break-after legacy shorthand (§3.4) ──
+    //
+    // Value grammar (this crate's scope, `BreakBetween` doc's "Scope
+    // carving" section): `auto | avoid | avoid-page | page`. Initial:
+    // `auto` / Inherited: no / Computed value: specified keyword.
+
+    #[test]
+    fn break_before_after_parse_all_implemented_keywords() {
+        assert_eq!(
+            parse("auto", "break-before"),
+            Some(PropertyValue::BreakBefore(BreakBetween::Auto))
+        );
+        assert_eq!(
+            parse("auto", "break-after"),
+            Some(PropertyValue::BreakAfter(BreakBetween::Auto))
+        );
+        assert_eq!(
+            parse("avoid", "break-before"),
+            Some(PropertyValue::BreakBefore(BreakBetween::Avoid))
+        );
+        assert_eq!(
+            parse("avoid-page", "break-before"),
+            Some(PropertyValue::BreakBefore(BreakBetween::AvoidPage))
+        );
+        assert_eq!(
+            parse("page", "break-before"),
+            Some(PropertyValue::BreakBefore(BreakBetween::Page))
+        );
+        assert_eq!(
+            parse("avoid", "break-after"),
+            Some(PropertyValue::BreakAfter(BreakBetween::Avoid))
+        );
+        assert_eq!(
+            parse("avoid-page", "break-after"),
+            Some(PropertyValue::BreakAfter(BreakBetween::AvoidPage))
+        );
+        assert_eq!(
+            parse("page", "break-after"),
+            Some(PropertyValue::BreakAfter(BreakBetween::Page))
+        );
+    }
+
+    #[test]
+    fn break_before_is_case_insensitive() {
+        assert_eq!(
+            parse("AUTO", "break-before"),
+            Some(PropertyValue::BreakBefore(BreakBetween::Auto))
+        );
+        assert_eq!(
+            parse("Avoid-Page", "break-before"),
+            Some(PropertyValue::BreakBefore(BreakBetween::AvoidPage))
+        );
+        assert_eq!(
+            parse("PAGE", "break-before"),
+            Some(PropertyValue::BreakBefore(BreakBetween::Page))
+        );
+    }
+
+    #[test]
+    fn break_before_after_rejects_out_of_scope_column_and_region_values() {
+        // (b) not supported — this crate has no multi-column or CSS
+        // Regions fragmentation context (`BreakBetween` doc's "Scope
+        // carving" section), not (a) spec-invalid.
+        for kw in ["avoid-column", "column", "avoid-region", "region"] {
+            assert_eq!(parse(kw, "break-before"), None);
+            assert_eq!(parse(kw, "break-after"), None);
+        }
+    }
+
+    #[test]
+    fn break_before_after_rejects_out_of_scope_page_spread_values() {
+        // (b) not supported — no page-spread concept in this crate
+        // (`BreakBetween` doc's "Scope carving" section).
+        for kw in ["left", "right", "recto", "verso"] {
+            assert_eq!(parse(kw, "break-before"), None);
+            assert_eq!(parse(kw, "break-after"), None);
+        }
+    }
+
+    #[test]
+    fn break_before_after_rejects_always_and_all() {
+        // `always`/`all` are not part of the current break-before/
+        // break-after grammar at all (`BreakBetween` doc's "Scope carving"
+        // section — Level 3's change log only names `always`, not `all`;
+        // both live in Level 4 instead, which this crate does not target).
+        // `always` is valid only as the `page-break-before`/
+        // `page-break-after` legacy shorthand's own keyword, never
+        // directly on `break-before`/`break-after`; `all` has no path in
+        // at all.
+        for kw in ["always", "all"] {
+            assert_eq!(parse(kw, "break-before"), None);
+            assert_eq!(parse(kw, "break-after"), None);
+        }
+    }
+
+    #[test]
+    fn break_before_after_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "break-before"), None);
+        assert_eq!(parse("bogus", "break-after"), None);
+    }
+
+    #[test]
+    fn break_before_after_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "break-before"), None);
+            assert_eq!(parse(kw, "break-after"), None);
+        }
+    }
+
+    #[test]
+    fn break_before_after_rejects_non_ident() {
+        assert_eq!(parse("16px", "break-before"), None);
+        assert_eq!(parse(r#""auto""#, "break-after"), None);
+    }
+
+    #[test]
+    fn break_before_after_key_maps_to_distinct_property_keys() {
+        // `break-before` / `break-after` are 2 independent cascade winners
+        // (unlike the `word-wrap`/`overflow-wrap` name alias, which shares
+        // one `PropertyKey` — `BreakBetween` doc's "legacy shorthand"
+        // section explains why this pair does too, just each with its
+        // *own* longhand).
+        let v = PropertyValue::BreakBefore(BreakBetween::Page);
+        assert_eq!(v.key(), PropertyKey::BreakBefore);
+        let v = PropertyValue::BreakAfter(BreakBetween::Page);
+        assert_eq!(v.key(), PropertyKey::BreakAfter);
+    }
+
+    // ── page-break-before / page-break-after legacy shorthand value remap
+    // (CSS Fragmentation Module Level 3 §3.4) ──
+
+    #[test]
+    fn page_break_before_after_legacy_shorthand_identity_values() {
+        for prop in ["page-break-before", "page-break-after"] {
+            let wrap = |v| {
+                if prop == "page-break-before" {
+                    PropertyValue::BreakBefore(v)
+                } else {
+                    PropertyValue::BreakAfter(v)
+                }
+            };
+            assert_eq!(parse("auto", prop), Some(wrap(BreakBetween::Auto)));
+            assert_eq!(parse("avoid", prop), Some(wrap(BreakBetween::Avoid)));
+        }
+    }
+
+    #[test]
+    fn page_break_before_after_legacy_shorthand_remaps_always_to_page() {
+        // CSS Fragmentation Module Level 3 §3.4 mapping table verbatim:
+        // `always` (page-break-*) -> `page` (break-*). Non-identity remap —
+        // pin the exact equality with the longhand spelling, mirroring
+        // `word_wrap_legacy_alias_parses_identically_to_overflow_wrap`'s
+        // shape (there the two spellings are identical; here they are not,
+        // which is exactly what this test must catch).
+        assert_eq!(
+            parse("always", "page-break-before"),
+            Some(PropertyValue::BreakBefore(BreakBetween::Page))
+        );
+        assert_eq!(
+            parse("always", "page-break-before"),
+            parse("page", "break-before")
+        );
+        assert_eq!(
+            parse("always", "page-break-after"),
+            Some(PropertyValue::BreakAfter(BreakBetween::Page))
+        );
+        assert_eq!(
+            parse("always", "page-break-after"),
+            parse("page", "break-after")
+        );
+    }
+
+    #[test]
+    fn page_break_before_after_legacy_shorthand_rejects_new_property_only_values() {
+        // `avoid-page` / `page` are valid on `break-before`/`break-after`
+        // directly, but CSS2.1's own `page-break-before`/`page-break-after`
+        // propdef grammar (`auto | always | avoid | left | right`) does not
+        // have them — the legacy shorthand's grammar is CSS2.1's, not the
+        // new property's (`BreakBetween` doc's "legacy shorthand" section).
+        for kw in ["avoid-page", "page"] {
+            assert_eq!(parse(kw, "page-break-before"), None);
+            assert_eq!(parse(kw, "page-break-after"), None);
+        }
+    }
+
+    #[test]
+    fn page_break_before_after_legacy_shorthand_rejects_left_and_right() {
+        // CSS2.1's own grammar has `left`/`right`, but they remap to
+        // `break-before`/`break-after` values this crate does not
+        // implement (`BreakBetween` doc's "Scope carving" section) — the
+        // scope carve applies transitively through the legacy shorthand.
+        for kw in ["left", "right"] {
+            assert_eq!(parse(kw, "page-break-before"), None);
+            assert_eq!(parse(kw, "page-break-after"), None);
+        }
+    }
+
+    #[test]
+    fn page_break_before_after_legacy_shorthand_key_maps_to_same_key_as_longhand() {
+        // One cascade winner per property, whether declared via the new
+        // name or the legacy shorthand name (`BreakBetween` doc's "legacy
+        // shorthand" section — no `expand_shorthand_into` arm needed since
+        // this is a 1:1, not a fan-out, shorthand).
+        let v = parse("always", "page-break-before").unwrap();
+        assert_eq!(v.key(), PropertyKey::BreakBefore);
+        let v = parse("always", "page-break-after").unwrap();
+        assert_eq!(v.key(), PropertyKey::BreakAfter);
+    }
+
+    // ── break-inside (CSS Fragmentation Module Level 3 §3.2) +
+    // page-break-inside legacy shorthand (§3.4) ──
+    //
+    // Value grammar (this crate's scope, `BreakInside` doc's "Scope
+    // carving" section): `auto | avoid | avoid-page` — a smaller, disjoint
+    // set from `break-before`/`break-after`'s `BreakBetween` (no `page`).
+    // Initial: `auto` / Inherited: no / Computed value: specified keyword.
+
+    #[test]
+    fn break_inside_parse_all_implemented_keywords() {
+        assert_eq!(
+            parse("auto", "break-inside"),
+            Some(PropertyValue::BreakInside(BreakInside::Auto))
+        );
+        assert_eq!(
+            parse("avoid", "break-inside"),
+            Some(PropertyValue::BreakInside(BreakInside::Avoid))
+        );
+        assert_eq!(
+            parse("avoid-page", "break-inside"),
+            Some(PropertyValue::BreakInside(BreakInside::AvoidPage))
+        );
+    }
+
+    #[test]
+    fn break_inside_is_case_insensitive() {
+        assert_eq!(
+            parse("AUTO", "break-inside"),
+            Some(PropertyValue::BreakInside(BreakInside::Auto))
+        );
+        assert_eq!(
+            parse("Avoid-Page", "break-inside"),
+            Some(PropertyValue::BreakInside(BreakInside::AvoidPage))
+        );
+    }
+
+    #[test]
+    fn break_inside_rejects_forced_break_values() {
+        // `break-inside` has no forced-break values at all — `page` /
+        // `column` / `region` are valid on `break-before`/`break-after`
+        // (or would be, absent this crate's scope carve) but have no
+        // `break-inside` counterpart in the spec grammar at all, not even
+        // an excluded one (`BreakInside` doc: "breaking within has no
+        // start/end edge to force a break relative to").
+        for kw in ["page", "column", "region"] {
+            assert_eq!(parse(kw, "break-inside"), None);
+        }
+    }
+
+    #[test]
+    fn break_inside_rejects_out_of_scope_avoid_values() {
+        // Unlike `page`/`column`/`region` above, `avoid-column` and
+        // `avoid-region` *are* in `break-inside`'s own propdef grammar
+        // (`auto | avoid | avoid-page | avoid-column | avoid-region`,
+        // `BreakInside` doc) — they are rejected here purely by this
+        // crate's scope carve (no multi-column / CSS Regions fragmentation
+        // context), not because the spec lacks them.
+        for kw in ["avoid-column", "avoid-region"] {
+            assert_eq!(parse(kw, "break-inside"), None);
+        }
+    }
+
+    #[test]
+    fn break_inside_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "break-inside"), None);
+    }
+
+    #[test]
+    fn break_inside_rejects_css_wide_keyword() {
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "break-inside"), None);
+        }
+    }
+
+    #[test]
+    fn break_inside_rejects_non_ident() {
+        assert_eq!(parse("16px", "break-inside"), None);
+        assert_eq!(parse(r#""auto""#, "break-inside"), None);
+    }
+
+    #[test]
+    fn break_inside_key_maps_to_break_inside_property_key() {
+        let v = PropertyValue::BreakInside(BreakInside::AvoidPage);
+        assert_eq!(v.key(), PropertyKey::BreakInside);
+    }
+
+    #[test]
+    fn page_break_inside_legacy_shorthand_identity_values() {
+        assert_eq!(
+            parse("auto", "page-break-inside"),
+            Some(PropertyValue::BreakInside(BreakInside::Auto))
+        );
+        assert_eq!(
+            parse("avoid", "page-break-inside"),
+            Some(PropertyValue::BreakInside(BreakInside::Avoid))
+        );
+        assert_eq!(
+            parse("auto", "page-break-inside"),
+            parse("auto", "break-inside")
+        );
+        assert_eq!(
+            parse("avoid", "page-break-inside"),
+            parse("avoid", "break-inside")
+        );
+    }
+
+    #[test]
+    fn page_break_inside_legacy_shorthand_rejects_new_property_only_value() {
+        // `avoid-page` is valid on `break-inside` directly, but CSS2.1's
+        // own `page-break-inside` propdef grammar is just `auto | avoid` —
+        // the legacy shorthand's grammar is CSS2.1's, not the new
+        // property's fuller one (`BreakInside` doc's "legacy shorthand"
+        // section).
+        assert_eq!(parse("avoid-page", "page-break-inside"), None);
+    }
+
+    #[test]
+    fn page_break_inside_legacy_shorthand_key_maps_to_same_key_as_longhand() {
+        let v = parse("avoid", "page-break-inside").unwrap();
+        assert_eq!(v.key(), PropertyKey::BreakInside);
     }
 
     // ── letter-spacing / word-spacing (CSS Text 3 §7.2 / §7.1) ──

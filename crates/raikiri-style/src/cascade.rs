@@ -3417,7 +3417,8 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`
 ///    / `OverflowValue` / `TextDecorationLine` / `TextDecorationStyle` /
 ///    `TextDecorationColor` / `VerticalAlign` / `FontStyle` / `Visibility` /
-///    `ZIndexValue` / `WordBreak` / `OverflowWrap`)
+///    `ZIndexValue` / `WordBreak` / `OverflowWrap` / `BreakBetween` /
+///    `BreakInside`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
@@ -3697,7 +3698,19 @@ pub(crate) fn resolve_against_inherited(
         // inheritance parent's — same shape as `Padding`/`Margin`/`Width`/
         // `Height` above, nothing for phase 2 to resolve here.
         | PropertyValue::LetterSpacing(_)
-        | PropertyValue::WordSpacing(_)) => v,
+        | PropertyValue::WordSpacing(_)
+        // `break-before`/`break-after` (CSS Fragmentation Module Level 3
+        // §3.1, legacy shorthand `page-break-before`/`page-break-after`
+        // included) carry no length (`BreakBetween` doc) and do not
+        // depend on the inheritance parent — nothing for phase 2 to
+        // resolve.
+        | PropertyValue::BreakBefore(_)
+        | PropertyValue::BreakAfter(_)
+        // `break-inside` (CSS Fragmentation Module Level 3 §3.2, legacy
+        // shorthand `page-break-inside` included) carries no length
+        // either (`BreakInside` doc) — same as `BreakBefore`/`BreakAfter`
+        // above.
+        | PropertyValue::BreakInside(_)) => v,
     })
 }
 
@@ -4138,6 +4151,18 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::LetterSpacing(ls) => target.letter_spacing = ls,
         // CSS Text 3 §7.1。直上の LetterSpacing arm と同型。
         PropertyValue::WordSpacing(ws) => target.word_spacing = ws,
+        // CSS Fragmentation Module Level 3 §3.1 break-before / break-after
+        // (legacy shorthand page-break-before / page-break-after も同じ
+        // variant/field に落ちる、`BreakBetween` doc 参照)。non-inherited、
+        // cascade winner が specified keyword をそのまま computed value に
+        // 反映。`BreakBetween` は Copy、by-value 代入で十分 (`ZIndex` arm と
+        // 同型)。
+        PropertyValue::BreakBefore(bb) => target.break_before = bb,
+        PropertyValue::BreakAfter(bb) => target.break_after = bb,
+        // CSS Fragmentation Module Level 3 §3.2 break-inside (legacy
+        // shorthand page-break-inside も同じ field に落ちる、`BreakInside`
+        // doc 参照)。直上の BreakBefore/BreakAfter arm と同型。
+        PropertyValue::BreakInside(bi) => target.break_inside = bi,
     }
 }
 
@@ -9024,6 +9049,69 @@ mod tests {
             ZIndexValue::Auto,
             "z-index must not inherit from parent (CSS2 §9.9.1 Inherited: no)"
         );
+    }
+
+    // ── break-before / break-after / break-inside wire-through
+    // (CSS Fragmentation Module Level 3 §3.1 / §3.2 / §3.4) ──
+
+    #[test]
+    fn break_before_wired_through_cascade_from_inline_style() {
+        // <p style="break-before: avoid-page"> → ComputedValues.break_before
+        // に BreakBetween::AvoidPage が届く。parser → PropertyValue::BreakBefore
+        // → apply_value → ComputedValues の end-to-end 疎通 smoke。sibling
+        // (box-sizing / z-index) の wire-through pattern を踏襲。
+        use crate::property::BreakBetween;
+        let cv = cascade_doc("", "p", Some("break-before: avoid-page"));
+        assert_eq!(cv.break_before, BreakBetween::AvoidPage);
+    }
+
+    #[test]
+    fn break_after_wired_through_cascade_from_inline_style() {
+        use crate::property::BreakBetween;
+        let cv = cascade_doc("", "p", Some("break-after: page"));
+        assert_eq!(cv.break_after, BreakBetween::Page);
+    }
+
+    #[test]
+    fn break_inside_wired_through_cascade_from_inline_style() {
+        use crate::property::BreakInside;
+        let cv = cascade_doc("", "p", Some("break-inside: avoid"));
+        assert_eq!(cv.break_inside, BreakInside::Avoid);
+    }
+
+    #[test]
+    fn break_before_non_inherited_child_starts_from_initial() {
+        // CSS Fragmentation Module Level 3 §3.1 propdef: "Inherited: no".
+        // sibling: `z_index_non_inherited_child_starts_from_initial` と同じ
+        // pattern。
+        use crate::property::BreakBetween;
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("break-before: page"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].break_before, BreakBetween::Page);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].break_before,
+            BreakBetween::Auto,
+            "break-before must not inherit from parent (CSS Fragmentation \
+             Module Level 3 §3.1 Inherited: no)"
+        );
+    }
+
+    #[test]
+    fn page_break_before_legacy_shorthand_wired_through_cascade_remaps_to_page() {
+        // <p style="page-break-before: always"> → ComputedValues.break_before
+        // に BreakBetween::Page が届く (CSS Fragmentation Module Level 3 §3.4
+        // mapping table: `always` -> `page`, `BreakBetween` doc's "legacy
+        // shorthand" section) — end-to-end pin that the non-identity remap
+        // survives the full parse -> cascade -> ComputedValues pipeline, not
+        // just the `property::tests` parser-level pin.
+        use crate::property::BreakBetween;
+        let cv = cascade_doc("", "p", Some("page-break-before: always"));
+        assert_eq!(cv.break_before, BreakBetween::Page);
     }
 
     // ── font-weight keyword + inheritance (CSS Fonts 4 §2.2) ──
