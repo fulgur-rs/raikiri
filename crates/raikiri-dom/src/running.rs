@@ -936,23 +936,30 @@ fn convert_string_set_source(content_list: &[ContentComponent]) -> Option<Conten
 ///   see `raikiri_style::property::parse_attr_fn`'s doc, "type / fallback
 ///   ... defer"), which is exactly the "`<syntax>` omitted" branch, so the
 ///   applicable default is the empty string, not the guaranteed-invalid
-///   value. (The algorithm's own step 4 states the guaranteed-invalid
-///   default unconditionally, without threading the `<syntax>`-presence
-///   branch the prose describes — read literally in isolation that step
-///   would make the prose's "if `<syntax>` is omitted" clause vacuous for
-///   every input, which is more likely a drafting gap in an active Working
-///   Draft than the intended rule. GCPM 3's own `<content-list>` grammar for
-///   `string-set` cites the older untyped-only `[CSS-VALUES-3]` `attr()`
-///   for its `<attr()>` term, not this typed Values 5 form, and legacy
-///   `content: attr(x)` — CSS 2.1 §12.2 — has resolved a missing attribute
-///   to the empty string since the property existed, both consistent with
-///   treating a missing attribute as "empty string, assignment still
-///   occurs" here.) This converges with the present-but-empty-attribute
-///   case above on the same `Literal("")` outcome, which matters because
-///   CSS GCPM 3 §1.1.1 fixes *that an assignment occurs* at content-box
-///   creation independent of what it resolves to, and `string()`'s
-///   `first-except` keyword (§1.1.2) is defined by whether an assignment
-///   occurred at all — not by what it resolved to.
+///   value. (The algorithm's own fallback definition — step 1 — states the
+///   guaranteed-invalid default without conditioning on `<syntax>`'s
+///   presence, and the missing-attribute case — step 2 — returns the
+///   guaranteed-invalid value together with that fallback, before
+///   `<syntax>` is ever examined at step 3/4; read literally in isolation,
+///   step 1 would make the prose's "if `<syntax>` is omitted" clause vacuous
+///   for every input, which is more likely a drafting gap in an active
+///   Working Draft than the intended rule. GCPM 3's own `<content-list>`
+///   grammar for `string-set` cites `[CSS-VALUES-3]` for its `<attr()>`
+///   term — evidence GCPM 3 wasn't written against this typed Values 5 form
+///   — but that citation's own hyperlink target points to Values 5, not
+///   Values 3 (unlike its bibliography text), and in any case CSS Values 3
+///   dropped `attr()` entirely — "punted to Level 5" per its own changelog —
+///   so it defines no `attr()` semantics, typed or untyped, for a reader
+///   chasing the citation to land on. Legacy `content: attr(x)` — CSS 2.1
+///   §12.2 — has resolved a missing attribute to the empty string since the
+///   property existed, consistent with treating a missing attribute as
+///   "empty string, assignment still occurs" here.) This converges with the
+///   present-but-empty-attribute case above on the same `Literal("")`
+///   outcome, which matters because CSS GCPM 3 §1.1.1 fixes *that an
+///   assignment occurs* at content-box creation independent of what it
+///   resolves to, and `string()`'s `first-except` keyword (§1.1.2) is
+///   defined by whether an assignment occurred at all — not by what it
+///   resolved to.
 /// - [`ContentComponent::Content`] with the default/`text` keyword (CSS
 ///   GCPM 3 §1.1.1.1 <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>,
 ///   "The string value of the element, determined as if `white-space:
