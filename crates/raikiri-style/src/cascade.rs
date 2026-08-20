@@ -152,6 +152,36 @@ const PRESENTATIONAL_HINT_SPECIFICITY: Specificity = 0;
 /// 値域を使うという単純さのための選択。
 const PRESENTATIONAL_HINT_SOURCE_ORDER: u32 = 0;
 
+/// Margin-collapsing quirks zeroing declaration
+/// ([`push_margin_collapsing_quirk_declarations`]) specificity. Pushed with
+/// [`Origin::UserAgent`], so it never needs to out-rank a real
+/// [`Origin::Author`] declaration on specificity — [`cascade_rank`] already
+/// guarantees any `Origin::Author` declaration outranks any
+/// `Origin::UserAgent` one regardless of specificity. This constant only
+/// has to out-rank *other* `Origin::UserAgent` declarations for the same
+/// property on the same node — most notably minimal.css's `blockquote,
+/// figure, listing, p, plaintext, pre, xmp { margin-top: 1em;
+/// margin-bottom: 1em; }` rule.
+///
+/// Reuses [`INLINE_SPECIFICITY`]'s value rather than re-deriving an
+/// equivalent bound: that constant's own pinning test
+/// (`inline_specificity_exceeds_max_reachable_packed_specificity`) already
+/// proves it exceeds every specificity value reachable through the
+/// `selectors` crate's packed representation — the exact same bound any
+/// selector-based `Origin::UserAgent` rule (present or future) is subject
+/// to as well.
+const MARGIN_COLLAPSING_QUIRK_SPECIFICITY: Specificity = INLINE_SPECIFICITY;
+/// [`MARGIN_COLLAPSING_QUIRK_SPECIFICITY`]'s companion source_order. `0` —
+/// same reasoning as [`PRESENTATIONAL_HINT_SOURCE_ORDER`]: the
+/// dedicated `cascade_rank` tier already decides every comparison that
+/// matters (against other `Origin::UserAgent` declarations, `beats`'s
+/// specificity comparison is what actually separates this from
+/// minimal.css's rule, and no two of *this* function's own pushes ever
+/// compete against each other for the same property on the same node), so
+/// no value other than "the same low end of the range real stylesheet
+/// source_order uses" is needed here.
+const MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER: u32 = 0;
+
 /// 1 candidate declaration = `(value, important, origin, specificity, source_order)`。
 /// `collect_cascaded` が populate、`pick_winners` が rank 化して winner を選ぶ
 /// (`Origin` を含む — clippy::type_complexity 回避のため alias 化)。
@@ -494,6 +524,22 @@ fn collect_cascaded<D: StyleDom>(
                 // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
                 // continues to pin the outcome this comment claims.
                 push_img_dimension_hints(&elem, &mut out.decls);
+                // HTML LS §15.3.9 margin-collapsing quirks (quirks-mode
+                // margin-block zeroing) — `ancestor_path` here is still
+                // `id`'s ancestor chain *without* `id` itself (that push
+                // happens further below, after this element's candidates
+                // are collected), so `ancestor_path.last()` is exactly
+                // `id`'s real DOM parent. See
+                // `push_margin_collapsing_quirk_declarations` doc for the
+                // full rule set and design rationale.
+                push_margin_collapsing_quirk_declarations(
+                    dom,
+                    id,
+                    &elem,
+                    &ancestor_path,
+                    quirks_mode,
+                    &mut out.decls,
+                );
                 // stylesheet rule matching
                 for rule in &rule_tree.style_rules {
                     if let Some(spec) = match_complex_selector_list(
@@ -2467,6 +2513,323 @@ fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDe
             Origin::AuthorPresentationalHint,
             PRESENTATIONAL_HINT_SPECIFICITY,
             PRESENTATIONAL_HINT_SOURCE_ORDER,
+        ));
+    }
+}
+
+/// The "elements with default margins" HTML LS §15.3.9 "Margin collapsing
+/// quirks"
+/// (<https://html.spec.whatwg.org/multipage/rendering.html#margin-collapsing-quirks>)
+/// names by an explicit list, verbatim: blockquote, dir, dl, h1, h2, h3,
+/// h4, h5, h6, listing, menu, ol, p, plaintext, pre, ul, xmp (17 elements).
+///
+/// `eq_ignore_ascii_case`, not plain `==` — matched against a *hardcoded
+/// literal* set, not against another DOM-sourced tag name (unlike
+/// [`sibling_position`]'s sibling-vs-sibling comparison, whose "html5ever
+/// already normalises" reasoning only covers two DOM-sourced tag names
+/// meeting each other). Nothing in [`StyleElement::tag_name`]'s own
+/// contract requires lower-casing — the crate's own test-only `TestDoc`
+/// mock explicitly does not lower-case — so this stays defensive the
+/// same way the other same-file examples of
+/// "DOM tag name vs. hardcoded literal" already are:
+/// `elem.tag_name().eq_ignore_ascii_case("img")`
+/// ([`push_img_dimension_hints`]) and
+/// `tag.eq_ignore_ascii_case("template")` (`ruletree.rs`'s `<template>`
+/// gate).
+fn is_element_with_default_margins(tag_name: &str) -> bool {
+    const NAMES: &[&str] = &[
+        "blockquote",
+        "dir",
+        "dl",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "listing",
+        "menu",
+        "ol",
+        "p",
+        "plaintext",
+        "pre",
+        "ul",
+        "xmp",
+    ];
+    NAMES.iter().any(|name| tag_name.eq_ignore_ascii_case(name))
+}
+
+/// HTML LS §15.3.9 defines a node as "substantial" if it is a text node
+/// that is not [inter-element
+/// whitespace](https://html.spec.whatwg.org/multipage/dom.html#inter-element-whitespace),
+/// or if it is an element node.
+///
+/// "Inter-element whitespace" (HTML LS §3.2.5 "Content models", same URL
+/// as above, verbatim): "Empty Text nodes and Text nodes consisting of
+/// just \[...\] ASCII whitespace \[...\] are considered inter-element
+/// whitespace" — "ASCII whitespace" itself links to Infra's
+/// <https://infra.spec.whatwg.org/#ascii-whitespace> dfn there, the
+/// 5-character set {tab, LF, FF, CR, space}. Same set this crate already
+/// uses for HTML attribute-value tokenisation (`class_token_matches` in
+/// [`crate::style_dom`]) and dimension-value leading-whitespace skipping
+/// ([`parse_html_dimension_value`]).
+///
+/// This is deliberately a *different* character set from CSS Selectors
+/// L4's `:empty` "document white space characters" ([`matches_empty`]
+/// doc) — that set is {space, tab, segment break/LF} and excludes form
+/// feed; HTML LS's "ASCII whitespace" includes form feed and carriage
+/// return too. The two predicates ([`matches_empty`] for `:empty`, this
+/// function's caller [`is_blank_element`] for HTML LS "blank") are
+/// spec-distinct features and must not share one whitespace set even
+/// though they look similar.
+///
+/// Comment / processing-instruction / document-fragment / document nodes
+/// are none of "text node" or "element node", so they are never
+/// substantial — matching how [`matches_empty`] treats the same kinds as
+/// not affecting `:empty` (verbatim spec text quoted on that function:
+/// "comments, processing instructions, and other nodes must not affect").
+fn is_substantial_node<D: StyleDom>(dom: &D, id: StyleNodeId) -> bool {
+    match dom.node(id) {
+        Some(node) => match node.kind() {
+            StyleNodeKind::Element => true,
+            StyleNodeKind::Text => !node
+                .text_content()
+                .unwrap_or("")
+                .chars()
+                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0C')),
+            StyleNodeKind::Comment
+            | StyleNodeKind::ProcessingInstruction
+            | StyleNodeKind::DocumentFragment
+            | StyleNodeKind::Document => false,
+        },
+        // cov:ignore: `child_ids` only ever yields ids that `dom.node`
+        // resolves (`StyleDom` trait doc: "child_ids(id) returns an empty
+        // iterator for invalid id", implying ids it does yield are
+        // valid) — same defensive posture as `matches_empty`'s own `None
+        // => true` fallback. This function's only two call sites
+        // (`is_blank_element`, `substantial_sibling_bounds`) always
+        // derive `id` from `dom.child_ids`.
+        None => false,
+    }
+}
+
+/// HTML LS §15.3.9 defines an element as "blank" if it "contains no
+/// substantial nodes"
+/// (<https://html.spec.whatwg.org/multipage/rendering.html#margin-collapsing-quirks>).
+///
+/// Only `elem_id`'s **direct** children need checking, not the full
+/// descendant subtree: [`is_substantial_node`] already counts *any*
+/// element node as substantial regardless of what that element itself
+/// contains, so the moment `elem_id` has one element child anywhere in its
+/// subtree, that child is itself either a substantial direct child, or
+/// the child leading to it is — "does any direct child qualify" and "does
+/// any descendant at any depth qualify" always agree for this particular
+/// definition of substantial.
+fn is_blank_element<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
+    !dom.child_ids(elem_id)
+        .any(|child_id| is_substantial_node(dom, child_id))
+}
+
+/// For `target_id` among `parent_id`'s direct children, whether it has no
+/// substantial sibling **before** it and no substantial sibling **after**
+/// it in document order (HTML LS §15.3.9's "has no substantial previous
+/// siblings" / "has no substantial following siblings" conditions,
+/// <https://html.spec.whatwg.org/multipage/rendering.html#margin-collapsing-quirks>).
+/// Single pass over `parent_id`'s children — same shape as
+/// [`sibling_position`]'s combined start/end computation.
+///
+/// `target_id` not found among `parent_id`'s children never happens for
+/// this function's only caller
+/// ([`push_margin_collapsing_quirk_declarations`]): `parent_id` there is
+/// always `ancestor_path.last()`, i.e. the real DOM parent
+/// [`collect_cascaded`] walked through `dom.child_ids(parent_id)` to reach
+/// `target_id` in the first place — the same ancestor-path invariant
+/// [`sibling_position`]'s own callers rely on.
+fn substantial_sibling_bounds<D: StyleDom>(
+    dom: &D,
+    parent_id: StyleNodeId,
+    target_id: StyleNodeId,
+) -> (bool, bool) {
+    let mut no_substantial_before = true;
+    let mut no_substantial_after = true;
+    let mut seen_target = false;
+    for child_id in dom.child_ids(parent_id) {
+        if child_id == target_id {
+            seen_target = true;
+            continue;
+        }
+        if is_substantial_node(dom, child_id) {
+            if seen_target {
+                no_substantial_after = false;
+            } else {
+                no_substantial_before = false;
+            }
+        }
+    }
+    (no_substantial_before, no_substantial_after)
+}
+
+/// Margin-collapsing quirks (HTML LS §15.3.9 "Margin collapsing quirks",
+/// <https://html.spec.whatwg.org/multipage/rendering.html#margin-collapsing-quirks>
+/// — fetched as raw spec HTML directly rather than through a summarizing
+/// fetch, the same precaution [`matches_empty`]'s doc explains: this
+/// section sits deep inside one very long single-page spec, where
+/// summarized fetches have been observed to truncate before reaching the
+/// relevant section).
+///
+/// Four verbatim rules, all gated on [`StyleQuirksMode::Quirks`] (the DOM
+/// Standard's full "quirks mode", distinct from "limited-quirks mode" —
+/// same distinction [`crate::style_dom::StyleQuirksMode`]'s own doc
+/// draws):
+///
+/// 1. Any "element with default margins"
+///    ([`is_element_with_default_margins`]) that is the child of a
+///    `body`/`td`/`th` element and has no substantial previous siblings:
+///    `margin-block-start` (this crate's `margin-top` — no writing-mode
+///    support, so physical == logical unconditionally here, same posture
+///    minimal.css's own `margin-block` substitution already takes)
+///    zeroed.
+/// 2. Same as 1, plus the element is "blank" ([`is_blank_element`]):
+///    `margin-block-end` (`margin-bottom`) also zeroed.
+/// 3. Any such element that is the child of a `td`/`th` element, has no
+///    substantial following siblings, and is blank: `margin-block-start`
+///    zeroed.
+/// 4. Any `p` that is the child of a `td`/`th` element and has no
+///    substantial following siblings: `margin-block-end` zeroed.
+///
+/// # Why this enters cascade as a candidate declaration rather than
+/// overriding the computed value directly
+///
+/// The spec frames all four rules as "is expected to have a user-agent
+/// level style sheet rule that sets \[...\] to zero" — i.e. a real UA
+/// stylesheet declaration participating in normal cascade, not an
+/// unconditional override. Concretely: real author CSS (any specificity,
+/// `Origin::Author`) must still be able to give the element a nonzero
+/// margin again; zeroing the resolved computed value after cascade
+/// (bypassing origin/specificity entirely) would incorrectly clobber
+/// that. So this function pushes an [`Origin::UserAgent`] candidate
+/// declaration into the same flat candidate list [`collect_cascaded`]
+/// already builds for this node from stylesheet rules and inline style,
+/// and lets the normal [`pick_winners`]/[`beats`] machinery decide —
+/// [`cascade_rank`] guarantees any `Origin::Author` declaration for the
+/// same property outranks this regardless of specificity. See
+/// [`MARGIN_COLLAPSING_QUIRK_SPECIFICITY`]'s own doc for why this
+/// declaration's specificity still needs to be chosen carefully (to
+/// out-rank *other* `Origin::UserAgent` declarations for the same
+/// property, e.g. minimal.css's default-margin rule).
+///
+/// # Why the structural predicates can't be plain CSS selectors
+///
+/// "No substantial previous/following sibling" counts text-node content
+/// (ignoring only inter-element whitespace), which CSS Selectors L4's
+/// `:first-child`/`:last-child` do not — those ignore *all* non-element
+/// siblings regardless of text content ([`sibling_position`] doc,
+/// verbatim: "Standalone text and other non-element nodes are not counted
+/// \[...\]"). A document like `<body>Hello<p>...</p></body>` has `<p>` as
+/// CSS's `:first-child` (no earlier *element* sibling) but HTML LS denies
+/// it "no substantial previous siblings" (the text "Hello" is
+/// substantial) — a selector-based UA rule built on `:first-child` would
+/// zero this `<p>`'s margin-block-start incorrectly. Hence the dedicated
+/// structural predicates ([`is_substantial_node`],
+/// [`substantial_sibling_bounds`], [`is_blank_element`]), computed
+/// directly against the [`StyleDom`] tree rather than expressed as
+/// selector components.
+///
+/// # HTML-namespace gate
+///
+/// Both `elem` and its `body`/`td`/`th` container are gated on
+/// `namespace_uri().is_none()` — same posture
+/// [`push_img_dimension_hints`]'s own doc explains for the same reason:
+/// HTML LS's rendering rules (§15.2's own `@namespace
+/// "http://www.w3.org/1999/xhtml";` scoping, which §15.3.9 falls under)
+/// are scoped to the HTML namespace, and [`StyleElement`] is a generic
+/// trait not tied to any one DOM/parser, so this stays defensive rather
+/// than relying on "no foreign-namespace vocabulary defines an element
+/// that happens to share one of these local names today".
+fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
+    dom: &D,
+    id: StyleNodeId,
+    elem: &impl StyleElement,
+    ancestor_path: &[StyleNodeId],
+    quirks_mode: StyleQuirksMode,
+    decls: &mut Vec<CascadedDecl>,
+) {
+    if quirks_mode != StyleQuirksMode::Quirks || elem.namespace_uri().is_some() {
+        return;
+    }
+    let tag_name = elem.tag_name();
+    if !is_element_with_default_margins(tag_name) {
+        return;
+    }
+    let Some(&parent_id) = ancestor_path.last() else {
+        return;
+    };
+    // cov:ignore: `parent_id` came from `ancestor_path`, which
+    // `collect_cascaded` only ever pushes `Element`-kind ids onto (this
+    // module's doc on `ancestor_path`), so `dom.node(parent_id)` resolving
+    // to a node whose `as_element()` is `Some` is guaranteed by that same
+    // invariant, not by anything local to this function. Defensive
+    // fallback kept anyway rather than an unchecked index, same posture
+    // as `sibling_position`'s own `dom.node(child_id)`/`as_element()`
+    // guards over `child_ids`.
+    let Some(parent_node) = dom.node(parent_id) else {
+        return;
+    };
+    // cov:ignore: see the comment on the `dom.node(parent_id)` guard above
+    // — same invariant covers this arm too.
+    let Some(parent_elem) = parent_node.as_element() else {
+        return;
+    };
+    if parent_elem.namespace_uri().is_some() {
+        return;
+    }
+    let parent_tag = parent_elem.tag_name();
+    let is_body = parent_tag.eq_ignore_ascii_case("body");
+    let is_td_or_th =
+        parent_tag.eq_ignore_ascii_case("td") || parent_tag.eq_ignore_ascii_case("th");
+    if !is_body && !is_td_or_th {
+        return;
+    }
+
+    let (no_substantial_before, no_substantial_after) =
+        substantial_sibling_bounds(dom, parent_id, id);
+    let is_blank = is_blank_element(dom, id);
+
+    let mut zero_start = false;
+    let mut zero_end = false;
+
+    // Rules 1 + 2: body/td/th child, no substantial previous sibling.
+    if no_substantial_before {
+        zero_start = true;
+        if is_blank {
+            zero_end = true;
+        }
+    }
+    // Rule 3: td/th child, no substantial following sibling, blank.
+    if is_td_or_th && no_substantial_after && is_blank {
+        zero_start = true;
+    }
+    // Rule 4: p child of td/th, no substantial following sibling.
+    if is_td_or_th && tag_name.eq_ignore_ascii_case("p") && no_substantial_after {
+        zero_end = true;
+    }
+
+    if zero_start {
+        decls.push((
+            PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(0.0))),
+            false,
+            Origin::UserAgent,
+            MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
+            MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER,
+        ));
+    }
+    if zero_end {
+        decls.push((
+            PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Px(0.0))),
+            false,
+            Origin::UserAgent,
+            MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
+            MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER,
         ));
     }
 }
@@ -10179,5 +10542,414 @@ mod tests {
         assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(2.0));
         assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(3.0));
         assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(4.0));
+    }
+
+    // ── HTML LS §15.3.9 "Margin collapsing quirks"
+    // (push_margin_collapsing_quirk_declarations) ──
+    //
+    // These tests build a UA stylesheet mimicking minimal.css's real
+    // `blockquote, figure, listing, p, plaintext, pre, xmp { margin-top:
+    // 1em; margin-bottom: 1em; }` default-margin rule (using an
+    // arbitrary-but-nonzero 16px so a zeroed vs. unaffected side is always
+    // unambiguous), via `RuleTree::empty()` + `add_stylesheet(_,
+    // Origin::UserAgent)` directly rather than `build_rule_tree` (which
+    // only ever tags DOM `<style>` elements as `Origin::Author` —
+    // `build_rule_tree_produces_author_origin_for_dom_style_elements` in
+    // `ruletree.rs` pins that).
+
+    fn margin_quirk_ua_tree(css: &str) -> RuleTree {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(css, Origin::UserAgent);
+        tree
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_zeroes_start_for_first_child_of_body() {
+        // `<body><p>text</p></body>`, quirks mode: `p` is the first
+        // (only) child of `body` and has no substantial previous
+        // siblings → rule 1 zeroes margin-top. `p` is not blank (has a
+        // substantial text child), so rule 2 does not also zero
+        // margin-bottom.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element(0, "body", None);
+        let p = doc.push_element(body, "p", None);
+        doc.push_text(p, "text");
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+        assert_eq!(
+            r.computed[p].margin.bottom,
+            ComputedLengthPercentageOrAuto::Px(16.0)
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_zeroes_both_sides_when_blank() {
+        // `<body><p></p></body>` — `p` is additionally blank (no
+        // substantial children at all) → rule 2 also zeroes
+        // margin-bottom.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element(0, "body", None);
+        let p = doc.push_element(body, "p", None);
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+        assert_eq!(
+            r.computed[p].margin.bottom,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_does_not_apply_outside_quirks_mode() {
+        // Same structure as the first-child test above, but each of the
+        // two non-`Quirks` `StyleQuirksMode` states — the quirk is gated
+        // on full quirks mode only. `LimitedQuirks` gets its own case
+        // (not folded into `NoQuirks`) because it's a DOM Standard dfn
+        // distinct from full quirks mode
+        // (`crate::style_dom::StyleQuirksMode`'s own doc draws the same
+        // distinction, and `class_selector_case_sensitivity_across_quirks_modes`
+        // above pins the equivalent distinction for selector matching) —
+        // a broken gate that folded `LimitedQuirks` in with `Quirks`
+        // would not be caught by testing `NoQuirks` alone.
+        for mode in [StyleQuirksMode::NoQuirks, StyleQuirksMode::LimitedQuirks] {
+            let mut doc = TestDoc::new();
+            doc.quirks_mode = mode;
+            let body = doc.push_element(0, "body", None);
+            let p = doc.push_element(body, "p", None);
+            doc.push_text(p, "text");
+
+            let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+            let r = cascade(&doc, &tree).expect("cascade Ok");
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                r.computed[p].margin.top,
+                ComputedLengthPercentageOrAuto::Px(16.0),
+                "{mode:?} must not trigger margin-collapsing-quirks zeroing"
+            );
+        }
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_substantial_text_sibling_blocks_zeroing() {
+        // `<body>Hello<p>text</p></body>` — `p` IS CSS's `:first-child`
+        // (no earlier *element* sibling), but HTML LS denies it "no
+        // substantial previous siblings" because the text node "Hello" is
+        // substantial (non-inter-element-whitespace). A selector-based UA
+        // rule built on `:first-child` would zero this incorrectly; the
+        // dedicated structural predicate must not.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element(0, "body", None);
+        doc.push_text(body, "Hello");
+        let p = doc.push_element(body, "p", None);
+        doc.push_text(p, "text");
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(16.0),
+            "a substantial (non-whitespace) previous text sibling must block zeroing"
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_whitespace_only_previous_sibling_does_not_block_zeroing() {
+        // `<body>   <p>text</p></body>` — the leading text node is
+        // whitespace-only (inter-element whitespace per HTML LS §3.2.5),
+        // so it is not substantial and must not block "no substantial
+        // previous siblings".
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element(0, "body", None);
+        doc.push_text(body, "   \t\n");
+        let p = doc.push_element(body, "p", None);
+        doc.push_text(p, "text");
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_comment_previous_sibling_does_not_block_zeroing() {
+        // `<body><!--c--><p>text</p></body>` — comment nodes are never
+        // substantial (HTML LS §15.3.9's "substantial" dfn only counts
+        // text/element nodes).
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element(0, "body", None);
+        doc.push_comment(body, "c");
+        let p = doc.push_element(body, "p", None);
+        doc.push_text(p, "text");
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_rule3_zeroes_start_for_blank_last_child_of_td() {
+        // `<td>Hello<pre></pre></td>` — `pre` has a substantial previous
+        // sibling ("Hello", rules 1/2 do not apply) but is the last
+        // (only trailing) child of `td` and is blank → rule 3 zeroes
+        // margin-top. `pre` (not `p`) is used deliberately so rule 4
+        // (which only ever fires for `p`) cannot also zero margin-bottom
+        // here, keeping rule 3 isolated.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let td = doc.push_element(0, "td", None);
+        doc.push_text(td, "Hello");
+        let pre = doc.push_element(td, "pre", None);
+
+        let tree = margin_quirk_ua_tree("pre { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[pre].margin.top,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[pre].margin.bottom,
+            ComputedLengthPercentageOrAuto::Px(16.0),
+            "rule 3 only zeroes margin-block-start, not margin-block-end"
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_rule4_zeroes_end_for_p_last_child_of_td_even_when_not_blank() {
+        // `<td>Hello<p>text</p></td>` — `p` has a substantial previous
+        // sibling (rules 1/2 do not apply) and is not blank (rule 3 does
+        // not apply either, it requires blank), but is `p` specifically
+        // and has no substantial following sibling → rule 4 zeroes
+        // margin-bottom regardless of blankness.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let td = doc.push_element(0, "td", None);
+        doc.push_text(td, "Hello");
+        let p = doc.push_element(td, "p", None);
+        doc.push_text(p, "text");
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(16.0),
+            "no rule zeroes margin-top here"
+        );
+        assert_eq!(
+            r.computed[p].margin.bottom,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_th_parent_triggers_rule4_same_as_td() {
+        // Same fixture as
+        // `margin_collapsing_quirk_rule4_zeroes_end_for_p_last_child_of_td_even_when_not_blank`
+        // but with a `th` container instead of `td` — every other test in
+        // this group uses `td` for the `td`/`th`-only rules (3 and 4), so
+        // this pins that the `th` half of that `is_td_or_th` check is
+        // exercised too.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let th = doc.push_element(0, "th", None);
+        doc.push_text(th, "Hello");
+        let p = doc.push_element(th, "p", None);
+        doc.push_text(p, "text");
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(16.0)
+        );
+        assert_eq!(
+            r.computed[p].margin.bottom,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_container_that_is_not_body_td_th_does_not_gate_at_all() {
+        // `<div><p>text</p></div>` — `p` is the first (only) child of a
+        // `div`, which is none of `body`/`td`/`th`, so none of the four
+        // rules can apply (rules 1/2 require a `body`/`td`/`th` parent;
+        // rules 3/4 require `td`/`th` specifically) — the
+        // `!is_body && !is_td_or_th` early-return path.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let div = doc.push_element(0, "div", None);
+        let p = doc.push_element(div, "p", None);
+        doc.push_text(p, "text");
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(16.0),
+            "a div container (neither body nor td/th) must never trigger any \
+             margin-collapsing-quirks rule"
+        );
+        assert_eq!(
+            r.computed[p].margin.bottom,
+            ComputedLengthPercentageOrAuto::Px(16.0)
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_rules_3_and_4_are_td_th_only_not_body() {
+        // `<body>Hello<p></p></body>` — `p` is blank and has no
+        // substantial following sibling, which would trigger rule 3 (if
+        // blank+trailing were enough regardless of parent) or rule 4 (if
+        // it applied to any parent) — but rules 3/4 are gated on a
+        // `td`/`th` parent specifically, and `body` must not qualify.
+        // Rule 1/2 also don't apply here (substantial previous sibling
+        // "Hello"), so nothing should be zeroed.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element(0, "body", None);
+        doc.push_text(body, "Hello");
+        let p = doc.push_element(body, "p", None);
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(16.0)
+        );
+        assert_eq!(
+            r.computed[p].margin.bottom,
+            ComputedLengthPercentageOrAuto::Px(16.0)
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_author_declaration_still_overrides_zeroing() {
+        // The spec frames this as a real UA-origin stylesheet rule
+        // participating in normal cascade, not an unconditional override
+        // — a real author declaration (any specificity) must still be
+        // able to give the element a nonzero margin.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element(0, "body", None);
+        let p = doc.push_element(body, "p", None);
+        doc.push_text(p, "text");
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "p { margin-top: 16px; margin-bottom: 16px; }",
+            Origin::UserAgent,
+        );
+        tree.add_stylesheet("p { margin-top: 5px; }", Origin::Author);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(5.0),
+            "a real author declaration must beat the quirks zeroing regardless of \
+             its specificity, since Origin::Author always outranks Origin::UserAgent"
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_does_not_apply_to_elements_outside_default_margin_list() {
+        // `<body><div>text</div></body>` — `div` is not one of HTML LS
+        // §15.3.9's 17 "elements with default margins", so the quirk
+        // must never fire for it even though it would otherwise satisfy
+        // every structural condition rule 1 checks.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element(0, "body", None);
+        let div = doc.push_element(body, "div", None);
+        doc.push_text(div, "text");
+
+        let tree = margin_quirk_ua_tree("div { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[div].margin.top,
+            ComputedLengthPercentageOrAuto::Px(16.0),
+            "div is not an \"element with default margins\" — must be unaffected"
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_foreign_namespace_element_is_not_gated() {
+        // Same shape as `push_img_dimension_hints`'s own namespace-gate
+        // regression (`foreign_namespace_img_local_name_does_not_get_the_hint`
+        // above) — a foreign-namespace element that merely shares the
+        // local name "p" must not pick up the quirks zeroing, even though
+        // it otherwise satisfies every structural condition rule 1
+        // checks (first child of `body`, no substantial previous
+        // sibling).
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element(0, "body", None);
+        let p = doc.push_element_with_namespace(body, "p", "http://example.com/not-html", &[]);
+        doc.push_text(p, "text");
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(16.0),
+            "a foreign-namespace element sharing the local name \"p\" must not \
+             get the quirks zeroing"
+        );
+    }
+
+    #[test]
+    fn margin_collapsing_quirk_foreign_namespace_parent_is_not_gated() {
+        // Mirror of the previous test on the *parent* side: a
+        // foreign-namespace element sharing the local name "body" must
+        // not count as the real HTML `body` this quirk is scoped to,
+        // even though the child otherwise satisfies every structural
+        // condition rule 1 checks.
+        let mut doc = TestDoc::new();
+        doc.quirks_mode = StyleQuirksMode::Quirks;
+        let body = doc.push_element_with_namespace(0, "body", "http://example.com/not-html", &[]);
+        let p = doc.push_element(body, "p", None);
+        doc.push_text(p, "text");
+
+        let tree = margin_quirk_ua_tree("p { margin-top: 16px; margin-bottom: 16px; }");
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].margin.top,
+            ComputedLengthPercentageOrAuto::Px(16.0),
+            "a foreign-namespace container sharing the local name \"body\" must \
+             not count as the real body/td/th for the quirk"
+        );
     }
 }
