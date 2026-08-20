@@ -10,8 +10,10 @@
  *
  * Scope: the minimal rule set required for a hello-world visual
  * regression test (<p style="color:red">Hi</p> → PNG) to succeed. Form
- * controls, margins, <pre>'s display, and <table> presentation are
- * deliberately deferred.
+ * controls, <pre>'s display, and <table> presentation are deliberately
+ * deferred. Margins are only partially landed (`hr` and the
+ * `blockquote`/`figure`/`listing`/`p`/`plaintext`/`pre`/`xmp` group below)
+ * — most other elements' margins (headings, lists, etc.) remain deferred.
  */
 
 /* CSS 2.1 App.D — html and body form the initial containing block */
@@ -65,19 +67,19 @@ hr         { display: block; }
  * still expected to render existing documents that use them, not only
  * newly-authored ones.
  *
- * listing/plaintext/xmp's other §flow-content-3 rules are deferred here
- * for different reasons. Their shared `margin-block: 1em` (with
- * blockquote/figure/p/pre) is still deferred, bucketed with this file's
- * existing margins deferral (see file header). Their other shared rule,
- * HTML LS §flow-content-3's `font-family: monospace; white-space: pre`
- * (with pre), is no longer bucketed wholesale — see the `listing,
- * plaintext, pre, xmp` rule near `code, kbd, samp, tt` below for the
- * split between what now lands and what remains deferred.
- *
  * address's separate §flow-content-3 rule, `address { font-style:
  * italic; }`, now lands too — folded into the `address, cite, dfn, em, i,
  * var` rule near `mark`/`ins, u` below, alongside the identical
- * declaration HTML LS §phrasing-content-3 specifies for cite/dfn/em/i/var. */
+ * declaration HTML LS §phrasing-content-3 specifies for cite/dfn/em/i/var.
+ *
+ * listing/plaintext/xmp's other §flow-content-3 rules have landed too.
+ * Their shared `margin-block: 1em` (with blockquote/figure/p/pre) is no
+ * longer deferred — see the `blockquote, figure, listing, p, plaintext,
+ * pre, xmp` rule near `hr` below. Their other shared rule, HTML LS
+ * §flow-content-3's `font-family: monospace; white-space: pre` (with
+ * pre), is no longer bucketed wholesale either — see the `listing,
+ * plaintext, pre, xmp` rule near `code, kbd, samp, tt` below for the
+ * split between what now lands and what remains deferred. */
 address   { display: block; }
 center    { display: block; }
 listing   { display: block; }
@@ -163,6 +165,65 @@ li { display: block; }
  * first, same "implement the fallback, track the gap" precedent as the li
  * display:list-item fallback above. */
 hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
+
+/* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) also
+ * specifies:
+ *   blockquote, figure, listing, p, plaintext, pre, xmp {
+ *     margin-block: 1em;
+ *   }
+ *   blockquote, figure { margin-inline: 40px; }
+ * — two separate rules, not one combined declaration the way hr's own
+ * margin-block/margin-inline pair above is.
+ *
+ * margin-block is a logical property raikiri-style does not implement
+ * (property.rs's parse_value has no "margin-block"/"margin-inline" arm at
+ * all, only the margin-{top,right,bottom,left} physical longhands and the
+ * physical `margin` shorthand). raikiri-style also has no writing-mode
+ * support, so physical block axis == logical block axis unconditionally
+ * here. Unlike hr's margin rule above, this substitution needs no
+ * auto-symmetry argument: margin-block never touches the inline axis at
+ * all, so `margin-top: 1em; margin-bottom: 1em;` below is an exact,
+ * complete substitution for it, not an approximation.
+ *
+ * The `margin-inline: 40px` rule for blockquote/figure is a genuinely
+ * separate declaration and stays deferred here. That is why the two
+ * physical longhands are used directly below instead of the `margin`
+ * shorthand's 2-value form (`margin: 1em 0`): the shorthand would also
+ * explicitly set margin-left/margin-right to 0, which happens to already
+ * be blockquote/figure's current (CSS-initial) value but is not the
+ * spec-correct one — same "nothing here for a shorthand to reset that a
+ * narrower longhand-only rule wouldn't already leave alone" shape as
+ * `background-color: yellow` standing in for the unimplemented
+ * `background` shorthand below, except here it guards against a false
+ * completeness claim on the still-deferred `margin-inline: 40px` rule,
+ * rather than the background case's simple absence of any other
+ * implemented sub-property to reset. For listing/p/plaintext/pre/xmp,
+ * which have no margin-inline rule of their own, margin-left/right
+ * staying at CSS-initial 0 already matches spec either way.
+ *
+ * pre itself still has no `display: block` rule anywhere in this file
+ * (see file header's `<pre>` scope note) — a separate, pre-existing gap
+ * this margin rule does not touch or depend on.
+ *
+ * HTML LS §15.3.9 "Margin collapsing quirks" separately requires, in
+ * quirks mode, that "elements with default margins" (its own defined
+ * list: blockquote, dir, dl, h1-h6, listing, menu, ol, p, plaintext, pre,
+ * ul, xmp — six of this rule's seven selector members, all but figure)
+ * have `margin-block-start` (and, when the element is "blank" — contains
+ * no substantial child — also `margin-block-end`) zeroed by a UA rule
+ * when the element is a body/td/th child with no substantial previous
+ * sibling. raikiri-dom does thread quirks-mode detection through to the
+ * cascade (`StyleDom::quirks_mode()` / `StyleQuirksMode` in cascade.rs),
+ * but only selector case-sensitivity (`Component::ID`/`Component::Class`
+ * matching) consults it — no margin rule here or elsewhere is gated on
+ * it, and the "substantial previous/following sibling" and "blank"
+ * structural predicates §15.3.9 needs have no equivalent this file's
+ * plain selector matching could express regardless. This gap predates
+ * this rule (quirks-mode CSS-initial 0 happened to already coincide with
+ * the spec-mandated zeroed value while no margin rule existed at all for
+ * these elements) but is a real, unimplemented case now that a nonzero
+ * margin-block-start actually lands. */
+blockquote, figure, listing, p, plaintext, pre, xmp { margin-top: 1em; margin-bottom: 1em; }
 
 /* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.4) specifies,
  * for hyperlink elements:
