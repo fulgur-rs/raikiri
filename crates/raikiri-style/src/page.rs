@@ -2022,6 +2022,20 @@ fn absolutize_in_page_context(
         PropertyValue::LineHeight(lh) => PropertyValue::LineHeight(lift_line_height(
             resolve_line_height(lh, font_size, ctx.root_line_height, ctx),
         )),
+        // ── text-indent ───────────────────────────────────────────────────
+        // CSS Text 3 §8.1 — same `<length-percentage>` absolutization shape
+        // as `padding-top` (`lp` helper above). The fact that this property
+        // is *inherited* at the element cascade layer doesn't change this
+        // function's job: `value` already arrived through
+        // `resolve_against_inherited` (this arm is phase 3, run after phase
+        // 2), so by this point it is this page context's own winner (or a
+        // value already carried through inheritance) — either way, just a
+        // `Length` that needs absolutizing against this context's own
+        // `font_size`/`own_line_height` basis, same as every other box
+        // property here.
+        PropertyValue::TextIndent(v) => {
+            PropertyValue::TextIndent(lp(v, font_size, own_line_height, ctx))
+        }
         // ── padding ───────────────────────────────────────────────────────
         PropertyValue::PaddingTop(v) => {
             PropertyValue::PaddingTop(lp(v, font_size, own_line_height, ctx))
@@ -4142,6 +4156,7 @@ mod tests {
         )])),
         Position => PropertyValue::Position(PositionValue::Static),
         TextAlign => PropertyValue::TextAlign(TextAlign::MatchParent),
+        TextIndent => PropertyValue::TextIndent(Length::Em(2.0)),
         PaddingTop => PropertyValue::PaddingTop(Length::Em(2.0)),
         PaddingRight => PropertyValue::PaddingRight(Length::Em(2.0)),
         PaddingBottom => PropertyValue::PaddingBottom(Length::Em(2.0)),
@@ -4343,6 +4358,7 @@ mod tests {
         StringSet,
         Position,
         TextAlign,
+        TextIndent,
         PaddingTop,
         PaddingRight,
         PaddingBottom,
@@ -4557,7 +4573,8 @@ mod tests {
             // 常に未解決の残滓。`page_corpus` の worst-case
             // payload としても使う。
             PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
-            PropertyValue::PaddingTop(l)
+            PropertyValue::TextIndent(l)
+            | PropertyValue::PaddingTop(l)
             | PropertyValue::PaddingRight(l)
             | PropertyValue::PaddingBottom(l)
             | PropertyValue::PaddingLeft(l)
