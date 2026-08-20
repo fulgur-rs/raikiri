@@ -531,7 +531,26 @@ const MAX_FONT_SIZE_PX: f32 = 1e6;
 /// [`MAX_FONT_SIZE_PX`] と同じ値を採ったのは、typographic に意味のある
 /// line-height multiplier (実用上せいぜい 1 桁台) から見て両方とも同程度に
 /// 過大な安全域だから。
+///
+/// # 結合の compile-time pin
+///
+/// 上記の overflow 非発生の論証は「両定数が同じ `1e6`」という結合そのものに
+/// 依存しており、どちらか一方だけを書き換えると崩れる。直下の
+/// `const _: () = assert!(...)` は「積は高々 `1e12`」という上記 paragraph
+/// 自体の関係式を compile time に固定する — `f32::MAX` 直下ではなく現在の
+/// 積そのものを band として pin してあるので、積が**増える**方向にどちらか
+/// の定数を変更すればビルドが落ちる (減る方向は安全域が広がるだけなので
+/// 素通しする)。値だけ緩めて通すのではなく、両定数と overflow 論証を
+/// 併せて見直すこと。[`MAX_FONT_SIZE_PX`] 自身の妥当域は同じ形の pin を
+/// `clamp_limits_are_in_the_documented_range` (test) が別途固定している。
 const MAX_LINE_HEIGHT_NUMBER: f32 = 1e6;
+
+// `f64` で積を取るのは、両定数を `f32` へ丸めた積が `1e12` 境界の
+// どちら側に丸まるかという 1 ULP 未満の差にこの検査を左右させないため
+// (`f32` 同士の積が overflow しても trap せず `+Inf` に飽和するだけで、
+// `+Inf <= 1e12` は正しく false と評価される。ここでの懸念は overflow
+// ではなく丸め境界の精度)。
+const _: () = assert!((MAX_LINE_HEIGHT_NUMBER as f64) * (MAX_FONT_SIZE_PX as f64) <= 1e12);
 
 /// parley に渡す `font-weight` の妥当域下限。
 ///
