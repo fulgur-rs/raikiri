@@ -62,11 +62,13 @@ pub use computed::ComputedValues;
 
 pub mod resolve;
 pub use resolve::{
-    ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedLineHeight, ResolveContext, lift_font_size, lift_length_or_normal,
-    lift_length_percentage, lift_line_height, resolve_border, resolve_font_size,
+    ComputedBorder, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+    ResolveContext, lift_font_size, lift_length_or_normal, lift_length_percentage,
+    lift_line_height, resolve_border, resolve_flex_basis, resolve_font_size,
     resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_line_height, resolve_margin_length_or_auto, used_line_height_length,
+    resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
+    used_line_height_length,
 };
 
 pub mod specified;

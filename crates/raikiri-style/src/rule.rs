@@ -10,8 +10,8 @@ use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
 use crate::property::{
-    Border, Length, LengthOrAuto, OverflowXY, PropertyValue, Sides, TextDecorationShorthand,
-    parse_value,
+    Border, FlexShorthand, GapShorthand, Length, LengthOrAuto, OverflowXY, PlaceContentShorthand,
+    PropertyValue, Sides, TextDecorationShorthand, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -527,7 +527,21 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::BreakInside(_)
         | PropertyValue::Float(_)
         | PropertyValue::Clear(_)
-        | PropertyValue::WhiteSpace(_) => expand_none(d, push),
+        | PropertyValue::WhiteSpace(_)
+        | PropertyValue::FlexDirection(_)
+        | PropertyValue::FlexWrap(_)
+        | PropertyValue::FlexGrow(_)
+        | PropertyValue::FlexShrink(_)
+        | PropertyValue::FlexBasis(_)
+        | PropertyValue::JustifyContent(_)
+        | PropertyValue::AlignContent(_)
+        | PropertyValue::AlignItems(_)
+        | PropertyValue::AlignSelf(_)
+        | PropertyValue::RowGap(_)
+        | PropertyValue::ColumnGap(_) => expand_none(d, push),
+        PropertyValue::Flex(f) => expand_flex(f, d.important, push),
+        PropertyValue::Gap(g) => expand_gap(g, d.important, push),
+        PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),
     }
 }
 
@@ -653,6 +667,64 @@ fn expand_overflow(pair: OverflowXY, important: bool, mut push: impl FnMut(Decla
     });
     push(Declaration {
         value: PropertyValue::OverflowY(pair.y),
+        important,
+    });
+}
+
+/// `flex` shorthand を `flex-grow` / `flex-shrink` / `flex-basis` の 3
+/// longhand に展開する cold helper。margin / padding / border shorthand
+/// precedent と同 pattern — shorthand parser (`property.rs` の
+/// `parse_flex_shorthand`、private fn のため直接 link 不可) が既に
+/// shorthand-local default (grow=1 / shrink=1 / basis=0px) を埋めているため
+/// ([`FlexShorthand`] doc の "Omitted-component defaults" 節参照)、本関数は
+/// 3 field をそのまま 3 declaration に分配するだけでよい。
+#[inline(never)]
+fn expand_flex(f: FlexShorthand, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::FlexGrow(f.grow),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::FlexShrink(f.shrink),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::FlexBasis(f.basis),
+        important,
+    });
+}
+
+/// `gap` shorthand を `row-gap` / `column-gap` の 2 longhand に展開する cold
+/// helper。[`GapShorthand`] doc の 2nd-value-omitted copy 規則は parser 側
+/// (`parse_gap_shorthand`) が既に適用済み — 本関数は 2 field をそのまま 2
+/// declaration に分配するだけでよい。
+#[inline(never)]
+fn expand_gap(g: GapShorthand, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::RowGap(g.row),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::ColumnGap(g.column),
+        important,
+    });
+}
+
+/// `place-content` shorthand を `align-content` / `justify-content` の 2
+/// longhand に展開する cold helper — [`expand_gap`] と同じ shape
+/// ([`PlaceContentShorthand`] doc 参照)。
+#[inline(never)]
+fn expand_place_content(
+    p: PlaceContentShorthand,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::AlignContent(p.align),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::JustifyContent(p.justify),
         important,
     });
 }

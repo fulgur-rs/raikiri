@@ -1599,6 +1599,311 @@ pub enum DisplayValue {
     Grid,
 }
 
+/// `flex-direction` property の value。
+///
+/// CSS Flexible Box Layout Module Level 1 §5.1 "Flex Flow Direction: the
+/// flex-direction property"
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>: value
+/// grammar `row | row-reverse | column | column-reverse`、propdef table
+/// "Initial: row"、"Inherited: no"、"Applies to: flex containers"、
+/// "Computed value: specified keyword"。
+///
+/// `#[non_exhaustive]` — [`DisplayValue`] と同じ forward-compat 契約。
+/// 37n sibling と同じ convention で `Default` を derive しない — 初期化側
+/// ([`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`]) が [`Self::Row`] を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlexDirectionValue {
+    /// `row` — spec initial value。main axis はコンテナの inline axis と
+    /// 同方向 (writing-mode 依存の物理方向解決は本 crate scope 外、
+    /// taffy 側の同 keyword mapping に委譲)。
+    Row,
+    /// `row-reverse` — main axis は `row` の逆方向。
+    RowReverse,
+    /// `column` — main axis はコンテナの block axis と同方向。
+    Column,
+    /// `column-reverse` — main axis は `column` の逆方向。
+    ColumnReverse,
+}
+
+/// `flex-wrap` property の value。
+///
+/// CSS Flexible Box Layout Module Level 1 §5.2 "Flex Line Wrapping: the
+/// flex-wrap property"
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property>: value grammar
+/// `nowrap | wrap | wrap-reverse`、"Initial: nowrap"、"Inherited: no"、
+/// "Applies to: flex containers"、"Computed value: specified keyword"。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlexWrapValue {
+    /// `nowrap` — spec initial value。single-line。
+    NoWrap,
+    /// `wrap` — multi-line、cross-start から cross-end へ積む。
+    Wrap,
+    /// `wrap-reverse` — multi-line、`wrap` と逆順に積む。
+    WrapReverse,
+}
+
+/// `flex-basis` property の specified value。
+///
+/// CSS Flexible Box Layout Module Level 1 §7.2.3 "The flex-basis property"
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-basis-property>: value
+/// grammar `content | <'width'>`、"Initial: auto"、"Inherited: no"、
+/// "Applies to: flex items"、"Computed value: specified keyword or a
+/// computed `<length-percentage>` value"。
+///
+/// `<'width'>` は `width` property (CSS Sizing 3 §3.1.1) と同じ grammar
+/// (`auto | <length-percentage [0,∞]>`) を再利用する旨の spec 記法 —
+/// 本 crate の [`LengthOrAuto`] とほぼ同じ shape だが、`flex-basis` は
+/// それに加え `content` keyword を持つ ("plus the content keyword" —
+/// spec §7.1 の shorthand 解説部より) ため、[`LengthOrAuto`] をそのまま
+/// 再利用せず専用 3-variant enum にする。
+///
+/// # `content` と `auto` の意味差 (spec §7.1 verbatim 要約) — 未解決のまま保持
+///
+/// - `auto`: 宣言要素の main-size property (`width`/`height`) の値を使う。
+///   その値自体も `auto` なら used flex-basis は `content` になる
+///   ("If that value is itself auto, then the used value is content.")。
+/// - `content`: main-size property の値を無視し、常に content-based sizing
+///   (typically max-content 相当) を使う。
+///
+/// 両者は computed 層でも区別を保つ (spec "Computed value: specified
+/// keyword … " — `content` は `auto` に畳まない)。**この区別の実際の
+/// 解決は本 crate の scope 外** — 下流 (raikiri-dom) の taffy bridge は
+/// 両方とも `taffy::Dimension::AUTO` に写像せざるを得ない
+/// (taffy 0.12 の `Dimension` に `content` 相当の variant が無いため)。
+/// bridge 側の scope carving は `crates/raikiri-dom/src/layout.rs` の
+/// `bridge_flex` doc を参照。
+///
+/// `#[non_exhaustive]` — 37n sibling [`DisplayValue`] / [`LengthOrAuto`] と
+/// 同じ forward-compat 契約。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FlexBasisValue {
+    /// `auto` — spec initial value。
+    Auto,
+    /// `content` — spec §7.1 "plus the content keyword"。
+    Content,
+    /// `<length-percentage [0,∞]>` — `width` と同じ non-negative constraint
+    /// ([`parse_flex_basis`] doc 参照)。
+    Length(Length),
+}
+
+/// `flex` shorthand の specified value。
+///
+/// CSS Flexible Box Layout Module Level 1 §7.1 "The flex Shorthand"
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-property>: value grammar
+/// `none | [ <'flex-grow'> <'flex-shrink'>? || <'flex-basis'> ]`、
+/// "Initial: 0 1 auto"、"Inherited: no"、"Applies to: flex items"。
+///
+/// `none` は独立した exclusive keyword (`0 0 auto` と等価) であり、本 struct
+/// では 3-field 展開後の値として表現する ([`parse_flex_shorthand`] doc の
+/// "`none`" 節参照) — grammar 上 別 branch だが構造化後は他の 3-value 形と
+/// 区別する必要がない。
+///
+/// # Omitted-component defaults は longhand の initial 値と**異なる**
+///
+/// spec 本文 verbatim (§7.1 "The flex property specifies…" 直後の Note):
+///
+/// > The initial values of the flex longhands are equivalent to
+/// > `flex: 0 1 auto`. This differs from their defaults when omitted in the
+/// > flex shorthand (effectively `1 1 0px`) so that the flex shorthand can
+/// > better accommodate the most common cases.
+///
+/// すなわち shorthand 内で成分を省略した場合の default は
+/// **grow=1 / shrink=1 / basis=0px** であり、`flex-grow`/`flex-shrink`/
+/// `flex-basis` 各 longhand 自身の initial 値 (0 / 1 / auto) とは異なる。
+/// [`parse_flex_shorthand`] がこの shorthand-local default を適用する。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlexShorthand {
+    /// [`Self`] doc 参照 — `<'flex-grow'>` 成分、省略時 1.0。
+    pub grow: f32,
+    /// [`Self`] doc 参照 — `<'flex-shrink'>` 成分、省略時 1.0。
+    pub shrink: f32,
+    /// [`Self`] doc 参照 — `<'flex-basis'>` 成分、省略時 `Length(Length::Px(0.0))`。
+    pub basis: FlexBasisValue,
+}
+
+/// `justify-content` / `align-content` 共有 value ("content-distribution"
+/// alignment)。
+///
+/// CSS Box Alignment Module Level 3 §5.1 "The justify-content and
+/// align-content Properties" propdef `justify-content`
+/// <https://www.w3.org/TR/css-align-3/#propdef-justify-content> / propdef
+/// `align-content` <https://www.w3.org/TR/css-align-3/#propdef-align-content>
+/// (両 propdef とも同じ §5.1 に同居する — 2 property を 1 節で定義する spec の
+/// 構成そのものが、本 crate が両者に 1 型を共有する判断を後押しする):
+/// 両者とも "Initial: normal"、"Inherited: no"、"Computed value: specified
+/// keyword(s)"。両 grammar は下記の scope carving を除き同型
+/// (`<content-distribution>` = §4.3 `space-between | space-around |
+/// space-evenly | stretch`、`<content-position>` = §4.1
+/// `center | start | end | flex-start | flex-end`) なので 1 型を共有する
+/// (`AlignItemsKeyword`/`AlignContentKeyword` を分けた precedent の逆 —
+/// grammar が実質同一なら共有する、という同じ判断原則の適用)。
+///
+/// # Scope carving
+///
+/// - **(b) 非対応**: `<overflow-position>` (`safe`/`unsafe` prefix、§4.4) は
+///   未実装 — parser はそれらの prefix を受理せず、prefix 付き宣言全体を
+///   drop する (`safe center` のような 2-token 列は `parse_content_alignment`
+///   の単一 keyword match に一致しないため自然に `None`)。
+/// - **(b) 非対応**: `<baseline-position>` (`first`?/`last`? `baseline`、
+///   `align-content` のみの grammar 分岐) は未実装 — taffy 0.12 の
+///   `AlignContent`/`JustifyContent` (共に `alignment::AlignContentKeyword`
+///   ベース) に `Baseline` variant が無く、taffy 側で表現不可能なため。
+/// - **(a) spec-invalid for this pair**: `justify-content` 独自の
+///   `left`/`right` 拡張 (`<content-position> | left | right`、writing-mode
+///   相対 keyword) は未実装 — taffy に対応 variant が無い。
+///
+/// 3 点とも「本 crate が値を捏造しない」原則により **silent drop** (parse
+/// failure → declaration 全体 drop) で扱う。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContentAlignmentValue {
+    /// `normal` — spec initial value。box alignment の "context に応じた
+    /// default" — その意味は `align-content` と `justify-content` とで
+    /// 異なる: flex の `align-content: normal` は [`Self::Stretch`] 相当
+    /// (複数行が cross axis を埋める) だが、`justify-content: normal` は
+    /// `flex-start` 相当 (main axis 上で詰めて配置、stretch する軸ではない)。
+    /// taffy bridge 側はどちらも `None` へ mapping し、taffy 自身の
+    /// field 別 default resolution に委ねる (`crates/raikiri-dom/src/layout.rs`
+    /// の `content_alignment_to_taffy` 参照)。
+    Normal,
+    /// `stretch` — CSS Box Alignment 3 §4.3 `<content-distribution>`。
+    Stretch,
+    /// `space-between` — `<content-distribution>`。
+    SpaceBetween,
+    /// `space-evenly` — `<content-distribution>`。
+    SpaceEvenly,
+    /// `space-around` — `<content-distribution>`。
+    SpaceAround,
+    /// `center` — CSS Box Alignment 3 §4.1 `<content-position>`。
+    Center,
+    /// `start` — `<content-position>`。
+    Start,
+    /// `end` — `<content-position>`。
+    End,
+    /// `flex-start` — `<content-position>`。
+    FlexStart,
+    /// `flex-end` — `<content-position>`。
+    FlexEnd,
+}
+
+/// `align-items` value ("self-alignment" — CSS Box Alignment 3 §4.1
+/// `<self-position>` を軸にした keyword set)。
+///
+/// CSS Box Alignment Module Level 3 §7.2 "Block-Axis (or Cross-Axis)
+/// Default Alignment: the align-items property" propdef `align-items`
+/// <https://www.w3.org/TR/css-align-3/#propdef-align-items>: value grammar
+/// `normal | stretch | <baseline-position> | <overflow-position>?
+/// <self-position>`、"Initial: normal"、"Inherited: no"、"Applies to: all
+/// elements"、"Computed value: specified keyword(s)"。
+///
+/// `align-self` (§6.2) はこの enum を [`AlignSelfValue::Value`] 経由で再利用する
+/// — grammar は `align-items` の全 keyword を含んだ上で `auto` を追加するため
+/// (共有型 + wrapper の precedent、[`FlexBasisValue`] が `LengthOrAuto` を
+/// 再利用せず専用 enum にしたのとは逆方向の判断だが、いずれも「共有できる
+/// grammar 部分だけを 1 型に切り出す」原則の適用)。
+///
+/// # Scope carving
+///
+/// - **(b) 非対応**: `<overflow-position>` (`safe`/`unsafe` prefix) は
+///   未実装、[`ContentAlignmentValue`] と同じ scope carving。
+/// - **(b) 非対応**: `self-start`/`self-end` (`<self-position>` の一部、
+///   writing-mode 相対 keyword) は未実装 — taffy `AlignItemsKeyword` に
+///   対応 variant が無いため。
+/// - **(b) 非対応**: `<baseline-position>` の `first`/`last` prefix は
+///   未実装 — taffy `AlignItemsKeyword::Baseline` は prefix 区別を持たない
+///   ("first" が既定、spec §9 "Fallback Alignment" 相当の細分化は非対応)。
+///   bare `baseline` keyword のみ受理する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelfAlignmentValue {
+    /// `normal` — spec initial value。
+    Normal,
+    /// `stretch`。
+    Stretch,
+    /// `center` — `<self-position>`。
+    Center,
+    /// `start` — `<self-position>`。
+    Start,
+    /// `end` — `<self-position>`。
+    End,
+    /// `flex-start` — `<self-position>`。
+    FlexStart,
+    /// `flex-end` — `<self-position>`。
+    FlexEnd,
+    /// `baseline` — `<baseline-position>` (prefix 非対応、[`Self`] doc 参照)。
+    Baseline,
+}
+
+/// `align-self` property の value。
+///
+/// CSS Box Alignment Module Level 3 §6.2 "Block-Axis (or Cross-Axis)
+/// Self-Alignment: the align-self property" propdef `align-self`
+/// <https://www.w3.org/TR/css-align-3/#propdef-align-self>: value grammar
+/// `auto | <overflow-position>? [ normal | <self-position> ] | stretch |
+/// <baseline-position>`、"Initial: auto"、"Inherited: no"、"Applies to:
+/// flex items, grid items, and absolutely-positioned boxes"、"Computed
+/// value: specified keyword(s)"。
+///
+/// `auto` 以外の全 keyword は [`SelfAlignmentValue`] (= `align-items` の
+/// grammar) と同一 — [`Self`] doc の共有 rationale 参照。
+///
+/// `#[non_exhaustive]` — 37n sibling [`SelfAlignmentValue`] と同じ
+/// forward-compat 契約。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlignSelfValue {
+    /// `auto` — spec initial value。CSS Box Alignment 3 §6.2 `valdef-align-
+    /// self-auto` (verbatim ではない要約): 親の computed `align-items` 値
+    /// (legacy keyword 除く) として振る舞う — 実際の fallback 解決は本 crate
+    /// scope 外、taffy 側 (`Option<AlignSelf> = None` → 親の `align_items`
+    /// へ fallback) に委譲する。
+    Auto,
+    /// `auto` 以外の明示 keyword — [`SelfAlignmentValue`] をそのまま再利用。
+    Value(SelfAlignmentValue),
+}
+
+/// `gap` shorthand の specified value。
+///
+/// CSS Box Alignment Module Level 3 §8.2 "Gap Shorthand: the gap property"
+/// propdef `gap`
+/// <https://www.w3.org/TR/css-align-3/#propdef-gap>: value grammar
+/// `<'row-gap'> <'column-gap'>?`、"Initial: see individual properties"、
+/// "Inherited: no"。第 2 成分省略時は第 1 成分の値をそのまま copy する
+/// (spec 本文: "If column-gap is omitted, it's set to the same value as
+/// row-gap.")。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GapShorthand {
+    /// `row-gap` 成分。
+    pub row: LengthOrNormal,
+    /// `column-gap` 成分 — 省略時は `row` と同値 ([`parse_gap_shorthand`] 参照)。
+    pub column: LengthOrNormal,
+}
+
+/// `place-content` shorthand の specified value。
+///
+/// CSS Box Alignment Module Level 3 §5.2 "Content-Distribution Shorthand:
+/// the place-content property" propdef `place-content`
+/// <https://www.w3.org/TR/css-align-3/#propdef-place-content>: value
+/// grammar `<'align-content'> <'justify-content'>?`、"Initial: normal"、
+/// "Inherited: no"。第 2 成分省略時は第 1 成分の値をそのまま copy する
+/// spec 規則の例外 ("unless that value is a `<baseline-position>` in which
+/// case it is defaulted to `start`") は本 crate では到達不能 — 本 crate の
+/// [`ContentAlignmentValue`] は `<baseline-position>` variant 自体を持たない
+/// ([`ContentAlignmentValue`] doc の scope carving 節参照) ため、"copy from
+/// first value" 分岐のみが常に成立する。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlaceContentShorthand {
+    /// `align-content` 成分。
+    pub align: ContentAlignmentValue,
+    /// `justify-content` 成分 — 省略時は `align` と同値
+    /// ([`parse_place_content_shorthand`] 参照、[`Self`] doc の例外注記も参照)。
+    pub justify: ContentAlignmentValue,
+}
+
 /// `box-sizing` property の value。
 ///
 /// CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
@@ -3678,6 +3983,70 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     WhiteSpace(WhiteSpace),
+    /// `flex-direction: row | row-reverse | column | column-reverse` —
+    /// non-inherited、initial: [`FlexDirectionValue::Row`]
+    /// ([`FlexDirectionValue`] doc 参照)。
+    FlexDirection(FlexDirectionValue),
+    /// `flex-wrap: nowrap | wrap | wrap-reverse` — non-inherited、initial:
+    /// [`FlexWrapValue::NoWrap`] ([`FlexWrapValue`] doc 参照)。
+    FlexWrap(FlexWrapValue),
+    /// `flex-grow: <number [0,∞]>` — non-inherited、initial: `0.0`
+    /// (CSS Flexible Box Layout Module Level 1 §7.2.1
+    /// <https://www.w3.org/TR/css-flexbox-1/#flex-grow-property>)。
+    /// [`parse_nonneg_finite_number`] が `[0,∞]` **と** finiteness を parse
+    /// 時に enforce する ([`ComputedValues::flex_grow`] doc の sink-guard
+    /// 注記参照)。
+    ///
+    /// [`ComputedValues::flex_grow`]: crate::computed::ComputedValues::flex_grow
+    FlexGrow(f32),
+    /// `flex-shrink: <number [0,∞]>` — non-inherited、initial: `1.0`
+    /// (CSS Flexible Box Layout Module Level 1 §7.2.2
+    /// <https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property>)。
+    /// [`Self::FlexGrow`] と同じ parse-time enforcement。
+    FlexShrink(f32),
+    /// `flex-basis: content | <'width'>` — non-inherited、initial:
+    /// [`FlexBasisValue::Auto`] ([`FlexBasisValue`] doc 参照)。
+    FlexBasis(FlexBasisValue),
+    /// `flex: none | [ <'flex-grow'> <'flex-shrink'>? || <'flex-basis'> ]`
+    /// shorthand — non-inherited、initial: `0 1 auto`
+    /// ([`FlexShorthand`] doc 参照)。[`crate::rule::expand_shorthand_into`]
+    /// が [`Self::FlexGrow`] / [`Self::FlexShrink`] / [`Self::FlexBasis`] の
+    /// 3 longhand に展開するため、element cascade 段には通常到達しない
+    /// (`Self::Margin` 等の shorthand precedent と同じ shape)。
+    Flex(FlexShorthand),
+    /// `justify-content` — non-inherited、initial:
+    /// [`ContentAlignmentValue::Normal`] ([`ContentAlignmentValue`] doc 参照)。
+    JustifyContent(ContentAlignmentValue),
+    /// `align-content` — non-inherited、initial:
+    /// [`ContentAlignmentValue::Normal`]。[`Self::JustifyContent`] と同じ
+    /// payload 型を共有する ([`ContentAlignmentValue`] doc 参照)。
+    AlignContent(ContentAlignmentValue),
+    /// `align-items` — non-inherited、initial:
+    /// [`SelfAlignmentValue::Normal`] ([`SelfAlignmentValue`] doc 参照)。
+    AlignItems(SelfAlignmentValue),
+    /// `align-self` — non-inherited、initial: [`AlignSelfValue::Auto`]
+    /// ([`AlignSelfValue`] doc 参照)。
+    AlignSelf(AlignSelfValue),
+    /// `row-gap: normal | <length-percentage [0,∞]>` — non-inherited、
+    /// initial: [`LengthOrNormal::Normal`] (CSS Box Alignment Module Level 3
+    /// §8.1 <https://www.w3.org/TR/css-align-3/#propdef-row-gap>)。
+    /// [`LengthOrNormal`] を再利用する ([`parse_gap_value`] doc 参照 —
+    /// `letter-spacing`/`word-spacing` とは異なり percentage を受理する点に
+    /// 注意)。
+    RowGap(LengthOrNormal),
+    /// `column-gap: normal | <length-percentage [0,∞]>` — non-inherited、
+    /// initial: [`LengthOrNormal::Normal`]。[`Self::RowGap`] と同じ grammar。
+    ColumnGap(LengthOrNormal),
+    /// `gap: <'row-gap'> <'column-gap'>?` shorthand — non-inherited、initial:
+    /// "see individual properties" ([`GapShorthand`] doc 参照)。
+    /// [`crate::rule::expand_shorthand_into`] が [`Self::RowGap`] /
+    /// [`Self::ColumnGap`] の 2 longhand に展開する。
+    Gap(GapShorthand),
+    /// `place-content: <'align-content'> <'justify-content'>?` shorthand —
+    /// non-inherited、initial: `normal` ([`PlaceContentShorthand`] doc 参照)。
+    /// [`crate::rule::expand_shorthand_into`] が [`Self::AlignContent`] /
+    /// [`Self::JustifyContent`] の 2 longhand に展開する。
+    PlaceContent(PlaceContentShorthand),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -3882,6 +4251,35 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::WhiteSpace の doc 参照。
     WhiteSpace,
+    // flex-* container/item longhands + `flex` shorthand (CSS Flexible Box
+    // Layout Module Level 1 §5.1/§5.2/§7.2.1/§7.2.2/§7.2.3/§7.1, semantics
+    // on the matching PropertyValue::Flex* variants; sibling PropertyKey
+    // variants carry no per-variant docs per crate convention). Shorthand
+    // key (`Flex`) placed after its 3 longhands, same convention as
+    // `Margin`/`Padding`/`Border`.
+    FlexDirection,
+    FlexWrap,
+    FlexGrow,
+    FlexShrink,
+    FlexBasis,
+    Flex,
+    // justify-content / align-content (CSS Box Alignment Module Level 3
+    // §5.1) / align-items (§7.2) / align-self (§6.2), semantics on the
+    // matching PropertyValue::* variants; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention.
+    JustifyContent,
+    AlignContent,
+    AlignItems,
+    AlignSelf,
+    // row-gap / column-gap longhands (CSS Box Alignment Module Level 3
+    // §8.1) + `gap` shorthand (§8.2). Shorthand key (`Gap`) placed after
+    // its 2 longhands, same convention as `Margin`/`Padding`/`Border`.
+    RowGap,
+    ColumnGap,
+    Gap,
+    // `place-content` shorthand (CSS Box Alignment Module Level 3 §5.2) —
+    // both longhands (`AlignContent`/`JustifyContent`) declared above.
+    PlaceContent,
 }
 
 impl PropertyValue {
@@ -3960,6 +4358,20 @@ impl PropertyValue {
             PropertyValue::Float(_) => PropertyKey::Float,
             PropertyValue::Clear(_) => PropertyKey::Clear,
             PropertyValue::WhiteSpace(_) => PropertyKey::WhiteSpace,
+            PropertyValue::FlexDirection(_) => PropertyKey::FlexDirection,
+            PropertyValue::FlexWrap(_) => PropertyKey::FlexWrap,
+            PropertyValue::FlexGrow(_) => PropertyKey::FlexGrow,
+            PropertyValue::FlexShrink(_) => PropertyKey::FlexShrink,
+            PropertyValue::FlexBasis(_) => PropertyKey::FlexBasis,
+            PropertyValue::Flex(_) => PropertyKey::Flex,
+            PropertyValue::JustifyContent(_) => PropertyKey::JustifyContent,
+            PropertyValue::AlignContent(_) => PropertyKey::AlignContent,
+            PropertyValue::AlignItems(_) => PropertyKey::AlignItems,
+            PropertyValue::AlignSelf(_) => PropertyKey::AlignSelf,
+            PropertyValue::RowGap(_) => PropertyKey::RowGap,
+            PropertyValue::ColumnGap(_) => PropertyKey::ColumnGap,
+            PropertyValue::Gap(_) => PropertyKey::Gap,
+            PropertyValue::PlaceContent(_) => PropertyKey::PlaceContent,
         }
     }
 }
@@ -4264,6 +4676,49 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // carving" section). initial `normal`, inherited, computed value =
         // specified keyword.
         "white-space" => parse_white_space(input).map(PropertyValue::WhiteSpace),
+        // CSS Flexible Box Layout Module Level 1 §5.1
+        // <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>.
+        "flex-direction" => parse_flex_direction(input).map(PropertyValue::FlexDirection),
+        // CSS Flexible Box Layout Module Level 1 §5.2
+        // <https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property>.
+        "flex-wrap" => parse_flex_wrap(input).map(PropertyValue::FlexWrap),
+        // CSS Flexible Box Layout Module Level 1 §7.2.1
+        // <https://www.w3.org/TR/css-flexbox-1/#flex-grow-property>.
+        "flex-grow" => parse_nonneg_finite_number(input).map(PropertyValue::FlexGrow),
+        // CSS Flexible Box Layout Module Level 1 §7.2.2
+        // <https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property>.
+        "flex-shrink" => parse_nonneg_finite_number(input).map(PropertyValue::FlexShrink),
+        // CSS Flexible Box Layout Module Level 1 §7.2.3
+        // <https://www.w3.org/TR/css-flexbox-1/#flex-basis-property>.
+        "flex-basis" => parse_flex_basis(input).map(PropertyValue::FlexBasis),
+        // CSS Flexible Box Layout Module Level 1 §7.1 "The flex Shorthand"
+        // <https://www.w3.org/TR/css-flexbox-1/#flex-property>.
+        "flex" => parse_flex_shorthand(input).map(PropertyValue::Flex),
+        // CSS Box Alignment Module Level 3 §5.1
+        // <https://www.w3.org/TR/css-align-3/#propdef-justify-content>.
+        "justify-content" => parse_content_alignment(input).map(PropertyValue::JustifyContent),
+        // CSS Box Alignment Module Level 3 §5.1
+        // <https://www.w3.org/TR/css-align-3/#propdef-align-content>.
+        "align-content" => parse_content_alignment(input).map(PropertyValue::AlignContent),
+        // CSS Box Alignment Module Level 3 §7.2
+        // <https://www.w3.org/TR/css-align-3/#propdef-align-items>.
+        "align-items" => parse_self_alignment(input).map(PropertyValue::AlignItems),
+        // CSS Box Alignment Module Level 3 §6.2
+        // <https://www.w3.org/TR/css-align-3/#propdef-align-self>.
+        "align-self" => parse_align_self(input).map(PropertyValue::AlignSelf),
+        // CSS Box Alignment Module Level 3 §8.1
+        // <https://www.w3.org/TR/css-align-3/#propdef-row-gap>.
+        "row-gap" => parse_gap_value(input).map(PropertyValue::RowGap),
+        // CSS Box Alignment Module Level 3 §8.1
+        // <https://www.w3.org/TR/css-align-3/#propdef-column-gap>.
+        "column-gap" => parse_gap_value(input).map(PropertyValue::ColumnGap),
+        // CSS Box Alignment Module Level 3 §8.2 "Gap Shorthand: the gap
+        // property"
+        // <https://www.w3.org/TR/css-align-3/#propdef-gap>.
+        "gap" => parse_gap_shorthand(input).map(PropertyValue::Gap),
+        // CSS Box Alignment Module Level 3 §5.2
+        // <https://www.w3.org/TR/css-align-3/#propdef-place-content>.
+        "place-content" => parse_place_content_shorthand(input).map(PropertyValue::PlaceContent),
         _ => None,
     }
 }
@@ -5503,6 +5958,301 @@ fn parse_letter_or_word_spacing(input: &mut Parser<'_, '_>) -> Option<LengthOrNo
     // 2. `<length>` — percentage 非対応 (`allow_percentage = false`)、sign は
     //    制限しない (上記 doc "Negative length は許容" 節)。
     parse_length_value(input, false).map(LengthOrNormal::Length)
+}
+
+/// `flex-direction: row | row-reverse | column | column-reverse` を parse
+/// する (CSS Flexible Box Layout Module Level 1 §5.1
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>)。
+/// [`parse_display`] と同じ single-ident ASCII case-insensitive idiom。
+fn parse_flex_direction(input: &mut Parser<'_, '_>) -> Option<FlexDirectionValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "row" => Some(FlexDirectionValue::Row),
+        "row-reverse" => Some(FlexDirectionValue::RowReverse),
+        "column" => Some(FlexDirectionValue::Column),
+        "column-reverse" => Some(FlexDirectionValue::ColumnReverse),
+        _ => None,
+    }
+}
+
+/// `flex-wrap: nowrap | wrap | wrap-reverse` を parse する (CSS Flexible Box
+/// Layout Module Level 1 §5.2
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property>)。
+fn parse_flex_wrap(input: &mut Parser<'_, '_>) -> Option<FlexWrapValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "nowrap" => Some(FlexWrapValue::NoWrap),
+        "wrap" => Some(FlexWrapValue::Wrap),
+        "wrap-reverse" => Some(FlexWrapValue::WrapReverse),
+        _ => None,
+    }
+}
+
+/// `<number [0,∞]>` を parse する — `flex-grow` / `flex-shrink` 共有 helper。
+///
+/// # Non-negative **と** finite の両方を parse 時に enforce する
+///
+/// [`parse_line_height`] の `<number>` branch と同じ `[0,∞]` non-negative
+/// check に加え、本 helper は **finiteness も** enforce する
+/// ([`PropertyValue::FlexGrow`] doc 参照)。これは本 crate の他の length 系
+/// helper (`parse_length_value` 等) とは非対称な判断で、理由は明示しておく:
+/// `padding`/`width` 等の length は raikiri-dom 側の
+/// `sanitize_taffy`/`sanitize_taffy_layout` という **sink 境界の guard** を
+/// 必ず経由してから taffy に渡る (「guard は sink 境界に置く」という本 crate
+/// 全体の設計方針、`crates/raikiri-dom/src/layout.rs` の非有限 f32 guard 節
+/// 参照) ため parse 層では素通しでよい。一方 `flex-grow`/`flex-shrink` は
+/// raikiri-dom の `bridge_flex` が `taffy::Style::flex_grow`/`flex_shrink`
+/// (共に生 `f32`) へ **無変換で直接 copy する** — 途中に絶対化/sink guard の
+/// 通過点が無いため、`+Inf`/`NaN` を防ぐ唯一の場所が本 parse-time check に
+/// なる。`<number [0,∞]>` 自体の f64→f32 変換 (cssparser tokenizer 側) は
+/// 巨大な literal (`flex-grow: 1e40`) で `+Inf` を produce しうる。
+fn parse_nonneg_finite_number(input: &mut Parser<'_, '_>) -> Option<f32> {
+    let n = input.expect_number().ok()?;
+    (n.is_finite() && n >= 0.0).then_some(n)
+}
+
+/// [`parse_nonneg_finite_number`] の `Result` 版 — `try_parse` closure 用
+/// ([`parse_padding_side_res`] と同じ wrapper pattern)。range/finite check
+/// の失敗も `Err` として返すため、`try_parse` が呼び出し側で自動的に
+/// rewind する (捕捉した Number token を別 branch へ fall through させない
+/// — [`parse_line_height`] doc の「Number token を commit した後は必ず
+/// ここで確定させる」節と同じ懸念を、check 自体を closure 内に置くことで
+/// 構造的に回避する)。
+fn parse_nonneg_finite_number_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<f32, ParseError<'i, ()>> {
+    parse_nonneg_finite_number(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `flex-basis: content | <'width'>` を parse する (CSS Flexible Box Layout
+/// Module Level 1 §7.2.3
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-basis-property>)。
+///
+/// [`parse_width`] と同じ 3-branch shape (`auto` → `content` →
+/// `<length-percentage [0,∞]>`) に `content` branch を追加したもの —
+/// [`FlexBasisValue`] doc 参照。
+fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisValue> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(FlexBasisValue::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("content"))
+        .is_ok()
+    {
+        return Some(FlexBasisValue::Content);
+    }
+    let length = parse_length_value(input, true)?;
+    // `<'width'>` reuse: CSS Sizing 3 §3.1.1 の `[0,∞]` non-negative
+    // constraint ([`parse_width`] と同 pattern)。
+    (length_payload(length) >= 0.0).then_some(FlexBasisValue::Length(length))
+}
+
+/// [`parse_flex_basis`] の `Result` 版 ([`parse_padding_side_res`] と同じ
+/// wrapper pattern、[`parse_flex_shorthand`] の `try_parse` 用)。
+fn parse_flex_basis_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<FlexBasisValue, ParseError<'i, ()>> {
+    parse_flex_basis(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `flex: none | [ <'flex-grow'> <'flex-shrink'>? || <'flex-basis'> ]` を
+/// parse する (CSS Flexible Box Layout Module Level 1 §7.1 "The flex
+/// Shorthand" <https://www.w3.org/TR/css-flexbox-1/#flex-property>)。
+///
+/// [`FlexShorthand`] doc の "Omitted-component defaults" 節が説明する
+/// shorthand-local default (grow=1 / shrink=1 / basis=0px、longhand 自身の
+/// initial とは異なる) をここで適用する。
+///
+/// # `none` — exclusive keyword
+///
+/// spec §7.1 "The keyword none expands to 0 0 auto." — 他の component と
+/// 共存しない (grammar top-level alternative)。
+///
+/// # Component order と unitless-zero ambiguity
+///
+/// grammar は `<flex-grow> <flex-shrink>?` の group と `<flex-basis>` の 2
+/// group を `||` (any order、どちらか 1 つ以上) で combine する。本関数は
+/// 最大 3 回のループで両 group を試す —
+/// **`<flex-grow>` group を毎回先に試す**ことで、spec 本文の以下の
+/// disambiguation 規則をそのまま実現する (verbatim):
+///
+/// > A unitless zero that is not already preceded by two flex factors must
+/// > be interpreted as a flex factor. To avoid misinterpretation or invalid
+/// > declarations, authors must specify a zero `<'flex-basis'>` component
+/// > with a unit or precede it by two flex factors.
+///
+/// `grow` が未確定な間は bare `0` を常に number (flex factor) として先取り
+/// consume するため、`flex: 0` は `grow=0` (`<'flex-basis'>` ではない) に
+/// なる。`grow`/`shrink` が両方確定した**後**の bare `0` は
+/// [`parse_flex_basis`] の unitless-zero clause 経由で `flex-basis` として
+/// 解釈される (`flex: 2 3 0` → `basis: Length(Px(0.0))`)。
+///
+/// `<flex-shrink>` は grammar 上 `<flex-grow>` に直接後続する成分であり
+/// (独立した `||` alternative ではない)、本関数もそれに合わせて `grow` を
+/// 得た**直後**にのみ `shrink` を試す。
+///
+/// 5 個目以降の leftover token は本関数では consume せず、[`parse_padding_shorthand`]
+/// 等と同じく caller (`rule.rs::DeclParser`) の `expect_exhausted` が
+/// declaration ごと drop する。
+fn parse_flex_shorthand(input: &mut Parser<'_, '_>) -> Option<FlexShorthand> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(FlexShorthand {
+            grow: 0.0,
+            shrink: 0.0,
+            basis: FlexBasisValue::Auto,
+        });
+    }
+    let mut grow: Option<f32> = None;
+    let mut shrink: Option<f32> = None;
+    let mut basis: Option<FlexBasisValue> = None;
+    for _ in 0..3 {
+        let mut progressed = false;
+        if grow.is_none()
+            && let Ok(g) = input.try_parse(parse_nonneg_finite_number_res)
+        {
+            grow = Some(g);
+            // `<flex-shrink>` は `<flex-grow>` に直接後続する成分 — 独立
+            // alternative としては試さない (上記 doc 参照)。
+            if let Ok(s) = input.try_parse(parse_nonneg_finite_number_res) {
+                shrink = Some(s);
+            }
+            progressed = true;
+        }
+        if !progressed
+            && basis.is_none()
+            && let Ok(b) = input.try_parse(parse_flex_basis_res)
+        {
+            basis = Some(b);
+            progressed = true;
+        }
+        if !progressed {
+            break;
+        }
+    }
+    // grammar 上どちらかの group が最低 1 つは要る — 0-value form
+    // (`flex:` に何も続かない) は invalid。
+    if grow.is_none() && basis.is_none() {
+        return None;
+    }
+    Some(FlexShorthand {
+        // shorthand-local default (`FlexShorthand` doc 参照) — longhand
+        // 自身の initial (grow=0 / basis=auto) とは異なる。
+        grow: grow.unwrap_or(1.0),
+        shrink: shrink.unwrap_or(1.0),
+        basis: basis.unwrap_or(FlexBasisValue::Length(Length::Px(0.0))),
+    })
+}
+
+/// `justify-content` / `align-content` 共有 parser
+/// ([`ContentAlignmentValue`] doc の scope carving 節参照 — `safe`/`unsafe`
+/// prefix、`<baseline-position>`、justify-content 独自の `left`/`right` は
+/// 単一 ident しか consume しない本関数の shape 上、自然に unmatched (2-token
+/// 列や非対応 ident は `_ => None`) になる)。
+fn parse_content_alignment(input: &mut Parser<'_, '_>) -> Option<ContentAlignmentValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(ContentAlignmentValue::Normal),
+        "stretch" => Some(ContentAlignmentValue::Stretch),
+        "space-between" => Some(ContentAlignmentValue::SpaceBetween),
+        "space-evenly" => Some(ContentAlignmentValue::SpaceEvenly),
+        "space-around" => Some(ContentAlignmentValue::SpaceAround),
+        "center" => Some(ContentAlignmentValue::Center),
+        "start" => Some(ContentAlignmentValue::Start),
+        "end" => Some(ContentAlignmentValue::End),
+        "flex-start" => Some(ContentAlignmentValue::FlexStart),
+        "flex-end" => Some(ContentAlignmentValue::FlexEnd),
+        _ => None,
+    }
+}
+
+/// [`parse_content_alignment`] の `Result` 版 ([`parse_padding_side_res`] と
+/// 同じ wrapper pattern、[`parse_place_content_shorthand`] の `try_parse` 用)。
+fn parse_content_alignment_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<ContentAlignmentValue, ParseError<'i, ()>> {
+    parse_content_alignment(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `align-items` parser ([`SelfAlignmentValue`] doc の scope carving 節
+/// 参照)。`align-self` (`auto` を追加で受理する) は [`parse_align_self`] が
+/// 本関数を再利用する。
+fn parse_self_alignment(input: &mut Parser<'_, '_>) -> Option<SelfAlignmentValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(SelfAlignmentValue::Normal),
+        "stretch" => Some(SelfAlignmentValue::Stretch),
+        "center" => Some(SelfAlignmentValue::Center),
+        "start" => Some(SelfAlignmentValue::Start),
+        "end" => Some(SelfAlignmentValue::End),
+        "flex-start" => Some(SelfAlignmentValue::FlexStart),
+        "flex-end" => Some(SelfAlignmentValue::FlexEnd),
+        "baseline" => Some(SelfAlignmentValue::Baseline),
+        _ => None,
+    }
+}
+
+/// `align-self: auto | …` parser — `auto` branch を先に試し
+/// (`try_parse` checkpoint、[`parse_width`] の "Order of alternatives" 節と
+/// 同じ rationale)、それ以外は [`parse_self_alignment`] (= `align-items` と
+/// 同じ keyword set) に delegate する。
+fn parse_align_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(AlignSelfValue::Auto);
+    }
+    parse_self_alignment(input).map(AlignSelfValue::Value)
+}
+
+/// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` 共有
+/// parser (CSS Box Alignment Module Level 3 §8.1
+/// <https://www.w3.org/TR/css-align-3/#propdef-row-gap>)。
+///
+/// [`parse_letter_or_word_spacing`] と shape は同じ (`normal` branch →
+/// length branch) だが、**percentage を受理する**点が異なる
+/// (`allow_percentage = true`、letter-spacing/word-spacing は "Percentages:
+/// N/A" だが gap は `<length-percentage>`)。non-negative constraint は
+/// [`parse_padding_side`] と同 pattern。
+fn parse_gap_value(input: &mut Parser<'_, '_>) -> Option<LengthOrNormal> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("normal"))
+        .is_ok()
+    {
+        return Some(LengthOrNormal::Normal);
+    }
+    let length = parse_length_value(input, true)?;
+    (length_payload(length) >= 0.0).then_some(LengthOrNormal::Length(length))
+}
+
+/// [`parse_gap_value`] の `Result` 版 ([`parse_padding_side_res`] と同じ
+/// wrapper pattern、[`parse_gap_shorthand`] の `try_parse` 用)。
+fn parse_gap_value_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<LengthOrNormal, ParseError<'i, ()>> {
+    parse_gap_value(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `gap: <'row-gap'> <'column-gap'>?` shorthand を parse する (CSS Box
+/// Alignment Module Level 3 §8.2
+/// <https://www.w3.org/TR/css-align-3/#propdef-gap>)。第 2 成分省略時は
+/// spec 本文通り第 1 成分をそのまま copy する ([`GapShorthand`] doc 参照)。
+fn parse_gap_shorthand(input: &mut Parser<'_, '_>) -> Option<GapShorthand> {
+    let row = parse_gap_value(input)?;
+    let column = input.try_parse(parse_gap_value_res).unwrap_or(row);
+    Some(GapShorthand { row, column })
+}
+
+/// `place-content: <'align-content'> <'justify-content'>?` shorthand を
+/// parse する (CSS Box Alignment Module Level 3 §5.2
+/// <https://www.w3.org/TR/css-align-3/#propdef-place-content>)。第 2 成分
+/// 省略時は spec 本文通り第 1 成分をそのまま copy する
+/// ([`PlaceContentShorthand`] doc 参照 — `<baseline-position>` 例外分岐は
+/// [`ContentAlignmentValue`] が同 variant を持たないため本 crate では
+/// 到達不能)。
+fn parse_place_content_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceContentShorthand> {
+    let align = parse_content_alignment(input)?;
+    let justify = input
+        .try_parse(parse_content_alignment_res)
+        .unwrap_or(align);
+    Some(PlaceContentShorthand { align, justify })
 }
 
 /// `font-weight: <font-weight-absolute> | bolder | lighter` を parse する。
@@ -13593,5 +14343,556 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::Height);
         let v = PropertyValue::Height(LengthOrAuto::Length(Length::Px(100.0)));
         assert_eq!(v.key(), PropertyKey::Height);
+    }
+
+    // ── flex-direction (CSS Flexible Box Layout Module Level 1 §5.1) ────
+
+    #[test]
+    fn flex_direction_parse_all_keywords() {
+        assert_eq!(
+            parse("row", "flex-direction"),
+            Some(PropertyValue::FlexDirection(FlexDirectionValue::Row))
+        );
+        assert_eq!(
+            parse("row-reverse", "flex-direction"),
+            Some(PropertyValue::FlexDirection(FlexDirectionValue::RowReverse))
+        );
+        assert_eq!(
+            parse("column", "flex-direction"),
+            Some(PropertyValue::FlexDirection(FlexDirectionValue::Column))
+        );
+        assert_eq!(
+            parse("column-reverse", "flex-direction"),
+            Some(PropertyValue::FlexDirection(
+                FlexDirectionValue::ColumnReverse
+            ))
+        );
+    }
+
+    #[test]
+    fn flex_direction_case_insensitive() {
+        assert_eq!(
+            parse("ROW-REVERSE", "flex-direction"),
+            Some(PropertyValue::FlexDirection(FlexDirectionValue::RowReverse))
+        );
+    }
+
+    #[test]
+    fn flex_direction_rejects_unknown_ident() {
+        assert_eq!(parse("diagonal", "flex-direction"), None);
+    }
+
+    // ── flex-wrap (CSS Flexible Box Layout Module Level 1 §5.2) ─────────
+
+    #[test]
+    fn flex_wrap_parse_all_keywords() {
+        assert_eq!(
+            parse("nowrap", "flex-wrap"),
+            Some(PropertyValue::FlexWrap(FlexWrapValue::NoWrap))
+        );
+        assert_eq!(
+            parse("wrap", "flex-wrap"),
+            Some(PropertyValue::FlexWrap(FlexWrapValue::Wrap))
+        );
+        assert_eq!(
+            parse("wrap-reverse", "flex-wrap"),
+            Some(PropertyValue::FlexWrap(FlexWrapValue::WrapReverse))
+        );
+    }
+
+    #[test]
+    fn flex_wrap_rejects_unknown_ident() {
+        assert_eq!(parse("nowrap-ish", "flex-wrap"), None);
+    }
+
+    // ── flex-grow / flex-shrink (CSS Flexible Box Layout Module Level 1
+    //    §7.2.1 / §7.2.2) ──────────────────────────────────────────────
+
+    #[test]
+    fn flex_grow_parse_number() {
+        assert_eq!(parse("2", "flex-grow"), Some(PropertyValue::FlexGrow(2.0)));
+        assert_eq!(parse("0", "flex-grow"), Some(PropertyValue::FlexGrow(0.0)));
+        assert_eq!(
+            parse("1.5", "flex-grow"),
+            Some(PropertyValue::FlexGrow(1.5))
+        );
+    }
+
+    #[test]
+    fn flex_grow_rejects_negative() {
+        // spec `<number [0,∞]>` — negative は grammar 違反。
+        assert_eq!(parse("-1", "flex-grow"), None);
+    }
+
+    #[test]
+    fn flex_grow_rejects_non_finite_literal() {
+        // f64 → f32 変換で `+Inf` になる巨大 literal
+        // (`parse_nonneg_finite_number` doc の hazard 節参照)。
+        assert_eq!(parse("1e40", "flex-grow"), None);
+    }
+
+    #[test]
+    fn flex_shrink_parse_number() {
+        assert_eq!(
+            parse("3", "flex-shrink"),
+            Some(PropertyValue::FlexShrink(3.0))
+        );
+    }
+
+    #[test]
+    fn flex_shrink_rejects_negative() {
+        assert_eq!(parse("-2", "flex-shrink"), None);
+    }
+
+    // ── flex-basis (CSS Flexible Box Layout Module Level 1 §7.2.3) ──────
+
+    #[test]
+    fn flex_basis_parse_auto() {
+        assert_eq!(
+            parse("auto", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::Auto))
+        );
+    }
+
+    #[test]
+    fn flex_basis_parse_content() {
+        assert_eq!(
+            parse("content", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::Content))
+        );
+    }
+
+    #[test]
+    fn flex_basis_parse_length_and_percentage() {
+        assert_eq!(
+            parse("200px", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::Length(
+                Length::Px(200.0)
+            )))
+        );
+        assert_eq!(
+            parse("50%", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::Length(
+                Length::Percent(50.0)
+            )))
+        );
+    }
+
+    #[test]
+    fn flex_basis_rejects_negative_length() {
+        // `<'width'>` reuse — CSS Sizing 3 §3.1.1 の `[0,∞]` constraint。
+        assert_eq!(parse("-10px", "flex-basis"), None);
+    }
+
+    // ── flex shorthand (CSS Flexible Box Layout Module Level 1 §7.1) ────
+
+    #[test]
+    fn flex_shorthand_none_expands_to_0_0_auto() {
+        assert_eq!(
+            parse("none", "flex"),
+            Some(PropertyValue::Flex(FlexShorthand {
+                grow: 0.0,
+                shrink: 0.0,
+                basis: FlexBasisValue::Auto,
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_shorthand_auto_is_1_1_auto() {
+        // §7.1.1 informative summary: `flex: auto` == `flex: 1 1 auto`。
+        assert_eq!(
+            parse("auto", "flex"),
+            Some(PropertyValue::Flex(FlexShorthand {
+                grow: 1.0,
+                shrink: 1.0,
+                basis: FlexBasisValue::Auto,
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_shorthand_bare_number_defaults_shrink_1_basis_0() {
+        // §7.1.1 informative summary: `flex: <number [1,∞]>` ==
+        // `flex: <number> 1 0` — omitted-component default (grow=1/shrink=1
+        // であって longhand 自身の initial ではない、`FlexShorthand` doc の
+        // "Omitted-component defaults" 節)。
+        assert_eq!(
+            parse("2", "flex"),
+            Some(PropertyValue::Flex(FlexShorthand {
+                grow: 2.0,
+                shrink: 1.0,
+                basis: FlexBasisValue::Length(Length::Px(0.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_shorthand_unitless_zero_is_a_flex_factor_not_yet_preceded_by_two() {
+        // spec §7.1 verbatim: "A unitless zero that is not already preceded
+        // by two flex factors must be interpreted as a flex factor."
+        assert_eq!(
+            parse("0", "flex"),
+            Some(PropertyValue::Flex(FlexShorthand {
+                grow: 0.0,
+                shrink: 1.0,
+                basis: FlexBasisValue::Length(Length::Px(0.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_shorthand_unitless_zero_after_two_factors_is_basis() {
+        // 同じ spec 文の逆方向 — 2 つの flex factor の**後**の unitless zero は
+        // flex-basis として解釈される。
+        assert_eq!(
+            parse("2 3 0", "flex"),
+            Some(PropertyValue::Flex(FlexShorthand {
+                grow: 2.0,
+                shrink: 3.0,
+                basis: FlexBasisValue::Length(Length::Px(0.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_shorthand_basis_only_defaults_grow_1_shrink_1() {
+        assert_eq!(
+            parse("30px", "flex"),
+            Some(PropertyValue::Flex(FlexShorthand {
+                grow: 1.0,
+                shrink: 1.0,
+                basis: FlexBasisValue::Length(Length::Px(30.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_shorthand_basis_before_grow_shrink() {
+        // `||` combinator — order-independent between the 2 groups.
+        assert_eq!(
+            parse("300px 2", "flex"),
+            Some(PropertyValue::Flex(FlexShorthand {
+                grow: 2.0,
+                shrink: 1.0,
+                basis: FlexBasisValue::Length(Length::Px(300.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_shorthand_grow_shrink_basis_full_form() {
+        assert_eq!(
+            parse("2 3 10%", "flex"),
+            Some(PropertyValue::Flex(FlexShorthand {
+                grow: 2.0,
+                shrink: 3.0,
+                basis: FlexBasisValue::Length(Length::Percent(10.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_shorthand_content_basis() {
+        assert_eq!(
+            parse("1 1 content", "flex"),
+            Some(PropertyValue::Flex(FlexShorthand {
+                grow: 1.0,
+                shrink: 1.0,
+                basis: FlexBasisValue::Content,
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_shorthand_empty_is_none() {
+        assert_eq!(parse("", "flex"), None);
+    }
+
+    // ── justify-content / align-content (CSS Box Alignment Module Level 3
+    //    §5.1) — shared `ContentAlignmentValue` ─────────────────────────
+
+    #[test]
+    fn justify_content_parse_content_distribution_and_position() {
+        assert_eq!(
+            parse("space-between", "justify-content"),
+            Some(PropertyValue::JustifyContent(
+                ContentAlignmentValue::SpaceBetween
+            ))
+        );
+        assert_eq!(
+            parse("center", "justify-content"),
+            Some(PropertyValue::JustifyContent(ContentAlignmentValue::Center))
+        );
+        assert_eq!(
+            parse("flex-end", "justify-content"),
+            Some(PropertyValue::JustifyContent(
+                ContentAlignmentValue::FlexEnd
+            ))
+        );
+        assert_eq!(
+            parse("normal", "justify-content"),
+            Some(PropertyValue::JustifyContent(ContentAlignmentValue::Normal))
+        );
+    }
+
+    #[test]
+    fn align_content_parse_same_grammar_as_justify_content() {
+        assert_eq!(
+            parse("stretch", "align-content"),
+            Some(PropertyValue::AlignContent(ContentAlignmentValue::Stretch))
+        );
+        assert_eq!(
+            parse("space-evenly", "align-content"),
+            Some(PropertyValue::AlignContent(
+                ContentAlignmentValue::SpaceEvenly
+            ))
+        );
+    }
+
+    #[test]
+    fn content_alignment_rejects_left_right_and_baseline() {
+        // scope carving: `left`/`right` (justify-content-specific extension)
+        // と `<baseline-position>` は taffy に対応 variant が無いため未実装
+        // (`ContentAlignmentValue` doc 参照)。
+        assert_eq!(parse("left", "justify-content"), None);
+        assert_eq!(parse("right", "justify-content"), None);
+        assert_eq!(parse("baseline", "align-content"), None);
+    }
+
+    #[test]
+    fn content_alignment_rejects_overflow_position_prefix() {
+        // scope carving: `safe`/`unsafe` prefix は未実装。
+        assert_eq!(parse("safe center", "justify-content"), None);
+    }
+
+    // ── align-items (CSS Box Alignment Module Level 3 §7.2) ─────────────
+
+    #[test]
+    fn align_items_parse_self_position_and_baseline() {
+        assert_eq!(
+            parse("stretch", "align-items"),
+            Some(PropertyValue::AlignItems(SelfAlignmentValue::Stretch))
+        );
+        assert_eq!(
+            parse("baseline", "align-items"),
+            Some(PropertyValue::AlignItems(SelfAlignmentValue::Baseline))
+        );
+        assert_eq!(
+            parse("flex-start", "align-items"),
+            Some(PropertyValue::AlignItems(SelfAlignmentValue::FlexStart))
+        );
+    }
+
+    #[test]
+    fn align_items_rejects_auto() {
+        // `auto` は align-self 専用 keyword — align-items の grammar には無い。
+        assert_eq!(parse("auto", "align-items"), None);
+    }
+
+    #[test]
+    fn align_items_rejects_self_start_self_end() {
+        // scope carving: writing-mode 相対 keyword は未実装
+        // (`SelfAlignmentValue` doc 参照)。
+        assert_eq!(parse("self-start", "align-items"), None);
+        assert_eq!(parse("self-end", "align-items"), None);
+    }
+
+    // ── align-self (CSS Box Alignment Module Level 3 §6.2) ──────────────
+
+    #[test]
+    fn align_self_parse_auto() {
+        assert_eq!(
+            parse("auto", "align-self"),
+            Some(PropertyValue::AlignSelf(AlignSelfValue::Auto))
+        );
+    }
+
+    #[test]
+    fn align_self_parse_explicit_reuses_self_alignment_grammar() {
+        assert_eq!(
+            parse("center", "align-self"),
+            Some(PropertyValue::AlignSelf(AlignSelfValue::Value(
+                SelfAlignmentValue::Center
+            )))
+        );
+        assert_eq!(
+            parse("baseline", "align-self"),
+            Some(PropertyValue::AlignSelf(AlignSelfValue::Value(
+                SelfAlignmentValue::Baseline
+            )))
+        );
+    }
+
+    // ── row-gap / column-gap (CSS Box Alignment Module Level 3 §8.1) ────
+
+    #[test]
+    fn row_gap_parse_normal() {
+        assert_eq!(
+            parse("normal", "row-gap"),
+            Some(PropertyValue::RowGap(LengthOrNormal::Normal))
+        );
+    }
+
+    #[test]
+    fn row_gap_parse_length_and_percentage() {
+        assert_eq!(
+            parse("10px", "row-gap"),
+            Some(PropertyValue::RowGap(LengthOrNormal::Length(Length::Px(
+                10.0
+            ))))
+        );
+        assert_eq!(
+            parse("5%", "row-gap"),
+            Some(PropertyValue::RowGap(LengthOrNormal::Length(
+                Length::Percent(5.0)
+            )))
+        );
+    }
+
+    #[test]
+    fn row_gap_rejects_negative() {
+        assert_eq!(parse("-1px", "row-gap"), None);
+    }
+
+    #[test]
+    fn column_gap_parse_same_grammar_as_row_gap() {
+        assert_eq!(
+            parse("2em", "column-gap"),
+            Some(PropertyValue::ColumnGap(LengthOrNormal::Length(
+                Length::Em(2.0)
+            )))
+        );
+    }
+
+    // ── gap shorthand (CSS Box Alignment Module Level 3 §8.2) ───────────
+
+    #[test]
+    fn gap_shorthand_single_value_copies_to_both() {
+        assert_eq!(
+            parse("10px", "gap"),
+            Some(PropertyValue::Gap(GapShorthand {
+                row: LengthOrNormal::Length(Length::Px(10.0)),
+                column: LengthOrNormal::Length(Length::Px(10.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn gap_shorthand_two_values() {
+        assert_eq!(
+            parse("10px 20px", "gap"),
+            Some(PropertyValue::Gap(GapShorthand {
+                row: LengthOrNormal::Length(Length::Px(10.0)),
+                column: LengthOrNormal::Length(Length::Px(20.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn gap_shorthand_normal() {
+        assert_eq!(
+            parse("normal", "gap"),
+            Some(PropertyValue::Gap(GapShorthand {
+                row: LengthOrNormal::Normal,
+                column: LengthOrNormal::Normal,
+            }))
+        );
+    }
+
+    // ── place-content shorthand (CSS Box Alignment Module Level 3 §5.2) ─
+
+    #[test]
+    fn place_content_shorthand_single_value_copies_to_both() {
+        assert_eq!(
+            parse("center", "place-content"),
+            Some(PropertyValue::PlaceContent(PlaceContentShorthand {
+                align: ContentAlignmentValue::Center,
+                justify: ContentAlignmentValue::Center,
+            }))
+        );
+    }
+
+    #[test]
+    fn place_content_shorthand_two_values() {
+        assert_eq!(
+            parse("center space-between", "place-content"),
+            Some(PropertyValue::PlaceContent(PlaceContentShorthand {
+                align: ContentAlignmentValue::Center,
+                justify: ContentAlignmentValue::SpaceBetween,
+            }))
+        );
+    }
+
+    // ── key() discriminant integrity (mirrors `height_key_maps_to_height_property_key`) ─
+
+    #[test]
+    fn flex_group_keys_map_correctly() {
+        assert_eq!(
+            PropertyValue::FlexDirection(FlexDirectionValue::Row).key(),
+            PropertyKey::FlexDirection
+        );
+        assert_eq!(
+            PropertyValue::FlexWrap(FlexWrapValue::NoWrap).key(),
+            PropertyKey::FlexWrap
+        );
+        assert_eq!(PropertyValue::FlexGrow(1.0).key(), PropertyKey::FlexGrow);
+        assert_eq!(
+            PropertyValue::FlexShrink(1.0).key(),
+            PropertyKey::FlexShrink
+        );
+        assert_eq!(
+            PropertyValue::FlexBasis(FlexBasisValue::Auto).key(),
+            PropertyKey::FlexBasis
+        );
+        assert_eq!(
+            PropertyValue::Flex(FlexShorthand {
+                grow: 1.0,
+                shrink: 1.0,
+                basis: FlexBasisValue::Auto,
+            })
+            .key(),
+            PropertyKey::Flex
+        );
+        assert_eq!(
+            PropertyValue::JustifyContent(ContentAlignmentValue::Normal).key(),
+            PropertyKey::JustifyContent
+        );
+        assert_eq!(
+            PropertyValue::AlignContent(ContentAlignmentValue::Normal).key(),
+            PropertyKey::AlignContent
+        );
+        assert_eq!(
+            PropertyValue::AlignItems(SelfAlignmentValue::Normal).key(),
+            PropertyKey::AlignItems
+        );
+        assert_eq!(
+            PropertyValue::AlignSelf(AlignSelfValue::Auto).key(),
+            PropertyKey::AlignSelf
+        );
+        assert_eq!(
+            PropertyValue::RowGap(LengthOrNormal::Normal).key(),
+            PropertyKey::RowGap
+        );
+        assert_eq!(
+            PropertyValue::ColumnGap(LengthOrNormal::Normal).key(),
+            PropertyKey::ColumnGap
+        );
+        assert_eq!(
+            PropertyValue::Gap(GapShorthand {
+                row: LengthOrNormal::Normal,
+                column: LengthOrNormal::Normal,
+            })
+            .key(),
+            PropertyKey::Gap
+        );
+        assert_eq!(
+            PropertyValue::PlaceContent(PlaceContentShorthand {
+                align: ContentAlignmentValue::Normal,
+                justify: ContentAlignmentValue::Normal,
+            })
+            .key(),
+            PropertyKey::PlaceContent
+        );
     }
 }

@@ -180,7 +180,8 @@
 
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
-    Border, BorderColor, BorderStyle, Length, LengthOrAuto, LengthOrNormal, LineHeight,
+    Border, BorderColor, BorderStyle, FlexBasisValue, Length, LengthOrAuto, LengthOrNormal,
+    LineHeight,
 };
 
 // ---------------------------------------------------------------------------
@@ -343,6 +344,46 @@ pub enum ComputedLengthPercentageOrAuto {
     Percent(f32),
     /// `auto` keyword。
     Auto,
+}
+
+/// Computed `flex-basis`。
+///
+/// CSS Flexible Box Layout Module Level 1 §7.2.3
+/// (<https://www.w3.org/TR/css-flexbox-1/#flex-basis-property>): "Computed
+/// value: specified keyword or a computed `<length-percentage>` value" —
+/// `auto` / `content` は computed 層でも keyword のまま、それ以外は
+/// [`ComputedLengthPercentage`] と同じ shape (`Px` / `Percent`) に絶対化する。
+/// [`ComputedLengthPercentageOrAuto`] の `content`-keyword 版に相当する。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedFlexBasis {
+    /// 絶対化済みの px 長。
+    Px(f32),
+    /// Percentage — authored 数値をそのまま保持。
+    Percent(f32),
+    /// `auto` keyword。
+    Auto,
+    /// `content` keyword ([`crate::property::FlexBasisValue`] doc の
+    /// "`content` と `auto` の意味差" 節参照)。
+    Content,
+}
+
+/// Computed `row-gap` / `column-gap`。
+///
+/// CSS Box Alignment Module Level 3 §8.1 propdef `row-gap`/`column-gap`
+/// (<https://www.w3.org/TR/css-align-3/#propdef-row-gap>): "Computed value:
+/// specified keyword, else a computed `<length-percentage>` value" — `normal`
+/// は computed 層でも keyword のまま残る点が [`ComputedLength`] へ潰す
+/// `letter-spacing`/`word-spacing` の `normal` ([`resolve_length_or_normal`]
+/// doc 参照) と**異なる** (gap は "Computes to: normal" ではなく "specified
+/// keyword" — spec 文言の違いをそのまま型に反映)。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedLengthPercentageOrNormal {
+    /// 絶対化済みの px 長。
+    Px(f32),
+    /// Percentage — authored 数値をそのまま保持。
+    Percent(f32),
+    /// `normal` keyword — spec initial value。
+    Normal,
 }
 
 /// Computed `line-height`。
@@ -1216,10 +1257,19 @@ pub fn resolve_length_percentage(
     }
 }
 
-/// `<length-percentage> | auto` を取る property (**`width` / `height`
-/// のみ** — `margin-*` は [`resolve_margin_length_or_auto`] を使うこと、下記
-/// "Finding A" 節参照) の specified value を絶対化する
+/// `<length-percentage> | auto` を取る property (**`width` / `height` /
+/// `flex-basis`** — `margin-*` は [`resolve_margin_length_or_auto`] を
+/// 使うこと、下記 "Finding A" 節参照) の specified value を絶対化する
 /// (**phase 3** — 自 node 基準)。
+///
+/// `flex-basis` ([`resolve_flex_basis`] 経由) が 3 人目の caller なのは
+/// `<'width'>` reuse (CSS Flexible Box Layout Module Level 1 §7.2.3、
+/// [`crate::property::FlexBasisValue`] doc 参照) の直接の帰結 — spec 上の
+/// propdef grammar が文字通り `width` の grammar を再利用しているため、`auto`
+/// / `Lh`/`Rlh` 解決不能時の fallback も `width`/`height` と同じ `Auto` が
+/// 正しい (flex-basis の spec initial も `auto`、"宣言されなかったのと同じ値に
+/// 倒す" という本関数の設計方針がそのまま適用できる — `margin-*` を除外する
+/// 理由とは無関係な独立の一致)。
 ///
 /// `Auto` は computed 層でも keyword のまま。`Percent` の扱いは
 /// [`resolve_length_percentage`] と同じ (素通し、used value 層で解決)。
@@ -1273,6 +1323,66 @@ pub fn resolve_length_percentage_or_auto(
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrAuto::Px(v),
                 ComputedLengthPercentage::Percent(p) => ComputedLengthPercentageOrAuto::Percent(p),
+            }
+        }
+    }
+}
+
+/// `flex-basis: content | <'width'>` の specified value を絶対化する
+/// (**phase 3** — 自 node 基準)。
+///
+/// `content` はそのまま keyword として素通し ([`ComputedFlexBasis::Content`]、
+/// [`crate::property::FlexBasisValue`] doc の scope carving 節参照)。`auto` /
+/// `<length-percentage>` 側は `<'width'>` reuse の通り
+/// [`resolve_length_percentage_or_auto`] と全く同じ shape (`Lh`/`Rlh` 解決
+/// 不能時の `Auto` fallback を含む) — 実装を複製せず delegate する。
+pub fn resolve_flex_basis(
+    specified: FlexBasisValue,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedFlexBasis {
+    match specified {
+        FlexBasisValue::Content => ComputedFlexBasis::Content,
+        FlexBasisValue::Auto => ComputedFlexBasis::Auto,
+        FlexBasisValue::Length(len) => {
+            match resolve_length_percentage_or_auto(
+                LengthOrAuto::Length(len),
+                font_size,
+                own_line_height,
+                ctx,
+            ) {
+                ComputedLengthPercentageOrAuto::Auto => ComputedFlexBasis::Auto,
+                ComputedLengthPercentageOrAuto::Px(v) => ComputedFlexBasis::Px(v),
+                ComputedLengthPercentageOrAuto::Percent(p) => ComputedFlexBasis::Percent(p),
+            }
+        }
+    }
+}
+
+/// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` の
+/// specified value を絶対化する (**phase 3** — 自 node 基準)。
+///
+/// `normal` は computed 層でも keyword のまま残る
+/// ([`ComputedLengthPercentageOrNormal`] doc 参照、`letter-spacing`/
+/// `word-spacing` の `normal → ComputedLength::ZERO`
+/// ([`resolve_length_or_normal`]) とは異なる spec 文言のため意図的に
+/// 別関数)。`<length-percentage>` 側は [`resolve_length_percentage`] へ
+/// delegate (percentage は素通し — used value 層は下流 (taffy) 責務)。
+pub fn resolve_length_percentage_or_normal(
+    specified: LengthOrNormal,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthPercentageOrNormal {
+    match specified {
+        LengthOrNormal::Normal => ComputedLengthPercentageOrNormal::Normal,
+        LengthOrNormal::Length(len) => {
+            match resolve_length_percentage(len, font_size, own_line_height, ctx) {
+                ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrNormal::Px(v),
+                ComputedLengthPercentage::Percent(p) => {
+                    ComputedLengthPercentageOrNormal::Percent(p)
+                }
             }
         }
     }
@@ -2675,6 +2785,36 @@ mod tests {
         assert_eq!(
             resolve_length_percentage(lifted, ComputedLength(10.0), None, &CTX),
             ComputedLengthPercentage::Percent(10.0),
+        );
+    }
+
+    /// `resolve_flex_basis`'s `FlexBasisValue::Content` arm — pass-through
+    /// keyword, no `<length-percentage>` machinery involved
+    /// ([`resolve_flex_basis`] doc's "content はそのまま keyword として素通し"
+    /// note).
+    #[test]
+    fn resolve_flex_basis_content_is_pass_through_keyword() {
+        assert_eq!(
+            resolve_flex_basis(FlexBasisValue::Content, ComputedLength(20.0), None, &CTX),
+            ComputedFlexBasis::Content,
+        );
+    }
+
+    /// `resolve_flex_basis`'s nested `Lh`/`Rlh`-unresolvable fallback
+    /// (delegated to [`resolve_length_percentage_or_auto`], sibling to
+    /// `border_width_resolves_lh_and_rlh` above) — `own_line_height: None`
+    /// (`normal` で解決不能) makes `1lh` fall back to `Auto`, same as the
+    /// `<'width'>` shape [`resolve_flex_basis`]'s doc says it reuses.
+    #[test]
+    fn resolve_flex_basis_falls_back_to_auto_when_lh_unresolvable() {
+        assert_eq!(
+            resolve_flex_basis(
+                FlexBasisValue::Length(Length::Lh(2.0)),
+                ComputedLength(20.0),
+                None,
+                &CTX
+            ),
+            ComputedFlexBasis::Auto,
         );
     }
 

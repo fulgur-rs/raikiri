@@ -29,19 +29,22 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
-    BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside,
-    ClearValue, ContentComponent, CssColor, Direction, DisplayValue, FloatValue, FontStyle, Length,
-    LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, Sides,
-    TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform,
-    VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue, empty_content_list,
-    empty_counter_entries, empty_string_set_entries, initial_font_family,
-    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
+    AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing,
+    BreakBetween, BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor,
+    Direction, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontStyle, Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap,
+    OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
+    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    initial_font_family, resolve_display_for_float, resolve_overflow,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_length_or_normal,
-    lift_length_percentage, lift_line_height, resolve_border, resolve_font_size,
-    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_line_height, resolve_margin_length_or_auto, used_line_height_length,
+    lift_length_percentage, lift_line_height, resolve_border, resolve_flex_basis,
+    resolve_font_size, resolve_length_or_normal, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
+    resolve_margin_length_or_auto, used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -251,6 +254,39 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::white_space`] の staging。層は computed-equivalent
     /// (`WhiteSpace` は length を運ばない)。
     pub white_space: WhiteSpace,
+    /// [`ComputedValues::flex_direction`] の staging。層は computed-equivalent
+    /// (`FlexDirectionValue` は length を運ばない)。
+    pub flex_direction: FlexDirectionValue,
+    /// [`ComputedValues::flex_wrap`] の staging。層は computed-equivalent
+    /// (`FlexWrapValue` は length を運ばない)。
+    pub flex_wrap: FlexWrapValue,
+    /// [`ComputedValues::flex_grow`] の staging。層は computed-equivalent
+    /// (`<number>` は絶対化不要 — [`ComputedValues::flex_grow`] doc 参照)。
+    pub flex_grow: f32,
+    /// [`ComputedValues::flex_shrink`] の staging。層は computed-equivalent。
+    pub flex_shrink: f32,
+    /// `flex-basis` の **specified** value。phase 3 ([`resolve_flex_basis`]) で
+    /// 絶対化される (`auto`/`content` keyword は保持、`<length-percentage>`
+    /// のみ絶対化) — [`Self::width`] と同じ絶対化 shape。
+    pub flex_basis: FlexBasisValue,
+    /// [`ComputedValues::justify_content`] の staging。層は computed-equivalent
+    /// (`ContentAlignmentValue` は length を運ばない)。
+    pub justify_content: ContentAlignmentValue,
+    /// [`ComputedValues::align_content`] の staging。層は computed-equivalent。
+    pub align_content: ContentAlignmentValue,
+    /// [`ComputedValues::align_items`] の staging。層は computed-equivalent
+    /// (`SelfAlignmentValue` は length を運ばない)。
+    pub align_items: SelfAlignmentValue,
+    /// [`ComputedValues::align_self`] の staging。層は computed-equivalent。
+    pub align_self: AlignSelfValue,
+    /// `row-gap` の **specified** value。phase 3
+    /// ([`resolve_length_percentage_or_normal`]) で絶対化される (`normal` は
+    /// 保持、`<length-percentage>` のみ絶対化) — [`Self::letter_spacing`] と
+    /// 同じ「specified 層のまま留まる」分類だが、`normal` の computed 表現が
+    /// 異なる ([`crate::resolve::ComputedLengthPercentageOrNormal`] doc 参照)。
+    pub row_gap: LengthOrNormal,
+    /// `column-gap` の **specified** value。[`Self::row_gap`] と同じ絶対化 phase。
+    pub column_gap: LengthOrNormal,
 }
 
 impl SpecifiedValues {
@@ -336,6 +372,28 @@ impl SpecifiedValues {
             clear: ClearValue::None,
             // CSS Text 3 §3: white-space initial は `normal`。
             white_space: WhiteSpace::Normal,
+            // CSS Flexible Box Layout Module Level 1 §5.1/§5.2:
+            // flex-direction initial は `row`、flex-wrap initial は `nowrap`。
+            flex_direction: FlexDirectionValue::Row,
+            flex_wrap: FlexWrapValue::NoWrap,
+            // CSS Flexible Box Layout Module Level 1 §7.2.1/§7.2.2:
+            // flex-grow initial は `0`、flex-shrink initial は `1`。
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            // CSS Flexible Box Layout Module Level 1 §7.2.3: flex-basis
+            // initial は `auto`。
+            flex_basis: FlexBasisValue::Auto,
+            // CSS Box Alignment Module Level 3 §5.1 (justify-content /
+            // align-content) / §7.2 (align-items): initial は `normal`、
+            // §6.2 (align-self) の initial は `auto`。
+            justify_content: ContentAlignmentValue::Normal,
+            align_content: ContentAlignmentValue::Normal,
+            align_items: SelfAlignmentValue::Normal,
+            align_self: AlignSelfValue::Auto,
+            // CSS Box Alignment Module Level 3 §8.1: row-gap / column-gap
+            // initial は `normal`。
+            row_gap: LengthOrNormal::Normal,
+            column_gap: LengthOrNormal::Normal,
         }
     }
 
@@ -448,6 +506,23 @@ impl SpecifiedValues {
             // non-inherited (CSS2 §9.5.1 / §9.5.2 "Inherited: no", both)。
             float: FloatValue::None,
             clear: ClearValue::None,
+            // non-inherited (CSS Flexible Box Layout Module Level 1 §5.1/
+            // §5.2/§7.2.1/§7.2.2/§7.2.3, all "Inherited: no")。
+            flex_direction: FlexDirectionValue::Row,
+            flex_wrap: FlexWrapValue::NoWrap,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: FlexBasisValue::Auto,
+            // non-inherited (CSS Box Alignment Module Level 3 §5.1/§5.1/
+            // §7.2/§6.2, all "Inherited: no")。
+            justify_content: ContentAlignmentValue::Normal,
+            align_content: ContentAlignmentValue::Normal,
+            align_items: SelfAlignmentValue::Normal,
+            align_self: AlignSelfValue::Auto,
+            // non-inherited (CSS Box Alignment Module Level 3 §8.1,
+            // "Inherited: no")。
+            row_gap: LengthOrNormal::Normal,
+            column_gap: LengthOrNormal::Normal,
         }
     }
 
@@ -849,6 +924,41 @@ impl SpecifiedValues {
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
             white_space: self.white_space,
+            // computed value = specified keyword (`FlexDirectionValue` /
+            // `FlexWrapValue` docs 参照、length を運ばないため相対解決なし) —
+            // 自 node の winner 適用結果をそのまま素通し。
+            flex_direction: self.flex_direction,
+            flex_wrap: self.flex_wrap,
+            // computed value = specified number (CSS Flexible Box Layout
+            // Module Level 1 §7.2.1/§7.2.2 参照、`<number>` は絶対化不要) —
+            // 自 node の winner 適用結果をそのまま素通し。
+            flex_grow: self.flex_grow,
+            flex_shrink: self.flex_shrink,
+            // `flex-basis` — `width`/`height` と同じ絶対化 shape
+            // (`resolve_flex_basis` doc 参照)。
+            flex_basis: resolve_flex_basis(self.flex_basis, font_size, own_line_height, ctx),
+            // computed value = specified keyword(s) (`ContentAlignmentValue`
+            // / `SelfAlignmentValue` / `AlignSelfValue` docs 参照、length を
+            // 運ばないため相対解決なし)。
+            justify_content: self.justify_content,
+            align_content: self.align_content,
+            align_items: self.align_items,
+            align_self: self.align_self,
+            // `row-gap` / `column-gap` — `padding` と似た絶対化 shape だが
+            // `normal` keyword を保持する (`resolve_length_percentage_or_normal`
+            // doc 参照)。
+            row_gap: resolve_length_percentage_or_normal(
+                self.row_gap,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            column_gap: resolve_length_percentage_or_normal(
+                self.column_gap,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
         }
     }
 }
@@ -891,8 +1001,8 @@ mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::resolve::{
-        ComputedBorder, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-        ComputedLineHeight,
+        ComputedBorder, ComputedFlexBasis, ComputedLengthPercentage,
+        ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
     };
 
     /// `root_font_size` = 16px の共通 context。
@@ -1008,6 +1118,17 @@ mod tests {
             float: FloatValue::Left,
             clear: ClearValue::Both,
             white_space: WhiteSpace::Pre,
+            flex_direction: FlexDirectionValue::Column,
+            flex_wrap: FlexWrapValue::Wrap,
+            flex_grow: 2.0,
+            flex_shrink: 3.0,
+            flex_basis: ComputedFlexBasis::Px(50.0),
+            justify_content: ContentAlignmentValue::SpaceBetween,
+            align_content: ContentAlignmentValue::Center,
+            align_items: SelfAlignmentValue::FlexEnd,
+            align_self: AlignSelfValue::Value(SelfAlignmentValue::Center),
+            row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
+            column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
         }
     }
 
@@ -1093,6 +1214,24 @@ mod tests {
         // CSS2 §9.5.1 / §9.5.2: float / clear は共に non-inherited。
         assert_eq!(child.float, initial.float);
         assert_eq!(child.clear, initial.clear);
+        // CSS Flexible Box Layout Module Level 1 §5.1/§5.2/§7.2.1/§7.2.2/
+        // §7.2.3: flex-* は non-inherited。
+        assert_eq!(child.flex_direction, initial.flex_direction);
+        assert_eq!(child.flex_wrap, initial.flex_wrap);
+        assert_eq!(child.flex_grow, initial.flex_grow);
+        assert_eq!(child.flex_shrink, initial.flex_shrink);
+        assert_eq!(child.flex_basis, initial.flex_basis);
+        // CSS Box Alignment Module Level 3 §5.1 (justify-content /
+        // align-content) / §7.2 (align-items) / §6.2 (align-self): all
+        // non-inherited。
+        assert_eq!(child.justify_content, initial.justify_content);
+        assert_eq!(child.align_content, initial.align_content);
+        assert_eq!(child.align_items, initial.align_items);
+        assert_eq!(child.align_self, initial.align_self);
+        // CSS Box Alignment Module Level 3 §8.1: row-gap / column-gap は
+        // non-inherited。
+        assert_eq!(child.row_gap, initial.row_gap);
+        assert_eq!(child.column_gap, initial.column_gap);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は

@@ -12,15 +12,17 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentComponent,
-    CssColor, Direction, DisplayValue, FloatValue, FontStyle, OverflowValue, OverflowWrap,
-    OverflowXY, Sides, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
-    TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue,
-    empty_content_list, empty_counter_entries, empty_string_set_entries, initial_font_family,
+    AlignSelfValue, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue,
+    ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue,
+    FlexWrapValue, FloatValue, FontStyle, OverflowValue, OverflowWrap, OverflowXY,
+    SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
+    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    initial_font_family,
 };
 use crate::resolve::{
-    ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedLineHeight,
+    ComputedBorder, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
@@ -781,6 +783,73 @@ pub struct ComputedValues {
     /// table describes belongs to a text layout / line-breaking consumer
     /// (raikiri-dom / raikiri-paint) this crate does not implement yet.
     pub white_space: WhiteSpace,
+    /// `flex-direction`. **non-inherited**, initial:
+    /// [`FlexDirectionValue::Row`] (CSS Flexible Box Layout Module Level 1
+    /// §5.1 <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>,
+    /// "Inherited: no"). Computed value = specified keyword ([`FlexDirectionValue`]
+    /// doc — no length payload).
+    pub flex_direction: FlexDirectionValue,
+    /// `flex-wrap`. **non-inherited**, initial: [`FlexWrapValue::NoWrap`]
+    /// (CSS Flexible Box Layout Module Level 1 §5.2
+    /// <https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property>, "Inherited:
+    /// no"). Computed value = specified keyword.
+    pub flex_wrap: FlexWrapValue,
+    /// `flex-grow`. **non-inherited**, initial: `0.0` (CSS Flexible Box
+    /// Layout Module Level 1 §7.2.1
+    /// <https://www.w3.org/TR/css-flexbox-1/#flex-grow-property>, "Inherited:
+    /// no"). Computed value = specified number ("`<number [0,∞]>`") —
+    /// [`crate::property`]'s parser enforces `[0,∞]` **and** finiteness at
+    /// parse time (this field has no downstream sink guard between here and
+    /// `taffy::Style::flex_grow`, unlike geometry fields that pass through
+    /// `raikiri-dom`'s `sanitize_taffy`).
+    pub flex_grow: f32,
+    /// `flex-shrink`. **non-inherited**, initial: `1.0` (CSS Flexible Box
+    /// Layout Module Level 1 §7.2.2
+    /// <https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property>,
+    /// "Inherited: no"). Same `[0,∞]` + finite parse-time enforcement as
+    /// [`Self::flex_grow`].
+    pub flex_shrink: f32,
+    /// `flex-basis`. **non-inherited**, initial:
+    /// [`ComputedFlexBasis::Auto`] (CSS Flexible Box Layout Module Level 1
+    /// §7.2.3 <https://www.w3.org/TR/css-flexbox-1/#flex-basis-property>,
+    /// "Inherited: no"). Computed value: specified keyword (`auto` /
+    /// `content`) or a computed `<length-percentage>` value
+    /// ([`ComputedFlexBasis`] doc).
+    pub flex_basis: ComputedFlexBasis,
+    /// `justify-content`. **non-inherited**, initial:
+    /// [`ContentAlignmentValue::Normal`] (CSS Box Alignment Module Level 3
+    /// §5.1 <https://www.w3.org/TR/css-align-3/#propdef-justify-content>,
+    /// "Inherited: no"). Computed value = specified keyword(s)
+    /// ([`ContentAlignmentValue`] doc — shared with [`Self::align_content`]).
+    pub justify_content: ContentAlignmentValue,
+    /// `align-content`. **non-inherited**, initial:
+    /// [`ContentAlignmentValue::Normal`] (CSS Box Alignment Module Level 3
+    /// §5.1 <https://www.w3.org/TR/css-align-3/#propdef-align-content>,
+    /// "Inherited: no"). Computed value = specified keyword(s).
+    pub align_content: ContentAlignmentValue,
+    /// `align-items`. **non-inherited**, initial:
+    /// [`SelfAlignmentValue::Normal`] (CSS Box Alignment Module Level 3
+    /// §7.2 <https://www.w3.org/TR/css-align-3/#propdef-align-items>,
+    /// "Inherited: no"). Computed value = specified keyword(s).
+    pub align_items: SelfAlignmentValue,
+    /// `align-self`. **non-inherited**, initial: [`AlignSelfValue::Auto`]
+    /// (CSS Box Alignment Module Level 3 §6.2
+    /// <https://www.w3.org/TR/css-align-3/#propdef-align-self>, "Inherited:
+    /// no"). Computed value = specified keyword(s).
+    pub align_self: AlignSelfValue,
+    /// `row-gap`. **non-inherited**, initial:
+    /// [`ComputedLengthPercentageOrNormal::Normal`] (CSS Box Alignment
+    /// Module Level 3 §8.1
+    /// <https://www.w3.org/TR/css-align-3/#propdef-row-gap>, "Inherited:
+    /// no"). Computed value: specified keyword, else a computed
+    /// `<length-percentage>` value ([`ComputedLengthPercentageOrNormal`] doc).
+    pub row_gap: ComputedLengthPercentageOrNormal,
+    /// `column-gap`. **non-inherited**, initial:
+    /// [`ComputedLengthPercentageOrNormal::Normal`] (CSS Box Alignment
+    /// Module Level 3 §8.1
+    /// <https://www.w3.org/TR/css-align-3/#propdef-column-gap>, "Inherited:
+    /// no"). Same shape as [`Self::row_gap`].
+    pub column_gap: ComputedLengthPercentageOrNormal,
 }
 
 impl ComputedValues {
@@ -891,6 +960,33 @@ impl ComputedValues {
             clear: ClearValue::None,
             // CSS Text 3 §3: white-space initial は `normal`。
             white_space: WhiteSpace::Normal,
+            // CSS Flexible Box Layout Module Level 1 §5.1: flex-direction
+            // initial は `row`。
+            flex_direction: FlexDirectionValue::Row,
+            // CSS Flexible Box Layout Module Level 1 §5.2: flex-wrap initial
+            // は `nowrap`。
+            flex_wrap: FlexWrapValue::NoWrap,
+            // CSS Flexible Box Layout Module Level 1 §7.2.1/§7.2.2:
+            // flex-grow initial は `0`、flex-shrink initial は `1`。
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            // CSS Flexible Box Layout Module Level 1 §7.2.3: flex-basis
+            // initial は `auto`。
+            flex_basis: ComputedFlexBasis::Auto,
+            // CSS Box Alignment Module Level 3 §5.1: justify-content /
+            // align-content initial は `normal`。
+            justify_content: ContentAlignmentValue::Normal,
+            align_content: ContentAlignmentValue::Normal,
+            // CSS Box Alignment Module Level 3 §7.2: align-items initial は
+            // `normal`。
+            align_items: SelfAlignmentValue::Normal,
+            // CSS Box Alignment Module Level 3 §6.2: align-self initial は
+            // `auto`。
+            align_self: AlignSelfValue::Auto,
+            // CSS Box Alignment Module Level 3 §8.1: row-gap / column-gap
+            // initial は `normal`。
+            row_gap: ComputedLengthPercentageOrNormal::Normal,
+            column_gap: ComputedLengthPercentageOrNormal::Normal,
         }
     }
 
@@ -1181,13 +1277,37 @@ mod tests {
             // CSS Text 3 §3: `Pre` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             white_space: WhiteSpace::Pre,
+            // CSS Flexible Box Layout Module Level 1 §5.1/§5.2: initial
+            // (`Row`/`NoWrap`) と異なる値 (non_initial_parent の趣旨どおり
+            // 全 field を非 initial に)。
+            flex_direction: FlexDirectionValue::Column,
+            flex_wrap: FlexWrapValue::Wrap,
+            // CSS Flexible Box Layout Module Level 1 §7.2.1/§7.2.2: initial
+            // (`0`/`1`) と異なる値。
+            flex_grow: 2.0,
+            flex_shrink: 3.0,
+            // CSS Flexible Box Layout Module Level 1 §7.2.3: initial
+            // (`auto`) と異なる値。
+            flex_basis: ComputedFlexBasis::Px(50.0),
+            // CSS Box Alignment Module Level 3 §5.1/§5.1/§7.2: initial
+            // (`normal`) と異なる値。
+            justify_content: ContentAlignmentValue::SpaceBetween,
+            align_content: ContentAlignmentValue::Center,
+            align_items: SelfAlignmentValue::FlexEnd,
+            // CSS Box Alignment Module Level 3 §6.2: initial (`auto`) と
+            // 異なる値。
+            align_self: AlignSelfValue::Value(SelfAlignmentValue::Center),
+            // CSS Box Alignment Module Level 3 §8.1: initial (`normal`) と
+            // 異なる値。
+            row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
+            column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 41 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 52 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1266,6 +1386,24 @@ mod tests {
         // CSS2 §9.5.1 / §9.5.2: float / clear は共に non-inherited。
         assert_eq!(child.float, initial.float);
         assert_eq!(child.clear, initial.clear);
+        // CSS Flexible Box Layout Module Level 1 §5.1/§5.2/§7.2.1/§7.2.2/
+        // §7.2.3: flex-* は non-inherited。
+        assert_eq!(child.flex_direction, initial.flex_direction);
+        assert_eq!(child.flex_wrap, initial.flex_wrap);
+        assert_eq!(child.flex_grow, initial.flex_grow);
+        assert_eq!(child.flex_shrink, initial.flex_shrink);
+        assert_eq!(child.flex_basis, initial.flex_basis);
+        // CSS Box Alignment Module Level 3 §5.1 (justify-content /
+        // align-content) / §7.2 (align-items) / §6.2 (align-self): all
+        // non-inherited。
+        assert_eq!(child.justify_content, initial.justify_content);
+        assert_eq!(child.align_content, initial.align_content);
+        assert_eq!(child.align_items, initial.align_items);
+        assert_eq!(child.align_self, initial.align_self);
+        // CSS Box Alignment Module Level 3 §8.1: row-gap / column-gap は
+        // non-inherited。
+        assert_eq!(child.row_gap, initial.row_gap);
+        assert_eq!(child.column_gap, initial.column_gap);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
