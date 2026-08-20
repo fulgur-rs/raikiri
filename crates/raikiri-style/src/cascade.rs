@@ -3416,7 +3416,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    捕まる。それ以外 (`BorderStyle` / `BorderColor`
 ///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`
 ///    / `OverflowValue` / `TextDecorationLine` / `TextDecorationStyle` /
-///    `TextDecorationColor` / `VerticalAlign` / `FontStyle`)
+///    `TextDecorationColor` / `VerticalAlign` / `FontStyle` / `ZIndexValue`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
@@ -3670,7 +3670,11 @@ pub(crate) fn resolve_against_inherited(
         // `normal`/`italic` implemented, `FontStyle` doc) and does not
         // depend on the inheritance parent — nothing for phase 2 to
         // resolve.
-        | PropertyValue::FontStyle(_)) => v,
+        | PropertyValue::FontStyle(_)
+        // `z-index` carries no length (`ZIndexValue` doc) and does not
+        // depend on the inheritance parent — nothing for phase 2 to
+        // resolve.
+        | PropertyValue::ZIndex(_)) => v,
     })
 }
 
@@ -4070,6 +4074,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherit_from で親値を引き継ぐ (`Direction` arm と同じ handling)。
         // `FontStyle` は Copy、by-value 代入で十分。
         PropertyValue::FontStyle(fs) => target.font_style = fs,
+        // CSS2 §9.9.1 z-index。non-inherited、cascade winner が specified
+        // value をそのまま computed value に反映。`ZIndexValue` は Copy、
+        // by-value 代入で十分 (`BoxSizing` / `VerticalAlign` arm と同型)。
+        PropertyValue::ZIndex(z) => target.z_index = z,
     }
 }
 
@@ -8573,6 +8581,40 @@ mod tests {
         use crate::property::BoxSizing;
         let cv = cascade_doc("", "p", Some("box-sizing: border-box"));
         assert_eq!(cv.box_sizing, BoxSizing::BorderBox);
+    }
+
+    // ── z-index wire-through (CSS2 §9.9.1) ──
+
+    #[test]
+    fn z_index_wired_through_cascade_from_inline_style() {
+        // <p style="z-index: 3"> → ComputedValues.z_index に
+        // ZIndexValue::Integer(3) が届く。parser → PropertyValue::ZIndex →
+        // apply_value → ComputedValues の end-to-end 疎通 smoke。sibling
+        // (box-sizing / font-style) の wire-through pattern を踏襲。
+        use crate::property::ZIndexValue;
+        let cv = cascade_doc("", "p", Some("z-index: 3"));
+        assert_eq!(cv.z_index, ZIndexValue::Integer(3));
+    }
+
+    #[test]
+    fn z_index_non_inherited_child_starts_from_initial() {
+        // CSS2 §9.9.1 propdef: "Inherited: no". sibling:
+        // `text_decoration_non_inherited_child_starts_from_initial` と同じ
+        // pattern。
+        use crate::property::ZIndexValue;
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("z-index: 5"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].z_index, ZIndexValue::Integer(5));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].z_index,
+            ZIndexValue::Auto,
+            "z-index must not inherit from parent (CSS2 §9.9.1 Inherited: no)"
+        );
     }
 
     // ── font-weight keyword + inheritance (CSS Fonts 4 §2.2) ──

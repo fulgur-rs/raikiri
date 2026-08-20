@@ -2050,7 +2050,10 @@ fn absolutize_in_page_context(
         // `normal`/`italic` implemented, see `FontStyle`'s doc) and
         // computed value = specified keyword — nothing for phase 3 to
         // absolutize.
-        | PropertyValue::FontStyle(_)) => v,
+        | PropertyValue::FontStyle(_)
+        // `z-index` carries no length (see `ZIndexValue`'s doc) and computed
+        // value = specified value — nothing for phase 3 to absolutize.
+        | PropertyValue::ZIndex(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2346,7 +2349,7 @@ mod tests {
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
         Length, LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
         TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        VerticalAlign,
+        VerticalAlign, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4078,11 +4081,13 @@ mod tests {
     /// 28 → 29 (`FontStyle` も同じ理由 — この crate の scope
     /// (`normal`/`italic` のみ) では length を運ばないため phase 3 に変換対象が
     /// 無い)。
+    /// 29 → 30 (`ZIndex` も同じ理由 — `ZIndexValue` は `<integer>` を運ぶが
+    /// length ではないため phase 3 に変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 29;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 30;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4286,6 +4291,12 @@ mod tests {
         // doc) — any value is "worst case" (`Direction` sibling comment
         // above uses the same reasoning).
         FontStyle => PropertyValue::FontStyle(FontStyle::Italic),
+        // No specified/computed distinction for `z-index` (computed value =
+        // specified value, `ZIndexValue` doc) — any value is "worst case"
+        // (`Direction` sibling comment above uses the same reasoning). A
+        // negative integer exercises the non-`Auto` branch without being
+        // mistakable for the zero the `auto` keyword computes to.
+        ZIndex => PropertyValue::ZIndex(ZIndexValue::Integer(-3)),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4449,6 +4460,7 @@ mod tests {
         TextDecoration,
         VerticalAlign,
         FontStyle,
+        ZIndex,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4686,7 +4698,9 @@ mod tests {
             | PropertyValue::VerticalAlign(_)
             // `FontStyle` carries no length either, at this crate's scope
             // (only `normal`/`italic` implemented).
-            | PropertyValue::FontStyle(_) => None,
+            | PropertyValue::FontStyle(_)
+            // `ZIndexValue` carries an `<integer>`, not a length.
+            | PropertyValue::ZIndex(_) => None,
         }
     }
 

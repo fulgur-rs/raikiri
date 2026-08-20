@@ -2183,6 +2183,59 @@ pub enum VerticalAlign {
     Super,
 }
 
+/// `z-index` property の value。
+///
+/// CSS Positioned Layout Module Level 3 does not itself formally define this
+/// property — it states only "The [z-index] property applies to all
+/// positioned boxes" and defers detail to CSS2
+/// (<https://drafts.csswg.org/css-position-3/#z-index-property>: "See CSS2 §
+/// 9.9 Layered presentation ... for details about z-index"). The propdef
+/// therefore lives in CSS2 §9.9.1 "Specifying the stack level: the 'z-index'
+/// property" <https://www.w3.org/TR/CSS2/visuren.html#z-index>.
+///
+/// propdef (CSS2 spec verbatim): Value: `auto | <integer> | inherit`,
+/// Initial: `auto`, Applies to: positioned elements, Inherited: **no**,
+/// Computed value: "as specified".
+///
+/// Meanings of values (CSS2 §9.9.1 spec verbatim):
+/// - `<integer>`: "This integer is the stack level of the generated box in
+///   the current stacking context. The box also establishes a new stacking
+///   context."
+/// - `auto`: "The stack level of the generated box in the current stacking
+///   context is 0. The box does not establish a new stacking context unless
+///   it is the root element."
+///
+/// # Scope carving
+///
+/// This crate's `position` property implementation ([`PositionValue`] doc)
+/// only recognizes `static` and CSS GCPM 3's `running(<custom-ident>)` —
+/// the CSS2 `relative` / `absolute` / `fixed` / `sticky` keywords that the
+/// propdef's "Applies to: positioned elements" clause presupposes are not
+/// implemented yet. Stacking-context construction and paint-order
+/// consumption of this value are therefore also out of scope here: this
+/// type only carries the cascaded value through to
+/// [`crate::computed::ComputedValues::z_index`], mirroring how
+/// [`FontStyle`] / [`VerticalAlign`] are cascaded and stored before any
+/// layout-side consumer exists for them.
+///
+/// `Default` は derive しない — [`Direction`] / [`BoxSizing`] と同じ
+/// convention (spec default は初期化側
+/// [`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`] が直接指定する)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ZIndexValue {
+    /// `auto` — spec initial value. "The stack level of the generated box
+    /// in the current stacking context is 0. The box does not establish a
+    /// new stacking context unless it is the root element." (CSS2 §9.9.1
+    /// verbatim)
+    Auto,
+    /// `<integer>` — "the stack level of the generated box in the current
+    /// stacking context. The box also establishes a new stacking context."
+    /// (CSS2 §9.9.1 verbatim)
+    Integer(i32),
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -2752,6 +2805,14 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     FontStyle(FontStyle),
+    /// `z-index: auto | <integer>` — **non-inherited**、initial:
+    /// [`ZIndexValue::Auto`] ([`ZIndexValue`] doc 参照、CSS2 §9.9.1
+    /// "Inherited: no")。computed value = specified value ([`ZIndexValue`]
+    /// doc 参照、length を運ばないため相対解決なし)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    ZIndex(ZIndexValue),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -2902,6 +2963,10 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::FontStyle の doc 参照。
     FontStyle,
+    // z-index (CSS2 §9.9.1、semantics on the matching PropertyValue::ZIndex
+    // variant; sibling PropertyKey variants carry no per-variant docs per
+    // crate convention). 末尾配置の理由は PropertyValue::FontStyle の doc 参照。
+    ZIndex,
 }
 
 impl PropertyValue {
@@ -2966,6 +3031,7 @@ impl PropertyValue {
             PropertyValue::TextDecoration(_) => PropertyKey::TextDecoration,
             PropertyValue::VerticalAlign(_) => PropertyKey::VerticalAlign,
             PropertyValue::FontStyle(_) => PropertyKey::FontStyle,
+            PropertyValue::ZIndex(_) => PropertyKey::ZIndex,
         }
     }
 }
@@ -3176,6 +3242,11 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // specified keyword (angle-bearing branch unreachable at this
         // scope).
         "font-style" => parse_font_style(input).map(PropertyValue::FontStyle),
+        // CSS2 §9.9.1 z-index. grammar: `auto | <integer>` (`inherit` — the
+        // propdef's third alternative — is the CSS-wide keyword, unhandled
+        // here per the "CSS-wide keyword (canonical)" section above).
+        // initial `auto`, not inherited, computed value = specified value.
+        "z-index" => parse_z_index(input).map(PropertyValue::ZIndex),
         _ => None,
     }
 }
@@ -5407,6 +5478,28 @@ fn parse_position(input: &mut Parser<'_, '_>) -> Option<PositionValue> {
         })
     });
     running.ok().map(PositionValue::Running)
+}
+
+/// `z-index: auto | <integer>` を parse する (CSS2 §9.9.1
+/// <https://www.w3.org/TR/CSS2/visuren.html#z-index>, [`ZIndexValue`] doc
+/// 参照)。
+///
+/// `auto` ident branch を先に try_parse する — [`parse_margin_side`] と同じ
+/// order-of-alternative 理由 (同関数 doc 参照)、ここでは the two branches
+/// (`auto` ident と integer token) の token kind が既に不連続なので必須では
+/// ないが、既存 sibling と同じ並びに揃える。
+///
+/// integer 本体は [`parse_counter_property`] の `<integer>` 抽出と同じ
+/// `expect_integer` 直接呼び出し — CSS Values 3 §4.2 "Integers: the
+/// `<integer>` type" により符号付き (負値含む) を許容し、range 制限は無い。
+fn parse_z_index(input: &mut Parser<'_, '_>) -> Option<ZIndexValue> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(ZIndexValue::Auto);
+    }
+    input
+        .try_parse(|i| i.expect_integer())
+        .ok()
+        .map(ZIndexValue::Integer)
 }
 
 fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
@@ -9531,6 +9624,97 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::FontStyle);
         let v = PropertyValue::FontStyle(FontStyle::Italic);
         assert_eq!(v.key(), PropertyKey::FontStyle);
+    }
+
+    // ── z-index (CSS2 §9.9.1) ──
+    //
+    // Value grammar (§9.9.1 spec verbatim): `auto | <integer> | inherit`.
+    // `inherit` is the CSS-wide keyword, unimplemented per the
+    // `PropertyValue` doc's "CSS-wide keyword" section. Initial: auto /
+    // Inherited: no / Computed value: as specified.
+
+    #[test]
+    fn z_index_parse_auto() {
+        assert_eq!(
+            parse("auto", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Auto))
+        );
+    }
+
+    #[test]
+    fn z_index_is_case_insensitive_on_auto() {
+        // CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII
+        // case-insensitive (sibling `box_sizing_is_case_insensitive` と
+        // 同 flavor)。
+        assert_eq!(
+            parse("AUTO", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Auto))
+        );
+        assert_eq!(
+            parse("Auto", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Auto))
+        );
+    }
+
+    #[test]
+    fn z_index_parse_positive_integer() {
+        assert_eq!(
+            parse("3", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(3)))
+        );
+    }
+
+    #[test]
+    fn z_index_parse_negative_integer() {
+        // CSS Values 3 §4.2 "Integers: the <integer> type"
+        // (https://www.w3.org/TR/css-values-3/#integers): <integer> は負値を
+        // 含む (sibling `counter_reset_accepts_negative_integer` と同型)。
+        assert_eq!(
+            parse("-2", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(-2)))
+        );
+    }
+
+    #[test]
+    fn z_index_parse_zero() {
+        assert_eq!(
+            parse("0", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(0)))
+        );
+    }
+
+    #[test]
+    fn z_index_rejects_non_integer_number() {
+        // <integer> excludes fractional numbers (CSS Values 3 §4.2).
+        assert_eq!(parse("1.5", "z-index"), None);
+    }
+
+    #[test]
+    fn z_index_rejects_length_and_percentage() {
+        assert_eq!(parse("1px", "z-index"), None);
+        assert_eq!(parse("50%", "z-index"), None);
+    }
+
+    #[test]
+    fn z_index_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "z-index"), None);
+    }
+
+    #[test]
+    fn z_index_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "z-index"), None);
+        }
+    }
+
+    #[test]
+    fn z_index_key_maps_to_z_index_property_key() {
+        let v = PropertyValue::ZIndex(ZIndexValue::Auto);
+        assert_eq!(v.key(), PropertyKey::ZIndex);
+        let v = PropertyValue::ZIndex(ZIndexValue::Integer(-1));
+        assert_eq!(v.key(), PropertyKey::ZIndex);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value
