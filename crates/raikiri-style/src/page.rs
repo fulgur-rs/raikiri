@@ -2050,7 +2050,11 @@ fn absolutize_in_page_context(
         // `normal`/`italic` implemented, see `FontStyle`'s doc) and
         // computed value = specified keyword — nothing for phase 3 to
         // absolutize.
-        | PropertyValue::FontStyle(_)) => v,
+        | PropertyValue::FontStyle(_)
+        // `visibility` carries no length (see `Visibility`'s doc) and
+        // computed value = specified keyword — nothing for phase 3 to
+        // absolutize.
+        | PropertyValue::Visibility(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2346,7 +2350,7 @@ mod tests {
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
         Length, LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
         TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        VerticalAlign,
+        VerticalAlign, Visibility,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4078,11 +4082,13 @@ mod tests {
     /// 28 → 29 (`FontStyle` も同じ理由 — この crate の scope
     /// (`normal`/`italic` のみ) では length を運ばないため phase 3 に変換対象が
     /// 無い)。
+    /// 29 → 30 (`Visibility` も同じ理由 — length を運ばないため phase 3 に
+    /// 変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 29;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 30;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4286,6 +4292,13 @@ mod tests {
         // doc) — any value is "worst case" (`Direction` sibling comment
         // above uses the same reasoning).
         FontStyle => PropertyValue::FontStyle(FontStyle::Italic),
+        // No specified/computed distinction for `visibility` (computed
+        // value = specified keyword, `Visibility` doc) — any value is
+        // "worst case" (`Direction` sibling comment above uses the same
+        // reasoning). `Collapse` chosen over `Hidden`/`Visible` since it is
+        // the keyword whose formatting-context-specific behavior this crate
+        // does not implement (`Visibility` doc's "Scope carving" section).
+        Visibility => PropertyValue::Visibility(Visibility::Collapse),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4449,6 +4462,7 @@ mod tests {
         TextDecoration,
         VerticalAlign,
         FontStyle,
+        Visibility,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4686,7 +4700,9 @@ mod tests {
             | PropertyValue::VerticalAlign(_)
             // `FontStyle` carries no length either, at this crate's scope
             // (only `normal`/`italic` implemented).
-            | PropertyValue::FontStyle(_) => None,
+            | PropertyValue::FontStyle(_)
+            // `Visibility` carries no length either.
+            | PropertyValue::Visibility(_) => None,
         }
     }
 

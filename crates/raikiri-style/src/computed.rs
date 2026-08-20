@@ -14,7 +14,7 @@ use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
     FontStyle, OverflowValue, OverflowXY, Sides, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, VerticalAlign, empty_content_list,
+    TextDecorationLine, TextDecorationStyle, VerticalAlign, Visibility, empty_content_list,
     empty_counter_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -567,6 +567,14 @@ pub struct ComputedValues {
     /// property's full `normal | italic | left | right | oblique <angle
     /// [-90deg,90deg]>?` grammar — see [`FontStyle`] doc.
     pub font_style: FontStyle,
+    /// `visibility`. **inherited**, initial: [`Visibility::Visible`] (CSS
+    /// Display Module Level 3 §4 "Invisibility: the visibility property"
+    /// <https://www.w3.org/TR/css-display-3/#visibility>, "Initial: visible"
+    /// / "Inherited: yes"). Computed value = specified keyword — see
+    /// [`Visibility`] doc's "Scope carving" section (the spec's
+    /// formatting-context-specific space-saving effect for `collapse` is
+    /// downstream layout scope, not represented by this field).
+    pub visibility: Visibility,
 }
 
 impl ComputedValues {
@@ -651,6 +659,8 @@ impl ComputedValues {
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
             font_style: FontStyle::Normal,
+            // CSS Display 3 §4: visibility initial は `visible`。
+            visibility: Visibility::Visible,
         }
     }
 
@@ -662,7 +672,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / visibility、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align)。
     ///
@@ -761,6 +771,8 @@ mod tests {
         assert_eq!(cv.direction, Direction::Ltr);
         // CSS Fonts 4 §2.4: font-style initial は `normal`。
         assert_eq!(cv.font_style, FontStyle::Normal);
+        // CSS Display 3 §4: visibility initial は `visible`。
+        assert_eq!(cv.visibility, Visibility::Visible);
         // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
         // CSS Box 3 §3.1: margin initial は 0 on each side。
@@ -881,13 +893,16 @@ mod tests {
             // CSS Fonts 4 §2.4: `Italic` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             font_style: FontStyle::Italic,
+            // CSS Display 3 §4: `Hidden` — initial (`Visible`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            visibility: Visibility::Hidden,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 27 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 28 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -907,6 +922,8 @@ mod tests {
         assert_eq!(child.direction, parent.direction);
         // CSS Fonts 4 §2.4: font-style は inherited。
         assert_eq!(child.font_style, parent.font_style);
+        // CSS Display 3 §4: visibility は inherited。
+        assert_eq!(child.visibility, parent.visibility);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);
