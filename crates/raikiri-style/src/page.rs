@@ -94,8 +94,9 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
-    lift_line_height, resolve_border, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_line_height, resolve_margin_length_or_auto, used_line_height_length,
+    lift_length_or_normal, lift_line_height, resolve_border, resolve_length_or_normal,
+    resolve_length_percentage, resolve_length_percentage_or_auto, resolve_line_height,
+    resolve_margin_length_or_auto, used_line_height_length,
 };
 use crate::rule::{Declaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
@@ -2245,6 +2246,20 @@ fn absolutize_in_page_context(
         // in practice (`expand_shorthand_into` expands it before this
         // function ever sees a winner), not a safety net if it were.
         PropertyValue::Overflow(pair) => PropertyValue::Overflow(resolve_overflow(pair)),
+        // ── letter-spacing / word-spacing ───────────────────────────────────
+        // CSS Text 3 §7.2 / §7.1: `normal | <length>`, absolutized the same
+        // way `crate::specified::SpecifiedValues::absolutize_with` does
+        // (`resolve_length_or_normal`), then mapped back into the
+        // specified-layer `LengthOrNormal` shape (`lift_length_or_normal`)
+        // that `PropertyValue` carries — same round-trip as `lp`/`lpa` above,
+        // reusing the shared element-path functions directly since neither
+        // needs page-context-specific plumbing.
+        PropertyValue::LetterSpacing(v) => PropertyValue::LetterSpacing(lift_length_or_normal(
+            resolve_length_or_normal(v, font_size, own_line_height, ctx),
+        )),
+        PropertyValue::WordSpacing(v) => PropertyValue::WordSpacing(lift_length_or_normal(
+            resolve_length_or_normal(v, font_size, own_line_height, ctx),
+        )),
     }
 }
 
@@ -2377,8 +2392,8 @@ mod tests {
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
-        Length, LengthOrAuto, LineHeight, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
-        TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
+        Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY,
+        PositionValue, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
         TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
@@ -4357,6 +4372,12 @@ mod tests {
         // "worst case" (`Direction` sibling comment above uses the same
         // reasoning).
         OverflowWrap => PropertyValue::OverflowWrap(OverflowWrap::Anywhere),
+        // `Em`/`Rem` (not `Px`) — same "worst case" reasoning as `Border`/
+        // `Width`/`Height`/`MarginTop` above: a font-relative unit exercises
+        // phase-3 absolutization (`resolve_length_or_normal`) instead of
+        // trivially round-tripping an already-absolute length.
+        LetterSpacing => PropertyValue::LetterSpacing(LengthOrNormal::Length(Length::Em(0.1))),
+        WordSpacing => PropertyValue::WordSpacing(LengthOrNormal::Length(Length::Rem(0.2))),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4526,6 +4547,8 @@ mod tests {
         ZIndex,
         WordBreak,
         OverflowWrap,
+        LetterSpacing,
+        WordSpacing,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4651,6 +4674,15 @@ mod tests {
                 LengthOrAuto::Length(l) => length(l),
             }
         }
+        /// `letter-spacing` / `word-spacing` の `normal | <length>`. `normal`
+        /// computes to zero (CSS Text 3 §7.2/§7.1) so it is never residue,
+        /// same shape as `LengthOrAuto::Auto` above.
+        fn length_or_normal(l: LengthOrNormal) -> Option<&'static str> {
+            match l {
+                LengthOrNormal::Normal => None,
+                LengthOrNormal::Length(l) => length(l),
+            }
+        }
         fn line_height(lh: LineHeight) -> Option<&'static str> {
             match lh {
                 // CSS Inline 3 §5.1: `normal` / `<number>` は computed 値のまま。
@@ -4722,6 +4754,9 @@ mod tests {
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
+            PropertyValue::LetterSpacing(l) | PropertyValue::WordSpacing(l) => {
+                length_or_normal(*l)
+            }
             // 層に依存しない payload — keyword / color / ident list / counter。
             PropertyValue::Color(_)
             | PropertyValue::BackgroundColor(_)
@@ -4801,6 +4836,30 @@ mod tests {
         assert_eq!(
             specified_layer_residue(&PropertyValue::PaddingTop(Length::Percent(50.0))),
             None,
+        );
+    }
+
+    /// `letter-spacing: normal` / `word-spacing: normal` は残滓ではない
+    /// (CSS Text 3 §7.2/§7.1: "Computes to zero.") — `page_corpus` の
+    /// `LetterSpacing`/`WordSpacing` worst-case サンプルは常に `Length`
+    /// variant (`sample_for` 参照) なので `length_or_normal`'s `Normal` arm
+    /// は corpus 経由では exercise されない。ここで直接叩く。
+    #[test]
+    fn letter_spacing_and_word_spacing_normal_is_not_specified_layer_residue() {
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::LetterSpacing(LengthOrNormal::Normal)),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::WordSpacing(LengthOrNormal::Normal)),
+            None,
+        );
+        // 対照 — `Em` は残滓 (絶対化前)。
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Em(1.0)
+            ))),
+            Some("Length::Em"),
         );
     }
 

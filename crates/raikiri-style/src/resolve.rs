@@ -179,7 +179,9 @@
 //! [`ComputedLength`] はこの trade の対象外 — 詳細は同型の doc を参照。
 
 use crate::computed::INITIAL_FONT_SIZE_PX;
-use crate::property::{Border, BorderColor, BorderStyle, Length, LengthOrAuto, LineHeight};
+use crate::property::{
+    Border, BorderColor, BorderStyle, Length, LengthOrAuto, LengthOrNormal, LineHeight,
+};
 
 // ---------------------------------------------------------------------------
 // computed value 層の value 型
@@ -1011,9 +1013,10 @@ pub fn resolve_font_size(
 ///
 /// # `Length::Percent` は grammar-unreachable
 ///
-/// 本関数の in-crate consumer は 2 つある — `border-*-width`
-/// ([`resolve_border`]) と `line-height` の `<length>` 成分
-/// ([`resolve_line_height`])。両者ともに `Length::Percent` を渡さない:
+/// 本関数の in-crate consumer は 3 つある — `border-*-width`
+/// ([`resolve_border`])、`line-height` の `<length>` 成分
+/// ([`resolve_line_height`])、`letter-spacing` / `word-spacing`
+/// ([`resolve_length_or_normal`])。いずれも `Length::Percent` を渡さない:
 ///
 /// - `border-*-width`: CSS Backgrounds 3 §3.3 "Line Thickness: the
 ///   border-width properties"
@@ -1024,6 +1027,14 @@ pub fn resolve_font_size(
 /// - `line-height`: [`resolve_line_height`] が `Length::Percent` を**本関数へ
 ///   delegate する前に intercept** して自要素の font-size で絶対化する
 ///   (CSS Inline 3 §5.1 "Percentages: computed relative to 1em")。
+/// - `letter-spacing` / `word-spacing`: `border-*-width` と同じ shape — CSS
+///   Text 3 §7.2 / §7.1 (`letter-spacing`
+///   <https://www.w3.org/TR/css-text-3/#letter-spacing-property> /
+///   `word-spacing` <https://www.w3.org/TR/css-text-3/#word-spacing-property>)
+///   の grammar `normal | <length>` も `<percentage>` を含まない
+///   ("Percentages: N/A" / "n/a")、percentage を含む declaration は parse 段で
+///   invalid として drop される (`parse_letter_or_word_spacing`、
+///   `allow_percentage=false`)。
 ///
 /// **後者は invariant であり、grammar による保証ではない** —
 /// [`resolve_line_height`] の match を「全 variant を本関数に delegate する」形に
@@ -1073,6 +1084,13 @@ pub fn resolve_font_size(
 /// initial と一致する) と違い、こちらの `0px` は border-width の spec
 /// initial とも一致しない、単なる「他に選びようがなかった値」である。
 ///
+/// **`letter-spacing` / `word-spacing` はこの不一致を持たない** —
+/// [`resolve_length_or_normal`] 経由でこの fallback を踏む場合 (`1lh` を
+/// `line-height: normal` 下で書いた場合)、`0px` は CSS Text 3 §7.2/§7.1 が
+/// 定める `normal` の computed value そのもの ("Computes to zero.") と一致する
+/// — `padding` の `Px(0.0)` fallback と同じ側であり、border-width の
+/// "他に選びようがなかった値" 側ではない。
+///
 /// この不整合は認識した上で **今回は直さない** — root 原因は
 /// [`used_line_height_length`] doc の "normal" wall そのもの (real font
 /// metrics が style 層に無い) であり、根本修正 (`ComputedLength` に
@@ -1110,6 +1128,33 @@ pub(crate) fn resolve_length(
         Length::Rlh(v) => {
             resolve_lh_multiplier(v, ctx.root_line_height).unwrap_or(ComputedLength::ZERO)
         }
+    }
+}
+
+/// `normal | <length>` を取る property (`letter-spacing` / `word-spacing`) の
+/// specified value を絶対化する (**phase 3** — 自 node 基準)。
+///
+/// `Normal` は常に [`ComputedLength::ZERO`] — CSS Text 3 §7.1
+/// (<https://www.w3.org/TR/css-text-3/#word-spacing-property>) / §7.2
+/// (<https://www.w3.org/TR/css-text-3/#letter-spacing-property>) がいずれも
+/// "No additional spacing is applied. Computes to zero." と明記する。
+/// `Length` 側は [`resolve_length`] へそのまま delegate する
+/// ([`LengthOrNormal`] は percentage を持たないため、`resolve_length_percentage`
+/// ではなく percentage 非対応の [`resolve_length`] が正しい delegate 先)。
+///
+/// [`ComputedLineHeight::Normal`] とは異なり、computed 層で keyword を保持
+/// **しない** — 両 property とも spec の "Computed value" が "an absolute
+/// length" であり、"normal" 自体は computed value の選択肢に含まれない
+/// (`line-height` の "Computed value: … normal" とはこの点で異なる)。
+pub fn resolve_length_or_normal(
+    specified: LengthOrNormal,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLength {
+    match specified {
+        LengthOrNormal::Normal => ComputedLength::ZERO,
+        LengthOrNormal::Length(l) => resolve_length(l, font_size, own_line_height, ctx),
     }
 }
 
@@ -1578,6 +1623,40 @@ pub fn lift_length_percentage(computed: ComputedLengthPercentage) -> Length {
         ComputedLengthPercentage::Px(v) => Length::Px(v),
         ComputedLengthPercentage::Percent(p) => Length::Percent(p),
     }
+}
+
+/// 親の computed `letter-spacing` / `word-spacing` を specified 表現に
+/// **lift** する (inheritance seed 用)。
+///
+/// [`lift_font_size`] と同じ lossless / fixed-point 性 — [`resolve_length_or_normal`]
+/// の `Length` branch は [`resolve_length`] へ delegate し、その `Px` arm は
+/// identity (`ComputedLength(v) -> Length::Px(v)` を素通し) なので、lift した
+/// 値を phase 3 に再度通しても二重適用にならない。
+///
+/// [`lift_line_height`] とは異なり `Normal` を復元しない — `letter-spacing: normal`
+/// / `word-spacing: normal` の computed value は spec 上すでに `0` (an absolute
+/// length、[`resolve_length_or_normal`] doc 参照) であり、`Normal` keyword は
+/// computed 層に一切現れないため、"lift 元" の情報として残っていない
+/// ([`ComputedLineHeight`] が `Normal` variant を保持し続けるのとの違いは
+/// [`resolve_length_or_normal`] doc 参照)。
+///
+/// ```
+/// use raikiri_style::{ComputedLength, ResolveContext, lift_length_or_normal, resolve_length_or_normal};
+/// use raikiri_style::property::LengthOrNormal;
+///
+/// let ctx = ResolveContext::initial();
+/// let inherited = ComputedLength(2.0);
+///
+/// // lift → 絶対化 の round trip は恒等 (Px が不動点)。
+/// let lifted = lift_length_or_normal(inherited);
+/// assert_eq!(
+///     resolve_length_or_normal(lifted, ComputedLength(16.0), None, &ctx),
+///     inherited
+/// );
+/// assert_eq!(lifted, LengthOrNormal::Length(raikiri_style::property::Length::Px(2.0)));
+/// ```
+pub fn lift_length_or_normal(computed: ComputedLength) -> LengthOrNormal {
+    LengthOrNormal::Length(Length::Px(computed.0))
 }
 
 #[cfg(test)]

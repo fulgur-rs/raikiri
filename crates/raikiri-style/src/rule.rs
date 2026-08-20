@@ -513,7 +513,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::Visibility(_)
         | PropertyValue::ZIndex(_)
         | PropertyValue::WordBreak(_)
-        | PropertyValue::OverflowWrap(_) => expand_none(d, push),
+        | PropertyValue::OverflowWrap(_)
+        | PropertyValue::LetterSpacing(_)
+        | PropertyValue::WordSpacing(_) => expand_none(d, push),
     }
 }
 
