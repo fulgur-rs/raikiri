@@ -3670,7 +3670,11 @@ pub(crate) fn resolve_against_inherited(
         // `normal`/`italic` implemented, `FontStyle` doc) and does not
         // depend on the inheritance parent — nothing for phase 2 to
         // resolve.
-        | PropertyValue::FontStyle(_)) => v,
+        | PropertyValue::FontStyle(_)
+        // `text-transform` carries no length (`TextTransform` doc) and
+        // does not depend on the inheritance parent — nothing for phase 2
+        // to resolve.
+        | PropertyValue::TextTransform(_)) => v,
     })
 }
 
@@ -4070,6 +4074,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherit_from で親値を引き継ぐ (`Direction` arm と同じ handling)。
         // `FontStyle` は Copy、by-value 代入で十分。
         PropertyValue::FontStyle(fs) => target.font_style = fs,
+        // CSS Text Module Level 3 §2.1。
+        // inherited property のため cascade winner が無い child は
+        // inherit_from で親値を引き継ぐ (`FontStyle` arm と同じ handling)。
+        // `TextTransform` は Copy、by-value 代入で十分。
+        PropertyValue::TextTransform(tt) => target.text_transform = tt,
     }
 }
 
@@ -8430,6 +8439,46 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].font_style, FontStyle::Italic);
         assert_eq!(r.computed[span].font_style, FontStyle::Normal);
+    }
+
+    // ── text-transform wire-through (CSS Text Module Level 3 §2.1) ──
+
+    #[test]
+    fn text_transform_wired_through_cascade_from_inline_style() {
+        use crate::property::TextTransform;
+        let cv = cascade_doc("", "p", Some("text-transform: uppercase"));
+        assert_eq!(cv.text_transform, TextTransform::Uppercase);
+    }
+
+    #[test]
+    fn text_transform_inherits_from_parent_element() {
+        // CSS Text Module Level 3 §2.1: text-transform は **inherited**.
+        use crate::property::TextTransform;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-transform: uppercase"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_transform, TextTransform::Uppercase);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].text_transform,
+            TextTransform::Uppercase,
+            "child should inherit text-transform from parent (CSS Text Module Level 3 §2.1 Inherited: yes)"
+        );
+    }
+
+    #[test]
+    fn text_transform_child_own_value_wins_over_inherited() {
+        use crate::property::TextTransform;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-transform: uppercase"));
+        let span = doc.push_element(p, "span", Some("text-transform: lowercase"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_transform, TextTransform::Uppercase);
+        assert_eq!(r.computed[span].text_transform, TextTransform::Lowercase);
     }
 
     // ── text-align: match-parent (CSS Text 3 §6.1) ──

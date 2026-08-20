@@ -1980,7 +1980,11 @@ fn absolutize_in_page_context(
         // `normal`/`italic` implemented, see `FontStyle`'s doc) and
         // computed value = specified keyword — nothing for phase 3 to
         // absolutize.
-        | PropertyValue::FontStyle(_)) => v,
+        | PropertyValue::FontStyle(_)
+        // `text-transform` carries no length (see `TextTransform`'s doc)
+        // and computed value = specified keyword — nothing for phase 3 to
+        // absolutize.
+        | PropertyValue::TextTransform(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2276,7 +2280,7 @@ mod tests {
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
         Length, LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
         TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        VerticalAlign,
+        TextTransform, VerticalAlign,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4008,11 +4012,14 @@ mod tests {
     /// 28 → 29 (`FontStyle` も同じ理由 — この crate の scope
     /// (`normal`/`italic` のみ) では length を運ばないため phase 3 に変換対象が
     /// 無い)。
+    /// 29 → 30 (`TextTransform` も同じ理由 — この crate の scope
+    /// (`none`/`capitalize`/`uppercase`/`lowercase` のみ) では length を
+    /// 運ばないため phase 3 に変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 29;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 30;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4216,6 +4223,11 @@ mod tests {
         // doc) — any value is "worst case" (`Direction` sibling comment
         // above uses the same reasoning).
         FontStyle => PropertyValue::FontStyle(FontStyle::Italic),
+        // No specified/computed distinction for `text-transform`
+        // (computed value = specified keyword, `TextTransform` doc) — any
+        // value is "worst case" (`Direction` sibling comment above uses
+        // the same reasoning).
+        TextTransform => PropertyValue::TextTransform(TextTransform::Uppercase),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4379,6 +4391,7 @@ mod tests {
         TextDecoration,
         VerticalAlign,
         FontStyle,
+        TextTransform,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4616,7 +4629,9 @@ mod tests {
             | PropertyValue::VerticalAlign(_)
             // `FontStyle` carries no length either, at this crate's scope
             // (only `normal`/`italic` implemented).
-            | PropertyValue::FontStyle(_) => None,
+            | PropertyValue::FontStyle(_)
+            // `TextTransform` carries no length either.
+            | PropertyValue::TextTransform(_) => None,
         }
     }
 
@@ -4970,7 +4985,7 @@ mod tests {
         let result = page(
             "@page { color: red; font-weight: bolder; display: block; \
              box-sizing: border-box; border-top-color: red; text-align: center; \
-             direction: rtl; font-style: italic }",
+             direction: rtl; font-style: italic; text-transform: uppercase }",
             &root,
         );
         assert_eq!(color_of(&result), Some(RED));
@@ -4995,6 +5010,10 @@ mod tests {
         assert_eq!(
             result.declarations().get(&PropertyKey::FontStyle),
             Some(&PropertyValue::FontStyle(FontStyle::Italic)),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::TextTransform),
+            Some(&PropertyValue::TextTransform(TextTransform::Uppercase)),
         );
     }
 
