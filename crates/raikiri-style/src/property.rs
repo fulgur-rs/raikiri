@@ -941,6 +941,76 @@ pub enum FontStyle {
     Italic,
 }
 
+/// `text-transform` property の value。
+///
+/// CSS Text Module Level 3 §2.1 "Case Transforms: the text-transform
+/// property" <https://www.w3.org/TR/css-text-3/#text-transform-property>。
+///
+/// propdef (spec verbatim): Value: `none | [capitalize | uppercase |
+/// lowercase] || full-width || full-size-kana`、Initial: `none`、Applies to:
+/// text、Inherited: **yes**、Computed value: "specified keyword"。
+///
+/// # Scope carving
+///
+/// - **Non-goal**: `full-width` / `full-size-kana` — the propdef's `||`
+///   double-bar combinator lets either keyword co-occur alongside a case
+///   keyword (`capitalize | uppercase | lowercase`) **in either order**;
+///   this crate implements only the case-keyword group (below) and does
+///   not recognize `full-width` / `full-size-kana` as idents. A single
+///   ident such as `full-width` on its own is rejected the same as any
+///   other unknown ident (below). A two-ident combination is rejected
+///   regardless of which order the case keyword and the unimplemented
+///   keyword appear in, but by two different mechanisms depending on
+///   which ident comes first ([`parse_text_transform`]'s doc has the
+///   per-arm detail):
+///   - unimplemented-first (e.g. `full-width uppercase`) —
+///     [`parse_text_transform`] itself fails on the first (unrecognized)
+///     ident, so `parse_value` already returns `None` before `DeclParser`'s
+///     exhaustive-consumption check is even reached.
+///   - case-keyword-first (e.g. `uppercase full-width`) —
+///     [`parse_text_transform`] succeeds on `uppercase` and leaves
+///     `full-width` unconsumed; the whole declaration is then dropped by
+///     `DeclParser` (in [`mod@crate::rule`])'s exhaustive-consumption
+///     check (the same general mechanism that rejects `font-size: 16px
+///     20px`) — no property-specific lookahead is needed here.
+///
+///   Either path lands on the same outcome (whole declaration dropped),
+///   so this crate does not need to special-case `||` order.
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical。sibling [`FontStyle`] と同 convention)。
+/// - **(a) spec-invalid**: 上記 4 keyword (`none`/`capitalize`/`uppercase`/
+///   `lowercase`、`full-width`/`full-size-kana` は未実装) 以外の ident は
+///   silent drop = `None`。
+///
+/// # Downstream handoff
+///
+/// Actually applying the case transform (the Unicode default-case
+/// algorithm, and word segmentation for `capitalize`'s titlecase rule) is
+/// out of this crate's scope — it belongs to the text-shaping/paint layer
+/// that consumes the computed value. This property carries only the
+/// cascade static-side keyword, mirroring
+/// [`crate::computed::ComputedValues::vertical_align`]'s "Downstream
+/// handoff" doc note.
+///
+/// [`FontStyle`] / [`Direction`] と同じ convention で `Default` を derive
+/// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`]) が [`TextTransform::None`]
+/// を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextTransform {
+    /// `none` — spec initial value。"No effects."
+    None,
+    /// `capitalize` — "Puts the first typographic letter unit of each word,
+    /// if lowercase, in titlecase; other characters are unaffected."
+    Capitalize,
+    /// `uppercase` — "Puts all letters in uppercase."
+    Uppercase,
+    /// `lowercase` — "Puts all letters in lowercase."
+    Lowercase,
+}
+
 /// `line-height` property の value (inline layout 実装の足がかりとなる author CSS 型)。
 ///
 /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
@@ -2752,6 +2822,15 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     FontStyle(FontStyle),
+    /// `text-transform: none | capitalize | uppercase | lowercase` —
+    /// **inherited**、initial: [`TextTransform::None`] (CSS Text Module
+    /// Level 3 §2.1 [`TextTransform`] doc 参照)。computed value = specified
+    /// keyword ([`TextTransform`] doc の Scope carving 節参照、`full-width`
+    /// / `full-size-kana` は未実装)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    TextTransform(TextTransform),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -2902,6 +2981,11 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::FontStyle の doc 参照。
     FontStyle,
+    // text-transform (CSS Text Module Level 3 §2.1、semantics on the
+    // matching PropertyValue::TextTransform variant; sibling PropertyKey
+    // variants carry no per-variant docs per crate convention). 末尾配置の
+    // 理由は PropertyValue::TextTransform の doc 参照。
+    TextTransform,
 }
 
 impl PropertyValue {
@@ -2966,6 +3050,7 @@ impl PropertyValue {
             PropertyValue::TextDecoration(_) => PropertyKey::TextDecoration,
             PropertyValue::VerticalAlign(_) => PropertyKey::VerticalAlign,
             PropertyValue::FontStyle(_) => PropertyKey::FontStyle,
+            PropertyValue::TextTransform(_) => PropertyKey::TextTransform,
         }
     }
 }
@@ -3176,6 +3261,14 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // specified keyword (angle-bearing branch unreachable at this
         // scope).
         "font-style" => parse_font_style(input).map(PropertyValue::FontStyle),
+        // CSS Text Module Level 3 §2.1 text-transform. grammar: `none |
+        // [capitalize | uppercase | lowercase] || full-width ||
+        // full-size-kana`, restricted here to `none` / `capitalize` /
+        // `uppercase` / `lowercase` (`TextTransform` doc's "Scope carving"
+        // section — `full-width` / `full-size-kana` are spec-valid but
+        // unimplemented). initial `none`, inherited, computed value =
+        // specified keyword.
+        "text-transform" => parse_text_transform(input).map(PropertyValue::TextTransform),
         _ => None,
     }
 }
@@ -4432,6 +4525,43 @@ fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
     match ident.to_ascii_lowercase().as_str() {
         "normal" => Some(FontStyle::Normal),
         "italic" => Some(FontStyle::Italic),
+        _ => None,
+    }
+}
+
+/// `text-transform: <ident>` を parse する (CSS Text Module Level 3 §2.1
+/// <https://www.w3.org/TR/css-text-3/#text-transform-property>)。
+///
+/// Value grammar (§2.1, full property grammar): `none | [capitalize |
+/// uppercase | lowercase] || full-width || full-size-kana`。本 parser は
+/// `none` / `capitalize` / `uppercase` / `lowercase` の 4 keyword のみ受理
+/// する ([`TextTransform`] doc の Scope carving 節参照) — `full-width` /
+/// `full-size-kana` は spec-valid だが未実装のため、他の未知 ident と同じく
+/// silent drop = `None` とする。1 ident しか consume しないため、
+/// `full-width` / `full-size-kana` を伴う `||` 併記は **どちらの ident が
+/// 先に来ても** declaration 全体が drop されるが、drop される場所は ident の
+/// 順序で変わる ([`TextTransform`] doc の Scope carving 節が両 case の
+/// canonical な記述):
+///
+/// - 未実装 ident が先 (例: `full-width uppercase`) — 本関数自体が最初の
+///   ident で `None` を返す。caller の `parse_value` はこの時点で declaration
+///   を drop するので、`DeclParser` の exhaustive-consumption check にすら
+///   到達しない。
+/// - case keyword が先 (例: `uppercase full-width`) — 本関数は `uppercase`
+///   を consume して成功で返るが、`full-width` が未消費のまま残る。
+///   declaration 全体は caller ([`mod@crate::rule`] の `DeclParser`) の
+///   exhaustive-consumption check で drop される (`font-size: 16px 20px` を
+///   拒否するのと同じ一般 mechanism)。
+///
+/// ASCII case-insensitive で ident を比較する (sibling [`parse_font_style`]
+/// と同 flavor)。
+fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<TextTransform> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "none" => Some(TextTransform::None),
+        "capitalize" => Some(TextTransform::Capitalize),
+        "uppercase" => Some(TextTransform::Uppercase),
+        "lowercase" => Some(TextTransform::Lowercase),
         _ => None,
     }
 }
@@ -9531,6 +9661,84 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::FontStyle);
         let v = PropertyValue::FontStyle(FontStyle::Italic);
         assert_eq!(v.key(), PropertyKey::FontStyle);
+    }
+
+    // ── text-transform (CSS Text Module Level 3 §2.1) ──
+    //
+    // Value grammar (§2.1 spec verbatim, full property grammar): `none |
+    // [capitalize | uppercase | lowercase] || full-width || full-size-kana`.
+    // This crate implements only none / capitalize / uppercase / lowercase
+    // (`TextTransform` doc's "Scope carving" section). Initial: none /
+    // Inherited: yes / Computed value: specified keyword.
+
+    #[test]
+    fn text_transform_parse_all_four_keywords() {
+        assert_eq!(
+            parse("none", "text-transform"),
+            Some(PropertyValue::TextTransform(TextTransform::None))
+        );
+        assert_eq!(
+            parse("capitalize", "text-transform"),
+            Some(PropertyValue::TextTransform(TextTransform::Capitalize))
+        );
+        assert_eq!(
+            parse("uppercase", "text-transform"),
+            Some(PropertyValue::TextTransform(TextTransform::Uppercase))
+        );
+        assert_eq!(
+            parse("lowercase", "text-transform"),
+            Some(PropertyValue::TextTransform(TextTransform::Lowercase))
+        );
+    }
+
+    #[test]
+    fn text_transform_is_case_insensitive() {
+        assert_eq!(
+            parse("NONE", "text-transform"),
+            Some(PropertyValue::TextTransform(TextTransform::None))
+        );
+        assert_eq!(
+            parse("Uppercase", "text-transform"),
+            Some(PropertyValue::TextTransform(TextTransform::Uppercase))
+        );
+    }
+
+    #[test]
+    fn text_transform_rejects_unimplemented_keywords() {
+        // (b) not supported — `full-width` / `full-size-kana` are
+        // spec-valid `||`-combinable keywords but unimplemented
+        // (`TextTransform` doc's "Scope carving" section), not (a)
+        // spec-invalid.
+        assert_eq!(parse("full-width", "text-transform"), None);
+        assert_eq!(parse("full-size-kana", "text-transform"), None);
+    }
+
+    #[test]
+    fn text_transform_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "text-transform"), None);
+    }
+
+    #[test]
+    fn text_transform_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "text-transform"), None);
+        }
+    }
+
+    #[test]
+    fn text_transform_rejects_non_ident() {
+        assert_eq!(parse("16px", "text-transform"), None);
+        assert_eq!(parse(r#""uppercase""#, "text-transform"), None);
+    }
+
+    #[test]
+    fn text_transform_key_maps_to_text_transform_property_key() {
+        let v = PropertyValue::TextTransform(TextTransform::None);
+        assert_eq!(v.key(), PropertyKey::TextTransform);
+        let v = PropertyValue::TextTransform(TextTransform::Capitalize);
+        assert_eq!(v.key(), PropertyKey::TextTransform);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value

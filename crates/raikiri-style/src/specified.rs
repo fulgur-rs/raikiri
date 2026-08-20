@@ -32,8 +32,9 @@ use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
     CssColor, Direction, DisplayValue, FontStyle, Length, LengthOrAuto, LineHeight, OverflowValue,
     OverflowXY, Sides, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
-    VerticalAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
-    initial_font_family, resolve_overflow, resolve_text_align_match_parent,
+    TextTransform, VerticalAlign, empty_content_list, empty_counter_entries,
+    empty_string_set_entries, initial_font_family, resolve_overflow,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_line_height,
@@ -57,7 +58,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -197,6 +198,9 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::font_style`] の staging。層は computed-equivalent
     /// (`FontStyle` は length を運ばない — この crate の scope では)。
     pub font_style: FontStyle,
+    /// [`ComputedValues::text_transform`] の staging。層は computed-equivalent
+    /// (`TextTransform` は length を運ばない)。
+    pub text_transform: TextTransform,
 }
 
 impl SpecifiedValues {
@@ -256,6 +260,8 @@ impl SpecifiedValues {
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
             font_style: FontStyle::Normal,
+            // CSS Text Module Level 3 §2.1: text-transform initial は `none`。
+            text_transform: TextTransform::None,
         }
     }
 
@@ -311,6 +317,8 @@ impl SpecifiedValues {
             direction: parent.direction,
             // CSS Fonts 4 §2.4: font-style は inherited。
             font_style: parent.font_style,
+            // CSS Text Module Level 3 §2.1: text-transform は inherited。
+            text_transform: parent.text_transform,
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
             display: DisplayValue::Inline,
@@ -664,6 +672,10 @@ impl SpecifiedValues {
             // この crate の scope では angle-bearing branch が unreachable
             // なため相対解決なし) — 自 node の winner 適用結果をそのまま素通し。
             font_style: self.font_style,
+            // computed value = specified keyword (`TextTransform` doc 参照、
+            // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
+            // そのまま素通し。
+            text_transform: self.text_transform,
         }
     }
 }
@@ -809,6 +821,7 @@ mod tests {
             text_decoration_color: TextDecorationColor::Resolved(CssColor::BLACK),
             vertical_align: VerticalAlign::Sub,
             font_style: FontStyle::Italic,
+            text_transform: TextTransform::Uppercase,
         }
     }
 
@@ -829,6 +842,8 @@ mod tests {
         assert_eq!(child.direction, Direction::Rtl);
         // CSS Fonts 4 §2.4: font-style は inherited。
         assert_eq!(child.font_style, FontStyle::Italic);
+        // CSS Text Module Level 3 §2.1: text-transform は inherited。
+        assert_eq!(child.text_transform, TextTransform::Uppercase);
         // computed → specified の lift (px 表現)。
         assert_eq!(child.font_size, Length::Px(24.0));
         assert_eq!(child.line_height, LineHeight::Number(1.5));
