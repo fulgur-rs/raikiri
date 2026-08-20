@@ -14,8 +14,8 @@ use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
     FontStyle, OverflowValue, OverflowWrap, OverflowXY, Sides, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace,
+    WordBreak, ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
     initial_font_family,
 };
 use crate::resolve::{
@@ -65,10 +65,10 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
-/// overflow / text_decoration / vertical_align)。
+/// overflow / text_decoration / vertical_align / z_index)。
 ///
 /// # 層
 ///
@@ -686,6 +686,23 @@ pub struct ComputedValues {
     /// normal" / "Inherited: yes"). Same computed-value shape as
     /// [`Self::letter_spacing`] — see that field's doc.
     pub word_spacing: ComputedLength,
+    /// `white-space`. **inherited**, initial: [`WhiteSpace::Normal`] (CSS
+    /// Text Module Level 3 §3 "White Space and Wrapping: the white-space
+    /// property" <https://www.w3.org/TR/css-text-3/#white-space-property>,
+    /// "Initial: normal" / "Inherited: yes"). Computed value = specified
+    /// keyword.
+    ///
+    /// # Scope carving
+    ///
+    /// This field holds only the `normal | pre | nowrap | pre-wrap |
+    /// pre-line` subset of the property's full `normal | pre | nowrap |
+    /// pre-wrap | break-spaces | pre-line` grammar — see [`WhiteSpace`]
+    /// doc. It also carries the cascaded value only — no consumer reads it
+    /// yet, same as [`Self::z_index`] doc's "Scope carving" section: the
+    /// white-space collapsing / line-wrapping algorithm the spec's keyword
+    /// table describes belongs to a text layout / line-breaking consumer
+    /// (raikiri-dom / raikiri-paint) this crate does not implement yet.
+    pub white_space: WhiteSpace,
 }
 
 impl ComputedValues {
@@ -786,6 +803,8 @@ impl ComputedValues {
             // initial `normal` は computed 層で `0` (`ComputedLength::ZERO`)。
             letter_spacing: ComputedLength::ZERO,
             word_spacing: ComputedLength::ZERO,
+            // CSS Text 3 §3: white-space initial は `normal`。
+            white_space: WhiteSpace::Normal,
         }
     }
 
@@ -797,7 +816,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index)。
     ///
@@ -941,6 +960,8 @@ mod tests {
         assert_eq!(cv.box_sizing, BoxSizing::ContentBox);
         // CSS2 §9.9.1: z-index initial は `auto`。
         assert_eq!(cv.z_index, ZIndexValue::Auto);
+        // CSS Text 3 §3: white-space initial は `normal`。
+        assert_eq!(cv.white_space, WhiteSpace::Normal);
     }
 
     #[test]
@@ -1052,13 +1073,16 @@ mod tests {
             // 非 initial に)。
             letter_spacing: ComputedLength(2.0),
             word_spacing: ComputedLength(4.0),
+            // CSS Text 3 §3: `Pre` — initial (`Normal`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            white_space: WhiteSpace::Pre,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 35 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 36 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1092,6 +1116,8 @@ mod tests {
         // inherited。
         assert_eq!(child.letter_spacing, parent.letter_spacing);
         assert_eq!(child.word_spacing, parent.word_spacing);
+        // CSS Text 3 §3: white-space は inherited。
+        assert_eq!(child.white_space, parent.white_space);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);

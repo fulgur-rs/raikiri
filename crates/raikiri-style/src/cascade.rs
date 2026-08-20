@@ -3417,7 +3417,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`
 ///    / `OverflowValue` / `TextDecorationLine` / `TextDecorationStyle` /
 ///    `TextDecorationColor` / `VerticalAlign` / `FontStyle` / `Visibility` /
-///    `ZIndexValue` / `WordBreak` / `OverflowWrap`)
+///    `ZIndexValue` / `WordBreak` / `OverflowWrap` / `WhiteSpace`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
@@ -3697,7 +3697,11 @@ pub(crate) fn resolve_against_inherited(
         // inheritance parent's — same shape as `Padding`/`Margin`/`Width`/
         // `Height` above, nothing for phase 2 to resolve here.
         | PropertyValue::LetterSpacing(_)
-        | PropertyValue::WordSpacing(_)) => v,
+        | PropertyValue::WordSpacing(_)
+        // `white-space` (CSS Text 3 §3) carries no length (`WhiteSpace`
+        // doc) and does not depend on the inheritance parent — nothing for
+        // phase 2 to resolve.
+        | PropertyValue::WhiteSpace(_)) => v,
     })
 }
 
@@ -4138,6 +4142,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::LetterSpacing(ls) => target.letter_spacing = ls,
         // CSS Text 3 §7.1。直上の LetterSpacing arm と同型。
         PropertyValue::WordSpacing(ws) => target.word_spacing = ws,
+        // CSS Text 3 §3 white-space。inherited property、computed value =
+        // specified value (相対解決なし) — sibling `WordBreak` と同じく
+        // 単純代入で十分。
+        PropertyValue::WhiteSpace(ws) => target.white_space = ws,
     }
 }
 
@@ -8847,6 +8855,46 @@ mod tests {
             "child must inherit the parent's already-computed 8px, not re-resolve \
              0.5em against its own 32px font-size (which would wrongly yield 16px)"
         );
+    }
+
+    // ── white-space wire-through (CSS Text 3 §3) ──
+
+    #[test]
+    fn white_space_wired_through_cascade_from_inline_style() {
+        use crate::property::WhiteSpace;
+        let cv = cascade_doc("", "p", Some("white-space: pre"));
+        assert_eq!(cv.white_space, WhiteSpace::Pre);
+    }
+
+    #[test]
+    fn white_space_inherits_from_parent_element() {
+        // CSS Text 3 §3: white-space は **inherited**.
+        use crate::property::WhiteSpace;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("white-space: pre"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].white_space, WhiteSpace::Pre);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].white_space,
+            WhiteSpace::Pre,
+            "child should inherit white-space from parent (CSS Text 3 §3 Inherited: yes)"
+        );
+    }
+
+    #[test]
+    fn white_space_child_own_value_wins_over_inherited() {
+        use crate::property::WhiteSpace;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("white-space: pre"));
+        let span = doc.push_element(p, "span", Some("white-space: nowrap"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].white_space, WhiteSpace::Pre);
+        assert_eq!(r.computed[span].white_space, WhiteSpace::Nowrap);
     }
 
     // ── text-align: match-parent (CSS Text 3 §6.1) ──

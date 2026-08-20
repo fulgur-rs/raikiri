@@ -2534,6 +2534,83 @@ pub enum OverflowWrap {
     Anywhere,
 }
 
+/// `white-space` property の value。
+///
+/// CSS Text Module Level 3 §3 "White Space and Wrapping: the white-space
+/// property" <https://www.w3.org/TR/css-text-3/#white-space-property>。
+///
+/// propdef (spec verbatim): Value: `normal | pre | nowrap | pre-wrap |
+/// break-spaces | pre-line`、Initial: `normal`、Applies to: text、Inherited:
+/// **yes**、Computed value: "specified keyword"。
+///
+/// # 5 keyword の意味 (spec 確認済み verbatim)
+///
+/// - [`Normal`](Self::Normal) — "This value directs user agents to collapse
+///   sequences of white space into a single character (or in some cases, no
+///   character). Lines may wrap at allowed soft wrap opportunities." spec
+///   initial value。
+/// - [`Pre`](Self::Pre) — "This value prevents user agents from collapsing
+///   sequences of white space. Segment breaks such as line feeds are
+///   preserved as forced line breaks. Lines only break at forced line
+///   breaks."
+/// - [`Nowrap`](Self::Nowrap) — "Like normal, this value collapses white
+///   space; but like pre, it does not allow wrapping."
+/// - [`PreWrap`](Self::PreWrap) — "Like pre, this value preserves white
+///   space; but like normal, it allows wrapping."
+/// - [`PreLine`](Self::PreLine) — "Like normal, this value collapses
+///   consecutive white space characters and allows wrapping, but it
+///   preserves segment breaks in the source as forced line breaks."
+///
+/// spec の informative summary table (collapsing 有無 / wrapping 有無の 2 軸)
+/// が示すとおり、5 keyword は独立な 2 behavior の組み合わせで決まる —
+/// (a) white space の collapse 有無 (`normal`/`nowrap`/`pre-line` は
+/// collapse、`pre`/`pre-wrap` は preserve)、(b) line wrap の有無
+/// (`normal`/`pre-wrap`/`pre-line` は wrap、`pre`/`nowrap` は no wrap)。
+///
+/// # Scope carving
+///
+/// - **Non-goal**: spec の 6th keyword `break-spaces` — spec verbatim: "The
+///   behavior is identical to that of pre-wrap, except that any sequence of
+///   preserved white space always takes up space, including at the end of
+///   the line." `pre-wrap` との差は行末の保存済み space が実際に space を
+///   占有するかどうかという line-breaking の used-value 計算に属する差
+///   であり、本 crate はまだ line box を持たない ([`WordBreak`] doc の
+///   deprecated `break-word` non-goal と同型の carve-out)。他の未知 ident
+///   と同じく silent drop = `None` とする。
+/// - **Downstream handoff**: white space の実際の collapsing / line
+///   wrapping algorithm 自体 (spec 冒頭の summary table が要約する 2 axis
+///   の適用) は、この crate がまだ持たない text layout / line-breaking
+///   consumer (raikiri-dom / raikiri-paint 側) の仕事であり、この property
+///   は cascade static-side keyword しか運ばない ([`TextTransform`] doc の
+///   "Downstream handoff" 節と同型)。
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(a) spec-invalid**: 上記 5 keyword (`break-spaces` は上記 Non-goal 節
+///   参照) 以外の ident は silent drop = `None`。
+///
+/// この crate の scope では length を運ばないため、computed value = specified
+/// keyword、相対解決なし ([`Direction`] doc と同型)。
+///
+/// [`Direction`] / [`WordBreak`] と同じ convention で `Default` を derive
+/// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`]) が [`WhiteSpace::Normal`]
+/// を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WhiteSpace {
+    /// `normal` — spec initial value。
+    Normal,
+    /// `pre`。
+    Pre,
+    /// `nowrap`。
+    Nowrap,
+    /// `pre-wrap`。
+    PreWrap,
+    /// `pre-line`。
+    PreLine,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -3209,6 +3286,15 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     WordSpacing(LengthOrNormal),
+    /// `white-space: normal | pre | nowrap | pre-wrap | pre-line` —
+    /// **inherited**、initial: [`WhiteSpace::Normal`] (CSS Text 3 §3
+    /// [`WhiteSpace`] doc 参照)。computed value = specified keyword
+    /// ([`WhiteSpace`] doc の Scope carving 節参照、6th keyword
+    /// `break-spaces` は未実装)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    WhiteSpace(WhiteSpace),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -3391,6 +3477,11 @@ pub enum PropertyKey {
     // 参照。
     LetterSpacing,
     WordSpacing,
+    // white-space (CSS Text 3 §3、semantics on the matching
+    // PropertyValue::WhiteSpace variant; sibling PropertyKey variants carry
+    // no per-variant docs per crate convention). 末尾配置の理由は
+    // PropertyValue::WhiteSpace の doc 参照。
+    WhiteSpace,
 }
 
 impl PropertyValue {
@@ -3463,6 +3554,7 @@ impl PropertyValue {
             PropertyValue::OverflowWrap(_) => PropertyKey::OverflowWrap,
             PropertyValue::LetterSpacing(_) => PropertyKey::LetterSpacing,
             PropertyValue::WordSpacing(_) => PropertyKey::WordSpacing,
+            PropertyValue::WhiteSpace(_) => PropertyKey::WhiteSpace,
         }
     }
 }
@@ -3721,6 +3813,12 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // <https://www.w3.org/TR/css-text-3/#word-spacing-property>. Same
         // `normal | <length>` grammar as `letter-spacing` above.
         "word-spacing" => parse_letter_or_word_spacing(input).map(PropertyValue::WordSpacing),
+        // CSS Text 3 §3 white-space. grammar (this crate's scope): `normal |
+        // pre | nowrap | pre-wrap | pre-line` — the spec's 6th keyword
+        // `break-spaces` is not implemented (`WhiteSpace` doc's "Scope
+        // carving" section). initial `normal`, inherited, computed value =
+        // specified keyword.
+        "white-space" => parse_white_space(input).map(PropertyValue::WhiteSpace),
         _ => None,
     }
 }
@@ -5146,6 +5244,28 @@ fn parse_overflow_wrap(input: &mut Parser<'_, '_>) -> Option<OverflowWrap> {
         "normal" => Some(OverflowWrap::Normal),
         "break-word" => Some(OverflowWrap::BreakWord),
         "anywhere" => Some(OverflowWrap::Anywhere),
+        _ => None,
+    }
+}
+
+/// `white-space: <ident>` を parse する (CSS Text 3 §3
+/// <https://www.w3.org/TR/css-text-3/#white-space-property>)。
+///
+/// Value grammar (§3, full property grammar): `normal | pre | nowrap |
+/// pre-wrap | break-spaces | pre-line`。本 parser は `normal` / `pre` /
+/// `nowrap` / `pre-wrap` / `pre-line` の 5 keyword のみ受理する
+/// ([`WhiteSpace`] doc の Scope carving 節参照) — 6th keyword
+/// `break-spaces` は spec-valid だが未実装のため、他の未知 ident と同じく
+/// silent drop = `None` とする。ASCII case-insensitive で ident を比較する
+/// (sibling `parse_word_break` と同 flavor)。
+fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(WhiteSpace::Normal),
+        "pre" => Some(WhiteSpace::Pre),
+        "nowrap" => Some(WhiteSpace::Nowrap),
+        "pre-wrap" => Some(WhiteSpace::PreWrap),
+        "pre-line" => Some(WhiteSpace::PreLine),
         _ => None,
     }
 }
@@ -10858,6 +10978,98 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::WordSpacing);
         let v = PropertyValue::WordSpacing(LengthOrNormal::Length(Length::Px(2.0)));
         assert_eq!(v.key(), PropertyKey::WordSpacing);
+    }
+
+    // ── white-space (CSS Text Module Level 3 §3) ──
+    //
+    // Value grammar (§3 spec verbatim, full property grammar): `normal | pre
+    // | nowrap | pre-wrap | break-spaces | pre-line`. This crate implements
+    // only normal / pre / nowrap / pre-wrap / pre-line (`WhiteSpace` doc's
+    // "Scope carving" section) — the 6th keyword `break-spaces` is excluded.
+    // Initial: normal / Inherited: yes / Computed value: specified keyword.
+
+    #[test]
+    fn white_space_parse_all_implemented_keywords() {
+        assert_eq!(
+            parse("normal", "white-space"),
+            Some(PropertyValue::WhiteSpace(WhiteSpace::Normal))
+        );
+        assert_eq!(
+            parse("pre", "white-space"),
+            Some(PropertyValue::WhiteSpace(WhiteSpace::Pre))
+        );
+        assert_eq!(
+            parse("nowrap", "white-space"),
+            Some(PropertyValue::WhiteSpace(WhiteSpace::Nowrap))
+        );
+        assert_eq!(
+            parse("pre-wrap", "white-space"),
+            Some(PropertyValue::WhiteSpace(WhiteSpace::PreWrap))
+        );
+        assert_eq!(
+            parse("pre-line", "white-space"),
+            Some(PropertyValue::WhiteSpace(WhiteSpace::PreLine))
+        );
+    }
+
+    #[test]
+    fn white_space_is_case_insensitive() {
+        assert_eq!(
+            parse("NORMAL", "white-space"),
+            Some(PropertyValue::WhiteSpace(WhiteSpace::Normal))
+        );
+        assert_eq!(
+            parse("Pre-Wrap", "white-space"),
+            Some(PropertyValue::WhiteSpace(WhiteSpace::PreWrap))
+        );
+        assert_eq!(
+            parse("PRE-LINE", "white-space"),
+            Some(PropertyValue::WhiteSpace(WhiteSpace::PreLine))
+        );
+    }
+
+    #[test]
+    fn white_space_rejects_unimplemented_break_spaces() {
+        // (b) not supported — the 6th spec-valid keyword `break-spaces` is
+        // unimplemented (`WhiteSpace` doc's "Scope carving" section — its
+        // hanging-vs-taking-space distinction at end of line is a
+        // line-breaking used-value concern this crate does not compute
+        // yet), not (a) spec-invalid.
+        assert_eq!(parse("break-spaces", "white-space"), None);
+    }
+
+    #[test]
+    fn white_space_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "white-space"), None);
+    }
+
+    #[test]
+    fn white_space_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "white-space"), None);
+        }
+    }
+
+    #[test]
+    fn white_space_rejects_non_ident() {
+        assert_eq!(parse("16px", "white-space"), None);
+        assert_eq!(parse(r#""pre""#, "white-space"), None);
+    }
+
+    #[test]
+    fn white_space_key_maps_to_white_space_property_key() {
+        let v = PropertyValue::WhiteSpace(WhiteSpace::Normal);
+        assert_eq!(v.key(), PropertyKey::WhiteSpace);
+        let v = PropertyValue::WhiteSpace(WhiteSpace::Pre);
+        assert_eq!(v.key(), PropertyKey::WhiteSpace);
+        let v = PropertyValue::WhiteSpace(WhiteSpace::Nowrap);
+        assert_eq!(v.key(), PropertyKey::WhiteSpace);
+        let v = PropertyValue::WhiteSpace(WhiteSpace::PreWrap);
+        assert_eq!(v.key(), PropertyKey::WhiteSpace);
+        let v = PropertyValue::WhiteSpace(WhiteSpace::PreLine);
+        assert_eq!(v.key(), PropertyKey::WhiteSpace);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value

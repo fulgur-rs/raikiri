@@ -2693,13 +2693,13 @@ mod tests {
     }
 
     #[test]
-    fn listing_plaintext_pre_xmp_font_family_ua_rule_survives_real_parse_and_cascade() {
+    fn listing_plaintext_pre_xmp_font_family_and_white_space_survives_real_parse_and_cascade() {
         // HTML LS §flow-content-3's
         //   listing, plaintext, pre, xmp { font-family: monospace; white-space: pre; }
-        // Only the `font-family: monospace` half lands in MINIMAL_UA_CSS
-        // (see minimal.css's comment on this rule for why `white-space: pre`
-        // stays deferred) — same split, and same test shape, as
-        // `code_kbd_samp_tt_ua_rule_survives_real_parse_and_cascade` above.
+        // Both declarations land in MINIMAL_UA_CSS — same test shape as
+        // `code_kbd_samp_tt_ua_rule_survives_real_parse_and_cascade` above,
+        // extended with a `white_space` assertion alongside `font_family`
+        // now that `white-space` parses (CSS Text 3 §3, `raikiri_style::property::WhiteSpace`).
         //
         // Each tag is parsed in its own isolated document rather than one
         // shared document like the sibling test above: html5ever's tokenizer
@@ -2708,6 +2708,7 @@ mod tests {
         // no further element, including a following `<pre>`/`<xmp>`/`<p>`,
         // would parse as an element at all.
         use raikiri_style::Origin;
+        use raikiri_style::property::WhiteSpace;
 
         for tag in ["pre", "listing", "plaintext", "xmp"] {
             let html = format!("<html><body><{tag}>x</{tag}></body></html>");
@@ -2727,11 +2728,18 @@ mod tests {
                 "monospace",
                 "{tag}'s UA rule font-family: monospace must reach computed.font_family through real parse+cascade"
             );
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                cascade.computed[id].white_space,
+                WhiteSpace::Pre,
+                "{tag}'s UA rule white-space: pre must reach computed.white_space through real parse+cascade"
+            );
         }
 
         // Contrast: an element the UA rule does not target must stay at
-        // CSS-initial `serif` (HTML LS §flow-content-3's selector is
-        // exactly the 4 elements above, not every element).
+        // CSS-initial `serif` / `normal` (HTML LS §flow-content-3's selector
+        // is exactly the 4 elements above, not every element).
         let html = "<html><body><p>x</p></body></html>";
         let opts = empty_options();
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
@@ -2747,6 +2755,13 @@ mod tests {
             cascade.computed[p_id].font_family[0].to_string(),
             "serif",
             "p must stay at CSS-initial font-family: serif, not the pre/listing/plaintext/xmp UA rule's monospace"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[p_id].white_space,
+            WhiteSpace::Normal,
+            "p must stay at CSS-initial white-space: normal, not the pre/listing/plaintext/xmp UA rule's pre"
         );
     }
 
@@ -2776,7 +2791,7 @@ mod tests {
         // leaving them untouched already does.
         //
         // Each tag is parsed in its own isolated document, same reason as
-        // `listing_plaintext_pre_xmp_font_family_ua_rule_survives_real_parse_and_cascade`
+        // `listing_plaintext_pre_xmp_font_family_and_white_space_survives_real_parse_and_cascade`
         // above: html5ever's tokenizer switches to the PLAINTEXT state on a
         // `<plaintext>` start tag, after which no further element in the
         // same document would parse.

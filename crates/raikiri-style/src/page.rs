@@ -2070,7 +2070,11 @@ fn absolutize_in_page_context(
         // `overflow-wrap` (legacy alias `word-wrap`, CSS Text 3 §5.4)
         // carries no length either (see `OverflowWrap`'s doc) — same as
         // `WordBreak` above.
-        | PropertyValue::OverflowWrap(_)) => v,
+        | PropertyValue::OverflowWrap(_)
+        // `white-space` (CSS Text 3 §3) carries no length either and
+        // computed value = specified keyword (see `WhiteSpace`'s doc) —
+        // nothing for phase 3 to absolutize.
+        | PropertyValue::WhiteSpace(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2394,7 +2398,8 @@ mod tests {
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
         Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY,
         PositionValue, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
-        TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak, ZIndexValue,
+        TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
+        ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4135,11 +4140,13 @@ mod tests {
     /// length ではないため phase 3 に変換対象が無い)。
     /// 32 → 34 (`WordBreak` / `OverflowWrap` も同じ理由 — どちらも length を
     /// 運ばない keyword-only property のため phase 3 に変換対象が無い)。
+    /// 34 → 35 (`WhiteSpace` も同じ理由 — length を運ばない keyword-only
+    /// property のため phase 3 に変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 34;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 35;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4378,6 +4385,13 @@ mod tests {
         // trivially round-tripping an already-absolute length.
         LetterSpacing => PropertyValue::LetterSpacing(LengthOrNormal::Length(Length::Em(0.1))),
         WordSpacing => PropertyValue::WordSpacing(LengthOrNormal::Length(Length::Rem(0.2))),
+        // No specified/computed distinction for `white-space` (computed
+        // value = specified keyword, `WhiteSpace` doc) — any value is
+        // "worst case" (`Direction` sibling comment above uses the same
+        // reasoning). `Pre` chosen over `Normal` since it is a non-initial
+        // keyword, the same "not the initial value" reasoning
+        // `WordBreak`/`OverflowWrap` samples above use.
+        WhiteSpace => PropertyValue::WhiteSpace(WhiteSpace::Pre),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4549,6 +4563,7 @@ mod tests {
         OverflowWrap,
         LetterSpacing,
         WordSpacing,
+        WhiteSpace,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4810,7 +4825,9 @@ mod tests {
             | PropertyValue::WordBreak(_)
             // `OverflowWrap` (CSS Text 3 §5.4, legacy alias `word-wrap`)
             // carries no length either.
-            | PropertyValue::OverflowWrap(_) => None,
+            | PropertyValue::OverflowWrap(_)
+            // `WhiteSpace` (CSS Text 3 §3) carries no length either.
+            | PropertyValue::WhiteSpace(_) => None,
         }
     }
 
@@ -5189,7 +5206,7 @@ mod tests {
             "@page { color: red; font-weight: bolder; display: block; \
              box-sizing: border-box; border-top-color: red; text-align: center; \
              direction: rtl; font-style: italic; text-transform: uppercase; \
-             word-break: break-all; overflow-wrap: anywhere }",
+             word-break: break-all; overflow-wrap: anywhere; white-space: pre }",
             &root,
         );
         assert_eq!(color_of(&result), Some(RED));
@@ -5226,6 +5243,10 @@ mod tests {
         assert_eq!(
             result.declarations().get(&PropertyKey::OverflowWrap),
             Some(&PropertyValue::OverflowWrap(OverflowWrap::Anywhere)),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::WhiteSpace),
+            Some(&PropertyValue::WhiteSpace(WhiteSpace::Pre)),
         );
     }
 
