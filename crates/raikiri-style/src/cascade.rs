@@ -3697,7 +3697,30 @@ pub(crate) fn resolve_against_inherited(
         // inheritance parent's — same shape as `Padding`/`Margin`/`Width`/
         // `Height` above, nothing for phase 2 to resolve here.
         | PropertyValue::LetterSpacing(_)
-        | PropertyValue::WordSpacing(_)) => v,
+        | PropertyValue::WordSpacing(_)
+        // `flex-*` / alignment / `row-gap`/`column-gap` (and their
+        // shorthands) — same "nothing for phase 2 to resolve" shape as
+        // `Padding`/`Margin`/`Width`/`Height` above for the length-bearing
+        // ones (`FlexBasis`/`RowGap`/`ColumnGap`/`Flex`/`Gap`; phase 3
+        // (`absolutize_in_page_context`) does the declaring node's own
+        // font-size resolution), and no length payload at all for the rest
+        // (`FlexDirection`/`FlexWrap`/`FlexGrow`/`FlexShrink`/
+        // `JustifyContent`/`AlignContent`/`AlignItems`/`AlignSelf`/
+        // `PlaceContent`).
+        | PropertyValue::FlexDirection(_)
+        | PropertyValue::FlexWrap(_)
+        | PropertyValue::FlexGrow(_)
+        | PropertyValue::FlexShrink(_)
+        | PropertyValue::FlexBasis(_)
+        | PropertyValue::Flex(_)
+        | PropertyValue::JustifyContent(_)
+        | PropertyValue::AlignContent(_)
+        | PropertyValue::AlignItems(_)
+        | PropertyValue::AlignSelf(_)
+        | PropertyValue::RowGap(_)
+        | PropertyValue::ColumnGap(_)
+        | PropertyValue::Gap(_)
+        | PropertyValue::PlaceContent(_)) => v,
     })
 }
 
@@ -4138,6 +4161,50 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::LetterSpacing(ls) => target.letter_spacing = ls,
         // CSS Text 3 §7.1。直上の LetterSpacing arm と同型。
         PropertyValue::WordSpacing(ws) => target.word_spacing = ws,
+        // CSS Flexible Box Layout Module Level 1 §5.1/§5.2。non-inherited、
+        // computed value = specified keyword (相対解決なし) — 単純代入で十分。
+        PropertyValue::FlexDirection(fd) => target.flex_direction = fd,
+        PropertyValue::FlexWrap(fw) => target.flex_wrap = fw,
+        // CSS Flexible Box Layout Module Level 1 §7.2.1/§7.2.2。
+        // non-inherited、computed value = specified number — 単純代入で十分。
+        PropertyValue::FlexGrow(g) => target.flex_grow = g,
+        PropertyValue::FlexShrink(s) => target.flex_shrink = s,
+        // CSS Flexible Box Layout Module Level 1 §7.2.3。specified 表現
+        // (`FlexBasisValue`) のまま格納 — 絶対化は phase 3 に委ねる
+        // (`LetterSpacing` arm と同じ handling)。non-inherited。
+        PropertyValue::FlexBasis(fb) => target.flex_basis = fb,
+        // `flex` shorthand fall-through — 通常は `expand_shorthand_into` が
+        // 3 longhand に展開済みのため cascade 経路には到達しない
+        // (`Margin`/`Padding`/`Border` shorthand fall-through と同じ
+        // "safety net ではない" 位置付け、[`PropertyKey::Padding`] doc 参照)。
+        PropertyValue::Flex(f) => {
+            target.flex_grow = f.grow;
+            target.flex_shrink = f.shrink;
+            target.flex_basis = f.basis;
+        }
+        // CSS Box Alignment Module Level 3 §5.1 (justify-content /
+        // align-content) / §7.2 (align-items) / §6.2 (align-self)。
+        // non-inherited、computed value = specified keyword(s) —
+        // 単純代入で十分。
+        PropertyValue::JustifyContent(jc) => target.justify_content = jc,
+        PropertyValue::AlignContent(ac) => target.align_content = ac,
+        PropertyValue::AlignItems(ai) => target.align_items = ai,
+        PropertyValue::AlignSelf(as_) => target.align_self = as_,
+        // CSS Box Alignment Module Level 3 §8.1。specified 表現
+        // (`LengthOrNormal`) のまま格納 — 絶対化は phase 3 に委ねる。
+        // non-inherited。
+        PropertyValue::RowGap(rg) => target.row_gap = rg,
+        PropertyValue::ColumnGap(cg) => target.column_gap = cg,
+        // `gap` shorthand fall-through (`Flex` arm と同じ位置付け)。
+        PropertyValue::Gap(g) => {
+            target.row_gap = g.row;
+            target.column_gap = g.column;
+        }
+        // `place-content` shorthand fall-through (`Flex` arm と同じ位置付け)。
+        PropertyValue::PlaceContent(p) => {
+            target.align_content = p.align;
+            target.justify_content = p.justify;
+        }
     }
 }
 
@@ -7952,6 +8019,110 @@ mod tests {
     }
 
     #[test]
+    fn author_flex_container_longhands_compute_through_cascade() {
+        // End-to-end pipeline pin (parse -> cascade -> ComputedValues) for
+        // the individual flex-container properties this task adds — sibling
+        // of `author_display_flex_and_grid_compute_through_cascade` above.
+        let cv = cascade_with_ua(
+            "",
+            "div { display: flex; flex-direction: column; flex-wrap: wrap; \
+             justify-content: space-between; align-items: center; \
+             align-content: flex-end; row-gap: 10px; column-gap: 5%; }",
+            "div",
+            None,
+        );
+        assert_eq!(
+            cv.flex_direction,
+            crate::property::FlexDirectionValue::Column
+        );
+        assert_eq!(cv.flex_wrap, crate::property::FlexWrapValue::Wrap);
+        assert_eq!(
+            cv.justify_content,
+            crate::property::ContentAlignmentValue::SpaceBetween
+        );
+        assert_eq!(cv.align_items, crate::property::SelfAlignmentValue::Center);
+        assert_eq!(
+            cv.align_content,
+            crate::property::ContentAlignmentValue::FlexEnd
+        );
+        assert_eq!(
+            cv.row_gap,
+            crate::resolve::ComputedLengthPercentageOrNormal::Px(10.0)
+        );
+        assert_eq!(
+            cv.column_gap,
+            crate::resolve::ComputedLengthPercentageOrNormal::Percent(5.0)
+        );
+    }
+
+    #[test]
+    fn author_flex_item_longhands_compute_through_cascade() {
+        let cv = cascade_with_ua(
+            "",
+            "div { flex-grow: 2; flex-shrink: 0; flex-basis: 50%; align-self: flex-end; }",
+            "div",
+            None,
+        );
+        assert_eq!(cv.flex_grow, 2.0);
+        assert_eq!(cv.flex_shrink, 0.0);
+        assert_eq!(
+            cv.flex_basis,
+            crate::resolve::ComputedFlexBasis::Percent(50.0)
+        );
+        assert_eq!(
+            cv.align_self,
+            crate::property::AlignSelfValue::Value(crate::property::SelfAlignmentValue::FlexEnd)
+        );
+    }
+
+    #[test]
+    fn author_flex_shorthand_expands_into_3_longhands_through_cascade() {
+        // Proves `crate::rule::expand_shorthand_into`'s `Flex` arm is
+        // actually wired into the real parse -> cascade pipeline (not just
+        // unit-tested at the parser/expansion-function level) — same
+        // end-to-end intent as `flex_shorthand_*` tests in `property.rs`,
+        // but through the full stylesheet -> cascade path.
+        let cv = cascade_with_ua("", "div { flex: 2 3 10%; }", "div", None);
+        assert_eq!(cv.flex_grow, 2.0);
+        assert_eq!(cv.flex_shrink, 3.0);
+        assert_eq!(
+            cv.flex_basis,
+            crate::resolve::ComputedFlexBasis::Percent(10.0)
+        );
+    }
+
+    #[test]
+    fn author_gap_shorthand_expands_into_2_longhands_through_cascade() {
+        let cv = cascade_with_ua("", "div { gap: 10px 20px; }", "div", None);
+        assert_eq!(
+            cv.row_gap,
+            crate::resolve::ComputedLengthPercentageOrNormal::Px(10.0)
+        );
+        assert_eq!(
+            cv.column_gap,
+            crate::resolve::ComputedLengthPercentageOrNormal::Px(20.0)
+        );
+    }
+
+    #[test]
+    fn author_place_content_shorthand_expands_into_2_longhands_through_cascade() {
+        let cv = cascade_with_ua(
+            "",
+            "div { place-content: center space-between; }",
+            "div",
+            None,
+        );
+        assert_eq!(
+            cv.align_content,
+            crate::property::ContentAlignmentValue::Center
+        );
+        assert_eq!(
+            cv.justify_content,
+            crate::property::ContentAlignmentValue::SpaceBetween
+        );
+    }
+
+    #[test]
     fn important_ua_beats_important_author_display() {
         // Important UA > Important Author (!important 反転、`cascade_rank`
         // doc has the exact values)
@@ -10568,6 +10739,65 @@ mod tests {
         };
         apply_value(PropertyValue::Border(sides), &mut cv);
         assert_eq!(cv.border, sides);
+    }
+
+    #[test]
+    fn apply_value_direct_flex_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_margin_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::Flex(f)` arm is
+        // unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 3 `FlexGrow`/`FlexShrink`/`FlexBasis`
+        // longhands before `apply_value` ever sees it) — not a safety
+        // net, a canary that catches regression if the arm is ever
+        // reached with a stale/wrong shorthand payload.
+        use crate::property::{FlexBasisValue, FlexShorthand};
+        let mut cv = SpecifiedValues::initial();
+        let f = FlexShorthand {
+            grow: 2.0,
+            shrink: 3.0,
+            basis: FlexBasisValue::Length(Length::Px(10.0)),
+        };
+        apply_value(PropertyValue::Flex(f), &mut cv);
+        assert_eq!(cv.flex_grow, 2.0);
+        assert_eq!(cv.flex_shrink, 3.0);
+        assert_eq!(cv.flex_basis, FlexBasisValue::Length(Length::Px(10.0)));
+    }
+
+    #[test]
+    fn apply_value_direct_gap_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_margin_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::Gap(g)` arm is
+        // unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 2 `RowGap`/`ColumnGap` longhands before
+        // `apply_value` ever sees it) — not a safety net, a canary.
+        use crate::property::{GapShorthand, LengthOrNormal};
+        let mut cv = SpecifiedValues::initial();
+        let g = GapShorthand {
+            row: LengthOrNormal::Length(Length::Px(10.0)),
+            column: LengthOrNormal::Length(Length::Px(30.0)),
+        };
+        apply_value(PropertyValue::Gap(g), &mut cv);
+        assert_eq!(cv.row_gap, LengthOrNormal::Length(Length::Px(10.0)));
+        assert_eq!(cv.column_gap, LengthOrNormal::Length(Length::Px(30.0)));
+    }
+
+    #[test]
+    fn apply_value_direct_place_content_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_margin_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::PlaceContent(p)` arm is
+        // unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 2 `AlignContent`/`JustifyContent`
+        // longhands before `apply_value` ever sees it) — not a safety
+        // net, a canary.
+        use crate::property::{ContentAlignmentValue, PlaceContentShorthand};
+        let mut cv = SpecifiedValues::initial();
+        let p = PlaceContentShorthand {
+            align: ContentAlignmentValue::SpaceBetween,
+            justify: ContentAlignmentValue::Center,
+        };
+        apply_value(PropertyValue::PlaceContent(p), &mut cv);
+        assert_eq!(cv.align_content, ContentAlignmentValue::SpaceBetween);
+        assert_eq!(cv.justify_content, ContentAlignmentValue::Center);
     }
 
     // ── text-decoration longhand + shorthand cascade (CSS Text Decoration

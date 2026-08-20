@@ -89,13 +89,15 @@ use crate::cascade::{
 };
 use crate::computed::ComputedValues;
 use crate::property::{
-    Border, BorderColor, BorderStyle, Length, LengthOrAuto, OverflowValue, OverflowXY, PropertyKey,
-    PropertyValue, Sides, parse_non_negative_length, parse_value, resolve_overflow,
+    Border, BorderColor, BorderStyle, FlexBasisValue, FlexShorthand, GapShorthand, Length,
+    LengthOrAuto, LengthOrNormal, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
+    parse_non_negative_length, parse_value, resolve_overflow,
 };
 use crate::resolve::{
-    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
-    lift_length_or_normal, lift_line_height, resolve_border, resolve_length_or_normal,
-    resolve_length_percentage, resolve_length_percentage_or_auto, resolve_line_height,
+    ComputedFlexBasis, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedLengthPercentageOrNormal, ResolveContext, lift_length_or_normal, lift_line_height,
+    resolve_border, resolve_flex_basis, resolve_length_or_normal, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
     resolve_margin_length_or_auto, used_line_height_length,
 };
 use crate::rule::{Declaration, expand_shorthand_into};
@@ -1957,6 +1959,44 @@ fn absolutize_in_page_context(
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
         }
     }
+    /// `flex-basis: content | <'width'>` — same mapping as [`lpa`], with
+    /// `content` preserved as its own keyword (`ComputedFlexBasis::Content`
+    /// has no `LengthOrAuto` equivalent, so it maps back to
+    /// `FlexBasisValue::Content` directly rather than routing through the
+    /// `Auto`/`Px`/`Percent` cases `lpa` shares).
+    fn fb(
+        specified: FlexBasisValue,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> FlexBasisValue {
+        match resolve_flex_basis(specified, font_size, own_line_height, ctx) {
+            ComputedFlexBasis::Auto => FlexBasisValue::Auto,
+            ComputedFlexBasis::Content => FlexBasisValue::Content,
+            ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
+            ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
+        }
+    }
+    /// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` —
+    /// same mapping shape as [`lp`], with `normal` preserved (unlike
+    /// `letter-spacing`/`word-spacing`'s `lift_length_or_normal`, which
+    /// collapses `normal` to a resolved `ComputedLength` — gap's `normal`
+    /// stays a keyword at the computed layer, see
+    /// [`ComputedLengthPercentageOrNormal`] doc).
+    fn lpn(
+        specified: LengthOrNormal,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> LengthOrNormal {
+        match resolve_length_percentage_or_normal(specified, font_size, own_line_height, ctx) {
+            ComputedLengthPercentageOrNormal::Normal => LengthOrNormal::Normal,
+            ComputedLengthPercentageOrNormal::Px(v) => LengthOrNormal::Length(Length::Px(v)),
+            ComputedLengthPercentageOrNormal::Percent(p) => {
+                LengthOrNormal::Length(Length::Percent(p))
+            }
+        }
+    }
     /// One `border-*` side: absolutize the width and apply the style gate.
     ///
     /// Routed through [`resolve_border`] rather than re-testing
@@ -2070,7 +2110,31 @@ fn absolutize_in_page_context(
         // `overflow-wrap` (legacy alias `word-wrap`, CSS Text 3 §5.4)
         // carries no length either (see `OverflowWrap`'s doc) — same as
         // `WordBreak` above.
-        | PropertyValue::OverflowWrap(_)) => v,
+        | PropertyValue::OverflowWrap(_)
+        // `flex-direction`/`flex-wrap` (CSS Flexible Box Layout Module
+        // Level 1 §5.1/§5.2) carry no length and computed value = specified
+        // keyword — nothing for phase 3 to absolutize.
+        | PropertyValue::FlexDirection(_)
+        | PropertyValue::FlexWrap(_)
+        // `flex-grow`/`flex-shrink` (§7.2.1/§7.2.2) carry a bare
+        // `<number>`, not a length — nothing for phase 3 to absolutize
+        // (unlike `FlexBasis` below, which does carry a
+        // `<length-percentage>` and gets its own transform arm).
+        | PropertyValue::FlexGrow(_)
+        | PropertyValue::FlexShrink(_)
+        // `justify-content`/`align-content` (CSS Box Alignment Module Level
+        // 3 §5.1) / `align-items` (§7.2) / `align-self` (§6.2) carry no
+        // length — same shape as `WordBreak` above.
+        | PropertyValue::JustifyContent(_)
+        | PropertyValue::AlignContent(_)
+        | PropertyValue::AlignItems(_)
+        | PropertyValue::AlignSelf(_)
+        // `place-content` shorthand joins the same bucket as identity
+        // pass-through — neither of its 2 components carries a length (see
+        // `TextDecoration` above for the same shorthand-with-no-length-
+        // components shape); it is structurally unreachable here regardless
+        // (`expand_shorthand_into` expands it before this function runs).
+        | PropertyValue::PlaceContent(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2260,6 +2324,38 @@ fn absolutize_in_page_context(
         PropertyValue::WordSpacing(v) => PropertyValue::WordSpacing(lift_length_or_normal(
             resolve_length_or_normal(v, font_size, own_line_height, ctx),
         )),
+        // ── flex-basis ────────────────────────────────────────────────────
+        // CSS Flexible Box Layout Module Level 1 §7.2.3 — `content`/`auto`
+        // preserved as keywords, `<length-percentage>` absolutized (`fb`
+        // helper above).
+        PropertyValue::FlexBasis(v) => {
+            PropertyValue::FlexBasis(fb(v, font_size, own_line_height, ctx))
+        }
+        // Shorthand fall-through (see `Padding` above) — unreachable in
+        // practice (`expand_shorthand_into` expands it before this function
+        // ever sees a winner). `grow`/`shrink` carry no length; `basis`
+        // gets the same `fb` treatment as the `FlexBasis` longhand above.
+        PropertyValue::Flex(f) => PropertyValue::Flex(FlexShorthand {
+            grow: f.grow,
+            shrink: f.shrink,
+            basis: fb(f.basis, font_size, own_line_height, ctx),
+        }),
+        // ── row-gap / column-gap ─────────────────────────────────────────
+        // CSS Box Alignment Module Level 3 §8.1 — `normal` preserved as a
+        // keyword (`lpn` helper above, unlike `letter-spacing`/
+        // `word-spacing`'s `normal → 0` collapse).
+        PropertyValue::RowGap(v) => {
+            PropertyValue::RowGap(lpn(v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::ColumnGap(v) => {
+            PropertyValue::ColumnGap(lpn(v, font_size, own_line_height, ctx))
+        }
+        // Shorthand fall-through (see `Padding` above) — unreachable in
+        // practice, same shape as `Flex` above.
+        PropertyValue::Gap(g) => PropertyValue::Gap(GapShorthand {
+            row: lpn(g.row, font_size, own_line_height, ctx),
+            column: lpn(g.column, font_size, own_line_height, ctx),
+        }),
     }
 }
 
@@ -2391,10 +2487,12 @@ mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
-        BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
-        Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY,
-        PositionValue, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
-        TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak, ZIndexValue,
+        AlignSelfValue, BoxSizing, ContentAlignmentValue, ContentComponent, CssColor, Direction,
+        DisplayValue, FlexDirectionValue, FlexWrapValue, FontStyle, FontWeightValue, Length,
+        LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY,
+        PlaceContentShorthand, PositionValue, SelfAlignmentValue, TextAlign, TextDecorationColor,
+        TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextTransform,
+        VerticalAlign, Visibility, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -3959,6 +4057,80 @@ mod tests {
         );
     }
 
+    /// Direct exercise of `absolutize_in_page_context`'s `flex-basis`/
+    /// `row-gap`/`column-gap` handling (the local `fb`/`lpn` helpers
+    /// above) across every one of their match arms — the `sample_for`
+    /// corpus (`page_corpus`) intentionally samples these three properties
+    /// with a `<length>` (`Px`-shaped) value only (the "worst case" per
+    /// that macro's own convention), which never reaches `fb`'s
+    /// `Auto`/`Content`/`Percent` arms nor `lpn`'s `Normal`/`Percent` arms.
+    /// This test pins all of them directly, sibling to
+    /// `absolutize_in_page_context_shorthand_fall_throughs` above.
+    #[test]
+    fn absolutize_in_page_context_covers_flex_basis_and_gap_arms() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        for (basis, expected) in [
+            (FlexBasisValue::Content, FlexBasisValue::Content),
+            (FlexBasisValue::Auto, FlexBasisValue::Auto),
+            (
+                FlexBasisValue::Length(Length::Percent(50.0)),
+                FlexBasisValue::Length(Length::Percent(50.0)),
+            ),
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::FlexBasis(basis)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::FlexBasis(expected),
+                "flex-basis: {basis:?}",
+            );
+        }
+
+        for gap in [
+            LengthOrNormal::Normal,
+            LengthOrNormal::Length(Length::Percent(25.0)),
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::RowGap(gap)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::RowGap(gap),
+                "row-gap: {gap:?}",
+            );
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::ColumnGap(gap)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::ColumnGap(gap),
+                "column-gap: {gap:?}",
+            );
+        }
+    }
+
     /// Direct exercise of the `FontSizeRelative` "safety net" arm of
     /// `absolutize_in_page_context` — structurally unreachable through
     /// `cascade_page` (step 3/phase 2 always converges `FontSizeRelative` to
@@ -4135,11 +4307,18 @@ mod tests {
     /// length ではないため phase 3 に変換対象が無い)。
     /// 32 → 34 (`WordBreak` / `OverflowWrap` も同じ理由 — どちらも length を
     /// 運ばない keyword-only property のため phase 3 に変換対象が無い)。
+    /// 34 → 43 (`FlexDirection` / `FlexWrap` / `FlexGrow` / `FlexShrink` /
+    /// `JustifyContent` / `AlignContent` / `AlignItems` / `AlignSelf` /
+    /// `PlaceContent` — 9 variant とも同じ理由: keyword-only か `<number>`
+    /// のみで length を運ばないため phase 3 に変換対象が無い。`FlexBasis` /
+    /// `RowGap` / `ColumnGap` / `Flex` / `Gap` は `<length-percentage>` を
+    /// 運ぶため pass-through 側には**加わらない** —
+    /// `absolutize_in_page_context` のバケット comment 参照)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 34;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 43;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4378,6 +4557,45 @@ mod tests {
         // trivially round-tripping an already-absolute length.
         LetterSpacing => PropertyValue::LetterSpacing(LengthOrNormal::Length(Length::Em(0.1))),
         WordSpacing => PropertyValue::WordSpacing(LengthOrNormal::Length(Length::Rem(0.2))),
+        // No specified/computed distinction for `flex-direction`/`flex-wrap`
+        // (computed value = specified keyword) — any value is "worst case"
+        // (`Direction` sibling comment above uses the same reasoning).
+        FlexDirection => PropertyValue::FlexDirection(FlexDirectionValue::RowReverse),
+        FlexWrap => PropertyValue::FlexWrap(FlexWrapValue::WrapReverse),
+        // No specified/computed distinction for `flex-grow`/`flex-shrink`
+        // (computed value = specified number, no length payload) — any
+        // value is "worst case".
+        FlexGrow => PropertyValue::FlexGrow(2.5),
+        FlexShrink => PropertyValue::FlexShrink(0.5),
+        // `Em` (not `Px`) — same "worst case" reasoning as `Width`/`Height`
+        // above: a font-relative unit exercises phase-3 absolutization
+        // (`resolve_flex_basis`) instead of trivially round-tripping an
+        // already-absolute length.
+        FlexBasis => PropertyValue::FlexBasis(FlexBasisValue::Length(Length::Em(2.0))),
+        Flex => PropertyValue::Flex(FlexShorthand {
+            grow: 2.0,
+            shrink: 1.0,
+            basis: FlexBasisValue::Length(Length::Rem(1.5)),
+        }),
+        // No specified/computed distinction for `justify-content`/
+        // `align-content`/`align-items`/`align-self` — any value is "worst
+        // case" (`Direction` sibling comment above uses the same reasoning).
+        JustifyContent => PropertyValue::JustifyContent(ContentAlignmentValue::SpaceBetween),
+        AlignContent => PropertyValue::AlignContent(ContentAlignmentValue::Center),
+        AlignItems => PropertyValue::AlignItems(SelfAlignmentValue::FlexEnd),
+        AlignSelf => PropertyValue::AlignSelf(AlignSelfValue::Value(SelfAlignmentValue::Center)),
+        // `Em`/`Rem` (not `Px`) — same "worst case" reasoning as
+        // `LetterSpacing`/`WordSpacing` above.
+        RowGap => PropertyValue::RowGap(LengthOrNormal::Length(Length::Em(0.5))),
+        ColumnGap => PropertyValue::ColumnGap(LengthOrNormal::Length(Length::Rem(0.75))),
+        Gap => PropertyValue::Gap(GapShorthand {
+            row: LengthOrNormal::Length(Length::Em(0.5)),
+            column: LengthOrNormal::Length(Length::Rem(0.75)),
+        }),
+        PlaceContent => PropertyValue::PlaceContent(PlaceContentShorthand {
+            align: ContentAlignmentValue::SpaceBetween,
+            justify: ContentAlignmentValue::Center,
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4549,6 +4767,20 @@ mod tests {
         OverflowWrap,
         LetterSpacing,
         WordSpacing,
+        FlexDirection,
+        FlexWrap,
+        FlexGrow,
+        FlexShrink,
+        FlexBasis,
+        Flex,
+        JustifyContent,
+        AlignContent,
+        AlignItems,
+        AlignSelf,
+        RowGap,
+        ColumnGap,
+        Gap,
+        PlaceContent,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4674,6 +4906,15 @@ mod tests {
                 LengthOrAuto::Length(l) => length(l),
             }
         }
+        /// `flex-basis: content | <'width'>` — `auto`/`content` keyword は
+        /// 常に無 residue (computed 層でも keyword のまま、`ComputedFlexBasis`
+        /// doc 参照)、`<length-percentage>` は [`length`] に delegate。
+        fn flex_basis(fb: FlexBasisValue) -> Option<&'static str> {
+            match fb {
+                FlexBasisValue::Auto | FlexBasisValue::Content => None,
+                FlexBasisValue::Length(l) => length(l),
+            }
+        }
         /// `letter-spacing` / `word-spacing` の `normal | <length>`. `normal`
         /// computes to zero (CSS Text 3 §7.2/§7.1) so it is never residue,
         /// same shape as `LengthOrAuto::Auto` above.
@@ -4757,6 +4998,15 @@ mod tests {
             PropertyValue::LetterSpacing(l) | PropertyValue::WordSpacing(l) => {
                 length_or_normal(*l)
             }
+            PropertyValue::FlexBasis(fb) => flex_basis(*fb),
+            // Shorthand fall-through — `grow`/`shrink` carry no length,
+            // `basis` gets the same `flex_basis` treatment as the
+            // `FlexBasis` longhand above.
+            PropertyValue::Flex(f) => flex_basis(f.basis),
+            PropertyValue::RowGap(l) | PropertyValue::ColumnGap(l) => length_or_normal(*l),
+            // Shorthand fall-through — either component being residue makes
+            // the whole shorthand residue.
+            PropertyValue::Gap(g) => length_or_normal(g.row).or_else(|| length_or_normal(g.column)),
             // 層に依存しない payload — keyword / color / ident list / counter。
             PropertyValue::Color(_)
             | PropertyValue::BackgroundColor(_)
@@ -4810,7 +5060,23 @@ mod tests {
             | PropertyValue::WordBreak(_)
             // `OverflowWrap` (CSS Text 3 §5.4, legacy alias `word-wrap`)
             // carries no length either.
-            | PropertyValue::OverflowWrap(_) => None,
+            | PropertyValue::OverflowWrap(_)
+            // `FlexDirectionValue`/`FlexWrapValue` carry no length either.
+            | PropertyValue::FlexDirection(_)
+            | PropertyValue::FlexWrap(_)
+            // `flex-grow`/`flex-shrink` carry a bare `<number>`, not a
+            // length.
+            | PropertyValue::FlexGrow(_)
+            | PropertyValue::FlexShrink(_)
+            // `ContentAlignmentValue`/`SelfAlignmentValue`/`AlignSelfValue`
+            // carry no length either.
+            | PropertyValue::JustifyContent(_)
+            | PropertyValue::AlignContent(_)
+            | PropertyValue::AlignItems(_)
+            | PropertyValue::AlignSelf(_)
+            // `place-content` shorthand — neither component carries a
+            // length (see `TextDecoration` above for the same shape).
+            | PropertyValue::PlaceContent(_) => None,
         }
     }
 
@@ -4857,6 +5123,42 @@ mod tests {
         // 対照 — `Em` は残滓 (絶対化前)。
         assert_eq!(
             specified_layer_residue(&PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Em(1.0)
+            ))),
+            Some("Length::Em"),
+        );
+    }
+
+    /// `flex-basis: content` / `auto` は残滓ではない (`ComputedFlexBasis`
+    /// doc: computed 層でも keyword のまま) — sibling of
+    /// `letter_spacing_and_word_spacing_normal_is_not_specified_layer_residue`
+    /// above, same reason: `page_corpus`'s `FlexBasis` worst-case sample is
+    /// always a `Length` variant (`sample_for` 参照), so `flex_basis`'s
+    /// keyword arm isn't exercised via the corpus. `row-gap`/`column-gap:
+    /// normal` follow the same pattern as letter-spacing/word-spacing's
+    /// `normal` (CSS Box Alignment 3 §8.1: normal は残滓ではなく keyword の
+    /// まま).
+    #[test]
+    fn flex_basis_content_and_gap_normal_are_not_specified_layer_residue() {
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::FlexBasis(FlexBasisValue::Content)),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::FlexBasis(FlexBasisValue::Auto)),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::RowGap(LengthOrNormal::Normal)),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::ColumnGap(LengthOrNormal::Normal)),
+            None,
+        );
+        // 対照 — `Em` は残滓 (絶対化前)。
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::FlexBasis(FlexBasisValue::Length(
                 Length::Em(1.0)
             ))),
             Some("Length::Em"),

@@ -15,17 +15,20 @@ use parley::{
     LayoutContext, LineHeight, StyleProperty,
 };
 use raikiri_style::property::{
-    BoxSizing as StyleBoxSizing, DisplayValue, FontStyle as StyleFontStyle,
+    AlignSelfValue, BoxSizing as StyleBoxSizing, ContentAlignmentValue, DisplayValue,
+    FlexDirectionValue, FlexWrapValue, FontStyle as StyleFontStyle, SelfAlignmentValue,
 };
 use raikiri_style::{
-    CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedLineHeight, ComputedValues,
+    CascadeResult, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+    ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
-    AvailableSpace, BoxSizing as TaffyBoxSizing, Dimension, Display, Layout as TaffyLayout,
-    LengthPercentage, LengthPercentageAuto, NodeId as TaffyNodeId, Point, Rect, Size,
-    compute_root_layout,
+    AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace,
+    BoxSizing as TaffyBoxSizing, Dimension, Display, FlexDirection as TaffyFlexDirection,
+    FlexWrap as TaffyFlexWrap, Layout as TaffyLayout, LengthPercentage, LengthPercentageAuto,
+    NodeId as TaffyNodeId, Point, Rect, Size, compute_root_layout,
 };
 
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
@@ -90,6 +93,15 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///   §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>。
 /// - [`bridge_box_sizing`] — [`raikiri_style::property::BoxSizing`] → [`taffy::BoxSizing`]
 ///   (CSS Sizing 3 §7)
+/// - [`bridge_flex`] — `flex-direction` / `flex-wrap` / `flex-grow` /
+///   `flex-shrink` / `flex-basis` → [`taffy::Style`]'s matching flex
+///   container/item fields (CSS Flexible Box Layout Module Level 1)
+/// - [`bridge_alignment`] — `justify-content` / `align-content` /
+///   `align-items` / `align-self` → [`taffy::Style`]'s matching
+///   `Option<AlignItems>`/`Option<AlignContent>` fields (CSS Box Alignment
+///   Module Level 3)
+/// - [`bridge_gap`] — `row-gap` / `column-gap` → [`taffy::Style::gap`]
+///   (`Size<LengthPercentage>`, CSS Box Alignment Module Level 3 §8.1)
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -103,6 +115,9 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_size(style, cv, &mut doc.layout_warnings);
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
+        bridge_flex(style, cv, &mut doc.layout_warnings);
+        bridge_alignment(style, cv);
+        bridge_gap(style, cv, &mut doc.layout_warnings);
     }
 }
 
@@ -175,10 +190,10 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let p = cv.padding;
     style.padding = Rect {
-        top: computed_length_percentage_to_taffy_length_percentage(p.top, diag),
-        right: computed_length_percentage_to_taffy_length_percentage(p.right, diag),
-        bottom: computed_length_percentage_to_taffy_length_percentage(p.bottom, diag),
-        left: computed_length_percentage_to_taffy_length_percentage(p.left, diag),
+        top: computed_length_percentage_to_taffy_length_percentage(p.top, "padding", diag),
+        right: computed_length_percentage_to_taffy_length_percentage(p.right, "padding", diag),
+        bottom: computed_length_percentage_to_taffy_length_percentage(p.bottom, "padding", diag),
+        left: computed_length_percentage_to_taffy_length_percentage(p.left, "padding", diag),
     };
 }
 
@@ -305,6 +320,222 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
         // に fail-quiet (silent spec-violation 拡大を避ける)。
         _ => TaffyBoxSizing::ContentBox,
     };
+}
+
+/// flex container/item property → [`taffy::Style`] bridge。
+///
+/// CSS Flexible Box Layout Module Level 1 の 5 property を対応する taffy
+/// field へ写す:
+///
+/// - `flex-direction` ([`FlexDirectionValue`]) → `style.flex_direction`
+///   (§5.1)
+/// - `flex-wrap` ([`FlexWrapValue`]) → `style.flex_wrap` (§5.2)
+/// - `flex-grow` (`f32`) → `style.flex_grow` (§7.2.1、無変換で直接 copy —
+///   `<number>` は spec 上絶対化を要さない、[`ComputedValues::flex_grow`]
+///   doc の sink-guard 注記参照)
+/// - `flex-shrink` (`f32`) → `style.flex_shrink` (§7.2.2、同上)
+/// - `flex-basis` ([`ComputedFlexBasis`]) → `style.flex_basis`
+///   (`taffy::Dimension`、§7.2.3)
+///
+/// # `flex-basis` の bridge — `width`/`height` と同じ helper を再利用
+///
+/// [`ComputedFlexBasis`] を [`ComputedLengthPercentageOrAuto`] に一度
+/// 変換してから [`computed_length_percentage_or_auto_to_taffy_dimension`]
+/// へ delegate する — [`bridge_size`] と全く同じ helper (percent の
+/// `/100.0` 変換 + [`sanitize_taffy`] 非有限 guard を含む) を再実装せず共有する。
+///
+/// - `Auto` → [`ComputedLengthPercentageOrAuto::Auto`]
+/// - `Px` / `Percent` → 対応する [`ComputedLengthPercentageOrAuto`] variant
+/// - `Content` → **`Auto` と同じ扱い** — `taffy::Dimension` に `content`
+///   keyword を表現する variant が存在しないため (`FlexBasisValue` doc の
+///   "`content` と `auto` の意味差" 節参照)、taffy 側の flex-basis 解決
+///   アルゴリズムに委ねる。`content` と `auto` の意味差 (宣言要素の
+///   `width`/`height` を参照するかどうか) はこの bridge の scope 外 —
+///   computed 層では区別を保っている ([`ComputedFlexBasis`] doc 参照) ため、
+///   将来 taffy 側 API が `content` を表現できるようになった時点で本 bridge
+///   だけを直せばよい。
+fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+    style.flex_direction = match cv.flex_direction {
+        FlexDirectionValue::Row => TaffyFlexDirection::Row,
+        FlexDirectionValue::RowReverse => TaffyFlexDirection::RowReverse,
+        FlexDirectionValue::Column => TaffyFlexDirection::Column,
+        FlexDirectionValue::ColumnReverse => TaffyFlexDirection::ColumnReverse,
+        // cov:ignore: unreachable while FlexDirectionValue is
+        // Row|RowReverse|Column|ColumnReverse only; required for its
+        // #[non_exhaustive] contract (see doc above, `bridge_display`
+        // catch-all と同じ趣旨).
+        _ => TaffyFlexDirection::Row,
+    };
+    style.flex_wrap = match cv.flex_wrap {
+        FlexWrapValue::NoWrap => TaffyFlexWrap::NoWrap,
+        FlexWrapValue::Wrap => TaffyFlexWrap::Wrap,
+        FlexWrapValue::WrapReverse => TaffyFlexWrap::WrapReverse,
+        // cov:ignore: unreachable while FlexWrapValue is
+        // NoWrap|Wrap|WrapReverse only; required for its #[non_exhaustive]
+        // contract.
+        _ => TaffyFlexWrap::NoWrap,
+    };
+    // `<number>` は絶対化不要 — 無変換で直接 copy。
+    style.flex_grow = cv.flex_grow;
+    style.flex_shrink = cv.flex_shrink;
+    // `flex-basis: content` (CSS Flexible Box Layout 1 §4.5) is distinct
+    // from `auto` in principle — it always uses the item's content size as
+    // the flex basis, even when `width`/`height` are also set, whereas
+    // `auto` defers to `width`/`height` first and only falls back to
+    // content size when those are also `auto`. This crate has no
+    // content-based intrinsic sizing pass to compute that distinction, so
+    // `content` is approximated as `auto` here; the two diverge only when
+    // an explicit `width`/`height` is present alongside `flex-basis:
+    // content`.
+    let basis_lpa = match cv.flex_basis {
+        ComputedFlexBasis::Auto | ComputedFlexBasis::Content => {
+            ComputedLengthPercentageOrAuto::Auto
+        }
+        ComputedFlexBasis::Px(v) => ComputedLengthPercentageOrAuto::Px(v),
+        ComputedFlexBasis::Percent(p) => ComputedLengthPercentageOrAuto::Percent(p),
+    };
+    style.flex_basis =
+        computed_length_percentage_or_auto_to_taffy_dimension(basis_lpa, "flex-basis", diag);
+}
+
+/// alignment property → [`taffy::Style`] bridge (CSS Box Alignment Module
+/// Level 3)。
+///
+/// - `justify-content` ([`ContentAlignmentValue`]) → `style.justify_content`
+///   (§5.1)
+/// - `align-content` ([`ContentAlignmentValue`]) → `style.align_content`
+///   (§5.1)
+/// - `align-items` ([`SelfAlignmentValue`]) → `style.align_items` (§7.2)
+/// - `align-self` ([`AlignSelfValue`]) → `style.align_self` (§6.2)
+///
+/// taffy 側の 4 field は全て `Option<…>` — CSS の `normal` (content-*系)
+/// keyword には対応する taffy keyword が無く、`None` へ写す
+/// (`bridge_box_sizing` の "Initial-value 補正" 節と同型の initial-value
+/// mismatch)。taffy はその後 layout mode 依存の default で埋める
+/// (`GridContainerStyle::grid_align_content` 等の `unwrap_or(AlignContent::STRETCH)`
+/// — grid path の fallback は `STRETCH`、flex path は
+/// `compute_flexbox_layout` 内部の別 default)。`align-self: auto` も同じ形
+/// (`Option::None` → 親の `align-items` に fallback、CSS Box Alignment 3
+/// §6.2 の spec 規定どおり)。
+///
+/// 明示 keyword は [`taffy::AlignItems`] / [`taffy::AlignContent`] の
+/// 定数 (`AlignItems::CENTER` 等、struct constant であって enum variant
+/// ではない — taffy 0.12 の safe/unsafe overflow-position 分離 shape、
+/// [`ContentAlignmentValue`]/[`SelfAlignmentValue`] doc の scope carving
+/// 節参照) に写す。`safety` field は常に `AlignmentSafety::Unsafe` —
+/// `safe`/`unsafe` prefix 自体を本 crate が受理していないため
+/// (`parse_content_alignment`/`parse_self_alignment` doc 参照)。
+fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
+    style.justify_content = content_alignment_to_taffy(cv.justify_content);
+    style.align_content = content_alignment_to_taffy(cv.align_content);
+    style.align_items = self_alignment_to_taffy(cv.align_items);
+    style.align_self = match cv.align_self {
+        AlignSelfValue::Auto => None,
+        // `align-self: normal` は `auto` とは異なり、親の `align-items` へ
+        // fallback せず、flex layout では単独で `stretch`相当に振る舞う
+        // (CSS Box Alignment 3 §8.3 の "In flex layout, this value
+        // behaves as stretch")。`self_alignment_to_taffy`'s `Normal =>
+        // None` mapping はここでは使えない — taffy の `align_self: None`
+        // は「コンテナの `align_items` を継承する」意味 (`auto` の spec
+        // 挙動そのもの) であり、`normal` の「親の値に関わらず stretch」
+        // とは異なるため、明示的に `STRETCH` へ写す。
+        AlignSelfValue::Value(SelfAlignmentValue::Normal) => Some(TaffyAlignItems::STRETCH),
+        AlignSelfValue::Value(v) => self_alignment_to_taffy(v),
+        // cov:ignore: unreachable while AlignSelfValue is Auto|Value(_)
+        // only; required for its #[non_exhaustive] contract
+        // (`self_alignment_to_taffy` の catch-all と同じ判断).
+        _ => None,
+    };
+}
+
+/// [`ContentAlignmentValue`] → `Option<taffy::AlignContent>` mapping —
+/// [`bridge_alignment`] の `justify_content` / `align_content` 両 field で
+/// 共有する ([`ContentAlignmentValue`] 自体が両 property の共有 payload
+/// 型であるのと同じ理由)。
+fn content_alignment_to_taffy(v: ContentAlignmentValue) -> Option<TaffyAlignContent> {
+    match v {
+        ContentAlignmentValue::Normal => None,
+        ContentAlignmentValue::Stretch => Some(TaffyAlignContent::STRETCH),
+        ContentAlignmentValue::SpaceBetween => Some(TaffyAlignContent::SPACE_BETWEEN),
+        ContentAlignmentValue::SpaceEvenly => Some(TaffyAlignContent::SPACE_EVENLY),
+        ContentAlignmentValue::SpaceAround => Some(TaffyAlignContent::SPACE_AROUND),
+        ContentAlignmentValue::Center => Some(TaffyAlignContent::CENTER),
+        ContentAlignmentValue::Start => Some(TaffyAlignContent::START),
+        ContentAlignmentValue::End => Some(TaffyAlignContent::END),
+        ContentAlignmentValue::FlexStart => Some(TaffyAlignContent::FLEX_START),
+        ContentAlignmentValue::FlexEnd => Some(TaffyAlignContent::FLEX_END),
+        // cov:ignore: unreachable while ContentAlignmentValue is the 10
+        // variants matched above only; required for its #[non_exhaustive]
+        // contract.
+        _ => None,
+    }
+}
+
+/// [`SelfAlignmentValue`] → `Option<taffy::AlignItems>` mapping —
+/// [`bridge_alignment`] の `align_items` field と `align_self` の
+/// `AlignSelfValue::Value` branch で共有する (`align-self` の非-`auto` 値は
+/// `align-items` と同じ keyword set、[`AlignSelfValue`] doc 参照)。
+fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<TaffyAlignItems> {
+    match v {
+        SelfAlignmentValue::Normal => None,
+        SelfAlignmentValue::Stretch => Some(TaffyAlignItems::STRETCH),
+        SelfAlignmentValue::Center => Some(TaffyAlignItems::CENTER),
+        SelfAlignmentValue::Start => Some(TaffyAlignItems::START),
+        SelfAlignmentValue::End => Some(TaffyAlignItems::END),
+        SelfAlignmentValue::FlexStart => Some(TaffyAlignItems::FLEX_START),
+        SelfAlignmentValue::FlexEnd => Some(TaffyAlignItems::FLEX_END),
+        SelfAlignmentValue::Baseline => Some(TaffyAlignItems::BASELINE),
+        // cov:ignore: unreachable while SelfAlignmentValue is the 8
+        // variants matched above only; required for its #[non_exhaustive]
+        // contract.
+        _ => None,
+    }
+}
+
+/// `row-gap` / `column-gap` → [`taffy::Style::gap`] (`Size<LengthPercentage>`)
+/// bridge。
+///
+/// CSS Box Alignment Module Level 3 §8.1 "Row and Column Gutters: the
+/// row-gap and column-gap properties"
+/// <https://www.w3.org/TR/css-align-3/#column-row-gap> propdef の
+/// "Initial: normal" に対し、同 propdef の value 説明 (verbatim) が:
+///
+/// > The value `normal` represents a used value of `1em` on multi-column
+/// > containers, and a used value of `0px` in all other contexts.
+///
+/// と規定する — flex/grid container はこの "all other contexts" に属する。
+/// これは [`bridge_box_sizing`] の "Initial-value 補正" 節と同型の
+/// mismatch: raikiri-style の computed 層 initial は `normal` keyword を
+/// 保持する ([`ComputedLengthPercentageOrNormal::Normal`]) が、taffy 側
+/// `Size<LengthPercentage>` (non-`Option`) には `normal` keyword が
+/// 存在しないため、本 bridge が `normal → 0` の変換を担う。
+///
+/// `Px` / `Percent` は [`ComputedLengthPercentage`] に一度変換してから
+/// [`computed_length_percentage_to_taffy_length_percentage`] (percent の
+/// `/100.0` 変換 + [`sanitize_taffy`] 非有限 guard を含む) へ delegate する
+/// — [`bridge_padding`] と同じ helper を再利用し、実装を複製しない。
+fn bridge_gap(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+    style.gap = Size {
+        width: computed_gap_component_to_taffy(cv.column_gap, "column-gap", diag),
+        height: computed_gap_component_to_taffy(cv.row_gap, "row-gap", diag),
+    };
+}
+
+/// [`bridge_gap`] の per-axis helper — `taffy::Size<LengthPercentage>` の
+/// `width` は inline axis (`column-gap` 相当)、`height` は block axis
+/// (`row-gap` 相当) に対応する (taffy `Size` の一般 convention、
+/// [`bridge_size`] の `width`/`height` mapping と同じ軸の向き)。
+fn computed_gap_component_to_taffy(
+    gap: ComputedLengthPercentageOrNormal,
+    site: &'static str,
+    diag: &mut Vec<LayoutWarn>,
+) -> LengthPercentage {
+    let lp = match gap {
+        ComputedLengthPercentageOrNormal::Normal => ComputedLengthPercentage::Px(0.0),
+        ComputedLengthPercentageOrNormal::Px(v) => ComputedLengthPercentage::Px(v),
+        ComputedLengthPercentageOrNormal::Percent(p) => ComputedLengthPercentage::Percent(p),
+    };
+    computed_length_percentage_to_taffy_length_percentage(lp, site, diag)
 }
 
 // ---------------------------------------------------------------------------
@@ -1693,7 +1924,14 @@ fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> 
 }
 
 /// [`ComputedLengthPercentage`] → [`taffy::LengthPercentage`] bridge
-/// (padding 用)。
+/// (padding / gap 用)。
+///
+/// `site` distinguishes the callers (`"padding"` / `"row-gap"` /
+/// `"column-gap"`) in [`LayoutWarn::NonFiniteClamped`] events — same
+/// `site`-parameter shape as
+/// [`computed_length_percentage_or_auto_to_taffy_dimension`]
+/// (`"width"`/`"height"`), generalized once a second caller
+/// ([`bridge_gap`]) appeared.
 ///
 /// # 網羅 match
 ///
@@ -1724,16 +1962,14 @@ fn child_within_parent_border_box(parent: &TaffyLayout, child: &TaffyLayout) -> 
 /// used value ではない** ([`MAX_TAFFY_MAGNITUDE`] の射程節を参照)。
 fn computed_length_percentage_to_taffy_length_percentage(
     len: ComputedLengthPercentage,
+    site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentage {
     match len {
         // site 1: `sanitize_taffy` で非有限を落とす。
-        // 唯一の caller (`bridge_padding`) 由来なので site label は固定。
-        ComputedLengthPercentage::Px(v) => {
-            LengthPercentage::length(sanitize_taffy(v, "padding", diag))
-        }
+        ComputedLengthPercentage::Px(v) => LengthPercentage::length(sanitize_taffy(v, site, diag)),
         ComputedLengthPercentage::Percent(p) => {
-            LengthPercentage::percent(sanitize_taffy(p / 100.0, "padding", diag))
+            LengthPercentage::percent(sanitize_taffy(p / 100.0, site, diag))
         }
     }
 }
@@ -3047,6 +3283,523 @@ mod tests {
             (b_loc.x - a_loc.x - 100.0).abs() < 0.5,
             "second flex item should sit 100px (first item's width) further along the main axis (x), got a.x={}, b.x={}",
             a_loc.x,
+            b_loc.x
+        );
+    }
+
+    #[test]
+    fn bridge_flex_maps_every_flex_direction_and_flex_wrap_keyword() {
+        // `bridge_flex`'s `flex_direction`/`flex_wrap` match arms — the
+        // sibling `flex_direction_column_stacks_children_vertically` /
+        // `gap_adds_space_between_flex_items` tests only exercise `Row`
+        // (default) and `Column` end-to-end through real layout geometry;
+        // this test pins the remaining keyword→taffy-constant mappings
+        // directly, since geometry alone can't discriminate e.g.
+        // `RowReverse` from `Row` without a multi-child fixture per
+        // variant.
+        for (direction, expected) in [
+            (FlexDirectionValue::Row, TaffyFlexDirection::Row),
+            (
+                FlexDirectionValue::RowReverse,
+                TaffyFlexDirection::RowReverse,
+            ),
+            (FlexDirectionValue::Column, TaffyFlexDirection::Column),
+            (
+                FlexDirectionValue::ColumnReverse,
+                TaffyFlexDirection::ColumnReverse,
+            ),
+        ] {
+            let mut cv = ComputedValues::initial();
+            cv.flex_direction = direction;
+            let mut style = Style::default();
+            let mut diag = Vec::new();
+            bridge_flex(&mut style, &cv, &mut diag);
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                style.flex_direction, expected,
+                "flex-direction: {direction:?}"
+            );
+        }
+
+        for (wrap, expected) in [
+            (FlexWrapValue::NoWrap, TaffyFlexWrap::NoWrap),
+            (FlexWrapValue::Wrap, TaffyFlexWrap::Wrap),
+            (FlexWrapValue::WrapReverse, TaffyFlexWrap::WrapReverse),
+        ] {
+            let mut cv = ComputedValues::initial();
+            cv.flex_wrap = wrap;
+            let mut style = Style::default();
+            let mut diag = Vec::new();
+            bridge_flex(&mut style, &cv, &mut diag);
+            assert_eq!(style.flex_wrap, expected, "flex-wrap: {wrap:?}");
+        }
+    }
+
+    #[test]
+    fn bridge_flex_absolutizes_flex_basis_px_and_percent() {
+        // `bridge_flex`'s `ComputedFlexBasis::Px`/`Percent` arms — no
+        // existing test sets an explicit `<length-percentage>` flex-basis
+        // (`flex_grow_absorbs_free_space` below leaves it at the `auto`
+        // initial value), so these two reachable arms had no direct
+        // coverage.
+        let mut cv = ComputedValues::initial();
+        cv.flex_basis = ComputedFlexBasis::Px(40.0);
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_flex(&mut style, &cv, &mut diag);
+        assert_eq!(style.flex_basis, Dimension::length(40.0));
+
+        // `ComputedFlexBasis::Percent` holds the authored number (`50.0`
+        // for `50%`, not a `0.0..=1.0` fraction) — the bridge divides by
+        // 100 before handing it to taffy, same convention as
+        // `computed_length_percentage_or_auto_to_taffy_dimension`'s other
+        // callers (`width`/`height`/`margin`).
+        let mut cv = ComputedValues::initial();
+        cv.flex_basis = ComputedFlexBasis::Percent(50.0);
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_flex(&mut style, &cv, &mut diag);
+        assert_eq!(style.flex_basis, Dimension::percent(0.5));
+    }
+
+    #[test]
+    fn content_alignment_to_taffy_maps_every_keyword() {
+        // `content_alignment_to_taffy` backs both `justify-content` and
+        // `align-content` (`bridge_alignment`) — pin every keyword→taffy
+        // constant mapping directly, since only `Center`-ish geometry is
+        // exercised end-to-end elsewhere.
+        for (value, expected) in [
+            (ContentAlignmentValue::Normal, None),
+            (
+                ContentAlignmentValue::Stretch,
+                Some(TaffyAlignContent::STRETCH),
+            ),
+            (
+                ContentAlignmentValue::SpaceBetween,
+                Some(TaffyAlignContent::SPACE_BETWEEN),
+            ),
+            (
+                ContentAlignmentValue::SpaceEvenly,
+                Some(TaffyAlignContent::SPACE_EVENLY),
+            ),
+            (
+                ContentAlignmentValue::SpaceAround,
+                Some(TaffyAlignContent::SPACE_AROUND),
+            ),
+            (
+                ContentAlignmentValue::Center,
+                Some(TaffyAlignContent::CENTER),
+            ),
+            (ContentAlignmentValue::Start, Some(TaffyAlignContent::START)),
+            (ContentAlignmentValue::End, Some(TaffyAlignContent::END)),
+            (
+                ContentAlignmentValue::FlexStart,
+                Some(TaffyAlignContent::FLEX_START),
+            ),
+            (
+                ContentAlignmentValue::FlexEnd,
+                Some(TaffyAlignContent::FLEX_END),
+            ),
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                content_alignment_to_taffy(value),
+                expected,
+                "value: {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn self_alignment_to_taffy_maps_every_keyword() {
+        // `self_alignment_to_taffy` backs `align-items` and the
+        // non-`auto` branch of `align-self` (`bridge_alignment`) — pin
+        // every keyword→taffy constant mapping directly.
+        for (value, expected) in [
+            (SelfAlignmentValue::Normal, None),
+            (SelfAlignmentValue::Stretch, Some(TaffyAlignItems::STRETCH)),
+            (SelfAlignmentValue::Center, Some(TaffyAlignItems::CENTER)),
+            (SelfAlignmentValue::Start, Some(TaffyAlignItems::START)),
+            (SelfAlignmentValue::End, Some(TaffyAlignItems::END)),
+            (
+                SelfAlignmentValue::FlexStart,
+                Some(TaffyAlignItems::FLEX_START),
+            ),
+            (SelfAlignmentValue::FlexEnd, Some(TaffyAlignItems::FLEX_END)),
+            (
+                SelfAlignmentValue::Baseline,
+                Some(TaffyAlignItems::BASELINE),
+            ),
+        ] {
+            assert_eq!(self_alignment_to_taffy(value), expected, "value: {value:?}");
+        }
+    }
+
+    #[test]
+    fn bridge_alignment_align_self_auto_maps_to_none() {
+        // `bridge_alignment`'s `AlignSelfValue::Auto` arm — the `None`
+        // mapping (CSS Box Alignment 3 §6.2: falls back to the parent's
+        // `align-items`, delegated to taffy) has no other coverage.
+        let mut cv = ComputedValues::initial();
+        cv.align_self = AlignSelfValue::Auto;
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        assert_eq!(style.align_self, None);
+    }
+
+    #[test]
+    fn bridge_alignment_align_self_value_delegates_to_self_alignment_to_taffy() {
+        // `bridge_alignment`'s `AlignSelfValue::Value(v)` arm — distinct
+        // from the sibling test above, which only pins the `Auto` arm.
+        // `self_alignment_to_taffy` itself is already pinned directly by
+        // `self_alignment_to_taffy_maps_every_keyword`, but that doesn't
+        // exercise this match arm's delegation to it.
+        let mut cv = ComputedValues::initial();
+        cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        assert_eq!(style.align_self, Some(TaffyAlignItems::CENTER));
+    }
+
+    #[test]
+    fn bridge_alignment_align_self_normal_maps_to_stretch_not_none() {
+        // Regression test (§8.3 review finding): `align-self: normal` must
+        // NOT collapse to the same `None` mapping as `align-self: auto`.
+        // `auto` computes to the parent's `align-items` value (CSS Box
+        // Alignment 3 §8.3), which taffy's `align_self: None` already
+        // implements by inheriting the container's `align_items`. But
+        // `normal` independently behaves as `stretch` in flex layout
+        // regardless of the parent's `align-items` — mapping it to `None`
+        // would incorrectly make it inherit the parent's value like `auto`
+        // does. See the end-to-end behavioral pin below.
+        let mut cv = ComputedValues::initial();
+        cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Normal);
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        assert_eq!(style.align_self, Some(TaffyAlignItems::STRETCH));
+    }
+
+    #[test]
+    fn align_self_normal_stretches_even_when_parent_align_items_is_center() {
+        // End-to-end pin of the §8.3 review finding: with the container's
+        // `align-items: center`, a child with `align-self: auto` would
+        // center (inheriting the parent's value per spec), but a child
+        // with `align-self: normal` must independently stretch to fill the
+        // cross axis — the two must NOT produce the same layout, even
+        // though `bridge_alignment` maps both through `Option<AlignItems>`.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex_container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;height:100px;align-items:center"),
+        );
+        let normal_child = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:50px;align-self:normal"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let child_height = doc.nodes[normal_child].unrounded_layout.size.height;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (child_height - 100.0).abs() < 0.5,
+            "align-self:normal must stretch to fill the 100px container cross-size regardless of the parent's align-items:center, got height={child_height}"
+        );
+    }
+
+    #[test]
+    fn flex_direction_column_stacks_children_vertically() {
+        // `bridge_flex`'s `flex_direction` field must actually reach
+        // taffy's `compute_flexbox_layout` — asserting `style.flex_direction
+        // == Column` alone would only prove the assignment, not the wiring,
+        // since reading the field back off the taffy `Style` cannot
+        // distinguish "assigned" from "used by the layout algorithm". With
+        // `flex-direction: column`, the main axis flips to the block (y)
+        // axis: 2 children with an explicit height must land at the same
+        // x offset with y offsets 20px (the first child's height) apart.
+        //
+        // Also carries `gap:10px 30px` (row-gap column-gap) to independently
+        // pin `row-gap → taffy::Style::gap.height`, which the sibling
+        // `gap_adds_space_between_flex_items` test cannot exercise — that
+        // test's default row-direction container only puts `column-gap` on
+        // the main axis. Here, `flex-direction: column` makes `row-gap` the
+        // *main*-axis gap (`Size::main()` for a column container resolves to
+        // `height`, per `bridge_gap`'s `width: column_gap, height: row_gap`
+        // mapping), so the two children's y-offset becomes 20px (first
+        // child's height) + 10px (row-gap) = 30px — discriminating a dropped
+        // row-gap (would stay at 20px) or a transposed bridge (would become
+        // 20px + 30px = 50px) from the correct wiring.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex_container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:column;gap:10px 30px"),
+        );
+        let child_a = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let child_b = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let a_loc = doc.nodes[child_a].unrounded_layout.location;
+        let b_loc = doc.nodes[child_b].unrounded_layout.location;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (a_loc.x - b_loc.x).abs() < 0.5,
+            "column-direction flex items must share the same cross-axis (x) offset, got a.x={}, b.x={}",
+            a_loc.x,
+            b_loc.x
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (b_loc.y - a_loc.y - 30.0).abs() < 0.5,
+            "second flex item should sit 30px (20px first item's height + 10px row-gap) further along the main axis (y), got a.y={}, b.y={}",
+            a_loc.y,
+            b_loc.y
+        );
+    }
+
+    #[test]
+    fn flex_grow_absorbs_free_space() {
+        // `bridge_flex`'s `flex_grow` field reaching taffy's flexible-length
+        // resolution algorithm (§9.7 "Resolving Flexible Lengths") — a
+        // growable child must widen past its own basis to consume the free
+        // space in the container, while a non-growable sibling stays at its
+        // basis.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex_container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;width:500px"),
+        );
+        let grower = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px;flex-grow:1"),
+        );
+        let fixed = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let grower_width = doc.nodes[grower].unrounded_layout.size.width;
+        let fixed_width = doc.nodes[fixed].unrounded_layout.size.width;
+        // Container is 500px, fixed sibling stays 100px, so the grower must
+        // absorb the remaining 400px free space (500 - 100 = 400).
+        //
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (grower_width - 400.0).abs() < 0.5,
+            "flex-grow:1 item should absorb the container's free space, got width={grower_width}"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (fixed_width - 100.0).abs() < 0.5,
+            "non-growing sibling should stay at its flex-basis width, got width={fixed_width}"
+        );
+    }
+
+    #[test]
+    fn bridge_gap_collapses_normal_to_zero() {
+        // `computed_gap_component_to_taffy`'s `Normal` arm (CSS Box
+        // Alignment 3 §8.1's "normal" keyword has no taffy equivalent, so
+        // this bridge collapses it to `0`) — a direct pin, since it's
+        // plausible for this branch to appear covered only incidentally
+        // through unrelated tests' default (gap-less) fixtures rather
+        // than being pinned on its own.
+        let cv = ComputedValues::initial();
+        assert_eq!(cv.row_gap, ComputedLengthPercentageOrNormal::Normal);
+        assert_eq!(cv.column_gap, ComputedLengthPercentageOrNormal::Normal);
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_gap(&mut style, &cv, &mut diag);
+        assert_eq!(
+            style.gap,
+            Size {
+                width: LengthPercentage::length(0.0),
+                height: LengthPercentage::length(0.0),
+            }
+        );
+    }
+
+    #[test]
+    fn bridge_gap_absolutizes_percent_gap() {
+        // `computed_gap_component_to_taffy`'s `Percent` arm — the `Px`
+        // arm has incidental coverage through `gap_adds_space_between_flex_items`
+        // below, but no existing test exercises `row-gap`/`column-gap` with
+        // a `<percentage>` value. `ComputedLengthPercentageOrNormal::Percent`
+        // holds the authored number (`25.0` for `25%`), and the bridge
+        // divides by 100 before handing it to taffy, same convention as
+        // `bridge_flex_absolutizes_flex_basis_px_and_percent` above.
+        let mut cv = ComputedValues::initial();
+        cv.row_gap = ComputedLengthPercentageOrNormal::Percent(25.0);
+        cv.column_gap = ComputedLengthPercentageOrNormal::Percent(10.0);
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_gap(&mut style, &cv, &mut diag);
+        assert_eq!(
+            style.gap,
+            Size {
+                width: LengthPercentage::percent(0.1),
+                height: LengthPercentage::percent(0.25),
+            }
+        );
+    }
+
+    #[test]
+    fn gap_adds_space_between_flex_items() {
+        // `bridge_gap` maps the `gap` shorthand's 2 components onto taffy's
+        // `Size<LengthPercentage>` as `Size { width: column_gap, height:
+        // row_gap }`. The 2 components are deliberately asymmetric (10px
+        // vs 30px) so that a transposed mapping (swapping row/column) would
+        // fail this assertion instead of passing it unnoticed — in a
+        // row-direction container (the default `flex-direction`), the
+        // main axis (x) gap is `column-gap`, so the second item's x offset
+        // must be the first item's width **plus 30px**, not 10px.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex_container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;gap:10px 30px"),
+        );
+        let child_a = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let child_b = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let a_loc = doc.nodes[child_a].unrounded_layout.location;
+        let b_loc = doc.nodes[child_b].unrounded_layout.location;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (b_loc.x - a_loc.x - 130.0).abs() < 0.5,
+            "second flex item should sit 130px (100px width + 30px column-gap) further along the main axis (x), got a.x={}, b.x={}",
+            a_loc.x,
+            b_loc.x
+        );
+    }
+
+    #[test]
+    fn justify_content_flex_end_pushes_children_to_container_end() {
+        // `bridge_alignment`'s `justify_content` field reaching taffy's
+        // main-axis alignment (§9.5 "Main-Axis Alignment") — with
+        // `justify-content: flex-end` in a 500px-wide row container, 2
+        // 100px-wide children must land flush against the container's end
+        // edge (x = 500 - 200 = 300 for the first child).
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex_container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;width:500px;justify-content:flex-end"),
+        );
+        let child_a = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let child_b = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let a_loc = doc.nodes[child_a].unrounded_layout.location;
+        let b_loc = doc.nodes[child_b].unrounded_layout.location;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (a_loc.x - 300.0).abs() < 0.5,
+            "first item should be pushed flush to the container's end edge (500 - 100 - 100 = 300), got a.x={}",
+            a_loc.x
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (b_loc.x - 400.0).abs() < 0.5,
+            "second item should sit immediately after the first (300 + 100 = 400), got b.x={}",
             b_loc.x
         );
     }
