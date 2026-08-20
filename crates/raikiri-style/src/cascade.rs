@@ -3670,7 +3670,13 @@ pub(crate) fn resolve_against_inherited(
         // `normal`/`italic` implemented, `FontStyle` doc) and does not
         // depend on the inheritance parent — nothing for phase 2 to
         // resolve.
-        | PropertyValue::FontStyle(_)) => v,
+        | PropertyValue::FontStyle(_)
+        // `letter-spacing` / `word-spacing` carry a `<length>` that needs
+        // the *declaring node's own* font-size (phase 3), not the
+        // inheritance parent's — same shape as `Padding`/`Margin`/`Width`/
+        // `Height` above, nothing for phase 2 to resolve here.
+        | PropertyValue::LetterSpacing(_)
+        | PropertyValue::WordSpacing(_)) => v,
     })
 }
 
@@ -4070,6 +4076,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherit_from で親値を引き継ぐ (`Direction` arm と同じ handling)。
         // `FontStyle` は Copy、by-value 代入で十分。
         PropertyValue::FontStyle(fs) => target.font_style = fs,
+        // CSS Text 3 §7.2。specified 表現 (`LengthOrNormal`) のまま格納 —
+        // 絶対化は phase 3 (`SpecifiedValues::finalize` / `absolutize_with`)
+        // に委ねる (関数冒頭の doc「length を運ぶ property は specified 表現の
+        // まま格納する」節)。inherited property のため cascade winner が無い
+        // child は inherit_from で親値を引き継ぐ (`FontStyle` arm と同じ
+        // handling)。`LengthOrNormal` は Copy、by-value 代入で十分。
+        PropertyValue::LetterSpacing(ls) => target.letter_spacing = ls,
+        // CSS Text 3 §7.1。直上の LetterSpacing arm と同型。
+        PropertyValue::WordSpacing(ws) => target.word_spacing = ws,
     }
 }
 
@@ -8430,6 +8445,82 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].font_style, FontStyle::Italic);
         assert_eq!(r.computed[span].font_style, FontStyle::Normal);
+    }
+
+    // ── letter-spacing / word-spacing wire-through (CSS Text 3 §7.2 / §7.1) ──
+
+    #[test]
+    fn letter_spacing_wired_through_cascade_from_inline_style() {
+        // `em` (not `px`) so this also exercises phase 3 absolutization
+        // (`resolve_length_or_normal`), not just the `apply_value` arm's
+        // pass-through assignment.
+        let cv = cascade_doc("", "p", Some("letter-spacing: 0.5em"));
+        assert_eq!(cv.letter_spacing, ComputedLength(8.0));
+    }
+
+    #[test]
+    fn word_spacing_wired_through_cascade_from_inline_style() {
+        let cv = cascade_doc("", "p", Some("word-spacing: 4px"));
+        assert_eq!(cv.word_spacing, ComputedLength(4.0));
+    }
+
+    #[test]
+    fn letter_spacing_and_word_spacing_inherit_from_parent_element() {
+        // CSS Text 3 §7.2 / §7.1: both are **inherited**.
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("letter-spacing: 2px; word-spacing: normal"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].letter_spacing, ComputedLength(2.0));
+        assert_eq!(r.computed[p].word_spacing, ComputedLength::ZERO);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].letter_spacing,
+            ComputedLength(2.0),
+            "child should inherit letter-spacing from parent (CSS Text 3 §7.2 Inherited: yes)"
+        );
+        assert_eq!(r.computed[span].word_spacing, ComputedLength::ZERO);
+    }
+
+    #[test]
+    fn letter_spacing_child_own_value_wins_over_inherited() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("letter-spacing: 2px"));
+        let span = doc.push_element(p, "span", Some("letter-spacing: -1px"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].letter_spacing, ComputedLength(2.0));
+        assert_eq!(r.computed[span].letter_spacing, ComputedLength(-1.0));
+    }
+
+    /// Inheritance carries the parent's already-**computed** length, not the
+    /// specified `em` re-resolved against the child's own font-size (CSS
+    /// Cascade 5 §7.2 "Inheritance": inherited values are the parent's
+    /// computed values; CSS Text 3 §7.2 "Computed value: an absolute
+    /// length"). A px-only fixture (the sibling tests above) can't
+    /// distinguish "inherit the computed px" from "inherit the specified
+    /// `em`/`px` and re-resolve" — those only diverge when the child's
+    /// font-size differs from the parent's, which requires an `em` value.
+    #[test]
+    fn letter_spacing_inherited_em_value_does_not_re_resolve_against_child_font_size() {
+        let mut doc = TestDoc::new();
+        // parent: font-size 16px, letter-spacing 0.5em -> computed 8px.
+        let p = doc.push_element(0, "p", Some("font-size: 16px; letter-spacing: 0.5em"));
+        // child: font-size 32px, no letter-spacing declaration of its own.
+        let span = doc.push_element(p, "span", Some("font-size: 32px"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].letter_spacing, ComputedLength(8.0));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].letter_spacing,
+            ComputedLength(8.0),
+            "child must inherit the parent's already-computed 8px, not re-resolve \
+             0.5em against its own 32px font-size (which would wrongly yield 16px)"
+        );
     }
 
     // ── text-align: match-parent (CSS Text 3 §6.1) ──

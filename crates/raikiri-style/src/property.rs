@@ -517,6 +517,44 @@ pub enum LengthOrAuto {
     Auto,
 }
 
+/// `normal | <length>` を取る property の specified value —
+/// [`letter-spacing`](PropertyValue::LetterSpacing) と
+/// [`word-spacing`](PropertyValue::WordSpacing) で共有する
+/// ([`LengthOrAuto`] が margin / width / height を横断して共有されるのと同じ
+/// reuse pattern、同 type の doc 参照)。
+///
+/// 両 property とも spec 上 percentage を持たない (`Percentages: N/A`) ため、
+/// `Length` 側の unit set はそのまま percentage を含む — percentage token は
+/// **parse 段で reject** する ([`parse_letter_or_word_spacing`] が
+/// `parse_length_value(input, false)` を使う)。
+///
+/// # Primary sources
+///
+/// - CSS Text 3 §7.1 "Word Spacing: the word-spacing property"
+///   (<https://www.w3.org/TR/css-text-3/#word-spacing-property>): "Value:
+///   `normal | <length>`"、"Percentages: N/A"。
+/// - CSS Text 3 §7.2 "Tracking: the letter-spacing property"
+///   (<https://www.w3.org/TR/css-text-3/#letter-spacing-property>): 同じ
+///   `normal | <length>` grammar、同じく percentage 非対応。
+///
+/// `#[non_exhaustive]` は [`LengthOrAuto`] と同じ判断 — future variant を
+/// non-breaking で追加できるようにする。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LengthOrNormal {
+    /// authored length (`2px` / `-0.05em` / etc.) — 両 property とも spec が
+    /// "Values may be negative, but there may be implementation-dependent
+    /// limits." と明記するため、parse 段では sign を制限しない
+    /// ([`margin-*`](LengthOrAuto) と同じ扱い、`padding` / `border-width` の
+    /// non-negative constraint とは異なる)。
+    Length(Length),
+    /// `normal` keyword。CSS Text 3 §7.1 / §7.2 いずれも "No additional
+    /// spacing is applied. Computes to zero." と定める — 絶対化
+    /// ([`crate::resolve::resolve_length_or_normal`]) は常に
+    /// [`crate::resolve::ComputedLength::ZERO`] に潰す。
+    Normal,
+}
+
 /// 4-side box-model value holder。field 順は CSS Box 3 §4.2 shorthand の
 /// 4-value form `top right bottom left` に一致 (clockwise from top)。
 ///
@@ -2752,6 +2790,33 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     FontStyle(FontStyle),
+    /// `letter-spacing: normal | <length>` — **inherited**、initial:
+    /// [`LengthOrNormal::Normal`] (CSS Text 3 §7.2 "Tracking: the
+    /// letter-spacing property"
+    /// <https://www.w3.org/TR/css-text-3/#letter-spacing-property>).
+    /// computed value: an absolute length (`normal` computes to zero —
+    /// [`LengthOrNormal`] doc 参照。[`LineHeight::Normal`] とは異なり、
+    /// `letter-spacing: normal` は font metrics に依存せず常に `0` へ絶対化
+    /// できるため、computed 層で keyword を保持する必要が無い)。
+    ///
+    /// **Non-goal**: §7.2 の "For legacy reasons, a computed letter-spacing
+    /// of zero yields a resolved value (`getComputedStyle()` return value)
+    /// of `normal`." は CSSOM の resolved-value serialization 規則であり、
+    /// この crate に CSSOM surface が無いため対象外。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    LetterSpacing(LengthOrNormal),
+    /// `word-spacing: normal | <length>` — **inherited**、initial:
+    /// [`LengthOrNormal::Normal`] (CSS Text 3 §7.1 "Word Spacing: the
+    /// word-spacing property"
+    /// <https://www.w3.org/TR/css-text-3/#word-spacing-property>).
+    /// computed value: an absolute length ([`Self::LetterSpacing`] doc の
+    /// "computes to zero" 節と同じ扱い)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    WordSpacing(LengthOrNormal),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -2902,6 +2967,13 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::FontStyle の doc 参照。
     FontStyle,
+    // letter-spacing / word-spacing (CSS Text 3 §7.2 / §7.1、semantics on
+    // the matching PropertyValue::LetterSpacing / PropertyValue::WordSpacing
+    // variants; sibling PropertyKey variants carry no per-variant docs per
+    // crate convention). 末尾配置の理由は PropertyValue::FontStyle の doc
+    // 参照。
+    LetterSpacing,
+    WordSpacing,
 }
 
 impl PropertyValue {
@@ -2966,6 +3038,8 @@ impl PropertyValue {
             PropertyValue::TextDecoration(_) => PropertyKey::TextDecoration,
             PropertyValue::VerticalAlign(_) => PropertyKey::VerticalAlign,
             PropertyValue::FontStyle(_) => PropertyKey::FontStyle,
+            PropertyValue::LetterSpacing(_) => PropertyKey::LetterSpacing,
+            PropertyValue::WordSpacing(_) => PropertyKey::WordSpacing,
         }
     }
 }
@@ -3176,6 +3250,17 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // specified keyword (angle-bearing branch unreachable at this
         // scope).
         "font-style" => parse_font_style(input).map(PropertyValue::FontStyle),
+        // CSS Text 3 §7.2 "Tracking: the letter-spacing property"
+        // <https://www.w3.org/TR/css-text-3/#letter-spacing-property>.
+        // grammar: `normal | <length>`, initial `normal`, inherited,
+        // percentage NOT supported ("Percentages: n/a"), negative lengths
+        // allowed ("Values may be negative, but there may be
+        // implementation-dependent limits.") — see `parse_letter_or_word_spacing`.
+        "letter-spacing" => parse_letter_or_word_spacing(input).map(PropertyValue::LetterSpacing),
+        // CSS Text 3 §7.1 "Word Spacing: the word-spacing property"
+        // <https://www.w3.org/TR/css-text-3/#word-spacing-property>. Same
+        // `normal | <length>` grammar as `letter-spacing` above.
+        "word-spacing" => parse_letter_or_word_spacing(input).map(PropertyValue::WordSpacing),
         _ => None,
     }
 }
@@ -3445,8 +3530,10 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// 重複 dimension unit dispatch を回避している。
 ///
 /// `allow_percentage=false` (= `<length>` mode) の caller は
-/// [`parse_border_width_side`] のみ — CSS Backgrounds 3 §3.3 の
-/// `<line-width>` grammar が `<percentage>` を含まないため。
+/// [`parse_border_width_side`] / [`parse_letter_or_word_spacing`] —
+/// 前者は CSS Backgrounds 3 §3.3 の `<line-width>` grammar が `<percentage>`
+/// を含まないため、後者は CSS Text 3 §7.1/§7.2 の `letter-spacing` /
+/// `word-spacing` grammar が共に "Percentages: N/A" と明記するため。
 ///
 /// # Percentage overflow
 ///
@@ -4341,6 +4428,61 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
     let l = parse_length_value(input, true)?;
     // spec `[0,∞]`: 負値は grammar 違反 → declaration drop。
     (length_payload(l) >= 0.0).then_some(LineHeight::Length(l))
+}
+
+/// `letter-spacing: normal | <length>` / `word-spacing: normal | <length>`
+/// を parse する。両 property は grammar が完全に同型 (CSS Text 3 §7.2
+/// <https://www.w3.org/TR/css-text-3/#letter-spacing-property> / §7.1
+/// <https://www.w3.org/TR/css-text-3/#word-spacing-property>) なので 1
+/// 関数を共有する ([`LengthOrNormal`] doc の reuse pattern 節参照)。
+///
+/// # Ordering
+///
+/// `normal` (`try_parse` + `expect_ident_matching`) → [`parse_length_value`]
+/// (`allow_percentage = false`) — [`parse_line_height`] と同じ 2-branch
+/// shape だが、`<number>` branch が無い (grammar 自体に `<number>`
+/// alternative が無いため、CSS Values 3 §5 の number-vs-length
+/// disambiguation は本 property には適用されない — bare `0` はそのまま
+/// [`parse_length_value`] の unitless-zero clause 経由で `Length::Px(0.0)`
+/// になる)。
+///
+/// # Percentage は非対応
+///
+/// 両 property とも spec が "Percentages: N/A" (word-spacing) /
+/// "Percentages: n/a" (letter-spacing) と明記する — `allow_percentage =
+/// false` により `5%` は `_ => None` (Percentage token に対する
+/// `allow_percentage` guard 不成立) で drop される。
+///
+/// # Negative length は許容 (non-negative filter を掛けない)
+///
+/// [`parse_line_height`] / [`parse_font_size`] 等の `[0,∞]` callers とは
+/// 異なり、本関数は [`length_payload`] による `>= 0.0` post-filter を
+/// **意図的に行わない**。CSS Text 3 §7.2 (letter-spacing) / §7.1
+/// (word-spacing) がいずれも "Values may be negative, but there may be
+/// implementation-dependent limits." と明記するため — spec 自身が sign を
+/// 制限していない ([`LengthOrAuto`] を使う `margin-*` と同じ扱い、`padding`
+/// / `border-width` の non-negative constraint とは対照的)。
+///
+/// # Non-goals
+///
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(b) 非対応**: `calc()` / `var()` は未実装 (css-variables-and-math)、
+///   silent drop
+/// - **(a) spec-invalid → drop**: `<percentage>`、`auto` 等 spec-invalid
+///   keyword は spec grammar 違反、drop
+fn parse_letter_or_word_spacing(input: &mut Parser<'_, '_>) -> Option<LengthOrNormal> {
+    // 1. `normal` keyword — spec initial value、"Computes to zero"。
+    if input
+        .try_parse(|i| i.expect_ident_matching("normal"))
+        .is_ok()
+    {
+        return Some(LengthOrNormal::Normal);
+    }
+    // 2. `<length>` — percentage 非対応 (`allow_percentage = false`)、sign は
+    //    制限しない (上記 doc "Negative length は許容" 節)。
+    parse_length_value(input, false).map(LengthOrNormal::Length)
 }
 
 /// `font-weight: <font-weight-absolute> | bolder | lighter` を parse する。
@@ -9531,6 +9673,188 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::FontStyle);
         let v = PropertyValue::FontStyle(FontStyle::Italic);
         assert_eq!(v.key(), PropertyKey::FontStyle);
+    }
+
+    // ── letter-spacing / word-spacing (CSS Text 3 §7.2 / §7.1) ──
+    //
+    // Value grammar (spec verbatim, identical for both): `normal | <length>`.
+    // Initial: `normal`. Inherited: yes. Percentages: N/A. Both share
+    // `parse_letter_or_word_spacing` — see that function's doc for the
+    // ordering / non-negative / percentage-rejection rationale.
+
+    #[test]
+    fn letter_spacing_parse_normal_keyword() {
+        assert_eq!(
+            parse("normal", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Normal))
+        );
+    }
+
+    #[test]
+    fn word_spacing_parse_normal_keyword() {
+        assert_eq!(
+            parse("normal", "word-spacing"),
+            Some(PropertyValue::WordSpacing(LengthOrNormal::Normal))
+        );
+    }
+
+    #[test]
+    fn letter_spacing_is_case_insensitive_normal() {
+        assert_eq!(
+            parse("NORMAL", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Normal))
+        );
+        assert_eq!(
+            parse("Normal", "word-spacing"),
+            Some(PropertyValue::WordSpacing(LengthOrNormal::Normal))
+        );
+    }
+
+    #[test]
+    fn letter_spacing_parse_length_px() {
+        assert_eq!(
+            parse("2px", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Px(2.0)
+            )))
+        );
+    }
+
+    #[test]
+    fn word_spacing_parse_length_px() {
+        assert_eq!(
+            parse("4px", "word-spacing"),
+            Some(PropertyValue::WordSpacing(LengthOrNormal::Length(
+                Length::Px(4.0)
+            )))
+        );
+    }
+
+    #[test]
+    fn letter_spacing_accepts_length_em_rem_pt() {
+        assert_eq!(
+            parse("0.1em", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Em(0.1)
+            )))
+        );
+        assert_eq!(
+            parse("1rem", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Rem(1.0)
+            )))
+        );
+        assert_eq!(
+            parse("2pt", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Pt(2.0)
+            )))
+        );
+    }
+
+    // Spec verbatim (both §7.1 and §7.2): "Values may be negative, but there
+    // may be implementation-dependent limits." — unlike `line-height` /
+    // `font-size` / `padding` etc., this property does NOT reject negative
+    // lengths at parse time (`parse_letter_or_word_spacing` doc's "Negative
+    // length は許容" section).
+    #[test]
+    fn letter_spacing_accepts_negative_length() {
+        assert_eq!(
+            parse("-2px", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Px(-2.0)
+            )))
+        );
+        assert_eq!(
+            parse("-0.05em", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Em(-0.05)
+            )))
+        );
+    }
+
+    #[test]
+    fn word_spacing_accepts_negative_length() {
+        assert_eq!(
+            parse("-1px", "word-spacing"),
+            Some(PropertyValue::WordSpacing(LengthOrNormal::Length(
+                Length::Px(-1.0)
+            )))
+        );
+    }
+
+    // Bare `0` has no `<number>` grammar alternative to disambiguate against
+    // here (unlike `line-height`) — it goes through `parse_length_value`'s
+    // unitless-zero clause and becomes `Length::Px(0.0)`, not `Normal`.
+    #[test]
+    fn letter_spacing_unitless_zero_is_length_not_normal() {
+        assert_eq!(
+            parse("0", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Px(0.0)
+            )))
+        );
+    }
+
+    // Spec verbatim (both §7.1 and §7.2): "Percentages: N/A" / "Percentages:
+    // n/a" — percentage is rejected at parse time, unlike `line-height`'s
+    // `<length-percentage>`.
+    #[test]
+    fn letter_spacing_rejects_percentage() {
+        assert_eq!(parse("5%", "letter-spacing"), None);
+    }
+
+    #[test]
+    fn word_spacing_rejects_percentage() {
+        assert_eq!(parse("5%", "word-spacing"), None);
+    }
+
+    #[test]
+    fn letter_spacing_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "letter-spacing"), None);
+        assert_eq!(parse("auto", "letter-spacing"), None);
+    }
+
+    #[test]
+    fn word_spacing_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "word-spacing"), None);
+    }
+
+    #[test]
+    fn letter_spacing_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "letter-spacing"), None);
+        }
+    }
+
+    #[test]
+    fn word_spacing_rejects_css_wide_keyword() {
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "word-spacing"), None);
+        }
+    }
+
+    #[test]
+    fn letter_spacing_rejects_non_length_non_ident() {
+        assert_eq!(parse(r#""2px""#, "letter-spacing"), None);
+    }
+
+    #[test]
+    fn letter_spacing_key_maps_to_letter_spacing_property_key() {
+        let v = PropertyValue::LetterSpacing(LengthOrNormal::Normal);
+        assert_eq!(v.key(), PropertyKey::LetterSpacing);
+        let v = PropertyValue::LetterSpacing(LengthOrNormal::Length(Length::Px(2.0)));
+        assert_eq!(v.key(), PropertyKey::LetterSpacing);
+    }
+
+    #[test]
+    fn word_spacing_key_maps_to_word_spacing_property_key() {
+        let v = PropertyValue::WordSpacing(LengthOrNormal::Normal);
+        assert_eq!(v.key(), PropertyKey::WordSpacing);
+        let v = PropertyValue::WordSpacing(LengthOrNormal::Length(Length::Px(2.0)));
+        assert_eq!(v.key(), PropertyKey::WordSpacing);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value

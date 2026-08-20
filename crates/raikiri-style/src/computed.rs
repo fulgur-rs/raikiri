@@ -64,7 +64,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / letter_spacing / word_spacing、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align)。
@@ -567,6 +567,30 @@ pub struct ComputedValues {
     /// property's full `normal | italic | left | right | oblique <angle
     /// [-90deg,90deg]>?` grammar — see [`FontStyle`] doc.
     pub font_style: FontStyle,
+    /// `letter-spacing`. **inherited**, initial: [`ComputedLength::ZERO`]
+    /// (CSS Text Module Level 3 §7.2 "Tracking: the letter-spacing
+    /// property" <https://www.w3.org/TR/css-text-3/#letter-spacing-property>,
+    /// "Initial: normal" / "Inherited: yes"). Computed value: an absolute
+    /// length — the spec's `normal` keyword computes to zero (§7.2 "No
+    /// additional spacing is applied. Computes to zero."), so unlike
+    /// [`Self::line_height`] this field never needs to carry the keyword at
+    /// the computed layer; [`crate::resolve::resolve_length_or_normal`]
+    /// collapses `normal` to `0` before this field is populated.
+    ///
+    /// Values may be negative (§7.2: "Values may be negative, but there may
+    /// be implementation-dependent limits.") — this field does not clamp.
+    ///
+    /// **Non-goal**: §7.2's legacy `getComputedStyle()` resolved-value rule
+    /// ("a computed letter-spacing of zero yields a resolved value of
+    /// `normal`") is a CSSOM serialization detail this crate has no surface
+    /// for.
+    pub letter_spacing: ComputedLength,
+    /// `word-spacing`. **inherited**, initial: [`ComputedLength::ZERO`] (CSS
+    /// Text Module Level 3 §7.1 "Word Spacing: the word-spacing property"
+    /// <https://www.w3.org/TR/css-text-3/#word-spacing-property>, "Initial:
+    /// normal" / "Inherited: yes"). Same computed-value shape as
+    /// [`Self::letter_spacing`] — see that field's doc.
+    pub word_spacing: ComputedLength,
 }
 
 impl ComputedValues {
@@ -651,6 +675,10 @@ impl ComputedValues {
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
             font_style: FontStyle::Normal,
+            // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing の
+            // initial `normal` は computed 層で `0` (`ComputedLength::ZERO`)。
+            letter_spacing: ComputedLength::ZERO,
+            word_spacing: ComputedLength::ZERO,
         }
     }
 
@@ -662,7 +690,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / letter_spacing / word_spacing、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align)。
     ///
@@ -881,6 +909,11 @@ mod tests {
             // CSS Fonts 4 §2.4: `Italic` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             font_style: FontStyle::Italic,
+            // CSS Text 3 §7.2 / §7.1: initial (`0`、`normal` の computed
+            // value) と異なる値 (non_initial_parent の趣旨どおり全 field を
+            // 非 initial に)。
+            letter_spacing: ComputedLength(2.0),
+            word_spacing: ComputedLength(4.0),
         }
     }
 

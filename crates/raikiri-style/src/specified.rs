@@ -30,16 +30,17 @@ use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
-    CssColor, Direction, DisplayValue, FontStyle, Length, LengthOrAuto, LineHeight, OverflowValue,
-    OverflowXY, Sides, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
-    VerticalAlign, empty_content_list, empty_counter_entries, empty_string_set_entries,
-    initial_font_family, resolve_overflow, resolve_text_align_match_parent,
+    CssColor, Direction, DisplayValue, FontStyle, Length, LengthOrAuto, LengthOrNormal, LineHeight,
+    OverflowValue, OverflowXY, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, VerticalAlign, empty_content_list, empty_counter_entries,
+    empty_string_set_entries, initial_font_family, resolve_overflow,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
-    ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_line_height,
-    resolve_border, resolve_font_size, resolve_length_percentage,
-    resolve_length_percentage_or_auto, resolve_line_height, resolve_margin_length_or_auto,
-    used_line_height_length,
+    ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_length_or_normal,
+    lift_line_height, resolve_border, resolve_font_size, resolve_length_or_normal,
+    resolve_length_percentage, resolve_length_percentage_or_auto, resolve_line_height,
+    resolve_margin_length_or_auto, used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -56,7 +57,7 @@ use crate::resolve::{
 ///
 /// | 層 | field |
 /// |---|---|
-/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` |
+/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `letter_spacing` / `word_spacing` |
 /// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
@@ -197,6 +198,16 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::font_style`] の staging。層は computed-equivalent
     /// (`FontStyle` は length を運ばない — この crate の scope では)。
     pub font_style: FontStyle,
+    /// `letter-spacing` の **specified** value。phase 3
+    /// ([`resolve_length_or_normal`]) で絶対化される — `padding`/`margin` と
+    /// 同じ「specified 層のまま留まる」分類 (`Normal` variant が `em`/`rem`
+    /// を含む `Length` と disjoint ではないため、`font_style` 等の
+    /// computed-equivalent 分類には入らない)。
+    pub letter_spacing: LengthOrNormal,
+    /// `word-spacing` の **specified** value。[`Self::letter_spacing`] と
+    /// 同じ絶対化 phase・同じ分類理由 ([`LengthOrNormal`] を共有する
+    /// sibling property、両者の spec 根拠は同 type の doc 参照)。
+    pub word_spacing: LengthOrNormal,
 }
 
 impl SpecifiedValues {
@@ -256,15 +267,20 @@ impl SpecifiedValues {
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
             font_style: FontStyle::Normal,
+            // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing の
+            // initial は共に `normal`。
+            letter_spacing: LengthOrNormal::Normal,
+            word_spacing: LengthOrNormal::Normal,
         }
     }
 
     /// 親 node の [`ComputedValues`] から child node の staging 開始値を作る。
     ///
     /// - **inherited** property は親の computed 値から seed する。length を運ぶ
-    ///   `font_size` / `line_height` は [`lift_font_size`] / [`lift_line_height`]
+    ///   `font_size` / `line_height` / `letter_spacing` / `word_spacing` は
+    ///   [`lift_font_size`] / [`lift_line_height`] / [`lift_length_or_normal`]
     ///   で specified 表現に lift する (`Px` は絶対化の不動点なので、phase 2 /
-    ///   phase 3 を通しても二重適用にならない — 両関数の doc 参照)。
+    ///   phase 3 を通しても二重適用にならない — 各関数の doc 参照)。
     /// - **non-inherited** property は [`Self::initial`] と同じ値。
     ///
     /// 分類の canonical source は [`ComputedValues`] の field doc comment。
@@ -311,6 +327,12 @@ impl SpecifiedValues {
             direction: parent.direction,
             // CSS Fonts 4 §2.4: font-style は inherited。
             font_style: parent.font_style,
+            // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing は共に
+            // inherited。computed `<length>` → specified `Px` の lift
+            // (`lift_font_size` と同じ lossless / 不動点性、
+            // `lift_length_or_normal` doc 参照)。
+            letter_spacing: lift_length_or_normal(parent.letter_spacing),
+            word_spacing: lift_length_or_normal(parent.word_spacing),
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
             display: DisplayValue::Inline,
@@ -664,6 +686,21 @@ impl SpecifiedValues {
             // この crate の scope では angle-bearing branch が unreachable
             // なため相対解決なし) — 自 node の winner 適用結果をそのまま素通し。
             font_style: self.font_style,
+            // `letter-spacing` / `word-spacing` の `1lh` 解決基準も他の box
+            // property と同じ `own_line_height` (CSS Text 3 §7.2 / §7.1 は
+            // `normal` を `0` に潰す以外 line-height 基準の特別扱いを持たない)。
+            letter_spacing: resolve_length_or_normal(
+                self.letter_spacing,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            word_spacing: resolve_length_or_normal(
+                self.word_spacing,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
         }
     }
 }
@@ -809,6 +846,8 @@ mod tests {
             text_decoration_color: TextDecorationColor::Resolved(CssColor::BLACK),
             vertical_align: VerticalAlign::Sub,
             font_style: FontStyle::Italic,
+            letter_spacing: ComputedLength(2.0),
+            word_spacing: ComputedLength(4.0),
         }
     }
 
@@ -832,6 +871,14 @@ mod tests {
         // computed → specified の lift (px 表現)。
         assert_eq!(child.font_size, Length::Px(24.0));
         assert_eq!(child.line_height, LineHeight::Number(1.5));
+        // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing は共に
+        // inherited。computed → specified の lift (px 表現、`lift_font_size`
+        // と同型)。
+        assert_eq!(
+            child.letter_spacing,
+            LengthOrNormal::Length(Length::Px(2.0))
+        );
+        assert_eq!(child.word_spacing, LengthOrNormal::Length(Length::Px(4.0)));
     }
 
     #[test]
