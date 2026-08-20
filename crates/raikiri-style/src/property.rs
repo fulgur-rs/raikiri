@@ -1011,6 +1011,51 @@ pub enum TextTransform {
     Lowercase,
 }
 
+/// `visibility` property の value。
+///
+/// CSS Display 3 §4 "Invisibility: the visibility property"
+/// <https://www.w3.org/TR/css-display-3/#visibility>。
+///
+/// propdef (spec verbatim): Value: `visible | hidden | collapse`、
+/// Initial: `visible`、Applies to: all elements、Inherited: **yes**、
+/// Computed value: "as specified"。
+///
+/// # Scope carving
+///
+/// - **`collapse`**: spec 本文はこの keyword について "can cause it to
+///   take up less space than otherwise in a formatting-context–specific
+///   way" と述べ、その space-saving 効果を table 行/列/行グループ/列グループ
+///   (CSS2 dynamic row and column effects) と flex item
+///   (CSS Flexbox 1 collapsed flex items) にだけ specific に定める。それ以外
+///   では spec 自身が "this simply makes the box invisible, just like
+///   `visibility: hidden`" と明記する。raikiri-style はこの space-saving 側の
+///   layout 効果をどの formatting context に対しても実装しない — 本 crate が
+///   運ぶのは computed value としての bare keyword のみで、上記の
+///   formatting-context 固有な仕様は下流 (layout) の scope。将来その実装が
+///   加わったときに `Hidden` との判別が要るため、`collapse` は `Hidden` に
+///   畳み込まず独立 variant として保持する。
+/// - **(b) 非対応**: CSS-wide keyword は未実装、silent drop ([`PropertyValue`]
+///   doc の「CSS-wide keyword」節が canonical)。
+/// - **(a) spec-invalid**: 上記 3 keyword 以外の ident は silent drop = `None`。
+///
+/// computed value = specified keyword (spec の "Computed value: as
+/// specified" のとおり、相対解決なし、[`Direction`] doc と同型)。
+///
+/// [`Direction`] / [`FontStyle`] と同じ convention で `Default` を derive
+/// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`]) が [`Visibility::Visible`]
+/// を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Visibility {
+    /// `visible` — spec initial value。
+    Visible,
+    /// `hidden`。
+    Hidden,
+    /// `collapse` — [`Visibility`] doc の「Scope carving」節参照。
+    Collapse,
+}
+
 /// `line-height` property の value (inline layout 実装の足がかりとなる author CSS 型)。
 ///
 /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
@@ -2831,6 +2876,15 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     TextTransform(TextTransform),
+    /// `visibility: visible | hidden | collapse` — **inherited**、initial:
+    /// [`Visibility::Visible`] (CSS Display 3 §4 [`Visibility`]
+    /// doc 参照)。computed value = specified keyword ([`Visibility`] doc の
+    /// Scope carving 節参照、`collapse` の formatting-context 固有な
+    /// space-saving 効果は未実装)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    Visibility(Visibility),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -2986,6 +3040,11 @@ pub enum PropertyKey {
     // variants carry no per-variant docs per crate convention). 末尾配置の
     // 理由は PropertyValue::TextTransform の doc 参照。
     TextTransform,
+    // visibility (CSS Display 3 §4、semantics on the matching
+    // PropertyValue::Visibility variant; sibling PropertyKey variants carry
+    // no per-variant docs per crate convention). 末尾配置の理由は
+    // PropertyValue::Visibility の doc 参照。
+    Visibility,
 }
 
 impl PropertyValue {
@@ -3051,6 +3110,7 @@ impl PropertyValue {
             PropertyValue::VerticalAlign(_) => PropertyKey::VerticalAlign,
             PropertyValue::FontStyle(_) => PropertyKey::FontStyle,
             PropertyValue::TextTransform(_) => PropertyKey::TextTransform,
+            PropertyValue::Visibility(_) => PropertyKey::Visibility,
         }
     }
 }
@@ -3269,6 +3329,12 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // unimplemented). initial `none`, inherited, computed value =
         // specified keyword.
         "text-transform" => parse_text_transform(input).map(PropertyValue::TextTransform),
+        // CSS Display 3 §4 visibility. grammar: `visible |
+        // hidden | collapse`. initial `visible`, inherited, computed value =
+        // specified keyword (`Visibility` doc's "Scope carving" section —
+        // `collapse`'s formatting-context-specific space-saving effect is
+        // unimplemented, the keyword itself is fully accepted).
+        "visibility" => parse_visibility(input).map(PropertyValue::Visibility),
         _ => None,
     }
 }
@@ -4562,6 +4628,24 @@ fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<TextTransform> {
         "capitalize" => Some(TextTransform::Capitalize),
         "uppercase" => Some(TextTransform::Uppercase),
         "lowercase" => Some(TextTransform::Lowercase),
+        _ => None,
+    }
+}
+
+/// `visibility: <ident>` を parse する (CSS Display 3 §4
+/// <https://www.w3.org/TR/css-display-3/#visibility>)。
+///
+/// Value grammar (spec verbatim): `visible | hidden | collapse`。全 3
+/// keyword を受理する ([`Visibility`] doc の Scope carving 節参照 —
+/// `collapse` の formatting-context 固有な space-saving 効果は未実装だが、
+/// keyword 自体は spec-valid として受理する)。ASCII case-insensitive で
+/// ident を比較する ([`parse_font_style`] と同 flavor)。
+fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<Visibility> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "visible" => Some(Visibility::Visible),
+        "hidden" => Some(Visibility::Hidden),
+        "collapse" => Some(Visibility::Collapse),
         _ => None,
     }
 }
@@ -9739,6 +9823,76 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::TextTransform);
         let v = PropertyValue::TextTransform(TextTransform::Capitalize);
         assert_eq!(v.key(), PropertyKey::TextTransform);
+    }
+
+    // ── visibility (CSS Display 3 §4) ──
+    //
+    // Value grammar (spec verbatim): `visible | hidden | collapse`. This
+    // crate implements all 3 keywords (`Visibility` doc's "Scope carving"
+    // section — `collapse`'s formatting-context-specific space-saving effect
+    // is unimplemented, but the keyword itself is fully accepted). Initial:
+    // visible / Inherited: yes / Computed value: as specified.
+
+    #[test]
+    fn visibility_parse_all_keywords() {
+        assert_eq!(
+            parse("visible", "visibility"),
+            Some(PropertyValue::Visibility(Visibility::Visible))
+        );
+        assert_eq!(
+            parse("hidden", "visibility"),
+            Some(PropertyValue::Visibility(Visibility::Hidden))
+        );
+        assert_eq!(
+            parse("collapse", "visibility"),
+            Some(PropertyValue::Visibility(Visibility::Collapse))
+        );
+    }
+
+    #[test]
+    fn visibility_is_case_insensitive() {
+        assert_eq!(
+            parse("VISIBLE", "visibility"),
+            Some(PropertyValue::Visibility(Visibility::Visible))
+        );
+        assert_eq!(
+            parse("Hidden", "visibility"),
+            Some(PropertyValue::Visibility(Visibility::Hidden))
+        );
+        assert_eq!(
+            parse("Collapse", "visibility"),
+            Some(PropertyValue::Visibility(Visibility::Collapse))
+        );
+    }
+
+    #[test]
+    fn visibility_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "visibility"), None);
+    }
+
+    #[test]
+    fn visibility_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "visibility"), None);
+        }
+    }
+
+    #[test]
+    fn visibility_rejects_non_ident() {
+        assert_eq!(parse("16px", "visibility"), None);
+        assert_eq!(parse(r#""hidden""#, "visibility"), None);
+    }
+
+    #[test]
+    fn visibility_key_maps_to_visibility_property_key() {
+        let v = PropertyValue::Visibility(Visibility::Visible);
+        assert_eq!(v.key(), PropertyKey::Visibility);
+        let v = PropertyValue::Visibility(Visibility::Hidden);
+        assert_eq!(v.key(), PropertyKey::Visibility);
+        let v = PropertyValue::Visibility(Visibility::Collapse);
+        assert_eq!(v.key(), PropertyKey::Visibility);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value

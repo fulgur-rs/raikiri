@@ -14,8 +14,8 @@ use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
     FontStyle, OverflowValue, OverflowXY, Sides, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, empty_content_list,
-    empty_counter_entries, empty_string_set_entries, initial_font_family,
+    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility,
+    empty_content_list, empty_counter_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -580,6 +580,14 @@ pub struct ComputedValues {
     /// uppercase | lowercase] || full-width || full-size-kana` grammar —
     /// see [`TextTransform`] doc.
     pub text_transform: TextTransform,
+    /// `visibility`. **inherited**, initial: [`Visibility::Visible`] (CSS
+    /// Display Module Level 3 §4 "Invisibility: the visibility property"
+    /// <https://www.w3.org/TR/css-display-3/#visibility>, "Initial: visible"
+    /// / "Inherited: yes"). Computed value = specified keyword — see
+    /// [`Visibility`] doc's "Scope carving" section (the spec's
+    /// formatting-context-specific space-saving effect for `collapse` is
+    /// downstream layout scope, not represented by this field).
+    pub visibility: Visibility,
 }
 
 impl ComputedValues {
@@ -666,6 +674,8 @@ impl ComputedValues {
             font_style: FontStyle::Normal,
             // CSS Text Module Level 3 §2.1: text-transform initial は `none`。
             text_transform: TextTransform::None,
+            // CSS Display 3 §4: visibility initial は `visible`。
+            visibility: Visibility::Visible,
         }
     }
 
@@ -677,7 +687,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align)。
     ///
@@ -778,6 +788,8 @@ mod tests {
         assert_eq!(cv.font_style, FontStyle::Normal);
         // CSS Text Module Level 3 §2.1: text-transform initial は `none`。
         assert_eq!(cv.text_transform, TextTransform::None);
+        // CSS Display 3 §4: visibility initial は `visible`。
+        assert_eq!(cv.visibility, Visibility::Visible);
         // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
         // CSS Box 3 §3.1: margin initial は 0 on each side。
@@ -902,6 +914,9 @@ mod tests {
             // と異なる値 (non_initial_parent の趣旨どおり全 field を非
             // initial に)。
             text_transform: TextTransform::Uppercase,
+            // CSS Display 3 §4: `Hidden` — initial (`Visible`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            visibility: Visibility::Hidden,
         }
     }
 
@@ -930,6 +945,8 @@ mod tests {
         assert_eq!(child.font_style, parent.font_style);
         // CSS Text Module Level 3 §2.1: text-transform は inherited。
         assert_eq!(child.text_transform, parent.text_transform);
+        // CSS Display 3 §4: visibility は inherited。
+        assert_eq!(child.visibility, parent.visibility);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);

@@ -3416,7 +3416,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    捕まる。それ以外 (`BorderStyle` / `BorderColor`
 ///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`
 ///    / `OverflowValue` / `TextDecorationLine` / `TextDecorationStyle` /
-///    `TextDecorationColor` / `VerticalAlign` / `FontStyle`)
+///    `TextDecorationColor` / `VerticalAlign` / `FontStyle` / `Visibility`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
@@ -3674,7 +3674,11 @@ pub(crate) fn resolve_against_inherited(
         // `text-transform` carries no length (`TextTransform` doc) and
         // does not depend on the inheritance parent — nothing for phase 2
         // to resolve.
-        | PropertyValue::TextTransform(_)) => v,
+        | PropertyValue::TextTransform(_)
+        // `visibility` carries no length (`Visibility` doc) and does not
+        // depend on the inheritance parent — nothing for phase 2 to
+        // resolve.
+        | PropertyValue::Visibility(_)) => v,
     })
 }
 
@@ -4079,6 +4083,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherit_from で親値を引き継ぐ (`FontStyle` arm と同じ handling)。
         // `TextTransform` は Copy、by-value 代入で十分。
         PropertyValue::TextTransform(tt) => target.text_transform = tt,
+        // CSS Display 3 §4。
+        // inherited property のため cascade winner が無い child は
+        // inherit_from で親値を引き継ぐ (`Direction` / `FontStyle` arm と同じ
+        // handling)。`Visibility` は Copy、by-value 代入で十分。
+        PropertyValue::Visibility(v) => target.visibility = v,
     }
 }
 
@@ -8469,6 +8478,34 @@ mod tests {
         );
     }
 
+    // ── visibility wire-through (CSS Display 3 §4) ──
+
+    #[test]
+    fn visibility_wired_through_cascade_from_inline_style() {
+        use crate::property::Visibility;
+        let cv = cascade_doc("", "p", Some("visibility: hidden"));
+        assert_eq!(cv.visibility, Visibility::Hidden);
+    }
+
+    #[test]
+    fn visibility_inherits_from_parent_element() {
+        // CSS Display 3 §4: visibility は **inherited**.
+        use crate::property::Visibility;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("visibility: hidden"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].visibility, Visibility::Hidden);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].visibility,
+            Visibility::Hidden,
+            "child should inherit visibility from parent (CSS Display 3 §4 Inherited: yes)"
+        );
+    }
+
     #[test]
     fn text_transform_child_own_value_wins_over_inherited() {
         use crate::property::TextTransform;
@@ -8479,6 +8516,18 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].text_transform, TextTransform::Uppercase);
         assert_eq!(r.computed[span].text_transform, TextTransform::Lowercase);
+    }
+
+    #[test]
+    fn visibility_child_own_value_wins_over_inherited() {
+        use crate::property::Visibility;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("visibility: hidden"));
+        let span = doc.push_element(p, "span", Some("visibility: visible"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].visibility, Visibility::Hidden);
+        assert_eq!(r.computed[span].visibility, Visibility::Visible);
     }
 
     // ── text-align: match-parent (CSS Text 3 §6.1) ──
