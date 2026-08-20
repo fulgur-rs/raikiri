@@ -1099,21 +1099,29 @@ fn is_css_document_white_space(c: char) -> bool {
 /// DFS accumulator for [`element_text_string_value`] — appends every
 /// descendant [`NodeData::Text`] node's raw character data (pre-whitespace-
 /// collapse) to `out`, in document order.
+///
+/// Explicit-stack iterative DFS (reverse-push children so the `Vec` pops
+/// them in original, i.e. document, order) — same shape as
+/// `crate::target::collect_descendant_text` — rather than recursion, so a
+/// deeply nested DOM cannot exhaust the call stack.
 #[allow(
     dead_code,
     reason = "Helper for element_text_string_value; \
               same not-yet-production-driven status."
 )]
-fn collect_descendant_text(doc: &Document, idx: usize, out: &mut String) {
-    let node = &doc.nodes[idx];
-    if !node.is_in_document() {
-        return;
-    }
-    if let NodeData::Text(t) = &node.data {
-        out.push_str(t.text_content.as_str());
-    }
-    for &child in &node.children {
-        collect_descendant_text(doc, child, out);
+fn collect_descendant_text(doc: &Document, root_idx: usize, out: &mut String) {
+    let mut stack: Vec<usize> = vec![root_idx];
+    while let Some(idx) = stack.pop() {
+        let node = &doc.nodes[idx];
+        if !node.is_in_document() {
+            continue;
+        }
+        if let NodeData::Text(t) = &node.data {
+            out.push_str(t.text_content.as_str());
+        }
+        for &child in node.children.iter().rev() {
+            stack.push(child);
+        }
     }
 }
 
@@ -2501,6 +2509,98 @@ mod tests {
         assert_eq!(
             resolved,
             Some(ContentComponent::Literal(SmolStr::new("Moby Dick")))
+        );
+    }
+
+    #[test]
+    fn resolve_string_set_component_content_text_no_stack_overflow_on_deep_dom_and_preserves_order()
+    {
+        // collect_descendant_text (element_text_string_value's DFS
+        // accumulator) must be iterative, not recursive, so a deeply
+        // nested DOM cannot exhaust the call stack — same deep-DOM
+        // regression shape as
+        // crate::layout::find_body_iterative_no_stack_overflow_on_deep_dom
+        // and raikiri-html's parse_survives_deeply_nested_html, both of
+        // which use 5000 levels. That depth was measured (locally,
+        // reverting this function to its old recursive form) to *not*
+        // overflow the default ~2 MiB test-thread stack for this specific
+        // function — its per-frame state is small (an index, two
+        // references) compared to those other walkers' recursive frames —
+        // so it would not have caught the bug this test exists to pin.
+        // 200_000 was measured to reliably overflow the old recursive
+        // form under the same default stack, giving roughly a 10x margin
+        // over the empirically observed ~15_000-20_000 overflow threshold.
+        //
+        // Each level contributes both a text child ("t{i} ") *and* the
+        // next nested element, so document order only comes out right if
+        // the stack-based walk pushes children in reverse (popping them
+        // back out in original order) rather than, say, descending into
+        // the nested child before visiting that level's own text — a
+        // single-child chain wouldn't exercise that ordering at all.
+        let mut doc = Document::new();
+        let mut parent = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        let root = parent;
+        let depth = 200_000;
+        for i in 0..depth {
+            doc.append_text(parent, format!("t{i} "));
+            parent = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+        }
+        // Built independently of collect_descendant_text's own
+        // whitespace-collapse pipeline, so this isn't just checking the
+        // implementation against itself.
+        let expected = (0..depth)
+            .map(|i| format!("t{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            root,
+            ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            },
+        );
+        assert_eq!(
+            resolved,
+            Some(ContentComponent::Literal(SmolStr::new(expected)))
+        );
+    }
+
+    #[test]
+    fn resolve_string_set_component_content_text_skips_template_descendants() {
+        // collect_descendant_text's `is_in_document()` check must actually
+        // skip a subtree that's still reachable via `node.children` but
+        // flagged out of the flat tree — the `<template>` case is the one
+        // shape of this in an ordinary parsed document (a `<template>`
+        // element itself stays in_document, but everything inside it gets
+        // cleared by `mark_in_document_flags`, same contract as
+        // `Document::mark_in_document_flags_keeps_template_element_but_clears_descendants`).
+        // A node that's merely absent from the tree (e.g. built with
+        // `parent: None`) would never reach this check at all, since the
+        // walk wouldn't descend into it in the first place — this test
+        // needs the reachable-but-flagged-out case specifically.
+        let mut doc = Document::new();
+        let root = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        doc.append_text(root, "before ");
+        let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
+        let inner = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+        doc.append_text(inner, "hidden");
+        doc.append_text(root, " after");
+
+        doc.mark_in_document_flags();
+        assert!(doc.get_node(tmpl).unwrap().is_in_document());
+        assert!(!doc.get_node(inner).unwrap().is_in_document());
+
+        let resolved = resolve_string_set_component(
+            &doc,
+            root,
+            ContentComponent::Content {
+                keyword: ContentTextKeyword::Text,
+            },
+        );
+        assert_eq!(
+            resolved,
+            Some(ContentComponent::Literal(SmolStr::new("before after")))
         );
     }
 
