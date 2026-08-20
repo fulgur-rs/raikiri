@@ -5,38 +5,38 @@
 //! mirror still exists dom-locally rather than being collapsed onto this
 //! driver yet).
 //!
-//! # Per-page call order
+//! # Per-document setup, then one [`drive_page`] call per page
 //!
-//! [`drive_page`] advances `PageContext` to a page in this order:
+//! [`raikiri_traits::TargetRegistry`] is *document*-scoped, not page-scoped
+//! — [`PageContext::begin_page`]'s own doc states its `resolved` /
+//! `pending_slots` maps "persist across pages too" and that "a single
+//! `PageContext` instance must live for the whole document". Building and
+//! wiring it is therefore a one-time, per-document step, kept separate from
+//! the per-page advance:
 //!
-//! 1. Build this page's [`raikiri_traits::TargetRegistry`]
-//!    ([`crate::target::build_target_registry`]) and stamp it to
-//!    `page_index` via [`raikiri_traits::TargetRegistry::begin_page`] —
-//!    *before* wiring it in. A freshly built registry starts at page index
-//!    0 / sequence 0; stamping it first means the registry [`PageContext`]
-//!    ends up holding already carries the right page-local sequence
-//!    numbering, rather than being wired in stale and needing a second,
-//!    redundant transition.
-//! 2. Wire it in ([`PageContext::set_targets`]) — before any
-//!    `RegisterTarget`-directive-driven [`PageContext::apply_directive`]
-//!    call for this page, per `apply_directive`'s own `RegisterTarget` arm
-//!    doc (`set_targets`'s wholesale-replace semantics would otherwise
-//!    clobber richer registrations already applied).
-//! 3. Advance `page_index` and every tracked `NamedStringState`
-//!    ([`PageContext::begin_page`]). The registry's own
-//!    `TargetRegistry::begin_page(page_index)` call this method makes
-//!    internally is a same-index no-op at this point — step 1 already
-//!    stamped the registry now wired in — so this step's only *new* effect
-//!    here is the `page_index` field write and the named-string page-boundary
-//!    snapshot. Calling `begin_page` *before* `set_targets` instead would
-//!    advance the *previous* page's (about-to-be-discarded) registry and
-//!    leave the freshly wired-in one un-stamped — the exact desync
-//!    `PageContext::begin_page`'s own doc "Residual gap this method does not
-//!    close" warns about.
-//! 4. Walk `page_root`'s subtree in document order
+//! 1. [`drive_document`] builds the whole document's
+//!    [`raikiri_traits::TargetRegistry`]
+//!    ([`crate::target::build_target_registry`]) and wires it in exactly
+//!    once, via [`PageContext::set_targets`], *before* the first
+//!    [`drive_page`] call. `set_targets`'s wholesale-replace semantics
+//!    (see [`PageContext::begin_page`]'s own doc "Residual gap this method
+//!    does not close") is exactly why this must happen only once per
+//!    document: a second `set_targets` call mid-document would silently
+//!    discard any `pending_slots` a caller had queued while processing an
+//!    earlier page — [`drive_page`] itself never calls `set_targets`, so
+//!    calling it more than once per document is a caller error, not
+//!    something this driver can do for you a second time safely.
+//! 2. [`drive_page`] is then called once per page. Each call advances
+//!    `page_index`, every tracked `NamedStringState`, and the *already-
+//!    wired* registry's own page-local sequence numbering — all three
+//!    together, via [`PageContext::begin_page`] — then walks `page_root`'s
+//!    subtree in document order
 //!    ([`crate::running::derive_element_directives`] per element, in CSS
 //!    Lists 3 §4 order), applying every derived directive via
-//!    [`PageContext::apply_directive`].
+//!    [`PageContext::apply_directive`]. It does **not** touch `targets`
+//!    itself; calling it before `ctx.targets` has been wired via
+//!    `set_targets` leaves target resolution running against an empty,
+//!    default `TargetRegistry` for the whole document.
 //!
 //! # Counter-scope exit (CSS Lists 3 §4.3) is not wired yet
 //!
@@ -50,7 +50,7 @@
 //! narrowing `crate::target`'s `CounterScopes` documents as a known,
 //! separately-tracked gap in its own ancestor-chain-only model).
 //!
-//! [`raikiri_traits::page::context::PageContext`] has no way to reach into a
+//! [`raikiri_traits::PageContext`] has no way to reach into a
 //! tracked counter stack and pop it from outside raikiri-traits:
 //! `PageContext::counter` is read-only, and the only mutation path is
 //! `apply_directive`'s exhaustive match over the existing `GcpmDirective`
@@ -75,9 +75,15 @@ use crate::running::derive_element_directives;
 use crate::target::build_target_registry;
 
 /// Advance `ctx` to `page_index` and walk `page_root`'s subtree in document
-/// order, applying every element's derived `GcpmDirective`s. See the
-/// module-level doc "Per-page call order" for why the 4 steps below run in
-/// exactly this sequence.
+/// order, applying every element's derived `GcpmDirective`s.
+///
+/// **Precondition: `ctx.targets` must already be wired** via
+/// [`PageContext::set_targets`] — this function never builds or replaces
+/// `targets` itself. See the module-level doc "Per-document setup, then one
+/// `drive_page` call per page" for why that wiring is a one-time,
+/// per-document step this function deliberately stays out of, and
+/// [`drive_document`] for the sanctioned way to satisfy this precondition
+/// for a whole document in one call.
 #[allow(
     dead_code,
     reason = "No production per-document caller wires this into a real \
@@ -95,18 +101,19 @@ pub(crate) fn drive_page(
     page_index: u32,
     page_root: usize,
 ) {
-    let mut registry = build_target_registry(doc, cascade);
-    registry.begin_page(page_index);
-    ctx.set_targets(registry);
     ctx.begin_page(page_index);
     walk_directives(ctx, doc, cascade, page_root);
 }
 
-/// Convenience wrapper treating the whole document as a single page
-/// (`page_index = 0`). Real multi-page fragmentation is a future PageStream
-/// concern this driver does not implement (see [`drive_page`]'s doc) —
-/// callers with a real per-page content split should call [`drive_page`]
-/// once per page instead.
+/// Build and wire the whole document's [`raikiri_traits::TargetRegistry`],
+/// then drive it as a single page (`page_index = 0`). This is the sole
+/// sanctioned one-shot entry point for a single-page document; a real
+/// multi-page caller should replicate steps 1 (build + [`PageContext::set_targets`],
+/// once) and 2 ([`drive_page`], once per page) of the module-level doc
+/// itself, rather than calling this function per page — calling it more
+/// than once per document would re-wire `targets` and silently discard any
+/// `pending_slots` queued in between, exactly the hazard the module doc's
+/// "one-time, per-document step" framing exists to rule out.
 #[allow(
     dead_code,
     reason = "No production per-document driver calls this yet — the \
@@ -115,6 +122,7 @@ pub(crate) fn drive_page(
               Exercised via this module's own tests."
 )]
 pub(crate) fn drive_document(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResult) {
+    ctx.set_targets(build_target_registry(doc, cascade));
     drive_page(ctx, doc, cascade, 0, doc.root);
 }
 
@@ -208,6 +216,8 @@ mod tests {
         let mut ctx = PageContext::default();
         drive_document(&mut ctx, &doc, &cr);
 
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             ctx.counter(&Symbol::new("c")).and_then(|c| c.current()),
             Some(2),
@@ -240,13 +250,15 @@ mod tests {
 
     #[test]
     fn drive_document_walks_in_document_order_not_arena_insertion_order() {
-        // A later sibling's counter-increment must observe an earlier
-        // sibling's counter-reset — this only holds if the walk visits
-        // elements in document order (reset before increment), not
-        // insertion order (which happens to coincide with document order
-        // for this simple tree, but the reverse-push-children Exit-tracking
-        // walk is what's actually under test — a regression here would be
-        // an unstable/wrong traversal order, e.g. children before parent).
+        // Document order must hold both across depth (parent before
+        // children) and across siblings (first child before second child).
+        // Two siblings doing the same commutative +1 increment couldn't
+        // distinguish a sibling-order regression (the sum is order-
+        // independent) — this uses a non-commutative pair instead
+        // (increment then set) specifically so a reversed sibling order
+        // produces a different final value: correct order yields
+        // increment(1) then set(99) = 99; a reversed walk would yield
+        // set(99) then increment(1) = 100 instead.
         let mut doc = Document::new();
         let parent = doc.append_element(
             Some(0),
@@ -264,7 +276,7 @@ mod tests {
             Some(parent),
             "p",
             Style::default(),
-            Some("counter-increment: item 1"),
+            Some("counter-set: item 99"),
         );
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
@@ -273,11 +285,14 @@ mod tests {
         let mut ctx = PageContext::default();
         drive_document(&mut ctx, &doc, &cr);
 
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             ctx.counter(&Symbol::new("item")).and_then(|c| c.current()),
-            Some(2),
-            "both increments must observe the reset that precedes them in \
-             document order"
+            Some(99),
+            "the second sibling's counter-set must apply AFTER the first \
+             sibling's counter-increment (document order) — a reversed \
+             sibling walk would yield 100 instead"
         );
     }
 
@@ -297,6 +312,8 @@ mod tests {
         let mut ctx = PageContext::default();
         drive_document(&mut ctx, &doc, &cr);
 
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             ctx.counter(&Symbol::new("c")),
             None,
@@ -306,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn drive_page_wires_the_page_scoped_target_registry_before_walking() {
+    fn drive_document_wires_the_target_registry_before_walking() {
         let mut doc = Document::new();
         let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
         set_id(&mut doc, h1, "intro");
@@ -315,7 +332,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_page(&mut ctx, &doc, &cr, 0, doc.root);
+        drive_document(&mut ctx, &doc, &cr);
 
         let mut registry = ctx.targets().clone();
         let out = registry.resolve_target_counter(
@@ -323,22 +340,28 @@ mod tests {
             Symbol::new("nonexistent"),
             CounterStyle::Decimal,
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             out,
             ResolveOutcome::Resolved("0".to_owned()),
             "the id-bearing element registered by build_target_registry must \
-             already be wired into PageContext.targets after drive_page"
+             already be wired into PageContext.targets after drive_document"
         );
     }
 
     #[test]
-    fn drive_page_stamps_the_registry_to_the_given_page_index_before_wiring() {
+    fn drive_page_stamps_the_already_wired_registry_to_the_given_page_index() {
         let mut doc = Document::new();
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
+        // Pre-wire, as drive_document would before the first drive_page
+        // call — drive_page itself never builds or wires targets (see its
+        // own doc's "Precondition").
+        ctx.set_targets(build_target_registry(&doc, &cr));
         drive_page(&mut ctx, &doc, &cr, 3, doc.root);
 
         assert_eq!(ctx.page_index, 3);
@@ -349,6 +372,8 @@ mod tests {
             Symbol::new("c"),
             CounterStyle::Decimal,
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             out,
             ResolveOutcome::Pending(raikiri_traits::TargetSlotId {
@@ -356,8 +381,108 @@ mod tests {
                 sequence: 0,
             }),
             "a slot minted after drive_page(.., 3, ..) must be stamped with \
-             page_index 3, proving the registry was stamped before being \
-             wired in rather than left at its freshly-built default of 0"
+             page_index 3, proving PageContext::begin_page's internal \
+             TargetRegistry::begin_page forwarding ran"
+        );
+    }
+
+    #[test]
+    fn drive_page_does_not_rewire_targets_on_a_second_call() {
+        // The bug this pins: an earlier version of drive_page rebuilt and
+        // wholesale-replaced ctx.targets on *every* call (not just the
+        // first), which silently discarded whatever the document's initial
+        // wiring had registered the moment a second page was driven —
+        // exactly the "targets persist across pages" contract violation
+        // PageContext::begin_page's own doc warns about. Proven here by
+        // driving page 1 with a *different* doc/cascade pair (one with no
+        // id-bearing elements at all) than the one drive_document wired
+        // targets from for page 0 — if drive_page still rebuilt targets
+        // internally, it would rebuild from this second, id-less doc and
+        // "#intro" would stop resolving.
+        let mut doc0 = Document::new();
+        let h1 = doc0.append_element(Some(0), "h1", Style::default(), None::<&str>);
+        set_id(&mut doc0, h1, "intro");
+        doc0.mark_in_document_flags();
+        let rules0 = build_rule_tree(&doc0);
+        let cr0 = cascade(&doc0, &rules0).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc0, &cr0);
+
+        let mut empty_doc = Document::new();
+        empty_doc.mark_in_document_flags();
+        let empty_rules = build_rule_tree(&empty_doc);
+        let empty_cr = cascade(&empty_doc, &empty_rules).expect("cascade Ok");
+        drive_page(&mut ctx, &empty_doc, &empty_cr, 1, empty_doc.root);
+
+        let mut registry = ctx.targets().clone();
+        let out = registry.resolve_target_counter(
+            "#intro",
+            Symbol::new("nonexistent"),
+            CounterStyle::Decimal,
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            out,
+            ResolveOutcome::Resolved("0".to_owned()),
+            "\"#intro\", registered by drive_document's initial wiring from \
+             doc0, must still resolve after a second drive_page call driven \
+             by an unrelated, id-less doc/cascade pair — proving drive_page \
+             did not rebuild ctx.targets from that second call's own doc"
+        );
+    }
+
+    #[test]
+    fn drive_document_skips_directives_inside_a_template_subtree() {
+        // walk_directives's `if !node.is_in_document() { continue; }` check
+        // must actually skip a subtree that's reachable via `node.children`
+        // but flagged out of the flat tree by `mark_in_document_flags` — the
+        // `<template>` case is the one shape of this in an ordinary parsed
+        // document (the `<template>` element itself stays in_document, but
+        // everything inside it gets cleared). A node that's merely absent
+        // from the tree (e.g. built with `parent: None`) would never reach
+        // this check at all, since the walk wouldn't descend into it in the
+        // first place — this test needs the reachable-but-flagged-out case
+        // specifically.
+        let mut doc = Document::new();
+        let tmpl = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(tmpl),
+            "p",
+            Style::default(),
+            Some("counter-reset: hidden 9"),
+        );
+        doc.append_element(
+            Some(0),
+            "p",
+            Style::default(),
+            Some("counter-reset: visible 1"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("hidden")),
+            None,
+            "a counter-reset inside a <template> subtree must have no \
+             effect — the subtree is reachable via node.children but \
+             cleared by mark_in_document_flags"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("visible"))
+                .and_then(|c| c.current()),
+            Some(1),
+            "a sibling counter-reset outside the <template> must still \
+             apply normally"
         );
     }
 
@@ -375,6 +500,10 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
+        // Pre-wire, satisfying drive_page's own documented precondition
+        // (this is what drive_document does internally before its first
+        // drive_page call).
+        ctx.set_targets(build_target_registry(&doc, &cr));
         drive_page(&mut ctx, &doc, &cr, 0, doc.root);
 
         // Second page has no string-set of its own — begin_page's carry-
@@ -385,6 +514,8 @@ mod tests {
         let empty_cr = cascade(&empty_doc, &empty_rules).expect("cascade Ok");
         drive_page(&mut ctx, &empty_doc, &empty_cr, 1, empty_doc.root);
 
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             ctx.string_state(&Symbol::new("title"))
                 .and_then(|s| s.on_page_start()),

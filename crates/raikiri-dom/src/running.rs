@@ -684,43 +684,6 @@ pub(crate) fn build_running_template_store(
     store
 }
 
-/// Build a [`ParsedRunningTemplate`] for the subtree rooted at
-/// `subtree_root` — the per-template half of
-/// [`build_running_template_store`]'s walk.
-///
-/// Walks the subtree in document order (same DFS shape as the caller),
-/// collecting for every in-document node:
-/// - its [`raikiri_style::ComputedValues`] into [`CascadeSubset::styles`]
-///   (walk order, per that field's doc);
-/// - `counter-reset` / `counter-increment` / `counter-set` entries as
-///   [`GcpmDirective::CounterReset`] / [`GcpmDirective::CounterIncrement`] /
-///   [`GcpmDirective::CounterSet`], pushed in that CSS Lists 3 §4 processing
-///   order (not property declaration order) — see the loop's own comment.
-///   `counter-increment` / `counter-set` emit one directive per raw
-///   `(name, value)` pair; `counter-reset` first deduplicates same-name
-///   pairs within the declaration to the last occurrence's value (CSS Lists
-///   3 §4.1), so it emits at most one directive per distinct name — see the
-///   dedup step's own comment;
-/// - `string-set` entries as [`GcpmDirective::StringSet`], via
-///   [`resolve_string_set_component`] (per-item `attr()`/bare `content()`
-///   resolution against this element, the one point in the pipeline that
-///   still has DOM access — see that function's doc) followed by
-///   [`convert_string_set_source`] — see both functions' docs for the
-///   skip-whole-entry-on-failure policy.
-/// - the node's `content` list, folded (OR) into the template's aggregate
-///   [`DynamicFlags`] via [`detect_dynamic_flags`] — the "real invocation
-///   site" this task adds (previously exercised only by unit tests calling
-///   `detect_dynamic_flags` directly).
-///
-/// Does NOT emit `RegisterRunning` for a nested `position: running(name)`
-/// seed found while walking the subtree — the nested element is registered
-/// independently by [`build_running_template_store`]'s own top-level walk;
-/// see [`ParsedRunningTemplate`]'s type-level `directives` field note for
-/// why this walker leaves that hedge unresolved (fail-closed, 原則 3) rather
-/// than guess a directive shape nothing downstream consumes yet. Does NOT
-/// emit `RegisterTarget` either — out of this task's scope (see the
-/// module-level "Divergence from `raikiri_traits::TargetRegistry`'s
-/// register policy" note).
 /// Derive every "producing" [`GcpmDirective`] a single element's computed
 /// style carries — `counter-reset` / `counter-increment` / `counter-set` /
 /// `string-set` — appending them to `out` in CSS Lists 3 §4 "Automatic
@@ -741,7 +704,8 @@ pub(crate) fn build_running_template_store(
 /// in the declaration, duplicates included) — reduce to one pair per
 /// distinct name, keeping the *last* occurrence's value via
 /// `HashMap::insert`'s overwrite-on-reinsert semantics, before emitting a
-/// directive. Consumers (`PageContext::apply_directive`) process one
+/// directive. Consumers (`PageContext::apply_directive`,
+/// `PhaseBWalkState::apply_directive`) process one
 /// `GcpmDirective` at a time and unconditionally push a new nested-scope
 /// frame per `CounterReset` received, so a duplicate name reaching them as
 /// two directives would produce two frames instead of one — dedup has to
@@ -815,6 +779,44 @@ pub(crate) fn derive_element_directives(
     }
 }
 
+/// Build a [`ParsedRunningTemplate`] for the subtree rooted at
+/// `subtree_root` — the per-template half of
+/// [`build_running_template_store`]'s walk.
+///
+/// Walks the subtree in document order (same DFS shape as the caller),
+/// collecting for every in-document node:
+/// - its [`raikiri_style::ComputedValues`] into [`CascadeSubset::styles`]
+///   (walk order, per that field's doc);
+/// - `counter-reset` / `counter-increment` / `counter-set` entries as
+///   [`GcpmDirective::CounterReset`] / [`GcpmDirective::CounterIncrement`] /
+///   [`GcpmDirective::CounterSet`], pushed in that CSS Lists 3 §4 processing
+///   order (not property declaration order) — see
+///   [`derive_element_directives`]'s own doc comment.
+///   `counter-increment` / `counter-set` emit one directive per raw
+///   `(name, value)` pair; `counter-reset` first deduplicates same-name
+///   pairs within the declaration to the last occurrence's value (CSS Lists
+///   3 §4.1), so it emits at most one directive per distinct name — see
+///   [`derive_element_directives`]'s "counter-reset dedup" doc note;
+/// - `string-set` entries as [`GcpmDirective::StringSet`], via
+///   [`resolve_string_set_component`] (per-item `attr()`/bare `content()`
+///   resolution against this element, the one point in the pipeline that
+///   still has DOM access — see that function's doc) followed by
+///   [`convert_string_set_source`] — see both functions' docs for the
+///   skip-whole-entry-on-failure policy.
+/// - the node's `content` list, folded (OR) into the template's aggregate
+///   [`DynamicFlags`] via [`detect_dynamic_flags`] — the "real invocation
+///   site" this task adds (previously exercised only by unit tests calling
+///   `detect_dynamic_flags` directly).
+///
+/// Does NOT emit `RegisterRunning` for a nested `position: running(name)`
+/// seed found while walking the subtree — the nested element is registered
+/// independently by [`build_running_template_store`]'s own top-level walk;
+/// see [`ParsedRunningTemplate`]'s type-level `directives` field note for
+/// why this walker leaves that hedge unresolved (fail-closed, 原則 3) rather
+/// than guess a directive shape nothing downstream consumes yet. Does NOT
+/// emit `RegisterTarget` either — out of this task's scope (see the
+/// module-level "Divergence from `raikiri_traits::TargetRegistry`'s
+/// register policy" note).
 #[allow(
     dead_code,
     reason = "Helper for build_running_template_store; \
