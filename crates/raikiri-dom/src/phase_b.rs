@@ -38,37 +38,38 @@
 //!    `set_targets` leaves target resolution running against an empty,
 //!    default `TargetRegistry` for the whole document.
 //!
-//! # Counter-scope exit (CSS Lists 3 §4.3) is not wired yet
+//! # Counter-scope exit (CSS Lists 3 §4.3)
 //!
 //! CSS Lists 3 §4.3 <https://www.w3.org/TR/css-lists-3/#auto-numbering>
 //! scopes a `counter-reset` to "the element's descendants and its following
-//! siblings with their descendants". Modeling that correctly means popping
-//! the pushed nested-scope frame at the *resetting element's own parent's*
-//! subtree exit, not at the resetting element's own exit — popping at the
-//! element's own exit would only keep the scope visible to its descendants,
-//! losing the following-sibling half CSS Lists 3 §4.3 grants it (the same
-//! narrowing `crate::target`'s `CounterScopes` documents as a known,
-//! separately-tracked gap in its own ancestor-chain-only model).
+//! siblings with their descendants". [`walk_directives`] models this by
+//! popping the pushed nested-scope frame at the *resetting element's own
+//! parent's* subtree exit, not at the resetting element's own exit —
+//! popping at the element's own exit would only keep the scope visible to
+//! its descendants, losing the following-sibling half CSS Lists 3 §4.3
+//! grants it (the same narrowing `crate::target`'s `CounterScopes`
+//! documents as a known, separately-tracked gap in its own
+//! ancestor-chain-only model — that dom-local type is a different code path
+//! from this driver and is not affected by this section).
 //!
-//! [`raikiri_traits::PageContext`] has no way to reach into a
-//! tracked counter stack and pop it from outside raikiri-traits:
-//! `PageContext::counter` is read-only, and the only mutation path is
-//! `apply_directive`'s exhaustive match over the existing `GcpmDirective`
-//! variants, none of which pop a scope. Extending that surface is a
-//! raikiri-traits public-API decision, not something this driver can settle
-//! on its own — until it lands, every `CounterReset` this walker applies
-//! accumulates depth monotonically rather than resetting at the correct
-//! same-parent scope, the same documented limitation
-//! [`crate::gcpm::CounterStack`]'s own doc already describes for its
-//! dom-local mirror. [`walk_directives`] still tracks Enter/Exit
-//! structurally (mirroring [`crate::target::build_target_registry`]'s own
-//! shape) so wiring the pop, once a mutation path exists, is a small
-//! addition here rather than a rewrite — the `Exit` step currently does
-//! nothing.
+//! The mechanism is a `pending_pops: Vec<Vec<Symbol>>` side-stack,
+//! structurally parallel to `walk_directives`'s own `Enter`/`Exit` stack:
+//! every `Enter(idx)` pushes a fresh bucket for `idx` right where it pushes
+//! `idx`'s matching `Exit` marker (so the two stacks stay 1:1, for leaf and
+//! non-leaf nodes alike), and every `CounterReset` directive `idx` applies
+//! to itself records its name not into that just-pushed bucket but into the
+//! bucket beneath it — the one `idx`'s own parent pushed — so the name is
+//! popped when the parent's subtree (not `idx`'s own subtree) finishes.
+//! Each `Exit` pops its matching bucket and calls
+//! [`raikiri_traits::PageContext::pop_counter_scope`] for every name in it.
+//! A root-level `counter-reset` (applied while `pending_pops` is still
+//! empty, i.e. before any bucket exists) has no ancestor exit inside this
+//! function to pop at and is intentionally left open for the whole
+//! [`drive_document`]/[`drive_page`] call.
 
 use raikiri_style::CascadeResult;
 use raikiri_style::property::DisplayValue;
-use raikiri_traits::PageContext;
+use raikiri_traits::{GcpmDirective, PageContext, Symbol};
 
 use crate::document::Document;
 use crate::running::derive_element_directives;
@@ -128,9 +129,11 @@ pub(crate) fn drive_document(ctx: &mut PageContext, doc: &Document, cascade: &Ca
 
 /// Document-order walk applying every in-document element's derived
 /// directives to `ctx`. Same iterative reverse-push-children DFS shape as
-/// [`crate::target::build_target_registry`], extended with an `Exit` step —
-/// currently a no-op (see module doc "Counter-scope exit is not wired yet"),
-/// kept structurally in place for that future wiring.
+/// [`crate::target::build_target_registry`], extended with an `Exit` step
+/// that pops nested counter scopes at the *resetting element's parent's*
+/// exit — see module doc "Counter-scope exit (CSS Lists 3 §4.3)" for the
+/// `pending_pops` side-stack this uses to track which names to pop at each
+/// `Exit`.
 fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResult, root: usize) {
     enum WalkStep {
         Enter(usize),
@@ -138,6 +141,13 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
     }
 
     let mut stack = vec![WalkStep::Enter(root)];
+    // `pending_pops[i]` holds the counter names to pop at the `Exit`
+    // matching the `Enter` that pushed bucket `i` — see module doc
+    // "Counter-scope exit (CSS Lists 3 §4.3)" for why a name lands in the
+    // *parent's* bucket (index `pending_pops.len() - 1` at the moment the
+    // resetting element is entered, i.e. the bucket the parent itself
+    // pushed) rather than the resetting element's own bucket.
+    let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
     let mut directives = Vec::new();
     while let Some(step) = stack.pop() {
         match step {
@@ -161,6 +171,24 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                         derive_element_directives(doc, idx, cv, &mut directives);
                         for directive in &directives {
                             ctx.apply_directive(directive);
+                            // Every scope this element's own CounterReset
+                            // pushes must be popped at this element's
+                            // PARENT's exit, not this element's own exit
+                            // (CSS Lists 3 §4.3 grants the scope to
+                            // following siblings too, not just
+                            // descendants) — so record it in the bucket the
+                            // parent already pushed, not a bucket of this
+                            // element's own. `pending_pops` is empty only
+                            // for `root` itself (no `Enter` has pushed a
+                            // bucket yet at that point), in which case a
+                            // root-level reset has no ancestor exit inside
+                            // this call to pop at and is intentionally left
+                            // open for the whole walk.
+                            if let GcpmDirective::CounterReset { name, .. } = directive
+                                && let Some(parent_bucket) = pending_pops.last_mut()
+                            {
+                                parent_bucket.push(name.clone());
+                            }
                         }
                     }
                     // cov:ignore: `raikiri_style::cascade`'s own contract
@@ -173,14 +201,38 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                 }
 
                 stack.push(WalkStep::Exit);
+                // This element's OWN bucket — accumulates any CounterReset
+                // names pushed by its children (see the `Enter` branch
+                // above) as they're processed, to be popped when this
+                // element's own `Exit` (just pushed above) is reached.
+                pending_pops.push(Vec::new());
                 for &child in node.children.iter().rev() {
                     stack.push(WalkStep::Enter(child));
                 }
             }
             WalkStep::Exit => {
-                // Parent-exit-pop for CSS Lists 3 §4.3 counter scoping is
-                // not wired yet — see module doc "Counter-scope exit is not
-                // wired yet".
+                // Pop the bucket pushed by the matching `Enter` and close
+                // every counter scope it accumulated. `pending_pops.pop()`
+                // is `None` only if this `Exit` has no matching `Enter`
+                // bucket — structurally impossible: every `Enter(idx)` path
+                // pushes exactly one `WalkStep::Exit` and one
+                // `pending_pops` bucket together (the `!is_in_document()`
+                // early `continue` skips both; every other path — the
+                // `display:none` arm, the defensive `None` arm, and the
+                // normal directive-applying arm — falls through to both),
+                // so the two stacks stay 1:1 for every node, leaf or not.
+                //
+                // cov:ignore: the `None` branch below is unreachable per
+                // the invariant above; kept as a graceful no-op rather than
+                // `.expect()` so a violation (if one ever existed) can't
+                // panic on parsed DOM input, matching the "defensive, not
+                // panicking" shape `crate::target::build_target_registry`'s
+                // own `.get(idx)` handling already uses nearby.
+                if let Some(names) = pending_pops.pop() {
+                    for name in names {
+                        ctx.pop_counter_scope(&name);
+                    }
+                }
             }
         }
     }
@@ -201,9 +253,9 @@ mod tests {
     }
 
     #[test]
-    fn drive_document_applies_counter_directives_in_document_order() {
+    fn drive_page_applies_counter_directives_from_a_subtree_root() {
         let mut doc = Document::new();
-        doc.append_element(
+        let h2 = doc.append_element(
             Some(0),
             "h2",
             Style::default(),
@@ -214,7 +266,19 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        // Walk `h2` itself as the page root, not `doc.root`: a CounterReset
+        // applied by the walked root's own element has no enclosing
+        // `pending_pops` bucket to be recorded into (see module doc
+        // "Counter-scope exit"), so it is never popped within this call and
+        // the fully composed value survives to be read back below. Walking
+        // from `doc.root` instead would correctly pop this scope by the
+        // time the call returns, since `h2` would then be a plain child
+        // whose reset gets popped at its real parent's exit — this is
+        // exactly what CSS Lists 3 §4.3 requires, it just means a
+        // whole-document walk isn't the right vantage point to observe a
+        // single element's own composed value from the outside.
+        ctx.set_targets(build_target_registry(&doc, &cr));
+        drive_page(&mut ctx, &doc, &cr, 0, h2);
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -249,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn drive_document_walks_in_document_order_not_arena_insertion_order() {
+    fn drive_page_walks_in_document_order_not_arena_insertion_order() {
         // Document order must hold both across depth (parent before
         // children) and across siblings (first child before second child).
         // Two siblings doing the same commutative +1 increment couldn't
@@ -283,7 +347,13 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        // Walk `section` (the resetting element) itself as the page root,
+        // not `doc.root`: `section`'s own CounterReset would otherwise be
+        // popped at `doc.root`'s exit — the very last step of a
+        // whole-document walk — before this assertion could ever observe
+        // the composed value. See module doc "Counter-scope exit".
+        ctx.set_targets(build_target_registry(&doc, &cr));
+        drive_page(&mut ctx, &doc, &cr, 0, parent);
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -451,13 +521,38 @@ mod tests {
             Some(tmpl),
             "p",
             Style::default(),
-            Some("counter-reset: hidden 9"),
+            // string-set is the probe that actually discriminates a broken
+            // skip here: `hidden`'s own counter-reset gets popped at tmpl's
+            // Exit regardless of whether the skip worked (tmpl itself is
+            // always walked, so its Exit always fires and drains whatever
+            // pending_pops bucket accumulated under it) — so a bare
+            // `ctx.counter(&hidden) == None` check below can no longer tell
+            // "skip worked, nothing ever ran" apart from "skip broken, but
+            // got cleaned up on the way out". `string_state`, unlike
+            // `counters`, is never popped by walk_directives at all, so its
+            // presence is unambiguous proof the templated element was
+            // walked.
+            Some("counter-reset: hidden 9; string-set: hidden_probe counter(hidden)"),
         );
+        // `counter-increment`, not `counter-reset`, deliberately: an
+        // implicitly-created counter (no reset seeding it) is never
+        // recorded in `walk_directives`'s `pending_pops` (only
+        // `CounterReset` directives are), so its value survives to be read
+        // back after `drive_document` regardless of where in the tree it
+        // sits — see module doc "Counter-scope exit". A `counter-reset`
+        // here would be popped at `doc.root`'s own exit (the very last step
+        // of a whole-document walk) before this assertion could observe it,
+        // same as the sibling fixes above; that pop is *correct* per CSS
+        // Lists 3 §4.3 (there is nothing left in the document to see the
+        // scope once the walk finishes), it just means `counter-reset`
+        // specifically is the wrong vehicle for this test's actual point,
+        // which is only that the `<template>` skip does not also wrongly
+        // skip an ordinary sibling.
         doc.append_element(
             Some(0),
             "p",
             Style::default(),
-            Some("counter-reset: visible 1"),
+            Some("counter-increment: visible 1"),
         );
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
@@ -475,13 +570,28 @@ mod tests {
              effect — the subtree is reachable via node.children but \
              cleared by mark_in_document_flags"
         );
+        // The discriminating assertion: string_state is never popped by
+        // walk_directives, so its presence would be unambiguous proof the
+        // templated element was walked at all — unlike the counter check
+        // above, which a broken skip could still pass (see this test's
+        // tmpl <p> fixture comment).
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("hidden_probe")),
+            None,
+            "a string-set inside a <template> subtree must never execute at \
+             all — its presence (even a since-popped counter value) would \
+             prove the <template> skip failed to prevent the subtree from \
+             being walked"
+        );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             ctx.counter(&Symbol::new("visible"))
                 .and_then(|c| c.current()),
             Some(1),
-            "a sibling counter-reset outside the <template> must still \
+            "a sibling counter-increment outside the <template> must still \
              apply normally"
         );
     }
@@ -521,6 +631,246 @@ mod tests {
                 .and_then(|s| s.on_page_start()),
             Some("Ch. 1"),
             "page 1's on_page_start must carry forward page 0's running value"
+        );
+    }
+
+    // ── Counter-scope exit (CSS Lists 3 §4.3) ───────────────
+    //
+    // These tests need to observe a counter's value at a point *inside* a
+    // walk, before some later `Exit` step pops it away — `ctx.counter()`
+    // alone cannot do that from outside this driver (see the tests above,
+    // which sidestep the same problem either by walking a subtree's own
+    // root directly, so its top-level scope is never popped within that
+    // call, or by using `counter-increment`/`counter-set` with no matching
+    // `counter-reset`, which is never tracked in `pending_pops` at all).
+    // Here, `string-set: <probe-name> counter(<name>)` is used instead: it
+    // freezes whatever `<name>` currently reads into a `NamedStringState`,
+    // which `walk_directives` never pops (only `counters` gets that
+    // treatment), so the frozen value survives to be read back after the
+    // whole walk completes, from wherever in the tree it was taken.
+
+    #[test]
+    fn sibling_elements_resetting_the_same_counter_get_independent_same_depth_scopes() {
+        // The bug this pins (previously described by this module's own doc
+        // as a known limitation for as long as `Exit` was a no-op): two
+        // sibling elements each doing `counter-reset` for the same name
+        // must each start their own independent, same-depth nested scope,
+        // not accumulate on top of each other or leak past their shared
+        // parent's subtree.
+        let mut doc = Document::new();
+        let section_a = doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-reset: c 0"),
+        );
+        doc.append_element(
+            Some(section_a),
+            "p",
+            Style::default(),
+            Some("counter-increment: c 1; string-set: probe_a counter(c)"),
+        );
+        let section_b = doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-reset: c 0"),
+        );
+        doc.append_element(
+            Some(section_b),
+            "p",
+            Style::default(),
+            Some("counter-increment: c 1; string-set: probe_b counter(c)"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe_a"))
+                .and_then(|s| s.running()),
+            Some("1"),
+            "section A's own <p> must see section A's independent scope (0 + 1 = 1)"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe_b"))
+                .and_then(|s| s.running()),
+            Some("1"),
+            "section B's own <p> must see section B's OWN independent, same-depth \
+             scope (0 + 1 = 1) — not 2, which is what accumulating on top of \
+             section A's still-open scope instead of starting a fresh one would \
+             produce"
+        );
+        // Both sections are direct children of doc.root, so both scopes are
+        // recorded into doc.root's own bucket and popped at doc.root's exit
+        // — the terminal step of this call. A stack that failed to unwind
+        // both nested frames (the "never pops at all" bug this whole
+        // feature fixes) would leave a leftover value here instead.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("c")).and_then(|c| c.current()),
+            None,
+            "both sections' scopes must be fully closed once their shared parent's \
+             (doc.root's) subtree walk completes — no leaked/accumulating depth"
+        );
+    }
+
+    #[test]
+    fn a_later_sibling_still_sees_an_earlier_siblings_reset_scope() {
+        // The "following siblings" half of CSS Lists 3 §4.3 specifically:
+        // a reset on an early sibling must remain visible to a LATER
+        // sibling (not a descendant of the resetting element) — this is
+        // what distinguishes popping at the resetting element's own exit
+        // (wrong: would already have closed the scope by the time the next
+        // sibling runs) from popping at the resetting element's PARENT's
+        // exit (correct: stays open through every following sibling too).
+        let mut doc = Document::new();
+        doc.append_element(Some(0), "p", Style::default(), Some("counter-reset: c 10"));
+        doc.append_element(
+            Some(0),
+            "p",
+            Style::default(),
+            Some("counter-increment: c 5; string-set: probe counter(c)"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe"))
+                .and_then(|s| s.running()),
+            Some("15"),
+            "the later sibling's counter-increment must mutate the still-open \
+             scope the earlier sibling's counter-reset established (10 + 5 = 15) \
+             — popping at the earlier sibling's own exit would have already \
+             closed it, giving 5 (implicit re-creation) instead"
+        );
+    }
+
+    #[test]
+    fn root_level_counter_reset_is_never_erroneously_popped_mid_walk() {
+        // A counter-reset applied by the walk's own `root` argument (rather
+        // than by a descendant reached from it) has no enclosing
+        // `pending_pops` bucket to be recorded into — see module doc
+        // "Counter-scope exit". It must stay open for the whole call, even
+        // once its own descendants have been fully processed.
+        let mut doc = Document::new();
+        let page_root =
+            doc.append_element(Some(0), "div", Style::default(), Some("counter-reset: c 5"));
+        doc.append_element(
+            Some(page_root),
+            "p",
+            Style::default(),
+            Some("counter-increment: c 1"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        ctx.set_targets(build_target_registry(&doc, &cr));
+        drive_page(&mut ctx, &doc, &cr, 0, page_root);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("c")).and_then(|c| c.current()),
+            Some(6),
+            "a counter-reset on the walk's own root element must never be popped \
+             within that same call — there is no ancestor exit inside the call to \
+             pop it at, so the reset (5) plus its descendant's increment (1) must \
+             still read back as 6"
+        );
+    }
+
+    #[test]
+    fn nested_resets_of_the_same_name_scope_independently_at_each_level() {
+        // A reset nested inside another reset for the SAME name must (a)
+        // give its own descendants (and following siblings, within its own
+        // parent) an independent inner scope, and (b) not corrupt the outer
+        // scope once the inner one closes — the outer value must reappear
+        // unchanged for whatever comes after the inner scope's parent
+        // exits. `CounterStack`'s own unit tests already pin the underlying
+        // push/pop mechanics directly; this is the integration-level
+        // version through this driver's actual document-order walk.
+        let mut doc = Document::new();
+        let outer = doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-reset: c 1"),
+        );
+        let inner = doc.append_element(
+            Some(outer),
+            "section",
+            Style::default(),
+            Some("counter-reset: c 100"),
+        );
+        doc.append_element(
+            Some(inner),
+            "p",
+            Style::default(),
+            Some("counter-increment: c 1; string-set: probe_leaf counter(c)"),
+        );
+        // A later sibling of `outer` itself (not of `inner`) — by the time
+        // this runs, `inner`'s scope has already closed (at `outer`'s own
+        // exit, which happens before this element is even entered, since
+        // it comes after the whole `outer` subtree in document order), but
+        // `outer`'s own scope is still open (it only closes at doc.root's
+        // exit).
+        doc.append_element(
+            Some(0),
+            "p",
+            Style::default(),
+            Some("counter-increment: c 1; string-set: probe_outer_sibling counter(c)"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe_leaf"))
+                .and_then(|s| s.running()),
+            Some("101"),
+            "the innermost element must see the INNER reset's own scope (100 + 1 \
+             = 101), nested on top of (not replacing) the outer scope"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe_outer_sibling"))
+                .and_then(|s| s.running()),
+            Some("2"),
+            "once the inner scope has closed (at `outer`'s own exit), a later \
+             sibling of `outer` must see OUTER's own scope re-emerge unchanged by \
+             the inner scope's activity (1 + 1 = 2), not the inner scope's value \
+             or some corrupted combination of the two"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("c")).and_then(|c| c.current()),
+            None,
+            "outer's own scope must in turn be fully closed once doc.root's \
+             subtree walk completes"
         );
     }
 }

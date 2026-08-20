@@ -22,25 +22,48 @@
 //! mirror — it is the first driver built against the promoted type, though
 //! (like this mirror) it has no production caller of its own yet either. It
 //! applies every element's `CounterReset`/`CounterIncrement`/
-//! `CounterSet`/`StringSet` directive correctly for the "descendants" half of
-//! CSS Lists 3 §4.3's counter-reset scope (modulo one pre-existing,
-//! separately-tracked gap it inherits by matching `crate::target`'s own
-//! `display:none` handling: a `display:none` element's *own* box-generating
-//! descendants are still walked and applied, since `display` isn't
-//! inherited — CSS Lists 3 §4.5 withdraws counter effects only from
-//! elements that don't themselves generate a box), but the "following
-//! siblings" half
-//! (popping a pushed nested-scope frame at the resetting element's own
-//! *parent's* subtree exit) is not wired yet: `PageContext` has no way to
-//! reach a tracked counter stack and pop it from outside raikiri-traits (see
-//! `crate::phase_b`'s module doc "Counter-scope exit is not wired yet" for
-//! the full account). **This module is deliberately retained, not
-//! deleted** — collapsing it onto `crate::phase_b` is gated on that
-//! counter-scope-pop capability landing, since until then this dom-local
-//! mirror and the promoted type are equally unable to reproduce the correct
-//! parent-exit-pop scoping, and this module's [`CounterStack::pop_scope`] /
-//! [`PhaseBWalkState::begin_page`] remain the closest concrete reference for
-//! what that wiring will eventually need to do.
+//! `CounterSet`/`StringSet` directive, and correctly handles the
+//! "descendants" half of CSS Lists 3 §4.3's counter-reset scope (modulo one
+//! pre-existing, separately-tracked gap it inherits by matching
+//! `crate::target`'s own `display:none` handling: a `display:none`
+//! element's *own* box-generating descendants are still walked and applied,
+//! since `display` isn't inherited — CSS Lists 3 §4.5 withdraws counter
+//! effects only from elements that don't themselves generate a box).
+//!
+//! For the "following siblings" half, it wires the *timing* of a pushed
+//! nested-scope frame's removal — popping at the resetting element's own
+//! *parent's* subtree exit, via `raikiri_traits::PageContext::pop_counter_scope`
+//! (see `crate::phase_b`'s module doc "Counter-scope exit (CSS Lists 3
+//! §4.3)" for the full account) — but it does **not** implement §4.3's
+//! separate "obscuring" rule: a later sibling's `counter-reset` of the same
+//! name is specified to remove an earlier sibling's still-open same-named
+//! frame from scope entirely, not merely sit above it. Because frames are
+//! only ever popped at parent-exit here, an earlier sibling's frame stays
+//! live (and visible) until then. `PageContext::counter`'s
+//! `CounterStack::current` read (the singular, top-of-stack accessor,
+//! backing the `counter()` CSS function) is unaffected — the later sibling's
+//! frame is always on top regardless. `CounterStack::values` (the plural,
+//! every-frame accessor `raikiri_traits::page::target`'s
+//! `join_counter_stack` consumes for the `counters()` CSS function and for
+//! target-counters snapshots) is where the gap is observable: it returns
+//! both frames joined together where the spec calls for only the later
+//! one.
+//!
+//! **This module is still deliberately retained, not deleted**, despite the
+//! promoted-type side now being fully wired: collapsing it onto
+//! `crate::phase_b` is a separate step (deleting
+//! [`PhaseBWalkState`]/[`apply_running_template_directives`], whose only
+//! caller is this module's own `#[cfg(test)]` module, and relying on
+//! `crate::phase_b`'s tests against the promoted type instead) that has not
+//! happened yet. This module's own
+//! [`CounterStack::pop_scope`] remains itself unwired — not because the
+//! capability is missing (it now works fine on the promoted side), but
+//! because [`apply_running_template_directives`]'s input (a flat, pre-
+//! collected `Vec<GcpmDirective>` with no subtree-*exit* markers — see
+//! "Input source" below) structurally cannot drive a parent-exit-pop at
+//! all, unlike `crate::phase_b`'s real DOM-tree walk. This is a different,
+//! still-not-collapsed code path from `crate::phase_b`'s, not a residual
+//! version of the same gap.
 //!
 //! **This module builds the algorithm + state dom-locally**, entirely inside
 //! raikiri-dom, so the walk's correctness (nested counter scopes, snapshot
@@ -96,24 +119,25 @@ use raikiri_traits::{ContentSource, GcpmDirective, RunningTemplateId, Symbol};
 /// *parent's* subtree exit (CSS Lists 3 §4.3 scopes a counter-reset to "the
 /// element's descendants and its following siblings with their
 /// descendants" — popping any earlier would hide the scope from the
-/// resetting element's own following siblings). `crate::phase_b`'s
-/// document-order walker (this module's promoted counterpart's driver — see
-/// module-level doc) applies every `CounterReset`/`CounterIncrement`/
-/// `CounterSet`/`StringSet` directive correctly, but does not yet call
-/// `pop_scope`'s promoted counterpart at all: the promoted
-/// `raikiri_traits::PageContext` has no way to reach a tracked counter stack
-/// and pop it from outside raikiri-traits (see `crate::phase_b`'s module doc
-/// "Counter-scope exit is not wired yet" for the full account of that gap).
-/// [`apply_running_template_directives`] (this dom-local mirror's own
-/// caller) has the identical limitation for the same underlying reason (its
-/// input, a flat `Vec<GcpmDirective>` with no subtree-exit markers, doesn't
-/// even carry the information `pop_scope` would need — see module-level
-/// doc). Applying two sibling `CounterReset`s through either walk today will
-/// therefore accumulate depth instead of resetting at the same level. This
-/// is a known, documented limitation of the *driver* side, not a bug in the
-/// push/pop primitives themselves — the unit tests below pin push/pop
-/// correctness directly, not the "real DOM walk pops at the right points"
-/// integration.
+/// resetting element's own following siblings).
+///
+/// `crate::phase_b`'s document-order walker (this type's promoted
+/// counterpart's driver — see module-level doc) now does exactly that,
+/// calling `raikiri_traits::PageContext::pop_counter_scope` at each
+/// resetting element's parent's subtree exit — see that module's doc
+/// "Counter-scope exit (CSS Lists 3 §4.3)" for the mechanism. This
+/// type's own [`Self::pop_scope`] remains unwired, and so does this
+/// dom-local mirror's own driver, [`apply_running_template_directives`]:
+/// their input (a flat `Vec<GcpmDirective>` with no subtree-exit markers —
+/// see module-level doc "Input source") structurally cannot express a
+/// parent-exit-pop, regardless of whether the capability exists elsewhere.
+/// Applying two sibling `CounterReset`s through *this* dom-local walk
+/// therefore still accumulates depth instead of resetting at the same
+/// level — a known, documented limitation of this particular driver, not a
+/// bug in the push/pop primitives themselves (the unit tests below pin
+/// push/pop correctness directly, not the "real DOM walk pops at the right
+/// points" integration, which `crate::phase_b`'s own tests now cover for
+/// the promoted type).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CounterStack {
     /// Nested scope frames, outermost first. Empty = the counter has not
@@ -170,13 +194,20 @@ impl CounterStack {
 
     /// Exit the innermost nested scope, returning its value (`None` if the
     /// stack was already empty). See the type-level "Caller invariant" note
-    /// — no directive currently triggers this; it's exposed for a future
-    /// DOM-tree-driven walker.
+    /// — this dom-local mirror's own caller
+    /// ([`apply_running_template_directives`]) has no way to trigger this
+    /// (its flat, exit-marker-less input can't express a parent-exit-pop);
+    /// `crate::phase_b`'s real DOM-tree walker calls the promoted
+    /// counterpart, `raikiri_traits::PageContext::pop_counter_scope`,
+    /// instead.
     #[allow(
         dead_code,
-        reason = "No driver calls this yet (see type-level 'Caller invariant' \
-                  note) — exercised directly by this module's unit tests, \
-                  exposed for a future DOM-tree-driven walker."
+        reason = "This dom-local mirror's own caller \
+                  (apply_running_template_directives) cannot trigger this \
+                  (see type-level 'Caller invariant' note) — exercised \
+                  directly by this module's unit tests. crate::phase_b's \
+                  real DOM-tree walker calls the promoted counterpart, \
+                  raikiri_traits::PageContext::pop_counter_scope, instead."
     )]
     pub(crate) fn pop_scope(&mut self) -> Option<i32> {
         self.frames.pop()

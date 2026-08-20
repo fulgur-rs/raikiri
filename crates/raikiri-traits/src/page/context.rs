@@ -98,11 +98,18 @@ use crate::dom::Symbol;
 /// [`Self::reset`] unconditionally *pushes* a new frame; it never replaces
 /// the innermost one. Popping that frame when the walk leaves the
 /// originating element's subtree is **not** done automatically here —
-/// [`Self::pop_scope`] exists for a future DOM-tree-driven walker to call at
-/// the right point (subtree exit, matching the real CSS scoping rule where
-/// two *sibling* elements each resetting the same counter get independent,
-/// same-depth scopes, not accumulating nesting) — that future walker has not
-/// landed yet.
+/// [`Self::pop_scope`] exists for a DOM-tree-driven walker to call at the
+/// right point (subtree exit, matching the real CSS scoping rule where two
+/// *sibling* elements each resetting the same counter get independent,
+/// same-depth scopes, not accumulating nesting). `raikiri_dom::phase_b`'s
+/// walker now does exactly this, via [`PageContext::pop_counter_scope`]'s
+/// forwarding call at the resetting element's own parent's subtree exit.
+/// That popping is LIFO-only, though: it does not implement CSS Lists 3
+/// §4.3's separate "obscuring" rule, under which a later sibling's reset of
+/// the same name is specified to evict an earlier sibling's still-open
+/// frame outright rather than merely sit above it — see
+/// `raikiri_dom::gcpm`'s module doc for the concrete gap this leaves in
+/// [`Self::values`]'s callers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CounterStack {
@@ -159,8 +166,9 @@ impl CounterStack {
 
     /// Exit the innermost nested scope, returning its value (`None` if the
     /// stack was already empty). See the type-level "Caller invariant" note
-    /// — no driver currently calls this yet; exposed for that future
-    /// DOM-tree-driven walker.
+    /// — `raikiri_dom::phase_b`'s walker now calls this, via
+    /// [`PageContext::pop_counter_scope`]'s forwarding call, at the
+    /// resetting element's own parent's subtree exit.
     pub fn pop_scope(&mut self) -> Option<i32> {
         self.frames.pop()
     }
@@ -245,8 +253,10 @@ impl NamedStringState {
     /// page's entry/start value, and clear the per-page first/last-use
     /// trackers (a fresh page starts with no assignments of its own).
     ///
-    /// No production driver calls this yet — the per-page walk that would
-    /// call it has not landed yet.
+    /// No production driver calls this yet — `raikiri_dom::phase_b`'s
+    /// per-page walk now reaches the promoted state through
+    /// [`PageContext::begin_page`], but that driver is still
+    /// `#[allow(dead_code)]` and is exercised only by tests.
     pub fn begin_page(&mut self) {
         self.on_page_start = self.running.clone();
         self.on_page_first_use = None;
@@ -397,8 +407,11 @@ fn resolve_content_source(
 /// this shape implements:
 ///
 /// - `counters` / `strings` / `running` / `targets` are private, mutated
-///   *only* via [`Self::apply_directive`] (single entry point — no per-field
-///   accessor/mutator), read via the narrow accessors below.
+///   *only* via [`Self::apply_directive`] (single entry point — no
+///   per-field accessor/mutator) with one narrow exception:
+///   [`Self::pop_counter_scope`], a scope-exit-only mutation no
+///   `GcpmDirective` variant can express — see that method's doc for why.
+///   Otherwise read via the narrow accessors below.
 /// - `page_index` / `page_name` are plain `pub` fields (copy-cheap scalars,
 ///   no invariant to protect).
 #[derive(Debug, Default, Clone)]
@@ -558,6 +571,35 @@ impl PageContext {
         }
     }
 
+    /// Pop the innermost nested scope tracked under `name`, returning its
+    /// value (`None` if `name` has no tracked counter at all, or if the
+    /// tracked [`CounterStack`] is already empty). A thin forwarding
+    /// wrapper around [`CounterStack::pop_scope`] — this method exists
+    /// because `counters` has no `counter_mut` accessor
+    /// ([`Self::apply_directive`]'s doc "single entry point" explains why
+    /// there is deliberately no per-field mutable accessor for the 4
+    /// encapsulated fields) and none of [`GcpmDirective`]'s existing six
+    /// variants carries a "pop a scope" instruction.
+    ///
+    /// **Why a caller needs this.** CSS Lists 3 §4.3
+    /// <https://www.w3.org/TR/css-lists-3/#auto-numbering> scopes a
+    /// `counter-reset` to "the element's descendants and its following
+    /// siblings with their descendants" — the pushed scope must stay visible
+    /// not only to the resetting element's descendants but also to its
+    /// following siblings (and their descendants) within the same parent. A
+    /// document-order tree walk that pushes a new scope (via
+    /// [`Self::apply_directive`]'s `CounterReset` arm) when entering the
+    /// resetting element must therefore *not* pop that scope again when
+    /// leaving that same element — doing so would only keep the scope
+    /// visible to its descendants, losing the following-sibling half of the
+    /// rule. The correct point to pop is when the resetting element's
+    /// *parent's* subtree walk finishes, once every following sibling has
+    /// had its turn. This method is that pop, exposed for a caller outside
+    /// this crate to invoke at the right point in its own walk.
+    pub fn pop_counter_scope(&mut self, name: &Symbol) -> Option<i32> {
+        self.counters.get_mut(name)?.pop_scope()
+    }
+
     /// Page-boundary hook — the coordinated way to advance to a new page.
     /// Updates three things together: `page_index` itself, every tracked
     /// [`NamedStringState`] (via [`NamedStringState::begin_page`]), and the
@@ -565,9 +607,9 @@ impl PageContext {
     /// [`TargetRegistry::begin_page`]). Design §7.2 names `PageContext` as
     /// sole owner of `page_index` and `targets` as sibling fields; this
     /// method is what actually keeps the two paired on a transition. No
-    /// production caller exists yet — the per-page walk that would call it
-    /// has not landed yet (same gap [`TargetRegistry::begin_page`]'s doc
-    /// flags).
+    /// production caller exists yet — `raikiri_dom::phase_b`'s per-page walk
+    /// now calls this method, but that driver is still
+    /// `#[allow(dead_code)]` and is exercised only by tests.
     ///
     /// **The sole sanctioned way to advance `page_index` from here on.**
     /// `page_index` remains a directly-writable `pub` field (see its own
@@ -1261,6 +1303,73 @@ mod tests {
                 crate::page::ResolveOutcome::Resolved("Real Title".to_owned()),
                 "set_targets's richer TargetInfo must survive the later counts-only RegisterTarget"
             );
+        }
+    }
+
+    // ── PageContext::pop_counter_scope ──────────────────────
+
+    mod pop_counter_scope_tests {
+        use super::*;
+
+        #[test]
+        fn pops_a_scope_pushed_via_counter_reset_directive() {
+            let mut ctx = PageContext::default();
+            let c = Symbol::new("c");
+            ctx.apply_directive(&GcpmDirective::CounterReset {
+                name: c.clone(),
+                value: 0,
+            });
+            ctx.apply_directive(&GcpmDirective::CounterReset {
+                name: c.clone(),
+                value: 10,
+            });
+            ctx.apply_directive(&GcpmDirective::CounterIncrement {
+                name: c.clone(),
+                delta: 5,
+            });
+            assert_eq!(ctx.counter(&c).and_then(CounterStack::current), Some(15));
+
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                ctx.pop_counter_scope(&c),
+                Some(15),
+                "must return the innermost (just-popped) scope's value"
+            );
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                ctx.counter(&c).and_then(CounterStack::current),
+                Some(0),
+                "after popping the inner scope, a subsequent read must fall back to \
+                 the outer scope pushed by the first CounterReset"
+            );
+        }
+
+        #[test]
+        fn popping_the_only_scope_falls_back_to_absent() {
+            let mut ctx = PageContext::default();
+            let c = Symbol::new("c");
+            ctx.apply_directive(&GcpmDirective::CounterReset {
+                name: c.clone(),
+                value: 3,
+            });
+            assert_eq!(ctx.pop_counter_scope(&c), Some(3));
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                ctx.counter(&c).and_then(CounterStack::current),
+                None,
+                "popping the only tracked scope must leave the counter reading as \
+                 absent, not silently resurrect a value"
+            );
+        }
+
+        #[test]
+        fn popping_a_name_with_no_tracked_counter_returns_none() {
+            let mut ctx = PageContext::default();
+            let untouched = Symbol::new("never-reset");
+            assert_eq!(ctx.pop_counter_scope(&untouched), None);
         }
     }
 
