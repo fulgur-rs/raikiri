@@ -32,8 +32,8 @@ use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
     CssColor, Direction, DisplayValue, FontStyle, Length, LengthOrAuto, LineHeight, OverflowValue,
     OverflowXY, Sides, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
-    TextTransform, VerticalAlign, Visibility, empty_content_list, empty_counter_entries,
-    empty_string_set_entries, initial_font_family, resolve_overflow,
+    TextTransform, VerticalAlign, Visibility, ZIndexValue, empty_content_list,
+    empty_counter_entries, empty_string_set_entries, initial_font_family, resolve_overflow,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
@@ -58,7 +58,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -204,6 +204,9 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::visibility`] の staging。層は computed-equivalent
     /// (`Visibility` は length を運ばない)。
     pub visibility: Visibility,
+    /// [`ComputedValues::z_index`] の staging。層は computed-equivalent
+    /// (`ZIndexValue` は length を運ばない)。
+    pub z_index: ZIndexValue,
 }
 
 impl SpecifiedValues {
@@ -267,6 +270,8 @@ impl SpecifiedValues {
             text_transform: TextTransform::None,
             // CSS Display 3 §4: visibility initial は `visible`。
             visibility: Visibility::Visible,
+            // CSS2 §9.9.1: z-index initial は `auto`。
+            z_index: ZIndexValue::Auto,
         }
     }
 
@@ -350,6 +355,8 @@ impl SpecifiedValues {
             text_decoration_color: TextDecorationColor::CurrentColor,
             // non-inherited (CSS 2.1 §10.8.1 "Inherited: no")。
             vertical_align: VerticalAlign::Baseline,
+            // non-inherited (CSS2 §9.9.1 "Inherited: no")。
+            z_index: ZIndexValue::Auto,
         }
     }
 
@@ -687,6 +694,10 @@ impl SpecifiedValues {
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
             visibility: self.visibility,
+            // computed value = specified value (`ZIndexValue` doc 参照、
+            // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
+            // そのまま素通し。
+            z_index: self.z_index,
         }
     }
 }
@@ -834,6 +845,7 @@ mod tests {
             font_style: FontStyle::Italic,
             text_transform: TextTransform::Uppercase,
             visibility: Visibility::Hidden,
+            z_index: ZIndexValue::Integer(3),
         }
     }
 
@@ -892,6 +904,8 @@ mod tests {
         assert_eq!(child.text_decoration_color, initial.text_decoration_color);
         // CSS 2.1 §10.8.1: vertical-align は non-inherited。
         assert_eq!(child.vertical_align, initial.vertical_align);
+        // CSS2 §9.9.1: z-index は non-inherited。
+        assert_eq!(child.z_index, initial.z_index);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は

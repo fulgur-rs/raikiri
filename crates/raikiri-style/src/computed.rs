@@ -14,7 +14,7 @@ use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
     FontStyle, OverflowValue, OverflowXY, Sides, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility,
+    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, ZIndexValue,
     empty_content_list, empty_counter_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -588,6 +588,21 @@ pub struct ComputedValues {
     /// formatting-context-specific space-saving effect for `collapse` is
     /// downstream layout scope, not represented by this field).
     pub visibility: Visibility,
+    /// `z-index`. **non-inherited**, initial: [`ZIndexValue::Auto`] (CSS2
+    /// §9.9.1 "Specifying the stack level: the 'z-index' property"
+    /// <https://www.w3.org/TR/CSS2/visuren.html#z-index>, "Initial: auto" /
+    /// "Inherited: no"). Computed value = specified value ([`ZIndexValue`]
+    /// doc — no length payload, so no relative resolution is needed).
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded value only — no consumer reads it
+    /// yet. [`ZIndexValue`] doc's "Scope carving" section explains why:
+    /// this crate's `position` property does not implement the CSS2
+    /// `relative`/`absolute`/`fixed`/`sticky` keywords that "positioned
+    /// elements" (the propdef's "Applies to" clause) presupposes, so there
+    /// is no stacking-context/paint-order consumer to wire up yet.
+    pub z_index: ZIndexValue,
 }
 
 impl ComputedValues {
@@ -676,6 +691,8 @@ impl ComputedValues {
             text_transform: TextTransform::None,
             // CSS Display 3 §4: visibility initial は `visible`。
             visibility: Visibility::Visible,
+            // CSS2 §9.9.1: z-index initial は `auto`。
+            z_index: ZIndexValue::Auto,
         }
     }
 
@@ -689,7 +706,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align)。
+    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index)。
     ///
     /// # 実装 (delegation)
     ///
@@ -823,6 +840,8 @@ mod tests {
         assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Auto);
         // CSS Sizing 3 §3.3: box-sizing initial は `content-box`。
         assert_eq!(cv.box_sizing, BoxSizing::ContentBox);
+        // CSS2 §9.9.1: z-index initial は `auto`。
+        assert_eq!(cv.z_index, ZIndexValue::Auto);
     }
 
     #[test]
@@ -917,6 +936,9 @@ mod tests {
             // CSS Display 3 §4: `Hidden` — initial (`Visible`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             visibility: Visibility::Hidden,
+            // CSS2 §9.9.1: `Integer(3)` — initial (`Auto`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            z_index: ZIndexValue::Integer(3),
         }
     }
 
@@ -980,6 +1002,8 @@ mod tests {
         assert_eq!(child.text_decoration_color, initial.text_decoration_color);
         // CSS 2.1 §10.8.1: vertical-align は non-inherited。
         assert_eq!(child.vertical_align, initial.vertical_align);
+        // CSS2 §9.9.1: z-index は non-inherited。
+        assert_eq!(child.z_index, initial.z_index);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
