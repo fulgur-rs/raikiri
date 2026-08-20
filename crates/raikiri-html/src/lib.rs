@@ -2204,8 +2204,8 @@ mod tests {
         //   ins, u { text-decoration: underline; }
         // all landed. The 5-element `cite, dfn, em, i, var { font-style:
         // italic; }` rule also landed — see
-        // `font_style_ua_rule_survives_real_parse_and_cascade` below for its
-        // dedicated real-parse+cascade coverage. sub/sup's two rules
+        // `cite_dfn_em_i_var_font_style_ua_rule_survives_real_parse_and_cascade`
+        // below for its dedicated real-parse+cascade coverage. sub/sup's two rules
         // (`vertical-align: sub`/`super`) also landed — covered separately
         // by `sub_sup_ua_rules_survive_real_parse_and_cascade` below. Same
         // "survives real parse+cascade, not just literal text in
@@ -2544,11 +2544,16 @@ mod tests {
     }
 
     #[test]
-    fn font_style_ua_rule_survives_real_parse_and_cascade() {
+    fn cite_dfn_em_i_var_font_style_ua_rule_survives_real_parse_and_cascade() {
         // HTML LS §phrasing-content-3's 5-element
         //   cite, dfn, em, i, var { font-style: italic; }
-        // Same "survives real parse+cascade, not just literal text in
-        // MINIMAL_UA_CSS" concern as the hr / a[href] /
+        // — now combined with §flow-content-3's separate `address` rule
+        // into one physical `address, cite, dfn, em, i, var` CSS rule (see
+        // minimal.css's comment on that rule), but this test covers only
+        // the 5 elements this spec rule itself names; `address`'s coverage
+        // is `address_font_style_ua_rule_survives_real_parse_and_cascade`
+        // below. Same "survives real parse+cascade, not just literal text
+        // in MINIMAL_UA_CSS" concern as the hr / a[href] /
         // `phrasing_content_ua_rules_survive_real_parse_and_cascade` tests
         // above — a separate test function (rather than folded into that
         // one) so this rule's coverage doesn't collide with concurrent
@@ -2593,14 +2598,62 @@ mod tests {
     }
 
     #[test]
+    fn address_font_style_ua_rule_survives_real_parse_and_cascade() {
+        // HTML LS §flow-content-3's separate `address { font-style: italic; }`
+        // rule (distinct from §phrasing-content-3's cite/dfn/em/i/var rule
+        // above, though both specify the same declaration) lands folded into
+        // the same physical CSS rule as cite/dfn/em/i/var — see minimal.css's
+        // comment on that rule for why. Same "survives real parse+cascade,
+        // not just literal text in MINIMAL_UA_CSS" concern as
+        // `cite_dfn_em_i_var_font_style_ua_rule_survives_real_parse_and_cascade`
+        // above — a separate test function, mirroring that test's own
+        // separate-function convention so this rule's coverage doesn't
+        // collide with concurrent edits to a shared test.
+        use raikiri_style::Origin;
+        use raikiri_style::property::FontStyle;
+
+        let html = b"<html><body><address>x</address><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+        let address_id = find_first_by_tag(&uncascaded.dom, "address")
+            .expect("<address> should exist")
+            .0 as usize;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[address_id].font_style,
+            FontStyle::Italic,
+            "address's UA rule font-style: italic must reach computed.font_style through real parse+cascade"
+        );
+
+        // Contrast: an element the UA rule does not target must stay at
+        // CSS-initial `normal` (HTML LS §flow-content-3's address rule
+        // targets only address, not every element).
+        let p_id = find_first_by_tag(&uncascaded.dom, "p")
+            .expect("<p> should exist")
+            .0 as usize;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            cascade.computed[p_id].font_style,
+            FontStyle::Normal,
+            "p must stay at CSS-initial font-style: normal, not address's UA rule's italic"
+        );
+    }
+
+    #[test]
     fn code_kbd_samp_tt_ua_rule_survives_real_parse_and_cascade() {
         // HTML LS §phrasing-content-3's
         //   code, kbd, samp, tt { font-family: monospace; }
         // Same "survives real parse+cascade, not just literal text in
         // MINIMAL_UA_CSS" concern as the hr / a[href] /
-        // `font_style_ua_rule_survives_real_parse_and_cascade` tests above —
-        // a separate test function, mirroring those sibling tests' own
-        // separate-function convention.
+        // `cite_dfn_em_i_var_font_style_ua_rule_survives_real_parse_and_cascade`
+        // tests above — a separate test function, mirroring those sibling
+        // tests' own separate-function convention.
         use raikiri_style::Origin;
 
         let html = b"<html><body><code>x</code><kbd>x</kbd><samp>x</samp>\
