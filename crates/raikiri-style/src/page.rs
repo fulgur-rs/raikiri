@@ -1629,7 +1629,7 @@ fn absolutize_in_page_context(
         // ── overflow-x / overflow-y ──────────────────────────────────────────
         // CSS Overflow 3 §3.1 cross-axis coupling — this axis's own winner
         // (`v`) paired with the *other* axis's winner (`overflow_pair`,
-        // [`page_context_overflow_pair`]'s output), same shape as
+        // `page_context_overflow_pair`'s output), same shape as
         // `border_width` pairing `w` with `border_styles.top` above.
         PropertyValue::OverflowX(v) => PropertyValue::OverflowX(
             resolve_overflow(OverflowXY {

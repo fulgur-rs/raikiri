@@ -2019,7 +2019,7 @@ fn effective_language<D: StyleDom, E: StyleElement>(
         // chain would try to return a `&str` borrowed from a `node` that
         // drops at the end of the closure, hence the explicit `if let`
         // nesting instead of the more compact combinator chain
-        // [`effective_language`]'s own doc-adjacent sibling functions use
+        // `effective_language`'s own doc-adjacent sibling functions use
         // where the borrow doesn't need to cross a temporary like this.
         if let Some(node) = dom.node(ancestor_id)
             && let Some(ancestor_elem) = node.as_element()
@@ -2213,7 +2213,7 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
     }
     for &ancestor_id in ancestors.iter().rev() {
         // Same "explicit `if let` nesting instead of `.and_then` chain"
-        // reason as [`effective_language`]'s sibling loop — `own_explicit_direction`
+        // reason as `effective_language`'s sibling loop — `own_explicit_direction`
         // borrows from `ancestor_elem`, which itself borrows from a `node`
         // temporary that must stay alive across the call.
         if let Some(node) = dom.node(ancestor_id)
@@ -3669,7 +3669,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 最終 winner を反映し終えていない可能性がある。coupling は全 winner
         // 適用後の phase 3 (`SpecifiedValues::finalize` → `absolutize_with`)
         // でのみ解決する (border style→width gating と同じ順序、
-        // [`resolve_overflow`] doc 参照)。
+        // `resolve_overflow` doc 参照)。
         PropertyValue::OverflowX(v) => target.overflow.x = v,
         PropertyValue::OverflowY(v) => target.overflow.y = v,
         // `overflow` shorthand fall-through。sibling `PropertyValue::Padding`
