@@ -558,6 +558,35 @@ impl PageContext {
         }
     }
 
+    /// Pop the innermost nested scope tracked under `name`, returning its
+    /// value (`None` if `name` has no tracked counter at all, or if the
+    /// tracked [`CounterStack`] is already empty). A thin forwarding
+    /// wrapper around [`CounterStack::pop_scope`] — this method exists
+    /// because `counters` has no `counter_mut` accessor
+    /// ([`Self::apply_directive`]'s doc "single entry point" explains why
+    /// there is deliberately no per-field mutable accessor for the 4
+    /// encapsulated fields) and none of [`GcpmDirective`]'s existing six
+    /// variants carries a "pop a scope" instruction.
+    ///
+    /// **Why a caller needs this.** CSS Lists 3 §4.3
+    /// <https://www.w3.org/TR/css-lists-3/#auto-numbering> scopes a
+    /// `counter-reset` to "the element's descendants and its following
+    /// siblings with their descendants" — the pushed scope must stay visible
+    /// not only to the resetting element's descendants but also to its
+    /// following siblings (and their descendants) within the same parent. A
+    /// document-order tree walk that pushes a new scope (via
+    /// [`Self::apply_directive`]'s `CounterReset` arm) when entering the
+    /// resetting element must therefore *not* pop that scope again when
+    /// leaving that same element — doing so would only keep the scope
+    /// visible to its descendants, losing the following-sibling half of the
+    /// rule. The correct point to pop is when the resetting element's
+    /// *parent's* subtree walk finishes, once every following sibling has
+    /// had its turn. This method is that pop, exposed for a caller outside
+    /// this crate to invoke at the right point in its own walk.
+    pub fn pop_counter_scope(&mut self, name: &Symbol) -> Option<i32> {
+        self.counters.get_mut(name)?.pop_scope()
+    }
+
     /// Page-boundary hook — the coordinated way to advance to a new page.
     /// Updates three things together: `page_index` itself, every tracked
     /// [`NamedStringState`] (via [`NamedStringState::begin_page`]), and the
@@ -1261,6 +1290,67 @@ mod tests {
                 crate::page::ResolveOutcome::Resolved("Real Title".to_owned()),
                 "set_targets's richer TargetInfo must survive the later counts-only RegisterTarget"
             );
+        }
+    }
+
+    // ── PageContext::pop_counter_scope ──────────────────────
+
+    mod pop_counter_scope_tests {
+        use super::*;
+
+        #[test]
+        fn pops_a_scope_pushed_via_counter_reset_directive() {
+            let mut ctx = PageContext::default();
+            let c = Symbol::new("c");
+            ctx.apply_directive(&GcpmDirective::CounterReset {
+                name: c.clone(),
+                value: 0,
+            });
+            ctx.apply_directive(&GcpmDirective::CounterReset {
+                name: c.clone(),
+                value: 10,
+            });
+            ctx.apply_directive(&GcpmDirective::CounterIncrement {
+                name: c.clone(),
+                delta: 5,
+            });
+            assert_eq!(ctx.counter(&c).and_then(CounterStack::current), Some(15));
+
+            assert_eq!(
+                ctx.pop_counter_scope(&c),
+                Some(15),
+                "must return the innermost (just-popped) scope's value"
+            );
+            assert_eq!(
+                ctx.counter(&c).and_then(CounterStack::current),
+                Some(0),
+                "after popping the inner scope, a subsequent read must fall back to \
+                 the outer scope pushed by the first CounterReset"
+            );
+        }
+
+        #[test]
+        fn popping_the_only_scope_falls_back_to_absent() {
+            let mut ctx = PageContext::default();
+            let c = Symbol::new("c");
+            ctx.apply_directive(&GcpmDirective::CounterReset {
+                name: c.clone(),
+                value: 3,
+            });
+            assert_eq!(ctx.pop_counter_scope(&c), Some(3));
+            assert_eq!(
+                ctx.counter(&c).and_then(CounterStack::current),
+                None,
+                "popping the only tracked scope must leave the counter reading as \
+                 absent, not silently resurrect a value"
+            );
+        }
+
+        #[test]
+        fn popping_a_name_with_no_tracked_counter_returns_none() {
+            let mut ctx = PageContext::default();
+            let untouched = Symbol::new("never-reset");
+            assert_eq!(ctx.pop_counter_scope(&untouched), None);
         }
     }
 
