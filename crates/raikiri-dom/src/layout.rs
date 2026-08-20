@@ -115,6 +115,14 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
 /// - `InlineBlock` → `Block` (block child + inline-level flow parent の
 ///   separate 扱い、精密化は follow-up)
 /// - `None` → `None`
+/// - `Flex` → `Flex` (CSS Display 3 §2.2 `<display-inside>` keyword、
+///   outer-defaulting rule で `block flex` と等価。
+///   [`crate::taffy_impl`]'s `LayoutFlexboxContainer` impl + taffy's
+///   `compute_flexbox_layout` が実 layout を担う)
+/// - `Grid` → `Grid` (CSS Display 3 §2.2 `<display-inside>` keyword、
+///   outer-defaulting rule で `block grid` と等価。
+///   [`crate::taffy_impl`]'s `LayoutGridContainer` impl + taffy's
+///   `compute_grid_layout` が実 layout を担う)
 /// - catch-all arm → `Block` (`non_exhaustive` forward-compat)
 fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
     style.display = match cv.display {
@@ -122,6 +130,8 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
         DisplayValue::Inline => Display::Block,
         DisplayValue::InlineBlock => Display::Block,
         DisplayValue::None => Display::None,
+        DisplayValue::Flex => Display::Flex,
+        DisplayValue::Grid => Display::Grid,
         _ => {
             // non_exhaustive catch-all — unknown future variant goes to Block
             Display::Block
@@ -2977,6 +2987,126 @@ mod tests {
 
         layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
         assert_eq!(doc.nodes[body].style.display, Display::None);
+    }
+
+    #[test]
+    fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
+        // display bridge が Display::Flex を実際に taffy::compute_flexbox_layout
+        // へ届けることを **geometry** で確認する — style.display の値を
+        // asserting するだけでは bridge が繋がったことしか示さず、taffy_impl.rs
+        // の compute_child_layout dispatch が実際に flex を起動していることの
+        // 証明にはならない。CSS Flexbox Level 1 の initial value
+        // (`flex-direction: row`、`flex-wrap: nowrap`) 通りなら、明示 width の
+        // 2 child は主軸 (x) 方向に並び、交差軸 (y) は揃う。
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex_container =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:flex"));
+        let child_a = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let child_b = doc.append_element(
+            Some(flex_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[flex_container].style.display,
+            Display::Flex,
+            "bridge_display must map DisplayValue::Flex to taffy::Display::Flex"
+        );
+        let a_loc = doc.nodes[child_a].unrounded_layout.location;
+        let b_loc = doc.nodes[child_b].unrounded_layout.location;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (a_loc.y - b_loc.y).abs() < 0.5,
+            "row-direction flex items must share the same cross-axis (y) offset, got a.y={}, b.y={}",
+            a_loc.y,
+            b_loc.y
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (b_loc.x - a_loc.x - 100.0).abs() < 0.5,
+            "second flex item should sit 100px (first item's width) further along the main axis (x), got a.x={}, b.x={}",
+            a_loc.x,
+            b_loc.x
+        );
+    }
+
+    #[test]
+    fn layout_single_page_bridges_display_grid_to_taffy_grid() {
+        // display bridge が Display::Grid を taffy::compute_grid_layout へ
+        // 届けることを確認する。raikiri-style は `grid-template-columns` 等の
+        // grid-* property を未実装 (本 task の scope 外、"entry point を開く"
+        // だけが scope) なので、implicit single-track grid の挙動は block と
+        // 見分けがつきにくい — ここでは「bridge が Display::Grid を発火させ、
+        // compute_grid_layout がクラッシュせず有限な box を返す」ことのみを
+        // pin する。track-level の挙動 pin は grid-* property 実装時の
+        // follow-up の責務。
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid_container =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:grid"));
+        let child_a = doc.append_element(
+            Some(grid_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let child_b = doc.append_element(
+            Some(grid_container),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[grid_container].style.display,
+            Display::Grid,
+            "bridge_display must map DisplayValue::Grid to taffy::Display::Grid"
+        );
+        for id in [child_a, child_b] {
+            let size = doc.nodes[id].unrounded_layout.size;
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert!(
+                size.width.is_finite()
+                    && size.height.is_finite()
+                    && size.width >= 0.0
+                    && size.height >= 0.0,
+                "grid item layout must be finite and non-negative, got {:?}",
+                size
+            );
+        }
     }
 
     #[test]
