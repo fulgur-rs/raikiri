@@ -77,9 +77,10 @@ hr         { display: block; }
  * longer deferred — see the `blockquote, figure, listing, p, plaintext,
  * pre, xmp` rule near `hr` below. Their other shared rule, HTML LS
  * §flow-content-3's `font-family: monospace; white-space: pre` (with
- * pre), is no longer bucketed wholesale either — see the `listing,
- * plaintext, pre, xmp` rule near `code, kbd, samp, tt` below for the
- * split between what now lands and what remains deferred. */
+ * pre), now lands in full too — see the `listing, plaintext, pre, xmp`
+ * rule near `code, kbd, samp, tt` below (its comment notes the one thing
+ * that's still pending: a layout-side consumer for `white-space: pre`'s
+ * pre-formatting algorithm). */
 address   { display: block; }
 center    { display: block; }
 listing   { display: block; }
@@ -374,22 +375,22 @@ code, kbd, samp, tt { font-family: monospace; }
  * specifies, for pre and its historical predecessors:
  *   listing, plaintext, pre, xmp { font-family: monospace; white-space: pre; }
  *
- * `font-family: monospace` lands below, split out of that pair for the
- * same reason `code, kbd, samp, tt` above lands verbatim: the property is
- * an independent axis from `white-space` — a plain generic-family lookup
- * through the same already-implemented path, complete on its own, not a
- * fragment of some other declaration the way the `dialog` display pair or
- * the `sub`/`sup` size+baseline pair above are. `white-space: pre` itself
- * stays deferred: raikiri-style/raikiri-dom do not implement CSS Text
- * Module Level 3's pre-formatting model (run preservation of literal
- * spaces/tabs/line breaks, suppressing normal collapsing/wrapping). Same
- * "land the implementable half, defer the rest" precedent as `hr`'s
- * `overflow: hidden` (ahead of BFC/float-clearing, above) and `li`'s
- * interim `display: block` (ahead of `display: list-item`, above).
+ * Both declarations now land verbatim. `font-family: monospace` reuses the
+ * same already-implemented generic-family lookup as `code, kbd, samp, tt`
+ * above. `white-space: pre` now parses too (CSS Text Module Level 3 §3
+ * "White Space and Wrapping: the white-space property"
+ * <https://www.w3.org/TR/css-text-3/#white-space-property>) and cascades
+ * through to the computed layer — but the pre-formatting algorithm the
+ * property describes (run preservation of literal spaces/tabs/line breaks,
+ * suppressing normal collapsing/wrapping) has no consumer in
+ * raikiri-dom/raikiri-paint yet, so the declaration is inert at render
+ * time. Same "land the cascade value, the layout consumer comes later"
+ * precedent as `hr`'s `overflow: hidden` above (BFC/float-clearing not
+ * wired in yet either).
  *
  * `pre` itself additionally still has no `display: block` rule anywhere
  * in this file, unlike listing/plaintext/xmp (which got it from the
  * §flow-content-3 selector above) — that is `pre`'s own pre-existing
  * display deferral (see file header's `<pre>` scope note), unrelated to
  * and not resolved by this rule. */
-listing, plaintext, pre, xmp { font-family: monospace; }
+listing, plaintext, pre, xmp { font-family: monospace; white-space: pre; }

@@ -2090,7 +2090,11 @@ fn absolutize_in_page_context(
         // path; `Float`/`Clear` are opaque pass-through values here, the
         // same treatment `ZIndex` gets (see that arm's doc).
         | PropertyValue::Float(_)
-        | PropertyValue::Clear(_)) => v,
+        | PropertyValue::Clear(_)
+        // `white-space` (CSS Text 3 §3) carries no length either and
+        // computed value = specified keyword (see `WhiteSpace`'s doc) —
+        // nothing for phase 3 to absolutize.
+        | PropertyValue::WhiteSpace(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2415,7 +2419,7 @@ mod tests {
         DisplayValue, FloatValue, FontStyle, FontWeightValue, Length, LengthOrAuto, LengthOrNormal,
         LineHeight, OverflowValue, OverflowWrap, OverflowXY, PositionValue, TextAlign,
         TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        TextTransform, VerticalAlign, Visibility, WordBreak, ZIndexValue,
+        TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4164,11 +4168,13 @@ mod tests {
     /// keyword-only property のため phase 3 に変換対象が無い。この path は
     /// §9.7 の `display` 強制変換も行わない —
     /// `absolutize_in_page_context` の `Float`/`Clear` arm doc 参照)。
+    /// 39 → 40 (`WhiteSpace` も同じ理由 — length を運ばない keyword-only
+    /// property のため phase 3 に変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 39;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 40;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4426,6 +4432,13 @@ mod tests {
         // specified value, `ClearValue` doc) — any value is "worst case"
         // (`Direction` sibling comment above uses the same reasoning).
         Clear => PropertyValue::Clear(ClearValue::Both),
+        // No specified/computed distinction for `white-space` (computed
+        // value = specified keyword, `WhiteSpace` doc) — any value is
+        // "worst case" (`Direction` sibling comment above uses the same
+        // reasoning). `Pre` chosen over `Normal` since it is a non-initial
+        // keyword, the same "not the initial value" reasoning
+        // `WordBreak`/`OverflowWrap` samples above use.
+        WhiteSpace => PropertyValue::WhiteSpace(WhiteSpace::Pre),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4602,6 +4615,7 @@ mod tests {
         BreakInside,
         Float,
         Clear,
+        WhiteSpace,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4876,7 +4890,9 @@ mod tests {
             // `FloatValue`/`ClearValue` (CSS2 §9.5.1/§9.5.2) carry no
             // length either.
             | PropertyValue::Float(_)
-            | PropertyValue::Clear(_) => None,
+            | PropertyValue::Clear(_)
+            // `WhiteSpace` (CSS Text 3 §3) carries no length either.
+            | PropertyValue::WhiteSpace(_) => None,
         }
     }
 
@@ -5255,7 +5271,7 @@ mod tests {
             "@page { color: red; font-weight: bolder; display: block; \
              box-sizing: border-box; border-top-color: red; text-align: center; \
              direction: rtl; font-style: italic; text-transform: uppercase; \
-             word-break: break-all; overflow-wrap: anywhere }",
+             word-break: break-all; overflow-wrap: anywhere; white-space: pre }",
             &root,
         );
         assert_eq!(color_of(&result), Some(RED));
@@ -5292,6 +5308,10 @@ mod tests {
         assert_eq!(
             result.declarations().get(&PropertyKey::OverflowWrap),
             Some(&PropertyValue::OverflowWrap(OverflowWrap::Anywhere)),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::WhiteSpace),
+            Some(&PropertyValue::WhiteSpace(WhiteSpace::Pre)),
         );
     }
 

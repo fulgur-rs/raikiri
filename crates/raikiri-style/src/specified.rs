@@ -33,9 +33,9 @@ use crate::property::{
     ClearValue, ContentComponent, CssColor, Direction, DisplayValue, FloatValue, FontStyle, Length,
     LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, Sides,
     TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform,
-    VerticalAlign, Visibility, WordBreak, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_string_set_entries, initial_font_family, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_match_parent,
+    VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue, empty_content_list,
+    empty_counter_entries, empty_string_set_entries, initial_font_family,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_length_or_normal,
@@ -59,7 +59,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -248,6 +248,9 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::clear`] の staging。層は computed-equivalent
     /// (`ClearValue` は length を運ばない)。
     pub clear: ClearValue,
+    /// [`ComputedValues::white_space`] の staging。層は computed-equivalent
+    /// (`WhiteSpace` は length を運ばない)。
+    pub white_space: WhiteSpace,
 }
 
 impl SpecifiedValues {
@@ -331,6 +334,8 @@ impl SpecifiedValues {
             // CSS2 §9.5.1 / §9.5.2: float / clear の initial は共に `none`。
             float: FloatValue::None,
             clear: ClearValue::None,
+            // CSS Text 3 §3: white-space initial は `normal`。
+            white_space: WhiteSpace::Normal,
         }
     }
 
@@ -407,6 +412,8 @@ impl SpecifiedValues {
             // `lift_length_or_normal` doc 参照)。
             letter_spacing: lift_length_or_normal(parent.letter_spacing),
             word_spacing: lift_length_or_normal(parent.word_spacing),
+            // CSS Text 3 §3: white-space は inherited。
+            white_space: parent.white_space,
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
             display: DisplayValue::Inline,
@@ -838,6 +845,10 @@ impl SpecifiedValues {
             // `display` field 自体の代入式が担う (`resolve_display_for_float`)。
             float: self.float,
             clear: self.clear,
+            // computed value = specified keyword (`WhiteSpace` doc 参照、
+            // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
+            // そのまま素通し。
+            white_space: self.white_space,
         }
     }
 }
@@ -996,6 +1007,7 @@ mod tests {
             break_inside: BreakInside::AvoidPage,
             float: FloatValue::Left,
             clear: ClearValue::Both,
+            white_space: WhiteSpace::Pre,
         }
     }
 
@@ -1027,6 +1039,8 @@ mod tests {
         assert_eq!(child.word_break, WordBreak::KeepAll);
         // CSS Text 3 §5.4: overflow-wrap は inherited。
         assert_eq!(child.overflow_wrap, OverflowWrap::Anywhere);
+        // CSS Text 3 §3: white-space は inherited。
+        assert_eq!(child.white_space, WhiteSpace::Pre);
         // computed → specified の lift (px 表現)。
         assert_eq!(child.font_size, Length::Px(24.0));
         assert_eq!(child.line_height, LineHeight::Number(1.5));

@@ -526,7 +526,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::BreakAfter(_)
         | PropertyValue::BreakInside(_)
         | PropertyValue::Float(_)
-        | PropertyValue::Clear(_) => expand_none(d, push),
+        | PropertyValue::Clear(_)
+        | PropertyValue::WhiteSpace(_) => expand_none(d, push),
     }
 }
 
