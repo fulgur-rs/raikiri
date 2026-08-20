@@ -483,11 +483,13 @@ impl TargetRegistry {
     /// `next_sequence` independently before the re-run, or `begin_page` must
     /// gain a force-reset variant — tracked as a follow-up, not fixed here.
     ///
-    /// No production driver calls this yet — the per-page walk that would
-    /// call it has not landed yet (same gap
-    /// `PageContext::begin_page`'s doc already flags). Until a driver calls
-    /// it, every slot is tagged to page 0 — correct for a single-page
-    /// document, harmless (just uninformative) for a multi-page one.
+    /// No production driver calls this directly yet —
+    /// `raikiri_dom::phase_b`'s per-page walk now reaches this method through
+    /// [`super::context::PageContext::begin_page`], but that driver is still
+    /// `#[allow(dead_code)]` and is exercised only by tests. Until a
+    /// production driver calls it, every slot is tagged to page 0 — correct
+    /// for a single-page document, harmless (just uninformative) for a
+    /// multi-page one.
     pub fn begin_page(&mut self, page_index: u32) {
         let current = self.page_index;
         assert!(
