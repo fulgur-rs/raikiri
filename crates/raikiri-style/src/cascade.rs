@@ -7507,6 +7507,20 @@ mod tests {
     }
 
     #[test]
+    fn author_display_flex_and_grid_compute_through_cascade() {
+        // Cascade output (`ComputedValues.display`) is read directly by
+        // raikiri-paint's `walk.rs` (independent of raikiri-dom's taffy
+        // bridge), so `display: flex` / `display: grid` reaching a
+        // `DisplayValue::Flex` / `DisplayValue::Grid` computed value here is
+        // observable to that consumer on its own, not only once the taffy
+        // bridge exists.
+        let flex_cv = cascade_with_ua("", "div { display: flex }", "div", None);
+        assert_eq!(flex_cv.display, DisplayValue::Flex);
+        let grid_cv = cascade_with_ua("", "div { display: grid }", "div", None);
+        assert_eq!(grid_cv.display, DisplayValue::Grid);
+    }
+
+    #[test]
     fn important_ua_beats_important_author_display() {
         // Important UA > Important Author (!important 反転、`cascade_rank`
         // doc has the exact values)

@@ -1396,13 +1396,13 @@ pub enum ContentComponent {
 /// は `inline`、not inherited。
 ///
 /// 現状受理する keyword は `block` / `inline` / `inline-block`
-/// / `none` の 4 値。`flex` / `grid` / `table*` /
-/// `list-item` / `flow-root` (standalone) / `contents` 等 spec-valid だが
-/// 未実装 (将来対応) の keyword は `parse_display` が `None` を返し、
+/// / `none` / `flex` / `grid` の 6 値。`table*` / `list-item` /
+/// `flow-root` (standalone) / `contents` 等 spec-valid だが未実装
+/// (将来対応) の keyword は `parse_display` が `None` を返し、
 /// declaration が silent drop される (rule.rs 側 invalid-value drop path)。
 ///
 /// `#[non_exhaustive]`: variant 追加を non-breaking にする (InlineBlock /
-/// None 追加は本 attribute 経由で forward-compatible)。
+/// None / Flex / Grid 追加は本 attribute 経由で forward-compatible)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayValue {
@@ -1424,6 +1424,26 @@ pub enum DisplayValue {
     /// box tree から omit する (hidden 相当)。
     /// <https://www.w3.org/TR/css-display-3/#typedef-display-box>
     None,
+    /// `flex` — CSS Display 3 §2.2 "Inner Display Layout Models" の
+    /// `<display-inside>` short form for a flex formatting context。
+    /// `<display-outside>` を省略した場合 outer display type は block に
+    /// デフォルトするため (§2.2 の outer-defaulting rule)、`display: flex`
+    /// は `display: block flex` と等価 (block-level box containing a
+    /// flex formatting context)。この等価性は §2 の informative summary
+    /// table にも明記されている。
+    /// <https://www.w3.org/TR/css-display-3/#typedef-display-inside>
+    /// <https://www.w3.org/TR/css-display-3/#the-display-properties>
+    Flex,
+    /// `grid` — CSS Display 3 §2.2 "Inner Display Layout Models" の
+    /// `<display-inside>` short form for a grid formatting context。
+    /// `<display-outside>` を省略した場合 outer display type は block に
+    /// デフォルトするため (§2.2 の outer-defaulting rule)、`display: grid`
+    /// は `display: block grid` と等価 (block-level box containing a
+    /// grid formatting context)。この等価性は §2 の informative summary
+    /// table にも明記されている。
+    /// <https://www.w3.org/TR/css-display-3/#typedef-display-inside>
+    /// <https://www.w3.org/TR/css-display-3/#the-display-properties>
+    Grid,
 }
 
 /// `box-sizing` property の value。
@@ -4400,15 +4420,19 @@ fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
 ///
 /// CSS Display 3 §2 "Box Layout Modes: the display property"
 /// <https://www.w3.org/TR/css-display-3/#propdef-display>。現状受理する
-/// keyword は 4 つ:
+/// keyword は 6 つ:
 ///
 /// - `block` — `<display-outside>` (block flow)
 /// - `inline` — `<display-outside>` (inline flow、initial value)
 /// - `inline-block` — `<display-legacy>` (inline flow-root)
 /// - `none` — `<display-box>` (subtree omitted from box tree)
+/// - `flex` — `<display-inside>` (§2.2) keyword、outer-defaulting rule
+///   により `block flex` と等価
+/// - `grid` — `<display-inside>` (§2.2) keyword、outer-defaulting rule
+///   により `block grid` と等価
 ///
-/// 他 keyword (`flex` / `grid` / `table*` / `list-item` / `flow-root` /
-/// `contents` 等) は spec-valid だが未実装のため silent drop
+/// 他 keyword (`inline-flex` / `inline-grid` / `table*` / `list-item` /
+/// `flow-root` / `contents` 等) は spec-valid だが未実装のため silent drop
 /// (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
 /// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
 /// keyword は ASCII case-insensitive)。
@@ -4422,6 +4446,8 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         "inline" => Some(DisplayValue::Inline),
         "inline-block" => Some(DisplayValue::InlineBlock),
         "none" => Some(DisplayValue::None),
+        "flex" => Some(DisplayValue::Flex),
+        "grid" => Some(DisplayValue::Grid),
         _ => None,
     }
 }
@@ -6348,13 +6374,33 @@ mod tests {
     }
 
     #[test]
+    fn display_parse_flex() {
+        // CSS Display 3 §2.2 "Inner Display Layout Models" — `<display-inside>`
+        // keyword, outer-defaulting rule makes it equivalent to `block flex`.
+        assert_eq!(
+            parse("flex", "display"),
+            Some(PropertyValue::Display(DisplayValue::Flex))
+        );
+    }
+
+    #[test]
+    fn display_parse_grid() {
+        // CSS Display 3 §2.2 "Inner Display Layout Models" — `<display-inside>`
+        // keyword, outer-defaulting rule makes it equivalent to `block grid`.
+        assert_eq!(
+            parse("grid", "display"),
+            Some(PropertyValue::Display(DisplayValue::Grid))
+        );
+    }
+
+    #[test]
     fn display_rejects_unknown_ident() {
-        // block / inline / inline-block / none 以外は spec-valid
-        // でも未実装のため silent drop。
-        // flex / grid / table* / list-item / flow-root / contents は将来の
-        // layout 対応で扱う予定。
-        assert_eq!(parse("flex", "display"), None);
-        assert_eq!(parse("grid", "display"), None);
+        // block / inline / inline-block / none / flex / grid 以外は
+        // spec-valid でも未実装のため silent drop。
+        // inline-flex / inline-grid / table* / list-item / flow-root /
+        // contents は将来の layout 対応で扱う予定。
+        assert_eq!(parse("inline-flex", "display"), None);
+        assert_eq!(parse("inline-grid", "display"), None);
         assert_eq!(parse("table", "display"), None);
         assert_eq!(parse("table-row", "display"), None);
         assert_eq!(parse("list-item", "display"), None);
@@ -6394,6 +6440,14 @@ mod tests {
         assert_eq!(
             parse("None", "display"),
             Some(PropertyValue::Display(DisplayValue::None))
+        );
+        assert_eq!(
+            parse("FLEX", "display"),
+            Some(PropertyValue::Display(DisplayValue::Flex))
+        );
+        assert_eq!(
+            parse("Grid", "display"),
+            Some(PropertyValue::Display(DisplayValue::Grid))
         );
     }
 
