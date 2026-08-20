@@ -31,10 +31,10 @@ use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing, ContentComponent,
     CssColor, Direction, DisplayValue, FontStyle, Length, LengthOrAuto, LineHeight, OverflowValue,
-    OverflowXY, Sides, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
-    TextTransform, VerticalAlign, Visibility, ZIndexValue, empty_content_list,
-    empty_counter_entries, empty_string_set_entries, initial_font_family, resolve_overflow,
-    resolve_text_align_match_parent,
+    OverflowWrap, OverflowXY, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak, ZIndexValue,
+    empty_content_list, empty_counter_entries, empty_string_set_entries, initial_font_family,
+    resolve_overflow, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_length_percentage,
@@ -58,7 +58,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` |
 ///
 /// `font_weight` が後者にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -215,6 +215,13 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::z_index`] の staging。層は computed-equivalent
     /// (`ZIndexValue` は length を運ばない)。
     pub z_index: ZIndexValue,
+    /// [`ComputedValues::word_break`] の staging。層は computed-equivalent
+    /// (`WordBreak` は length を運ばない)。
+    pub word_break: WordBreak,
+    /// [`ComputedValues::overflow_wrap`] の staging。層は computed-equivalent
+    /// (`OverflowWrap` は length を運ばない)。`word-wrap` legacy alias もこの
+    /// 同じ field に落ちる ([`ComputedValues::overflow_wrap`] doc 参照)。
+    pub overflow_wrap: OverflowWrap,
 }
 
 impl SpecifiedValues {
@@ -282,6 +289,10 @@ impl SpecifiedValues {
             visibility: Visibility::Visible,
             // CSS2 §9.9.1: z-index initial は `auto`。
             z_index: ZIndexValue::Auto,
+            // CSS Text 3 §5.1: word-break initial は `normal`。
+            word_break: WordBreak::Normal,
+            // CSS Text 3 §5.4: overflow-wrap initial は `normal`。
+            overflow_wrap: OverflowWrap::Normal,
         }
     }
 
@@ -347,6 +358,10 @@ impl SpecifiedValues {
             text_transform: parent.text_transform,
             // CSS Display 3 §4: visibility は inherited。
             visibility: parent.visibility,
+            // CSS Text 3 §5.1: word-break は inherited。
+            word_break: parent.word_break,
+            // CSS Text 3 §5.4: overflow-wrap は inherited。
+            overflow_wrap: parent.overflow_wrap,
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
             display: DisplayValue::Inline,
@@ -729,6 +744,14 @@ impl SpecifiedValues {
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
             z_index: self.z_index,
+            // computed value = specified keyword (`WordBreak` doc 参照、
+            // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
+            // そのまま素通し。
+            word_break: self.word_break,
+            // computed value = specified keyword (`OverflowWrap` doc 参照、
+            // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
+            // そのまま素通し。`word-wrap` legacy alias も同じ field に落ちる。
+            overflow_wrap: self.overflow_wrap,
         }
     }
 }
@@ -878,6 +901,8 @@ mod tests {
             text_transform: TextTransform::Uppercase,
             visibility: Visibility::Hidden,
             z_index: ZIndexValue::Integer(3),
+            word_break: WordBreak::KeepAll,
+            overflow_wrap: OverflowWrap::Anywhere,
         }
     }
 
@@ -905,6 +930,10 @@ mod tests {
         // CSS Text 3 §8.1: text-indent は inherited — computed → specified
         // の lift (`lift_length_percentage`)。
         assert_eq!(child.text_indent, Length::Px(9.0));
+        // CSS Text 3 §5.1: word-break は inherited。
+        assert_eq!(child.word_break, WordBreak::KeepAll);
+        // CSS Text 3 §5.4: overflow-wrap は inherited。
+        assert_eq!(child.overflow_wrap, OverflowWrap::Anywhere);
         // computed → specified の lift (px 表現)。
         assert_eq!(child.font_size, Length::Px(24.0));
         assert_eq!(child.line_height, LineHeight::Number(1.5));

@@ -2351,6 +2351,151 @@ pub enum ZIndexValue {
     Integer(i32),
 }
 
+/// `word-break` property の value。
+///
+/// CSS Text Module Level 3 §5.1 "Breaking Rules for Letters: the word-break
+/// property" <https://www.w3.org/TR/css-text-3/#word-break-property>。
+///
+/// propdef (spec verbatim): Value: `normal | keep-all | break-all |
+/// break-word`、Initial: `normal`、Applies to: text、Inherited: **yes**、
+/// Computed value: specified keyword。
+///
+/// # 3 keyword の意味 (spec 確認済み verbatim)
+///
+/// - [`Normal`](Self::Normal) — "Words break according to their customary
+///   rules, as described above. Korean, which commonly exhibits two
+///   different behaviors, allows breaks between any two consecutive
+///   Hangul/Hanja. For Ethiopic, which also exhibits two different
+///   behaviors, such breaks within words are not allowed." spec initial
+///   value。
+/// - [`KeepAll`](Self::KeepAll) — "Breaking is forbidden within 'words':
+///   implicit soft wrap opportunities between typographic letter units (or
+///   other typographic character units belonging to the NU, AL, AI, or ID
+///   Unicode line breaking classes) are suppressed, i.e. breaks are
+///   prohibited between pairs of such characters (regardless of line-break
+///   settings other than anywhere) except where opportunities exist due to
+///   dictionary-based breaking."
+/// - [`BreakAll`](Self::BreakAll) — "Breaking is allowed within 'words':
+///   specifically, in addition to soft wrap opportunities allowed for
+///   normal, any typographic letter units (and any typographic character
+///   units resolving to the NU ('numeric'), AL ('alphabetic'), or SA
+///   ('Southeast Asian') line breaking classes) are instead treated as ID
+///   ('ideographic characters') for the purpose of line-breaking.
+///   Hyphenation is not applied."
+///
+/// # Scope carving
+///
+/// - **Non-goal**: the spec's 4th keyword, a deprecated `break-word` value
+///   on `word-break` itself — spec verbatim: "For compatibility with legacy
+///   content, the word-break property also supports a deprecated
+///   break-word keyword. When specified, this has the same effect as
+///   word-break: normal and overflow-wrap: anywhere, regardless of the
+///   actual value of the overflow-wrap property." Representing that would
+///   mean one property's parsed value forcing a *different* property
+///   (`overflow-wrap`) to a specific value — a cross-property override this
+///   crate's per-property parse/cascade model has no slot for. `word-break:
+///   break-word` is silent-dropped like any other unhandled ident, the same
+///   way [`FontStyle`]'s unimplemented `oblique`/`left`/`right` keywords
+///   are. It is [`OverflowWrap::BreakWord`] — the non-deprecated
+///   `overflow-wrap: break-word` value — that this crate represents
+///   instead.
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(a) spec-invalid**: 上記 3 keyword (`normal`/`keep-all`/`break-all`、
+///   `break-word` は上記 Non-goal 節参照) 以外の ident は silent drop =
+///   `None`。
+///
+/// この crate の scope では length を運ばないため、computed value = specified
+/// keyword、相対解決なし ([`Direction`] doc と同型)。
+///
+/// [`Direction`] / [`FontStyle`] と同じ convention で `Default` を derive
+/// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`]) が [`WordBreak::Normal`]
+/// を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WordBreak {
+    /// `normal` — spec initial value。
+    Normal,
+    /// `keep-all`。
+    KeepAll,
+    /// `break-all`。
+    BreakAll,
+}
+
+/// `overflow-wrap` property の value (legacy name alias `word-wrap` は同一
+/// property を指す — 下記「legacy alias」節参照)。
+///
+/// CSS Text Module Level 3 §5.4 "Overflow Wrapping: the overflow-wrap
+/// (word-wrap) property"
+/// <https://www.w3.org/TR/css-text-3/#overflow-wrap-property>。
+///
+/// propdef (spec verbatim): Value: `normal | break-word | anywhere`、
+/// Initial: `normal`、Applies to: text、Inherited: **yes**、Computed value:
+/// specified keyword。
+///
+/// # legacy alias (`word-wrap`)
+///
+/// spec verbatim: "For legacy reasons, UAs must treat word-wrap as a legacy
+/// name alias of the overflow-wrap property." — `parse_value` dispatches
+/// both the `"overflow-wrap"` and `"word-wrap"` property names to the same
+/// [`PropertyValue::OverflowWrap`] variant / [`PropertyKey::OverflowWrap`]
+/// key, so the two names cascade against each other as one property (a
+/// declaration under either name can win over a declaration under the
+/// other), not as two independently-winning properties.
+///
+/// # 3 keyword の意味 (spec 確認済み verbatim)
+///
+/// - [`Normal`](Self::Normal) — "Lines may break only at allowed break
+///   points. However, the restrictions introduced by word-break: keep-all
+///   may be relaxed to match word-break: normal if there are no
+///   otherwise-acceptable break points in the line." spec initial value。
+/// - [`BreakWord`](Self::BreakWord) — "As for anywhere except that soft
+///   wrap opportunities introduced by break-word are not considered when
+///   calculating min-content intrinsic sizes."
+/// - [`Anywhere`](Self::Anywhere) — "An otherwise unbreakable sequence of
+///   characters may be broken at an arbitrary point if there are no
+///   otherwise-acceptable break points in the line. Shaping characters are
+///   still shaped as if the word were not broken, and grapheme clusters
+///   must stay together as one unit. No hyphenation character is inserted
+///   at the break point. Soft wrap opportunities introduced by anywhere are
+///   considered when calculating min-content intrinsic sizes."
+///
+/// # Scope carving
+///
+/// - **Non-goal**: the `BreakWord` / `Anywhere` distinction quoted above
+///   (whether the soft wrap opportunity counts toward min-content intrinsic
+///   size) is a layout-time distinction this crate does not compute
+///   intrinsic sizes for yet. Both keywords are still represented as
+///   distinct variants here (unlike `word-break`'s deprecated `break-word`
+///   value, which [`WordBreak`]'s doc explains is not represented at all)
+///   so the distinction survives for a future layout consumer even though
+///   nothing reads it yet.
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(a) spec-invalid**: 上記 3 keyword 以外の ident は silent drop =
+///   `None`。
+///
+/// この crate の scope では length を運ばないため、computed value = specified
+/// keyword、相対解決なし ([`Direction`] doc と同型)。
+///
+/// [`Direction`] / [`WordBreak`] と同じ convention で `Default` を derive
+/// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`]) が [`OverflowWrap::Normal`]
+/// を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverflowWrap {
+    /// `normal` — spec initial value。
+    Normal,
+    /// `break-word`。
+    BreakWord,
+    /// `anywhere`。
+    Anywhere,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -2983,6 +3128,22 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     ZIndex(ZIndexValue),
+    /// `word-break: normal | keep-all | break-all` — **inherited**、initial:
+    /// [`WordBreak::Normal`] (CSS Text 3 §5.1 [`WordBreak`] doc 参照)。
+    /// computed value = specified keyword ([`WordBreak`] doc の Scope
+    /// carving 節参照、deprecated `break-word` value は未実装)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    WordBreak(WordBreak),
+    /// `overflow-wrap: normal | break-word | anywhere` (legacy alias
+    /// `word-wrap`) — **inherited**、initial: [`OverflowWrap::Normal`]
+    /// (CSS Text 3 §5.4 [`OverflowWrap`] doc 参照)。computed value =
+    /// specified keyword ([`OverflowWrap`] doc 参照)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    OverflowWrap(OverflowWrap),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -3148,6 +3309,16 @@ pub enum PropertyKey {
     // variant; sibling PropertyKey variants carry no per-variant docs per
     // crate convention). 末尾配置の理由は PropertyValue::FontStyle の doc 参照。
     ZIndex,
+    // word-break (CSS Text 3 §5.1、semantics on the matching
+    // PropertyValue::WordBreak variant; sibling PropertyKey variants carry
+    // no per-variant docs per crate convention). 末尾配置の理由は
+    // PropertyValue::WordBreak の doc 参照。
+    WordBreak,
+    // overflow-wrap / legacy alias word-wrap (CSS Text 3 §5.4、semantics on
+    // the matching PropertyValue::OverflowWrap variant; sibling PropertyKey
+    // variants carry no per-variant docs per crate convention). 末尾配置の
+    // 理由は PropertyValue::OverflowWrap の doc 参照。
+    OverflowWrap,
 }
 
 impl PropertyValue {
@@ -3216,6 +3387,8 @@ impl PropertyValue {
             PropertyValue::TextTransform(_) => PropertyKey::TextTransform,
             PropertyValue::Visibility(_) => PropertyKey::Visibility,
             PropertyValue::ZIndex(_) => PropertyKey::ZIndex,
+            PropertyValue::WordBreak(_) => PropertyKey::WordBreak,
+            PropertyValue::OverflowWrap(_) => PropertyKey::OverflowWrap,
         }
     }
 }
@@ -3448,6 +3621,21 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // here per the "CSS-wide keyword (canonical)" section above).
         // initial `auto`, not inherited, computed value = specified value.
         "z-index" => parse_z_index(input).map(PropertyValue::ZIndex),
+        // CSS Text 3 §5.1 word-break. grammar (this crate's scope):
+        // `normal | keep-all | break-all` — the spec's 4th, deprecated
+        // `break-word` keyword is not implemented (`WordBreak` doc's
+        // "Scope carving" section). initial `normal`, inherited, computed
+        // value = specified keyword.
+        "word-break" => parse_word_break(input).map(PropertyValue::WordBreak),
+        // CSS Text 3 §5.4 overflow-wrap, grammar: `normal | break-word |
+        // anywhere`. `word-wrap` is the spec's mandated legacy name alias
+        // for this same property (`OverflowWrap` doc's "legacy alias"
+        // section) — both names parse to the same `PropertyValue` variant /
+        // `PropertyKey`. initial `normal`, inherited, computed value =
+        // specified keyword.
+        "overflow-wrap" | "word-wrap" => {
+            parse_overflow_wrap(input).map(PropertyValue::OverflowWrap)
+        }
         _ => None,
     }
 }
@@ -4776,6 +4964,46 @@ fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<Visibility> {
         "visible" => Some(Visibility::Visible),
         "hidden" => Some(Visibility::Hidden),
         "collapse" => Some(Visibility::Collapse),
+        _ => None,
+    }
+}
+
+/// `word-break: <ident>` を parse する (CSS Text 3 §5.1
+/// <https://www.w3.org/TR/css-text-3/#word-break-property>)。
+///
+/// Value grammar (§5.1, full property grammar): `normal | keep-all |
+/// break-all | break-word`。本 parser は `normal` / `keep-all` /
+/// `break-all` の 3 keyword のみ受理する ([`WordBreak`] doc の Scope
+/// carving 節参照) — 4th keyword `break-word` (deprecated,
+/// `word-break: normal` + `overflow-wrap: anywhere` の compound 相当) は
+/// spec-valid だが未実装のため、他の未知 ident と同じく silent drop =
+/// `None` とする。ASCII case-insensitive で ident を比較する (sibling
+/// `parse_font_style` と同 flavor)。
+fn parse_word_break(input: &mut Parser<'_, '_>) -> Option<WordBreak> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(WordBreak::Normal),
+        "keep-all" => Some(WordBreak::KeepAll),
+        "break-all" => Some(WordBreak::BreakAll),
+        _ => None,
+    }
+}
+
+/// `overflow-wrap: <ident>` (`word-wrap` legacy alias 名でも呼ばれる、
+/// [`OverflowWrap`] doc の「legacy alias」節参照) を parse する (CSS Text 3
+/// §5.4 <https://www.w3.org/TR/css-text-3/#overflow-wrap-property>)。
+///
+/// Value grammar (§5.4): `normal | break-word | anywhere` — 3 keyword とも
+/// 受理する (`WordBreak` の deprecated `break-word` とは異なり、
+/// `overflow-wrap` 自身の `break-word` は deprecated ではない spec-valid
+/// keyword、[`OverflowWrap`] doc 参照)。ASCII case-insensitive で ident を
+/// 比較する (sibling `parse_word_break` と同 flavor)。
+fn parse_overflow_wrap(input: &mut Parser<'_, '_>) -> Option<OverflowWrap> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(OverflowWrap::Normal),
+        "break-word" => Some(OverflowWrap::BreakWord),
+        "anywhere" => Some(OverflowWrap::Anywhere),
         _ => None,
     }
 }
@@ -10133,6 +10361,179 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::ZIndex);
         let v = PropertyValue::ZIndex(ZIndexValue::Integer(-1));
         assert_eq!(v.key(), PropertyKey::ZIndex);
+    }
+
+    // ── word-break (CSS Text 3 §5.1) ──
+    //
+    // Value grammar (§5.1 spec verbatim, full property grammar): `normal |
+    // keep-all | break-all | break-word`. This crate implements only
+    // normal / keep-all / break-all (`WordBreak` doc's "Scope carving"
+    // section) — the 4th, deprecated `break-word` keyword is excluded.
+    // Initial: normal / Inherited: yes / Computed value: specified keyword.
+
+    #[test]
+    fn word_break_parse_all_implemented_keywords() {
+        assert_eq!(
+            parse("normal", "word-break"),
+            Some(PropertyValue::WordBreak(WordBreak::Normal))
+        );
+        assert_eq!(
+            parse("keep-all", "word-break"),
+            Some(PropertyValue::WordBreak(WordBreak::KeepAll))
+        );
+        assert_eq!(
+            parse("break-all", "word-break"),
+            Some(PropertyValue::WordBreak(WordBreak::BreakAll))
+        );
+    }
+
+    #[test]
+    fn word_break_is_case_insensitive() {
+        assert_eq!(
+            parse("NORMAL", "word-break"),
+            Some(PropertyValue::WordBreak(WordBreak::Normal))
+        );
+        assert_eq!(
+            parse("Keep-All", "word-break"),
+            Some(PropertyValue::WordBreak(WordBreak::KeepAll))
+        );
+        assert_eq!(
+            parse("BREAK-ALL", "word-break"),
+            Some(PropertyValue::WordBreak(WordBreak::BreakAll))
+        );
+    }
+
+    #[test]
+    fn word_break_rejects_deprecated_break_word() {
+        // (b) not supported — the deprecated `break-word` value on
+        // `word-break` itself is spec-valid but unimplemented (`WordBreak`
+        // doc's "Scope carving" section — its compound `normal` +
+        // `overflow-wrap: anywhere` cross-property semantics have no slot
+        // in this crate's per-property model), not (a) spec-invalid.
+        assert_eq!(parse("break-word", "word-break"), None);
+    }
+
+    #[test]
+    fn word_break_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "word-break"), None);
+    }
+
+    #[test]
+    fn word_break_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "word-break"), None);
+        }
+    }
+
+    #[test]
+    fn word_break_rejects_non_ident() {
+        assert_eq!(parse("16px", "word-break"), None);
+        assert_eq!(parse(r#""normal""#, "word-break"), None);
+    }
+
+    #[test]
+    fn word_break_key_maps_to_word_break_property_key() {
+        let v = PropertyValue::WordBreak(WordBreak::Normal);
+        assert_eq!(v.key(), PropertyKey::WordBreak);
+        let v = PropertyValue::WordBreak(WordBreak::KeepAll);
+        assert_eq!(v.key(), PropertyKey::WordBreak);
+        let v = PropertyValue::WordBreak(WordBreak::BreakAll);
+        assert_eq!(v.key(), PropertyKey::WordBreak);
+    }
+
+    // ── overflow-wrap / word-wrap legacy alias (CSS Text 3 §5.4) ──
+    //
+    // Value grammar (§5.4 spec verbatim): `normal | break-word | anywhere`.
+    // All 3 keywords are implemented — unlike `word-break`'s deprecated
+    // `break-word`, `overflow-wrap: break-word` is not deprecated
+    // (`OverflowWrap` doc). `word-wrap` is the spec-mandated legacy name
+    // alias and must parse identically. Initial: normal / Inherited: yes /
+    // Computed value: specified keyword.
+
+    #[test]
+    fn overflow_wrap_parse_all_keywords() {
+        assert_eq!(
+            parse("normal", "overflow-wrap"),
+            Some(PropertyValue::OverflowWrap(OverflowWrap::Normal))
+        );
+        assert_eq!(
+            parse("break-word", "overflow-wrap"),
+            Some(PropertyValue::OverflowWrap(OverflowWrap::BreakWord))
+        );
+        assert_eq!(
+            parse("anywhere", "overflow-wrap"),
+            Some(PropertyValue::OverflowWrap(OverflowWrap::Anywhere))
+        );
+    }
+
+    #[test]
+    fn overflow_wrap_is_case_insensitive() {
+        assert_eq!(
+            parse("NORMAL", "overflow-wrap"),
+            Some(PropertyValue::OverflowWrap(OverflowWrap::Normal))
+        );
+        assert_eq!(
+            parse("Break-Word", "overflow-wrap"),
+            Some(PropertyValue::OverflowWrap(OverflowWrap::BreakWord))
+        );
+        assert_eq!(
+            parse("ANYWHERE", "overflow-wrap"),
+            Some(PropertyValue::OverflowWrap(OverflowWrap::Anywhere))
+        );
+    }
+
+    #[test]
+    fn word_wrap_legacy_alias_parses_identically_to_overflow_wrap() {
+        // CSS Text 3 §5.4 verbatim: "For legacy reasons, UAs must treat
+        // word-wrap as a legacy name alias of the overflow-wrap property."
+        for (kw, expected) in [
+            ("normal", OverflowWrap::Normal),
+            ("break-word", OverflowWrap::BreakWord),
+            ("anywhere", OverflowWrap::Anywhere),
+        ] {
+            assert_eq!(
+                parse(kw, "word-wrap"),
+                Some(PropertyValue::OverflowWrap(expected))
+            );
+            assert_eq!(parse(kw, "word-wrap"), parse(kw, "overflow-wrap"));
+        }
+    }
+
+    #[test]
+    fn overflow_wrap_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "overflow-wrap"), None);
+        assert_eq!(parse("bogus", "word-wrap"), None);
+    }
+
+    #[test]
+    fn overflow_wrap_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "overflow-wrap"), None);
+            assert_eq!(parse(kw, "word-wrap"), None);
+        }
+    }
+
+    #[test]
+    fn overflow_wrap_rejects_non_ident() {
+        assert_eq!(parse("16px", "overflow-wrap"), None);
+        assert_eq!(parse(r#""normal""#, "overflow-wrap"), None);
+    }
+
+    #[test]
+    fn overflow_wrap_key_maps_to_overflow_wrap_property_key() {
+        // `word-wrap` and `overflow-wrap` share one `PropertyKey` — the
+        // legacy alias cascades as one property, not two independently
+        // winning ones (`OverflowWrap` doc's "legacy alias" section).
+        let v = PropertyValue::OverflowWrap(OverflowWrap::Normal);
+        assert_eq!(v.key(), PropertyKey::OverflowWrap);
+        let v = PropertyValue::OverflowWrap(OverflowWrap::BreakWord);
+        assert_eq!(v.key(), PropertyKey::OverflowWrap);
+        let v = PropertyValue::OverflowWrap(OverflowWrap::Anywhere);
+        assert_eq!(v.key(), PropertyKey::OverflowWrap);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value

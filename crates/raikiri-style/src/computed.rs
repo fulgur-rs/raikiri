@@ -13,9 +13,10 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::property::{
     BorderColor, BorderStyle, BoxSizing, ContentComponent, CssColor, Direction, DisplayValue,
-    FontStyle, OverflowValue, OverflowXY, Sides, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, ZIndexValue,
-    empty_content_list, empty_counter_entries, empty_string_set_entries, initial_font_family,
+    FontStyle, OverflowValue, OverflowWrap, OverflowXY, Sides, TextAlign, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak,
+    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    initial_font_family,
 };
 use crate::resolve::{
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -64,7 +65,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / text_indent、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_indent / word_break / overflow_wrap、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align)。
@@ -632,6 +633,35 @@ pub struct ComputedValues {
     /// elements" (the propdef's "Applies to" clause) presupposes, so there
     /// is no stacking-context/paint-order consumer to wire up yet.
     pub z_index: ZIndexValue,
+    /// `word-break`. **inherited**, initial: [`WordBreak::Normal`] (CSS
+    /// Text Module Level 3 §5.1 "Breaking Rules for Letters: the
+    /// word-break property"
+    /// <https://www.w3.org/TR/css-text-3/#word-break-property>, "Initial:
+    /// normal" / "Inherited: yes"). Computed value = specified keyword
+    /// ([`WordBreak`] doc — no length payload, so no relative resolution
+    /// is needed).
+    ///
+    /// # Scope carving (minimal scope)
+    ///
+    /// This field holds only the `normal | keep-all | break-all` subset of
+    /// the property's full `normal | keep-all | break-all | break-word`
+    /// grammar — the deprecated `break-word` value is not represented, see
+    /// [`WordBreak`] doc's "Scope carving" section.
+    pub word_break: WordBreak,
+    /// `overflow-wrap` (legacy name alias: `word-wrap`). **inherited**,
+    /// initial: [`OverflowWrap::Normal`] (CSS Text Module Level 3 §5.4
+    /// "Overflow Wrapping: the overflow-wrap (word-wrap) property"
+    /// <https://www.w3.org/TR/css-text-3/#overflow-wrap-property>,
+    /// "Initial: normal" / "Inherited: yes"). Computed value = specified
+    /// keyword ([`OverflowWrap`] doc — no length payload, so no relative
+    /// resolution is needed).
+    ///
+    /// `word-wrap` is not a separate field — `parse_value` dispatches both
+    /// names to this same field's [`PropertyKey::OverflowWrap`]
+    /// ([`OverflowWrap`] doc's "legacy alias" section).
+    ///
+    /// [`PropertyKey::OverflowWrap`]: crate::property::PropertyKey::OverflowWrap
+    pub overflow_wrap: OverflowWrap,
 }
 
 impl ComputedValues {
@@ -724,6 +754,10 @@ impl ComputedValues {
             visibility: Visibility::Visible,
             // CSS2 §9.9.1: z-index initial は `auto`。
             z_index: ZIndexValue::Auto,
+            // CSS Text 3 §5.1: word-break initial は `normal`。
+            word_break: WordBreak::Normal,
+            // CSS Text 3 §5.4: overflow-wrap initial は `normal`。
+            overflow_wrap: OverflowWrap::Normal,
         }
     }
 
@@ -735,7 +769,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index)。
     ///
@@ -840,6 +874,10 @@ mod tests {
         assert_eq!(cv.visibility, Visibility::Visible);
         // CSS Text 3 §8.1: text-indent initial は `0`。
         assert_eq!(cv.text_indent, ComputedLengthPercentage::Px(0.0));
+        // CSS Text 3 §5.1: word-break initial は `normal`。
+        assert_eq!(cv.word_break, WordBreak::Normal);
+        // CSS Text 3 §5.4: overflow-wrap initial は `normal`。
+        assert_eq!(cv.overflow_wrap, OverflowWrap::Normal);
         // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
         // CSS Box 3 §3.1: margin initial は 0 on each side。
@@ -975,13 +1013,19 @@ mod tests {
             // CSS2 §9.9.1: `Integer(3)` — initial (`Auto`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             z_index: ZIndexValue::Integer(3),
+            // CSS Text 3 §5.1: `KeepAll` — initial (`Normal`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            word_break: WordBreak::KeepAll,
+            // CSS Text 3 §5.4: `Anywhere` — initial (`Normal`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            overflow_wrap: OverflowWrap::Anywhere,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 28 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 33 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1007,6 +1051,10 @@ mod tests {
         assert_eq!(child.visibility, parent.visibility);
         // CSS Text 3 §8.1: text-indent は inherited。
         assert_eq!(child.text_indent, parent.text_indent);
+        // CSS Text 3 §5.1: word-break は inherited。
+        assert_eq!(child.word_break, parent.word_break);
+        // CSS Text 3 §5.4: overflow-wrap は inherited。
+        assert_eq!(child.overflow_wrap, parent.overflow_wrap);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);

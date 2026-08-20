@@ -2061,7 +2061,15 @@ fn absolutize_in_page_context(
         | PropertyValue::Visibility(_)
         // `z-index` carries no length (see `ZIndexValue`'s doc) and computed
         // value = specified value — nothing for phase 3 to absolutize.
-        | PropertyValue::ZIndex(_)) => v,
+        | PropertyValue::ZIndex(_)
+        // `word-break` (CSS Text 3 §5.1) carries no length either and
+        // computed value = specified keyword (see `WordBreak`'s doc) —
+        // nothing for phase 3 to absolutize.
+        | PropertyValue::WordBreak(_)
+        // `overflow-wrap` (legacy alias `word-wrap`, CSS Text 3 §5.4)
+        // carries no length either (see `OverflowWrap`'s doc) — same as
+        // `WordBreak` above.
+        | PropertyValue::OverflowWrap(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2369,9 +2377,9 @@ mod tests {
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
         BoxSizing, ContentComponent, CssColor, Direction, DisplayValue, FontStyle, FontWeightValue,
-        Length, LengthOrAuto, LineHeight, OverflowValue, OverflowXY, PositionValue, TextAlign,
-        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        TextTransform, VerticalAlign, Visibility, ZIndexValue,
+        Length, LengthOrAuto, LineHeight, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
+        TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
+        TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4110,11 +4118,13 @@ mod tests {
     /// 変換対象が無い)。
     /// 31 → 32 (`ZIndex` も同じ理由 — `ZIndexValue` は `<integer>` を運ぶが
     /// length ではないため phase 3 に変換対象が無い)。
+    /// 32 → 34 (`WordBreak` / `OverflowWrap` も同じ理由 — どちらも length を
+    /// 運ばない keyword-only property のため phase 3 に変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 32;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 34;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4337,6 +4347,16 @@ mod tests {
         // negative integer exercises the non-`Auto` branch without being
         // mistakable for the zero the `auto` keyword computes to.
         ZIndex => PropertyValue::ZIndex(ZIndexValue::Integer(-3)),
+        // No specified/computed distinction for `word-break` (computed
+        // value = specified keyword, `WordBreak` doc) — any value is
+        // "worst case" (`Direction` sibling comment above uses the same
+        // reasoning).
+        WordBreak => PropertyValue::WordBreak(WordBreak::BreakAll),
+        // No specified/computed distinction for `overflow-wrap` (computed
+        // value = specified keyword, `OverflowWrap` doc) — any value is
+        // "worst case" (`Direction` sibling comment above uses the same
+        // reasoning).
+        OverflowWrap => PropertyValue::OverflowWrap(OverflowWrap::Anywhere),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4504,6 +4524,8 @@ mod tests {
         TextTransform,
         Visibility,
         ZIndex,
+        WordBreak,
+        OverflowWrap,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4748,7 +4770,12 @@ mod tests {
             // `Visibility` carries no length either.
             | PropertyValue::Visibility(_)
             // `ZIndexValue` carries an `<integer>`, not a length.
-            | PropertyValue::ZIndex(_) => None,
+            | PropertyValue::ZIndex(_)
+            // `WordBreak` (CSS Text 3 §5.1) carries no length either.
+            | PropertyValue::WordBreak(_)
+            // `OverflowWrap` (CSS Text 3 §5.4, legacy alias `word-wrap`)
+            // carries no length either.
+            | PropertyValue::OverflowWrap(_) => None,
         }
     }
 
@@ -5102,7 +5129,8 @@ mod tests {
         let result = page(
             "@page { color: red; font-weight: bolder; display: block; \
              box-sizing: border-box; border-top-color: red; text-align: center; \
-             direction: rtl; font-style: italic; text-transform: uppercase }",
+             direction: rtl; font-style: italic; text-transform: uppercase; \
+             word-break: break-all; overflow-wrap: anywhere }",
             &root,
         );
         assert_eq!(color_of(&result), Some(RED));
@@ -5131,6 +5159,14 @@ mod tests {
         assert_eq!(
             result.declarations().get(&PropertyKey::TextTransform),
             Some(&PropertyValue::TextTransform(TextTransform::Uppercase)),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::WordBreak),
+            Some(&PropertyValue::WordBreak(WordBreak::BreakAll)),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OverflowWrap),
+            Some(&PropertyValue::OverflowWrap(OverflowWrap::Anywhere)),
         );
     }
 

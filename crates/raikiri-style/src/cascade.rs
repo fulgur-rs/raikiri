@@ -3417,7 +3417,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`
 ///    / `OverflowValue` / `TextDecorationLine` / `TextDecorationStyle` /
 ///    `TextDecorationColor` / `VerticalAlign` / `FontStyle` / `Visibility` /
-///    `ZIndexValue`)
+///    `ZIndexValue` / `WordBreak` / `OverflowWrap`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
@@ -3684,7 +3684,14 @@ pub(crate) fn resolve_against_inherited(
         // `z-index` carries no length (`ZIndexValue` doc) and does not
         // depend on the inheritance parent — nothing for phase 2 to
         // resolve.
-        | PropertyValue::ZIndex(_)) => v,
+        | PropertyValue::ZIndex(_)
+        // `word-break` (CSS Text 3 §5.1) carries no length (`WordBreak`
+        // doc) and does not depend on the inheritance parent — nothing for
+        // phase 2 to resolve.
+        | PropertyValue::WordBreak(_)
+        // `overflow-wrap`/`word-wrap` (CSS Text 3 §5.4) carries no length
+        // (`OverflowWrap` doc) either — same as `WordBreak` above.
+        | PropertyValue::OverflowWrap(_)) => v,
     })
 }
 
@@ -4107,6 +4114,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // value をそのまま computed value に反映。`ZIndexValue` は Copy、
         // by-value 代入で十分 (`BoxSizing` / `VerticalAlign` arm と同型)。
         PropertyValue::ZIndex(z) => target.z_index = z,
+        // word-break は CSS Text 3 §5.1。inherited property、
+        // computed value = specified value (相対解決なし) — sibling
+        // `FontStyle` と同じく単純代入で十分。
+        PropertyValue::WordBreak(wb) => target.word_break = wb,
+        // overflow-wrap (legacy alias 名 word-wrap も同じ variant/field に
+        // 落ちる、`OverflowWrap` doc 参照) は CSS Text 3 §5.4。
+        // inherited property、computed value = specified value
+        // (相対解決なし) — sibling `WordBreak` と同じく単純代入で十分。
+        PropertyValue::OverflowWrap(ow) => target.overflow_wrap = ow,
     }
 }
 
@@ -8613,6 +8629,34 @@ mod tests {
         );
     }
 
+    // ── word-break wire-through (CSS Text 3 §5.1) ──
+
+    #[test]
+    fn word_break_wired_through_cascade_from_inline_style() {
+        use crate::property::WordBreak;
+        let cv = cascade_doc("", "p", Some("word-break: break-all"));
+        assert_eq!(cv.word_break, WordBreak::BreakAll);
+    }
+
+    #[test]
+    fn word_break_inherits_from_parent_element() {
+        // CSS Text 3 §5.1: word-break は **inherited**.
+        use crate::property::WordBreak;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("word-break: break-all"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].word_break, WordBreak::BreakAll);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].word_break,
+            WordBreak::BreakAll,
+            "child should inherit word-break from parent (CSS Text 3 §5.1 Inherited: yes)"
+        );
+    }
+
     #[test]
     fn text_transform_child_own_value_wins_over_inherited() {
         use crate::property::TextTransform;
@@ -8635,6 +8679,83 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].visibility, Visibility::Hidden);
         assert_eq!(r.computed[span].visibility, Visibility::Visible);
+    }
+
+    #[test]
+    fn word_break_child_own_value_wins_over_inherited() {
+        use crate::property::WordBreak;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("word-break: break-all"));
+        let span = doc.push_element(p, "span", Some("word-break: keep-all"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].word_break, WordBreak::BreakAll);
+        assert_eq!(r.computed[span].word_break, WordBreak::KeepAll);
+    }
+
+    // ── overflow-wrap / word-wrap legacy alias wire-through (CSS Text 3 §5.4) ──
+
+    #[test]
+    fn overflow_wrap_wired_through_cascade_from_inline_style() {
+        use crate::property::OverflowWrap;
+        let cv = cascade_doc("", "p", Some("overflow-wrap: anywhere"));
+        assert_eq!(cv.overflow_wrap, OverflowWrap::Anywhere);
+    }
+
+    #[test]
+    fn word_wrap_legacy_alias_wired_through_cascade_same_as_overflow_wrap() {
+        // CSS Text 3 §5.4 verbatim: "For legacy reasons, UAs must treat
+        // word-wrap as a legacy name alias of the overflow-wrap property."
+        use crate::property::OverflowWrap;
+        let cv = cascade_doc("", "p", Some("word-wrap: break-word"));
+        assert_eq!(cv.overflow_wrap, OverflowWrap::BreakWord);
+    }
+
+    #[test]
+    fn word_wrap_and_overflow_wrap_cascade_against_each_other_as_one_property() {
+        // `OverflowWrap` doc's "legacy alias" section: the two names share
+        // one `PropertyKey`, so — unlike two genuinely different properties
+        // — a later declaration under either name overrides an earlier
+        // declaration under the *other* name (CSS Cascading L4 §6.1 "Order
+        // of Appearance": "The last declaration in document order wins.",
+        // same rule pinned for a single property name by the
+        // `later_duplicate_in_inline_wins` sibling test above).
+        use crate::property::OverflowWrap;
+        let cv = cascade_doc("", "p", Some("overflow-wrap: normal; word-wrap: anywhere"));
+        assert_eq!(cv.overflow_wrap, OverflowWrap::Anywhere);
+        let cv = cascade_doc("", "p", Some("word-wrap: anywhere; overflow-wrap: normal"));
+        assert_eq!(cv.overflow_wrap, OverflowWrap::Normal);
+    }
+
+    #[test]
+    fn overflow_wrap_inherits_from_parent_element() {
+        // CSS Text 3 §5.4: overflow-wrap は **inherited**.
+        use crate::property::OverflowWrap;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("overflow-wrap: anywhere"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].overflow_wrap, OverflowWrap::Anywhere);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].overflow_wrap,
+            OverflowWrap::Anywhere,
+            "child should inherit overflow-wrap from parent (CSS Text 3 §5.4 Inherited: yes)"
+        );
+    }
+
+    #[test]
+    fn overflow_wrap_child_own_value_wins_over_inherited() {
+        use crate::property::OverflowWrap;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("overflow-wrap: anywhere"));
+        let span = doc.push_element(p, "span", Some("overflow-wrap: normal"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].overflow_wrap, OverflowWrap::Anywhere);
+        assert_eq!(r.computed[span].overflow_wrap, OverflowWrap::Normal);
     }
 
     // ── text-align: match-parent (CSS Text 3 §6.1) ──
