@@ -2083,10 +2083,10 @@ fn absolutize_in_page_context(
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
         | PropertyValue::TextDecoration(_)
-        // `font-style` carries no length at this crate's scope (only
-        // `normal`/`italic` implemented, see `FontStyle`'s doc) and
-        // computed value = specified keyword — nothing for phase 3 to
-        // absolutize.
+        // `font-style` carries no length at this crate's scope
+        // (`normal`/`italic`/`oblique` implemented, `oblique`'s `<angle>`
+        // argument is not — see `FontStyle`'s doc) and computed value =
+        // specified keyword — nothing for phase 3 to absolutize.
         | PropertyValue::FontStyle(_)
         // `text-transform` carries no length (see `TextTransform`'s doc)
         // and computed value = specified keyword — nothing for phase 3 to
@@ -5178,7 +5178,8 @@ mod tests {
             | PropertyValue::TextDecorationColor(_)
             | PropertyValue::TextDecoration(_)
             // `FontStyle` carries no length either, at this crate's scope
-            // (only `normal`/`italic` implemented).
+            // (`normal`/`italic`/`oblique` implemented, `oblique`'s
+            // `<angle>` argument is not).
             | PropertyValue::FontStyle(_)
             // `TextTransform` carries no length either.
             | PropertyValue::TextTransform(_)

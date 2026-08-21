@@ -610,11 +610,12 @@ pub struct ComputedValues {
     /// normal" / "Inherited: yes"). Computed value = specified keyword —
     /// see [`FontStyle`] doc's "Scope carving" section (the spec's
     /// angle-bearing computed-value branch is unreachable at this crate's
-    /// scope, since `oblique <angle>?` is not implemented).
+    /// scope, since `oblique`'s optional `<angle>` argument is not
+    /// implemented).
     ///
     /// # Scope carving (minimal scope)
     ///
-    /// This field holds only the `normal | italic` subset of the
+    /// This field holds only the `normal | italic | oblique` subset of the
     /// property's full `normal | italic | left | right | oblique <angle
     /// [-90deg,90deg]>?` grammar — see [`FontStyle`] doc.
     pub font_style: FontStyle,
