@@ -3418,7 +3418,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 ///    / `OverflowValue` / `TextDecorationLine` / `TextDecorationStyle` /
 ///    `TextDecorationColor` / `VerticalAlign` / `FontStyle` / `Visibility` /
 ///    `ZIndexValue` / `WordBreak` / `OverflowWrap` / `BreakBetween` /
-///    `BreakInside` / `WhiteSpace` / `Hyphens`)
+///    `BreakInside` / `WhiteSpace` / `Hyphens` / `FontVariantCaps`)
 ///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
 ///    field access で読んでいるため捕まらない。compile error になるのも
 ///    test target であって本関数ではない。
@@ -3764,7 +3764,12 @@ pub(crate) fn resolve_against_inherited(
         // `hyphens` (CSS Text 3 §5.3) carries no length (`Hyphens` doc) and
         // does not depend on the inheritance parent — nothing for phase 2
         // to resolve.
-        | PropertyValue::Hyphens(_)) => v,
+        | PropertyValue::Hyphens(_)
+        // `font-variant-caps` (CSS Fonts Module Level 3 §6.6) carries no
+        // length (`FontVariantCaps` doc) and does not depend on the
+        // inheritance parent — nothing for phase 2 to resolve, same shape
+        // as `FontStyle` above.
+        | PropertyValue::FontVariantCaps(_)) => v,
     })
 }
 
@@ -4289,6 +4294,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.align_content = p.align;
             target.justify_content = p.justify;
         }
+        // CSS Fonts Module Level 3 §6.6。
+        // inherited property のため cascade winner が無い child は
+        // inherit_from で親値を引き継ぐ (`FontStyle` arm と同じ handling)。
+        // `FontVariantCaps` は Copy、by-value 代入で十分。
+        PropertyValue::FontVariantCaps(fvc) => target.font_variant_caps = fvc,
     }
 }
 
@@ -8857,6 +8867,46 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].font_style, FontStyle::Italic);
         assert_eq!(r.computed[span].font_style, FontStyle::Normal);
+    }
+
+    // ── font-variant-caps wire-through (CSS Fonts Module Level 3 §6.6) ──
+
+    #[test]
+    fn font_variant_caps_wired_through_cascade_from_inline_style() {
+        use crate::property::FontVariantCaps;
+        let cv = cascade_doc("", "p", Some("font-variant-caps: small-caps"));
+        assert_eq!(cv.font_variant_caps, FontVariantCaps::SmallCaps);
+    }
+
+    #[test]
+    fn font_variant_caps_inherits_from_parent_element() {
+        // CSS Fonts Module Level 3 §6.6: font-variant-caps は **inherited**.
+        use crate::property::FontVariantCaps;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-variant-caps: small-caps"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_variant_caps, FontVariantCaps::SmallCaps);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].font_variant_caps,
+            FontVariantCaps::SmallCaps,
+            "child should inherit font-variant-caps from parent (CSS Fonts Module Level 3 §6.6 Inherited: yes)"
+        );
+    }
+
+    #[test]
+    fn font_variant_caps_child_own_value_wins_over_inherited() {
+        use crate::property::FontVariantCaps;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-variant-caps: small-caps"));
+        let span = doc.push_element(p, "span", Some("font-variant-caps: normal"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_variant_caps, FontVariantCaps::SmallCaps);
+        assert_eq!(r.computed[span].font_variant_caps, FontVariantCaps::Normal);
     }
 
     // ── text-transform wire-through (CSS Text Module Level 3 §2.1) ──
