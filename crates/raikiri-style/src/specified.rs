@@ -32,19 +32,21 @@ use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor,
     Direction, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
-    FontStyle, FontVariantCaps, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight,
+    FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
+    GridTemplateTracks, GridTrackSize, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight,
     OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign,
     TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform,
     VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue, empty_content_list,
     empty_counter_entries, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
-    initial_font_family, resolve_display_for_float, resolve_overflow,
+    initial_font_family, initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, empty_computed_text_shadow_list,
     lift_font_size, lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
     lift_text_shadow_item, resolve_border, resolve_flex_basis, resolve_font_size,
-    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length_or_normal,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_tab_size, resolve_text_shadow_item, resolve_vertical_align, used_line_height_length,
 };
@@ -317,6 +319,42 @@ pub struct SpecifiedValues {
     /// computed 値を [`lift_text_shadow_item`] で lift して seed する
     /// (`Self::text_indent` と同じ扱い)。
     pub text_shadow: Arc<Vec<TextShadowItem>>,
+    /// `grid-template-columns` の **specified** value。phase 3
+    /// (track list 中の `<length-percentage>` のみ絶対化、`none` keyword は
+    /// 保持) で絶対化される — [`Self::flex_basis`] と同じ「keyword or
+    /// absolutize」shape だが対象が単一値ではなく track list 全体。
+    pub grid_template_columns: GridTemplateTracks,
+    /// `grid-template-rows` の **specified** value。[`Self::grid_template_columns`]
+    /// と同じ絶対化 phase。
+    pub grid_template_rows: GridTemplateTracks,
+    /// [`ComputedValues::grid_template_areas`] の staging。層は
+    /// computed-equivalent (spec の "Computed value: the keyword `none` or a
+    /// list of string values" — track-sizing の `<length-percentage>` の
+    /// ような絶対化対象を持たない、[`GridTemplateAreasValue`] doc 参照)。
+    pub grid_template_areas: GridTemplateAreasValue,
+    /// `grid-auto-columns` の **specified** value。phase 3 で
+    /// [`Self::grid_template_columns`] と同じ track-size 絶対化を受ける。
+    pub grid_auto_columns: Arc<Vec<GridTrackSize>>,
+    /// `grid-auto-rows` の **specified** value。[`Self::grid_auto_columns`]
+    /// と同じ絶対化 phase。
+    pub grid_auto_rows: Arc<Vec<GridTrackSize>>,
+    /// [`ComputedValues::grid_auto_flow`] の staging。層は computed-equivalent
+    /// (`GridAutoFlowValue` は length を運ばない)。
+    pub grid_auto_flow: GridAutoFlowValue,
+    /// [`ComputedValues::grid_row_start`] の staging。層は computed-equivalent
+    /// (`GridLineValue` は length を運ばない)。
+    pub grid_row_start: GridLineValue,
+    /// [`ComputedValues::grid_row_end`] の staging。層は computed-equivalent。
+    pub grid_row_end: GridLineValue,
+    /// [`ComputedValues::grid_column_start`] の staging。層は computed-equivalent。
+    pub grid_column_start: GridLineValue,
+    /// [`ComputedValues::grid_column_end`] の staging。層は computed-equivalent。
+    pub grid_column_end: GridLineValue,
+    /// [`ComputedValues::justify_items`] の staging。層は computed-equivalent
+    /// (`SelfAlignmentValue` は length を運ばない)。
+    pub justify_items: SelfAlignmentValue,
+    /// [`ComputedValues::justify_self`] の staging。層は computed-equivalent。
+    pub justify_self: AlignSelfValue,
 }
 
 impl SpecifiedValues {
@@ -439,6 +477,29 @@ impl SpecifiedValues {
             // は `none` — shared empty Arc slot (`empty_text_shadow_list`
             // doc 参照)。
             text_shadow: empty_text_shadow_list(),
+            // CSS Grid Layout Module Level 1 §7.2/§7.3: grid-template-*
+            // initial は共に `none`。
+            grid_template_columns: GridTemplateTracks::None,
+            grid_template_rows: GridTemplateTracks::None,
+            grid_template_areas: GridTemplateAreasValue::None,
+            // CSS Grid Layout Module Level 1 §7.6: grid-auto-columns /
+            // grid-auto-rows initial は `auto`。
+            grid_auto_columns: initial_grid_auto_track_list(),
+            grid_auto_rows: initial_grid_auto_track_list(),
+            // CSS Grid Layout Module Level 1 §7.7: grid-auto-flow initial は
+            // `row`。
+            grid_auto_flow: GridAutoFlowValue::Row,
+            // CSS Grid Layout Module Level 1 §8.3: grid-row-start/-end /
+            // grid-column-start/-end initial は共に `auto`。
+            grid_row_start: GridLineValue::Auto,
+            grid_row_end: GridLineValue::Auto,
+            grid_column_start: GridLineValue::Auto,
+            grid_column_end: GridLineValue::Auto,
+            // CSS Box Alignment Module Level 3 §7.1/§6.1: justify-items /
+            // justify-self initial (`PropertyValue::JustifyItems` doc の
+            // "legacy は未対応" 節参照、justify-self は `auto`)。
+            justify_items: SelfAlignmentValue::Normal,
+            justify_self: AlignSelfValue::Auto,
         }
     }
 
@@ -598,6 +659,22 @@ impl SpecifiedValues {
             // "Inherited: no")。
             row_gap: LengthOrNormal::Normal,
             column_gap: LengthOrNormal::Normal,
+            // non-inherited (CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/
+            // §7.7/§8.3, all "Inherited: no")。
+            grid_template_columns: GridTemplateTracks::None,
+            grid_template_rows: GridTemplateTracks::None,
+            grid_template_areas: GridTemplateAreasValue::None,
+            grid_auto_columns: initial_grid_auto_track_list(),
+            grid_auto_rows: initial_grid_auto_track_list(),
+            grid_auto_flow: GridAutoFlowValue::Row,
+            grid_row_start: GridLineValue::Auto,
+            grid_row_end: GridLineValue::Auto,
+            grid_column_start: GridLineValue::Auto,
+            grid_column_end: GridLineValue::Auto,
+            // non-inherited (CSS Box Alignment Module Level 3 §7.1/§6.1,
+            // "Inherited: no")。
+            justify_items: SelfAlignmentValue::Normal,
+            justify_self: AlignSelfValue::Auto,
         }
     }
 
@@ -1074,6 +1151,52 @@ impl SpecifiedValues {
                         .collect(),
                 )
             },
+            // `grid-template-columns`/`-rows` — track list 全体の
+            // `<length-percentage>` を絶対化する (`resolve_grid_template_tracks`
+            // doc 参照)。
+            grid_template_columns: resolve_grid_template_tracks(
+                self.grid_template_columns,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            grid_template_rows: resolve_grid_template_tracks(
+                self.grid_template_rows,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            // computed value = specified value (`GridTemplateAreasValue` doc
+            // 参照、spec の "list of string values" — track-sizing の
+            // `<length-percentage>` のような絶対化対象を持たない) — 自 node
+            // の winner 適用結果をそのまま素通し。
+            grid_template_areas: self.grid_template_areas,
+            // `grid-auto-columns`/`-rows` — `grid_template_columns` と同じ
+            // track-size 絶対化。
+            grid_auto_columns: resolve_grid_auto_track_list(
+                &self.grid_auto_columns,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            grid_auto_rows: resolve_grid_auto_track_list(
+                &self.grid_auto_rows,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            // computed value = specified keyword(s) (`GridAutoFlowValue` /
+            // `GridLineValue` docs 参照、length を運ばないため相対解決なし) —
+            // 自 node の winner 適用結果をそのまま素通し。
+            grid_auto_flow: self.grid_auto_flow,
+            grid_row_start: self.grid_row_start,
+            grid_row_end: self.grid_row_end,
+            grid_column_start: self.grid_column_start,
+            grid_column_end: self.grid_column_end,
+            // computed value = specified keyword(s) (`SelfAlignmentValue` /
+            // `AlignSelfValue` docs 参照、length を運ばないため相対解決なし)。
+            justify_items: self.justify_items,
+            justify_self: self.justify_self,
         }
     }
 }
@@ -1117,9 +1240,10 @@ mod tests {
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::TextShadowColor;
     use crate::resolve::{
-        ComputedBorder, ComputedFlexBasis, ComputedLengthPercentage,
-        ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-        ComputedTabSize, ComputedTextShadow,
+        ComputedBorder, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
+        ComputedGridTrackList, ComputedGridTrackListComponent, ComputedGridTrackSize,
+        ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
+        ComputedLineHeight, ComputedTabSize, ComputedTextShadow,
     };
 
     /// `root_font_size` = 16px の共通 context。
@@ -1256,6 +1380,47 @@ mod tests {
                 blur_radius: ComputedLength(3.0),
                 color: TextShadowColor::Resolved(CssColor::BLACK),
             }]),
+            grid_template_columns: ComputedGridTemplateTracks::List(Arc::new(
+                ComputedGridTrackList {
+                    line_names: vec![vec![], vec![]],
+                    components: vec![ComputedGridTrackListComponent::Size(
+                        ComputedGridTrackSize::Breadth(ComputedGridTrackBreadth::Px(100.0)),
+                    )],
+                },
+            )),
+            grid_template_rows: ComputedGridTemplateTracks::List(Arc::new(ComputedGridTrackList {
+                line_names: vec![vec![], vec![]],
+                components: vec![ComputedGridTrackListComponent::Size(
+                    ComputedGridTrackSize::Breadth(ComputedGridTrackBreadth::Percent(50.0)),
+                )],
+            })),
+            grid_template_areas: GridTemplateAreasValue::Areas(Arc::new(
+                crate::property::GridTemplateAreas {
+                    row_strings: vec!["a".into()],
+                    areas: vec![crate::property::GridTemplateAreaEntry {
+                        name: "a".into(),
+                        row_start: 1,
+                        row_end: 2,
+                        column_start: 1,
+                        column_end: 2,
+                    }],
+                    row_count: 1,
+                    column_count: 1,
+                },
+            )),
+            grid_auto_columns: Arc::new(vec![ComputedGridTrackSize::Breadth(
+                ComputedGridTrackBreadth::MinContent,
+            )]),
+            grid_auto_rows: Arc::new(vec![ComputedGridTrackSize::Breadth(
+                ComputedGridTrackBreadth::MaxContent,
+            )]),
+            grid_auto_flow: GridAutoFlowValue::ColumnDense,
+            grid_row_start: GridLineValue::Line(2),
+            grid_row_end: GridLineValue::Span(3),
+            grid_column_start: GridLineValue::Named("foo".into()),
+            grid_column_end: GridLineValue::NamedLine("bar".into(), 2),
+            justify_items: SelfAlignmentValue::Center,
+            justify_self: AlignSelfValue::Value(SelfAlignmentValue::End),
         }
     }
 
@@ -1385,6 +1550,22 @@ mod tests {
         // non-inherited。
         assert_eq!(child.row_gap, initial.row_gap);
         assert_eq!(child.column_gap, initial.column_gap);
+        // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3: grid-*
+        // は全て non-inherited。
+        assert_eq!(child.grid_template_columns, initial.grid_template_columns);
+        assert_eq!(child.grid_template_rows, initial.grid_template_rows);
+        assert_eq!(child.grid_template_areas, initial.grid_template_areas);
+        assert_eq!(child.grid_auto_columns, initial.grid_auto_columns);
+        assert_eq!(child.grid_auto_rows, initial.grid_auto_rows);
+        assert_eq!(child.grid_auto_flow, initial.grid_auto_flow);
+        assert_eq!(child.grid_row_start, initial.grid_row_start);
+        assert_eq!(child.grid_row_end, initial.grid_row_end);
+        assert_eq!(child.grid_column_start, initial.grid_column_start);
+        assert_eq!(child.grid_column_end, initial.grid_column_end);
+        // CSS Box Alignment Module Level 3 §7.1/§6.1: justify-items /
+        // justify-self は共に non-inherited。
+        assert_eq!(child.justify_items, initial.justify_items);
+        assert_eq!(child.justify_self, initial.justify_self);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は

@@ -3780,7 +3780,37 @@ pub(crate) fn resolve_against_inherited(
         // inheritance parent's — same shape as `LetterSpacing`/`WordSpacing`
         // above, nothing for phase 2 to resolve here. The `<color>`
         // component carries no length either (`TextShadowColor` doc).
-        | PropertyValue::TextShadow(_)) => v,
+        | PropertyValue::TextShadow(_)
+        // CSS Grid Layout Module Level 1 grid-template-columns/-rows/-areas
+        // (§7.2/§7.3) + grid-auto-columns/-rows/-flow (§7.6/§7.7) +
+        // grid-row-start/-end/grid-column-start/-end (+ their `grid-row`/
+        // `grid-column` shorthands, §8.3/§8.4) — same "nothing for phase 2
+        // to resolve" shape as `FlexBasis`/`RowGap` above for the
+        // length-bearing track-sizing ones (`GridTemplateColumns`/
+        // `GridTemplateRows`/`GridAutoColumns`/`GridAutoRows`; phase 3 does
+        // the declaring node's own font-size resolution over the track
+        // list), and no length payload at all for the rest
+        // (`GridTemplateAreas`/`GridAutoFlow`/`GridRowStart`/`GridRowEnd`/
+        // `GridColumnStart`/`GridColumnEnd`/`GridRow`/`GridColumn`).
+        | PropertyValue::GridTemplateColumns(_)
+        | PropertyValue::GridTemplateRows(_)
+        | PropertyValue::GridTemplateAreas(_)
+        | PropertyValue::GridAutoColumns(_)
+        | PropertyValue::GridAutoRows(_)
+        | PropertyValue::GridAutoFlow(_)
+        | PropertyValue::GridRowStart(_)
+        | PropertyValue::GridRowEnd(_)
+        | PropertyValue::GridColumnStart(_)
+        | PropertyValue::GridColumnEnd(_)
+        | PropertyValue::GridRow(_)
+        | PropertyValue::GridColumn(_)
+        // justify-items (CSS Box Alignment Module Level 3 §7.1) /
+        // justify-self (§6.1) / place-items (§7.3) / place-self (§6.3) —
+        // same "no length payload" shape as `AlignItems`/`AlignSelf` above.
+        | PropertyValue::JustifyItems(_)
+        | PropertyValue::JustifySelf(_)
+        | PropertyValue::PlaceItems(_)
+        | PropertyValue::PlaceSelf(_)) => v,
     })
 }
 
@@ -4324,6 +4354,45 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `inherit_from` で親値 (lift 済み) を引き継ぐ。`Arc` は Clone が
         // bump のみなので by-value 代入で十分。
         PropertyValue::TextShadow(shadows) => target.text_shadow = shadows,
+        // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3。
+        // non-inherited、specified 表現のまま格納 — 絶対化は phase 3 に
+        // 委ねる (`LetterSpacing`/`FlexBasis` arm と同じ handling)。
+        PropertyValue::GridTemplateColumns(v) => target.grid_template_columns = v,
+        PropertyValue::GridTemplateRows(v) => target.grid_template_rows = v,
+        PropertyValue::GridTemplateAreas(v) => target.grid_template_areas = v,
+        PropertyValue::GridAutoColumns(v) => target.grid_auto_columns = v,
+        PropertyValue::GridAutoRows(v) => target.grid_auto_rows = v,
+        PropertyValue::GridAutoFlow(v) => target.grid_auto_flow = v,
+        PropertyValue::GridRowStart(v) => target.grid_row_start = v,
+        PropertyValue::GridRowEnd(v) => target.grid_row_end = v,
+        PropertyValue::GridColumnStart(v) => target.grid_column_start = v,
+        PropertyValue::GridColumnEnd(v) => target.grid_column_end = v,
+        // `grid-row` / `grid-column` shorthand fall-through — 通常は
+        // `expand_shorthand_into` が 2 longhand に展開済みのため cascade
+        // 経路には到達しない (`Flex` arm と同じ位置付け)。
+        PropertyValue::GridRow(shorthand) => {
+            target.grid_row_start = shorthand.start;
+            target.grid_row_end = shorthand.end;
+        }
+        PropertyValue::GridColumn(shorthand) => {
+            target.grid_column_start = shorthand.start;
+            target.grid_column_end = shorthand.end;
+        }
+        // CSS Box Alignment Module Level 3 §7.1 (justify-items) / §6.1
+        // (justify-self)。non-inherited、computed value = specified
+        // keyword(s) — 単純代入で十分。
+        PropertyValue::JustifyItems(v) => target.justify_items = v,
+        PropertyValue::JustifySelf(v) => target.justify_self = v,
+        // `place-items` / `place-self` shorthand fall-through (`Flex` arm
+        // と同じ位置付け)。
+        PropertyValue::PlaceItems(p) => {
+            target.align_items = p.align;
+            target.justify_items = p.justify;
+        }
+        PropertyValue::PlaceSelf(p) => {
+            target.align_self = p.align;
+            target.justify_self = p.justify;
+        }
     }
 }
 
@@ -8263,6 +8332,188 @@ mod tests {
     }
 
     #[test]
+    fn author_grid_template_columns_track_list_absolutizes_through_cascade() {
+        // `2em` at `font-size: 20px` → `40px` — proves phase 3 absolutizes
+        // `<length-percentage>` inside the track list (not just passes the
+        // specified value through), sibling of `author_flex_item_longhands_compute_through_cascade`
+        // above.
+        let cv = cascade_with_ua(
+            "",
+            "div { font-size: 20px; grid-template-columns: 2em 1fr auto; }",
+            "div",
+            None,
+        );
+        let crate::resolve::ComputedGridTemplateTracks::List(list) = cv.grid_template_columns
+        else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            panic!("expected a track list");
+        };
+        assert_eq!(
+            list.components,
+            vec![
+                crate::resolve::ComputedGridTrackListComponent::Size(
+                    crate::resolve::ComputedGridTrackSize::Breadth(
+                        crate::resolve::ComputedGridTrackBreadth::Px(40.0)
+                    )
+                ),
+                crate::resolve::ComputedGridTrackListComponent::Size(
+                    crate::resolve::ComputedGridTrackSize::Breadth(
+                        crate::resolve::ComputedGridTrackBreadth::Flex(1.0)
+                    )
+                ),
+                crate::resolve::ComputedGridTrackListComponent::Size(
+                    crate::resolve::ComputedGridTrackSize::Breadth(
+                        crate::resolve::ComputedGridTrackBreadth::Auto
+                    )
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn author_grid_template_rows_and_grid_auto_rows_compute_through_cascade() {
+        // Sibling of `author_grid_template_columns_track_list_absolutizes_through_cascade`
+        // above — `grid-template-rows`/`grid-auto-rows` share the parser and
+        // `apply_value` arm shape with their `-columns` counterparts but
+        // were never independently exercised through the cascade pipeline.
+        let cv = cascade_with_ua(
+            "",
+            "div { grid-template-rows: 1fr 2fr; grid-auto-rows: min-content; }",
+            "div",
+            None,
+        );
+        let crate::resolve::ComputedGridTemplateTracks::List(rows) = cv.grid_template_rows else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            panic!("expected a track list");
+        };
+        assert_eq!(
+            rows.components,
+            vec![
+                crate::resolve::ComputedGridTrackListComponent::Size(
+                    crate::resolve::ComputedGridTrackSize::Breadth(
+                        crate::resolve::ComputedGridTrackBreadth::Flex(1.0)
+                    )
+                ),
+                crate::resolve::ComputedGridTrackListComponent::Size(
+                    crate::resolve::ComputedGridTrackSize::Breadth(
+                        crate::resolve::ComputedGridTrackBreadth::Flex(2.0)
+                    )
+                ),
+            ]
+        );
+        assert_eq!(
+            cv.grid_auto_rows,
+            std::sync::Arc::new(vec![crate::resolve::ComputedGridTrackSize::Breadth(
+                crate::resolve::ComputedGridTrackBreadth::MinContent
+            )])
+        );
+    }
+
+    #[test]
+    fn author_grid_template_areas_computes_through_cascade() {
+        let cv = cascade_with_ua(
+            "",
+            r#"div { grid-template-areas: "header header" "nav main"; }"#,
+            "div",
+            None,
+        );
+        let crate::property::GridTemplateAreasValue::Areas(areas) = cv.grid_template_areas else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            panic!("expected parsed areas");
+        };
+        assert_eq!(areas.row_count, 2);
+        assert_eq!(areas.column_count, 2);
+        assert!(areas.areas.iter().any(|a| a.name == "header"));
+        assert!(areas.areas.iter().any(|a| a.name == "nav"));
+        assert!(areas.areas.iter().any(|a| a.name == "main"));
+    }
+
+    #[test]
+    fn author_grid_auto_flow_and_placement_longhands_compute_through_cascade() {
+        let cv = cascade_with_ua(
+            "",
+            "div { grid-auto-flow: column dense; grid-row-start: 2; \
+             grid-column-start: span 3; }",
+            "div",
+            None,
+        );
+        assert_eq!(
+            cv.grid_auto_flow,
+            crate::property::GridAutoFlowValue::ColumnDense
+        );
+        assert_eq!(cv.grid_row_start, crate::property::GridLineValue::Line(2));
+        assert_eq!(
+            cv.grid_column_start,
+            crate::property::GridLineValue::Span(3)
+        );
+    }
+
+    #[test]
+    fn author_grid_row_shorthand_expands_into_2_longhands_through_cascade() {
+        // Proves `crate::rule::expand_shorthand_into`'s `GridRow` arm is
+        // wired into the real parse -> cascade pipeline, sibling of
+        // `author_flex_shorthand_expands_into_3_longhands_through_cascade`
+        // above.
+        let cv = cascade_with_ua("", "div { grid-row: 2 / 5; }", "div", None);
+        assert_eq!(cv.grid_row_start, crate::property::GridLineValue::Line(2));
+        assert_eq!(cv.grid_row_end, crate::property::GridLineValue::Line(5));
+    }
+
+    #[test]
+    fn author_grid_column_shorthand_omitted_second_copies_ident_through_cascade() {
+        let cv = cascade_with_ua("", "div { grid-column: content; }", "div", None);
+        assert_eq!(
+            cv.grid_column_start,
+            crate::property::GridLineValue::Named("content".into())
+        );
+        assert_eq!(
+            cv.grid_column_end,
+            crate::property::GridLineValue::Named("content".into())
+        );
+    }
+
+    #[test]
+    fn author_justify_items_and_justify_self_compute_through_cascade() {
+        let cv = cascade_with_ua(
+            "",
+            "div { justify-items: center; justify-self: end; }",
+            "div",
+            None,
+        );
+        assert_eq!(
+            cv.justify_items,
+            crate::property::SelfAlignmentValue::Center
+        );
+        assert_eq!(
+            cv.justify_self,
+            crate::property::AlignSelfValue::Value(crate::property::SelfAlignmentValue::End)
+        );
+    }
+
+    #[test]
+    fn author_place_items_shorthand_expands_into_2_longhands_through_cascade() {
+        let cv = cascade_with_ua("", "div { place-items: start end; }", "div", None);
+        assert_eq!(cv.align_items, crate::property::SelfAlignmentValue::Start);
+        assert_eq!(cv.justify_items, crate::property::SelfAlignmentValue::End);
+    }
+
+    #[test]
+    fn author_place_self_shorthand_expands_into_2_longhands_through_cascade() {
+        let cv = cascade_with_ua("", "div { place-self: center; }", "div", None);
+        assert_eq!(
+            cv.align_self,
+            crate::property::AlignSelfValue::Value(crate::property::SelfAlignmentValue::Center)
+        );
+        assert_eq!(
+            cv.justify_self,
+            crate::property::AlignSelfValue::Value(crate::property::SelfAlignmentValue::Center)
+        );
+    }
+
+    #[test]
     fn important_ua_beats_important_author_display() {
         // Important UA > Important Author (!important 反転、`cascade_rank`
         // doc has the exact values)
@@ -11384,6 +11635,77 @@ mod tests {
         apply_value(PropertyValue::PlaceContent(p), &mut cv);
         assert_eq!(cv.align_content, ContentAlignmentValue::SpaceBetween);
         assert_eq!(cv.justify_content, ContentAlignmentValue::Center);
+    }
+
+    #[test]
+    fn apply_value_direct_grid_row_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_margin_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::GridRow(shorthand)` arm is
+        // unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 2 `GridRowStart`/`GridRowEnd` longhands before
+        // `apply_value` ever sees it) — not a safety net, a canary.
+        use crate::property::GridLineShorthand;
+        use crate::property::GridLineValue;
+        let mut cv = SpecifiedValues::initial();
+        let shorthand = GridLineShorthand {
+            start: GridLineValue::Line(2),
+            end: GridLineValue::Span(3),
+        };
+        apply_value(PropertyValue::GridRow(shorthand), &mut cv);
+        assert_eq!(cv.grid_row_start, GridLineValue::Line(2));
+        assert_eq!(cv.grid_row_end, GridLineValue::Span(3));
+    }
+
+    #[test]
+    fn apply_value_direct_grid_column_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_grid_row_shorthand_fall_through`
+        // above, for `PropertyValue::GridColumn(shorthand)`.
+        use crate::property::GridLineShorthand;
+        use crate::property::GridLineValue;
+        let mut cv = SpecifiedValues::initial();
+        let shorthand = GridLineShorthand {
+            start: GridLineValue::Named("content".into()),
+            end: GridLineValue::Auto,
+        };
+        apply_value(PropertyValue::GridColumn(shorthand), &mut cv);
+        assert_eq!(cv.grid_column_start, GridLineValue::Named("content".into()));
+        assert_eq!(cv.grid_column_end, GridLineValue::Auto);
+    }
+
+    #[test]
+    fn apply_value_direct_place_items_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_place_content_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::PlaceItems(p)` arm is
+        // unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 2 `AlignItems`/`JustifyItems` longhands before
+        // `apply_value` ever sees it) — not a safety net, a canary.
+        use crate::property::{PlaceItemsShorthand, SelfAlignmentValue};
+        let mut cv = SpecifiedValues::initial();
+        let p = PlaceItemsShorthand {
+            align: SelfAlignmentValue::Center,
+            justify: SelfAlignmentValue::End,
+        };
+        apply_value(PropertyValue::PlaceItems(p), &mut cv);
+        assert_eq!(cv.align_items, SelfAlignmentValue::Center);
+        assert_eq!(cv.justify_items, SelfAlignmentValue::End);
+    }
+
+    #[test]
+    fn apply_value_direct_place_self_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_place_items_shorthand_fall_through`
+        // above, for `PropertyValue::PlaceSelf(p)`.
+        use crate::property::{AlignSelfValue, PlaceSelfShorthand, SelfAlignmentValue};
+        let mut cv = SpecifiedValues::initial();
+        let p = PlaceSelfShorthand {
+            align: AlignSelfValue::Auto,
+            justify: AlignSelfValue::Value(SelfAlignmentValue::Start),
+        };
+        apply_value(PropertyValue::PlaceSelf(p), &mut cv);
+        assert_eq!(cv.align_self, AlignSelfValue::Auto);
+        assert_eq!(
+            cv.justify_self,
+            AlignSelfValue::Value(SelfAlignmentValue::Start)
+        );
     }
 
     // ── text-decoration longhand + shorthand cascade (CSS Text Decoration
