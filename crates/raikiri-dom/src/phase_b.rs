@@ -162,10 +162,13 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                     // <https://www.w3.org/TR/css-lists-3/#counters-in-elements-that-do-not-generate-boxes>:
                     // an element that does not generate a box "cannot set,
                     // reset, or increment a counter ... they must have no
-                    // effect." Same skip
+                    // effect." `display: none` (whole-subtree box omission)
+                    // and `display: contents` (element generates no box of
+                    // its own, CSS Display 3 §2.5) both qualify — same skip
                     // crate::target::build_target_registry's own `Enter`
                     // step already applies (see that function's doc).
-                    Some(cv) if cv.display == DisplayValue::None => {}
+                    Some(cv)
+                        if matches!(cv.display, DisplayValue::None | DisplayValue::Contents) => {}
                     Some(cv) => {
                         directives.clear();
                         derive_element_directives(doc, idx, cv, &mut directives);
@@ -388,6 +391,36 @@ mod tests {
             ctx.counter(&Symbol::new("c")),
             None,
             "a display:none element's counter-reset must have no effect \
+             (CSS Lists 3 §4.5)"
+        );
+    }
+
+    #[test]
+    fn drive_document_skips_directives_on_display_contents_elements() {
+        // Companion to drive_document_skips_directives_on_display_none_elements
+        // above — display:contents also generates no box for the element
+        // itself (CSS Display 3 §2.5), so CSS Lists 3 §4.5's "no effect"
+        // rule applies to it the same way.
+        let mut doc = Document::new();
+        doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("display: contents; counter-reset: c 5"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("c")),
+            None,
+            "a display:contents element's counter-reset must have no effect \
              (CSS Lists 3 §4.5)"
         );
     }

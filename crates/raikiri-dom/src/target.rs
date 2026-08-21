@@ -439,15 +439,20 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
                 }
 
                 let pushed = match cascade.computed.get(idx) {
-                    Some(cv) if cv.display == DisplayValue::None => {
+                    Some(cv)
+                        if matches!(cv.display, DisplayValue::None | DisplayValue::Contents) =>
+                    {
                         // CSS Lists 3 §4.5
                         // <https://www.w3.org/TR/css-lists-3/#counters-in-elements-that-do-not-generate-boxes>:
                         // an element that does not generate a box "cannot
                         // set, reset, or increment a counter ... they must
-                        // have no effect." Skip directive application
-                        // entirely — the element may still register as a
-                        // target below (target-* doesn't require box
-                        // generation, only an id).
+                        // have no effect." `display: none` (whole-subtree
+                        // box omission) and `display: contents` (element
+                        // generates no box of its own, CSS Display 3 §2.5)
+                        // both qualify. Skip directive application entirely
+                        // — the element may still register as a target
+                        // below (target-* doesn't require box generation,
+                        // only an id).
                         Vec::new()
                     }
                     Some(cv) => scopes.apply(cv),
@@ -859,6 +864,42 @@ mod tests {
             "a display:none element with no counter properties must still register \
              as a target — display:none only withdraws counter effects, not \
              target-*() addressability"
+        );
+    }
+
+    #[test]
+    fn build_target_registry_display_contents_element_does_not_affect_counter_stack() {
+        // Companion to build_target_registry_display_none_element_does_not_affect_counter_stack:
+        // display:contents also generates no box for the element itself
+        // (CSS Display 3 §2.5), so CSS Lists 3 §4.5's "no effect" rule
+        // applies here too. Same regression-pin shape (descendant probe,
+        // still-open scope) for the same reason that test documents.
+        let mut doc = Document::new();
+        let contents = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("display: contents; counter-reset: c 5"),
+        );
+        let target = doc.append_element(Some(contents), "span", Style::default(), None::<&str>);
+        set_id(&mut doc, target, "target");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut registry = build_target_registry(&doc, &cr);
+        let out = registry.resolve_target_counter(
+            "#target",
+            Symbol::new("c"),
+            raikiri_style::property::CounterStyle::Decimal,
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            out,
+            raikiri_traits::ResolveOutcome::Resolved("0".to_owned()),
+            "a display:contents ancestor's own counter-reset must have no effect at all, \
+             even observed from inside its still-open (but skipped) scope"
         );
     }
 
