@@ -3677,10 +3677,10 @@ pub(crate) fn resolve_against_inherited(
         // uses) — not this function's, since it depends on the declaring
         // node's own winners rather than the inheritance parent.
         | PropertyValue::VerticalAlign(_)
-        // `font-style` carries no length at this crate's scope (only
-        // `normal`/`italic` implemented, `FontStyle` doc) and does not
-        // depend on the inheritance parent — nothing for phase 2 to
-        // resolve.
+        // `font-style` carries no length at this crate's scope
+        // (`normal`/`italic`/`oblique` implemented, `oblique`'s `<angle>`
+        // argument is not — `FontStyle` doc) and does not depend on the
+        // inheritance parent — nothing for phase 2 to resolve.
         | PropertyValue::FontStyle(_)
         // `text-transform` carries no length (`TextTransform` doc) and
         // does not depend on the inheritance parent — nothing for phase 2
@@ -8791,6 +8791,13 @@ mod tests {
         use crate::property::FontStyle;
         let cv = cascade_doc("", "p", Some("font-style: italic"));
         assert_eq!(cv.font_style, FontStyle::Italic);
+    }
+
+    #[test]
+    fn font_style_oblique_wired_through_cascade_from_inline_style() {
+        use crate::property::FontStyle;
+        let cv = cascade_doc("", "p", Some("font-style: oblique"));
+        assert_eq!(cv.font_style, FontStyle::Oblique);
     }
 
     #[test]

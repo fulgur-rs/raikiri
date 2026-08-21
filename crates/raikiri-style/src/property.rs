@@ -948,23 +948,29 @@ pub enum RelativeFontSize {
 ///
 /// # Scope carving
 ///
-/// - **Non-goal**: `oblique <angle [-90deg,90deg]>?` — the optional
-///   `<angle>` argument needs its own payload-carrying variant, range
-///   clamping, and the "plus angle in degrees" half of the computed-value
-///   rule quoted above; deferred as a follow-up.
+/// - **Implemented as a bare keyword only**: `oblique` — accepted as a
+///   standalone ident, [`FontStyle::Oblique`]. The optional `<angle
+///   [-90deg,90deg]>` parameter that may follow it in the propdef grammar
+///   quoted above is a **non-goal**: it needs its own payload-carrying
+///   variant, range clamping, and the "plus angle in degrees" half of the
+///   computed-value rule quoted above; deferred as a follow-up. `oblique`
+///   with a trailing angle (e.g. `oblique 14deg`) is therefore rejected the
+///   same as any other declaration `DeclParser` can't fully consume ([`mod@crate::rule`]'s
+///   exhaustive-consumption check — same general mechanism noted on
+///   [`TextTransform`]'s doc for its `||` combinator case).
 /// - **Non-goal**: `left` / `right` — additional slant-direction keywords
 ///   in the same propdef grammar quoted above. Not implemented here;
 ///   silent drop like any other unhandled ident (below).
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
-/// - **(a) spec-invalid**: 上記 4 keyword (`normal` / `italic` / `left` /
-///   `right`、`oblique` は未実装) 以外の ident は silent drop = `None`。
+/// - **(a) spec-invalid**: 上記 5 keyword (`left` / `right` は上記 Non-goal
+///   節参照) 以外の ident は silent drop = `None`。
 ///
-/// With only `normal` / `italic` implemented, the angle-bearing branch of
-/// the spec's "Computed value" row is unreachable — so for this crate's
-/// scope, computed value = specified keyword, no relative resolution
-/// needed ([`Direction`] doc と同型)。
+/// With `oblique` accepted only as a bare keyword (no `<angle>` payload),
+/// the angle-bearing branch of the spec's "Computed value" row stays
+/// unreachable — so for this crate's scope, computed value = specified
+/// keyword, no relative resolution needed ([`Direction`] doc と同型)。
 ///
 /// [`Direction`] / [`BoxSizing`] と同じ convention で `Default` を derive
 /// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
@@ -977,6 +983,9 @@ pub enum FontStyle {
     Normal,
     /// `italic`。
     Italic,
+    /// `oblique` — bare keyword only, no `<angle>` payload (「Scope
+    /// carving」節参照)。
+    Oblique,
 }
 
 /// `text-transform` property の value。
@@ -2789,8 +2798,8 @@ pub enum ZIndexValue {
 ///   (`overflow-wrap`) to a specific value — a cross-property override this
 ///   crate's per-property parse/cascade model has no slot for. `word-break:
 ///   break-word` is silent-dropped like any other unhandled ident, the same
-///   way [`FontStyle`]'s unimplemented `oblique`/`left`/`right` keywords
-///   are. It is [`OverflowWrap::BreakWord`] — the non-deprecated
+///   way [`FontStyle`]'s unimplemented `left`/`right` keywords are. It is
+///   [`OverflowWrap::BreakWord`] — the non-deprecated
 ///   `overflow-wrap: break-word` value — that this crate represents
 ///   instead.
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
@@ -3904,10 +3913,11 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     VerticalAlign(VerticalAlign),
-    /// `font-style: normal | italic` — **inherited**、initial:
+    /// `font-style: normal | italic | oblique` — **inherited**、initial:
     /// [`FontStyle::Normal`] (CSS Fonts 4 §2.4 [`FontStyle`] doc 参照)。
     /// computed value = specified keyword ([`FontStyle`] doc の Scope
-    /// carving 節参照、`oblique <angle>?` / `left` / `right` は未実装)。
+    /// carving 節参照、`oblique <angle>` の angle 引数 / `left` / `right` は
+    /// 未実装)。
     /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
@@ -4632,11 +4642,11 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "vertical-align" => parse_vertical_align(input).map(PropertyValue::VerticalAlign),
         // CSS Fonts 4 §2.4 font-style. grammar: `normal | italic | left |
         // right | oblique <angle [-90deg,90deg]>?`, restricted here to
-        // `normal` / `italic` (`FontStyle` doc's "Scope carving" section —
-        // `oblique <angle>?` and `left`/`right` are spec-valid but
-        // unimplemented). initial `normal`, inherited, computed value =
-        // specified keyword (angle-bearing branch unreachable at this
-        // scope).
+        // `normal` / `italic` / bare `oblique` (`FontStyle` doc's "Scope
+        // carving" section — the `<angle>` argument to `oblique` and
+        // `left`/`right` are spec-valid but unimplemented). initial
+        // `normal`, inherited, computed value = specified keyword
+        // (angle-bearing branch unreachable at this scope).
         "font-style" => parse_font_style(input).map(PropertyValue::FontStyle),
         // CSS Text Module Level 3 §2.1 text-transform. grammar: `none |
         // [capitalize | uppercase | lowercase] || full-width ||
@@ -6387,16 +6397,22 @@ fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
 ///
 /// Value grammar (§2.4, full property grammar): `normal | italic | left |
 /// right | oblique <angle [-90deg,90deg]>?`。本 parser は `normal` /
-/// `italic` の 2 keyword のみ受理する ([`FontStyle`] doc の Scope carving
-/// 節参照) — `oblique` (angle の有無を問わず) と `left` / `right` は
-/// spec-valid だが未実装のため、他の未知 ident と同じく silent drop = `None`
-/// とする。ASCII case-insensitive で ident を比較する (37n sibling
-/// [`parse_direction`] と同 flavor)。
+/// `italic` / bare `oblique` の 3 keyword のみ受理する ([`FontStyle`] doc の
+/// Scope carving 節参照) — `oblique` に続く `<angle>` 引数と `left` / `right`
+/// は spec-valid だが未実装のため、他の未知 ident と同じく silent drop =
+/// `None` とする。`oblique <angle>` (例: `oblique 14deg`) はこの関数自体は
+/// `oblique` の ident だけを consume して成功で返るが、後続の `<angle>`
+/// token が未消費のまま残るため、宣言全体が caller ([`mod@crate::rule`] の
+/// `DeclParser`) の exhaustive-consumption check で drop される
+/// ([`parse_text_transform`] doc の「case keyword が先」ケースと同 mechanism)。
+/// ASCII case-insensitive で ident を比較する (sibling [`parse_direction`]
+/// と同 flavor)。
 fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
         "normal" => Some(FontStyle::Normal),
         "italic" => Some(FontStyle::Italic),
+        "oblique" => Some(FontStyle::Oblique),
         _ => None,
     }
 }
@@ -11853,12 +11869,13 @@ mod tests {
     //
     // Value grammar (§2.4 spec verbatim, full property grammar): `normal |
     // italic | left | right | oblique <angle [-90deg,90deg]>?`. This crate
-    // implements only normal / italic (`FontStyle` doc's "Scope carving"
-    // section). Initial: normal / Inherited: yes / Computed value:
+    // implements normal / italic / bare oblique (`FontStyle` doc's "Scope
+    // carving" section — the `<angle>` argument to `oblique` is out of
+    // scope). Initial: normal / Inherited: yes / Computed value:
     // specified keyword (angle-bearing branch unreachable at this scope).
 
     #[test]
-    fn font_style_parse_both_keywords() {
+    fn font_style_parse_all_implemented_keywords() {
         assert_eq!(
             parse("normal", "font-style"),
             Some(PropertyValue::FontStyle(FontStyle::Normal))
@@ -11866,6 +11883,10 @@ mod tests {
         assert_eq!(
             parse("italic", "font-style"),
             Some(PropertyValue::FontStyle(FontStyle::Italic))
+        );
+        assert_eq!(
+            parse("oblique", "font-style"),
+            Some(PropertyValue::FontStyle(FontStyle::Oblique))
         );
     }
 
@@ -11879,18 +11900,32 @@ mod tests {
             parse("Italic", "font-style"),
             Some(PropertyValue::FontStyle(FontStyle::Italic))
         );
+        assert_eq!(
+            parse("OBLIQUE", "font-style"),
+            Some(PropertyValue::FontStyle(FontStyle::Oblique))
+        );
     }
 
     #[test]
     fn font_style_rejects_unimplemented_keywords() {
-        // (b) not supported — `oblique` (with or without an angle) and the
-        // `left` / `right` slant-direction keywords are spec-valid but
-        // unimplemented (`FontStyle` doc's "Scope carving" section), not
-        // (a) spec-invalid.
-        assert_eq!(parse("oblique", "font-style"), None);
+        // (b) not supported — the `left` / `right` slant-direction keywords
+        // are spec-valid but unimplemented (`FontStyle` doc's "Scope
+        // carving" section), not (a) spec-invalid.
         assert_eq!(parse("left", "font-style"), None);
         assert_eq!(parse("right", "font-style"), None);
     }
+
+    // `oblique <angle>` (e.g. `oblique 14deg`) is not exercised by this
+    // module's `parse()` helper — it calls `parse_value` directly, which
+    // only runs the property-specific parser and does not perform the
+    // exhaustive-consumption check that drops a declaration with unconsumed
+    // trailing tokens. `parse_font_style` alone happily returns
+    // `Some(FontStyle::Oblique)` after consuming just the `oblique` ident,
+    // leaving `14deg` unread — the rejection of `oblique <angle>` as a
+    // whole declaration only happens one layer up, in
+    // [`mod@crate::rule`]'s `DeclParser`. See
+    // `rule::tests::rejects_font_style_oblique_with_angle` (mirrors
+    // `rejects_extra_length_after_font_size`) for that test.
 
     #[test]
     fn font_style_rejects_unknown_keyword() {
@@ -11917,6 +11952,8 @@ mod tests {
         let v = PropertyValue::FontStyle(FontStyle::Normal);
         assert_eq!(v.key(), PropertyKey::FontStyle);
         let v = PropertyValue::FontStyle(FontStyle::Italic);
+        assert_eq!(v.key(), PropertyKey::FontStyle);
+        let v = PropertyValue::FontStyle(FontStyle::Oblique);
         assert_eq!(v.key(), PropertyKey::FontStyle);
     }
 

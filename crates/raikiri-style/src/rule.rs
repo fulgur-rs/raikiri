@@ -964,6 +964,20 @@ mod tests {
     }
 
     #[test]
+    fn rejects_font_style_oblique_with_angle() {
+        // CSS Fonts 4 §2.4's `oblique <angle [-90deg,90deg]>?` grammar lets
+        // `oblique` take an optional angle, but this crate accepts `oblique`
+        // only as a bare keyword (`FontStyle` doc's "Scope carving"
+        // section) — the angle argument is out of scope.
+        // `parse_font_style` consumes just the `oblique` ident and succeeds,
+        // leaving `14deg` unconsumed, so the whole declaration is dropped by
+        // `DeclParser::expect_exhausted` — mirrors
+        // `rejects_extra_length_after_font_size` above.
+        let decls = parse_block("font-style: oblique 14deg;");
+        assert!(decls.is_empty());
+    }
+
+    #[test]
     fn rejects_extra_keyword_after_text_transform() {
         // CSS Text Module Level 3 §2.1's `||` combinator makes `uppercase
         // full-width` spec-valid grammar (case keyword co-occurring with
