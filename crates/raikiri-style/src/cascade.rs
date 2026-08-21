@@ -8084,6 +8084,15 @@ mod tests {
     }
 
     #[test]
+    fn author_display_list_item_computes_through_cascade() {
+        // End-to-end pipeline pin (parse -> cascade -> ComputedValues) for
+        // `display: list-item` — keyword-acceptance only, sibling of
+        // `author_display_flex_and_grid_compute_through_cascade` above.
+        let cv = cascade_with_ua("", "li { display: list-item }", "li", None);
+        assert_eq!(cv.display, DisplayValue::ListItem);
+    }
+
+    #[test]
     fn author_flex_container_longhands_compute_through_cascade() {
         // End-to-end pipeline pin (parse -> cascade -> ComputedValues) for
         // the individual flex-container properties this task adds — sibling
