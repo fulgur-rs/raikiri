@@ -6957,15 +6957,17 @@ fn parse_place_content_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceCont
 // CSS Grid Layout Module Level 1 parsers.
 // ─────────────────────────────────────────────────────────────────────────
 
-/// `<custom-ident>` 除外リスト — [`GridLineValue`] 系 production 専用
-/// ([`is_reserved_custom_ident`] に `span` / `auto` を追加除外)。
+/// `<custom-ident>` 除外リスト — [`GridLineValue`] 系 production と
+/// `<line-names>` (§7.2.2) の両方で使う ([`is_reserved_custom_ident`] に
+/// `span` / `auto` を追加除外)。
 ///
 /// CSS Grid Layout Module Level 1 §8.3 verbatim: "In all the above
 /// productions, the `<custom-ident>` additionally excludes the keywords
-/// `span` and `auto`" — [`is_reserved_counter_name`] が base list に `none`
-/// を足す precedent と同じ pattern。`<line-names>` (§7.2.2) の
-/// `<custom-ident>` はこの追加除外の対象**外** ([`parse_line_names`] は
-/// [`parse_custom_ident`] を直接使う)。
+/// `span` and `auto`"、および §7.2.2 verbatim: "A line name cannot be span
+/// or auto, i.e. the `<custom-ident>` in the `<line-names>` production
+/// excludes the keywords span and auto." — §7.2.2 自身がこの除外を明示的に
+/// `<line-names>` production に適用すると述べている ([`is_reserved_counter_name`]
+/// が base list に `none` を足す precedent と同じ pattern)。
 fn is_reserved_grid_line_name(ident: &str) -> bool {
     is_reserved_custom_ident(ident)
         || matches!(ident.to_ascii_lowercase().as_str(), "span" | "auto")
@@ -6996,10 +6998,10 @@ fn parse_grid_custom_ident_res<'i>(
 /// <https://www.w3.org/TR/css-grid-1/#named-lines>) を parse する。
 ///
 /// `<line-names>` の `<custom-ident>` は [`is_reserved_grid_line_name`] の
-/// 追加除外 (`span`/`auto`) を**受けない** — その除外は §8.3 の
-/// `<grid-line>` production 群にのみ及ぶ (spec 本文の "In all the **above**
-/// productions" は §8.3 セクション内の言及であり、§7.2.2 の
-/// `<line-names>` を指さない)。
+/// 追加除外 (`span`/`auto`) を**受ける** — §7.2.2 verbatim: "A line name
+/// cannot be span or auto, i.e. the `<custom-ident>` in the `<line-names>`
+/// production excludes the keywords span and auto." (この除外は §8.3 の
+/// `<grid-line>` production 群だけでなく、§7.2.2 自身が明示する)。
 ///
 /// `[` が見つからなければ `None` (呼び出し元は
 /// [`parse_line_names_or_empty`] 経由で空 `Vec` へ fallback)。空 `[]` は
@@ -7011,8 +7013,9 @@ fn parse_line_names(input: &mut Parser<'_, '_>) -> Option<Vec<SmolStr>> {
             i.parse_nested_block(|inner| {
                 let mut names = Vec::new();
                 while !inner.is_exhausted() {
-                    names
-                        .push(parse_custom_ident(inner).ok_or_else(|| inner.new_custom_error(()))?);
+                    names.push(
+                        parse_grid_custom_ident(inner).ok_or_else(|| inner.new_custom_error(()))?,
+                    );
                 }
                 Ok(names)
             })
@@ -7494,11 +7497,21 @@ fn parse_grid_line_shorthand(input: &mut Parser<'_, '_>) -> Option<GridLineShort
 ///
 /// `None` を返すのは trash token を検出した場合のみ (spec verbatim: "A
 /// trash token is a syntax error, and makes the declaration invalid.")。
+///
+/// whitespace 判定は `char::is_whitespace()` (Unicode `White_Space`
+/// property、`U+3000` 等の非 ASCII whitespace も含む) ではなく CSS Syntax 3
+/// の whitespace 定義 (<https://www.w3.org/TR/css-syntax-3/#whitespace>)
+/// verbatim: "A newline, U+0009 CHARACTER TABULATION, or U+0020 SPACE" を
+/// 直接使う — newline は同 spec の input preprocessing
+/// (<https://www.w3.org/TR/css-syntax-3/#input-preprocessing>) で
+/// U+000D/U+000C が U+000A に正規化された後の定義なので、ここでは `'\n'`
+/// のみを見ればよい (CR/FF は stylesheet 全体の tokenize 前処理で
+/// 消えている前提)。
 fn tokenize_grid_area_row(s: &str) -> Option<Vec<Option<SmolStr>>> {
     let mut cells = Vec::new();
     let mut chars = s.chars().peekable();
     while let Some(&c) = chars.peek() {
-        if c.is_whitespace() {
+        if matches!(c, '\t' | '\n' | ' ') {
             chars.next();
         } else if c == '.' {
             while chars.peek() == Some(&'.') {
@@ -16535,6 +16548,21 @@ mod tests {
     }
 
     #[test]
+    fn grid_template_columns_named_lines_reject_span_and_auto() {
+        // CSS Grid Layout Module Level 1 §7.2.2 verbatim: "A line name
+        // cannot be span or auto, i.e. the `<custom-ident>` in the
+        // `<line-names>` production excludes the keywords span and auto."
+        // `parse_line_names` must reject these the same way
+        // `parse_grid_custom_ident` already does for `<grid-line>`
+        // productions — a malformed `<line-names>` invalidates the whole
+        // declaration (silent drop), same as any other grammar violation.
+        assert_eq!(parse("[auto] 1fr", "grid-template-columns"), None);
+        assert_eq!(parse("[span] 1fr", "grid-template-columns"), None);
+        // Case-insensitive, same as `is_reserved_grid_line_name`.
+        assert_eq!(parse("[AUTO] 1fr", "grid-template-columns"), None);
+    }
+
+    #[test]
     fn grid_template_columns_repeat_integer() {
         let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) =
             parse("repeat(3, 1fr)", "grid-template-columns")
@@ -16808,6 +16836,36 @@ mod tests {
         // spec verbatim: "A trash token is a syntax error, and makes the
         // declaration invalid." `#` is neither an ident code point nor `.`.
         assert_eq!(parse(r#""a #""#, "grid-template-areas"), None);
+    }
+
+    #[test]
+    fn grid_template_areas_treats_non_ascii_space_as_an_ident_char_not_whitespace() {
+        // CSS Syntax 3 whitespace is exactly {tab, newline, space}
+        // (<https://www.w3.org/TR/css-syntax-3/#whitespace>) — U+3000
+        // IDEOGRAPHIC SPACE is not whitespace under that definition, so it
+        // must fall into the "ident code point" bucket (CSS Syntax 3's
+        // ident-code-point production includes any non-ASCII code point),
+        // becoming *part of* the named-cell token rather than a silently
+        // skipped separator between two cells.
+        let Some(PropertyValue::GridTemplateAreas(GridTemplateAreasValue::Areas(areas))) =
+            parse("\"a\u{3000}b\"", "grid-template-areas")
+        else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            panic!("expected a GridTemplateAreas value");
+        };
+        // A single named cell "a\u{3000}b", not two cells "a" and "b".
+        assert_eq!(areas.row_count, 1);
+        assert_eq!(areas.column_count, 1);
+    }
+
+    #[test]
+    fn grid_template_areas_rejects_vertical_tab_as_trash_not_whitespace() {
+        // U+000B LINE TABULATION is Unicode `White_Space` but not CSS
+        // whitespace (only tab/newline/space qualify) and not an ASCII
+        // ident code point either, so it must be a trash token — same
+        // shape as `grid_template_areas_rejects_trash_token`.
+        assert_eq!(parse("\"a\u{b}b\"", "grid-template-areas"), None);
     }
 
     #[test]
