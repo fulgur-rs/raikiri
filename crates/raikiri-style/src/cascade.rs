@@ -3662,12 +3662,20 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
         | PropertyValue::TextDecoration(_)
-        // `vertical-align: sub`/`super` describe a shift *relative to the
-        // parent's baseline*, but that relation is a used-value/layout
-        // concern (raikiri-paint scope, `VerticalAlign` doc's Non-goal
-        // note) — CSS 2.1 §10.8.1's computed value is still the bare
-        // specified keyword, so there is nothing for this function (phase
-        // 2, computed-value resolution) to resolve here either.
+        // `vertical-align`'s 6 keywords (`baseline`/`sub`/`super`/`middle`/
+        // `text-top`/`text-bottom`) describe a shift *relative to the
+        // parent's font metrics*, but that relation is a used-value/layout
+        // concern (raikiri-paint scope, `VerticalAlign` doc's "baseline
+        // shift 量の計算は raikiri-paint scope" note) — CSS 2.1 §10.8.1's
+        // computed value for these keywords is still the bare specified
+        // keyword, so there is nothing for this function (phase 2,
+        // inheritance-parent-relative resolution) to resolve. The
+        // `<length>` variant needs *own-node* font-size resolution (`em`/
+        // `rem`), which is phase 3's job
+        // (`crate::specified::SpecifiedValues::absolutize_with`'s
+        // `resolve_vertical_align` call, same split `FlexBasis` below
+        // uses) — not this function's, since it depends on the declaring
+        // node's own winners rather than the inheritance parent.
         | PropertyValue::VerticalAlign(_)
         // `font-style` carries no length at this crate's scope (only
         // `normal`/`italic` implemented, `FontStyle` doc) and does not
@@ -4146,8 +4154,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.text_decoration_style = shorthand.style;
             target.text_decoration_color = shorthand.color;
         }
-        // CSS 2.1 §10.8.1 vertical-align。non-inherited、cascade winner が
-        // specified keyword をそのまま computed value に反映。
+        // CSS 2.1 §10.8.1 vertical-align。non-inherited、cascade winner を
+        // このまま staging (`SpecifiedValues`) へ書き込む — `<length>`
+        // variant の絶対化 (`em`/`rem` 等) は phase 3
+        // (`SpecifiedValues::absolutize_with`'s `resolve_vertical_align`
+        // call) の役目でここでは行わない (`FlexBasis` arm と同型)。
         // `VerticalAlign` は Copy、by-value 代入で十分 (`BoxSizing` /
         // `TextDecorationLine` arm と同型)。
         PropertyValue::VerticalAlign(va) => target.vertical_align = va,
@@ -9255,6 +9266,42 @@ mod tests {
         use crate::property::BoxSizing;
         let cv = cascade_doc("", "p", Some("box-sizing: border-box"));
         assert_eq!(cv.box_sizing, BoxSizing::BorderBox);
+    }
+
+    // ── vertical-align wire-through (CSS 2.1 §10.8.1) ──
+
+    #[test]
+    fn vertical_align_new_keywords_wired_through_cascade_from_inline_style() {
+        // parser → PropertyValue::VerticalAlign → apply_value →
+        // SpecifiedValues::finalize → ComputedValues の end-to-end 疎通 —
+        // `middle`/`text-top`/`text-bottom` (`box_sizing_wired_through_cascade_from_inline_style`
+        // と同じ pattern)。
+        use crate::property::VerticalAlign;
+        assert_eq!(
+            cascade_doc("", "span", Some("vertical-align: middle")).vertical_align,
+            VerticalAlign::Middle
+        );
+        assert_eq!(
+            cascade_doc("", "span", Some("vertical-align: text-top")).vertical_align,
+            VerticalAlign::TextTop
+        );
+        assert_eq!(
+            cascade_doc("", "span", Some("vertical-align: text-bottom")).vertical_align,
+            VerticalAlign::TextBottom
+        );
+    }
+
+    #[test]
+    fn vertical_align_length_absolutizes_against_own_font_size_through_cascade() {
+        // `font-size: 20px; vertical-align: 2em` on the same element →
+        // phase 3 (`resolve_vertical_align`, called from
+        // `SpecifiedValues::absolutize_with`) absolutizes against this
+        // element's own (already phase-2-resolved) `font-size`, not the
+        // inherited parent's — 2 * 20 = 40px.
+        use crate::property::{Length, VerticalAlign};
+        let cv = cascade_doc("", "span", Some("font-size: 20px; vertical-align: 2em"));
+        assert_eq!(cv.font_size, ComputedLength(20.0));
+        assert_eq!(cv.vertical_align, VerticalAlign::Length(Length::Px(40.0)));
     }
 
     // ── z-index wire-through (CSS2 §9.9.1) ──

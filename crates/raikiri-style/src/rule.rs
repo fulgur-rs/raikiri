@@ -1005,6 +1005,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_extra_length_after_vertical_align() {
+        // "10px 20px" — `parse_vertical_align`'s `<length>` fallback doesn't
+        // consume to end of declaration itself (mirrors every other
+        // single-value property parser); the trailing token is unconsumed
+        // garbage from `expect_exhausted`'s point of view and the whole
+        // declaration drops — mirrors `rejects_extra_length_after_font_size`.
+        let decls = parse_block("vertical-align: 10px 20px;");
+        assert!(decls.is_empty());
+    }
+
+    #[test]
+    fn rejects_extra_ident_after_vertical_align() {
+        // "middle top" — `top` is spec-valid (CSS 2.1 §10.8.1) but out of
+        // this crate's scope (`VerticalAlign` doc's "Scope carving"
+        // section), so it is unconsumed garbage from `expect_exhausted`'s
+        // point of view and the whole declaration drops, same shape as
+        // `rejects_extra_ident_after_text_indent` above.
+        let decls = parse_block("vertical-align: middle top;");
+        assert!(decls.is_empty());
+    }
+
+    #[test]
     fn still_accepts_important_after_value() {
         // regression guard: !important は exhaustive-consumption check の後でも
         // 引き続き受理されなければならない。

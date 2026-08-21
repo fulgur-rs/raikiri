@@ -181,7 +181,7 @@
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     Border, BorderColor, BorderStyle, FlexBasisValue, Length, LengthOrAuto, LengthOrNormal,
-    LineHeight,
+    LineHeight, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -1132,6 +1132,13 @@ pub fn resolve_font_size(
 /// — `padding` の `Px(0.0)` fallback と同じ側であり、border-width の
 /// "他に選びようがなかった値" 側ではない。
 ///
+/// **`vertical-align: <length>` も同じ側 (`letter-spacing`/`word-spacing`
+/// 寄り)** — [`resolve_vertical_align`] 経由でこの fallback を踏む場合
+/// (`1lh` を `line-height: normal` 下で書いた場合)、`0px` は CSS 2.1
+/// §10.8.1 の `<length>` 自身の spec verbatim ("The value `0cm` means the
+/// same as `baseline`.") と一致する — `0px` shift = `baseline` と同じ
+/// 効果であり、border-width の "他に選びようがなかった値" 側ではない。
+///
 /// この不整合は認識した上で **今回は直さない** — root 原因は
 /// [`used_line_height_length`] doc の "normal" wall そのもの (real font
 /// metrics が style 層に無い) であり、根本修正 (`ComputedLength` に
@@ -1196,6 +1203,48 @@ pub fn resolve_length_or_normal(
     match specified {
         LengthOrNormal::Normal => ComputedLength::ZERO,
         LengthOrNormal::Length(l) => resolve_length(l, font_size, own_line_height, ctx),
+    }
+}
+
+/// `vertical-align: baseline | sub | super | middle | text-top |
+/// text-bottom | <length>` の specified value を絶対化する (**phase 3** —
+/// 自 node 基準)。
+///
+/// CSS 2.1 §10.8.1 propdef: "Computed value: for `<percentage>` and
+/// `<length>` the absolute length, otherwise as specified" — 6 keyword は
+/// computed 層でもそのまま keyword、`<length>` だけが絶対化対象。
+///
+/// # 戻り値が [`VerticalAlign`] 自身であること (別の `ComputedVerticalAlign`
+/// 型を新設しない理由)
+///
+/// [`FlexBasisValue`]/[`ComputedFlexBasis`] のような specified/computed
+/// 型分離パターンをここでは**採らない** — `raikiri-paint` 側 (`walk.rs` の
+/// `vertical_align_shift_px`) が [`crate::computed::ComputedValues::vertical_align`]
+/// の型として [`VerticalAlign`] を直接引数に取っており、別の computed 専用
+/// 型へ差し替えると raikiri-paint 側の signature 変更を要求してしまう。本
+/// crate の scope はこの property の raikiri-paint 側 wiring には一切
+/// 触れないことなので、[`Length`] を絶対化した上で同じ [`VerticalAlign`]
+/// enum の [`VerticalAlign::Length`] variant へ詰め直して返す —
+/// [`crate::page`] の `fb` helper が [`ComputedFlexBasis`] を
+/// [`FlexBasisValue`] へ詰め直すのと構造は同じだが、そちら側の型変換
+/// (`Computed* → specified 型`) を経由せず、絶対化前後で常に同じ型のまま
+/// 完結する点が異なる。
+pub fn resolve_vertical_align(
+    specified: VerticalAlign,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> VerticalAlign {
+    match specified {
+        VerticalAlign::Baseline
+        | VerticalAlign::Sub
+        | VerticalAlign::Super
+        | VerticalAlign::Middle
+        | VerticalAlign::TextTop
+        | VerticalAlign::TextBottom => specified,
+        VerticalAlign::Length(l) => VerticalAlign::Length(Length::Px(
+            resolve_length(l, font_size, own_line_height, ctx).px(),
+        )),
     }
 }
 
@@ -2815,6 +2864,79 @@ mod tests {
                 &CTX
             ),
             ComputedFlexBasis::Auto,
+        );
+    }
+
+    /// [`resolve_vertical_align`]'s 6 bare-keyword variants are pass-through
+    /// — no length payload, nothing for phase 3 to absolutize (same shape
+    /// as [`resolve_flex_basis`]'s `Content` arm above).
+    #[test]
+    fn resolve_vertical_align_keywords_are_pass_through() {
+        for va in [
+            VerticalAlign::Baseline,
+            VerticalAlign::Sub,
+            VerticalAlign::Super,
+            VerticalAlign::Middle,
+            VerticalAlign::TextTop,
+            VerticalAlign::TextBottom,
+        ] {
+            assert_eq!(
+                resolve_vertical_align(va, ComputedLength(20.0), None, &CTX),
+                va,
+            );
+        }
+    }
+
+    /// `<length>` absolutizes against the declaring node's own `font-size`
+    /// (`em`) — the same basis `letter-spacing`/`word-spacing` use via
+    /// [`resolve_length_or_normal`].
+    #[test]
+    fn resolve_vertical_align_length_absolutizes_em() {
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Em(2.0)),
+                ComputedLength(10.0),
+                None,
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(20.0)),
+        );
+    }
+
+    /// §10.8.1 spec verbatim ("Raise (positive value) or lower (negative
+    /// value)") — negative `<length>` absolutizes without a non-negative
+    /// filter, same as `letter-spacing`/`margin-*`.
+    #[test]
+    fn resolve_vertical_align_length_preserves_negative_sign() {
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Px(-6.0)),
+                ComputedLength(10.0),
+                None,
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(-6.0)),
+        );
+    }
+
+    /// `own_line_height: None` (`normal` で解決不能) makes `1lh` fall back
+    /// to `Px(0.0)` — same [`resolve_length`] "Finding B" fallback
+    /// `resolve_flex_basis_falls_back_to_auto_when_lh_unresolvable` above
+    /// pins, but landing on the *benign* side of that doc's distinction:
+    /// `0px` shift here matches CSS 2.1 §10.8.1's own spec verbatim for
+    /// `<length>` ("The value `0cm` means the same as `baseline`."), not an
+    /// arbitrary "no better option" value (`resolve_length` doc's "Finding
+    /// B" section).
+    #[test]
+    fn resolve_vertical_align_length_falls_back_to_zero_when_lh_unresolvable() {
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Lh(2.0)),
+                ComputedLength(20.0),
+                None,
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(0.0)),
         );
     }
 

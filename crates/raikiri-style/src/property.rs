@@ -2548,19 +2548,50 @@ pub struct TextDecorationShorthand {
 ///   specified keyword そのまま (相対解決なし)。raikiri-paint がこの 3
 ///   keyword を実際の glyph 描画位置へ反映する (下記「baseline shift 量の
 ///   計算は raikiri-paint scope」節)。
-/// - **(b) 非対応、silent drop 継続**: `top` / `text-top` / `middle` /
-///   `bottom` / `text-bottom` keyword は spec-valid だが未実装。box
-///   alignment (line box 内の他 box との高さ比較) を要し、inline
-///   formatting context / line box model 抜きには計算できないため未実装
-///   — この 5 keyword を「parse は通すが raikiri-paint は shift 0 として
-///   扱う」形に緩めることは**しない**: そうすると、UA/author が `sub` /
-///   `super` (raikiri-paint が実際に shift する) より高い cascade priority
-///   で `top` 等を宣言した場合、cascade 上は正当に winner になるが
-///   raikiri-paint は無視するため、**現在は正しく shift している要素が
-///   silent に shift 0 へ後退する** — 今 silent-reject (`None`) のままなら
-///   その宣言自体が cascade に参加せず起きない regression である。5
-///   keyword 全てが raikiri-paint 側でも実装されるまでは、parse 側で先に
-///   受理しない方が安全。
+/// - **実装済み**: `middle` / `text-top` / `text-bottom` の 3 keyword
+///   (§10.8.1 spec verbatim):
+///   - `middle`: "Align the vertical midpoint of the box with the
+///     baseline of the parent box plus half the x-height of the parent."
+///   - `text-top`: "Align the top of the box with the top of the
+///     parent's content area."
+///   - `text-bottom`: "Align the bottom of the box with the bottom of
+///     the parent's content area."
+///
+///   いずれも `sub`/`super` と同じ基準 — **親の font metric だけ**
+///   (baseline / x-height / content area の top・bottom) で定まり、line
+///   box 内の他 box の extent を必要としない。`top`/`bottom` (下記
+///   「非対応、silent drop 継続」節) との違いはまさにここ。percentage /
+///   length を運ばないため computed value = specified keyword そのまま。
+/// - **実装済み**: `<length>` value (§10.8.1 spec verbatim: "Raise
+///   (positive value) or lower (negative value) the box by this
+///   distance. The value `0cm` means the same as `baseline`.")。基準
+///   (line-height / font metrics) を必要としない絶対値であり、既存の
+///   length resolver ([`crate::resolve::resolve_length`]、
+///   `letter-spacing`/`word-spacing` の `<length>` 成分と同じ経路) で
+///   そのまま近似なしに絶対化できる。sign 制限なし (spec が明示的に負値を
+///   許容、`letter-spacing`/`margin-*` と同じ扱い)。`<percentage>` は
+///   grammar 上の別の alternative であり本 variant には含まれない (下記
+///   「非対応: `<percentage>`」節)。
+///
+///   Computed value の型は specified と同じ [`VerticalAlign`] のまま —
+///   [`crate::computed::ComputedValues::vertical_align`] doc の「computed
+///   でも型を分けない理由」節参照。`@page` 側の phase-3 pipeline
+///   ([`crate::page`] の `absolutize_in_page_context` /
+///   `specified_layer_residue`) もこの variant 専用の match arm を持つ。
+/// - **(b) 非対応、silent drop 継続**: `top` / `bottom` keyword は
+///   spec-valid だが未実装 (§10.8.1 spec verbatim: `top` = "Align the top
+///   of the aligned subtree with the top of the line box."、`bottom` =
+///   "Align the bottom of the aligned subtree with the bottom of the
+///   line box.")。line box 内の **他 box すべての extent** を要する、真の
+///   inline formatting context / line box model 依存の値であり、
+///   `middle`/`text-top`/`text-bottom` の「親の font metric だけで定まる」
+///   性質とは計算可能性の質が異なる。raikiri-dom は現状 inline formatting
+///   context を持たない (`display: inline` の要素も他の block 要素と同じ
+///   独立した行として積み上がる) ため、IFC 自体の実装が前提になる —
+///   `middle`/`text-top`/`text-bottom` に適用した「parse を通し、
+///   raikiri-paint 側の実装待ちは 0px shift の暫定値で吸収する」形の緩和
+///   (下記「cascade-regression risk の受け入れ」節) では済まない、質的に
+///   大きい別 work として引き続き未実装のまま残す。
 /// - **(b) 非対応**: `<percentage>` value は spec-valid だが未実装、silent
 ///   drop (`None`)。CSS 2.1 §10.8.1 はこの percentage を要素自身の
 ///   `line-height` 基準で定義する (propdef の "Percentages: refer to the
@@ -2568,12 +2599,11 @@ pub struct TextDecorationShorthand {
 ///   initial value、宣言が無い要素の既定) の下では
 ///   [`crate::resolve::used_line_height_length`] が `None` を返す —
 ///   real font metrics を style 層に持たないため "normal" を絶対長化できない
-///   (同関数 doc の "normal" wall が canonical)。`sub`/`super` の shift 量
-///   (下記「baseline shift 量の計算は raikiri-paint scope」節) と違い、この
-///   percentage には spec 側の UA-default fallback (CSS Inline
-///   Layout Module Level 3 §4.2.3 の `baseline-shift` 相当記述) が存在しない
-///   ため、`line-height: normal` という最も一般的なケースを誠実に近似する
-///   手段が無い。汎用 length resolver
+///   (同関数 doc の "normal" wall が canonical)。`<length>` (上記
+///   「実装済み」節) と違い、この percentage には spec 側の UA-default
+///   fallback (CSS Inline Layout Module Level 3 §4.2.3 の `baseline-shift`
+///   相当記述) が存在しないため、`line-height: normal` という最も一般的な
+///   ケースを誠実に近似する手段が無い。汎用 length resolver
 ///   ([`crate::resolve::resolve_length`]、`Length::Percent` を "grammar 上
 ///   到達しない" 前提で `0px` に落とす) へそのまま通す実装は誤り —
 ///   `0%` は spec 上 `baseline` と同義だが、非 0 の percentage まで一律
@@ -2584,48 +2614,54 @@ pub struct TextDecorationShorthand {
 ///   [`crate::computed::ComputedValues::line_height`] を読む consumer を
 ///   持たず (line-height 自体、`normal` を実解決する行き先が現状存在
 ///   しない)、percentage 残滓を素通しして渡す先が無い。
-/// - **(b) 非対応**: `<length>` value も spec-valid だが未実装、silent drop
-///   (`None`)。percentage と異なりこちらは基準 (line-height / font
-///   metrics) を必要としない絶対値であり、既存の汎用 length resolver
-///   ([`crate::resolve::resolve_length`]、`border-*-width` /
-///   `line-height` の `<length>` 成分が既に使う) でそのまま近似なしに
-///   絶対化できる — 単体では tractable。それでも percentage と同じ bucket
-///   に留めて未実装のままにしているのは、この enum が
-///   [`PropertyValue::VerticalAlign`] の payload として `@page` 側の
-///   phase-3 pipeline ([`crate::page`] の `absolutize_in_page_context` /
-///   `specified_layer_residue`) にもそのまま流れるため。**両関数とも現状
-///   `PropertyValue::VerticalAlign(_)` を内側の `VerticalAlign` enum に
-///   対する wildcard として match している** — 新しい top-level
-///   `PropertyValue` variant の追加はどちらの関数の (それ自体は網羅的な)
-///   外側 match でも compile error として強制されるが、`VerticalAlign`
-///   内部への variant 追加だけではこの wildcard がそれを黙って吸収し、
-///   どちらの site も compile error を出さない。すなわち length を運ぶ
-///   variant を追加しても、この 2 箇所の分類更新を忘れたままビルドも既存
-///   test も素通りしうる — [`length_payload`] の doc が言う fail-quiet
-///   (catch-all が拡張漏れを compile error にせず黙って吸収する class) と
-///   同じ risk であり、単なる bookkeeping コストの話ではない
-///   ([`crate::page`] のテスト側 corpus 分類、詳細は同 module 参照)。
-///   `raikiri-style` 側の staging 追加 (既存の `padding` / `margin` /
-///   `width` / `height` と同型) 自体は raikiri-paint 側の変更と独立に
-///   着手できるが、この `@page` 側の fail-quiet gap を塞ぐ作業は独立ではなく
-///   同じ変更に付随する — `<percentage>` が単独では着手できない以上、
-///   `<length>` だけを切り出して先に landing するより、両者をまとめて
-///   1 つの follow-up として着手する方がこの gap を確実に塞ぎやすい。
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
 /// - **(a) spec-invalid**: 上記以外の ident は silent drop = `None`。
-/// - **baseline shift 量の計算は raikiri-paint scope**: `sub` / `super` が
-///   指す実際の shift 量計算 (parent's used font-size を基準にした px offset)
+/// - **baseline shift 量の計算は raikiri-paint scope**: `sub` / `super` /
+///   `middle` / `text-top` / `text-bottom` が指す実際の shift 量計算
+///   (parent's used font-size ないし font metrics を基準にした px offset)
 ///   と glyph 描画位置への反映は raikiri-paint 側の責務。本 crate はこの
-///   computed value (`Sub` / `Super` の bare keyword) を運ぶだけで、shift
-///   量の算出は行わない。
+///   5 keyword の bare keyword、および `<length>` の絶対化済み px 値を
+///   運ぶだけで、shift 量の算出は行わない。raikiri-paint は現状 `sub`/
+///   `super` の 2 keyword だけを明示的な match arm で shift 計算しており、
+///   他 (`middle`/`text-top`/`text-bottom`/`<length>` を含む) は
+///   `#[non_exhaustive]` wildcard fallback 経由の 0px shift で暫定着地する
+///   (下記「cascade-regression risk の受け入れ」節)。
+///
+/// # cascade-regression risk の受け入れ (`Middle`/`TextTop`/`TextBottom`)
+///
+/// この節は本 doc の以前の版が明文化していた原則からの意図的な逸脱を記録
+/// する。以前の版は「raikiri-paint が shift を実装していない keyword は
+/// parse 段でも受理しない」方針を採っていた — 理由: UA/author が (実装済み
+/// の) `sub`/`super` より高い cascade priority で (未実装の) keyword を
+/// 宣言した場合、その宣言は cascade 上正当に winner になるが raikiri-paint
+/// は shift 0 として扱うため、**それまで正しく shift していた要素が
+/// silent に shift 0 へ後退する** — 「未対応の値が単に無効果」ではなく
+/// 「対応済みの値が押しのけられて後退する」という質的に異なるリスクだった
+/// ためである。
+///
+/// `Middle`/`TextTop`/`TextBottom` はこの原則の明示的な例外として追加した。
+/// 根拠: (1) 3 keyword とも `sub`/`super` と同じ「親の font metric だけで
+/// 定まる」基準を持ち (上記「実装済み」節)、計算可能性の質は `sub`/`super`
+/// と同等 — `top`/`bottom` (line box 全体依存) とは異なる。(2)
+/// raikiri-paint 側の shift 計算 arm はもともと `#[non_exhaustive]`
+/// wildcard で「`sub`/`super` 以外の全 keyword」を一様に 0px shift として
+/// 扱う設計だったため、この 3 keyword が増えても新種の failure mode は
+/// 生じない — 追加される regression risk の形は `sub`/`super` が既に
+/// 許容しているものと同型であり、対象 keyword が増えるだけである。
+/// `top`/`bottom` は引き続き対象外 (上記「非対応、silent drop 継続」節)、
+/// `<percentage>` も対象外 (別種の raikiri-style 内部 gap、上記
+/// 「非対応: `<percentage>`」節 — cascade-regression risk とは無関係)。
 ///
 /// `Default` は derive しない — 37n sibling [`TextDecorationShorthand`] と
 /// 同じ convention (spec default は初期化側
 /// [`crate::computed::ComputedValues::initial`] が直接指定する)。
+///
+/// `Eq` は derive しない — [`Self::Length`] が運ぶ [`Length`] が `f32`
+/// field を持つため ([`FlexBasisValue`] と同じ制約)。
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VerticalAlign {
     /// `baseline` — spec initial value。box の baseline を親の baseline に
     /// 揃える (追加のシフトなし、§10.8.1 spec verbatim: "Align the baseline
@@ -2639,6 +2675,21 @@ pub enum VerticalAlign {
     /// superscripts of the parent's box. (This value has no effect on the
     /// font size of the element's text.)" (§10.8.1 spec verbatim)。
     Super,
+    /// `middle` — "Align the vertical midpoint of the box with the
+    /// baseline of the parent box plus half the x-height of the parent."
+    /// (§10.8.1 spec verbatim)。
+    Middle,
+    /// `text-top` — "Align the top of the box with the top of the
+    /// parent's content area." (§10.8.1 spec verbatim)。
+    TextTop,
+    /// `text-bottom` — "Align the bottom of the box with the bottom of
+    /// the parent's content area." (§10.8.1 spec verbatim)。
+    TextBottom,
+    /// `<length>` — "Raise (positive value) or lower (negative value) the
+    /// box by this distance. The value `0cm` means the same as
+    /// `baseline`." (§10.8.1 spec verbatim)。computed 層では絶対化済みの
+    /// `Length::Px` を運ぶ ([`Self`] doc の「実装済み: `<length>`」節参照)。
+    Length(Length),
 }
 
 /// `z-index` property の value。
@@ -3843,11 +3894,12 @@ pub enum PropertyValue {
     /// (shorthand key は longhand の後に置く既存 convention — [`Self::Padding`] /
     /// [`Self::Margin`] / [`Self::Border`] / [`Self::Overflow`] と同じ並び)
     TextDecoration(TextDecorationShorthand),
-    /// `vertical-align: baseline | sub | super` — **non-inherited**、initial:
+    /// `vertical-align: baseline | sub | super | middle | text-top |
+    /// text-bottom | <length>` — **non-inherited**、initial:
     /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1
     /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>)。
-    /// computed value = specified keyword ([`VerticalAlign`] doc 参照、
-    /// percentage/length を運ばないため相対解決なし)。
+    /// computed value = keyword はそのまま、`<length>` は絶対化済み
+    /// ([`VerticalAlign`] doc の "Scope carving" 節参照)。
     /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
@@ -4573,9 +4625,10 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
             parse_text_decoration_shorthand(input).map(PropertyValue::TextDecoration)
         }
         // CSS 2.1 §10.8.1 vertical-align, restricted to `baseline` / `sub` /
-        // `super` (minimal scope — `VerticalAlign` doc's "Scope carving"
-        // section). initial `baseline`, not inherited, computed value =
-        // specified keyword.
+        // `super` / `middle` / `text-top` / `text-bottom` / `<length>`
+        // (`VerticalAlign` doc's "Scope carving" section — `top` / `bottom`
+        // / `<percentage>` remain out of scope). initial `baseline`, not
+        // inherited.
         "vertical-align" => parse_vertical_align(input).map(PropertyValue::VerticalAlign),
         // CSS Fonts 4 §2.4 font-style. grammar: `normal | italic | left |
         // right | oblique <angle [-90deg,90deg]>?`, restricted here to
@@ -6855,30 +6908,46 @@ fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDec
     })
 }
 
-/// `vertical-align: <ident>` を parse する (CSS 2.1 §10.8.1
+/// `vertical-align: <ident> | <length>` を parse する (CSS 2.1 §10.8.1
 /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>)。
 ///
-/// ASCII case-insensitive で ident を比較する (37n sibling [`parse_direction`]
-/// / [`parse_text_decoration_style`] と同 flavor)。
+/// Ident は ASCII case-insensitive で比較する (37n sibling [`parse_direction`]
+/// / [`parse_text_decoration_style`] と同 flavor)。ident 側を先に
+/// `try_parse` で試し、ident token でなければ (= dimension/number token
+/// の可能性があれば) `<length>` として再挑戦する — [`parse_flex_basis`]
+/// / [`parse_letter_or_word_spacing`] と同じ「keyword 群 → length
+/// フォールバック」構造。
 ///
-/// # Scope carving (minimal scope、[`VerticalAlign`] doc-comment に詳述)
+/// # Scope carving ([`VerticalAlign`] doc-comment に詳述)
 ///
-/// - **(b) 非対応**: `top` / `text-top` / `middle` / `bottom` /
-///   `text-bottom` keyword、`<percentage>` / `<length>` value は silent
-///   drop = `None` — [`VerticalAlign`] doc 参照。
+/// - **(b) 非対応**: `top` / `bottom` keyword、`<percentage>` value は
+///   silent drop = `None` — [`VerticalAlign`] doc 参照 (`top`/`bottom` は
+///   inline formatting context 依存、`<percentage>` は
+///   `line-height: normal` 時の未解決 gap)。
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
-/// - **(a) spec-invalid**: `baseline` / `sub` / `super` 以外の ident は
-///   silent drop = `None`。
+/// - **(a) spec-invalid**: `baseline` / `sub` / `super` / `middle` /
+///   `text-top` / `text-bottom` 以外の ident、および `<length>` grammar に
+///   合わない token は silent drop = `None`。
+/// - `<length>` に non-negative filter は掛けない — spec が "Raise
+///   (positive value) or lower (negative value)" と明示的に負値を許容する
+///   ([`parse_letter_or_word_spacing`] と同じ判断、`padding`/`border-width`
+///   の non-negative constraint とは対照的)。percentage は不可
+///   (`parse_length_value` の `allow_percentage = false`)。
 fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlign> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "baseline" => Some(VerticalAlign::Baseline),
-        "sub" => Some(VerticalAlign::Sub),
-        "super" => Some(VerticalAlign::Super),
-        _ => None,
+    if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
+        return match ident.to_ascii_lowercase().as_str() {
+            "baseline" => Some(VerticalAlign::Baseline),
+            "sub" => Some(VerticalAlign::Sub),
+            "super" => Some(VerticalAlign::Super),
+            "middle" => Some(VerticalAlign::Middle),
+            "text-top" => Some(VerticalAlign::TextTop),
+            "text-bottom" => Some(VerticalAlign::TextBottom),
+            _ => None,
+        };
     }
+    parse_length_value(input, false).map(VerticalAlign::Length)
 }
 
 /// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
@@ -11638,9 +11707,11 @@ mod tests {
 
     // ── vertical-align (CSS 2.1 §10.8.1) ──
     //
-    // Value grammar (minimal scope — `VerticalAlign` doc's "Scope carving"
-    // section): baseline | sub | super. Initial: baseline / Inherited: no /
-    // Computed value: specified keyword.
+    // Value grammar (`VerticalAlign` doc's "Scope carving" section):
+    // baseline | sub | super | middle | text-top | text-bottom | <length>.
+    // `top` / `bottom` / `<percentage>` remain out of scope. Initial:
+    // baseline / Inherited: no / Computed value: keyword as specified,
+    // `<length>` absolutized.
 
     #[test]
     fn vertical_align_parse_all_keywords() {
@@ -11655,6 +11726,18 @@ mod tests {
         assert_eq!(
             parse("super", "vertical-align"),
             Some(PropertyValue::VerticalAlign(VerticalAlign::Super))
+        );
+        assert_eq!(
+            parse("middle", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Middle))
+        );
+        assert_eq!(
+            parse("text-top", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::TextTop))
+        );
+        assert_eq!(
+            parse("text-bottom", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::TextBottom))
         );
     }
 
@@ -11672,15 +11755,55 @@ mod tests {
             parse("SUPER", "vertical-align"),
             Some(PropertyValue::VerticalAlign(VerticalAlign::Super))
         );
+        assert_eq!(
+            parse("Middle", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Middle))
+        );
+        assert_eq!(
+            parse("TEXT-TOP", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::TextTop))
+        );
+        assert_eq!(
+            parse("Text-Bottom", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::TextBottom))
+        );
+    }
+
+    #[test]
+    fn vertical_align_parse_length() {
+        assert_eq!(
+            parse("10px", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Length(
+                Length::Px(10.0)
+            )))
+        );
+        assert_eq!(
+            parse("1.5em", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Length(
+                Length::Em(1.5)
+            )))
+        );
+    }
+
+    #[test]
+    fn vertical_align_parse_length_allows_negative() {
+        // §10.8.1 spec verbatim: "Raise (positive value) or lower
+        // (negative value) the box by this distance." — no non-negative
+        // filter, same as `letter-spacing`/`margin-*`.
+        assert_eq!(
+            parse("-4px", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Length(
+                Length::Px(-4.0)
+            )))
+        );
     }
 
     #[test]
     fn vertical_align_rejects_unimplemented_keywords() {
-        // (b) not supported — `top` / `text-top` / `middle` / `bottom` /
-        // `text-bottom` and the `<percentage>`/`<length>` value forms are
-        // explicit follow-up (`VerticalAlign` doc's "Scope carving"
-        // section), not (a) spec-invalid.
-        for kw in ["top", "text-top", "middle", "bottom", "text-bottom"] {
+        // (b) not supported — `top` / `bottom` are explicit follow-up
+        // (`VerticalAlign` doc's "Scope carving" section: true inline
+        // formatting context dependency), not (a) spec-invalid.
+        for kw in ["top", "bottom"] {
             assert_eq!(parse(kw, "vertical-align"), None);
         }
     }
@@ -11700,19 +11823,30 @@ mod tests {
     }
 
     #[test]
-    fn vertical_align_rejects_non_ident() {
-        assert_eq!(parse("16px", "vertical-align"), None);
+    fn vertical_align_rejects_percentage() {
+        // (b) not supported — `<percentage>` is explicit follow-up
+        // (`VerticalAlign` doc's "Scope carving" section: unresolved
+        // `line-height: normal` gap), distinct from the now-implemented
+        // `<length>` grammar alternative.
         assert_eq!(parse("50%", "vertical-align"), None);
     }
 
     #[test]
     fn vertical_align_key_maps_to_vertical_align_property_key() {
-        let v = PropertyValue::VerticalAlign(VerticalAlign::Baseline);
-        assert_eq!(v.key(), PropertyKey::VerticalAlign);
-        let v = PropertyValue::VerticalAlign(VerticalAlign::Sub);
-        assert_eq!(v.key(), PropertyKey::VerticalAlign);
-        let v = PropertyValue::VerticalAlign(VerticalAlign::Super);
-        assert_eq!(v.key(), PropertyKey::VerticalAlign);
+        for va in [
+            VerticalAlign::Baseline,
+            VerticalAlign::Sub,
+            VerticalAlign::Super,
+            VerticalAlign::Middle,
+            VerticalAlign::TextTop,
+            VerticalAlign::TextBottom,
+            VerticalAlign::Length(Length::Px(3.0)),
+        ] {
+            assert_eq!(
+                PropertyValue::VerticalAlign(va).key(),
+                PropertyKey::VerticalAlign
+            );
+        }
     }
 
     // ── font-style (CSS Fonts 4 §2.4) ──
