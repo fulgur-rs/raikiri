@@ -19,5 +19,12 @@ rustc-hash    = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 
+# `io::safe_open`'s unix arm passes O_NOFOLLOW | O_NONBLOCK to the open
+# syscall (crates/raikiri-traits/src/io.rs). Target-gated: non-unix builds
+# never reference the crate, so they don't gain a dependency they never
+# compile against.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [lints]
 workspace = true

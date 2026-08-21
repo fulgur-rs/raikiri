@@ -8,8 +8,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
-libc      = "0.2"
-tiny-skia = { workspace = true }
+raikiri-traits = { workspace = true }
+tiny-skia      = { workspace = true }
 
 [dev-dependencies]
 anyrender           = { workspace = true }

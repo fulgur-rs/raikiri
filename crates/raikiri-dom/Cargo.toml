@@ -8,7 +8,6 @@ license.workspace = true
 
 [dependencies]
 bitflags       = "2"
-libc           = "0.2"
 parley         = { workspace = true }
 raikiri-style  = { workspace = true }
 raikiri-traits = { workspace = true }
