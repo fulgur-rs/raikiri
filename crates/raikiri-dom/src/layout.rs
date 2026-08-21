@@ -6845,6 +6845,51 @@ mod tests {
     }
 
     #[test]
+    fn bridge_grid_maps_grid_auto_columns_fit_content() {
+        // `fit-content(<length-percentage>)` (CSS Grid 1 §7.2.1) — no other
+        // `bridge_grid` test constructs `ComputedGridTrackSize::FitContent`,
+        // so `grid_track_size_to_taffy`'s `FitContent` arm (both the px and
+        // percentage forms) was previously unreached by any test.
+        let mut cv = ComputedValues::initial();
+        cv.grid_auto_columns = std::sync::Arc::new(vec![
+            ComputedGridTrackSize::FitContent(ComputedLengthPercentage::Px(80.0)),
+            ComputedGridTrackSize::FitContent(ComputedLengthPercentage::Percent(40.0)),
+        ]);
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_grid(&mut style, &cv, &mut diag);
+        assert_eq!(
+            style.grid_auto_columns,
+            vec![
+                TrackSizingFunction {
+                    min: MinTrackSizingFunction::auto(),
+                    max: MaxTrackSizingFunction::fit_content_px(80.0),
+                },
+                TrackSizingFunction {
+                    min: MinTrackSizingFunction::auto(),
+                    max: MaxTrackSizingFunction::fit_content_percent(0.4),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn grid_repeat_count_to_taffy_maps_auto_fill_and_auto_fit() {
+        // `repeat(auto-fill, ...)` / `repeat(auto-fit, ...)` (CSS Grid 1
+        // §7.2.3.2) — the other `bridge_grid` track-list tests only
+        // exercise `GridRepeatCount::Count(_)`, so the two auto-repeat
+        // variants had no direct coverage.
+        assert_eq!(
+            grid_repeat_count_to_taffy(GridRepeatCount::AutoFill),
+            TaffyRepetitionCount::AutoFill
+        );
+        assert_eq!(
+            grid_repeat_count_to_taffy(GridRepeatCount::AutoFit),
+            TaffyRepetitionCount::AutoFit
+        );
+    }
+
+    #[test]
     fn bridge_alignment_maps_justify_items_and_justify_self() {
         let mut cv = ComputedValues::initial();
         cv.justify_items = SelfAlignmentValue::Center;
@@ -6983,6 +7028,65 @@ mod tests {
              got a.y={}, b.y={}",
             a_loc.y,
             b_loc.y
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_named_line_after_repeat_resolves_to_the_correct_taffy_grid_line() {
+        // Regression test for the interleaving contract between
+        // raikiri-style's `GridTrackList::line_names` (one entry per
+        // `<line-names>?` production, i.e. `components.len() + 1` entries —
+        // CSS Grid 1 §7.2.1 `<track-list>` grammar) and taffy's
+        // `NamedLineResolver`, which advances an internal line counter once
+        // per name-list entry and additionally steps across an unrolled
+        // `repeat()`'s own tracks when it consumes one. A child placed with
+        // `grid-column-start: z`, where `z` is named right after a
+        // `repeat(2, [b] 50px)` block, must resolve to the grid line
+        // following the 100px + 50px + 50px tracks that precede it — this
+        // can only be told apart from an off-by-one in that bookkeeping by
+        // checking where taffy's own grid algorithm actually places the
+        // child, not by asserting on the bridged `taffy::Style` value.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid_container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:[a] 100px repeat(2, [b] 50px) [z] 100px"),
+        );
+        let cell_first = doc.append_element(
+            Some(grid_container),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:1;height:20px"),
+        );
+        let cell_z = doc.append_element(
+            Some(grid_container),
+            "div",
+            Style::default(),
+            Some("grid-column:z;grid-row:1;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let first_loc = doc.nodes[cell_first].unrounded_layout.location;
+        let z_loc = doc.nodes[cell_z].unrounded_layout.location;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (z_loc.x - first_loc.x - 200.0).abs() < 0.5,
+            "line `z` follows a 100px track and a repeat(2, 50px) block \
+             (100px total), so it should sit 200px to the right of line 1, \
+             got first.x={}, z.x={}",
+            first_loc.x,
+            z_loc.x
         );
     }
 }
