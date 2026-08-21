@@ -1549,13 +1549,13 @@ pub enum ContentComponent {
 /// は `inline`、not inherited。
 ///
 /// 現状受理する keyword は `block` / `inline` / `inline-block`
-/// / `none` / `flex` / `grid` の 6 値。`table*` / `list-item` /
-/// `flow-root` (standalone) / `contents` 等 spec-valid だが未実装
+/// / `none` / `flex` / `grid` / `contents` の 7 値。`table*` /
+/// `list-item` / `flow-root` (standalone) 等 spec-valid だが未実装
 /// (将来対応) の keyword は `parse_display` が `None` を返し、
 /// declaration が silent drop される (rule.rs 側 invalid-value drop path)。
 ///
 /// `#[non_exhaustive]`: variant 追加を non-breaking にする (InlineBlock /
-/// None / Flex / Grid 追加は本 attribute 経由で forward-compatible)。
+/// None / Flex / Grid / Contents 追加は本 attribute 経由で forward-compatible)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayValue {
@@ -1597,6 +1597,73 @@ pub enum DisplayValue {
     /// <https://www.w3.org/TR/css-display-3/#typedef-display-inside>
     /// <https://www.w3.org/TR/css-display-3/#the-display-properties>
     Grid,
+    /// `contents` — CSS Display Module Level 3 §2.4 "Showing or Hiding an
+    /// Element: the display-box keywords, contents"
+    /// <https://www.w3.org/TR/css-display-3/#valdef-display-contents>: the
+    /// element itself generates no box at all — as if it had been replaced
+    /// in the document tree by its children (and any pseudo-elements it
+    /// generates). Contrast with [`DisplayValue::None`], which suppresses
+    /// box generation for the element **and** its whole subtree.
+    ///
+    /// # Consumer-side box generation gap (known, not worked around here)
+    ///
+    /// Parsing, cascading, and inheritance treat `contents` like any other
+    /// keyword — none of that requires knowing the element's position in
+    /// the box tree, so this crate's side is complete. Actually
+    /// **generating** the correct box tree for `contents` is a different
+    /// problem: the layout tree builder has to promote the element's
+    /// children up to take its own place, skipping its own box while its
+    /// children still lay out as normal. That is a tree transformation, not
+    /// a value mapping, and this crate has no layout tree to transform (it
+    /// only produces per-element [`crate::computed::ComputedValues`]) — so
+    /// it is out of scope here by construction.
+    ///
+    /// At the time this variant was added, raikiri-dom's `bridge_display`
+    /// (the function that maps [`DisplayValue`] to `taffy::Style::display`)
+    /// has a catch-all arm that maps any display type it does not
+    /// specifically recognize to a plain block box, and `taffy`'s own
+    /// `Display`/`BoxGenerationMode` types have no "generate no box, but
+    /// still lay out children" mode to map `contents` onto correctly
+    /// either way. So a `display: contents` element will incorrectly still
+    /// generate a box there (a spurious box, not merely an approximation)
+    /// until real children-promotion support lands on the consumer side.
+    /// That gap is intentionally not papered over here: mapping `Contents`
+    /// to `Block` at the cascade layer would make the wrong behavior
+    /// unobservable instead of fixing it.
+    ///
+    /// A second, independent consumer reads this field directly rather
+    /// than through the taffy bridge above: raikiri-paint's
+    /// `vertical_align_shift_px` (`walk.rs`) gates its `vertical-align`
+    /// `sub`/`super` shift on `matches!(display, Inline | InlineBlock)`.
+    /// Before this variant existed, `display: contents` failed to parse
+    /// and the declaration was dropped, so an element that specified it
+    /// kept whatever `display` its other declarations (or the `Inline`
+    /// initial value) produced — which could satisfy that gate. Now that
+    /// `display: contents` parses and computes to `Contents`, such an
+    /// element no longer matches the gate and the shift is not applied.
+    /// This happens to move the element closer to spec-correct (per CSS2
+    /// §10.8 "Line height calculations: the 'line-height' and
+    /// 'vertical-align' properties" and CSS Inline 3, the property applies
+    /// to inline-level and table-cell boxes, and a `contents` element has
+    /// no box of its own to shift) — but it is a real, previously-untested
+    /// paint-visible behavior change introduced by this crate's cascade
+    /// output, worth knowing about independently of the box-generation gap
+    /// above.
+    ///
+    /// # Root element (not yet implemented)
+    ///
+    /// CSS Display Module Level 3 §2.7 "Automatic Box Type Transformations"
+    /// <https://www.w3.org/TR/css-display-3/#transformations>, "The Root
+    /// Element's Principal Box" subsection, verbatim: "a `display` of
+    /// `contents` computes to `block` on the root element." This crate
+    /// **does** track which element is the root during the inheritance walk
+    /// (`crate::cascade::resolve_inheritance`'s root-element detection,
+    /// used today to pick the `rem`/`rlh` resolution basis — see that
+    /// function's doc) — but that tracking is not wired into `display`
+    /// computation for any variant, so this root-element blockification
+    /// rule for `contents` is not implemented (nor is any other
+    /// `display`-specific root transformation).
+    Contents,
 }
 
 /// `flex-direction` property の value。
@@ -3174,7 +3241,7 @@ pub enum ClearValue {
 /// | others | same as specified |
 ///
 /// この crate の [`DisplayValue`] scope (`block` / `inline` / `inline-block`
-/// / `none` / `flex` / `grid`) に絞ると、表の中段に該当するのは
+/// / `none` / `flex` / `grid` / `contents`) に絞ると、表の中段に該当するのは
 /// [`DisplayValue::Inline`] と [`DisplayValue::InlineBlock`] の 2 variant
 /// だけ ([`DisplayValue`] は table 系 keyword を実装していない)。
 /// [`DisplayValue::Flex`] / [`DisplayValue::Grid`] は表に**登場しない**
@@ -3190,6 +3257,18 @@ pub enum ClearValue {
 /// same as specified」の一般ルールには**委ねない** — `None` がその一般
 /// ルールと同じ結果になるのは偶然の一致であり、将来 [`resolve_overflow`]
 /// 型の fail-safe 拡張で意味が変わりうる区別を明示するため)。
+///
+/// # `display: contents` も強制変換の対象外 (§9.7 とは別の spec 根拠)
+///
+/// CSS2 §9.7 の表自体は `contents` を扱わない (`contents` は CSS2 に無い
+/// 新しい keyword)。代わりに CSS Display Module Level 3 §2.7 "Automatic
+/// Box Type Transformations"
+/// <https://www.w3.org/TR/css-display-3/#transformations> がこの表を含む
+/// blockification 全般について verbatim で述べる: "This has no effect on
+/// display types that generate no box at all, such as `display: none` or
+/// `display: contents`." — floated `contents` 要素はそもそも box を
+/// 生成しないため、float によるこの強制変換自体が適用されない
+/// ([`DisplayValue::None`] と同じ結論だが、根拠となる spec 文は別)。
 ///
 /// # 同一 node の cross-field dependency
 ///
@@ -3214,6 +3293,10 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
     }
     match display {
         DisplayValue::None => DisplayValue::None,
+        // 関数 doc の「`display: contents` も強制変換の対象外」節 —
+        // box を生成しない display type には blockification 自体が
+        // 適用されない (CSS Display Module Level 3 §2.7 verbatim)。
+        DisplayValue::Contents => DisplayValue::Contents,
         DisplayValue::Inline | DisplayValue::InlineBlock => DisplayValue::Block,
         // `DisplayValue::None` の doc 直上の rationale と同じ理由で、この
         // arm もあえて `_` に潰さない — `Block` / `Flex` / `Grid` を明示
@@ -6557,7 +6640,7 @@ fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
 ///
 /// CSS Display 3 §2 "Box Layout Modes: the display property"
 /// <https://www.w3.org/TR/css-display-3/#propdef-display>。現状受理する
-/// keyword は 6 つ:
+/// keyword は 7 つ:
 ///
 /// - `block` — `<display-outside>` (block flow)
 /// - `inline` — `<display-outside>` (inline flow、initial value)
@@ -6567,12 +6650,14 @@ fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
 ///   により `block flex` と等価
 /// - `grid` — `<display-inside>` (§2.2) keyword、outer-defaulting rule
 ///   により `block grid` と等価
+/// - `contents` — `<display-box>` (§2.4)、要素自身が box を生成しない
+///   ([`DisplayValue::Contents`] doc 参照)
 ///
 /// 他 keyword (`inline-flex` / `inline-grid` / `table*` / `list-item` /
-/// `flow-root` / `contents` 等) は spec-valid だが未実装のため silent drop
-/// (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
-/// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
-/// keyword は ASCII case-insensitive)。
+/// `flow-root` 等) は spec-valid だが未実装のため silent drop (`None`)。ASCII
+/// case-insensitive で ident を比較する (CSS Values 3 §3.1 "Pre-defined
+/// Keywords" <https://www.w3.org/TR/css-values-3/#keywords>: keyword は
+/// ASCII case-insensitive)。
 fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
     // 37n sibling multi-keyword idiom (parse_string_fetch / parse_content_part /
     // parse_content_text_keyword) に揃える。ASCII case-insensitive matching は
@@ -6585,6 +6670,7 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         "none" => Some(DisplayValue::None),
         "flex" => Some(DisplayValue::Flex),
         "grid" => Some(DisplayValue::Grid),
+        "contents" => Some(DisplayValue::Contents),
         _ => None,
     }
 }
@@ -8656,18 +8742,27 @@ mod tests {
     }
 
     #[test]
+    fn display_parse_contents() {
+        // CSS Display 3 §2.4 <display-box> keyword — element generates no
+        // box of its own, children/pseudo-elements still generate boxes.
+        assert_eq!(
+            parse("contents", "display"),
+            Some(PropertyValue::Display(DisplayValue::Contents))
+        );
+    }
+
+    #[test]
     fn display_rejects_unknown_ident() {
-        // block / inline / inline-block / none / flex / grid 以外は
+        // block / inline / inline-block / none / flex / grid / contents 以外は
         // spec-valid でも未実装のため silent drop。
-        // inline-flex / inline-grid / table* / list-item / flow-root /
-        // contents は将来の layout 対応で扱う予定。
+        // inline-flex / inline-grid / table* / list-item / flow-root は
+        // 将来の layout 対応で扱う予定。
         assert_eq!(parse("inline-flex", "display"), None);
         assert_eq!(parse("inline-grid", "display"), None);
         assert_eq!(parse("table", "display"), None);
         assert_eq!(parse("table-row", "display"), None);
         assert_eq!(parse("list-item", "display"), None);
         assert_eq!(parse("flow-root", "display"), None);
-        assert_eq!(parse("contents", "display"), None);
     }
 
     #[test]
@@ -8710,6 +8805,14 @@ mod tests {
         assert_eq!(
             parse("Grid", "display"),
             Some(PropertyValue::Display(DisplayValue::Grid))
+        );
+        assert_eq!(
+            parse("CONTENTS", "display"),
+            Some(PropertyValue::Display(DisplayValue::Contents))
+        );
+        assert_eq!(
+            parse("Contents", "display"),
+            Some(PropertyValue::Display(DisplayValue::Contents))
         );
     }
 
@@ -12222,6 +12325,7 @@ mod tests {
             DisplayValue::None,
             DisplayValue::Flex,
             DisplayValue::Grid,
+            DisplayValue::Contents,
         ] {
             assert_eq!(
                 resolve_display_for_float(display, FloatValue::None),
@@ -12273,6 +12377,20 @@ mod tests {
             assert_eq!(
                 resolve_display_for_float(DisplayValue::None, float),
                 DisplayValue::None
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_display_for_float_leaves_contents_unchanged() {
+        // CSS Display 3 §2.7 verbatim: blockification "has no effect on
+        // display types that generate no box at all, such as display:
+        // none or display: contents" — so floating a `contents` element
+        // must not force it to `block` either.
+        for float in [FloatValue::Left, FloatValue::Right] {
+            assert_eq!(
+                resolve_display_for_float(DisplayValue::Contents, float),
+                DisplayValue::Contents
             );
         }
     }

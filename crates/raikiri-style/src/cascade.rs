@@ -8084,6 +8084,18 @@ mod tests {
     }
 
     #[test]
+    fn author_display_contents_computes_through_cascade() {
+        // CSS Display 3 §2.4 `contents` — same end-to-end pipeline pin as
+        // `author_display_flex_and_grid_compute_through_cascade` above.
+        // `ComputedValues.display` reaching `DisplayValue::Contents` here
+        // is this crate's whole scope for this keyword — see
+        // `DisplayValue::Contents`'s doc for the known consumer-side box
+        // generation gap this does not (and should not) work around.
+        let cv = cascade_with_ua("", "div { display: contents }", "div", None);
+        assert_eq!(cv.display, DisplayValue::Contents);
+    }
+
+    #[test]
     fn author_flex_container_longhands_compute_through_cascade() {
         // End-to-end pipeline pin (parse -> cascade -> ComputedValues) for
         // the individual flex-container properties this task adds — sibling
