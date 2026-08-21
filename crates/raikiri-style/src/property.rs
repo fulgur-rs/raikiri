@@ -7957,7 +7957,7 @@ fn parse_text_shadow_item(input: &mut Parser<'_, '_>) -> Option<TextShadowItem> 
     }
 
     // length run は必須 (spec grammar 上 `<length>{2,3}` に `?` が無い) —
-    // 0 slot でも `<color>` だけが埋まる可能性は無いが、[`parse_border_shorthand`]
+    // 0 slot でも `<color>` だけが埋まる可能性は無いが、`parse_border_shorthand`
     // の「at least 1 component 必須」とは違い、本 grammar では length run
     // 単独でも valid (`<color>` は完全に optional)。
     let (offset_x, offset_y, blur_radius) = lengths?;
@@ -15300,7 +15300,7 @@ mod tests {
 
     #[test]
     fn text_shadow_parse_single_offset_only_defaults_blur_and_color() {
-        // `<color>` / blur-radius 省略 — [`TextShadowItem`] doc の「各成分の
+        // `<color>` / blur-radius 省略 — `TextShadowItem` doc の「各成分の
         // 初期値埋め」節。
         assert_eq!(
             text_shadow_items("1px 2px"),
@@ -15357,7 +15357,7 @@ mod tests {
 
     #[test]
     fn text_shadow_parse_negative_offsets_allowed() {
-        // offset-x / offset-y に non-negative 制約は無い ([`TextShadowItem`]
+        // offset-x / offset-y に non-negative 制約は無い (`TextShadowItem`
         // doc の「Non-negative blur-radius」節 — blur のみ制約対象)。
         assert_eq!(
             text_shadow_items("-1px -2px"),
@@ -15373,7 +15373,7 @@ mod tests {
     #[test]
     fn text_shadow_parse_rejects_percentage() {
         // `<length>` のみ、percentage 不可 (CSS Text Decoration Module Level
-        // 3 §4 "Percentages: N/A", [`TextShadowItem`] doc 参照)。
+        // 3 §4 "Percentages: N/A", `TextShadowItem` doc 参照)。
         // `parse_length_value(input, false)` (`allow_percentage=false`) が
         // parse-time で拒否する — sibling precedent
         // `page_size_percentage_rejected` と同じ shape。
@@ -15388,7 +15388,7 @@ mod tests {
         // `<shadow>` syntax)。負の 3rd length は blur slot にマッチせず
         // unconsumed のまま残り、`parse_comma_separated` の
         // `parse_until_before` → `parse_entirely` が leftover を検知して
-        // declaration ごと drop する ([`parse_text_shadow`] doc 参照)。
+        // declaration ごと drop する (`parse_text_shadow` doc 参照)。
         assert_eq!(parse("1px 1px -3px", "text-shadow"), None);
     }
 

@@ -603,7 +603,7 @@ impl ComputedBorder {
 /// CSS Text Decoration Module Level 3 §4
 /// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property> の
 /// Computed value: "a list, each item consisting of three absolute lengths
-/// plus a computed color"。[`TextShadowItem`] (specified 層、`crate::property`)
+/// plus a computed color"。[`TextShadowItem`] (specified 層、[`crate::property`])
 /// の length 3 本 (`offset_x`/`offset_y`/`blur_radius`) を [`ComputedLength`]
 /// に絶対化したもの — `color` は [`ComputedBorder::color`] / used-value
 /// resolution が paint scope 責務な点も含め同じ扱い ([`TextShadowColor`] doc

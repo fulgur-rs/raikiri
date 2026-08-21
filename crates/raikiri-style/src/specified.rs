@@ -411,7 +411,7 @@ impl SpecifiedValues {
             row_gap: LengthOrNormal::Normal,
             column_gap: LengthOrNormal::Normal,
             // CSS Text Decoration Module Level 3 §4: text-shadow initial
-            // は `none` — shared empty Arc slot ([`empty_text_shadow_list`]
+            // は `none` — shared empty Arc slot (`empty_text_shadow_list`
             // doc 参照)。
             text_shadow: empty_text_shadow_list(),
         }
@@ -494,7 +494,7 @@ impl SpecifiedValues {
             white_space: parent.white_space,
             // CSS Text Decoration Module Level 3 §4: text-shadow は
             // inherited。computed `Arc<Vec<ComputedTextShadow>>` → specified
-            // `Arc<Vec<TextShadowItem>>` の per-item lift ([`lift_text_shadow_item`]、
+            // `Arc<Vec<TextShadowItem>>` の per-item lift (`lift_text_shadow_item`、
             // `Px` は不動点)。空 list は shared Arc slot を再利用 (per-node
             // allocation 回避、`Self::text_indent` 等の他 lift と違い list 全体を
             // map する必要があるため、空 check は他 non-inherited list property
