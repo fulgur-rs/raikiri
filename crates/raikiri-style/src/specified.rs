@@ -32,10 +32,10 @@ use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor,
     Direction, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
-    FontStyle, Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap,
-    OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    FontStyle, FontVariantCaps, Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue,
+    OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace,
+    WordBreak, ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
     initial_font_family, resolve_display_for_float, resolve_overflow,
     resolve_text_align_match_parent,
 };
@@ -62,7 +62,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// `font_weight` が後者 (2 行目) にいるのは load-bearing な事実である —
@@ -216,6 +216,9 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::font_style`] の staging。層は computed-equivalent
     /// (`FontStyle` は length を運ばない — この crate の scope では)。
     pub font_style: FontStyle,
+    /// [`ComputedValues::font_variant_caps`] の staging。層は
+    /// computed-equivalent (`FontVariantCaps` は length を運ばない)。
+    pub font_variant_caps: FontVariantCaps,
     /// [`ComputedValues::text_transform`] の staging。層は computed-equivalent
     /// (`TextTransform` は length を運ばない)。
     pub text_transform: TextTransform,
@@ -354,6 +357,9 @@ impl SpecifiedValues {
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
             font_style: FontStyle::Normal,
+            // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
+            // `normal`。
+            font_variant_caps: FontVariantCaps::Normal,
             // CSS Text Module Level 3 §2.1: text-transform initial は `none`。
             text_transform: TextTransform::None,
             // CSS Display 3 §4: visibility initial は `visible`。
@@ -462,6 +468,8 @@ impl SpecifiedValues {
             text_indent: lift_length_percentage(parent.text_indent),
             // CSS Fonts 4 §2.4: font-style は inherited。
             font_style: parent.font_style,
+            // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
+            font_variant_caps: parent.font_variant_caps,
             // CSS Text Module Level 3 §2.1: text-transform は inherited。
             text_transform: parent.text_transform,
             // CSS Display 3 §4: visibility は inherited。
@@ -884,6 +892,10 @@ impl SpecifiedValues {
             // この crate の scope では angle-bearing branch が unreachable
             // なため相対解決なし) — 自 node の winner 適用結果をそのまま素通し。
             font_style: self.font_style,
+            // computed value = specified keyword (`FontVariantCaps` doc 参照、
+            // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
+            // そのまま素通し。
+            font_variant_caps: self.font_variant_caps,
             // computed value = specified keyword (`TextTransform` doc 参照、
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
@@ -1118,6 +1130,7 @@ mod tests {
             text_decoration_color: TextDecorationColor::Resolved(CssColor::BLACK),
             vertical_align: VerticalAlign::Sub,
             font_style: FontStyle::Italic,
+            font_variant_caps: FontVariantCaps::SmallCaps,
             text_transform: TextTransform::Uppercase,
             visibility: Visibility::Hidden,
             z_index: ZIndexValue::Integer(3),
@@ -1162,6 +1175,8 @@ mod tests {
         assert_eq!(child.direction, Direction::Rtl);
         // CSS Fonts 4 §2.4: font-style は inherited。
         assert_eq!(child.font_style, FontStyle::Italic);
+        // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
+        assert_eq!(child.font_variant_caps, FontVariantCaps::SmallCaps);
         // CSS Text Module Level 3 §2.1: text-transform は inherited。
         assert_eq!(child.text_transform, TextTransform::Uppercase);
         // CSS Display 3 §4: visibility は inherited。

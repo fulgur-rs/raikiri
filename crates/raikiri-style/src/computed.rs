@@ -14,7 +14,7 @@ use crate::Atom;
 use crate::property::{
     AlignSelfValue, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue,
     ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontStyle, OverflowValue, OverflowWrap, OverflowXY,
+    FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, OverflowValue, OverflowWrap, OverflowXY,
     SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
     TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
     ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
@@ -67,7 +67,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -618,6 +618,15 @@ pub struct ComputedValues {
     /// property's full `normal | italic | left | right | oblique <angle
     /// [-90deg,90deg]>?` grammar — see [`FontStyle`] doc.
     pub font_style: FontStyle,
+    /// `font-variant-caps`. **inherited**, initial:
+    /// [`FontVariantCaps::Normal`] (CSS Fonts Module Level 3 §6.6
+    /// "Capitalization: the font-variant-caps property"
+    /// <https://www.w3.org/TR/css-fonts-3/#font-variant-caps-prop>,
+    /// "Initial: normal" / "Inherited: yes"). Computed value = specified
+    /// keyword — see [`FontVariantCaps`] doc's "Scope carving" section
+    /// (the spec's other 5 keywords, and the `font-variant` shorthand, are
+    /// not implemented).
+    pub font_variant_caps: FontVariantCaps,
     /// `text-transform`. **inherited**, initial: [`TextTransform::None`]
     /// (CSS Text Module Level 3 §2.1 "Case Transforms: the text-transform
     /// property" <https://www.w3.org/TR/css-text-3/#text-transform-property>,
@@ -955,6 +964,9 @@ impl ComputedValues {
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
             font_style: FontStyle::Normal,
+            // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
+            // `normal`。
+            font_variant_caps: FontVariantCaps::Normal,
             // CSS Text Module Level 3 §2.1: text-transform initial は `none`。
             text_transform: TextTransform::None,
             // CSS Display 3 §4: visibility initial は `visible`。
@@ -1017,7 +1029,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
     ///
@@ -1116,6 +1128,9 @@ mod tests {
         assert_eq!(cv.direction, Direction::Ltr);
         // CSS Fonts 4 §2.4: font-style initial は `normal`。
         assert_eq!(cv.font_style, FontStyle::Normal);
+        // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
+        // `normal`。
+        assert_eq!(cv.font_variant_caps, FontVariantCaps::Normal);
         // CSS Text Module Level 3 §2.1: text-transform initial は `none`。
         assert_eq!(cv.text_transform, TextTransform::None);
         // CSS Display 3 §4: visibility initial は `visible`。
@@ -1261,6 +1276,10 @@ mod tests {
             // CSS Fonts 4 §2.4: `Italic` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             font_style: FontStyle::Italic,
+            // CSS Fonts Module Level 3 §6.6: `SmallCaps` — initial
+            // (`Normal`) と異なる値 (non_initial_parent の趣旨どおり全
+            // field を非 initial に)。
+            font_variant_caps: FontVariantCaps::SmallCaps,
             // CSS Text Module Level 3 §2.1: `Uppercase` — initial (`None`)
             // と異なる値 (non_initial_parent の趣旨どおり全 field を非
             // initial に)。
@@ -1326,7 +1345,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 52 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 53 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1346,6 +1365,8 @@ mod tests {
         assert_eq!(child.direction, parent.direction);
         // CSS Fonts 4 §2.4: font-style は inherited。
         assert_eq!(child.font_style, parent.font_style);
+        // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
+        assert_eq!(child.font_variant_caps, parent.font_variant_caps);
         // CSS Text Module Level 3 §2.1: text-transform は inherited。
         assert_eq!(child.text_transform, parent.text_transform);
         // CSS Display 3 §4: visibility は inherited。

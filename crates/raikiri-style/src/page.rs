@@ -2088,6 +2088,10 @@ fn absolutize_in_page_context(
         // computed value = specified keyword — nothing for phase 3 to
         // absolutize.
         | PropertyValue::FontStyle(_)
+        // `font-variant-caps` carries no length either (see
+        // `FontVariantCaps`'s doc) and computed value = specified keyword —
+        // nothing for phase 3 to absolutize.
+        | PropertyValue::FontVariantCaps(_)
         // `text-transform` carries no length (see `TextTransform`'s doc)
         // and computed value = specified keyword — nothing for phase 3 to
         // absolutize.
@@ -2520,9 +2524,9 @@ mod tests {
     use crate::property::{
         AlignSelfValue, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
         ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue,
-        FloatValue, FontStyle, FontWeightValue, Length, LengthOrAuto, LengthOrNormal, LineHeight,
-        OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand, PositionValue,
-        SelfAlignmentValue, TextAlign, TextDecorationColor, TextDecorationLine,
+        FloatValue, FontStyle, FontVariantCaps, FontWeightValue, Length, LengthOrAuto,
+        LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
+        PositionValue, SelfAlignmentValue, TextAlign, TextDecorationColor, TextDecorationLine,
         TextDecorationShorthand, TextDecorationStyle, TextTransform, VerticalAlign, Visibility,
         WhiteSpace, WordBreak, ZIndexValue,
     };
@@ -4398,11 +4402,13 @@ mod tests {
     /// 専用 arm を `absolutize_in_page_context` に持つようになったため。
     /// pass-through 側から抜けたのはこの改修で唯一のケース — 上記の履歴は
     /// 全て「加わる」方向だったことに注意)。
+    /// 48 → 49 (`FontVariantCaps` も同じ理由 — length を運ばない keyword-only
+    /// property のため phase 3 に変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 48;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 49;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4707,6 +4713,13 @@ mod tests {
             align: ContentAlignmentValue::SpaceBetween,
             justify: ContentAlignmentValue::Center,
         }),
+        // No specified/computed distinction for `font-variant-caps`
+        // (computed value = specified keyword, `FontVariantCaps` doc) — any
+        // value is "worst case" (`Direction` sibling comment above uses the
+        // same reasoning). `SmallCaps` chosen over `Normal` since it is a
+        // non-initial keyword, the same "not the initial value" reasoning
+        // `WordBreak`/`WhiteSpace` samples above use.
+        FontVariantCaps => PropertyValue::FontVariantCaps(FontVariantCaps::SmallCaps),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4898,6 +4911,7 @@ mod tests {
         ColumnGap,
         Gap,
         PlaceContent,
+        FontVariantCaps,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -5180,6 +5194,8 @@ mod tests {
             // `FontStyle` carries no length either, at this crate's scope
             // (only `normal`/`italic` implemented).
             | PropertyValue::FontStyle(_)
+            // `FontVariantCaps` carries no length either.
+            | PropertyValue::FontVariantCaps(_)
             // `TextTransform` carries no length either.
             | PropertyValue::TextTransform(_)
             // `Visibility` carries no length either.
