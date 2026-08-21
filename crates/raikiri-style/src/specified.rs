@@ -36,8 +36,8 @@ use crate::property::{
     OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign,
     TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign,
     Visibility, WhiteSpace, WordBreak, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_string_set_entries, initial_font_family, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_match_parent,
+    empty_quotes_entries, empty_string_set_entries, initial_font_family, resolve_display_for_float,
+    resolve_overflow, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_length_or_normal,
@@ -63,7 +63,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// `font_weight` が後者 (2 行目) にいるのは load-bearing な事実である —
@@ -304,6 +304,9 @@ pub struct SpecifiedValues {
     pub row_gap: LengthOrNormal,
     /// `column-gap` の **specified** value。[`Self::row_gap`] と同じ絶対化 phase。
     pub column_gap: LengthOrNormal,
+    /// [`ComputedValues::quotes`] の staging。層は computed-equivalent
+    /// (length を運ばないため絶対化不要)。
+    pub quotes: Arc<Vec<(SmolStr, SmolStr)>>,
 }
 
 impl SpecifiedValues {
@@ -418,6 +421,10 @@ impl SpecifiedValues {
             // initial は `normal`。
             row_gap: LengthOrNormal::Normal,
             column_gap: LengthOrNormal::Normal,
+            // CSS Content 3 §2.4.1: quotes の spec initial は "depends on
+            // user agent"、本 impl は cleanroom 方針によりそれを空 list で
+            // 表現する ([`ComputedValues::quotes`] doc 参照)。
+            quotes: empty_quotes_entries(),
         }
     }
 
@@ -505,6 +512,9 @@ impl SpecifiedValues {
             white_space: parent.white_space,
             // CSS Text 3 §5.3: hyphens は inherited。
             hyphens: parent.hyphens,
+            // CSS Content 3 §2.4.1: quotes は inherited。Arc bump のみ
+            // ([`ComputedValues::font_family`] と同じ shape)。
+            quotes: parent.quotes.clone(),
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
             display: DisplayValue::Inline,
@@ -1011,6 +1021,10 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            // computed value = specified value (`ComputedValues::quotes` doc
+            // 参照、length を運ばないため相対解決なし) — 自 node の winner
+            // 適用結果 (または inherit_from で継承した親値) をそのまま素通し。
+            quotes: self.quotes,
         }
     }
 }
@@ -1185,6 +1199,7 @@ mod tests {
             align_self: AlignSelfValue::Value(SelfAlignmentValue::Center),
             row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
             column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
+            quotes: Arc::new(vec![(SmolStr::new("«"), SmolStr::new("»"))]),
         }
     }
 
@@ -1237,6 +1252,12 @@ mod tests {
         // `<length>` → specified `Px` の lift (`lift_tab_size` 経由、
         // `lift_font_size` と同型)。
         assert_eq!(child.tab_size, TabSize::Length(Length::Px(11.0)));
+        // CSS Content 3 §2.4.1: quotes は inherited。`inherit_from` の
+        // `parent.quotes.clone()` は Arc bump —
+        // deep-clone regression なら ptr_eq が false になる (`font_family`
+        // 同 assertion と同じ methodology)。
+        assert_eq!(child.quotes, parent.quotes);
+        assert!(Arc::ptr_eq(&child.quotes, &parent.quotes));
     }
 
     #[test]

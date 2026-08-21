@@ -542,7 +542,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::ColumnGap(_)
         // `hyphens` (CSS Text Module Level 3 §5.3) has no shorthand form.
         | PropertyValue::Hyphens(_)
-        | PropertyValue::FontVariantCaps(_) => expand_none(d, push),
+        | PropertyValue::FontVariantCaps(_)
+        | PropertyValue::Quotes(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),

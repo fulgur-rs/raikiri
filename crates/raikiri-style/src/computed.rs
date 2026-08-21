@@ -17,8 +17,8 @@ use crate::property::{
     FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, Hyphens, OverflowValue, OverflowWrap,
     OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
     TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
-    initial_font_family,
+    ZIndexValue, empty_content_list, empty_counter_entries, empty_quotes_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBorder, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
@@ -68,7 +68,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -912,6 +912,28 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-align-3/#propdef-column-gap>, "Inherited:
     /// no"). Same shape as [`Self::row_gap`].
     pub column_gap: ComputedLengthPercentageOrNormal,
+    /// `quotes` — nesting-level `(open, close)` string pairs. **inherited**.
+    /// CSS Content Module Level 3 §2.4.1
+    /// <https://www.w3.org/TR/css-content-3/#quotes-property>, legacy CSS2
+    /// §12.3.1 <https://www.w3.org/TR/CSS21/generate.html#quotes-specify>.
+    /// Spec initial is "depends on user agent" — no concrete string table is
+    /// specified. This implementation represents both the explicit `none`
+    /// keyword and the (cleanroom-motivated) unspecified-initial case as an
+    /// empty list — no other implementation's UA default is imported (see
+    /// [`crate::property::PropertyValue::Quotes`] doc for the full
+    /// rationale, including the `auto`/`match-parent` keywords this crate
+    /// does not implement).
+    ///
+    /// Resolving nesting depth to an actual quote-mark string (consulted
+    /// when [`Self::content`] carries a [`ContentComponent::Quote`]) is
+    /// downstream (raikiri-dom) responsibility — this crate stops at
+    /// cascade + inheritance wire-through, same split as [`Self::content`]
+    /// itself.
+    ///
+    /// [`Arc<Vec<..>>`] wrap is the same DoS-mitigation shape as
+    /// [`Self::counter_reset`] — cascade winner clone / inheritance walk
+    /// clone become a shallow Arc bump instead of a per-node `Vec` copy.
+    pub quotes: Arc<Vec<(SmolStr, SmolStr)>>,
 }
 
 impl ComputedValues {
@@ -1056,6 +1078,11 @@ impl ComputedValues {
             // initial は `normal`。
             row_gap: ComputedLengthPercentageOrNormal::Normal,
             column_gap: ComputedLengthPercentageOrNormal::Normal,
+            // CSS Content 3 §2.4.1: quotes の spec initial は "depends on
+            // user agent"、本 impl は cleanroom 方針によりそれを空 list で
+            // 表現する (`none` と同じ shared empty Arc slot、`Self::quotes`
+            // field doc / `empty_quotes_entries` doc 参照)。
+            quotes: empty_quotes_entries(),
         }
     }
 
@@ -1067,7 +1094,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
     ///
@@ -1385,13 +1412,16 @@ mod tests {
             // 異なる値。
             row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
             column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
+            // CSS Content 3 §2.4.1: `quotes` — initial (空 list) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            quotes: Arc::new(vec![(SmolStr::new("«"), SmolStr::new("»"))]),
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 55 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 56 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1436,6 +1466,8 @@ mod tests {
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);
+        // CSS Content 3 §2.4.1: quotes は inherited。
+        assert_eq!(child.quotes, parent.quotes);
 
         // non-inherited — initial に戻る。
         assert_eq!(child.background_color, initial.background_color);

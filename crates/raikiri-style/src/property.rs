@@ -61,6 +61,19 @@ pub(crate) fn empty_counter_entries() -> Arc<Vec<(SmolStr, i32)>> {
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
+/// 空 `quotes` entries を表す shared Arc — `none` の parse 結果、および
+/// (宣言なしの) initial value の両方がこの 1 slot を共有する
+/// ([`empty_counter_entries`] と同じ `OnceLock` 保持の shared-slot pattern)。
+///
+/// spec 上 `quotes` の initial value は "depends on user agent" (CSS2 §12.3.1)
+/// — 具体的な引用符文字列を規定しない。本実装は cleanroom 方針 (他実装の UA
+/// 既定値を持ち込まない) により、宣言が無い場合もこの空 list を initial 値として
+/// 採る ([`PropertyValue::Quotes`] doc 参照)。
+pub(crate) fn empty_quotes_entries() -> Arc<Vec<(SmolStr, SmolStr)>> {
+    static EMPTY: OnceLock<Arc<Vec<(SmolStr, SmolStr)>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
 /// `font-family` の initial value を表す shared Arc — [`empty_content_list`]
 /// 等と同じ `OnceLock` 保持の shared-slot pattern (同種の DoS 対策 fix の踏襲)。
 ///
@@ -1343,9 +1356,9 @@ pub enum ContentTextKeyword {
 /// は "replaced by the appropriate string as defined by the `quotes`
 /// property" かつ nesting depth を増減する。[`NoOpenQuote`](Self::NoOpenQuote) /
 /// [`NoCloseQuote`](Self::NoCloseQuote) は "Inserts nothing (as in none)" だが
-/// depth 増減のみ行う。実際の `quotes` property 引き (nesting depth → 文字列)
-/// は本 crate の static-side scope 外 — 下流 (raikiri-dom) が `quotes` の
-/// computed value と併せて runtime resolve する ([`CounterStyle`] /
+/// depth 増減のみ行う。実際の [`PropertyValue::Quotes`] 引き (nesting depth
+/// → 文字列) は本 crate の static-side scope 外 — 下流 (raikiri-dom) が
+/// `quotes` の computed value と併せて runtime resolve する ([`CounterStyle`] /
 /// [`StringFetchMode`] と同じ「resolve は downstream 責務」の分担)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1604,8 +1617,9 @@ pub enum ContentComponent {
     /// `<quote>` (`open-quote` / `close-quote` / `no-open-quote` /
     /// `no-close-quote`) — CSS Content 3 §2.4.2
     /// <https://www.w3.org/TR/css-content-3/#quote-values>。詳細は
-    /// [`QuoteKeyword`] の doc を参照 (実際の引用符文字列解決は `quotes`
-    /// property の computed value と合わせて downstream が行う)。
+    /// [`QuoteKeyword`] の doc を参照 (実際の引用符文字列解決は
+    /// [`PropertyValue::Quotes`] の computed value と合わせて downstream が
+    /// 行う)。
     Quote(QuoteKeyword),
     /// `leader(<leader-type>)` — CSS Content 3 §2.5.1 "The leader() function"
     /// <https://www.w3.org/TR/css-content-3/#leader-function>。詳細は
@@ -4359,6 +4373,54 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     FontVariantCaps(FontVariantCaps),
+    /// `quotes: none | [ <string> <string> ]+` — **inherited**。
+    ///
+    /// CSS Content Module Level 3 §2.4.1 "Quotation Mark System: the quotes
+    /// property" <https://www.w3.org/TR/css-content-3/#quotes-property>、
+    /// 前身の CSS2 §12.3.1
+    /// <https://www.w3.org/TR/CSS21/generate.html#quotes-specify> と同じ
+    /// legacy grammar `[ <string> <string> ]+ | none` を実装。CSS Content 3 が
+    /// 追加した `auto` / `match-parent` keyword alternative は本 crate の
+    /// scope 外 (未実装、spec-valid だが parse 時に reject — 下記 "非対応" 節)。
+    ///
+    /// 各 pair は nesting level (quote depth) ごとの (open, close) 引用符
+    /// 文字列。quote depth の定義と pair 選択規則は本 propdef 自体ではなく
+    /// `<quote>` keyword ([`QuoteKeyword`]) 側の section — CSS Content 3
+    /// §2.4.2 <https://www.w3.org/TR/css-content-3/#quote-values> (前身
+    /// CSS2 §12.3.2 <https://www.w3.org/TR/CSS21/generate.html#quotes-insert>
+    /// も同旨) — が定める。verbatim (§2.4.2): "the number of occurrences of
+    /// open-quote in all generated text before the current occurrence,
+    /// minus the number of occurrences of close-quote […]. If the depth is
+    /// 0, the first pair is used, if the depth is 1, the second pair is
+    /// used, etc. […] If the depth is greater than the number of pairs, the
+    /// last pair is repeated." — depth は **0-indexed** (depth 0 が 1 pair
+    /// 目) であり、depth が pair 数を超えたら最終 pair を再利用する。
+    ///
+    /// **`content` property の `open-quote` / `close-quote` keyword
+    /// ([`QuoteKeyword`]) との関係**: `<quote>` keyword 自体は nesting depth
+    /// の増減と「挿入するかどうか」だけを表現し、実際の文字列は決めない
+    /// ([`QuoteKeyword`] doc 参照)。depth → 実際の引用符文字列への解決は本
+    /// variant の値 (nesting level ごとの pair 列) を要するが、その解決自体は
+    /// 本 crate の static-side scope 外 — 下流 (raikiri-dom) が `content` の
+    /// [`ContentComponent::Quote`] component 列と本 property の computed
+    /// value を併せて runtime resolve する ([`QuoteKeyword`] doc の「resolve
+    /// は downstream 責務」節と同じ分担)。
+    ///
+    /// spec 上 initial value は "depends on user agent" (CSS2 §12.3.1) —
+    /// 具体的な引用符文字列を規定しない。本実装は cleanroom 方針 (他実装の UA
+    /// 既定値を持ち込まない) により、宣言が無い場合の初期値も `none` と同じ
+    /// 空 list で表現する ([`empty_quotes_entries`] 参照)。
+    ///
+    /// **非対応 (spec-valid)**: `auto` / `match-parent` — CSS Content 3
+    /// §2.4.1 が legacy grammar (CSS2 §12.3.1) に追加した keyword
+    /// alternative。本 crate は未実装で、どちらも parse 時に reject する
+    /// (`parse_quotes_property` の grammar が受理しないため、declaration が
+    /// silent drop される)。
+    ///
+    /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
+    /// (`* { quotes: "«" "»" }` × N element の cascade winner clone /
+    /// inheritance walk clone を shallow Arc bump にする、DoS 対策)。
+    Quotes(Arc<Vec<(SmolStr, SmolStr)>>),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -4606,6 +4668,11 @@ pub enum PropertyKey {
     // variants carry no per-variant docs per crate convention). 末尾配置の
     // 理由は PropertyValue::FontVariantCaps の doc 参照。
     FontVariantCaps,
+    // quotes (CSS Content Module Level 3 §2.4.1, semantics on the matching
+    // PropertyValue::Quotes variant; sibling PropertyKey variants carry no
+    // per-variant docs per crate convention). 末尾配置の理由は
+    // PropertyValue::Quotes の doc 参照 (1:1 disjoint な新 field)。
+    Quotes,
 }
 
 impl PropertyValue {
@@ -4701,6 +4768,7 @@ impl PropertyValue {
             PropertyValue::Hyphens(_) => PropertyKey::Hyphens,
             PropertyValue::TabSize(_) => PropertyKey::TabSize,
             PropertyValue::FontVariantCaps(_) => PropertyKey::FontVariantCaps,
+            PropertyValue::Quotes(_) => PropertyKey::Quotes,
         }
     }
 }
@@ -5068,6 +5136,17 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // doc section — it would need to reset longhands this crate does
         // not have).
         "font-variant-caps" => parse_font_variant_caps(input).map(PropertyValue::FontVariantCaps),
+        // CSS Content Module Level 3 §2.4.1 (legacy CSS2 §12.3.1 grammar
+        // subset: `none | [ <string> <string> ]+`, `auto` / `match-parent`
+        // not implemented — see `PropertyValue::Quotes` doc). Arc wrap +
+        // shared-empty-slot は counter-* と同じ DoS 対策 pattern。
+        "quotes" => parse_quotes_property(input).map(|v| {
+            if v.is_empty() {
+                PropertyValue::Quotes(empty_quotes_entries())
+            } else {
+                PropertyValue::Quotes(Arc::new(v))
+            }
+        }),
         _ => None,
     }
 }
@@ -7390,6 +7469,52 @@ fn parse_counter_property(
             .try_parse(|i| i.expect_integer())
             .unwrap_or(default_number);
         result.push((name, value));
+    }
+
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+/// `quotes` の value を parse する。
+///
+/// Grammar (legacy CSS2 §12.3.1 subset, [`PropertyValue::Quotes`] doc 参照):
+///   `quotes = none | [ <string> <string> ]+`
+///
+/// `none` を top-level alternative として先に処理。以降は `<string>` を LL(1)
+/// で 2 個ずつ pair にして peel する。
+///
+/// `parse_counter_property` (`<counter-name> <integer>?` — integer 省略時は
+/// property-specific default で補える) と異なり、`<string> <string>` の pair
+/// は片方が欠けた時点でその entry 自体が spec-invalid になる (grammar に
+/// optional 要素が無い) — このため、1 個目の `<string>` を消費した後 2 個目が
+/// 取れない (trailing unpaired `<string>`、またはその位置に `<string>` でない
+/// token が来た) 場合は、途中まで蓄積した pair を捨てて即座に declaration
+/// 全体を drop する (`None` を返す)。counter-* 系のように「ここまでの pair は
+/// 残し、以降を caller の `expect_exhausted` (rule.rs) に委ねる」設計には
+/// しない — 奇数個の `<string>` は `[ <string> <string> ]+` に決して一致しない
+/// ため、削るべき「途中まで正しい prefix」自体が存在しない。
+fn parse_quotes_property(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, SmolStr)>> {
+    // `none` = empty list (top-level alternative)。
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(Vec::new());
+    }
+
+    let mut result = Vec::new();
+    loop {
+        let open = match input.try_parse(|i| i.expect_string_cloned()) {
+            Ok(s) => SmolStr::new(s.as_ref()),
+            Err(_) => break,
+        };
+        let close = match input.try_parse(|i| i.expect_string_cloned()) {
+            Ok(s) => SmolStr::new(s.as_ref()),
+            // trailing unpaired `<string>` — spec-invalid, reject the whole
+            // declaration (see function doc).
+            Err(_) => return None,
+        };
+        result.push((open, close));
     }
 
     if result.is_empty() {
@@ -15756,6 +15881,86 @@ mod tests {
             })
             .key(),
             PropertyKey::PlaceContent
+        );
+    }
+
+    // ── quotes property (CSS Content Module Level 3 §2.4.1 / legacy CSS2
+    // §12.3.1 grammar subset `none | [ <string> <string> ]+`) ──
+
+    fn quotes_pairs(pairs: &[(&str, &str)]) -> Arc<Vec<(SmolStr, SmolStr)>> {
+        Arc::new(
+            pairs
+                .iter()
+                .map(|(open, close)| (SmolStr::new(open), SmolStr::new(close)))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn quotes_none_returns_empty_vec() {
+        // spec: `none` は空リストと同等 (top-level alternative)。
+        // empty case は shared Arc slot (`empty_quotes_entries`) を使う。
+        assert_eq!(
+            parse("none", "quotes"),
+            Some(PropertyValue::Quotes(empty_quotes_entries()))
+        );
+    }
+
+    #[test]
+    fn quotes_is_case_insensitive_on_none() {
+        // CSS spec: keyword `none` は ASCII case-insensitive。
+        assert_eq!(
+            parse("NONE", "quotes"),
+            Some(PropertyValue::Quotes(empty_quotes_entries()))
+        );
+    }
+
+    #[test]
+    fn quotes_single_pair() {
+        assert_eq!(
+            parse(r#""«" "»""#, "quotes"),
+            Some(PropertyValue::Quotes(quotes_pairs(&[("«", "»")])))
+        );
+    }
+
+    #[test]
+    fn quotes_multiple_pairs_deeper_nesting_levels() {
+        // 2 pair 目は 1 pair 目より深い nesting level (`PropertyValue::Quotes`
+        // doc の「levels of nesting」節)。
+        assert_eq!(
+            parse(r#""«" "»" "‹" "›""#, "quotes"),
+            Some(PropertyValue::Quotes(quotes_pairs(&[
+                ("«", "»"),
+                ("‹", "›"),
+            ])))
+        );
+    }
+
+    #[test]
+    fn quotes_rejects_empty_declaration() {
+        // grammar は `[ <string> <string> ]+` — 0 pair (`none` でもなく
+        // 何も書かれていない) は invalid、declaration drop。
+        assert_eq!(parse("", "quotes"), None);
+    }
+
+    #[test]
+    fn quotes_rejects_odd_number_of_strings() {
+        // trailing unpaired <string> は `[ <string> <string> ]+` に一致しない
+        // (`parse_quotes_property` doc の "malformed pair" 節)。
+        assert_eq!(parse(r#""«" "»" "‹""#, "quotes"), None);
+    }
+
+    #[test]
+    fn quotes_rejects_non_string_token() {
+        // <string> でない token (bare ident) は grammar 違反。
+        assert_eq!(parse("open close", "quotes"), None);
+    }
+
+    #[test]
+    fn quotes_key_maps_to_quotes_property_key() {
+        assert_eq!(
+            PropertyValue::Quotes(empty_quotes_entries()).key(),
+            PropertyKey::Quotes
         );
     }
 }
