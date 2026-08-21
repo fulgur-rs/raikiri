@@ -1597,8 +1597,8 @@ pub enum DisplayValue {
     /// <https://www.w3.org/TR/css-display-3/#typedef-display-inside>
     /// <https://www.w3.org/TR/css-display-3/#the-display-properties>
     Grid,
-    /// `contents` — CSS Display Module Level 3 §2.4 "Showing or Hiding an
-    /// Element: the display-box keywords, contents"
+    /// `contents` — CSS Display Module Level 3 §2.5 "Box Generation: the
+    /// none and contents keywords"
     /// <https://www.w3.org/TR/css-display-3/#valdef-display-contents>: the
     /// element itself generates no box at all — as if it had been replaced
     /// in the document tree by its children (and any pseudo-elements it
@@ -1652,12 +1652,11 @@ pub enum DisplayValue {
     ///
     /// # Root element (not yet implemented)
     ///
-    /// CSS Display Module Level 3 §2.7 "Automatic Box Type Transformations"
-    /// <https://www.w3.org/TR/css-display-3/#transformations>, "The Root
-    /// Element's Principal Box" subsection, verbatim: "a `display` of
-    /// `contents` computes to `block` on the root element." This crate
+    /// CSS Display Module Level 3 §2.8 "The Root Element's Principal Box"
+    /// <https://www.w3.org/TR/css-display-3/#root>, verbatim: "a `display`
+    /// of `contents` computes to `block` on the root element." This crate
     /// **does** track which element is the root during the inheritance walk
-    /// (`crate::cascade::resolve_inheritance`'s root-element detection,
+    /// ([`crate::cascade::resolve_inheritance`]'s root-element detection,
     /// used today to pick the `rem`/`rlh` resolution basis — see that
     /// function's doc) — but that tracking is not wired into `display`
     /// computation for any variant, so this root-element blockification
