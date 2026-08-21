@@ -423,7 +423,7 @@ impl SpecifiedValues {
             column_gap: LengthOrNormal::Normal,
             // CSS Content 3 §2.4.1: quotes の spec initial は "depends on
             // user agent"、本 impl は cleanroom 方針によりそれを空 list で
-            // 表現する ([`ComputedValues::quotes`] doc 参照)。
+            // 表現する (`ComputedValues::quotes` doc 参照)。
             quotes: empty_quotes_entries(),
         }
     }
@@ -513,7 +513,7 @@ impl SpecifiedValues {
             // CSS Text 3 §5.3: hyphens は inherited。
             hyphens: parent.hyphens,
             // CSS Content 3 §2.4.1: quotes は inherited。Arc bump のみ
-            // ([`ComputedValues::font_family`] と同じ shape)。
+            // (`ComputedValues::font_family` と同じ shape)。
             quotes: parent.quotes.clone(),
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
