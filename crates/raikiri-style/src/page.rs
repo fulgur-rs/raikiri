@@ -83,8 +83,6 @@ use cssparser::{
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, Token, match_ignore_ascii_case,
 };
 
-use std::sync::Arc;
-
 use crate::Atom;
 use crate::cascade::{
     ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_relative_font_size,
