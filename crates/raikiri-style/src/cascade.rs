@@ -3755,7 +3755,12 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::RowGap(_)
         | PropertyValue::ColumnGap(_)
         | PropertyValue::Gap(_)
-        | PropertyValue::PlaceContent(_)) => v,
+        | PropertyValue::PlaceContent(_)
+        // `quotes` (CSS Content 3 §2.4.1) carries no length and does not
+        // depend on the inheritance parent (computed value = specified
+        // value, `ComputedValues::quotes` doc) — nothing for phase 2 to
+        // resolve.
+        | PropertyValue::Quotes(_)) => v,
     })
 }
 
@@ -4270,6 +4275,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.align_content = p.align;
             target.justify_content = p.justify;
         }
+        // CSS Content 3 §2.4.1: quotes は将来の GCPM (paged media generated
+        // content) 対応に向けた足場 — parse 結果をそのまま computed value に
+        // 格納する (`CounterReset`/`Content` arm と同じ位置付け、
+        // `ComputedValues::quotes` doc 参照)。nesting depth → 実際の
+        // 引用符文字列への解決は下流 (raikiri-dom) 責務。
+        PropertyValue::Quotes(v) => target.quotes = v,
     }
 }
 
@@ -8423,6 +8434,43 @@ mod tests {
         // 他 counter property は non-inherited の initial (empty) のまま
         assert!(cv.counter_increment.is_empty());
         assert!(cv.counter_set.is_empty());
+    }
+
+    // ── quotes wire-through (CSS Content 3 §2.4.1) ──
+
+    #[test]
+    fn quotes_wired_through_cascade_from_inline_style() {
+        // <p style='quotes: "«" "»"'> → ComputedValues.quotes に `[("«", "»")]`
+        // が届く。parser → PropertyValue::Quotes → apply_value →
+        // ComputedValues の end-to-end 疎通 smoke (`counter_reset` wire-through
+        // pattern を踏襲)。quotes は Arc<Vec<..>>、`*cv.quotes` で deref-compare。
+        let cv = cascade_doc("", "p", Some(r#"quotes: "«" "»""#));
+        assert_eq!(*cv.quotes, vec![(SmolStr::new("«"), SmolStr::new("»"))]);
+    }
+
+    #[test]
+    fn quotes_is_inherited_child_carries_parent_pairs() {
+        // CSS Content 3 §2.4.1 "Inherited: yes"。<div style='quotes: ...'> の
+        // 子 <span> は自身 rule 無しでも parent の quotes pairs を継承する
+        // (`line_height_is_inherited_child_carries_parent_number` と同型 —
+        // counter-* (non-inherited) と対照的に、こちらは real cascade tree を
+        // 組んで inheritance walk 自体を通す)。
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some(r#"quotes: "«" "»" "‹" "›""#));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let expected = vec![
+            (SmolStr::new("«"), SmolStr::new("»")),
+            (SmolStr::new("‹"), SmolStr::new("›")),
+        ];
+        assert_eq!(*r.computed[div].quotes, expected);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            *r.computed[span].quotes, expected,
+            "quotes must be inherited (CSS Content 3 §2.4.1 Inherited: yes)"
+        );
     }
 
     // ── content wire-through (CSS Content 3 §2) ──

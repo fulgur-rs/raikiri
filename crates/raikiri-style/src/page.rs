@@ -2154,7 +2154,11 @@ fn absolutize_in_page_context(
         // `TextDecoration` above for the same shorthand-with-no-length-
         // components shape); it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
-        | PropertyValue::PlaceContent(_)) => v,
+        | PropertyValue::PlaceContent(_)
+        // `quotes` (CSS Content 3 §2.4.1) carries no length and computed
+        // value = specified value (`ComputedValues::quotes` doc) — nothing
+        // for phase 3 to absolutize.
+        | PropertyValue::Quotes(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -4398,11 +4402,14 @@ mod tests {
     /// 専用 arm を `absolutize_in_page_context` に持つようになったため。
     /// pass-through 側から抜けたのはこの改修で唯一のケース — 上記の履歴は
     /// 全て「加わる」方向だったことに注意)。
+    /// 48 → 49 (`Quotes` も同じ理由 — CSS Content 3 §2.4.1 は length を
+    /// 運ばない `[ <string> <string> ]+ | none` grammar のため phase 3 に
+    /// 変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 48;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 49;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4707,6 +4714,11 @@ mod tests {
             align: ContentAlignmentValue::SpaceBetween,
             justify: ContentAlignmentValue::Center,
         }),
+        // No specified/computed distinction for `quotes` (computed value =
+        // specified value, `ComputedValues::quotes` doc) — any value is
+        // "worst case" (`Direction` sibling comment above uses the same
+        // reasoning).
+        Quotes => PropertyValue::Quotes(Arc::new(vec![("«".into(), "»".into())])),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4898,6 +4910,7 @@ mod tests {
         ColumnGap,
         Gap,
         PlaceContent,
+        Quotes,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -5221,7 +5234,9 @@ mod tests {
             | PropertyValue::AlignSelf(_)
             // `place-content` shorthand — neither component carries a
             // length (see `TextDecoration` above for the same shape).
-            | PropertyValue::PlaceContent(_) => None,
+            | PropertyValue::PlaceContent(_)
+            // `quotes` (CSS Content 3 §2.4.1) carries no length either.
+            | PropertyValue::Quotes(_) => None,
         }
     }
 
