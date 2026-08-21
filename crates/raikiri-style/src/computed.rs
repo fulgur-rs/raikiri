@@ -23,7 +23,7 @@ use crate::property::{
 use crate::resolve::{
     ComputedBorder, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-    ComputedTabSize,
+    ComputedTabSize, ComputedTextShadow, empty_computed_text_shadow_list,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
@@ -68,7 +68,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -934,6 +934,22 @@ pub struct ComputedValues {
     /// [`Self::counter_reset`] — cascade winner clone / inheritance walk
     /// clone become a shallow Arc bump instead of a per-node `Vec` copy.
     pub quotes: Arc<Vec<(SmolStr, SmolStr)>>,
+    /// `text-shadow`. **inherited**, initial: empty list (= `none`) (CSS
+    /// Text Decoration Module Level 3 §4
+    /// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>,
+    /// "Initial: none" / "Inherited: yes"). Computed value: "a list, each
+    /// item consisting of three absolute lengths plus a computed color"
+    /// ([`ComputedTextShadow`] doc — `currentcolor` stays symbolic, used-value
+    /// resolution is paint scope responsibility, mirroring
+    /// [`Self::text_decoration_color`]).
+    ///
+    /// # Downstream handoff (future scope, style-scope confined)
+    ///
+    /// This field carries the cascade static side seed only, mirroring
+    /// [`Self::text_decoration_line`] — actually painting the shadow
+    /// (including the blur approximation) is raikiri-paint scope and not yet
+    /// wired.
+    pub text_shadow: Arc<Vec<ComputedTextShadow>>,
 }
 
 impl ComputedValues {
@@ -1083,6 +1099,10 @@ impl ComputedValues {
             // 表現する (`none` と同じ shared empty Arc slot、`Self::quotes`
             // field doc / `empty_quotes_entries` doc 参照)。
             quotes: empty_quotes_entries(),
+            // CSS Text Decoration Module Level 3 §4: text-shadow initial
+            // は `none` — shared empty Arc slot
+            // (`empty_computed_text_shadow_list` doc 参照)。
+            text_shadow: empty_computed_text_shadow_list(),
         }
     }
 
@@ -1094,7 +1114,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
     ///
@@ -1153,6 +1173,7 @@ impl ComputedValues {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::property::TextShadowColor;
 
     #[test]
     fn initial_values_match_spec() {
@@ -1415,13 +1436,22 @@ mod tests {
             // CSS Content 3 §2.4.1: `quotes` — initial (空 list) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             quotes: Arc::new(vec![(SmolStr::new("«"), SmolStr::new("»"))]),
+            // CSS Text Decoration Module Level 3 §4: initial (`none` =
+            // 空 list) と異なる値 (non_initial_parent の趣旨どおり全 field を
+            // 非 initial に)。
+            text_shadow: Arc::new(vec![ComputedTextShadow {
+                offset_x: ComputedLength(1.0),
+                offset_y: ComputedLength(2.0),
+                blur_radius: ComputedLength(3.0),
+                color: TextShadowColor::Resolved(CssColor::BLACK),
+            }]),
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 56 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 57 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1463,6 +1493,8 @@ mod tests {
         assert_eq!(child.hyphens, parent.hyphens);
         // CSS Text Module Level 3 §4.2: tab-size は inherited。
         assert_eq!(child.tab_size, parent.tab_size);
+        // CSS Text Decoration Module Level 3 §4: text-shadow は inherited。
+        assert_eq!(child.text_shadow, parent.text_shadow);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);

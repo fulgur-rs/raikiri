@@ -76,7 +76,7 @@
 //! source tree.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
@@ -91,12 +91,12 @@ use crate::computed::ComputedValues;
 use crate::property::{
     Border, BorderColor, BorderStyle, FlexBasisValue, FlexShorthand, GapShorthand, Length,
     LengthOrAuto, LengthOrNormal, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
-    parse_non_negative_length, parse_value, resolve_overflow,
+    TextShadowItem, parse_non_negative_length, parse_value, resolve_overflow,
 };
 use crate::resolve::{
     ComputedFlexBasis, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
     ComputedLengthPercentageOrNormal, ResolveContext, lift_length_or_normal, lift_line_height,
-    lift_tab_size, resolve_border, resolve_flex_basis, resolve_length_or_normal,
+    lift_tab_size, resolve_border, resolve_flex_basis, resolve_length, resolve_length_or_normal,
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_tab_size, resolve_vertical_align, used_line_height_length,
@@ -2040,6 +2040,31 @@ fn absolutize_in_page_context(
         )
         .width
     }
+    /// One `text-shadow` item: absolutize the 3 lengths (`offset-x`/
+    /// `offset-y`/`blur-radius`), round-tripped back into the specified-layer
+    /// `Length::Px` shape (`resolve_length` is the percentage-less resolver —
+    /// text-shadow's lengths don't allow `<percentage>`, `TextShadowItem`
+    /// doc). `color` carries no length (`TextShadowColor` doc) — passed
+    /// through unchanged, same as `Border`'s `color` field above.
+    fn text_shadow_item(
+        specified: TextShadowItem,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> TextShadowItem {
+        TextShadowItem {
+            offset_x: Length::Px(
+                resolve_length(specified.offset_x, font_size, own_line_height, ctx).px(),
+            ),
+            offset_y: Length::Px(
+                resolve_length(specified.offset_y, font_size, own_line_height, ctx).px(),
+            ),
+            blur_radius: Length::Px(
+                resolve_length(specified.blur_radius, font_size, own_line_height, ctx).px(),
+            ),
+            color: specified.color,
+        }
+    }
 
     match value {
         // ── already computed-equivalent after phase 2 ──────────────────────
@@ -2369,6 +2394,22 @@ fn absolutize_in_page_context(
         PropertyValue::TabSize(v) => {
             PropertyValue::TabSize(lift_tab_size(resolve_tab_size(v, font_size, own_line_height, ctx)))
         }
+        // ── text-shadow ─────────────────────────────────────────────────────
+        // CSS Text Decoration Module Level 3 §4: each item's 3 lengths
+        // (`offset-x`/`offset-y`/`blur-radius`) are absolutized against this
+        // context's own `font_size`/`own_line_height` basis (`text_shadow_item`
+        // helper above); `<color>` carries no length and passes through.
+        // `none` (empty list) needs no allocation — `items` is reused as-is.
+        PropertyValue::TextShadow(items) => PropertyValue::TextShadow(if items.is_empty() {
+            items
+        } else {
+            Arc::new(
+                items
+                    .iter()
+                    .map(|item| text_shadow_item(*item, font_size, own_line_height, ctx))
+                    .collect(),
+            )
+        }),
         // ── vertical-align ───────────────────────────────────────────────
         // CSS 2.1 §10.8.1 — the 6 keywords (`baseline`/`sub`/`super`/
         // `middle`/`text-top`/`text-bottom`) preserved as-is, `<length>`
@@ -2548,8 +2589,8 @@ mod tests {
         FloatValue, FontStyle, FontVariantCaps, FontWeightValue, Hyphens, Length, LengthOrAuto,
         LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
         PositionValue, SelfAlignmentValue, TabSize, TextAlign, TextDecorationColor,
-        TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextTransform,
-        VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue,
+        TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextShadowColor,
+        TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4260,6 +4301,63 @@ mod tests {
         }
     }
 
+    /// Direct exercise of the `TextShadow` arm of
+    /// `absolutize_in_page_context` — both the `none` (empty-list) fast
+    /// path, which reuses the input `Arc` without allocating, and the
+    /// non-empty path, which absolutizes each item's `offset_x`/`offset_y`/
+    /// `blur_radius` against this context's own font-size basis (CSS Text
+    /// Decoration Module Level 3 §4).
+    #[test]
+    fn absolutize_in_page_context_covers_text_shadow_arm() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::TextShadow(Arc::new(Vec::new()))),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::TextShadow(Arc::new(Vec::new())),
+            "text-shadow: none",
+        );
+
+        let specified = TextShadowItem {
+            offset_x: Length::Em(1.0),
+            offset_y: Length::Em(2.0),
+            blur_radius: Length::Em(0.5),
+            color: TextShadowColor::CurrentColor,
+        };
+        let expected = TextShadowItem {
+            offset_x: Length::Px(20.0),
+            offset_y: Length::Px(40.0),
+            blur_radius: Length::Px(10.0),
+            color: TextShadowColor::CurrentColor,
+        };
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::TextShadow(Arc::new(vec![
+                    specified
+                ]))),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::TextShadow(Arc::new(vec![expected])),
+            "text-shadow: 1em 2em 0.5em currentcolor",
+        );
+    }
+
     /// Direct exercise of the `FontSizeRelative` "safety net" arm of
     /// `absolutize_in_page_context` — structurally unreachable through
     /// `cascade_page` (step 3/phase 2 always converges `FontSizeRelative` to
@@ -4475,7 +4573,9 @@ mod tests {
     /// font-size: larger/smaller 1 (`FontSizeRelative` —
     /// `absolutize_in_page_context` の structurally-unreachable な safety-net
     /// arm。到達しないが「素通し」ではなく実際に変換する形の arm なので
-    /// `PHASE_3_PASS_THROUGH_VARIANTS` 側には数えない)。
+    /// `PHASE_3_PASS_THROUGH_VARIANTS` 側には数えない) / text-shadow 1
+    /// (各 item の length 3 本を絶対化する実 transform arm、`text_shadow_item`
+    /// helper 参照)。
     ///
     /// 以前は `PROPERTY_VALUE_VARIANTS -
     /// PHASE_3_PASS_THROUGH_VARIANTS` という `const` 式だった。
@@ -4798,6 +4898,18 @@ mod tests {
         // "worst case" (`Direction` sibling comment above uses the same
         // reasoning).
         Quotes => PropertyValue::Quotes(Arc::new(vec![("«".into(), "»".into())])),
+        // `Em` (not `Px`) offsets/blur — same "worst case" reasoning as
+        // `FlexBasis`/`RowGap` above: exercises phase-3 absolutization
+        // (`resolve_text_shadow_item`) instead of trivially round-tripping
+        // an already-absolute length. `color` is `Resolved` rather than
+        // `CurrentColor` so this sample also exercises the pass-through
+        // (non-length) `color` field with a non-default payload.
+        TextShadow => PropertyValue::TextShadow(Arc::new(vec![TextShadowItem {
+            offset_x: Length::Em(0.5),
+            offset_y: Length::Em(0.5),
+            blur_radius: Length::Em(0.25),
+            color: TextShadowColor::Resolved(GREEN),
+        }])),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4993,6 +5105,7 @@ mod tests {
         TabSize,
         FontVariantCaps,
         Quotes,
+        TextShadow,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -5337,6 +5450,15 @@ mod tests {
             | PropertyValue::PlaceContent(_)
             // `quotes` (CSS Content 3 §2.4.1) carries no length either.
             | PropertyValue::Quotes(_) => None,
+            // `text-shadow` — each item's 3 lengths (`offset-x`/`offset-y`/
+            // `blur-radius`) can carry specified-layer residue (same `length`
+            // check `Padding`/`Margin` use above); `<color>` carries no
+            // length (`TextShadowColor` doc).
+            PropertyValue::TextShadow(shadows) => shadows.iter().find_map(|s| {
+                length(s.offset_x)
+                    .or_else(|| length(s.offset_y))
+                    .or_else(|| length(s.blur_radius))
+            }),
         }
     }
 
