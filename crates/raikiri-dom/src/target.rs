@@ -893,6 +893,8 @@ mod tests {
             Symbol::new("c"),
             raikiri_style::property::CounterStyle::Decimal,
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             out,
             raikiri_traits::ResolveOutcome::Resolved("0".to_owned()),
