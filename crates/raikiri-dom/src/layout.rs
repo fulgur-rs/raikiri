@@ -6845,6 +6845,40 @@ mod tests {
     }
 
     #[test]
+    fn bridge_grid_maps_grid_auto_columns_percent_and_max_content_breadth() {
+        // Sibling of `bridge_grid_maps_grid_auto_columns_and_rows_track_sizes`
+        // above, which only exercises `Px`/`MinContent` — `Percent` and
+        // `MaxContent` are the 2 `ComputedGridTrackBreadth` variants that
+        // test left unreached in both `grid_track_breadth_to_taffy_min` and
+        // `grid_track_breadth_to_taffy_max` (`Flex`/`Auto` are covered
+        // elsewhere by the repeat/minmax and named-line tests).
+        let mut cv = ComputedValues::initial();
+        cv.grid_auto_columns = std::sync::Arc::new(vec![ComputedGridTrackSize::Breadth(
+            ComputedGridTrackBreadth::Percent(25.0),
+        )]);
+        cv.grid_auto_rows = std::sync::Arc::new(vec![ComputedGridTrackSize::Breadth(
+            ComputedGridTrackBreadth::MaxContent,
+        )]);
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_grid(&mut style, &cv, &mut diag);
+        assert_eq!(
+            style.grid_auto_columns,
+            vec![TrackSizingFunction {
+                min: MinTrackSizingFunction::percent(0.25),
+                max: MaxTrackSizingFunction::percent(0.25),
+            }]
+        );
+        assert_eq!(
+            style.grid_auto_rows,
+            vec![TrackSizingFunction {
+                min: MinTrackSizingFunction::max_content(),
+                max: MaxTrackSizingFunction::max_content(),
+            }]
+        );
+    }
+
+    #[test]
     fn bridge_grid_maps_grid_auto_columns_fit_content() {
         // `fit-content(<length-percentage>)` (CSS Grid 1 §7.2.1) — no other
         // `bridge_grid` test constructs `ComputedGridTrackSize::FitContent`,

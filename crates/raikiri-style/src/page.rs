@@ -2698,13 +2698,14 @@ mod tests {
     use crate::property::{
         AlignSelfValue, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
         ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue,
-        FloatValue, FontStyle, FontWeightValue, GridAutoFlowValue, GridLineShorthand,
-        GridLineValue, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue, Length,
-        LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY,
-        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
-        SelfAlignmentValue, TextAlign, TextDecorationColor, TextDecorationLine,
-        TextDecorationShorthand, TextDecorationStyle, TextTransform, VerticalAlign, Visibility,
-        WhiteSpace, WordBreak, ZIndexValue,
+        FloatValue, FontStyle, FontWeightValue, GridAutoFlowValue, GridInflexibleBreadth,
+        GridLineShorthand, GridLineValue, GridRepeatCount, GridTemplateAreaEntry,
+        GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth,
+        GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto,
+        LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
+        PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, SelfAlignmentValue, TextAlign,
+        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
+        TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
@@ -4088,6 +4089,102 @@ mod tests {
             Some(&PropertyValue::Height(LengthOrAuto::Length(Length::Px(
                 16.0
             )))),
+        );
+    }
+
+    /// `absolutize_in_page_context`'s grid arms (`gtt`'s inner
+    /// `grid_track_breadth_from_computed` / `grid_inflexible_breadth_from_computed`
+    /// / `grid_track_size_from_computed` / `grid_track_list_from_computed`
+    /// round-trip helpers) round-trip every `<track-breadth>` keyword,
+    /// `minmax()`, `fit-content()`, `repeat()`, and top-level `none` —
+    /// `author_grid_template_columns_track_list_absolutizes_through_cascade`
+    /// (`cascade.rs`) only exercises a bare `<length>` track, which leaves
+    /// every other shape in this round trip unreached.
+    #[test]
+    fn cascade_page_grid_template_columns_round_trips_every_track_shape_through_phase_3() {
+        let root = ComputedValues::initial();
+        let result = page(
+            "@page { \
+             grid-template-columns: 50% max-content minmax(min-content, 2fr) \
+             minmax(max-content, 3fr) minmax(auto, 10px) minmax(20px, max-content) \
+             minmax(20%, min-content) fit-content(40%) auto repeat(2, min-content); \
+             grid-template-rows: none; \
+             }",
+            &root,
+        );
+        let declarations = result.declarations();
+        let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) =
+            declarations.get(&PropertyKey::GridTemplateColumns)
+        else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            panic!("expected a track list");
+        };
+        assert_eq!(list.components.len(), 10);
+        assert_eq!(
+            list.components[0],
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Length(
+                Length::Percent(50.0)
+            )))
+        );
+        assert_eq!(
+            list.components[1],
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::MaxContent))
+        );
+        assert_eq!(
+            list.components[2],
+            GridTrackListComponent::Size(GridTrackSize::MinMax(
+                GridInflexibleBreadth::MinContent,
+                GridTrackBreadth::Flex(2.0),
+            ))
+        );
+        assert_eq!(
+            list.components[3],
+            GridTrackListComponent::Size(GridTrackSize::MinMax(
+                GridInflexibleBreadth::MaxContent,
+                GridTrackBreadth::Flex(3.0),
+            ))
+        );
+        assert_eq!(
+            list.components[4],
+            GridTrackListComponent::Size(GridTrackSize::MinMax(
+                GridInflexibleBreadth::Auto,
+                GridTrackBreadth::Length(Length::Px(10.0)),
+            ))
+        );
+        assert_eq!(
+            list.components[5],
+            GridTrackListComponent::Size(GridTrackSize::MinMax(
+                GridInflexibleBreadth::Length(Length::Px(20.0)),
+                GridTrackBreadth::MaxContent,
+            ))
+        );
+        assert_eq!(
+            list.components[6],
+            GridTrackListComponent::Size(GridTrackSize::MinMax(
+                GridInflexibleBreadth::Length(Length::Percent(20.0)),
+                GridTrackBreadth::MinContent,
+            ))
+        );
+        assert_eq!(
+            list.components[7],
+            GridTrackListComponent::Size(GridTrackSize::FitContent(Length::Percent(40.0)))
+        );
+        assert_eq!(
+            list.components[8],
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Auto))
+        );
+        assert_eq!(
+            list.components[9],
+            GridTrackListComponent::Repeat(GridTrackRepeat {
+                count: GridRepeatCount::Count(2),
+                line_names: vec![vec![], vec![]],
+                tracks: vec![GridTrackSize::Breadth(GridTrackBreadth::MinContent)],
+            })
+        );
+        assert_eq!(
+            declarations.get(&PropertyKey::GridTemplateRows),
+            Some(&PropertyValue::GridTemplateRows(GridTemplateTracks::None)),
         );
     }
 
@@ -5597,6 +5694,63 @@ mod tests {
         // 対照 — box property では `%` が computed 値 (CSS Values 4 §5.5.1 既定)。
         assert_eq!(
             specified_layer_residue(&PropertyValue::PaddingTop(Length::Percent(50.0))),
+            None,
+        );
+    }
+
+    /// `specified_layer_residue`'s grid helpers (`grid_track_breadth`/
+    /// `grid_inflexible_breadth`/`grid_track_size`/`grid_template_tracks`)
+    /// are only exercised end-to-end by
+    /// `page_declarations_carry_no_specified_layer_residue`, whose corpus
+    /// fixture (`sample_for`) uses a bare `<length>` track only — this
+    /// drives the detector directly with the branches that fixture never
+    /// reaches: bare keyword breadths, `minmax()` on both sides,
+    /// `fit-content()`, and top-level `none`.
+    #[test]
+    fn grid_track_residue_detector_covers_minmax_fit_content_and_top_level_none() {
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::GridTemplateColumns(
+                GridTemplateTracks::None
+            )),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::GridAutoColumns(std::sync::Arc::new(vec![
+                GridTrackSize::Breadth(GridTrackBreadth::MinContent),
+            ]))),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::GridAutoRows(std::sync::Arc::new(vec![
+                GridTrackSize::MinMax(GridInflexibleBreadth::Auto, GridTrackBreadth::MaxContent),
+            ]))),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::GridAutoColumns(std::sync::Arc::new(vec![
+                GridTrackSize::MinMax(
+                    GridInflexibleBreadth::Length(Length::Percent(10.0)),
+                    GridTrackBreadth::Length(Length::Px(5.0)),
+                ),
+            ]))),
+            None,
+        );
+        // `minmax()`'s min side still flags residue when it does carry a
+        // pre-absolutization unit — proves the detector doesn't just
+        // hardcode `None` for `MinMax`.
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::GridAutoRows(std::sync::Arc::new(vec![
+                GridTrackSize::MinMax(
+                    GridInflexibleBreadth::Length(Length::Em(1.0)),
+                    GridTrackBreadth::Flex(2.0),
+                ),
+            ]))),
+            Some("Length::Em"),
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::GridAutoRows(std::sync::Arc::new(vec![
+                GridTrackSize::FitContent(Length::Percent(20.0)),
+            ]))),
             None,
         );
     }

@@ -8270,6 +8270,8 @@ mod tests {
         );
         let crate::resolve::ComputedGridTemplateTracks::List(list) = cv.grid_template_columns
         else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             panic!("expected a track list");
         };
         assert_eq!(
@@ -8295,6 +8297,46 @@ mod tests {
     }
 
     #[test]
+    fn author_grid_template_rows_and_grid_auto_rows_compute_through_cascade() {
+        // Sibling of `author_grid_template_columns_track_list_absolutizes_through_cascade`
+        // above — `grid-template-rows`/`grid-auto-rows` share the parser and
+        // `apply_value` arm shape with their `-columns` counterparts but
+        // were never independently exercised through the cascade pipeline.
+        let cv = cascade_with_ua(
+            "",
+            "div { grid-template-rows: 1fr 2fr; grid-auto-rows: min-content; }",
+            "div",
+            None,
+        );
+        let crate::resolve::ComputedGridTemplateTracks::List(rows) = cv.grid_template_rows else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            panic!("expected a track list");
+        };
+        assert_eq!(
+            rows.components,
+            vec![
+                crate::resolve::ComputedGridTrackListComponent::Size(
+                    crate::resolve::ComputedGridTrackSize::Breadth(
+                        crate::resolve::ComputedGridTrackBreadth::Flex(1.0)
+                    )
+                ),
+                crate::resolve::ComputedGridTrackListComponent::Size(
+                    crate::resolve::ComputedGridTrackSize::Breadth(
+                        crate::resolve::ComputedGridTrackBreadth::Flex(2.0)
+                    )
+                ),
+            ]
+        );
+        assert_eq!(
+            cv.grid_auto_rows,
+            std::sync::Arc::new(vec![crate::resolve::ComputedGridTrackSize::Breadth(
+                crate::resolve::ComputedGridTrackBreadth::MinContent
+            )])
+        );
+    }
+
+    #[test]
     fn author_grid_template_areas_computes_through_cascade() {
         let cv = cascade_with_ua(
             "",
@@ -8303,6 +8345,8 @@ mod tests {
             None,
         );
         let crate::property::GridTemplateAreasValue::Areas(areas) = cv.grid_template_areas else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             panic!("expected parsed areas");
         };
         assert_eq!(areas.row_count, 2);
@@ -11209,6 +11253,77 @@ mod tests {
         apply_value(PropertyValue::PlaceContent(p), &mut cv);
         assert_eq!(cv.align_content, ContentAlignmentValue::SpaceBetween);
         assert_eq!(cv.justify_content, ContentAlignmentValue::Center);
+    }
+
+    #[test]
+    fn apply_value_direct_grid_row_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_margin_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::GridRow(shorthand)` arm is
+        // unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 2 `GridRowStart`/`GridRowEnd` longhands before
+        // `apply_value` ever sees it) — not a safety net, a canary.
+        use crate::property::GridLineShorthand;
+        use crate::property::GridLineValue;
+        let mut cv = SpecifiedValues::initial();
+        let shorthand = GridLineShorthand {
+            start: GridLineValue::Line(2),
+            end: GridLineValue::Span(3),
+        };
+        apply_value(PropertyValue::GridRow(shorthand), &mut cv);
+        assert_eq!(cv.grid_row_start, GridLineValue::Line(2));
+        assert_eq!(cv.grid_row_end, GridLineValue::Span(3));
+    }
+
+    #[test]
+    fn apply_value_direct_grid_column_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_grid_row_shorthand_fall_through`
+        // above, for `PropertyValue::GridColumn(shorthand)`.
+        use crate::property::GridLineShorthand;
+        use crate::property::GridLineValue;
+        let mut cv = SpecifiedValues::initial();
+        let shorthand = GridLineShorthand {
+            start: GridLineValue::Named("content".into()),
+            end: GridLineValue::Auto,
+        };
+        apply_value(PropertyValue::GridColumn(shorthand), &mut cv);
+        assert_eq!(cv.grid_column_start, GridLineValue::Named("content".into()));
+        assert_eq!(cv.grid_column_end, GridLineValue::Auto);
+    }
+
+    #[test]
+    fn apply_value_direct_place_items_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_place_content_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::PlaceItems(p)` arm is
+        // unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 2 `AlignItems`/`JustifyItems` longhands before
+        // `apply_value` ever sees it) — not a safety net, a canary.
+        use crate::property::{PlaceItemsShorthand, SelfAlignmentValue};
+        let mut cv = SpecifiedValues::initial();
+        let p = PlaceItemsShorthand {
+            align: SelfAlignmentValue::Center,
+            justify: SelfAlignmentValue::End,
+        };
+        apply_value(PropertyValue::PlaceItems(p), &mut cv);
+        assert_eq!(cv.align_items, SelfAlignmentValue::Center);
+        assert_eq!(cv.justify_items, SelfAlignmentValue::End);
+    }
+
+    #[test]
+    fn apply_value_direct_place_self_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_place_items_shorthand_fall_through`
+        // above, for `PropertyValue::PlaceSelf(p)`.
+        use crate::property::{AlignSelfValue, PlaceSelfShorthand, SelfAlignmentValue};
+        let mut cv = SpecifiedValues::initial();
+        let p = PlaceSelfShorthand {
+            align: AlignSelfValue::Auto,
+            justify: AlignSelfValue::Value(SelfAlignmentValue::Start),
+        };
+        apply_value(PropertyValue::PlaceSelf(p), &mut cv);
+        assert_eq!(cv.align_self, AlignSelfValue::Auto);
+        assert_eq!(
+            cv.justify_self,
+            AlignSelfValue::Value(SelfAlignmentValue::Start)
+        );
     }
 
     // ── text-decoration longhand + shorthand cascade (CSS Text Decoration

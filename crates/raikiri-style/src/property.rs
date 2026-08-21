@@ -16391,6 +16391,8 @@ mod tests {
             "100px auto 1fr min-content max-content",
             "grid-template-columns",
         ) else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             panic!("expected a track list");
         };
         assert_eq!(list.components.len(), 5);
@@ -16445,6 +16447,48 @@ mod tests {
     }
 
     #[test]
+    fn grid_template_columns_minmax_accepts_all_inflexible_breadth_keywords_as_min() {
+        // `<inflexible-breadth>` (`minmax()`'s first argument) accepts
+        // `auto` / `min-content` / `max-content` in addition to
+        // `<length-percentage>` (already covered by `grid_template_columns_minmax`
+        // above) — CSS Grid Layout Module Level 1 §7.2.1.
+        let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) = parse(
+            "minmax(auto, 100px) minmax(min-content, 1fr) minmax(max-content, 1fr)",
+            "grid-template-columns",
+        ) else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            panic!("expected a track list");
+        };
+        assert_eq!(
+            list.components,
+            vec![
+                GridTrackListComponent::Size(GridTrackSize::MinMax(
+                    GridInflexibleBreadth::Auto,
+                    GridTrackBreadth::Length(Length::Px(100.0)),
+                )),
+                GridTrackListComponent::Size(GridTrackSize::MinMax(
+                    GridInflexibleBreadth::MinContent,
+                    GridTrackBreadth::Flex(1.0),
+                )),
+                GridTrackListComponent::Size(GridTrackSize::MinMax(
+                    GridInflexibleBreadth::MaxContent,
+                    GridTrackBreadth::Flex(1.0),
+                )),
+            ]
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_rejects_negative_fr() {
+        // `<flex [0,∞]>` (CSS Grid Layout Module Level 1 §7.2.4) — a
+        // negative `fr` value fails `parse_grid_flex_res`'s non-negative
+        // check, and (unlike a valid `fr`) doesn't fall back to a
+        // `<length-percentage>` either, since `fr` isn't a length unit.
+        assert_eq!(parse("-1fr", "grid-template-columns"), None);
+    }
+
+    #[test]
     fn grid_template_columns_fit_content() {
         assert_eq!(
             parse("fit-content(40%)", "grid-template-columns"),
@@ -16460,11 +16504,22 @@ mod tests {
     }
 
     #[test]
+    fn grid_template_columns_fit_content_rejects_negative_length() {
+        // `fit-content( <length-percentage [0,∞]> )` (CSS Grid Layout
+        // Module Level 1 §7.2.1) — `parse_grid_fit_content_res` parses the
+        // length itself first (which does accept a negative sign), then
+        // rejects it in a separate non-negative check.
+        assert_eq!(parse("fit-content(-10px)", "grid-template-columns"), None);
+    }
+
+    #[test]
     fn grid_template_columns_named_lines() {
         let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) = parse(
             "[full-start] 1fr [content-start] 2fr [content-end] 1fr [full-end]",
             "grid-template-columns",
         ) else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             panic!("expected a track list");
         };
         assert_eq!(list.components.len(), 3);
@@ -16484,6 +16539,8 @@ mod tests {
         let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) =
             parse("repeat(3, 1fr)", "grid-template-columns")
         else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             panic!("expected a track list");
         };
         assert_eq!(
@@ -16502,6 +16559,8 @@ mod tests {
             "repeat(auto-fill, minmax(100px, 1fr))",
             "grid-template-columns",
         ) else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             panic!("expected a track list");
         };
         assert_eq!(
@@ -16585,6 +16644,42 @@ mod tests {
     }
 
     #[test]
+    fn grid_template_columns_rejects_repeat_with_no_tracks() {
+        // `repeat( <count>, [ <line-names>? <track-size> ]+ <line-names>? )`
+        // — the `+` requires at least 1 track; a bare trailing comma with
+        // nothing after it parses the count and comma but finds no
+        // `<track-size>`.
+        assert_eq!(parse("repeat(3,)", "grid-template-columns"), None);
+    }
+
+    #[test]
+    fn grid_template_columns_auto_repeat_plus_bare_track_validates_together() {
+        // `grid_track_list_obeys_auto_repeat_constraint`'s fixed-size walk
+        // must check bare `Size` components too, not just the tracks
+        // nested inside `repeat()` —
+        // `grid_template_columns_allows_auto_repeat_plus_fixed_repeat` above
+        // only combines 2 `repeat()`s, never a bare `Size` component
+        // alongside an auto-repeat.
+        assert!(matches!(
+            parse("100px repeat(auto-fill, 50px)", "grid-template-columns"),
+            Some(PropertyValue::GridTemplateColumns(
+                GridTemplateTracks::List(_)
+            ))
+        ));
+        // `fit-content()` has no `<fixed-size>` alternative
+        // (`grid_track_size_is_fixed` doc) — a bare `fit-content()`
+        // component alongside an auto-repeat makes the whole declaration
+        // invalid.
+        assert_eq!(
+            parse(
+                "fit-content(50%) repeat(auto-fill, 50px)",
+                "grid-template-columns"
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn grid_template_columns_rejects_unknown_ident() {
         assert_eq!(parse("bogus", "grid-template-columns"), None);
     }
@@ -16643,6 +16738,8 @@ mod tests {
             r#""header header" "nav main" "footer ...""#,
             "grid-template-areas",
         ) else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             panic!("expected parsed areas");
         };
         assert_eq!(areas.row_count, 3);
@@ -16679,6 +16776,8 @@ mod tests {
         let Some(PropertyValue::GridTemplateAreas(GridTemplateAreasValue::Areas(areas))) =
             parse(r#""a a" "a a""#, "grid-template-areas")
         else {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             panic!("expected parsed areas");
         };
         assert_eq!(areas.areas.len(), 1);
@@ -16709,6 +16808,16 @@ mod tests {
         // spec verbatim: "A trash token is a syntax error, and makes the
         // declaration invalid." `#` is neither an ident code point nor `.`.
         assert_eq!(parse(r#""a #""#, "grid-template-areas"), None);
+    }
+
+    #[test]
+    fn grid_template_areas_rejects_a_value_with_no_strings_at_all() {
+        // `none | <string>+` — neither the `none` keyword nor any `<string>`
+        // is present, so `parse_grid_template_areas`'s `rows.is_empty()`
+        // guard rejects it before ever reaching `build_grid_template_areas`
+        // (distinct from `grid_template_areas_rejects_trash_token` above,
+        // where a string IS present but its content is invalid).
+        assert_eq!(parse("5px", "grid-template-areas"), None);
     }
 
     #[test]
@@ -16920,6 +17029,32 @@ mod tests {
         // spec verbatim (§8.3): "the `<custom-ident>` additionally excludes
         // the keywords `span` and `auto`".
         assert_eq!(parse("span", "grid-column-start"), None);
+    }
+
+    #[test]
+    fn grid_line_integer_then_reserved_ident_leaves_leftover_for_caller_exhausted_check() {
+        // Sibling of `grid_line_rejects_span_and_auto_as_custom_ident` above,
+        // but exercised through the plain `<integer> <custom-ident>`
+        // alternative instead of the `span` prefix: after the leading `2`
+        // is consumed, `auto` fails the trailing `<custom-ident>`
+        // alternative (same additional exclusion) and is left unconsumed.
+        // Same "helper returns `Some`, rejection is the caller's job"
+        // pattern as
+        // `text_decoration_line_two_underlines_leaves_leftover_for_caller_exhausted_check`.
+        let mut input = ParserInput::new("2 auto");
+        let mut parser = Parser::new(&mut input);
+        assert_eq!(parse_grid_line(&mut parser), Some(GridLineValue::Line(2)));
+        assert!(!parser.is_exhausted());
+    }
+
+    #[test]
+    fn grid_line_rejects_a_value_that_is_neither_integer_nor_ident() {
+        // `[ [ <integer> ] && <custom-ident>? ] | <custom-ident> | auto`
+        // (`GridLineValue` doc) — a `<string>` token satisfies none of the
+        // alternatives `parse_grid_line` tries (`auto`, `span`, `<integer>`,
+        // `<custom-ident>`), so it's rejected outright rather than leaving
+        // a leftover token.
+        assert_eq!(parse(r#""foo""#, "grid-row-start"), None);
     }
 
     // ── grid-row / grid-column shorthand (CSS Grid Layout Module Level 1
