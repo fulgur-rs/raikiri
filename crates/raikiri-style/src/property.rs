@@ -1558,13 +1558,26 @@ pub enum ContentComponent {
 /// は `inline`、not inherited。
 ///
 /// 現状受理する keyword は `block` / `inline` / `inline-block`
-/// / `none` / `flex` / `grid` の 6 値。`table*` / `list-item` /
+/// / `none` / `flex` / `grid` / `list-item` の 7 値。`table*` /
 /// `flow-root` (standalone) / `contents` 等 spec-valid だが未実装
 /// (将来対応) の keyword は `parse_display` が `None` を返し、
 /// declaration が silent drop される (rule.rs 側 invalid-value drop path)。
 ///
+/// `list-item` は `<display-listitem> = <display-outside>? && [ flow |
+/// flow-root ]? && list-item` (outer-defaulting rule により省略された
+/// `<display-outside>` は block になる) の keyword-acceptance のみを
+/// 実装する — list-item box の生成 (principal box に加えて marker box を
+/// 追加で作る CSS Lists 3 §2.2 の挙動) と `::marker` 擬似要素の解決は
+/// 別 scope (marker/list-style-type 系の generated-content 機構に依存する
+/// 別途 layout work)。したがって `display: list-item` は本 crate では
+/// 単なる keyword として保持されるのみ。marker box 抜きの block-level
+/// principal box という近似は CSS2.1 §12.5.1 "a list-item's principal
+/// box is block-level" と spec-compatible (§12.5.1 のこの一文自体が
+/// marker box の有無を条件にしていない)。
+///
 /// `#[non_exhaustive]`: variant 追加を non-breaking にする (InlineBlock /
-/// None / Flex / Grid 追加は本 attribute 経由で forward-compatible)。
+/// None / Flex / Grid / ListItem 追加は本 attribute 経由で
+/// forward-compatible)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayValue {
@@ -1606,6 +1619,19 @@ pub enum DisplayValue {
     /// <https://www.w3.org/TR/css-display-3/#typedef-display-inside>
     /// <https://www.w3.org/TR/css-display-3/#the-display-properties>
     Grid,
+    /// `list-item` — CSS Display 3 §2 `<display-listitem>`
+    /// <https://www.w3.org/TR/css-display-3/#typedef-display-listitem>,
+    /// HTML Living Standard's default UA stylesheet rule for `li`
+    /// (`li { display: list-item; text-align: match-parent; }`)
+    /// <https://html.spec.whatwg.org/multipage/rendering.html#lists>.
+    /// `<display-outside>` を省略した場合 outer display type は block に
+    /// デフォルトするため (§2.2 の outer-defaulting rule と同型)、
+    /// `display: list-item` は `display: block flow list-item` と等価。
+    ///
+    /// keyword acceptance のみ — list-item principal box への marker box
+    /// 追加 (CSS Lists 3 §2.2) と `::marker` 擬似要素の解決は本 variant の
+    /// scope 外 (別途 generated-content/list 機構に依存する layout work)。
+    ListItem,
 }
 
 /// `flex-direction` property の value。
@@ -3183,12 +3209,15 @@ pub enum ClearValue {
 /// | others | same as specified |
 ///
 /// この crate の [`DisplayValue`] scope (`block` / `inline` / `inline-block`
-/// / `none` / `flex` / `grid`) に絞ると、表の中段に該当するのは
+/// / `none` / `flex` / `grid` / `list-item`) に絞ると、表の中段に該当するのは
 /// [`DisplayValue::Inline`] と [`DisplayValue::InlineBlock`] の 2 variant
 /// だけ ([`DisplayValue`] は table 系 keyword を実装していない)。
-/// [`DisplayValue::Flex`] / [`DisplayValue::Grid`] は表に**登場しない**
-/// ("others" 側、same as specified) — floated flex/grid container は
-/// float してもそのまま `flex`/`grid` の computed value を保つ。
+/// [`DisplayValue::Flex`] / [`DisplayValue::Grid`] / [`DisplayValue::ListItem`]
+/// は表に**登場しない** ("others" 側、same as specified) — floated
+/// flex/grid container は float してもそのまま `flex`/`grid` の computed
+/// value を保ち、`list-item` も同様に float 後も `list-item` のまま
+/// (`list-item` は表の中段 `inline-block` 等とは別 keyword であり、
+/// under `others` に落ちる)。
 ///
 /// # `display: none` は本関数の呼び出し前に別枝で処理される
 ///
@@ -3225,15 +3254,18 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
         DisplayValue::None => DisplayValue::None,
         DisplayValue::Inline | DisplayValue::InlineBlock => DisplayValue::Block,
         // `DisplayValue::None` の doc 直上の rationale と同じ理由で、この
-        // arm もあえて `_` に潰さない — `Block` / `Flex` / `Grid` を明示
-        // 列挙することで、将来 `DisplayValue` に table-family variant
-        // (CSS2 §9.7 表の `inline-table` / `table-row-group` 等) が
-        // 追加された時、この match が非網羅になり compile error で
-        // 呼び出し元に再考を強制する (`#[non_exhaustive]` は crate 外部
-        // consumer 向けの属性であり、定義 crate 内部のこの match には
-        // 適用されない)。silent に「specified のまま」へ pass-through
-        // させてしまうと §9.7 表を under-apply する。
-        same @ (DisplayValue::Block | DisplayValue::Flex | DisplayValue::Grid) => same,
+        // arm もあえて `_` に潰さない — `Block` / `Flex` / `Grid` /
+        // `ListItem` を明示列挙することで、将来 `DisplayValue` に
+        // table-family variant (CSS2 §9.7 表の `inline-table` /
+        // `table-row-group` 等) が追加された時、この match が非網羅になり
+        // compile error で呼び出し元に再考を強制する (`#[non_exhaustive]`
+        // は crate 外部 consumer 向けの属性であり、定義 crate 内部のこの
+        // match には適用されない)。silent に「specified のまま」へ
+        // pass-through させてしまうと §9.7 表を under-apply する。
+        same @ (DisplayValue::Block
+        | DisplayValue::Flex
+        | DisplayValue::Grid
+        | DisplayValue::ListItem) => same,
     }
 }
 
@@ -6573,7 +6605,7 @@ fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
 ///
 /// CSS Display 3 §2 "Box Layout Modes: the display property"
 /// <https://www.w3.org/TR/css-display-3/#propdef-display>。現状受理する
-/// keyword は 6 つ:
+/// keyword は 7 つ:
 ///
 /// - `block` — `<display-outside>` (block flow)
 /// - `inline` — `<display-outside>` (inline flow、initial value)
@@ -6583,8 +6615,14 @@ fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
 ///   により `block flex` と等価
 /// - `grid` — `<display-inside>` (§2.2) keyword、outer-defaulting rule
 ///   により `block grid` と等価
+/// - `list-item` — `<display-listitem>` keyword、outer-defaulting rule
+///   により `block flow list-item` と等価。HTML Living Standard の default
+///   UA stylesheet が `li` に指定する
+///   (<https://html.spec.whatwg.org/multipage/rendering.html#lists>)。
+///   [`DisplayValue::ListItem`] の doc が言う通り keyword acceptance のみ
+///   — marker box 生成は本 crate scope 外。
 ///
-/// 他 keyword (`inline-flex` / `inline-grid` / `table*` / `list-item` /
+/// 他 keyword (`inline-flex` / `inline-grid` / `table*` /
 /// `flow-root` / `contents` 等) は spec-valid だが未実装のため silent drop
 /// (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
 /// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
@@ -6601,6 +6639,7 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         "none" => Some(DisplayValue::None),
         "flex" => Some(DisplayValue::Flex),
         "grid" => Some(DisplayValue::Grid),
+        "list-item" => Some(DisplayValue::ListItem),
         _ => None,
     }
 }
@@ -8672,16 +8711,27 @@ mod tests {
     }
 
     #[test]
+    fn display_parse_list_item() {
+        // CSS Display 3 §2 <display-listitem>, outer-defaulting rule makes
+        // it equivalent to `block flow list-item`. HTML Living Standard's
+        // default UA stylesheet uses this for `li`
+        // <https://html.spec.whatwg.org/multipage/rendering.html#lists>.
+        assert_eq!(
+            parse("list-item", "display"),
+            Some(PropertyValue::Display(DisplayValue::ListItem))
+        );
+    }
+
+    #[test]
     fn display_rejects_unknown_ident() {
-        // block / inline / inline-block / none / flex / grid 以外は
-        // spec-valid でも未実装のため silent drop。
-        // inline-flex / inline-grid / table* / list-item / flow-root /
-        // contents は将来の layout 対応で扱う予定。
+        // block / inline / inline-block / none / flex / grid / list-item
+        // 以外は spec-valid でも未実装のため silent drop。
+        // inline-flex / inline-grid / table* / flow-root / contents は
+        // 将来の layout 対応で扱う予定。
         assert_eq!(parse("inline-flex", "display"), None);
         assert_eq!(parse("inline-grid", "display"), None);
         assert_eq!(parse("table", "display"), None);
         assert_eq!(parse("table-row", "display"), None);
-        assert_eq!(parse("list-item", "display"), None);
         assert_eq!(parse("flow-root", "display"), None);
         assert_eq!(parse("contents", "display"), None);
     }
@@ -8726,6 +8776,14 @@ mod tests {
         assert_eq!(
             parse("Grid", "display"),
             Some(PropertyValue::Display(DisplayValue::Grid))
+        );
+        assert_eq!(
+            parse("LIST-ITEM", "display"),
+            Some(PropertyValue::Display(DisplayValue::ListItem))
+        );
+        assert_eq!(
+            parse("List-Item", "display"),
+            Some(PropertyValue::Display(DisplayValue::ListItem))
         );
     }
 
@@ -12259,6 +12317,7 @@ mod tests {
             DisplayValue::None,
             DisplayValue::Flex,
             DisplayValue::Grid,
+            DisplayValue::ListItem,
         ] {
             assert_eq!(
                 resolve_display_for_float(display, FloatValue::None),
@@ -12283,7 +12342,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_display_for_float_leaves_block_flex_grid_unchanged() {
+    fn resolve_display_for_float_leaves_block_flex_grid_list_item_unchanged() {
         // §9.7 table's "others" row — not in the forced-to-block list.
         for float in [FloatValue::Left, FloatValue::Right] {
             assert_eq!(
@@ -12297,6 +12356,10 @@ mod tests {
             assert_eq!(
                 resolve_display_for_float(DisplayValue::Grid, float),
                 DisplayValue::Grid
+            );
+            assert_eq!(
+                resolve_display_for_float(DisplayValue::ListItem, float),
+                DisplayValue::ListItem
             );
         }
     }
