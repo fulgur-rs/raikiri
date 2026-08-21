@@ -164,7 +164,7 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                     // reset, or increment a counter ... they must have no
                     // effect." `display: none` (whole-subtree box omission)
                     // and `display: contents` (element generates no box of
-                    // its own, CSS Display 3 §2.4) both qualify — same skip
+                    // its own, CSS Display 3 §2.5) both qualify — same skip
                     // crate::target::build_target_registry's own `Enter`
                     // step already applies (see that function's doc).
                     Some(cv)
@@ -399,7 +399,7 @@ mod tests {
     fn drive_document_skips_directives_on_display_contents_elements() {
         // Companion to drive_document_skips_directives_on_display_none_elements
         // above — display:contents also generates no box for the element
-        // itself (CSS Display 3 §2.4), so CSS Lists 3 §4.5's "no effect"
+        // itself (CSS Display 3 §2.5), so CSS Lists 3 §4.5's "no effect"
         // rule applies to it the same way.
         let mut doc = Document::new();
         doc.append_element(

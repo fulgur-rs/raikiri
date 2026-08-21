@@ -448,7 +448,7 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
                         // set, reset, or increment a counter ... they must
                         // have no effect." `display: none` (whole-subtree
                         // box omission) and `display: contents` (element
-                        // generates no box of its own, CSS Display 3 §2.4)
+                        // generates no box of its own, CSS Display 3 §2.5)
                         // both qualify. Skip directive application entirely
                         // — the element may still register as a target
                         // below (target-* doesn't require box generation,
@@ -871,7 +871,7 @@ mod tests {
     fn build_target_registry_display_contents_element_does_not_affect_counter_stack() {
         // Companion to build_target_registry_display_none_element_does_not_affect_counter_stack:
         // display:contents also generates no box for the element itself
-        // (CSS Display 3 §2.4), so CSS Lists 3 §4.5's "no effect" rule
+        // (CSS Display 3 §2.5), so CSS Lists 3 §4.5's "no effect" rule
         // applies here too. Same regression-pin shape (descendant probe,
         // still-open scope) for the same reason that test documents.
         let mut doc = Document::new();

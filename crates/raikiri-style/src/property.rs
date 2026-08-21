@@ -6649,7 +6649,7 @@ fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
 ///   により `block flex` と等価
 /// - `grid` — `<display-inside>` (§2.2) keyword、outer-defaulting rule
 ///   により `block grid` と等価
-/// - `contents` — `<display-box>` (§2.4)、要素自身が box を生成しない
+/// - `contents` — `<display-box>` (§2.5)、要素自身が box を生成しない
 ///   ([`DisplayValue::Contents`] doc 参照)
 ///
 /// 他 keyword (`inline-flex` / `inline-grid` / `table*` / `list-item` /
@@ -8742,7 +8742,7 @@ mod tests {
 
     #[test]
     fn display_parse_contents() {
-        // CSS Display 3 §2.4 <display-box> keyword — element generates no
+        // CSS Display 3 §2.5 <display-box> keyword — element generates no
         // box of its own, children/pseudo-elements still generate boxes.
         assert_eq!(
             parse("contents", "display"),
