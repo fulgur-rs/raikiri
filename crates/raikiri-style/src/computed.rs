@@ -558,32 +558,51 @@ pub struct ComputedValues {
     /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1 "Vertical alignment: the
     /// 'vertical-align' property"
     /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>,
-    /// "Initial: baseline" / "Inherited: no"). Computed value = specified
-    /// keyword ([`VerticalAlign`] doc — no length payload in this minimal
-    /// scope, so no relative resolution is needed).
+    /// "Initial: baseline" / "Inherited: no"). Computed value: the 6
+    /// keywords (`baseline`/`sub`/`super`/`middle`/`text-top`/`text-bottom`)
+    /// stay the specified keyword; [`VerticalAlign::Length`] absolutizes to
+    /// `Length::Px` ([`crate::resolve::resolve_vertical_align`] doc).
     ///
-    /// # Scope carving (minimal scope)
+    /// # Scope carving
     ///
-    /// This field holds only the 3-keyword subset described on
-    /// [`VerticalAlign`] (`baseline` / `sub` / `super`) — the `top` /
-    /// `text-top` / `middle` / `bottom` / `text-bottom` keywords and the
-    /// `<percentage>` / `<length>` value forms are explicit follow-up, not
-    /// represented by this field.
+    /// This field holds the subset described on [`VerticalAlign`]'s own
+    /// "Scope carving" doc — `top` / `bottom` keywords and the
+    /// `<percentage>` value form remain explicit follow-up, not represented
+    /// by this field.
+    ///
+    /// # Same type at both the specified and computed layer
+    ///
+    /// Unlike most length-bearing fields in this crate (`flex_basis` /
+    /// `letter_spacing` / `border`, which all use a dedicated `Computed*`
+    /// type distinct from their specified-layer type), this field keeps the
+    /// **same** [`VerticalAlign`] type [`crate::specified::SpecifiedValues::vertical_align`]
+    /// carries. This is forced by raikiri-paint: its
+    /// `vertical_align_shift_px` function takes this crate's
+    /// [`VerticalAlign`] by value directly, so introducing a separate
+    /// computed-only type here would require a raikiri-paint signature
+    /// change this crate's scope does not include. See
+    /// [`crate::resolve::resolve_vertical_align`] doc for how the
+    /// [`VerticalAlign::Length`] variant is absolutized without changing
+    /// this field's type.
     ///
     /// # Downstream handoff
     ///
     /// This field carries the cascade static side value only, mirroring
     /// [`Self::text_decoration_line`] — the baseline-shift amount
-    /// calculation and glyph rendering for `sub`/`super` is raikiri-paint
-    /// scope, not this crate's. raikiri-paint does now consume this field
-    /// for `sub`/`super` (a used-font-size-relative pixel offset applied at
-    /// glyph draw time); the other recognized keyword, `baseline`,
-    /// continues to contribute no offset by definition. This does not by
-    /// itself make `sub`/`super` content appear inline with its
-    /// surrounding text — raikiri-dom has no inline formatting context yet
-    /// (every element, `inline` included, lays out as its own block row),
-    /// which is a separate, larger, pre-existing gap this field's wiring
-    /// does not close.
+    /// calculation and glyph rendering is raikiri-paint scope, not this
+    /// crate's. raikiri-paint consumes this field for `sub`/`super` (a
+    /// used-font-size-relative pixel offset applied at glyph draw time);
+    /// `baseline` continues to contribute no offset by definition. The
+    /// other 3 keywords (`middle`/`text-top`/`text-bottom`) and the
+    /// absolutized `Length` payload fall through raikiri-paint's own
+    /// `#[non_exhaustive]` wildcard fallback to the same 0px shift until
+    /// that crate's own shift-calculation work lands — this crate's job
+    /// ends at carrying the (now, for `Length`, absolutized) value through.
+    /// This does not by itself make `sub`/`super` content appear inline
+    /// with its surrounding text — raikiri-dom has no inline formatting
+    /// context yet (every element, `inline` included, lays out as its own
+    /// block row), which is a separate, larger, pre-existing gap this
+    /// field's wiring does not close.
     pub vertical_align: VerticalAlign,
     /// `font-style`. **inherited**, initial: [`FontStyle::Normal`] (CSS
     /// Fonts Module Level 4 §2.4 "Font style: the font-style property"

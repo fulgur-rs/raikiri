@@ -98,7 +98,7 @@ use crate::resolve::{
     ComputedLengthPercentageOrNormal, ResolveContext, lift_length_or_normal, lift_line_height,
     resolve_border, resolve_flex_basis, resolve_length_or_normal, resolve_length_percentage,
     resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
-    resolve_margin_length_or_auto, used_line_height_length,
+    resolve_margin_length_or_auto, resolve_vertical_align, used_line_height_length,
 };
 use crate::rule::{Declaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
@@ -2083,10 +2083,6 @@ fn absolutize_in_page_context(
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
         | PropertyValue::TextDecoration(_)
-        // `vertical-align` (minimal scope: `baseline`/`sub`/`super`) carries
-        // no length either and computed value = specified keyword (see
-        // `VerticalAlign`'s doc) — nothing for phase 3 to absolutize.
-        | PropertyValue::VerticalAlign(_)
         // `font-style` carries no length at this crate's scope (only
         // `normal`/`italic` implemented, see `FontStyle`'s doc) and
         // computed value = specified keyword — nothing for phase 3 to
@@ -2348,6 +2344,17 @@ fn absolutize_in_page_context(
         PropertyValue::WordSpacing(v) => PropertyValue::WordSpacing(lift_length_or_normal(
             resolve_length_or_normal(v, font_size, own_line_height, ctx),
         )),
+        // ── vertical-align ───────────────────────────────────────────────
+        // CSS 2.1 §10.8.1 — the 6 keywords (`baseline`/`sub`/`super`/
+        // `middle`/`text-top`/`text-bottom`) preserved as-is, `<length>`
+        // absolutized. `resolve_vertical_align` already returns the same
+        // `VerticalAlign` shape `PropertyValue::VerticalAlign` carries (no
+        // separate `Computed*` type exists for this property — see that
+        // function's doc for why — so unlike `lp`/`fb`/`lift_length_or_normal`
+        // above there is no round-trip conversion needed here).
+        PropertyValue::VerticalAlign(v) => {
+            PropertyValue::VerticalAlign(resolve_vertical_align(v, font_size, own_line_height, ctx))
+        }
         // ── flex-basis ────────────────────────────────────────────────────
         // CSS Flexible Box Layout Module Level 1 §7.2.3 — `content`/`auto`
         // preserved as keywords, `<length-percentage>` absolutized (`fb`
@@ -4156,6 +4163,43 @@ mod tests {
         }
     }
 
+    /// Direct exercise of `absolutize_in_page_context`'s `VerticalAlign`
+    /// arm — the 6 keywords stay as-is, `<length>` absolutizes against this
+    /// page context's own font-size (same "worst case: `Em`" shape
+    /// `page_corpus`'s `VerticalAlign` sample uses).
+    #[test]
+    fn absolutize_in_page_context_covers_vertical_align_length_arm() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        for (specified, expected) in [
+            (VerticalAlign::Baseline, VerticalAlign::Baseline),
+            (VerticalAlign::Middle, VerticalAlign::Middle),
+            (VerticalAlign::TextTop, VerticalAlign::TextTop),
+            (VerticalAlign::TextBottom, VerticalAlign::TextBottom),
+            (
+                VerticalAlign::Length(Length::Em(2.0)),
+                VerticalAlign::Length(Length::Px(40.0)),
+            ),
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::VerticalAlign(specified)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::VerticalAlign(expected),
+                "vertical-align: {specified:?}",
+            );
+        }
+    }
+
     /// Direct exercise of the `FontSizeRelative` "safety net" arm of
     /// `absolutize_in_page_context` — structurally unreachable through
     /// `cascade_page` (step 3/phase 2 always converges `FontSizeRelative` to
@@ -4349,11 +4393,16 @@ mod tests {
     /// `RowGap` / `ColumnGap` / `Flex` / `Gap` は `<length-percentage>` を
     /// 運ぶため pass-through 側には**加わらない** —
     /// `absolutize_in_page_context` のバケット comment 参照)。
+    /// 49 → 48 (`VerticalAlign` が `<length>` variant を獲得し、`FlexBasis`
+    /// 等と同じ理由でこちら側から**抜ける** — phase 3 で実際に絶対化する
+    /// 専用 arm を `absolutize_in_page_context` に持つようになったため。
+    /// pass-through 側から抜けたのはこの改修で唯一のケース — 上記の履歴は
+    /// 全て「加わる」方向だったことに注意)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 49;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 48;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4548,11 +4597,12 @@ mod tests {
             style: TextDecorationStyle::Wavy,
             color: TextDecorationColor::CurrentColor,
         }),
-        // No specified/computed distinction for `vertical-align` in this
-        // minimal scope (computed value = specified keyword, `VerticalAlign`
-        // doc) — any value is "worst case" (`Direction`/`TextDecorationLine`
-        // sibling comments above use the same reasoning).
-        VerticalAlign => PropertyValue::VerticalAlign(VerticalAlign::Sub),
+        // Unlike `Direction`/`TextDecorationLine` above, `vertical-align`
+        // *does* have a specified/computed distinction now that it carries
+        // a `<length>` variant — `Em` (not `Px`) is the worst-case payload,
+        // same "exercise phase-3 absolutization" reasoning as
+        // `LetterSpacing`/`FlexBasis` below.
+        VerticalAlign => PropertyValue::VerticalAlign(VerticalAlign::Length(Length::Em(0.3))),
         // No specified/computed distinction for `font-style` at this
         // crate's scope (computed value = specified keyword, `FontStyle`
         // doc) — any value is "worst case" (`Direction` sibling comment
@@ -4982,6 +5032,21 @@ mod tests {
                 FlexBasisValue::Length(l) => length(l),
             }
         }
+        /// `vertical-align` の 6 keyword (`baseline`/`sub`/`super`/`middle`/
+        /// `text-top`/`text-bottom`) は常に無 residue (computed 層でも
+        /// keyword のまま)、`<length>` は [`length`] に delegate — `flex_basis`
+        /// と同じ shape。
+        fn vertical_align(va: VerticalAlign) -> Option<&'static str> {
+            match va {
+                VerticalAlign::Baseline
+                | VerticalAlign::Sub
+                | VerticalAlign::Super
+                | VerticalAlign::Middle
+                | VerticalAlign::TextTop
+                | VerticalAlign::TextBottom => None,
+                VerticalAlign::Length(l) => length(l),
+            }
+        }
         /// `letter-spacing` / `word-spacing` の `normal | <length>`. `normal`
         /// computes to zero (CSS Text 3 §7.2/§7.1) so it is never residue,
         /// same shape as `LengthOrAuto::Auto` above.
@@ -5065,6 +5130,7 @@ mod tests {
             PropertyValue::LetterSpacing(l) | PropertyValue::WordSpacing(l) => {
                 length_or_normal(*l)
             }
+            PropertyValue::VerticalAlign(va) => vertical_align(*va),
             PropertyValue::FlexBasis(fb) => flex_basis(*fb),
             // Shorthand fall-through — `grow`/`shrink` carry no length,
             // `basis` gets the same `flex_basis` treatment as the
@@ -5111,9 +5177,6 @@ mod tests {
             | PropertyValue::TextDecorationStyle(_)
             | PropertyValue::TextDecorationColor(_)
             | PropertyValue::TextDecoration(_)
-            // `VerticalAlign` (minimal scope: `baseline`/`sub`/`super`)
-            // carries no length either.
-            | PropertyValue::VerticalAlign(_)
             // `FontStyle` carries no length either, at this crate's scope
             // (only `normal`/`italic` implemented).
             | PropertyValue::FontStyle(_)
@@ -5241,6 +5304,37 @@ mod tests {
         // 対照 — `Em` は残滓 (絶対化前)。
         assert_eq!(
             specified_layer_residue(&PropertyValue::FlexBasis(FlexBasisValue::Length(
+                Length::Em(1.0)
+            ))),
+            Some("Length::Em"),
+        );
+    }
+
+    /// `vertical-align` の 6 keyword (`baseline`/`sub`/`super`/`middle`/
+    /// `text-top`/`text-bottom`) は残滓ではない (computed 層でも keyword の
+    /// まま) — sibling of
+    /// `flex_basis_content_and_gap_normal_are_not_specified_layer_residue`
+    /// above, same reason: `page_corpus`'s `VerticalAlign` worst-case
+    /// sample is a `Length` variant (`sample_for` 参照), so `vertical_align`'s
+    /// keyword arms aren't exercised via the corpus.
+    #[test]
+    fn vertical_align_keywords_are_not_specified_layer_residue() {
+        for va in [
+            VerticalAlign::Baseline,
+            VerticalAlign::Sub,
+            VerticalAlign::Super,
+            VerticalAlign::Middle,
+            VerticalAlign::TextTop,
+            VerticalAlign::TextBottom,
+        ] {
+            assert_eq!(
+                specified_layer_residue(&PropertyValue::VerticalAlign(va)),
+                None
+            );
+        }
+        // 対照 — `Em` は残滓 (絶対化前)。
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::VerticalAlign(VerticalAlign::Length(
                 Length::Em(1.0)
             ))),
             Some("Length::Em"),

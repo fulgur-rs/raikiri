@@ -44,7 +44,7 @@ use crate::resolve::{
     lift_length_percentage, lift_line_height, resolve_border, resolve_flex_basis,
     resolve_font_size, resolve_length_or_normal, resolve_length_percentage,
     resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
-    resolve_margin_length_or_auto, used_line_height_length,
+    resolve_margin_length_or_auto, resolve_vertical_align, used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -62,9 +62,10 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `vertical_align` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` |
+/// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
-/// `font_weight` が後者にいるのは load-bearing な事実である —
+/// `font_weight` が後者 (2 行目) にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
 /// 時点で**親の computed weight に対して解決するので、`u16` で保持される
 /// (下記「D5 invariant」節)。
@@ -203,9 +204,14 @@ pub struct SpecifiedValues {
     /// computed-equivalent (`TextDecorationColor` は length を運ばない、
     /// currentcolor の used-value resolution は paint scope 責務)。
     pub text_decoration_color: TextDecorationColor,
-    /// [`ComputedValues::vertical_align`] の staging。層は computed-equivalent
-    /// (minimal scope の `VerticalAlign` — `baseline`/`sub`/`super` — は
-    /// length を運ばない)。
+    /// [`ComputedValues::vertical_align`] の staging。**型は
+    /// [`ComputedValues::vertical_align`] と同じ** [`VerticalAlign`] だが、
+    /// 層は field 一律ではない — `baseline`/`sub`/`super`/`middle`/
+    /// `text-top`/`text-bottom` の 6 keyword は computed-equivalent (length
+    /// を運ばない) な一方、[`VerticalAlign::Length`] は specified 層のまま
+    /// (`em`/`rem` 等を保持、絶対化は [`Self::absolutize_with`] の
+    /// [`crate::resolve::resolve_vertical_align`] 呼び出しに委ねる) — 型を
+    /// 分けない理由は同関数 doc 参照。
     pub vertical_align: VerticalAlign,
     /// [`ComputedValues::font_style`] の staging。層は computed-equivalent
     /// (`FontStyle` は length を運ばない — この crate の scope では)。
@@ -863,10 +869,17 @@ impl SpecifiedValues {
             text_decoration_line: self.text_decoration_line,
             text_decoration_style: self.text_decoration_style,
             text_decoration_color: self.text_decoration_color,
-            // computed value = specified keyword (`VerticalAlign` doc 参照、
-            // minimal scope の `baseline`/`sub`/`super` は length を運ばない
-            // ため相対解決なし)。
-            vertical_align: self.vertical_align,
+            // 6 keyword (`baseline`/`sub`/`super`/`middle`/`text-top`/
+            // `text-bottom`) は computed value = specified keyword、
+            // `VerticalAlign::Length` だけ own node の `font_size`/
+            // `own_line_height` 基準で絶対化する (`resolve_vertical_align`
+            // doc 参照)。
+            vertical_align: resolve_vertical_align(
+                self.vertical_align,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             // computed value = specified keyword (`FontStyle` doc 参照、
             // この crate の scope では angle-bearing branch が unreachable
             // なため相対解決なし) — 自 node の winner 適用結果をそのまま素通し。
@@ -1285,6 +1298,30 @@ mod tests {
         let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
         assert_eq!(cv.font_size, ComputedLength(32.0));
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
+    }
+
+    /// `vertical-align: <length>` absolutizes against the declaring node's
+    /// own (phase-2-resolved) `font-size` — same basis `letter-spacing`/
+    /// `word-spacing` use (`resolve_vertical_align` doc).
+    #[test]
+    fn finalize_resolves_vertical_align_length_against_own_font_size() {
+        let mut sv = SpecifiedValues::initial();
+        sv.font_size = Length::Px(20.0);
+        sv.vertical_align = VerticalAlign::Length(Length::Em(1.5)); // 1.5 * 20 = 30px
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(cv.font_size, ComputedLength(20.0));
+        assert_eq!(cv.vertical_align, VerticalAlign::Length(Length::Px(30.0)));
+    }
+
+    /// The 6 bare keywords (`baseline`/`sub`/`super`/`middle`/`text-top`/
+    /// `text-bottom`) pass through `finalize` unchanged — no relative
+    /// resolution needed (`VerticalAlign` doc's "Scope carving" section).
+    #[test]
+    fn finalize_passes_vertical_align_keywords_through_unchanged() {
+        let mut sv = SpecifiedValues::initial();
+        sv.vertical_align = VerticalAlign::Middle;
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(cv.vertical_align, VerticalAlign::Middle);
     }
 
     /// `padding: 1lh` needs the **already-resolved own** line-height as its
