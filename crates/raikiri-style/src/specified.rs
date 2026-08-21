@@ -32,10 +32,10 @@ use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor,
     Direction, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
-    FontStyle, Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap,
-    OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    FontStyle, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue,
+    OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace,
+    WordBreak, ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
     initial_font_family, resolve_display_for_float, resolve_overflow,
     resolve_text_align_match_parent,
 };
@@ -62,7 +62,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// `font_weight` が後者 (2 行目) にいるのは load-bearing な事実である —
@@ -260,6 +260,9 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::white_space`] の staging。層は computed-equivalent
     /// (`WhiteSpace` は length を運ばない)。
     pub white_space: WhiteSpace,
+    /// [`ComputedValues::hyphens`] の staging。層は computed-equivalent
+    /// (`Hyphens` は length を運ばない)。
+    pub hyphens: Hyphens,
     /// [`ComputedValues::flex_direction`] の staging。層は computed-equivalent
     /// (`FlexDirectionValue` は length を運ばない)。
     pub flex_direction: FlexDirectionValue,
@@ -378,6 +381,8 @@ impl SpecifiedValues {
             clear: ClearValue::None,
             // CSS Text 3 §3: white-space initial は `normal`。
             white_space: WhiteSpace::Normal,
+            // CSS Text 3 §5.3: hyphens initial は `manual`。
+            hyphens: Hyphens::Manual,
             // CSS Flexible Box Layout Module Level 1 §5.1/§5.2:
             // flex-direction initial は `row`、flex-wrap initial は `nowrap`。
             flex_direction: FlexDirectionValue::Row,
@@ -478,6 +483,8 @@ impl SpecifiedValues {
             word_spacing: lift_length_or_normal(parent.word_spacing),
             // CSS Text 3 §3: white-space は inherited。
             white_space: parent.white_space,
+            // CSS Text 3 §5.3: hyphens は inherited。
+            hyphens: parent.hyphens,
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
             display: DisplayValue::Inline,
@@ -937,6 +944,10 @@ impl SpecifiedValues {
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
             white_space: self.white_space,
+            // computed value = specified keyword (`Hyphens` doc 参照、
+            // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
+            // そのまま素通し。
+            hyphens: self.hyphens,
             // computed value = specified keyword (`FlexDirectionValue` /
             // `FlexWrapValue` docs 参照、length を運ばないため相対解決なし) —
             // 自 node の winner 適用結果をそのまま素通し。
@@ -1131,6 +1142,7 @@ mod tests {
             float: FloatValue::Left,
             clear: ClearValue::Both,
             white_space: WhiteSpace::Pre,
+            hyphens: Hyphens::None,
             flex_direction: FlexDirectionValue::Column,
             flex_wrap: FlexWrapValue::Wrap,
             flex_grow: 2.0,
@@ -1175,6 +1187,8 @@ mod tests {
         assert_eq!(child.overflow_wrap, OverflowWrap::Anywhere);
         // CSS Text 3 §3: white-space は inherited。
         assert_eq!(child.white_space, WhiteSpace::Pre);
+        // CSS Text 3 §5.3: hyphens は inherited。
+        assert_eq!(child.hyphens, Hyphens::None);
         // computed → specified の lift (px 表現)。
         assert_eq!(child.font_size, Length::Px(24.0));
         assert_eq!(child.line_height, LineHeight::Number(1.5));

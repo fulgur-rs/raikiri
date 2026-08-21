@@ -3305,6 +3305,80 @@ pub enum WhiteSpace {
     PreLine,
 }
 
+/// `hyphens` property の value。
+///
+/// CSS Text Module Level 3 §5.3 "Hyphenation: the hyphens property"
+/// <https://www.w3.org/TR/css-text-3/#hyphens-property>。
+///
+/// propdef (spec verbatim): Value: `none | manual | auto`、Initial: `manual`、
+/// Applies to: text、Inherited: **yes**、Computed value: specified keyword。
+///
+/// # 3 keyword の意味 (spec 確認済み verbatim)
+///
+/// - [`None`](Self::None) — "Words are not hyphenated, even if characters
+///   inside the word explicitly define hyphenation opportunities."
+/// - [`Manual`](Self::Manual) — "Words are only hyphenated where there are
+///   characters inside the word that explicitly suggest hyphenation
+///   opportunities." spec initial value。explicit な hyphenation opportunity
+///   の代表例が soft hyphen (`U+00AD`、HTML では `&shy;`) — 同 §
+///   "In Unicode, U+00AD is a conditional 'soft hyphen'" 参照。
+/// - [`Auto`](Self::Auto) — "Words may be broken at hyphenation
+///   opportunities determined automatically by a language-appropriate
+///   hyphenation resource in addition to those indicated explicitly by a
+///   conditional hyphen."
+///
+/// # Scope carving
+///
+/// - **Non-goal**: `auto` の "determined automatically by a
+///   language-appropriate hyphenation resource" (辞書ベースの自動
+///   hyphenation) は本 crate の scope 外 — content language の検出も
+///   言語別 hyphenation resource もこの crate は持たない。`auto` と
+///   `manual` は spec 上明確に区別される 2 keyword であり、本 type は両方を
+///   distinct variant として represent する — [`OverflowWrap`] doc の
+///   Scope carving 節が `BreakWord`/`Anywhere` について述べる判断と同型
+///   (この crate の layer では区別を観測できなくても、将来の
+///   layout/hyphenation consumer のために variant 自体は残す)。
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(a) spec-invalid**: 上記 3 keyword 以外の ident は silent drop =
+///   `None`。
+///
+/// # Downstream handoff
+///
+/// 実際に word のどこで hyphenation opportunity が発生するかの計算
+/// (soft hyphen 位置の走査、`auto` の dictionary lookup) は本 crate の
+/// scope 外 — text-shaping/paint 層の consumer が読む cascade static-side
+/// keyword しか本 property は運ばない ([`TextTransform`] doc の
+/// 「Downstream handoff」節と同型)。**dictionary-based automatic
+/// hyphenation を持たない downstream consumer が [`Auto`](Self::Auto) を
+/// 安全に扱う唯一の方法は [`Manual`](Self::Manual) と同じ soft hyphen
+/// (`U+00AD`) のみの分割** — この対応は downstream consumer 側の実装判断
+/// として明示的に文書化する (silent な仕様省略にしない)。computed value
+/// 自体は spec どおり 3 keyword を区別したまま保持する — CSSOM
+/// round-trip、および将来 dictionary-based hyphenation resource を追加した
+/// ときに `Auto`/`Manual` を再び分岐できる forward-compat のため。
+///
+/// この crate の scope では length を運ばないため、computed value = specified
+/// keyword、相対解決なし ([`Direction`] doc と同型)。
+///
+/// [`Direction`] / [`WordBreak`] と同じ convention で `Default` を derive
+/// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`]) が [`Hyphens::Manual`]
+/// を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hyphens {
+    /// `none`。
+    None,
+    /// `manual` — spec initial value。
+    Manual,
+    /// `auto`。この crate の scope では [`Manual`](Self::Manual) と同じ
+    /// soft-hyphen-only 分割として downstream consumer が扱う想定 — 詳細は
+    /// 上記型 doc の「Downstream handoff」節参照。
+    Auto,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -4099,6 +4173,15 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] が [`Self::AlignContent`] /
     /// [`Self::JustifyContent`] の 2 longhand に展開する。
     PlaceContent(PlaceContentShorthand),
+    /// `hyphens: none | manual | auto` — **inherited**、initial:
+    /// [`Hyphens::Manual`] (CSS Text 3 §5.3 [`Hyphens`] doc 参照)。computed
+    /// value = specified keyword ([`Hyphens`] doc の Scope carving /
+    /// Downstream handoff 節参照 — `auto` は dictionary-based hyphenation を
+    /// 実装せず、distinct variant のまま残す)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    Hyphens(Hyphens),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -4332,6 +4415,10 @@ pub enum PropertyKey {
     // `place-content` shorthand (CSS Box Alignment Module Level 3 §5.2) —
     // both longhands (`AlignContent`/`JustifyContent`) declared above.
     PlaceContent,
+    // `hyphens` (CSS Text Module Level 3 §5.3), semantics on the matching
+    // PropertyValue::Hyphens variant; sibling PropertyKey variants carry no
+    // per-variant docs per crate convention.
+    Hyphens,
 }
 
 impl PropertyValue {
@@ -4424,6 +4511,7 @@ impl PropertyValue {
             PropertyValue::ColumnGap(_) => PropertyKey::ColumnGap,
             PropertyValue::Gap(_) => PropertyKey::Gap,
             PropertyValue::PlaceContent(_) => PropertyKey::PlaceContent,
+            PropertyValue::Hyphens(_) => PropertyKey::Hyphens,
         }
     }
 }
@@ -4772,6 +4860,12 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Box Alignment Module Level 3 §5.2
         // <https://www.w3.org/TR/css-align-3/#propdef-place-content>.
         "place-content" => parse_place_content_shorthand(input).map(PropertyValue::PlaceContent),
+        // CSS Text 3 §5.3 hyphens. grammar: `none | manual | auto`, initial
+        // `manual`, inherited, computed value = specified keyword. `auto`
+        // is parse-accepted as its own keyword (`Hyphens` doc's "Downstream
+        // handoff" section — this crate does not collapse it to `manual` at
+        // parse time).
+        "hyphens" => parse_hyphens(input).map(PropertyValue::Hyphens),
         _ => None,
     }
 }
@@ -6549,6 +6643,25 @@ fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
         "nowrap" => Some(WhiteSpace::Nowrap),
         "pre-wrap" => Some(WhiteSpace::PreWrap),
         "pre-line" => Some(WhiteSpace::PreLine),
+        _ => None,
+    }
+}
+
+/// `hyphens: <ident>` を parse する (CSS Text 3 §5.3
+/// <https://www.w3.org/TR/css-text-3/#hyphens-property>)。
+///
+/// Value grammar (§5.3): `none | manual | auto` — 3 keyword とも受理する。
+/// `auto` は `manual` に collapse せず、parse 段では別 keyword として
+/// そのまま [`Hyphens::Auto`] を返す ([`Hyphens`] doc の「Downstream
+/// handoff」節 — 両者の扱いの一致は downstream consumer 側の実装判断であり、
+/// この parser の責務ではない)。ASCII case-insensitive で ident を比較する
+/// (sibling `parse_word_break` と同 flavor)。
+fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "none" => Some(Hyphens::None),
+        "manual" => Some(Hyphens::Manual),
+        "auto" => Some(Hyphens::Auto),
         _ => None,
     }
 }
@@ -13056,6 +13169,79 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::WhiteSpace);
         let v = PropertyValue::WhiteSpace(WhiteSpace::PreLine);
         assert_eq!(v.key(), PropertyKey::WhiteSpace);
+    }
+
+    // ── hyphens (CSS Text 3 §5.3) ──
+    //
+    // grammar: `none | manual | auto` (`Hyphens` doc's Scope carving section
+    // — this crate implements all 3 spec-valid keywords, unlike `word-break`
+    // or `white-space`). Initial: manual / Inherited: yes / Computed value:
+    // specified keyword.
+
+    #[test]
+    fn hyphens_parse_all_implemented_keywords() {
+        assert_eq!(
+            parse("none", "hyphens"),
+            Some(PropertyValue::Hyphens(Hyphens::None))
+        );
+        assert_eq!(
+            parse("manual", "hyphens"),
+            Some(PropertyValue::Hyphens(Hyphens::Manual))
+        );
+        // `auto` parses to its own distinct variant, not `Hyphens::Manual`
+        // — the collapse to soft-hyphen-only splitting is a downstream
+        // consumer decision (`Hyphens` doc's "Downstream handoff" section),
+        // not something this parser (or the computed value) performs.
+        assert_eq!(
+            parse("auto", "hyphens"),
+            Some(PropertyValue::Hyphens(Hyphens::Auto))
+        );
+    }
+
+    #[test]
+    fn hyphens_is_case_insensitive() {
+        assert_eq!(
+            parse("NONE", "hyphens"),
+            Some(PropertyValue::Hyphens(Hyphens::None))
+        );
+        assert_eq!(
+            parse("Manual", "hyphens"),
+            Some(PropertyValue::Hyphens(Hyphens::Manual))
+        );
+        assert_eq!(
+            parse("AUTO", "hyphens"),
+            Some(PropertyValue::Hyphens(Hyphens::Auto))
+        );
+    }
+
+    #[test]
+    fn hyphens_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "hyphens"), None);
+    }
+
+    #[test]
+    fn hyphens_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future work),
+        // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "hyphens"), None);
+        }
+    }
+
+    #[test]
+    fn hyphens_rejects_non_ident() {
+        assert_eq!(parse("16px", "hyphens"), None);
+        assert_eq!(parse(r#""manual""#, "hyphens"), None);
+    }
+
+    #[test]
+    fn hyphens_key_maps_to_hyphens_property_key() {
+        let v = PropertyValue::Hyphens(Hyphens::None);
+        assert_eq!(v.key(), PropertyKey::Hyphens);
+        let v = PropertyValue::Hyphens(Hyphens::Manual);
+        assert_eq!(v.key(), PropertyKey::Hyphens);
+        let v = PropertyValue::Hyphens(Hyphens::Auto);
+        assert_eq!(v.key(), PropertyKey::Hyphens);
     }
 
     // ── resolve_overflow (CSS Overflow 3 §3.1 cross-axis computed-value

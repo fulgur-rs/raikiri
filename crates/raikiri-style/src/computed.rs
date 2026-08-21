@@ -14,7 +14,7 @@ use crate::Atom;
 use crate::property::{
     AlignSelfValue, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue,
     ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontStyle, OverflowValue, OverflowWrap, OverflowXY,
+    FlexWrapValue, FloatValue, FontStyle, Hyphens, OverflowValue, OverflowWrap, OverflowXY,
     SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
     TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
     ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
@@ -67,7 +67,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -802,6 +802,23 @@ pub struct ComputedValues {
     /// table describes belongs to a text layout / line-breaking consumer
     /// (raikiri-dom / raikiri-paint) this crate does not implement yet.
     pub white_space: WhiteSpace,
+    /// `hyphens`. **inherited**, initial: [`Hyphens::Manual`] (CSS Text
+    /// Module Level 3 §5.3 "Hyphenation: the hyphens property"
+    /// <https://www.w3.org/TR/css-text-3/#hyphens-property>, "Initial:
+    /// manual" / "Inherited: yes"). Computed value = specified keyword.
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded value only — no consumer reads it
+    /// yet, same as [`Self::white_space`] doc's note: the actual
+    /// hyphenation-opportunity computation belongs to a text layout /
+    /// line-breaking consumer this crate does not implement yet. `auto` is
+    /// stored as its own distinct value, not collapsed to `manual`, even
+    /// though dictionary-based automatic hyphenation is out of this crate's
+    /// scope — see [`Hyphens`] doc's "Downstream handoff" section for why
+    /// the collapse (to soft-hyphen-only splitting) is a consumer-side
+    /// decision rather than something this field's computed value encodes.
+    pub hyphens: Hyphens,
     /// `flex-direction`. **non-inherited**, initial:
     /// [`FlexDirectionValue::Row`] (CSS Flexible Box Layout Module Level 1
     /// §5.1 <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>,
@@ -979,6 +996,8 @@ impl ComputedValues {
             clear: ClearValue::None,
             // CSS Text 3 §3: white-space initial は `normal`。
             white_space: WhiteSpace::Normal,
+            // CSS Text 3 §5.3: hyphens initial は `manual`。
+            hyphens: Hyphens::Manual,
             // CSS Flexible Box Layout Module Level 1 §5.1: flex-direction
             // initial は `row`。
             flex_direction: FlexDirectionValue::Row,
@@ -1017,7 +1036,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
     ///
@@ -1171,6 +1190,8 @@ mod tests {
         assert_eq!(cv.clear, ClearValue::None);
         // CSS Text 3 §3: white-space initial は `normal`。
         assert_eq!(cv.white_space, WhiteSpace::Normal);
+        // CSS Text 3 §5.3: hyphens initial は `manual`。
+        assert_eq!(cv.hyphens, Hyphens::Manual);
     }
 
     #[test]
@@ -1296,6 +1317,9 @@ mod tests {
             // CSS Text 3 §3: `Pre` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             white_space: WhiteSpace::Pre,
+            // CSS Text 3 §5.3: `None` — initial (`Manual`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            hyphens: Hyphens::None,
             // CSS Flexible Box Layout Module Level 1 §5.1/§5.2: initial
             // (`Row`/`NoWrap`) と異なる値 (non_initial_parent の趣旨どおり
             // 全 field を非 initial に)。
@@ -1326,7 +1350,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 52 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 53 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1362,6 +1386,8 @@ mod tests {
         assert_eq!(child.word_spacing, parent.word_spacing);
         // CSS Text 3 §3: white-space は inherited。
         assert_eq!(child.white_space, parent.white_space);
+        // CSS Text 3 §5.3: hyphens は inherited。
+        assert_eq!(child.hyphens, parent.hyphens);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);

@@ -2131,6 +2131,10 @@ fn absolutize_in_page_context(
         // computed value = specified keyword (see `WhiteSpace`'s doc) —
         // nothing for phase 3 to absolutize.
         | PropertyValue::WhiteSpace(_)
+        // `hyphens` (CSS Text 3 §5.3) carries no length either and computed
+        // value = specified keyword (see `Hyphens`'s doc) — same as
+        // `WhiteSpace` above.
+        | PropertyValue::Hyphens(_)
         // `flex-direction`/`flex-wrap` (CSS Flexible Box Layout Module
         // Level 1 §5.1/§5.2) carry no length and computed value = specified
         // keyword — nothing for phase 3 to absolutize.
@@ -2520,8 +2524,8 @@ mod tests {
     use crate::property::{
         AlignSelfValue, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
         ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue,
-        FloatValue, FontStyle, FontWeightValue, Length, LengthOrAuto, LengthOrNormal, LineHeight,
-        OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand, PositionValue,
+        FloatValue, FontStyle, FontWeightValue, Hyphens, Length, LengthOrAuto, LengthOrNormal,
+        LineHeight, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand, PositionValue,
         SelfAlignmentValue, TextAlign, TextDecorationColor, TextDecorationLine,
         TextDecorationShorthand, TextDecorationStyle, TextTransform, VerticalAlign, Visibility,
         WhiteSpace, WordBreak, ZIndexValue,
@@ -4398,11 +4402,13 @@ mod tests {
     /// 専用 arm を `absolutize_in_page_context` に持つようになったため。
     /// pass-through 側から抜けたのはこの改修で唯一のケース — 上記の履歴は
     /// 全て「加わる」方向だったことに注意)。
+    /// 48 → 49 (`Hyphens` も同じ理由 — length を運ばない keyword-only
+    /// property のため phase 3 に変換対象が無い)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 48;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 49;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4707,6 +4713,15 @@ mod tests {
             align: ContentAlignmentValue::SpaceBetween,
             justify: ContentAlignmentValue::Center,
         }),
+        // No specified/computed distinction for `hyphens` (computed value =
+        // specified keyword, `Hyphens` doc) — any value is "worst case"
+        // (`Direction` sibling comment above uses the same reasoning).
+        // `Auto` chosen over `None`/`Manual`, same "the keyword whose
+        // behavior this crate does not implement" reasoning `Visibility`'s
+        // `Collapse` sample above uses (`Hyphens` doc's "Downstream
+        // handoff" section — dictionary-based automatic hyphenation is not
+        // implemented).
+        Hyphens => PropertyValue::Hyphens(Hyphens::Auto),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4898,6 +4913,7 @@ mod tests {
         ColumnGap,
         Gap,
         PlaceContent,
+        Hyphens,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -5206,6 +5222,8 @@ mod tests {
             | PropertyValue::Clear(_)
             // `WhiteSpace` (CSS Text 3 §3) carries no length either.
             | PropertyValue::WhiteSpace(_)
+            // `Hyphens` (CSS Text 3 §5.3) carries no length either.
+            | PropertyValue::Hyphens(_)
             // `FlexDirectionValue`/`FlexWrapValue` carry no length either.
             | PropertyValue::FlexDirection(_)
             | PropertyValue::FlexWrap(_)
