@@ -16,19 +16,25 @@ use parley::{
 };
 use raikiri_style::property::{
     AlignSelfValue, BoxSizing as StyleBoxSizing, ContentAlignmentValue, DisplayValue,
-    FlexDirectionValue, FlexWrapValue, FontStyle as StyleFontStyle, SelfAlignmentValue,
+    FlexDirectionValue, FlexWrapValue, FontStyle as StyleFontStyle, GridAutoFlowValue,
+    GridLineValue, GridRepeatCount, GridTemplateAreasValue, SelfAlignmentValue,
 };
 use raikiri_style::{
-    CascadeResult, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-    ComputedValues,
+    CascadeResult, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
+    ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
+    ComputedLineHeight, ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
     AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace,
     BoxSizing as TaffyBoxSizing, Dimension, Display, FlexDirection as TaffyFlexDirection,
-    FlexWrap as TaffyFlexWrap, Layout as TaffyLayout, LengthPercentage, LengthPercentageAuto,
-    NodeId as TaffyNodeId, Point, Rect, Size, compute_root_layout,
+    FlexWrap as TaffyFlexWrap, GridAutoFlow as TaffyGridAutoFlow, GridPlacement,
+    GridTemplateArea as TaffyGridTemplateArea, GridTemplateComponent, GridTemplateRepetition,
+    Layout as TaffyLayout, LengthPercentage, LengthPercentageAuto, Line as TaffyLine,
+    MaxTrackSizingFunction, MinTrackSizingFunction, NodeId as TaffyNodeId, Point, Rect,
+    RepetitionCount as TaffyRepetitionCount, Size, TrackSizingFunction, compute_root_layout,
+    style_helpers as taffy_style_helpers,
 };
 
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
@@ -97,11 +103,16 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///   `flex-shrink` / `flex-basis` → [`taffy::Style`]'s matching flex
 ///   container/item fields (CSS Flexible Box Layout Module Level 1)
 /// - [`bridge_alignment`] — `justify-content` / `align-content` /
-///   `align-items` / `align-self` → [`taffy::Style`]'s matching
-///   `Option<AlignItems>`/`Option<AlignContent>` fields (CSS Box Alignment
-///   Module Level 3)
+///   `align-items` / `align-self` / `justify-items` / `justify-self` →
+///   [`taffy::Style`]'s matching `Option<AlignItems>`/`Option<AlignContent>`
+///   fields (CSS Box Alignment Module Level 3)
 /// - [`bridge_gap`] — `row-gap` / `column-gap` → [`taffy::Style::gap`]
 ///   (`Size<LengthPercentage>`, CSS Box Alignment Module Level 3 §8.1)
+/// - [`bridge_grid`] — `grid-template-columns` / `grid-template-rows` /
+///   `grid-template-areas` / `grid-auto-columns` / `grid-auto-rows` /
+///   `grid-auto-flow` / `grid-row-start` / `grid-row-end` /
+///   `grid-column-start` / `grid-column-end` → [`taffy::Style`]'s matching
+///   grid container/item fields (CSS Grid Layout Module Level 1)
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -118,6 +129,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_flex(style, cv, &mut doc.layout_warnings);
         bridge_alignment(style, cv);
         bridge_gap(style, cv, &mut doc.layout_warnings);
+        bridge_grid(style, cv, &mut doc.layout_warnings);
     }
 }
 
@@ -407,16 +419,24 @@ fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
 ///   (§5.1)
 /// - `align-items` ([`SelfAlignmentValue`]) → `style.align_items` (§7.2)
 /// - `align-self` ([`AlignSelfValue`]) → `style.align_self` (§6.2)
+/// - `justify-items` ([`SelfAlignmentValue`]) → `style.justify_items` (§7.1)
+///   — grid container 上の inline-axis 版 `align-items`、同じ keyword set
+///   ([`SelfAlignmentValue`] doc 参照) を共有する。
+/// - `justify-self` ([`AlignSelfValue`]) → `style.justify_self` (§6.1) —
+///   grid item 上の inline-axis 版 `align-self`。taffy `GridItemStyle::justify_self`
+///   の doc も `align_self` と同じ "Falls back to the parents … if not set"
+///   契約を持つため、`align-self` と同じ `normal`/`auto` 特殊 handling が
+///   そのまま適用できる。
 ///
-/// taffy 側の 4 field は全て `Option<…>` — CSS の `normal` (content-*系)
+/// taffy 側の 6 field は全て `Option<…>` — CSS の `normal` (content-*系)
 /// keyword には対応する taffy keyword が無く、`None` へ写す
 /// (`bridge_box_sizing` の "Initial-value 補正" 節と同型の initial-value
 /// mismatch)。taffy はその後 layout mode 依存の default で埋める
 /// (`GridContainerStyle::grid_align_content` 等の `unwrap_or(AlignContent::STRETCH)`
 /// — grid path の fallback は `STRETCH`、flex path は
-/// `compute_flexbox_layout` 内部の別 default)。`align-self: auto` も同じ形
-/// (`Option::None` → 親の `align-items` に fallback、CSS Box Alignment 3
-/// §6.2 の spec 規定どおり)。
+/// `compute_flexbox_layout` 内部の別 default)。`align-self`/`justify-self`
+/// の `auto` も同じ形 (`Option::None` → 親の `align-items`/`justify-items`
+/// に fallback、CSS Box Alignment 3 §6.2/§6.1 の spec 規定どおり)。
 ///
 /// 明示 keyword は [`taffy::AlignItems`] / [`taffy::AlignContent`] の
 /// 定数 (`AlignItems::CENTER` 等、struct constant であって enum variant
@@ -429,23 +449,34 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
     style.justify_content = content_alignment_to_taffy(cv.justify_content);
     style.align_content = content_alignment_to_taffy(cv.align_content);
     style.align_items = self_alignment_to_taffy(cv.align_items);
-    style.align_self = match cv.align_self {
+    style.align_self = self_alignment_or_auto_to_taffy(cv.align_self);
+    style.justify_items = self_alignment_to_taffy(cv.justify_items);
+    style.justify_self = self_alignment_or_auto_to_taffy(cv.justify_self);
+}
+
+/// [`AlignSelfValue`] → `Option<taffy::AlignItems>` mapping — shared by
+/// `align-self` and `justify-self` ([`bridge_alignment`] doc の
+/// `justify-self` 節参照、taffy 側 `AlignSelf` は `AlignItems` の type
+/// alias)。
+fn self_alignment_or_auto_to_taffy(v: AlignSelfValue) -> Option<TaffyAlignItems> {
+    match v {
         AlignSelfValue::Auto => None,
-        // `align-self: normal` は `auto` とは異なり、親の `align-items` へ
-        // fallback せず、flex layout では単独で `stretch`相当に振る舞う
-        // (CSS Box Alignment 3 §8.3 の "In flex layout, this value
-        // behaves as stretch")。`self_alignment_to_taffy`'s `Normal =>
-        // None` mapping はここでは使えない — taffy の `align_self: None`
-        // は「コンテナの `align_items` を継承する」意味 (`auto` の spec
-        // 挙動そのもの) であり、`normal` の「親の値に関わらず stretch」
-        // とは異なるため、明示的に `STRETCH` へ写す。
+        // `normal` は `auto` とは異なり、親の align-items/justify-items へ
+        // fallback せず、flex/grid layout では単独で `stretch` 相当に
+        // 振る舞う (CSS Box Alignment 3 §8.3 の "In flex layout, this
+        // value behaves as stretch" — grid layout も同節の対象)。
+        // `self_alignment_to_taffy`'s `Normal => None` mapping はここでは
+        // 使えない — taffy の `None` は「コンテナの対応 property を
+        // 継承する」意味 (`auto` の spec 挙動そのもの) であり、`normal` の
+        // 「親の値に関わらず stretch」とは異なるため、明示的に `STRETCH`
+        // へ写す。
         AlignSelfValue::Value(SelfAlignmentValue::Normal) => Some(TaffyAlignItems::STRETCH),
         AlignSelfValue::Value(v) => self_alignment_to_taffy(v),
         // cov:ignore: unreachable while AlignSelfValue is Auto|Value(_)
         // only; required for its #[non_exhaustive] contract
         // (`self_alignment_to_taffy` の catch-all と同じ判断).
         _ => None,
-    };
+    }
 }
 
 /// [`ContentAlignmentValue`] → `Option<taffy::AlignContent>` mapping —
@@ -536,6 +567,297 @@ fn computed_gap_component_to_taffy(
         ComputedLengthPercentageOrNormal::Percent(p) => ComputedLengthPercentage::Percent(p),
     };
     computed_length_percentage_to_taffy_length_percentage(lp, site, diag)
+}
+
+/// grid container/item property → [`taffy::Style`] bridge (CSS Grid Layout
+/// Module Level 1)。
+///
+/// - `grid-template-columns` / `grid-template-rows` → `style.grid_template_columns`
+///   / `style.grid_template_rows` (`Vec<GridTemplateComponent>`、§7.2) +
+///   `style.grid_template_column_names` / `style.grid_template_row_names`
+///   (line names outside any `repeat()`、§7.2.2 — [`grid_template_tracks_to_taffy`]
+///   doc の shape 対応参照)
+/// - `grid-template-areas` → `style.grid_template_areas`
+///   (`Vec<GridTemplateArea>`、§7.3)
+/// - `grid-auto-columns` / `grid-auto-rows` → `style.grid_auto_columns` /
+///   `style.grid_auto_rows` (§7.6)
+/// - `grid-auto-flow` → `style.grid_auto_flow` (§7.7)
+/// - `grid-row-start`/`grid-row-end` / `grid-column-start`/`grid-column-end`
+///   → `style.grid_row` / `style.grid_column` (`Line<GridPlacement>`、§8.3)
+fn bridge_grid(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+    let (columns, column_names) =
+        grid_template_tracks_to_taffy(&cv.grid_template_columns, "grid-template-columns", diag);
+    style.grid_template_columns = columns;
+    style.grid_template_column_names = column_names;
+    let (rows, row_names) =
+        grid_template_tracks_to_taffy(&cv.grid_template_rows, "grid-template-rows", diag);
+    style.grid_template_rows = rows;
+    style.grid_template_row_names = row_names;
+
+    style.grid_template_areas = match &cv.grid_template_areas {
+        GridTemplateAreasValue::None => Vec::new(),
+        GridTemplateAreasValue::Areas(areas) => areas
+            .areas
+            .iter()
+            .map(|a| TaffyGridTemplateArea {
+                name: a.name.to_string(),
+                row_start: saturate_u16(a.row_start),
+                row_end: saturate_u16(a.row_end),
+                column_start: saturate_u16(a.column_start),
+                column_end: saturate_u16(a.column_end),
+            })
+            .collect(),
+        // cov:ignore: unreachable while GridTemplateAreasValue is
+        // None|Areas(_) only; required for its #[non_exhaustive] contract
+        // (see `bridge_display` catch-all doc).
+        _ => Vec::new(),
+    };
+
+    style.grid_auto_columns = cv
+        .grid_auto_columns
+        .iter()
+        .copied()
+        .map(|t| grid_track_size_to_taffy(t, "grid-auto-columns", diag))
+        .collect();
+    style.grid_auto_rows = cv
+        .grid_auto_rows
+        .iter()
+        .copied()
+        .map(|t| grid_track_size_to_taffy(t, "grid-auto-rows", diag))
+        .collect();
+
+    style.grid_auto_flow = match cv.grid_auto_flow {
+        GridAutoFlowValue::Row => TaffyGridAutoFlow::Row,
+        GridAutoFlowValue::Column => TaffyGridAutoFlow::Column,
+        GridAutoFlowValue::RowDense => TaffyGridAutoFlow::RowDense,
+        GridAutoFlowValue::ColumnDense => TaffyGridAutoFlow::ColumnDense,
+        // cov:ignore: unreachable while GridAutoFlowValue is
+        // Row|Column|RowDense|ColumnDense only; required for its
+        // #[non_exhaustive] contract (see `bridge_display` catch-all doc).
+        _ => TaffyGridAutoFlow::Row,
+    };
+
+    style.grid_row = TaffyLine {
+        start: grid_line_value_to_taffy_placement(&cv.grid_row_start),
+        end: grid_line_value_to_taffy_placement(&cv.grid_row_end),
+    };
+    style.grid_column = TaffyLine {
+        start: grid_line_value_to_taffy_placement(&cv.grid_column_start),
+        end: grid_line_value_to_taffy_placement(&cv.grid_column_end),
+    };
+}
+
+/// [`ComputedGridTemplateTracks`] → taffy's `(Vec<GridTemplateComponent>,
+/// Vec<Vec<String>>)` pair — [`bridge_grid`]'s `grid_template_columns`/
+/// `grid_template_rows` field **and** their paired `_names` field share one
+/// helper because taffy's `NamedLineResolver` consumes both in lock-step
+/// (one name-list entry per top-level component, plus one trailing entry
+/// after the last — see taffy 0.12's `NamedLineResolver::new`, which zips
+/// `grid_template_columns()`/`grid_template_rows()` against
+/// `grid_template_column_names()`/`grid_template_row_names()`). This is
+/// exactly [`crate` `raikiri_style`]'s own `ComputedGridTrackList::line_names`
+/// interleave convention (`line_names.len() == components.len() + 1`), so
+/// the two Vecs below are built from the same source data without any
+/// reindexing.
+///
+/// `none` maps to a pair of empty `Vec`s — taffy's own default for a
+/// container with no explicit track list.
+fn grid_template_tracks_to_taffy(
+    tracks: &ComputedGridTemplateTracks,
+    site: &'static str,
+    diag: &mut Vec<LayoutWarn>,
+) -> (Vec<GridTemplateComponent<String>>, Vec<Vec<String>>) {
+    match tracks {
+        ComputedGridTemplateTracks::None => (Vec::new(), Vec::new()),
+        ComputedGridTemplateTracks::List(list) => {
+            let components = list
+                .components
+                .iter()
+                .cloned()
+                .map(|component| match component {
+                    ComputedGridTrackListComponent::Size(size) => {
+                        GridTemplateComponent::Single(grid_track_size_to_taffy(size, site, diag))
+                    }
+                    ComputedGridTrackListComponent::Repeat(repeat) => {
+                        GridTemplateComponent::Repeat(GridTemplateRepetition {
+                            count: grid_repeat_count_to_taffy(repeat.count),
+                            tracks: repeat
+                                .tracks
+                                .into_iter()
+                                .map(|t| grid_track_size_to_taffy(t, site, diag))
+                                .collect(),
+                            line_names: repeat
+                                .line_names
+                                .into_iter()
+                                .map(|names| names.iter().map(ToString::to_string).collect())
+                                .collect(),
+                        })
+                    }
+                })
+                .collect();
+            let line_names = list
+                .line_names
+                .iter()
+                .map(|names| names.iter().map(ToString::to_string).collect())
+                .collect();
+            (components, line_names)
+        }
+    }
+}
+
+/// [`GridRepeatCount`] → [`taffy::RepetitionCount`] mapping. `Count`'s
+/// `<integer [1,∞]>` payload is `u32` at the raikiri-style layer (CSS
+/// Values 4 §4.2 places no upper bound on `<integer>`) but taffy's
+/// `RepetitionCount::Count` is `u16` — silently saturating at
+/// [`u16::MAX`] (65535 repetitions) rather than adding new
+/// [`LayoutWarn`] machinery for an author value that large, which would
+/// already make taffy's own track-sizing algorithm impractically slow
+/// long before this cast is reached.
+fn grid_repeat_count_to_taffy(count: GridRepeatCount) -> TaffyRepetitionCount {
+    match count {
+        GridRepeatCount::Count(n) => TaffyRepetitionCount::Count(saturate_u16(n)),
+        GridRepeatCount::AutoFill => TaffyRepetitionCount::AutoFill,
+        GridRepeatCount::AutoFit => TaffyRepetitionCount::AutoFit,
+        // cov:ignore: unreachable while GridRepeatCount is
+        // Count|AutoFill|AutoFit only; required for its #[non_exhaustive]
+        // contract.
+        _ => TaffyRepetitionCount::Count(1),
+    }
+}
+
+/// [`ComputedGridTrackSize`] → [`taffy::TrackSizingFunction`]
+/// (`MinMax<MinTrackSizingFunction, MaxTrackSizingFunction>`) mapping.
+///
+/// `FitContent` has no bare-breadth min side in taffy's model (only
+/// `MaxTrackSizingFunction::fit_content_px`/`fit_content_percent` exist) —
+/// the CSS spec formula `max(minimum, min(limit, max-content))` treats the
+/// min side as `auto`, which is what `MinTrackSizingFunction::auto()`
+/// supplies here.
+fn grid_track_size_to_taffy(
+    size: ComputedGridTrackSize,
+    site: &'static str,
+    diag: &mut Vec<LayoutWarn>,
+) -> TrackSizingFunction {
+    match size {
+        ComputedGridTrackSize::Breadth(b) => TrackSizingFunction {
+            min: grid_track_breadth_to_taffy_min(b, site, diag),
+            max: grid_track_breadth_to_taffy_max(b, site, diag),
+        },
+        ComputedGridTrackSize::MinMax(min, max) => TrackSizingFunction {
+            min: grid_track_breadth_to_taffy_min(min, site, diag),
+            max: grid_track_breadth_to_taffy_max(max, site, diag),
+        },
+        ComputedGridTrackSize::FitContent(lp) => {
+            let max = match lp {
+                ComputedLengthPercentage::Px(v) => {
+                    MaxTrackSizingFunction::fit_content_px(sanitize_taffy(v, site, diag))
+                }
+                ComputedLengthPercentage::Percent(p) => {
+                    MaxTrackSizingFunction::fit_content_percent(sanitize_taffy(
+                        p / 100.0,
+                        site,
+                        diag,
+                    ))
+                }
+            };
+            TrackSizingFunction {
+                min: MinTrackSizingFunction::auto(),
+                max,
+            }
+        }
+    }
+}
+
+/// [`ComputedGridTrackBreadth`] → [`taffy::MinTrackSizingFunction`] mapping
+/// (`minmax()`'s min side, or the min side of a bare `<track-breadth>`
+/// widened to `MinMax { min, max }` — [`grid_track_size_to_taffy`]'s
+/// `Breadth` arm). `Flex` never actually reaches this function
+/// ([`ComputedGridTrackBreadth`] doc's collapse note — the min side is
+/// only ever produced by `resolve_grid_inflexible_breadth`, which has no
+/// `Flex` variant to produce it from); the arm below is a defensive
+/// fallback to keep the match exhaustive, not a reachable case.
+fn grid_track_breadth_to_taffy_min(
+    b: ComputedGridTrackBreadth,
+    site: &'static str,
+    diag: &mut Vec<LayoutWarn>,
+) -> MinTrackSizingFunction {
+    use ComputedGridTrackBreadth as B;
+    match b {
+        B::Px(v) => MinTrackSizingFunction::length(sanitize_taffy(v, site, diag)),
+        B::Percent(p) => MinTrackSizingFunction::percent(sanitize_taffy(p / 100.0, site, diag)),
+        B::MinContent => MinTrackSizingFunction::min_content(),
+        B::MaxContent => MinTrackSizingFunction::max_content(),
+        B::Auto => MinTrackSizingFunction::auto(),
+        // cov:ignore: see this fn's doc — structurally unreachable, kept
+        // only for match exhaustiveness.
+        B::Flex(_) => MinTrackSizingFunction::auto(),
+    }
+}
+
+/// [`ComputedGridTrackBreadth`] → [`taffy::MaxTrackSizingFunction`] mapping
+/// (`minmax()`'s max side, or the max side of a bare `<track-breadth>` —
+/// [`grid_track_size_to_taffy`]'s `Breadth` arm). Unlike
+/// [`grid_track_breadth_to_taffy_min`], `Flex` (`fr`) is a real, reachable
+/// case here — the `fr` unit is only valid on the max side of `minmax()`
+/// or as a bare `<track-breadth>` (CSS Grid Layout Module Level 1 §7.2.4).
+fn grid_track_breadth_to_taffy_max(
+    b: ComputedGridTrackBreadth,
+    site: &'static str,
+    diag: &mut Vec<LayoutWarn>,
+) -> MaxTrackSizingFunction {
+    use ComputedGridTrackBreadth as B;
+    match b {
+        B::Px(v) => MaxTrackSizingFunction::length(sanitize_taffy(v, site, diag)),
+        B::Percent(p) => MaxTrackSizingFunction::percent(sanitize_taffy(p / 100.0, site, diag)),
+        B::Flex(f) => MaxTrackSizingFunction::fr(sanitize_taffy(f, site, diag)),
+        B::MinContent => MaxTrackSizingFunction::min_content(),
+        B::MaxContent => MaxTrackSizingFunction::max_content(),
+        B::Auto => MaxTrackSizingFunction::auto(),
+    }
+}
+
+/// [`GridLineValue`] → [`taffy::GridPlacement`] mapping (CSS Grid Layout
+/// Module Level 1 §8.3). [`GridLineValue::Named`] (bare `<custom-ident>`,
+/// no explicit index) maps to `NamedLine` with index `1` explicitly filled
+/// in — same as [`GridLineValue`]'s own doc explains: taffy 0.12 treats
+/// index `0` as an "unspecified" sentinel and normalizes it to `1`
+/// internally (`NamedLineResolver::find_line_index`'s `if idx == 0 { idx =
+/// 1; }`), so filling in `1` here ahead of time is behavior-identical.
+///
+/// `Line`/`Span`/`NamedSpan`'s `i32`/`u32` payloads are widened from parse
+/// time's unbounded `<integer>` (CSS Values 4 §4.2) but taffy's
+/// `GridLine`/`Span(u16)`/`NamedSpan(_, u16)` use 16-bit integers —
+/// silently saturating at [`i16::MIN`]/[`i16::MAX`]/[`u16::MAX`] rather
+/// than adding new [`LayoutWarn`] machinery, same rationale as
+/// [`grid_repeat_count_to_taffy`].
+fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
+    match v {
+        GridLineValue::Auto => GridPlacement::Auto,
+        GridLineValue::Line(n) => taffy_style_helpers::line(saturate_i16(*n)),
+        GridLineValue::Named(name) => GridPlacement::NamedLine(name.to_string(), 1),
+        GridLineValue::NamedLine(name, n) => {
+            GridPlacement::NamedLine(name.to_string(), saturate_i16(*n))
+        }
+        GridLineValue::Span(n) => GridPlacement::Span(saturate_u16(*n)),
+        GridLineValue::SpanNamed(name, n) => {
+            GridPlacement::NamedSpan(name.to_string(), saturate_u16(*n))
+        }
+        // cov:ignore: unreachable while GridLineValue is the 6 variants
+        // matched above only; required for its #[non_exhaustive] contract.
+        _ => GridPlacement::Auto,
+    }
+}
+
+/// Saturating `i32` → `i16` cast — [`grid_line_value_to_taffy_placement`]
+/// doc's "silently saturating" rationale.
+fn saturate_i16(n: i32) -> i16 {
+    n.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
+/// Saturating `u32` → `u16` cast — [`grid_line_value_to_taffy_placement`] /
+/// [`grid_repeat_count_to_taffy`] doc's "silently saturating" rationale.
+fn saturate_u16(n: u32) -> u16 {
+    n.min(u16::MAX as u32) as u16
 }
 
 // ---------------------------------------------------------------------------
@@ -6327,5 +6649,340 @@ mod tests {
                 i + 1
             );
         }
+    }
+
+    // ── bridge_grid (CSS Grid Layout Module Level 1) ────────────────────
+
+    use raikiri_style::property::{GridTemplateAreaEntry, GridTemplateAreas};
+    use raikiri_style::{ComputedGridTrackList, ComputedGridTrackRepeat};
+
+    #[test]
+    fn bridge_grid_maps_grid_auto_flow_keywords() {
+        for (flow, expected) in [
+            (GridAutoFlowValue::Row, TaffyGridAutoFlow::Row),
+            (GridAutoFlowValue::Column, TaffyGridAutoFlow::Column),
+            (GridAutoFlowValue::RowDense, TaffyGridAutoFlow::RowDense),
+            (
+                GridAutoFlowValue::ColumnDense,
+                TaffyGridAutoFlow::ColumnDense,
+            ),
+        ] {
+            let mut cv = ComputedValues::initial();
+            cv.grid_auto_flow = flow;
+            let mut style = Style::default();
+            let mut diag = Vec::new();
+            bridge_grid(&mut style, &cv, &mut diag);
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(style.grid_auto_flow, expected, "grid-auto-flow: {flow:?}");
+        }
+    }
+
+    #[test]
+    fn bridge_grid_maps_every_grid_line_placement_variant() {
+        for (value, expected) in [
+            (GridLineValue::Auto, GridPlacement::Auto),
+            (GridLineValue::Line(-2), taffy_style_helpers::line(-2i16)),
+            (
+                GridLineValue::Named("col".into()),
+                GridPlacement::NamedLine("col".to_string(), 1),
+            ),
+            (
+                GridLineValue::NamedLine("col".into(), 3),
+                GridPlacement::NamedLine("col".to_string(), 3),
+            ),
+            (GridLineValue::Span(4), GridPlacement::Span(4)),
+            (
+                GridLineValue::SpanNamed("col".into(), 2),
+                GridPlacement::NamedSpan("col".to_string(), 2),
+            ),
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                grid_line_value_to_taffy_placement(&value),
+                expected,
+                "grid-line: {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bridge_grid_maps_grid_row_and_grid_column_from_the_4_longhands() {
+        let mut cv = ComputedValues::initial();
+        cv.grid_row_start = GridLineValue::Line(2);
+        cv.grid_row_end = GridLineValue::Span(3);
+        cv.grid_column_start = GridLineValue::Named("main".into());
+        cv.grid_column_end = GridLineValue::Auto;
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_grid(&mut style, &cv, &mut diag);
+        assert_eq!(
+            style.grid_row,
+            TaffyLine {
+                start: taffy_style_helpers::line(2i16),
+                end: GridPlacement::Span(3),
+            }
+        );
+        assert_eq!(
+            style.grid_column,
+            TaffyLine {
+                start: GridPlacement::NamedLine("main".to_string(), 1),
+                end: GridPlacement::Auto,
+            }
+        );
+    }
+
+    #[test]
+    fn bridge_grid_maps_track_list_with_repeat_minmax_fr_and_named_lines() {
+        // `grid-template-columns: [a] 100px repeat(2, [b] minmax(0, 1fr))`
+        // — exercises a bare fixed track, a `repeat()` with `minmax()`/`fr`
+        // inside, and named lines both outside and inside the `repeat()`.
+        let mut cv = ComputedValues::initial();
+        cv.grid_template_columns =
+            ComputedGridTemplateTracks::List(std::sync::Arc::new(ComputedGridTrackList {
+                line_names: vec![vec!["a".into()], vec![], vec![]],
+                components: vec![
+                    ComputedGridTrackListComponent::Size(ComputedGridTrackSize::Breadth(
+                        ComputedGridTrackBreadth::Px(100.0),
+                    )),
+                    ComputedGridTrackListComponent::Repeat(ComputedGridTrackRepeat {
+                        count: GridRepeatCount::Count(2),
+                        line_names: vec![vec!["b".into()], vec![]],
+                        tracks: vec![ComputedGridTrackSize::MinMax(
+                            ComputedGridTrackBreadth::Px(0.0),
+                            ComputedGridTrackBreadth::Flex(1.0),
+                        )],
+                    }),
+                ],
+            }));
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_grid(&mut style, &cv, &mut diag);
+
+        assert_eq!(style.grid_template_columns.len(), 2);
+        assert_eq!(
+            style.grid_template_columns[0],
+            GridTemplateComponent::Single(TrackSizingFunction {
+                min: MinTrackSizingFunction::length(100.0),
+                max: MaxTrackSizingFunction::length(100.0),
+            })
+        );
+        assert_eq!(
+            style.grid_template_columns[1],
+            GridTemplateComponent::Repeat(GridTemplateRepetition {
+                count: TaffyRepetitionCount::Count(2),
+                tracks: vec![TrackSizingFunction {
+                    min: MinTrackSizingFunction::length(0.0),
+                    max: MaxTrackSizingFunction::fr(1.0),
+                }],
+                line_names: vec![vec!["b".to_string()], vec![]],
+            })
+        );
+        assert_eq!(
+            style.grid_template_column_names,
+            vec![vec!["a".to_string()], vec![], vec![]]
+        );
+    }
+
+    #[test]
+    fn bridge_grid_maps_grid_template_areas() {
+        let mut cv = ComputedValues::initial();
+        cv.grid_template_areas =
+            GridTemplateAreasValue::Areas(std::sync::Arc::new(GridTemplateAreas {
+                row_strings: vec!["header".into()],
+                areas: vec![GridTemplateAreaEntry {
+                    name: "header".into(),
+                    row_start: 1,
+                    row_end: 2,
+                    column_start: 1,
+                    column_end: 3,
+                }],
+                row_count: 1,
+                column_count: 2,
+            }));
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_grid(&mut style, &cv, &mut diag);
+        assert_eq!(
+            style.grid_template_areas,
+            vec![TaffyGridTemplateArea {
+                name: "header".to_string(),
+                row_start: 1,
+                row_end: 2,
+                column_start: 1,
+                column_end: 3,
+            }]
+        );
+    }
+
+    #[test]
+    fn bridge_grid_maps_grid_auto_columns_and_rows_track_sizes() {
+        let mut cv = ComputedValues::initial();
+        cv.grid_auto_columns = std::sync::Arc::new(vec![ComputedGridTrackSize::Breadth(
+            ComputedGridTrackBreadth::Px(50.0),
+        )]);
+        cv.grid_auto_rows = std::sync::Arc::new(vec![ComputedGridTrackSize::Breadth(
+            ComputedGridTrackBreadth::MinContent,
+        )]);
+        let mut style = Style::default();
+        let mut diag = Vec::new();
+        bridge_grid(&mut style, &cv, &mut diag);
+        assert_eq!(
+            style.grid_auto_columns,
+            vec![TrackSizingFunction {
+                min: MinTrackSizingFunction::length(50.0),
+                max: MaxTrackSizingFunction::length(50.0),
+            }]
+        );
+        assert_eq!(
+            style.grid_auto_rows,
+            vec![TrackSizingFunction {
+                min: MinTrackSizingFunction::min_content(),
+                max: MaxTrackSizingFunction::min_content(),
+            }]
+        );
+    }
+
+    #[test]
+    fn bridge_alignment_maps_justify_items_and_justify_self() {
+        let mut cv = ComputedValues::initial();
+        cv.justify_items = SelfAlignmentValue::Center;
+        cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::End);
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        assert_eq!(style.justify_items, Some(TaffyAlignItems::CENTER));
+        assert_eq!(style.justify_self, Some(TaffyAlignItems::END));
+
+        // `justify-self: normal` behaves as `stretch` (CSS Box Alignment 3
+        // §8.3), not as `None` (which would mean "inherit justify-items")
+        // — same special-case as `align-self: normal`
+        // (`self_alignment_or_auto_to_taffy` doc).
+        let mut cv = ComputedValues::initial();
+        cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::Normal);
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        assert_eq!(style.justify_self, Some(TaffyAlignItems::STRETCH));
+    }
+
+    #[test]
+    fn grid_template_columns_actually_sizes_columns_through_taffy_grid_algorithm() {
+        // `bridge_grid`'s `grid_template_columns` field must actually reach
+        // taffy's `compute_grid_layout` — asserting the `taffy::Style`
+        // field alone would only prove the assignment, not the wiring
+        // (same rationale as `flex_direction_column_stacks_children_vertically`
+        // above). A 2-column `100px 200px` grid with one child explicitly
+        // placed in each column must position the second child 100px to
+        // the right of the first.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid_container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100px 200px"),
+        );
+        let cell_a = doc.append_element(
+            Some(grid_container),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:1;height:20px"),
+        );
+        let cell_b = doc.append_element(
+            Some(grid_container),
+            "div",
+            Style::default(),
+            Some("grid-column:2;grid-row:1;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let a_loc = doc.nodes[cell_a].unrounded_layout.location;
+        let b_loc = doc.nodes[cell_b].unrounded_layout.location;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (b_loc.x - a_loc.x - 100.0).abs() < 0.5,
+            "second grid cell should sit 100px (first column's width) to \
+             the right of the first, got a.x={}, b.x={}",
+            a_loc.x,
+            b_loc.x
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (a_loc.y - b_loc.y).abs() < 0.5,
+            "both cells share row 1, so they must share the same y \
+             offset, got a.y={}, b.y={}",
+            a_loc.y,
+            b_loc.y
+        );
+    }
+
+    #[test]
+    fn grid_auto_flow_column_places_implicit_items_column_wise_through_taffy() {
+        // `bridge_grid`'s `grid_auto_flow` field reaching taffy's
+        // auto-placement algorithm — with `grid-auto-flow: column` and no
+        // explicit placement, 2 children must be auto-placed into
+        // successive *columns* of the same row (not successive rows, the
+        // `row` default), which the 100px `grid-auto-columns` track makes
+        // observable as a 100px x-offset between them.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid_container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-auto-flow:column;grid-auto-columns:100px"),
+        );
+        let cell_a = doc.append_element(
+            Some(grid_container),
+            "div",
+            Style::default(),
+            Some("height:20px"),
+        );
+        let cell_b = doc.append_element(
+            Some(grid_container),
+            "div",
+            Style::default(),
+            Some("height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let a_loc = doc.nodes[cell_a].unrounded_layout.location;
+        let b_loc = doc.nodes[cell_b].unrounded_layout.location;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (b_loc.x - a_loc.x - 100.0).abs() < 0.5,
+            "column-flow auto-placement should put the second item 100px \
+             (grid-auto-columns) to the right of the first, got a.x={}, b.x={}",
+            a_loc.x,
+            b_loc.x
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (a_loc.y - b_loc.y).abs() < 0.5,
+            "column-flow auto-placement should keep both items on row 1, \
+             got a.y={}, b.y={}",
+            a_loc.y,
+            b_loc.y
+        );
     }
 }

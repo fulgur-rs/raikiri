@@ -83,22 +83,29 @@ use cssparser::{
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, Token, match_ignore_ascii_case,
 };
 
+use std::sync::Arc;
+
 use crate::Atom;
 use crate::cascade::{
     ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_relative_font_size,
 };
 use crate::computed::ComputedValues;
 use crate::property::{
-    Border, BorderColor, BorderStyle, FlexBasisValue, FlexShorthand, GapShorthand, Length,
-    LengthOrAuto, LengthOrNormal, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
-    parse_non_negative_length, parse_value, resolve_overflow,
+    Border, BorderColor, BorderStyle, FlexBasisValue, FlexShorthand, GapShorthand,
+    GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
+    OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, parse_non_negative_length,
+    parse_value, resolve_overflow,
 };
 use crate::resolve::{
-    ComputedFlexBasis, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedLengthPercentageOrNormal, ResolveContext, lift_length_or_normal, lift_line_height,
-    resolve_border, resolve_flex_basis, resolve_length_or_normal, resolve_length_percentage,
-    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_vertical_align, used_line_height_length,
+    ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
+    ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
+    ResolveContext, lift_length_or_normal, lift_line_height, resolve_border, resolve_flex_basis,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length_or_normal,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
+    resolve_vertical_align, used_line_height_length,
 };
 use crate::rule::{Declaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
@@ -1997,6 +2004,123 @@ fn absolutize_in_page_context(
             }
         }
     }
+    /// [`ComputedGridTrackBreadth`] → specified [`GridTrackBreadth`] —
+    /// round-trip half of [`gtt`]/[`gatl`], same "computed-equivalent
+    /// specified representation" convention as [`fb`]/[`lpn`] (`Px`/
+    /// `Percent` only, no other unit ever appears post-absolutization).
+    fn grid_track_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridTrackBreadth {
+        match b {
+            ComputedGridTrackBreadth::Px(v) => GridTrackBreadth::Length(Length::Px(v)),
+            ComputedGridTrackBreadth::Percent(p) => GridTrackBreadth::Length(Length::Percent(p)),
+            ComputedGridTrackBreadth::Flex(f) => GridTrackBreadth::Flex(f),
+            ComputedGridTrackBreadth::MinContent => GridTrackBreadth::MinContent,
+            ComputedGridTrackBreadth::MaxContent => GridTrackBreadth::MaxContent,
+            ComputedGridTrackBreadth::Auto => GridTrackBreadth::Auto,
+        }
+    }
+    /// [`ComputedGridTrackBreadth`] → specified [`GridInflexibleBreadth`] —
+    /// sibling of [`grid_track_breadth_from_computed`] for `minmax()`'s min
+    /// side. `ComputedGridTrackBreadth::Flex` never reaches
+    /// here (`ComputedGridTrackBreadth`'s doc "collapse" note: the min side
+    /// is only ever produced by [`crate::resolve::resolve_grid_inflexible_breadth`],
+    /// which has no `Flex` variant to produce it from) — the arm is a
+    /// defensive fallback to keep the match exhaustive, not a reachable case.
+    fn grid_inflexible_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridInflexibleBreadth {
+        match b {
+            ComputedGridTrackBreadth::Px(v) => GridInflexibleBreadth::Length(Length::Px(v)),
+            ComputedGridTrackBreadth::Percent(p) => {
+                GridInflexibleBreadth::Length(Length::Percent(p))
+            }
+            ComputedGridTrackBreadth::MinContent => GridInflexibleBreadth::MinContent,
+            ComputedGridTrackBreadth::MaxContent => GridInflexibleBreadth::MaxContent,
+            // cov:ignore: unreachable per this fn's doc; kept for match
+            // exhaustiveness.
+            ComputedGridTrackBreadth::Flex(_) | ComputedGridTrackBreadth::Auto => {
+                GridInflexibleBreadth::Auto
+            }
+        }
+    }
+    /// [`ComputedGridTrackSize`] → specified [`GridTrackSize`] — round-trip
+    /// half of [`gtt`]/[`gatl`].
+    fn grid_track_size_from_computed(s: ComputedGridTrackSize) -> GridTrackSize {
+        match s {
+            ComputedGridTrackSize::Breadth(b) => {
+                GridTrackSize::Breadth(grid_track_breadth_from_computed(b))
+            }
+            ComputedGridTrackSize::MinMax(min, max) => GridTrackSize::MinMax(
+                grid_inflexible_breadth_from_computed(min),
+                grid_track_breadth_from_computed(max),
+            ),
+            ComputedGridTrackSize::FitContent(lp) => GridTrackSize::FitContent(match lp {
+                ComputedLengthPercentage::Px(v) => Length::Px(v),
+                ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+            }),
+        }
+    }
+    /// [`ComputedGridTrackList`] → specified [`GridTrackList`] — round-trip
+    /// half of [`gtt`]. `line_names` carry no length so they clone through
+    /// unchanged.
+    fn grid_track_list_from_computed(list: &ComputedGridTrackList) -> GridTrackList {
+        GridTrackList {
+            line_names: list.line_names.clone(),
+            components: list
+                .components
+                .iter()
+                .cloned()
+                .map(|c| match c {
+                    ComputedGridTrackListComponent::Size(s) => {
+                        GridTrackListComponent::Size(grid_track_size_from_computed(s))
+                    }
+                    ComputedGridTrackListComponent::Repeat(r) => {
+                        GridTrackListComponent::Repeat(GridTrackRepeat {
+                            count: r.count,
+                            line_names: r.line_names,
+                            tracks: r
+                                .tracks
+                                .into_iter()
+                                .map(grid_track_size_from_computed)
+                                .collect(),
+                        })
+                    }
+                })
+                .collect(),
+        }
+    }
+    /// `grid-template-columns` / `grid-template-rows` — round-trips through
+    /// [`resolve_grid_template_tracks`] and maps the `Computed*` mirror
+    /// types back to the specified-layer shape (`none` preserved as a
+    /// keyword, same as [`fb`]'s `Auto`/`Content` handling).
+    fn gtt(
+        specified: GridTemplateTracks,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> GridTemplateTracks {
+        match resolve_grid_template_tracks(specified, font_size, own_line_height, ctx) {
+            ComputedGridTemplateTracks::None => GridTemplateTracks::None,
+            ComputedGridTemplateTracks::List(list) => {
+                GridTemplateTracks::List(Arc::new(grid_track_list_from_computed(&list)))
+            }
+        }
+    }
+    /// `grid-auto-columns` / `grid-auto-rows` — same round-trip shape as
+    /// [`gtt`], for the `<track-size>+` (no `none`, no `<line-names>`)
+    /// grammar.
+    fn gatl(
+        specified: &[GridTrackSize],
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> Arc<Vec<GridTrackSize>> {
+        let computed = resolve_grid_auto_track_list(specified, font_size, own_line_height, ctx);
+        Arc::new(
+            computed
+                .iter()
+                .cloned()
+                .map(grid_track_size_from_computed)
+                .collect(),
+        )
+    }
     /// One `border-*` side: absolutize the width and apply the style gate.
     ///
     /// Routed through [`resolve_border`] rather than re-testing
@@ -2154,7 +2278,42 @@ fn absolutize_in_page_context(
         // `TextDecoration` above for the same shorthand-with-no-length-
         // components shape); it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
-        | PropertyValue::PlaceContent(_)) => v,
+        | PropertyValue::PlaceContent(_)
+        // `grid-template-areas` (CSS Grid Layout Module Level 1 §7.3) —
+        // computed value is the keyword `none` or the authored string list
+        // itself (`GridTemplateAreasValue` doc), not a parsed/absolutized
+        // form — nothing for phase 3 to absolutize, same shape as
+        // `GridTemplateAreasValue`'s specified/computed-equivalent layering
+        // (unlike `GridTemplateColumns`/`GridTemplateRows` below, which do
+        // carry `<length-percentage>` in their track sizes and get their
+        // own transform arm).
+        | PropertyValue::GridTemplateAreas(_)
+        // `grid-auto-flow` (§7.7) carries no length and computed value =
+        // specified keyword(s) — same shape as `WordBreak` above.
+        | PropertyValue::GridAutoFlow(_)
+        // `grid-row-start`/`-end`/`grid-column-start`/`-end` (§8.3) carry no
+        // length (`GridLineValue` doc) — same shape as `WordBreak` above.
+        | PropertyValue::GridRowStart(_)
+        | PropertyValue::GridRowEnd(_)
+        | PropertyValue::GridColumnStart(_)
+        | PropertyValue::GridColumnEnd(_)
+        // `grid-row`/`grid-column` shorthands (§8.4) join the same bucket as
+        // identity pass-through — neither longhand they expand to carries a
+        // length either, and they are structurally unreachable here
+        // regardless (same `expand_shorthand_into` reasoning as
+        // `PlaceContent` above).
+        | PropertyValue::GridRow(_)
+        | PropertyValue::GridColumn(_)
+        // `justify-items` (CSS Box Alignment Module Level 3 §7.1) /
+        // `justify-self` (§6.1) carry no length — same shape as
+        // `AlignItems`/`AlignSelf` above.
+        | PropertyValue::JustifyItems(_)
+        | PropertyValue::JustifySelf(_)
+        // `place-items`/`place-self` shorthands (§7.3/§6.3) join the same
+        // bucket as identity pass-through, same reasoning as
+        // `PlaceContent`/`GridRow` above.
+        | PropertyValue::PlaceItems(_)
+        | PropertyValue::PlaceSelf(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -2387,6 +2546,25 @@ fn absolutize_in_page_context(
             row: lpn(g.row, font_size, own_line_height, ctx),
             column: lpn(g.column, font_size, own_line_height, ctx),
         }),
+        // ── grid-template-columns / grid-template-rows ──────────────────────
+        // CSS Grid Layout Module Level 1 §7.2 — `none` preserved as a
+        // keyword, `<length-percentage>` inside the track list absolutized
+        // (`gtt` helper above).
+        PropertyValue::GridTemplateColumns(v) => {
+            PropertyValue::GridTemplateColumns(gtt(v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::GridTemplateRows(v) => {
+            PropertyValue::GridTemplateRows(gtt(v, font_size, own_line_height, ctx))
+        }
+        // ── grid-auto-columns / grid-auto-rows ───────────────────────────────
+        // CSS Grid Layout Module Level 1 §7.6 — same track-size
+        // absolutization as `GridTemplateColumns` above (`gatl` helper).
+        PropertyValue::GridAutoColumns(v) => {
+            PropertyValue::GridAutoColumns(gatl(&v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::GridAutoRows(v) => {
+            PropertyValue::GridAutoRows(gatl(&v, font_size, own_line_height, ctx))
+        }
     }
 }
 
@@ -2520,8 +2698,10 @@ mod tests {
     use crate::property::{
         AlignSelfValue, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
         ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue,
-        FloatValue, FontStyle, FontWeightValue, Length, LengthOrAuto, LengthOrNormal, LineHeight,
-        OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand, PositionValue,
+        FloatValue, FontStyle, FontWeightValue, GridAutoFlowValue, GridLineShorthand,
+        GridLineValue, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue, Length,
+        LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY,
+        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
         SelfAlignmentValue, TextAlign, TextDecorationColor, TextDecorationLine,
         TextDecorationShorthand, TextDecorationStyle, TextTransform, VerticalAlign, Visibility,
         WhiteSpace, WordBreak, ZIndexValue,
@@ -4398,11 +4578,22 @@ mod tests {
     /// 専用 arm を `absolutize_in_page_context` に持つようになったため。
     /// pass-through 側から抜けたのはこの改修で唯一のケース — 上記の履歴は
     /// 全て「加わる」方向だったことに注意)。
+    /// 48 → 60 (CSS Grid Layout Module Level 1 の `GridTemplateAreas` /
+    /// `GridAutoFlow` / `GridRowStart` / `GridRowEnd` / `GridColumnStart` /
+    /// `GridColumnEnd` / `GridRow` / `GridColumn` (§7.3/§7.7/§8.3/§8.4) と
+    /// CSS Box Alignment Module Level 3 の `JustifyItems` / `JustifySelf` /
+    /// `PlaceItems` / `PlaceSelf` (§7.1/§6.1/§7.3/§6.3) — 12 variant とも
+    /// 同じ理由: keyword-only (または shorthand-with-no-length-components)
+    /// のため length を運ばず phase 3 に変換対象が無い。`GridTemplateColumns`
+    /// / `GridTemplateRows` / `GridAutoColumns` / `GridAutoRows` は track
+    /// list 中に `<length-percentage>` を運ぶため pass-through 側には
+    /// **加わらない** — `absolutize_in_page_context` のバケット comment
+    /// 参照)。
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 48;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 60;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -4707,6 +4898,78 @@ mod tests {
             align: ContentAlignmentValue::SpaceBetween,
             justify: ContentAlignmentValue::Center,
         }),
+        // `Em`/`Rem` (not `Px`) — same "worst case" reasoning as
+        // `FlexBasis`/`RowGap` above: a font-relative unit inside the track
+        // list exercises phase-3 absolutization (`gtt`/`resolve_grid_template_tracks`)
+        // instead of trivially round-tripping an already-absolute length.
+        GridTemplateColumns => PropertyValue::GridTemplateColumns(GridTemplateTracks::List(
+            Arc::new(GridTrackList {
+                line_names: vec![vec![], vec![]],
+                components: vec![GridTrackListComponent::Size(GridTrackSize::Breadth(
+                    GridTrackBreadth::Length(Length::Em(2.0)),
+                ))],
+            }),
+        )),
+        GridTemplateRows => PropertyValue::GridTemplateRows(GridTemplateTracks::List(Arc::new(
+            GridTrackList {
+                line_names: vec![vec![], vec![]],
+                components: vec![GridTrackListComponent::Size(GridTrackSize::Breadth(
+                    GridTrackBreadth::Length(Length::Rem(1.5)),
+                ))],
+            },
+        ))),
+        // No specified/computed distinction for `grid-template-areas`
+        // (computed value = specified string list, `GridTemplateAreasValue`
+        // doc) — any value is "worst case".
+        GridTemplateAreas => PropertyValue::GridTemplateAreas(GridTemplateAreasValue::Areas(
+            Arc::new(GridTemplateAreas {
+                row_strings: vec!["a".into()],
+                areas: vec![GridTemplateAreaEntry {
+                    name: "a".into(),
+                    row_start: 1,
+                    row_end: 2,
+                    column_start: 1,
+                    column_end: 2,
+                }],
+                row_count: 1,
+                column_count: 1,
+            }),
+        )),
+        // `Em`/`Rem` (not `Px`) — same "worst case" reasoning as
+        // `GridTemplateColumns`/`GridTemplateRows` above.
+        GridAutoColumns => PropertyValue::GridAutoColumns(Arc::new(vec![GridTrackSize::Breadth(
+            GridTrackBreadth::Length(Length::Em(1.5)),
+        )])),
+        GridAutoRows => PropertyValue::GridAutoRows(Arc::new(vec![GridTrackSize::Breadth(
+            GridTrackBreadth::Length(Length::Rem(2.0)),
+        )])),
+        // No specified/computed distinction for `grid-auto-flow`/
+        // `grid-row-start`/`grid-row-end`/`grid-column-start`/
+        // `grid-column-end` — any value is "worst case" (`Direction`
+        // sibling comment above uses the same reasoning).
+        GridAutoFlow => PropertyValue::GridAutoFlow(GridAutoFlowValue::ColumnDense),
+        GridRowStart => PropertyValue::GridRowStart(GridLineValue::Line(2)),
+        GridRowEnd => PropertyValue::GridRowEnd(GridLineValue::Span(3)),
+        GridColumnStart => PropertyValue::GridColumnStart(GridLineValue::Named("foo".into())),
+        GridColumnEnd => PropertyValue::GridColumnEnd(GridLineValue::NamedLine("bar".into(), 2)),
+        GridRow => PropertyValue::GridRow(GridLineShorthand {
+            start: GridLineValue::Line(1),
+            end: GridLineValue::Line(3),
+        }),
+        GridColumn => PropertyValue::GridColumn(GridLineShorthand {
+            start: GridLineValue::Line(2),
+            end: GridLineValue::Auto,
+        }),
+        JustifyItems => PropertyValue::JustifyItems(SelfAlignmentValue::Center),
+        JustifySelf => PropertyValue::JustifySelf(AlignSelfValue::Value(SelfAlignmentValue::End)),
+        PlaceItems => PropertyValue::PlaceItems(PlaceItemsShorthand {
+            align: SelfAlignmentValue::Center,
+            justify: SelfAlignmentValue::End,
+        }),
+        PlaceSelf => PropertyValue::PlaceSelf(PlaceSelfShorthand {
+            align: AlignSelfValue::Auto,
+            justify: AlignSelfValue::Value(SelfAlignmentValue::Start),
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4898,6 +5161,22 @@ mod tests {
         ColumnGap,
         Gap,
         PlaceContent,
+        GridTemplateColumns,
+        GridTemplateRows,
+        GridTemplateAreas,
+        GridAutoColumns,
+        GridAutoRows,
+        GridAutoFlow,
+        GridRowStart,
+        GridRowEnd,
+        GridColumnStart,
+        GridColumnEnd,
+        GridRow,
+        GridColumn,
+        JustifyItems,
+        JustifySelf,
+        PlaceItems,
+        PlaceSelf,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -5098,6 +5377,51 @@ mod tests {
         ) -> Option<&'static str> {
             [s.top, s.right, s.bottom, s.left].into_iter().find_map(f)
         }
+        /// `<track-breadth>` — `min-content`/`max-content`/`auto`/`<flex>`
+        /// keyword は常に無 residue (`<number>` 相当、absolutize 不要)、
+        /// `<length-percentage>` は [`length`] に delegate。
+        fn grid_track_breadth(b: &GridTrackBreadth) -> Option<&'static str> {
+            match b {
+                GridTrackBreadth::Length(l) => length(*l),
+                GridTrackBreadth::Flex(_)
+                | GridTrackBreadth::MinContent
+                | GridTrackBreadth::MaxContent
+                | GridTrackBreadth::Auto => None,
+            }
+        }
+        /// `<inflexible-breadth>` — [`grid_track_breadth`] と同じ shape
+        /// (`<flex>` variant を持たない点のみ異なる)。
+        fn grid_inflexible_breadth(b: &GridInflexibleBreadth) -> Option<&'static str> {
+            match b {
+                GridInflexibleBreadth::Length(l) => length(*l),
+                GridInflexibleBreadth::MinContent
+                | GridInflexibleBreadth::MaxContent
+                | GridInflexibleBreadth::Auto => None,
+            }
+        }
+        /// `<track-size>` — `minmax()` はどちらかの side が残滓なら全体を
+        /// 残滓とする。
+        fn grid_track_size(s: &GridTrackSize) -> Option<&'static str> {
+            match s {
+                GridTrackSize::Breadth(b) => grid_track_breadth(b),
+                GridTrackSize::MinMax(min, max) => {
+                    grid_inflexible_breadth(min).or_else(|| grid_track_breadth(max))
+                }
+                GridTrackSize::FitContent(l) => length(*l),
+            }
+        }
+        /// `grid-template-columns` / `grid-template-rows`: `none` は常に無
+        /// residue、track list は component (bare track と `repeat()` の
+        /// 中身の両方) を走査していずれか 1 つでも残滓なら全体を残滓とする。
+        fn grid_template_tracks(t: &GridTemplateTracks) -> Option<&'static str> {
+            match t {
+                GridTemplateTracks::None => None,
+                GridTemplateTracks::List(list) => list.components.iter().find_map(|c| match c {
+                    GridTrackListComponent::Size(s) => grid_track_size(s),
+                    GridTrackListComponent::Repeat(r) => r.tracks.iter().find_map(grid_track_size),
+                }),
+            }
+        }
 
         match value {
             PropertyValue::FontWeight(fw) => font_weight(*fw),
@@ -5140,6 +5464,12 @@ mod tests {
             // Shorthand fall-through — either component being residue makes
             // the whole shorthand residue.
             PropertyValue::Gap(g) => length_or_normal(g.row).or_else(|| length_or_normal(g.column)),
+            PropertyValue::GridTemplateColumns(v) | PropertyValue::GridTemplateRows(v) => {
+                grid_template_tracks(v)
+            }
+            PropertyValue::GridAutoColumns(v) | PropertyValue::GridAutoRows(v) => {
+                v.iter().find_map(grid_track_size)
+            }
             // 層に依存しない payload — keyword / color / ident list / counter。
             PropertyValue::Color(_)
             | PropertyValue::BackgroundColor(_)
@@ -5221,7 +5551,28 @@ mod tests {
             | PropertyValue::AlignSelf(_)
             // `place-content` shorthand — neither component carries a
             // length (see `TextDecoration` above for the same shape).
-            | PropertyValue::PlaceContent(_) => None,
+            | PropertyValue::PlaceContent(_)
+            // `GridTemplateAreasValue` carries no `<length-percentage>`
+            // either — computed value is the specified string list itself
+            // (`GridTemplateAreasValue` doc).
+            | PropertyValue::GridTemplateAreas(_)
+            // `GridAutoFlowValue`/`GridLineValue` carry no length either.
+            | PropertyValue::GridAutoFlow(_)
+            | PropertyValue::GridRowStart(_)
+            | PropertyValue::GridRowEnd(_)
+            | PropertyValue::GridColumnStart(_)
+            | PropertyValue::GridColumnEnd(_)
+            // `grid-row`/`grid-column` shorthand — neither longhand they
+            // expand to carries a length either.
+            | PropertyValue::GridRow(_)
+            | PropertyValue::GridColumn(_)
+            // `SelfAlignmentValue`/`AlignSelfValue` carry no length either.
+            | PropertyValue::JustifyItems(_)
+            | PropertyValue::JustifySelf(_)
+            // `place-items`/`place-self` shorthand — same shape as
+            // `place-content` above.
+            | PropertyValue::PlaceItems(_)
+            | PropertyValue::PlaceSelf(_) => None,
         }
     }
 

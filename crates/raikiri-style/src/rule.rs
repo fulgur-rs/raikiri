@@ -10,8 +10,9 @@ use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
 use crate::property::{
-    Border, FlexShorthand, GapShorthand, Length, LengthOrAuto, OverflowXY, PlaceContentShorthand,
-    PropertyValue, Sides, TextDecorationShorthand, parse_value,
+    Border, FlexShorthand, GapShorthand, GridLineShorthand, Length, LengthOrAuto, OverflowXY,
+    PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyValue, Sides,
+    TextDecorationShorthand, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -538,10 +539,40 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::AlignItems(_)
         | PropertyValue::AlignSelf(_)
         | PropertyValue::RowGap(_)
-        | PropertyValue::ColumnGap(_) => expand_none(d, push),
+        | PropertyValue::ColumnGap(_)
+        // grid-template-columns/-rows/-areas + grid-auto-columns/-rows/-flow
+        // + grid-row-start/-end + grid-column-start/-end — 展開先の longhand
+        // を持たない individual property (CSS Grid Layout Module Level 1
+        // §7.2/§7.3/§7.6/§7.7/§8.3)。
+        | PropertyValue::GridTemplateColumns(_)
+        | PropertyValue::GridTemplateRows(_)
+        | PropertyValue::GridTemplateAreas(_)
+        | PropertyValue::GridAutoColumns(_)
+        | PropertyValue::GridAutoRows(_)
+        | PropertyValue::GridAutoFlow(_)
+        | PropertyValue::GridRowStart(_)
+        | PropertyValue::GridRowEnd(_)
+        | PropertyValue::GridColumnStart(_)
+        | PropertyValue::GridColumnEnd(_)
+        // justify-items / justify-self (CSS Box Alignment Module Level 3
+        // §7.1/§6.1) — 同じく展開先の longhand を持たない。
+        | PropertyValue::JustifyItems(_)
+        | PropertyValue::JustifySelf(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),
+        // `GridLineShorthand` は `SmolStr` を持ち Copy ではない — 他の
+        // shorthand payload (`Sides<..>` / `FlexShorthand` / `GapShorthand`
+        // 等、全て Copy) と異なり値を `d.value` (`&Declaration` 経由の
+        // place) から move できないため、`ref` binding で参照のまま
+        // `expand_grid_row` / `expand_grid_column` に渡す
+        // ([`expand_grid_row`] doc 参照)。
+        PropertyValue::GridRow(ref shorthand) => expand_grid_row(shorthand, d.important, push),
+        PropertyValue::GridColumn(ref shorthand) => {
+            expand_grid_column(shorthand, d.important, push)
+        }
+        PropertyValue::PlaceItems(p) => expand_place_items(p, d.important, push),
+        PropertyValue::PlaceSelf(p) => expand_place_self(p, d.important, push),
     }
 }
 
@@ -725,6 +756,79 @@ fn expand_place_content(
     });
     push(Declaration {
         value: PropertyValue::JustifyContent(p.justify),
+        important,
+    });
+}
+
+/// `grid-row` shorthand を `grid-row-start` / `grid-row-end` の 2 longhand
+/// に展開する cold helper。[`GridLineShorthand`] doc の 2nd-value-omitted
+/// copy 規則は parser 側 (`property.rs` の `parse_grid_line_shorthand`、
+/// private fn のため直接 link 不可) が既に適用済み。
+///
+/// `shorthand: &GridLineShorthand` — [`expand_shorthand_into`] の
+/// `PropertyValue::GridRow(ref shorthand)` arm の doc 参照。他の shorthand
+/// expand helper (`expand_flex` 等) と異なり参照を受け取り `.clone()` する
+/// (`GridLineValue` が `SmolStr` を持ち Copy ではないため)。
+#[inline(never)]
+fn expand_grid_row(
+    shorthand: &GridLineShorthand,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::GridRowStart(shorthand.start.clone()),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::GridRowEnd(shorthand.end.clone()),
+        important,
+    });
+}
+
+/// `grid-column` shorthand を `grid-column-start` / `grid-column-end` の 2
+/// longhand に展開する cold helper — [`expand_grid_row`] と同じ shape。
+#[inline(never)]
+fn expand_grid_column(
+    shorthand: &GridLineShorthand,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::GridColumnStart(shorthand.start.clone()),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::GridColumnEnd(shorthand.end.clone()),
+        important,
+    });
+}
+
+/// `place-items` shorthand を `align-items` / `justify-items` の 2 longhand
+/// に展開する cold helper — [`expand_gap`] と同じ shape
+/// ([`PlaceItemsShorthand`] doc 参照)。
+#[inline(never)]
+fn expand_place_items(p: PlaceItemsShorthand, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::AlignItems(p.align),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::JustifyItems(p.justify),
+        important,
+    });
+}
+
+/// `place-self` shorthand を `align-self` / `justify-self` の 2 longhand に
+/// 展開する cold helper — [`expand_place_items`] と同じ shape
+/// ([`PlaceSelfShorthand`] doc 参照)。
+#[inline(never)]
+fn expand_place_self(p: PlaceSelfShorthand, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::AlignSelf(p.align),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::JustifySelf(p.justify),
         important,
     });
 }

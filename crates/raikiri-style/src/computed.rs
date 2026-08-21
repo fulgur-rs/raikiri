@@ -14,15 +14,16 @@ use crate::Atom;
 use crate::property::{
     AlignSelfValue, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue,
     ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontStyle, OverflowValue, OverflowWrap, OverflowXY,
-    SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
-    initial_font_family,
+    FlexWrapValue, FloatValue, FontStyle, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
+    OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TextAlign,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign,
+    Visibility, WhiteSpace, WordBreak, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
-    ComputedBorder, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+    ComputedBorder, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackSize,
+    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedLengthPercentageOrNormal, ComputedLineHeight, initial_computed_grid_auto_track_list,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
@@ -869,6 +870,65 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-align-3/#propdef-column-gap>, "Inherited:
     /// no"). Same shape as [`Self::row_gap`].
     pub column_gap: ComputedLengthPercentageOrNormal,
+    /// `grid-template-columns`. **non-inherited**, initial:
+    /// [`ComputedGridTemplateTracks::None`] (CSS Grid Layout Module Level 1
+    /// §7.2 <https://www.w3.org/TR/css-grid-1/#track-sizing>, "Inherited:
+    /// no"). Computed value: the keyword `none` or a computed track list
+    /// ([`ComputedGridTemplateTracks`] doc).
+    pub grid_template_columns: ComputedGridTemplateTracks,
+    /// `grid-template-rows`. **non-inherited**, initial:
+    /// [`ComputedGridTemplateTracks::None`]. Same shape as
+    /// [`Self::grid_template_columns`].
+    pub grid_template_rows: ComputedGridTemplateTracks,
+    /// `grid-template-areas`. **non-inherited**, initial:
+    /// [`GridTemplateAreasValue::None`] (CSS Grid Layout Module Level 1 §7.3
+    /// <https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>,
+    /// "Inherited: no"). Computed value: the keyword `none` or a list of
+    /// string values — no length payload, so this field stays the
+    /// specified-layer type ([`GridTemplateAreasValue`] doc).
+    pub grid_template_areas: GridTemplateAreasValue,
+    /// `grid-auto-columns`. **non-inherited**, initial: `auto` (CSS Grid
+    /// Layout Module Level 1 §7.6
+    /// <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-columns>,
+    /// "Inherited: no").
+    pub grid_auto_columns: Arc<Vec<ComputedGridTrackSize>>,
+    /// `grid-auto-rows`. **non-inherited**, initial: `auto`. Same shape as
+    /// [`Self::grid_auto_columns`].
+    pub grid_auto_rows: Arc<Vec<ComputedGridTrackSize>>,
+    /// `grid-auto-flow`. **non-inherited**, initial: [`GridAutoFlowValue::Row`]
+    /// (CSS Grid Layout Module Level 1 §7.7
+    /// <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-flow>,
+    /// "Inherited: no"). Computed value = specified keyword(s) — no length
+    /// payload.
+    pub grid_auto_flow: GridAutoFlowValue,
+    /// `grid-row-start`. **non-inherited**, initial: [`GridLineValue::Auto`]
+    /// (CSS Grid Layout Module Level 1 §8.3
+    /// <https://www.w3.org/TR/css-grid-1/#line-placement>, "Inherited:
+    /// no"). Computed value: specified keyword, identifier, and/or integer
+    /// — no length payload.
+    pub grid_row_start: GridLineValue,
+    /// `grid-row-end`. **non-inherited**, initial: [`GridLineValue::Auto`].
+    /// Same shape as [`Self::grid_row_start`].
+    pub grid_row_end: GridLineValue,
+    /// `grid-column-start`. **non-inherited**, initial: [`GridLineValue::Auto`].
+    /// Same shape as [`Self::grid_row_start`].
+    pub grid_column_start: GridLineValue,
+    /// `grid-column-end`. **non-inherited**, initial: [`GridLineValue::Auto`].
+    /// Same shape as [`Self::grid_row_start`].
+    pub grid_column_end: GridLineValue,
+    /// `justify-items`. **non-inherited**, initial:
+    /// [`SelfAlignmentValue::Normal`] (CSS Box Alignment Module Level 3 §7.1
+    /// <https://www.w3.org/TR/css-align-3/#propdef-justify-items>,
+    /// "Inherited: no" — [`crate::property::PropertyValue::JustifyItems`]
+    /// doc's "legacy は未対応" section explains why this crate's initial
+    /// differs from the spec's literal `legacy`). Computed value =
+    /// specified keyword(s).
+    pub justify_items: SelfAlignmentValue,
+    /// `justify-self`. **non-inherited**, initial: [`AlignSelfValue::Auto`]
+    /// (CSS Box Alignment Module Level 3 §6.1
+    /// <https://www.w3.org/TR/css-align-3/#propdef-justify-self>,
+    /// "Inherited: no").
+    pub justify_self: AlignSelfValue,
 }
 
 impl ComputedValues {
@@ -1006,6 +1066,29 @@ impl ComputedValues {
             // initial は `normal`。
             row_gap: ComputedLengthPercentageOrNormal::Normal,
             column_gap: ComputedLengthPercentageOrNormal::Normal,
+            // CSS Grid Layout Module Level 1 §7.2/§7.3: grid-template-*
+            // initial は共に `none`。
+            grid_template_columns: ComputedGridTemplateTracks::None,
+            grid_template_rows: ComputedGridTemplateTracks::None,
+            grid_template_areas: GridTemplateAreasValue::None,
+            // CSS Grid Layout Module Level 1 §7.6: grid-auto-columns /
+            // grid-auto-rows initial は `auto`。
+            grid_auto_columns: initial_computed_grid_auto_track_list(),
+            grid_auto_rows: initial_computed_grid_auto_track_list(),
+            // CSS Grid Layout Module Level 1 §7.7: grid-auto-flow initial は
+            // `row`。
+            grid_auto_flow: GridAutoFlowValue::Row,
+            // CSS Grid Layout Module Level 1 §8.3: grid-row-start/-end /
+            // grid-column-start/-end initial は共に `auto`。
+            grid_row_start: GridLineValue::Auto,
+            grid_row_end: GridLineValue::Auto,
+            grid_column_start: GridLineValue::Auto,
+            grid_column_end: GridLineValue::Auto,
+            // CSS Box Alignment Module Level 3 §7.1/§6.1: justify-items /
+            // justify-self initial ([`crate::property::PropertyValue::JustifyItems`]
+            // doc の "legacy は未対応" 節参照、justify-self は `auto`)。
+            justify_items: SelfAlignmentValue::Normal,
+            justify_self: AlignSelfValue::Auto,
         }
     }
 
@@ -1076,6 +1159,9 @@ impl ComputedValues {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resolve::{
+        ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
+    };
 
     #[test]
     fn initial_values_match_spec() {
@@ -1320,13 +1406,58 @@ mod tests {
             // 異なる値。
             row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
             column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
+            // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3:
+            // initial (`none`/`auto`/`row`) と異なる値。
+            grid_template_columns: ComputedGridTemplateTracks::List(Arc::new(
+                ComputedGridTrackList {
+                    line_names: vec![vec![], vec![]],
+                    components: vec![ComputedGridTrackListComponent::Size(
+                        ComputedGridTrackSize::Breadth(ComputedGridTrackBreadth::Px(100.0)),
+                    )],
+                },
+            )),
+            grid_template_rows: ComputedGridTemplateTracks::List(Arc::new(ComputedGridTrackList {
+                line_names: vec![vec![], vec![]],
+                components: vec![ComputedGridTrackListComponent::Size(
+                    ComputedGridTrackSize::Breadth(ComputedGridTrackBreadth::Percent(50.0)),
+                )],
+            })),
+            grid_template_areas: GridTemplateAreasValue::Areas(Arc::new(
+                crate::property::GridTemplateAreas {
+                    row_strings: vec!["a".into()],
+                    areas: vec![crate::property::GridTemplateAreaEntry {
+                        name: "a".into(),
+                        row_start: 1,
+                        row_end: 2,
+                        column_start: 1,
+                        column_end: 2,
+                    }],
+                    row_count: 1,
+                    column_count: 1,
+                },
+            )),
+            grid_auto_columns: Arc::new(vec![ComputedGridTrackSize::Breadth(
+                ComputedGridTrackBreadth::MinContent,
+            )]),
+            grid_auto_rows: Arc::new(vec![ComputedGridTrackSize::Breadth(
+                ComputedGridTrackBreadth::MaxContent,
+            )]),
+            grid_auto_flow: GridAutoFlowValue::ColumnDense,
+            grid_row_start: GridLineValue::Line(2),
+            grid_row_end: GridLineValue::Span(3),
+            grid_column_start: GridLineValue::Named("foo".into()),
+            grid_column_end: GridLineValue::NamedLine("bar".into(), 2),
+            // CSS Box Alignment Module Level 3 §7.1/§6.1: initial
+            // (`normal`/`auto`) と異なる値。
+            justify_items: SelfAlignmentValue::Center,
+            justify_self: AlignSelfValue::Value(SelfAlignmentValue::End),
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 52 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 64 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1423,6 +1554,22 @@ mod tests {
         // non-inherited。
         assert_eq!(child.row_gap, initial.row_gap);
         assert_eq!(child.column_gap, initial.column_gap);
+        // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3: grid-*
+        // は全て non-inherited。
+        assert_eq!(child.grid_template_columns, initial.grid_template_columns);
+        assert_eq!(child.grid_template_rows, initial.grid_template_rows);
+        assert_eq!(child.grid_template_areas, initial.grid_template_areas);
+        assert_eq!(child.grid_auto_columns, initial.grid_auto_columns);
+        assert_eq!(child.grid_auto_rows, initial.grid_auto_rows);
+        assert_eq!(child.grid_auto_flow, initial.grid_auto_flow);
+        assert_eq!(child.grid_row_start, initial.grid_row_start);
+        assert_eq!(child.grid_row_end, initial.grid_row_end);
+        assert_eq!(child.grid_column_start, initial.grid_column_start);
+        assert_eq!(child.grid_column_end, initial.grid_column_end);
+        // CSS Box Alignment Module Level 3 §7.1/§6.1: justify-items /
+        // justify-self は共に non-inherited。
+        assert_eq!(child.justify_items, initial.justify_items);
+        assert_eq!(child.justify_self, initial.justify_self);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。

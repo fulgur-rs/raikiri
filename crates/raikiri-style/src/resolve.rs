@@ -178,10 +178,15 @@
 //!
 //! [`ComputedLength`] はこの trade の対象外 — 詳細は同型の doc を参照。
 
+use std::sync::Arc;
+
+use smol_str::SmolStr;
+
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
-    Border, BorderColor, BorderStyle, FlexBasisValue, Length, LengthOrAuto, LengthOrNormal,
-    LineHeight, VerticalAlign,
+    Border, BorderColor, BorderStyle, FlexBasisValue, GridInflexibleBreadth, GridRepeatCount,
+    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
+    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LineHeight, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -384,6 +389,115 @@ pub enum ComputedLengthPercentageOrNormal {
     Percent(f32),
     /// `normal` keyword — spec initial value。
     Normal,
+}
+
+/// Computed `<track-breadth>` / `<inflexible-breadth>` (CSS Grid Layout
+/// Module Level 1 §7.2.1)。
+///
+/// [`crate::property::GridTrackBreadth`] と [`crate::property::GridInflexibleBreadth`]
+/// を computed 層で**単一の型に collapse** する — 両者の specified 層での
+/// 分離は `minmax()` の min 側で `<flex>` (`fr`) を grammar-level に reject
+/// するための parse-time の制約に過ぎず ([`GridTrackSize`] doc の "fixed-size
+/// 制約" 節参照)、parse を通過した時点でその制約は既に enforce 済み —
+/// computed 層で min 側
+/// が [`Self::Flex`] を保持することは構造的に起きない (`resolve_grid_track_size`
+/// の `MinMax` arm は常に [`resolve_grid_inflexible_breadth`] を min 側に
+/// 適用し、その関数は `Flex` variant 自体を持たない
+/// [`crate::property::GridInflexibleBreadth`] からしか呼ばれないため)。
+/// 2 つ目の型を維持する利益が無いため 1 つに畳む判断。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedGridTrackBreadth {
+    /// 絶対化済みの px 長。
+    Px(f32),
+    /// Percentage — authored 数値をそのまま保持。
+    Percent(f32),
+    /// `<flex>` (`fr`) — authored 数値をそのまま保持 (`<number>` 相当、
+    /// 絶対化不要)。
+    Flex(f32),
+    /// `min-content`。
+    MinContent,
+    /// `max-content`。
+    MaxContent,
+    /// `auto`。
+    Auto,
+}
+
+/// Computed `<track-size>` (CSS Grid Layout Module Level 1 §7.2.1)。
+/// [`crate::property::GridTrackSize`] の computed 版 — `Length` 系
+/// payload が [`ComputedGridTrackBreadth`] / [`ComputedLengthPercentage`] に
+/// 絶対化される点のみ異なる。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedGridTrackSize {
+    /// bare `<track-breadth>`。
+    Breadth(ComputedGridTrackBreadth),
+    /// `minmax( <inflexible-breadth>, <track-breadth> )` — [`ComputedGridTrackBreadth`]
+    /// doc の collapse 注記により両 side が同じ型。
+    MinMax(ComputedGridTrackBreadth, ComputedGridTrackBreadth),
+    /// `fit-content( <length-percentage> )`。
+    FitContent(ComputedLengthPercentage),
+}
+
+/// Computed `repeat()` — [`crate::property::GridTrackRepeat`] の computed
+/// 版。`count` (`<integer>`/`auto-fill`/`auto-fit`) と `line_names`
+/// (`<custom-ident>` のみ) は length を運ばないため specified 層の型
+/// ([`crate::property::GridRepeatCount`] / `Vec<Vec<SmolStr>>`) をそのまま
+/// 再利用する。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComputedGridTrackRepeat {
+    /// 繰り返し回数 — length を運ばないため specified 層の型を再利用。
+    pub count: GridRepeatCount,
+    /// interleaved line name — length を運ばないため specified 層のまま。
+    pub line_names: Vec<Vec<SmolStr>>,
+    /// 絶対化済みの track sizing function 列。
+    pub tracks: Vec<ComputedGridTrackSize>,
+}
+
+/// Computed track list component — [`crate::property::GridTrackListComponent`]
+/// の computed 版。
+#[derive(Clone, Debug, PartialEq)]
+pub enum ComputedGridTrackListComponent {
+    /// 単独 track sizing function。
+    Size(ComputedGridTrackSize),
+    /// `repeat()`。
+    Repeat(ComputedGridTrackRepeat),
+}
+
+/// Computed track list — [`crate::property::GridTrackList`] の computed 版。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComputedGridTrackList {
+    /// interleaved line name — length を運ばないため specified 層のまま。
+    pub line_names: Vec<Vec<SmolStr>>,
+    /// track list の component 列 (絶対化済み)。
+    pub components: Vec<ComputedGridTrackListComponent>,
+}
+
+/// Computed `grid-template-columns` / `grid-template-rows`。
+///
+/// CSS Grid Layout Module Level 1 §7.2: "Computed value: the keyword `none`
+/// or a computed track list" — [`crate::property::GridTemplateTracks`] の
+/// computed 版、`Arc` wrap も同じ理由 ([`crate::property::GridTemplateTracks`]
+/// doc 参照)。
+#[derive(Clone, Debug, PartialEq)]
+pub enum ComputedGridTemplateTracks {
+    /// `none` — spec initial value。
+    None,
+    /// 絶対化済みの track list。
+    List(Arc<ComputedGridTrackList>),
+}
+
+/// `grid-auto-columns` / `grid-auto-rows` の spec initial value (`auto`) の
+/// computed 層 shared `Arc` — [`crate::property::initial_grid_auto_track_list`]
+/// の computed 版、同じ perf pattern (per-node allocation 回避)。
+pub(crate) fn initial_computed_grid_auto_track_list() -> Arc<Vec<ComputedGridTrackSize>> {
+    static INITIAL: std::sync::OnceLock<Arc<Vec<ComputedGridTrackSize>>> =
+        std::sync::OnceLock::new();
+    INITIAL
+        .get_or_init(|| {
+            Arc::new(vec![ComputedGridTrackSize::Breadth(
+                ComputedGridTrackBreadth::Auto,
+            )])
+        })
+        .clone()
 }
 
 /// Computed `line-height`。
@@ -1407,6 +1521,147 @@ pub fn resolve_flex_basis(
             }
         }
     }
+}
+
+/// `<track-breadth>` の specified value を絶対化する (**phase 3** — 自 node
+/// 基準)。`<length-percentage>` 以外の keyword/`<flex>` はそのまま素通し。
+pub fn resolve_grid_track_breadth(
+    specified: GridTrackBreadth,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedGridTrackBreadth {
+    match specified {
+        GridTrackBreadth::Auto => ComputedGridTrackBreadth::Auto,
+        GridTrackBreadth::MinContent => ComputedGridTrackBreadth::MinContent,
+        GridTrackBreadth::MaxContent => ComputedGridTrackBreadth::MaxContent,
+        GridTrackBreadth::Flex(f) => ComputedGridTrackBreadth::Flex(f),
+        GridTrackBreadth::Length(len) => {
+            match resolve_length_percentage(len, font_size, own_line_height, ctx) {
+                ComputedLengthPercentage::Px(v) => ComputedGridTrackBreadth::Px(v),
+                ComputedLengthPercentage::Percent(p) => ComputedGridTrackBreadth::Percent(p),
+            }
+        }
+    }
+}
+
+/// `<inflexible-breadth>` の specified value を絶対化する (**phase 3** —
+/// 自 node 基準)。[`ComputedGridTrackBreadth`] doc の collapse 注記の通り、
+/// 戻り値の型は [`resolve_grid_track_breadth`] と同じ —
+/// [`crate::property::GridInflexibleBreadth`] に `<flex>` variant が
+/// 無いため [`ComputedGridTrackBreadth::Flex`] を返すことは構造的に無い。
+pub fn resolve_grid_inflexible_breadth(
+    specified: GridInflexibleBreadth,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedGridTrackBreadth {
+    match specified {
+        GridInflexibleBreadth::Auto => ComputedGridTrackBreadth::Auto,
+        GridInflexibleBreadth::MinContent => ComputedGridTrackBreadth::MinContent,
+        GridInflexibleBreadth::MaxContent => ComputedGridTrackBreadth::MaxContent,
+        GridInflexibleBreadth::Length(len) => {
+            match resolve_length_percentage(len, font_size, own_line_height, ctx) {
+                ComputedLengthPercentage::Px(v) => ComputedGridTrackBreadth::Px(v),
+                ComputedLengthPercentage::Percent(p) => ComputedGridTrackBreadth::Percent(p),
+            }
+        }
+    }
+}
+
+/// `<track-size>` の specified value を絶対化する (**phase 3** — 自 node
+/// 基準)。
+pub fn resolve_grid_track_size(
+    specified: GridTrackSize,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedGridTrackSize {
+    match specified {
+        GridTrackSize::Breadth(b) => ComputedGridTrackSize::Breadth(resolve_grid_track_breadth(
+            b,
+            font_size,
+            own_line_height,
+            ctx,
+        )),
+        GridTrackSize::MinMax(min, max) => ComputedGridTrackSize::MinMax(
+            resolve_grid_inflexible_breadth(min, font_size, own_line_height, ctx),
+            resolve_grid_track_breadth(max, font_size, own_line_height, ctx),
+        ),
+        GridTrackSize::FitContent(len) => ComputedGridTrackSize::FitContent(
+            resolve_length_percentage(len, font_size, own_line_height, ctx),
+        ),
+    }
+}
+
+/// [`crate::property::GridTrackList`] の specified value を絶対化する
+/// (**phase 3** — 自 node 基準)。`line_names` は length を運ばないため
+/// clone してそのまま持ち越す。
+pub fn resolve_grid_track_list(
+    specified: &GridTrackList,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedGridTrackList {
+    ComputedGridTrackList {
+        line_names: specified.line_names.clone(),
+        components: specified
+            .components
+            .iter()
+            .cloned()
+            .map(|c| match c {
+                GridTrackListComponent::Size(s) => ComputedGridTrackListComponent::Size(
+                    resolve_grid_track_size(s, font_size, own_line_height, ctx),
+                ),
+                GridTrackListComponent::Repeat(GridTrackRepeat {
+                    count,
+                    line_names,
+                    tracks,
+                }) => ComputedGridTrackListComponent::Repeat(ComputedGridTrackRepeat {
+                    count,
+                    line_names,
+                    tracks: tracks
+                        .into_iter()
+                        .map(|t| resolve_grid_track_size(t, font_size, own_line_height, ctx))
+                        .collect(),
+                }),
+            })
+            .collect(),
+    }
+}
+
+/// `grid-template-columns` / `grid-template-rows`: `none | <track-list> |
+/// <auto-track-list>` の specified value を絶対化する (**phase 3** — 自
+/// node 基準)。`none` はそのまま keyword として素通し。
+pub fn resolve_grid_template_tracks(
+    specified: GridTemplateTracks,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedGridTemplateTracks {
+    match specified {
+        GridTemplateTracks::None => ComputedGridTemplateTracks::None,
+        GridTemplateTracks::List(list) => ComputedGridTemplateTracks::List(Arc::new(
+            resolve_grid_track_list(&list, font_size, own_line_height, ctx),
+        )),
+    }
+}
+
+/// `grid-auto-columns` / `grid-auto-rows`: `<track-size>+` の specified
+/// value を絶対化する (**phase 3** — 自 node 基準)。
+pub fn resolve_grid_auto_track_list(
+    specified: &[GridTrackSize],
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Arc<Vec<ComputedGridTrackSize>> {
+    Arc::new(
+        specified
+            .iter()
+            .cloned()
+            .map(|t| resolve_grid_track_size(t, font_size, own_line_height, ctx))
+            .collect(),
+    )
 }
 
 /// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` の

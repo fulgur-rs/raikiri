@@ -1904,6 +1904,460 @@ pub struct PlaceContentShorthand {
     pub justify: ContentAlignmentValue,
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// CSS Grid Layout Module Level 1 (<https://www.w3.org/TR/css-grid-1/>) —
+// grid-template-columns/-rows/-areas, grid-auto-columns/-rows/-flow,
+// grid-row/-column (longhands + shorthand), and (from CSS Box Alignment
+// Module Level 3) justify-items/justify-self/place-items/place-self.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// `<track-breadth>` — one operand of a `<track-size>` (bare, or inside
+/// `minmax()`'s second argument).
+///
+/// CSS Grid Layout Module Level 1 §7.2.1 "Track Sizes"
+/// (<https://www.w3.org/TR/css-grid-1/#valdef-grid-template-columns-track-breadth>),
+/// grammar (verbatim):
+///
+/// `<track-breadth> = <length-percentage [0,∞]> | <flex [0,∞]> | min-content
+/// | max-content | auto`
+///
+/// The `<flex>` unit (`fr`) is defined in §7.2.4 "Flexible Lengths: the fr
+/// unit" (<https://www.w3.org/TR/css-grid-1/#fr-unit>).
+///
+/// `#[non_exhaustive]` — [`DisplayValue`] と同じ forward-compat 契約。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTrackBreadth {
+    /// `<length-percentage [0,∞]>`。
+    Length(Length),
+    /// `<flex [0,∞]>` — the `fr` unit (§7.2.4)。authored non-negative number
+    /// (`1fr` → `Flex(1.0)`)。
+    Flex(f32),
+    /// `min-content`。
+    MinContent,
+    /// `max-content`。
+    MaxContent,
+    /// `auto` — track-sizing 文脈での `auto` は "as `max-content`, but
+    /// clamped to fit within the grid container" (spec §7.2.1) — resolve は
+    /// used-value layer (raikiri-dom / taffy) 責務。
+    Auto,
+}
+
+/// `<inflexible-breadth>` — `minmax()` の第 1 引数 (min side) の grammar。
+/// `<track-breadth>` から `<flex>` を除いたもの (spec: "A minmax() function
+/// takes exactly two arguments... If the first argument is a `<flex>`
+/// value... the declaration is invalid" 相当の grammar-level 除外)。
+///
+/// CSS Grid Layout Module Level 1 §7.2.1
+/// (<https://www.w3.org/TR/css-grid-1/#valdef-grid-template-columns-inflexible-breadth>):
+///
+/// `<inflexible-breadth> = <length-percentage [0,∞]> | min-content |
+/// max-content | auto`
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridInflexibleBreadth {
+    /// `<length-percentage [0,∞]>` — この variant はそのまま `<fixed-breadth>`
+    /// ([`GridTrackSize`] doc の "fixed-size 制約" 節参照) にも相当する。
+    Length(Length),
+    /// `min-content`。
+    MinContent,
+    /// `max-content`。
+    MaxContent,
+    /// `auto`。
+    Auto,
+}
+
+/// `<track-size>` — 1 grid track の sizing function。
+///
+/// CSS Grid Layout Module Level 1 §7.2.1 "Track Sizes"
+/// (<https://www.w3.org/TR/css-grid-1/#typedef-track-size>), grammar
+/// (verbatim):
+///
+/// `<track-size> = <track-breadth> | minmax( <inflexible-breadth> ,
+/// <track-breadth> ) | fit-content( <length-percentage [0,∞]> )`
+///
+/// # `<fixed-size>` — auto-repeat / fixed-repeat 内で追加される制約
+///
+/// `repeat(auto-fill|auto-fit, …)` / `repeat(<integer>, …)` の一部の形
+/// (`<auto-repeat>` / `<fixed-repeat>`、[`GridTrackRepeat`] doc 参照) は
+/// `<track-size>` ではなく、より狭い `<fixed-size>` (§7.2.1
+/// <https://www.w3.org/TR/css-grid-1/#typedef-fixed-size>) を要求する:
+///
+/// `<fixed-size> = <fixed-breadth> | minmax( <fixed-breadth> , <track-breadth>
+/// ) | minmax( <inflexible-breadth> , <fixed-breadth> )` where `<fixed-breadth>
+/// = <length-percentage [0,∞]>`
+///
+/// この crate は `<track-size>` と `<fixed-size>` を型として分けず (両者は
+/// [`Self`] の同じ shape で表現可能)、代わりに [`grid_track_size_is_fixed`]
+/// が post-parse validation として `<fixed-size>` 制約 (`fr` / bare
+/// `min-content`/`max-content`/`auto` を許さない、`fit-content()` も不可) を
+/// [`parse_grid_template_tracks`] から適用する。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTrackSize {
+    /// bare `<track-breadth>`。
+    Breadth(GridTrackBreadth),
+    /// `minmax( <inflexible-breadth>, <track-breadth> )`。
+    MinMax(GridInflexibleBreadth, GridTrackBreadth),
+    /// `fit-content( <length-percentage [0,∞]> )` — spec §7.2.1: "represents
+    /// the formula `max(minimum, min(limit, max-content))`"。limit は非負
+    /// length-percentage。
+    FitContent(Length),
+}
+
+/// `repeat()` の第 1 引数 (repetition count)。
+///
+/// CSS Grid Layout Module Level 1 §7.2.3.1 "Syntax of repeat()"
+/// (<https://www.w3.org/TR/css-grid-1/#typedef-track-repeat>): `<track-repeat>`
+/// は `<integer [1,∞]>` のみ、`<auto-repeat>` (§7.2.3.2
+/// <https://www.w3.org/TR/css-grid-1/#typedef-auto-repeat>) は `auto-fill |
+/// auto-fit` のみ。この crate は両方を 1 つの enum で表現し、
+/// [`parse_grid_repeat`] が context ごとに正しい alternative のみ受理する
+/// ([`GridTrackRepeat`] doc の "許可される count" 節参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridRepeatCount {
+    /// `<integer [1,∞]>` — 固定回数の repeat (`<track-repeat>` /
+    /// `<fixed-repeat>`)。
+    Count(u32),
+    /// `auto-fill` — repeat-to-fill、空きトラックは残す
+    /// (§7.2.3.2 <https://www.w3.org/TR/css-grid-1/#auto-fill>)。実際の
+    /// repetition 回数の算出は used-value layer (raikiri-dom / taffy) 責務。
+    AutoFill,
+    /// `auto-fit` — `auto-fill` と同じだが、空きトラックを collapse する
+    /// (§7.2.3.2 <https://www.w3.org/TR/css-grid-1/#auto-fit>)。
+    AutoFit,
+}
+
+/// `repeat( <count>, <tracks> )` — track list 中の 1 repeat() component。
+///
+/// CSS Grid Layout Module Level 1 §7.2.3.1
+/// (<https://www.w3.org/TR/css-grid-1/#funcdef-repeat>), grammar
+/// (verbatim, 3 alternative forms):
+///
+/// ```text
+/// <track-repeat> = repeat( [ <integer [1,∞]> ] , [ <line-names>? <track-size> ]+ <line-names>? )
+/// <auto-repeat>  = repeat( [ auto-fill | auto-fit ] , [ <line-names>? <fixed-size> ]+ <line-names>? )
+/// <fixed-repeat> = repeat( [ <integer [1,∞]> ] , [ <line-names>? <fixed-size> ]+ <line-names>? )
+/// ```
+///
+/// [`Self::line_names`] は [`GridTrackList::line_names`] と同じ interleave
+/// 規約 (`line_names.len() == tracks.len() + 1`、`tracks[i]` の直前が
+/// `line_names[i]`、末尾の trailing set が `line_names[tracks.len()]`) —
+/// taffy 0.12 `GridTemplateRepetition.line_names` の shape と一致する
+/// (repeat() 1 巡分の line name を表す、繰り返しの巡ごとの名前 merge は
+/// used-value layer 責務、spec §7.2.3.1 の "If a repeat() function ends up
+/// placing two `<line-names>` adjacent to each other, the name lists are
+/// merged" は本 crate の scope 外)。
+///
+/// # 許可される count と `<fixed-size>` 制約
+///
+/// - [`GridRepeatCount::Count`] (`<track-repeat>`) — [`Self::tracks`] は
+///   full `<track-size>` ([`GridTrackSize`] のいずれの variant も可、`fr`
+///   含む)。ただし [`GridTrackList`] level の "at most one auto-repeat"
+///   制約とは無関係に、この形自体は無制限に track list 中へ現れてよい。
+/// - [`GridRepeatCount::AutoFill`] / [`GridRepeatCount::AutoFit`]
+///   (`<auto-repeat>`) — [`Self::tracks`] は `<fixed-size>` 制約下
+///   ([`GridTrackSize`] doc 参照、`fr`/bare `min-content`/`max-content`/
+///   `auto`/`fit-content()` は不可)。spec §7.2.3.1 verbatim: "It can only
+///   appear once in the track list, but the same track list can also
+///   contain `<fixed-repeat>`s." — [`parse_grid_template_tracks`] が
+///   track list 全体を通して 1 回まで constraint を検査する。
+/// - `<fixed-repeat>` は本 crate では別 variant を持たず、
+///   [`GridRepeatCount::Count`] + `<fixed-size>` 制約 (auto-repeat が
+///   track list 中に存在する場合のみ [`grid_track_size_is_fixed`] で
+///   post-validate) として扱う — [`parse_grid_template_tracks`] doc 参照。
+///
+/// `repeat()` はネストしない (spec §7.2.3.1 verbatim: "The repeat() notation
+/// can't be nested.") — [`Self::tracks`] の要素型が [`GridTrackSize`] で
+/// あり [`GridTrackList`] を含まないため、構造的にネスト不可能。
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridTrackRepeat {
+    /// 繰り返し回数。
+    pub count: GridRepeatCount,
+    /// interleaved line name。[`Self`] doc の shape 参照。
+    pub line_names: Vec<Vec<SmolStr>>,
+    /// 繰り返される track sizing function 列。
+    pub tracks: Vec<GridTrackSize>,
+}
+
+/// `<track-list>` / `<auto-track-list>` 中の 1 component — 単独 track か
+/// `repeat()`。
+///
+/// CSS Grid Layout Module Level 1 §7.2 "Explicit Track Sizing"
+/// (<https://www.w3.org/TR/css-grid-1/#track-sizing>) の `<track-list>`
+/// grammar: `[ <line-names>? [ <track-size> | <track-repeat> ] ]+
+/// <line-names>?`。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTrackListComponent {
+    /// 単独 track sizing function。
+    Size(GridTrackSize),
+    /// `repeat()`。
+    Repeat(GridTrackRepeat),
+}
+
+/// `grid-template-columns` / `grid-template-rows` の `none` 以外の specified
+/// value — track list 全体 (interleaved line names + component 列)。
+///
+/// CSS Grid Layout Module Level 1 §7.2, `<track-list>` grammar:
+/// `[ <line-names>? [ <track-size> | <track-repeat> ] ]+ <line-names>?`。
+///
+/// [`Self::line_names`] は `Self::components` と 1 対 1 で interleave する:
+/// `line_names.len() == components.len() + 1`、`components[i]` の直前の
+/// named line set が `line_names[i]`、track list 全体の末尾 (最後の
+/// component の後) が `line_names[components.len()]`。この shape は taffy
+/// 0.12 の `Style::grid_template_column_names` / `grid_template_row_names`
+/// (`components` と lock-step で consume される、taffy `NamedLineResolver`
+/// 内部 iteration の shape) と直接対応し、raikiri-dom 側 bridge が
+/// 変換なしで zip できる。
+///
+/// この crate は `<track-list>` (auto-repeat なし、全 component が full
+/// `<track-size>` を使える) と `<auto-track-list>` (ちょうど 1 つの
+/// auto-repeat を含み、他の全 track は `<fixed-size>` 制約下)
+/// を型として分けず、1 つの `GridTrackList` で両方を表現する —
+/// [`parse_grid_template_tracks`] が post-parse validation として
+/// "at most one auto-repeat" と "auto-repeat 存在時、他の全 track は
+/// `<fixed-size>`" の 2 制約を検査する ([`GridTrackRepeat`] doc 参照)。
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridTrackList {
+    /// interleaved line name。[`Self`] doc の shape 参照。
+    pub line_names: Vec<Vec<SmolStr>>,
+    /// track list の component 列。
+    pub components: Vec<GridTrackListComponent>,
+}
+
+/// `grid-template-columns` / `grid-template-rows` の specified value。
+///
+/// CSS Grid Layout Module Level 1 §7.2 "Explicit Track Sizing: the
+/// grid-template-rows and grid-template-columns properties"
+/// (<https://www.w3.org/TR/css-grid-1/#track-sizing>): value grammar `none |
+/// <track-list> | <auto-track-list>`、"Initial: none"、"Inherited: no"、
+/// "Percentages: refer to corresponding dimension of the content area"、
+/// "Computed value: the keyword `none` or a computed track list"。
+///
+/// `Arc` wrap は [`PropertyValue`] doc の "cascade memory DoS 対策" 節と同じ
+/// perf pattern ([`ContentComponent`] list の `Content(Arc<Vec<..>>)` と同じ
+/// 理由 — track list は任意個の repeat() を含みうる heap payload で、
+/// cascade winner 選定のたび clone されうる)。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTemplateTracks {
+    /// `none` — spec initial value。explicit track が定義されない。
+    None,
+    /// `<track-list>` / `<auto-track-list>`。
+    List(Arc<GridTrackList>),
+}
+
+/// `grid-template-areas` の 1 named area — 1-based, exclusive-end な grid
+/// line 座標 (taffy 0.12 `GridTemplateArea` と同じ座標系、CSS Grid Layout
+/// Module Level 1 §9.2 "Line-based Placement: the grid-template-areas
+/// shorthand" の rectangle-to-lines 変換規則)。
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridTemplateAreaEntry {
+    /// area 名。
+    pub name: SmolStr,
+    /// row 開始 grid line (1-based)。
+    pub row_start: u32,
+    /// row 終了 grid line (1-based, exclusive — `row_end - row_start` が
+    /// row span)。
+    pub row_end: u32,
+    /// column 開始 grid line (1-based)。
+    pub column_start: u32,
+    /// column 終了 grid line (1-based, exclusive)。
+    pub column_end: u32,
+}
+
+/// `grid-template-areas` の `none` 以外の specified value。
+///
+/// CSS Grid Layout Module Level 1 §7.3 "Named Areas: the
+/// grid-template-areas property"
+/// (<https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>):
+/// "Computed value: the keyword `none` or a **list of string values**" —
+/// grid-template-columns/-rows と異なり、computed value は解析済み area
+/// 矩形ではなく **authored string のリストそのもの**。[`Self::row_strings`]
+/// がこの computed-value 要件を満たす。[`Self::areas`] /
+/// [`Self::row_count`] / [`Self::column_count`] は parse 時に一度だけ
+/// 算出する解析結果 (raikiri-dom bridge が再解析せず直接 taffy
+/// `GridTemplateArea` へ変換できるようにするための cache)。
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridTemplateAreas {
+    /// authored string 列 (spec の computed value そのもの)。
+    pub row_strings: Vec<SmolStr>,
+    /// 解析済み named area — [`parse_grid_template_areas`] の rectangle
+    /// validation を通過したもののみ。
+    pub areas: Vec<GridTemplateAreaEntry>,
+    /// string grid の row 数 (= `row_strings.len()`)。
+    pub row_count: u32,
+    /// string grid の column 数 (全 row で同数、spec 制約
+    /// [`parse_grid_template_areas`] doc 参照)。
+    pub column_count: u32,
+}
+
+/// `grid-template-areas` property の specified value。
+///
+/// [`GridTemplateAreas`] doc 参照。`Arc` wrap は [`GridTemplateTracks::List`]
+/// と同じ理由 (heap payload、cascade winner 選定での clone コスト削減)。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTemplateAreasValue {
+    /// `none` — spec initial value。
+    None,
+    /// `<string>+` — 解析済み named area の集合。
+    Areas(Arc<GridTemplateAreas>),
+}
+
+/// `grid-auto-flow` property の value。
+///
+/// CSS Grid Layout Module Level 1 §7.7 "Automatic Placement: the
+/// grid-auto-flow property"
+/// (<https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-flow>): value
+/// grammar `[ row | column ] || dense`、"Initial: row"、"Inherited: no"、
+/// "Computed value: specified keyword(s)"。
+///
+/// `#[non_exhaustive]` — [`DisplayValue`] と同じ forward-compat 契約。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridAutoFlowValue {
+    /// `row` (dense なし) — spec initial value。
+    Row,
+    /// `column` (dense なし)。
+    Column,
+    /// `row dense`。
+    RowDense,
+    /// `column dense`。
+    ColumnDense,
+}
+
+/// `<grid-line>` — `grid-row-start` / `grid-row-end` / `grid-column-start` /
+/// `grid-column-end` の共有 grammar (§8.4 の `grid-row` / `grid-column`
+/// shorthand は [`GridLineShorthand`] 経由でこれを再利用する)。
+///
+/// CSS Grid Layout Module Level 1 §8.3 "Line-based Placement: the
+/// grid-row-start, grid-column-start, grid-row-end, and grid-column-end
+/// properties"
+/// (<https://www.w3.org/TR/css-grid-1/#line-placement>): value grammar
+/// (verbatim)
+///
+/// ```text
+/// <grid-line> =
+///   auto |
+///   <custom-ident> |
+///   [ [ <integer [-∞,-1]> | <integer [1,∞]> ] && <custom-ident>? ] |
+///   [ span && [ <integer [1,∞]> || <custom-ident> ] ]
+/// ```
+///
+/// "Initial: auto"、"Inherited: no"、"Percentages: n/a"、"Computed value:
+/// specified keyword, identifier, and/or integer"。
+///
+/// spec 本文 verbatim: "In all the above productions, the `<custom-ident>`
+/// additionally excludes the keywords `span` and `auto`"、および "If the
+/// `<integer>` is omitted, it defaults to 1. Negative integers or zero are
+/// invalid." — [`is_reserved_grid_line_name`] と [`parse_grid_line`] が
+/// それぞれの制約を enforce する。
+///
+/// bare `<custom-ident>` alternative (index 省略) は
+/// [`Self::NamedLine`] に index `1` を明示的に埋めて畳む — taffy 0.12
+/// `GridPlacement::NamedLine` は index `0` を「未指定」sentinel として扱い、
+/// 内部で `0` を `1` に正規化する
+/// (`NamedLineResolver::find_line_index` の `if idx == 0 { idx = 1; }`) ため、
+/// この crate 側で先に `1` を埋めても意味は変わらない。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridLineValue {
+    /// `auto` — spec initial value。auto-placement、または (span と併用時)
+    /// default span of one。
+    Auto,
+    /// `<integer>` — 1-based grid line index (負数は末尾から)。`0` は spec
+    /// 上 invalid ([`parse_grid_line`] doc 参照)。
+    Line(i32),
+    /// bare `<custom-ident>` — grammar top-level alternative (`<integer>`
+    /// 併記なし)。[`GridLineShorthand`] の第 2 成分省略時 copy 規則
+    /// (spec 本文 verbatim "if the first value is a `<custom-ident>`") は
+    /// **この variant のみ**を対象とする — [`Self::NamedLine`]
+    /// (`<integer> && <custom-ident>` compound、`<integer>` 省略時も spec 上
+    /// `1` を明示指定した扱いになる別の grammar alternative) は対象外
+    /// ([`parse_grid_line`] doc 参照)。
+    Named(SmolStr),
+    /// `[ [ <integer> ] && <custom-ident>? ]` — `<integer>` 必須の named
+    /// line 参照 compound (`<custom-ident>` 側は省略可)。
+    NamedLine(SmolStr, i32),
+    /// `span <integer>` — 明示 span。
+    Span(u32),
+    /// `span <custom-ident>` (`<integer>` 併記可、省略時は `1`) — named line
+    /// までの span。
+    SpanNamed(SmolStr, u32),
+}
+
+/// `grid-row` / `grid-column` shorthand の specified value。
+///
+/// CSS Grid Layout Module Level 1 §8.4 "Placement Shorthands: the
+/// grid-column, grid-row, and grid-area properties"
+/// (<https://www.w3.org/TR/css-grid-1/#placement-shorthands>): value grammar
+/// `<grid-line> [ / <grid-line> ]?`、"Initial: auto"、"Inherited: no"。
+///
+/// spec 本文 verbatim: "If two `<grid-line>` values are specified, the
+/// grid-row-start / grid-column-start longhand is set to the value before
+/// the slash, and the grid-row-end / grid-column-end longhand is set to the
+/// value after the slash. When the second value is omitted, if the first
+/// value is a `<custom-ident>`, the grid-row-end / grid-column-end longhand
+/// is also set to that `<custom-ident>`; otherwise, it is set to `auto`." —
+/// [`parse_grid_line_shorthand`] がこの規則を適用する。
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridLineShorthand {
+    /// `-start` longhand 成分。
+    pub start: GridLineValue,
+    /// `-end` longhand 成分 — 省略時の規則は [`Self`] doc 参照。
+    pub end: GridLineValue,
+}
+
+/// `place-items` shorthand の specified value。
+///
+/// CSS Box Alignment Module Level 3 §7.3 "Default Alignment Shorthand: the
+/// place-items property"
+/// (<https://www.w3.org/TR/css-align-3/#propdef-place-items>): value grammar
+/// `<'align-items'> <'justify-items'>?`、"Initial: see individual
+/// properties"、"Inherited: no"。第 2 成分省略時は第 1 成分の値をそのまま
+/// copy する ([`PlaceContentShorthand`] doc の同型注記参照 — 本 crate の
+/// [`SelfAlignmentValue`] は `justify-items` 側の追加 scope carve-out
+/// (`legacy`、[`PropertyValue::JustifyItems`] doc 参照) を持たないため、
+/// copy 規則の例外分岐は到達不能)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlaceItemsShorthand {
+    /// `align-items` 成分。
+    pub align: SelfAlignmentValue,
+    /// `justify-items` 成分 — 省略時は `align` と同値
+    /// ([`parse_place_items_shorthand`] 参照)。
+    pub justify: SelfAlignmentValue,
+}
+
+/// `place-self` shorthand の specified value。
+///
+/// CSS Box Alignment Module Level 3 §6.3 "Self-Alignment Shorthand: the
+/// place-self property"
+/// (<https://www.w3.org/TR/css-align-3/#propdef-place-self>): value grammar
+/// `<'align-self'> <'justify-self'>?`、"Initial: `auto`"、"Inherited: no"。
+/// 第 2 成分省略時の copy 規則は [`PlaceItemsShorthand`] と同じ。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlaceSelfShorthand {
+    /// `align-self` 成分。
+    pub align: AlignSelfValue,
+    /// `justify-self` 成分 — 省略時は `align` と同値
+    /// ([`parse_place_self_shorthand`] 参照)。
+    pub justify: AlignSelfValue,
+}
+
+/// `grid-auto-columns` / `grid-auto-rows` の spec initial value
+/// (`auto`、単一要素 `[GridTrackSize::Breadth(GridTrackBreadth::Auto)]`) の
+/// shared `Arc` — [`empty_content_list`] と同じ perf pattern (per-node
+/// allocation を避け、process 全体で 1 heap slot を bump-share する)。
+pub(crate) fn initial_grid_auto_track_list() -> Arc<Vec<GridTrackSize>> {
+    static INITIAL: OnceLock<Arc<Vec<GridTrackSize>>> = OnceLock::new();
+    INITIAL
+        .get_or_init(|| Arc::new(vec![GridTrackSize::Breadth(GridTrackBreadth::Auto)]))
+        .clone()
+}
+
 /// `box-sizing` property の value。
 ///
 /// CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
@@ -4099,6 +4553,88 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] が [`Self::AlignContent`] /
     /// [`Self::JustifyContent`] の 2 longhand に展開する。
     PlaceContent(PlaceContentShorthand),
+    /// `grid-template-columns` — non-inherited、initial:
+    /// [`GridTemplateTracks::None`] ([`GridTemplateTracks`] doc 参照)。
+    GridTemplateColumns(GridTemplateTracks),
+    /// `grid-template-rows` — non-inherited、initial:
+    /// [`GridTemplateTracks::None`]。[`Self::GridTemplateColumns`] と同じ
+    /// grammar/shape。
+    GridTemplateRows(GridTemplateTracks),
+    /// `grid-template-areas` — non-inherited、initial:
+    /// [`GridTemplateAreasValue::None`] ([`GridTemplateAreasValue`] doc 参照)。
+    GridTemplateAreas(GridTemplateAreasValue),
+    /// `grid-auto-columns: <track-size>+` — non-inherited、initial: `auto`
+    /// (単一要素 `[GridTrackSize::Breadth(GridTrackBreadth::Auto)]`、CSS
+    /// Grid Layout Module Level 1 §7.6
+    /// <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-columns>)。`Arc`
+    /// wrap は [`Self::GridTemplateColumns`] と同じ理由。
+    GridAutoColumns(Arc<Vec<GridTrackSize>>),
+    /// `grid-auto-rows` — non-inherited、initial: `auto`。
+    /// [`Self::GridAutoColumns`] と同じ grammar/shape。
+    GridAutoRows(Arc<Vec<GridTrackSize>>),
+    /// `grid-auto-flow` — non-inherited、initial: [`GridAutoFlowValue::Row`]
+    /// ([`GridAutoFlowValue`] doc 参照)。
+    GridAutoFlow(GridAutoFlowValue),
+    /// `grid-row-start` — non-inherited、initial: [`GridLineValue::Auto`]
+    /// ([`GridLineValue`] doc 参照)。
+    GridRowStart(GridLineValue),
+    /// `grid-row-end` — non-inherited、initial: [`GridLineValue::Auto`]。
+    GridRowEnd(GridLineValue),
+    /// `grid-column-start` — non-inherited、initial: [`GridLineValue::Auto`]。
+    GridColumnStart(GridLineValue),
+    /// `grid-column-end` — non-inherited、initial: [`GridLineValue::Auto`]。
+    GridColumnEnd(GridLineValue),
+    /// `grid-row: <grid-line> [ / <grid-line> ]?` shorthand — non-inherited、
+    /// initial: `auto` ([`GridLineShorthand`] doc 参照)。
+    /// [`crate::rule::expand_shorthand_into`] が [`Self::GridRowStart`] /
+    /// [`Self::GridRowEnd`] の 2 longhand に展開する。
+    GridRow(GridLineShorthand),
+    /// `grid-column` shorthand — non-inherited、initial: `auto`。
+    /// [`crate::rule::expand_shorthand_into`] が [`Self::GridColumnStart`] /
+    /// [`Self::GridColumnEnd`] の 2 longhand に展開する。
+    GridColumn(GridLineShorthand),
+    /// `justify-items` — non-inherited。[`SelfAlignmentValue`] を
+    /// `align-items` と共有再利用する ([`Self::AlignItems`] と同じ payload
+    /// 型)。
+    ///
+    /// # Scope carving — `legacy` は未対応
+    ///
+    /// CSS Box Alignment Module Level 3 §7.1
+    /// (<https://www.w3.org/TR/css-align-3/#propdef-justify-items>) の spec
+    /// grammar は `normal | stretch | <baseline-position> |
+    /// <overflow-position>? [ <self-position> | left | right ] | legacy |
+    /// legacy && [ left | right | center ]`、"Initial: `legacy`" —
+    /// `<self-position>` 以外の carve-out ([`SelfAlignmentValue`] doc の
+    /// scope carving 節と同じ、`<overflow-position>`/`left`/`right`) に加え、
+    /// `legacy` keyword とその特殊な "effectively inherit into descendants"
+    /// 継承 (spec 本文 verbatim: "if the inherited value of justify-items
+    /// includes the legacy keyword, this value computes to the inherited
+    /// value; otherwise it computes to normal" — HTML `<center>` element /
+    /// `align` 属性の legacy alignment 実装専用機構) は未対応。taffy 0.12 の
+    /// `justify_items: Option<AlignItems>` にも `legacy` 相当の表現が無い。
+    ///
+    /// spec の "otherwise it computes to normal" 分岐が示すとおり、`legacy`
+    /// 機構が未実装の本 crate では (誰も `legacy` を継承させられないため)
+    /// 実効的に常に `normal` へ収束する — この crate の initial value を
+    /// spec の `legacy` ではなく [`SelfAlignmentValue::Normal`] とするのは
+    /// この収束先を直接表現したもの。
+    JustifyItems(SelfAlignmentValue),
+    /// `justify-self` — non-inherited、initial: [`AlignSelfValue::Auto`]。
+    /// [`AlignSelfValue`] を `align-self` と共有再利用する
+    /// ([`Self::AlignSelf`] と同じ payload 型)。CSS Box Alignment Module
+    /// Level 3 §6.1 <https://www.w3.org/TR/css-align-3/#propdef-justify-self>。
+    JustifySelf(AlignSelfValue),
+    /// `place-items: <'align-items'> <'justify-items'>?` shorthand —
+    /// non-inherited、initial: "see individual properties"
+    /// ([`PlaceItemsShorthand`] doc 参照)。
+    /// [`crate::rule::expand_shorthand_into`] が [`Self::AlignItems`] /
+    /// [`Self::JustifyItems`] の 2 longhand に展開する。
+    PlaceItems(PlaceItemsShorthand),
+    /// `place-self: <'align-self'> <'justify-self'>?` shorthand —
+    /// non-inherited、initial: `auto` ([`PlaceSelfShorthand`] doc 参照)。
+    /// [`crate::rule::expand_shorthand_into`] が [`Self::AlignSelf`] /
+    /// [`Self::JustifySelf`] の 2 longhand に展開する。
+    PlaceSelf(PlaceSelfShorthand),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -4332,6 +4868,39 @@ pub enum PropertyKey {
     // `place-content` shorthand (CSS Box Alignment Module Level 3 §5.2) —
     // both longhands (`AlignContent`/`JustifyContent`) declared above.
     PlaceContent,
+    // grid-template-columns / grid-template-rows / grid-template-areas
+    // (CSS Grid Layout Module Level 1 §7.2 / §7.3, semantics on the matching
+    // PropertyValue::GridTemplate* variants; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention).
+    GridTemplateColumns,
+    GridTemplateRows,
+    GridTemplateAreas,
+    // grid-auto-columns / grid-auto-rows / grid-auto-flow (CSS Grid Layout
+    // Module Level 1 §7.6 / §7.7).
+    GridAutoColumns,
+    GridAutoRows,
+    GridAutoFlow,
+    // grid-row-start / grid-row-end / grid-column-start / grid-column-end
+    // longhands (CSS Grid Layout Module Level 1 §8.3) + grid-row /
+    // grid-column shorthands (§8.4). Shorthand keys (`GridRow`/`GridColumn`)
+    // placed after their 2 longhands each, same convention as
+    // `Margin`/`Padding`/`Border`.
+    GridRowStart,
+    GridRowEnd,
+    GridRow,
+    GridColumnStart,
+    GridColumnEnd,
+    GridColumn,
+    // justify-items (CSS Box Alignment Module Level 3 §7.1) / justify-self
+    // (§6.1), semantics on the matching PropertyValue::* variants.
+    JustifyItems,
+    JustifySelf,
+    // `place-items` shorthand (§7.3) — both longhands (`AlignItems`/
+    // `JustifyItems`) declared above (AlignItems 側は既存 flex/alignment
+    // 節)。`place-self` shorthand (§6.3) — both longhands
+    // (`AlignSelf`/`JustifySelf`) declared above.
+    PlaceItems,
+    PlaceSelf,
 }
 
 impl PropertyValue {
@@ -4424,6 +4993,22 @@ impl PropertyValue {
             PropertyValue::ColumnGap(_) => PropertyKey::ColumnGap,
             PropertyValue::Gap(_) => PropertyKey::Gap,
             PropertyValue::PlaceContent(_) => PropertyKey::PlaceContent,
+            PropertyValue::GridTemplateColumns(_) => PropertyKey::GridTemplateColumns,
+            PropertyValue::GridTemplateRows(_) => PropertyKey::GridTemplateRows,
+            PropertyValue::GridTemplateAreas(_) => PropertyKey::GridTemplateAreas,
+            PropertyValue::GridAutoColumns(_) => PropertyKey::GridAutoColumns,
+            PropertyValue::GridAutoRows(_) => PropertyKey::GridAutoRows,
+            PropertyValue::GridAutoFlow(_) => PropertyKey::GridAutoFlow,
+            PropertyValue::GridRowStart(_) => PropertyKey::GridRowStart,
+            PropertyValue::GridRowEnd(_) => PropertyKey::GridRowEnd,
+            PropertyValue::GridColumnStart(_) => PropertyKey::GridColumnStart,
+            PropertyValue::GridColumnEnd(_) => PropertyKey::GridColumnEnd,
+            PropertyValue::GridRow(_) => PropertyKey::GridRow,
+            PropertyValue::GridColumn(_) => PropertyKey::GridColumn,
+            PropertyValue::JustifyItems(_) => PropertyKey::JustifyItems,
+            PropertyValue::JustifySelf(_) => PropertyKey::JustifySelf,
+            PropertyValue::PlaceItems(_) => PropertyKey::PlaceItems,
+            PropertyValue::PlaceSelf(_) => PropertyKey::PlaceSelf,
         }
     }
 }
@@ -4772,6 +5357,50 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Box Alignment Module Level 3 §5.2
         // <https://www.w3.org/TR/css-align-3/#propdef-place-content>.
         "place-content" => parse_place_content_shorthand(input).map(PropertyValue::PlaceContent),
+        // CSS Grid Layout Module Level 1 §7.2
+        // <https://www.w3.org/TR/css-grid-1/#track-sizing>.
+        "grid-template-columns" => {
+            parse_grid_template_tracks(input).map(PropertyValue::GridTemplateColumns)
+        }
+        "grid-template-rows" => {
+            parse_grid_template_tracks(input).map(PropertyValue::GridTemplateRows)
+        }
+        // CSS Grid Layout Module Level 1 §7.3
+        // <https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>.
+        "grid-template-areas" => {
+            parse_grid_template_areas(input).map(PropertyValue::GridTemplateAreas)
+        }
+        // CSS Grid Layout Module Level 1 §7.6
+        // <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-columns>.
+        "grid-auto-columns" => {
+            parse_grid_auto_track_list(input).map(PropertyValue::GridAutoColumns)
+        }
+        "grid-auto-rows" => parse_grid_auto_track_list(input).map(PropertyValue::GridAutoRows),
+        // CSS Grid Layout Module Level 1 §7.7
+        // <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-flow>.
+        "grid-auto-flow" => parse_grid_auto_flow(input).map(PropertyValue::GridAutoFlow),
+        // CSS Grid Layout Module Level 1 §8.3
+        // <https://www.w3.org/TR/css-grid-1/#line-placement>.
+        "grid-row-start" => parse_grid_line(input).map(PropertyValue::GridRowStart),
+        "grid-row-end" => parse_grid_line(input).map(PropertyValue::GridRowEnd),
+        "grid-column-start" => parse_grid_line(input).map(PropertyValue::GridColumnStart),
+        "grid-column-end" => parse_grid_line(input).map(PropertyValue::GridColumnEnd),
+        // CSS Grid Layout Module Level 1 §8.4
+        // <https://www.w3.org/TR/css-grid-1/#placement-shorthands>.
+        "grid-row" => parse_grid_line_shorthand(input).map(PropertyValue::GridRow),
+        "grid-column" => parse_grid_line_shorthand(input).map(PropertyValue::GridColumn),
+        // CSS Box Alignment Module Level 3 §7.1
+        // <https://www.w3.org/TR/css-align-3/#propdef-justify-items>.
+        "justify-items" => parse_self_alignment(input).map(PropertyValue::JustifyItems),
+        // CSS Box Alignment Module Level 3 §6.1
+        // <https://www.w3.org/TR/css-align-3/#propdef-justify-self>.
+        "justify-self" => parse_align_self(input).map(PropertyValue::JustifySelf),
+        // CSS Box Alignment Module Level 3 §7.3
+        // <https://www.w3.org/TR/css-align-3/#propdef-place-items>.
+        "place-items" => parse_place_items_shorthand(input).map(PropertyValue::PlaceItems),
+        // CSS Box Alignment Module Level 3 §6.3
+        // <https://www.w3.org/TR/css-align-3/#propdef-place-self>.
+        "place-self" => parse_place_self_shorthand(input).map(PropertyValue::PlaceSelf),
         _ => None,
     }
 }
@@ -6244,6 +6873,14 @@ fn parse_self_alignment(input: &mut Parser<'_, '_>) -> Option<SelfAlignmentValue
     }
 }
 
+/// [`parse_self_alignment`] の `Result` 版 ([`parse_padding_side_res`] と
+/// 同じ wrapper pattern、[`parse_place_items_shorthand`] の `try_parse` 用)。
+fn parse_self_alignment_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<SelfAlignmentValue, ParseError<'i, ()>> {
+    parse_self_alignment(input).ok_or_else(|| input.new_custom_error(()))
+}
+
 /// `align-self: auto | …` parser — `auto` branch を先に試し
 /// (`try_parse` checkpoint、[`parse_width`] の "Order of alternatives" 節と
 /// 同じ rationale)、それ以外は [`parse_self_alignment`] (= `align-items` と
@@ -6253,6 +6890,14 @@ fn parse_align_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
         return Some(AlignSelfValue::Auto);
     }
     parse_self_alignment(input).map(AlignSelfValue::Value)
+}
+
+/// [`parse_align_self`] の `Result` 版 ([`parse_padding_side_res`] と同じ
+/// wrapper pattern、[`parse_place_self_shorthand`] の `try_parse` 用)。
+fn parse_align_self_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<AlignSelfValue, ParseError<'i, ()>> {
+    parse_align_self(input).ok_or_else(|| input.new_custom_error(()))
 }
 
 /// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` 共有
@@ -6306,6 +6951,690 @@ fn parse_place_content_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceCont
         .try_parse(parse_content_alignment_res)
         .unwrap_or(align);
     Some(PlaceContentShorthand { align, justify })
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CSS Grid Layout Module Level 1 parsers.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// `<custom-ident>` 除外リスト — [`GridLineValue`] 系 production 専用
+/// ([`is_reserved_custom_ident`] に `span` / `auto` を追加除外)。
+///
+/// CSS Grid Layout Module Level 1 §8.3 verbatim: "In all the above
+/// productions, the `<custom-ident>` additionally excludes the keywords
+/// `span` and `auto`" — [`is_reserved_counter_name`] が base list に `none`
+/// を足す precedent と同じ pattern。`<line-names>` (§7.2.2) の
+/// `<custom-ident>` はこの追加除外の対象**外** ([`parse_line_names`] は
+/// [`parse_custom_ident`] を直接使う)。
+fn is_reserved_grid_line_name(ident: &str) -> bool {
+    is_reserved_custom_ident(ident)
+        || matches!(ident.to_ascii_lowercase().as_str(), "span" | "auto")
+}
+
+/// [`GridLineValue`] 系 production 内の `<custom-ident>` を parse する
+/// ([`is_reserved_grid_line_name`] の追加除外を適用する点のみ
+/// [`parse_custom_ident`] と異なる)。
+fn parse_grid_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
+    let ident = input.expect_ident().ok()?.clone();
+    if is_reserved_grid_line_name(&ident) {
+        None
+    } else {
+        Some(SmolStr::new(ident.as_ref()))
+    }
+}
+
+/// [`parse_grid_custom_ident`] の `Result` 版 ([`parse_padding_side_res`] と
+/// 同じ wrapper pattern、`&&`/`||` combinator 内の `try_parse` 用)。
+fn parse_grid_custom_ident_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<SmolStr, ParseError<'i, ()>> {
+    parse_grid_custom_ident(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `<line-names> = '[' <custom-ident>* ']'` (CSS Grid Layout Module Level 1
+/// §7.2.2 "Naming Grid Lines: the `[<custom-ident>*]` syntax"
+/// <https://www.w3.org/TR/css-grid-1/#named-lines>) を parse する。
+///
+/// `<line-names>` の `<custom-ident>` は [`is_reserved_grid_line_name`] の
+/// 追加除外 (`span`/`auto`) を**受けない** — その除外は §8.3 の
+/// `<grid-line>` production 群にのみ及ぶ (spec 本文の "In all the **above**
+/// productions" は §8.3 セクション内の言及であり、§7.2.2 の
+/// `<line-names>` を指さない)。
+///
+/// `[` が見つからなければ `None` (呼び出し元は
+/// [`parse_line_names_or_empty`] 経由で空 `Vec` へ fallback)。空 `[]` は
+/// `Some(vec![])`。
+fn parse_line_names(input: &mut Parser<'_, '_>) -> Option<Vec<SmolStr>> {
+    input
+        .try_parse(|i| -> Result<Vec<SmolStr>, ParseError<'_, ()>> {
+            i.expect_square_bracket_block()?;
+            i.parse_nested_block(|inner| {
+                let mut names = Vec::new();
+                while !inner.is_exhausted() {
+                    names
+                        .push(parse_custom_ident(inner).ok_or_else(|| inner.new_custom_error(()))?);
+                }
+                Ok(names)
+            })
+        })
+        .ok()
+}
+
+/// [`GridTrackList::line_names`] / [`GridTrackRepeat::line_names`] の各
+/// interleave slot を埋める helper — `<line-names>?` (省略可) を空 `Vec` に
+/// 正規化する。
+fn parse_line_names_or_empty(input: &mut Parser<'_, '_>) -> Vec<SmolStr> {
+    parse_line_names(input).unwrap_or_default()
+}
+
+/// `<flex [0,∞]>` — the `fr` unit (CSS Grid Layout Module Level 1 §7.2.4
+/// "Flexible Lengths: the fr unit"
+/// <https://www.w3.org/TR/css-grid-1/#fr-unit>) を parse する。
+///
+/// non-negative **と** finite を parse 時に enforce する —
+/// [`parse_nonneg_finite_number`] doc と同じ理由 (raikiri-dom bridge が
+/// taffy `MaxTrackSizingFunction::fr` へ無変換で copy する、sink guard を
+/// 経由しない経路)。
+fn parse_grid_flex_res<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
+    match input.next()?.clone() {
+        Token::Dimension {
+            value, ref unit, ..
+        } if unit.eq_ignore_ascii_case("fr") => {
+            if value.is_finite() && value >= 0.0 {
+                Ok(value)
+            } else {
+                Err(input.new_custom_error(()))
+            }
+        }
+        t => Err(input.new_unexpected_token_error(t)),
+    }
+}
+
+/// `<track-breadth> = <length-percentage [0,∞]> | <flex [0,∞]> | min-content
+/// | max-content | auto` を parse する (CSS Grid Layout Module Level 1 §7.2.1
+/// "Track Sizes"
+/// <https://www.w3.org/TR/css-grid-1/#valdef-grid-template-columns-track-breadth>)。
+///
+/// `<length-percentage>` branch は必ず最後に試す —
+/// [`parse_length_value`] は失敗時も token を consume する ([`parse_flex_basis`]
+/// doc の同 rationale 参照) ため、それ以降に別 alternative を試せない。
+fn parse_track_breadth(input: &mut Parser<'_, '_>) -> Option<GridTrackBreadth> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(GridTrackBreadth::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("min-content"))
+        .is_ok()
+    {
+        return Some(GridTrackBreadth::MinContent);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("max-content"))
+        .is_ok()
+    {
+        return Some(GridTrackBreadth::MaxContent);
+    }
+    if let Ok(flex) = input.try_parse(parse_grid_flex_res) {
+        return Some(GridTrackBreadth::Flex(flex));
+    }
+    let length = parse_length_value(input, true)?;
+    (length_payload(length) >= 0.0).then_some(GridTrackBreadth::Length(length))
+}
+
+/// `<inflexible-breadth> = <length-percentage [0,∞]> | min-content |
+/// max-content | auto` を parse する (CSS Grid Layout Module Level 1 §7.2.1
+/// <https://www.w3.org/TR/css-grid-1/#valdef-grid-template-columns-inflexible-breadth>)。
+/// [`parse_track_breadth`] と同型だが `<flex>` branch を持たない。
+fn parse_inflexible_breadth(input: &mut Parser<'_, '_>) -> Option<GridInflexibleBreadth> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(GridInflexibleBreadth::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("min-content"))
+        .is_ok()
+    {
+        return Some(GridInflexibleBreadth::MinContent);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("max-content"))
+        .is_ok()
+    {
+        return Some(GridInflexibleBreadth::MaxContent);
+    }
+    let length = parse_length_value(input, true)?;
+    (length_payload(length) >= 0.0).then_some(GridInflexibleBreadth::Length(length))
+}
+
+/// `minmax( <inflexible-breadth>, <track-breadth> )` を parse する (CSS Grid
+/// Layout Module Level 1 §7.2.1
+/// <https://www.w3.org/TR/css-grid-1/#funcdef-grid-template-columns-minmax>)。
+fn parse_grid_minmax_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<(GridInflexibleBreadth, GridTrackBreadth), ParseError<'i, ()>> {
+    input.expect_function_matching("minmax")?;
+    input.parse_nested_block(|inner| {
+        let min = parse_inflexible_breadth(inner).ok_or_else(|| inner.new_custom_error(()))?;
+        inner.expect_comma()?;
+        let max = parse_track_breadth(inner).ok_or_else(|| inner.new_custom_error(()))?;
+        Ok((min, max))
+    })
+}
+
+/// `fit-content( <length-percentage [0,∞]> )` を parse する (CSS Grid Layout
+/// Module Level 1 §7.2.1
+/// <https://www.w3.org/TR/css-grid-1/#funcdef-grid-template-columns-fit-content>)。
+fn parse_grid_fit_content_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<Length, ParseError<'i, ()>> {
+    input.expect_function_matching("fit-content")?;
+    input.parse_nested_block(|inner| {
+        let len = parse_length_value(inner, true).ok_or_else(|| inner.new_custom_error(()))?;
+        if length_payload(len) >= 0.0 {
+            Ok(len)
+        } else {
+            Err(inner.new_custom_error(()))
+        }
+    })
+}
+
+/// `<track-size>` を parse する ([`GridTrackSize`] doc 参照)。3 alternative
+/// を順に試す (`minmax()` → `fit-content()` → bare `<track-breadth>`) —
+/// 前 2 つは固有 function name で判別できるため順序に意味は薄いが、
+/// bare `<track-breadth>` は必ず最後 ([`parse_track_breadth`] doc の
+/// consume-on-failure 注記参照)。
+fn parse_track_size(input: &mut Parser<'_, '_>) -> Option<GridTrackSize> {
+    if let Ok((min, max)) = input.try_parse(parse_grid_minmax_res) {
+        return Some(GridTrackSize::MinMax(min, max));
+    }
+    if let Ok(limit) = input.try_parse(parse_grid_fit_content_res) {
+        return Some(GridTrackSize::FitContent(limit));
+    }
+    parse_track_breadth(input).map(GridTrackSize::Breadth)
+}
+
+/// [`GridTrackBreadth`] が `<fixed-breadth>` (= `<length-percentage>`のみ)
+/// かどうか — [`grid_track_size_is_fixed`] の component。
+fn grid_track_breadth_is_fixed(b: &GridTrackBreadth) -> bool {
+    matches!(b, GridTrackBreadth::Length(_))
+}
+
+/// [`GridInflexibleBreadth`] が `<fixed-breadth>` かどうか —
+/// [`grid_track_size_is_fixed`] の component。
+fn grid_inflexible_breadth_is_fixed(b: &GridInflexibleBreadth) -> bool {
+    matches!(b, GridInflexibleBreadth::Length(_))
+}
+
+/// [`GridTrackSize`] が `<fixed-size>` 制約 (CSS Grid Layout Module Level 1
+/// §7.2.1 `<fixed-size> = <fixed-breadth> | minmax( <fixed-breadth>,
+/// <track-breadth> ) | minmax( <inflexible-breadth>, <fixed-breadth> )`) を
+/// 満たすかどうか — [`GridTrackSize`] doc の "fixed-size 制約" 節参照。
+///
+/// `minmax()` は min/max のどちらか一方が `<fixed-breadth>` であれば足りる
+/// (spec 上両方が fixed である必要はない — `minmax(100px, 1fr)` は valid
+/// `<fixed-size>`)。`fit-content()` は `<fixed-size>` の grammar に
+/// alternative が無いため常に `false`。
+fn grid_track_size_is_fixed(t: &GridTrackSize) -> bool {
+    match t {
+        GridTrackSize::Breadth(b) => grid_track_breadth_is_fixed(b),
+        GridTrackSize::MinMax(min, max) => {
+            grid_inflexible_breadth_is_fixed(min) || grid_track_breadth_is_fixed(max)
+        }
+        GridTrackSize::FitContent(_) => false,
+    }
+}
+
+/// `repeat()` の repetition count (`<integer [1,∞]>` / `auto-fill` /
+/// `auto-fit`) を parse する ([`GridRepeatCount`] doc 参照)。
+fn parse_grid_repeat_count(input: &mut Parser<'_, '_>) -> Option<GridRepeatCount> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("auto-fill"))
+        .is_ok()
+    {
+        return Some(GridRepeatCount::AutoFill);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("auto-fit"))
+        .is_ok()
+    {
+        return Some(GridRepeatCount::AutoFit);
+    }
+    let n = input.try_parse(|i| i.expect_integer()).ok()?;
+    (n >= 1).then_some(GridRepeatCount::Count(n as u32))
+}
+
+/// `repeat( <count>, [ <line-names>? <track-size> ]+ <line-names>? )` を
+/// parse する ([`GridTrackRepeat`] doc 参照)。count が
+/// [`GridRepeatCount::Count`] か [`GridRepeatCount::AutoFill`]/
+/// [`GridRepeatCount::AutoFit`] かで inner track が `<track-size>` /
+/// `<fixed-size>` のどちらの grammar に従うべきかが変わる
+/// ([`GridTrackRepeat`] doc の "許可される count と `<fixed-size>` 制約"
+/// 節参照) が、本関数は grammar 上共通の shape (full `<track-size>`) で
+/// parse し、`<fixed-size>` 制約は [`parse_grid_template_tracks`] が
+/// track list 全体を見て post-validate する。
+fn parse_grid_repeat_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<GridTrackRepeat, ParseError<'i, ()>> {
+    input.expect_function_matching("repeat")?;
+    input.parse_nested_block(|inner| {
+        let count = parse_grid_repeat_count(inner).ok_or_else(|| inner.new_custom_error(()))?;
+        inner.expect_comma()?;
+        let mut line_names = vec![parse_line_names_or_empty(inner)];
+        let mut tracks = Vec::new();
+        while let Some(size) = parse_track_size(inner) {
+            tracks.push(size);
+            line_names.push(parse_line_names_or_empty(inner));
+        }
+        if tracks.is_empty() {
+            return Err(inner.new_custom_error(()));
+        }
+        Ok(GridTrackRepeat {
+            count,
+            line_names,
+            tracks,
+        })
+    })
+}
+
+/// [`parse_grid_repeat_res`] の `Option` 版 —
+/// [`parse_grid_track_list`] の alternation 用。
+fn parse_grid_repeat(input: &mut Parser<'_, '_>) -> Option<GridTrackRepeat> {
+    input.try_parse(parse_grid_repeat_res).ok()
+}
+
+/// `<track-list>` / `<auto-track-list>` の component 列 (`[ <line-names>?
+/// [ <track-size> | <track-repeat> ] ]+ <line-names>?`) を parse する。
+/// `<fixed-size>` 制約の検査は行わない ([`grid_track_list_obeys_auto_repeat_constraint`]
+/// が呼び出し元 [`parse_grid_template_tracks`] で担う)。
+fn parse_grid_track_list(input: &mut Parser<'_, '_>) -> Option<GridTrackList> {
+    let mut line_names = vec![parse_line_names_or_empty(input)];
+    let mut components = Vec::new();
+    loop {
+        if let Some(repeat) = parse_grid_repeat(input) {
+            components.push(GridTrackListComponent::Repeat(repeat));
+        } else if let Some(size) = parse_track_size(input) {
+            components.push(GridTrackListComponent::Size(size));
+        } else {
+            break;
+        }
+        line_names.push(parse_line_names_or_empty(input));
+    }
+    if components.is_empty() {
+        None
+    } else {
+        Some(GridTrackList {
+            line_names,
+            components,
+        })
+    }
+}
+
+/// [`parse_grid_track_list`] が返した [`GridTrackList`] が spec の 2 制約を
+/// 満たすかどうかを検査する (post-parse validation、
+/// [`GridTrackRepeat`] doc の "許可される count と `<fixed-size>` 制約" 節参照):
+///
+/// 1. CSS Grid Layout Module Level 1 §7.2.3.1 verbatim: "It can only appear
+///    once in the track list" — auto-fill/auto-fit repeat は track list 中
+///    に高々 1 つ。
+/// 2. §7.2.3.1 verbatim: "Automatic repetitions (auto-fill or auto-fit)
+///    cannot be combined with fully intrinsic or flexible sizes" —
+///    auto-repeat が存在する場合、track list 中の**他の全 track**
+///    (bare track と他の repeat() の中身の両方、auto-repeat 自身の中身も
+///    含む) が [`grid_track_size_is_fixed`] を満たす必要がある。
+fn grid_track_list_obeys_auto_repeat_constraint(list: &GridTrackList) -> bool {
+    let auto_repeat_count = list
+        .components
+        .iter()
+        .filter(|c| {
+            matches!(
+                c,
+                GridTrackListComponent::Repeat(r)
+                    if matches!(r.count, GridRepeatCount::AutoFill | GridRepeatCount::AutoFit)
+            )
+        })
+        .count();
+    if auto_repeat_count > 1 {
+        return false;
+    }
+    if auto_repeat_count == 0 {
+        return true;
+    }
+    list.components.iter().all(|c| match c {
+        GridTrackListComponent::Size(size) => grid_track_size_is_fixed(size),
+        GridTrackListComponent::Repeat(r) => r.tracks.iter().all(grid_track_size_is_fixed),
+    })
+}
+
+/// `grid-template-columns` / `grid-template-rows`: `none | <track-list> |
+/// <auto-track-list>` を parse する (CSS Grid Layout Module Level 1 §7.2
+/// <https://www.w3.org/TR/css-grid-1/#track-sizing>、[`GridTemplateTracks`]
+/// doc 参照)。
+fn parse_grid_template_tracks(input: &mut Parser<'_, '_>) -> Option<GridTemplateTracks> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(GridTemplateTracks::None);
+    }
+    let list = parse_grid_track_list(input)?;
+    if !grid_track_list_obeys_auto_repeat_constraint(&list) {
+        return None;
+    }
+    Some(GridTemplateTracks::List(Arc::new(list)))
+}
+
+/// `grid-auto-columns` / `grid-auto-rows`: `<track-size>+` を parse する
+/// (CSS Grid Layout Module Level 1 §7.6
+/// <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-columns>)。
+/// `<track-list>` と異なり `repeat()` も `<line-names>` interleaving も
+/// grammar に含まれない — bare `<track-size>` の並びのみ。
+fn parse_grid_auto_track_list(input: &mut Parser<'_, '_>) -> Option<Arc<Vec<GridTrackSize>>> {
+    let mut tracks = Vec::new();
+    while let Some(size) = parse_track_size(input) {
+        tracks.push(size);
+    }
+    if tracks.is_empty() {
+        None
+    } else {
+        Some(Arc::new(tracks))
+    }
+}
+
+/// `grid-auto-flow: [ row | column ] || dense` を parse する (CSS Grid
+/// Layout Module Level 1 §7.7
+/// <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-flow>)。
+///
+/// `dense` 単独 (axis 省略) は [`GridAutoFlowValue::RowDense`] に畳む —
+/// axis 省略時の default が `row` であるため ([`GridAutoFlowValue`] doc の
+/// 同型注記参照)。両 group とも順序自由 (`||`) なので最大 2 回のループで
+/// 両方を試す。
+fn parse_grid_auto_flow(input: &mut Parser<'_, '_>) -> Option<GridAutoFlowValue> {
+    #[derive(Clone, Copy)]
+    enum Axis {
+        Row,
+        Column,
+    }
+    let mut axis: Option<Axis> = None;
+    let mut dense = false;
+    for _ in 0..2 {
+        if axis.is_none() && input.try_parse(|i| i.expect_ident_matching("row")).is_ok() {
+            axis = Some(Axis::Row);
+            continue;
+        }
+        if axis.is_none()
+            && input
+                .try_parse(|i| i.expect_ident_matching("column"))
+                .is_ok()
+        {
+            axis = Some(Axis::Column);
+            continue;
+        }
+        if !dense
+            && input
+                .try_parse(|i| i.expect_ident_matching("dense"))
+                .is_ok()
+        {
+            dense = true;
+            continue;
+        }
+        break;
+    }
+    match (axis, dense) {
+        (None, false) => None,
+        (None, true) => Some(GridAutoFlowValue::RowDense),
+        (Some(Axis::Row), false) => Some(GridAutoFlowValue::Row),
+        (Some(Axis::Row), true) => Some(GridAutoFlowValue::RowDense),
+        (Some(Axis::Column), false) => Some(GridAutoFlowValue::Column),
+        (Some(Axis::Column), true) => Some(GridAutoFlowValue::ColumnDense),
+    }
+}
+
+/// `span <integer [1,∞]> || <custom-ident>` (`span` ident は呼び出し元が
+/// 既に consume 済み) を parse する — [`parse_grid_line`] の tail helper。
+fn parse_grid_line_span_tail(input: &mut Parser<'_, '_>) -> Option<GridLineValue> {
+    let mut number: Option<u32> = None;
+    let mut name: Option<SmolStr> = None;
+    for _ in 0..2 {
+        if number.is_none()
+            && let Ok(n) = input.try_parse(|i| i.expect_integer())
+        {
+            if n < 1 {
+                return None;
+            }
+            number = Some(n as u32);
+            continue;
+        }
+        if name.is_none()
+            && let Ok(n) = input.try_parse(parse_grid_custom_ident_res)
+        {
+            name = Some(n);
+            continue;
+        }
+        break;
+    }
+    match (number, name) {
+        (Some(n), Some(name)) => Some(GridLineValue::SpanNamed(name, n)),
+        (Some(n), None) => Some(GridLineValue::Span(n)),
+        (None, Some(name)) => Some(GridLineValue::SpanNamed(name, 1)),
+        // `span` の直後に何も続かない — grammar 上 `span &&
+        // [ <integer> || <custom-ident> ]` の右辺 group が必須のため invalid。
+        (None, None) => None,
+    }
+}
+
+/// `<grid-line>` を parse する ([`GridLineValue`] doc 参照)。
+///
+/// `[ [ <integer> ] && <custom-ident>? ]` alternative は order-free
+/// (`&&`) なので、`<integer>` を最大 2 回のループで先に/後に両方試す —
+/// **`<integer>` が一度も現れなければ** (`number.is_none()`)、それは
+/// この alternative ではなく別の top-level alternative `<custom-ident>`
+/// (単独) にマッチしたことを意味し、[`GridLineValue::Named`]
+/// (bare-ident、shorthand omission-copy 規則の対象) を返す —
+/// [`GridLineValue::NamedLine`] (`<integer>` 併記、対象外) とは
+/// [`GridLineShorthand`] doc の spec verbatim 引用が要求する区別
+/// ([`parse_grid_line_shorthand`] 参照)。
+fn parse_grid_line(input: &mut Parser<'_, '_>) -> Option<GridLineValue> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(GridLineValue::Auto);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("span")).is_ok() {
+        return parse_grid_line_span_tail(input);
+    }
+    let mut number: Option<i32> = None;
+    let mut name: Option<SmolStr> = None;
+    for _ in 0..2 {
+        if number.is_none()
+            && let Ok(n) = input.try_parse(|i| i.expect_integer())
+        {
+            number = Some(n);
+            continue;
+        }
+        if name.is_none()
+            && let Ok(n) = input.try_parse(parse_grid_custom_ident_res)
+        {
+            name = Some(n);
+            continue;
+        }
+        break;
+    }
+    match (number, name) {
+        // `0` は spec verbatim "Negative integers or zero are invalid" —
+        // named の有無に関わらず reject。
+        (Some(0), _) => None,
+        (Some(n), Some(name)) => Some(GridLineValue::NamedLine(name, n)),
+        (Some(n), None) => Some(GridLineValue::Line(n)),
+        (None, Some(name)) => Some(GridLineValue::Named(name)),
+        (None, None) => None,
+    }
+}
+
+/// `grid-row` / `grid-column`: `<grid-line> [ / <grid-line> ]?` shorthand を
+/// parse する ([`GridLineShorthand`] doc 参照)。
+fn parse_grid_line_shorthand(input: &mut Parser<'_, '_>) -> Option<GridLineShorthand> {
+    let start = parse_grid_line(input)?;
+    if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        let end = parse_grid_line(input)?;
+        return Some(GridLineShorthand { start, end });
+    }
+    // spec 本文 verbatim ([`GridLineShorthand`] doc 引用): 第 2 成分省略時、
+    // 第 1 成分が `<custom-ident>` (= [`GridLineValue::Named`]、`<integer>`
+    // 併記なしの bare 形のみ) なら第 2 成分にもその名前を copy、それ以外は
+    // `auto`。
+    let end = match &start {
+        GridLineValue::Named(name) => GridLineValue::Named(name.clone()),
+        _ => GridLineValue::Auto,
+    };
+    Some(GridLineShorthand { start, end })
+}
+
+/// `grid-template-areas` の 1 `<string>` を cell token 列へ分解する。
+///
+/// CSS Grid Layout Module Level 1 §7.3 verbatim tokenization 規則
+/// (<https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>):
+/// "Tokenize the string into a list of the following tokens, using
+/// longest-match semantics": ident code point の並び (named cell) / `.` の
+/// 並び (null cell) / whitespace (無視、トークン化されない) / それ以外
+/// (trash token → invalid)。
+///
+/// `None` を返すのは trash token を検出した場合のみ (spec verbatim: "A
+/// trash token is a syntax error, and makes the declaration invalid.")。
+fn tokenize_grid_area_row(s: &str) -> Option<Vec<Option<SmolStr>>> {
+    let mut cells = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else if c == '.' {
+            while chars.peek() == Some(&'.') {
+                chars.next();
+            }
+            cells.push(None);
+        } else if is_grid_area_ident_char(c) {
+            let mut name = String::new();
+            while let Some(&c2) = chars.peek() {
+                if !is_grid_area_ident_char(c2) {
+                    break;
+                }
+                name.push(c2);
+                chars.next();
+            }
+            cells.push(Some(SmolStr::new(name)));
+        } else {
+            return None;
+        }
+    }
+    Some(cells)
+}
+
+/// CSS Syntax 3 の "ident code point" (letter / digit / `-` / `_` /
+/// non-ASCII) を近似する classifier — [`tokenize_grid_area_row`] の
+/// named-cell token 分解専用。escape sequence (`\XX`) は考慮しない —
+/// `<string>` token の value は cssparser が既に unescape した literal
+/// character 列であり、`grid-template-areas` の string tokenization
+/// (§7.3) 自体は再度 CSS syntax としての escape 解釈を行わない (spec の
+/// 定義がそのまま code point 単位の分類であるため)。
+fn is_grid_area_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-' || !c.is_ascii()
+}
+
+/// [`tokenize_grid_area_row`] 済みの row 列から [`GridTemplateAreas`] を
+/// 構築する — named area の bounding box を算出し、spec §7.3 verbatim の
+/// "If a named grid area spans multiple grid cells, but those cells do not
+/// form a single filled-in rectangle, the declaration is invalid." を検査
+/// する。
+///
+/// `rows` は呼び出し元 ([`parse_grid_template_areas`]) が非空を保証する
+/// (空なら呼び出し元が先に `None` を返す)。
+fn build_grid_template_areas(
+    rows: Vec<Vec<Option<SmolStr>>>,
+    row_strings: Vec<SmolStr>,
+) -> Option<GridTemplateAreas> {
+    let row_count = rows.len();
+    let column_count = rows[0].len();
+    // spec 本文 verbatim: "All strings must define the same number of cell
+    // tokens ... and at least one cell token, or else the declaration is
+    // invalid."
+    if column_count == 0 || rows.iter().any(|r| r.len() != column_count) {
+        return None;
+    }
+    // (name, row_min, row_max, col_min, col_max) — 初出順、線形 scan
+    // (area 名の種類数は現実的に小さいため HashMap を持ち込まない)。
+    let mut bounds: Vec<(SmolStr, usize, usize, usize, usize)> = Vec::new();
+    for (r, row) in rows.iter().enumerate() {
+        for (c, cell) in row.iter().enumerate() {
+            let Some(name) = cell else { continue };
+            match bounds.iter_mut().find(|(n, ..)| n == name) {
+                Some((_, r0, r1, c0, c1)) => {
+                    *r0 = (*r0).min(r);
+                    *r1 = (*r1).max(r);
+                    *c0 = (*c0).min(c);
+                    *c1 = (*c1).max(c);
+                }
+                None => bounds.push((name.clone(), r, r, c, c)),
+            }
+        }
+    }
+    let mut areas = Vec::with_capacity(bounds.len());
+    for (name, r0, r1, c0, c1) in bounds {
+        let is_filled_rectangle = rows[r0..=r1]
+            .iter()
+            .all(|row| row[c0..=c1].iter().all(|cell| cell.as_ref() == Some(&name)));
+        if !is_filled_rectangle {
+            return None;
+        }
+        areas.push(GridTemplateAreaEntry {
+            name,
+            row_start: r0 as u32 + 1,
+            row_end: r1 as u32 + 2,
+            column_start: c0 as u32 + 1,
+            column_end: c1 as u32 + 2,
+        });
+    }
+    Some(GridTemplateAreas {
+        row_strings,
+        areas,
+        row_count: row_count as u32,
+        column_count: column_count as u32,
+    })
+}
+
+/// `grid-template-areas: none | <string>+` を parse する (CSS Grid Layout
+/// Module Level 1 §7.3
+/// <https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>、
+/// [`GridTemplateAreasValue`] doc 参照)。
+fn parse_grid_template_areas(input: &mut Parser<'_, '_>) -> Option<GridTemplateAreasValue> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(GridTemplateAreasValue::None);
+    }
+    let mut row_strings: Vec<SmolStr> = Vec::new();
+    let mut rows: Vec<Vec<Option<SmolStr>>> = Vec::new();
+    while let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| SmolStr::new(s.as_ref()))) {
+        let tokens = tokenize_grid_area_row(&s)?;
+        row_strings.push(s);
+        rows.push(tokens);
+    }
+    if rows.is_empty() {
+        return None;
+    }
+    build_grid_template_areas(rows, row_strings)
+        .map(|areas| GridTemplateAreasValue::Areas(Arc::new(areas)))
+}
+
+/// `place-items: <'align-items'> <'justify-items'>?` shorthand を parse
+/// する (CSS Box Alignment Module Level 3 §7.3
+/// <https://www.w3.org/TR/css-align-3/#propdef-place-items>)。第 2 成分
+/// 省略時は spec 本文通り第 1 成分をそのまま copy する
+/// ([`PlaceItemsShorthand`] doc 参照)。
+fn parse_place_items_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceItemsShorthand> {
+    let align = parse_self_alignment(input)?;
+    let justify = input.try_parse(parse_self_alignment_res).unwrap_or(align);
+    Some(PlaceItemsShorthand { align, justify })
+}
+
+/// `place-self: <'align-self'> <'justify-self'>?` shorthand を parse する
+/// (CSS Box Alignment Module Level 3 §6.3
+/// <https://www.w3.org/TR/css-align-3/#propdef-place-self>)。第 2 成分
+/// 省略時の copy 規則は [`parse_place_items_shorthand`] と同じ。
+fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfShorthand> {
+    let align = parse_align_self(input)?;
+    let justify = input.try_parse(parse_align_self_res).unwrap_or(align);
+    Some(PlaceSelfShorthand { align, justify })
 }
 
 /// `font-weight: <font-weight-absolute> | bolder | lighter` を parse する。
@@ -15027,6 +16356,795 @@ mod tests {
             })
             .key(),
             PropertyKey::PlaceContent
+        );
+    }
+
+    // ── grid-template-columns / grid-template-rows (CSS Grid Layout Module
+    //    Level 1 §7.2) ──────────────────────────────────────────────────
+
+    #[test]
+    fn grid_template_columns_none() {
+        assert_eq!(
+            parse("none", "grid-template-columns"),
+            Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::None))
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_single_track() {
+        assert_eq!(
+            parse("100px", "grid-template-columns"),
+            Some(PropertyValue::GridTemplateColumns(
+                GridTemplateTracks::List(Arc::new(GridTrackList {
+                    line_names: vec![vec![], vec![]],
+                    components: vec![GridTrackListComponent::Size(GridTrackSize::Breadth(
+                        GridTrackBreadth::Length(Length::Px(100.0))
+                    ))],
+                }))
+            ))
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_multiple_tracks_and_keywords() {
+        let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) = parse(
+            "100px auto 1fr min-content max-content",
+            "grid-template-columns",
+        ) else {
+            panic!("expected a track list");
+        };
+        assert_eq!(list.components.len(), 5);
+        assert_eq!(
+            list.components[0],
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Length(
+                Length::Px(100.0)
+            )))
+        );
+        assert_eq!(
+            list.components[1],
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Auto))
+        );
+        assert_eq!(
+            list.components[2],
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Flex(1.0)))
+        );
+        assert_eq!(
+            list.components[3],
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::MinContent))
+        );
+        assert_eq!(
+            list.components[4],
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::MaxContent))
+        );
+        // 6 line-name slots (5 components + 1 trailing), all empty.
+        assert_eq!(list.line_names.len(), 6);
+        assert!(list.line_names.iter().all(Vec::is_empty));
+    }
+
+    #[test]
+    fn grid_template_columns_minmax() {
+        assert_eq!(
+            parse("minmax(0, 1fr)", "grid-template-columns"),
+            Some(PropertyValue::GridTemplateColumns(
+                GridTemplateTracks::List(Arc::new(GridTrackList {
+                    line_names: vec![vec![], vec![]],
+                    components: vec![GridTrackListComponent::Size(GridTrackSize::MinMax(
+                        GridInflexibleBreadth::Length(Length::Px(0.0)),
+                        GridTrackBreadth::Flex(1.0),
+                    ))],
+                }))
+            ))
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_minmax_rejects_flex_in_min_position() {
+        // `<inflexible-breadth>` (minmax's first argument) excludes `<flex>`
+        // — CSS Grid Layout Module Level 1 §7.2.1.
+        assert_eq!(parse("minmax(1fr, 100px)", "grid-template-columns"), None);
+    }
+
+    #[test]
+    fn grid_template_columns_fit_content() {
+        assert_eq!(
+            parse("fit-content(40%)", "grid-template-columns"),
+            Some(PropertyValue::GridTemplateColumns(
+                GridTemplateTracks::List(Arc::new(GridTrackList {
+                    line_names: vec![vec![], vec![]],
+                    components: vec![GridTrackListComponent::Size(GridTrackSize::FitContent(
+                        Length::Percent(40.0)
+                    ))],
+                }))
+            ))
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_named_lines() {
+        let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) = parse(
+            "[full-start] 1fr [content-start] 2fr [content-end] 1fr [full-end]",
+            "grid-template-columns",
+        ) else {
+            panic!("expected a track list");
+        };
+        assert_eq!(list.components.len(), 3);
+        assert_eq!(
+            list.line_names,
+            vec![
+                vec![SmolStr::new("full-start")],
+                vec![SmolStr::new("content-start")],
+                vec![SmolStr::new("content-end")],
+                vec![SmolStr::new("full-end")],
+            ]
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_repeat_integer() {
+        let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) =
+            parse("repeat(3, 1fr)", "grid-template-columns")
+        else {
+            panic!("expected a track list");
+        };
+        assert_eq!(
+            list.components,
+            vec![GridTrackListComponent::Repeat(GridTrackRepeat {
+                count: GridRepeatCount::Count(3),
+                line_names: vec![vec![], vec![]],
+                tracks: vec![GridTrackSize::Breadth(GridTrackBreadth::Flex(1.0))],
+            })]
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_repeat_auto_fill() {
+        let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) = parse(
+            "repeat(auto-fill, minmax(100px, 1fr))",
+            "grid-template-columns",
+        ) else {
+            panic!("expected a track list");
+        };
+        assert_eq!(
+            list.components,
+            vec![GridTrackListComponent::Repeat(GridTrackRepeat {
+                count: GridRepeatCount::AutoFill,
+                line_names: vec![vec![], vec![]],
+                tracks: vec![GridTrackSize::MinMax(
+                    GridInflexibleBreadth::Length(Length::Px(100.0)),
+                    GridTrackBreadth::Flex(1.0),
+                )],
+            })]
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_repeat_auto_fit() {
+        assert!(matches!(
+            parse("repeat(auto-fit, 100px)", "grid-template-columns"),
+            Some(PropertyValue::GridTemplateColumns(
+                GridTemplateTracks::List(_)
+            ))
+        ));
+    }
+
+    #[test]
+    fn grid_template_columns_repeat_auto_fill_rejects_flex() {
+        // CSS Grid Layout Module Level 1 §7.2.3.1 verbatim: "Automatic
+        // repetitions (auto-fill or auto-fit) cannot be combined with fully
+        // intrinsic or flexible sizes" — `<auto-repeat>` requires
+        // `<fixed-size>`, which excludes bare `fr`.
+        assert_eq!(
+            parse("repeat(auto-fill, 1fr)", "grid-template-columns"),
+            None
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_repeat_auto_fill_rejects_bare_min_content() {
+        // `<fixed-size>` also excludes bare `min-content`/`max-content`/
+        // `auto` (only `<fixed-breadth>`, or `minmax()` with a
+        // `<fixed-breadth>` side, qualify).
+        assert_eq!(
+            parse("repeat(auto-fill, min-content)", "grid-template-columns"),
+            None
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_rejects_second_auto_repeat() {
+        // §7.2.3.1 verbatim: "It can only appear once in the track list".
+        assert_eq!(
+            parse(
+                "repeat(auto-fill, 100px) repeat(auto-fit, 100px)",
+                "grid-template-columns"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn grid_template_columns_allows_auto_repeat_plus_fixed_repeat() {
+        // §7.2.3.1 verbatim: "...but the same track list can also contain
+        // `<fixed-repeat>`s." — a numeric `repeat()` alongside the one
+        // `auto-fill`/`auto-fit` is valid provided its own tracks are also
+        // `<fixed-size>`.
+        assert!(matches!(
+            parse(
+                "repeat(2, 50px) repeat(auto-fill, 100px)",
+                "grid-template-columns"
+            ),
+            Some(PropertyValue::GridTemplateColumns(
+                GridTemplateTracks::List(_)
+            ))
+        ));
+    }
+
+    #[test]
+    fn grid_template_columns_rejects_zero_repeat_count() {
+        assert_eq!(parse("repeat(0, 1fr)", "grid-template-columns"), None);
+    }
+
+    #[test]
+    fn grid_template_columns_rejects_unknown_ident() {
+        assert_eq!(parse("bogus", "grid-template-columns"), None);
+    }
+
+    #[test]
+    fn grid_template_rows_shares_the_same_grammar() {
+        assert_eq!(
+            parse("50%", "grid-template-rows"),
+            Some(PropertyValue::GridTemplateRows(GridTemplateTracks::List(
+                Arc::new(GridTrackList {
+                    line_names: vec![vec![], vec![]],
+                    components: vec![GridTrackListComponent::Size(GridTrackSize::Breadth(
+                        GridTrackBreadth::Length(Length::Percent(50.0))
+                    ))],
+                })
+            )))
+        );
+    }
+
+    // ── grid-template-areas (CSS Grid Layout Module Level 1 §7.3) ───────
+
+    #[test]
+    fn grid_template_areas_none() {
+        assert_eq!(
+            parse("none", "grid-template-areas"),
+            Some(PropertyValue::GridTemplateAreas(
+                GridTemplateAreasValue::None
+            ))
+        );
+    }
+
+    #[test]
+    fn grid_template_areas_simple_single_cell() {
+        assert_eq!(
+            parse(r#""a""#, "grid-template-areas"),
+            Some(PropertyValue::GridTemplateAreas(
+                GridTemplateAreasValue::Areas(Arc::new(GridTemplateAreas {
+                    row_strings: vec![SmolStr::new("a")],
+                    areas: vec![GridTemplateAreaEntry {
+                        name: SmolStr::new("a"),
+                        row_start: 1,
+                        row_end: 2,
+                        column_start: 1,
+                        column_end: 2,
+                    }],
+                    row_count: 1,
+                    column_count: 1,
+                }))
+            ))
+        );
+    }
+
+    #[test]
+    fn grid_template_areas_multi_row_multi_col_with_null_cells() {
+        let Some(PropertyValue::GridTemplateAreas(GridTemplateAreasValue::Areas(areas))) = parse(
+            r#""header header" "nav main" "footer ...""#,
+            "grid-template-areas",
+        ) else {
+            panic!("expected parsed areas");
+        };
+        assert_eq!(areas.row_count, 3);
+        assert_eq!(areas.column_count, 2);
+        let mut names: Vec<&str> = areas.areas.iter().map(|a| a.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["footer", "header", "main", "nav"]);
+        let header = areas.areas.iter().find(|a| a.name == "header").unwrap();
+        assert_eq!(
+            (
+                header.row_start,
+                header.row_end,
+                header.column_start,
+                header.column_end
+            ),
+            (1, 2, 1, 3)
+        );
+        let footer = areas.areas.iter().find(|a| a.name == "footer").unwrap();
+        // `...` is a run of `.` null-cell tokens spanning the second
+        // column — `footer` only occupies the first column of row 3.
+        assert_eq!(
+            (
+                footer.row_start,
+                footer.row_end,
+                footer.column_start,
+                footer.column_end
+            ),
+            (3, 4, 1, 2)
+        );
+    }
+
+    #[test]
+    fn grid_template_areas_spanning_area_forms_rectangle() {
+        let Some(PropertyValue::GridTemplateAreas(GridTemplateAreasValue::Areas(areas))) =
+            parse(r#""a a" "a a""#, "grid-template-areas")
+        else {
+            panic!("expected parsed areas");
+        };
+        assert_eq!(areas.areas.len(), 1);
+        let a = &areas.areas[0];
+        assert_eq!(
+            (a.row_start, a.row_end, a.column_start, a.column_end),
+            (1, 3, 1, 3)
+        );
+    }
+
+    #[test]
+    fn grid_template_areas_rejects_uneven_columns() {
+        // spec verbatim: "All strings must define the same number of cell
+        // tokens ... or else the declaration is invalid."
+        assert_eq!(parse(r#""a b" "c""#, "grid-template-areas"), None);
+    }
+
+    #[test]
+    fn grid_template_areas_rejects_non_rectangular_area() {
+        // spec verbatim: "If a named grid area spans multiple grid cells,
+        // but those cells do not form a single filled-in rectangle, the
+        // declaration is invalid."
+        assert_eq!(parse(r#""a b" "b a""#, "grid-template-areas"), None);
+    }
+
+    #[test]
+    fn grid_template_areas_rejects_trash_token() {
+        // spec verbatim: "A trash token is a syntax error, and makes the
+        // declaration invalid." `#` is neither an ident code point nor `.`.
+        assert_eq!(parse(r#""a #""#, "grid-template-areas"), None);
+    }
+
+    #[test]
+    fn grid_template_areas_rejects_empty_string_list() {
+        assert_eq!(parse(r#""""#, "grid-template-areas"), None);
+    }
+
+    // ── grid-auto-columns / grid-auto-rows (CSS Grid Layout Module Level 1
+    //    §7.6) ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn grid_auto_columns_single_track() {
+        assert_eq!(
+            parse("200px", "grid-auto-columns"),
+            Some(PropertyValue::GridAutoColumns(Arc::new(vec![
+                GridTrackSize::Breadth(GridTrackBreadth::Length(Length::Px(200.0)))
+            ])))
+        );
+    }
+
+    #[test]
+    fn grid_auto_columns_multiple_tracks() {
+        assert_eq!(
+            parse("100px 1fr", "grid-auto-columns"),
+            Some(PropertyValue::GridAutoColumns(Arc::new(vec![
+                GridTrackSize::Breadth(GridTrackBreadth::Length(Length::Px(100.0))),
+                GridTrackSize::Breadth(GridTrackBreadth::Flex(1.0)),
+            ])))
+        );
+    }
+
+    #[test]
+    fn grid_auto_rows_shares_the_same_grammar() {
+        assert_eq!(
+            parse("min-content", "grid-auto-rows"),
+            Some(PropertyValue::GridAutoRows(Arc::new(vec![
+                GridTrackSize::Breadth(GridTrackBreadth::MinContent)
+            ])))
+        );
+    }
+
+    #[test]
+    fn grid_auto_columns_rejects_repeat() {
+        // `<track-size>+` — `repeat()` is not part of this grammar (unlike
+        // `grid-template-columns`'s `<track-list>`).
+        assert_eq!(parse("repeat(2, 10px)", "grid-auto-columns"), None);
+    }
+
+    // ── grid-auto-flow (CSS Grid Layout Module Level 1 §7.7) ────────────
+
+    #[test]
+    fn grid_auto_flow_row() {
+        assert_eq!(
+            parse("row", "grid-auto-flow"),
+            Some(PropertyValue::GridAutoFlow(GridAutoFlowValue::Row))
+        );
+    }
+
+    #[test]
+    fn grid_auto_flow_column() {
+        assert_eq!(
+            parse("column", "grid-auto-flow"),
+            Some(PropertyValue::GridAutoFlow(GridAutoFlowValue::Column))
+        );
+    }
+
+    #[test]
+    fn grid_auto_flow_dense_alone_defaults_to_row() {
+        assert_eq!(
+            parse("dense", "grid-auto-flow"),
+            Some(PropertyValue::GridAutoFlow(GridAutoFlowValue::RowDense))
+        );
+    }
+
+    #[test]
+    fn grid_auto_flow_row_dense_either_order() {
+        assert_eq!(
+            parse("row dense", "grid-auto-flow"),
+            Some(PropertyValue::GridAutoFlow(GridAutoFlowValue::RowDense))
+        );
+        assert_eq!(
+            parse("dense row", "grid-auto-flow"),
+            Some(PropertyValue::GridAutoFlow(GridAutoFlowValue::RowDense))
+        );
+    }
+
+    #[test]
+    fn grid_auto_flow_column_dense() {
+        assert_eq!(
+            parse("column dense", "grid-auto-flow"),
+            Some(PropertyValue::GridAutoFlow(GridAutoFlowValue::ColumnDense))
+        );
+    }
+
+    #[test]
+    fn grid_auto_flow_rejects_empty() {
+        assert_eq!(parse("", "grid-auto-flow"), None);
+    }
+
+    // ── grid-row-start / grid-row-end / grid-column-start /
+    //    grid-column-end (CSS Grid Layout Module Level 1 §8.3) ──────────
+
+    #[test]
+    fn grid_line_auto() {
+        assert_eq!(
+            parse("auto", "grid-row-start"),
+            Some(PropertyValue::GridRowStart(GridLineValue::Auto))
+        );
+    }
+
+    #[test]
+    fn grid_line_positive_and_negative_integer() {
+        assert_eq!(
+            parse("3", "grid-row-start"),
+            Some(PropertyValue::GridRowStart(GridLineValue::Line(3)))
+        );
+        assert_eq!(
+            parse("-1", "grid-row-end"),
+            Some(PropertyValue::GridRowEnd(GridLineValue::Line(-1)))
+        );
+    }
+
+    #[test]
+    fn grid_line_rejects_zero() {
+        // spec verbatim: "Negative integers or zero are invalid."
+        assert_eq!(parse("0", "grid-column-start"), None);
+    }
+
+    #[test]
+    fn grid_line_bare_custom_ident() {
+        assert_eq!(
+            parse("content-start", "grid-column-start"),
+            Some(PropertyValue::GridColumnStart(GridLineValue::Named(
+                SmolStr::new("content-start")
+            )))
+        );
+    }
+
+    #[test]
+    fn grid_line_integer_and_name_either_order() {
+        assert_eq!(
+            parse("2 content-start", "grid-column-start"),
+            Some(PropertyValue::GridColumnStart(GridLineValue::NamedLine(
+                SmolStr::new("content-start"),
+                2
+            )))
+        );
+        assert_eq!(
+            parse("content-start 2", "grid-column-start"),
+            Some(PropertyValue::GridColumnStart(GridLineValue::NamedLine(
+                SmolStr::new("content-start"),
+                2
+            )))
+        );
+    }
+
+    #[test]
+    fn grid_line_span_integer() {
+        assert_eq!(
+            parse("span 3", "grid-column-end"),
+            Some(PropertyValue::GridColumnEnd(GridLineValue::Span(3)))
+        );
+    }
+
+    #[test]
+    fn grid_line_span_rejects_zero_or_negative() {
+        assert_eq!(parse("span 0", "grid-column-end"), None);
+        assert_eq!(parse("span -1", "grid-column-end"), None);
+    }
+
+    #[test]
+    fn grid_line_span_named() {
+        assert_eq!(
+            parse("span content-end", "grid-column-end"),
+            Some(PropertyValue::GridColumnEnd(GridLineValue::SpanNamed(
+                SmolStr::new("content-end"),
+                1
+            )))
+        );
+    }
+
+    #[test]
+    fn grid_line_span_named_and_integer_either_order() {
+        assert_eq!(
+            parse("span 2 content-end", "grid-column-end"),
+            Some(PropertyValue::GridColumnEnd(GridLineValue::SpanNamed(
+                SmolStr::new("content-end"),
+                2
+            )))
+        );
+        assert_eq!(
+            parse("span content-end 2", "grid-column-end"),
+            Some(PropertyValue::GridColumnEnd(GridLineValue::SpanNamed(
+                SmolStr::new("content-end"),
+                2
+            )))
+        );
+    }
+
+    #[test]
+    fn grid_line_span_alone_is_invalid() {
+        // grammar: `span && [ <integer> || <custom-ident> ]` — the bracketed
+        // group is mandatory.
+        assert_eq!(parse("span", "grid-row-start"), None);
+    }
+
+    #[test]
+    fn grid_line_rejects_span_and_auto_as_custom_ident() {
+        // spec verbatim (§8.3): "the `<custom-ident>` additionally excludes
+        // the keywords `span` and `auto`".
+        assert_eq!(parse("span", "grid-column-start"), None);
+    }
+
+    // ── grid-row / grid-column shorthand (CSS Grid Layout Module Level 1
+    //    §8.4) ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn grid_row_shorthand_two_values() {
+        assert_eq!(
+            parse("2 / 5", "grid-row"),
+            Some(PropertyValue::GridRow(GridLineShorthand {
+                start: GridLineValue::Line(2),
+                end: GridLineValue::Line(5),
+            }))
+        );
+    }
+
+    #[test]
+    fn grid_row_shorthand_omitted_second_copies_custom_ident() {
+        // spec verbatim: "if the first value is a `<custom-ident>`, the
+        // grid-row-end / grid-column-end longhand is also set to that
+        // `<custom-ident>`".
+        assert_eq!(
+            parse("content", "grid-row"),
+            Some(PropertyValue::GridRow(GridLineShorthand {
+                start: GridLineValue::Named(SmolStr::new("content")),
+                end: GridLineValue::Named(SmolStr::new("content")),
+            }))
+        );
+    }
+
+    #[test]
+    fn grid_row_shorthand_omitted_second_defaults_to_auto_for_non_ident() {
+        // spec verbatim: "...otherwise, it is set to auto."
+        assert_eq!(
+            parse("3", "grid-row"),
+            Some(PropertyValue::GridRow(GridLineShorthand {
+                start: GridLineValue::Line(3),
+                end: GridLineValue::Auto,
+            }))
+        );
+        assert_eq!(
+            parse("span 2", "grid-row"),
+            Some(PropertyValue::GridRow(GridLineShorthand {
+                start: GridLineValue::Span(2),
+                end: GridLineValue::Auto,
+            }))
+        );
+    }
+
+    #[test]
+    fn grid_column_shorthand_two_values() {
+        assert_eq!(
+            parse("main-start / main-end", "grid-column"),
+            Some(PropertyValue::GridColumn(GridLineShorthand {
+                start: GridLineValue::Named(SmolStr::new("main-start")),
+                end: GridLineValue::Named(SmolStr::new("main-end")),
+            }))
+        );
+    }
+
+    // ── justify-items / justify-self (CSS Box Alignment Module Level 3
+    //    §7.1 / §6.1) ────────────────────────────────────────────────────
+
+    #[test]
+    fn justify_items_parse_keywords() {
+        assert_eq!(
+            parse("center", "justify-items"),
+            Some(PropertyValue::JustifyItems(SelfAlignmentValue::Center))
+        );
+        assert_eq!(
+            parse("stretch", "justify-items"),
+            Some(PropertyValue::JustifyItems(SelfAlignmentValue::Stretch))
+        );
+    }
+
+    #[test]
+    fn justify_self_parse_auto_and_keywords() {
+        assert_eq!(
+            parse("auto", "justify-self"),
+            Some(PropertyValue::JustifySelf(AlignSelfValue::Auto))
+        );
+        assert_eq!(
+            parse("end", "justify-self"),
+            Some(PropertyValue::JustifySelf(AlignSelfValue::Value(
+                SelfAlignmentValue::End
+            )))
+        );
+    }
+
+    // ── place-items / place-self (CSS Box Alignment Module Level 3 §7.3 /
+    //    §6.3) ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn place_items_shorthand_single_value_copies_to_both() {
+        assert_eq!(
+            parse("center", "place-items"),
+            Some(PropertyValue::PlaceItems(PlaceItemsShorthand {
+                align: SelfAlignmentValue::Center,
+                justify: SelfAlignmentValue::Center,
+            }))
+        );
+    }
+
+    #[test]
+    fn place_items_shorthand_two_values() {
+        assert_eq!(
+            parse("start end", "place-items"),
+            Some(PropertyValue::PlaceItems(PlaceItemsShorthand {
+                align: SelfAlignmentValue::Start,
+                justify: SelfAlignmentValue::End,
+            }))
+        );
+    }
+
+    #[test]
+    fn place_self_shorthand_single_value_copies_to_both() {
+        assert_eq!(
+            parse("auto", "place-self"),
+            Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+                align: AlignSelfValue::Auto,
+                justify: AlignSelfValue::Auto,
+            }))
+        );
+    }
+
+    #[test]
+    fn place_self_shorthand_two_values() {
+        assert_eq!(
+            parse("center stretch", "place-self"),
+            Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+                align: AlignSelfValue::Value(SelfAlignmentValue::Center),
+                justify: AlignSelfValue::Value(SelfAlignmentValue::Stretch),
+            }))
+        );
+    }
+
+    // ── key() discriminant integrity (mirrors `flex_group_keys_map_correctly`) ─
+
+    #[test]
+    fn grid_group_keys_map_correctly() {
+        assert_eq!(
+            PropertyValue::GridTemplateColumns(GridTemplateTracks::None).key(),
+            PropertyKey::GridTemplateColumns
+        );
+        assert_eq!(
+            PropertyValue::GridTemplateRows(GridTemplateTracks::None).key(),
+            PropertyKey::GridTemplateRows
+        );
+        assert_eq!(
+            PropertyValue::GridTemplateAreas(GridTemplateAreasValue::None).key(),
+            PropertyKey::GridTemplateAreas
+        );
+        assert_eq!(
+            PropertyValue::GridAutoColumns(Arc::new(vec![GridTrackSize::Breadth(
+                GridTrackBreadth::Auto
+            )]))
+            .key(),
+            PropertyKey::GridAutoColumns
+        );
+        assert_eq!(
+            PropertyValue::GridAutoRows(Arc::new(vec![GridTrackSize::Breadth(
+                GridTrackBreadth::Auto
+            )]))
+            .key(),
+            PropertyKey::GridAutoRows
+        );
+        assert_eq!(
+            PropertyValue::GridAutoFlow(GridAutoFlowValue::Row).key(),
+            PropertyKey::GridAutoFlow
+        );
+        assert_eq!(
+            PropertyValue::GridRowStart(GridLineValue::Auto).key(),
+            PropertyKey::GridRowStart
+        );
+        assert_eq!(
+            PropertyValue::GridRowEnd(GridLineValue::Auto).key(),
+            PropertyKey::GridRowEnd
+        );
+        assert_eq!(
+            PropertyValue::GridColumnStart(GridLineValue::Auto).key(),
+            PropertyKey::GridColumnStart
+        );
+        assert_eq!(
+            PropertyValue::GridColumnEnd(GridLineValue::Auto).key(),
+            PropertyKey::GridColumnEnd
+        );
+        assert_eq!(
+            PropertyValue::GridRow(GridLineShorthand {
+                start: GridLineValue::Auto,
+                end: GridLineValue::Auto,
+            })
+            .key(),
+            PropertyKey::GridRow
+        );
+        assert_eq!(
+            PropertyValue::GridColumn(GridLineShorthand {
+                start: GridLineValue::Auto,
+                end: GridLineValue::Auto,
+            })
+            .key(),
+            PropertyKey::GridColumn
+        );
+        assert_eq!(
+            PropertyValue::JustifyItems(SelfAlignmentValue::Normal).key(),
+            PropertyKey::JustifyItems
+        );
+        assert_eq!(
+            PropertyValue::JustifySelf(AlignSelfValue::Auto).key(),
+            PropertyKey::JustifySelf
+        );
+        assert_eq!(
+            PropertyValue::PlaceItems(PlaceItemsShorthand {
+                align: SelfAlignmentValue::Normal,
+                justify: SelfAlignmentValue::Normal,
+            })
+            .key(),
+            PropertyKey::PlaceItems
+        );
+        assert_eq!(
+            PropertyValue::PlaceSelf(PlaceSelfShorthand {
+                align: AlignSelfValue::Auto,
+                justify: AlignSelfValue::Auto,
+            })
+            .key(),
+            PropertyKey::PlaceSelf
         );
     }
 }
