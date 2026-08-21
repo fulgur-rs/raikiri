@@ -566,7 +566,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // 等、全て Copy) と異なり値を `d.value` (`&Declaration` 経由の
         // place) から move できないため、`ref` binding で参照のまま
         // `expand_grid_row` / `expand_grid_column` に渡す
-        // ([`expand_grid_row`] doc 参照)。
+        // (`expand_grid_row` doc 参照)。
         PropertyValue::GridRow(ref shorthand) => expand_grid_row(shorthand, d.important, push),
         PropertyValue::GridColumn(ref shorthand) => {
             expand_grid_column(shorthand, d.important, push)

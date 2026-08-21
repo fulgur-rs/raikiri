@@ -457,7 +457,7 @@ impl SpecifiedValues {
             grid_column_start: GridLineValue::Auto,
             grid_column_end: GridLineValue::Auto,
             // CSS Box Alignment Module Level 3 §7.1/§6.1: justify-items /
-            // justify-self initial ([`PropertyValue::JustifyItems`] doc の
+            // justify-self initial (`PropertyValue::JustifyItems` doc の
             // "legacy は未対応" 節参照、justify-self は `auto`)。
             justify_items: SelfAlignmentValue::Normal,
             justify_self: AlignSelfValue::Auto,

@@ -7472,8 +7472,8 @@ fn parse_grid_line_shorthand(input: &mut Parser<'_, '_>) -> Option<GridLineShort
         let end = parse_grid_line(input)?;
         return Some(GridLineShorthand { start, end });
     }
-    // spec 本文 verbatim ([`GridLineShorthand`] doc 引用): 第 2 成分省略時、
-    // 第 1 成分が `<custom-ident>` (= [`GridLineValue::Named`]、`<integer>`
+    // spec 本文 verbatim (`GridLineShorthand` doc 引用): 第 2 成分省略時、
+    // 第 1 成分が `<custom-ident>` (= `GridLineValue::Named`、`<integer>`
     // 併記なしの bare 形のみ) なら第 2 成分にもその名前を copy、それ以外は
     // `auto`。
     let end = match &start {
