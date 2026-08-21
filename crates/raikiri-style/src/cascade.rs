@@ -3707,6 +3707,11 @@ pub(crate) fn resolve_against_inherited(
         // `Height` above, nothing for phase 2 to resolve here.
         | PropertyValue::LetterSpacing(_)
         | PropertyValue::WordSpacing(_)
+        // `tab-size`'s `<length>` alternative needs the same *declaring
+        // node's own* font-size basis (phase 3) as `LetterSpacing`/
+        // `WordSpacing` above; its `<number>` alternative carries no length
+        // at all. Either way, nothing for phase 2 to resolve here.
+        | PropertyValue::TabSize(_)
         // `break-before`/`break-after` (CSS Fragmentation Module Level 3
         // §3.1, legacy shorthand `page-break-before`/`page-break-after`
         // included) carry no length (`BreakBetween` doc) and do not
@@ -4203,6 +4208,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::LetterSpacing(ls) => target.letter_spacing = ls,
         // CSS Text 3 §7.1。直上の LetterSpacing arm と同型。
         PropertyValue::WordSpacing(ws) => target.word_spacing = ws,
+        // CSS Text Module Level 3 §4.2。specified 表現 (`TabSize`) のまま
+        // 格納 — `<length>` 側の絶対化は phase 3 に委ねる (`LetterSpacing`
+        // arm と同じ handling)。inherited property のため cascade winner が
+        // 無い child は inherit_from で親値を引き継ぐ。`TabSize` は Copy、
+        // by-value 代入で十分。
+        PropertyValue::TabSize(ts) => target.tab_size = ts,
         // CSS Fragmentation Module Level 3 §3.1 break-before / break-after
         // (legacy shorthand page-break-before / page-break-after も同じ
         // variant/field に落ちる、`BreakBetween` doc 参照)。non-inherited、
@@ -4293,7 +4304,7 @@ mod tests {
     };
     use crate::resolve::{
         ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-        ComputedLineHeight,
+        ComputedLineHeight, ComputedTabSize,
     };
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
@@ -9107,6 +9118,105 @@ mod tests {
             "child must inherit the parent's already-computed 8px, not re-resolve \
              0.5em against its own 32px font-size (which would wrongly yield 16px)"
         );
+    }
+
+    // ── tab-size wire-through (CSS Text Module Level 3 §4.2) ──
+
+    #[test]
+    fn tab_size_number_wired_through_cascade_from_inline_style() {
+        let cv = cascade_doc("", "p", Some("tab-size: 4"));
+        assert_eq!(cv.tab_size, ComputedTabSize::Number(4.0));
+    }
+
+    #[test]
+    fn tab_size_length_wired_through_cascade_from_inline_style() {
+        // `em` (not `px`) so this also exercises phase 3 absolutization
+        // (`resolve_tab_size`), not just the `apply_value` arm's
+        // pass-through assignment.
+        let cv = cascade_doc("", "p", Some("font-size: 20px; tab-size: 2em"));
+        assert_eq!(cv.tab_size, ComputedTabSize::Length(ComputedLength(40.0)));
+    }
+
+    #[test]
+    fn tab_size_defaults_to_initial_8_when_undeclared() {
+        // CSS Text Module Level 3 §4.2: "Initial: 8".
+        let cv = cascade_doc("", "p", None);
+        assert_eq!(cv.tab_size, ComputedTabSize::Number(8.0));
+    }
+
+    #[test]
+    fn tab_size_inherits_from_parent_element() {
+        // CSS Text Module Level 3 §4.2: "Inherited: yes".
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("tab-size: 6"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].tab_size, ComputedTabSize::Number(6.0));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].tab_size,
+            ComputedTabSize::Number(6.0),
+            "child should inherit tab-size from parent (CSS Text Module Level 3 §4.2 Inherited: yes)"
+        );
+    }
+
+    #[test]
+    fn tab_size_child_own_value_wins_over_inherited() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("tab-size: 6"));
+        let span = doc.push_element(p, "span", Some("tab-size: 2"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].tab_size, ComputedTabSize::Number(6.0));
+        assert_eq!(r.computed[span].tab_size, ComputedTabSize::Number(2.0));
+    }
+
+    /// Inheritance carries the parent's already-**computed** length, not the
+    /// specified `em` re-resolved against the child's own font-size — same
+    /// shape as
+    /// `letter_spacing_inherited_em_value_does_not_re_resolve_against_child_font_size`
+    /// above (CSS Cascade 5 §7.2 "Inheritance": inherited values are the
+    /// parent's computed values; CSS Text Module Level 3 §4.2 "Computed
+    /// value: the specified number or absolute length").
+    #[test]
+    fn tab_size_inherited_em_value_does_not_re_resolve_against_child_font_size() {
+        let mut doc = TestDoc::new();
+        // parent: font-size 16px, tab-size 2em -> computed 32px.
+        let p = doc.push_element(0, "p", Some("font-size: 16px; tab-size: 2em"));
+        // child: font-size 32px, no tab-size declaration of its own.
+        let span = doc.push_element(p, "span", Some("font-size: 32px"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].tab_size,
+            ComputedTabSize::Length(ComputedLength(32.0))
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].tab_size,
+            ComputedTabSize::Length(ComputedLength(32.0)),
+            "child must inherit the parent's already-computed 32px, not re-resolve \
+             2em against its own 32px font-size (which would wrongly yield 64px)"
+        );
+    }
+
+    #[test]
+    fn tab_size_number_inherited_by_child_multiplies_own_font_size() {
+        // Mirrors `line-height`'s unitless-number inheritance special
+        // behavior shape (CSS Text Module Level 3 §4.2's `<number>`
+        // alternative carries no length, so unlike the `<length>` case
+        // above there is nothing to "re-resolve" — the raw number just
+        // passes through unchanged regardless of the child's own font-size).
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-size: 16px; tab-size: 4"));
+        let span = doc.push_element(p, "span", Some("font-size: 32px"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].tab_size, ComputedTabSize::Number(4.0));
+        assert_eq!(r.computed[span].tab_size, ComputedTabSize::Number(4.0));
     }
 
     // ── white-space wire-through (CSS Text 3 §3) ──

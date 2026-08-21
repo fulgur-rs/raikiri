@@ -33,7 +33,7 @@ use crate::property::{
     BreakBetween, BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor,
     Direction, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
     FontStyle, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue,
-    OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor,
+    OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign, TextDecorationColor,
     TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace,
     WordBreak, ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
     initial_font_family, resolve_display_for_float, resolve_overflow,
@@ -41,10 +41,11 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_length_or_normal,
-    lift_length_percentage, lift_line_height, resolve_border, resolve_flex_basis,
+    lift_length_percentage, lift_line_height, lift_tab_size, resolve_border, resolve_flex_basis,
     resolve_font_size, resolve_length_or_normal, resolve_length_percentage,
     resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_vertical_align, used_line_height_length,
+    resolve_margin_length_or_auto, resolve_tab_size, resolve_vertical_align,
+    used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -61,7 +62,7 @@ use crate::resolve::{
 ///
 /// | 層 | field |
 /// |---|---|
-/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` |
+/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` |
 /// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
@@ -242,6 +243,10 @@ pub struct SpecifiedValues {
     /// 同じ絶対化 phase・同じ分類理由 ([`LengthOrNormal`] を共有する
     /// sibling property、両者の spec 根拠は同 type の doc 参照)。
     pub word_spacing: LengthOrNormal,
+    /// `tab-size` の **specified** value。phase 3 ([`resolve_tab_size`]) で
+    /// 自 node の computed font-size を基準に絶対化される (`<length>` 側
+    /// のみ — `<number>` は絶対化不要、[`Self::flex_grow`] と同じ扱い)。
+    pub tab_size: TabSize,
     /// [`ComputedValues::break_before`] の staging。層は computed-equivalent
     /// (`BreakBetween` は length を運ばない)。
     pub break_before: BreakBetween,
@@ -371,6 +376,8 @@ impl SpecifiedValues {
             // initial は共に `normal`。
             letter_spacing: LengthOrNormal::Normal,
             word_spacing: LengthOrNormal::Normal,
+            // CSS Text Module Level 3 §4.2: tab-size initial は `8`。
+            tab_size: TabSize::Number(8.0),
             // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
             // break-after / break-inside initial は共に `auto`。
             break_before: BreakBetween::Auto,
@@ -412,10 +419,11 @@ impl SpecifiedValues {
     ///
     /// - **inherited** property は親の computed 値から seed する。length を運ぶ
     ///   `font_size` / `line_height` / `text_indent` / `letter_spacing` /
-    ///   `word_spacing` は [`lift_font_size`] / [`lift_line_height`] /
-    ///   [`lift_length_percentage`] / [`lift_length_or_normal`] で specified
-    ///   表現に lift する (`Px` / `Percent` は絶対化の不動点なので、phase 2 /
-    ///   phase 3 を通しても二重適用にならない — 各関数の doc 参照)。
+    ///   `word_spacing` / `tab_size` は [`lift_font_size`] / [`lift_line_height`] /
+    ///   [`lift_length_percentage`] / [`lift_length_or_normal`] /
+    ///   [`lift_tab_size`] で specified 表現に lift する (`Px` / `Percent` は
+    ///   絶対化の不動点なので、phase 2 / phase 3 を通しても二重適用に
+    ///   ならない — 各関数の doc 参照)。
     /// - **non-inherited** property は [`Self::initial`] と同じ値。
     ///
     /// 分類の canonical source は [`ComputedValues`] の field doc comment。
@@ -481,6 +489,10 @@ impl SpecifiedValues {
             // `lift_length_or_normal` doc 参照)。
             letter_spacing: lift_length_or_normal(parent.letter_spacing),
             word_spacing: lift_length_or_normal(parent.word_spacing),
+            // CSS Text Module Level 3 §4.2: tab-size は inherited。computed
+            // `<number>` / `<length>` → specified 表現の lift
+            // (`lift_line_height` と同型)。
+            tab_size: lift_tab_size(parent.tab_size),
             // CSS Text 3 §3: white-space は inherited。
             white_space: parent.white_space,
             // CSS Text 3 §5.3: hyphens は inherited。
@@ -926,6 +938,10 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            // `tab-size` の `1lh` 解決基準も他の box property と同じ
+            // `own_line_height` (CSS Text Module Level 3 §4.2 は line-height
+            // 基準の特別扱いを持たない)。
+            tab_size: resolve_tab_size(self.tab_size, font_size, own_line_height, ctx),
             // computed value = specified keyword (`BreakBetween` doc 参照、
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
@@ -1027,6 +1043,7 @@ mod tests {
     use crate::resolve::{
         ComputedBorder, ComputedFlexBasis, ComputedLengthPercentage,
         ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+        ComputedTabSize,
     };
 
     /// `root_font_size` = 16px の共通 context。
@@ -1136,6 +1153,7 @@ mod tests {
             overflow_wrap: OverflowWrap::Anywhere,
             letter_spacing: ComputedLength(2.0),
             word_spacing: ComputedLength(4.0),
+            tab_size: ComputedTabSize::Length(ComputedLength(11.0)),
             break_before: BreakBetween::Page,
             break_after: BreakBetween::AvoidPage,
             break_inside: BreakInside::AvoidPage,
@@ -1200,6 +1218,10 @@ mod tests {
             LengthOrNormal::Length(Length::Px(2.0))
         );
         assert_eq!(child.word_spacing, LengthOrNormal::Length(Length::Px(4.0)));
+        // CSS Text Module Level 3 §4.2: tab-size は inherited。computed
+        // `<length>` → specified `Px` の lift (`lift_tab_size` 経由、
+        // `lift_font_size` と同型)。
+        assert_eq!(child.tab_size, TabSize::Length(Length::Px(11.0)));
     }
 
     #[test]
