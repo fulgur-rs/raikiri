@@ -293,11 +293,31 @@ if [[ "$SKIP_COVERAGE" -eq 1 ]]; then
   echo "-- §8.1(c) patch coverage: --skip-coverage passed, skipping --"
 elif [[ -x "$SCRIPT_DIR/patch-coverage.sh" ]]; then
   echo "-- §8.1(c) patch coverage (scripts/patch-coverage.sh --base $BASE_REF) --"
-  if ! "$SCRIPT_DIR/patch-coverage.sh" "$BASE_REF"; then
+  set +e
+  "$SCRIPT_DIR/patch-coverage.sh" "$BASE_REF"
+  PATCH_COVERAGE_STATUS=$?
+  set -e
+  if [[ "$PATCH_COVERAGE_STATUS" -eq 1 ]]; then
     echo "FAIL: scripts/patch-coverage.sh reported uncovered changed lines"
     echo "      without a cov:ignore escape. Per gate.md §8.1.1: add a"
     echo "      covering test (in-scope) or escalate to a bd issue"
     echo "      (out-of-scope), then re-run."
+    FAIL=1
+  elif [[ "$PATCH_COVERAGE_STATUS" -eq 2 ]]; then
+    echo "FAIL: scripts/patch-coverage.sh's coverage measurement could not"
+    echo "      complete (exit 2: infra failure, not an uncovered-line"
+    echo "      finding) — a dirty tree (uncommitted *.rs changes),"
+    echo "      cargo-llvm-cov not installed, or a cargo metadata failure."
+    echo "      See patch-coverage.sh's own stderr output for which one."
+    echo "      Fix that infra problem and re-run; adding a test will not"
+    echo "      fix this."
+    FAIL=1
+  elif [[ "$PATCH_COVERAGE_STATUS" -ne 0 ]]; then
+    echo "FAIL: scripts/patch-coverage.sh exited $PATCH_COVERAGE_STATUS, which"
+    echo "      is outside its documented 0/1/2 contract (see its own"
+    echo "      \"Exit status\" header comment). Treat this as unverified"
+    echo "      rather than either FAIL message above — investigate the"
+    echo "      script's output before re-running."
     FAIL=1
   fi
 else

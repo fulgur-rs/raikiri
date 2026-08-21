@@ -47,7 +47,11 @@
 #
 # Exit status: 0 if every changed line is covered or cov:ignore-exempted,
 # 1 if any changed line is uncovered (gate.md §8.1.1: fix in-scope, or
-# escalate to a bd issue out-of-scope, then re-run).
+# escalate to a bd issue out-of-scope, then re-run), 2 if coverage
+# measurement could not complete — a dirty tree, cargo-llvm-cov not
+# installed, or a `cargo metadata` failure (see lib/patch_coverage.py's
+# load_cargo_metadata) — which is an infra problem, not a coverage
+# finding, and needs its own fix rather than a covering test.
 
 set -euo pipefail
 
