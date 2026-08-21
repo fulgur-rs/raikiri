@@ -2701,11 +2701,12 @@ mod tests {
         FloatValue, FontStyle, FontWeightValue, GridAutoFlowValue, GridInflexibleBreadth,
         GridLineShorthand, GridLineValue, GridRepeatCount, GridTemplateAreaEntry,
         GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth,
-        GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto,
-        LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
-        PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, SelfAlignmentValue, TextAlign,
-        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue,
+        GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length,
+        LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY,
+        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
+        SelfAlignmentValue, TextAlign, TextDecorationColor, TextDecorationLine,
+        TextDecorationShorthand, TextDecorationStyle, TextTransform, VerticalAlign, Visibility,
+        WhiteSpace, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use std::sync::Arc;
