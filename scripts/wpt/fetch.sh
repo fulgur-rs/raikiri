@@ -17,7 +17,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Resolve REPO_ROOT from the caller's shell cwd, with a cross-tree
+# mismatch guard — see scripts/lib/repo_root.sh for the rationale. This
+# matters here specifically because REPO_ROOT below feeds LOCAL_WPT_DIR: a
+# tree mismatch would previously have symlinked the *wrong* worktree's
+# target/wpt without any indication something was off.
+# shellcheck source=../lib/repo_root.sh
+source "$SCRIPT_DIR/../lib/repo_root.sh"
+
 SHA_FILE="$SCRIPT_DIR/pinned_sha.txt"
 SUBSET_FILE="$SCRIPT_DIR/subset.txt"
 REMOTE_URL="${WPT_REMOTE_URL:-https://github.com/web-platform-tests/wpt.git}"

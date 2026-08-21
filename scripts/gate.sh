@@ -35,41 +35,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Resolve the repo root from the caller's shell, not from this script's own
-# on-disk location. BASH_SOURCE[0] is the literal path string used to
-# invoke the script, which is not necessarily inside the tree the caller
-# actually wants checked — e.g. running another checkout's absolute
-# .../scripts/gate.sh while the shell's cwd is a different git worktree.
-# Deriving REPO_ROOT from SCRIPT_DIR in that case would silently `cd` into
-# the wrong tree and run every check below against it instead of the one
-# the caller is sitting in. `git rev-parse --show-toplevel` with no `-C`
-# already resolves against the shell's current directory, which is exactly
-# what we want here: whatever tree the shell was actually in when it
-# invoked this script is the tree that gets checked.
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-
-# Guard against the same mismatch reappearing one level down: this script
-# delegates to sibling scripts as "$SCRIPT_DIR/<name>.sh" (patch-coverage.sh,
-# cascade-bench-compare.sh below), and each of those resolves ITS OWN repo
-# root the same way this script used to — from where the invoked file
-# lives, not from the caller's cwd. If the file path used to invoke this
-# script sits in a different git tree than the one just resolved above,
-# those delegated scripts would silently redirect themselves into that
-# other tree even though this script itself now stays put. Rather than let
-# that split happen invisibly several hundred lines later, fail loudly here
-# and tell the caller which invocation to use instead.
-SCRIPT_TREE="$(cd "$SCRIPT_DIR/.." && git rev-parse --show-toplevel 2>/dev/null || true)"
-if [[ -n "$SCRIPT_TREE" && "$SCRIPT_TREE" != "$REPO_ROOT" ]]; then
-  echo "gate.sh: refusing to run." >&2
-  echo "  The script file you invoked lives in a different git tree than" >&2
-  echo "  your shell's current directory:" >&2
-  echo "    invoked script's tree     : $SCRIPT_TREE" >&2
-  echo "    current directory's tree  : $REPO_ROOT" >&2
-  echo "  Invoke the gate.sh that belongs to the tree you want checked" >&2
-  echo "  (e.g. cd there and run ./scripts/gate.sh) instead of another" >&2
-  echo "  checkout's absolute path." >&2
-  exit 2
-fi
+# Resolve REPO_ROOT from the caller's shell cwd (not from this script's own
+# on-disk location) and hard-fail if the invoked file and the cwd disagree
+# on which git tree is meant — see scripts/lib/repo_root.sh for the full
+# rationale. This script delegates to sibling scripts as
+# "$SCRIPT_DIR/<name>.sh" (patch-coverage.sh, cascade-bench-compare.sh
+# below), which source the same helper, so the guard applies consistently
+# one level down too.
+# shellcheck source=lib/repo_root.sh
+source "$SCRIPT_DIR/lib/repo_root.sh"
 
 cd "$REPO_ROOT"
 
