@@ -1132,6 +1132,13 @@ pub fn resolve_font_size(
 /// — `padding` の `Px(0.0)` fallback と同じ側であり、border-width の
 /// "他に選びようがなかった値" 側ではない。
 ///
+/// **`vertical-align: <length>` も同じ側 (`letter-spacing`/`word-spacing`
+/// 寄り)** — [`resolve_vertical_align`] 経由でこの fallback を踏む場合
+/// (`1lh` を `line-height: normal` 下で書いた場合)、`0px` は CSS 2.1
+/// §10.8.1 の `<length>` 自身の spec verbatim ("The value `0cm` means the
+/// same as `baseline`.") と一致する — `0px` shift = `baseline` と同じ
+/// 効果であり、border-width の "他に選びようがなかった値" 側ではない。
+///
 /// この不整合は認識した上で **今回は直さない** — root 原因は
 /// [`used_line_height_length`] doc の "normal" wall そのもの (real font
 /// metrics が style 層に無い) であり、根本修正 (`ComputedLength` に
@@ -2909,6 +2916,27 @@ mod tests {
                 &CTX
             ),
             VerticalAlign::Length(Length::Px(-6.0)),
+        );
+    }
+
+    /// `own_line_height: None` (`normal` で解決不能) makes `1lh` fall back
+    /// to `Px(0.0)` — same [`resolve_length`] "Finding B" fallback
+    /// `resolve_flex_basis_falls_back_to_auto_when_lh_unresolvable` above
+    /// pins, but landing on the *benign* side of that doc's distinction:
+    /// `0px` shift here matches CSS 2.1 §10.8.1's own spec verbatim for
+    /// `<length>` ("The value `0cm` means the same as `baseline`."), not an
+    /// arbitrary "no better option" value (`resolve_length` doc's "Finding
+    /// B" section).
+    #[test]
+    fn resolve_vertical_align_length_falls_back_to_zero_when_lh_unresolvable() {
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Lh(2.0)),
+                ComputedLength(20.0),
+                None,
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(0.0)),
         );
     }
 
