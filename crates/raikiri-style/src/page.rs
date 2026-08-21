@@ -2701,7 +2701,7 @@ mod tests {
         FloatValue, FontStyle, FontWeightValue, GridAutoFlowValue, GridInflexibleBreadth,
         GridLineShorthand, GridLineValue, GridRepeatCount, GridTemplateAreaEntry,
         GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth,
-        GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto,
+        GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto,
         LengthOrNormal, LineHeight, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
         PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, SelfAlignmentValue, TextAlign,
         TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
@@ -4107,7 +4107,8 @@ mod tests {
             "@page { \
              grid-template-columns: 50% max-content minmax(min-content, 2fr) \
              minmax(max-content, 3fr) minmax(auto, 10px) minmax(20px, max-content) \
-             minmax(20%, min-content) fit-content(40%) auto repeat(2, min-content); \
+             minmax(20%, min-content) fit-content(40%) fit-content(25px) auto \
+             repeat(2, min-content); \
              grid-template-rows: none; \
              }",
             &root,
@@ -4120,7 +4121,7 @@ mod tests {
             // failure, which doesn't happen while this test passes.
             panic!("expected a track list");
         };
-        assert_eq!(list.components.len(), 10);
+        assert_eq!(list.components.len(), 11);
         assert_eq!(
             list.components[0],
             GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Length(
@@ -4172,10 +4173,14 @@ mod tests {
         );
         assert_eq!(
             list.components[8],
-            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Auto))
+            GridTrackListComponent::Size(GridTrackSize::FitContent(Length::Px(25.0)))
         );
         assert_eq!(
             list.components[9],
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Auto))
+        );
+        assert_eq!(
+            list.components[10],
             GridTrackListComponent::Repeat(GridTrackRepeat {
                 count: GridRepeatCount::Count(2),
                 line_names: vec![vec![], vec![]],
@@ -5752,6 +5757,26 @@ mod tests {
                 GridTrackSize::FitContent(Length::Percent(20.0)),
             ]))),
             None,
+        );
+        // `grid_template_tracks`'s `GridTemplateTracks::List` arm must scan
+        // a top-level `repeat()`'s nested tracks too, not just bare `Size`
+        // components — `GridAutoColumns`/`GridAutoRows` above never route
+        // through `grid_template_tracks` at all (they carry a bare
+        // `Vec<GridTrackSize>`, not a `GridTemplateTracks`).
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::GridTemplateColumns(
+                GridTemplateTracks::List(std::sync::Arc::new(GridTrackList {
+                    line_names: vec![vec![], vec![]],
+                    components: vec![GridTrackListComponent::Repeat(GridTrackRepeat {
+                        count: GridRepeatCount::Count(2),
+                        line_names: vec![vec![], vec![]],
+                        tracks: vec![GridTrackSize::Breadth(GridTrackBreadth::Length(
+                            Length::Em(1.0)
+                        ))],
+                    })],
+                }))
+            )),
+            Some("Length::Em"),
         );
     }
 
