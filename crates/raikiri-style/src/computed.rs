@@ -23,6 +23,7 @@ use crate::property::{
 use crate::resolve::{
     ComputedBorder, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+    ComputedTextShadow, empty_computed_text_shadow_list,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
@@ -67,7 +68,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / text_shadow、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -869,6 +870,22 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-align-3/#propdef-column-gap>, "Inherited:
     /// no"). Same shape as [`Self::row_gap`].
     pub column_gap: ComputedLengthPercentageOrNormal,
+    /// `text-shadow`. **inherited**, initial: empty list (= `none`) (CSS
+    /// Text Decoration Module Level 3 §4
+    /// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>,
+    /// "Initial: none" / "Inherited: yes"). Computed value: "a list, each
+    /// item consisting of three absolute lengths plus a computed color"
+    /// ([`ComputedTextShadow`] doc — `currentcolor` stays symbolic, used-value
+    /// resolution is paint scope responsibility, mirroring
+    /// [`Self::text_decoration_color`]).
+    ///
+    /// # Downstream handoff (future scope, style-scope confined)
+    ///
+    /// This field carries the cascade static side seed only, mirroring
+    /// [`Self::text_decoration_line`] — actually painting the shadow
+    /// (including the blur approximation) is raikiri-paint scope and not yet
+    /// wired.
+    pub text_shadow: Arc<Vec<ComputedTextShadow>>,
 }
 
 impl ComputedValues {
@@ -1006,6 +1023,10 @@ impl ComputedValues {
             // initial は `normal`。
             row_gap: ComputedLengthPercentageOrNormal::Normal,
             column_gap: ComputedLengthPercentageOrNormal::Normal,
+            // CSS Text Decoration Module Level 3 §4: text-shadow initial
+            // は `none` — shared empty Arc slot
+            // (`empty_computed_text_shadow_list` doc 参照)。
+            text_shadow: empty_computed_text_shadow_list(),
         }
     }
 
@@ -1017,7 +1038,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / text_shadow、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
     ///
@@ -1076,6 +1097,7 @@ impl ComputedValues {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::property::TextShadowColor;
 
     #[test]
     fn initial_values_match_spec() {
@@ -1320,13 +1342,22 @@ mod tests {
             // 異なる値。
             row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
             column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
+            // CSS Text Decoration Module Level 3 §4: initial (`none` =
+            // 空 list) と異なる値 (non_initial_parent の趣旨どおり全 field を
+            // 非 initial に)。
+            text_shadow: Arc::new(vec![ComputedTextShadow {
+                offset_x: ComputedLength(1.0),
+                offset_y: ComputedLength(2.0),
+                blur_radius: ComputedLength(3.0),
+                color: TextShadowColor::Resolved(CssColor::BLACK),
+            }]),
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 52 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 53 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1362,6 +1393,8 @@ mod tests {
         assert_eq!(child.word_spacing, parent.word_spacing);
         // CSS Text 3 §3: white-space は inherited。
         assert_eq!(child.white_space, parent.white_space);
+        // CSS Text Decoration Module Level 3 §4: text-shadow は inherited。
+        assert_eq!(child.text_shadow, parent.text_shadow);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);

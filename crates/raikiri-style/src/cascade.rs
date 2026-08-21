@@ -3755,7 +3755,13 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::RowGap(_)
         | PropertyValue::ColumnGap(_)
         | PropertyValue::Gap(_)
-        | PropertyValue::PlaceContent(_)) => v,
+        | PropertyValue::PlaceContent(_)
+        // `text-shadow`'s per-item lengths (offset-x/offset-y/blur-radius)
+        // need the *declaring node's own* font-size (phase 3), not the
+        // inheritance parent's — same shape as `LetterSpacing`/`WordSpacing`
+        // above, nothing for phase 2 to resolve here. The `<color>`
+        // component carries no length either (`TextShadowColor` doc).
+        | PropertyValue::TextShadow(_)) => v,
     })
 }
 
@@ -4270,6 +4276,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.align_content = p.align;
             target.justify_content = p.justify;
         }
+        // CSS Text Decoration Module Level 3 §4。specified 表現
+        // (`Arc<Vec<TextShadowItem>>`) のまま格納 — 絶対化 (各 item の length
+        // 3 本) は phase 3 (`SpecifiedValues::finalize` / `absolutize_with`)
+        // に委ねる (`LetterSpacing`/`FlexBasis` arm と同じ handling)。
+        // inherited property のため、cascade winner が無い child は
+        // `inherit_from` で親値 (lift 済み) を引き継ぐ。`Arc` は Clone が
+        // bump のみなので by-value 代入で十分。
+        PropertyValue::TextShadow(shadows) => target.text_shadow = shadows,
     }
 }
 
@@ -4285,7 +4299,7 @@ mod tests {
     };
     use crate::resolve::{
         ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-        ComputedLineHeight,
+        ComputedLineHeight, ComputedTextShadow,
     };
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
@@ -9079,6 +9093,90 @@ mod tests {
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             r.computed[span].letter_spacing,
+            ComputedLength(8.0),
+            "child must inherit the parent's already-computed 8px, not re-resolve \
+             0.5em against its own 32px font-size (which would wrongly yield 16px)"
+        );
+    }
+
+    // ── text-shadow wire-through (CSS Text Decoration Module Level 3 §4) ──
+
+    #[test]
+    fn text_shadow_wired_through_cascade_from_inline_style() {
+        use crate::property::{CssColor, TextShadowColor};
+        // `em` (not `px`) so this also exercises phase 3 absolutization
+        // (`resolve_text_shadow_item`), not just the `apply_value` arm's
+        // pass-through assignment — same rationale as
+        // `letter_spacing_wired_through_cascade_from_inline_style`.
+        let cv = cascade_doc("", "p", Some("text-shadow: 0.5em 1em red"));
+        assert_eq!(
+            *cv.text_shadow,
+            vec![ComputedTextShadow {
+                offset_x: ComputedLength(8.0),
+                offset_y: ComputedLength(16.0),
+                blur_radius: ComputedLength::ZERO,
+                color: TextShadowColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }),
+            }]
+        );
+    }
+
+    #[test]
+    fn text_shadow_none_is_empty_computed_list() {
+        let cv = cascade_doc("", "p", Some("text-shadow: none"));
+        assert!(cv.text_shadow.is_empty());
+    }
+
+    #[test]
+    fn text_shadow_inherits_from_parent_element() {
+        // CSS Text Decoration Module Level 3 §4: **inherited**.
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-shadow: 1px 1px black"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_shadow.len(), 1);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].text_shadow, r.computed[p].text_shadow,
+            "child should inherit text-shadow from parent (CSS Text Decoration \
+             Module Level 3 §4 Inherited: yes)"
+        );
+    }
+
+    #[test]
+    fn text_shadow_child_own_value_wins_over_inherited() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-shadow: 1px 1px black"));
+        let span = doc.push_element(p, "span", Some("text-shadow: none"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_shadow.len(), 1);
+        assert!(r.computed[span].text_shadow.is_empty());
+    }
+
+    /// Inheritance carries the parent's already-**computed** lengths, not the
+    /// specified `em` re-resolved against the child's own font-size — same
+    /// shape as `letter_spacing_inherited_em_value_does_not_re_resolve_against_child_font_size`.
+    #[test]
+    fn text_shadow_inherited_em_value_does_not_re_resolve_against_child_font_size() {
+        let mut doc = TestDoc::new();
+        // parent: font-size 16px, text-shadow 0.5em -> computed 8px.
+        let p = doc.push_element(0, "p", Some("font-size: 16px; text-shadow: 0.5em 0.5em"));
+        // child: font-size 32px, no text-shadow declaration of its own.
+        let span = doc.push_element(p, "span", Some("font-size: 32px"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_shadow[0].offset_x, ComputedLength(8.0));
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].text_shadow[0].offset_x,
             ComputedLength(8.0),
             "child must inherit the parent's already-computed 8px, not re-resolve \
              0.5em against its own 32px font-size (which would wrongly yield 16px)"

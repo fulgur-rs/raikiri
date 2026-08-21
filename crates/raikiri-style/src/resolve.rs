@@ -178,10 +178,12 @@
 //!
 //! [`ComputedLength`] はこの trade の対象外 — 詳細は同型の doc を参照。
 
+use std::sync::{Arc, OnceLock};
+
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     Border, BorderColor, BorderStyle, FlexBasisValue, Length, LengthOrAuto, LengthOrNormal,
-    LineHeight, VerticalAlign,
+    LineHeight, TextShadowColor, TextShadowItem, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -593,6 +595,83 @@ impl ComputedBorder {
     /// `border-*-style` の computed value への read-only accessor。
     pub fn style(&self) -> BorderStyle {
         self.style
+    }
+}
+
+/// `text-shadow` の 1 shadow entry の computed value。
+///
+/// CSS Text Decoration Module Level 3 §4
+/// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property> の
+/// Computed value: "a list, each item consisting of three absolute lengths
+/// plus a computed color"。[`TextShadowItem`] (specified 層、`crate::property`)
+/// の length 3 本 (`offset_x`/`offset_y`/`blur_radius`) を [`ComputedLength`]
+/// に絶対化したもの — `color` は [`ComputedBorder::color`] / used-value
+/// resolution が paint scope 責務な点も含め同じ扱い ([`TextShadowColor`] doc
+/// 参照)。
+///
+/// `#[non_exhaustive]` — sibling [`ComputedBorder`] と同じ判断 (future field
+/// の non-breaking 追加)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComputedTextShadow {
+    /// 絶対化済みの `offset-x`。
+    pub offset_x: ComputedLength,
+    /// 絶対化済みの `offset-y`。
+    pub offset_y: ComputedLength,
+    /// 絶対化済みの `blur-radius`。省略時 (specified 層で `Length::Px(0.0)`
+    /// に eager fill 済み、[`TextShadowItem`] doc 参照) は `ComputedLength::ZERO`。
+    pub blur_radius: ComputedLength,
+    /// `<color>` — `currentcolor` keyword を保持したまま computed 層に残る
+    /// (used-value 解決は paint 責務、[`TextShadowColor`] doc 参照)。
+    pub color: TextShadowColor,
+}
+
+/// 空 `text-shadow` list (`none`) を表す computed 層の shared Arc —
+/// [`crate::property::empty_text_shadow_list`] の computed-layer counterpart
+/// (同じ `OnceLock` shared-slot pattern、per-node allocation regression 回避)。
+/// specified 層 (`Arc<Vec<TextShadowItem>>`) と computed 層
+/// (`Arc<Vec<ComputedTextShadow>>`) は phase 3 で型が変わる (length が
+/// [`Length`] → [`ComputedLength`] に絶対化される) ため、別 slot が要る。
+pub(crate) fn empty_computed_text_shadow_list() -> Arc<Vec<ComputedTextShadow>> {
+    static EMPTY: OnceLock<Arc<Vec<ComputedTextShadow>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
+/// [`TextShadowItem`] (specified) を絶対化して [`ComputedTextShadow`] にする
+/// (**phase 3** — 自 node 基準)。
+///
+/// 3 本の length はいずれも `<length>` (percentage 不可、[`TextShadowItem`]
+/// doc 参照) なので、percentage 対応の [`resolve_length_percentage`] ではなく
+/// percentage 非対応の [`resolve_length`] へ delegate する
+/// ([`resolve_length_or_normal`] が `letter-spacing`/`word-spacing` の
+/// `<length>` 成分を同じ理由で [`resolve_length`] に委譲するのと同型)。
+/// `color` は length を運ばないため素通し。
+pub fn resolve_text_shadow_item(
+    specified: TextShadowItem,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedTextShadow {
+    ComputedTextShadow {
+        offset_x: resolve_length(specified.offset_x, font_size, own_line_height, ctx),
+        offset_y: resolve_length(specified.offset_y, font_size, own_line_height, ctx),
+        blur_radius: resolve_length(specified.blur_radius, font_size, own_line_height, ctx),
+        color: specified.color,
+    }
+}
+
+/// 親の computed `text-shadow` 1 item を specified 表現に **lift** する
+/// (inheritance seed 用)。
+///
+/// [`lift_length_or_normal`] と同じ lossless / 不動点性 — [`resolve_length`]
+/// の `Px` arm は identity なので、lift した値を phase 3 に再度通しても
+/// 二重適用にならない。`color` は length を運ばないため素通し。
+pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
+    TextShadowItem {
+        offset_x: Length::Px(computed.offset_x.0),
+        offset_y: Length::Px(computed.offset_y.0),
+        blur_radius: Length::Px(computed.blur_radius.0),
+        color: computed.color,
     }
 }
 

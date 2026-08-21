@@ -35,7 +35,8 @@ pub use style_dom::{
 
 pub mod property;
 pub use property::{
-    CssColor, DisplayValue, Length, LengthOrAuto, LengthOrNormal, PropertyKey, PropertyValue, Sides,
+    CssColor, DisplayValue, Length, LengthOrAuto, LengthOrNormal, PropertyKey, PropertyValue,
+    Sides, TextShadowColor, TextShadowItem,
 };
 
 pub mod rule;
@@ -64,11 +65,11 @@ pub mod resolve;
 pub use resolve::{
     ComputedBorder, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-    ResolveContext, lift_font_size, lift_length_or_normal, lift_length_percentage,
-    lift_line_height, resolve_border, resolve_flex_basis, resolve_font_size,
-    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
-    used_line_height_length,
+    ComputedTextShadow, ResolveContext, lift_font_size, lift_length_or_normal,
+    lift_length_percentage, lift_line_height, lift_text_shadow_item, resolve_border,
+    resolve_flex_basis, resolve_font_size, resolve_length_or_normal, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
+    resolve_margin_length_or_auto, resolve_text_shadow_item, used_line_height_length,
 };
 
 pub mod specified;

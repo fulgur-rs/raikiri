@@ -34,17 +34,18 @@ use crate::property::{
     Direction, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
     FontStyle, Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap,
     OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
-    initial_font_family, resolve_display_for_float, resolve_overflow,
+    TextDecorationStyle, TextShadowItem, TextTransform, VerticalAlign, Visibility, WhiteSpace,
+    WordBreak, ZIndexValue, empty_content_list, empty_counter_entries, empty_string_set_entries,
+    empty_text_shadow_list, initial_font_family, resolve_display_for_float, resolve_overflow,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
-    ComputedLength, ComputedLineHeight, ResolveContext, lift_font_size, lift_length_or_normal,
-    lift_length_percentage, lift_line_height, resolve_border, resolve_flex_basis,
-    resolve_font_size, resolve_length_or_normal, resolve_length_percentage,
-    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_vertical_align, used_line_height_length,
+    ComputedLength, ComputedLineHeight, ResolveContext, empty_computed_text_shadow_list,
+    lift_font_size, lift_length_or_normal, lift_length_percentage, lift_line_height,
+    lift_text_shadow_item, resolve_border, resolve_flex_basis, resolve_font_size,
+    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
+    resolve_text_shadow_item, resolve_vertical_align, used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -61,7 +62,7 @@ use crate::resolve::{
 ///
 /// | 層 | field |
 /// |---|---|
-/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` |
+/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `text_shadow` |
 /// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
@@ -293,6 +294,15 @@ pub struct SpecifiedValues {
     pub row_gap: LengthOrNormal,
     /// `column-gap` の **specified** value。[`Self::row_gap`] と同じ絶対化 phase。
     pub column_gap: LengthOrNormal,
+    /// `text-shadow` の **specified** value。phase 3
+    /// ([`resolve_text_shadow_item`]) で各 item の length 3 本が絶対化される
+    /// — [`Self::padding`] と同じ「specified 層のまま留まる」分類だが、こちらは
+    /// **inherited** かつ list-shaped (`Sides<T>` の 4 side ではなく可変長
+    /// list) — [`ComputedValues::text_shadow`] doc 参照。`Self::inherit_from`
+    /// は (`padding` のように initial へ再セットするのではなく) 親の
+    /// computed 値を [`lift_text_shadow_item`] で lift して seed する
+    /// (`Self::text_indent` と同じ扱い)。
+    pub text_shadow: Arc<Vec<TextShadowItem>>,
 }
 
 impl SpecifiedValues {
@@ -400,6 +410,10 @@ impl SpecifiedValues {
             // initial は `normal`。
             row_gap: LengthOrNormal::Normal,
             column_gap: LengthOrNormal::Normal,
+            // CSS Text Decoration Module Level 3 §4: text-shadow initial
+            // は `none` — shared empty Arc slot ([`empty_text_shadow_list`]
+            // doc 参照)。
+            text_shadow: empty_text_shadow_list(),
         }
     }
 
@@ -478,6 +492,24 @@ impl SpecifiedValues {
             word_spacing: lift_length_or_normal(parent.word_spacing),
             // CSS Text 3 §3: white-space は inherited。
             white_space: parent.white_space,
+            // CSS Text Decoration Module Level 3 §4: text-shadow は
+            // inherited。computed `Arc<Vec<ComputedTextShadow>>` → specified
+            // `Arc<Vec<TextShadowItem>>` の per-item lift ([`lift_text_shadow_item`]、
+            // `Px` は不動点)。空 list は shared Arc slot を再利用 (per-node
+            // allocation 回避、`Self::text_indent` 等の他 lift と違い list 全体を
+            // map する必要があるため、空 check は他 non-inherited list property
+            // (`content` 等) と同じ判断)。
+            text_shadow: if parent.text_shadow.is_empty() {
+                empty_text_shadow_list()
+            } else {
+                Arc::new(
+                    parent
+                        .text_shadow
+                        .iter()
+                        .map(|c| lift_text_shadow_item(*c))
+                        .collect(),
+                )
+            },
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
             display: DisplayValue::Inline,
@@ -972,6 +1004,23 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            // `text-shadow` — each item's 3 lengths absolutized against this
+            // node's own `font_size`/`own_line_height` basis
+            // (`resolve_text_shadow_item`), `<color>` passed through
+            // unchanged (no length). Empty list (`none`) reuses the shared
+            // computed-layer empty Arc slot rather than allocating.
+            text_shadow: if self.text_shadow.is_empty() {
+                empty_computed_text_shadow_list()
+            } else {
+                Arc::new(
+                    self.text_shadow
+                        .iter()
+                        .map(|item| {
+                            resolve_text_shadow_item(*item, font_size, own_line_height, ctx)
+                        })
+                        .collect(),
+                )
+            },
         }
     }
 }
@@ -1013,9 +1062,11 @@ pub(crate) const INITIAL_BORDER: Border = Border {
 mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
+    use crate::property::TextShadowColor;
     use crate::resolve::{
         ComputedBorder, ComputedFlexBasis, ComputedLengthPercentage,
         ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+        ComputedTextShadow,
     };
 
     /// `root_font_size` = 16px の共通 context。
@@ -1142,6 +1193,12 @@ mod tests {
             align_self: AlignSelfValue::Value(SelfAlignmentValue::Center),
             row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
             column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
+            text_shadow: Arc::new(vec![ComputedTextShadow {
+                offset_x: ComputedLength(1.0),
+                offset_y: ComputedLength(2.0),
+                blur_radius: ComputedLength(3.0),
+                color: TextShadowColor::Resolved(CssColor::BLACK),
+            }]),
         }
     }
 
@@ -1186,6 +1243,18 @@ mod tests {
             LengthOrNormal::Length(Length::Px(2.0))
         );
         assert_eq!(child.word_spacing, LengthOrNormal::Length(Length::Px(4.0)));
+        // CSS Text Decoration Module Level 3 §4: text-shadow は
+        // inherited。computed → specified の per-item lift
+        // (`lift_text_shadow_item`、px 表現) — `<color>` は素通し。
+        assert_eq!(
+            *child.text_shadow,
+            vec![TextShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(3.0),
+                color: TextShadowColor::Resolved(CssColor::BLACK),
+            }]
+        );
     }
 
     #[test]
@@ -1582,5 +1651,65 @@ mod tests {
         assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(16.0));
         assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(4.0));
         assert_eq!(cv.padding.left, ComputedLengthPercentage::Percent(5.0));
+    }
+
+    /// `text-shadow` の list-shaped phase 3 — 直上
+    /// `finalize_absolutizes_each_side_independently` の `Sides<Length>`
+    /// precedent を可変長 list に一般化したもの。各 item の
+    /// 3 length (`offset_x`/`offset_y`/`blur_radius`) が own-node font-size
+    /// basis で独立に絶対化される (`resolve_text_shadow_item`)、`<color>` は
+    /// 素通し ([`TextShadowColor`] doc)。
+    #[test]
+    fn finalize_absolutizes_each_text_shadow_item_independently() {
+        let mut sv = SpecifiedValues::initial();
+        sv.text_shadow = Arc::new(vec![
+            TextShadowItem {
+                offset_x: Length::Em(1.0),
+                offset_y: Length::Rem(2.0),
+                blur_radius: Length::Pt(3.0),
+                color: TextShadowColor::CurrentColor,
+            },
+            TextShadowItem {
+                offset_x: Length::Px(4.0),
+                offset_y: Length::Px(5.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::Resolved(CssColor::BLACK),
+            },
+        ]);
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(
+            *cv.text_shadow,
+            vec![
+                ComputedTextShadow {
+                    // 1em * own font-size (16px, `SpecifiedValues::initial`).
+                    offset_x: ComputedLength(16.0),
+                    // 2rem * root font-size (16px, `CTX`).
+                    offset_y: ComputedLength(32.0),
+                    // 3pt = 3 * 4/3 px = 4px.
+                    blur_radius: ComputedLength(4.0),
+                    color: TextShadowColor::CurrentColor,
+                },
+                ComputedTextShadow {
+                    offset_x: ComputedLength(4.0),
+                    offset_y: ComputedLength(5.0),
+                    blur_radius: ComputedLength::ZERO,
+                    color: TextShadowColor::Resolved(CssColor::BLACK),
+                },
+            ]
+        );
+    }
+
+    /// 空 list (`none`) は allocation せず shared computed-empty-Arc slot を
+    /// 再利用する — [`Self::absolutize_with`] の `text_shadow` arm doc 参照。
+    #[test]
+    fn finalize_empty_text_shadow_list_reuses_shared_computed_empty_arc() {
+        let sv = SpecifiedValues::initial();
+        assert!(sv.text_shadow.is_empty());
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert!(cv.text_shadow.is_empty());
+        assert!(Arc::ptr_eq(
+            &cv.text_shadow,
+            &ComputedValues::initial().text_shadow
+        ));
     }
 }

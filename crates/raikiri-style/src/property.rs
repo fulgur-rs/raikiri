@@ -94,6 +94,16 @@ pub(crate) fn initial_font_family() -> Arc<Vec<Atom>> {
         .clone()
 }
 
+/// 空 `text-shadow` list (`none`) を表す shared Arc — [`empty_content_list`]
+/// 等と同じ `OnceLock` 保持の shared-slot pattern (per-node allocation
+/// regression 回避)。`none` = 空 list という表現は [`parse_content`] /
+/// [`parse_counter_property`] と同じ precedent
+/// ([`TextShadowItem`] doc 参照)。
+pub(crate) fn empty_text_shadow_list() -> Arc<Vec<TextShadowItem>> {
+    static EMPTY: OnceLock<Arc<Vec<TextShadowItem>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
 /// RGBA color (0-255 per channel、`a` は 255 = fully opaque)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CssColor {
@@ -3305,6 +3315,87 @@ pub enum WhiteSpace {
     PreLine,
 }
 
+/// `text-shadow` の 1 shadow entry が運ぶ `<color>` 成分 — [`BorderColor`] /
+/// [`TextDecorationColor`] と同型の `currentcolor` keyword / resolved
+/// `<color>` distinction。
+///
+/// CSS Text Decoration Module Level 3 §4 "Text Shadows: the text-shadow
+/// property" <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>:
+/// "Values are interpreted as for box-shadow." — box-shadow の `<shadow>`
+/// syntax (CSS Backgrounds 3 §6.1 "Drop Shadows: the box-shadow property"
+/// <https://www.w3.org/TR/css-backgrounds-3/#box-shadow>)
+/// で `<color>` が省略された場合、used-value は `currentcolor` と同じ
+/// (CSS Color 3 §4.4 <https://www.w3.org/TR/css-color-3/#currentColor-def>)。
+/// used-value resolution (currentcolor → 同 node の computed `color`
+/// property) は paint scope 責務 — rationale は [`BorderColor`] doc の「なぜ
+/// cascade static side で enum 保持するか」節と同型。
+///
+/// `#[non_exhaustive]` — sibling [`BorderColor`] / [`TextDecorationColor`]
+/// と同じ判断 (future variant、例: CSS Color 4 §6.2 system-color keyword の
+/// non-breaking 追加)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextShadowColor {
+    /// `currentcolor` keyword — `<color>` 省略時の spec-mandated 扱い
+    /// (box-shadow 経由の継承、上記 doc 参照)。
+    CurrentColor,
+    /// Resolved `<color>` value — author が hex / named / `rgb(a)` /
+    /// `transparent` で明示指定した場合の payload。
+    Resolved(CssColor),
+}
+
+/// `text-shadow` の 1 shadow entry (comma-separated list の 1 要素)。
+///
+/// CSS Text Decoration Module Level 3 §4
+/// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property> —
+/// "Values are interpreted as for box-shadow. (But note that spread values
+/// and the inset keyword are not allowed.)" box-shadow の `<shadow>` syntax
+/// (CSS Backgrounds 3 §6.1 "Drop Shadows: the box-shadow property") を
+/// `inset` と 4 番目の length (spread-distance)
+/// を除いた形で narrow したもの — grammar は `<color>? && <length>{2,3}`
+/// (offset-x, offset-y, 省略可能な blur-radius)。
+///
+/// # 各成分の初期値埋め (省略成分)
+///
+/// - `blur_radius` 省略 → `Length::Px(0.0)` — spec の computed value 定義
+///   ("a list, each item consisting of three absolute lengths plus a
+///   computed color") が blur-radius を常に 3 番目の length として要求する
+///   ため、[`parse_border_shorthand`] の「省略成分は spec の initial value で
+///   埋める」precedent に倣い parse 時点で eager に埋める (`Option<Length>`
+///   を specified 層まで持ち越さない)。
+/// - `color` 省略 → [`TextShadowColor::CurrentColor`] — [`BorderColor`] の
+///   `color.unwrap_or(BorderColor::CurrentColor)` precedent と同型
+///   ([`parse_border_shorthand`] 参照)。
+///
+/// # Non-negative blur-radius
+///
+/// blur-radius (3 番目の length) は non-negative — CSS Backgrounds 3 §6.1
+/// "Drop Shadows: the box-shadow property" の `<shadow>` syntax (box-shadow /
+/// text-shadow 共通) が blur-radius / spread
+/// distance に "Negative values are invalid" を課す。offset-x / offset-y
+/// (1・2 番目の length) にこの制約は無い (負値可、box-shadow の offset と
+/// 同型)。parse 側の実装は [`parse_text_shadow_lengths`] 参照。
+///
+/// # `#[non_exhaustive]`
+///
+/// future field (例: box-shadow 導入時に共有する `spread`/`inset` 相当の
+/// 拡張余地) の non-breaking 追加のため — sibling [`Border`] と同 pattern。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextShadowItem {
+    /// `offset-x` — `<length>` (percentage 不可、CSS Text Decoration Module
+    /// Level 3 §4 "Percentages: N/A")。負値可。
+    pub offset_x: Length,
+    /// `offset-y` — [`Self::offset_x`] と同じ grammar。
+    pub offset_y: Length,
+    /// `blur-radius` — `<length [0,∞]>`。省略時 `Length::Px(0.0)` (上記
+    /// doc 参照)。
+    pub blur_radius: Length,
+    /// `<color>` 成分 — 省略時は [`TextShadowColor::CurrentColor`] (上記
+    /// doc 参照)。
+    pub color: TextShadowColor,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -4099,6 +4190,19 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] が [`Self::AlignContent`] /
     /// [`Self::JustifyContent`] の 2 longhand に展開する。
     PlaceContent(PlaceContentShorthand),
+    /// `text-shadow: none | <shadow>#` — **inherited**、initial: `none`
+    /// (CSS Text Decoration Module Level 3 §4
+    /// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>,
+    /// "Initial: none" / "Inherited: yes")。`none` は空 list で表現する
+    /// ([`TextShadowItem`] doc 参照、[`Self::CounterReset`] 等と同じ
+    /// precedent)。computed value = 各要素の length を絶対化した list
+    /// (spec: "a list, each item consisting of three absolute lengths plus a
+    /// computed color") — 絶対化は phase 3 に委ねる ([`Self::LetterSpacing`]
+    /// と同じ「specified 表現のまま格納」handling)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    TextShadow(Arc<Vec<TextShadowItem>>),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -4332,6 +4436,11 @@ pub enum PropertyKey {
     // `place-content` shorthand (CSS Box Alignment Module Level 3 §5.2) —
     // both longhands (`AlignContent`/`JustifyContent`) declared above.
     PlaceContent,
+    // text-shadow (CSS Text Decoration Module Level 3 §4, semantics on
+    // the matching PropertyValue::TextShadow variant; sibling PropertyKey
+    // variants carry no per-variant docs per crate convention). 末尾配置の
+    // 理由は PropertyValue::TextShadow の doc 参照。
+    TextShadow,
 }
 
 impl PropertyValue {
@@ -4424,6 +4533,7 @@ impl PropertyValue {
             PropertyValue::ColumnGap(_) => PropertyKey::ColumnGap,
             PropertyValue::Gap(_) => PropertyKey::Gap,
             PropertyValue::PlaceContent(_) => PropertyKey::PlaceContent,
+            PropertyValue::TextShadow(_) => PropertyKey::TextShadow,
         }
     }
 }
@@ -4772,6 +4882,18 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Box Alignment Module Level 3 §5.2
         // <https://www.w3.org/TR/css-align-3/#propdef-place-content>.
         "place-content" => parse_place_content_shorthand(input).map(PropertyValue::PlaceContent),
+        // CSS Text Decoration Module Level 3 §4 text-shadow。
+        // Arc wrap は cascade memory DoS 対策 (同種の Content/StringSet/
+        // counter-* fix の pattern 踏襲)、空 list (`none`) は shared Arc slot
+        // (`empty_text_shadow_list`) に落として per-node allocation
+        // regression を避ける。
+        "text-shadow" => parse_text_shadow(input).map(|v| {
+            if v.is_empty() {
+                PropertyValue::TextShadow(empty_text_shadow_list())
+            } else {
+                PropertyValue::TextShadow(Arc::new(v))
+            }
+        }),
         _ => None,
     }
 }
@@ -7744,6 +7866,131 @@ fn parse_leader_type(input: &mut Parser<'_, '_>) -> Option<LeaderType> {
         "space" => Some(LeaderType::Space),
         _ => None,
     }
+}
+
+/// `text-shadow: <color>? && <length>{2,3}` 成分の `<color>` slot。
+///
+/// [`parse_border_color`] / [`parse_text_decoration_color`] と同型 —
+/// `currentcolor` keyword (CSS Color 3 §4.4) を先取りしてから
+/// [`parse_color`] (hex / named / `rgb(a)` / `transparent`) に委譲する。
+/// 独立した helper にしてあるのは、他 2 者と異なる payload 型
+/// ([`TextShadowColor`]) を持つため。
+fn parse_text_shadow_color(input: &mut Parser<'_, '_>) -> Option<TextShadowColor> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("currentcolor"))
+        .is_ok()
+    {
+        return Some(TextShadowColor::CurrentColor);
+    }
+    parse_color(input).map(TextShadowColor::Resolved)
+}
+
+/// `<length>{2,3}` の contiguous run (offset-x offset-y blur-radius?) を 1
+/// unit として parse する — [`TextShadowItem`] doc の「Non-negative
+/// blur-radius」節参照。
+///
+/// blur-radius は [`parse_non_negative_length`] で non-negative を
+/// enforce、省略時は `Length::Px(0.0)` (同 doc の「各成分の初期値埋め」節)。
+/// caller ([`parse_text_shadow_item`]) が本関数全体を `try_parse` で包む
+/// ことで、offset-x の parse 失敗 (= 最初の token が `<color>` 等) 時に
+/// x/y いずれの消費も正しく rewind される
+/// ([`parse_length_value`] は token を unconditional に消費するため、
+/// [`parse_margin_side`] doc の「Order of alternative」節と同じ理由で
+/// checkpoint 経由の rewind が要る)。
+fn parse_text_shadow_lengths<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<(Length, Length, Length), ParseError<'i, ()>> {
+    let x = parse_length_value(input, false).ok_or_else(|| input.new_custom_error(()))?;
+    let y = parse_length_value(input, false).ok_or_else(|| input.new_custom_error(()))?;
+    let blur = input
+        .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+            parse_non_negative_length(i).ok_or_else(|| i.new_custom_error(()))
+        })
+        .unwrap_or(Length::Px(0.0));
+    Ok((x, y, blur))
+}
+
+/// `text-shadow` の 1 shadow entry — `<color>? && <length>{2,3}`。
+///
+/// # `&&` (both-required, any-order) grammar semantics
+///
+/// spec CSS Values 4 §2.2 "Component Value Combinators"
+/// <https://www.w3.org/TR/css-values-4/#component-combinators> verbatim: "A
+/// double ampersand (&&) separates two or more components, all of which must
+/// occur, in any order." — 本 grammar では:
+/// - length run (`<length>{2,3}`) は必須、1 回のみ
+/// - `<color>` はその自身の `?` multiplier により 0 or 1 回
+/// - 両者の順序は自由 (`1px 1px red` / `red 1px 1px` 全て valid)、ただし
+///   length run 自体は contiguous (`1px red 1px` のように間へ `<color>` を
+///   挟むことはできない — [`parse_text_shadow_lengths`] が 1 unit として
+///   parse する)
+///
+/// # Loop 実装
+///
+/// [`parse_border_shorthand`] の `||` loop と同じ shape — unfilled slot
+/// (length run / color) を loop で peel、`try_parse` で order-independent に
+/// 試す。length run を先に試すのは任意の順序選択 (どちらを先に試しても
+/// 結果は変わらない、`try_parse` が失敗時に必ず rewind するため)。
+fn parse_text_shadow_item(input: &mut Parser<'_, '_>) -> Option<TextShadowItem> {
+    let mut lengths: Option<(Length, Length, Length)> = None;
+    let mut color: Option<TextShadowColor> = None;
+
+    loop {
+        if lengths.is_some() && color.is_some() {
+            break;
+        }
+        if lengths.is_none()
+            && let Ok(triple) = input.try_parse(parse_text_shadow_lengths)
+        {
+            lengths = Some(triple);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(c) = input.try_parse(|i| -> Result<TextShadowColor, ParseError<'_, ()>> {
+                parse_text_shadow_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            color = Some(c);
+            continue;
+        }
+        break;
+    }
+
+    // length run は必須 (spec grammar 上 `<length>{2,3}` に `?` が無い) —
+    // 0 slot でも `<color>` だけが埋まる可能性は無いが、[`parse_border_shorthand`]
+    // の「at least 1 component 必須」とは違い、本 grammar では length run
+    // 単独でも valid (`<color>` は完全に optional)。
+    let (offset_x, offset_y, blur_radius) = lengths?;
+    Some(TextShadowItem {
+        offset_x,
+        offset_y,
+        blur_radius,
+        color: color.unwrap_or(TextShadowColor::CurrentColor),
+    })
+}
+
+/// `text-shadow: none | <shadow>#` を parse する。
+///
+/// CSS Text Decoration Module Level 3 §4
+/// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>。
+///
+/// `none` = 空 list (top-level alternative) — [`parse_content`] /
+/// [`parse_counter_property`] と同じ shape。comma-separated list は
+/// `cssparser::Parser::parse_comma_separated` に委譲 (各 item の未消費
+/// leftover token は同メソッドの `parse_until_before` → `parse_entirely`
+/// が自動検知して declaration ごと drop する — [`TextShadowItem`] doc の
+/// 「Non-negative blur-radius」節が挙げる `text-shadow: 1px 1px -1px`
+/// (負の blur-radius は unconsumed のまま残る) のような入力はこの経路で
+/// reject される)。
+fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextShadowItem>> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(Vec::new());
+    }
+    input
+        .parse_comma_separated(|i| -> Result<TextShadowItem, ParseError<'_, ()>> {
+            parse_text_shadow_item(i).ok_or_else(|| i.new_custom_error(()))
+        })
+        .ok()
 }
 
 #[cfg(test)]
@@ -15027,6 +15274,167 @@ mod tests {
             })
             .key(),
             PropertyKey::PlaceContent
+        );
+    }
+
+    // ── text-shadow (CSS Text Decoration Module Level 3 §4) ─────────
+
+    /// [`content_items`] と同じ shape の extraction helper —
+    /// `PropertyValue::TextShadow(Arc<Vec<..>>)` の payload を clone して返す。
+    fn text_shadow_items(source: &str) -> Vec<TextShadowItem> {
+        match parse(source, "text-shadow") {
+            Some(PropertyValue::TextShadow(v)) => (*v).clone(),
+            // cov:ignore: this panic branch is unreached as long as every
+            // caller passes a genuinely valid text-shadow declaration —
+            // llvm-cov marks the panic-message literal "uncovered" the
+            // same way it does for any other panic-only branch (same
+            // false-positive class as the let-else panic branch above).
+            other => panic!("expected PropertyValue::TextShadow, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_shadow_parse_none_is_empty_list() {
+        assert_eq!(text_shadow_items("none"), Vec::new());
+    }
+
+    #[test]
+    fn text_shadow_parse_single_offset_only_defaults_blur_and_color() {
+        // `<color>` / blur-radius 省略 — [`TextShadowItem`] doc の「各成分の
+        // 初期値埋め」節。
+        assert_eq!(
+            text_shadow_items("1px 2px"),
+            vec![TextShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }]
+        );
+    }
+
+    #[test]
+    fn text_shadow_parse_color_after_lengths() {
+        assert_eq!(
+            text_shadow_items("1px 2px 3px red"),
+            vec![TextShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(3.0),
+                color: TextShadowColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }),
+            }]
+        );
+    }
+
+    /// `<color>? && <length>{2,3}` の `&&` combinator — 順序は自由
+    /// ([`parse_text_shadow_item`] doc の「`&&` grammar semantics」節)。
+    /// color-before は color-after (直上 test) と同じ結果になる。
+    #[test]
+    fn text_shadow_parse_color_before_lengths_matches_color_after() {
+        assert_eq!(
+            text_shadow_items("red 1px 2px 3px"),
+            text_shadow_items("1px 2px 3px red"),
+        );
+    }
+
+    #[test]
+    fn text_shadow_parse_explicit_currentcolor_keyword() {
+        assert_eq!(
+            text_shadow_items("currentcolor 1px 1px"),
+            vec![TextShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }]
+        );
+    }
+
+    #[test]
+    fn text_shadow_parse_negative_offsets_allowed() {
+        // offset-x / offset-y に non-negative 制約は無い ([`TextShadowItem`]
+        // doc の「Non-negative blur-radius」節 — blur のみ制約対象)。
+        assert_eq!(
+            text_shadow_items("-1px -2px"),
+            vec![TextShadowItem {
+                offset_x: Length::Px(-1.0),
+                offset_y: Length::Px(-2.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }]
+        );
+    }
+
+    #[test]
+    fn text_shadow_parse_rejects_percentage() {
+        // `<length>` のみ、percentage 不可 (CSS Text Decoration Module Level
+        // 3 §4 "Percentages: N/A", [`TextShadowItem`] doc 参照)。
+        // `parse_length_value(input, false)` (`allow_percentage=false`) が
+        // parse-time で拒否する — sibling precedent
+        // `page_size_percentage_rejected` と同じ shape。
+        assert_eq!(parse("50% 50%", "text-shadow"), None);
+    }
+
+    #[test]
+    fn text_shadow_parse_rejects_negative_blur_radius() {
+        // blur-radius (3rd length) は non-negative — CSS Backgrounds 3 §6.1
+        // "Drop Shadows: the box-shadow property"
+        // "Negative values are invalid" (box-shadow / text-shadow 共通の
+        // `<shadow>` syntax)。負の 3rd length は blur slot にマッチせず
+        // unconsumed のまま残り、`parse_comma_separated` の
+        // `parse_until_before` → `parse_entirely` が leftover を検知して
+        // declaration ごと drop する ([`parse_text_shadow`] doc 参照)。
+        assert_eq!(parse("1px 1px -3px", "text-shadow"), None);
+    }
+
+    #[test]
+    fn text_shadow_parse_multiple_comma_separated() {
+        assert_eq!(
+            text_shadow_items("1px 1px red, 2px 2px 4px blue"),
+            vec![
+                TextShadowItem {
+                    offset_x: Length::Px(1.0),
+                    offset_y: Length::Px(1.0),
+                    blur_radius: Length::Px(0.0),
+                    color: TextShadowColor::Resolved(CssColor {
+                        r: 255,
+                        g: 0,
+                        b: 0,
+                        a: 255,
+                    }),
+                },
+                TextShadowItem {
+                    offset_x: Length::Px(2.0),
+                    offset_y: Length::Px(2.0),
+                    blur_radius: Length::Px(4.0),
+                    color: TextShadowColor::Resolved(CssColor {
+                        r: 0,
+                        g: 0,
+                        b: 255,
+                        a: 255,
+                    }),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn text_shadow_parse_rejects_empty_value() {
+        // length run は必須 — `<color>` 単体 (`text-shadow: red`) は
+        // grammar 上 invalid。
+        assert_eq!(parse("red", "text-shadow"), None);
+    }
+
+    #[test]
+    fn text_shadow_key_maps_to_text_shadow_property_key() {
+        assert_eq!(
+            PropertyValue::TextShadow(Arc::new(Vec::new())).key(),
+            PropertyKey::TextShadow
         );
     }
 }
