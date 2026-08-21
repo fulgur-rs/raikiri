@@ -96,9 +96,10 @@ use crate::property::{
 use crate::resolve::{
     ComputedFlexBasis, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
     ComputedLengthPercentageOrNormal, ResolveContext, lift_length_or_normal, lift_line_height,
-    resolve_border, resolve_flex_basis, resolve_length_or_normal, resolve_length_percentage,
-    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_vertical_align, used_line_height_length,
+    lift_tab_size, resolve_border, resolve_flex_basis, resolve_length_or_normal,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
+    resolve_tab_size, resolve_vertical_align, used_line_height_length,
 };
 use crate::rule::{Declaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
@@ -2344,6 +2345,18 @@ fn absolutize_in_page_context(
         PropertyValue::WordSpacing(v) => PropertyValue::WordSpacing(lift_length_or_normal(
             resolve_length_or_normal(v, font_size, own_line_height, ctx),
         )),
+        // ── tab-size ─────────────────────────────────────────────────────
+        // CSS Text Module Level 3 §4.2: `<number [0,∞]> | <length [0,∞]>`,
+        // absolutized the same way
+        // `crate::specified::SpecifiedValues::absolutize_with` does
+        // (`resolve_tab_size`), then mapped back into the specified-layer
+        // `TabSize` shape (`lift_tab_size`) that `PropertyValue` carries —
+        // same round-trip as `LetterSpacing`/`WordSpacing` above, reusing
+        // the shared element-path functions directly since neither needs
+        // page-context-specific plumbing.
+        PropertyValue::TabSize(v) => {
+            PropertyValue::TabSize(lift_tab_size(resolve_tab_size(v, font_size, own_line_height, ctx)))
+        }
         // ── vertical-align ───────────────────────────────────────────────
         // CSS 2.1 §10.8.1 — the 6 keywords (`baseline`/`sub`/`super`/
         // `middle`/`text-top`/`text-bottom`) preserved as-is, `<length>`
@@ -2522,7 +2535,7 @@ mod tests {
         ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue,
         FloatValue, FontStyle, FontWeightValue, Length, LengthOrAuto, LengthOrNormal, LineHeight,
         OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand, PositionValue,
-        SelfAlignmentValue, TextAlign, TextDecorationColor, TextDecorationLine,
+        SelfAlignmentValue, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
         TextDecorationShorthand, TextDecorationStyle, TextTransform, VerticalAlign, Visibility,
         WhiteSpace, WordBreak, ZIndexValue,
     };
@@ -4200,6 +4213,41 @@ mod tests {
         }
     }
 
+    /// Direct exercise of `absolutize_in_page_context`'s `TabSize` arm —
+    /// `<number>` stays as-is (CSS Text Module Level 3 §4.2: "Computed
+    /// value: the specified number or absolute length"), `<length>`
+    /// absolutizes against this page context's own font-size (same "worst
+    /// case: `Em`" shape `page_corpus`'s `TabSize` sample uses).
+    #[test]
+    fn absolutize_in_page_context_covers_tab_size_arm() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        for (specified, expected) in [
+            (TabSize::Number(4.0), TabSize::Number(4.0)),
+            (
+                TabSize::Length(Length::Em(2.0)),
+                TabSize::Length(Length::Px(40.0)),
+            ),
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::TabSize(specified)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::TabSize(expected),
+                "tab-size: {specified:?}",
+            );
+        }
+    }
+
     /// Direct exercise of the `FontSizeRelative` "safety net" arm of
     /// `absolutize_in_page_context` — structurally unreachable through
     /// `cascade_page` (step 3/phase 2 always converges `FontSizeRelative` to
@@ -4707,6 +4755,11 @@ mod tests {
             align: ContentAlignmentValue::SpaceBetween,
             justify: ContentAlignmentValue::Center,
         }),
+        // `Em` (not `Px`) — same "worst case" reasoning as `LetterSpacing`/
+        // `WordSpacing` above: a font-relative unit exercises phase-3
+        // absolutization (`resolve_tab_size`) instead of trivially
+        // round-tripping an already-absolute length.
+        TabSize => PropertyValue::TabSize(TabSize::Length(Length::Em(0.5))),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -4898,6 +4951,7 @@ mod tests {
         ColumnGap,
         Gap,
         PlaceContent,
+        TabSize,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -5056,6 +5110,18 @@ mod tests {
                 LengthOrNormal::Length(l) => length(l),
             }
         }
+        /// `tab-size: <number [0,∞]> | <length [0,∞]>`. `<number>` is
+        /// already computed-equivalent (CSS Text Module Level 3 §4.2:
+        /// "Computed value: the specified number or absolute length" —
+        /// unlike `letter-spacing`/`word-spacing`'s `normal`, there is no
+        /// keyword-to-length collapse here to begin with), `<length>`
+        /// delegates to [`length`].
+        fn tab_size(ts: TabSize) -> Option<&'static str> {
+            match ts {
+                TabSize::Number(_) => None,
+                TabSize::Length(l) => length(l),
+            }
+        }
         fn line_height(lh: LineHeight) -> Option<&'static str> {
             match lh {
                 // CSS Inline 3 §5.1: `normal` / `<number>` は computed 値のまま。
@@ -5130,6 +5196,7 @@ mod tests {
             PropertyValue::LetterSpacing(l) | PropertyValue::WordSpacing(l) => {
                 length_or_normal(*l)
             }
+            PropertyValue::TabSize(ts) => tab_size(*ts),
             PropertyValue::VerticalAlign(va) => vertical_align(*va),
             PropertyValue::FlexBasis(fb) => flex_basis(*fb),
             // Shorthand fall-through — `grow`/`shrink` carry no length,
@@ -5306,6 +5373,27 @@ mod tests {
             specified_layer_residue(&PropertyValue::FlexBasis(FlexBasisValue::Length(
                 Length::Em(1.0)
             ))),
+            Some("Length::Em"),
+        );
+    }
+
+    /// `tab-size: <number>` は残滓ではない (CSS Text Module Level 3 §4.2:
+    /// "Computed value: the specified number or absolute length" —
+    /// `<number>` はそもそも computed 層でも number のまま、`normal` の
+    /// ような keyword-to-length collapse を経ない) — sibling of
+    /// `flex_basis_content_and_gap_normal_are_not_specified_layer_residue`
+    /// above, same reason: `page_corpus`'s `TabSize` worst-case sample is
+    /// always the `Length` variant (`sample_for` 参照), so `tab_size`'s
+    /// `Number` arm isn't exercised via the corpus. Here directly.
+    #[test]
+    fn tab_size_number_is_not_specified_layer_residue() {
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::TabSize(TabSize::Number(4.0))),
+            None,
+        );
+        // 対照 — `Em` は残滓 (絶対化前)。
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::TabSize(TabSize::Length(Length::Em(1.0)))),
             Some("Length::Em"),
         );
     }

@@ -3305,6 +3305,55 @@ pub enum WhiteSpace {
     PreLine,
 }
 
+/// `tab-size` property の value。
+///
+/// CSS Text Module Level 3 §4.2 "Tab Character Size: the tab-size property"
+/// (<https://www.w3.org/TR/css-text-3/#tab-size-property>), value grammar
+/// `<number [0,∞]> | <length [0,∞]>`. Initial: `8`. Inherited: yes.
+/// Percentages: N/A.
+///
+/// [`LineHeight`] と同じ number-vs-length split の shape だが 2 branch のみ —
+/// `normal` keyword を持たない点が異なる:
+///
+/// - [`Number`](Self::Number) — `<number [0,∞]>`。spec 本文 "A `<number>`
+///   represents the measure as a multiple of the advance width of the space
+///   character (U+0020) of the nearest block container ancestor of the
+///   preserved tab, including its associated letter-spacing and
+///   word-spacing." — この font metric 依存の解決は、本 crate がまだ持たない
+///   text layout consumer (raikiri-dom / raikiri-paint) の仕事であり、本
+///   crate は unitless multiplier を素通しするだけ ([`LineHeight::Number`]
+///   と同じ scope carving)。
+/// - [`Length`](Self::Length) — `<length [0,∞]>`。percentage を持たない点が
+///   [`LineHeight::Length`] (`<length-percentage>`) と異なる — spec propdef
+///   の "Percentages: N/A" が根拠。
+///
+/// # Non-negative constraint
+///
+/// spec grammar `[0,∞]` (両 branch とも) — 本文 "Negative values are not
+/// allowed." により負値は invalid → parser 側で drop (`parse_tab_size` の
+/// post-filter、spec-invalid → drop)。
+///
+/// # `<length>` alternative の CR status
+///
+/// spec は `<length>` alternative を "at risk" (CR プロセス中に取り下げ
+/// られる可能性がある feature) とマークしている。本実装は TR に記載の現行
+/// grammar をそのまま実装する — 取り下げが実際に発生したら別途対応する。
+///
+/// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]`
+/// 属性、変数追加が既存 pattern-match を break しない forward-compat 契約、
+/// sibling [`LineHeight`] / [`Length`] と同 pattern)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TabSize {
+    /// `<number [0,∞]>` — advance width of the space character (U+0020) の
+    /// multiplier。computed 層でも number のまま (font metric 依存の解決は
+    /// downstream consumer の仕事、type doc 参照)。
+    Number(f32),
+    /// `<length [0,∞]>` — absolute tab size。percentage は持たない (type doc
+    /// の "Percentages: N/A" 節参照)。
+    Length(Length),
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -4099,6 +4148,16 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] が [`Self::AlignContent`] /
     /// [`Self::JustifyContent`] の 2 longhand に展開する。
     PlaceContent(PlaceContentShorthand),
+    /// `tab-size: <number [0,∞]> | <length [0,∞]>` — **inherited**、initial:
+    /// [`TabSize::Number`]`(8.0)` (CSS Text Module Level 3 §4.2 "Tab
+    /// Character Size: the tab-size property"
+    /// <https://www.w3.org/TR/css-text-3/#tab-size-property>). computed
+    /// value: the specified number or an absolutized length ([`TabSize`]
+    /// doc 参照)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    TabSize(TabSize),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -4332,6 +4391,11 @@ pub enum PropertyKey {
     // `place-content` shorthand (CSS Box Alignment Module Level 3 §5.2) —
     // both longhands (`AlignContent`/`JustifyContent`) declared above.
     PlaceContent,
+    // tab-size (CSS Text Module Level 3 §4.2、semantics on the matching
+    // PropertyValue::TabSize variant; sibling PropertyKey variants carry no
+    // per-variant docs per crate convention). 末尾配置の理由は
+    // PropertyValue::TabSize の doc 参照。
+    TabSize,
 }
 
 impl PropertyValue {
@@ -4424,6 +4488,7 @@ impl PropertyValue {
             PropertyValue::ColumnGap(_) => PropertyKey::ColumnGap,
             PropertyValue::Gap(_) => PropertyKey::Gap,
             PropertyValue::PlaceContent(_) => PropertyKey::PlaceContent,
+            PropertyValue::TabSize(_) => PropertyKey::TabSize,
         }
     }
 }
@@ -4772,6 +4837,9 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Box Alignment Module Level 3 §5.2
         // <https://www.w3.org/TR/css-align-3/#propdef-place-content>.
         "place-content" => parse_place_content_shorthand(input).map(PropertyValue::PlaceContent),
+        // CSS Text Module Level 3 §4.2
+        // <https://www.w3.org/TR/css-text-3/#tab-size-property>.
+        "tab-size" => parse_tab_size(input).map(PropertyValue::TabSize),
         _ => None,
     }
 }
@@ -5956,6 +6024,53 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
     let l = parse_length_value(input, true)?;
     // spec `[0,∞]`: 負値は grammar 違反 → declaration drop。
     (length_payload(l) >= 0.0).then_some(LineHeight::Length(l))
+}
+
+/// `tab-size: <number [0,∞]> | <length [0,∞]>` を parse する (CSS Text
+/// Module Level 3 §4.2 "Tab Character Size: the tab-size property"
+/// <https://www.w3.org/TR/css-text-3/#tab-size-property>)。
+///
+/// # Ordering
+///
+/// [`parse_line_height`] と同じ 2-branch shape (bare `<number>` を先に試し、
+/// Dimension/Percentage には rewind して Length branch へ) から `normal`
+/// branch を除いたもの — tab-size の grammar に `normal` alternative は無い。
+/// `<length>` 側は `allow_percentage = false`
+/// ([`parse_length_value`] — spec propdef "Percentages: N/A" が根拠、
+/// [`TabSize::Length`] doc 参照)。
+///
+/// # Non-negative
+///
+/// spec `[0,∞]` (両 branch) — 全 branch で negative reject:
+/// - Number branch: `n >= 0.0` guard、負なら `None` = declaration drop
+/// - Length branch: payload の inner f32 に `>= 0.0` guard、負なら drop
+///
+/// [`parse_line_height`] doc の「Number token を commit した後は必ずここで
+/// 確定させる」節と同じ懸念がここにも当てはまる — `try_parse` は `Ok` の
+/// path で cursor を戻さないため、Number branch を通った後に外側で reject
+/// すると `tab-size: -1 20px` が `20px` として silently accept されてしまう
+/// (spec-invalid CSS を通す correctness bug)。
+///
+/// # Non-goals
+///
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(b) 非対応**: `calc()` / `var()` は未実装、silent drop。
+/// - **(a) spec-invalid → drop**: `<number>` / `<length>` の負値、`auto` 等
+///   spec-invalid keyword、percentage は spec grammar 違反、drop。
+fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
+    // 1. bare `<number [0,∞]>` — Token::Number (unit なし)。Dimension
+    //    (`4px`) に対しては `expect_number` が Err を返し `try_parse` が
+    //    rewind するため、Length branch へフォールスルー。
+    if let Ok(n) = input.try_parse(|i| i.expect_number()) {
+        // spec `[0,∞]` 違反 → declaration drop (Length branch へ落とさない、
+        // 上記 doc 節参照)。
+        return (n >= 0.0).then_some(TabSize::Number(n));
+    }
+    // 2. `<length [0,∞]>` — percentage 非対応 (allow_percentage = false)。
+    let l = parse_length_value(input, false)?;
+    (length_payload(l) >= 0.0).then_some(TabSize::Length(l))
 }
 
 /// `letter-spacing: normal | <length>` / `word-spacing: normal | <length>`
@@ -12956,6 +13071,138 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::LetterSpacing);
         let v = PropertyValue::LetterSpacing(LengthOrNormal::Length(Length::Px(2.0)));
         assert_eq!(v.key(), PropertyKey::LetterSpacing);
+    }
+
+    // ── tab-size (CSS Text Module Level 3 §4.2) ──
+    //
+    // Value grammar: `<number [0,∞]> | <length [0,∞]>`. Initial: `8`.
+    // Inherited: yes. Percentages: N/A. Shares `parse_line_height`'s
+    // Number-then-Length ordering (minus the `normal` branch tab-size's
+    // grammar doesn't have) — see `parse_tab_size` doc.
+
+    #[test]
+    fn tab_size_parse_bare_number() {
+        assert_eq!(
+            parse("4", "tab-size"),
+            Some(PropertyValue::TabSize(TabSize::Number(4.0)))
+        );
+    }
+
+    #[test]
+    fn tab_size_parse_length_px() {
+        assert_eq!(
+            parse("32px", "tab-size"),
+            Some(PropertyValue::TabSize(TabSize::Length(Length::Px(32.0))))
+        );
+    }
+
+    #[test]
+    fn tab_size_accepts_length_em_rem_pt() {
+        assert_eq!(
+            parse("2em", "tab-size"),
+            Some(PropertyValue::TabSize(TabSize::Length(Length::Em(2.0))))
+        );
+        assert_eq!(
+            parse("1rem", "tab-size"),
+            Some(PropertyValue::TabSize(TabSize::Length(Length::Rem(1.0))))
+        );
+        assert_eq!(
+            parse("6pt", "tab-size"),
+            Some(PropertyValue::TabSize(TabSize::Length(Length::Pt(6.0))))
+        );
+    }
+
+    #[test]
+    fn tab_size_number_vs_em_are_distinct_variants() {
+        // Same load-bearing Number-vs-Length distinction as `line-height`
+        // (`line_height_number_vs_em_are_distinct_variants`) — unitless `4`
+        // and dimensioned `4em` map to different variants even though the
+        // scalar matches.
+        let number = parse("4", "tab-size");
+        let length_em = parse("4em", "tab-size");
+        assert_eq!(number, Some(PropertyValue::TabSize(TabSize::Number(4.0))));
+        assert_eq!(
+            length_em,
+            Some(PropertyValue::TabSize(TabSize::Length(Length::Em(4.0))))
+        );
+        assert_ne!(number, length_em, "Number and Length must be distinct");
+    }
+
+    #[test]
+    fn tab_size_accepts_zero_number_and_length() {
+        // spec `[0,∞]`: 0 is a valid boundary value. Same CSS Values 3 §5
+        // "0 could be parsed as either a `<number>` or a `<length>`... must
+        // parse as a `<number>`" clause `line-height` exercises
+        // (`line_height_accepts_zero_number_and_length`) — bare `0` commits
+        // to the Number branch before the Length branch is ever tried.
+        assert_eq!(
+            parse("0", "tab-size"),
+            Some(PropertyValue::TabSize(TabSize::Number(0.0)))
+        );
+        assert_eq!(
+            parse("0px", "tab-size"),
+            Some(PropertyValue::TabSize(TabSize::Length(Length::Px(0.0))))
+        );
+    }
+
+    #[test]
+    fn tab_size_rejects_negative_number() {
+        // spec verbatim: "Negative values are not allowed."
+        assert_eq!(parse("-4", "tab-size"), None);
+    }
+
+    #[test]
+    fn tab_size_rejects_negative_length() {
+        assert_eq!(parse("-10px", "tab-size"), None);
+        assert_eq!(parse("-1em", "tab-size"), None);
+    }
+
+    #[test]
+    fn tab_size_rejects_negative_number_with_trailing_length() {
+        // Regression guard mirroring
+        // `line_height_rejects_negative_number_with_trailing_length`: the
+        // Number branch must not fall through to the Length branch once a
+        // Token::Number has been consumed via `try_parse`'s `Ok` path
+        // (which does not rewind). A fallthrough implementation would let
+        // `tab-size: -1 20px` silently accept `20px`.
+        assert_eq!(parse("-1 20px", "tab-size"), None);
+        assert_eq!(parse("-1 2em", "tab-size"), None);
+    }
+
+    #[test]
+    fn tab_size_rejects_percentage() {
+        // spec propdef: "Percentages: N/A".
+        assert_eq!(parse("50%", "tab-size"), None);
+    }
+
+    #[test]
+    fn tab_size_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "tab-size"), None);
+        assert_eq!(parse("auto", "tab-size"), None);
+        assert_eq!(parse("normal", "tab-size"), None);
+    }
+
+    #[test]
+    fn tab_size_rejects_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future
+        // work), silent drop (`PropertyValue` doc's "CSS-wide keyword"
+        // section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "tab-size"), None);
+        }
+    }
+
+    #[test]
+    fn tab_size_rejects_non_length_non_ident() {
+        assert_eq!(parse(r#""4""#, "tab-size"), None);
+    }
+
+    #[test]
+    fn tab_size_key_maps_to_tab_size_property_key() {
+        let v = PropertyValue::TabSize(TabSize::Number(4.0));
+        assert_eq!(v.key(), PropertyKey::TabSize);
+        let v = PropertyValue::TabSize(TabSize::Length(Length::Px(32.0)));
+        assert_eq!(v.key(), PropertyKey::TabSize);
     }
 
     #[test]

@@ -516,6 +516,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::OverflowWrap(_)
         | PropertyValue::LetterSpacing(_)
         | PropertyValue::WordSpacing(_)
+        | PropertyValue::TabSize(_)
         // break-before / break-after / break-inside (+ legacy shorthand
         // page-break-before / page-break-after / page-break-inside, which
         // parse directly to the same variants — `BreakBetween`/

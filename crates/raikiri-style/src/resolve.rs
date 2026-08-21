@@ -135,8 +135,8 @@
 //! 「sum 型だから」という形の性質ではない。
 //!
 //! - [`ComputedLengthPercentage`] / [`ComputedLengthPercentageOrAuto`] /
-//!   [`ComputedLineHeight`] — **付けない** (下記 trade。下流に網羅 match を
-//!   強制する)。
+//!   [`ComputedLineHeight`] / [`ComputedTabSize`] — **付けない** (下記 trade。
+//!   下流に網羅 match を強制する)。
 //! - [`ComputedBorder`] / [`ResolveContext`] — **付ける**。field 追加は下流の
 //!   match を fail-quiet にしないので、source 互換を取る方が純粋に得。
 //! - [`ComputedLength`] — **付けない**。`ComputedLength(16.0)` の位置構築を
@@ -181,7 +181,7 @@
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     Border, BorderColor, BorderStyle, FlexBasisValue, Length, LengthOrAuto, LengthOrNormal,
-    LineHeight, VerticalAlign,
+    LineHeight, TabSize, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -435,6 +435,51 @@ pub enum ComputedLineHeight {
     /// 解決は paint 責務)。
     Normal,
     /// `<number>` — unitless multiplier。computed 層でも number のまま。
+    Number(f32),
+    /// 絶対化済みの `<length>`。
+    Length(ComputedLength),
+}
+
+/// Computed `tab-size`。
+///
+/// # Primary source (§ title + anchor)
+///
+/// CSS Text Module Level 3 §4.2 "Tab Character Size: the tab-size property"
+/// (<https://www.w3.org/TR/css-text-3/#tab-size-property>) propdef table:
+///
+/// > Value: `<number [0,∞]> | <length [0,∞]>`
+/// > Initial: 8
+/// > Percentages: N/A
+/// > Computed value: the specified number or absolute length
+///
+/// [`Number`](Self::Number) が computed 層でも number のまま残るのは
+/// [`ComputedLineHeight::Number`] と同じ理由 — spec 本文 "A `<number>`
+/// represents the measure as a multiple of the advance width of the space
+/// character ... of the nearest block container ancestor" という font
+/// metric 依存の解決を、本 crate がまだ持たない downstream text layout
+/// consumer に委ねる ([`crate::property::TabSize`] doc 参照)。
+///
+/// `#[non_exhaustive]` を付けない判断とその trade は
+/// [module doc](crate::resolve) を参照。
+///
+/// ```
+/// use raikiri_style::{ComputedLength, ComputedTabSize, ResolveContext, resolve_tab_size};
+/// use raikiri_style::property::{Length, TabSize};
+///
+/// let ctx = ResolveContext::initial();
+/// let font_size = ComputedLength(20.0);
+///
+/// // `<length>` は自要素の computed font-size に対して絶対化される。
+/// let ts = resolve_tab_size(TabSize::Length(Length::Em(2.0)), font_size, None, &ctx);
+/// assert_eq!(ts, ComputedTabSize::Length(ComputedLength(40.0)));
+///
+/// // `<number>` は素通し (downstream consumer が自分の font metrics に掛ける)。
+/// let n = resolve_tab_size(TabSize::Number(4.0), font_size, None, &ctx);
+/// assert_eq!(n, ComputedTabSize::Number(4.0));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedTabSize {
+    /// `<number>` — computed 層でも number のまま。
     Number(f32),
     /// 絶対化済みの `<length>`。
     Length(ComputedLength),
@@ -1206,6 +1251,31 @@ pub fn resolve_length_or_normal(
     }
 }
 
+/// `tab-size` の specified value を絶対化する (**phase 3** — 自 node 基準)。
+///
+/// CSS Text Module Level 3 §4.2 propdef: "Computed value: the specified
+/// number or absolute length" — [`TabSize::Number`] は素通し
+/// ([`ComputedTabSize`] doc / [`crate::property::TabSize`] doc の scope
+/// carving 節参照: 実際の tab stop advance の解決は font metric に依存した
+/// downstream consumer の仕事)。[`TabSize::Length`] 側は [`resolve_length`]
+/// へそのまま delegate する ([`TabSize`] は percentage を持たないため、
+/// [`resolve_length_percentage`] ではなく percentage 非対応の
+/// [`resolve_length`] が正しい delegate 先 — [`resolve_length_or_normal`]
+/// と同型)。
+pub fn resolve_tab_size(
+    specified: TabSize,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedTabSize {
+    match specified {
+        TabSize::Number(n) => ComputedTabSize::Number(n),
+        TabSize::Length(l) => {
+            ComputedTabSize::Length(resolve_length(l, font_size, own_line_height, ctx))
+        }
+    }
+}
+
 /// `vertical-align: baseline | sub | super | middle | text-top |
 /// text-bottom | <length>` の specified value を絶対化する (**phase 3** —
 /// 自 node 基準)。
@@ -1816,6 +1886,42 @@ pub fn lift_length_percentage(computed: ComputedLengthPercentage) -> Length {
 /// ```
 pub fn lift_length_or_normal(computed: ComputedLength) -> LengthOrNormal {
     LengthOrNormal::Length(Length::Px(computed.0))
+}
+
+/// 親の [`ComputedTabSize`] を specified 表現 ([`TabSize`]) に **lift** する
+/// (inheritance seed 用) — [`lift_line_height`] と同じ lossless / 不動点性。
+///
+/// - `Number(n)` → `TabSize::Number(n)`。[`resolve_tab_size`] の `Number`
+///   arm は identity なので不動点。
+/// - `Length(l)` → `TabSize::Length(Length::Px(l.px()))`。
+///   [`resolve_length`] の `Px` arm は identity なので不動点
+///   ([`lift_font_size`] と同じ根拠)。
+///
+/// ```
+/// use raikiri_style::{
+///     ComputedLength, ComputedTabSize, ResolveContext, lift_tab_size, resolve_tab_size,
+/// };
+///
+/// let ctx = ResolveContext::initial();
+/// let font_size = ComputedLength(16.0);
+///
+/// // lift → 絶対化 の round trip は恒等 (Px が不動点)。
+/// let inherited = ComputedTabSize::Length(ComputedLength(32.0));
+/// let lifted = lift_tab_size(inherited);
+/// assert_eq!(resolve_tab_size(lifted, font_size, None, &ctx), inherited);
+///
+/// // `Number` も素通しのまま不動点。
+/// let inherited_number = ComputedTabSize::Number(4.0);
+/// assert_eq!(
+///     resolve_tab_size(lift_tab_size(inherited_number), font_size, None, &ctx),
+///     inherited_number
+/// );
+/// ```
+pub fn lift_tab_size(computed: ComputedTabSize) -> TabSize {
+    match computed {
+        ComputedTabSize::Number(n) => TabSize::Number(n),
+        ComputedTabSize::Length(l) => TabSize::Length(Length::Px(l.px())),
+    }
 }
 
 #[cfg(test)]

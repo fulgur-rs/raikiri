@@ -23,6 +23,7 @@ use crate::property::{
 use crate::resolve::{
     ComputedBorder, ComputedFlexBasis, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+    ComputedTabSize,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
@@ -67,7 +68,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / tab_size、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -707,6 +708,21 @@ pub struct ComputedValues {
     /// normal" / "Inherited: yes"). Same computed-value shape as
     /// [`Self::letter_spacing`] — see that field's doc.
     pub word_spacing: ComputedLength,
+    /// `tab-size`. **inherited**, initial: [`ComputedTabSize::Number`]`(8.0)`
+    /// (CSS Text Module Level 3 §4.2 "Tab Character Size: the tab-size
+    /// property" <https://www.w3.org/TR/css-text-3/#tab-size-property>,
+    /// "Initial: 8" / "Inherited: yes"). Computed value: the specified
+    /// number, or an absolutized length ([`ComputedTabSize`] doc).
+    ///
+    /// # Scope carving (nothing reads this field yet)
+    ///
+    /// This field carries the cascaded/absolutized value only — no consumer
+    /// reads it yet, same as [`Self::white_space`] doc's "Scope carving"
+    /// section: the actual tab-stop advance calculation (§4.2's "multiple of
+    /// the advance width of the space character... of the nearest block
+    /// container ancestor") is font-metric-dependent text layout behavior
+    /// (raikiri-dom / raikiri-paint scope) this crate does not implement.
+    pub tab_size: ComputedTabSize,
     /// `break-before` (legacy shorthand: `page-break-before`).
     /// **non-inherited**, initial: [`BreakBetween::Auto`] (CSS
     /// Fragmentation Module Level 3 §3.1 "Breaks Between Boxes: the
@@ -969,6 +985,8 @@ impl ComputedValues {
             // initial `normal` は computed 層で `0` (`ComputedLength::ZERO`)。
             letter_spacing: ComputedLength::ZERO,
             word_spacing: ComputedLength::ZERO,
+            // CSS Text Module Level 3 §4.2: tab-size initial は `8`.
+            tab_size: ComputedTabSize::Number(8.0),
             // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
             // break-after / break-inside initial は共に `auto`。
             break_before: BreakBetween::Auto,
@@ -1017,7 +1035,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / tab_size、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
     ///
@@ -1282,6 +1300,9 @@ mod tests {
             // 非 initial に)。
             letter_spacing: ComputedLength(2.0),
             word_spacing: ComputedLength(4.0),
+            // CSS Text Module Level 3 §4.2: initial (`8`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            tab_size: ComputedTabSize::Number(3.0),
             // CSS Fragmentation Module Level 3 §3.1 / §3.2: initial
             // (`Auto`) と異なる値 (non_initial_parent の趣旨どおり全 field
             // を非 initial に)。
@@ -1326,7 +1347,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 52 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 53 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1362,6 +1383,8 @@ mod tests {
         assert_eq!(child.word_spacing, parent.word_spacing);
         // CSS Text 3 §3: white-space は inherited。
         assert_eq!(child.white_space, parent.white_space);
+        // CSS Text Module Level 3 §4.2: tab-size は inherited。
+        assert_eq!(child.tab_size, parent.tab_size);
         // `line-height` の computed `<length>` は子で **再解決されない**
         // (CSS Inline 3: percentage は宣言要素で絶対化済)。
         assert_eq!(child.line_height, parent.line_height);
