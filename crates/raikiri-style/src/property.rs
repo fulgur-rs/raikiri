@@ -7351,7 +7351,7 @@ fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisValue> {
     }
     let length = parse_length_value(input, true)?;
     // `<'width'>` reuse: CSS Sizing 3 §3.1.1 の `[0,∞]` non-negative
-    // constraint ([`parse_width`] と同 pattern)。
+    // constraint (`parse_width` と同 pattern)。
     (length_payload(length) >= 0.0).then_some(FlexBasisValue::Length(length))
 }
 
@@ -14136,7 +14136,7 @@ mod tests {
     // `Some(FontStyle::Oblique)` after consuming just the `oblique` ident,
     // leaving `14deg` unread — the rejection of `oblique <angle>` as a
     // whole declaration only happens one layer up, in
-    // [`mod@crate::rule`]'s `DeclParser`. See
+    // `crate::rule`'s `DeclParser`. See
     // `rule::tests::rejects_font_style_oblique_with_angle` (mirrors
     // `rejects_extra_length_after_font_size`) for that test.
 
