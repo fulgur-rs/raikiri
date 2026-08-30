@@ -626,9 +626,9 @@ pub struct ComputedValues {
     /// "Capitalization: the font-variant-caps property"
     /// <https://www.w3.org/TR/css-fonts-3/#font-variant-caps-prop>,
     /// "Initial: normal" / "Inherited: yes"). Computed value = specified
-    /// keyword — see [`FontVariantCaps`] doc's "Scope carving" section
-    /// (the spec's other 5 keywords, and the `font-variant` shorthand, are
-    /// not implemented).
+    /// keyword — see [`FontVariantCaps`] doc's "7 keyword の意味" section
+    /// (all 7 property keywords implemented) and its "Scope carving"
+    /// section (the `font-variant` shorthand is not).
     pub font_variant_caps: FontVariantCaps,
     /// `text-transform`. **inherited**, initial: [`TextTransform::None`]
     /// (CSS Text Module Level 3 §2.1 "Case Transforms: the text-transform
