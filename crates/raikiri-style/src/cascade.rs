@@ -1958,14 +1958,14 @@ fn match_from_element<'s, D: StyleDom>(
 /// whose language is not tagged (e.g. `lang=\"\"`), but does match elements
 /// whose language is tagged as undetermined (`lang=und`). A language range
 /// consisting of an empty string (`:lang(\"\")`) matches (only) elements
-/// whose language is not tagged." [`language_range_matches`]'s first-subtag
-/// step would otherwise let a bare `*` range match the empty content
-/// language vacuously (splitting `""` on `-` yields one empty subtag, and
-/// `*` matches any subtag per RFC4647), so this function special-cases
-/// exactly `(lang.is_empty(), range == "*")` rather than gating on
-/// `lang.is_empty()` alone — a broader gate would incorrectly also reject
-/// `:lang("")` (and any other literal range) against `lang=""`, when the
-/// quoted spec text says `:lang("")` must match that case.
+/// whose language is not tagged." [`language_range_matches`] itself already
+/// enforces both halves of this quote directly: it special-cases an empty
+/// `content_language` (needed for `:lang("")`, which is a CSS-level
+/// construct rather than a well-formed BCP47 range) by requiring exact
+/// string equality against `range`, which yields `false` for a bare `*`
+/// range against an empty `content_language` and `true` for `:lang("")`
+/// against one — so this function needs no special case of its own and
+/// simply delegates every range to it.
 fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
     ranges: &[String],
     dom: &D,
@@ -1973,13 +1973,9 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
 ) -> bool {
     let lang = effective_language(dom, elem, ancestors);
-    ranges.iter().any(|range| {
-        if lang.is_empty() && range == "*" {
-            false
-        } else {
-            language_range_matches(range, &lang)
-        }
-    })
+    ranges
+        .iter()
+        .any(|range| language_range_matches(range, &lang))
 }
 
 /// Resolves an element's **content language** per HTML Living Standard
@@ -2147,24 +2143,87 @@ fn own_html_or_svg_lang_attribute<E: StyleElement>(elem: &E) -> Option<&str> {
 /// performed ASCII case-insensitively", which is exactly RFC4647's own
 /// per-subtag rule — no separate case-folding pass needed.
 ///
-/// # Deliberately out of scope: BCP47 canonicalization / well-formedness
+/// # BCP47 well-formedness and canonicalization
 ///
-/// CSS Selectors L4 §7.2 additionally requires the content language and the
-/// range to be "canonicalized and converted to extlang form as per section
-/// 4.5 of \[RFC5646\] prior to the extended filtering operation" and that
-/// "language tags or ranges that are not valid do not match anything" /
-/// "language ranges that are not well-formed \[...\] do not match anything".
-/// Implementing BCP47 canonicalization and well-formedness validation is a
-/// substantial undertaking on its own (a subtag registry / grammar checker),
-/// comparable in scope to the Unicode Bidi Algorithm this task's bd
-/// description explicitly permits deferring for `:dir()`'s `auto` value —
-/// this function skips both and operates directly on the raw hyphen-split
-/// subtag strings as written. In practice this only under-rejects (a
-/// genuinely ill-formed tag like `:lang(åå)` — non-ASCII, spec says "would
-/// not match" — is instead compared subtag-by-subtag and may spuriously
-/// match); it never causes a spec-valid match to be missed. No known
-/// real-world content in this repo's test corpus depends on the rejection
-/// behavior.
+/// CSS Selectors L4 §7.2 additionally requires (bikeshed source, same fetch
+/// as above):
+///
+/// > The \[content language\] and the \[language range\] must be
+/// > canonicalized and converted to extlang form as per section 4.5 of
+/// > \[RFC5646\] prior to the extended filtering operation; language tags or
+/// > ranges that are not valid do not match anything. \[...\] The language
+/// > range must be an extended language range according to BCP47. Language
+/// > ranges that are not well-formed language tags or which would not be a
+/// > well-formed language tag if an initial wildcard character "\*" were
+/// > replaced with a valid subtag, do not match anything.
+///
+/// with an example spelling out that `:lang(åå)` "would not match, because
+/// it contain\[s\] non-ASCII characters so is ill-formed", while `:lang(qq)`
+/// "could match, even though qq is not a registered language code" — i.e.
+/// the bar is grammatical **well-formedness** (RFC 5646 §2.1's ABNF), not
+/// full **validity** (well-formed *and* every subtag registered in the IANA
+/// Language Subtag Registry, RFC5646's own stricter term — `qq` is
+/// well-formed but not valid, and the spec's own example says it can still
+/// match).
+///
+/// [`is_well_formed_language_tag`] and [`is_well_formed_extended_language_range`]
+/// implement well-formedness; [`canonicalize_primary_language_subtag`]
+/// implements the canonicalization step that matters for matching
+/// correctness (deprecated-subtag replacement). Both are applied to `range`
+/// and `content_language` before the extended-filtering algorithm below
+/// runs. RFC 5646 §4.5 canonicalization (deprecated subtag -> registry
+/// `Preferred-Value`) is a genuine *false-negative* source: without it,
+/// `language_range_matches("he", "iw")` returns `false` even though `iw` is
+/// the deprecated form of `he` and a conformant UA must match `:lang(he)`
+/// against `lang="iw"`.
+///
+/// ## Implemented subset
+///
+/// - **Well-formedness** is checked per-subtag against the shared
+///   length/charset envelope every RFC 5646 §2.1 subtag production other
+///   than the primary language subtag reduces to (1 to 8 ASCII letters or
+///   digits — see [`is_well_formed_alphanum_subtag`]'s doc for the
+///   derivation across `extlang`/`script`/`region`/`variant`/`extension`/
+///   `privateuse`), plus a stricter first-subtag check for the `langtag`
+///   alternative (ASCII alpha only, length bounds per position) and a
+///   separate arm for the top-level `privateuse` alternative used alone
+///   (`x-foo`) — see [`is_well_formed_language_tag`]'s doc for both. This is
+///   **not** a full position-tracking walk of the `langtag` production:
+///   subtag *sequencing* is not validated. Concretely, this implementation
+///   does not detect `en-DE-Latn` (region before script), `en-Latn-Cyrl`
+///   (two script-shaped subtags), `en-ab1` (a digit where only an
+///   extlang/alpha subtag could legally appear), or a bare extension
+///   singleton with no following value subtag (`en-a`) as ill-formed — each
+///   is accepted because every individual subtag has *some* legal shape,
+///   even though the sequence as a whole does not parse under the `langtag`
+///   production. What this check *does* still reject beyond the shape
+///   envelope: any `langtag`-shaped tag whose first subtag is alpha but
+///   shorter than 2 characters — in practice this means 13 of RFC 5646's 26
+///   fixed `irregular`/`regular` grandfathered tags (17 `irregular` + 9
+///   `regular`) — the `i-*` ones (`i-klingon`, `i-navajo`, ...), whose
+///   leading `i` subtag is 1 character. The remaining grandfathered tags
+///   (`art-lojban`, `cel-gaulish`, `no-bok`, `no-nyn`, `zh-guoyu`,
+///   `zh-hakka`, `zh-min`, `zh-min-nan`, `zh-xiang`, `en-GB-oed`,
+///   `sgn-BE-FR`, `sgn-BE-NL`, `sgn-CH-DE`) all have a 2-or-more-character
+///   alpha first subtag and so pass this check as ordinary well-formed
+///   tags — their special, registration-defined meaning is not recognized
+///   (see the canonicalization bullet below for the consequence of that).
+/// - **Canonicalization** implements RFC 5646 §4.5 step 3 ("Subtags are
+///   replaced by their 'Preferred-Value'"), restricted to the primary
+///   language subtag and to a documented table
+///   ([`DEPRECATED_PRIMARY_LANGUAGE_SUBTAGS`]) rather than the full IANA
+///   registry. Not implemented: extension-subtag reordering (§4.5 step 1),
+///   grandfathered/redundant-tag replacement (§4.5 step 2 — the observable
+///   consequence, given the well-formedness bullet above: `:lang(hak)`
+///   does not match `lang="zh-hakka"`, and `:lang(nb)` does not match
+///   `lang="no-bok"`, even though both grandfathered tags pass
+///   well-formedness), and the extlang-form `Prefix`-restoration step
+///   (needed only when a *primary* language subtag is itself a deprecated
+///   extlang subtag — none of this table's entries are).
+///
+/// A full subtag registry / grammar checker (matching the scope the
+/// Unicode Bidi Algorithm gets for `:dir()`'s `auto` value) remains a
+/// substantial undertaking beyond this documented subset.
 pub(crate) fn language_range_matches(range: &str, content_language: &str) -> bool {
     fn subtags_match(range_subtag: &str, tag_subtag: &str) -> bool {
         range_subtag == "*" || range_subtag.eq_ignore_ascii_case(tag_subtag)
@@ -2173,13 +2232,47 @@ pub(crate) fn language_range_matches(range: &str, content_language: &str) -> boo
         subtag.chars().count() == 1
     }
 
+    // `:lang("")` and an untagged content language (HTML LS §3.2.6.2's own
+    // "the corresponding language tag is the empty string" fallback,
+    // quoted on `effective_language`'s doc) are CSS-level constructs, not
+    // BCP47 language tags/ranges — RFC 5646/4647 well-formedness and
+    // canonicalization do not apply to either side here. Selectors L4 §7.2
+    // (quoted in full on `lang_pseudo_matches`'s doc) instead gives them
+    // its own equality rule directly: "A language range consisting of an
+    // empty string matches (only) elements whose language is not tagged."
+    // This equality check also subsumes "a wildcard language range does
+    // not match elements whose language is not tagged" for every range
+    // (not just a literal `*`) once `content_language` is empty, since no
+    // non-empty range string can equal the empty string.
+    if range.is_empty() || content_language.is_empty() {
+        return range == content_language;
+    }
+
     let range_subtags: Vec<&str> = range.split('-').collect();
     let tag_subtags: Vec<&str> = content_language.split('-').collect();
+
+    // Selectors L4 §7.2 (quoted above): ill-formed tags/ranges never match.
+    if !is_well_formed_extended_language_range(&range_subtags)
+        || !is_well_formed_language_tag(&tag_subtags)
+    {
+        return false;
+    }
+
+    // Selectors L4 §7.2 (quoted above): canonicalize before extended
+    // filtering. `subtags_match`/the loop below only ever read these
+    // through `.eq_ignore_ascii_case`/`== "*"`, so owning `String`s here
+    // (needed to overwrite the primary language subtag in place) costs
+    // nothing but an allocation per subtag, on a selector-matching path
+    // this crate does not treat as hot.
+    let mut range_subtags: Vec<String> = range_subtags.into_iter().map(String::from).collect();
+    let mut tag_subtags: Vec<String> = tag_subtags.into_iter().map(String::from).collect();
+    canonicalize_primary_language_subtag(&mut range_subtags);
+    canonicalize_primary_language_subtag(&mut tag_subtags);
 
     // Step 2: first subtag must match (range's first subtag may itself be
     // `*`, e.g. the bare wildcard range `:lang(*)` — `subtags_match` already
     // handles that).
-    if !subtags_match(range_subtags[0], tag_subtags[0]) {
+    if !subtags_match(&range_subtags[0], &tag_subtags[0]) {
         return false;
     }
     let mut ri = 1;
@@ -2187,12 +2280,12 @@ pub(crate) fn language_range_matches(range: &str, content_language: &str) -> boo
 
     // Step 3.
     while ri < range_subtags.len() {
-        let r = range_subtags[ri];
+        let r = &range_subtags[ri];
         if r == "*" {
             ri += 1; // 3.A
             continue;
         }
-        let Some(&t) = tag_subtags.get(ti) else {
+        let Some(t) = tag_subtags.get(ti) else {
             return false; // 3.B
         };
         if subtags_match(r, t) {
@@ -2206,6 +2299,127 @@ pub(crate) fn language_range_matches(range: &str, content_language: &str) -> boo
         ti += 1; // 3.E
     }
     true // Step 4.
+}
+
+/// Is `subtag` well-formed as any RFC 5646 §2.1 subtag production **other
+/// than** the primary language subtag? `extlang` = `3ALPHA`, `script` =
+/// `4ALPHA`, `region` = `2ALPHA / 3DIGIT`, `variant` = `5*8alphanum /
+/// (DIGIT 3alphanum)`, an extension singleton = 1 alphanumeric character,
+/// an extension value subtag = `2*8alphanum`, and a `privateuse`
+/// introducer (`"x"`) or value subtag = `1*8alphanum`. Every one of these
+/// productions falls inside the same envelope — 1 to 8 ASCII letters or
+/// digits — so rather than tracking which specific production a subtag
+/// belongs to (a full position-tracking grammar walk, out of scope per
+/// [`language_range_matches`]'s doc), this function checks that shared
+/// envelope directly.
+fn is_well_formed_alphanum_subtag(subtag: &str) -> bool {
+    (1..=8).contains(&subtag.len()) && subtag.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// Is `subtags` (already split on `-`, guaranteed non-empty by
+/// [`language_range_matches`]'s empty-string early return) well-formed as a
+/// BCP47 **`Language-Tag`**? RFC 5646 §2.1's top-level production is
+/// `Language-Tag = langtag / privateuse / grandfathered`; this function
+/// implements the first two alternatives (`grandfathered` is not
+/// recognized as its own alternative — see [`language_range_matches`]'s
+/// doc for which grandfathered tags this still accepts as ordinary
+/// `langtag`s and which it rejects).
+///
+/// For `langtag`, the primary language subtag (`subtags[0]`) must be pure
+/// ASCII alpha, 2 to 8 characters — the union of `language`'s three ABNF
+/// alternatives (`2*3ALPHA`, the reserved `4ALPHA`, and `5*8ALPHA`). For the
+/// top-level `privateuse` alternative (`"x" 1*("-" (1*8alphanum))`),
+/// `subtags[0]` must case-insensitively equal `"x"` and at least one
+/// further subtag must be present (the ABNF's `1*`); this is the only
+/// signal this function uses to pick between the two alternatives, so it
+/// cannot separately model a `langtag`'s own optional trailing
+/// `privateuse` extension — that extension's subtags simply pass through
+/// [`is_well_formed_alphanum_subtag`] like any other trailing subtag.
+/// Every subtag after the first, in either alternative, only needs
+/// [`is_well_formed_alphanum_subtag`]'s shared envelope; see that
+/// function's doc, and [`language_range_matches`]'s doc for the list of
+/// `langtag` subtag *sequences* this does not validate.
+fn is_well_formed_language_tag(subtags: &[&str]) -> bool {
+    let first = subtags[0];
+    let first_ok = if first.eq_ignore_ascii_case("x") {
+        subtags.len() >= 2
+    } else {
+        (2..=8).contains(&first.len()) && first.bytes().all(|b| b.is_ascii_alphabetic())
+    };
+    first_ok
+        && subtags[1..]
+            .iter()
+            .all(|s| is_well_formed_alphanum_subtag(s))
+}
+
+/// Is `subtags` (already split on `-`, guaranteed non-empty by
+/// [`language_range_matches`]'s empty-string early return) well-formed as
+/// an RFC 4647 §2.2 "extended language range"?
+///
+/// > extended-language-range = (1\*8ALPHA / "\*")
+/// >                           \*("-" (1\*8alphanum / "\*"))
+///
+/// The first subtag must be ASCII alpha (1 to 8 characters) or the
+/// wildcard `*`; every later subtag must be `*` or satisfy
+/// [`is_well_formed_alphanum_subtag`]. This is RFC4647's own range grammar
+/// (looser than [`is_well_formed_language_tag`]'s `langtag` production,
+/// e.g. it has no per-position script/region/variant distinctions) rather
+/// than an implementation of Selectors L4 §7.2's "would not be a
+/// well-formed language tag if an initial wildcard \[...\] were replaced
+/// with a valid subtag" clause, which would require backtracking over
+/// every possible wildcard-to-subtag substitution; see
+/// [`language_range_matches`]'s doc for the scope this leaves out.
+fn is_well_formed_extended_language_range(subtags: &[&str]) -> bool {
+    let first = subtags[0];
+    let first_ok = first == "*"
+        || ((1..=8).contains(&first.len()) && first.bytes().all(|b| b.is_ascii_alphabetic()));
+    first_ok
+        && subtags[1..]
+            .iter()
+            .all(|&s| s == "*" || is_well_formed_alphanum_subtag(s))
+}
+
+/// The deprecated **2-letter** (`Type: language`) primary language subtags
+/// from the IANA Language Subtag Registry
+/// (<https://www.iana.org/assignments/language-subtag-registry/language-subtag-registry>)
+/// — every registry record with `Type: language`, a subtag exactly 2
+/// letters long, and both a `Deprecated` and a `Preferred-Value` field.
+/// This is the complete set of *2-letter* deprecated primary language
+/// subtags; the registry additionally lists over 100 deprecated
+/// **3-letter** (ISO 639-3) primary language subtags — macrolanguage or
+/// orthography mergers such as `ncp` -> `kdz` — which this table
+/// deliberately excludes.
+const DEPRECATED_PRIMARY_LANGUAGE_SUBTAGS: &[(&str, &str)] = &[
+    ("bh", "bih"),
+    ("in", "id"),
+    ("iw", "he"),
+    ("ji", "yi"),
+    ("jw", "jv"),
+    ("mo", "ro"),
+];
+
+/// Canonicalizes `subtags`' primary language subtag (index 0; `subtags` is
+/// guaranteed non-empty by [`language_range_matches`]'s empty-string early
+/// return) to its registry `Preferred-Value` when it matches (ASCII
+/// case-insensitively — subtags are case-insensitive per RFC 5646 §2.1.1)
+/// one of [`DEPRECATED_PRIMARY_LANGUAGE_SUBTAGS`], per RFC 5646 §4.5 step 3
+/// ("Subtags are replaced by their 'Preferred-Value', if there is one").
+/// The replacement is written out in the registry's own lowercase form,
+/// which is harmless here because [`language_range_matches`]'s extended
+/// filtering comparison is itself ASCII-case-insensitive.
+///
+/// Only the primary language subtag is ever replaced — this crate's
+/// documented subset has no extlang, script, region, variant, extension,
+/// or grandfathered/redundant-tag `Preferred-Value` entries, so RFC 5646
+/// §4.5's other canonicalization steps are not implemented; see
+/// [`language_range_matches`]'s doc for the list.
+fn canonicalize_primary_language_subtag(subtags: &mut [String]) {
+    for &(deprecated, preferred) in DEPRECATED_PRIMARY_LANGUAGE_SUBTAGS {
+        if subtags[0].eq_ignore_ascii_case(deprecated) {
+            subtags[0] = preferred.to_string();
+            break;
+        }
+    }
 }
 
 /// `PseudoClass::Dir` arm of [`compound_matches`] — resolves the element's
@@ -6190,6 +6404,144 @@ mod tests {
         assert!(language_range_matches("en", "EN-US"));
     }
 
+    /// Selectors L4 §7.2's own example, quoted on [`language_range_matches`]'s
+    /// doc: "`:lang(åå)` would not match, because it contain[s] non-ASCII
+    /// characters so is ill-formed." Checked against several `lang` values,
+    /// including `åå` itself, to pin "never matches any element, regardless
+    /// of its lang attribute value" (not merely "doesn't happen to match
+    /// this particular content language").
+    #[test]
+    fn language_range_matches_rejects_non_ascii_ill_formed_range() {
+        for content_language in ["en", "en-US", "åå", ""] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert!(
+                !language_range_matches("åå", content_language),
+                "ill-formed range :lang(åå) must never match content \
+                 language {content_language:?}"
+            );
+        }
+    }
+
+    /// The other half of Selectors L4 §7.2's paired example (same fetch as
+    /// above): "`:lang(qq)` could match, even though qq is not a
+    /// registered language code." `qq` is well-formed (2 ASCII alpha
+    /// characters) but not IANA-registered — pins that this
+    /// implementation's bar is well-formedness (RFC 5646 §2.1's ABNF), not
+    /// full BCP47 validity (well-formed *and* every subtag registered),
+    /// matching the spec's own worked example rather than a stricter
+    /// registry check a future change might otherwise "helpfully" add.
+    #[test]
+    fn language_range_matches_well_formed_unregistered_subtag_can_match() {
+        assert!(language_range_matches("qq", "qq"));
+        assert!(language_range_matches("qq", "qq-Latn"));
+    }
+
+    /// Well-formedness rejects an overlong subtag (RFC 5646 §2.1: "All
+    /// subtags have a maximum length of eight characters") on either side —
+    /// covers [`is_well_formed_language_tag`]'s later-subtag branch, which
+    /// the non-ASCII range test above does not reach (that one fails on the
+    /// first-subtag check instead).
+    #[test]
+    fn language_range_matches_rejects_overlong_subtag_on_either_side() {
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            !language_range_matches("en", "en-abcdefghi"),
+            "9-character subtag exceeds RFC 5646's 8-character maximum"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            !language_range_matches("en-abcdefghi", "en-US"),
+            "same overlong-subtag rejection, this time on the range side"
+        );
+    }
+
+    /// A double hyphen splits into an empty subtag, which fits no BCP47
+    /// subtag production regardless of position.
+    #[test]
+    fn language_range_matches_rejects_empty_subtag_from_double_hyphen() {
+        assert!(!language_range_matches("en", "en--US"));
+    }
+
+    /// RFC 5646 §4.5 step 3 canonicalization (deprecated primary language
+    /// subtag -> registry `Preferred-Value`) is a genuine false-negative
+    /// source without it: `iw` is the deprecated form of `he` (IANA
+    /// Language Subtag Registry, `Type: language`, `Subtag: iw`,
+    /// `Deprecated`, `Preferred-Value: he`), so a conformant UA must match
+    /// `:lang(he)` against `lang="iw"` **and** `:lang(iw)` against
+    /// `lang="he"` — canonicalization runs on both the range and the
+    /// content language before comparison, so the match is symmetric.
+    #[test]
+    fn language_range_matches_canonicalizes_deprecated_primary_language_subtag() {
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            language_range_matches("he", "iw"),
+            ":lang(he) must match the deprecated-but-still-in-the-wild lang=\"iw\""
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            language_range_matches("iw", "he"),
+            ":lang(iw) must also match lang=\"he\" — the :lang() argument \
+             itself is canonicalized too, per Selectors L4 §7.2"
+        );
+    }
+
+    /// Regression coverage for the rest of [`DEPRECATED_PRIMARY_LANGUAGE_SUBTAGS`]
+    /// beyond the `iw`/`he` pair pinned above, including `bh` -> `bih` — the
+    /// one entry where the `Preferred-Value` changes the subtag's *length*
+    /// (2 letters -> 3), which is exactly where an off-by-one in the
+    /// canonicalize-then-compare ordering would surface.
+    #[test]
+    fn language_range_matches_canonicalizes_remaining_deprecated_subtag_table_entries() {
+        for (deprecated, preferred) in [
+            ("bh", "bih"),
+            ("in", "id"),
+            ("ji", "yi"),
+            ("jw", "jv"),
+            ("mo", "ro"),
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert!(
+                language_range_matches(preferred, deprecated),
+                ":lang({preferred}) must match lang=\"{deprecated}\""
+            );
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert!(
+                language_range_matches(deprecated, preferred),
+                ":lang({deprecated}) must match lang=\"{preferred}\""
+            );
+        }
+    }
+
+    /// Regression pin: a well-formed, multi-subtag tag/range pair that does
+    /// NOT involve any deprecated subtag must still match exactly as before
+    /// this well-formedness/canonicalization pass — exercises a `script`
+    /// subtag (`Hans`) through the new validation pipeline, distinct from
+    /// the plain-primary-language pairs the pre-existing tests use.
+    #[test]
+    fn language_range_matches_well_formed_non_canonicalized_tag_still_matches() {
+        assert!(language_range_matches("zh-Hans", "zh-Hans-CN"));
+        assert!(!language_range_matches("zh-Hant", "zh-Hans-CN"));
+    }
+
+    /// RFC 5646 §2.1's `privateuse = "x" 1*("-" (1*8alphanum))` is a live,
+    /// still-usable `Language-Tag` alternative on its own (distinct from the
+    /// frozen `grandfathered` list) — a bare top-level `privateuse` tag like
+    /// `x-foo` must be well-formed and must match itself.
+    #[test]
+    fn language_range_matches_privateuse_tag_matches_itself() {
+        assert!(language_range_matches("x-foo", "x-foo"));
+        // The ABNF's `1*` requires at least one value subtag after the `x`
+        // introducer — a bare `x` alone is ill-formed and must not match.
+        assert!(!language_range_matches("x", "x"));
+    }
+
     /// `dir="auto"` folds into the same "keep walking up" bucket as a
     /// missing/invalid `dir` attribute — the documented scope cut on
     /// [`resolve_directionality`] (deferred Unicode-bidi content sniffing).
@@ -6247,11 +6599,13 @@ mod tests {
     #[test]
     fn language_range_matches_wildcard_matches_any_tagged_language() {
         // The CSS-spec-level "wildcard doesn't match untagged" rule
-        // (`lang_pseudo_matches` doc) is enforced by that caller's own
-        // `(lang.is_empty(), range == "*")` special case before this
-        // function is ever reached for the untagged case — this function
-        // itself just needs to accept any non-empty tag for a bare `*`
-        // range (RFC 4647 §3.3.2 step 2's wildcard-subtag clause).
+        // (`lang_pseudo_matches` doc) is enforced directly by this
+        // function's own empty-`content_language` early return, which
+        // requires exact string equality against `range` and so yields
+        // `false` for a bare `*` range against an empty `content_language`
+        // — this function itself just needs to accept any non-empty tag
+        // for a bare `*` range (RFC 4647 §3.3.2 step 2's wildcard-subtag
+        // clause), which is what the assertions below check.
         assert!(language_range_matches("*", "ja"));
         assert!(language_range_matches("*", "en-US"));
         assert!(language_range_matches("*", "und"));
