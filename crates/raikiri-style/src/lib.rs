@@ -347,8 +347,8 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
 
     /// `:lang(range, ...)` / `:dir(ltr|rtl)` — CSS Selectors L4 §7.2 / §7.1
     /// (see [`PseudoClass::Lang`] / [`PseudoClass::Dir`] doc for spec
-    /// anchors). Grammar (bikeshed source, 2026-08-12 direct fetch, quoted
-    /// verbatim on [`Direction`]'s doc / [`crate::cascade::language_range_matches`]'s
+    /// anchors). Grammar (bikeshed source, quoted verbatim on
+    /// [`Direction`]'s doc / [`crate::cascade::language_range_matches`]'s
     /// doc): `:lang()` "accepts a comma-separated list of one or more
     /// language ranges \[...\] a valid CSS `<ident>` or `<string>`"; `:dir()`'s
     /// "argument \[...\] must be a single identifier, otherwise the selector
