@@ -1040,8 +1040,8 @@ fn sibling_position<D: StyleDom>(
 /// [`matches_empty`]; fell back to Selectors **Level 3** §6.6
 /// <https://www.w3.org/TR/selectors-3/#structural-pseudos> (verbatim,
 /// 2026-08-12 direct fetch — again the same feature, unchanged by L4
-/// except for the unrelated `An+B of S` extension this task does not
-/// implement, see `ruletree.rs`'s `is_supported_selector_list` doc):
+/// except for the unrelated `An+B of S` extension, which is not
+/// implemented here, see `ruletree.rs`'s `is_supported_selector_list` doc):
 /// "The :nth-child(an+b) pseudo-class notation represents an element that
 /// has an+b-1 siblings before it in the document tree... The
 /// :nth-last-child(an+b) pseudo-class notation represents an element that
@@ -7156,10 +7156,9 @@ mod tests {
     }
 
     /// `:dir(rtl)` matches an element with an explicit `dir="rtl"` attribute,
-    /// and — the actual differentiator from `[dir=rtl]` this task's bd
-    /// description points at — a descendant with no `dir` of its own
-    /// inherits that directionality (`resolve_directionality`'s ancestor
-    /// walk).
+    /// and — the actual differentiator from `[dir=rtl]` — a descendant with
+    /// no `dir` of its own inherits that directionality
+    /// (`resolve_directionality`'s ancestor walk).
     #[test]
     fn dir_matches_explicit_rtl_and_inherits_to_descendant_without_own_dir() {
         let mut doc = TestDoc::new();
@@ -7765,10 +7764,9 @@ mod tests {
 
     /// A missing `dir` attribute (HTML LS "Undefined" state) is a
     /// *different* case from `dir=\"auto\"` above and must keep falling
-    /// through to the ancestor's directionality, unchanged by this task —
-    /// `background-color` isolates the element's own `:dir()` match from
-    /// ordinary (unrelated) property inheritance the same way the tests
-    /// above do.
+    /// through to the ancestor's directionality — `background-color`
+    /// isolates the element's own `:dir()` match from ordinary (unrelated)
+    /// property inheritance the same way the tests above do.
     #[test]
     fn dir_undefined_still_falls_through_to_ancestor_via_background_color() {
         let mut doc = TestDoc::new();
@@ -9976,8 +9974,8 @@ mod tests {
     #[test]
     fn author_flex_container_longhands_compute_through_cascade() {
         // End-to-end pipeline pin (parse -> cascade -> ComputedValues) for
-        // the individual flex-container properties this task adds — sibling
-        // of `author_display_flex_and_grid_compute_through_cascade` above.
+        // the individual flex-container properties — sibling of
+        // `author_display_flex_and_grid_compute_through_cascade` above.
         let cv = cascade_with_ua(
             "",
             "div { display: flex; flex-direction: column; flex-wrap: wrap; \
