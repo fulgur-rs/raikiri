@@ -3356,22 +3356,11 @@ mod tests {
         // center/listing/plaintext/xmp は HTML LS §16.2 上は
         // "entirely obsolete" 分類だが、その分類は authoring conformance の
         // 話であって UA rendering の話ではない (詳細は minimal.css のコメント
-        // 参照)。dialog (7要素目) はこのループには含めない —
-        // まだ本ファイルに rule 自体が無い (deliberately deferred、詳細は
-        // minimal.css のコメント参照)。当初 `dialog { display: none; }` /
-        // `dialog[open] { display: block; }` の2 rule ペアで追加していたが、
-        // レビューで regression が発見され amend で削除した:
-        // `raikiri_dom::ElementRef::attr()` が空文字列属性値を `None` に
-        // 正規化する bug により、canonical form の
-        // 素の `<dialog open>` では `dialog[open]` が発火せず、無条件の
-        // `dialog { display: none; }` だけが効いてしまう —
-        // rule 追加前 (no-rule → CSS-initial `inline`、box type は誤りだが
-        // content は見える) より悪化する (`display: none` で content が
-        // 完全に不可視になる) regression だったため。上記 attr() の bug が
-        // 解消され次第再導入する予定 (followup として追跡中)。cascade まで
-        // 通した非-vacuous な検証は追加した6要素分は
+        // 参照)。cascade まで通した非-vacuous な検証は追加した6要素分は
         // `crates/raikiri/tests/build_cascaded.rs`
         // `flow_content_3_residue_elements_are_display_block_via_ua_css` 側。
+        // dialog (§flow-content-3 の7要素目) はこの loop には入れない
+        // (下の assert 参照)。
         for tag in [
             "html",
             "body",
@@ -3417,6 +3406,29 @@ mod tests {
                 "MINIMAL_UA_CSS is missing selector rule `{tag} {{ … }}`",
             );
         }
+        // dialog の display は open 属性依存 (minimal.css の `dialog` /
+        // `dialog[open]` specificity pair 経由、詳細は minimal.css の
+        // コメント参照) で、上の loop が保証する「無条件に display: block」
+        // の契約には当てはまらないため、上の loop には含めず両方の
+        // selector-rule prefix の存在をここで直接 assert する。cascade まで
+        // 通した非-vacuous な検証は `crates/raikiri/tests/build_cascaded.rs`
+        // `dialog_display_reflects_open_attribute_via_ua_css` 側。
+        let has_selector_rule = |selector: &str| {
+            MINIMAL_UA_CSS.lines().any(|line| {
+                line.trim_start()
+                    .strip_prefix(selector)
+                    .map(|rest| rest.trim_start().starts_with('{'))
+                    .unwrap_or(false)
+            })
+        };
+        assert!(
+            has_selector_rule("dialog"),
+            "MINIMAL_UA_CSS is missing selector rule `dialog {{ … }}`",
+        );
+        assert!(
+            has_selector_rule("dialog[open]"),
+            "MINIMAL_UA_CSS is missing selector rule `dialog[open] {{ … }}`",
+        );
         // spec 参照コメントが含まれていること (CSS 2.1 App.D 由来の cleanroom 印)
         assert!(
             MINIMAL_UA_CSS.contains("CSS 2.1 App.D"),
