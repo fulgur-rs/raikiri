@@ -2348,7 +2348,13 @@ fn absolutize_in_page_context(
         // bucket as identity pass-through, same reasoning as
         // `PlaceContent`/`GridRow` above.
         | PropertyValue::PlaceItems(_)
-        | PropertyValue::PlaceSelf(_)) => v,
+        | PropertyValue::PlaceSelf(_)
+        // `orphans`/`widows` (CSS Fragmentation Module Level 3 §3.3) carry a
+        // bare positive `<integer>`, not a length, and computed value =
+        // specified integer — nothing for phase 3 to absolutize, same shape
+        // as `FlexGrow`/`FlexShrink` above.
+        | PropertyValue::Orphans(_)
+        | PropertyValue::Widows(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -4852,11 +4858,14 @@ mod tests {
     /// list 中に `<length-percentage>` を運ぶため pass-through 側には
     /// **加わらない** — `absolutize_in_page_context` のバケット comment
     /// 参照)。
+    /// 63 → 65 (`Orphans` / `Widows`, CSS Fragmentation Module Level 3 §3.3 —
+    /// both carry a bare positive `<integer>`, not a length, so there is
+    /// nothing for phase 3 to absolutize).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 63;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 65;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -5273,6 +5282,12 @@ mod tests {
             align: AlignSelfValue::Auto,
             justify: AlignSelfValue::Value(SelfAlignmentValue::Start),
         }),
+        // No specified/computed distinction for `orphans`/`widows`
+        // (computed value = specified integer, CSS Fragmentation Module
+        // Level 3 §3.3) — any positive value is "worst case" (`Direction`
+        // sibling comment above uses the same reasoning).
+        Orphans => PropertyValue::Orphans(5),
+        Widows => PropertyValue::Widows(7),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -5485,6 +5500,8 @@ mod tests {
         JustifySelf,
         PlaceItems,
         PlaceSelf,
+        Orphans,
+        Widows,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -5900,7 +5917,11 @@ mod tests {
             // `place-items`/`place-self` shorthand — same shape as
             // `place-content` above.
             | PropertyValue::PlaceItems(_)
-            | PropertyValue::PlaceSelf(_) => None,
+            | PropertyValue::PlaceSelf(_)
+            // `orphans`/`widows` carry an `<integer>`, not a length, same as
+            // `ZIndexValue` above.
+            | PropertyValue::Orphans(_)
+            | PropertyValue::Widows(_) => None,
             // `text-shadow` — each item's 3 lengths (`offset-x`/`offset-y`/
             // `blur-radius`) can carry specified-layer residue (same `length`
             // check `Padding`/`Margin` use above); `<color>` carries no
