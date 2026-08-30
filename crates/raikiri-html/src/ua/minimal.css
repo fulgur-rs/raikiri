@@ -88,22 +88,51 @@ plaintext { display: block; }
 search    { display: block; }
 xmp       { display: block; }
 
-/* dialog (the 7th §flow-content-3 element not covered above) is
- * deliberately NOT added here yet. The spec pair
- * `dialog { display: block; } dialog:not([open]) { display: none; }`
- * needs reproducing without `:not()` support (`is_supported_selector_list`
- * in ruletree.rs), which is reachable via specificity as `dialog {
- * display: none; }` overridden by `dialog[open] { display: block; }`.
- * `raikiri_dom::ElementRef::attr()` previously normalized any empty-value
- * attribute (including the canonical bare `<dialog open>` HTML5
- * boolean-attribute form) to `None`, which would have made `dialog[open]`
- * never fire for real documents while the unconditional `dialog {
- * display: none; }` half still would — a net regression vs. today's
- * no-rule-at-all (CSS-initial `inline`, at least visible) for the common
- * open-dialog case. That attr() bug is now fixed (`attr()` returns
- * `Some("")` for a present-but-empty attribute, so `dialog[open]` does
- * fire for `<dialog open>`); the two-rule pair is still deferred here as
- * a separate, not-yet-landed addition rather than an active blocker. */
+/* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) includes
+ * `dialog` as a member of the section's shared `display: block` group
+ * selector (the same group `address`/`center`/`listing`/`plaintext`/
+ * `search`/`xmp` above belong to), and separately specifies the only
+ * dialog-specific display rule in that section:
+ *   dialog:not([open]) { display: none; }
+ *
+ * `:not()` is not a supported selector component here (see
+ * `is_supported_selector_list` in ruletree.rs), so the pair below reaches
+ * the same open/closed split through specificity instead: `dialog[open]`'s
+ * attribute selector gives it higher specificity than the type-only
+ * `dialog` rule, so it wins regardless of source order. A dialog with no
+ * `open` attribute resolves to `display: none` and one with `open` present
+ * — either the bare HTML5 boolean-attribute form `<dialog open>` or a
+ * non-empty `open="open"` — resolves to `display: block`.
+ * `raikiri_dom::ElementRef::attr()` tracks attribute presence independent
+ * of value, returning `Some("")` for a present-but-empty attribute rather
+ * than collapsing it to `None`, so `dialog[open]` matches the bare form
+ * too — the same presence-tracking `a[href]` below relies on for
+ * `<a href="">`. Landed as a pair rather than the `display: none` half
+ * alone: that half by itself would hide already-open dialogs with no
+ * offsetting rule, worse than the CSS-initial `display: inline` a
+ * dialog-less stylesheet would leave them at.
+ *
+ * dialog's other rules from that same §flow-content-3 code block are out of
+ * scope for this display-only rule set. The `dialog { … }` declarations —
+ * `position: absolute`, `inset-inline-start`/`inset-inline-end`, fit-content
+ * sizing, `margin: auto`, `border: solid`, `padding: 1em`,
+ * `background-color: Canvas`, `color: CanvasText` — hang together off
+ * `position: absolute`, which doesn't parse (property.rs's `parse_position`
+ * only accepts `static`/`running(<custom-ident>)`, confirmed by the
+ * `parse("absolute", "position")` → `None` test), so as a group they
+ * wouldn't reproduce the spec's positioned dialog box even if added
+ * piecemeal.
+ *
+ * `dialog:modal` and `::backdrop` aren't supported by the selector parser at
+ * all: raikiri-style's lib.rs recognizes only `:hover`/`:active` and the
+ * functional `:lang()`/`:dir()` as pseudo-classes (`RaikiriSelectorParser`),
+ * and its pseudo-element type (`PseudoElem`) is an uninhabited enum with no
+ * `parse_pseudo_element` override, so neither construct can parse as a
+ * selector component at all.
+ *
+ * The related `[popover]` attribute family is separately out of scope. */
+dialog       { display: none; }
+dialog[open] { display: block; }
 
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
  * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,
@@ -250,14 +279,14 @@ blockquote, figure, listing, p, plaintext, pre, xmp { margin-top: 1em; margin-bo
  * A bare `<a name="x">` / `<a id="x">` fragment-target anchor with no
  * `href` is not a link at all per spec and must stay at CSS-initial (no
  * color/underline). Gated here via the `[href]` attribute selector
- * (`Component::AttributeInNoNamespaceExists`, already exercised in this
- * same file by the `dialog[open]` deferral note above).
+ * (`Component::AttributeInNoNamespaceExists`, already used in this same
+ * file by the `dialog[open]` rule above).
  *
  * `<a href="">` (an href-having-but-empty link, still spec-`:link` per
  * the same clause) does match `[href]` here: `raikiri_dom::ElementRef::attr()`
  * tracks attribute presence independent of value, returning `Some("")`
  * for a present-but-empty attribute rather than collapsing it to `None`
- * (same fix the `dialog[open]` deferral note above references). */
+ * (same behavior the `dialog[open]` rule above relies on). */
 a[href] { color: #0000EE; text-decoration: underline; }
 
 /* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.4) also

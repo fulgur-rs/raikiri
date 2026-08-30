@@ -775,19 +775,11 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
     // not UA rendering — §flow-content-3 itself still lists them in the
     // same display:block selector as address/search (full reasoning in
     // minimal.css's comment). dialog, the 7th residue element, is
-    // deliberately NOT in this list — minimal.css has no rule for it at
-    // all yet. An earlier version of this change added a
-    // `dialog { display: none; } dialog[open] { display: block; }` pair
-    // (plus a test here), but review found it was a regression:
-    // `raikiri_dom::ElementRef::attr()` normalizes any empty-value
-    // attribute to `None`, so `dialog[open]`
-    // never fires for the canonical bare `<dialog open>` form, leaving
-    // only the unconditional `dialog { display: none; }` in effect — a
-    // real open dialog's content went from visible-but-wrong-box
-    // (CSS-initial `inline`, no rule) to fully invisible (`none`). Pulled
-    // out in the amend; dialog's UA CSS is deferred as a whole unit,
-    // blocked on a raikiri-dom empty-value-attribute bug (see minimal.css's
-    // comment). Same
+    // deliberately NOT in this list — its display resolves conditionally
+    // on the `open` attribute rather than unconditionally to
+    // `display: block`, so it needs its own attribute-driven test rather
+    // than fitting this unconditional loop (see
+    // `dialog_display_reflects_open_attribute_via_ua_css` below). Same
     // non-vacuous real parse -> build_cascaded pattern as
     // `sectioning_and_grouping_elements_are_display_block_via_ua_css` /
     // `list_elements_are_display_block_via_ua_css` /
@@ -805,6 +797,42 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
             display,
             DisplayValue::Block,
             "<{tag}> should be display: block from the flow-content-3 UA CSS group"
+        );
+    }
+}
+
+#[test]
+fn dialog_display_reflects_open_attribute_via_ua_css() {
+    // HTML LS §flow-content-3 (15.3.3) specifies
+    // `dialog:not([open]) { display: none; }` alongside dialog's
+    // membership in the section's unconditional `display: block`
+    // group selector. minimal.css reproduces that pair without `:not()`
+    // support via specificity instead (`dialog { display: none; }`
+    // overridden by the higher-specificity `dialog[open] { display:
+    // block; }` — see that file's comment for the full rationale).
+    //
+    // This exercises the real parse -> build_cascaded path (not a
+    // raikiri-style unit test with a mock attribute), so that
+    // `raikiri_dom::ElementRef::attr()`'s presence-vs-value handling of
+    // the bare HTML5 boolean-attribute form (`<dialog open>`, value `""`)
+    // is proven end-to-end rather than merely assumed, alongside the
+    // non-empty `open="open"` form.
+    let cases = [
+        ("<dialog>Hi</dialog>", DisplayValue::None),
+        ("<dialog open>Hi</dialog>", DisplayValue::Block),
+        ("<dialog open=\"open\">Hi</dialog>", DisplayValue::Block),
+    ];
+    for (fragment, expected) in cases {
+        let html = format!("<html><body>{fragment}</body></html>");
+        let doc = parse_html(&html);
+        let result = build_cascaded(&doc);
+
+        let dialog_id = find_by_tag(&doc.dom, "dialog").expect("<dialog> exists");
+        let display = result.computed[dialog_id.0 as usize].display;
+        assert_eq!(
+            display, expected,
+            "dialog display should reflect the open attribute per minimal.css's \
+             dialog/dialog[open] specificity pair (fragment: {fragment:?})"
         );
     }
 }
