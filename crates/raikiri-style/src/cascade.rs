@@ -2779,15 +2779,24 @@ fn text_node_first_strong_direction(data: &str) -> Option<Direction> {
 /// to [`char::is_alphabetic`] (guarded by `NON_STRONG_ALPHABETIC_RANGES`,
 /// see below) for `L` (covers Latin, Greek,
 /// Cyrillic, CJK, Hangul, Devanagari, and effectively every other
-/// left-to-right alphabetic script) or `None` for non-alphabetic code
-/// points (digits, punctuation, whitespace, combining marks) — which
-/// matches the real `Bidi_Class` table for most of those too (their actual
-/// classes are typically weak/neutral types like EN, AN, CS, ON, WS, NSM).
-/// This is not exhaustive — case 2 of the `is_alphabetic()` fallback
-/// section below documents a broader, deliberately unguarded residual set
-/// of non-alphabetic code points whose real `Bidi_Class` actually is `L`
-/// (mostly non-Latin decimal digits; see case 2 for why it's left
-/// unguarded). Three specific code points *are* handled explicitly before
+/// left-to-right alphabetic script), then to `STRONG_L_NON_ALPHABETIC_RANGES`
+/// (see below) for a further set of code points whose real `Bidi_Class` is
+/// `L` despite not being alphabetic (non-Latin decimal digits,
+/// script-specific punctuation, and viramas/tone marks that Unicode does
+/// not tag `Alphabetic`), or `None` for everything else — which matches
+/// the real `Bidi_Class` table for most of those too (their actual classes
+/// are typically weak/neutral types like EN, AN, CS, ON, WS, NSM). This is
+/// not exhaustive — case 2 of the `is_alphabetic()` fallback section below
+/// documents two further residuals left deliberately unguarded beyond
+/// `STRONG_L_NON_ALPHABETIC_RANGES`'s fixed `Nd`/punctuation/`Mc`
+/// categories: a version-drift-driven one, where a Unicode revision newer
+/// than what the pinned toolchain's `is_alphabetic()` was built against
+/// assigns real `Bidi_Class=L` to code points this function does not yet
+/// special-case (currently on the order of thousands, of which only three
+/// are individually listed), and a smaller, toolchain-independent
+/// structural one (`So`/`No` symbols and numbers) — see case 2 for both
+/// residuals' shape and why each is left unguarded. Three specific code
+/// points *are* handled explicitly before
 /// reaching any of this, cheaply, without a table: U+200E LEFT-TO-RIGHT
 /// MARK and U+200F RIGHT-TO-LEFT MARK
 /// (`Cf`, General Punctuation block) and U+061C ARABIC LETTER MARK (`Cf`,
@@ -2831,7 +2840,7 @@ fn text_node_first_strong_direction(data: &str) -> Option<Direction> {
 /// snapshot (Unicode 17.0.0), so there is no comparable cross-source
 /// version skew to caveat here.
 ///
-/// # `is_alphabetic()` fallback: two known gaps against the real `Bidi_Class`
+/// # `is_alphabetic()` fallback: two gaps against the real `Bidi_Class`
 ///
 /// Outside `AL_RANGES`/`R_RANGES`, `L` is derived from
 /// [`char::is_alphabetic`] — i.e. from Unicode's `Alphabetic` property
@@ -2872,22 +2881,118 @@ fn text_node_first_strong_direction(data: &str) -> Option<Direction> {
 ///    `Bidi_Class=L` but `is_alphabetic() == false`, mostly decimal digits
 ///    of non-Latin scripts (e.g. U+0966..U+096F DEVANAGARI DIGIT
 ///    ZERO..NINE) plus a smaller set of punctuation (e.g. U+055A..U+055F
-///    Armenian punctuation). This function does not correct this
-///    direction in general — there is no inclusion table mirroring
-///    `NON_STRONG_ALPHABETIC_RANGES` for it, so a genuinely-first `L`
-///    character in this set can still be skipped in favor of a later
-///    `AL`/`R` character in the same text. (One member of this same
-///    category, U+200E LEFT-TO-RIGHT MARK, *is* corrected — not by an
-///    inclusion table but by the explicit top-of-function check described
-///    above, since that code point was already being singled out for
-///    U+200F's sake.) This is a narrower gap than case 1 in practice: case
-///    1's combining marks routinely sit immediately in front of an ordinary
-///    base letter in natural text (the true first strong character is
-///    right there, one code point later), whereas this case requires a
-///    digit or punctuation mark to itself be the text's true first strong
-///    character ahead of an unrelated `AL`/`R` character elsewhere in the
-///    same string. Left as a known, documented gap rather than adding a
-///    second large table.
+///    Armenian punctuation). Left uncorrected, a genuinely-first `L`
+///    character in this set would be skipped in favor of a later `AL`/`R`
+///    character in the same text, resolving the wrong direction outright
+///    — the same failure shape as case 1, just in the opposite direction.
+///    `STRONG_L_NON_ALPHABETIC_RANGES` below closes the categorical part
+///    of this gap: every explicit (non-`@missing`) `DerivedBidiClass.txt`
+///    entry whose `Bidi_Class=L` and whose `General_Category`
+///    (`DerivedGeneralCategory.txt`, same Unicode version) is `Nd`
+///    (decimal digit), one of the punctuation categories
+///    `Pc`/`Pd`/`Pe`/`Pf`/`Pi`/`Po`/`Ps`, or `Mc` (spacing combining mark,
+///    plus one functionally-identical `Mn` entry) — 186 entries for
+///    Unicode 17.0.0, exhaustive for exactly those categories plus the
+///    three Sharada Vowel Signs Supplement code points below, which are
+///    added for a different reason covered in the next paragraph, not
+///    because a fourth category exists. The first two categories are
+///    named-script digits and punctuation; `Mc` needs its own
+///    explanation, since most `Mc` code points are vowel signs already
+///    covered by `Alphabetic=Yes` — the ones actually needed here are
+///    viramas, tone marks, and similar combining marks that Unicode does
+///    not consider `Alphabetic` under any Unicode version, despite their
+///    real `Bidi_Class=L`. (One member of this same case-2 category,
+///    U+200E LEFT-TO-RIGHT MARK, is handled separately — not by this table but
+///    by the explicit top-of-function check described above, since that code
+///    point was already being singled out for U+200F's sake.)
+///
+///    A second, unrelated route into this same "real `L`,
+///    `is_alphabetic() == false`" shape is version drift, mirroring case
+///    1's caveat above: `char::is_alphabetic` may track a Unicode
+///    revision older than the 17.0.0 this table's categories are derived
+///    against, so a code point that Unicode 17.0.0 assigns both
+///    `Bidi_Class=L` and `Alphabetic=Yes` can still fail
+///    `is_alphabetic()` under an older-than-17.0.0 toolchain — even
+///    though, by rights, it should need no table entry at all and be
+///    caught by the plain `c.is_alphabetic()` branch above. The three
+///    Sharada Vowel Signs Supplement code points below are exactly this:
+///    `Mc`, `Alphabetic=Yes` under UCD 17.0.0, and so already inside this
+///    table's `Nd`/punctuation/`Mc` category filter, but listed
+///    individually because they are the three code points this table's
+///    own derivation verified as affected. They are not the only code
+///    points this mechanism affects. Checking this workspace's pinned rustc 1.89.0
+///    (`rust-toolchain.toml`) against the same `Bidi_Class=L` ∧
+///    `Alphabetic=Yes` (Unicode 17.0.0) intersection finds 4620 such code
+///    points failing `char::is_alphabetic()`, not 3 — dominated by CJK
+///    Unified Ideographs Extension J alone (4298 code points,
+///    U+323B0..U+33479), plus Tangut Ideographic Components and a handful
+///    of other letter blocks Unicode 17.0.0 newly assigned (Tai Yo, Beria
+///    Erfe, Tolong Siki, Latin Extended-D). Checked directly, not just
+///    assumed: of the 4620, exactly 3 are `General_Category` `Mc` — the
+///    same three Sharada entries already listed — and none is `Mn`,
+///    `Nd`, or one of the punctuation categories; the remaining 4617 are
+///    `Lo` (4555), `Lu` (28), `Ll` (26), `Lm` (5), or `Nl` (3) letters
+///    and letter-numbers, entirely outside this table's
+///    `Nd`/punctuation/`Mc` category filter. So covering them here would
+///    mean dropping that filter and turning this into a general
+///    "toolchain hasn't caught up to Unicode 17.0.0 yet" table with a
+///    completely different, much larger and version-churn-prone scope,
+///    not an extension of the current one. Hardcoding thousands of
+///    entries for that — one CJK block alone accounts for the
+///    overwhelming majority — would be exactly the kind
+///    of exhaustive per-code-point enumeration this function's tables
+///    otherwise avoid, and it would go silently stale (redundant, not
+///    merely unneeded) the moment the pinned toolchain is updated past
+///    17.0.0, since `char::is_alphabetic` would then cover these code
+///    points on its own. Closing this class of gap for good would mean
+///    either updating the pinned rustc toolchain or deriving the
+///    `Alphabetic` check directly from UCD data instead of
+///    `char::is_alphabetic` — both out of scope for this table. Left as
+///    a known, open-ended limitation whose size tracks how far the
+///    pinned toolchain lags the newest Unicode data, unlike the closed,
+///    version-independent `Nd`/punctuation/`Mc` categories above.
+///
+///    Separately from version drift, a residual is deliberately left
+///    uncovered regardless of toolchain version: explicit `Bidi_Class=L`
+///    code points outside `Nd`/punctuation/`Mc` whose real
+///    `General_Category` is `So`/`No` (symbols and other numbers). This
+///    category is not a clean "symbols, not script text" line the way it
+///    might sound — Ethiopic's entire digit series (U+1369..U+137C
+///    ETHIOPIC DIGIT ONE..ETHIOPIC NUMBER TEN THOUSAND) is `No`, not `Nd`,
+///    because Ethiopic historically has no zero and its "digits" are
+///    additive numeral signs rather than positional digits; smaller
+///    numeral-adjacent `No` sets exist for Tamil, Bengali, Oriya,
+///    Malayalam, Sinhala, and Tibetan half-integers alongside the Braille
+///    patterns, circled/parenthesized digits, and squared/circled CJK
+///    compatibility symbols that are genuinely symbol-like. Also left out:
+///    a handful of `Cf` format characters and `Sk` modifier symbols with
+///    real `Bidi_Class=L` that are not `Alphabetic=Yes` (e.g. U+110BD
+///    KAITHI NUMBER SIGN / U+110CD KAITHI NUMBER SIGN ABOVE,
+///    U+A789..U+A78A MODIFIER LETTER COLON..MODIFIER LETTER SHORT EQUALS
+///    SIGN), and the three Private Use Area blocks (`Co`, two of them
+///    65534 code points wide, one — the BMP Private Use Area — 6400),
+///    which also carry an explicit `Bidi_Class=L` entry each. All of these
+///    are excluded by the same category check as the rest of the residual,
+///    not specially cased. Unlike the `Mc` viramas this table does cover,
+///    the `So`/`No` residual has no single derivation rule that reliably
+///    separates "numeral sign genuinely likely to open real text" from
+///    "compatibility symbol essentially never seen as the first character
+///    of a sentence" — chasing it further would mean enumerating the
+///    residual case by case rather than by a `General_Category` rule,
+///    which this function's tables otherwise avoid doing. Left as a known,
+///    narrowly-scoped gap: it requires one of these residual code points
+///    to itself be the text's true first strong character ahead of an
+///    unrelated `AL`/`R` character elsewhere in the same string.
+///    (Separately, and much larger again: `DerivedBidiClass.txt` also
+///    carries a single `@missing: 0000..10FFFF; Left_To_Right` line — the
+///    default `Bidi_Class` for every *unassigned* code point in the entire
+///    codespace, dwarfing every table on this page combined. That default
+///    plays no part in this table's derivation: like
+///    `NON_STRONG_ALPHABETIC_RANGES` above, this table only draws from
+///    explicit, non-`@missing` per-code-point entries — unlike
+///    `AL_RANGES`/`R_RANGES`, which do transcribe `@missing` lines, but
+///    only the narrower, per-script-block ones, never this codespace-wide
+///    one.)
 fn strong_bidi_type(c: char) -> Option<StrongBidiType> {
     let cp = c as u32;
     // U+200E LEFT-TO-RIGHT MARK and U+200F RIGHT-TO-LEFT MARK are explicit
@@ -3359,6 +3464,367 @@ fn strong_bidi_type(c: char) -> Option<StrongBidiType> {
         (0x1E6EE, 0x1E6EF), // NSM
         (0x1E6F5, 0x1E6F5), // NSM
     ];
+    // Code points where the real `Bidi_Class` (per `DerivedBidiClass.txt`'s
+    // explicit, non-`@missing` per-code-point entries, Unicode 17.0.0) is `L`,
+    // but `Alphabetic=Yes` does not hold (`char::is_alphabetic() == false`) —
+    // see this function's doc, "`is_alphabetic()` fallback" section, case 2,
+    // for why this table exists and its scope. Restricted to entries whose
+    // `General_Category` (`DerivedGeneralCategory.txt`, same Unicode version)
+    // is `Nd` (decimal digit), one of the punctuation categories
+    // `Pc`/`Pd`/`Pe`/`Pf`/`Pi`/`Po`/`Ps`, or `Mc` (spacing combining mark) —
+    // plus a single `Mn` (non-spacing mark) entry that is functionally
+    // identical to the `Mc` ones (noted at its own site below) — see case 2's
+    // doc for why each of these shapes is included and what is deliberately
+    // left out. None of these ranges overlaps `AL_RANGES`/`R_RANGES` above
+    // (verified against this crate's actual `AL_RANGES`/`R_RANGES` tables at
+    // derivation time); none is `Alphabetic=Yes` under this workspace's
+    // pinned `char::is_alphabetic` (verified at derivation time) — except
+    // the three Sharada Vowel Signs Supplement entries noted at their own
+    // site below, which are `Alphabetic=Yes` under UCD 17.0.0 itself and
+    // need an entry here for exactly that reason (see their comment). Those
+    // three are individually-fixed instances of a much larger toolchain-lag
+    // class this table does not attempt to cover in full — see this
+    // function's doc, "`is_alphabetic()` fallback" section, case 2's second
+    // paragraph, for the fuller picture and why the rest is out of scope
+    // here. None overlaps `NON_STRONG_ALPHABETIC_RANGES` above — true by
+    // construction for every entry except those same three, since every
+    // other entry there has `Alphabetic=Yes` and every other entry here
+    // does not, while the three Sharada entries are instead checked
+    // directly against that table's actual code points (its `NSM` entries
+    // for the same Unicode block are 0x11B60, 0x11B62..0x11B64, 0x11B66 —
+    // disjoint from 0x11B61/0x11B65/0x11B67 here). Also checked directly at
+    // derivation time for every entry (range-pair overlap, not just
+    // individual code points, since both tables store ranges). So every
+    // entry here really would fall through to the final `None` below absent
+    // this check.
+    const STRONG_L_NON_ALPHABETIC_RANGES: &[(u32, u32)] = &[
+        // Armenian
+        (0x055A, 0x055F), // Po
+        (0x0589, 0x0589), // Po
+        // Devanagari
+        (0x0964, 0x0965), // Po
+        (0x0966, 0x096F), // Nd
+        (0x0970, 0x0970), // Po
+        // Bengali
+        (0x09E6, 0x09EF), // Nd
+        (0x09FD, 0x09FD), // Po
+        // Gurmukhi
+        (0x0A66, 0x0A6F), // Nd
+        (0x0A76, 0x0A76), // Po
+        // Gujarati
+        (0x0AE6, 0x0AEF), // Nd
+        (0x0AF0, 0x0AF0), // Po
+        // Oriya
+        (0x0B66, 0x0B6F), // Nd
+        // Tamil
+        (0x0BE6, 0x0BEF), // Nd
+        // Telugu
+        (0x0C66, 0x0C6F), // Nd
+        (0x0C77, 0x0C77), // Po
+        // Kannada
+        (0x0C84, 0x0C84), // Po
+        (0x0CE6, 0x0CEF), // Nd
+        // Malayalam
+        (0x0D66, 0x0D6F), // Nd
+        // Sinhala
+        (0x0DE6, 0x0DEF), // Nd
+        (0x0DF4, 0x0DF4), // Po
+        // Thai
+        (0x0E4F, 0x0E4F), // Po
+        (0x0E50, 0x0E59), // Nd
+        (0x0E5A, 0x0E5B), // Po
+        // Lao
+        (0x0ED0, 0x0ED9), // Nd
+        // Tibetan
+        (0x0F04, 0x0F12), // Po
+        (0x0F14, 0x0F14), // Po
+        (0x0F20, 0x0F29), // Nd
+        (0x0F85, 0x0F85), // Po
+        (0x0FD0, 0x0FD4), // Po
+        (0x0FD9, 0x0FDA), // Po
+        // Myanmar
+        (0x1040, 0x1049), // Nd
+        (0x104A, 0x104F), // Po
+        (0x1090, 0x1099), // Nd
+        // Georgian
+        (0x10FB, 0x10FB), // Po
+        // Ethiopic
+        (0x1360, 0x1368), // Po
+        // Unified Canadian Aboriginal Syllabics
+        (0x166E, 0x166E), // Po
+        // Runic
+        (0x16EB, 0x16ED), // Po
+        // Hanunoo
+        (0x1735, 0x1736), // Po
+        // Khmer
+        (0x17D4, 0x17D6), // Po
+        (0x17D8, 0x17DA), // Po
+        (0x17E0, 0x17E9), // Nd
+        // Mongolian
+        (0x1810, 0x1819), // Nd
+        // Limbu
+        (0x1946, 0x194F), // Nd
+        // New Tai Lue
+        (0x19D0, 0x19D9), // Nd
+        // Buginese
+        (0x1A1E, 0x1A1F), // Po
+        // Tai Tham
+        (0x1A80, 0x1A89), // Nd
+        (0x1A90, 0x1A99), // Nd
+        (0x1AA0, 0x1AA6), // Po
+        (0x1AA8, 0x1AAD), // Po
+        // Balinese
+        (0x1B4E, 0x1B4F), // Po
+        (0x1B50, 0x1B59), // Nd
+        (0x1B5A, 0x1B60), // Po
+        (0x1B7D, 0x1B7F), // Po
+        // Sundanese
+        (0x1BB0, 0x1BB9), // Nd
+        // Batak
+        (0x1BFC, 0x1BFF), // Po
+        // Lepcha
+        (0x1C3B, 0x1C3F), // Po
+        (0x1C40, 0x1C49), // Nd
+        // Ol Chiki
+        (0x1C50, 0x1C59), // Nd
+        (0x1C7E, 0x1C7F), // Po
+        // Sundanese Supplement
+        (0x1CC0, 0x1CC7), // Po
+        // Vedic Extensions
+        (0x1CD3, 0x1CD3), // Po
+        // Tifinagh
+        (0x2D70, 0x2D70), // Po
+        // Lisu
+        (0xA4FE, 0xA4FF), // Po
+        // Vai
+        (0xA620, 0xA629), // Nd
+        // Bamum
+        (0xA6F2, 0xA6F7), // Po
+        // Saurashtra
+        (0xA8CE, 0xA8CF), // Po
+        (0xA8D0, 0xA8D9), // Nd
+        // Devanagari Extended
+        (0xA8F8, 0xA8FA), // Po
+        (0xA8FC, 0xA8FC), // Po
+        // Kayah Li
+        (0xA900, 0xA909), // Nd
+        (0xA92E, 0xA92F), // Po
+        // Rejang
+        (0xA95F, 0xA95F), // Po
+        // Javanese
+        (0xA9C1, 0xA9CD), // Po
+        (0xA9D0, 0xA9D9), // Nd
+        (0xA9DE, 0xA9DF), // Po
+        // Myanmar Extended-B
+        (0xA9F0, 0xA9F9), // Nd
+        // Cham
+        (0xAA50, 0xAA59), // Nd
+        (0xAA5C, 0xAA5F), // Po
+        // Tai Viet
+        (0xAADE, 0xAADF), // Po
+        // Meetei Mayek Extensions
+        (0xAAF0, 0xAAF1), // Po
+        // Meetei Mayek
+        (0xABEB, 0xABEB), // Po
+        (0xABF0, 0xABF9), // Nd
+        // Aegean Numbers
+        (0x10100, 0x10100), // Po
+        (0x10102, 0x10102), // Po
+        // Ugaritic
+        (0x1039F, 0x1039F), // Po
+        // Old Persian
+        (0x103D0, 0x103D0), // Po
+        // Osmanya
+        (0x104A0, 0x104A9), // Nd
+        // Caucasian Albanian
+        (0x1056F, 0x1056F), // Po
+        // Brahmi
+        (0x11047, 0x1104D), // Po
+        (0x11066, 0x1106F), // Nd
+        // Kaithi
+        (0x110BB, 0x110BC), // Po
+        (0x110BE, 0x110C1), // Po
+        // Sora Sompeng
+        (0x110F0, 0x110F9), // Nd
+        // Chakma
+        (0x11136, 0x1113F), // Nd
+        (0x11140, 0x11143), // Po
+        // Mahajani
+        (0x11174, 0x11175), // Po
+        // Sharada
+        (0x111C5, 0x111C8), // Po
+        (0x111CD, 0x111CD), // Po
+        (0x111D0, 0x111D9), // Nd
+        (0x111DB, 0x111DB), // Po
+        (0x111DD, 0x111DF), // Po
+        // Khojki
+        (0x11238, 0x1123D), // Po
+        // Multani
+        (0x112A9, 0x112A9), // Po
+        // Khudawadi
+        (0x112F0, 0x112F9), // Nd
+        // Tulu-Tigalari
+        (0x113D4, 0x113D5), // Po
+        (0x113D7, 0x113D8), // Po
+        // Newa
+        (0x1144B, 0x1144F), // Po
+        (0x11450, 0x11459), // Nd
+        (0x1145A, 0x1145B), // Po
+        (0x1145D, 0x1145D), // Po
+        // Tirhuta
+        (0x114C6, 0x114C6), // Po
+        (0x114D0, 0x114D9), // Nd
+        // Siddham
+        (0x115C1, 0x115D7), // Po
+        // Modi
+        (0x11641, 0x11643), // Po
+        (0x11650, 0x11659), // Nd
+        // Takri
+        (0x116B9, 0x116B9), // Po
+        (0x116C0, 0x116C9), // Nd
+        // Myanmar Extended-C
+        (0x116D0, 0x116E3), // Nd
+        // Ahom
+        (0x11730, 0x11739), // Nd
+        (0x1173C, 0x1173E), // Po
+        // Dogra
+        (0x1183B, 0x1183B), // Po
+        // Warang Citi
+        (0x118E0, 0x118E9), // Nd
+        // Dives Akuru
+        (0x11944, 0x11946), // Po
+        (0x11950, 0x11959), // Nd
+        // Nandinagari
+        (0x119E2, 0x119E2), // Po
+        // Zanabazar Square
+        (0x11A3F, 0x11A46), // Po
+        // Soyombo
+        (0x11A9A, 0x11A9C), // Po
+        (0x11A9E, 0x11AA2), // Po
+        // Devanagari Extended-A
+        (0x11B00, 0x11B09), // Po
+        // Sunuwar
+        (0x11BE1, 0x11BE1), // Po
+        (0x11BF0, 0x11BF9), // Nd
+        // Bhaiksuki
+        (0x11C41, 0x11C45), // Po
+        (0x11C50, 0x11C59), // Nd
+        // Marchen
+        (0x11C70, 0x11C71), // Po
+        // Masaram Gondi
+        (0x11D50, 0x11D59), // Nd
+        // Gunjala Gondi
+        (0x11DA0, 0x11DA9), // Nd
+        // Tolong Siki
+        (0x11DE0, 0x11DE9), // Nd
+        // Makasar
+        (0x11EF7, 0x11EF8), // Po
+        // Kawi
+        (0x11F43, 0x11F4F), // Po
+        (0x11F50, 0x11F59), // Nd
+        // Tamil Supplement
+        (0x11FFF, 0x11FFF), // Po
+        // Cuneiform Numbers and Punctuation
+        (0x12470, 0x12474), // Po
+        // Cypro-Minoan
+        (0x12FF1, 0x12FF2), // Po
+        // Gurung Khema
+        (0x16130, 0x16139), // Nd
+        // Mro
+        (0x16A60, 0x16A69), // Nd
+        (0x16A6E, 0x16A6F), // Po
+        // Tangsa
+        (0x16AC0, 0x16AC9), // Nd
+        // Bassa Vah
+        (0x16AF5, 0x16AF5), // Po
+        // Pahawh Hmong
+        (0x16B37, 0x16B3B), // Po
+        (0x16B44, 0x16B44), // Po
+        (0x16B50, 0x16B59), // Nd
+        // Kirat Rai
+        (0x16D6D, 0x16D6F), // Po
+        (0x16D70, 0x16D79), // Nd
+        // Medefaidrin
+        (0x16E97, 0x16E9A), // Po
+        // Duployan
+        (0x1BC9F, 0x1BC9F), // Po
+        // Sutton SignWriting
+        (0x1DA87, 0x1DA8B), // Po
+        // Nyiakeng Puachue Hmong
+        (0x1E140, 0x1E149), // Nd
+        // Wancho
+        (0x1E2F0, 0x1E2F9), // Nd
+        // Nag Mundari
+        (0x1E4F0, 0x1E4F9), // Nd
+        // Ol Onal
+        (0x1E5F1, 0x1E5FA), // Nd
+        (0x1E5FF, 0x1E5FF), // Po
+        // The entries above are all `Nd`/punctuation. The entries below are
+        // `Mc` (spacing combining mark), plus one `Mn` entry noted at its
+        // own site — see this function's doc, case 2, for why these are
+        // included here even though the surrounding doc text otherwise
+        // talks about "named-script digits and punctuation": most `Mc`
+        // code points with an explicit `Bidi_Class=L` entry are vowel signs
+        // that are already `Alphabetic=Yes` and so already resolve
+        // correctly through the `is_alphabetic()` branch above without
+        // needing a table entry at all; these are the residual — viramas,
+        // tone marks, and similar combining marks that Unicode does not
+        // consider `Alphabetic` (a virama suppresses a vowel rather than
+        // representing one) despite carrying `Bidi_Class=L` themselves.
+        // Tibetan
+        (0x0F3E, 0x0F3F), // Mc
+        // Tagalog
+        (0x1715, 0x1715), // Mc
+        // Hanunoo
+        (0x1734, 0x1734), // Mc
+        // Balinese
+        (0x1B44, 0x1B44), // Mc
+        // Sundanese
+        (0x1BAA, 0x1BAA), // Mc
+        // Batak
+        (0x1BF2, 0x1BF3), // Mc
+        // Vedic Extensions
+        (0x1CE1, 0x1CE1), // Mc
+        (0x1CF7, 0x1CF7), // Mc
+        // CJK Symbols and Punctuation (Hangul tone marks)
+        (0x302E, 0x302F), // Mc
+        // Rejang
+        (0xA953, 0xA953), // Mc
+        // Javanese
+        (0xA9C0, 0xA9C0), // Mc
+        // Meetei Mayek
+        (0xABEC, 0xABEC), // Mc
+        // Sharada
+        (0x111C0, 0x111C0), // Mc
+        // Khojki
+        (0x11235, 0x11235), // Mc
+        // Grantha
+        (0x1134D, 0x1134D), // Mc
+        // Tulu-Tigalari
+        (0x113CF, 0x113CF), // Mc
+        // Takri
+        (0x116B6, 0x116B6), // Mc
+        // Dives Akuru
+        (0x1193D, 0x1193D), // Mc
+        // Sharada Vowel Signs Supplement (new in Unicode 17.0.0). Excluded
+        // from this workspace's pinned rustc 1.89.0 `char::is_alphabetic()`
+        // tables, which predate this block's assignment, even though UCD
+        // 17.0.0 marks these `Alphabetic=Yes` like the other vowel signs in
+        // this script — so unlike most `Mc` vowel signs, these three still
+        // need an explicit entry here rather than relying on the
+        // `is_alphabetic()` branch.
+        (0x11B61, 0x11B61), // Mc
+        (0x11B65, 0x11B65), // Mc
+        (0x11B67, 0x11B67), // Mc
+        // Bhaiksuki (this one virama is `Mn`, not `Mc`, unlike its
+        // counterparts above — same role, different General_Category)
+        (0x11C3F, 0x11C3F), // Mn
+        // Kawi
+        (0x11F41, 0x11F41), // Mc
+        // Musical Symbols
+        (0x1D165, 0x1D166), // Mc
+        (0x1D16D, 0x1D172), // Mc
+    ];
     if NON_STRONG_WITHIN_AL_R_RANGES
         .iter()
         .any(|&(lo, hi)| (lo..=hi).contains(&cp))
@@ -3378,6 +3844,12 @@ fn strong_bidi_type(c: char) -> Option<StrongBidiType> {
         return None;
     }
     if c.is_alphabetic() {
+        return Some(StrongBidiType::L);
+    }
+    if STRONG_L_NON_ALPHABETIC_RANGES
+        .iter()
+        .any(|&(lo, hi)| (lo..=hi).contains(&cp))
+    {
         return Some(StrongBidiType::L);
     }
     None
@@ -7727,6 +8199,157 @@ mod tests {
             r.computed[span].background_color, BLUE,
             "leading Arabic-Indic digit (weak AN, not strong AL) must be \
              skipped so the scan reaches the Latin text and resolves ltr"
+        );
+    }
+
+    /// [`strong_bidi_type`]'s `STRONG_L_NON_ALPHABETIC_RANGES` table, `Nd`
+    /// case: U+0966 DEVANAGARI DIGIT ZERO has real `Bidi_Class=L` but
+    /// `is_alphabetic() == false` (it is a decimal digit, not a letter).
+    /// Without this table the digit would fall through to `None`
+    /// (non-strong) and the scan would skip past it, wrongly resolving via
+    /// the later Arabic (type `AL`) text instead — the opposite direction
+    /// from the spec, since the digit is the text's true first strong
+    /// (`L`) character.
+    #[test]
+    fn dir_auto_with_devanagari_digit_before_arabic_text_resolves_ltr() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // U+0966 DEVANAGARI DIGIT ZERO, then "السلام" (Arabic, type AL).
+        doc.push_text(
+            span,
+            "\u{0966}\u{0627}\u{0644}\u{0633}\u{0644}\u{0627}\u{0645}",
+        );
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, RED);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, BLUE,
+            "leading Devanagari digit (strong L, despite not being \
+             is_alphabetic()) must resolve ltr on its own, not fall through \
+             to the later Arabic text"
+        );
+    }
+
+    /// Same table, `Po` case: U+055A ARMENIAN APOSTROPHE has real
+    /// `Bidi_Class=L` but `is_alphabetic() == false` (it is punctuation,
+    /// not a letter). Mirrors the Devanagari-digit test above with a
+    /// Hebrew (type `R`) character standing in for the later strong
+    /// character that must NOT be reached.
+    #[test]
+    fn dir_auto_with_armenian_punctuation_before_hebrew_text_resolves_ltr() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // U+055A ARMENIAN APOSTROPHE, then "שלום" (Hebrew, type R).
+        doc.push_text(span, "\u{055A}\u{05E9}\u{05DC}\u{05D5}\u{05DD}");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, RED);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, BLUE,
+            "leading Armenian punctuation (strong L, despite not being \
+             is_alphabetic()) must resolve ltr on its own, not fall \
+             through to the later Hebrew text"
+        );
+    }
+
+    /// Same table, `Mc` case: U+1B44 BALINESE ADEG ADEG is a virama (a
+    /// spacing combining mark that suppresses the inherent vowel of the
+    /// preceding consonant) with real `Bidi_Class=L`, but Unicode does not
+    /// consider a virama `Alphabetic` the way it considers an ordinary
+    /// vowel sign alphabetic, so `is_alphabetic() == false` here too.
+    /// Mirrors the two tests above with Arabic (type `AL`) standing in for
+    /// the later strong character that must NOT be reached.
+    #[test]
+    fn dir_auto_with_balinese_virama_before_arabic_text_resolves_ltr() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // U+1B44 BALINESE ADEG ADEG, then "السلام" (Arabic, type AL).
+        doc.push_text(
+            span,
+            "\u{1B44}\u{0627}\u{0644}\u{0633}\u{0644}\u{0627}\u{0645}",
+        );
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, RED);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, BLUE,
+            "leading Balinese virama (strong L, despite not being \
+             is_alphabetic()) must resolve ltr on its own, not fall \
+             through to the later Arabic text"
+        );
+    }
+
+    /// Same table, `Mc` case, Sharada Vowel Signs Supplement (new in Unicode
+    /// 17.0.0): U+11B61 SHARADA VOWEL SIGN OOE has real `Bidi_Class=L` and
+    /// is `Alphabetic=Yes` per UCD 17.0.0, but this workspace's pinned rustc
+    /// 1.89.0 predates that Unicode version, so `char::is_alphabetic()`
+    /// still returns `false` for it. Without its own table entry (as
+    /// opposed to the Balinese virama above, which is never `Alphabetic`
+    /// under any Unicode version) the vowel sign would fall through to
+    /// `None` exactly the way the `is_alphabetic()`-fallback gap this table
+    /// exists to close would predict.
+    #[test]
+    fn dir_auto_with_sharada_vowel_sign_ooe_before_arabic_text_resolves_ltr() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // U+11B61 SHARADA VOWEL SIGN OOE, then "السلام" (Arabic, type AL).
+        doc.push_text(
+            span,
+            "\u{11B61}\u{0627}\u{0644}\u{0633}\u{0644}\u{0627}\u{0645}",
+        );
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, RED);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, BLUE,
+            "leading Sharada vowel sign (strong L, despite not being \
+             is_alphabetic() under this workspace's pinned rustc) must \
+             resolve ltr on its own, not fall through to the later Arabic \
+             text"
         );
     }
 
