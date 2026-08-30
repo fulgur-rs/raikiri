@@ -353,15 +353,40 @@ fn parse_pad(input: &mut Parser<'_, '_>) -> Option<PadDescriptor> {
 /// case this crate's tests exercise is unaffected, and true clustering is
 /// deferred per "start with subset, widen from there"
 /// rather than adding a dependency for it now.
-fn apply_pad(pad: &PadDescriptor, repr: String, negative_reserved: i64) -> String {
+///
+/// `pad.min_length` is parsed straight off an author-supplied CSS
+/// `<integer [0,∞]>` with no upper bound (`parse_pad`), so `diff` — and
+/// therefore the number of `pad.symbol` copies this function would
+/// otherwise unconditionally allocate — is likewise unbounded. Returns
+/// `None` rather than padding when the pad addition's own bytes, *combined
+/// with `repr`'s own byte length*, would exceed [`MAX_REPR_BYTES`] (see that
+/// constant's doc) — not just the pad addition measured in isolation, since
+/// `repr` already contributes its own bytes to the representation this
+/// function builds. [`generate_counter`] treats `None` here the same as a
+/// `None` initial representation — fall through to the rule's fallback
+/// counter style (step 4 in its own doc).
+fn apply_pad(pad: &PadDescriptor, repr: String, negative_reserved: i64) -> Option<String> {
     let len = repr.chars().count() as i64;
     let diff = i64::from(pad.min_length) - len - negative_reserved;
     if diff > 0 {
+        let pad_bytes = checked_repr_bytes(diff, pad.symbol.as_str().len())?;
+        // Budget the *combined* output — `repr`'s own bytes plus the pad
+        // addition — against `MAX_REPR_BYTES`, not just the pad portion in
+        // isolation. `saturating_add` rather than plain `+`: `repr_bytes` and
+        // `pad_bytes` are each independently derived (one from an already-
+        // built `String`, the other from an author-supplied `min_length`
+        // with no upper bound), so their sum could in principle overflow
+        // `u64`; a saturated sum is still unambiguously over budget, which
+        // is the only thing this comparison needs to know.
+        let repr_bytes = repr.len() as u64;
+        if repr_bytes.saturating_add(pad_bytes) > MAX_REPR_BYTES {
+            return None;
+        }
         let mut out = pad.symbol.as_str().repeat(diff as usize);
         out.push_str(&repr);
-        out
+        Some(out)
     } else {
-        repr
+        Some(repr)
     }
 }
 
@@ -1135,6 +1160,88 @@ impl CounterStyleRegistry {
 // generate a counter (§2) — the per-system algorithms + resolve_custom_counter
 // ---------------------------------------------------------------------------
 
+/// Allocation-size (byte) budget for [`symbolic_repr`], [`additive_repr`],
+/// and [`apply_pad`] — CSS Counter Styles L3 §2 "Counter Styles"
+/// <https://www.w3.org/TR/css-counter-styles-3/#counter-styles> verbatim:
+/// "Some values of system (symbolic, additive) and some descriptors (pad)
+/// can generate representations with size linear to an author-supplied
+/// number. This can potentially be abused to generate excessively large
+/// representations and consume undue amounts of the user's memory or even
+/// hang their browser. User agents must support representations at least 60
+/// Unicode codepoints long, but they may choose to instead use the fallback
+/// style for representations that would be longer than 60 codepoints."
+///
+/// This crate takes the latter option: all three functions return `None`
+/// once the representation they would build exceeds this many bytes, and
+/// [`generate_counter`] already treats a `None` result — whether the
+/// initial representation ([`symbolic_repr`]/[`additive_repr`]) or the
+/// padded one ([`apply_pad`]) — as "use the fallback counter style" (see
+/// its own doc); no separate fallback plumbing is needed.
+///
+/// # Why bytes, not repetition count
+///
+/// An earlier version of this cap bounded symbol *repetition count* only.
+/// That bounds allocation size only when a `<symbol>`'s own length is
+/// itself bounded — but `<symbol>`'s `<string>` alternative (`parse_symbol`)
+/// has no length limit anywhere in this parser: a single long-`<string>`
+/// symbol, repeated a repetition count comfortably under any reps-only cap,
+/// still allocates `reps * symbol.len()` bytes — the same linear-blowup
+/// shape the cap exists to close, just carried by symbol length instead of
+/// the counter value. `apply_pad`'s `pad.min_length` (an unbounded
+/// `<integer [0,∞]>`, parsed straight off the author's CSS with no upper
+/// bound — see [`parse_pad`]) produces the identical shape a third way:
+/// `pad.symbol` repeated `diff` times, where `diff` is derived from
+/// `min_length`. Bounding *bytes* — repetitions times symbol length, or pad
+/// difference times pad-symbol length — bounds the actual worst-case
+/// allocation regardless of which factor is inflated.
+///
+/// # Relation to the 60-codepoint floor
+///
+/// §2's own floor is a *codepoint* count in the rendered representation, not
+/// a byte count — but it still gives a hard, not merely practical, bound on
+/// this budget: UTF-8 encodes any single codepoint in at most 4 bytes, so a
+/// representation of exactly 60 codepoints is at most `60 * 4 = 240` bytes,
+/// regardless of how those bytes are split between repetition count and
+/// symbol length. `MAX_REPR_BYTES` (64 KiB = 65536 bytes) exceeds that
+/// worst case by roughly 270×, so this cap can never reject a
+/// representation §2 requires user agents to support — full stop, not just
+/// "in practice" for realistically-authored `symbols`/`additive-symbols`/
+/// `pad` declarations (whose symbols are typically far shorter than 4
+/// bytes/codepoint and whose byte cost is correspondingly far below 240
+/// bytes at the 60-codepoint mark). The headroom above 240 bytes is what
+/// makes the cap "generous", not what makes it *safe* — safety comes from
+/// the 240-byte bound alone.
+///
+/// A symbol whose own string is empty (`""`) never trips *this budget
+/// check* at any repetition count or pad difference: the byte product
+/// `reps * 0` is always `0`, so an empty symbol's true (0-codepoint)
+/// representation is exactly what a budget-only check would return. This
+/// falls directly out of measuring bytes rather than repetitions — no
+/// separate empty-symbol special case is needed for the *budget*. It does
+/// **not**, by itself, bound how long a caller might still spend
+/// constructing that representation — see the empty-symbol guard inline in
+/// [`additive_repr`]'s own repetition loop (a body comment there, not this
+/// doc) for the one place an empty symbol still needs special-casing, for
+/// time rather than bytes.
+const MAX_REPR_BYTES: u64 = 64 * 1024;
+
+/// Checked `reps * symbol_len` byte count, or `None` on `u64` overflow —
+/// shared by [`symbolic_repr`], [`additive_repr`], and [`apply_pad`] (see
+/// [`MAX_REPR_BYTES`]'s doc for why all three need this same check). `reps`
+/// is always non-negative at every call site (a repetition count or a pad
+/// `difference`, each already checked `> 0` / derived from a non-negative
+/// quantity before this is called) — the multiplication itself is
+/// `checked_mul` rather than plain `*` because `reps` and `symbol_len` are
+/// each independently large enough (an `i32`-counter-value-derived
+/// repetition count or a `u32`-derived pad difference; a `<string>` token
+/// with no parser-enforced length limit) that their product can exceed
+/// `u64::MAX`. `None` is treated as "exceeds the budget" by every caller,
+/// same as an in-range-but-too-large product — an overflowing byte count is
+/// never smaller than the budget it overflowed past.
+fn checked_repr_bytes(reps: i64, symbol_len: usize) -> Option<u64> {
+    (reps as u64).checked_mul(symbol_len as u64)
+}
+
 fn cyclic_repr(symbols: &[CounterSymbol], value: i64) -> Option<String> {
     let n = symbols.len() as i64;
     if n == 0 {
@@ -1214,6 +1321,12 @@ fn alphabetic_repr(symbols: &[CounterSymbol], value: i64) -> Option<String> {
 /// "Let the chosen symbol be symbol((value - 1) mod N). Let the
 /// representation length be ceil(value / N). Append the chosen symbol to S a
 /// number of times equal to the representation length."
+///
+/// The representation length is unbounded in `value` — a large enough
+/// counter value drives it toward the platform's allocation limit, and (see
+/// [`MAX_REPR_BYTES`]'s doc) so does an arbitrarily long `symbol` at a
+/// small `value`. See [`MAX_REPR_BYTES`] for the spec-sanctioned cap
+/// enforced here.
 fn symbolic_repr(symbols: &[CounterSymbol], value: i64) -> Option<String> {
     let n = symbols.len() as i64;
     if n == 0 {
@@ -1221,8 +1334,17 @@ fn symbolic_repr(symbols: &[CounterSymbol], value: i64) -> Option<String> {
     }
     let index = (value - 1).rem_euclid(n);
     let symbol = symbols[index as usize].as_str();
-    let reps = if value <= 0 { 0 } else { (value + n - 1) / n };
-    Some(symbol.repeat(reps as usize))
+    // ceil(value / n), computed as `(value - 1) / n + 1` rather than the
+    // more obvious `(value + n - 1) / n` — the latter's intermediate
+    // `value + n` can overflow `i64` for `value` near `i64::MAX`, before
+    // the `- 1` would bring it back in range. `(value - 1)` cannot
+    // underflow here (`value > 0` in this branch), and the final `+ 1`
+    // cannot overflow either, since the result is `<= value <= i64::MAX`.
+    let reps = if value <= 0 { 0 } else { (value - 1) / n + 1 };
+    match checked_repr_bytes(reps, symbol.len()) {
+        Some(bytes) if bytes <= MAX_REPR_BYTES => Some(symbol.repeat(reps as usize)),
+        _ => None,
+    }
 }
 
 /// CSS Counter Styles L3 §3.1.6
@@ -1243,26 +1365,76 @@ fn symbolic_repr(symbols: &[CounterSymbol], value: i64) -> Option<String> {
 ///
 /// Steps 2's and 4's "must instead be represented by the fallback counter
 /// style" are both modeled as `None` — same convention as [`fixed_repr`].
+/// Step 2's branch has a second `None` case beyond "no weight-0 tuple
+/// exists": a matching tuple's `<symbol>` whose own byte length alone
+/// exceeds [`MAX_REPR_BYTES`] (that constant's doc) also yields `None` here,
+/// the same cap step 3's loop applies to every other tuple's contribution.
+///
+/// Step 3's per-tuple `reps` is unbounded in `value` — a large enough
+/// counter value (paired with a small tuple weight) drives the cumulative
+/// repetition count toward the platform's allocation limit, and (see
+/// [`MAX_REPR_BYTES`]'s doc) so does an arbitrarily long tuple `symbol` at a
+/// small `reps`. See [`MAX_REPR_BYTES`] for the spec-sanctioned cap enforced
+/// here: the running byte total is checked *before* each tuple's
+/// repetitions are pushed onto `s`, so the cap bounds `s`'s worst-case size
+/// rather than merely detecting the overrun after the fact.
 fn additive_repr(tuples: &[(i32, CounterSymbol)], value: i64) -> Option<String> {
     if tuples.is_empty() {
         return None; // cov:ignore: defensive; unreachable — `is_valid` requires ≥1.
     }
     if value == 0 {
-        return tuples
-            .iter()
-            .find(|(w, _)| *w == 0)
-            .map(|(_, sym)| sym.as_str().to_string());
+        return tuples.iter().find(|(w, _)| *w == 0).and_then(|(_, sym)| {
+            let symbol = sym.as_str();
+            // Same byte-budget check as the loop below, applied here too —
+            // a weight-0 tuple is parser-valid (`additive-symbols` accepts a
+            // weight of 0, and additive's auto range includes 0, see
+            // `auto_range`) and its `<symbol>` has no parser-enforced length
+            // limit, so without this check an arbitrarily long symbol string
+            // on a weight-0 tuple would allocate unboundedly even though
+            // `reps` here is conceptually always 1.
+            match checked_repr_bytes(1, symbol.len()) {
+                Some(bytes) if bytes <= MAX_REPR_BYTES => Some(symbol.to_string()),
+                _ => None,
+            }
+        });
     }
     let mut v = value;
     let mut s = String::new();
+    let mut total_bytes: u64 = 0;
     for (weight, symbol) in tuples {
         let w = i64::from(*weight);
         if w == 0 || w > v {
             continue;
         }
         let reps = v / w;
-        for _ in 0..reps {
-            s.push_str(symbol.as_str());
+        let symbol_str = symbol.as_str();
+        let tuple_bytes = checked_repr_bytes(reps, symbol_str.len())?;
+        // `total_bytes <= MAX_REPR_BYTES` is this loop's invariant (true
+        // initially, and re-established below on every iteration that
+        // doesn't already return), so `MAX_REPR_BYTES - total_bytes` never
+        // underflows — comparing against the *remaining* budget this way,
+        // rather than adding `tuple_bytes` (which can itself be near
+        // `u64::MAX`, see `checked_repr_bytes`'s doc) to `total_bytes` and
+        // checking afterward, means the running total itself never needs
+        // its own overflow check.
+        if tuple_bytes > MAX_REPR_BYTES - total_bytes {
+            return None;
+        }
+        total_bytes += tuple_bytes;
+        // The byte budget above cannot see this loop's *time* cost: an
+        // empty `symbol_str` makes `tuple_bytes` (and therefore its
+        // contribution to `total_bytes`) `0` regardless of `reps`, so a
+        // zero-weight-adjacent tuple with an empty symbol and a `reps` in
+        // the billions (bounded only by the counter value, not by this
+        // function's byte budget) would otherwise still run this loop
+        // `reps` times doing nothing — a CPU-time DoS the byte budget
+        // doesn't close on its own. Skipping the loop entirely when
+        // `symbol_str` is empty is a no-op-preserving optimization (`reps`
+        // pushes of `""` never change `s`), not a behavior change.
+        if !symbol_str.is_empty() {
+            for _ in 0..reps {
+                s.push_str(symbol_str);
+            }
         }
         v -= w * reps;
         if v == 0 {
@@ -1392,7 +1564,7 @@ fn generate_counter(
         // Scope-cut — see `CounterStyleSystem::Extends`'s doc.
         CounterStyleSystem::Extends(_) => None,
     };
-    let Some(mut repr) = initial else {
+    let Some(repr) = initial else {
         return generate_counter(registry, rule.fallback.as_str(), value, visited);
     };
 
@@ -1400,13 +1572,20 @@ fn generate_counter(
     // its padding `difference` by the negative descriptor's own length
     // *before* step 5 wraps it on, so the negative sign's presence still
     // counts toward `pad.min_length` even though it isn't part of `repr`
-    // yet at this point in the algorithm.
+    // yet at this point in the algorithm. `apply_pad` itself can return
+    // `None` (an author-supplied `pad.min_length` large enough, combined
+    // with `pad.symbol`'s length *and* `repr`'s own byte length, to exceed
+    // `MAX_REPR_BYTES` — see that constant's doc) — routed through the same
+    // fallback hop as a `None` initial representation above, per this
+    // function's own doc.
     let negative_reserved = if uses_negative && value_i64 < 0 {
         negative_descriptor_len(&rule.negative)
     } else {
         0
     };
-    repr = apply_pad(&rule.pad, repr, negative_reserved);
+    let Some(mut repr) = apply_pad(&rule.pad, repr, negative_reserved) else {
+        return generate_counter(registry, rule.fallback.as_str(), value, visited);
+    };
 
     // Step 5.
     if uses_negative && value_i64 < 0 {
@@ -2030,6 +2209,111 @@ mod tests {
         );
     }
 
+    #[test]
+    fn symbolic_repr_byte_budget_boundary_is_not_rejected() {
+        let symbols = vec![CounterSymbol(SmolStr::new("*"))];
+        // 1-byte symbol, so `reps == value == byte count`:
+        // `value == MAX_REPR_BYTES` sits exactly on the cap's own
+        // boundary — asserting it still produces the un-truncated,
+        // full-length representation guards against an off-by-one that
+        // rejects the boundary value itself. (Ordinary small-`reps`
+        // behavior — no cap involvement at all — is already covered by
+        // `resolve_symbolic_doubles_symbol_on_successive_passes` above,
+        // with values 1/2/3.)
+        let value = MAX_REPR_BYTES as i64;
+        assert_eq!(
+            symbolic_repr(&symbols, value).as_deref(),
+            Some("*".repeat(value as usize).as_str())
+        );
+    }
+
+    #[test]
+    fn symbolic_repr_caps_reps_to_bound_allocation() {
+        let symbols = vec![CounterSymbol(SmolStr::new("*"))];
+        // 1-byte symbol, so `reps * symbol.len() == value`:
+        // `MAX_REPR_BYTES + 1` is the first value whose representation
+        // byte size exceeds the cap.
+        assert_eq!(symbolic_repr(&symbols, MAX_REPR_BYTES as i64 + 1), None);
+        // A pathologically large counter value must not drive an
+        // unbounded allocation — it hits the same cap, not `i32::MAX` reps.
+        assert_eq!(symbolic_repr(&symbols, i64::from(i32::MAX)), None);
+    }
+
+    /// Regression: a long (not 1-codepoint) `<symbol>` `<string>` at a
+    /// repetition count comfortably under a hypothetical
+    /// repetition-count-only cap (4096) would still exceed the byte budget
+    /// once symbol length is accounted for. This is exactly the bypass a
+    /// repetition-count-only cap misses — `reps <= 4096` alone says nothing
+    /// about the symbol's own length, and a `<symbol>` `<string>` has no
+    /// parser-enforced length limit (`parse_symbol`).
+    #[test]
+    fn symbolic_repr_long_symbol_bypasses_repetition_only_cap() {
+        let long_symbol = "x".repeat(100); // 100 bytes, not 1.
+        let symbols = vec![CounterSymbol(SmolStr::new(long_symbol))];
+        // 100 bytes * 4096 reps = 409,600 bytes, far over `MAX_REPR_BYTES`
+        // (64 KiB) even though 4096 reps alone was previously accepted.
+        assert_eq!(symbolic_repr(&symbols, 4096), None);
+    }
+
+    /// The flip side of the regression above: a long symbol used only a
+    /// handful of times is legitimate content well within the byte budget,
+    /// and must not be wrongly rejected just because it is "long" — the cap
+    /// is on total bytes, not on symbol length in isolation.
+    #[test]
+    fn symbolic_repr_long_symbol_with_few_reps_is_not_wrongly_rejected() {
+        let long_symbol = "x".repeat(1000);
+        let symbols = vec![CounterSymbol(SmolStr::new(long_symbol.clone()))];
+        assert_eq!(
+            symbolic_repr(&symbols, 1).as_deref(),
+            Some(long_symbol.as_str())
+        );
+    }
+
+    /// Regression: an empty (`""`) symbol's true representation
+    /// is always the empty string, at any repetition count, since
+    /// `reps * 0 == 0` bytes never exceeds the budget — unlike the earlier
+    /// repetition-count-only cap, which rejected large-`value` empty-symbol
+    /// representations even though their true rendered length is 0
+    /// codepoints and could never itself drive a large allocation.
+    #[test]
+    fn symbolic_repr_empty_symbol_never_capped_regardless_of_value() {
+        let symbols = vec![CounterSymbol(SmolStr::new(""))];
+        assert_eq!(symbolic_repr(&symbols, 5000).as_deref(), Some(""));
+        assert_eq!(
+            symbolic_repr(&symbols, i64::from(i32::MAX)).as_deref(),
+            Some("")
+        );
+    }
+
+    /// `reps * symbol.len()` can overflow `u64` for a sufficiently large
+    /// `value` paired with a long symbol — `checked_repr_bytes` must treat
+    /// that as "exceeds budget" rather than panicking or wrapping around to
+    /// a small, wrongly-accepted byte count.
+    #[test]
+    fn symbolic_repr_extreme_value_and_long_symbol_does_not_overflow() {
+        let long_symbol = "x".repeat(2000);
+        let symbols = vec![CounterSymbol(SmolStr::new(long_symbol))];
+        assert_eq!(symbolic_repr(&symbols, i64::MAX), None);
+    }
+
+    #[test]
+    fn resolve_symbolic_extreme_value_falls_back_to_custom_style_in_registry() {
+        let registry = CounterStyleRegistry::from_source(
+            r#"
+            @counter-style stars { system: symbolic; symbols: "*"; fallback: overflow; }
+            @counter-style overflow { system: cyclic; symbols: "%"; }
+            "#,
+        );
+        // `i32::MAX` is within symbolic's auto range (1..∞, §3.5), so step 2
+        // of `generate_counter` does not intercept it — this genuinely
+        // reaches `symbolic_repr`'s cap and exercises the `None` ->
+        // fallback routing end to end, not just the direct cap check above.
+        assert_eq!(
+            resolve_custom_counter(&registry, "stars", i32::MAX).as_deref(),
+            Some("%")
+        );
+    }
+
     // ── resolve_custom_counter: fixed ─────────────────────────────────
 
     #[test]
@@ -2086,6 +2370,132 @@ mod tests {
         assert_eq!(
             resolve_custom_counter(&registry, "toy-roman", 11).as_deref(),
             Some("XI")
+        );
+    }
+
+    #[test]
+    fn additive_repr_byte_budget_boundary_is_not_rejected() {
+        let tuples = vec![(1, CounterSymbol(SmolStr::new("I")))];
+        // Weight-1 tuple with a 1-byte symbol, so `reps == value == byte
+        // count`: `value == MAX_REPR_BYTES` sits exactly on the cap's own
+        // boundary — still fully represented, not truncated. (Ordinary
+        // small-`reps` behavior — no cap involvement at all — is already
+        // covered by `resolve_additive_roman_like` above, with values
+        // 7/11.)
+        let value = MAX_REPR_BYTES as i64;
+        assert_eq!(
+            additive_repr(&tuples, value).as_deref(),
+            Some("I".repeat(value as usize).as_str())
+        );
+    }
+
+    #[test]
+    fn additive_repr_caps_reps_to_bound_allocation() {
+        let tuples = vec![(1, CounterSymbol(SmolStr::new("I")))];
+        // First value whose single-tuple `reps * symbol.len()` exceeds the
+        // byte budget.
+        assert_eq!(additive_repr(&tuples, MAX_REPR_BYTES as i64 + 1), None);
+        // A pathologically large counter value must not drive an
+        // unbounded allocation.
+        assert_eq!(additive_repr(&tuples, i64::from(i32::MAX)), None);
+    }
+
+    #[test]
+    fn additive_repr_caps_cumulative_bytes_across_tuples() {
+        // No single tuple's byte contribution exceeds the budget on its
+        // own, but the running total across tuples does — the cap must
+        // catch this case too, not just a single oversized tuple.
+        let tuples = vec![
+            (2, CounterSymbol(SmolStr::new("A"))),
+            (1, CounterSymbol(SmolStr::new("B"))),
+        ];
+        // `value` chosen so the first tuple alone contributes exactly
+        // `MAX_REPR_BYTES` bytes (1-byte symbol, value / 2 == MAX_REPR_BYTES,
+        // remainder 1), leaving a nonzero remainder that would need a
+        // second tuple's bytes on top — pushing the cumulative total over
+        // the budget.
+        let value = MAX_REPR_BYTES as i64 * 2 + 1;
+        assert_eq!(additive_repr(&tuples, value), None);
+    }
+
+    /// Regression, the additive-system sibling of
+    /// `symbolic_repr_long_symbol_bypasses_repetition_only_cap` — a long
+    /// tuple symbol at a repetition count comfortably under a hypothetical
+    /// repetition-count-only cap would still exceed the byte budget.
+    #[test]
+    fn additive_repr_long_symbol_bypasses_repetition_only_cap() {
+        let long_symbol = "x".repeat(100); // 100 bytes, not 1.
+        let tuples = vec![(1, CounterSymbol(SmolStr::new(long_symbol)))];
+        // Weight-1 tuple, so `reps == value == 4096`; 100 bytes * 4096 reps
+        // = 409,600 bytes, far over `MAX_REPR_BYTES` (64 KiB) even though
+        // 4096 reps alone was previously accepted.
+        assert_eq!(additive_repr(&tuples, 4096), None);
+    }
+
+    /// Regression, the additive-system sibling of
+    /// `symbolic_repr_empty_symbol_never_capped_regardless_of_value`: a
+    /// zero-weight tuple with an empty symbol never trips the cap, at any
+    /// value, since it contributes 0 bytes regardless of how many times a
+    /// *different* tuple in the same list repeats.
+    #[test]
+    fn additive_repr_empty_symbol_tuple_never_capped_regardless_of_value() {
+        let tuples = vec![(1, CounterSymbol(SmolStr::new("")))];
+        let value = i64::from(i32::MAX);
+        assert_eq!(additive_repr(&tuples, value).as_deref(), Some(""));
+    }
+
+    /// `reps * symbol.len()` can overflow `u64` for a sufficiently large
+    /// `value` paired with a long tuple symbol — must be treated as
+    /// "exceeds budget", not panic or wrap around.
+    #[test]
+    fn additive_repr_extreme_value_and_long_symbol_does_not_overflow() {
+        let long_symbol = "x".repeat(2000);
+        let tuples = vec![(1, CounterSymbol(SmolStr::new(long_symbol)))];
+        assert_eq!(additive_repr(&tuples, i64::MAX), None);
+    }
+
+    #[test]
+    fn additive_repr_zero_value_with_zero_weight_tuple_returns_symbol() {
+        let tuples = vec![(0, CounterSymbol(SmolStr::new("Z")))];
+        assert_eq!(additive_repr(&tuples, 0).as_deref(), Some("Z"));
+    }
+
+    #[test]
+    fn additive_repr_zero_value_without_zero_weight_tuple_returns_none() {
+        let tuples = vec![(1, CounterSymbol(SmolStr::new("I")))];
+        assert_eq!(additive_repr(&tuples, 0), None);
+    }
+
+    /// The `value == 0` branch built its matching tuple's symbol
+    /// string directly, bypassing the byte-budget check applied everywhere
+    /// else in this function. A weight-0 tuple is parser-valid
+    /// (`additive-symbols` accepts a weight of 0, and the additive system's
+    /// auto range — `auto_range` — includes 0), and `<symbol>`'s own length
+    /// has no parser-enforced limit, so a single such tuple with an
+    /// arbitrarily long symbol string still allocated unboundedly at
+    /// `value == 0` regardless of this function's byte budget.
+    #[test]
+    fn additive_repr_zero_value_long_symbol_bypasses_cap() {
+        let long_symbol = "x".repeat(MAX_REPR_BYTES as usize + 1);
+        let tuples = vec![(0, CounterSymbol(SmolStr::new(long_symbol)))];
+        assert_eq!(additive_repr(&tuples, 0), None);
+    }
+
+    #[test]
+    fn resolve_additive_extreme_value_falls_back_to_custom_style_in_registry() {
+        let registry = CounterStyleRegistry::from_source(
+            r#"
+            @counter-style toy-roman { system: additive; additive-symbols: 1 "I"; fallback: overflow; }
+            @counter-style overflow { system: cyclic; symbols: "%"; }
+            "#,
+        );
+        // `i32::MAX` is within additive's auto range (0..∞, §3.5), so step 2
+        // of `generate_counter` does not intercept it — this genuinely
+        // reaches `additive_repr`'s cap and exercises the `None` ->
+        // fallback routing end to end, not just the direct cap check above.
+        assert_eq!(
+            resolve_custom_counter(&registry, "toy-roman", i32::MAX).as_deref(),
+            Some("%")
         );
     }
 
@@ -2204,6 +2614,112 @@ mod tests {
         assert_eq!(
             resolve_custom_counter(&registry, "thumbs", -5).as_deref(),
             Some("00A")
+        );
+    }
+
+    // ── apply_pad: byte-budget cap (same DoS class as symbolic/additive) ──
+
+    #[test]
+    fn apply_pad_within_byte_budget_pads_normally() {
+        let pad = PadDescriptor {
+            min_length: 10,
+            symbol: CounterSymbol(SmolStr::new("0")),
+        };
+        assert_eq!(
+            apply_pad(&pad, "5".to_string(), 0).as_deref(),
+            Some("0000000005")
+        );
+    }
+
+    /// `pad.min_length` is an unbounded
+    /// `<integer [0,∞]>` (`parse_pad`) used directly as a `String::repeat`
+    /// count with no upper bound — the same unbounded-allocation shape as
+    /// `symbolic_repr`/`additive_repr`, reachable unconditionally from
+    /// `generate_counter` for every counter system, not just
+    /// symbolic/additive.
+    #[test]
+    fn apply_pad_huge_min_length_caps_to_bound_allocation() {
+        let pad = PadDescriptor {
+            min_length: u32::MAX,
+            symbol: CounterSymbol(SmolStr::new("0")),
+        };
+        // `diff` is on the order of `u32::MAX` (~4.3 billion) even after
+        // subtracting `repr`'s own length — 1 byte/rep alone is far over
+        // `MAX_REPR_BYTES` (64 KiB).
+        assert_eq!(apply_pad(&pad, "5".to_string(), 0), None);
+    }
+
+    /// Same vulnerability class as `apply_pad_huge_min_length_caps_to_bound_allocation`,
+    /// but via a long `pad` *symbol* at a modest `min_length` instead of an
+    /// extreme `min_length` — mirrors the `symbolic_repr`/`additive_repr`
+    /// long-symbol bypass of a would-be count-only cap: a `min_length` far
+    /// too small to look suspicious on its own can still drive a large
+    /// allocation once the pad symbol's own byte length is a free variable.
+    #[test]
+    fn apply_pad_long_symbol_at_modest_min_length_caps_to_bound_allocation() {
+        let long_symbol = "x".repeat(2000);
+        let pad = PadDescriptor {
+            min_length: 100,
+            symbol: CounterSymbol(SmolStr::new(long_symbol)),
+        };
+        // diff = 100 - 0 = 100; 100 * 2000 bytes = 200,000 bytes, over
+        // `MAX_REPR_BYTES`.
+        assert_eq!(apply_pad(&pad, String::new(), 0), None);
+    }
+
+    /// This function checked only the newly-added pad portion's
+    /// byte count against `MAX_REPR_BYTES`, not the total of the existing
+    /// `repr`'s own bytes plus the pad addition. `repr` here is exactly
+    /// `MAX_REPR_BYTES` bytes — itself within budget, the same boundary
+    /// `symbolic_repr`/`additive_repr` accept on their own (see
+    /// `symbolic_repr_byte_budget_boundary_is_not_rejected`) — and the pad
+    /// addition is a single extra byte, comfortably within budget in
+    /// isolation. Only measuring the combined total catches that the two
+    /// together exceed the cap by one byte.
+    #[test]
+    fn apply_pad_caps_combined_repr_and_pad_bytes_not_just_pad_portion() {
+        let repr = "x".repeat(MAX_REPR_BYTES as usize);
+        let pad = PadDescriptor {
+            min_length: MAX_REPR_BYTES as u32 + 1,
+            symbol: CounterSymbol(SmolStr::new("0")),
+        };
+        // diff = (MAX_REPR_BYTES + 1) - MAX_REPR_BYTES = 1; pad_bytes = 1,
+        // trivially within budget alone. Combined with `repr`'s own
+        // `MAX_REPR_BYTES` bytes, the total is `MAX_REPR_BYTES + 1`.
+        assert_eq!(apply_pad(&pad, repr, 0), None);
+    }
+
+    /// Regression, the `apply_pad` sibling of
+    /// `symbolic_repr_empty_symbol_never_capped_regardless_of_value`: an
+    /// empty pad symbol contributes 0 bytes regardless of `min_length`, so
+    /// it never trips the cap even at `u32::MAX`.
+    #[test]
+    fn apply_pad_empty_symbol_never_capped_even_with_huge_min_length() {
+        let pad = PadDescriptor {
+            min_length: u32::MAX,
+            symbol: CounterSymbol(SmolStr::new("")),
+        };
+        // An empty pad symbol can never actually lengthen the
+        // representation (repeating "" contributes nothing), so `repr` is
+        // returned unchanged rather than falling back.
+        assert_eq!(apply_pad(&pad, "5".to_string(), 0).as_deref(), Some("5"));
+    }
+
+    /// End-to-end: an oversized `pad` descriptor routes through
+    /// `generate_counter`'s fallback hop exactly like a `symbolic_repr`/
+    /// `additive_repr` cap trip does, not just at the direct `apply_pad`
+    /// level above.
+    #[test]
+    fn resolve_pad_oversized_falls_back_to_custom_style_in_registry() {
+        let registry = CounterStyleRegistry::from_source(
+            r#"
+            @counter-style padded { system: cyclic; symbols: "*"; pad: 100000 "0"; fallback: overflow; }
+            @counter-style overflow { system: cyclic; symbols: "%"; }
+            "#,
+        );
+        assert_eq!(
+            resolve_custom_counter(&registry, "padded", 1).as_deref(),
+            Some("%")
         );
     }
 
