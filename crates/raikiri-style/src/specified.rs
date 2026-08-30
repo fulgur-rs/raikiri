@@ -66,7 +66,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// `font_weight` が後者 (2 行目) にいるのは load-bearing な事実である —
@@ -355,6 +355,11 @@ pub struct SpecifiedValues {
     pub justify_items: SelfAlignmentValue,
     /// [`ComputedValues::justify_self`] の staging。層は computed-equivalent。
     pub justify_self: AlignSelfValue,
+    /// [`ComputedValues::orphans`] の staging。層は computed-equivalent
+    /// (`<integer>` は length を運ばない)。
+    pub orphans: i32,
+    /// [`ComputedValues::widows`] の staging。[`Self::orphans`] と同じ層。
+    pub widows: i32,
 }
 
 impl SpecifiedValues {
@@ -500,6 +505,10 @@ impl SpecifiedValues {
             // "legacy は未対応" 節参照、justify-self は `auto`)。
             justify_items: SelfAlignmentValue::Normal,
             justify_self: AlignSelfValue::Auto,
+            // CSS Fragmentation Module Level 3 §3.3: orphans / widows
+            // initial は共に `2`。
+            orphans: 2,
+            widows: 2,
         }
     }
 
@@ -590,6 +599,10 @@ impl SpecifiedValues {
             // CSS Content 3 §2.4.1: quotes は inherited。Arc bump のみ
             // (`ComputedValues::font_family` と同じ shape)。
             quotes: parent.quotes.clone(),
+            // CSS Fragmentation Module Level 3 §3.3: orphans / widows は共に
+            // inherited。
+            orphans: parent.orphans,
+            widows: parent.widows,
             // CSS Text Decoration Module Level 3 §4: text-shadow は
             // inherited。computed `Arc<Vec<ComputedTextShadow>>` → specified
             // `Arc<Vec<TextShadowItem>>` の per-item lift (`lift_text_shadow_item`、
@@ -1197,6 +1210,12 @@ impl SpecifiedValues {
             // `AlignSelfValue` docs 参照、length を運ばないため相対解決なし)。
             justify_items: self.justify_items,
             justify_self: self.justify_self,
+            // computed value = specified integer (CSS Fragmentation Module
+            // Level 3 §3.3、length を運ばないため相対解決なし) — 自 node の
+            // winner 適用結果 (または inherit_from で継承した親値) をそのまま
+            // 素通し。
+            orphans: self.orphans,
+            widows: self.widows,
         }
     }
 }
@@ -1421,6 +1440,8 @@ mod tests {
             grid_column_end: GridLineValue::NamedLine("bar".into(), 2),
             justify_items: SelfAlignmentValue::Center,
             justify_self: AlignSelfValue::Value(SelfAlignmentValue::End),
+            orphans: 5,
+            widows: 7,
         }
     }
 
@@ -1491,6 +1512,10 @@ mod tests {
                 color: TextShadowColor::Resolved(CssColor::BLACK),
             }]
         );
+        // CSS Fragmentation Module Level 3 §3.3: orphans / widows は共に
+        // inherited。
+        assert_eq!(child.orphans, 5);
+        assert_eq!(child.widows, 7);
     }
 
     #[test]

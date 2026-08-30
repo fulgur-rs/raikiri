@@ -563,7 +563,11 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // justify-items / justify-self (CSS Box Alignment Module Level 3
         // §7.1/§6.1) — 同じく展開先の longhand を持たない。
         | PropertyValue::JustifyItems(_)
-        | PropertyValue::JustifySelf(_) => expand_none(d, push),
+        | PropertyValue::JustifySelf(_)
+        // orphans / widows (CSS Fragmentation Module Level 3 §3.3) — 同じく
+        // 展開先の longhand を持たない。
+        | PropertyValue::Orphans(_)
+        | PropertyValue::Widows(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),

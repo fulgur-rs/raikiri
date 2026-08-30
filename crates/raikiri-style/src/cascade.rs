@@ -3810,7 +3810,12 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::JustifyItems(_)
         | PropertyValue::JustifySelf(_)
         | PropertyValue::PlaceItems(_)
-        | PropertyValue::PlaceSelf(_)) => v,
+        | PropertyValue::PlaceSelf(_)
+        // `orphans`/`widows` (CSS Fragmentation Module Level 3 §3.3) carry a
+        // bare positive `<integer>`, not a length — nothing for phase 2 to
+        // resolve, same shape as `FlexGrow`/`FlexShrink` above.
+        | PropertyValue::Orphans(_)
+        | PropertyValue::Widows(_)) => v,
     })
 }
 
@@ -4393,6 +4398,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.align_self = p.align;
             target.justify_self = p.justify;
         }
+        // CSS Fragmentation Module Level 3 §3.3. inherited、computed value =
+        // specified integer — simple assignment (`FlexGrow`/`FlexShrink` arm
+        // と同じ shape、length を運ばないため絶対化不要)。
+        PropertyValue::Orphans(n) => target.orphans = n,
+        PropertyValue::Widows(n) => target.widows = n,
     }
 }
 
@@ -9756,6 +9766,85 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].hyphens, Hyphens::Auto);
         assert_eq!(r.computed[span].hyphens, Hyphens::None);
+    }
+
+    // ── orphans / widows wire-through (CSS Fragmentation Module Level 3
+    //    §3.3) ──
+
+    #[test]
+    fn orphans_widows_wired_through_cascade_from_inline_style() {
+        let cv = cascade_doc("", "p", Some("orphans: 4; widows: 3"));
+        assert_eq!(cv.orphans, 4);
+        assert_eq!(cv.widows, 3);
+    }
+
+    #[test]
+    fn orphans_widows_inherit_from_parent_element() {
+        // CSS Fragmentation Module Level 3 §3.3: orphans / widows は
+        // **inherited**.
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("orphans: 4; widows: 3"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].orphans, 4);
+        assert_eq!(r.computed[p].widows, 3);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].orphans, 4,
+            "child should inherit orphans from parent (CSS Fragmentation \
+             Module Level 3 §3.3 Inherited: yes)"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].widows, 3,
+            "child should inherit widows from parent (CSS Fragmentation \
+             Module Level 3 §3.3 Inherited: yes)"
+        );
+    }
+
+    #[test]
+    fn orphans_widows_child_own_value_wins_over_inherited() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("orphans: 4; widows: 3"));
+        let span = doc.push_element(p, "span", Some("orphans: 6; widows: 5"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].orphans, 4);
+        assert_eq!(r.computed[p].widows, 3);
+        assert_eq!(r.computed[span].orphans, 6);
+        assert_eq!(r.computed[span].widows, 5);
+    }
+
+    #[test]
+    fn orphans_widows_default_to_initial_value_2_without_declaration() {
+        // CSS Fragmentation Module Level 3 §3.3: Initial は共に `2`。
+        let cv = cascade_doc("", "p", None);
+        assert_eq!(cv.orphans, 2);
+        assert_eq!(cv.widows, 2);
+    }
+
+    #[test]
+    fn orphans_widows_reject_zero_and_negative_leaving_initial_value() {
+        // "Negative values and zero are invalid and must cause the
+        // declaration to be ignored" — the whole declaration drops, so the
+        // property stays at its initial value `2` rather than being clamped.
+        let cv = cascade_doc("", "p", Some("orphans: 0; widows: -1"));
+        assert_eq!(cv.orphans, 2);
+        assert_eq!(cv.widows, 2);
+    }
+
+    #[test]
+    fn orphans_widows_invalid_declaration_is_dropped_independently_of_sibling() {
+        // The spec says "the declaration" (singular) is ignored — this pins
+        // that an invalid `orphans` doesn't also take down a syntactically
+        // valid, separately-declared `widows` in the same block (per-
+        // declaration drop, not per-block).
+        let cv = cascade_doc("", "p", Some("orphans: 0; widows: 3"));
+        assert_eq!(cv.orphans, 2);
+        assert_eq!(cv.widows, 3);
     }
 
     // ── text-align: match-parent (CSS Text 3 §6.1) ──

@@ -69,7 +69,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -1010,6 +1010,29 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-align-3/#propdef-justify-self>,
     /// "Inherited: no").
     pub justify_self: AlignSelfValue,
+    /// `orphans`. **inherited**, initial: `2` (CSS Fragmentation Module
+    /// Level 3 §3.3 "Breaks Between Lines: orphans, widows"
+    /// <https://www.w3.org/TR/css-break-3/#widows-orphans>, which
+    /// supersedes CSS 2.1 §13.3.2's original definition of this property
+    /// with the same grammar/initial/inheritance). Value: `<integer>`,
+    /// computed value = specified integer. The spec restricts this to
+    /// positive integers ("Negative values and zero are invalid and must
+    /// cause the declaration to be ignored") — enforced at parse time
+    /// ([`crate::property::PropertyValue::Orphans`] doc).
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded/inherited value only — the
+    /// minimum-line-count enforcement this property describes (keeping at
+    /// least this many line boxes together before a fragmentation break) is
+    /// a pagination/layout-time algorithm this crate does not implement.
+    pub orphans: i32,
+    /// `widows`. Same shape as [`Self::orphans`] — see that field's doc
+    /// (CSS Fragmentation Module Level 3 §3.3, same propdef table, `<integer>`
+    /// / initial `2` / inherited / positive-only). The only difference is
+    /// which side of a fragmentation break the minimum line count applies to
+    /// (after the break, vs. `orphans`'s before).
+    pub widows: i32,
 }
 
 impl ComputedValues {
@@ -1186,6 +1209,10 @@ impl ComputedValues {
             // doc の "legacy は未対応" 節参照、justify-self は `auto`)。
             justify_items: SelfAlignmentValue::Normal,
             justify_self: AlignSelfValue::Auto,
+            // CSS Fragmentation Module Level 3 §3.3: orphans / widows
+            // initial は共に `2`。
+            orphans: 2,
+            widows: 2,
         }
     }
 
@@ -1197,7 +1224,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
     ///
@@ -1576,13 +1603,17 @@ mod tests {
             // (`normal`/`auto`) と異なる値。
             justify_items: SelfAlignmentValue::Center,
             justify_self: AlignSelfValue::Value(SelfAlignmentValue::End),
+            // CSS Fragmentation Module Level 3 §3.3: initial (`2`) と異なる値
+            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
+            orphans: 5,
+            widows: 7,
         }
     }
 
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 69 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 71 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1631,6 +1662,10 @@ mod tests {
         assert_eq!(child.line_height, parent.line_height);
         // CSS Content 3 §2.4.1: quotes は inherited。
         assert_eq!(child.quotes, parent.quotes);
+        // CSS Fragmentation Module Level 3 §3.3: orphans / widows は共に
+        // inherited。
+        assert_eq!(child.orphans, parent.orphans);
+        assert_eq!(child.widows, parent.widows);
 
         // non-inherited — initial に戻る。
         assert_eq!(child.background_color, initial.background_color);

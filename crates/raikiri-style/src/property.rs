@@ -5143,6 +5143,27 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] が [`Self::AlignSelf`] /
     /// [`Self::JustifySelf`] の 2 longhand に展開する。
     PlaceSelf(PlaceSelfShorthand),
+    /// `orphans` — **inherited**、initial: `2` (CSS Fragmentation Module
+    /// Level 3 §3.3 "Breaks Between Lines: orphans, widows"
+    /// <https://www.w3.org/TR/css-break-3/#widows-orphans>。CSS 2.1
+    /// §13.3.2 の原定義を supersede するが grammar は不変)。Value:
+    /// `<integer>`。computed value = specified integer。
+    ///
+    /// spec は正の整数のみを許容する: "Only positive integers are allowed
+    /// as values of orphans and widows. Negative values and zero are
+    /// invalid and must cause the declaration to be ignored." — parse 時に
+    /// enforce される (`parse_positive_integer` 参照) ため、この payload は
+    /// 常に `> 0`。
+    ///
+    /// この crate が実装するのは parsing と inherited storage のみ —
+    /// このプロパティが記述する pagination 時の最小行数 enforcement 自体は
+    /// 未実装。
+    Orphans(i32),
+    /// `widows` — [`Self::Orphans`] と同じ grammar/initial/inheritance・
+    /// 正数限定の制約 (CSS Fragmentation Module Level 3 §3.3、同じ propdef
+    /// table)。違いは最小行数を fragmentation break のどちら側に適用するか
+    /// だけ (break 後 — `orphans` は break 前)。
+    Widows(i32),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -5433,6 +5454,12 @@ pub enum PropertyKey {
     // (`AlignSelf`/`JustifySelf`) declared above.
     PlaceItems,
     PlaceSelf,
+    // orphans / widows (CSS Fragmentation Module Level 3 §3.3, semantics on
+    // the matching PropertyValue::Orphans / PropertyValue::Widows variants;
+    // sibling PropertyKey variants carry no per-variant docs per crate
+    // convention).
+    Orphans,
+    Widows,
 }
 
 impl PropertyValue {
@@ -5546,6 +5573,8 @@ impl PropertyValue {
             PropertyValue::JustifySelf(_) => PropertyKey::JustifySelf,
             PropertyValue::PlaceItems(_) => PropertyKey::PlaceItems,
             PropertyValue::PlaceSelf(_) => PropertyKey::PlaceSelf,
+            PropertyValue::Orphans(_) => PropertyKey::Orphans,
+            PropertyValue::Widows(_) => PropertyKey::Widows,
         }
     }
 }
@@ -5980,6 +6009,14 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Box Alignment Module Level 3 §6.3
         // <https://www.w3.org/TR/css-align-3/#propdef-place-self>.
         "place-self" => parse_place_self_shorthand(input).map(PropertyValue::PlaceSelf),
+        // CSS Fragmentation Module Level 3 §3.3 "Breaks Between Lines:
+        // orphans, widows" <https://www.w3.org/TR/css-break-3/#widows-orphans>
+        // (supersedes CSS 2.1 §13.3.2's original definition of these same 2
+        // properties, unchanged grammar). Grammar: `<integer>`, restricted
+        // to positive integers (`parse_positive_integer` doc). initial `2`,
+        // inherited, computed value = specified integer.
+        "orphans" => parse_positive_integer(input).map(PropertyValue::Orphans),
+        "widows" => parse_positive_integer(input).map(PropertyValue::Widows),
         _ => None,
     }
 }
@@ -9630,6 +9667,22 @@ fn parse_z_index(input: &mut Parser<'_, '_>) -> Option<ZIndexValue> {
         .try_parse(|i| i.expect_integer())
         .ok()
         .map(ZIndexValue::Integer)
+}
+
+/// `orphans` / `widows: <integer>` の value を parse する (CSS Fragmentation
+/// Module Level 3 §3.3 "Breaks Between Lines: orphans, widows"
+/// <https://www.w3.org/TR/css-break-3/#widows-orphans>).
+///
+/// `expect_integer` 直接呼び出しは [`parse_z_index`] / [`parse_counter_property`]
+/// と同じ pattern。この 2 property は `<integer>` を **正の値のみ**に制限する
+/// spec 独自の制約を持つ点が sibling と異なる: "Only positive integers are
+/// allowed as values of orphans and widows. Negative values and zero are
+/// invalid and must cause the declaration to be ignored." — 0 以下は
+/// spec-invalid として `None` (declaration が丸ごと drop される、
+/// 他の out-of-range `<integer>`/`<length>` value と同じ扱い)。
+fn parse_positive_integer(input: &mut Parser<'_, '_>) -> Option<i32> {
+    let value = input.try_parse(|i| i.expect_integer()).ok()?;
+    if value > 0 { Some(value) } else { None }
 }
 
 /// `break-before: <ident>` / `break-after: <ident>` を parse する (CSS
@@ -18798,5 +18851,74 @@ mod tests {
             .key(),
             PropertyKey::PlaceSelf
         );
+    }
+
+    // ── orphans / widows (CSS Fragmentation Module Level 3 §3.3) ──
+    //
+    // Value grammar: `<integer>`, restricted to positive integers by spec
+    // prose ("Only positive integers are allowed as values of orphans and
+    // widows. Negative values and zero are invalid and must cause the
+    // declaration to be ignored."). Initial: 2 / Inherited: yes / Computed
+    // value: specified integer.
+
+    #[test]
+    fn orphans_widows_parse_valid_positive_integers() {
+        assert_eq!(parse("1", "orphans"), Some(PropertyValue::Orphans(1)));
+        assert_eq!(parse("2", "orphans"), Some(PropertyValue::Orphans(2)));
+        assert_eq!(parse("100", "orphans"), Some(PropertyValue::Orphans(100)));
+        assert_eq!(parse("1", "widows"), Some(PropertyValue::Widows(1)));
+        assert_eq!(parse("3", "widows"), Some(PropertyValue::Widows(3)));
+    }
+
+    #[test]
+    fn orphans_widows_parse_leading_plus_sign() {
+        // CSS Values and Units 3 §4.2 `<integer>`: a leading `+` sign is
+        // part of the grammar (`[+-]? digit+`), not an error.
+        assert_eq!(parse("+3", "orphans"), Some(PropertyValue::Orphans(3)));
+        assert_eq!(parse("+3", "widows"), Some(PropertyValue::Widows(3)));
+    }
+
+    #[test]
+    fn orphans_widows_reject_zero() {
+        // Spec verbatim: "Negative values and zero are invalid and must
+        // cause the declaration to be ignored."
+        assert_eq!(parse("0", "orphans"), None);
+        assert_eq!(parse("0", "widows"), None);
+    }
+
+    #[test]
+    fn orphans_widows_reject_negative_integers() {
+        assert_eq!(parse("-1", "orphans"), None);
+        assert_eq!(parse("-100", "orphans"), None);
+        assert_eq!(parse("-1", "widows"), None);
+    }
+
+    #[test]
+    fn orphans_widows_reject_non_integer_values() {
+        // Fractional numbers, lengths, idents, and strings are all outside
+        // the `<integer>` grammar.
+        assert_eq!(parse("1.5", "orphans"), None);
+        assert_eq!(parse("2px", "orphans"), None);
+        assert_eq!(parse("auto", "orphans"), None);
+        assert_eq!(parse(r#""2""#, "orphans"), None);
+        assert_eq!(parse("1.5", "widows"), None);
+        assert_eq!(parse("2px", "widows"), None);
+    }
+
+    #[test]
+    fn orphans_widows_reject_css_wide_keyword() {
+        // (b) not supported — CSS-wide keyword is unimplemented (future
+        // work), silent drop (`PropertyValue` doc's "CSS-wide keyword"
+        // section is canonical).
+        for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(kw, "orphans"), None);
+            assert_eq!(parse(kw, "widows"), None);
+        }
+    }
+
+    #[test]
+    fn orphans_widows_key_maps_to_distinct_property_keys() {
+        assert_eq!(PropertyValue::Orphans(2).key(), PropertyKey::Orphans);
+        assert_eq!(PropertyValue::Widows(2).key(), PropertyKey::Widows);
     }
 }
