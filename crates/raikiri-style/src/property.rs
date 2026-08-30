@@ -1021,21 +1021,32 @@ pub enum FontStyle {
 /// `normal`、Applies to: all elements、Inherited: **yes**、Percentages: N/A、
 /// Computed value: "as specified"。
 ///
-/// # 2 keyword の意味 (spec 確認済み verbatim)
+/// # 7 keyword の意味 (spec 確認済み verbatim)
 ///
 /// - [`Normal`](Self::Normal) — "None of the features listed below are
 ///   enabled." spec initial value。
 /// - [`SmallCaps`](Self::SmallCaps) — "Enables display of small capitals
 ///   (OpenType feature: smcp). Small-caps glyphs typically use the form of
 ///   uppercase letters but are reduced to the size of lowercase letters."
+/// - [`AllSmallCaps`](Self::AllSmallCaps) — "Enables display of small
+///   capitals for both upper and lowercase letters (OpenType features:
+///   c2sc, smcp)."
+/// - [`PetiteCaps`](Self::PetiteCaps) — "Enables display of petite
+///   capitals (OpenType feature: pcap)."
+/// - [`AllPetiteCaps`](Self::AllPetiteCaps) — "Enables display of petite
+///   capitals for both upper and lowercase letters (OpenType features:
+///   c2pc, pcap)."
+/// - [`Unicase`](Self::Unicase) — "Enables display of mixture of small
+///   capitals for uppercase letters with normal lowercase letters
+///   (OpenType feature: unic)."
+/// - [`TitlingCaps`](Self::TitlingCaps) — "Enables display of titling
+///   capitals (OpenType feature: titl). Uppercase letter glyphs are often
+///   designed for use with lowercase letters. When used in all uppercase
+///   titling sequences they can appear too strong. Titling capitals are
+///   designed specifically for this situation."
 ///
 /// # Scope carving
 ///
-/// - **Non-goal**: the spec's other 5 keywords (`all-small-caps` /
-///   `petite-caps` / `all-petite-caps` / `unicase` / `titling-caps`) —
-///   spec-valid but unimplemented, silent-dropped like any other unhandled
-///   ident, the same way [`FontStyle`]'s unimplemented `oblique`/`left`/
-///   `right` keywords are.
 /// - **Non-goal**: the `font-variant` shorthand (CSS Fonts 3 §6.9 "Overall
 ///   shorthand for font rendering: the font-variant property"). Spec
 ///   verbatim: "Like other shorthands, using 'font-variant' resets
@@ -1053,17 +1064,39 @@ pub enum FontStyle {
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
-/// - **(a) spec-invalid**: 上記 2 keyword 以外の ident は silent drop = `None`。
+/// - **(a) spec-invalid**: 上記 7 keyword 以外の ident は silent drop = `None`。
 ///
 /// この crate の scope では length を運ばないため、computed value = specified
 /// keyword、相対解決なし ([`Direction`] doc と同型)。
 ///
 /// # Downstream handoff
 ///
-/// `small-caps` が指す `smcp` OpenType feature の実際の glyph 差し替えは
-/// text-shaping/paint 層の責務であり、本 crate はそこへ渡す cascade static
-/// side の keyword を運ぶだけ ([`TextTransform`] doc の「Downstream
-/// handoff」節と同型)。
+/// 各 keyword が指す OpenType feature (`smcp` / `c2sc` / `pcap` / `c2pc` /
+/// `unic` / `titl`) の実際の glyph 差し替えは text-shaping/paint 層の責務であり、
+/// 本 crate はそこへ渡す cascade static side の keyword を運ぶだけ
+/// ([`TextTransform`] doc の「Downstream handoff」節と同型)。フォント側の
+/// feature 非対応時のフォールバックも同じく downstream の責務。§6.6 は
+/// `normal` 以外の 6 keyword 全てに対してこのフォールバックを規定しており、
+/// 内容は keyword ごとに異なる:
+///
+/// - `small-caps` / `all-small-caps`: SHOULD-level の synthesis fallback
+///   (spec verbatim: "if 'small-caps' or 'all-small-caps' is specified but
+///   small-caps glyphs are not available for a given font, user agents
+///   should simulate a small-caps font")。
+/// - `petite-caps` / `all-petite-caps`: 対応 font が無い場合、それぞれ
+///   `small-caps` / `all-small-caps` が指定されたのと同じ挙動になる (spec
+///   verbatim: "If either 'petite-caps' or 'all-petite-caps' is specified
+///   for a font that doesn't support these features, the property behaves
+///   as if 'small-caps' or 'all-small-caps', respectively, had been
+///   specified")。
+/// - `unicase`: 対応 font が無い場合、小文字化された大文字にのみ
+///   `small-caps` が適用されたのと同じ挙動になる (spec verbatim: "If 'unicase'
+///   is specified for a font that doesn't support that feature, the
+///   property behaves as if 'small-caps' was applied only to lowercased
+///   uppercase letters")。
+/// - `titling-caps`: 対応 font が無い場合、可視効果なし (spec verbatim: "If
+///   'titling-caps' is specified with a font that does not support this
+///   feature, this property has no visible effect")。
 ///
 /// [`FontStyle`] / [`Direction`] と同じ convention で `Default` を derive
 /// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
@@ -1076,6 +1109,16 @@ pub enum FontVariantCaps {
     Normal,
     /// `small-caps`。
     SmallCaps,
+    /// `all-small-caps`。
+    AllSmallCaps,
+    /// `petite-caps`。
+    PetiteCaps,
+    /// `all-petite-caps`。
+    AllPetiteCaps,
+    /// `unicase`。
+    Unicase,
+    /// `titling-caps`。
+    TitlingCaps,
 }
 
 /// `text-transform` property の value。
@@ -4991,11 +5034,12 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     TabSize(TabSize),
-    /// `font-variant-caps: normal | small-caps` — **inherited**、initial:
-    /// [`FontVariantCaps::Normal`] (CSS Fonts 3 §6.6 [`FontVariantCaps`]
-    /// doc 参照)。computed value = specified keyword ([`FontVariantCaps`]
-    /// doc の Scope carving 節参照、他 5 keyword と `font-variant`
-    /// shorthand は未実装)。
+    /// `font-variant-caps: normal | small-caps | all-small-caps |
+    /// petite-caps | all-petite-caps | unicase | titling-caps` —
+    /// **inherited**、initial: [`FontVariantCaps::Normal`] (CSS Fonts 3
+    /// §6.6 [`FontVariantCaps`] doc 参照)。computed value = specified
+    /// keyword ([`FontVariantCaps`] doc の Scope carving 節参照、
+    /// `font-variant` shorthand は未実装)。
     /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
@@ -5903,15 +5947,14 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Text Module Level 3 §4.2
         // <https://www.w3.org/TR/css-text-3/#tab-size-property>.
         "tab-size" => parse_tab_size(input).map(PropertyValue::TabSize),
-        // CSS Fonts Module Level 3 §6.6 font-variant-caps. grammar (this
-        // crate's scope): `normal | small-caps` — the spec's other 5
-        // keywords (`all-small-caps`/`petite-caps`/`all-petite-caps`/
-        // `unicase`/`titling-caps`) are not implemented
-        // (`FontVariantCaps` doc's "Scope carving" section). initial
+        // CSS Fonts Module Level 3 §6.6 font-variant-caps. grammar: `normal
+        // | small-caps | all-small-caps | petite-caps | all-petite-caps |
+        // unicase | titling-caps` — all 7 keywords implemented
+        // (`FontVariantCaps` doc's "7 keyword の意味" section). initial
         // `normal`, inherited, computed value = specified keyword. The
-        // `font-variant` shorthand has no dispatch arm of its own (same
-        // doc section — it would need to reset longhands this crate does
-        // not have).
+        // `font-variant` shorthand has no dispatch arm of its own
+        // (`FontVariantCaps` doc's "Scope carving" section — it would need
+        // to reset longhands this crate does not have).
         "font-variant-caps" => parse_font_variant_caps(input).map(PropertyValue::FontVariantCaps),
         // CSS Content Module Level 3 §2.4.1 (legacy CSS2 §12.3.1 grammar
         // subset: `none | [ <string> <string> ]+`, `auto` / `match-parent`
@@ -8380,16 +8423,21 @@ fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
 ///
 /// Value grammar (§6.6, full property grammar): `normal | small-caps |
 /// all-small-caps | petite-caps | all-petite-caps | unicase |
-/// titling-caps`。本 parser は `normal` / `small-caps` の 2 keyword のみ
-/// 受理する ([`FontVariantCaps`] doc の Scope carving 節参照) — 残り 5
-/// keyword は spec-valid だが未実装のため、他の未知 ident と同じく
-/// silent drop = `None` とする。ASCII case-insensitive で ident を比較する
-/// (sibling [`parse_font_style`] と同 flavor)。
+/// titling-caps`。本 parser はこの 7 keyword 全てを受理する
+/// ([`FontVariantCaps`] doc の「7 keyword の意味」節参照)。それ以外の ident は
+/// spec-invalid = 未知 ident として silent drop = `None` とする。
+/// ASCII case-insensitive で ident を比較する (sibling [`parse_font_style`]
+/// と同 flavor)。
 fn parse_font_variant_caps(input: &mut Parser<'_, '_>) -> Option<FontVariantCaps> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
         "normal" => Some(FontVariantCaps::Normal),
         "small-caps" => Some(FontVariantCaps::SmallCaps),
+        "all-small-caps" => Some(FontVariantCaps::AllSmallCaps),
+        "petite-caps" => Some(FontVariantCaps::PetiteCaps),
+        "all-petite-caps" => Some(FontVariantCaps::AllPetiteCaps),
+        "unicase" => Some(FontVariantCaps::Unicase),
+        "titling-caps" => Some(FontVariantCaps::TitlingCaps),
         _ => None,
     }
 }
@@ -14174,12 +14222,12 @@ mod tests {
     //
     // Value grammar (§6.6 spec verbatim, full property grammar): `normal |
     // small-caps | all-small-caps | petite-caps | all-petite-caps | unicase
-    // | titling-caps`. This crate implements only normal / small-caps
-    // (`FontVariantCaps` doc's "Scope carving" section). Initial: normal /
+    // | titling-caps`. This crate implements all 7 keywords
+    // (`FontVariantCaps` doc's "7 keyword の意味" section). Initial: normal /
     // Inherited: yes / Computed value: specified keyword.
 
     #[test]
-    fn font_variant_caps_parse_both_keywords() {
+    fn font_variant_caps_parse_all_seven_keywords() {
         assert_eq!(
             parse("normal", "font-variant-caps"),
             Some(PropertyValue::FontVariantCaps(FontVariantCaps::Normal))
@@ -14187,6 +14235,30 @@ mod tests {
         assert_eq!(
             parse("small-caps", "font-variant-caps"),
             Some(PropertyValue::FontVariantCaps(FontVariantCaps::SmallCaps))
+        );
+        assert_eq!(
+            parse("all-small-caps", "font-variant-caps"),
+            Some(PropertyValue::FontVariantCaps(
+                FontVariantCaps::AllSmallCaps
+            ))
+        );
+        assert_eq!(
+            parse("petite-caps", "font-variant-caps"),
+            Some(PropertyValue::FontVariantCaps(FontVariantCaps::PetiteCaps))
+        );
+        assert_eq!(
+            parse("all-petite-caps", "font-variant-caps"),
+            Some(PropertyValue::FontVariantCaps(
+                FontVariantCaps::AllPetiteCaps
+            ))
+        );
+        assert_eq!(
+            parse("unicase", "font-variant-caps"),
+            Some(PropertyValue::FontVariantCaps(FontVariantCaps::Unicase))
+        );
+        assert_eq!(
+            parse("titling-caps", "font-variant-caps"),
+            Some(PropertyValue::FontVariantCaps(FontVariantCaps::TitlingCaps))
         );
     }
 
@@ -14200,26 +14272,22 @@ mod tests {
             parse("Small-Caps", "font-variant-caps"),
             Some(PropertyValue::FontVariantCaps(FontVariantCaps::SmallCaps))
         );
-    }
-
-    #[test]
-    fn font_variant_caps_rejects_unimplemented_keywords() {
-        // (b) not supported — the spec's other 5 keywords are spec-valid
-        // but unimplemented (`FontVariantCaps` doc's "Scope carving"
-        // section), not (a) spec-invalid.
-        for kw in [
-            "all-small-caps",
-            "petite-caps",
-            "all-petite-caps",
-            "unicase",
-            "titling-caps",
-        ] {
-            assert_eq!(parse(kw, "font-variant-caps"), None);
-        }
+        assert_eq!(
+            parse("ALL-SMALL-CAPS", "font-variant-caps"),
+            Some(PropertyValue::FontVariantCaps(
+                FontVariantCaps::AllSmallCaps
+            ))
+        );
+        assert_eq!(
+            parse("Titling-Caps", "font-variant-caps"),
+            Some(PropertyValue::FontVariantCaps(FontVariantCaps::TitlingCaps))
+        );
     }
 
     #[test]
     fn font_variant_caps_rejects_unknown_keyword() {
+        // (a) spec-invalid — not one of the 7 keywords in the property
+        // grammar.
         assert_eq!(parse("bogus", "font-variant-caps"), None);
     }
 
@@ -14240,10 +14308,18 @@ mod tests {
 
     #[test]
     fn font_variant_caps_key_maps_to_font_variant_caps_property_key() {
-        let v = PropertyValue::FontVariantCaps(FontVariantCaps::Normal);
-        assert_eq!(v.key(), PropertyKey::FontVariantCaps);
-        let v = PropertyValue::FontVariantCaps(FontVariantCaps::SmallCaps);
-        assert_eq!(v.key(), PropertyKey::FontVariantCaps);
+        for value in [
+            FontVariantCaps::Normal,
+            FontVariantCaps::SmallCaps,
+            FontVariantCaps::AllSmallCaps,
+            FontVariantCaps::PetiteCaps,
+            FontVariantCaps::AllPetiteCaps,
+            FontVariantCaps::Unicase,
+            FontVariantCaps::TitlingCaps,
+        ] {
+            let v = PropertyValue::FontVariantCaps(value);
+            assert_eq!(v.key(), PropertyKey::FontVariantCaps);
+        }
     }
 
     #[test]
