@@ -8,7 +8,8 @@ use selectors::parser::{ParseRelative, SelectorList};
 
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
 use crate::page::{
-    PageRule, PageSelector, PageSizeDeclaration, parse_page_declaration_block, parse_page_prelude,
+    PageBleedDeclaration, PageMarksDeclaration, PageRule, PageSelector, PageSizeDeclaration,
+    parse_page_declaration_block, parse_page_prelude,
 };
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -215,11 +216,19 @@ impl RuleTree {
                     });
                     style_order = style_order.wrapping_add(1);
                 }
-                ParsedRule::Page(selector, declarations, size_declarations) => {
+                ParsedRule::Page(
+                    selector,
+                    declarations,
+                    size_declarations,
+                    marks_declarations,
+                    bleed_declarations,
+                ) => {
                     self.page_rules.push(PageRule {
                         selector,
                         declarations,
                         size_declarations,
+                        marks_declarations,
+                        bleed_declarations,
                         source_order: page_order,
                         origin,
                     });
@@ -344,7 +353,13 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
 /// は default `parse_prelude` の `Err` に落ちて cssparser 側で silent drop。
 enum ParsedRule {
     Style(SelectorList<RaikiriSelectorImpl>, Vec<Declaration>),
-    Page(PageSelector, Vec<Declaration>, Vec<PageSizeDeclaration>),
+    Page(
+        PageSelector,
+        Vec<Declaration>,
+        Vec<PageSizeDeclaration>,
+        Vec<PageMarksDeclaration>,
+        Vec<PageBleedDeclaration>,
+    ),
 }
 
 /// StyleSheetParser 実装。qualified rule + `@page` を受理、他 at-rule は drop。
@@ -377,14 +392,21 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleRuleParser {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
-        // @page body = declaration list + `size` descriptor list — parsed by
-        // a dedicated `crate::page::parse_page_declaration_block` (not the
-        // generic `parse_declaration_block` qualified rules use below,
-        // see that function's doc for why). 未サポート property / descriptor
-        // (`marks` / `bleed` / margin-box at-rule 等) は既存の silent-drop で
-        // 0 declaration 化する。
-        let (declarations, size_declarations) = parse_page_declaration_block(input);
-        Ok(ParsedRule::Page(prelude, declarations, size_declarations))
+        // @page body = declaration list + `size` / `marks` / `bleed`
+        // descriptor lists — parsed by a dedicated
+        // `crate::page::parse_page_declaration_block` (not the generic
+        // `parse_declaration_block` qualified rules use below, see that
+        // function's doc for why). 未サポート property / descriptor
+        // (margin-box at-rule 等) は既存の silent-drop で 0 declaration 化する。
+        let (declarations, size_declarations, marks_declarations, bleed_declarations) =
+            parse_page_declaration_block(input);
+        Ok(ParsedRule::Page(
+            prelude,
+            declarations,
+            size_declarations,
+            marks_declarations,
+            bleed_declarations,
+        ))
     }
 }
 
@@ -1026,20 +1048,39 @@ mod tests {
     // <https://www.w3.org/TR/css-page-3/#syntax-page-selector>
     //
     // Test で使う body は property.rs でサポート済み (color / font-*) を
-    // 選ぶ — `crate::page::parse_page_declaration_block` は `size` descriptor
-    // を専用 grammar で受理するが (下の page_size_* test 群参照)、`marks` /
-    // `bleed` / margin-box 等それ以外の @page descriptor や未サポート
-    // property は現時点で silent drop され declaration 0 個になる (下の
-    // page_body_marks_dropped_size_parsed がその regression guard)。
+    // 選ぶ — `crate::page::parse_page_declaration_block` は `size` / `marks` /
+    // `bleed` descriptor を専用 grammar で受理するが (下の page_size_* /
+    // page_marks_* / page_bleed_* test 群参照。ただしこれらは各 descriptor
+    // 固有の grammar level の正しさ — 受理される値と拒否される値の境界 —
+    // を検証するテストであり、次の一般的な drop mechanism 自体の証拠では
+    // ない)、それ以外の未サポート property は `parse_value` が `None` を
+    // 返し、その declaration ごと silent drop される (下の
+    // page_body_unknown_property_is_dropped_declaration_survives がその
+    // regression guard)。`PageDeclParser::parse_value` のこの分岐は
+    // qualified rule 側の `crate::rule::DeclParser` と同型 (`None` を
+    // `.ok_or_else` で `Err` に変換し、cssparser の error recovery が
+    // その 1 declaration だけを skip する) だが、コード上は別コピーであり
+    // qualified-rule 側の analogue
+    // (`crate::rule::tests::drops_invalid_property_and_value` /
+    // `crate::property::tests::unknown_property_returns_none`) はこの
+    // `@page` 側の分岐までは検証しない。
+    //
+    // margin-box 等の at-rule (`@top-left { … }` 等、L3 §5) は別の経路 —
+    // そもそも declaration ではないため `parse_value` に届かず、
+    // `AtRuleParser::parse_prelude` の default `Err` を cssparser の
+    // error recovery が block ごと skip する (下の
+    // page_margin_box_at_rule_body_is_skipped_declaration_survives がその
+    // regression guard)。
     //
     // NB: `margin` は author scope の supported property になった
     // (`parse_page_declaration_block` 出口で 4 longhand に展開)。@page context
-    // での margin-box descriptor 挙動 (L3 §5) は依然未実装のまま — 通常の
+    // での margin-box at-rule 挙動 (L3 §5) は依然未実装のまま — 通常の
     // longhand `margin-top` 等の parse は @page body 内でも成立するが
     // page-context specific な意味付けは持たない。
 
     use crate::page::{
-        PageOrientation, PagePseudo, PageSelector, PageSelectorEntry, PageSize, PageSizeKeyword,
+        PageBleed, PageMarks, PageOrientation, PagePseudo, PageSelector, PageSelectorEntry,
+        PageSize, PageSizeKeyword,
     };
     use crate::{Atom, Length, PageRule};
 
@@ -1317,32 +1358,36 @@ mod tests {
     }
 
     #[test]
-    fn page_body_marks_dropped_size_parsed() {
-        // `marks` remains an unimplemented `@page` descriptor (CSS Paged
-        // Media Level 3 §5 crop/cross marks) — `crate::property::parse_value`
-        // doesn't recognize it, so `PageDeclParser`'s ordinary-property arm
-        // drops it, same as any other unsupported property/descriptor.
-        // `size`, by contrast, now has a dedicated grammar
-        // (`crate::page::parse_page_size_value`) and lands in
-        // `size_declarations` instead of being silently dropped — this test
-        // pins both halves in one fixture so a future regression in either
-        // direction (an unsupported descriptor stops dropping, or `size`
-        // regresses back to dropping) shows up here.
+    fn page_body_size_marks_bleed_all_parsed_together() {
+        // `size` / `marks` / `bleed` each have a dedicated grammar
+        // (`crate::page::parse_page_size_value` /
+        // `parse_page_marks_value` / `parse_page_bleed_value`) — this test
+        // pins that all three parse independently and land in their own
+        // `*_declarations` field when they appear together in one `@page`
+        // block (the `page_size_*` / `page_marks_*` / `page_bleed_*` test
+        // groups elsewhere in this module each exercise only one descriptor
+        // in isolation).
         //
-        // NB: 以前は `margin: 1cm` を dropped 例に使っていたが (`margin`
-        // property 自体が未認識だった)、その後 `margin` は author scope で
-        // 認識されるようになった (unit `cm` は依然未サポート = drop するが、
-        // drop 経路が「property 未認識」から「unit 未サポート」に変わった)。
-        // @page-specific descriptor のみで例を組み直し、意図する "@page
-        // descriptor drop" の regression guard に集約。
-        let rules = page_rules("@page { size: A4; marks: crop }");
+        // The fixture also throws in a margin-box at-rule (`@top-left { … }`,
+        // CSS Paged Media Level 3 §5) to confirm it keeps being silently
+        // skipped alongside the three descriptors. That is a secondary,
+        // weaker check here — this fixture has no other ordinary
+        // declaration, so `declarations.is_empty()` alone can't distinguish
+        // "the at-rule body was skipped" from "the whole rule failed to
+        // parse". The stronger regression guard for the margin-box-skip
+        // claim, which pins a sibling *declaration* surviving the skip, is
+        // `page_margin_box_at_rule_body_is_skipped_declaration_survives`
+        // above.
+        let rules =
+            page_rules("@page { size: A4; marks: crop; bleed: 6pt; @top-left { content: 'x' } }");
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].selector, ps_single(None, vec![]));
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert!(
             rules[0].declarations.is_empty(),
-            "`marks` is still an unsupported descriptor and must keep dropping"
+            "the margin-box at-rule body must keep dropping, and no other \
+             declaration is present in this fixture"
         );
         assert_eq!(rules[0].size_declarations.len(), 1);
         assert_eq!(
@@ -1353,6 +1398,21 @@ mod tests {
             }
         );
         assert!(!rules[0].size_declarations[0].important);
+        assert_eq!(rules[0].marks_declarations.len(), 1);
+        assert_eq!(
+            rules[0].marks_declarations[0].value,
+            PageMarks::Marks {
+                crop: true,
+                cross: false,
+            }
+        );
+        assert!(!rules[0].marks_declarations[0].important);
+        assert_eq!(rules[0].bleed_declarations.len(), 1);
+        assert_eq!(
+            rules[0].bleed_declarations[0].value,
+            PageBleed::Length(Length::Pt(6.0))
+        );
+        assert!(!rules[0].bleed_declarations[0].important);
     }
 
     #[test]
@@ -1628,6 +1688,30 @@ mod tests {
     }
 
     #[test]
+    fn page_body_unknown_property_is_dropped_declaration_survives() {
+        // regression guard: `PageDeclParser::parse_value`'s ordinary-property
+        // arm dispatches to `crate::property::parse_value` and turns a
+        // `None` return into an `Err` (`.ok_or_else`) for that one
+        // declaration; cssparser's error recovery then skips just that
+        // declaration, leaving the ones before and after it alone. This
+        // pins the actually-unknown-property-name case specifically —
+        // trailing garbage *after* a known property's value is a different
+        // failure inside the same arm (`expect_exhausted` rejecting a
+        // successful `parse_value` result), covered separately by
+        // `page_body_ordinary_property_trailing_garbage_drops_declaration`
+        // below.
+        //
+        // `cursor` is used as the unsupported-property canary, matching the
+        // choice already made by `crate::rule::tests::drops_invalid_property_and_value`
+        // and `crate::property::tests::unknown_property_returns_none` —
+        // relocate to a different still-unimplemented property name if
+        // `cursor` gains support.
+        let rules = page_rules("@page { cursor: pointer; color: red }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].declarations.len(), 1);
+    }
+
+    #[test]
     fn page_body_ordinary_property_trailing_garbage_drops_declaration() {
         // `PageDeclParser::parse_value`'s ordinary-property arm (the
         // `crate::property::parse_value` dispatch, distinct from the `size`
@@ -1665,6 +1749,214 @@ mod tests {
             }
         );
         assert!(!rules[0].size_declarations[1].important);
+    }
+
+    // ── `marks` descriptor grammar ──
+    //
+    // Spec: CSS Paged Media Level 3, §7.2 "Crop and Registration Marks: the
+    // marks property" <https://www.w3.org/TR/css-page-3/#marks>. Grammar:
+    // `none | [ crop || cross ]`.
+
+    #[test]
+    fn page_marks_none() {
+        let rules = page_rules("@page { marks: none }");
+        assert_eq!(rules[0].marks_declarations.len(), 1);
+        assert_eq!(rules[0].marks_declarations[0].value, PageMarks::None);
+    }
+
+    #[test]
+    fn page_marks_crop_alone() {
+        // `||` combinator: `cross` is optional as long as `crop` is present.
+        let rules = page_rules("@page { marks: crop }");
+        assert_eq!(
+            rules[0].marks_declarations[0].value,
+            PageMarks::Marks {
+                crop: true,
+                cross: false,
+            }
+        );
+    }
+
+    #[test]
+    fn page_marks_cross_alone() {
+        // `||` combinator: `crop` is optional as long as `cross` is present.
+        let rules = page_rules("@page { marks: cross }");
+        assert_eq!(
+            rules[0].marks_declarations[0].value,
+            PageMarks::Marks {
+                crop: false,
+                cross: true,
+            }
+        );
+    }
+
+    #[test]
+    fn page_marks_crop_and_cross_either_order() {
+        // `||` combinator: both sub-components may appear, in either source
+        // order.
+        let forward = page_rules("@page { marks: crop cross }");
+        let backward = page_rules("@page { marks: cross crop }");
+        let expected = PageMarks::Marks {
+            crop: true,
+            cross: true,
+        };
+        assert_eq!(forward[0].marks_declarations[0].value, expected);
+        assert_eq!(backward[0].marks_declarations[0].value, expected);
+    }
+
+    #[test]
+    fn page_marks_duplicate_crop_rejected() {
+        // Each of `crop` / `cross` may appear at most once under `||` — a
+        // second `crop` is trailing garbage, not a second valid alternative.
+        let rules = page_rules("@page { marks: crop crop }");
+        assert!(rules[0].marks_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_marks_duplicate_cross_rejected() {
+        // Mirrors `page_marks_duplicate_crop_rejected` for the other `||`
+        // alternative — `parse_page_marks_value`'s `!cross` guard must reject
+        // a second `cross` the same way its `!crop` guard rejects a second
+        // `crop`.
+        let rules = page_rules("@page { marks: cross cross }");
+        assert!(rules[0].marks_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_marks_unknown_keyword_rejected() {
+        let rules = page_rules("@page { marks: foo }");
+        assert!(rules[0].marks_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_marks_none_with_trailing_garbage_rejected() {
+        // `none` is a distinct top-level alternative, not combinable with
+        // `crop`/`cross` — trailing garbage after it drops the whole
+        // declaration (`expect_exhausted` in `PageDeclParser::parse_value`).
+        let rules = page_rules("@page { marks: none crop }");
+        assert!(rules[0].marks_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_marks_important() {
+        let rules = page_rules("@page { marks: crop !important }");
+        assert_eq!(rules[0].marks_declarations.len(), 1);
+        assert!(rules[0].marks_declarations[0].important);
+    }
+
+    #[test]
+    fn page_marks_is_case_insensitive() {
+        let none = page_rules("@page { marks: NONE }");
+        assert_eq!(none[0].marks_declarations[0].value, PageMarks::None);
+
+        let mixed = page_rules("@page { marks: Crop Cross }");
+        assert_eq!(
+            mixed[0].marks_declarations[0].value,
+            PageMarks::Marks {
+                crop: true,
+                cross: true,
+            }
+        );
+    }
+
+    // Runs the `value()` accessor body — see
+    // `page_size_declaration_value_accessor_matches_the_field`'s doc for why
+    // this needs its own dedicated test (direct field access elsewhere never
+    // calls the accessor).
+    #[test]
+    fn page_marks_declaration_value_accessor_matches_the_field() {
+        let rules = page_rules("@page { marks: crop cross }");
+        let decl = rules[0].marks_declarations[0];
+        assert_eq!(
+            decl.value(),
+            PageMarks::Marks {
+                crop: true,
+                cross: true,
+            }
+        );
+    }
+
+    // ── `bleed` descriptor grammar ──
+    //
+    // Spec: CSS Paged Media Level 3, §7.3 "Bleed Area: the bleed property"
+    // <https://www.w3.org/TR/css-page-3/#bleed>. Grammar: `auto | <length>`.
+
+    #[test]
+    fn page_bleed_auto() {
+        let rules = page_rules("@page { bleed: auto }");
+        assert_eq!(rules[0].bleed_declarations.len(), 1);
+        assert_eq!(rules[0].bleed_declarations[0].value, PageBleed::Auto);
+    }
+
+    #[test]
+    fn page_bleed_length() {
+        let rules = page_rules("@page { bleed: 6pt }");
+        assert_eq!(
+            rules[0].bleed_declarations[0].value,
+            PageBleed::Length(Length::Pt(6.0))
+        );
+    }
+
+    #[test]
+    fn page_bleed_negative_length_accepted() {
+        // Unlike `size`'s `<length>` alternative ("Negative lengths are
+        // illegal"), `bleed`'s explicitly permits negative values: "Values
+        // may be negative, but there may be implementation-specific
+        // limits."
+        let rules = page_rules("@page { bleed: -6pt }");
+        assert_eq!(
+            rules[0].bleed_declarations[0].value,
+            PageBleed::Length(Length::Pt(-6.0))
+        );
+    }
+
+    #[test]
+    fn page_bleed_percentage_rejected() {
+        // Grammar is `<length>`, not `<length-percentage>` — `%` is outside
+        // the `bleed` descriptor grammar entirely.
+        let rules = page_rules("@page { bleed: 50% }");
+        assert!(rules[0].bleed_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_bleed_unknown_keyword_rejected() {
+        let rules = page_rules("@page { bleed: foo }");
+        assert!(rules[0].bleed_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_bleed_trailing_garbage_drops_whole_declaration() {
+        // Unlike `page_bleed_unknown_keyword_rejected` (nothing in the
+        // grammar matches at all), this exercises the `bleed` arm's own
+        // `expect_exhausted` guard in `PageDeclParser::parse_value`: `6pt`
+        // parses cleanly as a valid `<length>`, but leftover tokens after it
+        // must still drop the whole declaration rather than silently
+        // truncating to the successfully-parsed prefix.
+        let rules = page_rules("@page { bleed: 6pt garbage }");
+        assert!(rules[0].bleed_declarations.is_empty());
+    }
+
+    #[test]
+    fn page_bleed_important() {
+        let rules = page_rules("@page { bleed: 6pt !important }");
+        assert_eq!(rules[0].bleed_declarations.len(), 1);
+        assert!(rules[0].bleed_declarations[0].important);
+    }
+
+    #[test]
+    fn page_bleed_is_case_insensitive() {
+        let rules = page_rules("@page { bleed: AUTO }");
+        assert_eq!(rules[0].bleed_declarations[0].value, PageBleed::Auto);
+    }
+
+    // Runs the `value()` accessor body — see
+    // `page_size_declaration_value_accessor_matches_the_field`'s doc for why
+    // this needs its own dedicated test.
+    #[test]
+    fn page_bleed_declaration_value_accessor_matches_the_field() {
+        let rules = page_rules("@page { bleed: 6pt }");
+        let decl = rules[0].bleed_declarations[0];
+        assert_eq!(decl.value(), PageBleed::Length(Length::Pt(6.0)));
     }
 
     #[test]

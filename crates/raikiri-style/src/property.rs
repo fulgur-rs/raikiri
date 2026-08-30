@@ -6410,6 +6410,24 @@ pub(crate) fn parse_non_negative_length(input: &mut Parser<'_, '_>) -> Option<Le
     (length_payload(length) >= 0.0).then_some(length)
 }
 
+/// `<length>` with no `<percentage>` alternative and no sign restriction —
+/// [`parse_length_value`] with `allow_percentage=false`, unfiltered, so
+/// callers outside this module don't have to re-enumerate [`Length`]
+/// variants by hand.
+///
+/// `pub(crate)` for the one caller outside this module: [`crate::page`]'s
+/// `bleed` descriptor parser. CSS Paged Media Level 3 §7.3 "Bleed Area: the
+/// bleed property" (<https://www.w3.org/TR/css-page-3/#bleed>) grammar is
+/// `auto | <length>` and explicitly permits negative values ("Values may be
+/// negative, but there may be implementation-specific limits") — the same
+/// unrestricted-sign shape [`parse_letter_or_word_spacing`] already uses for
+/// `letter-spacing` / `word-spacing`, unlike this module's sibling
+/// [`parse_non_negative_length`] (`size`'s `<length>` alternative, which the
+/// spec instead states is `[0,∞]`).
+pub(crate) fn parse_length_allow_negative(input: &mut Parser<'_, '_>) -> Option<Length> {
+    parse_length_value(input, false)
+}
+
 /// `text-indent`'s `<length-percentage>` component.
 ///
 /// grammar reference: CSS Text 3 §8.1

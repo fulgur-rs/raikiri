@@ -26,8 +26,9 @@
 //!   `additive-symbols`. `speak-as` is deliberately **not** in that list
 //!   (audio-rendering concern, no bearing on the text-formatting use case
 //!   this module serves) and is silently dropped like any other unsupported
-//!   descriptor, per this crate's general convention (e.g. `@page`'s
-//!   `marks`/`bleed`, [`crate::ruletree`]'s `@media`/`@supports`).
+//!   descriptor or at-rule, per this crate's general convention (e.g.
+//!   `@page`'s margin-box at-rules, [`crate::ruletree`]'s
+//!   `@media`/`@supports`).
 //! - The `generate a counter` algorithm (§2, quoted in full on
 //!   [`generate_counter`]) for six of `system`'s seven values: `cyclic`,
 //!   `numeric`, `alphabetic`, `symbolic`, `additive`, `fixed`. `extends` is

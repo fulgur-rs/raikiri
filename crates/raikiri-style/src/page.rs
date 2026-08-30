@@ -13,7 +13,7 @@
 //!
 //! # Primary source
 //!
-//! Four anchors are cited, one per production the parser consumes:
+//! Six anchors are cited, one per production the parser consumes:
 //!
 //! - `<page-selector-list>` / `<page-selector>` grammar and the "No whitespace
 //!   is allowed between the productions" compound rule — CSS Paged Media
@@ -32,6 +32,13 @@
 //!   portrait | landscape ] ]`) — CSS Paged Media Module Level 3, §7.1
 //!   "Page size: the size property":
 //!   <https://www.w3.org/TR/css-page-3/#page-size-prop>
+//! - `marks` descriptor grammar (`none | [ crop || cross ]`) — CSS Paged
+//!   Media Module Level 3, §7.2 "Crop and Registration Marks: the marks
+//!   property":
+//!   <https://www.w3.org/TR/css-page-3/#marks>
+//! - `bleed` descriptor grammar (`auto | <length>`) — CSS Paged Media Module
+//!   Level 3, §7.3 "Bleed Area: the bleed property":
+//!   <https://www.w3.org/TR/css-page-3/#bleed>
 //!
 //! # Grammar coverage
 //!
@@ -93,7 +100,7 @@ use crate::property::{
     GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, TextShadowItem,
-    parse_non_negative_length, parse_value, resolve_overflow,
+    parse_length_allow_negative, parse_non_negative_length, parse_value, resolve_overflow,
 };
 use crate::resolve::{
     ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
@@ -416,6 +423,116 @@ impl PageSizeDeclaration {
     }
 }
 
+/// Parsed value of the `marks` descriptor (CSS Paged Media Level 3 §7.2
+/// "Crop and Registration Marks: the marks property",
+/// <https://www.w3.org/TR/css-page-3/#marks>).
+///
+/// Grammar (spec verbatim): `none | [ crop || cross ]`. `none` (the
+/// descriptor's initial value) is its own top-level alternative, not merely
+/// the empty case of the `||` combinator on the right — see
+/// [`parse_page_marks_value`] for how the two alternatives are told apart.
+/// The `||` combinator on the second alternative means `crop` and `cross`
+/// are each independently optional as long as at least one of the two is
+/// present, in either source order (`crop cross` and `cross crop` are
+/// equally spec-legal, as is either alone).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageMarks {
+    /// `none` — draw neither crop nor registration marks (initial value).
+    None,
+    /// `[ crop || cross ]`, with at least one of the two flags set.
+    ///
+    /// # Invariant: never both `false`
+    ///
+    /// [`parse_page_marks_value`] never constructs this variant with both
+    /// fields `false` — that state is not reachable through this module's
+    /// parser (an empty match of neither sub-component is a parse error, the
+    /// same invariant [`PageSize::Named`]'s doc documents for its own `||`
+    /// alternative).
+    Marks {
+        /// `crop` was authored — draws short lines at the page corners
+        /// marking where the page box should be trimmed.
+        crop: bool,
+        /// `cross` was authored — draws registration marks used to align
+        /// multiple separations/colors.
+        cross: bool,
+    },
+}
+
+/// One `marks:` declaration from an `@page` block, in source order — same
+/// shape and rationale as [`PageSizeDeclaration`] (see that type's doc for
+/// why this is a `Vec<PageMarksDeclaration>` rather than a single resolved
+/// value on [`PageRule`], and for the `pub(crate) value` / `value()`
+/// accessor / `pub important` field split).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageMarksDeclaration {
+    /// The parsed `marks` value. `pub(crate)`, with [`Self::value`] the only
+    /// path to it from outside the crate — mirrors
+    /// [`PageSizeDeclaration::value`].
+    pub(crate) value: PageMarks,
+    /// `!important` flag — spec-meaningful for `marks` for the same reason
+    /// covered on [`PageSizeDeclaration::important`], even though nothing
+    /// consumes it yet.
+    pub important: bool,
+}
+
+impl PageMarksDeclaration {
+    /// The parsed `marks` value — read-only accessor. Returns by value:
+    /// [`PageMarks`] is `Copy`, same shape as [`PageSizeDeclaration::value`].
+    pub fn value(&self) -> PageMarks {
+        self.value
+    }
+}
+
+/// Parsed value of the `bleed` descriptor (CSS Paged Media Level 3 §7.3
+/// "Bleed Area: the bleed property", <https://www.w3.org/TR/css-page-3/#bleed>).
+///
+/// Grammar (spec verbatim): `auto | <length>`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PageBleed {
+    /// `auto` — the descriptor's initial value. Spec: "Computes to 6pt if
+    /// marks has crop and to zero otherwise" — resolving that depends on the
+    /// `marks` descriptor's own cascaded value and is used-value work
+    /// performed downstream, not at parse time (same layering
+    /// [`PageSize::Auto`]'s doc describes for the `size` descriptor's own
+    /// UA-defined resolution).
+    Auto,
+    /// `<length>` — an explicit bleed distance. Unlike `size`'s `<length>`
+    /// alternative ("Negative lengths are illegal"), `bleed`'s grammar
+    /// explicitly allows negative values: "Values may be negative, but
+    /// there may be implementation-specific limits." — so no non-negative
+    /// filter is applied here (see [`parse_page_bleed_value`]).
+    Length(Length),
+}
+
+/// One `bleed:` declaration from an `@page` block, in source order — same
+/// shape and rationale as [`PageSizeDeclaration`] (see that type's doc for
+/// why this is a `Vec<PageBleedDeclaration>` rather than a single resolved
+/// value on [`PageRule`], and for the `pub(crate) value` / `value()`
+/// accessor / `pub important` field split).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageBleedDeclaration {
+    /// The parsed `bleed` value. `pub(crate)`, with [`Self::value`] the only
+    /// path to it from outside the crate — mirrors
+    /// [`PageSizeDeclaration::value`].
+    pub(crate) value: PageBleed,
+    /// `!important` flag — spec-meaningful for `bleed` for the same reason
+    /// covered on [`PageSizeDeclaration::important`], even though nothing
+    /// consumes it yet.
+    pub important: bool,
+}
+
+impl PageBleedDeclaration {
+    /// The parsed `bleed` value — read-only accessor. Returns by value:
+    /// [`PageBleed`] is `Copy`, same shape as [`PageSizeDeclaration::value`].
+    pub fn value(&self) -> PageBleed {
+        self.value
+    }
+}
+
 /// Parsed `@page` rule — selector + declaration list + source order + origin.
 ///
 /// `source_order` numbers `@page` rules *independently* of style rules; the
@@ -424,13 +541,14 @@ impl PageSizeDeclaration {
 /// `StyleRule::source_order` semantics untouched. Cross-kind ordering can be
 /// reconstructed by future cascade code if needed.
 ///
-/// Field order (selector → declarations → size_declarations → source_order →
-/// origin) mirrors [`crate::StyleRule`]'s (selector → declarations →
-/// source_order → origin) as closely as an extra `@page`-only field allows,
-/// so both rule kinds present a similar shape to the cascade code. Future
-/// fields (other `@page`-specific descriptors like `marks` / `bleed` /
-/// margin-box, a cascade-origin cache, etc.) are expected to be added later;
-/// `#[non_exhaustive]` means that addition stays non-breaking.
+/// Field order (selector → declarations → size_declarations →
+/// marks_declarations → bleed_declarations → source_order → origin) mirrors
+/// [`crate::StyleRule`]'s (selector → declarations → source_order → origin)
+/// as closely as the extra `@page`-only fields allow, so both rule kinds
+/// present a similar shape to the cascade code. Future fields (the
+/// margin-box at-rules per L3 §5, a cascade-origin cache, etc.) are expected
+/// to be added later; `#[non_exhaustive]` means that addition stays
+/// non-breaking.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct PageRule {
@@ -442,10 +560,12 @@ pub struct PageRule {
     /// silently dropped (matching this crate's general unsupported-property
     /// policy).
     ///
-    /// Note: `@page`-specific descriptors other than `size` (`marks`,
-    /// `bleed`, and the margin-box at-rules `@top-left` etc. per L3 §5) are
-    /// still dropped here; wiring them is future scope. `size` itself is no
-    /// longer dropped — see [`PageRule::size_declarations`].
+    /// Note: `@page`-specific descriptors other than `size` / `marks` /
+    /// `bleed` (the margin-box at-rules `@top-left` etc. per L3 §5) are
+    /// still dropped here; wiring them is future scope. `size` / `marks` /
+    /// `bleed` themselves are no longer dropped — see
+    /// [`PageRule::size_declarations`] / [`PageRule::marks_declarations`] /
+    /// [`PageRule::bleed_declarations`].
     ///
     /// # Why this field (and `RuleTree::page_rules`) is still `pub`
     ///
@@ -502,9 +622,10 @@ pub struct PageRule {
     /// Not yet consumed by [`cascade_page`] / [`PageCascadeResult`] —
     /// wiring a `size` cascade winner across multiple matching `@page`
     /// rules, and translating the winner into an actual page-box
-    /// width/height, are both future scope. Other `@page` descriptors
-    /// (`marks`, `bleed`, margin-box at-rules) remain unparsed and are
-    /// silently dropped, same as before.
+    /// width/height, are both future scope. `marks` / `bleed` are parsed the
+    /// same way — see [`PageRule::marks_declarations`] /
+    /// [`PageRule::bleed_declarations`]. The margin-box at-rules remain
+    /// unparsed and are silently dropped, same as before.
     ///
     /// # `pub` surface — same shape as `declarations`
     ///
@@ -522,6 +643,42 @@ pub struct PageRule {
     /// change wires a `size` cascade winner can rely on the invariant
     /// holding for every `PageSizeDeclaration` it encounters.
     pub size_declarations: Vec<PageSizeDeclaration>,
+    /// `marks:` declarations from the block body, in source order — see
+    /// [`PageMarksDeclaration`] for the value shape. Parsed by
+    /// [`parse_page_declaration_block`] via a dedicated grammar
+    /// ([`parse_page_marks_value`]), since `marks` is an `@page` descriptor
+    /// (CSS Paged Media Level 3 §7.2 "Crop and Registration Marks: the marks
+    /// property", <https://www.w3.org/TR/css-page-3/#marks>), not a
+    /// [`PropertyValue`] the general [`crate::property::parse_value`]
+    /// dispatch recognizes. Empty when the block declares no `marks`.
+    ///
+    /// Not yet consumed by [`cascade_page`] / [`PageCascadeResult`] — same
+    /// future-scope split [`PageRule::size_declarations`]'s doc describes
+    /// for `size`. Shares that field's `pub` surface analysis
+    /// ([`PageRule::declarations`]'s doc) and the same
+    /// never-construct-the-parser-unreachable-state guarantee
+    /// ([`PageMarksDeclaration::value`] is `pub(crate)`, so a consumer
+    /// cannot assign a hand-built `PageMarks::Marks { crop: false, cross:
+    /// false }` — the state [`PageMarks::Marks`]'s own doc documents as
+    /// parser-unreachable — into this field).
+    pub marks_declarations: Vec<PageMarksDeclaration>,
+    /// `bleed:` declarations from the block body, in source order — see
+    /// [`PageBleedDeclaration`] for the value shape. Parsed by
+    /// [`parse_page_declaration_block`] via a dedicated grammar
+    /// ([`parse_page_bleed_value`]), since `bleed` is an `@page` descriptor
+    /// (CSS Paged Media Level 3 §7.3 "Bleed Area: the bleed property",
+    /// <https://www.w3.org/TR/css-page-3/#bleed>), not a [`PropertyValue`]
+    /// the general [`crate::property::parse_value`] dispatch recognizes.
+    /// Empty when the block declares no `bleed`.
+    ///
+    /// Not yet consumed by [`cascade_page`] / [`PageCascadeResult`] — same
+    /// future-scope split [`PageRule::size_declarations`]'s doc describes
+    /// for `size`; resolving `PageBleed::Auto` additionally depends on the
+    /// cascaded `marks` value (see [`PageBleed::Auto`]'s doc), so it cannot
+    /// be resolved any earlier than that `marks` wiring lands. Shares
+    /// `size_declarations`'s `pub` surface analysis
+    /// ([`PageRule::declarations`]'s doc).
+    pub bleed_declarations: Vec<PageBleedDeclaration>,
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
     pub source_order: u32,
@@ -688,29 +845,40 @@ fn parse_and_push_pseudo<'i>(
 }
 
 // ---------------------------------------------------------------------------
-// @page block body — declarations + the `size` descriptor
+// @page block body — declarations + the `size` / `marks` / `bleed`
+// descriptors
 //
-// CSS Paged Media Level 3, §7.1 "Page size: the size property" —
-//   <https://www.w3.org/TR/css-page-3/#page-size-prop>
+// CSS Paged Media Level 3:
+//   §7.1 "Page size: the size property" —
+//     <https://www.w3.org/TR/css-page-3/#page-size-prop>
+//   §7.2 "Crop and Registration Marks: the marks property" —
+//     <https://www.w3.org/TR/css-page-3/#marks>
+//   §7.3 "Bleed Area: the bleed property" —
+//     <https://www.w3.org/TR/css-page-3/#bleed>
 // ---------------------------------------------------------------------------
 
 /// Per-declaration parse result for an `@page` block body — either an
 /// ordinary property [`Declaration`] (routed through the same
-/// [`crate::property::parse_value`] dispatch qualified rules use) or the
-/// `size` descriptor's dedicated value ([`PageSize`]), which is not a
-/// [`PropertyValue`] variant and so cannot come out of that dispatch.
+/// [`crate::property::parse_value`] dispatch qualified rules use) or one of
+/// the three descriptors' dedicated values ([`PageSize`] / [`PageMarks`] /
+/// [`PageBleed`]), none of which are [`PropertyValue`] variants and so
+/// cannot come out of that dispatch.
 enum PageBodyItem {
     /// An ordinary property declaration.
     Property(Declaration),
     /// A `size:` declaration.
     Size(PageSizeDeclaration),
+    /// A `marks:` declaration.
+    Marks(PageMarksDeclaration),
+    /// A `bleed:` declaration.
+    Bleed(PageBleedDeclaration),
 }
 
 /// Per-declaration parser for `@page` block bodies, driving
 /// [`RuleBodyParser`] the same way [`crate::rule`]'s (crate-private)
 /// `DeclParser` drives it for qualified style rules — see
 /// [`parse_page_declaration_block`] for the entry point and the
-/// `size`/ordinary-property dispatch this type implements.
+/// `size`/`marks`/`bleed`/ordinary-property dispatch this type implements.
 ///
 /// The `AtRuleParser` / `QualifiedRuleParser` impls below are no-ops (all
 /// default-trait-method behavior, same shape as [`crate::rule`]'s
@@ -720,8 +888,8 @@ enum PageBodyItem {
 /// error recovery silently skips just that nested block — declarations
 /// before and after it still parse (pinned by
 /// `ruletree::tests::page_margin_box_at_rule_body_is_skipped_declaration_survives`).
-/// Wiring margin-box at-rules is future scope, unrelated to the `size`
-/// descriptor this type exists for.
+/// Wiring margin-box at-rules is future scope, unrelated to the three
+/// descriptors this type exists for.
 struct PageDeclParser;
 
 impl<'i> DeclarationParser<'i> for PageDeclParser {
@@ -736,27 +904,27 @@ impl<'i> DeclarationParser<'i> for PageDeclParser {
     ) -> Result<PageBodyItem, ParseError<'i, Self::Error>> {
         if name.eq_ignore_ascii_case("size") {
             let value = parse_page_size_value(input)?;
-            // `!important` is spec-legal here too — CSS Paged Media Level 3's
-            // "Cascading in the page context" states page-context
-            // declarations "cascade just like declarations in style rule
-            // for elements" (cited in full on `PageRule::origin`) — so it is
-            // consumed (not left as trailing garbage) and retained on
-            // `PageSizeDeclaration`, exactly like the ordinary-property arm
-            // below does for `Declaration::important`.
-            let important = input.try_parse(cssparser::parse_important).is_ok();
-            // Exhaustive consumption, matching `crate::rule::DeclParser`:
-            // trailing garbage after the value (and optional `!important`)
-            // rejects the whole declaration.
-            input.expect_exhausted().map_err(
-                |e: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> { e.into() },
-            )?;
+            let important = parse_important_and_exhaust(input)?;
             return Ok(PageBodyItem::Size(PageSizeDeclaration { value, important }));
         }
+        if name.eq_ignore_ascii_case("marks") {
+            let value = parse_page_marks_value(input)?;
+            let important = parse_important_and_exhaust(input)?;
+            return Ok(PageBodyItem::Marks(PageMarksDeclaration {
+                value,
+                important,
+            }));
+        }
+        if name.eq_ignore_ascii_case("bleed") {
+            let value = parse_page_bleed_value(input)?;
+            let important = parse_important_and_exhaust(input)?;
+            return Ok(PageBodyItem::Bleed(PageBleedDeclaration {
+                value,
+                important,
+            }));
+        }
         let value = parse_value(name.as_ref(), input).ok_or_else(|| input.new_custom_error(()))?;
-        let important = input.try_parse(cssparser::parse_important).is_ok();
-        input.expect_exhausted().map_err(
-            |e: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> { e.into() },
-        )?;
+        let important = parse_important_and_exhaust(input)?;
         Ok(PageBodyItem::Property(Declaration { value, important }))
     }
 }
@@ -785,22 +953,46 @@ impl<'i> RuleBodyItemParser<'i, PageBodyItem, ()> for PageDeclParser {
     }
 }
 
-/// Parse an `@page` block body (the `{ … }` contents), producing both the
-/// ordinary property declarations and the `size:` declarations (in source
-/// order — see [`PageRule::size_declarations`] for why duplicates within one
-/// block are kept rather than reduced here).
+/// Consume a declaration's optional trailing `!important` and confirm no
+/// further tokens remain — the tail every [`PageDeclParser::parse_value`] arm
+/// shares (the three descriptor arms and the ordinary-property arm alike).
+///
+/// `!important` is spec-legal on every `@page`-context declaration — CSS
+/// Paged Media Level 3's "Cascading in the page context" states page-context
+/// declarations "cascade just like declarations in style rule for elements"
+/// (cited in full on `PageRule::origin`) — so this consumes it (rather than
+/// leaving it as trailing garbage for `expect_exhausted` below to reject) and
+/// returns whether it was present, for the caller to retain on its own
+/// `*Declaration`.
+///
+/// Exhaustive consumption matches `crate::rule::DeclParser`: trailing
+/// garbage after the value (and optional `!important`) rejects the whole
+/// declaration.
+fn parse_important_and_exhaust<'i>(input: &mut Parser<'i, '_>) -> Result<bool, ParseError<'i, ()>> {
+    let important = input.try_parse(cssparser::parse_important).is_ok();
+    input.expect_exhausted()?;
+    Ok(important)
+}
+
+/// Parse an `@page` block body (the `{ … }` contents), producing the
+/// ordinary property declarations and the `size:` / `marks:` / `bleed:`
+/// declarations (each in source order — see [`PageRule::size_declarations`]
+/// for why duplicates within one block are kept rather than reduced here).
 ///
 /// # Not a reuse of [`crate::rule::parse_declaration_block`]
 ///
 /// Unlike qualified style rules, `@page` blocks are parsed by a dedicated
 /// [`PageDeclParser`] rather than [`crate::rule`]'s (crate-private)
-/// `DeclParser` — the `size` descriptor is not a [`PropertyValue`] variant
-/// [`crate::property::parse_value`] can produce, so it needs its own grammar
-/// ([`parse_page_size_value`]) rather than being silently dropped by the
+/// `DeclParser` — none of the three descriptors is a [`PropertyValue`]
+/// variant [`crate::property::parse_value`] can produce, so each needs its
+/// own grammar ([`parse_page_size_value`] / [`parse_page_marks_value`] /
+/// [`parse_page_bleed_value`]) rather than being silently dropped by the
 /// general property parser (the pre-existing behavior for *every* `@page`
-/// descriptor before this function existed — still true today for `marks` /
-/// `bleed` / margin-box, see
-/// `ruletree::tests::page_body_marks_dropped_size_parsed`).
+/// descriptor before this function existed). The margin-box at-rules are a
+/// different case: they're not a declaration at all, so `parse_value` never
+/// sees them — cssparser's at-rule error recovery skips them instead (see
+/// [`PageDeclParser`]'s doc, pinned by
+/// `ruletree::tests::page_margin_box_at_rule_body_is_skipped_declaration_survives`).
 ///
 /// # Shorthand expansion — this is call site 4 of `expand_shorthand_into`
 ///
@@ -814,19 +1006,33 @@ impl<'i> RuleBodyItemParser<'i, PageBodyItem, ()> for PageDeclParser {
 /// account and why each one is load-bearing.
 pub(crate) fn parse_page_declaration_block(
     input: &mut Parser<'_, '_>,
-) -> (Vec<Declaration>, Vec<PageSizeDeclaration>) {
+) -> (
+    Vec<Declaration>,
+    Vec<PageSizeDeclaration>,
+    Vec<PageMarksDeclaration>,
+    Vec<PageBleedDeclaration>,
+) {
     let mut parser = PageDeclParser;
     let mut declarations = Vec::new();
     let mut size_declarations = Vec::new();
+    let mut marks_declarations = Vec::new();
+    let mut bleed_declarations = Vec::new();
     for item in RuleBodyParser::new(input, &mut parser).flatten() {
         match item {
             PageBodyItem::Property(decl) => {
                 expand_shorthand_into(&decl, |d| declarations.push(d));
             }
             PageBodyItem::Size(decl) => size_declarations.push(decl),
+            PageBodyItem::Marks(decl) => marks_declarations.push(decl),
+            PageBodyItem::Bleed(decl) => bleed_declarations.push(decl),
         }
     }
-    (declarations, size_declarations)
+    (
+        declarations,
+        size_declarations,
+        marks_declarations,
+        bleed_declarations,
+    )
 }
 
 /// Parse the `size` descriptor's value grammar — CSS Paged Media Level 3
@@ -957,6 +1163,95 @@ fn parse_page_orientation<'i>(
     Ok(orientation)
 }
 
+/// Parse the `marks` descriptor's value grammar — CSS Paged Media Level 3
+/// §7.2 "Crop and Registration Marks: the marks property"
+/// (<https://www.w3.org/TR/css-page-3/#marks>), grammar (spec verbatim):
+/// `none | [ crop || cross ]`. See [`PageMarks`] for the parsed shape.
+///
+/// `none` is tried first via `try_parse` (same rewind-on-mismatch ordering
+/// [`parse_page_size_value`] uses for its `auto` alternative) since it is a
+/// distinct top-level alternative, not a possible outcome of the `||`
+/// combinator below.
+///
+/// The `||` combinator on the second alternative is handled with the same
+/// loop-until-neither-matches idiom [`parse_page_size_value`] uses for its
+/// own `<page-size> || [ portrait | landscape ]` alternative: `crop` and
+/// `cross` are each tried at most once (so `crop crop` doesn't loop forever
+/// nor silently accept the duplicate — the second `crop` is left as
+/// unconsumed trailing garbage for the caller's `expect_exhausted` to
+/// reject), in either source order, and at least one of the two must match
+/// or the whole declaration is invalid.
+///
+/// Called with the parser positioned right after `marks` `:` (the same shape
+/// [`crate::property::parse_value`] callers expect) — consumes exactly the
+/// value tokens, leaving any trailing `!important` for the caller
+/// ([`PageDeclParser::parse_value`]).
+fn parse_page_marks_value<'i>(input: &mut Parser<'i, '_>) -> Result<PageMarks, ParseError<'i, ()>> {
+    if input
+        .try_parse(|input| input.expect_ident_matching("none"))
+        .is_ok()
+    {
+        return Ok(PageMarks::None);
+    }
+
+    let mut crop = false;
+    let mut cross = false;
+    loop {
+        if !crop
+            && input
+                .try_parse(|input| input.expect_ident_matching("crop"))
+                .is_ok()
+        {
+            crop = true;
+            continue;
+        }
+        if !cross
+            && input
+                .try_parse(|input| input.expect_ident_matching("cross"))
+                .is_ok()
+        {
+            cross = true;
+            continue;
+        }
+        break;
+    }
+    if !crop && !cross {
+        // Neither alternative matched — `none` failed above, and the `||`
+        // combinator requires at least one of `crop` / `cross`.
+        return Err(input.new_custom_error(()));
+    }
+    Ok(PageMarks::Marks { crop, cross })
+}
+
+/// Parse the `bleed` descriptor's value grammar — CSS Paged Media Level 3
+/// §7.3 "Bleed Area: the bleed property"
+/// (<https://www.w3.org/TR/css-page-3/#bleed>), grammar (spec verbatim):
+/// `auto | <length>`. See [`PageBleed`] for the parsed shape.
+///
+/// `auto` is tried first via `try_parse` — same rewind-then-fall-through
+/// ordering [`parse_page_size_value`] uses, needed for the same reason: the
+/// length branch unconditionally consumes a token on its first step.
+///
+/// Unlike `size`'s `<length>` alternative ("Negative lengths are illegal"),
+/// `bleed`'s explicitly permits negative values ("Values may be negative,
+/// but there may be implementation-specific limits") — so this calls
+/// [`parse_length_allow_negative`] rather than [`parse_non_negative_length`]
+/// (the `size` descriptor's helper — see [`PageBleed::Length`]'s doc).
+///
+/// Called with the parser positioned right after `bleed` `:` — consumes
+/// exactly the value tokens, leaving any trailing `!important` for the
+/// caller ([`PageDeclParser::parse_value`]).
+fn parse_page_bleed_value<'i>(input: &mut Parser<'i, '_>) -> Result<PageBleed, ParseError<'i, ()>> {
+    if input
+        .try_parse(|input| input.expect_ident_matching("auto"))
+        .is_ok()
+    {
+        return Ok(PageBleed::Auto);
+    }
+    let length = parse_length_allow_negative(input).ok_or_else(|| input.new_custom_error(()))?;
+    Ok(PageBleed::Length(length))
+}
+
 // ---------------------------------------------------------------------------
 // @page cascade order 本実装
 //
@@ -1024,21 +1319,25 @@ pub struct PageContextQuery {
 ///
 /// Contains one entry per property that at least one matching `@page` rule
 /// declared. `@page`-specific **descriptors** (`size`, `marks`, `bleed`) are
-/// absent from this result. `marks` / `bleed` still have no parser at all
-/// (the current property dispatch silently drops them — see
-/// `ruletree::tests::page_body_marks_dropped_size_parsed`).
-/// `size` is different: it *is* parsed now (see [`PageRule::size_declarations`]
-/// / [`PageSize`]), but that parsed value is not yet folded into this
-/// cascade result — wiring a `size` cascade winner across multiple matching
-/// `@page` rules is still future scope, tracked separately from ordinary
-/// property cascading.
+/// absent from this result. All three *are* parsed (see
+/// [`PageRule::size_declarations`] / [`PageRule::marks_declarations`] /
+/// [`PageRule::bleed_declarations`] and [`PageSize`] / [`PageMarks`] /
+/// [`PageBleed`]), but none of the three parsed values is yet folded into
+/// this cascade result — wiring a cascade winner across multiple matching
+/// `@page` rules for each descriptor is still future scope, tracked
+/// separately from ordinary property cascading. The margin-box at-rules (L3
+/// §5) have no parser at all yet — they're not a declaration `parse_value`
+/// could dispatch on in the first place, so cssparser's at-rule error
+/// recovery skips them instead (see [`PageDeclParser`]'s doc, pinned by
+/// `ruletree::tests::page_margin_box_at_rule_body_is_skipped_declaration_survives`).
 ///
 /// The ordinary box properties are **not** in that category: `margin` /
 /// `padding` / `border-*` / `width` / `height` are parsed (the `margin`
 /// shorthand is expanded to longhands) and go
 /// through both resolution phases below. Downstream page-layout code is
 /// expected to translate this bag into its page-box model, plus
-/// [`PageRule::size_declarations`] and future `@page`-descriptor fields
+/// [`PageRule::size_declarations`] / [`PageRule::marks_declarations`] /
+/// [`PageRule::bleed_declarations`] and future `@page`-descriptor fields
 /// once those gain cascade wiring of their own; raikiri-style remains a
 /// leaf crate.
 ///
