@@ -817,7 +817,7 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
                     lang_pseudo_matches(ranges, dom, elem, ancestors)
                 }
                 crate::PseudoClass::Dir(dir) => {
-                    resolve_directionality(dom, elem, ancestors) == *dir
+                    resolve_directionality(dom, elem, elem_id, ancestors) == *dir
                 }
                 // `:hover` / `:active` — dynamic pseudo-class は本実装の
                 // scope 外のまま。`is_supported_selector_list` が rule tree 構築時点で
@@ -2424,25 +2424,28 @@ fn canonicalize_primary_language_subtag(subtags: &mut [String]) {
 
 /// `PseudoClass::Dir` arm of [`compound_matches`] — resolves the element's
 /// **directionality** per HTML Living Standard §3.2.6.4 "The `dir`
-/// attribute" (<https://html.spec.whatwg.org/multipage/dom.html#the-directionality>,
-/// 2026-08-12 direct fetch) simplified to explicit `ltr`/`rtl` only:
+/// attribute" (<https://html.spec.whatwg.org/multipage/dom.html#the-directionality>)
+/// simplified as documented in the sections below:
 ///
 /// > The directionality of an element \[...\] is either 'ltr' or 'rtl'. To
 /// > compute the directionality given an element element, switch on
 /// > element's dir attribute state: LTR — Return 'ltr'. RTL — Return 'rtl'.
-/// > \[...\] Undefined \[...\] Otherwise — Return the parent directionality
-/// > of element.
+/// > \[...\] Auto \[...\] Let result be the auto directionality of element.
+/// > If result is null, then return 'ltr'. Return result. \[...\] Undefined
+/// > \[...\] Otherwise — Return the parent directionality of element.
 /// >
 /// > To compute the parent directionality given an element element: Let
 /// > parentNode be element's parent node. \[...\] If parentNode is an
 /// > element, then return the directionality of parentNode. Return 'ltr'.
 ///
-/// i.e. own `dir="ltr"`/`dir="rtl"` wins; otherwise walk up to the nearest
-/// ancestor with an explicit `ltr`/`rtl` `dir`; if none exists anywhere
-/// (including at the document root, which has no parent element), the
-/// default is `'ltr'` — this function is total (`Direction`, not
-/// `Option<Direction>`), matching the spec's own "always ltr or rtl, never
-/// undetermined" shape.
+/// i.e. own `dir="ltr"`/`dir="rtl"` wins; own `dir="auto"` uses
+/// [`auto_directionality`]'s text scan (falling back to `'ltr'`, *not* the
+/// parent's directionality, when the scan finds nothing); otherwise
+/// (missing/invalid `dir`) walk up to the nearest ancestor with an explicit
+/// `ltr`/`rtl` `dir`; if none exists anywhere (including at the document
+/// root, which has no parent element), the default is `'ltr'` — this
+/// function is total (`Direction`, not `Option<Direction>`), matching the
+/// spec's own "always ltr or rtl, never undetermined" shape.
 ///
 /// CSS Selectors L4 §7.1 <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>
 /// (bikeshed source, same fetch as [`Direction`]'s doc) is what motivates
@@ -2451,25 +2454,30 @@ fn canonicalize_primary_language_subtag(subtags: &mut [String]) {
 /// that a child without a dir attribute will have the same directionality
 /// as its closest ancestor with a valid dir attribute."
 ///
-/// # Deliberately out of scope: `auto` state and its content-sniffing fallback
+/// # Deliberately out of scope
 ///
-/// The HTML quote above elides the `Auto` state's own arm, which this
-/// function folds into `Undefined`'s "return the parent directionality"
-/// behavior instead of implementing — see [`Direction`]'s doc for why this
-/// is a *real* behavioral divergence (Auto's own content-sniffing fallback
-/// is `'ltr'` unconditionally, not the parent's directionality) and not
-/// merely an implementation-order simplification. Also elided: the `bdi`
-/// element and `input[type=tel]` special cases in HTML's `Undefined` arm
-/// (raikiri has no notion of element-specific behavior at this layer) and
-/// the shadow-tree host step of "parent directionality" (raikiri has no
-/// shadow DOM).
+/// The quoted `Auto` arm above elides two branches of the referenced "auto
+/// directionality" algorithm that this crate does not implement — see
+/// [`auto_directionality`]'s own doc for the precise cut and why each is out
+/// of scope. Also elided from the `Undefined` arm: the `bdi` element and
+/// `input[type=tel]` special cases (raikiri has no notion of
+/// element-specific behavior at this layer — `bdi` without an explicit
+/// `dir` attribute still falls through to the ancestor walk below, same as
+/// any other element with no `dir`) and the shadow-tree host step of
+/// "parent directionality" (raikiri has no shadow DOM).
 pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
     dom: &D,
     elem: &E,
+    elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
 ) -> Direction {
-    if let Some(dir) = own_explicit_direction(elem) {
-        return dir;
+    match own_dir_attribute_state(elem) {
+        DirAttributeState::Ltr => return Direction::Ltr,
+        DirAttributeState::Rtl => return Direction::Rtl,
+        DirAttributeState::Auto => {
+            return auto_directionality(dom, elem_id).unwrap_or(Direction::Ltr);
+        }
+        DirAttributeState::Undefined => {}
     }
     for &ancestor_id in ancestors.iter().rev() {
         // Same "explicit `if let` nesting instead of `.and_then` chain"
@@ -2486,30 +2494,33 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
     Direction::Ltr
 }
 
-/// HTML's `dir` attribute LTR/RTL states only (`Undefined`/`Auto` — missing,
-/// invalid, or `auto` — all collapse to `None` here; see
-/// [`resolve_directionality`] doc for how the caller folds `Auto` into the
-/// same "keep walking up" treatment as `Undefined`). Attribute keyword
-/// matching is ASCII case-insensitive, per HTML's general treatment of
-/// enumerated attribute keywords (`the dir attribute is an enumerated
-/// attribute with the following keywords and states`, same fetch as
-/// [`resolve_directionality`]'s doc) — same posture as this crate's other
-/// HTML-enumerated-value comparisons (e.g. `elem.tag_name()`'s
-/// `eq_ignore_ascii_case` in [`compound_matches`]).
+/// The `dir` attribute's full enumerated state — HTML LS §3.2.6.4's LTR /
+/// RTL / Auto / Undefined states (same fetch as [`resolve_directionality`]'s
+/// doc) — including `Auto`, which [`own_explicit_direction`] (the
+/// ancestor-walk helper, which only ever needs an explicit `ltr`/`rtl`
+/// winner) folds into `None` alongside `Undefined`.
+///
+/// Attribute keyword matching is ASCII case-insensitive, per HTML's general
+/// treatment of enumerated attribute keywords (`the dir attribute is an
+/// enumerated attribute with the following keywords and states`, same
+/// fetch) — same posture as this crate's other HTML-enumerated-value
+/// comparisons (e.g. `elem.tag_name()`'s `eq_ignore_ascii_case` in
+/// [`compound_matches`]). Missing or invalid values (anything other than
+/// `ltr`/`rtl`/`auto`) both resolve to `Undefined` per HTML LS's own
+/// "missing value default and invalid value default are both the Undefined
+/// state".
 ///
 /// # HTML-namespace-only, unlike [`effective_language`]'s `lang` reads
 ///
-/// The same fetch [`resolve_directionality`]'s doc quotes continues,
-/// immediately after the quoted algorithm:
+/// The same fetch continues, immediately after the quoted algorithm:
 ///
 /// > Since the `dir` attribute is only defined for HTML elements, it cannot
 /// > be present on elements from other namespaces. Thus, elements from
 /// > other namespaces always end up using the parent directionality.
 ///
 /// so a `dir` attribute on a foreign-namespace element (e.g. inline
-/// `<svg dir="rtl">`) must not be read here — it falls through to
-/// [`resolve_directionality`]'s ancestor walk instead, same as if the
-/// attribute were absent. `elem.namespace_uri().is_none()` is this crate's
+/// `<svg dir="rtl">`) must resolve to `Undefined` here regardless of its
+/// literal value — `elem.namespace_uri().is_none()` is this crate's
 /// established "is an HTML element" proxy — the same one
 /// `resolve_case_sensitivity`'s doc documents and
 /// `resolve_case_sensitivity_non_html_namespace_element_is_case_sensitive`
@@ -2526,15 +2537,850 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
 /// difference is allowlist *size*, not gate-vs-no-gate — do not widen this
 /// function's allowlist to match [`own_html_or_svg_lang_attribute`]'s; `dir`
 /// genuinely has no SVG exception in the quoted algorithm.
-fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direction> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DirAttributeState {
+    /// `dir="ltr"` — HTML LS "LTR" state.
+    Ltr,
+    /// `dir="rtl"` — HTML LS "RTL" state.
+    Rtl,
+    /// `dir="auto"` — HTML LS "Auto" state.
+    Auto,
+    /// Missing, invalid, or on a non-HTML-namespace element — HTML LS
+    /// "Undefined" state.
+    Undefined,
+}
+
+fn own_dir_attribute_state<E: StyleElement>(elem: &E) -> DirAttributeState {
     if elem.namespace_uri().is_some() {
-        return None;
+        return DirAttributeState::Undefined;
     }
     match elem.attr("dir") {
-        Some(v) if v.eq_ignore_ascii_case("ltr") => Some(Direction::Ltr),
-        Some(v) if v.eq_ignore_ascii_case("rtl") => Some(Direction::Rtl),
-        _ => None,
+        Some(v) if v.eq_ignore_ascii_case("ltr") => DirAttributeState::Ltr,
+        Some(v) if v.eq_ignore_ascii_case("rtl") => DirAttributeState::Rtl,
+        Some(v) if v.eq_ignore_ascii_case("auto") => DirAttributeState::Auto,
+        _ => DirAttributeState::Undefined,
     }
+}
+
+/// HTML's `dir` attribute LTR/RTL states only — `Undefined`/`Auto` (missing,
+/// invalid, or `auto`) both collapse to `None` here, since the only caller
+/// ([`resolve_directionality`]'s ancestor walk) needs exactly "does this
+/// ancestor have an explicit winner to inherit", and per HTML LS's "parent
+/// directionality" an ancestor's own `Auto`/`Undefined` state is not such a
+/// winner (the walk keeps going past it toward that ancestor's own parent).
+/// See [`own_dir_attribute_state`]'s doc for the full 4-state read this
+/// delegates to, including the namespace gate and case-insensitivity.
+fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direction> {
+    match own_dir_attribute_state(elem) {
+        DirAttributeState::Ltr => Some(Direction::Ltr),
+        DirAttributeState::Rtl => Some(Direction::Rtl),
+        DirAttributeState::Auto | DirAttributeState::Undefined => None,
+    }
+}
+
+/// HTML LS §3.2.6.4's "auto directionality" given an element (same fetch as
+/// [`resolve_directionality`]'s doc), simplified to the text-content-scan
+/// branch only:
+///
+/// > To compute the auto directionality given an element element: \[...\]
+/// > Return the contained text auto directionality of element with
+/// > canExcludeRoot set to false.
+///
+/// i.e. [`contained_text_auto_directionality`] over `element`'s own
+/// descendants, `None` iff no descendant text node contains a strong L/AL/R
+/// character anywhere ([`resolve_directionality`]'s caller then applies the
+/// spec's own `'ltr'` fallback for that case).
+///
+/// # Deliberately out of scope
+///
+/// The full algorithm has two branches elided here, both unreachable from
+/// this crate's current DOM model:
+///
+/// - **Form-associated elements' current value** — the spec's first step
+///   scans an `input`/`textarea` element's live *value* (not its descendant
+///   text) for the same L/AL/R rule. [`StyleElement`] has no notion of a
+///   form control's current value (a run-time, potentially
+///   script-or-user-mutated state distinct from the parsed DOM tree this
+///   crate's style layer operates over) — out of scope for the same reason
+///   [`crate::style_dom`] carries no form-control surface at all. Falling
+///   through to the descendant-text scan instead happens to coincide with a
+///   `textarea`'s *initial* value (its child text node) but not any
+///   subsequently-changed value, and always resolves `input` (a void
+///   element with no descendant text) to `None` regardless of what the
+///   user has typed into it.
+/// - **`slot` elements with shadow-tree assigned nodes** — raikiri has no
+///   shadow DOM (established elsewhere, e.g. [`resolve_directionality`]'s
+///   own "Deliberately out of scope" note on the shadow-tree host step of
+///   "parent directionality"), so this branch's precondition never holds.
+fn auto_directionality<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> Option<Direction> {
+    contained_text_auto_directionality(dom, elem_id)
+}
+
+/// HTML LS §3.2.6.4's "contained text auto directionality" of an element,
+/// with `canExcludeRoot` fixed to `false` (the only value
+/// [`auto_directionality`] ever needs — `true` is only used by the
+/// shadow-tree `slot` branch this crate does not implement, see that
+/// function's doc). Same fetch as [`resolve_directionality`]'s doc:
+///
+/// > For each node descendant of element's descendants, in tree order: If
+/// > any of \[descendant, any ancestor element of descendant that is a
+/// > descendant of element\] is one of \[a bdi element, a script element, a
+/// > style element, a textarea element, an element whose dir attribute is
+/// > not in the Undefined state\], then continue. \[...\] If descendant is
+/// > not a Text node, then continue. Let result be the text node
+/// > directionality of descendant. If result is not null, then return
+/// > result. \[...\] Return null.
+///
+/// i.e. a depth-first, tree-order walk of `elem_id`'s descendants that skips
+/// entire subtrees rooted at a `bdi`/`script`/`style`/`textarea` element or
+/// any element with its own non-`Undefined` `dir` (those resolve their own
+/// directionality independently and must not contribute text to this
+/// element's scan — see [`excluded_from_auto_text_scan`]), scanning every
+/// remaining text node in order via [`text_node_first_strong_direction`]
+/// until one yields a non-`None` result. `elem_id` itself is never checked
+/// against the exclusion set (that is exactly what `canExcludeRoot = false`
+/// means) — only its descendants are.
+///
+/// This crate has no `slot` element / shadow-tree concept, so the spec's
+/// "if descendant is a `slot` element whose root is a shadow root" branch
+/// (which would otherwise interrupt this walk to consult a shadow host) is
+/// omitted; every descendant that isn't excluded is either scanned (if a
+/// `Text` node) or recursed into (if an `Element`).
+fn contained_text_auto_directionality<D: StyleDom>(
+    dom: &D,
+    elem_id: StyleNodeId,
+) -> Option<Direction> {
+    dom.child_ids(elem_id)
+        .find_map(|child_id| auto_text_scan_subtree(dom, child_id))
+}
+
+/// One node of [`contained_text_auto_directionality`]'s tree-order walk —
+/// recurses into element subtrees (unless [`excluded_from_auto_text_scan`]),
+/// and applies [`text_node_first_strong_direction`] to text nodes. Comment /
+/// processing-instruction / document-fragment / document nodes are none of
+/// "text node" or "element node" and so never contribute, matching how
+/// [`matches_empty`] / [`is_substantial_node`] treat the same node kinds.
+fn auto_text_scan_subtree<D: StyleDom>(dom: &D, node_id: StyleNodeId) -> Option<Direction> {
+    let node = dom.node(node_id)?;
+    match node.kind() {
+        StyleNodeKind::Text => text_node_first_strong_direction(node.text_content().unwrap_or("")),
+        StyleNodeKind::Element => {
+            // cov:ignore: `kind() == Element` guarantees `as_element()` is
+            // `Some` — `StyleNode::as_element`'s own trait doc contract
+            // ("Some iff kind() == Element").
+            let elem = node.as_element()?;
+            if excluded_from_auto_text_scan(&elem) {
+                return None;
+            }
+            dom.child_ids(node_id)
+                .find_map(|child_id| auto_text_scan_subtree(dom, child_id))
+        }
+        StyleNodeKind::Comment
+        | StyleNodeKind::ProcessingInstruction
+        | StyleNodeKind::DocumentFragment
+        | StyleNodeKind::Document => None,
+    }
+}
+
+/// The exclusion set [`contained_text_auto_directionality`]'s spec quote
+/// lists — an element that must not contribute (nor let its own
+/// descendants contribute) text to an ancestor's auto-directionality scan,
+/// because it resolves its own directionality independently: `bdi`,
+/// `script`, `style`, `textarea`, or any element whose own `dir` attribute
+/// is not `Undefined` (`ltr`/`rtl`/`auto` all count — an `auto` descendant
+/// resolves its *own* text scan rather than leaking its text into the
+/// ancestor's).
+///
+/// The 4 tag names are gated to the HTML namespace
+/// (`elem.namespace_uri().is_none()`, this crate's established "is an HTML
+/// element" proxy — see [`own_dir_attribute_state`]'s doc) since HTML LS's
+/// `bdi`/`script`/`style`/`textarea` dfns denote specifically the HTML
+/// elements of those names, not e.g. SVG's own distinct `script`/`style`
+/// elements. The `dir`-attribute-state check needs no separate namespace
+/// gate — [`own_dir_attribute_state`] already resolves any foreign-namespace
+/// element to `Undefined`.
+fn excluded_from_auto_text_scan<E: StyleElement>(elem: &E) -> bool {
+    if !matches!(own_dir_attribute_state(elem), DirAttributeState::Undefined) {
+        return true;
+    }
+    if elem.namespace_uri().is_some() {
+        return false;
+    }
+    const EXCLUDED_TAGS: &[&str] = &["bdi", "script", "style", "textarea"];
+    EXCLUDED_TAGS
+        .iter()
+        .any(|tag| elem.tag_name().eq_ignore_ascii_case(tag))
+}
+
+/// Bidirectional character type, restricted to the 3 *strong* types HTML
+/// LS's "text node directionality" algorithm consults — see
+/// [`text_node_first_strong_direction`]'s doc for the quoted algorithm and
+/// [`strong_bidi_type`]'s doc for how a code point is classified into one
+/// of these (or neither).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StrongBidiType {
+    /// Left-to-Right.
+    L,
+    /// Arabic Letter.
+    Al,
+    /// Right-to-Left (non-Arabic).
+    R,
+}
+
+/// HTML LS §3.2.6.4's "text node directionality" given a `Text` node's data
+/// (same fetch as [`resolve_directionality`]'s doc):
+///
+/// > If text's data does not contain a code point whose bidirectional
+/// > character type is L, AL, or R, then return null. Let codePoint be the
+/// > first code point in text's data whose bidirectional character type is
+/// > L, AL, or R. If codePoint is of bidirectional character type AL or R,
+/// > then return 'rtl'. If codePoint is of bidirectional character type L,
+/// > then return 'ltr'.
+///
+/// i.e. scan `data` in order for the first code point [`strong_bidi_type`]
+/// classifies as L/AL/R (code points of any other — weak or neutral —
+/// bidirectional type, which this crate does not otherwise classify at all,
+/// are simply skipped over); `AL`/`R` resolve to `Direction::Rtl`, `L` to
+/// `Direction::Ltr`; `None` iff no such code point exists anywhere in
+/// `data`.
+fn text_node_first_strong_direction(data: &str) -> Option<Direction> {
+    data.chars().find_map(|c| match strong_bidi_type(c)? {
+        StrongBidiType::L => Some(Direction::Ltr),
+        StrongBidiType::Al | StrongBidiType::R => Some(Direction::Rtl),
+    })
+}
+
+/// Classifies a code point's Unicode Bidi_Class (Unicode Standard Annex #9,
+/// the "\[BIDI\]" reference [`text_node_first_strong_direction`]'s HTML LS
+/// quote cites) into one of the 3 *strong* types this crate's simplified
+/// auto-directionality scan needs — `L`, `Al`, or `R` — or `None` for every
+/// other Bidi_Class (the weak and neutral types: European/Arabic numbers,
+/// separators, terminators, whitespace, neutral punctuation, combining
+/// marks, controls, …), which is exactly the "not strong, keep scanning"
+/// outcome [`text_node_first_strong_direction`]'s caller needs for those.
+///
+/// # Scope: default-block ranges only, not a full per-code-point Bidi_Class table
+///
+/// The Unicode Character Database's actual `Bidi_Class` property is a
+/// complete per-code-point assignment (`DerivedBidiClass.txt`,
+/// <https://www.unicode.org/Public/UCD/latest/ucd/extracted/DerivedBidiClass.txt>)
+/// — implementing that in full is a multi-thousand-range data table on its
+/// own, comparable in scope to the RFC4647/BCP47 canonicalization table
+/// [`language_range_matches`]'s doc similarly declines to bring in for a
+/// different feature. This function instead hard-codes exactly the ranges
+/// that same UCD file's own "`@missing`" comments give as the **default**
+/// Bidi_Class for every script block the Unicode Standard reserves for
+/// right-to-left use (`AL_RANGES` / `R_RANGES` below, transcribed directly
+/// from those `@missing` lines, and guarded against the embedded
+/// non-default code points inside them by `NON_STRONG_WITHIN_AL_R_RANGES`,
+/// see below) — this covers every script block Unicode reserves by default
+/// for Arabic-derived (`AL`) or other right-to-left (`R`) use, not just
+/// "the major ones". Any code point outside all of those ranges falls back
+/// to [`char::is_alphabetic`] (guarded by `NON_STRONG_ALPHABETIC_RANGES`,
+/// see below) for `L` (covers Latin, Greek,
+/// Cyrillic, CJK, Hangul, Devanagari, and effectively every other
+/// left-to-right alphabetic script) or `None` for non-alphabetic code
+/// points (digits, punctuation, whitespace, combining marks) — which
+/// matches the real `Bidi_Class` table for most of those too (their actual
+/// classes are typically weak/neutral types like EN, AN, CS, ON, WS, NSM).
+/// This is not exhaustive — case 2 of the `is_alphabetic()` fallback
+/// section below documents a broader, deliberately unguarded residual set
+/// of non-alphabetic code points whose real `Bidi_Class` actually is `L`
+/// (mostly non-Latin decimal digits; see case 2 for why it's left
+/// unguarded). Three specific code points *are* handled explicitly before
+/// reaching any of this, cheaply, without a table: U+200E LEFT-TO-RIGHT
+/// MARK and U+200F RIGHT-TO-LEFT MARK
+/// (`Cf`, General Punctuation block) and U+061C ARABIC LETTER MARK (`Cf`,
+/// Arabic block) all have an explicit (non-`@missing`)
+/// `DerivedBidiClass.txt` entry of `L`, `R`, and `AL` respectively — none
+/// is alphabetic, so none would resolve correctly through the
+/// `is_alphabetic`-based fallback above. U+061C already falls
+/// inside `AL_RANGES`'s main Arabic range (U+0600..U+07BF) and needs no
+/// special handling; U+200E and U+200F fall inside neither `AL_RANGES` nor
+/// `R_RANGES`, so this function checks for those two explicitly, before
+/// either range table, at the top of its body.
+///
+/// A known imprecision from using whole-block ranges rather than the real
+/// per-code-point table: a handful of code points *inside* the
+/// `AL_RANGES`/`R_RANGES` below (e.g. Arabic-Indic digits, Hebrew
+/// punctuation and accents) have a real `Bidi_Class` that is actually a
+/// weak/neutral type, not `AL`/`R`. Over-classifying such a code point as
+/// strong `AL`/`R` can make the scan stop *and resolve* on it before ever
+/// reaching the text's true first strong character, flipping the result
+/// outright — not a harmless "one code point early" scan offset with the
+/// same eventual outcome. Example: U+0664 ARABIC-INDIC DIGIT FOUR falls
+/// inside `AL_RANGES`'s main Arabic span but its real `Bidi_Class` is `AN`
+/// (Arabic Number, weak); in `"\u{0664}H"` the spec skips it and resolves
+/// on the following Latin `H` (`L`) → `ltr`, whereas over-classifying the
+/// digit as strong `AL` would wrongly stop the scan there and resolve
+/// `rtl`. `NON_STRONG_WITHIN_AL_R_RANGES` below closes this gap: every
+/// explicit (non-`@missing`) `DerivedBidiClass.txt` entry whose range
+/// falls inside an `AL_RANGES`/`R_RANGES` span and whose class is not that
+/// span's own `AL`/`R` default (74 entries for Unicode 17.0.0 — none of
+/// them `L`, only other weak/neutral types: `NSM`, `ON`, `AN`, `EN`, `ET`,
+/// `ES`, `CS`, `BN`) — the same "guard the default-block table with the
+/// exceptions extracted from the same source file" shape
+/// `NON_STRONG_ALPHABETIC_RANGES` below uses for the `is_alphabetic()`
+/// fallback. This function checks it before either range table and treats
+/// a match as non-strong (`None`), so `AL_RANGES`/`R_RANGES` membership
+/// alone no longer over-classifies these code points as strong. Unlike
+/// `NON_STRONG_ALPHABETIC_RANGES` (which guards `char::is_alphabetic`, a
+/// property computed by a separate, independently-versioned Rust/Unicode
+/// table — see its own version-drift caveat below), `AL_RANGES`/`R_RANGES`
+/// and this table are both transcribed from the same `DerivedBidiClass.txt`
+/// snapshot (Unicode 17.0.0), so there is no comparable cross-source
+/// version skew to caveat here.
+///
+/// # `is_alphabetic()` fallback: two known gaps against the real `Bidi_Class`
+///
+/// Outside `AL_RANGES`/`R_RANGES`, `L` is derived from
+/// [`char::is_alphabetic`] — i.e. from Unicode's `Alphabetic` property
+/// (`DerivedCoreProperties.txt`), a *different* property than `Bidi_Class`.
+/// The two properties agree for the overwhelming majority of code points,
+/// but diverge in two ways that can each flip the resolved direction
+/// outright:
+///
+/// 1. **False `L`**: some code points are `Alphabetic=Yes` but their real
+///    `Bidi_Class` is not `L` at all — mostly `Mn`/`Mc` combining marks
+///    classified `NSM`, plus a smaller set of `Lm` spacing modifier
+///    letters and one `Nl` numeral-symbol block (Ancient Greek Numbers,
+///    U+10140..U+10174), all classified `ON`. Left unguarded,
+///    `is_alphabetic()` would misclassify these as strong `L` and stop the
+///    scan right there, even though the text's real first strong character
+///    is later. Example: U+0941 DEVANAGARI VOWEL SIGN U is
+///    `Other_Alphabetic` (`is_alphabetic() == true`) but `Bidi_Class=NSM`
+///    (non-strong); in `"\u{0941}שלום"` the spec skips it and resolves on
+///    the following Hebrew (`R`) code point → `rtl`, whereas treating
+///    U+0941 itself as strong `L` would wrongly stop the scan there and
+///    resolve `ltr`. `NON_STRONG_ALPHABETIC_RANGES` below closes this gap:
+///    for Unicode 17.0.0, it is the full set of code points with
+///    `Alphabetic=Yes` and a `Bidi_Class` other than `L`, outside
+///    `AL_RANGES`/`R_RANGES` (whose own over-classification exceptions are
+///    the separate gap `NON_STRONG_WITHIN_AL_R_RANGES` above closes) —
+///    derived by intersecting
+///    `DerivedCoreProperties.txt`'s `Alphabetic` ranges against
+///    `DerivedBidiClass.txt`'s explicit per-code-point entries, both at
+///    that same Unicode version. `char::is_alphabetic` itself may track a
+///    different Unicode revision than 17.0.0 (this crate does not pin
+///    Rust's own Unicode table version); any code point added or
+///    reclassified between that revision and 17.0.0 is not guaranteed to
+///    be covered. This function consults the table before falling back to
+///    `is_alphabetic`, and treats a match as non-strong (`None`) rather
+///    than `L`.
+///
+/// 2. **False non-`L`**: the opposite gap — some code points have real
+///    `Bidi_Class=L` but `is_alphabetic() == false`, mostly decimal digits
+///    of non-Latin scripts (e.g. U+0966..U+096F DEVANAGARI DIGIT
+///    ZERO..NINE) plus a smaller set of punctuation (e.g. U+055A..U+055F
+///    Armenian punctuation). This function does not correct this
+///    direction in general — there is no inclusion table mirroring
+///    `NON_STRONG_ALPHABETIC_RANGES` for it, so a genuinely-first `L`
+///    character in this set can still be skipped in favor of a later
+///    `AL`/`R` character in the same text. (One member of this same
+///    category, U+200E LEFT-TO-RIGHT MARK, *is* corrected — not by an
+///    inclusion table but by the explicit top-of-function check described
+///    above, since that code point was already being singled out for
+///    U+200F's sake.) This is a narrower gap than case 1 in practice: case
+///    1's combining marks routinely sit immediately in front of an ordinary
+///    base letter in natural text (the true first strong character is
+///    right there, one code point later), whereas this case requires a
+///    digit or punctuation mark to itself be the text's true first strong
+///    character ahead of an unrelated `AL`/`R` character elsewhere in the
+///    same string. Left as a known, documented gap rather than adding a
+///    second large table.
+fn strong_bidi_type(c: char) -> Option<StrongBidiType> {
+    let cp = c as u32;
+    // U+200E LEFT-TO-RIGHT MARK and U+200F RIGHT-TO-LEFT MARK are explicit
+    // per-code-point `DerivedBidiClass.txt` entries (`Cf` General
+    // Punctuation, `; L` and `; R` respectively) outside every range in
+    // `AL_RANGES`/`R_RANGES` below — see this function's `# Scope` doc
+    // section for the full 3-code-point picture including U+061C ARABIC
+    // LETTER MARK (which needs no arm here: already `AL_RANGES`-covered).
+    // Checked first, before either range table, so neither falls through to
+    // the `is_alphabetic` branch below — both are format characters
+    // (`is_alphabetic() == false`), which would otherwise return `None` for
+    // both instead of their real strong type.
+    match cp {
+        0x200E => return Some(StrongBidiType::L),
+        0x200F => return Some(StrongBidiType::R),
+        _ => {}
+    }
+    // Transcribed from `DerivedBidiClass.txt`'s "@missing" default-value
+    // comments for the code point ranges reserved for right-to-left
+    // scripts (see this function's doc) — each left edge/right edge here
+    // is one of those file's own `@missing: START..END; Bidi_Class` lines.
+    const AL_RANGES: &[(u32, u32)] = &[
+        (0x0600, 0x07BF),   // Arabic, Syriac, Arabic Supplement, Thaana
+        (0x0860, 0x08FF),   // Syriac Supplement, Arabic Extended-B/-A
+        (0xFB50, 0xFDCF),   // Arabic Presentation Forms-A (partial)
+        (0xFDF0, 0xFDFF),   // Arabic Presentation Forms-A (partial)
+        (0xFE70, 0xFEFF),   // Arabic Presentation Forms-B
+        (0x10D00, 0x10D3F), // Hanifi Rohingya
+        (0x10EC0, 0x10EFF), // Arabic Extended-C
+        (0x10F30, 0x10F6F), // Sogdian
+        (0x1EC70, 0x1ECBF), // Indic Siyaq Numbers
+        (0x1ED00, 0x1ED4F), // Ottoman Siyaq Numbers
+        (0x1EE00, 0x1EEFF), // Arabic Mathematical Alphabetic Symbols
+    ];
+    // FB1D..FB4F (Hebrew Presentation Forms) is a separate range from the
+    // main Hebrew block below because it is only *half* of the Alphabetic
+    // Presentation Forms block — the other half, FB00..FB1C (Latin
+    // ligatures), is Left_To_Right, not Right_To_Left.
+    const R_RANGES: &[(u32, u32)] = &[
+        (0x0590, 0x05FF),   // Hebrew
+        (0x07C0, 0x085F),   // NKo, Samaritan, Mandaic
+        (0xFB1D, 0xFB4F),   // Hebrew Presentation Forms
+        (0x10800, 0x10CFF), // Cypriot..Old Hungarian
+        (0x10D40, 0x10EBF), // Garay, Rumi Numeral Symbols, Yezidi
+        (0x10F00, 0x10F2F), // Old Sogdian
+        (0x10F70, 0x10FFF), // Old Uyghur..Elymaic
+        (0x1E800, 0x1EC6F), // Mende Kikakui..Adlam
+        (0x1ECC0, 0x1ECFF), // reserved remainder after Indic Siyaq Numbers (R-default)
+        (0x1ED50, 0x1EDFF), // reserved remainder after Ottoman Siyaq Numbers (R-default)
+        (0x1EF00, 0x1EFFF), // reserved remainder after Arabic Mathematical Alphabetic Symbols (R-default)
+    ];
+    // Code points *inside* an `AL_RANGES`/`R_RANGES` span above whose real
+    // `Bidi_Class` (per `DerivedBidiClass.txt`'s explicit, non-`@missing`
+    // per-code-point entries, Unicode 17.0.0) is not that span's own
+    // `AL`/`R` default — see this function's doc, the "known imprecision"
+    // paragraph, for why this table exists (over-classifying these as
+    // strong `AL`/`R` can resolve the wrong direction outright, not just
+    // stop the scan one code point early) and how it was derived. Checked
+    // before either range table below, so every code point here is
+    // classified `None` (non-strong) instead of falling into
+    // `AL_RANGES`/`R_RANGES`'s membership check.
+    const NON_STRONG_WITHIN_AL_R_RANGES: &[(u32, u32)] = &[
+        // Hebrew
+        (0x0591, 0x05BD), // NSM
+        (0x05BF, 0x05BF), // NSM
+        (0x05C1, 0x05C2), // NSM
+        (0x05C4, 0x05C5), // NSM
+        (0x05C7, 0x05C7), // NSM
+        // Arabic, Syriac, Arabic Supplement, Thaana
+        (0x0600, 0x0605), // AN
+        (0x0606, 0x0607), // ON
+        (0x0609, 0x060A), // ET
+        (0x060C, 0x060C), // CS
+        (0x060E, 0x060F), // ON
+        (0x0610, 0x061A), // NSM
+        (0x064B, 0x065F), // NSM
+        (0x0660, 0x0669), // AN
+        (0x066A, 0x066A), // ET
+        (0x066B, 0x066C), // AN
+        (0x0670, 0x0670), // NSM
+        (0x06D6, 0x06DC), // NSM
+        (0x06DD, 0x06DD), // AN
+        (0x06DE, 0x06DE), // ON
+        (0x06DF, 0x06E4), // NSM
+        (0x06E7, 0x06E8), // NSM
+        (0x06E9, 0x06E9), // ON
+        (0x06EA, 0x06ED), // NSM
+        (0x06F0, 0x06F9), // EN
+        (0x0711, 0x0711), // NSM
+        (0x0730, 0x074A), // NSM
+        (0x07A6, 0x07B0), // NSM
+        // NKo, Samaritan, Mandaic
+        (0x07EB, 0x07F3), // NSM
+        (0x07F6, 0x07F6), // ON
+        (0x07F7, 0x07F9), // ON
+        (0x07FD, 0x07FD), // NSM
+        (0x0816, 0x0819), // NSM
+        (0x081B, 0x0823), // NSM
+        (0x0825, 0x0827), // NSM
+        (0x0829, 0x082D), // NSM
+        (0x0859, 0x085B), // NSM
+        // Syriac Supplement, Arabic Extended-B/-A
+        (0x0890, 0x0891), // AN
+        (0x0897, 0x089F), // NSM
+        (0x08CA, 0x08E1), // NSM
+        (0x08E2, 0x08E2), // AN
+        (0x08E3, 0x08FF), // NSM (this entry's real DerivedBidiClass.txt
+        // range continues to U+0902, already covered separately by
+        // `NON_STRONG_ALPHABETIC_RANGES`'s Devanagari `(0x0900, 0x0902)`
+        // entry below — clipped here to stay inside this span)
+        // Hebrew Presentation Forms
+        (0xFB1E, 0xFB1E), // NSM
+        (0xFB29, 0xFB29), // ES
+        // Arabic Presentation Forms-A (partial)
+        (0xFBC3, 0xFBD2), // ON
+        (0xFD3E, 0xFD3E), // ON
+        (0xFD3F, 0xFD3F), // ON
+        (0xFD40, 0xFD4F), // ON
+        (0xFD90, 0xFD91), // ON
+        (0xFDC8, 0xFDCF), // ON
+        (0xFDFD, 0xFDFF), // ON
+        // Arabic Presentation Forms-B
+        (0xFEFF, 0xFEFF), // BN
+        // Cypriot..Old Hungarian
+        (0x1091F, 0x1091F), // ON
+        (0x10A01, 0x10A03), // NSM
+        (0x10A05, 0x10A06), // NSM
+        (0x10A0C, 0x10A0F), // NSM
+        (0x10A38, 0x10A3A), // NSM
+        (0x10A3F, 0x10A3F), // NSM
+        (0x10AE5, 0x10AE6), // NSM
+        (0x10B39, 0x10B3F), // ON
+        // Hanifi Rohingya
+        (0x10D24, 0x10D27), // NSM
+        (0x10D30, 0x10D39), // AN
+        // Garay, Rumi Numeral Symbols, Yezidi
+        (0x10D40, 0x10D49), // AN
+        (0x10D69, 0x10D6D), // NSM
+        (0x10D6E, 0x10D6E), // ON
+        (0x10E60, 0x10E7E), // AN
+        (0x10EAB, 0x10EAC), // NSM
+        // Arabic Extended-C
+        (0x10ED0, 0x10ED0), // ON
+        (0x10ED1, 0x10ED8), // ON
+        (0x10EFA, 0x10EFF), // NSM
+        // Sogdian
+        (0x10F46, 0x10F50), // NSM
+        // Old Uyghur..Elymaic
+        (0x10F82, 0x10F85), // NSM
+        // Mende Kikakui..Adlam
+        (0x1E8D0, 0x1E8D6), // NSM
+        (0x1E944, 0x1E94A), // NSM
+        // Arabic Mathematical Alphabetic Symbols
+        (0x1EEF0, 0x1EEF1), // ON
+    ];
+    // Code points where `Alphabetic=Yes` (the property `char::is_alphabetic`
+    // implements) but the real `Bidi_Class` is something other than `L` —
+    // see this function's doc, "`is_alphabetic()` fallback" section, case 1,
+    // for why this table exists and how it was derived. None of these
+    // ranges overlaps `AL_RANGES`/`R_RANGES` above (by construction of the
+    // derivation), so every entry here really does fall through to the
+    // `is_alphabetic()` branch below absent this check.
+    const NON_STRONG_ALPHABETIC_RANGES: &[(u32, u32)] = &[
+        // Spacing Modifier Letters
+        (0x02B9, 0x02BA), // ON
+        (0x02C6, 0x02CF), // ON
+        (0x02EC, 0x02EC), // ON
+        // Combining Diacritical Marks
+        (0x0345, 0x0345), // NSM
+        (0x0363, 0x036F), // NSM
+        // Greek and Coptic
+        (0x0374, 0x0374), // ON
+        // Devanagari
+        (0x0900, 0x0902), // NSM
+        (0x093A, 0x093A), // NSM
+        (0x0941, 0x0948), // NSM
+        (0x0955, 0x0957), // NSM
+        (0x0962, 0x0963), // NSM
+        // Bengali
+        (0x0981, 0x0981), // NSM
+        (0x09C1, 0x09C4), // NSM
+        (0x09E2, 0x09E3), // NSM
+        // Gurmukhi
+        (0x0A01, 0x0A02), // NSM
+        (0x0A41, 0x0A42), // NSM
+        (0x0A47, 0x0A48), // NSM
+        (0x0A4B, 0x0A4C), // NSM
+        (0x0A51, 0x0A51), // NSM
+        (0x0A70, 0x0A71), // NSM
+        (0x0A75, 0x0A75), // NSM
+        // Gujarati
+        (0x0A81, 0x0A82), // NSM
+        (0x0AC1, 0x0AC5), // NSM
+        (0x0AC7, 0x0AC8), // NSM
+        (0x0AE2, 0x0AE3), // NSM
+        (0x0AFA, 0x0AFC), // NSM
+        // Oriya
+        (0x0B01, 0x0B01), // NSM
+        (0x0B3F, 0x0B3F), // NSM
+        (0x0B41, 0x0B44), // NSM
+        (0x0B56, 0x0B56), // NSM
+        (0x0B62, 0x0B63), // NSM
+        // Tamil
+        (0x0B82, 0x0B82), // NSM
+        (0x0BC0, 0x0BC0), // NSM
+        // Telugu
+        (0x0C00, 0x0C00), // NSM
+        (0x0C04, 0x0C04), // NSM
+        (0x0C3E, 0x0C40), // NSM
+        (0x0C46, 0x0C48), // NSM
+        (0x0C4A, 0x0C4C), // NSM
+        (0x0C55, 0x0C56), // NSM
+        (0x0C62, 0x0C63), // NSM
+        // Kannada
+        (0x0C81, 0x0C81), // NSM
+        (0x0CCC, 0x0CCC), // NSM
+        (0x0CE2, 0x0CE3), // NSM
+        // Malayalam
+        (0x0D00, 0x0D01), // NSM
+        (0x0D41, 0x0D44), // NSM
+        (0x0D62, 0x0D63), // NSM
+        // Sinhala
+        (0x0D81, 0x0D81), // NSM
+        (0x0DD2, 0x0DD4), // NSM
+        (0x0DD6, 0x0DD6), // NSM
+        // Thai
+        (0x0E31, 0x0E31), // NSM
+        (0x0E34, 0x0E3A), // NSM
+        (0x0E4D, 0x0E4D), // NSM
+        // Lao
+        (0x0EB1, 0x0EB1), // NSM
+        (0x0EB4, 0x0EB9), // NSM
+        (0x0EBB, 0x0EBC), // NSM
+        (0x0ECD, 0x0ECD), // NSM
+        // Tibetan
+        (0x0F71, 0x0F7E), // NSM
+        (0x0F80, 0x0F83), // NSM
+        (0x0F8D, 0x0F97), // NSM
+        (0x0F99, 0x0FBC), // NSM
+        // Myanmar
+        (0x102D, 0x1030), // NSM
+        (0x1032, 0x1036), // NSM
+        (0x103D, 0x103E), // NSM
+        (0x1058, 0x1059), // NSM
+        (0x105E, 0x1060), // NSM
+        (0x1071, 0x1074), // NSM
+        (0x1082, 0x1082), // NSM
+        (0x1085, 0x1086), // NSM
+        (0x108D, 0x108D), // NSM
+        (0x109D, 0x109D), // NSM
+        // Tagalog
+        (0x1712, 0x1713), // NSM
+        // Hanunoo
+        (0x1732, 0x1733), // NSM
+        // Buhid
+        (0x1752, 0x1753), // NSM
+        // Tagbanwa
+        (0x1772, 0x1773), // NSM
+        // Khmer
+        (0x17B7, 0x17BD), // NSM
+        (0x17C6, 0x17C6), // NSM
+        // Mongolian
+        (0x1885, 0x1886), // NSM
+        (0x18A9, 0x18A9), // NSM
+        // Limbu
+        (0x1920, 0x1922), // NSM
+        (0x1927, 0x1928), // NSM
+        (0x1932, 0x1932), // NSM
+        // Buginese
+        (0x1A17, 0x1A18), // NSM
+        (0x1A1B, 0x1A1B), // NSM
+        // Tai Tham
+        (0x1A56, 0x1A56), // NSM
+        (0x1A58, 0x1A5E), // NSM
+        (0x1A62, 0x1A62), // NSM
+        (0x1A65, 0x1A6C), // NSM
+        (0x1A73, 0x1A74), // NSM
+        // Combining Diacritical Marks Extended
+        (0x1ABF, 0x1AC0), // NSM
+        (0x1ACC, 0x1ACE), // NSM
+        // Balinese
+        (0x1B00, 0x1B03), // NSM
+        (0x1B36, 0x1B3A), // NSM
+        (0x1B3C, 0x1B3C), // NSM
+        (0x1B42, 0x1B42), // NSM
+        // Sundanese
+        (0x1B80, 0x1B81), // NSM
+        (0x1BA2, 0x1BA5), // NSM
+        (0x1BA8, 0x1BA9), // NSM
+        (0x1BAC, 0x1BAD), // NSM
+        // Batak
+        (0x1BE8, 0x1BE9), // NSM
+        (0x1BED, 0x1BED), // NSM
+        (0x1BEF, 0x1BF1), // NSM
+        // Lepcha
+        (0x1C2C, 0x1C33), // NSM
+        (0x1C36, 0x1C36), // NSM
+        // Combining Diacritical Marks Supplement
+        (0x1DD3, 0x1DF4), // NSM
+        // Cyrillic Extended-A
+        (0x2DE0, 0x2DFF), // NSM
+        // Supplemental Punctuation
+        (0x2E2F, 0x2E2F), // ON
+        // Cyrillic Extended-B
+        (0xA674, 0xA67B), // NSM
+        (0xA67F, 0xA67F), // ON
+        (0xA69E, 0xA69F), // NSM
+        // Modifier Tone Letters
+        (0xA717, 0xA71F), // ON
+        // Latin Extended-D
+        (0xA788, 0xA788), // ON
+        // Syloti Nagri
+        (0xA802, 0xA802), // NSM
+        (0xA80B, 0xA80B), // NSM
+        (0xA825, 0xA826), // NSM
+        // Saurashtra
+        (0xA8C5, 0xA8C5), // NSM
+        // Devanagari Extended
+        (0xA8FF, 0xA8FF), // NSM
+        // Kayah Li
+        (0xA926, 0xA92A), // NSM
+        // Rejang
+        (0xA947, 0xA951), // NSM
+        // Javanese
+        (0xA980, 0xA982), // NSM
+        (0xA9B6, 0xA9B9), // NSM
+        (0xA9BC, 0xA9BD), // NSM
+        // Myanmar Extended-B
+        (0xA9E5, 0xA9E5), // NSM
+        // Cham
+        (0xAA29, 0xAA2E), // NSM
+        (0xAA31, 0xAA32), // NSM
+        (0xAA35, 0xAA36), // NSM
+        (0xAA43, 0xAA43), // NSM
+        (0xAA4C, 0xAA4C), // NSM
+        // Myanmar Extended-A
+        (0xAA7C, 0xAA7C), // NSM
+        // Tai Viet
+        (0xAAB0, 0xAAB0), // NSM
+        (0xAAB2, 0xAAB4), // NSM
+        (0xAAB7, 0xAAB8), // NSM
+        (0xAABE, 0xAABE), // NSM
+        // Meetei Mayek Extensions
+        (0xAAEC, 0xAAED), // NSM
+        // Meetei Mayek
+        (0xABE5, 0xABE5), // NSM
+        (0xABE8, 0xABE8), // NSM
+        // Ancient Greek Numbers
+        (0x10140, 0x10174), // ON
+        // Old Permic
+        (0x10376, 0x1037A), // NSM
+        // Brahmi
+        (0x11001, 0x11001), // NSM
+        (0x11038, 0x11045), // NSM
+        (0x11073, 0x11074), // NSM
+        // Kaithi
+        (0x11080, 0x11081), // NSM
+        (0x110B3, 0x110B6), // NSM
+        (0x110C2, 0x110C2), // NSM
+        // Chakma
+        (0x11100, 0x11102), // NSM
+        (0x11127, 0x1112B), // NSM
+        (0x1112D, 0x11132), // NSM
+        // Sharada
+        (0x11180, 0x11181), // NSM
+        (0x111B6, 0x111BE), // NSM
+        (0x111CF, 0x111CF), // NSM
+        // Khojki
+        (0x1122F, 0x11231), // NSM
+        (0x11234, 0x11234), // NSM
+        (0x11237, 0x11237), // NSM
+        (0x1123E, 0x1123E), // NSM
+        (0x11241, 0x11241), // NSM
+        // Khudawadi
+        (0x112DF, 0x112DF), // NSM
+        (0x112E3, 0x112E8), // NSM
+        // Grantha
+        (0x11300, 0x11301), // NSM
+        (0x11340, 0x11340), // NSM
+        // Tulu-Tigalari
+        (0x113BB, 0x113C0), // NSM
+        // Newa
+        (0x11438, 0x1143F), // NSM
+        (0x11443, 0x11444), // NSM
+        // Tirhuta
+        (0x114B3, 0x114B8), // NSM
+        (0x114BA, 0x114BA), // NSM
+        (0x114BF, 0x114C0), // NSM
+        // Siddham
+        (0x115B2, 0x115B5), // NSM
+        (0x115BC, 0x115BD), // NSM
+        (0x115DC, 0x115DD), // NSM
+        // Modi
+        (0x11633, 0x1163A), // NSM
+        (0x1163D, 0x1163D), // NSM
+        (0x11640, 0x11640), // NSM
+        // Takri
+        (0x116AB, 0x116AB), // NSM
+        (0x116AD, 0x116AD), // NSM
+        (0x116B0, 0x116B5), // NSM
+        // Ahom
+        (0x1171D, 0x1171D), // NSM
+        (0x1171F, 0x1171F), // NSM
+        (0x11722, 0x11725), // NSM
+        (0x11727, 0x1172A), // NSM
+        // Dogra
+        (0x1182F, 0x11837), // NSM
+        // Dives Akuru
+        (0x1193B, 0x1193C), // NSM
+        // Nandinagari
+        (0x119D4, 0x119D7), // NSM
+        (0x119DA, 0x119DB), // NSM
+        // Zanabazar Square
+        (0x11A01, 0x11A06), // NSM
+        (0x11A09, 0x11A0A), // NSM
+        (0x11A35, 0x11A38), // NSM
+        (0x11A3B, 0x11A3E), // NSM
+        // Soyombo
+        (0x11A51, 0x11A56), // NSM
+        (0x11A59, 0x11A5B), // NSM
+        (0x11A8A, 0x11A96), // NSM
+        // Sharada Supplement
+        (0x11B60, 0x11B60), // NSM
+        (0x11B62, 0x11B64), // NSM
+        (0x11B66, 0x11B66), // NSM
+        // Bhaiksuki
+        (0x11C30, 0x11C36), // NSM
+        (0x11C38, 0x11C3D), // NSM
+        // Marchen
+        (0x11C92, 0x11CA7), // NSM
+        (0x11CAA, 0x11CB0), // NSM
+        (0x11CB2, 0x11CB3), // NSM
+        (0x11CB5, 0x11CB6), // NSM
+        // Masaram Gondi
+        (0x11D31, 0x11D36), // NSM
+        (0x11D3A, 0x11D3A), // NSM
+        (0x11D3C, 0x11D3D), // NSM
+        (0x11D3F, 0x11D41), // NSM
+        (0x11D43, 0x11D43), // NSM
+        (0x11D47, 0x11D47), // NSM
+        // Gunjala Gondi
+        (0x11D90, 0x11D91), // NSM
+        (0x11D95, 0x11D95), // NSM
+        // Makasar
+        (0x11EF3, 0x11EF4), // NSM
+        // Kawi
+        (0x11F00, 0x11F01), // NSM
+        (0x11F36, 0x11F3A), // NSM
+        (0x11F40, 0x11F40), // NSM
+        // Gurung Khema
+        (0x1611E, 0x16129), // NSM
+        (0x1612D, 0x1612E), // NSM
+        // Miao
+        (0x16F4F, 0x16F4F), // NSM
+        (0x16F8F, 0x16F92), // NSM
+        // Duployan
+        (0x1BC9E, 0x1BC9E), // NSM
+        // Glagolitic Supplement
+        (0x1E000, 0x1E006), // NSM
+        (0x1E008, 0x1E018), // NSM
+        (0x1E01B, 0x1E021), // NSM
+        (0x1E023, 0x1E024), // NSM
+        (0x1E026, 0x1E02A), // NSM
+        // Cyrillic Extended-D
+        (0x1E08F, 0x1E08F), // NSM
+        // Tai Yo
+        (0x1E6E3, 0x1E6E3), // NSM
+        (0x1E6E6, 0x1E6E6), // NSM
+        (0x1E6EE, 0x1E6EF), // NSM
+        (0x1E6F5, 0x1E6F5), // NSM
+    ];
+    if NON_STRONG_WITHIN_AL_R_RANGES
+        .iter()
+        .any(|&(lo, hi)| (lo..=hi).contains(&cp))
+    {
+        return None;
+    }
+    if AL_RANGES.iter().any(|&(lo, hi)| (lo..=hi).contains(&cp)) {
+        return Some(StrongBidiType::Al);
+    }
+    if R_RANGES.iter().any(|&(lo, hi)| (lo..=hi).contains(&cp)) {
+        return Some(StrongBidiType::R);
+    }
+    if NON_STRONG_ALPHABETIC_RANGES
+        .iter()
+        .any(|&(lo, hi)| (lo..=hi).contains(&cp))
+    {
+        return None;
+    }
+    if c.is_alphabetic() {
+        return Some(StrongBidiType::L);
+    }
+    None
 }
 
 /// `Component::AttributeInNoNamespace`'s `ParsedCaseSensitivity` (spec-only,
@@ -6338,6 +7184,45 @@ mod tests {
         );
     }
 
+    /// Mirror of the `rtl`-ancestor case above with an `ltr` ancestor
+    /// instead — [`own_explicit_direction`]'s `Ltr` arm is only reachable
+    /// via [`resolve_directionality`]'s ancestor-walk loop (an element's
+    /// *own* `ltr`/`rtl` state is read via [`own_dir_attribute_state`]
+    /// directly), so this is the only test that exercises it; the `rtl`
+    /// sibling test above only exercises the loop's `Rtl` arm. An `rtl`
+    /// *grandparent* wraps the `ltr` parent specifically so this test can
+    /// fail: without it, a broken `Ltr` arm would still leave `span`
+    /// resolving to `'ltr'` via the loop-exhausted default, indistinguishable
+    /// from the arm working — with the `rtl` grandparent present, a broken
+    /// `Ltr` arm instead lets the walk continue past the `ltr` parent to the
+    /// `rtl` grandparent, flipping `span` to `rtl`.
+    #[test]
+    fn dir_matches_explicit_ltr_and_inherits_to_descendant_without_own_dir() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let section = doc.push_element(0, "section", None);
+        doc.set_attr(section, "dir", "rtl"); // grandparent, see doc above
+        let article = doc.push_element(section, "article", None);
+        doc.set_attr(article, "dir", "ltr");
+        let span = doc.push_element(article, "span", None); // no dir of its own
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, BLUE);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, BLUE,
+            ":dir(ltr) must match a descendant with no dir attribute of its \
+             own, inheriting from its dir=\"ltr\" ancestor rather than \
+             continuing past it to the dir=\"rtl\" grandparent"
+        );
+    }
+
     /// Default directionality (no `dir` attribute anywhere in the chain) is
     /// `ltr` — HTML LS "parent directionality" §3.2.6.4's root fallback
     /// (`resolve_directionality`'s doc). `:dir(rtl)` must not match; `:dir(ltr)`
@@ -6542,26 +7427,523 @@ mod tests {
         assert!(!language_range_matches("x", "x"));
     }
 
-    /// `dir="auto"` folds into the same "keep walking up" bucket as a
-    /// missing/invalid `dir` attribute — the documented scope cut on
-    /// [`resolve_directionality`] (deferred Unicode-bidi content sniffing).
+    /// `dir="auto"` resolves via the element's own contained-text scan
+    /// (HTML LS §3.2.6.4's "auto directionality" — see
+    /// [`resolve_directionality`]'s doc), *not* by falling through to the
+    /// nearest ancestor's directionality — even when that ancestor has an
+    /// explicit `dir` of its own. `background-color` (not inherited, unlike
+    /// `font-family`) proves the span itself resolved `ltr` rather than
+    /// merely failing to match `:dir(rtl)` while still visually inheriting
+    /// the ancestor's rtl-associated styling.
     #[test]
-    fn dir_auto_falls_through_to_ancestor_directionality_not_default_ltr() {
+    fn dir_auto_scans_own_text_ltr_first_strong_overrides_rtl_ancestor() {
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
-        doc.push_text(s, ":dir(rtl) { font-family: rtl-font }");
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
         let article = doc.push_element(0, "article", None);
         doc.set_attr(article, "dir", "rtl");
-        let bdi_like = doc.push_element(article, "span", None);
-        doc.set_attr(bdi_like, "dir", "auto"); // deferred, not resolved via bidi
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // "Hello" is wrapped in an ordinary (non-excluded) nested <b>, not a
+        // direct text child of `span` — exercises the recursive descent
+        // into an un-excluded element subtree in
+        // `auto_text_scan_subtree`, not just the direct-text-child case.
+        let bold = doc.push_element(span, "b", None);
+        doc.push_text(bold, "Hello"); // first strong character 'H' is type L
 
         let tree = build_rule_tree(&doc);
         let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
-            r.computed[bdi_like].font_family[0].to_string(),
-            "rtl-font",
-            "dir=\"auto\" must fall through to the ancestor's directionality \
-             under this task's documented scope cut, not block inheritance"
+            r.computed[article].background_color, RED,
+            ":dir(rtl) must still match the article's own explicit dir=\"rtl\""
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, BLUE,
+            "dir=\"auto\" must resolve via the element's own text scan (first \
+             strong character 'H' is type L → ltr), not by inheriting the \
+             rtl ancestor's directionality"
+        );
+    }
+
+    /// Mirror of the LTR-first-strong case above, with the ancestor now
+    /// `ltr` and the `dir=\"auto\"` element's own text starting with an
+    /// Arabic (bidirectional type AL) character — resolves `rtl` despite
+    /// the `ltr` ancestor.
+    #[test]
+    fn dir_auto_with_arabic_text_resolves_rtl_despite_ltr_ancestor() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "ltr");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        doc.push_text(span, "\u{0627}\u{0644}\u{0633}\u{0644}\u{0627}\u{0645}"); // "السلام"
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, BLUE);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, RED,
+            "first strong character is Arabic (type AL) → rtl"
+        );
+    }
+
+    /// Same shape as the Arabic case, but with a Hebrew (bidirectional type
+    /// R, the non-Arabic right-to-left branch of
+    /// [`strong_bidi_type`]) first strong character.
+    #[test]
+    fn dir_auto_with_hebrew_text_resolves_rtl_despite_ltr_ancestor() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "ltr");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        doc.push_text(span, "\u{05E9}\u{05DC}\u{05D5}\u{05DD}"); // "שלום"
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, BLUE);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, RED,
+            "first strong character is Hebrew (type R) → rtl"
+        );
+    }
+
+    /// [`strong_bidi_type`]'s `R_RANGES` table, Hebrew Presentation Forms
+    /// case (U+FB1D..U+FB4F, distinct from the main Hebrew block
+    /// U+0590..U+05FF the test above exercises) — a separate
+    /// `DerivedBidiClass.txt` `@missing` range and therefore a separate
+    /// table entry that needs its own coverage.
+    #[test]
+    fn dir_auto_with_hebrew_presentation_forms_text_resolves_rtl_despite_ltr_ancestor() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "ltr");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        doc.push_text(span, "\u{FB1D}"); // HEBREW LETTER YOD WITH HIRIQ
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, BLUE);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, RED,
+            "Hebrew presentation forms character is type R → rtl"
+        );
+    }
+
+    /// U+200E LEFT-TO-RIGHT MARK (`Cf`, General Punctuation block) is one of
+    /// [`strong_bidi_type`]'s explicit top-of-function exceptions (type `L`,
+    /// checked before either range table) — its own doc's history matters
+    /// here: this exact case (U+200E as text's first strong character,
+    /// followed by unrelated Arabic text) previously resolved wrongly
+    /// (`rtl` instead of the spec-correct `ltr`) before that check existed,
+    /// because `is_alphabetic('\u{200E}') == false` fell through to `None`.
+    #[test]
+    fn dir_auto_with_leading_ltr_mark_before_arabic_text_resolves_ltr() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // U+200E LEFT-TO-RIGHT MARK, then "السلام" (Arabic, type AL).
+        doc.push_text(
+            span,
+            "\u{200E}\u{0627}\u{0644}\u{0633}\u{0644}\u{0627}\u{0645}",
+        );
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, RED);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, BLUE,
+            "first strong character is U+200E (type L) → ltr, despite \
+             unrelated Arabic text right after it"
+        );
+    }
+
+    /// U+200F RIGHT-TO-LEFT MARK (`Cf`, General Punctuation block) is
+    /// [`strong_bidi_type`]'s other explicit top-of-function exception
+    /// (type `R`) — mirrors the U+200E case above with the roles reversed.
+    #[test]
+    fn dir_auto_with_leading_rtl_mark_before_latin_text_resolves_rtl() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "ltr");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // U+200F RIGHT-TO-LEFT MARK, then unrelated Latin (type L) text.
+        doc.push_text(span, "\u{200F}Hello");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, BLUE);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, RED,
+            "first strong character is U+200F (type R) → rtl, despite \
+             unrelated Latin text right after it"
+        );
+    }
+
+    /// [`strong_bidi_type`]'s `NON_STRONG_ALPHABETIC_RANGES` table, `NSM`
+    /// case: U+0941 DEVANAGARI VOWEL SIGN U is `Alphabetic=Yes`
+    /// (`char::is_alphabetic() == true`) but its real `Bidi_Class` is
+    /// `NSM` (non-strong), not `L`. Without the exclusion table this
+    /// leading combining mark would be misclassified as strong `L` and
+    /// stop the scan immediately, resolving `ltr`; the correct scan skips
+    /// it and continues to the following Hebrew (type `R`) text, resolving
+    /// `rtl`.
+    #[test]
+    fn dir_auto_skips_non_strong_alphabetic_combining_mark_before_hebrew_resolves_rtl() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "ltr");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // U+0941 DEVANAGARI VOWEL SIGN U, then "שלום" (Hebrew, type R).
+        doc.push_text(span, "\u{0941}\u{05E9}\u{05DC}\u{05D5}\u{05DD}");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, BLUE);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, RED,
+            "leading non-strong combining mark must be skipped (not \
+             misclassified as strong L) so the scan reaches the Hebrew \
+             text and resolves rtl"
+        );
+    }
+
+    /// Same table, `ON` case (a spacing modifier letter, not a combining
+    /// mark): U+02C6 MODIFIER LETTER CIRCUMFLEX ACCENT is also
+    /// `Alphabetic=Yes` but its real `Bidi_Class` is `ON`, not `L`.
+    #[test]
+    fn dir_auto_skips_non_strong_alphabetic_modifier_letter_before_arabic_resolves_rtl() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "ltr");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // U+02C6 MODIFIER LETTER CIRCUMFLEX ACCENT, then "السلام" (Arabic, type AL).
+        doc.push_text(
+            span,
+            "\u{02C6}\u{0627}\u{0644}\u{0633}\u{0644}\u{0627}\u{0645}",
+        );
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, BLUE);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, RED,
+            "leading non-strong alphabetic modifier letter must be skipped \
+             so the scan reaches the Arabic text and resolves rtl"
+        );
+    }
+
+    /// [`strong_bidi_type`]'s `NON_STRONG_WITHIN_AL_R_RANGES` table: U+0664
+    /// ARABIC-INDIC DIGIT FOUR falls inside `AL_RANGES`'s main Arabic span
+    /// (U+0600..U+07BF) but its real `Bidi_Class` is `AN` (Arabic Number,
+    /// weak), not `AL`. Without this exclusion table the range-table
+    /// lookup alone would over-classify it as strong `AL` and stop the
+    /// scan there, wrongly resolving `rtl` — not merely stopping one code
+    /// point early, but resolving the *opposite* direction from the
+    /// following Latin (type `L`) text's true first-strong result.
+    #[test]
+    fn dir_auto_skips_arabic_indic_digit_before_latin_text_resolves_ltr() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        // U+0664 ARABIC-INDIC DIGIT FOUR, then Latin "H".
+        doc.push_text(span, "\u{0664}H");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, RED);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, BLUE,
+            "leading Arabic-Indic digit (weak AN, not strong AL) must be \
+             skipped so the scan reaches the Latin text and resolves ltr"
+        );
+    }
+
+    /// No strongly-directional character anywhere in the `dir=\"auto\"`
+    /// element's contained text (digits, spaces, and punctuation are all
+    /// non-strong) — HTML LS's own `Auto`-state fallback is `'ltr'`
+    /// unconditionally, never the ancestor's directionality (contrast with
+    /// `dir_undefined_still_falls_through_to_ancestor_via_background_color`
+    /// below, where an *absent* `dir` attribute does fall through to this
+    /// same `rtl` ancestor).
+    #[test]
+    fn dir_auto_with_no_strong_directional_text_falls_back_to_ltr_despite_rtl_ancestor() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let span = doc.push_element(article, "span", None);
+        doc.set_attr(span, "dir", "auto");
+        doc.push_text(span, "123 456!");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[article].background_color, RED);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, BLUE,
+            "no strong L/AL/R character anywhere → 'ltr' fallback, not the \
+             rtl ancestor's directionality"
+        );
+    }
+
+    /// A missing `dir` attribute (HTML LS "Undefined" state) is a
+    /// *different* case from `dir=\"auto\"` above and must keep falling
+    /// through to the ancestor's directionality, unchanged by this task —
+    /// `background-color` isolates the element's own `:dir()` match from
+    /// ordinary (unrelated) property inheritance the same way the tests
+    /// above do.
+    #[test]
+    fn dir_undefined_still_falls_through_to_ancestor_via_background_color() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let article = doc.push_element(0, "article", None);
+        doc.set_attr(article, "dir", "rtl");
+        let span = doc.push_element(article, "span", None); // no dir attribute at all
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[span].background_color, RED,
+            "missing dir attribute must still fall through to the ancestor's \
+             directionality"
+        );
+    }
+
+    /// [`excluded_from_auto_text_scan`]'s `dir`-attribute-state branch: a
+    /// descendant with its own non-`Undefined` `dir` (here `rtl`) resolves
+    /// its *own* directionality independently and must not leak its text
+    /// into an ancestor's auto-directionality scan. Tree order would visit
+    /// the nested Arabic text before the outer element's own trailing
+    /// English text — if the exclusion were missing, the scan would
+    /// (wrongly) stop at the Arabic text and resolve `rtl`.
+    #[test]
+    fn auto_directionality_skips_descendant_with_own_dir_attribute() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let outer = doc.push_element(0, "div", None);
+        doc.set_attr(outer, "dir", "auto");
+        let inner = doc.push_element(outer, "span", None);
+        doc.set_attr(inner, "dir", "rtl");
+        doc.push_text(inner, "\u{0627}"); // Arabic alef — must be skipped
+        doc.push_text(outer, "Hello"); // outer's own trailing text
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[outer].background_color, BLUE,
+            "the dir=\"rtl\" descendant's text must be excluded from the \
+             outer element's own auto-directionality scan"
+        );
+    }
+
+    /// [`excluded_from_auto_text_scan`]'s tag-name branch, `bdi` case,
+    /// isolated from the `dir`-attribute branch above (this `bdi` element
+    /// carries no `dir` attribute of its own — it is excluded purely by
+    /// being a `bdi` element, per HTML LS's exclusion list).
+    #[test]
+    fn auto_directionality_skips_bdi_descendant_text() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let outer = doc.push_element(0, "div", None);
+        doc.set_attr(outer, "dir", "auto");
+        let bdi = doc.push_element(outer, "bdi", None); // no dir attribute
+        doc.push_text(bdi, "\u{0627}"); // Arabic alef — must be skipped
+        doc.push_text(outer, "Hello");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[outer].background_color, BLUE,
+            "a bdi descendant's text must be excluded from the outer \
+             element's own auto-directionality scan, regardless of its own \
+             dir state"
+        );
+    }
+
+    /// [`excluded_from_auto_text_scan`]'s tag-name branch, `script`/`style`
+    /// case — stylesheet/script text must never be treated as page content
+    /// for directionality purposes.
+    #[test]
+    fn auto_directionality_skips_script_and_style_descendant_text() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let outer = doc.push_element(0, "div", None);
+        doc.set_attr(outer, "dir", "auto");
+        let nested_script = doc.push_element(outer, "script", None);
+        doc.push_text(nested_script, "\u{0627}");
+        let nested_style = doc.push_element(outer, "style", None);
+        doc.push_text(nested_style, "\u{0627}");
+        doc.push_text(outer, "Hello");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[outer].background_color, BLUE,
+            "script/style descendant text must be excluded from the outer \
+             element's own auto-directionality scan"
+        );
+    }
+
+    /// [`excluded_from_auto_text_scan`]'s namespace-gate branch: a
+    /// foreign-namespace (SVG) descendant is not one of the 4 HTML-only
+    /// excluded tag names (it cannot be, per HTML LS's own dfns), so its
+    /// text must still be scanned like any ordinary descendant's — unlike
+    /// the `bdi`/`script`/`style`/`textarea` cases above, this is a
+    /// "must **not** be excluded" regression test.
+    #[test]
+    fn auto_directionality_scans_into_foreign_namespace_descendant_text() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let outer = doc.push_element(0, "div", None);
+        doc.set_attr(outer, "dir", "auto");
+        let svg_text =
+            doc.push_element_with_namespace(outer, "text", "http://www.w3.org/2000/svg", &[]);
+        doc.push_text(svg_text, "\u{0627}"); // Arabic alef
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[outer].background_color, RED,
+            "a foreign-namespace descendant's text must still be scanned, \
+             not excluded"
+        );
+    }
+
+    /// Comment nodes are neither "text node" nor "element node" and must
+    /// not contribute to the auto-directionality scan (mirrors
+    /// [`matches_empty`] / [`is_substantial_node`]'s treatment of the same
+    /// node kind). Deliberately has **no** other text anywhere in the
+    /// element, so a wrong implementation that read the comment's own text
+    /// content would resolve `rtl`, not merely fail to resolve `ltr` for an
+    /// unrelated reason.
+    #[test]
+    fn auto_directionality_ignores_comment_node_text() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+        );
+        let outer = doc.push_element(0, "div", None);
+        doc.set_attr(outer, "dir", "auto");
+        doc.push_comment(outer, "\u{0627}"); // Arabic alef inside a comment
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[outer].background_color, BLUE,
+            "a comment node's text must never be scanned; with no other \
+             text present this must resolve via the 'ltr' no-strong-\
+             character fallback"
         );
     }
 
