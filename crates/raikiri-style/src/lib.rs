@@ -182,8 +182,8 @@ pub enum PseudoClass {
     Lang(Vec<String>),
     /// `:dir(ltr)` / `:dir(rtl)` — CSS Selectors L4 §7.1
     /// <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>. See [`Direction`]
-    /// doc for the scope cut (explicit values only, no `auto` content
-    /// sniffing).
+    /// doc for how this argument relates to a `dir="auto"` matched element's
+    /// own (resolved, not literal) directionality.
     Dir(Direction),
 }
 
@@ -218,22 +218,24 @@ pub enum PseudoClass {
 /// plain 2-variant enum instead of needing a third "other identifier,
 /// never matches" variant.
 ///
-/// # Scope: explicit values only, `auto` not resolved
+/// # `:dir()`'s argument vs. the matched element's directionality
 ///
-/// The HTML directionality algorithm
-/// (<https://html.spec.whatwg.org/multipage/dom.html#the-directionality>)
-/// resolves a `dir="auto"` element's directionality by scanning its text
-/// content for the first character with strong bidirectional type (a
-/// simplified form of the Unicode Bidirectional Algorithm's paragraph-level
-/// determination) — a substantial undertaking on its own, and out of this
-/// crate's current scope.
-/// [`crate::cascade::resolve_directionality`] folds `dir="auto"` into the
-/// same bucket as a missing/invalid `dir` attribute (HTML's "Undefined"
-/// state) and defers to the nearest ancestor's directionality — see that
-/// function's doc for the precise divergence from the full algorithm (HTML's
-/// own `Auto`-state fallback is `'ltr'` when no strong character is found,
-/// *not* the parent's directionality, so this is a real behavioral
-/// simplification, not just an implementation-order detail).
+/// This enum is used two ways: as `:dir()`'s own selector *argument* (the
+/// CSSWG bikeshed quote above already establishes that argument is only
+/// ever `ltr`/`rtl`, never a literal `auto` — there is no `:dir(auto)`
+/// syntax), and as the *matched element's* resolved directionality
+/// ([`crate::cascade::resolve_directionality`]'s return type) that argument
+/// is compared against. An element with `dir="auto"` still resolves to a
+/// concrete `Ltr`/`Rtl` value for that comparison via the HTML
+/// directionality algorithm's own `Auto`-state arm
+/// (<https://html.spec.whatwg.org/multipage/dom.html#the-directionality>) —
+/// scanning the element's contained text for the first character with a
+/// strong bidirectional type — see
+/// [`crate::cascade::resolve_directionality`]'s doc for that resolution and
+/// [`mod@crate::cascade`]'s `strong_bidi_type` doc for the specific scope
+/// cut in this crate's character classification (every Unicode block
+/// reserved by default for right-to-left use, via a hand-transcribed range
+/// table, not a full per-code-point Bidi_Class table).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
     /// Left-to-right (`dir="ltr"`, HTML LS "LTR" state).
