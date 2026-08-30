@@ -4306,7 +4306,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `flex` shorthand fall-through — 通常は `expand_shorthand_into` が
         // 3 longhand に展開済みのため cascade 経路には到達しない
         // (`Margin`/`Padding`/`Border` shorthand fall-through と同じ
-        // "safety net ではない" 位置付け、[`PropertyKey::Padding`] doc 参照)。
+        // "safety net ではない" 位置付け、`PropertyKey::Padding` doc 参照)。
         PropertyValue::Flex(f) => {
             target.flex_grow = f.grow;
             target.flex_shrink = f.shrink;
