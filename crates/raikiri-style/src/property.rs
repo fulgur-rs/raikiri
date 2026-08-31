@@ -10,7 +10,7 @@
 use std::sync::{Arc, OnceLock};
 
 use cssparser::color::{clamp_unit_f32, parse_named_color};
-use cssparser::{ParseError, Parser, Token};
+use cssparser::{BasicParseError, BasicParseErrorKind, ParseError, Parser, Token};
 use smol_str::SmolStr;
 
 use crate::Atom;
@@ -4220,6 +4220,21 @@ pub struct TextShadowItem {
     pub color: TextShadowColor,
 }
 
+/// A CSS Custom Properties Level 1 declaration retained as raw tokens.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CustomProperty {
+    pub(crate) name: SmolStr,
+    pub(crate) value: SmolStr,
+}
+
+/// A known property whose value must wait for computed-value substitution.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeferredValue {
+    pub(crate) property: SmolStr,
+    pub(crate) value: SmolStr,
+    pub(crate) key: PropertyKey,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -4308,6 +4323,11 @@ pub struct TextShadowItem {
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyValue {
+    /// A `--<ident>` custom property. The value remains token-preserving until
+    /// the computed-value stage, where `var()` references are resolved.
+    CustomProperty(CustomProperty),
+    /// A known property value containing `var()` or a math function.
+    Deferred(DeferredValue),
     /// `color: <color>` — inherited、initial: black。
     Color(CssColor),
     /// `background-color: <color>` — **non-inherited**、initial: `transparent`。
@@ -5504,6 +5524,9 @@ pub enum PropertyKey {
     // convention).
     Orphans,
     Widows,
+    /// Internal sentinel for a custom property. Custom properties are
+    /// selected by their case-sensitive name, not by this key.
+    Custom,
 }
 
 impl PropertyValue {
@@ -5513,6 +5536,8 @@ impl PropertyValue {
     /// また `@page` cascade 結果 map の key として使う。
     pub fn key(&self) -> PropertyKey {
         match self {
+            PropertyValue::CustomProperty(_) => PropertyKey::Custom,
+            PropertyValue::Deferred(value) => value.key,
             PropertyValue::Color(_) => PropertyKey::Color,
             PropertyValue::BackgroundColor(_) => PropertyKey::BackgroundColor,
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
@@ -5623,11 +5648,288 @@ impl PropertyValue {
     }
 }
 
+const DEFERRED_FUNCTIONS: [&str; 5] = ["var", "calc", "min", "max", "clamp"];
+
+/// Shared upper bound for a deferred declaration value and every intermediate
+/// string produced while substituting variables or simplifying math functions.
+/// CSS Variables 1 §3.3 permits a UA-defined expansion limit; keeping the
+/// bound in this module lets the declaration capture enforce it before making
+/// an owned `SmolStr`.
+pub(crate) const MAX_SUBSTITUTED_VALUE_BYTES: usize = 64 * 1024;
+
+fn is_deferred_function(name: &str) -> bool {
+    DEFERRED_FUNCTIONS
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
+
+fn contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
+    let start = input.state();
+    let source_start = input.position();
+    let mut over_limit = false;
+    while input.next().is_ok() {
+        if input.slice(source_start..input.position()).len() > MAX_SUBSTITUTED_VALUE_BYTES {
+            over_limit = true;
+            break;
+        }
+    }
+    let source = input.slice(source_start..input.position());
+    input.reset(&start);
+    over_limit || contains_deferred_function_in_source(source)
+}
+
+fn contains_deferred_function_in_source(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    let mut position = 0;
+    while position < bytes.len() {
+        if bytes[position] == b'\'' || bytes[position] == b'"' {
+            let Some(end) = skip_deferred_string(input, position) else {
+                return false;
+            };
+            position = end;
+            continue;
+        }
+        if bytes[position] == b'/' && bytes.get(position + 1) == Some(&b'*') {
+            let Some(end) = skip_deferred_comment(input, position) else {
+                return false;
+            };
+            position = end;
+            continue;
+        }
+        if bytes[position].is_ascii_alphabetic() || bytes[position] == b'-' {
+            let name_start = position;
+            position += 1;
+            while position < bytes.len()
+                && (bytes[position].is_ascii_alphanumeric() || bytes[position] == b'-')
+            {
+                position += 1;
+            }
+            if position < bytes.len()
+                && bytes[position] == b'('
+                && is_deferred_function(&input[name_start..position])
+            {
+                return true;
+            }
+            continue;
+        }
+        let Some(character) = input[position..].chars().next() else {
+            // cov:ignore: a valid Rust `str` cannot end between UTF-8 scalar
+            // values while this byte-indexed scanner advances by chars.
+            return false;
+        };
+        position += character.len_utf8();
+    }
+    false
+}
+
+fn skip_deferred_string(input: &str, start: usize) -> Option<usize> {
+    let quote = input.as_bytes()[start];
+    let bytes = input.as_bytes();
+    let mut position = start + 1;
+    while position < bytes.len() {
+        match bytes[position] {
+            b'\\' => position = position.checked_add(2)?,
+            byte if byte == quote => return Some(position + 1),
+            _ => position += 1,
+        }
+    }
+    None
+}
+
+fn skip_deferred_comment(input: &str, start: usize) -> Option<usize> {
+    input[start + 2..]
+        .find("*/")
+        .map(|offset| start + 2 + offset + 2)
+}
+
+/// Consume a value containing a substitution/math function while leaving a
+/// trailing `!important` for the declaration parser.
+fn consume_deferred_value(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
+    let start_state = input.state();
+    let start = input.position();
+    loop {
+        if input.slice(start..input.position()).len() > MAX_SUBSTITUTED_VALUE_BYTES {
+            input.reset(&start_state);
+            return None;
+        }
+        let before_token = input.state();
+        let token_start = input.position();
+        match input.next() {
+            Ok(Token::Delim('!')) => {
+                input.reset(&before_token);
+                input.skip_whitespace();
+                let bang_state = input.state();
+                let is_important = input
+                    .try_parse(|parser| {
+                        cssparser::parse_important(parser)?;
+                        parser.expect_exhausted()
+                    })
+                    .is_ok();
+                if is_important {
+                    input.reset(&bang_state);
+                    let value = input.slice(start..token_start).trim();
+                    return Some(value.into());
+                }
+                input.reset(&start_state);
+                return None;
+            }
+            Ok(_) => {}
+            Err(BasicParseError {
+                kind: BasicParseErrorKind::EndOfInput,
+                ..
+            }) => {
+                let value = input.slice(start..input.position()).trim();
+                return Some(value.into());
+            }
+            // cov:ignore: cssparser's `Parser::next` only reports
+            // EndOfInput as a basic error for a valid token stream.
+            Err(_) => {
+                input.reset(&start_state);
+                return None;
+            }
+        }
+    }
+}
+
+pub(crate) fn is_custom_property_name(name: &str) -> bool {
+    name.len() > 2 && name.as_bytes().starts_with(b"--")
+}
+
+/// Return the known property key without parsing its value.
+pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
+    let normalized_name = name.to_ascii_lowercase();
+    Some(match normalized_name.as_str() {
+        "color" => PropertyKey::Color,
+        "background-color" => PropertyKey::BackgroundColor,
+        "font-family" => PropertyKey::FontFamily,
+        "font-size" => PropertyKey::FontSize,
+        "font-weight" => PropertyKey::FontWeight,
+        "line-height" => PropertyKey::LineHeight,
+        "display" => PropertyKey::Display,
+        "counter-reset" => PropertyKey::CounterReset,
+        "counter-increment" => PropertyKey::CounterIncrement,
+        "counter-set" => PropertyKey::CounterSet,
+        "content" => PropertyKey::Content,
+        "string-set" => PropertyKey::StringSet,
+        "position" => PropertyKey::Position,
+        "text-align" => PropertyKey::TextAlign,
+        "text-indent" => PropertyKey::TextIndent,
+        "padding-top" => PropertyKey::PaddingTop,
+        "padding-right" => PropertyKey::PaddingRight,
+        "padding-bottom" => PropertyKey::PaddingBottom,
+        "padding-left" => PropertyKey::PaddingLeft,
+        "padding" => PropertyKey::Padding,
+        "margin-top" => PropertyKey::MarginTop,
+        "margin-right" => PropertyKey::MarginRight,
+        "margin-bottom" => PropertyKey::MarginBottom,
+        "margin-left" => PropertyKey::MarginLeft,
+        "margin" => PropertyKey::Margin,
+        "border-top-width" => PropertyKey::BorderTopWidth,
+        "border-right-width" => PropertyKey::BorderRightWidth,
+        "border-bottom-width" => PropertyKey::BorderBottomWidth,
+        "border-left-width" => PropertyKey::BorderLeftWidth,
+        "border-top-style" => PropertyKey::BorderTopStyle,
+        "border-right-style" => PropertyKey::BorderRightStyle,
+        "border-bottom-style" => PropertyKey::BorderBottomStyle,
+        "border-left-style" => PropertyKey::BorderLeftStyle,
+        "border-top-color" => PropertyKey::BorderTopColor,
+        "border-right-color" => PropertyKey::BorderRightColor,
+        "border-bottom-color" => PropertyKey::BorderBottomColor,
+        "border-left-color" => PropertyKey::BorderLeftColor,
+        "border" => PropertyKey::Border,
+        "width" => PropertyKey::Width,
+        "height" => PropertyKey::Height,
+        "box-sizing" => PropertyKey::BoxSizing,
+        "direction" => PropertyKey::Direction,
+        "overflow-x" => PropertyKey::OverflowX,
+        "overflow-y" => PropertyKey::OverflowY,
+        "overflow" => PropertyKey::Overflow,
+        "text-decoration-line" => PropertyKey::TextDecorationLine,
+        "text-decoration-style" => PropertyKey::TextDecorationStyle,
+        "text-decoration-color" => PropertyKey::TextDecorationColor,
+        "text-decoration" => PropertyKey::TextDecoration,
+        "vertical-align" => PropertyKey::VerticalAlign,
+        "font-style" => PropertyKey::FontStyle,
+        "text-transform" => PropertyKey::TextTransform,
+        "visibility" => PropertyKey::Visibility,
+        "z-index" => PropertyKey::ZIndex,
+        "word-break" => PropertyKey::WordBreak,
+        "overflow-wrap" | "word-wrap" => PropertyKey::OverflowWrap,
+        "letter-spacing" => PropertyKey::LetterSpacing,
+        "word-spacing" => PropertyKey::WordSpacing,
+        "break-before" | "page-break-before" => PropertyKey::BreakBefore,
+        "break-after" | "page-break-after" => PropertyKey::BreakAfter,
+        "break-inside" | "page-break-inside" => PropertyKey::BreakInside,
+        "float" => PropertyKey::Float,
+        "clear" => PropertyKey::Clear,
+        "white-space" => PropertyKey::WhiteSpace,
+        "flex-direction" => PropertyKey::FlexDirection,
+        "flex-wrap" => PropertyKey::FlexWrap,
+        "flex-grow" => PropertyKey::FlexGrow,
+        "flex-shrink" => PropertyKey::FlexShrink,
+        "flex-basis" => PropertyKey::FlexBasis,
+        "flex" => PropertyKey::Flex,
+        "justify-content" => PropertyKey::JustifyContent,
+        "align-content" => PropertyKey::AlignContent,
+        "align-items" => PropertyKey::AlignItems,
+        "align-self" => PropertyKey::AlignSelf,
+        "row-gap" => PropertyKey::RowGap,
+        "column-gap" => PropertyKey::ColumnGap,
+        "gap" => PropertyKey::Gap,
+        "place-content" => PropertyKey::PlaceContent,
+        "hyphens" => PropertyKey::Hyphens,
+        "tab-size" => PropertyKey::TabSize,
+        "font-variant-caps" => PropertyKey::FontVariantCaps,
+        "quotes" => PropertyKey::Quotes,
+        "text-shadow" => PropertyKey::TextShadow,
+        "grid-template-columns" => PropertyKey::GridTemplateColumns,
+        "grid-template-rows" => PropertyKey::GridTemplateRows,
+        "grid-template-areas" => PropertyKey::GridTemplateAreas,
+        "grid-auto-columns" => PropertyKey::GridAutoColumns,
+        "grid-auto-rows" => PropertyKey::GridAutoRows,
+        "grid-auto-flow" => PropertyKey::GridAutoFlow,
+        "grid-row-start" => PropertyKey::GridRowStart,
+        "grid-row-end" => PropertyKey::GridRowEnd,
+        "grid-row" => PropertyKey::GridRow,
+        "grid-column-start" => PropertyKey::GridColumnStart,
+        "grid-column-end" => PropertyKey::GridColumnEnd,
+        "grid-column" => PropertyKey::GridColumn,
+        "justify-items" => PropertyKey::JustifyItems,
+        "justify-self" => PropertyKey::JustifySelf,
+        "place-items" => PropertyKey::PlaceItems,
+        "place-self" => PropertyKey::PlaceSelf,
+        "orphans" => PropertyKey::Orphans,
+        "widows" => PropertyKey::Widows,
+        _ => return None,
+    })
+}
+
 /// Property name + Parser から `PropertyValue` を produce。
 /// 認識できない name / invalid value は `None`。
 pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    // ascii-lowercase 比較で property name を dispatch。
+    if is_custom_property_name(name) {
+        let value = consume_deferred_value(input)?;
+        return Some(PropertyValue::CustomProperty(CustomProperty {
+            name: name.into(),
+            value,
+        }));
+    }
+
+    let key = property_key_for_name(name);
     let normalized_name = name.to_ascii_lowercase();
+    let start = input.state();
+    if key.is_some() && contains_deferred_function(input) {
+        input.reset(&start);
+        let value = consume_deferred_value(input)?;
+        return Some(PropertyValue::Deferred(DeferredValue {
+            property: name.to_ascii_lowercase().into(),
+            value,
+            key: key?,
+        }));
+    }
+    input.reset(&start);
+
+    // ascii-lowercase 比較で property name を dispatch。
     match normalized_name.as_str() {
         "color" => parse_color(input).map(PropertyValue::Color),
         // CSS Backgrounds 3 §2.2 <https://www.w3.org/TR/css-backgrounds-3/#background-color>
@@ -18945,6 +19247,26 @@ mod tests {
             .key(),
             PropertyKey::PlaceSelf
         );
+    }
+
+    #[test]
+    fn deferred_function_scanner_skips_literals_and_handles_bounds() {
+        assert!(contains_deferred_function_in_source("foo(VAR(--x))"));
+        assert!(!contains_deferred_function_in_source(
+            r#""var(--x)" /* calc(1px) */"#
+        ));
+        assert!(!contains_deferred_function_in_source("\"unterminated"));
+        assert!(!contains_deferred_function_in_source("/* unterminated"));
+        assert_eq!(skip_deferred_string(r#""a\"b""#, 0), Some(6));
+        assert_eq!(skip_deferred_string("\"unterminated", 0), None);
+        assert_eq!(skip_deferred_comment("/* comment */", 0), Some(13));
+        assert_eq!(skip_deferred_comment("/* unterminated", 0), None);
+    }
+
+    #[test]
+    fn deferred_value_capture_rejects_oversized_input() {
+        let source = format!("calc(1px){}", "x".repeat(64 * 1024));
+        assert!(parse(&source, "width").is_none());
     }
 
     // ── orphans / widows (CSS Fragmentation Module Level 3 §3.3) ──

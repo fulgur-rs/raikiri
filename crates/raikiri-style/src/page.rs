@@ -89,14 +89,16 @@ use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, Token, match_ignore_ascii_case,
 };
+use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::cascade::{
-    ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_relative_font_size,
+    ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_custom_property_map,
+    resolve_deferred_value, resolve_relative_font_size,
 };
 use crate::computed::ComputedValues;
 use crate::property::{
-    Border, BorderColor, BorderStyle, FlexBasisValue, FlexShorthand, GapShorthand,
+    Border, BorderColor, BorderStyle, CustomProperty, FlexBasisValue, FlexShorthand, GapShorthand,
     GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, TextShadowItem,
@@ -1344,6 +1346,11 @@ pub struct PageContextQuery {
 /// Iteration order over `declarations` is `HashMap`-random; consumers that
 /// need a deterministic order should sort or look up by [`PropertyKey`]
 /// (Tests here look up by key rather than iterating).
+/// Custom-property declarations are cascaded separately by their
+/// case-sensitive names and are used only while resolving `var()`. They are
+/// never emitted under `PropertyKey::Custom`, and a winning deferred value is
+/// either fully reparsed/projected before emission or omitted as invalid at
+/// computed-value time; this map never exposes raw specified-layer values.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageCascadeResult {
@@ -1845,6 +1852,7 @@ pub fn cascade_page(
     // Shape mirrors `cascade::CascadedDecl` per the sibling convention, with
     // `PageSpecificity` in place of `selectors`-crate `Specificity`.
     let mut candidates: Vec<(PropertyValue, bool, Origin, PageSpecificity, u32)> = Vec::new();
+    let mut custom_candidates: Vec<PageCustomCascadedDecl> = Vec::new();
     for rule in &rule_tree.page_rules {
         // Comma-separated list = OR: rule contributes if any entry matches.
         // Take the highest-specificity matching entry within this rule (spec
@@ -1861,6 +1869,16 @@ pub fn cascade_page(
         }
         if let Some(spec) = best_spec {
             for decl in &rule.declarations {
+                if let PropertyValue::CustomProperty(custom) = &decl.value {
+                    custom_candidates.push((
+                        custom.clone(),
+                        decl.important,
+                        rule.origin,
+                        spec,
+                        rule.source_order,
+                    ));
+                    continue;
+                }
                 // Expand shorthands into longhands before pushing candidates —
                 // the parse-time expansion alone does not cover the post-parse
                 // mutation path through the `pub` field `PageRule::declarations`
@@ -1873,6 +1891,26 @@ pub fn cascade_page(
             }
         }
     }
+
+    // Custom properties have case-sensitive name keys and therefore must not
+    // enter the ordinary PropertyKey winner table (which contains the
+    // `PropertyKey::Custom` sentinel only for the specified-layer shape).
+    let mut custom_best: HashMap<SmolStr, (u8, PageSpecificity, u32, CustomProperty)> =
+        HashMap::new();
+    for (value, important, origin, spec, order) in custom_candidates {
+        let name = value.name.clone();
+        let rank = cascade_rank(origin, important);
+        let replace = custom_best
+            .get(&name)
+            .is_none_or(|existing| (rank, spec, order) >= (existing.0, existing.1, existing.2));
+        if replace {
+            custom_best.insert(name, (rank, spec, order, value));
+        }
+    }
+    let custom_local: HashMap<SmolStr, SmolStr> = custom_best
+        .into_iter()
+        .map(|(name, (_, _, _, value))| (name, value.value))
+        .collect();
 
     // Winner selection — sibling arm to `cascade::pick_winners`.
     let mut best: HashMap<PropertyKey, (u8, PageSpecificity, u32, PropertyValue)> = HashMap::new();
@@ -1899,10 +1937,15 @@ pub fn cascade_page(
     // which the `LegacyInitialValues` path would otherwise take on every call
     // (`property.rs` の `empty_counter_entries` と同じ前例)。
     static INITIAL_PAGE_PARENT: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
-    let inherited: &ComputedValues = match inheritance {
-        PageInheritance::FromRoot(root) => root,
-        PageInheritance::LegacyInitialValues => &INITIAL_PAGE_PARENT,
-    };
+    let empty_custom_properties = HashMap::new();
+    let (inherited, inherited_custom_properties): (&ComputedValues, &HashMap<SmolStr, SmolStr>) =
+        match inheritance {
+            PageInheritance::FromRoot(root) => (root, &root.custom_properties),
+            PageInheritance::LegacyInitialValues => {
+                (&INITIAL_PAGE_PARENT, &empty_custom_properties)
+            }
+        };
+    let custom_properties = resolve_custom_property_map(inherited_custom_properties, &custom_local);
     // `ctx` carries `inherited`'s used line-height as `root_line_height` —
     // needed by *both* step 3 below (`resolve_against_inherited`'s
     // `FontSize` arm, for `font-size: 1lh`/`1rlh`'s self-reference basis) and
@@ -1926,7 +1969,15 @@ pub fn cascade_page(
     );
     let resolved: HashMap<PropertyKey, ResolvedAgainstInherited> = best
         .into_iter()
-        .map(|(k, (_, _, _, v))| (k, resolve_against_inherited(v, inherited, &ctx)))
+        .filter_map(|(k, (_, _, _, value))| {
+            let value = match value {
+                PropertyValue::Deferred(deferred) => {
+                    resolve_deferred_value(&deferred, &custom_properties)
+                }
+                value => Some(value),
+            }?;
+            Some((k, resolve_against_inherited(value, inherited, &ctx)))
+        })
         .collect();
 
     // Step 4 (phase 3): absolutize the remaining lengths against the page
@@ -2492,6 +2543,8 @@ fn absolutize_in_page_context(
         // here would be a second application against the *wrong* basis (its
         // own value instead of the inheritance parent's).
         v @ (PropertyValue::Color(_)
+        | PropertyValue::CustomProperty(_)
+        | PropertyValue::Deferred(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)
@@ -2962,6 +3015,11 @@ struct PageSpecificity {
     h: u32,
 }
 
+/// One page custom-property candidate. Custom names are cascaded separately
+/// from the ordinary `PropertyKey` table because CSS Variables names compare
+/// case-sensitively.
+type PageCustomCascadedDecl = (CustomProperty, bool, Origin, PageSpecificity, u32);
+
 /// Match a single compound `<page-selector>` entry against `query`.
 ///
 /// Returns the entry's [`PageSpecificity`] on a match, `None` otherwise.
@@ -3065,8 +3123,8 @@ mod tests {
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
         AlignSelfValue, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
-        ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue,
-        FloatValue, FontStyle, FontVariantCaps, FontWeightValue, GridAutoFlowValue,
+        ContentComponent, CssColor, CustomProperty, Direction, DisplayValue, FlexDirectionValue,
+        FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, FontWeightValue, GridAutoFlowValue,
         GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount,
         GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks,
         GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
@@ -3077,6 +3135,8 @@ mod tests {
         VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
+    use crate::ruletree::build_rule_tree;
+    use crate::test_dom::TestDoc;
     use std::sync::Arc;
 
     const RED: CssColor = CssColor {
@@ -3948,6 +4008,65 @@ mod tests {
             )))),
             "`em` must be resolved against the page context's font-size"
         );
+    }
+
+    #[test]
+    fn cascade_page_resolves_var_margin_without_raw_custom_or_deferred_values() {
+        // CSS Paged Media 3 §6 gives the page context a computed value for
+        // every property. The public declaration bag therefore must not leak
+        // the specified-layer `Deferred` or the synthetic `Custom` key.
+        let root = ComputedValues::initial();
+        let result = page(
+            "@page { --page-margin: 2px; margin: var(--page-margin, 1px) }",
+            &root,
+        );
+        let expected = PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(2.0)));
+        assert_eq!(
+            result.declarations().get(&PropertyKey::MarginTop),
+            Some(&expected)
+        );
+        assert!(!result.declarations().contains_key(&PropertyKey::Custom));
+        assert!(result.declarations().values().all(|value| {
+            !matches!(
+                value,
+                PropertyValue::CustomProperty(_) | PropertyValue::Deferred(_)
+            )
+        }));
+    }
+
+    #[test]
+    fn cascade_page_resolves_custom_property_inherited_from_root() {
+        // CSS Variables 1 marks custom properties as inherited, and CSS Paged
+        // Media 3 §6 makes the root element the page context's inheritance
+        // parent. The page pass must therefore receive the root's resolved
+        // custom-property map without exposing it as a `PropertyKey` entry.
+        let mut doc = TestDoc::new();
+        let root_id = doc.push_element(0, "html", Some("--page-margin: 3px"));
+        let tree = build_rule_tree(&doc);
+        let cascaded = crate::cascade::cascade(&doc, &tree).expect("cascade Ok");
+        let result = page(
+            "@page { margin: var(--page-margin, 1px) }",
+            &cascaded.computed[root_id],
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::MarginTop),
+            Some(&PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+                3.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn cascade_page_drops_invalid_deferred_value_at_computed_time() {
+        let root = ComputedValues::initial();
+        let result = page("@page { width: var(--missing); color: red }", &root);
+        assert!(!result.declarations().contains_key(&PropertyKey::Width));
+        assert!(result.declarations().values().all(|value| {
+            !matches!(
+                value,
+                PropertyValue::CustomProperty(_) | PropertyValue::Deferred(_)
+            )
+        }));
     }
 
     // ── Phase 3 in the page context ─────────────────────────────────────────
@@ -5160,11 +5279,13 @@ mod tests {
     /// 63 → 65 (`Orphans` / `Widows`, CSS Fragmentation Module Level 3 §3.3 —
     /// both carry a bare positive `<integer>`, not a length, so there is
     /// nothing for phase 3 to absolutize).
+    /// 65 → 67 (`CustomProperty` / `Deferred` are retained before computed
+    /// value resolution and are not page-context length values).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 65;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 67;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -5587,6 +5708,10 @@ mod tests {
         // sibling comment above uses the same reasoning).
         Orphans => PropertyValue::Orphans(5),
         Widows => PropertyValue::Widows(7),
+        Custom => PropertyValue::CustomProperty(CustomProperty {
+            name: "--sample".into(),
+            value: "1px".into(),
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -5612,8 +5737,15 @@ mod tests {
     /// `page_corpus_covers_every_registered_property_value_variant` (test、
     /// 下) が red になるので、ここへの追加漏れは最終的に検出される。
     fn key_sharing_extras() -> Vec<PropertyValue> {
-        use crate::property::RelativeFontSize;
-        vec![PropertyValue::FontSizeRelative(RelativeFontSize::Larger)]
+        use crate::property::{DeferredValue, RelativeFontSize};
+        vec![
+            PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
+            PropertyValue::Deferred(DeferredValue {
+                property: "width".into(),
+                value: "calc(1px + 1px)".into(),
+                key: PropertyKey::Width,
+            }),
+        ]
     }
 
     /// 全 `PropertyValue` variant を **specified 層の worst case** payload で
@@ -5699,6 +5831,8 @@ mod tests {
     // 楽にするための慣習 — 順序自体に意味は無い、`property_key_samples!` の
     // 呼び出しと同様)。
     property_value_variant_registry! {
+        CustomProperty,
+        Deferred,
         Color,
         BackgroundColor,
         FontFamily,
@@ -6220,7 +6354,11 @@ mod tests {
             // `orphans`/`widows` carry an `<integer>`, not a length, same as
             // `ZIndexValue` above.
             | PropertyValue::Orphans(_)
-            | PropertyValue::Widows(_) => None,
+            | PropertyValue::Widows(_)
+            // Custom properties and deferred values are pre-computed cascade
+            // representations, not page-context computed length payloads.
+            | PropertyValue::CustomProperty(_)
+            | PropertyValue::Deferred(_) => None,
             // `text-shadow` — each item's 3 lengths (`offset-x`/`offset-y`/
             // `blur-radius`) can carry specified-layer residue (same `length`
             // check `Padding`/`Margin` use above); `<color>` carries no
