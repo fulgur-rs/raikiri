@@ -10,7 +10,7 @@
 use std::sync::{Arc, OnceLock};
 
 use cssparser::color::{clamp_unit_f32, parse_named_color};
-use cssparser::{BasicParseError, BasicParseErrorKind, ParseError, Parser, Token};
+use cssparser::{BasicParseError, BasicParseErrorKind, ParseError, Parser, ParserInput, Token};
 use smol_str::SmolStr;
 
 use crate::Atom;
@@ -5666,62 +5666,66 @@ fn is_deferred_function(name: &str) -> bool {
 fn contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
     let start = input.state();
     let source_start = input.position();
-    let mut over_limit = false;
-    while input.next().is_ok() {
-        if input.slice(source_start..input.position()).len() > MAX_SUBSTITUTED_VALUE_BYTES {
-            over_limit = true;
-            break;
-        }
-    }
-    let source = input.slice(source_start..input.position());
+    let found = if input.slice_from(source_start).len() > MAX_SUBSTITUTED_VALUE_BYTES {
+        true
+    } else {
+        parser_contains_deferred_function(input)
+    };
     input.reset(&start);
-    over_limit || contains_deferred_function_in_source(source)
+    found
 }
 
+#[cfg(test)]
 fn contains_deferred_function_in_source(input: &str) -> bool {
-    let bytes = input.as_bytes();
-    let mut position = 0;
-    while position < bytes.len() {
-        if bytes[position] == b'\'' || bytes[position] == b'"' {
-            let Some(end) = skip_deferred_string(input, position) else {
-                return false;
-            };
-            position = end;
-            continue;
-        }
-        if bytes[position] == b'/' && bytes.get(position + 1) == Some(&b'*') {
-            let Some(end) = skip_deferred_comment(input, position) else {
-                return false;
-            };
-            position = end;
-            continue;
-        }
-        if bytes[position].is_ascii_alphabetic() || bytes[position] == b'-' {
-            let name_start = position;
-            position += 1;
-            while position < bytes.len()
-                && (bytes[position].is_ascii_alphanumeric() || bytes[position] == b'-')
-            {
-                position += 1;
-            }
-            if position < bytes.len()
-                && bytes[position] == b'('
-                && is_deferred_function(&input[name_start..position])
-            {
-                return true;
-            }
-            continue;
-        }
-        let Some(character) = input[position..].chars().next() else {
-            // cov:ignore: a valid Rust `str` cannot end between UTF-8 scalar
-            // values while this byte-indexed scanner advances by chars.
-            return false;
-        };
-        position += character.len_utf8();
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    if input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
+        return true;
     }
-    false
+    parser_contains_deferred_function(&mut parser)
 }
 
+/// Inspect CSS component-value tokens, including nested blocks, so a deferred
+/// function is recognized only when cssparser emitted a real `Function` token.
+/// Raw substring matching would mistake `#var(--x)` for a variable function.
+fn parser_contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
+    let mut found = false;
+    loop {
+        let token = match input.next() {
+            Ok(token) => token.clone(),
+            Err(_) => break,
+        };
+        match token {
+            Token::Function(name) => {
+                if is_deferred_function(name.as_ref()) {
+                    found = true;
+                }
+                if input
+                    .parse_nested_block(|nested| {
+                        Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(nested))
+                    })
+                    .unwrap_or(false)
+                {
+                    found = true;
+                }
+            }
+            Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                if input
+                    .parse_nested_block(|nested| {
+                        Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(nested))
+                    })
+                    .unwrap_or(false)
+                {
+                    found = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+#[cfg(test)]
 fn skip_deferred_string(input: &str, start: usize) -> Option<usize> {
     let quote = input.as_bytes()[start];
     let bytes = input.as_bytes();
@@ -5736,6 +5740,7 @@ fn skip_deferred_string(input: &str, start: usize) -> Option<usize> {
     None
 }
 
+#[cfg(test)]
 fn skip_deferred_comment(input: &str, start: usize) -> Option<usize> {
     input[start + 2..]
         .find("*/")
@@ -5921,6 +5926,19 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
     if key.is_some() && contains_deferred_function(input) {
         input.reset(&start);
         let value = consume_deferred_value(input)?;
+        if !contains_function_in_source(&value, "var") {
+            // A math function without substitution can be simplified and
+            // reparsed now. This rejects an invalid winning declaration such
+            // as `width: calc(foo)` during declaration parsing, rather than
+            // letting it override a valid earlier declaration and fail only
+            // during cascade resolution.
+            let simplified = crate::cascade::simplify_math_functions(value.as_ref())?;
+            let mut reparsed_input = ParserInput::new(simplified.as_ref());
+            let mut reparsed = Parser::new(&mut reparsed_input);
+            let parsed = parse_value(name, &mut reparsed)?;
+            reparsed.expect_exhausted().ok()?;
+            return Some(parsed);
+        }
         return Some(PropertyValue::Deferred(DeferredValue {
             property: name.to_ascii_lowercase().into(),
             value,
@@ -6364,6 +6382,49 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "widows" => parse_positive_integer(input).map(PropertyValue::Widows),
         _ => None,
     }
+}
+
+fn contains_function_in_source(input: &str, wanted: &str) -> bool {
+    fn scan(parser: &mut Parser<'_, '_>, wanted: &str) -> bool {
+        let mut found = false;
+        loop {
+            let token = match parser.next() {
+                Ok(token) => token.clone(),
+                Err(_) => break,
+            };
+            match token {
+                Token::Function(name) => {
+                    if name.eq_ignore_ascii_case(wanted) {
+                        found = true;
+                    }
+                    if parser
+                        .parse_nested_block(|nested| {
+                            Ok::<_, ParseError<'_, ()>>(scan(nested, wanted))
+                        })
+                        .unwrap_or(false)
+                    {
+                        found = true;
+                    }
+                }
+                Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                    if parser
+                        .parse_nested_block(|nested| {
+                            Ok::<_, ParseError<'_, ()>>(scan(nested, wanted))
+                        })
+                        .unwrap_or(false)
+                    {
+                        found = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    scan(&mut parser, wanted)
 }
 
 /// `<color>` を parse する。
@@ -19255,6 +19316,8 @@ mod tests {
         assert!(!contains_deferred_function_in_source(
             r#""var(--x)" /* calc(1px) */"#
         ));
+        assert!(!contains_deferred_function_in_source("#var(--x)"));
+        assert!(!contains_deferred_function_in_source("@calc(1px)"));
         assert!(!contains_deferred_function_in_source("\"unterminated"));
         assert!(!contains_deferred_function_in_source("/* unterminated"));
         assert_eq!(skip_deferred_string(r#""a\"b""#, 0), Some(6));
@@ -19267,6 +19330,12 @@ mod tests {
     fn deferred_value_capture_rejects_oversized_input() {
         let source = format!("calc(1px){}", "x".repeat(64 * 1024));
         assert!(parse(&source, "width").is_none());
+    }
+
+    #[test]
+    fn math_without_var_is_validated_during_declaration_parsing() {
+        assert!(parse("calc(foo)", "width").is_none());
+        assert!(parse("min(10px, 20px)", "width").is_some());
     }
 
     // ── orphans / widows (CSS Fragmentation Module Level 3 §3.3) ──

@@ -31,7 +31,7 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
 
-use cssparser::{Parser, ParserInput};
+use cssparser::{Parser, ParserInput, Token};
 use selectors::attr::{CaseSensitivity, ParsedCaseSensitivity};
 use selectors::parser::{Combinator, NthSelectorData, Selector, SelectorIter, SelectorList};
 use smol_str::SmolStr;
@@ -4813,7 +4813,7 @@ fn project_deferred_value(
     })
 }
 
-fn simplify_math_functions(input: &str) -> Option<SmolStr> {
+pub(crate) fn simplify_math_functions(input: &str) -> Option<SmolStr> {
     simplify_math_functions_at_depth(input, 0)
 }
 
@@ -4826,63 +4826,135 @@ fn push_bounded(output: &mut String, fragment: &str) -> Option<()> {
     Some(())
 }
 
+const MATH_FUNCTIONS: [&str; 4] = ["calc", "min", "max", "clamp"];
+
+/// Find a named CSS function by walking cssparser's component-value tokens.
+/// `Parser::next` skips a function body, so recurse into every block to keep
+/// nested `var()`/math functions visible while preserving their byte offsets.
+fn find_function_token(
+    input: &str,
+    minimum_start: usize,
+    names: &[&str],
+) -> Option<(usize, usize)> {
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    find_function_token_in_parser(&mut parser, minimum_start, names)
+}
+
+fn find_function_token_in_parser<'i, 't>(
+    parser: &mut Parser<'i, 't>,
+    minimum_start: usize,
+    names: &[&str],
+) -> Option<(usize, usize)> {
+    let mut found = None;
+    loop {
+        let token_start = parser.position().byte_index();
+        let token = match parser.next() {
+            Ok(token) => token.clone(),
+            Err(_) => break,
+        };
+        match token {
+            Token::Function(name) => {
+                let open = parser.position().byte_index().checked_sub(1)?;
+                let candidate = if token_start >= minimum_start
+                    && names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted))
+                {
+                    Some((token_start, open))
+                } else {
+                    None
+                };
+                let nested_found = parser
+                    .parse_nested_block(|nested| {
+                        Ok::<_, cssparser::ParseError<'i, ()>>(find_function_token_in_parser(
+                            nested,
+                            minimum_start,
+                            names,
+                        ))
+                    })
+                    .ok()
+                    .flatten();
+                if found.is_none() {
+                    found = candidate.or(nested_found);
+                }
+            }
+            Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                let nested_found = parser
+                    .parse_nested_block(|nested| {
+                        Ok::<_, cssparser::ParseError<'i, ()>>(find_function_token_in_parser(
+                            nested,
+                            minimum_start,
+                            names,
+                        ))
+                    })
+                    .ok()
+                    .flatten();
+                if let Some(nested_found) = nested_found {
+                    if found.is_none() {
+                        found = Some(nested_found);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+fn needs_css_token_separator(left: &str, right: &str) -> bool {
+    let left = left
+        .as_bytes()
+        .iter()
+        .rev()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .copied();
+    let right = right
+        .as_bytes()
+        .iter()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .copied();
+    let (Some(left), Some(right)) = (left, right) else {
+        return false;
+    };
+    if left.is_ascii_alphanumeric()
+        && (right.is_ascii_alphanumeric() || matches!(right, b'.' | b'%'))
+    {
+        return true;
+    }
+    if (left.is_ascii_alphabetic() || matches!(left, b'-' | b'_' | b'\\') || left >= 0x80)
+        && (right.is_ascii_alphanumeric() || matches!(right, b'-' | b'_' | b'\\') || right >= 0x80)
+    {
+        return true;
+    }
+    if matches!(left, b'+' | b'-') && (right.is_ascii_digit() || right == b'.') {
+        return true;
+    }
+    if left == b'.' && right.is_ascii_digit() {
+        return true;
+    }
+    matches!(left, b'#' | b'@')
+        && (right.is_ascii_alphabetic() || matches!(right, b'-' | b'_' | b'\\') || right >= 0x80)
+}
+
 fn simplify_math_functions_at_depth(input: &str, depth: usize) -> Option<SmolStr> {
     if depth > MAX_VARIABLE_RESOLUTION_DEPTH || input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
         return None;
     }
-    let bytes = input.as_bytes();
     let mut output = String::with_capacity(input.len());
     let mut position = 0;
-    while position < bytes.len() {
-        if bytes[position] == b'\'' || bytes[position] == b'"' {
-            let end = skip_css_string(input, position)?;
-            push_bounded(&mut output, &input[position..end])?;
-            position = end;
-            continue;
+    while let Some((name_start, open)) = find_function_token(input, position, &MATH_FUNCTIONS) {
+        push_bounded(&mut output, &input[position..name_start])?;
+        let close = find_matching_paren(input, open)?;
+        let name = &input[name_start..open];
+        let inner_source = &input[open + 1..close];
+        let inner = simplify_math_functions_at_depth(inner_source, depth.saturating_add(1))?;
+        let evaluated = evaluate_math_function(name, &inner)?;
+        push_bounded(&mut output, &evaluated)?;
+        if needs_css_token_separator(&output, &input[close + 1..]) {
+            push_bounded(&mut output, " ")?;
         }
-        if bytes[position] == b'/' && bytes.get(position + 1) == Some(&b'*') {
-            let end = skip_css_comment(input, position)?;
-            push_bounded(&mut output, &input[position..end])?;
-            position = end;
-            continue;
-        }
-        if bytes[position].is_ascii_alphabetic() || bytes[position] == b'-' {
-            let name_start = position;
-            position += 1;
-            while position < bytes.len()
-                && (bytes[position].is_ascii_alphanumeric() || bytes[position] == b'-')
-            {
-                position += 1;
-            }
-            if position < bytes.len() && bytes[position] == b'(' {
-                let close = find_matching_paren(input, position)?;
-                let name = &input[name_start..position];
-                let inner_source = &input[position + 1..close];
-                let inner_depth = depth.saturating_add(1);
-                let inner = simplify_math_functions_at_depth(inner_source, inner_depth)?;
-                if matches!(
-                    name.to_ascii_lowercase().as_str(),
-                    "calc" | "min" | "max" | "clamp"
-                ) {
-                    let evaluated = evaluate_math_function(name, &inner)?;
-                    push_bounded(&mut output, &evaluated)?;
-                } else {
-                    push_bounded(&mut output, name)?;
-                    push_bounded(&mut output, "(")?;
-                    push_bounded(&mut output, &inner)?;
-                    push_bounded(&mut output, ")")?;
-                }
-                position = close + 1;
-                continue;
-            }
-            push_bounded(&mut output, &input[name_start..position])?;
-            continue;
-        }
-        let character = input[position..].chars().next()?;
-        let end = position + character.len_utf8();
-        push_bounded(&mut output, &input[position..end])?;
-        position = end;
+        position = close + 1;
     }
+    push_bounded(&mut output, &input[position..])?;
     Some(output.into())
 }
 
@@ -5524,31 +5596,17 @@ fn find_cycle_members(local: &HashMap<SmolStr, SmolStr>) -> HashSet<SmolStr> {
 }
 
 fn collect_var_references(input: &str, references: &mut Vec<SmolStr>) -> Result<(), ()> {
-    if input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
+    if input.len() > MAX_SUBSTITUTED_VALUE_BYTES || !css_literals_are_well_formed(input) {
         return Err(());
     }
-    let bytes = input.as_bytes();
     let mut position = 0;
-    while position < bytes.len() {
-        if bytes[position] == b'\'' || bytes[position] == b'"' {
-            position = skip_css_string(input, position).ok_or(())?;
-            continue;
-        }
-        if bytes[position] == b'/' && bytes.get(position + 1) == Some(&b'*') {
-            position = skip_css_comment(input, position).ok_or(())?;
-            continue;
-        }
-        if let Some(open) = var_function_open(input, position) {
-            let close = find_matching_paren(input, open).ok_or(())?;
-            let (name, _) = split_var_arguments(&input[open + 1..close]).ok_or(())?;
-            references.push(name);
-            // Continue through the function body so fallback arguments and
-            // nested var() references are also dependency edges.
-            position = open + 1;
-            continue;
-        }
-        let character = input[position..].chars().next().ok_or(())?;
-        position += character.len_utf8();
+    while let Some((_, open)) = find_function_token(input, position, &["var"]) {
+        let close = find_matching_paren(input, open).ok_or(())?;
+        let (name, _) = split_var_arguments(&input[open + 1..close]).ok_or(())?;
+        references.push(name);
+        // Continue through the function body so fallback arguments and
+        // nested var() references are also dependency edges.
+        position = open + 1;
     }
     Ok(())
 }
@@ -5558,69 +5616,63 @@ fn substitute_vars(
     resolve: &mut impl FnMut(&str) -> Option<SmolStr>,
     depth: usize,
 ) -> Option<SmolStr> {
-    if depth > MAX_VARIABLE_RESOLUTION_DEPTH || input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
+    if depth > MAX_VARIABLE_RESOLUTION_DEPTH
+        || input.len() > MAX_SUBSTITUTED_VALUE_BYTES
+        || !css_literals_are_well_formed(input)
+    {
         return None;
     }
     let mut output = String::with_capacity(input.len());
     let mut position = 0;
-    while position < input.len() {
-        let bytes = input.as_bytes();
+    while let Some((name_start, open)) = find_function_token(input, position, &["var"]) {
+        push_bounded(&mut output, &input[position..name_start])?;
+        let close = find_matching_paren(input, open)?;
+        let inner = &input[open + 1..close];
+        let (name, fallback) = split_var_arguments(inner)?;
+        let replacement = match resolve(name.as_str()) {
+            Some(value) => value,
+            None => match fallback {
+                Some(fallback) => substitute_vars(fallback, resolve, depth.saturating_add(1))?,
+                None => return None,
+            },
+        };
+        push_bounded(&mut output, &replacement)?;
+        if needs_css_token_separator(&output, &input[close + 1..]) {
+            // Substitution preserves the original component-value token
+            // boundaries. Add a separator only where reparsing the bounded
+            // serialization would otherwise merge adjacent tokens.
+            push_bounded(&mut output, " ")?;
+        }
+        position = close + 1;
+    }
+    push_bounded(&mut output, &input[position..])?;
+    Some(output.into())
+}
+
+fn css_literals_are_well_formed(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    let mut position = 0;
+    while position < bytes.len() {
         if bytes[position] == b'\'' || bytes[position] == b'"' {
-            let end = skip_css_string(input, position)?;
-            push_bounded(&mut output, &input[position..end])?;
+            let Some(end) = skip_css_string(input, position) else {
+                return false;
+            };
             position = end;
             continue;
         }
         if bytes[position] == b'/' && bytes.get(position + 1) == Some(&b'*') {
-            let end = skip_css_comment(input, position)?;
-            push_bounded(&mut output, &input[position..end])?;
+            let Some(end) = skip_css_comment(input, position) else {
+                return false;
+            };
             position = end;
             continue;
         }
-        if let Some(open) = var_function_open(input, position) {
-            let close = find_matching_paren(input, open)?;
-            let inner = &input[open + 1..close];
-            let (name, fallback) = split_var_arguments(inner)?;
-            let replacement = match resolve(name.as_str()) {
-                Some(value) => value,
-                None => match fallback {
-                    Some(fallback) => substitute_vars(fallback, resolve, depth.saturating_add(1))?,
-                    None => return None,
-                },
-            };
-            push_bounded(&mut output, &replacement)?;
-            position = close + 1;
-            if !replacement.is_empty() && position < input.len() {
-                // The source was tokenized before substitution. A whitespace
-                // separator keeps a replacement such as `10` from merging
-                // with a following `px` token when this bounded design
-                // reparses the substituted serialization.
-                push_bounded(&mut output, " ")?;
-            }
-            continue;
-        }
-        let character = input[position..].chars().next()?;
-        let end = position + character.len_utf8();
-        push_bounded(&mut output, &input[position..end])?;
-        position = end;
+        let Some(character) = input[position..].chars().next() else {
+            return false;
+        };
+        position += character.len_utf8();
     }
-    Some(output.into())
-}
-
-fn var_function_open(input: &str, position: usize) -> Option<usize> {
-    let bytes = input.as_bytes();
-    if position + 4 > bytes.len()
-        || !input[position..position + 3].eq_ignore_ascii_case("var")
-        || bytes[position + 3] != b'('
-        || (position > 0 && is_css_ident_byte(bytes[position - 1]))
-    {
-        return None;
-    }
-    Some(position + 3)
-}
-
-fn is_css_ident_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'\\') || byte >= 0x80
+    true
 }
 
 fn skip_css_string(input: &str, start: usize) -> Option<usize> {
@@ -16685,6 +16737,18 @@ mod tests {
     }
 
     #[test]
+    fn invalid_math_declaration_is_dropped_before_cascade() {
+        let cv = cascade_doc("", "div", Some("width: 10px; width: calc(foo)"));
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(10.0));
+    }
+
+    #[test]
+    fn hash_prefixed_var_text_is_not_substituted() {
+        let cv = cascade_doc("", "div", Some("color: red; color: #var(--missing)"));
+        assert_eq!(cv.color, RED);
+    }
+
+    #[test]
     fn min_max_and_clamp_reach_width() {
         let min = cascade_doc("", "div", Some("width: min(20px, 10px)"));
         let max = cascade_doc("", "div", Some("width: max(10px, 20px)"));
@@ -16701,6 +16765,7 @@ mod tests {
         // `10` + `px`, not a newly reparsed `10px` token.
         let cv = cascade_doc("", "div", Some("--n: 10; width: var(--n)px"));
         assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(simplify_math_functions("calc(10)px"), Some("10 px".into()));
     }
 
     #[test]

@@ -1290,10 +1290,15 @@ impl ComputedValues {
     /// [`SpecifiedValues::inherit_from`]: crate::specified::SpecifiedValues::inherit_from
     /// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
     pub fn inherit_from(parent: &Self) -> Self {
-        crate::specified::SpecifiedValues::inherit_from(parent).finalize(
+        let mut child = crate::specified::SpecifiedValues::inherit_from(parent).finalize(
             parent,
             &crate::resolve::ResolveContext::new(parent.font_size),
-        )
+        );
+        // CSS Variables 1 §2: custom properties are inherited. `finalize`
+        // starts with the ordinary computed initial state, so carry this
+        // crate-private bridge explicitly through the public helper too.
+        child.custom_properties = parent.custom_properties.clone();
+        child
     }
 }
 
@@ -1687,6 +1692,7 @@ mod tests {
         // inherited。
         assert_eq!(child.orphans, parent.orphans);
         assert_eq!(child.widows, parent.widows);
+        assert_eq!(child.custom_properties, parent.custom_properties);
 
         // non-inherited — initial に戻る。
         assert_eq!(child.background_color, initial.background_color);
@@ -1782,8 +1788,12 @@ mod tests {
             ComputedLength(16.0),
             ComputedLength(999.0),
         ] {
-            let via_staging = SpecifiedValues::inherit_from(&parent)
+            let mut via_staging = SpecifiedValues::inherit_from(&parent)
                 .finalize(&parent, &ResolveContext::new(root_font_size));
+            // `ComputedValues::inherit_from` also carries the crate-private
+            // custom-property inheritance bridge; mirror it here so this
+            // test continues to compare the same staging path.
+            via_staging.custom_properties = parent.custom_properties.clone();
             assert_eq!(
                 via_staging, expected,
                 "inherit_from must not depend on the rem basis ({root_font_size:?})"
