@@ -10,7 +10,9 @@
 use std::sync::{Arc, OnceLock};
 
 use cssparser::color::{clamp_unit_f32, parse_named_color};
-use cssparser::{BasicParseError, BasicParseErrorKind, ParseError, Parser, ParserInput, Token};
+use cssparser::{
+    BasicParseError, BasicParseErrorKind, ParseError, Parser, ParserInput, SourcePosition, Token,
+};
 use smol_str::SmolStr;
 
 use crate::Atom;
@@ -5666,11 +5668,7 @@ fn is_deferred_function(name: &str) -> bool {
 fn contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
     let start = input.state();
     let source_start = input.position();
-    let found = if input.slice_from(source_start).len() > MAX_SUBSTITUTED_VALUE_BYTES {
-        true
-    } else {
-        parser_contains_deferred_function(input)
-    };
+    let found = parser_contains_deferred_function(input, source_start);
     input.reset(&start);
     found
 }
@@ -5682,19 +5680,26 @@ fn contains_deferred_function_in_source(input: &str) -> bool {
     if input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
         return true;
     }
-    parser_contains_deferred_function(&mut parser)
+    let source_start = parser.position();
+    parser_contains_deferred_function(&mut parser, source_start)
 }
 
 /// Inspect CSS component-value tokens, including nested blocks, so a deferred
 /// function is recognized only when cssparser emitted a real `Function` token.
 /// Raw substring matching would mistake `#var(--x)` for a variable function.
-fn parser_contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
+fn parser_contains_deferred_function(
+    input: &mut Parser<'_, '_>,
+    source_start: SourcePosition,
+) -> bool {
     let mut found = false;
     loop {
         let token = match input.next() {
             Ok(token) => token.clone(),
             Err(_) => break,
         };
+        if input.slice(source_start..input.position()).len() > MAX_SUBSTITUTED_VALUE_BYTES {
+            found = true;
+        }
         match token {
             Token::Function(name) => {
                 if is_deferred_function(name.as_ref()) {
@@ -5702,7 +5707,10 @@ fn parser_contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
                 }
                 if input
                     .parse_nested_block(|nested| {
-                        Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(nested))
+                        Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(
+                            nested,
+                            source_start,
+                        ))
                     })
                     .unwrap_or(false)
                 {
@@ -5712,7 +5720,10 @@ fn parser_contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
             Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
                 if input
                     .parse_nested_block(|nested| {
-                        Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(nested))
+                        Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(
+                            nested,
+                            source_start,
+                        ))
                     })
                     .unwrap_or(false)
                 {
@@ -19336,6 +19347,11 @@ mod tests {
         let mut parser_input = ParserInput::new(&source);
         let mut parser = Parser::new(&mut parser_input);
         assert!(contains_deferred_function(&mut parser));
+
+        let oversized = "x".repeat(MAX_SUBSTITUTED_VALUE_BYTES + 1);
+        let mut oversized_input = ParserInput::new(&oversized);
+        let mut oversized_parser = Parser::new(&mut oversized_input);
+        assert!(contains_deferred_function(&mut oversized_parser));
     }
 
     #[test]

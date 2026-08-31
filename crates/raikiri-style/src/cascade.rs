@@ -5668,7 +5668,7 @@ fn css_literals_are_well_formed(input: &str) -> bool {
             continue;
         }
         let Some(character) = input[position..].chars().next() else {
-            return false;
+            return false; // cov:ignore: a valid Rust str cannot end between UTF-8 scalar values.
         };
         position += character.len_utf8();
     }
