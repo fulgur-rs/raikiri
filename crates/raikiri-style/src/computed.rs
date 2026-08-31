@@ -12,18 +12,20 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    AlignSelfValue, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue,
-    ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
-    GridTemplateAreasValue, Hyphens, OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue,
-    Sides, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform,
-    VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue, empty_content_list,
-    empty_counter_entries, empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BorderColor, BorderStyle, BoxSizing, BreakBetween,
+    BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor, Direction,
+    DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, OverflowValue, OverflowWrap,
+    OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
+    ZIndexValue, empty_content_list, empty_counter_entries, empty_quotes_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
-    ComputedBorder, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackSize,
-    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedLengthPercentageOrNormal, ComputedLineHeight, ComputedTabSize, ComputedTextShadow,
+    ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
+    ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+    ComputedOutline, ComputedTabSize, ComputedTextShadow, empty_computed_box_shadow_list,
     empty_computed_text_shadow_list, initial_computed_grid_auto_track_list,
 };
 
@@ -71,7 +73,7 @@ pub struct RunningTemplate {
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
 /// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
 /// non-inherited: background-color / display / counter-* / content / string-set /
-/// running_templates / padding / margin / border / width / height / box_sizing /
+/// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
 ///
 /// # 層
@@ -90,8 +92,7 @@ pub struct RunningTemplate {
 ///
 /// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
 ///
-/// `#[non_exhaustive]` により future property (box-shadow 等) の追加が
-/// non-breaking。
+/// `#[non_exhaustive]` により future property の追加が non-breaking。
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComputedValues {
@@ -428,6 +429,16 @@ pub struct ComputedValues {
     ///   [`border-color`](https://www.w3.org/TR/css-backgrounds-3/#border-color) /
     ///   [`border shorthand`](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)。
     pub border: Sides<ComputedBorder>,
+    /// `border-radius` の four-corner computed lengths。**non-inherited**、
+    /// initial は全 corner `0px`。percentage/elliptical form は specified
+    /// parser の scope 外。
+    pub border_radius: ComputedBorderRadius,
+    /// `box-shadow` の computed shadow list。**non-inherited**、initial は
+    /// empty list (`none`)。描画そのものは paint 層の責務。
+    pub box_shadow: Arc<Vec<ComputedBoxShadowItem>>,
+    /// `outline` の computed width/style/color。**non-inherited**、initial は
+    /// `medium` / `none` / `currentcolor`。outline は box model 寸法へ影響しない。
+    pub outline: ComputedOutline,
     /// `width` — preferred physical horizontal size (writing-mode neutral な
     /// physical property、vertical writing mode では block axis に対応)。
     /// **non-inherited**、initial: [`ComputedLengthPercentageOrAuto::Auto`] (CSS Sizing 3 §3.1.1
@@ -1100,6 +1111,18 @@ impl ComputedValues {
                 style: BorderStyle::None,
                 color: BorderColor::CurrentColor,
             }),
+            // CSS Backgrounds and Borders 3 §5: border-radius initial is 0.
+            border_radius: ComputedBorderRadius::all(ComputedLength::ZERO),
+            // CSS Backgrounds and Borders 3 §6.1: box-shadow initial is none.
+            box_shadow: empty_computed_box_shadow_list(),
+            // CSS UI 3 §4.1/§4.2: outline initial style is none and outline
+            // width initial is medium (3px). Unlike border width, the
+            // computed outline width is retained even when style is none.
+            outline: ComputedOutline {
+                width: ComputedLength(BORDER_WIDTH_MEDIUM_PX),
+                style: BorderStyle::None,
+                color: BorderColor::CurrentColor,
+            },
             // CSS Sizing 3 §3.1.1: width initial は `auto`。
             width: ComputedLengthPercentageOrAuto::Auto,
             // CSS Sizing 3 §3.1.1: height initial は `auto`。
@@ -1226,7 +1249,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
     ///
     /// # 実装 (delegation)
     ///
@@ -1367,6 +1390,14 @@ mod tests {
                 color: BorderColor::CurrentColor,
             })
         );
+        assert_eq!(
+            cv.border_radius,
+            ComputedBorderRadius::all(ComputedLength::ZERO)
+        );
+        assert!(cv.box_shadow.is_empty());
+        assert_eq!(cv.outline.width(), ComputedLength(3.0));
+        assert_eq!(cv.outline.style(), BorderStyle::None);
+        assert_eq!(cv.outline.color, BorderColor::CurrentColor);
         // CSS Sizing 3 §3.1.1: width initial は `auto`。
         assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
         // CSS Sizing 3 §3.1.1: height initial は `auto`。
@@ -1454,6 +1485,24 @@ mod tests {
                 style: BorderStyle::Solid,
                 color: BorderColor::Resolved(CssColor::BLACK),
             }),
+            border_radius: ComputedBorderRadius {
+                top_left: ComputedLength(1.0),
+                top_right: ComputedLength(2.0),
+                bottom_right: ComputedLength(3.0),
+                bottom_left: ComputedLength(4.0),
+            },
+            box_shadow: Arc::new(vec![ComputedBoxShadowItem {
+                offset_x: ComputedLength(1.0),
+                offset_y: ComputedLength(2.0),
+                blur_radius: ComputedLength(3.0),
+                spread_radius: ComputedLength(4.0),
+                color: TextShadowColor::Resolved(CssColor::BLACK),
+            }]),
+            outline: ComputedOutline {
+                width: ComputedLength(4.0),
+                style: BorderStyle::Solid,
+                color: BorderColor::Resolved(CssColor::BLACK),
+            },
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),
             box_sizing: BoxSizing::BorderBox,
@@ -1683,6 +1732,9 @@ mod tests {
         // `resolve_border` を通っている証拠でもある。
         assert_eq!(child.border, initial.border);
         assert_eq!(child.border.top.width, ComputedLength::ZERO);
+        assert_eq!(child.border_radius, initial.border_radius);
+        assert_eq!(child.box_shadow, initial.box_shadow);
+        assert_eq!(child.outline, initial.outline);
         assert_eq!(child.width, initial.width);
         assert_eq!(child.height, initial.height);
         assert_eq!(child.box_sizing, initial.box_sizing);

@@ -29,26 +29,29 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
-    AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderStyle, BoxSizing,
-    BreakBetween, BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor,
-    Direction, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
-    FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
-    GridTemplateTracks, GridTrackSize, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight,
-    OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform,
-    VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue, empty_content_list,
-    empty_counter_entries, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
-    initial_font_family, initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
+    AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderRadius, BorderStyle,
+    BoxShadowItem, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
+    ContentComponent, CssColor, Direction, DisplayValue, FlexBasisValue, FlexDirectionValue,
+    FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, Hyphens, Length, LengthOrAuto,
+    LengthOrNormal, LineHeight, Outline, OverflowValue, OverflowWrap, OverflowXY,
+    SelfAlignmentValue, Sides, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextShadowItem, TextTransform, VerticalAlign, Visibility, WhiteSpace,
+    WordBreak, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list, initial_font_family,
+    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
-    ComputedLength, ComputedLineHeight, ResolveContext, empty_computed_text_shadow_list,
-    lift_font_size, lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
-    lift_text_shadow_item, resolve_border, resolve_flex_basis, resolve_font_size,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length_or_normal,
-    resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_tab_size, resolve_text_shadow_item, resolve_vertical_align, used_line_height_length,
+    ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
+    empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_font_size,
+    lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
+    lift_text_shadow_item, resolve_border, resolve_border_radius, resolve_box_shadow_item,
+    resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
+    resolve_grid_template_tracks, resolve_length_or_normal, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
+    resolve_margin_length_or_auto, resolve_outline, resolve_tab_size, resolve_text_shadow_item,
+    resolve_vertical_align, used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -65,7 +68,7 @@ use crate::resolve::{
 ///
 /// | 層 | field |
 /// |---|---|
-/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` |
+/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` |
 /// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
@@ -186,6 +189,14 @@ pub struct SpecifiedValues {
     /// `border` の **specified** value。phase 3 ([`resolve_border`]) で
     /// width が絶対化され、`none` / `hidden` の style gating も適用される。
     pub border: Sides<Border>,
+    /// `border-radius` の **specified** value。phase 3 で四隅の length を
+    /// 自 node の font-size / line-height 基準へ絶対化する。
+    pub border_radius: BorderRadius,
+    /// `box-shadow` の **specified** value。phase 3 で各 shadow の length を
+    /// 絶対化する。property は non-inherited。
+    pub box_shadow: Arc<Vec<BoxShadowItem>>,
+    /// `outline` の **specified** value。phase 3 で width を絶対化する。
+    pub outline: Outline,
     /// `width` の **specified** value。phase 3 で絶対化される。
     pub width: LengthOrAuto,
     /// `height` の **specified** value。phase 3 で絶対化される。
@@ -406,6 +417,18 @@ impl SpecifiedValues {
             // border-image の節なので「一貫性のため」本 file を 5.x に
             // 戻してはならない。)
             border: Sides::all(INITIAL_BORDER),
+            border_radius: BorderRadius {
+                top_left: Length::Px(0.0),
+                top_right: Length::Px(0.0),
+                bottom_right: Length::Px(0.0),
+                bottom_left: Length::Px(0.0),
+            },
+            box_shadow: empty_box_shadow_list(),
+            outline: Outline {
+                width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
+                style: BorderStyle::None,
+                color: BorderColor::CurrentColor,
+            },
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
@@ -633,6 +656,18 @@ impl SpecifiedValues {
             padding: Sides::all(Length::Px(0.0)),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             border: Sides::all(INITIAL_BORDER),
+            border_radius: BorderRadius {
+                top_left: Length::Px(0.0),
+                top_right: Length::Px(0.0),
+                bottom_right: Length::Px(0.0),
+                bottom_left: Length::Px(0.0),
+            },
+            box_shadow: empty_box_shadow_list(),
+            outline: Outline {
+                width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
+                style: BorderStyle::None,
+                color: BorderColor::CurrentColor,
+            },
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
@@ -1013,6 +1048,23 @@ impl SpecifiedValues {
             border: self
                 .border
                 .map(|b| resolve_border(b, font_size, own_line_height, ctx)),
+            border_radius: resolve_border_radius(
+                self.border_radius,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            box_shadow: if self.box_shadow.is_empty() {
+                empty_computed_box_shadow_list()
+            } else {
+                Arc::new(
+                    self.box_shadow
+                        .iter()
+                        .map(|item| resolve_box_shadow_item(*item, font_size, own_line_height, ctx))
+                        .collect::<Vec<ComputedBoxShadowItem>>(),
+                )
+            },
+            outline: resolve_outline(self.outline, font_size, own_line_height, ctx),
             width: resolve_length_percentage_or_auto(self.width, font_size, own_line_height, ctx),
             height: resolve_length_percentage_or_auto(self.height, font_size, own_line_height, ctx),
             box_sizing: self.box_sizing,
@@ -1259,10 +1311,11 @@ mod tests {
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::TextShadowColor;
     use crate::resolve::{
-        ComputedBorder, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
-        ComputedGridTrackList, ComputedGridTrackListComponent, ComputedGridTrackSize,
-        ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-        ComputedLineHeight, ComputedTabSize, ComputedTextShadow,
+        ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
+        ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
+        ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLengthPercentage,
+        ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+        ComputedOutline, ComputedTabSize, ComputedTextShadow,
     };
 
     /// `root_font_size` = 16px の共通 context。
@@ -1353,6 +1406,24 @@ mod tests {
                 style: BorderStyle::Solid,
                 color: BorderColor::Resolved(CssColor::BLACK),
             }),
+            border_radius: ComputedBorderRadius {
+                top_left: ComputedLength(1.0),
+                top_right: ComputedLength(2.0),
+                bottom_right: ComputedLength(3.0),
+                bottom_left: ComputedLength(4.0),
+            },
+            box_shadow: Arc::new(vec![ComputedBoxShadowItem {
+                offset_x: ComputedLength(1.0),
+                offset_y: ComputedLength(2.0),
+                blur_radius: ComputedLength(3.0),
+                spread_radius: ComputedLength(4.0),
+                color: TextShadowColor::Resolved(CssColor::BLACK),
+            }]),
+            outline: ComputedOutline {
+                width: ComputedLength(4.0),
+                style: BorderStyle::Solid,
+                color: BorderColor::Resolved(CssColor::BLACK),
+            },
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),
             box_sizing: BoxSizing::BorderBox,

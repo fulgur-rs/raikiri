@@ -5313,6 +5313,11 @@ pub(crate) fn resolve_against_inherited(
         // above, nothing for phase 2 to resolve here. The `<color>`
         // component carries no length either (`TextShadowColor` doc).
         | PropertyValue::TextShadow(_)
+        // F7/F8/F9 lengths need the declaring node/page context and therefore
+        // remain for phase 3.
+        | PropertyValue::BorderRadius(_)
+        | PropertyValue::BoxShadow(_)
+        | PropertyValue::Outline(_)
         // CSS Grid Layout Module Level 1 grid-template-columns/-rows/-areas
         // (§7.2/§7.3) + grid-auto-columns/-rows/-flow (§7.6/§7.7) +
         // grid-row-start/-end/grid-column-start/-end (+ their `grid-row`/
@@ -5891,6 +5896,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `inherit_from` で親値 (lift 済み) を引き継ぐ。`Arc` は Clone が
         // bump のみなので by-value 代入で十分。
         PropertyValue::TextShadow(shadows) => target.text_shadow = shadows,
+        PropertyValue::BorderRadius(v) => target.border_radius = v,
+        PropertyValue::BoxShadow(shadows) => target.box_shadow = shadows,
+        PropertyValue::Outline(v) => target.outline = v,
         // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3。
         // non-inherited、specified 表現のまま格納 — 絶対化は phase 3 に
         // 委ねる (`LetterSpacing`/`FlexBasis` arm と同じ handling)。
@@ -5947,10 +5955,12 @@ mod tests {
     use crate::property::{
         Border, BorderColor, BorderStyle, Length, LengthOrAuto, OverflowValue, OverflowXY, Sides,
         TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
+        TextShadowColor,
     };
     use crate::resolve::{
-        ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-        ComputedLineHeight, ComputedTabSize, ComputedTextShadow,
+        ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
+        ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight,
+        ComputedTabSize, ComputedTextShadow,
     };
     use crate::ruletree::build_rule_tree;
     use crate::test_dom::TestDoc;
@@ -11991,6 +12001,87 @@ mod tests {
     fn text_shadow_none_is_empty_computed_list() {
         let cv = cascade_doc("", "p", Some("text-shadow: none"));
         assert!(cv.text_shadow.is_empty());
+    }
+
+    // ── border-radius / box-shadow / outline wire-through ────────────────
+
+    #[test]
+    fn border_radius_box_shadow_and_outline_compute_through_cascade() {
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some(
+                "border-radius: 1em 2em 3em 4em; \
+                 box-shadow: red 0.5em -1em 0.25em 0.125em, 2px 3px; \
+                 outline: solid 2em red",
+            ),
+        );
+
+        assert_eq!(
+            cv.border_radius,
+            ComputedBorderRadius {
+                top_left: ComputedLength(16.0),
+                top_right: ComputedLength(32.0),
+                bottom_right: ComputedLength(48.0),
+                bottom_left: ComputedLength(64.0),
+            }
+        );
+        assert_eq!(
+            *cv.box_shadow,
+            vec![
+                ComputedBoxShadowItem {
+                    offset_x: ComputedLength(8.0),
+                    offset_y: ComputedLength(-16.0),
+                    blur_radius: ComputedLength(4.0),
+                    spread_radius: ComputedLength(2.0),
+                    color: TextShadowColor::Resolved(CssColor {
+                        r: 255,
+                        g: 0,
+                        b: 0,
+                        a: 255,
+                    }),
+                },
+                ComputedBoxShadowItem {
+                    offset_x: ComputedLength(2.0),
+                    offset_y: ComputedLength(3.0),
+                    blur_radius: ComputedLength::ZERO,
+                    spread_radius: ComputedLength::ZERO,
+                    color: TextShadowColor::CurrentColor,
+                },
+            ]
+        );
+        assert_eq!(cv.outline.width(), ComputedLength(32.0));
+        assert_eq!(cv.outline.style(), BorderStyle::Solid);
+        assert_eq!(
+            cv.outline.color,
+            BorderColor::Resolved(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            })
+        );
+    }
+
+    #[test]
+    fn border_radius_box_shadow_and_outline_are_non_inherited() {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(
+            0,
+            "p",
+            Some("border-radius: 1px; box-shadow: 1px 2px red; outline: solid 3px red"),
+        );
+        let child = doc.push_element(parent, "span", None);
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        let initial = ComputedValues::initial();
+
+        assert_ne!(result.computed[parent].border_radius, initial.border_radius);
+        assert!(!result.computed[parent].box_shadow.is_empty());
+        assert_ne!(result.computed[parent].outline, initial.outline);
+        assert_eq!(result.computed[child].border_radius, initial.border_radius);
+        assert_eq!(result.computed[child].box_shadow, initial.box_shadow);
+        assert_eq!(result.computed[child].outline, initial.outline);
     }
 
     #[test]

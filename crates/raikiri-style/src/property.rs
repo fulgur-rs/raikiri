@@ -117,6 +117,12 @@ pub(crate) fn empty_text_shadow_list() -> Arc<Vec<TextShadowItem>> {
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
+/// 空 `box-shadow` list (`none`) を表す shared Arc。
+pub(crate) fn empty_box_shadow_list() -> Arc<Vec<BoxShadowItem>> {
+    static EMPTY: OnceLock<Arc<Vec<BoxShadowItem>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
 /// RGBA color (0-255 per channel、`a` は 255 = fully opaque)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CssColor {
@@ -4220,6 +4226,65 @@ pub struct TextShadowItem {
     pub color: TextShadowColor,
 }
 
+/// `border-radius` の four-corner `<length>` value。
+///
+/// CSS Backgrounds and Borders Level 3 §5
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-radius> の shorthand を
+/// parse-time に四隅へ展開した形。corner の順序は top-left, top-right,
+/// bottom-right, bottom-left (clockwise) で、`1`/`2`/`3` value の省略規則も
+/// `parse_border_radius` が適用する。`<percentage>`、slash で指定する楕円形状、
+/// longhand は本 task の scope 外である。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BorderRadius {
+    /// top-left corner radius。
+    pub top_left: Length,
+    /// top-right corner radius。
+    pub top_right: Length,
+    /// bottom-right corner radius。
+    pub bottom_right: Length,
+    /// bottom-left corner radius。
+    pub bottom_left: Length,
+}
+
+/// `box-shadow` の comma-separated list の 1 entry。
+///
+/// CSS Backgrounds and Borders Level 3 §6.1
+/// <https://www.w3.org/TR/css-backgrounds-3/#box-shadow> の offset、optional
+/// blur、optional spread、optional color を保持する。`inset` はこの task では
+/// 受理しない (下流実装との scope 合わせ)。offset と spread は負値を許し、blur
+/// は non-negative に制限する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoxShadowItem {
+    /// horizontal offset。
+    pub offset_x: Length,
+    /// vertical offset。
+    pub offset_y: Length,
+    /// blur radius。省略時は `0px`。
+    pub blur_radius: Length,
+    /// spread distance。省略時は `0px`。
+    pub spread_radius: Length,
+    /// color。省略時は `currentcolor`。
+    pub color: TextShadowColor,
+}
+
+/// `outline` shorthand の specified value。
+///
+/// CSS Basic User Interface Module Level 3 §3
+/// <https://www.w3.org/TR/css-ui-3/#outline-props> の width/style/color を
+/// any-order で保持する。outline は border と異なり box model の寸法を変えない。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Outline {
+    /// outline width。省略時は `medium`。
+    pub width: Length,
+    /// outline style。省略時は `none`。
+    pub style: BorderStyle,
+    /// outline color。省略時は `currentcolor`。
+    pub color: BorderColor,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -5105,6 +5170,15 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     TextShadow(Arc<Vec<TextShadowItem>>),
+    /// `border-radius` — non-inherited。four-corner `<length>` shorthand を
+    /// [`BorderRadius`] に展開する。percentage / elliptical slash form は未対応。
+    BorderRadius(BorderRadius),
+    /// `box-shadow: none | <shadow>#` — non-inherited。複数 entry を保持する。
+    /// `inset` は未対応、各 entry の color 省略は `currentcolor` で表現する。
+    BoxShadow(Arc<Vec<BoxShadowItem>>),
+    /// `outline` shorthand — non-inherited。width/style/color を保持するが、
+    /// outline の layout 非干渉性そのものは下流 layout の責務である。
+    Outline(Outline),
     /// `grid-template-columns` — non-inherited、initial:
     /// [`GridTemplateTracks::None`] ([`GridTemplateTracks`] doc 参照)。
     GridTemplateColumns(GridTemplateTracks),
@@ -5504,6 +5578,11 @@ pub enum PropertyKey {
     // convention).
     Orphans,
     Widows,
+    // border-radius / box-shadow / outline (CSS Backgrounds and Borders 3 §5
+    // / §6.1 and CSS UI 3 §3; semantics on matching PropertyValue variants).
+    BorderRadius,
+    BoxShadow,
+    Outline,
 }
 
 impl PropertyValue {
@@ -5619,6 +5698,9 @@ impl PropertyValue {
             PropertyValue::PlaceSelf(_) => PropertyKey::PlaceSelf,
             PropertyValue::Orphans(_) => PropertyKey::Orphans,
             PropertyValue::Widows(_) => PropertyKey::Widows,
+            PropertyValue::BorderRadius(_) => PropertyKey::BorderRadius,
+            PropertyValue::BoxShadow(_) => PropertyKey::BoxShadow,
+            PropertyValue::Outline(_) => PropertyKey::Outline,
         }
     }
 }
@@ -6008,6 +6090,23 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
                 PropertyValue::TextShadow(Arc::new(v))
             }
         }),
+        // CSS Backgrounds and Borders 3 §5: this task supports the four
+        // circular `<length>` radii only; percentages and slash-separated
+        // elliptical radii remain a follow-up.
+        "border-radius" => parse_border_radius(input).map(PropertyValue::BorderRadius),
+        // CSS Backgrounds and Borders 3 §6.1: multiple comma-separated
+        // shadows are stored as an Arc list. `inset` is intentionally outside
+        // this task's downstream-compatible subset.
+        "box-shadow" => parse_box_shadow(input).map(|v| {
+            if v.is_empty() {
+                PropertyValue::BoxShadow(empty_box_shadow_list())
+            } else {
+                PropertyValue::BoxShadow(Arc::new(v))
+            }
+        }),
+        // CSS UI 3 §3: outline is an any-order width/style/color shorthand and
+        // does not participate in box-model sizing.
+        "outline" => parse_outline(input).map(PropertyValue::Outline),
         // CSS Grid Layout Module Level 1 §7.2
         // <https://www.w3.org/TR/css-grid-1/#track-sizing>.
         "grid-template-columns" => {
@@ -10058,6 +10157,178 @@ fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextShadowItem>> 
         .ok()
 }
 
+/// `border-radius` の 1--4 個の circular `<length>` を四隅へ展開する。
+///
+/// CSS Backgrounds and Borders 3 §5 の shorthand expansion に従い、値は
+/// top-left, top-right, bottom-right, bottom-left の順で解釈する。
+/// percentage、slash 以降の楕円形指定、負値はこの task では受理しない。
+fn parse_border_radius(input: &mut Parser<'_, '_>) -> Option<BorderRadius> {
+    let first = parse_non_negative_length(input)?;
+    let second = input.try_parse(parse_non_negative_length_res).ok();
+    let third = input.try_parse(parse_non_negative_length_res).ok();
+    let fourth = input.try_parse(parse_non_negative_length_res).ok();
+
+    Some(match (second, third, fourth) {
+        (None, _, _) => BorderRadius {
+            top_left: first,
+            top_right: first,
+            bottom_right: first,
+            bottom_left: first,
+        },
+        (Some(opposite), None, _) => BorderRadius {
+            top_left: first,
+            top_right: opposite,
+            bottom_right: first,
+            bottom_left: opposite,
+        },
+        (Some(horizontal), Some(bottom), None) => BorderRadius {
+            top_left: first,
+            top_right: horizontal,
+            bottom_right: bottom,
+            bottom_left: horizontal,
+        },
+        (Some(top_right), Some(bottom_right), Some(bottom_left)) => BorderRadius {
+            top_left: first,
+            top_right,
+            bottom_right,
+            bottom_left,
+        },
+    })
+}
+
+fn parse_non_negative_length_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<Length, ParseError<'i, ()>> {
+    parse_non_negative_length(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+fn parse_length_allow_negative_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<Length, ParseError<'i, ()>> {
+    parse_length_allow_negative(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `<length>{2,4}` の box-shadow length run を parse する。
+fn parse_box_shadow_lengths<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<(Length, Length, Length, Length), ParseError<'i, ()>> {
+    let offset_x = parse_length_value(input, false).ok_or_else(|| input.new_custom_error(()))?;
+    let offset_y = parse_length_value(input, false).ok_or_else(|| input.new_custom_error(()))?;
+    // Parse the optional third slot without rewinding a negative length into
+    // the fourth (spread) slot.  The grammar's third length is blur-radius,
+    // which is non-negative; only the fourth spread-radius may be negative.
+    let blur_radius = match input.try_parse(parse_length_allow_negative_res) {
+        Ok(value) if length_payload(value) >= 0.0 => value,
+        Ok(_) => return Err(input.new_custom_error(())),
+        Err(_) => Length::Px(0.0),
+    };
+    let spread_radius = input
+        .try_parse(parse_length_allow_negative_res)
+        .unwrap_or(Length::Px(0.0));
+    Ok((offset_x, offset_y, blur_radius, spread_radius))
+}
+
+fn parse_box_shadow_item(input: &mut Parser<'_, '_>) -> Option<BoxShadowItem> {
+    let mut lengths: Option<(Length, Length, Length, Length)> = None;
+    let mut color: Option<TextShadowColor> = None;
+
+    loop {
+        if lengths.is_some() && color.is_some() {
+            break;
+        }
+        if lengths.is_none()
+            && let Ok(value) = input.try_parse(parse_box_shadow_lengths)
+        {
+            lengths = Some(value);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(value) = input.try_parse(|i| -> Result<TextShadowColor, ParseError<'_, ()>> {
+                parse_text_shadow_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            color = Some(value);
+            continue;
+        }
+        break;
+    }
+
+    let (offset_x, offset_y, blur_radius, spread_radius) = lengths?;
+    Some(BoxShadowItem {
+        offset_x,
+        offset_y,
+        blur_radius,
+        spread_radius,
+        color: color.unwrap_or(TextShadowColor::CurrentColor),
+    })
+}
+
+/// `box-shadow: none | <shadow>#` を parse する。
+fn parse_box_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<BoxShadowItem>> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(Vec::new());
+    }
+    input
+        .parse_comma_separated(|i| -> Result<BoxShadowItem, ParseError<'_, ()>> {
+            parse_box_shadow_item(i).ok_or_else(|| i.new_custom_error(()))
+        })
+        .ok()
+}
+
+/// `outline` shorthand の width/style/color components を any-order で parse する。
+fn parse_outline(input: &mut Parser<'_, '_>) -> Option<Outline> {
+    let mut width: Option<Length> = None;
+    let mut style: Option<BorderStyle> = None;
+    let mut color: Option<BorderColor> = None;
+
+    loop {
+        if width.is_some() && style.is_some() && color.is_some() {
+            break;
+        }
+        if width.is_none()
+            && let Ok(value) = input.try_parse(parse_border_width_side_res)
+        {
+            width = Some(value);
+            continue;
+        }
+        if style.is_none()
+            && let Ok(value) = input.try_parse(parse_outline_style_res)
+        {
+            style = Some(value);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(value) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
+                parse_border_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            color = Some(value);
+            continue;
+        }
+        break;
+    }
+
+    if width.is_none() && style.is_none() && color.is_none() {
+        return None;
+    }
+    Some(Outline {
+        width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)),
+        style: style.unwrap_or(BorderStyle::None),
+        color: color.unwrap_or(BorderColor::CurrentColor),
+    })
+}
+
+fn parse_outline_style_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<BorderStyle, ParseError<'i, ()>> {
+    let style = parse_border_style_side(input).ok_or_else(|| input.new_custom_error(()))?;
+    if matches!(style, BorderStyle::Hidden) {
+        Err(input.new_custom_error(()))
+    } else {
+        Ok(style)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10067,6 +10338,25 @@ mod tests {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
         parse_value(name, &mut parser)
+    }
+
+    fn parse_entire(source: &str, name: &str) -> Option<PropertyValue> {
+        let mut input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut input);
+        parser
+            .parse_entirely(|i| -> Result<PropertyValue, ParseError<'_, ()>> {
+                parse_value(name, i).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+    }
+
+    fn red() -> CssColor {
+        CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        }
     }
 
     #[test]
@@ -18962,6 +19252,138 @@ mod tests {
         assert_eq!(parse("100", "orphans"), Some(PropertyValue::Orphans(100)));
         assert_eq!(parse("1", "widows"), Some(PropertyValue::Widows(1)));
         assert_eq!(parse("3", "widows"), Some(PropertyValue::Widows(3)));
+    }
+
+    // ── border-radius / box-shadow / outline (CSS Backgrounds 3 / CSS UI 3)
+    // ──
+
+    #[test]
+    fn border_radius_expands_one_to_four_lengths_in_clockwise_order() {
+        assert_eq!(
+            parse("1px", "border-radius"),
+            Some(PropertyValue::BorderRadius(BorderRadius {
+                top_left: Length::Px(1.0),
+                top_right: Length::Px(1.0),
+                bottom_right: Length::Px(1.0),
+                bottom_left: Length::Px(1.0),
+            }))
+        );
+        assert_eq!(
+            parse("1px 2em", "border-radius"),
+            Some(PropertyValue::BorderRadius(BorderRadius {
+                top_left: Length::Px(1.0),
+                top_right: Length::Em(2.0),
+                bottom_right: Length::Px(1.0),
+                bottom_left: Length::Em(2.0),
+            }))
+        );
+        assert_eq!(
+            parse("1px 2px 3px", "border-radius"),
+            Some(PropertyValue::BorderRadius(BorderRadius {
+                top_left: Length::Px(1.0),
+                top_right: Length::Px(2.0),
+                bottom_right: Length::Px(3.0),
+                bottom_left: Length::Px(2.0),
+            }))
+        );
+        assert_eq!(
+            parse("1px 2px 3px 4px", "border-radius"),
+            Some(PropertyValue::BorderRadius(BorderRadius {
+                top_left: Length::Px(1.0),
+                top_right: Length::Px(2.0),
+                bottom_right: Length::Px(3.0),
+                bottom_left: Length::Px(4.0),
+            }))
+        );
+    }
+
+    #[test]
+    fn border_radius_rejects_percentages_and_negative_lengths() {
+        assert_eq!(parse_entire("50%", "border-radius"), None);
+        assert_eq!(parse_entire("1px -2px", "border-radius"), None);
+    }
+
+    #[test]
+    fn box_shadow_parses_none_multiple_entries_and_optional_components() {
+        assert_eq!(
+            parse("none", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![])))
+        );
+
+        let value = parse("red 1px -2px 3px 4px, 2px 3px", "box-shadow");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        let Some(PropertyValue::BoxShadow(shadows)) = value else {
+            panic!("box-shadow should parse to a shadow list");
+        };
+        assert_eq!(
+            shadows.as_ref(),
+            &[
+                BoxShadowItem {
+                    offset_x: Length::Px(1.0),
+                    offset_y: Length::Px(-2.0),
+                    blur_radius: Length::Px(3.0),
+                    spread_radius: Length::Px(4.0),
+                    color: TextShadowColor::Resolved(red()),
+                },
+                BoxShadowItem {
+                    offset_x: Length::Px(2.0),
+                    offset_y: Length::Px(3.0),
+                    blur_radius: Length::Px(0.0),
+                    spread_radius: Length::Px(0.0),
+                    color: TextShadowColor::CurrentColor,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn box_shadow_rejects_inset_percentages_and_negative_blur_but_allows_spread() {
+        assert_eq!(parse("inset 1px 2px", "box-shadow"), None);
+        assert_eq!(parse_entire("1px 2px 3px 4px 5px", "box-shadow"), None);
+        assert_eq!(parse("1px 2px -3px", "box-shadow"), None);
+        assert_eq!(
+            parse("1px 2px 3px -4px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(3.0),
+                spread_radius: Length::Px(-4.0),
+                color: TextShadowColor::CurrentColor,
+            }])))
+        );
+        assert_eq!(parse("1px 2px 10%", "box-shadow"), None);
+    }
+
+    #[test]
+    fn outline_parses_any_order_and_fills_initial_components() {
+        assert_eq!(
+            parse("solid 2px red", "outline"),
+            Some(PropertyValue::Outline(Outline {
+                width: Length::Px(2.0),
+                style: BorderStyle::Solid,
+                color: BorderColor::Resolved(red()),
+            }))
+        );
+        assert_eq!(
+            parse("red", "outline"),
+            Some(PropertyValue::Outline(Outline {
+                width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
+                style: BorderStyle::None,
+                color: BorderColor::Resolved(red()),
+            }))
+        );
+        assert_eq!(parse("auto", "outline"), None);
+        assert_eq!(parse("hidden", "outline"), None);
+        assert_eq!(
+            PropertyValue::Outline(Outline {
+                width: Length::Px(1.0),
+                style: BorderStyle::None,
+                color: BorderColor::CurrentColor,
+            })
+            .key(),
+            PropertyKey::Outline
+        );
     }
 
     #[test]
