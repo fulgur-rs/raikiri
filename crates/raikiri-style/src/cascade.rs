@@ -2750,6 +2750,822 @@ fn text_node_first_strong_direction(data: &str) -> Option<Direction> {
     })
 }
 
+// Transcribed from `DerivedBidiClass.txt`'s "@missing" default-value
+// comments for the code point ranges reserved for right-to-left
+// scripts (see this function's doc) — each left edge/right edge here
+// is one of those file's own `@missing: START..END; Bidi_Class` lines.
+const AL_RANGES: &[(u32, u32)] = &[
+    (0x0600, 0x07BF),   // Arabic, Syriac, Arabic Supplement, Thaana
+    (0x0860, 0x08FF),   // Syriac Supplement, Arabic Extended-B/-A
+    (0xFB50, 0xFDCF),   // Arabic Presentation Forms-A (partial)
+    (0xFDF0, 0xFDFF),   // Arabic Presentation Forms-A (partial)
+    (0xFE70, 0xFEFF),   // Arabic Presentation Forms-B
+    (0x10D00, 0x10D3F), // Hanifi Rohingya
+    (0x10EC0, 0x10EFF), // Arabic Extended-C
+    (0x10F30, 0x10F6F), // Sogdian
+    (0x1EC70, 0x1ECBF), // Indic Siyaq Numbers
+    (0x1ED00, 0x1ED4F), // Ottoman Siyaq Numbers
+    (0x1EE00, 0x1EEFF), // Arabic Mathematical Alphabetic Symbols
+];
+// FB1D..FB4F (Hebrew Presentation Forms) is a separate range from the
+// main Hebrew block below because it is only *half* of the Alphabetic
+// Presentation Forms block — the other half, FB00..FB1C (Latin
+// ligatures), is Left_To_Right, not Right_To_Left.
+const R_RANGES: &[(u32, u32)] = &[
+    (0x0590, 0x05FF),   // Hebrew
+    (0x07C0, 0x085F),   // NKo, Samaritan, Mandaic
+    (0xFB1D, 0xFB4F),   // Hebrew Presentation Forms
+    (0x10800, 0x10CFF), // Cypriot..Old Hungarian
+    (0x10D40, 0x10EBF), // Garay, Rumi Numeral Symbols, Yezidi
+    (0x10F00, 0x10F2F), // Old Sogdian
+    (0x10F70, 0x10FFF), // Old Uyghur..Elymaic
+    (0x1E800, 0x1EC6F), // Mende Kikakui..Adlam
+    (0x1ECC0, 0x1ECFF), // reserved remainder after Indic Siyaq Numbers (R-default)
+    (0x1ED50, 0x1EDFF), // reserved remainder after Ottoman Siyaq Numbers (R-default)
+    (0x1EF00, 0x1EFFF), // reserved remainder after Arabic Mathematical Alphabetic Symbols (R-default)
+];
+// Code points *inside* an `AL_RANGES`/`R_RANGES` span above whose real
+// `Bidi_Class` (per `DerivedBidiClass.txt`'s explicit, non-`@missing`
+// per-code-point entries, Unicode 17.0.0) is not that span's own
+// `AL`/`R` default — see this function's doc, the "known imprecision"
+// paragraph, for why this table exists (over-classifying these as
+// strong `AL`/`R` can resolve the wrong direction outright, not just
+// stop the scan one code point early) and how it was derived. Checked
+// before either range table below, so every code point here is
+// classified `None` (non-strong) instead of falling into
+// `AL_RANGES`/`R_RANGES`'s membership check.
+const NON_STRONG_WITHIN_AL_R_RANGES: &[(u32, u32)] = &[
+    // Hebrew
+    (0x0591, 0x05BD), // NSM
+    (0x05BF, 0x05BF), // NSM
+    (0x05C1, 0x05C2), // NSM
+    (0x05C4, 0x05C5), // NSM
+    (0x05C7, 0x05C7), // NSM
+    // Arabic, Syriac, Arabic Supplement, Thaana
+    (0x0600, 0x0605), // AN
+    (0x0606, 0x0607), // ON
+    (0x0609, 0x060A), // ET
+    (0x060C, 0x060C), // CS
+    (0x060E, 0x060F), // ON
+    (0x0610, 0x061A), // NSM
+    (0x064B, 0x065F), // NSM
+    (0x0660, 0x0669), // AN
+    (0x066A, 0x066A), // ET
+    (0x066B, 0x066C), // AN
+    (0x0670, 0x0670), // NSM
+    (0x06D6, 0x06DC), // NSM
+    (0x06DD, 0x06DD), // AN
+    (0x06DE, 0x06DE), // ON
+    (0x06DF, 0x06E4), // NSM
+    (0x06E7, 0x06E8), // NSM
+    (0x06E9, 0x06E9), // ON
+    (0x06EA, 0x06ED), // NSM
+    (0x06F0, 0x06F9), // EN
+    (0x0711, 0x0711), // NSM
+    (0x0730, 0x074A), // NSM
+    (0x07A6, 0x07B0), // NSM
+    // NKo, Samaritan, Mandaic
+    (0x07EB, 0x07F3), // NSM
+    (0x07F6, 0x07F6), // ON
+    (0x07F7, 0x07F9), // ON
+    (0x07FD, 0x07FD), // NSM
+    (0x0816, 0x0819), // NSM
+    (0x081B, 0x0823), // NSM
+    (0x0825, 0x0827), // NSM
+    (0x0829, 0x082D), // NSM
+    (0x0859, 0x085B), // NSM
+    // Syriac Supplement, Arabic Extended-B/-A
+    (0x0890, 0x0891), // AN
+    (0x0897, 0x089F), // NSM
+    (0x08CA, 0x08E1), // NSM
+    (0x08E2, 0x08E2), // AN
+    (0x08E3, 0x08FF), // NSM (this entry's real DerivedBidiClass.txt
+    // range continues to U+0902, already covered separately by
+    // `NON_STRONG_ALPHABETIC_RANGES`'s Devanagari `(0x0900, 0x0902)`
+    // entry below — clipped here to stay inside this span)
+    // Hebrew Presentation Forms
+    (0xFB1E, 0xFB1E), // NSM
+    (0xFB29, 0xFB29), // ES
+    // Arabic Presentation Forms-A (partial)
+    (0xFBC3, 0xFBD2), // ON
+    (0xFD3E, 0xFD3E), // ON
+    (0xFD3F, 0xFD3F), // ON
+    (0xFD40, 0xFD4F), // ON
+    (0xFD90, 0xFD91), // ON
+    (0xFDC8, 0xFDCF), // ON
+    (0xFDFD, 0xFDFF), // ON
+    // Arabic Presentation Forms-B
+    (0xFEFF, 0xFEFF), // BN
+    // Cypriot..Old Hungarian
+    (0x1091F, 0x1091F), // ON
+    (0x10A01, 0x10A03), // NSM
+    (0x10A05, 0x10A06), // NSM
+    (0x10A0C, 0x10A0F), // NSM
+    (0x10A38, 0x10A3A), // NSM
+    (0x10A3F, 0x10A3F), // NSM
+    (0x10AE5, 0x10AE6), // NSM
+    (0x10B39, 0x10B3F), // ON
+    // Hanifi Rohingya
+    (0x10D24, 0x10D27), // NSM
+    (0x10D30, 0x10D39), // AN
+    // Garay, Rumi Numeral Symbols, Yezidi
+    (0x10D40, 0x10D49), // AN
+    (0x10D69, 0x10D6D), // NSM
+    (0x10D6E, 0x10D6E), // ON
+    (0x10E60, 0x10E7E), // AN
+    (0x10EAB, 0x10EAC), // NSM
+    // Arabic Extended-C
+    (0x10ED0, 0x10ED0), // ON
+    (0x10ED1, 0x10ED8), // ON
+    (0x10EFA, 0x10EFF), // NSM
+    // Sogdian
+    (0x10F46, 0x10F50), // NSM
+    // Old Uyghur..Elymaic
+    (0x10F82, 0x10F85), // NSM
+    // Mende Kikakui..Adlam
+    (0x1E8D0, 0x1E8D6), // NSM
+    (0x1E944, 0x1E94A), // NSM
+    // Arabic Mathematical Alphabetic Symbols
+    (0x1EEF0, 0x1EEF1), // ON
+];
+// Code points where `Alphabetic=Yes` (the property `char::is_alphabetic`
+// implements) but the real `Bidi_Class` is something other than `L` —
+// see this function's doc, "`is_alphabetic()` fallback" section, case 1,
+// for why this table exists and how it was derived. None of these
+// ranges overlaps `AL_RANGES`/`R_RANGES` above (by construction of the
+// derivation), so every entry here really does fall through to the
+// `is_alphabetic()` branch below absent this check.
+const NON_STRONG_ALPHABETIC_RANGES: &[(u32, u32)] = &[
+    // Spacing Modifier Letters
+    (0x02B9, 0x02BA), // ON
+    (0x02C6, 0x02CF), // ON
+    (0x02EC, 0x02EC), // ON
+    // Combining Diacritical Marks
+    (0x0345, 0x0345), // NSM
+    (0x0363, 0x036F), // NSM
+    // Greek and Coptic
+    (0x0374, 0x0374), // ON
+    // Devanagari
+    (0x0900, 0x0902), // NSM
+    (0x093A, 0x093A), // NSM
+    (0x0941, 0x0948), // NSM
+    (0x0955, 0x0957), // NSM
+    (0x0962, 0x0963), // NSM
+    // Bengali
+    (0x0981, 0x0981), // NSM
+    (0x09C1, 0x09C4), // NSM
+    (0x09E2, 0x09E3), // NSM
+    // Gurmukhi
+    (0x0A01, 0x0A02), // NSM
+    (0x0A41, 0x0A42), // NSM
+    (0x0A47, 0x0A48), // NSM
+    (0x0A4B, 0x0A4C), // NSM
+    (0x0A51, 0x0A51), // NSM
+    (0x0A70, 0x0A71), // NSM
+    (0x0A75, 0x0A75), // NSM
+    // Gujarati
+    (0x0A81, 0x0A82), // NSM
+    (0x0AC1, 0x0AC5), // NSM
+    (0x0AC7, 0x0AC8), // NSM
+    (0x0AE2, 0x0AE3), // NSM
+    (0x0AFA, 0x0AFC), // NSM
+    // Oriya
+    (0x0B01, 0x0B01), // NSM
+    (0x0B3F, 0x0B3F), // NSM
+    (0x0B41, 0x0B44), // NSM
+    (0x0B56, 0x0B56), // NSM
+    (0x0B62, 0x0B63), // NSM
+    // Tamil
+    (0x0B82, 0x0B82), // NSM
+    (0x0BC0, 0x0BC0), // NSM
+    // Telugu
+    (0x0C00, 0x0C00), // NSM
+    (0x0C04, 0x0C04), // NSM
+    (0x0C3E, 0x0C40), // NSM
+    (0x0C46, 0x0C48), // NSM
+    (0x0C4A, 0x0C4C), // NSM
+    (0x0C55, 0x0C56), // NSM
+    (0x0C62, 0x0C63), // NSM
+    // Kannada
+    (0x0C81, 0x0C81), // NSM
+    (0x0CCC, 0x0CCC), // NSM
+    (0x0CE2, 0x0CE3), // NSM
+    // Malayalam
+    (0x0D00, 0x0D01), // NSM
+    (0x0D41, 0x0D44), // NSM
+    (0x0D62, 0x0D63), // NSM
+    // Sinhala
+    (0x0D81, 0x0D81), // NSM
+    (0x0DD2, 0x0DD4), // NSM
+    (0x0DD6, 0x0DD6), // NSM
+    // Thai
+    (0x0E31, 0x0E31), // NSM
+    (0x0E34, 0x0E3A), // NSM
+    (0x0E4D, 0x0E4D), // NSM
+    // Lao
+    (0x0EB1, 0x0EB1), // NSM
+    (0x0EB4, 0x0EB9), // NSM
+    (0x0EBB, 0x0EBC), // NSM
+    (0x0ECD, 0x0ECD), // NSM
+    // Tibetan
+    (0x0F71, 0x0F7E), // NSM
+    (0x0F80, 0x0F83), // NSM
+    (0x0F8D, 0x0F97), // NSM
+    (0x0F99, 0x0FBC), // NSM
+    // Myanmar
+    (0x102D, 0x1030), // NSM
+    (0x1032, 0x1036), // NSM
+    (0x103D, 0x103E), // NSM
+    (0x1058, 0x1059), // NSM
+    (0x105E, 0x1060), // NSM
+    (0x1071, 0x1074), // NSM
+    (0x1082, 0x1082), // NSM
+    (0x1085, 0x1086), // NSM
+    (0x108D, 0x108D), // NSM
+    (0x109D, 0x109D), // NSM
+    // Tagalog
+    (0x1712, 0x1713), // NSM
+    // Hanunoo
+    (0x1732, 0x1733), // NSM
+    // Buhid
+    (0x1752, 0x1753), // NSM
+    // Tagbanwa
+    (0x1772, 0x1773), // NSM
+    // Khmer
+    (0x17B7, 0x17BD), // NSM
+    (0x17C6, 0x17C6), // NSM
+    // Mongolian
+    (0x1885, 0x1886), // NSM
+    (0x18A9, 0x18A9), // NSM
+    // Limbu
+    (0x1920, 0x1922), // NSM
+    (0x1927, 0x1928), // NSM
+    (0x1932, 0x1932), // NSM
+    // Buginese
+    (0x1A17, 0x1A18), // NSM
+    (0x1A1B, 0x1A1B), // NSM
+    // Tai Tham
+    (0x1A56, 0x1A56), // NSM
+    (0x1A58, 0x1A5E), // NSM
+    (0x1A62, 0x1A62), // NSM
+    (0x1A65, 0x1A6C), // NSM
+    (0x1A73, 0x1A74), // NSM
+    // Combining Diacritical Marks Extended
+    (0x1ABF, 0x1AC0), // NSM
+    (0x1ACC, 0x1ACE), // NSM
+    // Balinese
+    (0x1B00, 0x1B03), // NSM
+    (0x1B36, 0x1B3A), // NSM
+    (0x1B3C, 0x1B3C), // NSM
+    (0x1B42, 0x1B42), // NSM
+    // Sundanese
+    (0x1B80, 0x1B81), // NSM
+    (0x1BA2, 0x1BA5), // NSM
+    (0x1BA8, 0x1BA9), // NSM
+    (0x1BAC, 0x1BAD), // NSM
+    // Batak
+    (0x1BE8, 0x1BE9), // NSM
+    (0x1BED, 0x1BED), // NSM
+    (0x1BEF, 0x1BF1), // NSM
+    // Lepcha
+    (0x1C2C, 0x1C33), // NSM
+    (0x1C36, 0x1C36), // NSM
+    // Combining Diacritical Marks Supplement
+    (0x1DD3, 0x1DF4), // NSM
+    // Cyrillic Extended-A
+    (0x2DE0, 0x2DFF), // NSM
+    // Supplemental Punctuation
+    (0x2E2F, 0x2E2F), // ON
+    // Cyrillic Extended-B
+    (0xA674, 0xA67B), // NSM
+    (0xA67F, 0xA67F), // ON
+    (0xA69E, 0xA69F), // NSM
+    // Modifier Tone Letters
+    (0xA717, 0xA71F), // ON
+    // Latin Extended-D
+    (0xA788, 0xA788), // ON
+    // Syloti Nagri
+    (0xA802, 0xA802), // NSM
+    (0xA80B, 0xA80B), // NSM
+    (0xA825, 0xA826), // NSM
+    // Saurashtra
+    (0xA8C5, 0xA8C5), // NSM
+    // Devanagari Extended
+    (0xA8FF, 0xA8FF), // NSM
+    // Kayah Li
+    (0xA926, 0xA92A), // NSM
+    // Rejang
+    (0xA947, 0xA951), // NSM
+    // Javanese
+    (0xA980, 0xA982), // NSM
+    (0xA9B6, 0xA9B9), // NSM
+    (0xA9BC, 0xA9BD), // NSM
+    // Myanmar Extended-B
+    (0xA9E5, 0xA9E5), // NSM
+    // Cham
+    (0xAA29, 0xAA2E), // NSM
+    (0xAA31, 0xAA32), // NSM
+    (0xAA35, 0xAA36), // NSM
+    (0xAA43, 0xAA43), // NSM
+    (0xAA4C, 0xAA4C), // NSM
+    // Myanmar Extended-A
+    (0xAA7C, 0xAA7C), // NSM
+    // Tai Viet
+    (0xAAB0, 0xAAB0), // NSM
+    (0xAAB2, 0xAAB4), // NSM
+    (0xAAB7, 0xAAB8), // NSM
+    (0xAABE, 0xAABE), // NSM
+    // Meetei Mayek Extensions
+    (0xAAEC, 0xAAED), // NSM
+    // Meetei Mayek
+    (0xABE5, 0xABE5), // NSM
+    (0xABE8, 0xABE8), // NSM
+    // Ancient Greek Numbers
+    (0x10140, 0x10174), // ON
+    // Old Permic
+    (0x10376, 0x1037A), // NSM
+    // Brahmi
+    (0x11001, 0x11001), // NSM
+    (0x11038, 0x11045), // NSM
+    (0x11073, 0x11074), // NSM
+    // Kaithi
+    (0x11080, 0x11081), // NSM
+    (0x110B3, 0x110B6), // NSM
+    (0x110C2, 0x110C2), // NSM
+    // Chakma
+    (0x11100, 0x11102), // NSM
+    (0x11127, 0x1112B), // NSM
+    (0x1112D, 0x11132), // NSM
+    // Sharada
+    (0x11180, 0x11181), // NSM
+    (0x111B6, 0x111BE), // NSM
+    (0x111CF, 0x111CF), // NSM
+    // Khojki
+    (0x1122F, 0x11231), // NSM
+    (0x11234, 0x11234), // NSM
+    (0x11237, 0x11237), // NSM
+    (0x1123E, 0x1123E), // NSM
+    (0x11241, 0x11241), // NSM
+    // Khudawadi
+    (0x112DF, 0x112DF), // NSM
+    (0x112E3, 0x112E8), // NSM
+    // Grantha
+    (0x11300, 0x11301), // NSM
+    (0x11340, 0x11340), // NSM
+    // Tulu-Tigalari
+    (0x113BB, 0x113C0), // NSM
+    // Newa
+    (0x11438, 0x1143F), // NSM
+    (0x11443, 0x11444), // NSM
+    // Tirhuta
+    (0x114B3, 0x114B8), // NSM
+    (0x114BA, 0x114BA), // NSM
+    (0x114BF, 0x114C0), // NSM
+    // Siddham
+    (0x115B2, 0x115B5), // NSM
+    (0x115BC, 0x115BD), // NSM
+    (0x115DC, 0x115DD), // NSM
+    // Modi
+    (0x11633, 0x1163A), // NSM
+    (0x1163D, 0x1163D), // NSM
+    (0x11640, 0x11640), // NSM
+    // Takri
+    (0x116AB, 0x116AB), // NSM
+    (0x116AD, 0x116AD), // NSM
+    (0x116B0, 0x116B5), // NSM
+    // Ahom
+    (0x1171D, 0x1171D), // NSM
+    (0x1171F, 0x1171F), // NSM
+    (0x11722, 0x11725), // NSM
+    (0x11727, 0x1172A), // NSM
+    // Dogra
+    (0x1182F, 0x11837), // NSM
+    // Dives Akuru
+    (0x1193B, 0x1193C), // NSM
+    // Nandinagari
+    (0x119D4, 0x119D7), // NSM
+    (0x119DA, 0x119DB), // NSM
+    // Zanabazar Square
+    (0x11A01, 0x11A06), // NSM
+    (0x11A09, 0x11A0A), // NSM
+    (0x11A35, 0x11A38), // NSM
+    (0x11A3B, 0x11A3E), // NSM
+    // Soyombo
+    (0x11A51, 0x11A56), // NSM
+    (0x11A59, 0x11A5B), // NSM
+    (0x11A8A, 0x11A96), // NSM
+    // Sharada Supplement
+    (0x11B60, 0x11B60), // NSM
+    (0x11B62, 0x11B64), // NSM
+    (0x11B66, 0x11B66), // NSM
+    // Bhaiksuki
+    (0x11C30, 0x11C36), // NSM
+    (0x11C38, 0x11C3D), // NSM
+    // Marchen
+    (0x11C92, 0x11CA7), // NSM
+    (0x11CAA, 0x11CB0), // NSM
+    (0x11CB2, 0x11CB3), // NSM
+    (0x11CB5, 0x11CB6), // NSM
+    // Masaram Gondi
+    (0x11D31, 0x11D36), // NSM
+    (0x11D3A, 0x11D3A), // NSM
+    (0x11D3C, 0x11D3D), // NSM
+    (0x11D3F, 0x11D41), // NSM
+    (0x11D43, 0x11D43), // NSM
+    (0x11D47, 0x11D47), // NSM
+    // Gunjala Gondi
+    (0x11D90, 0x11D91), // NSM
+    (0x11D95, 0x11D95), // NSM
+    // Makasar
+    (0x11EF3, 0x11EF4), // NSM
+    // Kawi
+    (0x11F00, 0x11F01), // NSM
+    (0x11F36, 0x11F3A), // NSM
+    (0x11F40, 0x11F40), // NSM
+    // Gurung Khema
+    (0x1611E, 0x16129), // NSM
+    (0x1612D, 0x1612E), // NSM
+    // Miao
+    (0x16F4F, 0x16F4F), // NSM
+    (0x16F8F, 0x16F92), // NSM
+    // Duployan
+    (0x1BC9E, 0x1BC9E), // NSM
+    // Glagolitic Supplement
+    (0x1E000, 0x1E006), // NSM
+    (0x1E008, 0x1E018), // NSM
+    (0x1E01B, 0x1E021), // NSM
+    (0x1E023, 0x1E024), // NSM
+    (0x1E026, 0x1E02A), // NSM
+    // Cyrillic Extended-D
+    (0x1E08F, 0x1E08F), // NSM
+    // Tai Yo
+    (0x1E6E3, 0x1E6E3), // NSM
+    (0x1E6E6, 0x1E6E6), // NSM
+    (0x1E6EE, 0x1E6EF), // NSM
+    (0x1E6F5, 0x1E6F5), // NSM
+];
+// Code points where the real `Bidi_Class` (per `DerivedBidiClass.txt`'s
+// explicit, non-`@missing` per-code-point entries, Unicode 17.0.0) is `L`,
+// but `Alphabetic=Yes` does not hold (`char::is_alphabetic() == false`) —
+// see this function's doc, "`is_alphabetic()` fallback" section, case 2,
+// for why this table exists and its scope. Restricted to entries whose
+// `General_Category` (`DerivedGeneralCategory.txt`, same Unicode version)
+// is `Nd` (decimal digit), one of the punctuation categories
+// `Pc`/`Pd`/`Pe`/`Pf`/`Pi`/`Po`/`Ps`, or `Mc` (spacing combining mark) —
+// plus a single `Mn` (non-spacing mark) entry that is functionally
+// identical to the `Mc` ones (noted at its own site below) — see case 2's
+// doc for why each of these shapes is included and what is deliberately
+// left out. None of these ranges overlaps `AL_RANGES`/`R_RANGES` above
+// (verified against this crate's actual `AL_RANGES`/`R_RANGES` tables at
+// derivation time); none is `Alphabetic=Yes` under this workspace's
+// pinned `char::is_alphabetic` (verified at derivation time) — except
+// the three Sharada Vowel Signs Supplement entries noted at their own
+// site below, which are `Alphabetic=Yes` under UCD 17.0.0 itself and
+// need an entry here for exactly that reason (see their comment). Those
+// three are individually-fixed instances of a much larger toolchain-lag
+// class this table does not attempt to cover in full — see this
+// function's doc, "`is_alphabetic()` fallback" section, case 2's second
+// paragraph, for the fuller picture and why the rest is out of scope
+// here. None overlaps `NON_STRONG_ALPHABETIC_RANGES` above — true by
+// construction for every entry except those same three, since every
+// other entry there has `Alphabetic=Yes` and every other entry here
+// does not, while the three Sharada entries are instead checked
+// directly against that table's actual code points (its `NSM` entries
+// for the same Unicode block are 0x11B60, 0x11B62..0x11B64, 0x11B66 —
+// disjoint from 0x11B61/0x11B65/0x11B67 here). Also checked directly at
+// derivation time for every entry (range-pair overlap, not just
+// individual code points, since both tables store ranges). So every
+// entry here really would fall through to the final `None` below absent
+// this check.
+const STRONG_L_NON_ALPHABETIC_RANGES: &[(u32, u32)] = &[
+    // Armenian
+    (0x055A, 0x055F), // Po
+    (0x0589, 0x0589), // Po
+    // Devanagari
+    (0x0964, 0x0965), // Po
+    (0x0966, 0x096F), // Nd
+    (0x0970, 0x0970), // Po
+    // Bengali
+    (0x09E6, 0x09EF), // Nd
+    (0x09FD, 0x09FD), // Po
+    // Gurmukhi
+    (0x0A66, 0x0A6F), // Nd
+    (0x0A76, 0x0A76), // Po
+    // Gujarati
+    (0x0AE6, 0x0AEF), // Nd
+    (0x0AF0, 0x0AF0), // Po
+    // Oriya
+    (0x0B66, 0x0B6F), // Nd
+    // Tamil
+    (0x0BE6, 0x0BEF), // Nd
+    // Telugu
+    (0x0C66, 0x0C6F), // Nd
+    (0x0C77, 0x0C77), // Po
+    // Kannada
+    (0x0C84, 0x0C84), // Po
+    (0x0CE6, 0x0CEF), // Nd
+    // Malayalam
+    (0x0D66, 0x0D6F), // Nd
+    // Sinhala
+    (0x0DE6, 0x0DEF), // Nd
+    (0x0DF4, 0x0DF4), // Po
+    // Thai
+    (0x0E4F, 0x0E4F), // Po
+    (0x0E50, 0x0E59), // Nd
+    (0x0E5A, 0x0E5B), // Po
+    // Lao
+    (0x0ED0, 0x0ED9), // Nd
+    // Tibetan
+    (0x0F04, 0x0F12), // Po
+    (0x0F14, 0x0F14), // Po
+    (0x0F20, 0x0F29), // Nd
+    (0x0F85, 0x0F85), // Po
+    (0x0FD0, 0x0FD4), // Po
+    (0x0FD9, 0x0FDA), // Po
+    // Myanmar
+    (0x1040, 0x1049), // Nd
+    (0x104A, 0x104F), // Po
+    (0x1090, 0x1099), // Nd
+    // Georgian
+    (0x10FB, 0x10FB), // Po
+    // Ethiopic
+    (0x1360, 0x1368), // Po
+    // Unified Canadian Aboriginal Syllabics
+    (0x166E, 0x166E), // Po
+    // Runic
+    (0x16EB, 0x16ED), // Po
+    // Hanunoo
+    (0x1735, 0x1736), // Po
+    // Khmer
+    (0x17D4, 0x17D6), // Po
+    (0x17D8, 0x17DA), // Po
+    (0x17E0, 0x17E9), // Nd
+    // Mongolian
+    (0x1810, 0x1819), // Nd
+    // Limbu
+    (0x1946, 0x194F), // Nd
+    // New Tai Lue
+    (0x19D0, 0x19D9), // Nd
+    // Buginese
+    (0x1A1E, 0x1A1F), // Po
+    // Tai Tham
+    (0x1A80, 0x1A89), // Nd
+    (0x1A90, 0x1A99), // Nd
+    (0x1AA0, 0x1AA6), // Po
+    (0x1AA8, 0x1AAD), // Po
+    // Balinese
+    (0x1B4E, 0x1B4F), // Po
+    (0x1B50, 0x1B59), // Nd
+    (0x1B5A, 0x1B60), // Po
+    (0x1B7D, 0x1B7F), // Po
+    // Sundanese
+    (0x1BB0, 0x1BB9), // Nd
+    // Batak
+    (0x1BFC, 0x1BFF), // Po
+    // Lepcha
+    (0x1C3B, 0x1C3F), // Po
+    (0x1C40, 0x1C49), // Nd
+    // Ol Chiki
+    (0x1C50, 0x1C59), // Nd
+    (0x1C7E, 0x1C7F), // Po
+    // Sundanese Supplement
+    (0x1CC0, 0x1CC7), // Po
+    // Vedic Extensions
+    (0x1CD3, 0x1CD3), // Po
+    // Tifinagh
+    (0x2D70, 0x2D70), // Po
+    // Lisu
+    (0xA4FE, 0xA4FF), // Po
+    // Vai
+    (0xA620, 0xA629), // Nd
+    // Bamum
+    (0xA6F2, 0xA6F7), // Po
+    // Saurashtra
+    (0xA8CE, 0xA8CF), // Po
+    (0xA8D0, 0xA8D9), // Nd
+    // Devanagari Extended
+    (0xA8F8, 0xA8FA), // Po
+    (0xA8FC, 0xA8FC), // Po
+    // Kayah Li
+    (0xA900, 0xA909), // Nd
+    (0xA92E, 0xA92F), // Po
+    // Rejang
+    (0xA95F, 0xA95F), // Po
+    // Javanese
+    (0xA9C1, 0xA9CD), // Po
+    (0xA9D0, 0xA9D9), // Nd
+    (0xA9DE, 0xA9DF), // Po
+    // Myanmar Extended-B
+    (0xA9F0, 0xA9F9), // Nd
+    // Cham
+    (0xAA50, 0xAA59), // Nd
+    (0xAA5C, 0xAA5F), // Po
+    // Tai Viet
+    (0xAADE, 0xAADF), // Po
+    // Meetei Mayek Extensions
+    (0xAAF0, 0xAAF1), // Po
+    // Meetei Mayek
+    (0xABEB, 0xABEB), // Po
+    (0xABF0, 0xABF9), // Nd
+    // Aegean Numbers
+    (0x10100, 0x10100), // Po
+    (0x10102, 0x10102), // Po
+    // Ugaritic
+    (0x1039F, 0x1039F), // Po
+    // Old Persian
+    (0x103D0, 0x103D0), // Po
+    // Osmanya
+    (0x104A0, 0x104A9), // Nd
+    // Caucasian Albanian
+    (0x1056F, 0x1056F), // Po
+    // Brahmi
+    (0x11047, 0x1104D), // Po
+    (0x11066, 0x1106F), // Nd
+    // Kaithi
+    (0x110BB, 0x110BC), // Po
+    (0x110BE, 0x110C1), // Po
+    // Sora Sompeng
+    (0x110F0, 0x110F9), // Nd
+    // Chakma
+    (0x11136, 0x1113F), // Nd
+    (0x11140, 0x11143), // Po
+    // Mahajani
+    (0x11174, 0x11175), // Po
+    // Sharada
+    (0x111C5, 0x111C8), // Po
+    (0x111CD, 0x111CD), // Po
+    (0x111D0, 0x111D9), // Nd
+    (0x111DB, 0x111DB), // Po
+    (0x111DD, 0x111DF), // Po
+    // Khojki
+    (0x11238, 0x1123D), // Po
+    // Multani
+    (0x112A9, 0x112A9), // Po
+    // Khudawadi
+    (0x112F0, 0x112F9), // Nd
+    // Tulu-Tigalari
+    (0x113D4, 0x113D5), // Po
+    (0x113D7, 0x113D8), // Po
+    // Newa
+    (0x1144B, 0x1144F), // Po
+    (0x11450, 0x11459), // Nd
+    (0x1145A, 0x1145B), // Po
+    (0x1145D, 0x1145D), // Po
+    // Tirhuta
+    (0x114C6, 0x114C6), // Po
+    (0x114D0, 0x114D9), // Nd
+    // Siddham
+    (0x115C1, 0x115D7), // Po
+    // Modi
+    (0x11641, 0x11643), // Po
+    (0x11650, 0x11659), // Nd
+    // Takri
+    (0x116B9, 0x116B9), // Po
+    (0x116C0, 0x116C9), // Nd
+    // Myanmar Extended-C
+    (0x116D0, 0x116E3), // Nd
+    // Ahom
+    (0x11730, 0x11739), // Nd
+    (0x1173C, 0x1173E), // Po
+    // Dogra
+    (0x1183B, 0x1183B), // Po
+    // Warang Citi
+    (0x118E0, 0x118E9), // Nd
+    // Dives Akuru
+    (0x11944, 0x11946), // Po
+    (0x11950, 0x11959), // Nd
+    // Nandinagari
+    (0x119E2, 0x119E2), // Po
+    // Zanabazar Square
+    (0x11A3F, 0x11A46), // Po
+    // Soyombo
+    (0x11A9A, 0x11A9C), // Po
+    (0x11A9E, 0x11AA2), // Po
+    // Devanagari Extended-A
+    (0x11B00, 0x11B09), // Po
+    // Sunuwar
+    (0x11BE1, 0x11BE1), // Po
+    (0x11BF0, 0x11BF9), // Nd
+    // Bhaiksuki
+    (0x11C41, 0x11C45), // Po
+    (0x11C50, 0x11C59), // Nd
+    // Marchen
+    (0x11C70, 0x11C71), // Po
+    // Masaram Gondi
+    (0x11D50, 0x11D59), // Nd
+    // Gunjala Gondi
+    (0x11DA0, 0x11DA9), // Nd
+    // Tolong Siki
+    (0x11DE0, 0x11DE9), // Nd
+    // Makasar
+    (0x11EF7, 0x11EF8), // Po
+    // Kawi
+    (0x11F43, 0x11F4F), // Po
+    (0x11F50, 0x11F59), // Nd
+    // Tamil Supplement
+    (0x11FFF, 0x11FFF), // Po
+    // Cuneiform Numbers and Punctuation
+    (0x12470, 0x12474), // Po
+    // Cypro-Minoan
+    (0x12FF1, 0x12FF2), // Po
+    // Gurung Khema
+    (0x16130, 0x16139), // Nd
+    // Mro
+    (0x16A60, 0x16A69), // Nd
+    (0x16A6E, 0x16A6F), // Po
+    // Tangsa
+    (0x16AC0, 0x16AC9), // Nd
+    // Bassa Vah
+    (0x16AF5, 0x16AF5), // Po
+    // Pahawh Hmong
+    (0x16B37, 0x16B3B), // Po
+    (0x16B44, 0x16B44), // Po
+    (0x16B50, 0x16B59), // Nd
+    // Kirat Rai
+    (0x16D6D, 0x16D6F), // Po
+    (0x16D70, 0x16D79), // Nd
+    // Medefaidrin
+    (0x16E97, 0x16E9A), // Po
+    // Duployan
+    (0x1BC9F, 0x1BC9F), // Po
+    // Sutton SignWriting
+    (0x1DA87, 0x1DA8B), // Po
+    // Nyiakeng Puachue Hmong
+    (0x1E140, 0x1E149), // Nd
+    // Wancho
+    (0x1E2F0, 0x1E2F9), // Nd
+    // Nag Mundari
+    (0x1E4F0, 0x1E4F9), // Nd
+    // Ol Onal
+    (0x1E5F1, 0x1E5FA), // Nd
+    (0x1E5FF, 0x1E5FF), // Po
+    // The entries above are all `Nd`/punctuation. The entries below are
+    // `Mc` (spacing combining mark), plus one `Mn` entry noted at its
+    // own site — see this function's doc, case 2, for why these are
+    // included here even though the surrounding doc text otherwise
+    // talks about "named-script digits and punctuation": most `Mc`
+    // code points with an explicit `Bidi_Class=L` entry are vowel signs
+    // that are already `Alphabetic=Yes` and so already resolve
+    // correctly through the `is_alphabetic()` branch above without
+    // needing a table entry at all; these are the residual — viramas,
+    // tone marks, and similar combining marks that Unicode does not
+    // consider `Alphabetic` (a virama suppresses a vowel rather than
+    // representing one) despite carrying `Bidi_Class=L` themselves.
+    // Tibetan
+    (0x0F3E, 0x0F3F), // Mc
+    // Tagalog
+    (0x1715, 0x1715), // Mc
+    // Hanunoo
+    (0x1734, 0x1734), // Mc
+    // Balinese
+    (0x1B44, 0x1B44), // Mc
+    // Sundanese
+    (0x1BAA, 0x1BAA), // Mc
+    // Batak
+    (0x1BF2, 0x1BF3), // Mc
+    // Vedic Extensions
+    (0x1CE1, 0x1CE1), // Mc
+    (0x1CF7, 0x1CF7), // Mc
+    // CJK Symbols and Punctuation (Hangul tone marks)
+    (0x302E, 0x302F), // Mc
+    // Rejang
+    (0xA953, 0xA953), // Mc
+    // Javanese
+    (0xA9C0, 0xA9C0), // Mc
+    // Meetei Mayek
+    (0xABEC, 0xABEC), // Mc
+    // Sharada
+    (0x111C0, 0x111C0), // Mc
+    // Khojki
+    (0x11235, 0x11235), // Mc
+    // Grantha
+    (0x1134D, 0x1134D), // Mc
+    // Tulu-Tigalari
+    (0x113CF, 0x113CF), // Mc
+    // Takri
+    (0x116B6, 0x116B6), // Mc
+    // Dives Akuru
+    (0x1193D, 0x1193D), // Mc
+    // Sharada Vowel Signs Supplement (new in Unicode 17.0.0). Excluded
+    // from this workspace's pinned rustc 1.89.0 `char::is_alphabetic()`
+    // tables, which predate this block's assignment, even though UCD
+    // 17.0.0 marks these `Alphabetic=Yes` like the other vowel signs in
+    // this script — so unlike most `Mc` vowel signs, these three still
+    // need an explicit entry here rather than relying on the
+    // `is_alphabetic()` branch.
+    (0x11B61, 0x11B61), // Mc
+    (0x11B65, 0x11B65), // Mc
+    (0x11B67, 0x11B67), // Mc
+    // Bhaiksuki (this one virama is `Mn`, not `Mc`, unlike its
+    // counterparts above — same role, different General_Category)
+    (0x11C3F, 0x11C3F), // Mn
+    // Kawi
+    (0x11F41, 0x11F41), // Mc
+    // Musical Symbols
+    (0x1D165, 0x1D166), // Mc
+    (0x1D16D, 0x1D172), // Mc
+];
+
 /// Classifies a code point's Unicode Bidi_Class (Unicode Standard Annex #9,
 /// the "\[BIDI\]" reference [`text_node_first_strong_direction`]'s HTML LS
 /// quote cites) into one of the 3 *strong* types this crate's simplified
@@ -3010,821 +3826,6 @@ fn strong_bidi_type(c: char) -> Option<StrongBidiType> {
         0x200F => return Some(StrongBidiType::R),
         _ => {}
     }
-    // Transcribed from `DerivedBidiClass.txt`'s "@missing" default-value
-    // comments for the code point ranges reserved for right-to-left
-    // scripts (see this function's doc) — each left edge/right edge here
-    // is one of those file's own `@missing: START..END; Bidi_Class` lines.
-    const AL_RANGES: &[(u32, u32)] = &[
-        (0x0600, 0x07BF),   // Arabic, Syriac, Arabic Supplement, Thaana
-        (0x0860, 0x08FF),   // Syriac Supplement, Arabic Extended-B/-A
-        (0xFB50, 0xFDCF),   // Arabic Presentation Forms-A (partial)
-        (0xFDF0, 0xFDFF),   // Arabic Presentation Forms-A (partial)
-        (0xFE70, 0xFEFF),   // Arabic Presentation Forms-B
-        (0x10D00, 0x10D3F), // Hanifi Rohingya
-        (0x10EC0, 0x10EFF), // Arabic Extended-C
-        (0x10F30, 0x10F6F), // Sogdian
-        (0x1EC70, 0x1ECBF), // Indic Siyaq Numbers
-        (0x1ED00, 0x1ED4F), // Ottoman Siyaq Numbers
-        (0x1EE00, 0x1EEFF), // Arabic Mathematical Alphabetic Symbols
-    ];
-    // FB1D..FB4F (Hebrew Presentation Forms) is a separate range from the
-    // main Hebrew block below because it is only *half* of the Alphabetic
-    // Presentation Forms block — the other half, FB00..FB1C (Latin
-    // ligatures), is Left_To_Right, not Right_To_Left.
-    const R_RANGES: &[(u32, u32)] = &[
-        (0x0590, 0x05FF),   // Hebrew
-        (0x07C0, 0x085F),   // NKo, Samaritan, Mandaic
-        (0xFB1D, 0xFB4F),   // Hebrew Presentation Forms
-        (0x10800, 0x10CFF), // Cypriot..Old Hungarian
-        (0x10D40, 0x10EBF), // Garay, Rumi Numeral Symbols, Yezidi
-        (0x10F00, 0x10F2F), // Old Sogdian
-        (0x10F70, 0x10FFF), // Old Uyghur..Elymaic
-        (0x1E800, 0x1EC6F), // Mende Kikakui..Adlam
-        (0x1ECC0, 0x1ECFF), // reserved remainder after Indic Siyaq Numbers (R-default)
-        (0x1ED50, 0x1EDFF), // reserved remainder after Ottoman Siyaq Numbers (R-default)
-        (0x1EF00, 0x1EFFF), // reserved remainder after Arabic Mathematical Alphabetic Symbols (R-default)
-    ];
-    // Code points *inside* an `AL_RANGES`/`R_RANGES` span above whose real
-    // `Bidi_Class` (per `DerivedBidiClass.txt`'s explicit, non-`@missing`
-    // per-code-point entries, Unicode 17.0.0) is not that span's own
-    // `AL`/`R` default — see this function's doc, the "known imprecision"
-    // paragraph, for why this table exists (over-classifying these as
-    // strong `AL`/`R` can resolve the wrong direction outright, not just
-    // stop the scan one code point early) and how it was derived. Checked
-    // before either range table below, so every code point here is
-    // classified `None` (non-strong) instead of falling into
-    // `AL_RANGES`/`R_RANGES`'s membership check.
-    const NON_STRONG_WITHIN_AL_R_RANGES: &[(u32, u32)] = &[
-        // Hebrew
-        (0x0591, 0x05BD), // NSM
-        (0x05BF, 0x05BF), // NSM
-        (0x05C1, 0x05C2), // NSM
-        (0x05C4, 0x05C5), // NSM
-        (0x05C7, 0x05C7), // NSM
-        // Arabic, Syriac, Arabic Supplement, Thaana
-        (0x0600, 0x0605), // AN
-        (0x0606, 0x0607), // ON
-        (0x0609, 0x060A), // ET
-        (0x060C, 0x060C), // CS
-        (0x060E, 0x060F), // ON
-        (0x0610, 0x061A), // NSM
-        (0x064B, 0x065F), // NSM
-        (0x0660, 0x0669), // AN
-        (0x066A, 0x066A), // ET
-        (0x066B, 0x066C), // AN
-        (0x0670, 0x0670), // NSM
-        (0x06D6, 0x06DC), // NSM
-        (0x06DD, 0x06DD), // AN
-        (0x06DE, 0x06DE), // ON
-        (0x06DF, 0x06E4), // NSM
-        (0x06E7, 0x06E8), // NSM
-        (0x06E9, 0x06E9), // ON
-        (0x06EA, 0x06ED), // NSM
-        (0x06F0, 0x06F9), // EN
-        (0x0711, 0x0711), // NSM
-        (0x0730, 0x074A), // NSM
-        (0x07A6, 0x07B0), // NSM
-        // NKo, Samaritan, Mandaic
-        (0x07EB, 0x07F3), // NSM
-        (0x07F6, 0x07F6), // ON
-        (0x07F7, 0x07F9), // ON
-        (0x07FD, 0x07FD), // NSM
-        (0x0816, 0x0819), // NSM
-        (0x081B, 0x0823), // NSM
-        (0x0825, 0x0827), // NSM
-        (0x0829, 0x082D), // NSM
-        (0x0859, 0x085B), // NSM
-        // Syriac Supplement, Arabic Extended-B/-A
-        (0x0890, 0x0891), // AN
-        (0x0897, 0x089F), // NSM
-        (0x08CA, 0x08E1), // NSM
-        (0x08E2, 0x08E2), // AN
-        (0x08E3, 0x08FF), // NSM (this entry's real DerivedBidiClass.txt
-        // range continues to U+0902, already covered separately by
-        // `NON_STRONG_ALPHABETIC_RANGES`'s Devanagari `(0x0900, 0x0902)`
-        // entry below — clipped here to stay inside this span)
-        // Hebrew Presentation Forms
-        (0xFB1E, 0xFB1E), // NSM
-        (0xFB29, 0xFB29), // ES
-        // Arabic Presentation Forms-A (partial)
-        (0xFBC3, 0xFBD2), // ON
-        (0xFD3E, 0xFD3E), // ON
-        (0xFD3F, 0xFD3F), // ON
-        (0xFD40, 0xFD4F), // ON
-        (0xFD90, 0xFD91), // ON
-        (0xFDC8, 0xFDCF), // ON
-        (0xFDFD, 0xFDFF), // ON
-        // Arabic Presentation Forms-B
-        (0xFEFF, 0xFEFF), // BN
-        // Cypriot..Old Hungarian
-        (0x1091F, 0x1091F), // ON
-        (0x10A01, 0x10A03), // NSM
-        (0x10A05, 0x10A06), // NSM
-        (0x10A0C, 0x10A0F), // NSM
-        (0x10A38, 0x10A3A), // NSM
-        (0x10A3F, 0x10A3F), // NSM
-        (0x10AE5, 0x10AE6), // NSM
-        (0x10B39, 0x10B3F), // ON
-        // Hanifi Rohingya
-        (0x10D24, 0x10D27), // NSM
-        (0x10D30, 0x10D39), // AN
-        // Garay, Rumi Numeral Symbols, Yezidi
-        (0x10D40, 0x10D49), // AN
-        (0x10D69, 0x10D6D), // NSM
-        (0x10D6E, 0x10D6E), // ON
-        (0x10E60, 0x10E7E), // AN
-        (0x10EAB, 0x10EAC), // NSM
-        // Arabic Extended-C
-        (0x10ED0, 0x10ED0), // ON
-        (0x10ED1, 0x10ED8), // ON
-        (0x10EFA, 0x10EFF), // NSM
-        // Sogdian
-        (0x10F46, 0x10F50), // NSM
-        // Old Uyghur..Elymaic
-        (0x10F82, 0x10F85), // NSM
-        // Mende Kikakui..Adlam
-        (0x1E8D0, 0x1E8D6), // NSM
-        (0x1E944, 0x1E94A), // NSM
-        // Arabic Mathematical Alphabetic Symbols
-        (0x1EEF0, 0x1EEF1), // ON
-    ];
-    // Code points where `Alphabetic=Yes` (the property `char::is_alphabetic`
-    // implements) but the real `Bidi_Class` is something other than `L` —
-    // see this function's doc, "`is_alphabetic()` fallback" section, case 1,
-    // for why this table exists and how it was derived. None of these
-    // ranges overlaps `AL_RANGES`/`R_RANGES` above (by construction of the
-    // derivation), so every entry here really does fall through to the
-    // `is_alphabetic()` branch below absent this check.
-    const NON_STRONG_ALPHABETIC_RANGES: &[(u32, u32)] = &[
-        // Spacing Modifier Letters
-        (0x02B9, 0x02BA), // ON
-        (0x02C6, 0x02CF), // ON
-        (0x02EC, 0x02EC), // ON
-        // Combining Diacritical Marks
-        (0x0345, 0x0345), // NSM
-        (0x0363, 0x036F), // NSM
-        // Greek and Coptic
-        (0x0374, 0x0374), // ON
-        // Devanagari
-        (0x0900, 0x0902), // NSM
-        (0x093A, 0x093A), // NSM
-        (0x0941, 0x0948), // NSM
-        (0x0955, 0x0957), // NSM
-        (0x0962, 0x0963), // NSM
-        // Bengali
-        (0x0981, 0x0981), // NSM
-        (0x09C1, 0x09C4), // NSM
-        (0x09E2, 0x09E3), // NSM
-        // Gurmukhi
-        (0x0A01, 0x0A02), // NSM
-        (0x0A41, 0x0A42), // NSM
-        (0x0A47, 0x0A48), // NSM
-        (0x0A4B, 0x0A4C), // NSM
-        (0x0A51, 0x0A51), // NSM
-        (0x0A70, 0x0A71), // NSM
-        (0x0A75, 0x0A75), // NSM
-        // Gujarati
-        (0x0A81, 0x0A82), // NSM
-        (0x0AC1, 0x0AC5), // NSM
-        (0x0AC7, 0x0AC8), // NSM
-        (0x0AE2, 0x0AE3), // NSM
-        (0x0AFA, 0x0AFC), // NSM
-        // Oriya
-        (0x0B01, 0x0B01), // NSM
-        (0x0B3F, 0x0B3F), // NSM
-        (0x0B41, 0x0B44), // NSM
-        (0x0B56, 0x0B56), // NSM
-        (0x0B62, 0x0B63), // NSM
-        // Tamil
-        (0x0B82, 0x0B82), // NSM
-        (0x0BC0, 0x0BC0), // NSM
-        // Telugu
-        (0x0C00, 0x0C00), // NSM
-        (0x0C04, 0x0C04), // NSM
-        (0x0C3E, 0x0C40), // NSM
-        (0x0C46, 0x0C48), // NSM
-        (0x0C4A, 0x0C4C), // NSM
-        (0x0C55, 0x0C56), // NSM
-        (0x0C62, 0x0C63), // NSM
-        // Kannada
-        (0x0C81, 0x0C81), // NSM
-        (0x0CCC, 0x0CCC), // NSM
-        (0x0CE2, 0x0CE3), // NSM
-        // Malayalam
-        (0x0D00, 0x0D01), // NSM
-        (0x0D41, 0x0D44), // NSM
-        (0x0D62, 0x0D63), // NSM
-        // Sinhala
-        (0x0D81, 0x0D81), // NSM
-        (0x0DD2, 0x0DD4), // NSM
-        (0x0DD6, 0x0DD6), // NSM
-        // Thai
-        (0x0E31, 0x0E31), // NSM
-        (0x0E34, 0x0E3A), // NSM
-        (0x0E4D, 0x0E4D), // NSM
-        // Lao
-        (0x0EB1, 0x0EB1), // NSM
-        (0x0EB4, 0x0EB9), // NSM
-        (0x0EBB, 0x0EBC), // NSM
-        (0x0ECD, 0x0ECD), // NSM
-        // Tibetan
-        (0x0F71, 0x0F7E), // NSM
-        (0x0F80, 0x0F83), // NSM
-        (0x0F8D, 0x0F97), // NSM
-        (0x0F99, 0x0FBC), // NSM
-        // Myanmar
-        (0x102D, 0x1030), // NSM
-        (0x1032, 0x1036), // NSM
-        (0x103D, 0x103E), // NSM
-        (0x1058, 0x1059), // NSM
-        (0x105E, 0x1060), // NSM
-        (0x1071, 0x1074), // NSM
-        (0x1082, 0x1082), // NSM
-        (0x1085, 0x1086), // NSM
-        (0x108D, 0x108D), // NSM
-        (0x109D, 0x109D), // NSM
-        // Tagalog
-        (0x1712, 0x1713), // NSM
-        // Hanunoo
-        (0x1732, 0x1733), // NSM
-        // Buhid
-        (0x1752, 0x1753), // NSM
-        // Tagbanwa
-        (0x1772, 0x1773), // NSM
-        // Khmer
-        (0x17B7, 0x17BD), // NSM
-        (0x17C6, 0x17C6), // NSM
-        // Mongolian
-        (0x1885, 0x1886), // NSM
-        (0x18A9, 0x18A9), // NSM
-        // Limbu
-        (0x1920, 0x1922), // NSM
-        (0x1927, 0x1928), // NSM
-        (0x1932, 0x1932), // NSM
-        // Buginese
-        (0x1A17, 0x1A18), // NSM
-        (0x1A1B, 0x1A1B), // NSM
-        // Tai Tham
-        (0x1A56, 0x1A56), // NSM
-        (0x1A58, 0x1A5E), // NSM
-        (0x1A62, 0x1A62), // NSM
-        (0x1A65, 0x1A6C), // NSM
-        (0x1A73, 0x1A74), // NSM
-        // Combining Diacritical Marks Extended
-        (0x1ABF, 0x1AC0), // NSM
-        (0x1ACC, 0x1ACE), // NSM
-        // Balinese
-        (0x1B00, 0x1B03), // NSM
-        (0x1B36, 0x1B3A), // NSM
-        (0x1B3C, 0x1B3C), // NSM
-        (0x1B42, 0x1B42), // NSM
-        // Sundanese
-        (0x1B80, 0x1B81), // NSM
-        (0x1BA2, 0x1BA5), // NSM
-        (0x1BA8, 0x1BA9), // NSM
-        (0x1BAC, 0x1BAD), // NSM
-        // Batak
-        (0x1BE8, 0x1BE9), // NSM
-        (0x1BED, 0x1BED), // NSM
-        (0x1BEF, 0x1BF1), // NSM
-        // Lepcha
-        (0x1C2C, 0x1C33), // NSM
-        (0x1C36, 0x1C36), // NSM
-        // Combining Diacritical Marks Supplement
-        (0x1DD3, 0x1DF4), // NSM
-        // Cyrillic Extended-A
-        (0x2DE0, 0x2DFF), // NSM
-        // Supplemental Punctuation
-        (0x2E2F, 0x2E2F), // ON
-        // Cyrillic Extended-B
-        (0xA674, 0xA67B), // NSM
-        (0xA67F, 0xA67F), // ON
-        (0xA69E, 0xA69F), // NSM
-        // Modifier Tone Letters
-        (0xA717, 0xA71F), // ON
-        // Latin Extended-D
-        (0xA788, 0xA788), // ON
-        // Syloti Nagri
-        (0xA802, 0xA802), // NSM
-        (0xA80B, 0xA80B), // NSM
-        (0xA825, 0xA826), // NSM
-        // Saurashtra
-        (0xA8C5, 0xA8C5), // NSM
-        // Devanagari Extended
-        (0xA8FF, 0xA8FF), // NSM
-        // Kayah Li
-        (0xA926, 0xA92A), // NSM
-        // Rejang
-        (0xA947, 0xA951), // NSM
-        // Javanese
-        (0xA980, 0xA982), // NSM
-        (0xA9B6, 0xA9B9), // NSM
-        (0xA9BC, 0xA9BD), // NSM
-        // Myanmar Extended-B
-        (0xA9E5, 0xA9E5), // NSM
-        // Cham
-        (0xAA29, 0xAA2E), // NSM
-        (0xAA31, 0xAA32), // NSM
-        (0xAA35, 0xAA36), // NSM
-        (0xAA43, 0xAA43), // NSM
-        (0xAA4C, 0xAA4C), // NSM
-        // Myanmar Extended-A
-        (0xAA7C, 0xAA7C), // NSM
-        // Tai Viet
-        (0xAAB0, 0xAAB0), // NSM
-        (0xAAB2, 0xAAB4), // NSM
-        (0xAAB7, 0xAAB8), // NSM
-        (0xAABE, 0xAABE), // NSM
-        // Meetei Mayek Extensions
-        (0xAAEC, 0xAAED), // NSM
-        // Meetei Mayek
-        (0xABE5, 0xABE5), // NSM
-        (0xABE8, 0xABE8), // NSM
-        // Ancient Greek Numbers
-        (0x10140, 0x10174), // ON
-        // Old Permic
-        (0x10376, 0x1037A), // NSM
-        // Brahmi
-        (0x11001, 0x11001), // NSM
-        (0x11038, 0x11045), // NSM
-        (0x11073, 0x11074), // NSM
-        // Kaithi
-        (0x11080, 0x11081), // NSM
-        (0x110B3, 0x110B6), // NSM
-        (0x110C2, 0x110C2), // NSM
-        // Chakma
-        (0x11100, 0x11102), // NSM
-        (0x11127, 0x1112B), // NSM
-        (0x1112D, 0x11132), // NSM
-        // Sharada
-        (0x11180, 0x11181), // NSM
-        (0x111B6, 0x111BE), // NSM
-        (0x111CF, 0x111CF), // NSM
-        // Khojki
-        (0x1122F, 0x11231), // NSM
-        (0x11234, 0x11234), // NSM
-        (0x11237, 0x11237), // NSM
-        (0x1123E, 0x1123E), // NSM
-        (0x11241, 0x11241), // NSM
-        // Khudawadi
-        (0x112DF, 0x112DF), // NSM
-        (0x112E3, 0x112E8), // NSM
-        // Grantha
-        (0x11300, 0x11301), // NSM
-        (0x11340, 0x11340), // NSM
-        // Tulu-Tigalari
-        (0x113BB, 0x113C0), // NSM
-        // Newa
-        (0x11438, 0x1143F), // NSM
-        (0x11443, 0x11444), // NSM
-        // Tirhuta
-        (0x114B3, 0x114B8), // NSM
-        (0x114BA, 0x114BA), // NSM
-        (0x114BF, 0x114C0), // NSM
-        // Siddham
-        (0x115B2, 0x115B5), // NSM
-        (0x115BC, 0x115BD), // NSM
-        (0x115DC, 0x115DD), // NSM
-        // Modi
-        (0x11633, 0x1163A), // NSM
-        (0x1163D, 0x1163D), // NSM
-        (0x11640, 0x11640), // NSM
-        // Takri
-        (0x116AB, 0x116AB), // NSM
-        (0x116AD, 0x116AD), // NSM
-        (0x116B0, 0x116B5), // NSM
-        // Ahom
-        (0x1171D, 0x1171D), // NSM
-        (0x1171F, 0x1171F), // NSM
-        (0x11722, 0x11725), // NSM
-        (0x11727, 0x1172A), // NSM
-        // Dogra
-        (0x1182F, 0x11837), // NSM
-        // Dives Akuru
-        (0x1193B, 0x1193C), // NSM
-        // Nandinagari
-        (0x119D4, 0x119D7), // NSM
-        (0x119DA, 0x119DB), // NSM
-        // Zanabazar Square
-        (0x11A01, 0x11A06), // NSM
-        (0x11A09, 0x11A0A), // NSM
-        (0x11A35, 0x11A38), // NSM
-        (0x11A3B, 0x11A3E), // NSM
-        // Soyombo
-        (0x11A51, 0x11A56), // NSM
-        (0x11A59, 0x11A5B), // NSM
-        (0x11A8A, 0x11A96), // NSM
-        // Sharada Supplement
-        (0x11B60, 0x11B60), // NSM
-        (0x11B62, 0x11B64), // NSM
-        (0x11B66, 0x11B66), // NSM
-        // Bhaiksuki
-        (0x11C30, 0x11C36), // NSM
-        (0x11C38, 0x11C3D), // NSM
-        // Marchen
-        (0x11C92, 0x11CA7), // NSM
-        (0x11CAA, 0x11CB0), // NSM
-        (0x11CB2, 0x11CB3), // NSM
-        (0x11CB5, 0x11CB6), // NSM
-        // Masaram Gondi
-        (0x11D31, 0x11D36), // NSM
-        (0x11D3A, 0x11D3A), // NSM
-        (0x11D3C, 0x11D3D), // NSM
-        (0x11D3F, 0x11D41), // NSM
-        (0x11D43, 0x11D43), // NSM
-        (0x11D47, 0x11D47), // NSM
-        // Gunjala Gondi
-        (0x11D90, 0x11D91), // NSM
-        (0x11D95, 0x11D95), // NSM
-        // Makasar
-        (0x11EF3, 0x11EF4), // NSM
-        // Kawi
-        (0x11F00, 0x11F01), // NSM
-        (0x11F36, 0x11F3A), // NSM
-        (0x11F40, 0x11F40), // NSM
-        // Gurung Khema
-        (0x1611E, 0x16129), // NSM
-        (0x1612D, 0x1612E), // NSM
-        // Miao
-        (0x16F4F, 0x16F4F), // NSM
-        (0x16F8F, 0x16F92), // NSM
-        // Duployan
-        (0x1BC9E, 0x1BC9E), // NSM
-        // Glagolitic Supplement
-        (0x1E000, 0x1E006), // NSM
-        (0x1E008, 0x1E018), // NSM
-        (0x1E01B, 0x1E021), // NSM
-        (0x1E023, 0x1E024), // NSM
-        (0x1E026, 0x1E02A), // NSM
-        // Cyrillic Extended-D
-        (0x1E08F, 0x1E08F), // NSM
-        // Tai Yo
-        (0x1E6E3, 0x1E6E3), // NSM
-        (0x1E6E6, 0x1E6E6), // NSM
-        (0x1E6EE, 0x1E6EF), // NSM
-        (0x1E6F5, 0x1E6F5), // NSM
-    ];
-    // Code points where the real `Bidi_Class` (per `DerivedBidiClass.txt`'s
-    // explicit, non-`@missing` per-code-point entries, Unicode 17.0.0) is `L`,
-    // but `Alphabetic=Yes` does not hold (`char::is_alphabetic() == false`) —
-    // see this function's doc, "`is_alphabetic()` fallback" section, case 2,
-    // for why this table exists and its scope. Restricted to entries whose
-    // `General_Category` (`DerivedGeneralCategory.txt`, same Unicode version)
-    // is `Nd` (decimal digit), one of the punctuation categories
-    // `Pc`/`Pd`/`Pe`/`Pf`/`Pi`/`Po`/`Ps`, or `Mc` (spacing combining mark) —
-    // plus a single `Mn` (non-spacing mark) entry that is functionally
-    // identical to the `Mc` ones (noted at its own site below) — see case 2's
-    // doc for why each of these shapes is included and what is deliberately
-    // left out. None of these ranges overlaps `AL_RANGES`/`R_RANGES` above
-    // (verified against this crate's actual `AL_RANGES`/`R_RANGES` tables at
-    // derivation time); none is `Alphabetic=Yes` under this workspace's
-    // pinned `char::is_alphabetic` (verified at derivation time) — except
-    // the three Sharada Vowel Signs Supplement entries noted at their own
-    // site below, which are `Alphabetic=Yes` under UCD 17.0.0 itself and
-    // need an entry here for exactly that reason (see their comment). Those
-    // three are individually-fixed instances of a much larger toolchain-lag
-    // class this table does not attempt to cover in full — see this
-    // function's doc, "`is_alphabetic()` fallback" section, case 2's second
-    // paragraph, for the fuller picture and why the rest is out of scope
-    // here. None overlaps `NON_STRONG_ALPHABETIC_RANGES` above — true by
-    // construction for every entry except those same three, since every
-    // other entry there has `Alphabetic=Yes` and every other entry here
-    // does not, while the three Sharada entries are instead checked
-    // directly against that table's actual code points (its `NSM` entries
-    // for the same Unicode block are 0x11B60, 0x11B62..0x11B64, 0x11B66 —
-    // disjoint from 0x11B61/0x11B65/0x11B67 here). Also checked directly at
-    // derivation time for every entry (range-pair overlap, not just
-    // individual code points, since both tables store ranges). So every
-    // entry here really would fall through to the final `None` below absent
-    // this check.
-    const STRONG_L_NON_ALPHABETIC_RANGES: &[(u32, u32)] = &[
-        // Armenian
-        (0x055A, 0x055F), // Po
-        (0x0589, 0x0589), // Po
-        // Devanagari
-        (0x0964, 0x0965), // Po
-        (0x0966, 0x096F), // Nd
-        (0x0970, 0x0970), // Po
-        // Bengali
-        (0x09E6, 0x09EF), // Nd
-        (0x09FD, 0x09FD), // Po
-        // Gurmukhi
-        (0x0A66, 0x0A6F), // Nd
-        (0x0A76, 0x0A76), // Po
-        // Gujarati
-        (0x0AE6, 0x0AEF), // Nd
-        (0x0AF0, 0x0AF0), // Po
-        // Oriya
-        (0x0B66, 0x0B6F), // Nd
-        // Tamil
-        (0x0BE6, 0x0BEF), // Nd
-        // Telugu
-        (0x0C66, 0x0C6F), // Nd
-        (0x0C77, 0x0C77), // Po
-        // Kannada
-        (0x0C84, 0x0C84), // Po
-        (0x0CE6, 0x0CEF), // Nd
-        // Malayalam
-        (0x0D66, 0x0D6F), // Nd
-        // Sinhala
-        (0x0DE6, 0x0DEF), // Nd
-        (0x0DF4, 0x0DF4), // Po
-        // Thai
-        (0x0E4F, 0x0E4F), // Po
-        (0x0E50, 0x0E59), // Nd
-        (0x0E5A, 0x0E5B), // Po
-        // Lao
-        (0x0ED0, 0x0ED9), // Nd
-        // Tibetan
-        (0x0F04, 0x0F12), // Po
-        (0x0F14, 0x0F14), // Po
-        (0x0F20, 0x0F29), // Nd
-        (0x0F85, 0x0F85), // Po
-        (0x0FD0, 0x0FD4), // Po
-        (0x0FD9, 0x0FDA), // Po
-        // Myanmar
-        (0x1040, 0x1049), // Nd
-        (0x104A, 0x104F), // Po
-        (0x1090, 0x1099), // Nd
-        // Georgian
-        (0x10FB, 0x10FB), // Po
-        // Ethiopic
-        (0x1360, 0x1368), // Po
-        // Unified Canadian Aboriginal Syllabics
-        (0x166E, 0x166E), // Po
-        // Runic
-        (0x16EB, 0x16ED), // Po
-        // Hanunoo
-        (0x1735, 0x1736), // Po
-        // Khmer
-        (0x17D4, 0x17D6), // Po
-        (0x17D8, 0x17DA), // Po
-        (0x17E0, 0x17E9), // Nd
-        // Mongolian
-        (0x1810, 0x1819), // Nd
-        // Limbu
-        (0x1946, 0x194F), // Nd
-        // New Tai Lue
-        (0x19D0, 0x19D9), // Nd
-        // Buginese
-        (0x1A1E, 0x1A1F), // Po
-        // Tai Tham
-        (0x1A80, 0x1A89), // Nd
-        (0x1A90, 0x1A99), // Nd
-        (0x1AA0, 0x1AA6), // Po
-        (0x1AA8, 0x1AAD), // Po
-        // Balinese
-        (0x1B4E, 0x1B4F), // Po
-        (0x1B50, 0x1B59), // Nd
-        (0x1B5A, 0x1B60), // Po
-        (0x1B7D, 0x1B7F), // Po
-        // Sundanese
-        (0x1BB0, 0x1BB9), // Nd
-        // Batak
-        (0x1BFC, 0x1BFF), // Po
-        // Lepcha
-        (0x1C3B, 0x1C3F), // Po
-        (0x1C40, 0x1C49), // Nd
-        // Ol Chiki
-        (0x1C50, 0x1C59), // Nd
-        (0x1C7E, 0x1C7F), // Po
-        // Sundanese Supplement
-        (0x1CC0, 0x1CC7), // Po
-        // Vedic Extensions
-        (0x1CD3, 0x1CD3), // Po
-        // Tifinagh
-        (0x2D70, 0x2D70), // Po
-        // Lisu
-        (0xA4FE, 0xA4FF), // Po
-        // Vai
-        (0xA620, 0xA629), // Nd
-        // Bamum
-        (0xA6F2, 0xA6F7), // Po
-        // Saurashtra
-        (0xA8CE, 0xA8CF), // Po
-        (0xA8D0, 0xA8D9), // Nd
-        // Devanagari Extended
-        (0xA8F8, 0xA8FA), // Po
-        (0xA8FC, 0xA8FC), // Po
-        // Kayah Li
-        (0xA900, 0xA909), // Nd
-        (0xA92E, 0xA92F), // Po
-        // Rejang
-        (0xA95F, 0xA95F), // Po
-        // Javanese
-        (0xA9C1, 0xA9CD), // Po
-        (0xA9D0, 0xA9D9), // Nd
-        (0xA9DE, 0xA9DF), // Po
-        // Myanmar Extended-B
-        (0xA9F0, 0xA9F9), // Nd
-        // Cham
-        (0xAA50, 0xAA59), // Nd
-        (0xAA5C, 0xAA5F), // Po
-        // Tai Viet
-        (0xAADE, 0xAADF), // Po
-        // Meetei Mayek Extensions
-        (0xAAF0, 0xAAF1), // Po
-        // Meetei Mayek
-        (0xABEB, 0xABEB), // Po
-        (0xABF0, 0xABF9), // Nd
-        // Aegean Numbers
-        (0x10100, 0x10100), // Po
-        (0x10102, 0x10102), // Po
-        // Ugaritic
-        (0x1039F, 0x1039F), // Po
-        // Old Persian
-        (0x103D0, 0x103D0), // Po
-        // Osmanya
-        (0x104A0, 0x104A9), // Nd
-        // Caucasian Albanian
-        (0x1056F, 0x1056F), // Po
-        // Brahmi
-        (0x11047, 0x1104D), // Po
-        (0x11066, 0x1106F), // Nd
-        // Kaithi
-        (0x110BB, 0x110BC), // Po
-        (0x110BE, 0x110C1), // Po
-        // Sora Sompeng
-        (0x110F0, 0x110F9), // Nd
-        // Chakma
-        (0x11136, 0x1113F), // Nd
-        (0x11140, 0x11143), // Po
-        // Mahajani
-        (0x11174, 0x11175), // Po
-        // Sharada
-        (0x111C5, 0x111C8), // Po
-        (0x111CD, 0x111CD), // Po
-        (0x111D0, 0x111D9), // Nd
-        (0x111DB, 0x111DB), // Po
-        (0x111DD, 0x111DF), // Po
-        // Khojki
-        (0x11238, 0x1123D), // Po
-        // Multani
-        (0x112A9, 0x112A9), // Po
-        // Khudawadi
-        (0x112F0, 0x112F9), // Nd
-        // Tulu-Tigalari
-        (0x113D4, 0x113D5), // Po
-        (0x113D7, 0x113D8), // Po
-        // Newa
-        (0x1144B, 0x1144F), // Po
-        (0x11450, 0x11459), // Nd
-        (0x1145A, 0x1145B), // Po
-        (0x1145D, 0x1145D), // Po
-        // Tirhuta
-        (0x114C6, 0x114C6), // Po
-        (0x114D0, 0x114D9), // Nd
-        // Siddham
-        (0x115C1, 0x115D7), // Po
-        // Modi
-        (0x11641, 0x11643), // Po
-        (0x11650, 0x11659), // Nd
-        // Takri
-        (0x116B9, 0x116B9), // Po
-        (0x116C0, 0x116C9), // Nd
-        // Myanmar Extended-C
-        (0x116D0, 0x116E3), // Nd
-        // Ahom
-        (0x11730, 0x11739), // Nd
-        (0x1173C, 0x1173E), // Po
-        // Dogra
-        (0x1183B, 0x1183B), // Po
-        // Warang Citi
-        (0x118E0, 0x118E9), // Nd
-        // Dives Akuru
-        (0x11944, 0x11946), // Po
-        (0x11950, 0x11959), // Nd
-        // Nandinagari
-        (0x119E2, 0x119E2), // Po
-        // Zanabazar Square
-        (0x11A3F, 0x11A46), // Po
-        // Soyombo
-        (0x11A9A, 0x11A9C), // Po
-        (0x11A9E, 0x11AA2), // Po
-        // Devanagari Extended-A
-        (0x11B00, 0x11B09), // Po
-        // Sunuwar
-        (0x11BE1, 0x11BE1), // Po
-        (0x11BF0, 0x11BF9), // Nd
-        // Bhaiksuki
-        (0x11C41, 0x11C45), // Po
-        (0x11C50, 0x11C59), // Nd
-        // Marchen
-        (0x11C70, 0x11C71), // Po
-        // Masaram Gondi
-        (0x11D50, 0x11D59), // Nd
-        // Gunjala Gondi
-        (0x11DA0, 0x11DA9), // Nd
-        // Tolong Siki
-        (0x11DE0, 0x11DE9), // Nd
-        // Makasar
-        (0x11EF7, 0x11EF8), // Po
-        // Kawi
-        (0x11F43, 0x11F4F), // Po
-        (0x11F50, 0x11F59), // Nd
-        // Tamil Supplement
-        (0x11FFF, 0x11FFF), // Po
-        // Cuneiform Numbers and Punctuation
-        (0x12470, 0x12474), // Po
-        // Cypro-Minoan
-        (0x12FF1, 0x12FF2), // Po
-        // Gurung Khema
-        (0x16130, 0x16139), // Nd
-        // Mro
-        (0x16A60, 0x16A69), // Nd
-        (0x16A6E, 0x16A6F), // Po
-        // Tangsa
-        (0x16AC0, 0x16AC9), // Nd
-        // Bassa Vah
-        (0x16AF5, 0x16AF5), // Po
-        // Pahawh Hmong
-        (0x16B37, 0x16B3B), // Po
-        (0x16B44, 0x16B44), // Po
-        (0x16B50, 0x16B59), // Nd
-        // Kirat Rai
-        (0x16D6D, 0x16D6F), // Po
-        (0x16D70, 0x16D79), // Nd
-        // Medefaidrin
-        (0x16E97, 0x16E9A), // Po
-        // Duployan
-        (0x1BC9F, 0x1BC9F), // Po
-        // Sutton SignWriting
-        (0x1DA87, 0x1DA8B), // Po
-        // Nyiakeng Puachue Hmong
-        (0x1E140, 0x1E149), // Nd
-        // Wancho
-        (0x1E2F0, 0x1E2F9), // Nd
-        // Nag Mundari
-        (0x1E4F0, 0x1E4F9), // Nd
-        // Ol Onal
-        (0x1E5F1, 0x1E5FA), // Nd
-        (0x1E5FF, 0x1E5FF), // Po
-        // The entries above are all `Nd`/punctuation. The entries below are
-        // `Mc` (spacing combining mark), plus one `Mn` entry noted at its
-        // own site — see this function's doc, case 2, for why these are
-        // included here even though the surrounding doc text otherwise
-        // talks about "named-script digits and punctuation": most `Mc`
-        // code points with an explicit `Bidi_Class=L` entry are vowel signs
-        // that are already `Alphabetic=Yes` and so already resolve
-        // correctly through the `is_alphabetic()` branch above without
-        // needing a table entry at all; these are the residual — viramas,
-        // tone marks, and similar combining marks that Unicode does not
-        // consider `Alphabetic` (a virama suppresses a vowel rather than
-        // representing one) despite carrying `Bidi_Class=L` themselves.
-        // Tibetan
-        (0x0F3E, 0x0F3F), // Mc
-        // Tagalog
-        (0x1715, 0x1715), // Mc
-        // Hanunoo
-        (0x1734, 0x1734), // Mc
-        // Balinese
-        (0x1B44, 0x1B44), // Mc
-        // Sundanese
-        (0x1BAA, 0x1BAA), // Mc
-        // Batak
-        (0x1BF2, 0x1BF3), // Mc
-        // Vedic Extensions
-        (0x1CE1, 0x1CE1), // Mc
-        (0x1CF7, 0x1CF7), // Mc
-        // CJK Symbols and Punctuation (Hangul tone marks)
-        (0x302E, 0x302F), // Mc
-        // Rejang
-        (0xA953, 0xA953), // Mc
-        // Javanese
-        (0xA9C0, 0xA9C0), // Mc
-        // Meetei Mayek
-        (0xABEC, 0xABEC), // Mc
-        // Sharada
-        (0x111C0, 0x111C0), // Mc
-        // Khojki
-        (0x11235, 0x11235), // Mc
-        // Grantha
-        (0x1134D, 0x1134D), // Mc
-        // Tulu-Tigalari
-        (0x113CF, 0x113CF), // Mc
-        // Takri
-        (0x116B6, 0x116B6), // Mc
-        // Dives Akuru
-        (0x1193D, 0x1193D), // Mc
-        // Sharada Vowel Signs Supplement (new in Unicode 17.0.0). Excluded
-        // from this workspace's pinned rustc 1.89.0 `char::is_alphabetic()`
-        // tables, which predate this block's assignment, even though UCD
-        // 17.0.0 marks these `Alphabetic=Yes` like the other vowel signs in
-        // this script — so unlike most `Mc` vowel signs, these three still
-        // need an explicit entry here rather than relying on the
-        // `is_alphabetic()` branch.
-        (0x11B61, 0x11B61), // Mc
-        (0x11B65, 0x11B65), // Mc
-        (0x11B67, 0x11B67), // Mc
-        // Bhaiksuki (this one virama is `Mn`, not `Mc`, unlike its
-        // counterparts above — same role, different General_Category)
-        (0x11C3F, 0x11C3F), // Mn
-        // Kawi
-        (0x11F41, 0x11F41), // Mc
-        // Musical Symbols
-        (0x1D165, 0x1D166), // Mc
-        (0x1D16D, 0x1D172), // Mc
-    ];
     if NON_STRONG_WITHIN_AL_R_RANGES
         .iter()
         .any(|&(lo, hi)| (lo..=hi).contains(&cp))
@@ -8350,6 +8351,215 @@ mod tests {
              resolve ltr on its own, not fall through to the later Arabic \
              text"
         );
+    }
+
+    #[test]
+    fn strong_bidi_range_tables_preserve_classification_invariants() {
+        fn overlaps(a: (u32, u32), b: (u32, u32)) -> bool {
+            a.0 <= b.1 && b.0 <= a.1
+        }
+
+        fn assert_table_is_internally_disjoint(name: &str, table: &[(u32, u32)]) {
+            for (index, &left) in table.iter().enumerate() {
+                assert!(left.0 <= left.1, "{name}[{index}] has an inverted range");
+                for (other_index, &right) in table.iter().enumerate().skip(index + 1) {
+                    // cov:ignore: the failure-message branch of this `assert!` only
+                    // executes for a deliberately broken generated const table;
+                    // constructing one here would test the fixture instead of the
+                    // invariant, while the checked-in table is immutable.
+                    assert!(
+                        !overlaps(left, right),
+                        "{name}[{index}] {left:#x?} overlaps {name}[{other_index}] {right:#x?}"
+                    );
+                }
+            }
+        }
+
+        fn assert_tables_are_disjoint(
+            left_name: &str,
+            left: &[(u32, u32)],
+            right_name: &str,
+            right: &[(u32, u32)],
+        ) {
+            for (left_index, &left_range) in left.iter().enumerate() {
+                for (right_index, &right_range) in right.iter().enumerate() {
+                    // cov:ignore: the failure-message branch of this `assert!` only
+                    // executes for a deliberately broken generated const table;
+                    // constructing one here would test the fixture instead of the
+                    // invariant, while the checked-in table is immutable.
+                    assert!(
+                        !overlaps(left_range, right_range),
+                        "{left_name}[{left_index}] {left_range:#x?} overlaps \
+                         {right_name}[{right_index}] {right_range:#x?}"
+                    );
+                }
+            }
+        }
+
+        let tables = [
+            ("AL_RANGES", AL_RANGES),
+            ("R_RANGES", R_RANGES),
+            (
+                "NON_STRONG_WITHIN_AL_R_RANGES",
+                NON_STRONG_WITHIN_AL_R_RANGES,
+            ),
+            ("NON_STRONG_ALPHABETIC_RANGES", NON_STRONG_ALPHABETIC_RANGES),
+            (
+                "STRONG_L_NON_ALPHABETIC_RANGES",
+                STRONG_L_NON_ALPHABETIC_RANGES,
+            ),
+        ];
+
+        for &(name, table) in &tables {
+            assert_table_is_internally_disjoint(name, table);
+        }
+        assert_tables_are_disjoint("AL_RANGES", AL_RANGES, "R_RANGES", R_RANGES);
+        assert_tables_are_disjoint(
+            "AL_RANGES",
+            AL_RANGES,
+            "NON_STRONG_ALPHABETIC_RANGES",
+            NON_STRONG_ALPHABETIC_RANGES,
+        );
+        assert_tables_are_disjoint(
+            "R_RANGES",
+            R_RANGES,
+            "NON_STRONG_ALPHABETIC_RANGES",
+            NON_STRONG_ALPHABETIC_RANGES,
+        );
+        assert_tables_are_disjoint(
+            "AL_RANGES",
+            AL_RANGES,
+            "STRONG_L_NON_ALPHABETIC_RANGES",
+            STRONG_L_NON_ALPHABETIC_RANGES,
+        );
+        assert_tables_are_disjoint(
+            "R_RANGES",
+            R_RANGES,
+            "STRONG_L_NON_ALPHABETIC_RANGES",
+            STRONG_L_NON_ALPHABETIC_RANGES,
+        );
+        assert_tables_are_disjoint(
+            "NON_STRONG_WITHIN_AL_R_RANGES",
+            NON_STRONG_WITHIN_AL_R_RANGES,
+            "NON_STRONG_ALPHABETIC_RANGES",
+            NON_STRONG_ALPHABETIC_RANGES,
+        );
+        assert_tables_are_disjoint(
+            "NON_STRONG_WITHIN_AL_R_RANGES",
+            NON_STRONG_WITHIN_AL_R_RANGES,
+            "STRONG_L_NON_ALPHABETIC_RANGES",
+            STRONG_L_NON_ALPHABETIC_RANGES,
+        );
+        assert_tables_are_disjoint(
+            "NON_STRONG_ALPHABETIC_RANGES",
+            NON_STRONG_ALPHABETIC_RANGES,
+            "STRONG_L_NON_ALPHABETIC_RANGES",
+            STRONG_L_NON_ALPHABETIC_RANGES,
+        );
+
+        for &(lo, hi) in NON_STRONG_WITHIN_AL_R_RANGES {
+            // cov:ignore: the failure-message branch of this `assert!` only
+            // executes for a deliberately broken generated const table;
+            // constructing one here would test the fixture instead of the
+            // invariant, while the checked-in table is immutable.
+            assert!(
+                AL_RANGES
+                    .iter()
+                    .chain(R_RANGES)
+                    .any(|&outer| outer.0 <= lo && hi <= outer.1),
+                "non-strong exception {lo:#x}..={hi:#x} is outside AL/R defaults"
+            );
+        }
+
+        for &(lo, hi) in NON_STRONG_ALPHABETIC_RANGES {
+            for cp in lo..=hi {
+                let character = char::from_u32(cp).expect("range is a Unicode scalar");
+                let resolved = strong_bidi_type(character);
+                if character.is_alphabetic() {
+                    // cov:ignore: the failure-message branch of this `assert_eq!` only
+                    // executes for a deliberately broken generated const table;
+                    // constructing one here would test the fixture instead of the
+                    // invariant, while the checked-in table is immutable.
+                    assert_eq!(
+                        resolved, None,
+                        "alphabetic NON_STRONG_ALPHABETIC_RANGES entry U+{cp:04X} must be excluded from L"
+                    );
+                }
+                // cov:ignore: the failure-message branch of this `assert!` only
+                // executes for a deliberately broken generated const table;
+                // constructing one here would test the fixture instead of the
+                // invariant, while the checked-in table is immutable.
+                assert!(
+                    resolved != Some(StrongBidiType::L),
+                    "NON_STRONG_ALPHABETIC_RANGES entry U+{cp:04X} must never resolve as L"
+                );
+            }
+        }
+        for &(lo, hi) in STRONG_L_NON_ALPHABETIC_RANGES {
+            for cp in lo..=hi {
+                let character = char::from_u32(cp).expect("range is a Unicode scalar");
+                // cov:ignore: the failure-message branch of this `assert!` only
+                // executes for a deliberately broken generated const table;
+                // constructing one here would test the fixture instead of the
+                // invariant, while the checked-in table is immutable.
+                assert!(
+                    !character.is_alphabetic(),
+                    "STRONG_L_NON_ALPHABETIC_RANGES contains alphabetic U+{cp:04X}"
+                );
+                // cov:ignore: the failure-message branch of this `assert_eq!` only
+                // executes for a deliberately broken generated const table;
+                // constructing one here would test the fixture instead of the
+                // invariant, while the checked-in table is immutable.
+                assert_eq!(
+                    strong_bidi_type(character),
+                    Some(StrongBidiType::L),
+                    "STRONG_L_NON_ALPHABETIC_RANGES entry U+{cp:04X} must resolve as L"
+                );
+            }
+        }
+
+        for &(lo, hi) in AL_RANGES {
+            for cp in lo..=hi {
+                let expected = if NON_STRONG_WITHIN_AL_R_RANGES
+                    .iter()
+                    .any(|&(excluded_lo, excluded_hi)| (excluded_lo..=excluded_hi).contains(&cp))
+                {
+                    None
+                } else {
+                    Some(StrongBidiType::Al)
+                };
+                // cov:ignore: the failure-message branch of this `assert_eq!` only
+                // executes for a deliberately broken generated const table;
+                // constructing one here would test the fixture instead of the
+                // invariant, while the checked-in table is immutable.
+                assert_eq!(
+                    strong_bidi_type(char::from_u32(cp).expect("range is a Unicode scalar")),
+                    expected,
+                    "AL_RANGES classification changed for U+{cp:04X}"
+                );
+            }
+        }
+        for &(lo, hi) in R_RANGES {
+            for cp in lo..=hi {
+                let expected = if NON_STRONG_WITHIN_AL_R_RANGES
+                    .iter()
+                    .any(|&(excluded_lo, excluded_hi)| (excluded_lo..=excluded_hi).contains(&cp))
+                {
+                    None
+                } else {
+                    Some(StrongBidiType::R)
+                };
+                // cov:ignore: the failure-message branch of this `assert_eq!` only
+                // executes for a deliberately broken generated const table;
+                // constructing one here would test the fixture instead of the
+                // invariant, while the checked-in table is immutable.
+                assert_eq!(
+                    strong_bidi_type(char::from_u32(cp).expect("range is a Unicode scalar")),
+                    expected,
+                    "R_RANGES classification changed for U+{cp:04X}"
+                );
+            }
+        }
     }
 
     /// No strongly-directional character anywhere in the `dir=\"auto\"`
