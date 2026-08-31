@@ -4,7 +4,7 @@
 //! それ以外の at-rule (@media / @supports / @import 等) は引き続き silently skip。
 
 use cssparser::{Parser, ParserInput, StyleSheetParser};
-use selectors::parser::{ParseRelative, SelectorList};
+use selectors::parser::{ParseRelative, Selector, SelectorList};
 
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
 use crate::page::{
@@ -502,14 +502,21 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// `parse_non_ts_functional_pseudo_class` 経由の `Component::NonTSPseudoClass`
 /// には一切ならない (`:hover`/`:active`/`:lang()`/`:dir()` のような
 /// non-tree-structural pseudo-class だけがそちら経由)。`:nth-child(An+B of
-/// S)` (L4 拡張 selector-list 形態) は `Parser::parse_nth_child_of()` を
-/// override していない (デフォルト `false`) ため常に `Component::NthOf`
-/// ではなく `Component::Nth` になり、" of S" 部分は
-/// `cssparser::Parser::parse_nested_block` の「closure が block 終端まで
-/// 消費しなければ Err に上書きする」contract (cssparser 0.37.0 `parser.rs`
-/// doc) により leftover token として selector 全体を parse error に落とす
-/// — fail-closed (silent superset-match にはならない、regression test
-/// `nth_child_of_extended_syntax_is_rejected_not_silently_widened` 参照)。
+/// S)` / `:nth-last-child(An+B of S)` (Selectors Level 4 §13.3.1/§13.3.2)
+/// は `RaikiriSelectorParser::parse_nth_child_of()` が有効化しているため、
+/// `selectors` crate により `Component::NthOf` として parse される。
+/// `Component::NthOf` に保持された selector-list は `is_supported_selector` が
+/// 再帰的に検査し、通常の selector と同じ対応済み component だけなら rule
+/// tree に格納する。cascade 側ではその list に一致する兄弟だけを 1-based
+/// の `An+B` 対象列に含め、`:nth-last-child()` では同じ filtered list を末尾
+/// から数える。従って `of S` は省略時の全要素兄弟列へ暗黙に広げられず、
+/// 未対応 component を含む selector は従来どおり rule ごと drop される。
+/// `S` 内の nested `Component::NthOf` も意図的に未対応として扱う。
+/// Selectors L4 の文法上は selector argument に含められるが、現行
+/// cascade matcher は `S` を各兄弟について評価するため、nested `NthOf` を
+/// 許可すると sibling scan が再帰的に増幅する。この bounded support boundary
+/// では通常の type/class/id/attribute selector と対応済み combinator を含む
+/// `S` は引き続き受理し、nested `NthOf` を含む style rule だけを drop する。
 ///
 /// spec: CSS Selectors Level 4 — class selector
 /// <https://www.w3.org/TR/selectors-4/#class-html>、ID selector
@@ -538,35 +545,45 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// 側の対応 match arm は combinator/pseudo-class の追加のたびに複数回
 /// 同時編集することになるため、変更のたびにこの対応関係を保つこと。
 fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
+    list.slice()
+        .iter()
+        .all(|selector| is_supported_selector(selector, true))
+}
+
+fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth_of: bool) -> bool {
     use selectors::parser::{Combinator, Component};
 
-    for selector in list.slice() {
-        for component in selector.iter_raw_match_order() {
-            match component {
-                Component::LocalName(_)
-                | Component::ExplicitUniversalType
-                | Component::ExplicitAnyNamespace
-                | Component::ExplicitNoNamespace
-                | Component::DefaultNamespace(_)
-                | Component::ID(_)
-                | Component::Class(_)
-                | Component::AttributeInNoNamespaceExists { .. }
-                | Component::AttributeInNoNamespace { .. }
-                | Component::Combinator(
-                    Combinator::Descendant
-                    | Combinator::Child
-                    | Combinator::NextSibling
-                    | Combinator::LaterSibling,
-                )
-                | Component::Root
-                | Component::Empty
-                | Component::Nth(_) => {}
-                Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_)) => {}
-                _ => return false,
+    selector
+        .iter_raw_match_order()
+        .all(|component| match component {
+            Component::LocalName(_)
+            | Component::ExplicitUniversalType
+            | Component::ExplicitAnyNamespace
+            | Component::ExplicitNoNamespace
+            | Component::DefaultNamespace(_)
+            | Component::ID(_)
+            | Component::Class(_)
+            | Component::AttributeInNoNamespaceExists { .. }
+            | Component::AttributeInNoNamespace { .. }
+            | Component::Combinator(
+                Combinator::Descendant
+                | Combinator::Child
+                | Combinator::NextSibling
+                | Combinator::LaterSibling,
+            )
+            | Component::Root
+            | Component::Empty
+            | Component::Nth(_) => true,
+            Component::NthOf(data) => {
+                allow_nth_of
+                    && data
+                        .selectors()
+                        .iter()
+                        .all(|selector| is_supported_selector(selector, false))
             }
-        }
-    }
-    true
+            Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_)) => true,
+            _ => false,
+        })
 }
 
 #[cfg(test)]
@@ -702,18 +719,22 @@ mod tests {
     }
 
     #[test]
-    fn nth_child_of_extended_syntax_selector_is_dropped() {
-        // `:nth-child(An+B of S)` (L4's extended selector-list form) is out
-        // of scope (`is_supported_selector_list`
-        // doc's `Component::Nth`/`Component::NthOf` note) — the whole
-        // selector fails to *parse* (see
-        // `cascade::tests::nth_child_of_extended_syntax_is_rejected_not_silently_widened`),
-        // so it never even reaches this gate; pinned here at the
-        // `add_stylesheet`/`build_rule_tree` integration level too.
-        let doc = dom_with_style("p:nth-child(2n+1 of .foo) { color: red } p { color: blue }");
+    fn nth_child_of_extended_syntax_selector_is_captured() {
+        let doc = dom_with_style(
+            "p:nth-child(2n+1 of .foo) { color: red } \
+             p:nth-last-child(1 of [data-kind=selected]) { color: blue }",
+        );
         let tree = build_rule_tree(&doc);
-        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules.len(), 2);
         assert_eq!(tree.style_rules[0].source_order, 0);
+        assert_eq!(tree.style_rules[1].source_order, 1);
+    }
+
+    #[test]
+    fn nested_nth_child_of_selector_is_dropped() {
+        let doc = dom_with_style("li:nth-child(2 of li:nth-child(2 of .featured)) { color: red }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 0);
     }
 
     #[test]
