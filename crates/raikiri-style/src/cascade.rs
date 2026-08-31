@@ -4888,10 +4888,10 @@ fn find_function_token_in_parser<'i, 't>(
                     })
                     .ok()
                     .flatten();
-                if let Some(nested_found) = nested_found {
-                    if found.is_none() {
-                        found = Some(nested_found);
-                    }
+                if let Some(nested_found) = nested_found
+                    && found.is_none()
+                {
+                    found = Some(nested_found);
                 }
             }
             _ => {}
@@ -16346,6 +16346,13 @@ mod tests {
             simplify_math_functions_at_depth("calc(1px)", MAX_VARIABLE_RESOLUTION_DEPTH + 1),
             None
         );
+        assert_eq!(simplify_math_functions("(calc(1px))"), Some("(1px)".into()));
+        assert_eq!(simplify_math_functions("[calc(1px)]"), Some("[1px]".into()));
+        assert_eq!(simplify_math_functions("{calc(1px)}"), Some("{1px}".into()));
+        assert!(needs_css_token_separator("-", "a"));
+        assert!(needs_css_token_separator("+", "2"));
+        assert!(needs_css_token_separator(".", "2"));
+        assert!(needs_css_token_separator("#", "a"));
         assert_eq!(
             evaluate_math_function("calc", &"x".repeat(MAX_SUBSTITUTED_VALUE_BYTES + 1)),
             None

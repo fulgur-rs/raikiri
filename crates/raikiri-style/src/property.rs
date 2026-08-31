@@ -19324,12 +19324,18 @@ mod tests {
         assert_eq!(skip_deferred_string("\"unterminated", 0), None);
         assert_eq!(skip_deferred_comment("/* comment */", 0), Some(13));
         assert_eq!(skip_deferred_comment("/* unterminated", 0), None);
+        assert!(contains_deferred_function_in_source("[var(--x)]"));
+        assert!(contains_function_in_source("[var(--x)]", "var"));
     }
 
     #[test]
     fn deferred_value_capture_rejects_oversized_input() {
         let source = format!("calc(1px){}", "x".repeat(64 * 1024));
         assert!(parse(&source, "width").is_none());
+        assert!(contains_deferred_function_in_source(&source));
+        let mut parser_input = ParserInput::new(&source);
+        let mut parser = Parser::new(&mut parser_input);
+        assert!(contains_deferred_function(&mut parser));
     }
 
     #[test]
