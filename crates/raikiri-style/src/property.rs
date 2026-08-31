@@ -9,7 +9,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use cssparser::color::{clamp_unit_f32, parse_named_color};
+use cssparser::color::parse_named_color;
 use cssparser::{ParseError, Parser, Token};
 use smol_str::SmolStr;
 
@@ -6068,8 +6068,8 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
 ///
 /// cssparser 0.37 は (0.36 までと異なり) 汎用 `Color` enum / `Color::parse` を
 /// 提供しない — それは別 crate `cssparser-color` 側に移った。ここでは
-/// 各 form の parse を自前 (cleanroom) で組み立て、hex / named / rgb() の
-/// 3 形式をカバーする:
+/// 各 form の parse を自前 (cleanroom) で組み立て、hex / named / rgb() /
+/// color() / lab() / lch() / oklab() / oklch() / color-mix() をカバーする:
 ///
 /// - **Hex** (`#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa`) は
 ///   [`CssColor::from_hex`] を呼び出す — CSS Color 4 §5.2 準拠の cleanroom 実装。
@@ -6085,24 +6085,538 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
 /// `rgba(0, 0, 0, 0)` の shorthand と規定される — `parse_named_color` の
 /// (r, g, b) は alpha を返さないため、Ident arm 手前で明示 branch して
 /// [`CssColor::TRANSPARENT`] を返す。
+///
+/// `from` を先頭に置く CSS Color 5 の relative color syntax は未対応である。
+/// この parser は origin color や `currentColor` を解決する cascade context を
+/// 持たないためである。
+///
+/// Modern color syntax の `none`（missing component）は、missing component の
+/// carry-forward を持たない bounded model では未対応として reject する。
+/// Lab/OKLab の lightness が black/white boundary にある場合は conversion 側で
+/// a/b や chroma にかかわらず boundary color へ固定する。それ以外の
+/// out-of-gamut は 8-bit sRGB への bounded approximation であり、CSS Color 4 の
+/// 完全な gamut mapping は未対応である。
 fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
+    parse_color_float(input).map(ParsedColor::to_css_color)
+}
+
+fn parse_color_float(input: &mut Parser<'_, '_>) -> Option<ParsedColor> {
     let token = input.next().ok()?.clone();
     match token {
-        Token::Hash(ref value) | Token::IDHash(ref value) => CssColor::from_hex(value),
+        Token::Hash(ref value) | Token::IDHash(ref value) => {
+            CssColor::from_hex(value).map(ParsedColor::from_css_color)
+        }
         Token::Ident(ref name) if name.eq_ignore_ascii_case("transparent") => {
-            Some(CssColor::TRANSPARENT)
+            Some(ParsedColor::from_css_color(CssColor::TRANSPARENT))
         }
         Token::Ident(ref name) => {
             let (r, g, b) = parse_named_color(name).ok()?;
-            Some(CssColor { r, g, b, a: 255 })
+            Some(ParsedColor::from_css_color(CssColor { r, g, b, a: 255 }))
         }
         Token::Function(ref name)
             if name.eq_ignore_ascii_case("rgb") || name.eq_ignore_ascii_case("rgba") =>
         {
             input.parse_nested_block(parse_rgb_function).ok()
         }
+        Token::Function(ref name) if name.eq_ignore_ascii_case("color") => {
+            input.parse_nested_block(parse_color_function).ok()
+        }
+        Token::Function(ref name) if name.eq_ignore_ascii_case("lab") => input
+            .parse_nested_block(|i| parse_lab_function(i, LabFunction::Lab))
+            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("lch") => input
+            .parse_nested_block(|i| parse_lab_function(i, LabFunction::Lch))
+            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("oklab") => input
+            .parse_nested_block(|i| parse_lab_function(i, LabFunction::Oklab))
+            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("oklch") => input
+            .parse_nested_block(|i| parse_lab_function(i, LabFunction::Oklch))
+            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("color-mix") => {
+            input.parse_nested_block(parse_color_mix_function).ok()
+        }
         _ => None,
     }
+}
+
+#[derive(Clone, Copy)]
+enum LabFunction {
+    Lab,
+    Lch,
+    Oklab,
+    Oklch,
+}
+
+#[derive(Clone, Copy)]
+enum MixColorSpace {
+    Srgb,
+    SrgbLinear,
+    Lab,
+    Lch,
+    Oklab,
+    Oklch,
+}
+
+#[derive(Clone, Copy)]
+struct ColorCoordinates {
+    first: f32,
+    second: f32,
+    third: f32,
+    alpha: f32,
+}
+
+#[derive(Clone, Copy)]
+struct ParsedColor {
+    rgb: [f32; 3],
+    alpha: f32,
+}
+
+impl ParsedColor {
+    fn from_css_color(color: CssColor) -> Self {
+        Self {
+            rgb: [
+                f32::from(color.r) / 255.0,
+                f32::from(color.g) / 255.0,
+                f32::from(color.b) / 255.0,
+            ],
+            alpha: f32::from(color.a) / 255.0,
+        }
+    }
+
+    fn to_css_color(self) -> CssColor {
+        rgb_f32_to_css_color(self.rgb, self.alpha)
+    }
+}
+
+fn parse_color_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, ParseError<'i, ()>> {
+    // Bounded CSS Color 4 support: the two sRGB spaces are representable by
+    // CssColor without widening the public value model. Wide-gamut predefined
+    // spaces remain a follow-up because this parser stores only 8-bit sRGB.
+    let color_space = input.expect_ident()?.clone();
+    let first = parse_color_component(input, 1.0)?;
+    let second = parse_color_component(input, 1.0)?;
+    let third = parse_color_component(input, 1.0)?;
+    let alpha = parse_optional_modern_alpha(input)?;
+
+    let color = match color_space.as_ref().to_ascii_lowercase().as_str() {
+        "srgb" => [first, second, third],
+        "srgb-linear" => [srgb_encode(first), srgb_encode(second), srgb_encode(third)],
+        _ => return Err(input.new_custom_error(())),
+    };
+    Ok(ParsedColor { rgb: color, alpha })
+}
+
+fn parse_lab_function<'i>(
+    input: &mut Parser<'i, '_>,
+    function: LabFunction,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let is_oklab = matches!(function, LabFunction::Oklab | LabFunction::Oklch);
+    let lightness = parse_lightness(input, is_oklab)?;
+    let component_scale = match function {
+        LabFunction::Lab => 125.0,
+        LabFunction::Lch => 150.0,
+        LabFunction::Oklab | LabFunction::Oklch => 0.4,
+    };
+    let mut second = parse_color_component(input, component_scale)?;
+    let third = if matches!(function, LabFunction::Lch | LabFunction::Oklch) {
+        second = second.max(0.0);
+        parse_hue(input)?
+    } else {
+        parse_color_component(input, component_scale)?
+    };
+    let alpha = parse_optional_modern_alpha(input)?;
+
+    let rgb = match function {
+        LabFunction::Lab => lab_to_srgb([lightness, second, third]),
+        LabFunction::Lch => lab_to_srgb([lightness, second * third.cos(), second * third.sin()]),
+        LabFunction::Oklab => oklab_to_srgb([lightness, second, third]),
+        LabFunction::Oklch => {
+            oklab_to_srgb([lightness, second * third.cos(), second * third.sin()])
+        }
+    };
+    Ok(ParsedColor { rgb, alpha })
+}
+
+fn parse_color_mix_function<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    input.expect_ident_matching("in")?;
+    let color_space = parse_mix_color_space(input)?;
+    input.expect_comma()?;
+
+    let color_one = parse_color_float(input).ok_or_else(|| input.new_custom_error(()))?;
+    let percentage_one = input.try_parse(parse_mix_percentage).ok();
+    input.expect_comma()?;
+    let color_two = parse_color_float(input).ok_or_else(|| input.new_custom_error(()))?;
+    let percentage_two = input.try_parse(parse_mix_percentage).ok();
+    let (percentage_one, percentage_two) = match (percentage_one, percentage_two) {
+        (None, None) => (0.5, 0.5),
+        (Some(first), None) => (first, 1.0 - first),
+        (None, Some(second)) => (1.0 - second, second),
+        (Some(first), Some(second)) => (first, second),
+    };
+
+    let (weight_one, weight_two, alpha_multiplier) =
+        normalize_mix_percentages(percentage_one, percentage_two);
+    if weight_one + weight_two == 0.0 {
+        return Ok(ParsedColor {
+            rgb: [0.0; 3],
+            alpha: 0.0,
+        });
+    }
+
+    let first = css_color_to_coordinates(color_one, color_space);
+    let second = css_color_to_coordinates(color_two, color_space);
+    let mixed = mix_coordinates(first, second, weight_one, weight_two, color_space);
+    let rgb = coordinates_to_srgb(mixed, color_space);
+    Ok(ParsedColor {
+        rgb,
+        alpha: mixed.alpha * alpha_multiplier,
+    })
+}
+
+fn parse_mix_color_space<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<MixColorSpace, ParseError<'i, ()>> {
+    let name = input.expect_ident()?.clone();
+    match name.as_ref().to_ascii_lowercase().as_str() {
+        "srgb" => Ok(MixColorSpace::Srgb),
+        "srgb-linear" => Ok(MixColorSpace::SrgbLinear),
+        "lab" => Ok(MixColorSpace::Lab),
+        "lch" => Ok(MixColorSpace::Lch),
+        "oklab" => Ok(MixColorSpace::Oklab),
+        "oklch" => Ok(MixColorSpace::Oklch),
+        _ => Err(input.new_custom_error(())),
+    }
+}
+
+fn parse_mix_percentage<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
+    let percentage = input.expect_percentage()?;
+    if (0.0..=1.0).contains(&percentage) {
+        Ok(percentage)
+    } else {
+        Err(input.new_custom_error(()))
+    }
+}
+
+fn normalize_mix_percentages(first: f32, second: f32) -> (f32, f32, f32) {
+    let sum = first + second;
+    if sum == 0.0 {
+        return (0.0, 0.0, 0.0);
+    }
+    if sum > 1.0 {
+        (first / sum, second / sum, 1.0)
+    } else {
+        (first / sum, second / sum, sum)
+    }
+}
+
+fn parse_color_component<'i>(
+    input: &mut Parser<'i, '_>,
+    percentage_scale: f32,
+) -> Result<f32, ParseError<'i, ()>> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Err(input.new_custom_error(()));
+    }
+    if let Ok(percentage) = input.try_parse(|i| i.expect_percentage()) {
+        return Ok(percentage * percentage_scale);
+    }
+    Ok(input.expect_number()?)
+}
+
+fn parse_lightness<'i>(
+    input: &mut Parser<'i, '_>,
+    is_oklab: bool,
+) -> Result<f32, ParseError<'i, ()>> {
+    let value = if let Ok(percentage) = input.try_parse(|i| i.expect_percentage()) {
+        if is_oklab {
+            percentage
+        } else {
+            percentage * 100.0
+        }
+    } else {
+        input.expect_number()?
+    };
+    Ok(if is_oklab {
+        value.clamp(0.0, 1.0)
+    } else {
+        value.clamp(0.0, 100.0)
+    })
+}
+
+fn parse_hue<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Err(input.new_custom_error(()));
+    }
+    match input.next()?.clone() {
+        Token::Number { value, .. } => Ok(value.to_radians()),
+        Token::Dimension {
+            value, ref unit, ..
+        } => {
+            let degrees = match unit.to_ascii_lowercase().as_str() {
+                "deg" => value,
+                "grad" => value * 0.9,
+                "rad" => value.to_degrees(),
+                "turn" => value * 360.0,
+                _ => return Err(input.new_custom_error(())),
+            };
+            Ok(degrees.to_radians())
+        }
+        token => Err(input.new_unexpected_token_error(token)),
+    }
+}
+
+fn parse_optional_modern_alpha<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
+    if input.try_parse(|i| i.expect_delim('/')).is_err() {
+        return Ok(1.0);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Err(input.new_custom_error(()));
+    }
+    if let Ok(percentage) = input.try_parse(|i| i.expect_percentage()) {
+        return Ok(percentage.clamp(0.0, 1.0));
+    }
+    Ok(input.expect_number()?.clamp(0.0, 1.0))
+}
+
+fn rgb_f32_to_css_color(rgb: [f32; 3], alpha: f32) -> CssColor {
+    CssColor {
+        r: channel_to_u8(rgb[0]),
+        g: channel_to_u8(rgb[1]),
+        b: channel_to_u8(rgb[2]),
+        a: channel_to_u8(alpha),
+    }
+}
+
+fn channel_to_u8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn srgb_encode(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    if value <= 0.0031308 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn srgb_decode(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+// CSS Color conversion matrices are kept at their published precision; the
+// runtime representation remains f32 until the final 8-bit property value.
+#[allow(clippy::excessive_precision)]
+fn lab_to_srgb([lightness, a, b]: [f32; 3]) -> [f32; 3] {
+    if lightness <= 0.0 {
+        return [0.0; 3];
+    }
+    if lightness >= 100.0 {
+        return [1.0; 3];
+    }
+    let fy = (lightness + 16.0) / 116.0;
+    let fx = fy + a / 500.0;
+    let fz = fy - b / 200.0;
+    let epsilon = 216.0 / 24389.0;
+    let kappa = 24389.0 / 27.0;
+    let f_inv = |value: f32| {
+        let cube = value * value * value;
+        if cube > epsilon {
+            cube
+        } else {
+            (116.0 * value - 16.0) / kappa
+        }
+    };
+    let xyz_d50 = [
+        0.9642956764 * f_inv(fx),
+        f_inv(fy),
+        0.8251046025 * f_inv(fz),
+    ];
+    let xyz_d65 = [
+        0.9554734527 * xyz_d50[0] - 0.0230985369 * xyz_d50[1] + 0.0632593087 * xyz_d50[2],
+        -0.0283697070 * xyz_d50[0] + 1.0099954580 * xyz_d50[1] + 0.0210413990 * xyz_d50[2],
+        0.0123140017 * xyz_d50[0] - 0.0205076964 * xyz_d50[1] + 1.3303659366 * xyz_d50[2],
+    ];
+    [
+        3.2409699 * xyz_d65[0] - 1.5373832 * xyz_d65[1] - 0.4986108 * xyz_d65[2],
+        -0.9692436 * xyz_d65[0] + 1.8759675 * xyz_d65[1] + 0.0415551 * xyz_d65[2],
+        0.0556301 * xyz_d65[0] - 0.2039769 * xyz_d65[1] + 1.0569715 * xyz_d65[2],
+    ]
+    .map(srgb_encode)
+}
+
+#[allow(clippy::excessive_precision)]
+fn oklab_to_srgb([lightness, a, b]: [f32; 3]) -> [f32; 3] {
+    if lightness <= 0.0 {
+        return [0.0; 3];
+    }
+    if lightness >= 1.0 {
+        return [1.0; 3];
+    }
+    let l = lightness + 0.3963377774 * a + 0.2158037573 * b;
+    let m = lightness - 0.1055613458 * a - 0.0638541728 * b;
+    let s = lightness - 0.0894841775 * a - 1.2914855480 * b;
+    let l = l * l * l;
+    let m = m * m * m;
+    let s = s * s * s;
+    [
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+    ]
+    .map(srgb_encode)
+}
+
+fn css_color_to_coordinates(color: ParsedColor, space: MixColorSpace) -> ColorCoordinates {
+    let rgb = color.rgb;
+    let alpha = color.alpha;
+    let [first, second, third] = match space {
+        MixColorSpace::Srgb => rgb,
+        MixColorSpace::SrgbLinear => rgb.map(srgb_decode),
+        MixColorSpace::Lab | MixColorSpace::Lch => srgb_to_lab(rgb),
+        MixColorSpace::Oklab | MixColorSpace::Oklch => srgb_to_oklab(rgb),
+    };
+    if matches!(space, MixColorSpace::Lch | MixColorSpace::Oklch) {
+        let chroma = (second * second + third * third).sqrt();
+        let chroma_threshold = if matches!(space, MixColorSpace::Lch) {
+            0.0015
+        } else {
+            0.000004
+        };
+        let hue = if chroma <= chroma_threshold {
+            0.0
+        } else {
+            third.atan2(second).rem_euclid(std::f32::consts::TAU)
+        };
+        ColorCoordinates {
+            first,
+            second: chroma,
+            third: hue,
+            alpha,
+        }
+    } else {
+        ColorCoordinates {
+            first,
+            second,
+            third,
+            alpha,
+        }
+    }
+}
+
+fn mix_coordinates(
+    first: ColorCoordinates,
+    second: ColorCoordinates,
+    weight_one: f32,
+    weight_two: f32,
+    space: MixColorSpace,
+) -> ColorCoordinates {
+    let alpha_one = first.alpha * weight_one;
+    let alpha_two = second.alpha * weight_two;
+    let alpha = alpha_one + alpha_two;
+    let component = |one: f32, two: f32| {
+        if alpha == 0.0 {
+            0.0
+        } else {
+            (one * alpha_one + two * alpha_two) / alpha
+        }
+    };
+    let (second_component, third_component) =
+        if matches!(space, MixColorSpace::Lch | MixColorSpace::Oklch) {
+            let first_hue = first.third;
+            let second_hue = second.third;
+            let hue = if first.second == 0.0 {
+                second_hue
+            } else if second.second == 0.0 {
+                first_hue
+            } else {
+                let delta = (second_hue - first_hue + std::f32::consts::PI)
+                    .rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI;
+                first_hue + delta * weight_two
+            };
+            (component(first.second, second.second), hue)
+        } else {
+            (
+                component(first.second, second.second),
+                component(first.third, second.third),
+            )
+        };
+    ColorCoordinates {
+        first: component(first.first, second.first),
+        second: second_component,
+        third: third_component,
+        alpha,
+    }
+}
+
+fn coordinates_to_srgb(color: ColorCoordinates, space: MixColorSpace) -> [f32; 3] {
+    let components = if matches!(space, MixColorSpace::Lch | MixColorSpace::Oklch) {
+        [
+            color.first,
+            color.second * color.third.cos(),
+            color.second * color.third.sin(),
+        ]
+    } else {
+        [color.first, color.second, color.third]
+    };
+    match space {
+        MixColorSpace::Srgb => components,
+        MixColorSpace::SrgbLinear => components.map(srgb_encode),
+        MixColorSpace::Lab | MixColorSpace::Lch => lab_to_srgb(components),
+        MixColorSpace::Oklab | MixColorSpace::Oklch => oklab_to_srgb(components),
+    }
+}
+
+#[allow(clippy::excessive_precision)]
+fn srgb_to_lab(rgb: [f32; 3]) -> [f32; 3] {
+    let rgb = rgb.map(srgb_decode);
+    let xyz_d65 = [
+        0.4123908 * rgb[0] + 0.3575843 * rgb[1] + 0.1804808 * rgb[2],
+        0.2126390 * rgb[0] + 0.7151687 * rgb[1] + 0.0721923 * rgb[2],
+        0.0193308 * rgb[0] + 0.1191948 * rgb[1] + 0.9505322 * rgb[2],
+    ];
+    let xyz_d50 = [
+        1.0479298208 * xyz_d65[0] + 0.0229467933 * xyz_d65[1] - 0.0501922295 * xyz_d65[2],
+        0.0296278157 * xyz_d65[0] + 0.9904344846 * xyz_d65[1] - 0.0170738250 * xyz_d65[2],
+        -0.0092430582 * xyz_d65[0] + 0.0150551449 * xyz_d65[1] + 0.7518742814 * xyz_d65[2],
+    ];
+    let epsilon = 216.0 / 24389.0;
+    let kappa = 24389.0 / 27.0;
+    let f = |value: f32| {
+        if value > epsilon {
+            value.cbrt()
+        } else {
+            (kappa * value + 16.0) / 116.0
+        }
+    };
+    let fx = f(xyz_d50[0] / 0.9642956764);
+    let fy = f(xyz_d50[1]);
+    let fz = f(xyz_d50[2] / 0.8251046025);
+    [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
+}
+
+#[allow(clippy::excessive_precision)]
+fn srgb_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
+    let rgb = rgb.map(srgb_decode);
+    let l = 0.41222147 * rgb[0] + 0.53633254 * rgb[1] + 0.05144599 * rgb[2];
+    let m = 0.21190350 * rgb[0] + 0.68069955 * rgb[1] + 0.10739696 * rgb[2];
+    let s = 0.08830246 * rgb[0] + 0.28171884 * rgb[1] + 0.62997870 * rgb[2];
+    let l = l.cbrt();
+    let m = m.cbrt();
+    let s = s.cbrt();
+    [
+        0.21045426 * l + 0.79361779 * m - 0.00407205 * s,
+        1.97799850 * l - 2.42859221 * m + 0.45059371 * s,
+        0.02590404 * l + 0.78277177 * m - 0.80867577 * s,
+    ]
 }
 
 /// `border-*-color` の value parser — `currentcolor` keyword を先取りしてから
@@ -6161,12 +6675,15 @@ fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
 /// ranges defined here at parsed-value time" — 負値 / >255 (number) や
 /// 100% 超も spec-valid、clamp only。
 ///
-/// - `<number>` 0..=255 → `clamp_channel` で `i32.clamp(0, 255) as u8`
+/// - `<number>` 0..=255 → `clamp_channel` で `i32.clamp(0, 255)` を 0..=1 に
+///   正規化
 /// - `<percentage>` 0%..=100% → `expect_percentage` は `0%`→0.0 / `100%`→1.0
-///   の unit_value を返すため [`clamp_unit_f32`] (`round(v * 255).clamp(0, 255)`)
-///   で `u8` へ mapping
+///   の unit_value を返すため、そのまま normalized f32 として保持
 /// - `<alpha-value>` は `<number>` 0..=1 または `<percentage>` 0%..=100% —
-///   どちらも [`clamp_unit_f32`] で単一 formula に統合
+///   どちらも clamp 後に normalized f32 として保持
+///
+/// Legacy parser は color-mix() の endpoint を保持できるよう normalized f32 を返し、
+/// property value へ落とす時だけ [`rgb_f32_to_css_color`] で u8 化する。
 ///
 /// # Non-goals
 ///
@@ -6176,12 +6693,13 @@ fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
 /// - Fractional number channel (`rgb(127.5, 0, 0)`) は spec grammar 上 valid
 ///   だが、`expect_integer` (整数 `int_value` 必須) を採用しているため drop
 ///   — 未実装 (将来対応)、future task で `<number>` に緩める余地。
-/// - Alpha の `none` component は modern syntax でのみ許容 — 本 task 対象外。
-fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<CssColor, ParseError<'i, ()>> {
+/// - Alpha の `none` component は modern syntax で許容されるが、missing value を
+///   carry-forward できない本 parser では未対応として reject する。
+fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, ParseError<'i, ()>> {
     // 1st channel: try percentage first、fail → integer number。
     // 成功した variant が以降 2 channel の kind を固定する。
     let (r, is_pct) = if let Ok(pct) = input.try_parse(|i| i.expect_percentage()) {
-        (clamp_unit_f32(pct), true)
+        (pct.clamp(0.0, 1.0), true)
     } else {
         (clamp_channel(input.expect_integer()?), false)
     };
@@ -6194,9 +6712,12 @@ fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<CssColor, ParseE
     let a = if input.try_parse(|i| i.expect_comma()).is_ok() {
         parse_alpha_value(input)?
     } else {
-        255
+        1.0
     };
-    Ok(CssColor { r, g, b, a })
+    Ok(ParsedColor {
+        rgb: [r, g, b],
+        alpha: a,
+    })
 }
 
 /// legacy rgb() の 2 番目 / 3 番目 channel を parse する。1 番目 channel で
@@ -6206,9 +6727,9 @@ fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<CssColor, ParseE
 fn parse_rgb_channel<'i>(
     input: &mut Parser<'i, '_>,
     is_pct: bool,
-) -> Result<u8, ParseError<'i, ()>> {
+) -> Result<f32, ParseError<'i, ()>> {
     if is_pct {
-        Ok(clamp_unit_f32(input.expect_percentage()?))
+        Ok(input.expect_percentage()?.clamp(0.0, 1.0))
     } else {
         Ok(clamp_channel(input.expect_integer()?))
     }
@@ -6216,23 +6737,23 @@ fn parse_rgb_channel<'i>(
 
 /// `<alpha-value>` (CSS Color 4 §5.1 grammar: `<number> | <percentage>`)。
 /// `<number>` は 0..=1、`<percentage>` は 0%..=100% で、どちらも clamp 後
-/// [`clamp_unit_f32`] で 0..=255 の `u8` に mapping する
-/// (`expect_percentage` の unit_value は既に 0..=1 化されているため同一 formula)。
+/// normalized f32 に mapping する (`expect_percentage` の unit_value は既に
+/// 0..=1 化されているため同一 formula)。
 ///
 /// try_parse で percentage を先行させる — `<percentage>` は Token::Percentage、
 /// `<number>` は Token::Number で orthogonal だが、percentage-first は
 /// [`parse_rgb_function`] の 1 番目 channel と対称の順序 (mix reject と同じ
 /// pattern で読める)。
-fn parse_alpha_value<'i>(input: &mut Parser<'i, '_>) -> Result<u8, ParseError<'i, ()>> {
+fn parse_alpha_value<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
     if let Ok(pct) = input.try_parse(|i| i.expect_percentage()) {
-        Ok(clamp_unit_f32(pct))
+        Ok(pct.clamp(0.0, 1.0))
     } else {
-        Ok(clamp_unit_f32(input.expect_number()?))
+        Ok(input.expect_number()?.clamp(0.0, 1.0))
     }
 }
 
-fn clamp_channel(value: i32) -> u8 {
-    value.clamp(0, 255) as u8
+fn clamp_channel(value: i32) -> f32 {
+    value.clamp(0, 255) as f32 / 255.0
 }
 
 /// `font-family: <family-name>#` を parse する。
@@ -10184,6 +10705,483 @@ mod tests {
         );
     }
 
+    #[test]
+    fn color_parse_color_srgb_and_linear_srgb() {
+        assert_eq!(
+            parse("color(srgb 1 0 0 / 50%)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 128,
+            }))
+        );
+        assert_eq!(
+            parse("color(srgb-linear 1 0 0)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_lab_family_extremes() {
+        for source in [
+            "lab(0% 0 0)",
+            "lch(0% 0 0)",
+            "oklab(0% 0 0)",
+            "oklch(0% 0 0)",
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                parse(source, "color"),
+                Some(PropertyValue::Color(CssColor::BLACK)),
+                "{source}"
+            );
+        }
+        for source in [
+            "lab(100% 0 0)",
+            "lch(100% 0 0)",
+            "oklab(100% 0 0)",
+            "oklch(100% 0 0)",
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                parse(source, "color"),
+                Some(PropertyValue::Color(CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                })),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn color_parse_lab_family_converts_neutral_lightness() {
+        assert_eq!(
+            parse("lab(50% 0 0)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 119,
+                g: 119,
+                b: 119,
+                a: 255,
+            }))
+        );
+        assert_eq!(
+            parse("lch(50% 0 120deg)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 119,
+                g: 119,
+                b: 119,
+                a: 255,
+            }))
+        );
+        assert_eq!(
+            parse("oklab(50% 0 0)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 99,
+                g: 99,
+                b: 99,
+                a: 255,
+            }))
+        );
+        assert_eq!(
+            parse("oklch(50% 0 120deg)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 99,
+                g: 99,
+                b: 99,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_lab_family_clamps_lightness_and_chroma() {
+        assert_eq!(
+            parse("lab(120% 0 0)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            }))
+        );
+        assert_eq!(
+            parse("oklab(-1 0 0)", "color"),
+            Some(PropertyValue::Color(CssColor::BLACK))
+        );
+        assert_eq!(
+            parse("lch(50% -10 120deg)", "color"),
+            parse("lab(50% 0 0)", "color")
+        );
+        assert_eq!(
+            parse("oklch(50% -10 120deg)", "color"),
+            parse("oklab(50% 0 0)", "color")
+        );
+    }
+
+    #[test]
+    fn color_parse_lab_family_rejects_none_components() {
+        for source in [
+            "lab(50% none none)",
+            "lch(50% none none)",
+            "oklab(50% none none)",
+            "oklch(50% none none)",
+        ] {
+            assert_eq!(parse(source, "color"), None);
+        }
+    }
+
+    #[test]
+    fn color_parse_lab_family_accepts_percentage_components() {
+        assert_eq!(
+            parse("lab(50% 10% -10%)", "color"),
+            parse("lab(50% 12.5 -12.5)", "color")
+        );
+        assert_eq!(
+            parse("lch(50% 20% 30deg)", "color"),
+            parse("lch(50% 30 30deg)", "color")
+        );
+        assert_eq!(
+            parse("oklab(50% 20% -20%)", "color"),
+            parse("oklab(50% 0.08 -0.08)", "color")
+        );
+        assert_eq!(
+            parse("oklch(50% 20% 30deg)", "color"),
+            parse("oklch(50% 0.08 30deg)", "color")
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_in_srgb_normalizes_percentages() {
+        assert_eq!(
+            parse("color-mix(in srgb, red 25%, blue 75%)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 64,
+                g: 0,
+                b: 191,
+                a: 255,
+            }))
+        );
+        assert_eq!(
+            parse("color-mix(in srgb, red 80%, blue 80%)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 128,
+                g: 0,
+                b: 128,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_premultiplies_alpha() {
+        assert_eq!(
+            parse(
+                "color-mix(in srgb, rgb(255, 0, 0, 0.5) 50%, blue 50%)",
+                "color"
+            ),
+            Some(PropertyValue::Color(CssColor {
+                r: 85,
+                g: 0,
+                b: 170,
+                a: 191,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_omitted_percentage_gets_leftover() {
+        assert_eq!(
+            parse("color-mix(in srgb, red 25%, blue)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 64,
+                g: 0,
+                b: 191,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_second_percentage_gets_leftover_for_first() {
+        assert_eq!(
+            parse("color-mix(in srgb, red, blue 25%)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 191,
+                g: 0,
+                b: 64,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_rejects_percentage_above_100() {
+        assert_eq!(parse("color-mix(in srgb, red 101%, blue)", "color"), None);
+        assert_eq!(parse("color-mix(in srgb, red, blue 101%)", "color"), None);
+    }
+
+    #[test]
+    fn color_parse_color_mix_supports_linear_srgb() {
+        assert_eq!(
+            parse("color-mix(in srgb-linear, black, white)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 188,
+                g: 188,
+                b: 188,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_supports_lab_family_spaces() {
+        for space in ["lab", "lch"] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                parse(&format!("color-mix(in {space}, black, white)"), "color"),
+                Some(PropertyValue::Color(CssColor {
+                    r: 119,
+                    g: 119,
+                    b: 119,
+                    a: 255,
+                })),
+                "{space}"
+            );
+        }
+        for space in ["oklab", "oklch"] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                parse(&format!("color-mix(in {space}, black, white)"), "color"),
+                Some(PropertyValue::Color(CssColor {
+                    r: 99,
+                    g: 99,
+                    b: 99,
+                    a: 255,
+                })),
+                "{space}"
+            );
+        }
+    }
+
+    #[test]
+    fn color_parse_hue_rejects_none_and_accepts_css_angle_units() {
+        assert_eq!(parse("lch(50% 20 none)", "color"), None);
+        assert_eq!(
+            parse("lch(50% 20 100grad)", "color"),
+            parse("lch(50% 20 90deg)", "color")
+        );
+        assert_eq!(
+            parse("lch(50% 20 1.5707964rad)", "color"),
+            parse("lch(50% 20 90deg)", "color")
+        );
+        assert_eq!(
+            parse("lch(50% 20 0.25turn)", "color"),
+            parse("lch(50% 20 90deg)", "color")
+        );
+    }
+
+    #[test]
+    fn color_parse_hue_rejects_unknown_units_and_tokens() {
+        assert_eq!(parse("lch(50% 20 1foo)", "color"), None);
+        assert_eq!(parse("lch(50% 20 \"not-a-hue\")", "color"), None);
+    }
+
+    #[test]
+    fn color_parse_color_modern_alpha_rejects_none_and_accepts_number() {
+        assert_eq!(parse("color(srgb 1 0 0 / none)", "color"), None);
+        assert_eq!(
+            parse("color(srgb 1 0 0 / 0.25)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 64,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_zero_percentages_is_transparent() {
+        assert_eq!(
+            parse("color-mix(in srgb, red 0%, blue 0%)", "color"),
+            Some(PropertyValue::Color(CssColor::TRANSPARENT))
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_nonzero_weights_with_zero_alpha_is_transparent() {
+        assert_eq!(
+            parse("color-mix(in srgb, transparent, transparent)", "color"),
+            Some(PropertyValue::Color(CssColor::TRANSPARENT))
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_lch_handles_one_achromatic_color() {
+        assert!(matches!(
+            parse("color-mix(in lch, black, red)", "color"),
+            Some(PropertyValue::Color(_))
+        ));
+        assert!(matches!(
+            parse("color-mix(in lch, red, black)", "color"),
+            Some(PropertyValue::Color(_))
+        ));
+    }
+
+    #[test]
+    fn color_parse_color_mix_lch_interpolates_two_hues() {
+        assert!(matches!(
+            parse("color-mix(in lch, red, blue)", "color"),
+            Some(PropertyValue::Color(_))
+        ));
+    }
+
+    #[test]
+    fn color_parse_color_mix_preserves_float_color_endpoints() {
+        assert_eq!(
+            parse(
+                "color-mix(in srgb, color(srgb 0.002 0 0) 50%, black 50%)",
+                "color"
+            ),
+            Some(PropertyValue::Color(CssColor::BLACK))
+        );
+    }
+
+    #[test]
+    fn color_mix_lch_hue_uses_specified_weight_with_different_alpha() {
+        let mixed = mix_coordinates(
+            ColorCoordinates {
+                first: 50.0,
+                second: 40.0,
+                third: 0.0,
+                alpha: 1.0,
+            },
+            ColorCoordinates {
+                first: 50.0,
+                second: 40.0,
+                third: std::f32::consts::FRAC_PI_2,
+                alpha: 0.25,
+            },
+            0.25,
+            0.75,
+            MixColorSpace::Lch,
+        );
+        assert!((mixed.third - std::f32::consts::FRAC_PI_2 * 0.75).abs() < 0.000001);
+    }
+
+    #[test]
+    fn color_parse_color_mix_lch_handles_different_alpha_endpoints() {
+        assert_eq!(
+            parse(
+                "color-mix(in lch, red 25%, rgb(0, 0, 255, 0.25) 75%)",
+                "color"
+            ),
+            Some(PropertyValue::Color(CssColor {
+                r: 206,
+                g: 0,
+                b: 215,
+                a: 112,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_mix_uses_space_specific_powerless_hue_thresholds() {
+        let near_neutral = ParsedColor {
+            rgb: [0.5, 0.5, 0.50001],
+            alpha: 1.0,
+        };
+        assert_eq!(
+            css_color_to_coordinates(near_neutral, MixColorSpace::Lch).third,
+            0.0
+        );
+        assert_eq!(
+            css_color_to_coordinates(near_neutral, MixColorSpace::Oklch).third,
+            0.0
+        );
+    }
+
+    #[test]
+    fn color_parse_lab_family_maps_lightness_boundaries() {
+        for source in ["lab(0% 125 125)", "lch(0% 150 45deg)"] {
+            assert_eq!(
+                parse(source, "color"),
+                Some(PropertyValue::Color(CssColor::BLACK))
+            );
+        }
+        for source in ["lab(100% -125 -125)", "lch(100% 150 45deg)"] {
+            assert_eq!(
+                parse(source, "color"),
+                Some(PropertyValue::Color(CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                }))
+            );
+        }
+        assert_eq!(
+            parse("oklab(0 0.4 0.4)", "color"),
+            Some(PropertyValue::Color(CssColor::BLACK))
+        );
+        assert_eq!(
+            parse("oklab(1 -0.4 -0.4)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            }))
+        );
+        assert_eq!(
+            parse("oklch(0 0.4 45deg)", "color"),
+            Some(PropertyValue::Color(CssColor::BLACK))
+        );
+        assert_eq!(
+            parse("oklch(1 0.4 45deg)", "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_parse_color_level_four_rejects_relative_from_syntax() {
+        for source in [
+            "color(from red srgb 1 0 0)",
+            "lab(from red 50% 0 0)",
+            "lch(from red 50% 0 0)",
+            "oklab(from red 0.5 0 0)",
+            "oklch(from red 50% 0 0)",
+        ] {
+            assert_eq!(parse(source, "color"), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn color_parse_color_functions_reject_invalid_syntax() {
+        assert_eq!(parse("color(display-p3 1 0 0)", "color"), None);
+        assert_eq!(parse("lab(50%, 0, 0)", "color"), None);
+        assert_eq!(parse("color-mix(in srgb, red, blue, white)", "color"), None);
+        assert_eq!(parse("color-mix(in unsupported, red, blue)", "color"), None);
+    }
+
     // ── rgb() / rgba() function form ──
     //
     // CSS Color 4 §5.1 legacy comma syntax の追加 form covers。
@@ -10194,7 +11192,7 @@ mod tests {
     #[test]
     fn color_parse_rgb_percentage_form() {
         // §5.1: `<percentage>` 0%/100% は `<number>` 0/255 と等価。
-        // 100% → 1.0 unit_value → clamp_unit_f32(1.0) = round(255) = 255。
+        // 100% → 1.0 unit_value → final `rgb_f32_to_css_color` で round(255) = 255。
         assert_eq!(
             parse("rgb(100%, 0%, 0%)", "color"),
             Some(PropertyValue::Color(CssColor {
@@ -10208,8 +11206,8 @@ mod tests {
 
     #[test]
     fn color_parse_rgba_number_alpha() {
-        // §5.1 alpha-value = <number> 0..=1。0.5 → clamp_unit_f32(0.5) =
-        // round(127.5) = 128 (cssparser convention)。
+        // §5.1 alpha-value = <number> 0..=1。0.5 → final u8 conversion の
+        // round(127.5) = 128。
         assert_eq!(
             parse("rgba(255, 0, 0, 0.5)", "color"),
             Some(PropertyValue::Color(CssColor {
@@ -10483,8 +11481,8 @@ mod tests {
 
     #[test]
     fn background_color_parse_rgba() {
-        // rgba() alpha は number literal (0.0..=1.0)、clamp_unit_f32 で
-        // 0..=255 に mapping。0.5 → 128 (rounding は cssparser 準拠)。
+        // rgba() alpha は number literal (0.0..=1.0)、final u8 conversion で
+        // 0..=255 に mapping。0.5 → 128 (rounding は CSS Color 4 準拠)。
         assert_eq!(
             parse("rgba(0, 0, 0, 0.5)", "background-color"),
             Some(PropertyValue::BackgroundColor(CssColor {
