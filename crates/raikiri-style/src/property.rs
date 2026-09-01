@@ -5695,7 +5695,12 @@ fn parser_contains_deferred_function(
     loop {
         let token = match input.next() {
             Ok(token) => token.clone(),
-            Err(_) => break,
+            Err(_) => {
+                if input.slice(source_start..input.position()).len() > MAX_SUBSTITUTED_VALUE_BYTES {
+                    found = true;
+                }
+                break;
+            }
         };
         if input.slice(source_start..input.position()).len() > MAX_SUBSTITUTED_VALUE_BYTES {
             found = true;
@@ -5794,6 +5799,10 @@ fn consume_deferred_value(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
                 kind: BasicParseErrorKind::EndOfInput,
                 ..
             }) => {
+                if input.slice(start..input.position()).len() > MAX_SUBSTITUTED_VALUE_BYTES {
+                    input.reset(&start_state);
+                    return None;
+                }
                 let value = input.slice(start..input.position()).trim();
                 return Some(value.into());
             }
@@ -19352,6 +19361,12 @@ mod tests {
         let mut oversized_input = ParserInput::new(&oversized);
         let mut oversized_parser = Parser::new(&mut oversized_input);
         assert!(contains_deferred_function(&mut oversized_parser));
+    }
+
+    #[test]
+    fn deferred_value_capture_rejects_oversized_trailing_comment() {
+        let source = format!("var(--x)/*{}*/", "x".repeat(MAX_SUBSTITUTED_VALUE_BYTES));
+        assert!(parse(&source, "width").is_none());
     }
 
     #[test]
