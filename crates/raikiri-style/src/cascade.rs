@@ -7137,9 +7137,9 @@ mod tests {
     use crate::property::CssColor;
     use crate::property::DisplayValue;
     use crate::property::{
-        Border, BorderColor, BorderStyle, Length, LengthOrAuto, OverflowValue, OverflowXY, Sides,
-        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        TextShadowColor,
+        Border, BorderColor, BorderStyle, Length, LengthOrAuto, OverflowValue, OverflowXY,
+        PropertyKey, Sides, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
+        TextDecorationStyle, TextShadowColor,
     };
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
