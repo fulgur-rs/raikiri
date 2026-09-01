@@ -511,12 +511,18 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// の `An+B` 対象列に含め、`:nth-last-child()` では同じ filtered list を末尾
 /// から数える。従って `of S` は省略時の全要素兄弟列へ暗黙に広げられず、
 /// 未対応 component を含む selector は従来どおり rule ごと drop される。
-/// `S` 内の nested `Component::NthOf` も意図的に未対応として扱う。
-/// Selectors L4 の文法上は selector argument に含められるが、現行
-/// cascade matcher は `S` を各兄弟について評価するため、nested `NthOf` を
-/// 許可すると sibling scan が再帰的に増幅する。この bounded support boundary
-/// では通常の type/class/id/attribute selector と対応済み combinator を含む
-/// `S` は引き続き受理し、nested `NthOf` を含む style rule だけを drop する。
+/// `S` 内の nested `Component::Nth` / `Component::NthOf` は意図的に未対応
+/// として扱う。Selectors L4 の文法上は `S` に complex-real-selector-list
+/// を許している (Selectors L4 §13.3.1
+/// <https://www.w3.org/TR/selectors-4/#the-nth-child-pseudo> /
+/// §13.3.2 <https://www.w3.org/TR/selectors-4/#the-nth-last-child-pseudo>)
+/// が、これは本実装が意図的に狭める bounded-support boundary
+/// (追跡: `raikiri-spike-flln.7`) である。cascade matcher は `S` を各兄弟
+/// について評価するため、nested nth component を許可すると sibling scan
+/// が再帰的に増幅する。`is_supported_selector` は外側 selector の nth
+/// component だけを許可し、`S` を検査するときは nested nth component を
+/// scan 前に reject する。一方、通常の type/class/id/attribute selector と
+/// 対応済み combinator を含む flat `S` は引き続き受理する。
 ///
 /// spec: CSS Selectors Level 4 — class selector
 /// <https://www.w3.org/TR/selectors-4/#class-html>、ID selector
@@ -550,7 +556,7 @@ fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool 
         .all(|selector| is_supported_selector(selector, true))
 }
 
-fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth_of: bool) -> bool {
+fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth: bool) -> bool {
     use selectors::parser::{Combinator, Component};
 
     selector
@@ -572,10 +578,10 @@ fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth_of:
                 | Combinator::LaterSibling,
             )
             | Component::Root
-            | Component::Empty
-            | Component::Nth(_) => true,
+            | Component::Empty => true,
+            Component::Nth(_) => allow_nth,
             Component::NthOf(data) => {
-                allow_nth_of
+                allow_nth
                     && data
                         .selectors()
                         .iter()

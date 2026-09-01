@@ -10839,6 +10839,13 @@ mod tests {
         doc.set_attr(last_filtered, "data-kind", "selected");
 
         let tree = build_rule_tree(&doc);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            tree.style_rules.len(),
+            2,
+            "flat selector-list filters must remain captured"
+        );
         let r = cascade(&doc, &tree).expect("cascade Ok");
 
         assert_eq!(r.computed[second_filtered].color, RED);
@@ -10867,6 +10874,95 @@ mod tests {
             r.computed[last_filtered].background_color,
             ComputedValues::initial().background_color
         );
+    }
+
+    #[test]
+    fn nested_nth_child_filter_is_rejected_before_sibling_scan() {
+        // Selectors L4 permits a complex-real-selector-list in `of S`, but this
+        // implementation rejects nested structural nth components before the
+        // outer filter can scan the sibling list. Keep enough siblings here to
+        // make accidentally accepting the nested filter observable.
+        let selector = "li:nth-child(1 of :nth-child(1))";
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            crate::parse_selector_list(selector).is_ok(),
+            "the nested nth-child selector must parse before support filtering"
+        );
+
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "li:nth-child(1 of :nth-child(1)) { background-color: red }",
+        );
+        let list = doc.push_element(0, "ul", None);
+        let sibling_count = 256;
+        let items: Vec<_> = (0..sibling_count)
+            .map(|_| doc.push_element(list, "li", None))
+            .collect();
+
+        let tree = build_rule_tree(&doc);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            tree.style_rules.is_empty(),
+            "nested nth-child filters must be dropped before sibling scans"
+        );
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        for item in items {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                result.computed[item].background_color,
+                ComputedValues::initial().background_color,
+                "nested nth-child filter must not style any of {sibling_count} siblings"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_nth_last_child_filter_is_rejected_before_sibling_scan() {
+        // The from-end form must share the same bounded support boundary as
+        // the from-start form; otherwise it could retain a second expensive
+        // nested sibling scan path.
+        let selector = "li:nth-last-child(1 of :nth-last-child(1))";
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            crate::parse_selector_list(selector).is_ok(),
+            "the nested nth-last-child selector must parse before support filtering"
+        );
+
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "li:nth-last-child(1 of :nth-last-child(1)) { background-color: red }",
+        );
+        let list = doc.push_element(0, "ul", None);
+        let sibling_count = 256;
+        let items: Vec<_> = (0..sibling_count)
+            .map(|_| doc.push_element(list, "li", None))
+            .collect();
+
+        let tree = build_rule_tree(&doc);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            tree.style_rules.is_empty(),
+            "nested nth-last-child filters must be dropped before sibling scans"
+        );
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        for item in items {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                result.computed[item].background_color,
+                ComputedValues::initial().background_color,
+                "nested nth-last-child filter must not style any of {sibling_count} siblings"
+            );
+        }
     }
 
     #[test]
