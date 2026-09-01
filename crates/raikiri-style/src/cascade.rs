@@ -5303,12 +5303,14 @@ fn split_top_level_commas(input: &str) -> Option<Vec<&str>> {
                 if closers.len() >= MAX_DEFERRED_VALUE_NESTING_DEPTH {
                     return None;
                 }
-                closers.push(match bytes[position] {
-                    b'(' => b')',
-                    b'[' => b']',
-                    b'{' => b'}',
-                    _ => unreachable!(),
-                });
+                let closer = if bytes[position] == b'(' {
+                    b')'
+                } else if bytes[position] == b'[' {
+                    b']'
+                } else {
+                    b'}'
+                };
+                closers.push(closer);
                 position += 1;
             }
             b')' | b']' | b'}' if closers.last() == Some(&bytes[position]) => {
@@ -16324,6 +16326,10 @@ mod tests {
             Some(r#""calc(1px)" /* calc(2px) */"#.into())
         );
         assert_eq!(
+            simplify_math_functions("calc(calc(1px))"),
+            Some("1px".into())
+        );
+        assert_eq!(
             simplify_math_functions_at_depth("calc(1px)", MAX_VARIABLE_RESOLUTION_DEPTH + 1),
             None
         );
@@ -16466,13 +16472,25 @@ mod tests {
             split_top_level_commas("min(1px, 2px), 3px"),
             Some(vec!["min(1px, 2px)", "3px"])
         );
+        assert_eq!(
+            split_top_level_commas(r"foo\,bar, baz"),
+            Some(vec![r"foo\,bar", "baz"])
+        );
+        assert_eq!(split_top_level_commas("{a,b}, c"), Some(vec!["{a,b}", "c"]));
         assert_eq!(split_top_level_commas(")"), None);
+        assert_eq!(split_top_level_commas("[a,b"), None);
         let nested = format!(
             "{}1{}",
             "(".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1),
             ")".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1)
         );
         assert!(MathParser::new(&nested).parse().is_none());
+        let too_deep = format!(
+            "{}1{}",
+            "[".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1),
+            "]".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1)
+        );
+        assert_eq!(split_top_level_commas(&too_deep), None);
     }
 
     #[test]
@@ -16527,6 +16545,14 @@ mod tests {
         assert_eq!(
             substitute_vars("var(--missing, blue)", &mut no_resolution, 0),
             Some("blue".into())
+        );
+        assert_eq!(
+            substitute_vars(
+                "var(--missing, var(--also-missing, red))",
+                &mut no_resolution,
+                0
+            ),
+            Some("red".into())
         );
         assert_eq!(
             substitute_vars(

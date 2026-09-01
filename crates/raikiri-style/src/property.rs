@@ -19447,6 +19447,11 @@ mod tests {
     }
 
     #[test]
+    fn deferred_value_capture_rejects_bad_url_before_important() {
+        assert!(parse(r#"var(--x) url(foo"bar)!important"#, "width").is_none());
+    }
+
+    #[test]
     fn deferred_value_capture_rejects_excessive_component_nesting() {
         let depth = 129;
         let source = format!("{}var(--x){}", "[".repeat(depth), "]".repeat(depth));
