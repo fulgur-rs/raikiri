@@ -5659,6 +5659,10 @@ const DEFERRED_FUNCTIONS: [&str; 5] = ["var", "calc", "min", "max", "clamp"];
 /// an owned `SmolStr`.
 pub(crate) const MAX_SUBSTITUTED_VALUE_BYTES: usize = 64 * 1024;
 
+/// Maximum component-value nesting accepted by the deferred-value scanners.
+/// The recursive parser paths use the same bound as a stack guard.
+pub(crate) const MAX_DEFERRED_VALUE_NESTING_DEPTH: usize = 128;
+
 fn is_deferred_function(name: &str) -> bool {
     DEFERRED_FUNCTIONS
         .iter()
@@ -5668,7 +5672,7 @@ fn is_deferred_function(name: &str) -> bool {
 fn contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
     let start = input.state();
     let source_start = input.position();
-    let found = parser_contains_deferred_function(input, source_start);
+    let found = parser_contains_deferred_function(input, source_start, 0);
     input.reset(&start);
     found
 }
@@ -5681,7 +5685,7 @@ fn contains_deferred_function_in_source(input: &str) -> bool {
         return true;
     }
     let source_start = parser.position();
-    parser_contains_deferred_function(&mut parser, source_start)
+    parser_contains_deferred_function(&mut parser, source_start, 0)
 }
 
 /// Inspect CSS component-value tokens, including nested blocks, so a deferred
@@ -5690,7 +5694,11 @@ fn contains_deferred_function_in_source(input: &str) -> bool {
 fn parser_contains_deferred_function(
     input: &mut Parser<'_, '_>,
     source_start: SourcePosition,
+    depth: usize,
 ) -> bool {
+    if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
+        return true;
+    }
     let mut found = false;
     loop {
         let token = match input.next() {
@@ -5715,6 +5723,7 @@ fn parser_contains_deferred_function(
                         Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(
                             nested,
                             source_start,
+                            depth.saturating_add(1),
                         ))
                     })
                     .unwrap_or(false)
@@ -5728,6 +5737,7 @@ fn parser_contains_deferred_function(
                         Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(
                             nested,
                             source_start,
+                            depth.saturating_add(1),
                         ))
                     })
                     .unwrap_or(false)
@@ -5741,7 +5751,6 @@ fn parser_contains_deferred_function(
     found
 }
 
-#[cfg(test)]
 fn skip_deferred_string(input: &str, start: usize) -> Option<usize> {
     let quote = input.as_bytes()[start];
     let bytes = input.as_bytes();
@@ -5756,11 +5765,96 @@ fn skip_deferred_string(input: &str, start: usize) -> Option<usize> {
     None
 }
 
-#[cfg(test)]
 fn skip_deferred_comment(input: &str, start: usize) -> Option<usize> {
     input[start + 2..]
         .find("*/")
         .map(|offset| start + 2 + offset + 2)
+}
+
+fn is_deferred_css_whitespace_byte(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\x0C' | b'\r')
+}
+
+fn is_deferred_css_newline_byte(byte: u8) -> bool {
+    matches!(byte, b'\n' | b'\x0C' | b'\r')
+}
+
+fn skip_deferred_escape(input: &str, start: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    if bytes.get(start) != Some(&b'\\') {
+        return None;
+    }
+    let mut position = start.checked_add(1)?;
+    let first = *bytes.get(position)?;
+    if is_deferred_css_newline_byte(first) {
+        return None;
+    }
+    if first.is_ascii_hexdigit() {
+        let mut digits = 0;
+        while digits < 6 && bytes.get(position).is_some_and(u8::is_ascii_hexdigit) {
+            digits += 1;
+            position += 1;
+        }
+        if bytes
+            .get(position)
+            .is_some_and(|byte| is_deferred_css_whitespace_byte(*byte))
+        {
+            if bytes.get(position) == Some(&b'\r') && bytes.get(position + 1) == Some(&b'\n') {
+                position += 2;
+            } else {
+                position += 1;
+            }
+        }
+        return Some(position);
+    }
+    let character = input[position..].chars().next()?;
+    Some(position + character.len_utf8())
+}
+
+fn css_component_values_are_bounded(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    let mut closers = Vec::new();
+    let mut position = 0;
+    while position < bytes.len() {
+        match bytes[position] {
+            b'\'' | b'"' => {
+                let Some(end) = skip_deferred_string(input, position) else {
+                    return false;
+                };
+                position = end;
+            }
+            b'/' if bytes.get(position + 1) == Some(&b'*') => {
+                let Some(end) = skip_deferred_comment(input, position) else {
+                    return false;
+                };
+                position = end;
+            }
+            b'\\' => {
+                let Some(end) = skip_deferred_escape(input, position) else {
+                    return false;
+                };
+                position = end;
+            }
+            b'(' | b'[' | b'{' => {
+                if closers.len() >= MAX_DEFERRED_VALUE_NESTING_DEPTH {
+                    return false;
+                }
+                closers.push(match bytes[position] {
+                    b'(' => b')',
+                    b'[' => b']',
+                    b'{' => b'}',
+                    _ => unreachable!(),
+                });
+                position += 1;
+            }
+            b')' | b']' | b'}' if closers.last() == Some(&bytes[position]) => {
+                closers.pop();
+                position += 1;
+            }
+            _ => position += 1,
+        }
+    }
+    true
 }
 
 /// Consume a value containing a substitution/math function while leaving a
@@ -5793,6 +5887,10 @@ fn consume_deferred_value(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
                         return None;
                     }
                     let value = input.slice(start..token_start).trim();
+                    if !css_component_values_are_bounded(value) {
+                        input.reset(&start_state);
+                        return None;
+                    }
                     return Some(value.into());
                 }
                 input.reset(&start_state);
@@ -5808,6 +5906,10 @@ fn consume_deferred_value(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
                     return None;
                 }
                 let value = input.slice(start..input.position()).trim();
+                if !css_component_values_are_bounded(value) {
+                    input.reset(&start_state);
+                    return None;
+                }
                 return Some(value.into());
             }
             // cov:ignore: cssparser's `Parser::next` only reports
@@ -19379,6 +19481,13 @@ mod tests {
             "var(--x)/*{}*/!important",
             "x".repeat(MAX_SUBSTITUTED_VALUE_BYTES)
         );
+        assert!(parse(&source, "width").is_none());
+    }
+
+    #[test]
+    fn deferred_value_capture_rejects_excessive_component_nesting() {
+        let depth = 129;
+        let source = format!("{}var(--x){}", "[".repeat(depth), "]".repeat(depth));
         assert!(parse(&source, "width").is_none());
     }
 

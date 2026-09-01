@@ -40,8 +40,8 @@ use crate::computed::{ComputedValues, RunningTemplate, empty_custom_properties};
 use crate::error::CascadeError;
 use crate::property::{
     CustomProperty, DeferredValue, FontWeightValue, Length, LengthOrAuto,
-    MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue, RelativeFontSize,
-    is_custom_property_name, parse_value, resolve_text_align_match_parent,
+    MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue,
+    RelativeFontSize, is_custom_property_name, parse_value, resolve_text_align_match_parent,
 };
 use crate::resolve::{ComputedLength, ResolveContext, used_line_height_length};
 use crate::rule::{expand_shorthand_into, parse_declaration_block};
@@ -4828,25 +4828,24 @@ fn push_bounded(output: &mut String, fragment: &str) -> Option<()> {
 
 const MATH_FUNCTIONS: [&str; 4] = ["calc", "min", "max", "clamp"];
 
-/// Find a named CSS function by walking cssparser's component-value tokens.
+/// Find named CSS functions by walking cssparser's component-value tokens.
 /// `Parser::next` skips a function body, so recurse into every block to keep
 /// nested `var()`/math functions visible while preserving their byte offsets.
-fn find_function_token(
-    input: &str,
-    minimum_start: usize,
-    names: &[&str],
-) -> Option<(usize, usize)> {
+fn find_function_tokens(input: &str, names: &[&str]) -> Option<Vec<(usize, usize, usize)>> {
     let mut parser_input = ParserInput::new(input);
     let mut parser = Parser::new(&mut parser_input);
-    find_function_token_in_parser(&mut parser, minimum_start, names)
+    find_function_tokens_in_parser(&mut parser, names, 0)
 }
 
-fn find_function_token_in_parser<'i, 't>(
+fn find_function_tokens_in_parser<'i, 't>(
     parser: &mut Parser<'i, 't>,
-    minimum_start: usize,
     names: &[&str],
-) -> Option<(usize, usize)> {
-    let mut found = None;
+    depth: usize,
+) -> Option<Vec<(usize, usize, usize)>> {
+    if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
+        return None;
+    }
+    let mut found = Vec::new();
     loop {
         let token_start = parser.position().byte_index();
         let token = match parser.next() {
@@ -4856,48 +4855,32 @@ fn find_function_token_in_parser<'i, 't>(
         match token {
             Token::Function(name) => {
                 let open = parser.position().byte_index().checked_sub(1)?;
-                let candidate = if token_start >= minimum_start
-                    && names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted))
-                {
-                    Some((token_start, open))
-                } else {
-                    None
-                };
-                let nested_found = parser
+                let is_target = names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted));
+                let mut nested_found = parser
                     .parse_nested_block(|nested| {
-                        Ok::<_, cssparser::ParseError<'i, ()>>(find_function_token_in_parser(
-                            nested,
-                            minimum_start,
-                            names,
-                        ))
+                        find_function_tokens_in_parser(nested, names, depth.saturating_add(1))
+                            .ok_or_else(|| nested.new_custom_error::<(), ()>(()))
                     })
-                    .ok()
-                    .flatten();
-                if found.is_none() {
-                    found = candidate.or(nested_found);
+                    .ok()?;
+                if is_target {
+                    let close = parser.position().byte_index().checked_sub(1)?;
+                    found.push((token_start, open, close));
                 }
+                found.append(&mut nested_found);
             }
             Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
-                let nested_found = parser
+                let mut nested_found = parser
                     .parse_nested_block(|nested| {
-                        Ok::<_, cssparser::ParseError<'i, ()>>(find_function_token_in_parser(
-                            nested,
-                            minimum_start,
-                            names,
-                        ))
+                        find_function_tokens_in_parser(nested, names, depth.saturating_add(1))
+                            .ok_or_else(|| nested.new_custom_error::<(), ()>(()))
                     })
-                    .ok()
-                    .flatten();
-                if let Some(nested_found) = nested_found
-                    && found.is_none()
-                {
-                    found = Some(nested_found);
-                }
+                    .ok()?;
+                found.append(&mut nested_found);
             }
             _ => {}
         }
     }
-    found
+    Some(found)
 }
 
 fn needs_css_token_separator(left: &str, right: &str) -> bool {
@@ -4925,6 +4908,9 @@ fn needs_css_token_separator(left: &str, right: &str) -> bool {
     {
         return true;
     }
+    if left.is_ascii_digit() && (matches!(right, b'-' | b'_' | b'\\') || right >= 0x80) {
+        return true;
+    }
     if matches!(left, b'+' | b'-') && (right.is_ascii_digit() || right == b'.') {
         return true;
     }
@@ -4932,7 +4918,7 @@ fn needs_css_token_separator(left: &str, right: &str) -> bool {
         return true;
     }
     matches!(left, b'#' | b'@')
-        && (right.is_ascii_alphabetic() || matches!(right, b'-' | b'_' | b'\\') || right >= 0x80)
+        && (right.is_ascii_alphanumeric() || matches!(right, b'-' | b'_' | b'\\') || right >= 0x80)
 }
 
 fn simplify_math_functions_at_depth(input: &str, depth: usize) -> Option<SmolStr> {
@@ -4941,9 +4927,12 @@ fn simplify_math_functions_at_depth(input: &str, depth: usize) -> Option<SmolStr
     }
     let mut output = String::with_capacity(input.len());
     let mut position = 0;
-    while let Some((name_start, open)) = find_function_token(input, position, &MATH_FUNCTIONS) {
+    let functions = find_function_tokens(input, &MATH_FUNCTIONS)?;
+    for (name_start, open, close) in functions {
+        if name_start < position {
+            continue;
+        }
         push_bounded(&mut output, &input[position..name_start])?;
-        let close = find_matching_paren(input, open)?;
         let name = &input[name_start..open];
         let inner_source = &input[open + 1..close];
         let inner = simplify_math_functions_at_depth(inner_source, depth.saturating_add(1))?;
@@ -4952,7 +4941,7 @@ fn simplify_math_functions_at_depth(input: &str, depth: usize) -> Option<SmolStr
         if needs_css_token_separator(&output, &input[close + 1..]) {
             push_bounded(&mut output, " ")?;
         }
-        position = close + 1;
+        position = close.checked_add(1)?;
     }
     push_bounded(&mut output, &input[position..])?;
     Some(output.into())
@@ -5103,11 +5092,16 @@ fn serialize_math_value(value: MathValue) -> Option<String> {
 struct MathParser<'a> {
     input: &'a str,
     position: usize,
+    nesting_depth: usize,
 }
 
 impl<'a> MathParser<'a> {
     fn new(input: &'a str) -> Self {
-        Self { input, position: 0 }
+        Self {
+            input,
+            position: 0,
+            nesting_depth: 0,
+        }
     }
 
     fn parse(mut self) -> Option<MathValue> {
@@ -5181,8 +5175,14 @@ impl<'a> MathParser<'a> {
     fn parse_primary(&mut self) -> Option<MathValue> {
         self.skip_whitespace();
         if self.input.as_bytes().get(self.position) == Some(&b'(') {
+            if self.nesting_depth >= MAX_VARIABLE_RESOLUTION_DEPTH {
+                return None;
+            }
             self.position += 1;
-            let value = self.parse_sum()?;
+            self.nesting_depth += 1;
+            let value = self.parse_sum();
+            self.nesting_depth -= 1;
+            let value = value?;
             self.skip_whitespace();
             if self.input.as_bytes().get(self.position) != Some(&b')') {
                 return None;
@@ -5290,7 +5290,7 @@ fn split_top_level_commas(input: &str) -> Option<Vec<&str>> {
     let bytes = input.as_bytes();
     let mut parts = Vec::new();
     let mut start = 0;
-    let mut depth = 0usize;
+    let mut closers = Vec::new();
     let mut position = 0;
     while position < bytes.len() {
         match bytes[position] {
@@ -5298,21 +5298,34 @@ fn split_top_level_commas(input: &str) -> Option<Vec<&str>> {
             b'/' if bytes.get(position + 1) == Some(&b'*') => {
                 position = skip_css_comment(input, position)?
             }
-            b'(' => {
-                depth += 1;
+            b'\\' => position = skip_css_escape(input, position)?,
+            b'(' | b'[' | b'{' => {
+                if closers.len() >= MAX_DEFERRED_VALUE_NESTING_DEPTH {
+                    return None;
+                }
+                closers.push(match bytes[position] {
+                    b'(' => b')',
+                    b'[' => b']',
+                    b'{' => b'}',
+                    _ => unreachable!(),
+                });
                 position += 1;
             }
-            b')' => {
-                depth = depth.checked_sub(1)?;
+            b')' | b']' | b'}' if closers.last() == Some(&bytes[position]) => {
+                closers.pop();
                 position += 1;
             }
-            b',' if depth == 0 => {
+            b')' | b']' | b'}' if closers.is_empty() => return None,
+            b',' if closers.is_empty() => {
                 parts.push(input[start..position].trim());
                 start = position + 1;
                 position += 1;
             }
             _ => position += 1,
         }
+    }
+    if !closers.is_empty() {
+        return None;
     }
     parts.push(input[start..].trim());
     parts.iter().all(|part| !part.is_empty()).then_some(parts)
@@ -5432,7 +5445,7 @@ fn apply_winners(
 // CSS Variables 1 §3.3 requires a UA-defined expansion limit to prevent
 // exponential substitution blowups. The depth bound is an additional stack
 // guard for the mutually recursive resolver/substituter paths.
-const MAX_VARIABLE_RESOLUTION_DEPTH: usize = 128;
+const MAX_VARIABLE_RESOLUTION_DEPTH: usize = MAX_DEFERRED_VALUE_NESTING_DEPTH;
 
 fn resolve_custom_properties(
     inherited: &HashMap<SmolStr, SmolStr>,
@@ -5599,14 +5612,10 @@ fn collect_var_references(input: &str, references: &mut Vec<SmolStr>) -> Result<
     if input.len() > MAX_SUBSTITUTED_VALUE_BYTES || !css_literals_are_well_formed(input) {
         return Err(());
     }
-    let mut position = 0;
-    while let Some((_, open)) = find_function_token(input, position, &["var"]) {
-        let close = find_matching_paren(input, open).ok_or(())?;
+    let functions = find_function_tokens(input, &["var"]).ok_or(())?;
+    for (_, open, close) in functions {
         let (name, _) = split_var_arguments(&input[open + 1..close]).ok_or(())?;
         references.push(name);
-        // Continue through the function body so fallback arguments and
-        // nested var() references are also dependency edges.
-        position = open + 1;
     }
     Ok(())
 }
@@ -5624,9 +5633,12 @@ fn substitute_vars(
     }
     let mut output = String::with_capacity(input.len());
     let mut position = 0;
-    while let Some((name_start, open)) = find_function_token(input, position, &["var"]) {
+    let functions = find_function_tokens(input, &["var"])?;
+    for (name_start, open, close) in functions {
+        if name_start < position {
+            continue;
+        }
         push_bounded(&mut output, &input[position..name_start])?;
-        let close = find_matching_paren(input, open)?;
         let inner = &input[open + 1..close];
         let (name, fallback) = split_var_arguments(inner)?;
         let replacement = match resolve(name.as_str()) {
@@ -5643,7 +5655,7 @@ fn substitute_vars(
             // serialization would otherwise merge adjacent tokens.
             push_bounded(&mut output, " ")?;
         }
-        position = close + 1;
+        position = close.checked_add(1)?;
     }
     push_bounded(&mut output, &input[position..])?;
     Some(output.into())
@@ -5693,37 +5705,6 @@ fn skip_css_comment(input: &str, start: usize) -> Option<usize> {
     input[start + 2..]
         .find("*/")
         .map(|offset| start + 2 + offset + 2)
-}
-
-fn find_matching_paren(input: &str, open: usize) -> Option<usize> {
-    if input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
-        return None;
-    }
-    let bytes = input.as_bytes();
-    let mut depth = 1usize;
-    let mut position = open + 1;
-    while position < bytes.len() {
-        match bytes[position] {
-            b'\'' | b'"' => position = skip_css_string(input, position)?,
-            b'/' if bytes.get(position + 1) == Some(&b'*') => {
-                position = skip_css_comment(input, position)?
-            }
-            b'\\' => position = skip_css_escape(input, position)?,
-            b'(' => {
-                depth += 1;
-                position += 1;
-            }
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(position);
-                }
-                position += 1;
-            }
-            _ => position += 1,
-        }
-    }
-    None
 }
 
 fn split_var_arguments(input: &str) -> Option<(SmolStr, Option<&str>)> {
@@ -16353,6 +16334,11 @@ mod tests {
         assert!(needs_css_token_separator("+", "2"));
         assert!(needs_css_token_separator(".", "2"));
         assert!(needs_css_token_separator("#", "a"));
+        assert!(needs_css_token_separator("10", "--foo"));
+        assert!(needs_css_token_separator("10", "_foo"));
+        assert!(needs_css_token_separator("10", r"\66 oo"));
+        assert!(needs_css_token_separator("10", "é"));
+        assert!(needs_css_token_separator("#", "1"));
         assert_eq!(
             evaluate_math_function("calc", &"x".repeat(MAX_SUBSTITUTED_VALUE_BYTES + 1)),
             None
@@ -16481,12 +16467,12 @@ mod tests {
             Some(vec!["min(1px, 2px)", "3px"])
         );
         assert_eq!(split_top_level_commas(")"), None);
-        assert_eq!(find_matching_paren("f(\"(\", /* ) */ 1)", 1), Some(16));
-        assert_eq!(find_matching_paren("f(", 1), None);
-        assert_eq!(
-            find_matching_paren(&"(".repeat(MAX_SUBSTITUTED_VALUE_BYTES + 1), 0),
-            None
+        let nested = format!(
+            "{}1{}",
+            "(".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1),
+            ")".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1)
         );
+        assert!(MathParser::new(&nested).parse().is_none());
     }
 
     #[test]
@@ -16559,7 +16545,6 @@ mod tests {
         assert_eq!(skip_css_string("\"unterminated", 0), None);
         assert_eq!(skip_css_comment("/* comment */", 0), Some(13));
         assert_eq!(skip_css_comment("/* unterminated", 0), None);
-        assert_eq!(find_matching_paren("f(\\))", 1), Some(4));
         assert_eq!(skip_css_escape("x", 0), None);
         assert_eq!(skip_css_escape("\\\n", 0), None);
         assert_eq!(skip_css_escape(r"\31 ", 0), Some(4));
@@ -16587,6 +16572,29 @@ mod tests {
         assert_eq!(escaped_name, "--x,");
         assert_eq!(escaped_fallback, Some("red"));
         assert_eq!(split_var_arguments("--x)"), None);
+    }
+
+    #[test]
+    fn variable_substitution_preserves_number_identifier_boundary() {
+        assert_eq!(
+            substitute_vars("var(--n)--foo", &mut |_| Some("10".into()), 0),
+            Some("10 --foo".into())
+        );
+        assert_eq!(
+            substitute_vars("var(--missing, [foo)bar])", &mut |_| None, 0),
+            Some("[foo)bar]".into())
+        );
+    }
+
+    #[test]
+    fn component_value_scanners_bound_nesting_and_blocks() {
+        let nested = format!(
+            "{}var(--x){}",
+            "[".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1),
+            "]".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1)
+        );
+        assert_eq!(find_function_tokens(&nested, &["var"]), None);
+        assert_eq!(split_top_level_commas("[a,b], c"), Some(vec!["[a,b]", "c"]));
     }
 
     #[test]
