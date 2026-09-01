@@ -328,6 +328,12 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
     type Impl = RaikiriSelectorImpl;
     type Error = SelectorParseErrorKind<'i>;
 
+    /// Enable Selectors Level 4 `of <selector-list>` parsing for
+    /// `:nth-child()` and `:nth-last-child()`.
+    fn parse_nth_child_of(&self) -> bool {
+        true
+    }
+
     fn parse_non_ts_pseudo_class(
         &self,
         location: SourceLocation,
@@ -511,5 +517,50 @@ mod tests {
         // fails the *whole* list — `p` here is otherwise perfectly valid on
         // its own.
         assert!(parse_selector_list("p, :dir(sideways)").is_err());
+    }
+
+    #[test]
+    fn parse_nth_child_of_selector_list_uses_nth_of_component() {
+        use selectors::parser::{Component, NthType};
+
+        for (source, expected_type) in [
+            (
+                "p:nth-child(2 of .featured, [data-kind=\"selected\"])",
+                NthType::Child,
+            ),
+            (
+                "p:nth-last-child(2 of .featured, [data-kind=\"selected\"])",
+                NthType::LastChild,
+            ),
+        ] {
+            let list = parse_selector_list(source).expect("parse selector-list argument");
+            let selector = &list.slice()[0];
+            let component = selector
+                .iter()
+                .find(|component| matches!(component, Component::NthOf(_)))
+                .expect("selector must contain Component::NthOf");
+            match component {
+                Component::NthOf(data) => {
+                    assert!(data.nth_data().ty == expected_type);
+                    assert_eq!(data.nth_data().an_plus_b.0, 0);
+                    assert_eq!(data.nth_data().an_plus_b.1, 2);
+                    assert_eq!(data.selectors().len(), 2);
+                }
+                // cov:ignore: `find` above only yields `Component::NthOf`;
+                // this arm is unreachable by construction.
+                _ => unreachable!("find above guarantees Component::NthOf"),
+            }
+
+            let mut serialized = String::new();
+            list.to_css(&mut serialized)
+                .expect("serialize selector list");
+            assert_eq!(serialized, source);
+        }
+    }
+
+    #[test]
+    fn parse_nth_child_of_rejects_invalid_selector_list_forms() {
+        assert!(parse_selector_list("p:nth-child(2 of .featured,)").is_err());
+        assert!(parse_selector_list("p:nth-of-type(2 of .featured)").is_err());
     }
 }

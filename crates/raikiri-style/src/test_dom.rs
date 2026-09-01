@@ -23,6 +23,7 @@ pub(crate) struct TestDoc {
 
 pub(crate) struct TestNode {
     pub(crate) kind: StyleNodeKind,
+    pub(crate) in_document: bool,
     pub(crate) tag: String,
     pub(crate) inline_style: Option<String>,
     /// Null-namespace attributes other than `style` —
@@ -51,6 +52,7 @@ impl TestDoc {
         Self {
             nodes: vec![TestNode {
                 kind: StyleNodeKind::Document,
+                in_document: true,
                 tag: String::new(),
                 inline_style: None,
                 attrs: Vec::new(),
@@ -86,6 +88,7 @@ impl TestDoc {
         let id = self.nodes.len();
         self.nodes.push(TestNode {
             kind: StyleNodeKind::Element,
+            in_document: true,
             tag: tag.into(),
             inline_style: inline_style.map(|s| s.to_string()),
             attrs: attrs
@@ -113,6 +116,7 @@ impl TestDoc {
         let id = self.nodes.len();
         self.nodes.push(TestNode {
             kind: StyleNodeKind::Element,
+            in_document: true,
             tag: tag.into(),
             inline_style: None,
             attrs: attrs
@@ -131,6 +135,7 @@ impl TestDoc {
         let id = self.nodes.len();
         self.nodes.push(TestNode {
             kind: StyleNodeKind::Text,
+            in_document: true,
             tag: String::new(),
             inline_style: None,
             attrs: Vec::new(),
@@ -150,6 +155,7 @@ impl TestDoc {
         let id = self.nodes.len();
         self.nodes.push(TestNode {
             kind: StyleNodeKind::Comment,
+            in_document: true,
             tag: String::new(),
             inline_style: None,
             attrs: Vec::new(),
@@ -182,6 +188,12 @@ impl TestDoc {
     /// which the default `None` (HTML) never reaches.
     pub(crate) fn set_namespace(&mut self, id: usize, namespace_uri: &str) {
         self.nodes[id].namespace = Some(namespace_uri.to_string());
+    }
+
+    /// Override flat-tree membership for a node. This lets style tests model
+    /// detached or inert nodes while keeping raw arena child order intact.
+    pub(crate) fn set_in_document(&mut self, id: usize, in_document: bool) {
+        self.nodes[id].in_document = in_document;
     }
 }
 
@@ -252,6 +264,10 @@ impl<'a> StyleNode for TestNodeRef<'a> {
     }
     fn text_content(&self) -> Option<&str> {
         self.doc.nodes[self.id].text.as_deref()
+    }
+
+    fn is_in_document(&self) -> bool {
+        self.doc.nodes[self.id].in_document
     }
 }
 

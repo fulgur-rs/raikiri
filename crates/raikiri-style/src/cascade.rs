@@ -33,7 +33,9 @@ use std::sync::Arc;
 
 use cssparser::{Parser, ParserInput, Token};
 use selectors::attr::{CaseSensitivity, ParsedCaseSensitivity};
-use selectors::parser::{Combinator, NthSelectorData, Selector, SelectorIter, SelectorList};
+use selectors::parser::{
+    Combinator, NthOfSelectorData, NthSelectorData, Selector, SelectorIter, SelectorList,
+};
 use smol_str::SmolStr;
 
 use crate::computed::{ComputedValues, RunningTemplate, empty_custom_properties};
@@ -757,6 +759,12 @@ fn collect_cascaded<D: StyleDom>(
 ///   target); both fall back for the same underlying reason ("the root
 ///   element's parent-in-tree is the Document node, not an `Element`, but
 ///   `StyleDom::child_ids` still works against it").
+/// - `Component::NthOf(data)` (`:nth-child(An+B of S)` /
+///   `:nth-last-child(An+B of S)`, CSS Selectors L4 §13.3.1/§13.3.2) — see
+///   [`matches_nth_of`] for the filtered sibling-position algorithm. Each
+///   direct element child is first matched against the stored selector-list
+///   `S` using the same complex-selector matcher as a stylesheet selector;
+///   only matching children contribute to the 1-based position.
 ///
 /// 他 component (namespace 付き属性 selector = 常に `Component::AttributeOther`、
 /// または非小文字 local name **かつ値付き**の属性 selector = 同じく
@@ -898,7 +906,27 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
                 // `match_combinator_chain`'s `NextSibling`/`LaterSibling`
                 // arms already use.
                 let sibling_parent = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
-                matches_nth(dom, sibling_parent, elem_id, elem.tag_name(), data)
+                matches_nth(
+                    dom,
+                    sibling_parent,
+                    elem_id,
+                    elem.tag_name(),
+                    data,
+                    ancestors,
+                    quirks_mode,
+                )
+            }
+            Component::NthOf(data) => {
+                let sibling_parent = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
+                matches_nth_of(
+                    dom,
+                    sibling_parent,
+                    elem_id,
+                    elem.tag_name(),
+                    data,
+                    ancestors,
+                    quirks_mode,
+                )
             }
             _ => {
                 // 他 component (AttributeOther) は ruletree build 段で
@@ -1022,10 +1050,17 @@ fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
         })
 }
 
-/// 1-based sibling position of `elem_id` among `parent_id`'s **element**
-/// children, both from the start and from the end, plus the total count of
-/// such siblings — shared arithmetic behind every `Component::Nth` variant
-/// ([`matches_nth`]).
+#[derive(Clone, Copy)]
+struct SiblingMatchContext<'a> {
+    selector_filter: Option<&'a [Selector<RaikiriSelectorImpl>]>,
+    ancestors: &'a [StyleNodeId],
+    quirks_mode: StyleQuirksMode,
+}
+
+/// 1-based sibling position of `elem_id` among `parent_id`'s **in-document
+/// element** children, both from the start and from the end, plus the total
+/// count of such siblings — shared arithmetic behind `Component::Nth` and
+/// `Component::NthOf` matching ([`matches_nth`] / [`matches_nth_of`]).
 ///
 /// `of_type == false` (`:nth-child`/`:first-child`/`:last-child`/
 /// `:only-child`) counts **all** element siblings regardless of tag; CSS
@@ -1050,12 +1085,18 @@ fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
 /// ever reach `StyleElement::tag_name`, and "expanded name" comparison for
 /// non-HTML (SVG/MathML) content is case-sensitive per XML tag-name rules,
 /// so exact comparison is correct for both.
+///
+/// When `selector_filter` is present, a child contributes only if it matches
+/// at least one selector in that list. The candidate is evaluated with the
+/// same `ancestors` and `quirks_mode` as the element being matched, because
+/// all direct siblings share that parent context.
 fn sibling_position<D: StyleDom>(
     dom: &D,
     parent_id: StyleNodeId,
     elem_id: StyleNodeId,
     elem_tag: &str,
     of_type: bool,
+    context: SiblingMatchContext<'_>,
 ) -> (i32, i32, i32) {
     let mut total = 0i32;
     let mut index_from_start = 0i32;
@@ -1063,10 +1104,29 @@ fn sibling_position<D: StyleDom>(
         let Some(child_node) = dom.node(child_id) else {
             continue;
         };
+        // `child_ids` is the raw arena view for the style DOM, so detached /
+        // inert nodes can still occur in this iterator. Structural
+        // pseudo-classes operate on the flat-tree sibling list, matching the
+        // gate used by `collect_cascaded` and sibling combinators.
+        if !child_node.is_in_document() {
+            continue;
+        }
         let Some(sibling) = child_node.as_element() else {
             continue;
         };
         if of_type && sibling.tag_name() != elem_tag {
+            continue;
+        }
+        if let Some(selectors) = context.selector_filter
+            && !selector_slice_matches(
+                selectors,
+                dom,
+                &sibling,
+                child_id,
+                context.ancestors,
+                context.quirks_mode,
+            )
+        {
             continue;
         }
         total += 1;
@@ -1093,8 +1153,7 @@ fn sibling_position<D: StyleDom>(
 /// [`matches_empty`]; fell back to Selectors **Level 3** §6.6
 /// <https://www.w3.org/TR/selectors-3/#structural-pseudos> (verbatim,
 /// 2026-08-12 direct fetch — again the same feature, unchanged by L4
-/// except for the unrelated `An+B of S` extension, which is not
-/// implemented here, see `ruletree.rs`'s `is_supported_selector_list` doc):
+/// except for the `An+B of S` extension handled by [`matches_nth_of`]):
 /// "The :nth-child(an+b) pseudo-class notation represents an element that
 /// has an+b-1 siblings before it in the document tree... The
 /// :nth-last-child(an+b) pseudo-class notation represents an element that
@@ -1129,9 +1188,60 @@ fn matches_nth<D: StyleDom>(
     elem_id: StyleNodeId,
     elem_tag: &str,
     data: &NthSelectorData,
+    ancestors: &[StyleNodeId],
+    quirks_mode: StyleQuirksMode,
 ) -> bool {
-    let (from_start, from_end, total) =
-        sibling_position(dom, parent_id, elem_id, elem_tag, data.ty.is_of_type());
+    let (from_start, from_end, total) = sibling_position(
+        dom,
+        parent_id,
+        elem_id,
+        elem_tag,
+        data.ty.is_of_type(),
+        SiblingMatchContext {
+            selector_filter: None,
+            ancestors,
+            quirks_mode,
+        },
+    );
+    matches_nth_position(from_start, from_end, total, data)
+}
+
+/// `Component::NthOf` matching for CSS Selectors L4's `:nth-child(An+B of S)`
+/// and `:nth-last-child(An+B of S)` forms. The specification defines the
+/// position among the inclusive siblings that match `S`; the selector-list
+/// matcher therefore runs for every direct element child before the normal
+/// `An+B` arithmetic is applied.
+fn matches_nth_of<D: StyleDom>(
+    dom: &D,
+    parent_id: StyleNodeId,
+    elem_id: StyleNodeId,
+    elem_tag: &str,
+    data: &NthOfSelectorData<RaikiriSelectorImpl>,
+    ancestors: &[StyleNodeId],
+    quirks_mode: StyleQuirksMode,
+) -> bool {
+    let nth_data = data.nth_data();
+    let (from_start, from_end, total) = sibling_position(
+        dom,
+        parent_id,
+        elem_id,
+        elem_tag,
+        nth_data.ty.is_of_type(),
+        SiblingMatchContext {
+            selector_filter: Some(data.selectors()),
+            ancestors,
+            quirks_mode,
+        },
+    );
+    matches_nth_position(from_start, from_end, total, nth_data)
+}
+
+fn matches_nth_position(
+    from_start: i32,
+    from_end: i32,
+    total: i32,
+    data: &NthSelectorData,
+) -> bool {
     if from_start == 0 {
         // Defensive: `elem_id` was not found among `parent_id`'s (filtered)
         // element children at all — unreachable given `collect_cascaded`'s
@@ -1217,15 +1327,7 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
 ) -> Option<Specificity> {
     let mut best: Option<Specificity> = None;
     for selector in list.slice() {
-        let mut iter = selector.iter();
-        let whole_matches = compound_matches(dom, &mut iter, elem, elem_id, ancestors, quirks_mode)
-            && match iter.next_sequence() {
-                None => true,
-                Some(combinator) => {
-                    match_combinator_chain(dom, combinator, elem_id, ancestors, iter, quirks_mode)
-                }
-            };
-        if whole_matches {
+        if selector_matches(dom, selector, elem, elem_id, ancestors, quirks_mode) {
             let spec = specificity_of(selector);
             best = Some(match best {
                 Some(prev) => prev.max(spec),
@@ -1234,6 +1336,37 @@ fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
         }
     }
     best
+}
+
+fn selector_slice_matches<D: StyleDom, E: StyleElement>(
+    selectors: &[Selector<RaikiriSelectorImpl>],
+    dom: &D,
+    elem: &E,
+    elem_id: StyleNodeId,
+    ancestors: &[StyleNodeId],
+    quirks_mode: StyleQuirksMode,
+) -> bool {
+    selectors
+        .iter()
+        .any(|selector| selector_matches(dom, selector, elem, elem_id, ancestors, quirks_mode))
+}
+
+fn selector_matches<D: StyleDom, E: StyleElement>(
+    dom: &D,
+    selector: &Selector<RaikiriSelectorImpl>,
+    elem: &E,
+    elem_id: StyleNodeId,
+    ancestors: &[StyleNodeId],
+    quirks_mode: StyleQuirksMode,
+) -> bool {
+    let mut iter = selector.iter();
+    compound_matches(dom, &mut iter, elem, elem_id, ancestors, quirks_mode)
+        && match iter.next_sequence() {
+            None => true,
+            Some(combinator) => {
+                match_combinator_chain(dom, combinator, elem_id, ancestors, iter, quirks_mode)
+            }
+        }
 }
 
 /// [`match_complex_selector_list`] が右端 compound を `elem` に対して
@@ -10457,20 +10590,99 @@ mod tests {
     }
 
     #[test]
-    fn nth_child_of_extended_syntax_is_rejected_not_silently_widened() {
-        // `:nth-child(An+B of S)` (CSS Selectors L4's extended
-        // selector-list form) is out of scope — `RaikiriSelectorParser`
-        // does not override `Parser::parse_nth_child_of` (default `false`,
-        // `ruletree.rs`'s `is_supported_selector_list` doc). Per
-        // `cssparser::Parser::parse_nested_block`'s own contract ("The
-        // result is overridden to an `Err(..)` if the closure leaves some
-        // input before that point", cssparser 0.37.0 `parser.rs`, direct
-        // fetch) this must be a hard parse error — NOT silently parsed as
-        // plain `:nth-child(An+B)` (which would silently match a superset
-        // of what the author wrote).
-        assert!(
-            crate::parse_selector_list("p:nth-child(2n+1 of .foo)").is_err(),
-            "the `of S` extended nth-child syntax must fail to parse, not silently widen"
+    fn nth_child_of_extended_syntax_is_accepted_as_selector_list_argument() {
+        let list = crate::parse_selector_list("p:nth-child(2n+1 of .foo)")
+            .expect("the `of S` selector-list syntax must parse");
+        assert_eq!(list.slice().len(), 1);
+    }
+
+    #[test]
+    fn nth_child_of_selector_list_filters_siblings_for_both_directions() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            "li:nth-child(2 of .featured, [data-kind=selected]) { color: red } \
+             li:nth-last-child(2 of .featured, [data-kind=selected]) { background-color: red }",
+        );
+        let ul = doc.push_element(0, "ul", None);
+
+        let first_featured = doc.push_element(ul, "li", None);
+        doc.set_attr(first_featured, "class", "featured");
+
+        let unfiltered_before_second = doc.push_element(ul, "li", None);
+
+        let second_filtered = doc.push_element(ul, "li", None);
+        doc.set_attr(second_filtered, "data-kind", "selected");
+
+        let third_filtered_non_li = doc.push_element(ul, "div", None);
+        doc.set_attr(third_filtered_non_li, "class", "featured");
+
+        let unfiltered = doc.push_element(ul, "li", None);
+
+        let second_from_end = doc.push_element(ul, "li", None);
+        doc.set_attr(second_from_end, "class", "featured");
+
+        let unfiltered_before_last = doc.push_element(ul, "li", None);
+
+        let last_filtered = doc.push_element(ul, "li", None);
+        doc.set_attr(last_filtered, "data-kind", "selected");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        assert_eq!(r.computed[second_filtered].color, RED);
+        assert_eq!(r.computed[second_from_end].background_color, RED);
+        assert_eq!(
+            r.computed[first_featured].color,
+            ComputedValues::initial().color
+        );
+        assert_eq!(
+            r.computed[third_filtered_non_li].color,
+            ComputedValues::initial().color
+        );
+        assert_eq!(
+            r.computed[unfiltered].color,
+            ComputedValues::initial().color
+        );
+        assert_eq!(
+            r.computed[unfiltered_before_second].color,
+            ComputedValues::initial().color
+        );
+        assert_eq!(
+            r.computed[unfiltered_before_last].background_color,
+            ComputedValues::initial().background_color
+        );
+        assert_eq!(
+            r.computed[last_filtered].background_color,
+            ComputedValues::initial().background_color
+        );
+    }
+
+    #[test]
+    fn nth_child_of_ignores_inert_element_siblings() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "li:nth-child(2 of .featured) { color: red }");
+        let ul = doc.push_element(0, "ul", None);
+
+        let first_featured = doc.push_element(ul, "li", None);
+        doc.set_attr(first_featured, "class", "featured");
+
+        let inert_featured = doc.push_element(ul, "li", None);
+        doc.set_attr(inert_featured, "class", "featured");
+        doc.set_in_document(inert_featured, false);
+
+        let second_featured = doc.push_element(ul, "li", None);
+        doc.set_attr(second_featured, "class", "featured");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        assert_eq!(r.computed[second_featured].color, RED);
+        assert_eq!(
+            r.computed[inert_featured].color,
+            ComputedValues::initial().color
         );
     }
 
