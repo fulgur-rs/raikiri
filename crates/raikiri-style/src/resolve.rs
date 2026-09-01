@@ -184,10 +184,10 @@ use smol_str::SmolStr;
 
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
-    Border, BorderColor, BorderStyle, FlexBasisValue, GridInflexibleBreadth, GridRepeatCount,
-    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
-    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LineHeight, TabSize, TextShadowColor,
-    TextShadowItem, VerticalAlign,
+    Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, FlexBasisValue,
+    GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
+    LineHeight, Outline, TabSize, TextShadowColor, TextShadowItem, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -830,6 +830,124 @@ pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
         offset_y: Length::Px(computed.offset_y.0),
         blur_radius: Length::Px(computed.blur_radius.0),
         color: computed.color,
+    }
+}
+
+/// Computed `border-radius`。各 corner の length は px へ絶対化済み。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComputedBorderRadius {
+    /// top-left corner radius。
+    pub top_left: ComputedLength,
+    /// top-right corner radius。
+    pub top_right: ComputedLength,
+    /// bottom-right corner radius。
+    pub bottom_right: ComputedLength,
+    /// bottom-left corner radius。
+    pub bottom_left: ComputedLength,
+}
+
+impl ComputedBorderRadius {
+    /// 全 corner を同じ computed length で埋める。
+    pub fn all(value: ComputedLength) -> Self {
+        Self {
+            top_left: value,
+            top_right: value,
+            bottom_right: value,
+            bottom_left: value,
+        }
+    }
+}
+
+/// Computed `box-shadow` の 1 entry。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComputedBoxShadowItem {
+    /// 絶対化済み horizontal offset。
+    pub offset_x: ComputedLength,
+    /// 絶対化済み vertical offset。
+    pub offset_y: ComputedLength,
+    /// 絶対化済み blur radius。
+    pub blur_radius: ComputedLength,
+    /// 絶対化済み spread distance。
+    pub spread_radius: ComputedLength,
+    /// color。`currentcolor` は used-value 層まで保持する。
+    pub color: TextShadowColor,
+}
+
+/// Computed `outline`。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComputedOutline {
+    /// 絶対化済み outline width。style が `none` でも computed value は保持する。
+    pub(crate) width: ComputedLength,
+    /// outline style。
+    pub(crate) style: BorderStyle,
+    /// outline color。
+    pub color: BorderColor,
+}
+
+impl ComputedOutline {
+    /// 絶対化済み outline width を返す。
+    pub fn width(&self) -> ComputedLength {
+        self.width
+    }
+
+    /// outline style を返す。
+    pub fn style(&self) -> BorderStyle {
+        self.style
+    }
+}
+
+/// 空 `box-shadow` list (`none`) の computed 層 shared Arc。
+pub(crate) fn empty_computed_box_shadow_list() -> Arc<Vec<ComputedBoxShadowItem>> {
+    static EMPTY: OnceLock<Arc<Vec<ComputedBoxShadowItem>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
+/// `border-radius` の各 corner を自 node の font-size / line-height 基準で絶対化する。
+pub fn resolve_border_radius(
+    specified: BorderRadius,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedBorderRadius {
+    ComputedBorderRadius {
+        top_left: resolve_length(specified.top_left, font_size, own_line_height, ctx),
+        top_right: resolve_length(specified.top_right, font_size, own_line_height, ctx),
+        bottom_right: resolve_length(specified.bottom_right, font_size, own_line_height, ctx),
+        bottom_left: resolve_length(specified.bottom_left, font_size, own_line_height, ctx),
+    }
+}
+
+/// `box-shadow` の 1 entry を自 node の font-size / line-height 基準で絶対化する。
+pub fn resolve_box_shadow_item(
+    specified: BoxShadowItem,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedBoxShadowItem {
+    ComputedBoxShadowItem {
+        offset_x: resolve_length(specified.offset_x, font_size, own_line_height, ctx),
+        offset_y: resolve_length(specified.offset_y, font_size, own_line_height, ctx),
+        blur_radius: resolve_length(specified.blur_radius, font_size, own_line_height, ctx),
+        spread_radius: resolve_length(specified.spread_radius, font_size, own_line_height, ctx),
+        color: specified.color,
+    }
+}
+
+/// `outline` の width を絶対化する。outline は box model に影響しないため、
+/// border のような style-dependent width gate は適用しない。
+pub fn resolve_outline(
+    specified: Outline,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedOutline {
+    ComputedOutline {
+        width: resolve_length(specified.width, font_size, own_line_height, ctx),
+        style: specified.style,
+        color: specified.color,
     }
 }
 
@@ -2260,7 +2378,10 @@ pub fn lift_tab_size(computed: ComputedTabSize) -> TabSize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::property::Sides;
+    use crate::property::{
+        BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CssColor, Outline, Sides,
+        TextShadowColor,
+    };
     use crate::specified::SpecifiedValues;
 
     /// `root_font_size` = 16px の共通 context (`rem` の参照値)。
@@ -3176,6 +3297,72 @@ mod tests {
             resolve_border(specified, ComputedLength(20.0), None, &CTX).width,
             ComputedLength::ZERO,
         );
+    }
+
+    #[test]
+    fn border_radius_and_box_shadow_resolve_all_length_components() {
+        let radius = BorderRadius {
+            top_left: Length::Em(1.0),
+            top_right: Length::Rem(0.5),
+            bottom_right: Length::Pt(12.0),
+            bottom_left: Length::Lh(2.0),
+        };
+        assert_eq!(
+            resolve_border_radius(
+                radius,
+                ComputedLength(20.0),
+                Some(ComputedLength(10.0)),
+                &CTX,
+            ),
+            ComputedBorderRadius {
+                top_left: ComputedLength(20.0),
+                top_right: ComputedLength(8.0),
+                bottom_right: ComputedLength(16.0),
+                bottom_left: ComputedLength(20.0),
+            }
+        );
+
+        let shadow = BoxShadowItem {
+            offset_x: Length::Em(-0.5),
+            offset_y: Length::Rem(0.25),
+            blur_radius: Length::Pt(3.0),
+            spread_radius: Length::Lh(0.5),
+            color: TextShadowColor::Resolved(CssColor::BLACK),
+        };
+        assert_eq!(
+            resolve_box_shadow_item(
+                shadow,
+                ComputedLength(20.0),
+                Some(ComputedLength(10.0)),
+                &CTX,
+            ),
+            ComputedBoxShadowItem {
+                offset_x: ComputedLength(-10.0),
+                offset_y: ComputedLength(4.0),
+                blur_radius: ComputedLength(4.0),
+                spread_radius: ComputedLength(5.0),
+                color: TextShadowColor::Resolved(CssColor::BLACK),
+            }
+        );
+    }
+
+    #[test]
+    fn outline_resolution_preserves_width_for_none_and_solid_styles() {
+        let mut outline = Outline {
+            width: Length::Em(2.0),
+            style: BorderStyle::None,
+            color: BorderColor::Resolved(CssColor::BLACK),
+        };
+        let computed = resolve_outline(outline, ComputedLength(20.0), None, &CTX);
+        assert_eq!(computed.width(), ComputedLength(40.0));
+        assert_eq!(computed.style(), BorderStyle::None);
+        assert_eq!(computed.color, outline.color);
+
+        outline.style = BorderStyle::Solid;
+        let computed = resolve_outline(outline, ComputedLength(20.0), None, &CTX);
+        assert_eq!(computed.width(), ComputedLength(40.0));
+        assert_eq!(computed.style(), BorderStyle::Solid);
+        assert_eq!(computed.color, outline.color);
     }
 
     // -----------------------------------------------------------------

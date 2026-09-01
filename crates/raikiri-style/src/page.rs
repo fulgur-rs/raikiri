@@ -98,21 +98,23 @@ use crate::cascade::{
 };
 use crate::computed::ComputedValues;
 use crate::property::{
-    Border, BorderColor, BorderStyle, CustomProperty, FlexBasisValue, FlexShorthand, GapShorthand,
-    GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, TextShadowItem,
-    parse_length_allow_negative, parse_non_negative_length, parse_value, resolve_overflow,
+    Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CustomProperty, FlexBasisValue,
+    FlexShorthand, GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth,
+    GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto,
+    LengthOrNormal, Outline, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
+    TextShadowItem, parse_length_allow_negative, parse_non_negative_length, parse_value,
+    resolve_overflow,
 };
 use crate::resolve::{
     ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
     ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
     ResolveContext, lift_length_or_normal, lift_line_height, lift_tab_size, resolve_border,
-    resolve_flex_basis, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_border_radius, resolve_box_shadow_item, resolve_flex_basis,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_tab_size, resolve_vertical_align, used_line_height_length,
+    resolve_outline, resolve_tab_size, resolve_vertical_align, used_line_height_length,
 };
 use crate::rule::{Declaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
@@ -2537,6 +2539,61 @@ fn absolutize_in_page_context(
         }
     }
 
+    /// `border-radius` の 4 corner を computed 長から `PropertyValue` が
+    /// 運ぶ `Length::Px` 表現へ戻す。page bag は element path の
+    /// `ComputedValues` と同じ computed-value 契約を持つが、既存の bag の
+    /// API を壊さないため payload 型は specified 側を再利用する。
+    fn border_radius_value(
+        specified: BorderRadius,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> BorderRadius {
+        let computed = resolve_border_radius(specified, font_size, own_line_height, ctx);
+        BorderRadius {
+            top_left: Length::Px(computed.top_left.px()),
+            top_right: Length::Px(computed.top_right.px()),
+            bottom_right: Length::Px(computed.bottom_right.px()),
+            bottom_left: Length::Px(computed.bottom_left.px()),
+        }
+    }
+
+    /// `box-shadow` の 1 item を computed 長から page bag の
+    /// `BoxShadowItem` へ戻す。`color` は resolve 層で長さを持たないため
+    /// そのまま保持する。
+    fn box_shadow_item(
+        specified: BoxShadowItem,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> BoxShadowItem {
+        let computed = resolve_box_shadow_item(specified, font_size, own_line_height, ctx);
+        BoxShadowItem {
+            offset_x: Length::Px(computed.offset_x.px()),
+            offset_y: Length::Px(computed.offset_y.px()),
+            blur_radius: Length::Px(computed.blur_radius.px()),
+            spread_radius: Length::Px(computed.spread_radius.px()),
+            color: computed.color,
+        }
+    }
+
+    /// `outline` の width を絶対化した computed value を
+    /// `PropertyValue` の payload に戻す。outline は box model の寸法へ
+    /// 影響しないため、page phase では値の解決だけを行う。
+    fn outline_value(
+        specified: Outline,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> Outline {
+        let computed = resolve_outline(specified, font_size, own_line_height, ctx);
+        Outline {
+            width: Length::Px(computed.width().px()),
+            style: computed.style(),
+            color: computed.color,
+        }
+    }
+
     match value {
         // ── already computed-equivalent after phase 2 ──────────────────────
         // `font-size` is phase 2's output (`Length::Px`); re-absolutizing it
@@ -2856,6 +2913,31 @@ fn absolutize_in_page_context(
         PropertyValue::Border(sides) => {
             PropertyValue::Border(sides.map(|b| border(b, font_size, own_line_height, ctx)))
         }
+        // ── border-radius / box-shadow / outline ─────────────────────────
+        // CSS Backgrounds and Borders 3 §5/§6.1 and CSS UI 3 §4: all
+        // length components are computed against this page context's own
+        // font-size/line-height. Percentages are intentionally outside this
+        // task's parser contract, so every surviving component round-trips
+        // as `Length::Px` after phase 3.
+        PropertyValue::BorderRadius(v) => PropertyValue::BorderRadius(border_radius_value(
+            v,
+            font_size,
+            own_line_height,
+            ctx,
+        )),
+        PropertyValue::BoxShadow(items) => PropertyValue::BoxShadow(if items.is_empty() {
+            items
+        } else {
+            Arc::new(
+                items
+                    .iter()
+                    .map(|item| box_shadow_item(*item, font_size, own_line_height, ctx))
+                    .collect(),
+            )
+        }),
+        PropertyValue::Outline(v) => {
+            PropertyValue::Outline(outline_value(v, font_size, own_line_height, ctx))
+        }
         // ── width / height ────────────────────────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
@@ -3122,14 +3204,15 @@ mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
-        AlignSelfValue, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
-        ContentComponent, CssColor, CustomProperty, Direction, DisplayValue, FlexDirectionValue,
-        FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, FontWeightValue, GridAutoFlowValue,
-        GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount,
-        GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks,
-        GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
-        Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight, OverflowValue, OverflowWrap,
-        OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
+        AlignSelfValue, BorderRadius, BoxShadowItem, BoxSizing, BreakBetween, BreakInside,
+        ClearValue, ContentAlignmentValue, ContentComponent, CssColor, CustomProperty, Direction,
+        DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
+        FontWeightValue, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand,
+        GridLineValue, GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas,
+        GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+        GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Length, LengthOrAuto,
+        LengthOrNormal, LineHeight, Outline, OverflowValue, OverflowWrap, OverflowXY,
+        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
         SelfAlignmentValue, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
         TextDecorationShorthand, TextDecorationStyle, TextShadowColor, TextTransform,
         VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue,
@@ -4834,6 +4917,18 @@ mod tests {
                 color: BorderColor::CurrentColor,
             })),
         );
+        // `box-shadow: none` reuses the shared empty Arc without allocating.
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::BoxShadow(Arc::new(Vec::new(),))),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::BoxShadow(Arc::new(Vec::new())),
+        );
         // `overflow` shorthand fall-through — resolves
         // against its *own* pair, ignoring the `overflow_pair` parameter
         // (which describes the longhands, sibling note to the `border` case
@@ -5059,6 +5154,52 @@ mod tests {
             ),
             PropertyValue::TextShadow(Arc::new(vec![expected])),
             "text-shadow: 1em 2em 0.5em currentcolor",
+        );
+    }
+
+    #[test]
+    fn cascade_page_computes_border_radius_box_shadow_and_outline() {
+        let root = root_with_font_size(20.0);
+        let result = page(
+            "@page { border-radius: 1em 2em 3em 4em; box-shadow: red 0.5em -1em 0.25em 0.125em, 2px 3px; outline: solid 2em red }",
+            &root,
+        );
+
+        assert_eq!(
+            result.declarations().get(&PropertyKey::BorderRadius),
+            Some(&PropertyValue::BorderRadius(BorderRadius {
+                top_left: Length::Px(20.0),
+                top_right: Length::Px(40.0),
+                bottom_right: Length::Px(60.0),
+                bottom_left: Length::Px(80.0),
+            }))
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::BoxShadow),
+            Some(&PropertyValue::BoxShadow(Arc::new(vec![
+                BoxShadowItem {
+                    offset_x: Length::Px(10.0),
+                    offset_y: Length::Px(-20.0),
+                    blur_radius: Length::Px(5.0),
+                    spread_radius: Length::Px(2.5),
+                    color: TextShadowColor::Resolved(RED),
+                },
+                BoxShadowItem {
+                    offset_x: Length::Px(2.0),
+                    offset_y: Length::Px(3.0),
+                    blur_radius: Length::Px(0.0),
+                    spread_radius: Length::Px(0.0),
+                    color: TextShadowColor::CurrentColor,
+                },
+            ])))
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::Outline),
+            Some(&PropertyValue::Outline(Outline {
+                width: Length::Px(40.0),
+                style: BorderStyle::Solid,
+                color: BorderColor::Resolved(RED),
+            }))
         );
     }
 
@@ -5712,6 +5853,27 @@ mod tests {
             name: "--sample".into(),
             value: "1px".into(),
         }),
+        // Font-relative lengths exercise the page phase-3 conversion for all
+        // three newly supported static-side properties. Percentages are not
+        // part of this task's parser contract.
+        BorderRadius => PropertyValue::BorderRadius(BorderRadius {
+            top_left: Length::Em(0.5),
+            top_right: Length::Rem(0.25),
+            bottom_right: Length::Pt(6.0),
+            bottom_left: Length::Px(1.0),
+        }),
+        BoxShadow => PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+            offset_x: Length::Em(0.5),
+            offset_y: Length::Rem(0.25),
+            blur_radius: Length::Pt(3.0),
+            spread_radius: Length::Px(1.0),
+            color: TextShadowColor::Resolved(GREEN),
+        }])),
+        Outline => PropertyValue::Outline(Outline {
+            width: Length::Em(0.25),
+            style: BorderStyle::Solid,
+            color: BorderColor::Resolved(GREEN),
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -5917,6 +6079,9 @@ mod tests {
         FontVariantCaps,
         Quotes,
         TextShadow,
+        BorderRadius,
+        BoxShadow,
+        Outline,
         GridTemplateColumns,
         GridTemplateRows,
         GridTemplateAreas,
@@ -6368,6 +6533,27 @@ mod tests {
                     .or_else(|| length(s.offset_y))
                     .or_else(|| length(s.blur_radius))
             }),
+            // `border-radius` stores four independent `<length>` corners;
+            // every non-px unit is specified-layer residue until phase 3.
+            PropertyValue::BorderRadius(radius) => [
+                radius.top_left,
+                radius.top_right,
+                radius.bottom_right,
+                radius.bottom_left,
+            ]
+            .into_iter()
+            .find_map(length),
+            // `box-shadow` stores four length components per item. Colors do
+            // not participate in the layer check.
+            PropertyValue::BoxShadow(shadows) => shadows.iter().find_map(|s| {
+                length(s.offset_x)
+                    .or_else(|| length(s.offset_y))
+                    .or_else(|| length(s.blur_radius))
+                    .or_else(|| length(s.spread_radius))
+            }),
+            // `outline` has one length-bearing component; style/color are
+            // already computed-equivalent.
+            PropertyValue::Outline(outline) => length(outline.width),
         }
     }
 
