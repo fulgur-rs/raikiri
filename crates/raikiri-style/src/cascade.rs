@@ -16959,6 +16959,10 @@ mod tests {
             substitute_vars_with_budget("var(--x)", &mut |_| Some("red".into()), 0, &mut budget),
             None
         );
+    }
+
+    #[test]
+    fn math_parser_rejects_a_leading_sum_operator_without_whitespace() {
         assert!(!MathParser::new("1px").has_css_whitespace_before(0));
     }
 
