@@ -97,7 +97,7 @@
 //! section above) — [`resolve_custom_counter`] itself is still exercised by
 //! this module's own tests only.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
@@ -1514,92 +1514,104 @@ pub fn resolve_custom_counter(
     name: &str,
     value: i32,
 ) -> Option<String> {
-    let mut visited: Vec<SmolStr> = Vec::new();
+    let mut visited = HashSet::new();
     generate_counter(registry, name, value, &mut visited)
 }
 
-fn generate_counter(
-    registry: &CounterStyleRegistry,
+fn generate_counter<'a>(
+    registry: &'a CounterStyleRegistry,
     name: &str,
     value: i32,
-    visited: &mut Vec<SmolStr>,
+    visited: &mut HashSet<&'a str>,
 ) -> Option<String> {
     // Step 1.
-    let rule = registry.get(name)?;
+    let mut rule = registry.get(name)?;
     // Per §3.7's explicit loop-detection rule ("if a loop in the specified
     // fallbacks is detected, the decimal style must be used instead" — full
     // quote + anchor on this function's doc), modeled here via the crate's
     // `None`-defers-to-`decimal` boundary convention: refuse to loop through
     // a `fallback` chain that revisits a name.
-    if visited.iter().any(|v| v.as_str() == rule.name.as_str()) {
-        return None;
-    }
-    visited.push(rule.name.clone());
-
-    // Step 2.
-    if !rule_contains_value(rule, value) {
-        return generate_counter(registry, rule.fallback.as_str(), value, visited);
-    }
-
-    // Step 3 — the negative-sign absolute-value adjustment applies uniformly
-    // here: for a system that doesn't use a negative sign (cyclic / fixed /
-    // the moot `extends` case), `system_uses_negative_sign` is `false` and
-    // `algorithm_value` is just `value` unchanged.
-    let uses_negative = system_uses_negative_sign(&rule.system);
-    let value_i64 = i64::from(value);
-    let algorithm_value = if uses_negative && value_i64 < 0 {
-        -value_i64
-    } else {
-        value_i64
-    };
-    let initial = match &rule.system {
-        CounterStyleSystem::Cyclic => cyclic_repr(&rule.symbols, algorithm_value),
-        CounterStyleSystem::Fixed {
-            first_symbol_value: first,
-        } => fixed_repr(&rule.symbols, i64::from(*first), algorithm_value),
-        CounterStyleSystem::Numeric => numeric_repr(&rule.symbols, algorithm_value),
-        CounterStyleSystem::Alphabetic => alphabetic_repr(&rule.symbols, algorithm_value),
-        CounterStyleSystem::Symbolic => symbolic_repr(&rule.symbols, algorithm_value),
-        CounterStyleSystem::Additive => additive_repr(&rule.additive_symbols, algorithm_value),
-        // Scope-cut — see `CounterStyleSystem::Extends`'s doc.
-        CounterStyleSystem::Extends(_) => None,
-    };
-    let Some(repr) = initial else {
-        return generate_counter(registry, rule.fallback.as_str(), value, visited);
-    };
-
-    // Step 4 — §3.6's pad algorithm (quoted in full on `apply_pad`) reduces
-    // its padding `difference` by the negative descriptor's own length
-    // *before* step 5 wraps it on, so the negative sign's presence still
-    // counts toward `pad.min_length` even though it isn't part of `repr`
-    // yet at this point in the algorithm. `apply_pad` itself can return
-    // `None` (an author-supplied `pad.min_length` large enough, combined
-    // with `pad.symbol`'s length *and* `repr`'s own byte length, to exceed
-    // `MAX_REPR_BYTES` — see that constant's doc) — routed through the same
-    // fallback hop as a `None` initial representation above, per this
-    // function's own doc.
-    let negative_reserved = if uses_negative && value_i64 < 0 {
-        negative_descriptor_len(&rule.negative)
-    } else {
-        0
-    };
-    let Some(mut repr) = apply_pad(&rule.pad, repr, negative_reserved) else {
-        return generate_counter(registry, rule.fallback.as_str(), value, visited);
-    };
-
-    // Step 5.
-    if uses_negative && value_i64 < 0 {
-        let mut wrapped = String::new();
-        wrapped.push_str(rule.negative.prefix.as_str());
-        wrapped.push_str(&repr);
-        if let Some(suffix) = &rule.negative.suffix {
-            wrapped.push_str(suffix.as_str());
+    //
+    // Fallback resolution is deliberately iterative: CSS does not impose a
+    // maximum fallback-chain length, so using the process stack for each hop
+    // would make a long finite chain a stack-exhaustion vector.
+    loop {
+        // The keys borrow immutable registry entries for this resolution, so
+        // no per-hop name clone is allocated. The set owns only O(N) hash
+        // buckets and pointers, while expected O(1) lookup avoids the old
+        // Vec's O(N) scan at every hop.
+        if !visited.insert(rule.name.as_str()) {
+            return None;
         }
-        repr = wrapped;
-    }
 
-    // Step 6.
-    Some(repr)
+        // Step 2.
+        if !rule_contains_value(rule, value) {
+            rule = registry.get(rule.fallback.as_str())?;
+            continue;
+        }
+
+        // Step 3 — the negative-sign absolute-value adjustment applies uniformly
+        // here: for a system that doesn't use a negative sign (cyclic / fixed /
+        // the moot `extends` case), `system_uses_negative_sign` is `false` and
+        // `algorithm_value` is just `value` unchanged.
+        let uses_negative = system_uses_negative_sign(&rule.system);
+        let value_i64 = i64::from(value);
+        let algorithm_value = if uses_negative && value_i64 < 0 {
+            -value_i64
+        } else {
+            value_i64
+        };
+        let initial = match &rule.system {
+            CounterStyleSystem::Cyclic => cyclic_repr(&rule.symbols, algorithm_value),
+            CounterStyleSystem::Fixed {
+                first_symbol_value: first,
+            } => fixed_repr(&rule.symbols, i64::from(*first), algorithm_value),
+            CounterStyleSystem::Numeric => numeric_repr(&rule.symbols, algorithm_value),
+            CounterStyleSystem::Alphabetic => alphabetic_repr(&rule.symbols, algorithm_value),
+            CounterStyleSystem::Symbolic => symbolic_repr(&rule.symbols, algorithm_value),
+            CounterStyleSystem::Additive => additive_repr(&rule.additive_symbols, algorithm_value),
+            // Scope-cut — see `CounterStyleSystem::Extends`'s doc.
+            CounterStyleSystem::Extends(_) => None,
+        };
+        let Some(repr) = initial else {
+            rule = registry.get(rule.fallback.as_str())?;
+            continue;
+        };
+
+        // Step 4 — §3.6's pad algorithm (quoted in full on `apply_pad`) reduces
+        // its padding `difference` by the negative descriptor's own length
+        // *before* step 5 wraps it on, so the negative sign's presence still
+        // counts toward `pad.min_length` even though it isn't part of `repr`
+        // yet at this point in the algorithm. `apply_pad` itself can return
+        // `None` (an author-supplied `pad.min_length` large enough, combined
+        // with `pad.symbol`'s length *and* `repr`'s own byte length, to exceed
+        // `MAX_REPR_BYTES` — see that constant's doc) — routed through the same
+        // fallback hop as a `None` initial representation above, per this
+        // function's own doc.
+        let negative_reserved = if uses_negative && value_i64 < 0 {
+            negative_descriptor_len(&rule.negative)
+        } else {
+            0
+        };
+        let Some(mut repr) = apply_pad(&rule.pad, repr, negative_reserved) else {
+            rule = registry.get(rule.fallback.as_str())?;
+            continue;
+        };
+
+        // Step 5.
+        if uses_negative && value_i64 < 0 {
+            let mut wrapped = String::new();
+            wrapped.push_str(rule.negative.prefix.as_str());
+            wrapped.push_str(&repr);
+            if let Some(suffix) = &rule.negative.suffix {
+                wrapped.push_str(suffix.as_str());
+            }
+            repr = wrapped;
+        }
+
+        // Step 6.
+        return Some(repr);
+    }
 }
 
 #[cfg(test)]
@@ -2803,5 +2815,37 @@ mod tests {
         // Neither `a` nor `b` accepts value 5 (both ranged to exactly 1);
         // the fallback chain cycles a -> b -> a -> ... and must terminate.
         assert_eq!(resolve_custom_counter(&registry, "a", 5), None);
+    }
+
+    #[test]
+    fn resolve_long_finite_fallback_chain_terminates_at_default_fallback() {
+        const CHAIN_LENGTH: usize = 10_000;
+        let mut registry = CounterStyleRegistry::new();
+        for index in 0..CHAIN_LENGTH {
+            let mut rule = CounterStyleRule::new(SmolStr::new(format!("chain-{index}")));
+            rule.system = CounterStyleSystem::Cyclic;
+            rule.range = CounterRange::List(vec![RangeEntry {
+                lower: RangeLimit::Finite(1),
+                upper: RangeLimit::Finite(1),
+            }]);
+            rule.symbols = vec![CounterSymbol(SmolStr::new("*"))];
+            if index + 1 < CHAIN_LENGTH {
+                rule.fallback = SmolStr::new(format!("chain-{}", index + 1));
+            }
+            registry.insert(rule);
+        }
+
+        let terminal_name = format!("chain-{}", CHAIN_LENGTH - 1);
+        assert_eq!(
+            registry
+                .get(&terminal_name)
+                .map(|rule| rule.fallback.as_str()),
+            Some("decimal")
+        );
+
+        // Every custom style rejects 2, so the finite chain must reach the
+        // final rule's default `decimal` fallback and return this crate's
+        // `None` boundary without exhausting the process stack.
+        assert_eq!(resolve_custom_counter(&registry, "chain-0", 2), None);
     }
 }
