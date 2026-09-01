@@ -5788,6 +5788,10 @@ fn consume_deferred_value(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
                     .is_ok();
                 if is_important {
                     input.reset(&bang_state);
+                    if input.slice(start..input.position()).len() > MAX_SUBSTITUTED_VALUE_BYTES {
+                        input.reset(&start_state);
+                        return None;
+                    }
                     let value = input.slice(start..token_start).trim();
                     return Some(value.into());
                 }
@@ -19366,6 +19370,15 @@ mod tests {
     #[test]
     fn deferred_value_capture_rejects_oversized_trailing_comment() {
         let source = format!("var(--x)/*{}*/", "x".repeat(MAX_SUBSTITUTED_VALUE_BYTES));
+        assert!(parse(&source, "width").is_none());
+    }
+
+    #[test]
+    fn deferred_value_capture_rejects_oversized_comment_before_important() {
+        let source = format!(
+            "var(--x)/*{}*/!important",
+            "x".repeat(MAX_SUBSTITUTED_VALUE_BYTES)
+        );
         assert!(parse(&source, "width").is_none());
     }
 
