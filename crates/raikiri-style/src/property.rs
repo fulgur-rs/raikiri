@@ -5750,6 +5750,11 @@ pub(crate) const MAX_SUBSTITUTED_VALUE_BYTES: usize = 64 * 1024;
 /// The recursive parser paths use the same bound as a stack guard.
 pub(crate) const MAX_DEFERRED_VALUE_NESTING_DEPTH: usize = 128;
 
+// CSS Color 5's `<color>` endpoint grammar is recursive because it includes
+// `<color-mix()>`. Bound this parser's recursive descent to keep untrusted
+// declarations from exhausting the native stack.
+const MAX_COLOR_MIX_NESTING_DEPTH: usize = 128;
+
 fn is_deferred_function(name: &str) -> bool {
     DEFERRED_FUNCTIONS
         .iter()
@@ -6652,10 +6657,10 @@ fn contains_function_in_source(input: &str, wanted: &str) -> bool {
 /// out-of-gamut は 8-bit sRGB への bounded approximation であり、CSS Color 4 の
 /// 完全な gamut mapping は未対応である。
 fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
-    parse_color_float(input).map(ParsedColor::to_css_color)
+    parse_color_float(input, 0).map(ParsedColor::to_css_color)
 }
 
-fn parse_color_float(input: &mut Parser<'_, '_>) -> Option<ParsedColor> {
+fn parse_color_float(input: &mut Parser<'_, '_>, color_mix_depth: usize) -> Option<ParsedColor> {
     let token = input.next().ok()?.clone();
     match token {
         Token::Hash(ref value) | Token::IDHash(ref value) => {
@@ -6689,7 +6694,15 @@ fn parse_color_float(input: &mut Parser<'_, '_>) -> Option<ParsedColor> {
             .parse_nested_block(|i| parse_lab_function(i, LabFunction::Oklch))
             .ok(),
         Token::Function(ref name) if name.eq_ignore_ascii_case("color-mix") => {
-            input.parse_nested_block(parse_color_mix_function).ok()
+            if color_mix_depth >= MAX_COLOR_MIX_NESTING_DEPTH {
+                None
+            } else {
+                input
+                    .parse_nested_block(|nested| {
+                        parse_color_mix_function(nested, color_mix_depth.saturating_add(1))
+                    })
+                    .ok()
+            }
         }
         _ => None,
     }
@@ -6795,15 +6808,18 @@ fn parse_lab_function<'i>(
 
 fn parse_color_mix_function<'i>(
     input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
 ) -> Result<ParsedColor, ParseError<'i, ()>> {
     input.expect_ident_matching("in")?;
     let color_space = parse_mix_color_space(input)?;
     input.expect_comma()?;
 
-    let color_one = parse_color_float(input).ok_or_else(|| input.new_custom_error(()))?;
+    let color_one =
+        parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
     let percentage_one = input.try_parse(parse_mix_percentage).ok();
     input.expect_comma()?;
-    let color_two = parse_color_float(input).ok_or_else(|| input.new_custom_error(()))?;
+    let color_two =
+        parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
     let percentage_two = input.try_parse(parse_mix_percentage).ok();
     let (percentage_one, percentage_two) = match (percentage_one, percentage_two) {
         (None, None) => (0.5, 0.5),
@@ -11342,6 +11358,16 @@ mod tests {
             .ok()
     }
 
+    fn parse_color_entire(source: &str) -> Option<CssColor> {
+        let mut input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut input);
+        parser
+            .parse_entirely(|i| -> Result<CssColor, ParseError<'_, ()>> {
+                parse_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+    }
+
     fn red() -> CssColor {
         CssColor {
             r: 255,
@@ -11619,6 +11645,75 @@ mod tests {
         assert_eq!(
             parse("oklch(50% 20% 30deg)", "color"),
             parse("oklch(50% 0.08 30deg)", "color")
+        );
+    }
+
+    fn nested_color_mix_in_first_endpoint(depth: usize) -> String {
+        let mut source = String::new();
+        for _ in 0..depth {
+            source.push_str("color-mix(in srgb, ");
+        }
+        source.push_str("red");
+        for _ in 0..depth {
+            source.push_str(", blue)");
+        }
+        source
+    }
+
+    fn nested_color_mix_in_second_endpoint(depth: usize) -> String {
+        let mut source = String::new();
+        for _ in 0..depth {
+            source.push_str("color-mix(in srgb, red, ");
+        }
+        source.push_str("blue");
+        for _ in 0..depth {
+            source.push(')');
+        }
+        source
+    }
+
+    fn nested_color_mix_in_both_endpoints(depth: usize) -> String {
+        format!(
+            "color-mix(in srgb, {}, {})",
+            nested_color_mix_in_first_endpoint(depth),
+            nested_color_mix_in_second_endpoint(depth)
+        )
+    }
+
+    #[test]
+    fn color_parse_color_mix_accepts_boundary_depth_on_both_endpoints() {
+        let boundary = MAX_COLOR_MIX_NESTING_DEPTH;
+        for source in [
+            nested_color_mix_in_first_endpoint(boundary),
+            nested_color_mix_in_second_endpoint(boundary),
+            nested_color_mix_in_both_endpoints(boundary.saturating_sub(1)),
+        ] {
+            assert!(parse_color_entire(&source).is_some());
+        }
+    }
+
+    #[test]
+    fn color_parse_color_mix_rejects_first_depth_beyond_boundary_on_both_endpoints() {
+        let too_deep = MAX_COLOR_MIX_NESTING_DEPTH + 1;
+        for source in [
+            nested_color_mix_in_first_endpoint(too_deep),
+            nested_color_mix_in_second_endpoint(too_deep),
+            nested_color_mix_in_both_endpoints(MAX_COLOR_MIX_NESTING_DEPTH),
+        ] {
+            assert_eq!(parse_color_entire(&source), None);
+        }
+    }
+
+    #[test]
+    fn color_parse_color_mix_rejects_adversarially_deep_nesting() {
+        let deep = MAX_COLOR_MIX_NESTING_DEPTH.saturating_mul(16);
+        assert_eq!(
+            parse_color_entire(&nested_color_mix_in_first_endpoint(deep)),
+            None
+        );
+        assert_eq!(
+            parse_color_entire(&nested_color_mix_in_second_endpoint(deep)),
+            None
         );
     }
 
