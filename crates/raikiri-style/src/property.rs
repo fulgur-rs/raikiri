@@ -6260,10 +6260,7 @@ fn parse_color_mix_function<'i>(
     let (weight_one, weight_two, alpha_multiplier) =
         normalize_mix_percentages(percentage_one, percentage_two);
     if weight_one + weight_two == 0.0 {
-        return Ok(ParsedColor {
-            rgb: [0.0; 3],
-            alpha: 0.0,
-        });
+        return Err(input.new_custom_error(()));
     }
 
     let first = css_color_to_coordinates(color_one, color_space);
@@ -6490,10 +6487,18 @@ fn css_color_to_coordinates(color: ParsedColor, space: MixColorSpace) -> ColorCo
         } else {
             0.000004
         };
-        let hue = if chroma <= chroma_threshold {
-            0.0
+        let (chroma, hue) = if chroma <= chroma_threshold {
+            // CSS Color 4 treats a hue below the space-specific powerless
+            // threshold as missing during interpolation. Keep the converted
+            // coordinate achromatic too, so `mix_coordinates` takes the
+            // missing-hue carry-forward branch rather than interpolating a
+            // hue that was only rounded to zero.
+            (0.0, 0.0)
         } else {
-            third.atan2(second).rem_euclid(std::f32::consts::TAU)
+            (
+                chroma,
+                third.atan2(second).rem_euclid(std::f32::consts::TAU),
+            )
         };
         ColorCoordinates {
             first,
@@ -6537,9 +6542,16 @@ fn mix_coordinates(
             } else if second.second == 0.0 {
                 first_hue
             } else {
-                let delta = (second_hue - first_hue + std::f32::consts::PI)
-                    .rem_euclid(std::f32::consts::TAU)
-                    - std::f32::consts::PI;
+                // Normalize to the shorter arc while preserving the sign of
+                // an exact half-turn. `rem_euclid` maps both +PI and -PI to
+                // -PI, but CSS interpolation must retain the authored
+                // direction at that tie.
+                let mut delta = second_hue - first_hue;
+                if delta > std::f32::consts::PI {
+                    delta -= std::f32::consts::TAU;
+                } else if delta < -std::f32::consts::PI {
+                    delta += std::f32::consts::TAU;
+                }
                 first_hue + delta * weight_two
             };
             (component(first.second, second.second), hue)
@@ -11014,11 +11026,8 @@ mod tests {
     }
 
     #[test]
-    fn color_parse_color_mix_zero_percentages_is_transparent() {
-        assert_eq!(
-            parse("color-mix(in srgb, red 0%, blue 0%)", "color"),
-            Some(PropertyValue::Color(CssColor::TRANSPARENT))
-        );
+    fn color_parse_color_mix_zero_percentages_is_invalid() {
+        assert_eq!(parse("color-mix(in srgb, red 0%, blue 0%)", "color"), None);
     }
 
     #[test]
@@ -11109,9 +11118,61 @@ mod tests {
             0.0
         );
         assert_eq!(
+            css_color_to_coordinates(near_neutral, MixColorSpace::Lch).second,
+            0.0
+        );
+        assert_eq!(
             css_color_to_coordinates(near_neutral, MixColorSpace::Oklch).third,
             0.0
         );
+        assert_eq!(
+            css_color_to_coordinates(near_neutral, MixColorSpace::Oklch).second,
+            0.0
+        );
+    }
+
+    #[test]
+    fn color_mix_lch_shorter_hue_preserves_positive_half_turn() {
+        let mixed = mix_coordinates(
+            ColorCoordinates {
+                first: 50.0,
+                second: 40.0,
+                third: 0.0,
+                alpha: 1.0,
+            },
+            ColorCoordinates {
+                first: 50.0,
+                second: 40.0,
+                third: std::f32::consts::PI,
+                alpha: 1.0,
+            },
+            0.25,
+            0.75,
+            MixColorSpace::Lch,
+        );
+        assert!((mixed.third - std::f32::consts::PI * 0.75).abs() < 0.000001);
+    }
+
+    #[test]
+    fn color_mix_lch_shorter_hue_wraps_negative_delta() {
+        let mixed = mix_coordinates(
+            ColorCoordinates {
+                first: 50.0,
+                second: 40.0,
+                third: std::f32::consts::PI * 1.5,
+                alpha: 1.0,
+            },
+            ColorCoordinates {
+                first: 50.0,
+                second: 40.0,
+                third: 0.0,
+                alpha: 1.0,
+            },
+            0.5,
+            0.5,
+            MixColorSpace::Lch,
+        );
+        assert!((mixed.third - std::f32::consts::PI * 1.75).abs() < 0.000001);
     }
 
     #[test]
