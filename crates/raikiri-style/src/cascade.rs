@@ -16962,7 +16962,7 @@ mod tests {
     }
 
     #[test]
-    fn math_parser_rejects_a_leading_sum_operator_without_whitespace() {
+    fn has_css_whitespace_before_at_start_returns_false() {
         assert!(!MathParser::new("1px").has_css_whitespace_before(0));
     }
 
