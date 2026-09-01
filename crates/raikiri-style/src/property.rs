@@ -647,8 +647,9 @@ impl<T> Sides<T> {
 ///
 /// CSS Backgrounds 3 §3.2 "Line Patterns: the border-style properties"
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-style>:
-/// `<line-style> = none | hidden | dotted | dashed | solid | double | groove |
-/// ridge | inset | outset`。initial value は `none`、not inherited (§3.2)。
+/// Border の `<line-style> = none | hidden | dotted | dashed | solid | double |
+/// groove | ridge | inset | outset` と、outline 専用の `auto` を表す。initial
+/// value は `none`、not inherited (§3.2)。
 ///
 /// UA stylesheet 差はあるが本 crate は cleanroom scope (`walls.md` §1) のため
 /// spec-defined 10 alternative のみ受理する。ASCII case-insensitive で
@@ -703,6 +704,10 @@ pub enum BorderStyle {
     /// `outset` — §3.2 verbatim: "Looks as if the content on the inside of the
     /// border is raised out of the canvas."
     Outset,
+    /// `auto` — outline-style 専用の自動 outline。CSS Basic User Interface 3
+    /// §3 は `outline-style` に `auto` を許すが、border の `<line-style>` には
+    /// 含めないため、`parse_border_style_side` では受理しない。
+    Auto,
 }
 
 /// `border-*-color` computed value — spec `currentcolor` keyword と resolved
@@ -10321,6 +10326,9 @@ fn parse_outline(input: &mut Parser<'_, '_>) -> Option<Outline> {
 fn parse_outline_style_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<BorderStyle, ParseError<'i, ()>> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Ok(BorderStyle::Auto);
+    }
     let style = parse_border_style_side(input).ok_or_else(|| input.new_custom_error(()))?;
     if matches!(style, BorderStyle::Hidden) {
         Err(input.new_custom_error(()))
@@ -19373,7 +19381,15 @@ mod tests {
                 color: BorderColor::Resolved(red()),
             }))
         );
-        assert_eq!(parse("auto", "outline"), None);
+        assert_eq!(
+            parse("auto", "outline"),
+            Some(PropertyValue::Outline(Outline {
+                width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
+                style: BorderStyle::Auto,
+                color: BorderColor::CurrentColor,
+            }))
+        );
+        assert_eq!(parse("auto", "border-top-style"), None);
         assert_eq!(parse("hidden", "outline"), None);
         assert_eq!(
             PropertyValue::Outline(Outline {
