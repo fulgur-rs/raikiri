@@ -4831,7 +4831,10 @@ const MATH_FUNCTIONS: [&str; 4] = ["calc", "min", "max", "clamp"];
 /// Find named CSS functions by walking cssparser's component-value tokens.
 /// `Parser::next` skips a function body, so recurse into every block to keep
 /// nested `var()`/math functions visible while preserving their byte offsets.
-fn find_function_tokens(input: &str, names: &[&str]) -> Option<Vec<(usize, usize, usize)>> {
+fn find_function_tokens(
+    input: &str,
+    names: &[&str],
+) -> Option<Vec<(SmolStr, usize, usize, usize)>> {
     let mut parser_input = ParserInput::new(input);
     let mut parser = Parser::new(&mut parser_input);
     find_function_tokens_in_parser(&mut parser, names, 0)
@@ -4841,7 +4844,7 @@ fn find_function_tokens_in_parser<'i, 't>(
     parser: &mut Parser<'i, 't>,
     names: &[&str],
     depth: usize,
-) -> Option<Vec<(usize, usize, usize)>> {
+) -> Option<Vec<(SmolStr, usize, usize, usize)>> {
     if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
         return None;
     }
@@ -4856,6 +4859,7 @@ fn find_function_tokens_in_parser<'i, 't>(
             Token::Function(name) => {
                 let open = parser.position().byte_index().checked_sub(1)?;
                 let is_target = names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted));
+                let decoded_name: SmolStr = name.as_ref().into();
                 let mut nested_found = parser
                     .parse_nested_block(|nested| {
                         find_function_tokens_in_parser(nested, names, depth.saturating_add(1))
@@ -4864,7 +4868,7 @@ fn find_function_tokens_in_parser<'i, 't>(
                     .ok()?;
                 if is_target {
                     let close = parser.position().byte_index().checked_sub(1)?;
-                    found.push((token_start, open, close));
+                    found.push((decoded_name, token_start, open, close));
                 }
                 found.append(&mut nested_found);
             }
@@ -4908,6 +4912,11 @@ fn needs_css_token_separator(left: &str, right: &str) -> bool {
     {
         return true;
     }
+    if right == b'('
+        && (left.is_ascii_alphabetic() || matches!(left, b'-' | b'_' | b'\\') || left >= 0x80)
+    {
+        return true;
+    }
     if left.is_ascii_digit() && (matches!(right, b'-' | b'_' | b'\\') || right >= 0x80) {
         return true;
     }
@@ -4928,15 +4937,14 @@ fn simplify_math_functions_at_depth(input: &str, depth: usize) -> Option<SmolStr
     let mut output = String::with_capacity(input.len());
     let mut position = 0;
     let functions = find_function_tokens(input, &MATH_FUNCTIONS)?;
-    for (name_start, open, close) in functions {
+    for (name, name_start, open, close) in functions {
         if name_start < position {
             continue;
         }
         push_bounded(&mut output, &input[position..name_start])?;
-        let name = &input[name_start..open];
         let inner_source = &input[open + 1..close];
         let inner = simplify_math_functions_at_depth(inner_source, depth.saturating_add(1))?;
-        let evaluated = evaluate_math_function(name, &inner)?;
+        let evaluated = evaluate_math_function(name.as_str(), &inner)?;
         push_bounded(&mut output, &evaluated)?;
         if needs_css_token_separator(&output, &input[close + 1..]) {
             push_bounded(&mut output, " ")?;
@@ -5106,14 +5114,14 @@ impl<'a> MathParser<'a> {
 
     fn parse(mut self) -> Option<MathValue> {
         let value = self.parse_sum()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         (self.position == self.input.len()).then_some(value)
     }
 
     fn parse_sum(&mut self) -> Option<MathValue> {
         let mut value = self.parse_product()?;
         loop {
-            self.skip_whitespace();
+            self.skip_whitespace()?;
             let Some(&operator) = self.input.as_bytes().get(self.position) else {
                 return Some(value);
             };
@@ -5121,13 +5129,8 @@ impl<'a> MathParser<'a> {
                 return Some(value);
             }
             let operator_position = self.position;
-            if operator_position == 0
-                || !self.input.as_bytes()[operator_position - 1].is_ascii_whitespace()
-                || !self
-                    .input
-                    .as_bytes()
-                    .get(operator_position + 1)
-                    .is_some_and(u8::is_ascii_whitespace)
+            if !self.has_css_whitespace_before(operator_position)
+                || !self.has_css_whitespace_after(operator_position + 1)
             {
                 return None;
             }
@@ -5148,7 +5151,7 @@ impl<'a> MathParser<'a> {
     fn parse_product(&mut self) -> Option<MathValue> {
         let mut value = self.parse_primary()?;
         loop {
-            self.skip_whitespace();
+            self.skip_whitespace()?;
             let operator = match self.input.as_bytes().get(self.position) {
                 Some(b'*') | Some(b'/') => self.input.as_bytes()[self.position],
                 _ => return Some(value),
@@ -5173,7 +5176,7 @@ impl<'a> MathParser<'a> {
     }
 
     fn parse_primary(&mut self) -> Option<MathValue> {
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         if self.input.as_bytes().get(self.position) == Some(&b'(') {
             if self.nesting_depth >= MAX_VARIABLE_RESOLUTION_DEPTH {
                 return None;
@@ -5183,7 +5186,7 @@ impl<'a> MathParser<'a> {
             let value = self.parse_sum();
             self.nesting_depth -= 1;
             let value = value?;
-            self.skip_whitespace();
+            self.skip_whitespace()?;
             if self.input.as_bytes().get(self.position) != Some(&b')') {
                 return None;
             }
@@ -5271,15 +5274,40 @@ impl<'a> MathParser<'a> {
         Some(MathValue { number, unit })
     }
 
-    fn skip_whitespace(&mut self) {
-        while self
-            .input
-            .as_bytes()
-            .get(self.position)
-            .is_some_and(u8::is_ascii_whitespace)
-        {
-            self.position += 1;
+    fn skip_whitespace(&mut self) -> Option<()> {
+        loop {
+            while self
+                .input
+                .as_bytes()
+                .get(self.position)
+                .is_some_and(u8::is_ascii_whitespace)
+            {
+                self.position += 1;
+            }
+            if self.input.as_bytes().get(self.position..self.position + 2) == Some(b"/*") {
+                self.position = skip_css_comment(self.input, self.position)?;
+                continue;
+            }
+            return Some(());
         }
+    }
+
+    fn has_css_whitespace_before(&self, position: usize) -> bool {
+        if position == 0 {
+            return false;
+        }
+        if self.input.as_bytes()[position - 1].is_ascii_whitespace() {
+            return true;
+        }
+        self.input[..position].ends_with("*/")
+    }
+
+    fn has_css_whitespace_after(&self, position: usize) -> bool {
+        self.input
+            .as_bytes()
+            .get(position)
+            .is_some_and(u8::is_ascii_whitespace)
+            || self.input.as_bytes().get(position..position + 2) == Some(b"/*")
     }
 }
 
@@ -5449,6 +5477,34 @@ fn apply_winners(
 // guard for the mutually recursive resolver/substituter paths.
 const MAX_VARIABLE_RESOLUTION_DEPTH: usize = MAX_DEFERRED_VALUE_NESTING_DEPTH;
 
+/// Maximum number of uncached custom-property expansions in one map resolve.
+/// Memoization handles shared DAG branches; this second bound caps the work
+/// spent on a large, mostly-unique dependency graph.
+const MAX_VARIABLE_RESOLUTION_STEPS: usize = 16 * 1024;
+
+struct VariableResolutionBudget {
+    remaining: usize,
+    exhausted: bool,
+}
+
+impl VariableResolutionBudget {
+    fn new(limit: usize) -> Self {
+        Self {
+            remaining: limit,
+            exhausted: false,
+        }
+    }
+
+    fn consume(&mut self) -> bool {
+        if self.remaining == 0 {
+            self.exhausted = true;
+            return false;
+        }
+        self.remaining -= 1;
+        true
+    }
+}
+
 fn resolve_custom_properties(
     inherited: &HashMap<SmolStr, SmolStr>,
     candidates: &[CustomCascadedDecl],
@@ -5498,6 +5554,7 @@ pub(crate) fn resolve_custom_property_map(
         cycle_members: find_cycle_members(local),
         memo: HashMap::new(),
         resolving: Vec::new(),
+        budget: VariableResolutionBudget::new(MAX_VARIABLE_RESOLUTION_STEPS),
     };
     for name in names {
         if let Some(value) = resolver.resolve(&name, 0) {
@@ -5511,8 +5568,9 @@ struct CustomPropertyResolver<'a> {
     local: &'a HashMap<SmolStr, SmolStr>,
     inherited: &'a HashMap<SmolStr, SmolStr>,
     cycle_members: HashSet<SmolStr>,
-    memo: HashMap<SmolStr, Option<SmolStr>>,
+    memo: HashMap<(SmolStr, usize), Option<SmolStr>>,
     resolving: Vec<SmolStr>,
+    budget: VariableResolutionBudget,
 }
 
 impl CustomPropertyResolver<'_> {
@@ -5521,14 +5579,12 @@ impl CustomPropertyResolver<'_> {
             return None;
         }
         let name: SmolStr = name.into();
-        // A memoized result is only valid when resolved from the root.  A
-        // nested lookup has a smaller remaining depth budget; reusing its
-        // result from a later root lookup could bypass the bound and make the
-        // outcome depend on HashMap iteration order.
-        if depth == 0
-            && let Some(value) = self.memo.get(&name)
-        {
+        let key = (name.clone(), depth);
+        if let Some(value) = self.memo.get(&key) {
             return value.clone();
+        }
+        if !self.budget.consume() {
+            return None;
         }
         if self.cycle_members.contains(&name) {
             return None;
@@ -5547,10 +5603,14 @@ impl CustomPropertyResolver<'_> {
             depth,
         );
         self.resolving.pop();
-        if depth == 0 {
-            self.memo.insert(name, resolved.clone());
+        if !self.budget.exhausted {
+            self.memo.insert(key, resolved.clone());
         }
-        resolved
+        if self.budget.exhausted {
+            None
+        } else {
+            resolved
+        }
     }
 }
 
@@ -5615,7 +5675,7 @@ fn collect_var_references(input: &str, references: &mut Vec<SmolStr>) -> Result<
         return Err(());
     }
     let functions = find_function_tokens(input, &["var"]).ok_or(())?;
-    for (_, open, close) in functions {
+    for (_, _, open, close) in functions {
         let (name, _) = split_var_arguments(&input[open + 1..close]).ok_or(())?;
         references.push(name);
     }
@@ -5627,6 +5687,16 @@ fn substitute_vars(
     resolve: &mut impl FnMut(&str) -> Option<SmolStr>,
     depth: usize,
 ) -> Option<SmolStr> {
+    let mut budget = VariableResolutionBudget::new(MAX_VARIABLE_RESOLUTION_STEPS);
+    substitute_vars_with_budget(input, resolve, depth, &mut budget)
+}
+
+fn substitute_vars_with_budget(
+    input: &str,
+    resolve: &mut impl FnMut(&str) -> Option<SmolStr>,
+    depth: usize,
+    budget: &mut VariableResolutionBudget,
+) -> Option<SmolStr> {
     if depth > MAX_VARIABLE_RESOLUTION_DEPTH
         || input.len() > MAX_SUBSTITUTED_VALUE_BYTES
         || !css_literals_are_well_formed(input)
@@ -5636,9 +5706,12 @@ fn substitute_vars(
     let mut output = String::with_capacity(input.len());
     let mut position = 0;
     let functions = find_function_tokens(input, &["var"])?;
-    for (name_start, open, close) in functions {
+    for (_, name_start, open, close) in functions {
         if name_start < position {
             continue;
+        }
+        if !budget.consume() {
+            return None;
         }
         push_bounded(&mut output, &input[position..name_start])?;
         let inner = &input[open + 1..close];
@@ -5646,7 +5719,9 @@ fn substitute_vars(
         let replacement = match resolve(name.as_str()) {
             Some(value) => value,
             None => match fallback {
-                Some(fallback) => substitute_vars(fallback, resolve, depth.saturating_add(1))?,
+                Some(fallback) => {
+                    substitute_vars_with_budget(fallback, resolve, depth.saturating_add(1), budget)?
+                }
                 None => return None,
             },
         };
@@ -16504,6 +16579,7 @@ mod tests {
                 cycle_members: HashSet::new(),
                 memo: HashMap::new(),
                 resolving: Vec::new(),
+                budget: VariableResolutionBudget::new(MAX_VARIABLE_RESOLUTION_STEPS),
             };
             assert_eq!(resolver.resolve("--a", 0), Some("red".into()));
             assert_eq!(resolver.resolve("--a", 0), Some("red".into()));
@@ -16514,8 +16590,43 @@ mod tests {
             cycle_members: HashSet::new(),
             memo: HashMap::new(),
             resolving: vec!["--a".into()],
+            budget: VariableResolutionBudget::new(MAX_VARIABLE_RESOLUTION_STEPS),
         };
         assert_eq!(resolver.resolve("--a", 0), None);
+        let branching_local = HashMap::from([
+            (
+                SmolStr::from("--root"),
+                SmolStr::from("var(--shared) var(--shared)"),
+            ),
+            (SmolStr::from("--shared"), SmolStr::from("red")),
+        ]);
+        let branching_inherited = HashMap::new();
+        let mut resolver = CustomPropertyResolver {
+            local: &branching_local,
+            inherited: &branching_inherited,
+            cycle_members: HashSet::new(),
+            memo: HashMap::new(),
+            resolving: Vec::new(),
+            budget: VariableResolutionBudget::new(MAX_VARIABLE_RESOLUTION_STEPS),
+        };
+        assert_eq!(resolver.resolve("--root", 0), Some("red red".into()));
+        assert!(resolver.memo.contains_key(&(SmolStr::from("--shared"), 1)));
+
+        let budget_local = HashMap::from([
+            (SmolStr::from("--a"), SmolStr::from("var(--b)")),
+            (SmolStr::from("--b"), SmolStr::from("var(--c)")),
+            (SmolStr::from("--c"), SmolStr::from("red")),
+        ]);
+        let mut resolver = CustomPropertyResolver {
+            local: &budget_local,
+            inherited: &inherited,
+            cycle_members: HashSet::new(),
+            memo: HashMap::new(),
+            resolving: Vec::new(),
+            budget: VariableResolutionBudget::new(2),
+        };
+        assert_eq!(resolver.resolve("--a", 0), None);
+        assert!(resolver.budget.exhausted);
         local.insert("--broken".into(), "\"unterminated".into());
         assert!(find_cycle_members(&local).is_empty());
 
@@ -16807,6 +16918,41 @@ mod tests {
         let cv = cascade_doc("", "div", Some("--n: 10; width: var(--n)px"));
         assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
         assert_eq!(simplify_math_functions("calc(10)px"), Some("10 px".into()));
+    }
+
+    #[test]
+    fn var_substitution_does_not_create_a_function_token() {
+        let cv = cascade_doc("", "div", Some("--fn: rgb; color: var(--fn)(255, 0, 0)"));
+        assert_eq!(cv.color, CssColor::BLACK);
+        assert_eq!(
+            substitute_vars("var(--fn)(255, 0, 0)", &mut |_| Some("rgb".into()), 0),
+            Some("rgb (255, 0, 0)".into())
+        );
+    }
+
+    #[test]
+    fn escaped_math_function_names_are_evaluated_after_token_decoding() {
+        assert_eq!(simplify_math_functions(r"c\61 lc(1px)"), Some("1px".into()));
+        let cv = cascade_doc("", "div", Some(r"width: c\61 lc(1px)"));
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(1.0));
+    }
+
+    #[test]
+    fn css_comments_are_whitespace_inside_math_functions() {
+        assert_eq!(
+            simplify_math_functions("calc(1px /* comment */ + 2px)"),
+            Some("3px".into())
+        );
+        let cv = cascade_doc("", "div", Some("width: calc(1px /* comment */ + 2px)"));
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(3.0));
+    }
+
+    #[test]
+    fn variable_resolution_budget_rejects_excess_expansions() {
+        let mut budget = VariableResolutionBudget::new(2);
+        assert!(budget.consume());
+        assert!(budget.consume());
+        assert!(!budget.consume());
     }
 
     #[test]
