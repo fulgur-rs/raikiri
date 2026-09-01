@@ -6,7 +6,8 @@
 //! 現サポート property の一覧と inherited / non-inherited 分類は
 //! [`ComputedValues`] 定義の field doc comment を参照。
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
 use smol_str::SmolStr;
 
@@ -46,6 +47,14 @@ use crate::resolve::{
 /// fail-fast して doctest section まで到達しないので、
 /// `cargo test -p raikiri-style` と `--doc` を別々に走らせること)。
 pub(crate) const INITIAL_FONT_SIZE_PX: f32 = 16.0;
+
+/// Shared empty custom-property map for computed values that have no local
+/// custom-property declarations. The map is crate-private bookkeeping for the
+/// `@page` cascade; it is not part of the public computed-style API.
+pub(crate) fn empty_custom_properties() -> Arc<HashMap<SmolStr, SmolStr>> {
+    static EMPTY: OnceLock<Arc<HashMap<SmolStr, SmolStr>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(HashMap::new())).clone()
+}
 
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
 ///
@@ -1033,6 +1042,13 @@ pub struct ComputedValues {
     /// which side of a fragmentation break the minimum line count applies to
     /// (after the break, vs. `orphans`'s before).
     pub widows: i32,
+    /// Resolved custom properties for the page-context inheritance bridge.
+    ///
+    /// This is deliberately crate-private: `ComputedValues`' public property
+    /// bag remains unchanged, while `cascade_page` can faithfully implement
+    /// CSS Variables' inherited custom-property semantics without adding a
+    /// public API or a second root-style argument.
+    pub(crate) custom_properties: Arc<HashMap<SmolStr, SmolStr>>,
 }
 
 impl ComputedValues {
@@ -1213,6 +1229,7 @@ impl ComputedValues {
             // initial は共に `2`。
             orphans: 2,
             widows: 2,
+            custom_properties: empty_custom_properties(),
         }
     }
 
@@ -1273,10 +1290,15 @@ impl ComputedValues {
     /// [`SpecifiedValues::inherit_from`]: crate::specified::SpecifiedValues::inherit_from
     /// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
     pub fn inherit_from(parent: &Self) -> Self {
-        crate::specified::SpecifiedValues::inherit_from(parent).finalize(
+        let mut child = crate::specified::SpecifiedValues::inherit_from(parent).finalize(
             parent,
             &crate::resolve::ResolveContext::new(parent.font_size),
-        )
+        );
+        // CSS Variables 1 §2: custom properties are inherited. `finalize`
+        // starts with the ordinary computed initial state, so carry this
+        // crate-private bridge explicitly through the public helper too.
+        child.custom_properties = parent.custom_properties.clone();
+        child
     }
 }
 
@@ -1607,6 +1629,10 @@ mod tests {
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             orphans: 5,
             widows: 7,
+            custom_properties: Arc::new(HashMap::from([(
+                SmolStr::new("--fixture"),
+                SmolStr::new("1px"),
+            )])),
         }
     }
 
@@ -1666,6 +1692,7 @@ mod tests {
         // inherited。
         assert_eq!(child.orphans, parent.orphans);
         assert_eq!(child.widows, parent.widows);
+        assert_eq!(child.custom_properties, parent.custom_properties);
 
         // non-inherited — initial に戻る。
         assert_eq!(child.background_color, initial.background_color);
@@ -1761,8 +1788,12 @@ mod tests {
             ComputedLength(16.0),
             ComputedLength(999.0),
         ] {
-            let via_staging = SpecifiedValues::inherit_from(&parent)
+            let mut via_staging = SpecifiedValues::inherit_from(&parent)
                 .finalize(&parent, &ResolveContext::new(root_font_size));
+            // `ComputedValues::inherit_from` also carries the crate-private
+            // custom-property inheritance bridge; mirror it here so this
+            // test continues to compare the same staging path.
+            via_staging.custom_properties = parent.custom_properties.clone();
             assert_eq!(
                 via_staging, expected,
                 "inherit_from must not depend on the rem basis ({root_font_size:?})"

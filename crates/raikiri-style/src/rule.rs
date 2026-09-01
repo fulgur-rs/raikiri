@@ -10,9 +10,9 @@ use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
 use crate::property::{
-    Border, FlexShorthand, GapShorthand, GridLineShorthand, Length, LengthOrAuto, OverflowXY,
-    PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyValue, Sides,
-    TextDecorationShorthand, parse_value,
+    Border, DeferredValue, FlexShorthand, GapShorthand, GridLineShorthand, Length, LengthOrAuto,
+    OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey,
+    PropertyValue, Sides, TextDecorationShorthand, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -460,6 +460,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         PropertyValue::TextDecoration(shorthand) => {
             expand_text_decoration(shorthand, d.important, push)
         }
+        PropertyValue::Deferred(ref deferred) => {
+            expand_deferred(d, deferred, d.important, push)
+        }
         // 展開先の longhand variant を持たない — そのまま 1 個 push。
         // `_` に潰さないこと (上の「wildcard arm を置かない理由 (契約)」節)。
         // ここへ variant を足すことは「展開先が無い」という主張である。
@@ -567,6 +570,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // orphans / widows (CSS Fragmentation Module Level 3 §3.3) — 同じく
         // 展開先の longhand を持たない。
         | PropertyValue::Orphans(_)
+        | PropertyValue::CustomProperty(_)
         | PropertyValue::Widows(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
@@ -591,6 +595,73 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
 #[inline(always)]
 fn expand_none(d: &Declaration, mut push: impl FnMut(Declaration)) {
     push(d.clone());
+}
+
+/// A deferred shorthand still expands before per-key cascade winner selection.
+/// The raw value is cloned once per longhand and re-parsed only after the
+/// winning longhand has been selected, preserving shorthand/longhand order.
+#[inline(never)]
+fn expand_deferred(
+    d: &Declaration,
+    deferred: &DeferredValue,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    let keys: &[PropertyKey] = match deferred.key {
+        PropertyKey::Padding => &[
+            PropertyKey::PaddingTop,
+            PropertyKey::PaddingRight,
+            PropertyKey::PaddingBottom,
+            PropertyKey::PaddingLeft,
+        ],
+        PropertyKey::Margin => &[
+            PropertyKey::MarginTop,
+            PropertyKey::MarginRight,
+            PropertyKey::MarginBottom,
+            PropertyKey::MarginLeft,
+        ],
+        PropertyKey::Border => &[
+            PropertyKey::BorderTopWidth,
+            PropertyKey::BorderTopStyle,
+            PropertyKey::BorderTopColor,
+            PropertyKey::BorderRightWidth,
+            PropertyKey::BorderRightStyle,
+            PropertyKey::BorderRightColor,
+            PropertyKey::BorderBottomWidth,
+            PropertyKey::BorderBottomStyle,
+            PropertyKey::BorderBottomColor,
+            PropertyKey::BorderLeftWidth,
+            PropertyKey::BorderLeftStyle,
+            PropertyKey::BorderLeftColor,
+        ],
+        PropertyKey::Overflow => &[PropertyKey::OverflowX, PropertyKey::OverflowY],
+        PropertyKey::TextDecoration => &[
+            PropertyKey::TextDecorationLine,
+            PropertyKey::TextDecorationStyle,
+            PropertyKey::TextDecorationColor,
+        ],
+        PropertyKey::Flex => &[
+            PropertyKey::FlexGrow,
+            PropertyKey::FlexShrink,
+            PropertyKey::FlexBasis,
+        ],
+        PropertyKey::Gap => &[PropertyKey::RowGap, PropertyKey::ColumnGap],
+        PropertyKey::PlaceContent => &[PropertyKey::AlignContent, PropertyKey::JustifyContent],
+        PropertyKey::GridRow => &[PropertyKey::GridRowStart, PropertyKey::GridRowEnd],
+        PropertyKey::GridColumn => &[PropertyKey::GridColumnStart, PropertyKey::GridColumnEnd],
+        PropertyKey::PlaceItems => &[PropertyKey::AlignItems, PropertyKey::JustifyItems],
+        PropertyKey::PlaceSelf => &[PropertyKey::AlignSelf, PropertyKey::JustifySelf],
+        _ => return expand_none(d, push),
+    };
+
+    for key in keys {
+        let mut value = deferred.clone();
+        value.key = *key;
+        push(Declaration {
+            value: PropertyValue::Deferred(value),
+            important,
+        });
+    }
 }
 
 /// `margin` shorthand を 4 longhand に展開する cold helper。
@@ -993,6 +1064,130 @@ mod tests {
                  compile は通る)"
             );
         }
+    }
+
+    #[test]
+    fn deferred_shorthand_expands_to_each_longhand_key() {
+        use crate::property::{DeferredValue, PropertyKey};
+
+        let cases: &[(PropertyKey, &[PropertyKey])] = &[
+            (
+                PropertyKey::Padding,
+                &[
+                    PropertyKey::PaddingTop,
+                    PropertyKey::PaddingRight,
+                    PropertyKey::PaddingBottom,
+                    PropertyKey::PaddingLeft,
+                ],
+            ),
+            (
+                PropertyKey::Margin,
+                &[
+                    PropertyKey::MarginTop,
+                    PropertyKey::MarginRight,
+                    PropertyKey::MarginBottom,
+                    PropertyKey::MarginLeft,
+                ],
+            ),
+            (
+                PropertyKey::Border,
+                &[
+                    PropertyKey::BorderTopWidth,
+                    PropertyKey::BorderTopStyle,
+                    PropertyKey::BorderTopColor,
+                    PropertyKey::BorderRightWidth,
+                    PropertyKey::BorderRightStyle,
+                    PropertyKey::BorderRightColor,
+                    PropertyKey::BorderBottomWidth,
+                    PropertyKey::BorderBottomStyle,
+                    PropertyKey::BorderBottomColor,
+                    PropertyKey::BorderLeftWidth,
+                    PropertyKey::BorderLeftStyle,
+                    PropertyKey::BorderLeftColor,
+                ],
+            ),
+            (
+                PropertyKey::Overflow,
+                &[PropertyKey::OverflowX, PropertyKey::OverflowY],
+            ),
+            (
+                PropertyKey::TextDecoration,
+                &[
+                    PropertyKey::TextDecorationLine,
+                    PropertyKey::TextDecorationStyle,
+                    PropertyKey::TextDecorationColor,
+                ],
+            ),
+            (
+                PropertyKey::Flex,
+                &[
+                    PropertyKey::FlexGrow,
+                    PropertyKey::FlexShrink,
+                    PropertyKey::FlexBasis,
+                ],
+            ),
+            (
+                PropertyKey::Gap,
+                &[PropertyKey::RowGap, PropertyKey::ColumnGap],
+            ),
+            (
+                PropertyKey::PlaceContent,
+                &[PropertyKey::AlignContent, PropertyKey::JustifyContent],
+            ),
+            (
+                PropertyKey::GridRow,
+                &[PropertyKey::GridRowStart, PropertyKey::GridRowEnd],
+            ),
+            (
+                PropertyKey::GridColumn,
+                &[PropertyKey::GridColumnStart, PropertyKey::GridColumnEnd],
+            ),
+            (
+                PropertyKey::PlaceItems,
+                &[PropertyKey::AlignItems, PropertyKey::JustifyItems],
+            ),
+            (
+                PropertyKey::PlaceSelf,
+                &[PropertyKey::AlignSelf, PropertyKey::JustifySelf],
+            ),
+        ];
+
+        for (shorthand, expected) in cases {
+            let declaration = Declaration {
+                value: PropertyValue::Deferred(DeferredValue {
+                    property: "test".into(),
+                    value: "raw".into(),
+                    key: *shorthand,
+                }),
+                important: true,
+            };
+            let mut expanded = Vec::new();
+            expand_shorthand_into(&declaration, |declaration| {
+                expanded.push((declaration.value.key(), declaration.important));
+            });
+            assert_eq!(
+                expanded,
+                expected
+                    .iter()
+                    .copied()
+                    .map(|key| (key, true))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        let declaration = Declaration {
+            value: PropertyValue::Deferred(DeferredValue {
+                property: "width".into(),
+                value: "raw".into(),
+                key: PropertyKey::Width,
+            }),
+            important: false,
+        };
+        let mut expanded = Vec::new();
+        expand_shorthand_into(&declaration, |declaration| {
+            expanded.push((declaration.value.key(), declaration.important));
+        });
+        assert_eq!(expanded, vec![(PropertyKey::Width, false)]);
     }
 
     #[test]

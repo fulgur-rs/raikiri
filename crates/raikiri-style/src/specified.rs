@@ -1216,6 +1216,7 @@ impl SpecifiedValues {
             // 素通し。
             orphans: self.orphans,
             widows: self.widows,
+            custom_properties: crate::computed::empty_custom_properties(),
         }
     }
 }
@@ -1442,6 +1443,7 @@ mod tests {
             justify_self: AlignSelfValue::Value(SelfAlignmentValue::End),
             orphans: 5,
             widows: 7,
+            custom_properties: crate::computed::empty_custom_properties(),
         }
     }
 
