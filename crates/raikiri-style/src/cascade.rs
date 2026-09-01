@@ -1004,9 +1004,9 @@ struct SiblingMatchContext<'a> {
     quirks_mode: StyleQuirksMode,
 }
 
-/// 1-based sibling position of `elem_id` among `parent_id`'s **element**
-/// children, both from the start and from the end, plus the total count of
-/// such siblings — shared arithmetic behind `Component::Nth` and
+/// 1-based sibling position of `elem_id` among `parent_id`'s **in-document
+/// element** children, both from the start and from the end, plus the total
+/// count of such siblings — shared arithmetic behind `Component::Nth` and
 /// `Component::NthOf` matching ([`matches_nth`] / [`matches_nth_of`]).
 ///
 /// `of_type == false` (`:nth-child`/`:first-child`/`:last-child`/
@@ -1051,6 +1051,13 @@ fn sibling_position<D: StyleDom>(
         let Some(child_node) = dom.node(child_id) else {
             continue;
         };
+        // `child_ids` is the raw arena view for the style DOM, so detached /
+        // inert nodes can still occur in this iterator. Structural
+        // pseudo-classes operate on the flat-tree sibling list, matching the
+        // gate used by `collect_cascaded` and sibling combinators.
+        if !child_node.is_in_document() {
+            continue;
+        }
         let Some(sibling) = child_node.as_element() else {
             continue;
         };
@@ -9409,6 +9416,8 @@ mod tests {
         let first_featured = doc.push_element(ul, "li", None);
         doc.set_attr(first_featured, "class", "featured");
 
+        let unfiltered_before_second = doc.push_element(ul, "li", None);
+
         let second_filtered = doc.push_element(ul, "li", None);
         doc.set_attr(second_filtered, "data-kind", "selected");
 
@@ -9419,6 +9428,8 @@ mod tests {
 
         let second_from_end = doc.push_element(ul, "li", None);
         doc.set_attr(second_from_end, "class", "featured");
+
+        let unfiltered_before_last = doc.push_element(ul, "li", None);
 
         let last_filtered = doc.push_element(ul, "li", None);
         doc.set_attr(last_filtered, "data-kind", "selected");
@@ -9441,8 +9452,43 @@ mod tests {
             ComputedValues::initial().color
         );
         assert_eq!(
+            r.computed[unfiltered_before_second].color,
+            ComputedValues::initial().color
+        );
+        assert_eq!(
+            r.computed[unfiltered_before_last].background_color,
+            ComputedValues::initial().background_color
+        );
+        assert_eq!(
             r.computed[last_filtered].background_color,
             ComputedValues::initial().background_color
+        );
+    }
+
+    #[test]
+    fn nth_child_of_ignores_inert_element_siblings() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "li:nth-child(2 of .featured) { color: red }");
+        let ul = doc.push_element(0, "ul", None);
+
+        let first_featured = doc.push_element(ul, "li", None);
+        doc.set_attr(first_featured, "class", "featured");
+
+        let inert_featured = doc.push_element(ul, "li", None);
+        doc.set_attr(inert_featured, "class", "featured");
+        doc.set_in_document(inert_featured, false);
+
+        let second_featured = doc.push_element(ul, "li", None);
+        doc.set_attr(second_featured, "class", "featured");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        assert_eq!(r.computed[second_featured].color, RED);
+        assert_eq!(
+            r.computed[inert_featured].color,
+            ComputedValues::initial().color
         );
     }
 
