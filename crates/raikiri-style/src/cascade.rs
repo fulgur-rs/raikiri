@@ -16953,6 +16953,13 @@ mod tests {
         assert!(budget.consume());
         assert!(budget.consume());
         assert!(!budget.consume());
+
+        let mut budget = VariableResolutionBudget::new(0);
+        assert_eq!(
+            substitute_vars_with_budget("var(--x)", &mut |_| Some("red".into()), 0, &mut budget),
+            None
+        );
+        assert!(!MathParser::new("1px").has_css_whitespace_before(0));
     }
 
     #[test]
