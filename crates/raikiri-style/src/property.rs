@@ -7079,6 +7079,24 @@ fn parse_lab_function<'i>(
     Ok(ParsedColor::from_lab_coordinates(space, coordinates, alpha))
 }
 
+/// Parse one `<color-stop>` with its optional percentage in either order.
+///
+/// CSS Color 4 permits `<percentage> <color>` as well as the existing
+/// `<color> <percentage>` spelling, but a stop may contain only one percentage.
+fn parse_color_mix_stop<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<(ParsedColor, Option<f32>), ParseError<'i, ()>> {
+    let leading_percentage = input.try_parse(parse_mix_percentage).ok();
+    let color =
+        parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
+    let trailing_percentage = input.try_parse(parse_mix_percentage).ok();
+    if leading_percentage.is_some() && trailing_percentage.is_some() {
+        return Err(input.new_custom_error(()));
+    }
+    Ok((color, leading_percentage.or(trailing_percentage)))
+}
+
 fn parse_color_mix_function<'i>(
     input: &mut Parser<'i, '_>,
     color_mix_depth: usize,
@@ -7087,13 +7105,9 @@ fn parse_color_mix_function<'i>(
     let color_space = parse_mix_color_space(input)?;
     input.expect_comma()?;
 
-    let color_one =
-        parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
-    let percentage_one = input.try_parse(parse_mix_percentage).ok();
+    let (color_one, percentage_one) = parse_color_mix_stop(input, color_mix_depth)?;
     input.expect_comma()?;
-    let color_two =
-        parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
-    let percentage_two = input.try_parse(parse_mix_percentage).ok();
+    let (color_two, percentage_two) = parse_color_mix_stop(input, color_mix_depth)?;
     let (percentage_one, percentage_two) = match (percentage_one, percentage_two) {
         (None, None) => (0.5, 0.5),
         (Some(first), None) => (first, 1.0 - first),
@@ -12871,6 +12885,81 @@ mod tests {
                 a: 255,
             }))
         );
+    }
+
+    #[test]
+    fn color_parse_color_mix_accepts_percentage_before_color() {
+        let cases = [
+            (
+                "color-mix(in srgb, 25% red, blue)",
+                "color-mix(in srgb, red 25%, blue)",
+                CssColor {
+                    r: 64,
+                    g: 0,
+                    b: 191,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in srgb, red, 25% blue)",
+                "color-mix(in srgb, red, blue 25%)",
+                CssColor {
+                    r: 191,
+                    g: 0,
+                    b: 64,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in srgb, 25% red, 75% blue)",
+                "color-mix(in srgb, red 25%, blue 75%)",
+                CssColor {
+                    r: 64,
+                    g: 0,
+                    b: 191,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in srgb, 25% red, blue 75%)",
+                "color-mix(in srgb, red 25%, blue 75%)",
+                CssColor {
+                    r: 64,
+                    g: 0,
+                    b: 191,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in srgb, red 25%, 75% blue)",
+                "color-mix(in srgb, red 25%, blue 75%)",
+                CssColor {
+                    r: 64,
+                    g: 0,
+                    b: 191,
+                    a: 255,
+                },
+            ),
+        ];
+        for (percentage_before, percentage_after, expected) in cases {
+            assert_eq!(parse_color_entire(percentage_before), Some(expected));
+            assert_eq!(
+                parse_color_entire(percentage_before),
+                parse_color_entire(percentage_after)
+            );
+        }
+    }
+
+    #[test]
+    fn color_parse_color_mix_rejects_multiple_stop_percentages() {
+        for source in [
+            "color-mix(in srgb, 25% red 25%, blue)",
+            "color-mix(in srgb, red 25% 25%, blue)",
+            "color-mix(in srgb, 101% red, blue)",
+            "color-mix(in srgb, red, 101% blue)",
+        ] {
+            assert_eq!(parse_color_entire(source), None);
+        }
     }
 
     #[test]
