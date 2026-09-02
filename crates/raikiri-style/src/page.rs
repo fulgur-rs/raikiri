@@ -101,9 +101,9 @@ use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CustomProperty, FlexBasisValue,
     FlexShorthand, GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth,
     GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto,
-    LengthOrNormal, Outline, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
-    TextShadowItem, parse_length_allow_negative, parse_non_negative_length, parse_value,
-    resolve_overflow,
+    LengthOrNormal, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey,
+    PropertyValue, Sides, TextShadowItem, parse_length_allow_negative, parse_non_negative_length,
+    parse_value, resolve_overflow,
 };
 use crate::resolve::{
     ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
@@ -1996,6 +1996,7 @@ pub fn cascade_page(
     // sibling is `SpecifiedValues::finalize`, not `finalize_as_root`. `ctx`
     // (built above, before step 3) already carries this basis.
     let border_styles = page_context_border_styles(&resolved);
+    let outline_style = page_context_outline_style(&resolved);
     // The page context's raw `overflow-x`/`overflow-y` winners
     // — mirrors `border_styles` above: the CSS Overflow
     // 3 §3.1 cross-axis coupling needs both axes at once, and `resolved`'s
@@ -2017,6 +2018,7 @@ pub fn cascade_page(
                         own_line_height,
                         &ctx,
                         border_styles,
+                        outline_style,
                         overflow_pair,
                     ),
                 )
@@ -2176,6 +2178,22 @@ fn page_context_border_styles(
     sides
 }
 
+/// The page context's computed `outline-style`, used to gate the
+/// `outline-width` longhand in phase 3. An absent declaration means the
+/// initial `none` (CSS UI 3 §4.3); unlike border sides, outline has one shared
+/// style rather than four physical sides.
+fn page_context_outline_style(
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
+) -> OutlineStyle {
+    declarations
+        .values()
+        .find_map(|value| match value.as_property_value() {
+            PropertyValue::OutlineStyle(style) => Some(*style),
+            _ => None,
+        })
+        .unwrap_or(OutlineStyle::None)
+}
+
 /// The page context's raw (pre-[`resolve_overflow`]) `overflow-x` +
 /// `overflow-y` winners — the input to the CSS Overflow 3 §3.1 cross-axis
 /// coupling gate in phase 3.
@@ -2268,6 +2286,7 @@ fn absolutize_in_page_context(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
     border_styles: Sides<BorderStyle>,
+    outline_style: OutlineStyle,
     overflow_pair: OverflowXY,
 ) -> PropertyValue {
     let value = value.into_property_value();
@@ -2513,6 +2532,33 @@ fn absolutize_in_page_context(
         )
         .width
     }
+    /// An `outline-width` longhand, gated by the winning `outline-style`.
+    ///
+    /// Routing through [`resolve_outline`] keeps the element and page paths
+    /// on the same CSS UI 3 §4.2 computed-value rule: width is zero when the
+    /// style is `none` (or the retained-but-parser-rejected `hidden` keyword).
+    fn outline_width(
+        width: Length,
+        style: OutlineStyle,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> Length {
+        Length::Px(
+            resolve_outline(
+                Outline {
+                    width,
+                    style,
+                    color: OutlineColor::Invert,
+                },
+                font_size,
+                own_line_height,
+                ctx,
+            )
+            .width()
+            .px(),
+        )
+    }
     /// One `text-shadow` item: absolutize the 3 lengths (`offset-x`/
     /// `offset-y`/`blur-radius`), round-tripped back into the specified-layer
     /// `Length::Px` shape (`resolve_length` is the percentage-less resolver —
@@ -2623,6 +2669,8 @@ fn absolutize_in_page_context(
         | PropertyValue::BorderRightColor(_)
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
+        | PropertyValue::OutlineStyle(_)
+        | PropertyValue::OutlineColor(_)
         | PropertyValue::BoxSizing(_)
         // `text-decoration-line`/`-style`/`-color` carry no length and
         // computed value = specified keyword(s)/color (see
@@ -2938,6 +2986,15 @@ fn absolutize_in_page_context(
         PropertyValue::Outline(v) => {
             PropertyValue::Outline(outline_value(v, font_size, own_line_height, ctx))
         }
+        PropertyValue::OutlineWidth(v) => {
+            PropertyValue::OutlineWidth(outline_width(
+                v,
+                outline_style,
+                font_size,
+                own_line_height,
+                ctx,
+            ))
+        },
         // ── width / height ────────────────────────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
@@ -3211,7 +3268,7 @@ mod tests {
         GridLineValue, GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas,
         GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
         GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Length, LengthOrAuto,
-        LengthOrNormal, LineHeight, Outline, OverflowValue, OverflowWrap, OverflowXY,
+        LengthOrNormal, LineHeight, Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
         PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
         SelfAlignmentValue, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
         TextDecorationShorthand, TextDecorationStyle, TextShadowColor, TextTransform,
@@ -4118,6 +4175,36 @@ mod tests {
     }
 
     #[test]
+    fn cascade_page_resolves_var_outline_shorthand_into_all_longhands() {
+        // The page parser expands `outline: var(--outline)` before winner
+        // selection, so page-side deferred resolution must project the
+        // reparsed `Outline` value for each selected longhand.
+        let result = page(
+            "@page { --outline: auto 2px red; outline: var(--outline) }",
+            &ComputedValues::initial(),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OutlineWidth),
+            Some(&PropertyValue::OutlineWidth(Length::Px(2.0)))
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OutlineStyle),
+            Some(&PropertyValue::OutlineStyle(OutlineStyle::Auto))
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OutlineColor),
+            Some(&PropertyValue::OutlineColor(OutlineColor::Resolved(RED)))
+        );
+        assert!(!result.declarations().contains_key(&PropertyKey::Custom));
+        assert!(result.declarations().values().all(|value| {
+            !matches!(
+                value,
+                PropertyValue::CustomProperty(_) | PropertyValue::Deferred(_)
+            )
+        }));
+    }
+
+    #[test]
     fn cascade_page_resolves_custom_property_inherited_from_root() {
         // CSS Variables 1 marks custom properties as inherited, and CSS Paged
         // Media 3 §6 makes the root element the page context's inheritance
@@ -4817,6 +4904,52 @@ mod tests {
     }
 
     #[test]
+    fn page_context_outline_style_defaults_to_initial_none() {
+        assert_eq!(
+            page_context_outline_style(&HashMap::new()),
+            OutlineStyle::None
+        );
+    }
+
+    #[test]
+    fn cascade_page_outline_color_preserves_invert_and_currentcolor() {
+        let root = ComputedValues::initial();
+        let invert = page("@page { outline-color: invert }", &root);
+        assert_eq!(
+            invert.declarations().get(&PropertyKey::OutlineColor),
+            Some(&PropertyValue::OutlineColor(OutlineColor::Invert))
+        );
+
+        let current = page("@page { outline-color: currentcolor }", &root);
+        assert_eq!(
+            current.declarations().get(&PropertyKey::OutlineColor),
+            Some(&PropertyValue::OutlineColor(OutlineColor::CurrentColor))
+        );
+    }
+
+    #[test]
+    fn cascade_page_outline_width_is_gated_by_outline_style_winner() {
+        let root = root_with_font_size(20.0);
+        let undeclared = page("@page { outline-width: 2em }", &root);
+        assert_eq!(
+            undeclared.declarations().get(&PropertyKey::OutlineWidth),
+            Some(&PropertyValue::OutlineWidth(Length::Px(0.0)))
+        );
+
+        let none = page("@page { outline-width: 2em; outline-style: none }", &root);
+        assert_eq!(
+            none.declarations().get(&PropertyKey::OutlineWidth),
+            Some(&PropertyValue::OutlineWidth(Length::Px(0.0)))
+        );
+
+        let solid = page("@page { outline-width: 2em; outline-style: solid }", &root);
+        assert_eq!(
+            solid.declarations().get(&PropertyKey::OutlineWidth),
+            Some(&PropertyValue::OutlineWidth(Length::Px(40.0)))
+        );
+    }
+
+    #[test]
     fn page_context_overflow_pair_collects_both_axes() {
         // Sibling of `page_context_border_styles_default_to_initial_none`
         // above — covers `page_context_overflow_pair`'s `OverflowX`/
@@ -4879,6 +5012,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::Padding(Sides::all(Length::Px(40.0))),
@@ -4892,6 +5026,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Px(32.0)))),
@@ -4909,6 +5044,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::Border(Sides::all(Border {
@@ -4925,6 +5061,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::BoxShadow(Arc::new(Vec::new())),
@@ -4945,6 +5082,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::Overflow(OverflowXY {
@@ -4986,6 +5124,7 @@ mod tests {
                     None,
                     &ctx,
                     styles,
+                    OutlineStyle::None,
                     OverflowXY::both(OverflowValue::Visible),
                 ),
                 PropertyValue::FlexBasis(expected),
@@ -5006,6 +5145,7 @@ mod tests {
                     None,
                     &ctx,
                     styles,
+                    OutlineStyle::None,
                     OverflowXY::both(OverflowValue::Visible),
                 ),
                 PropertyValue::RowGap(gap),
@@ -5020,6 +5160,7 @@ mod tests {
                     None,
                     &ctx,
                     styles,
+                    OutlineStyle::None,
                     OverflowXY::both(OverflowValue::Visible),
                 ),
                 PropertyValue::ColumnGap(gap),
@@ -5057,6 +5198,7 @@ mod tests {
                     None,
                     &ctx,
                     styles,
+                    OutlineStyle::None,
                     OverflowXY::both(OverflowValue::Visible),
                 ),
                 PropertyValue::VerticalAlign(expected),
@@ -5092,6 +5234,7 @@ mod tests {
                     None,
                     &ctx,
                     styles,
+                    OutlineStyle::None,
                     OverflowXY::both(OverflowValue::Visible),
                 ),
                 PropertyValue::TabSize(expected),
@@ -5121,6 +5264,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::TextShadow(Arc::new(Vec::new())),
@@ -5150,6 +5294,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::TextShadow(Arc::new(vec![expected])),
@@ -5194,12 +5339,38 @@ mod tests {
             ])))
         );
         assert_eq!(
-            result.declarations().get(&PropertyKey::Outline),
-            Some(&PropertyValue::Outline(Outline {
-                width: Length::Px(40.0),
-                style: BorderStyle::Solid,
-                color: BorderColor::Resolved(RED),
-            }))
+            result.declarations().get(&PropertyKey::OutlineWidth),
+            Some(&PropertyValue::OutlineWidth(Length::Px(40.0)))
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OutlineStyle),
+            Some(&PropertyValue::OutlineStyle(OutlineStyle::Solid))
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OutlineColor),
+            Some(&PropertyValue::OutlineColor(OutlineColor::Resolved(RED)))
+        );
+    }
+
+    /// CSS Basic User Interface Module Level 3 §4: page-context outline
+    /// declarations use the dedicated `OutlineStyle` carrier, including the
+    /// outline-only `auto` keyword.
+    #[test]
+    fn cascade_page_outline_auto_survives_longhand_expansion() {
+        let root = root_with_font_size(20.0);
+        let result = page("@page { outline: auto 2em red }", &root);
+
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OutlineWidth),
+            Some(&PropertyValue::OutlineWidth(Length::Px(40.0)))
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OutlineStyle),
+            Some(&PropertyValue::OutlineStyle(OutlineStyle::Auto))
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::OutlineColor),
+            Some(&PropertyValue::OutlineColor(OutlineColor::Resolved(RED)))
         );
     }
 
@@ -5232,6 +5403,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::FontSize(Length::Px(24.0)),
@@ -5245,6 +5417,7 @@ mod tests {
                 None,
                 &ctx,
                 styles,
+                OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::FontSize(Length::Px(20.0 / 1.2)),
@@ -5422,11 +5595,15 @@ mod tests {
     /// nothing for phase 3 to absolutize).
     /// 65 → 67 (`CustomProperty` / `Deferred` are retained before computed
     /// value resolution and are not page-context length values).
+    /// 67 → 69 (`OutlineStyle` / `OutlineColor` are keyword/color values and
+    /// therefore need no page-context length conversion; `OutlineWidth` and
+    /// the `Outline` shorthand remain on the transform side because they carry
+    /// a width).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 67;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 69;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -5871,9 +6048,12 @@ mod tests {
         }])),
         Outline => PropertyValue::Outline(Outline {
             width: Length::Em(0.25),
-            style: BorderStyle::Solid,
-            color: BorderColor::Resolved(GREEN),
+            style: OutlineStyle::Solid,
+            color: OutlineColor::Resolved(GREEN),
         }),
+        OutlineWidth => PropertyValue::OutlineWidth(Length::Em(0.25)),
+        OutlineStyle => PropertyValue::OutlineStyle(OutlineStyle::Solid),
+        OutlineColor => PropertyValue::OutlineColor(OutlineColor::Resolved(GREEN)),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -6082,6 +6262,9 @@ mod tests {
         BorderRadius,
         BoxShadow,
         Outline,
+        OutlineWidth,
+        OutlineStyle,
+        OutlineColor,
         GridTemplateColumns,
         GridTemplateRows,
         GridTemplateAreas,
@@ -6426,6 +6609,8 @@ mod tests {
             | PropertyValue::BorderRightColor(_)
             | PropertyValue::BorderBottomColor(_)
             | PropertyValue::BorderLeftColor(_)
+            | PropertyValue::OutlineStyle(_)
+            | PropertyValue::OutlineColor(_)
             | PropertyValue::BoxSizing(_)
             // `OverflowValue` carries no length — its
             // cross-axis coupling (`resolve_overflow`) is real phase-3 work
@@ -6554,6 +6739,7 @@ mod tests {
             // `outline` has one length-bearing component; style/color are
             // already computed-equivalent.
             PropertyValue::Outline(outline) => length(outline.width),
+            PropertyValue::OutlineWidth(width) => length(*width),
         }
     }
 
@@ -6958,6 +7144,7 @@ mod tests {
                     None,
                     &ctx,
                     styles,
+                    OutlineStyle::Solid,
                     overflow_pair,
                 ) == *value
             })
@@ -6989,7 +7176,17 @@ mod tests {
         let residues: Vec<(PropertyKey, &'static str)> = page_corpus()
             .into_iter()
             .map(|v| resolve_against_inherited(v, &root, &ctx))
-            .map(|v| absolutize_in_page_context(v, font_size, None, &ctx, styles, overflow_pair))
+            .map(|v| {
+                absolutize_in_page_context(
+                    v,
+                    font_size,
+                    None,
+                    &ctx,
+                    styles,
+                    OutlineStyle::Solid,
+                    overflow_pair,
+                )
+            })
             .filter_map(|v| specified_layer_residue(&v).map(|r| (v.key(), r)))
             .collect();
 

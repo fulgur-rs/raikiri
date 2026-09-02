@@ -13,10 +13,10 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BorderColor, BorderStyle, BoxSizing, BreakBetween,
-    BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor, Direction,
-    DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, OverflowValue, OverflowWrap,
+    AlignSelfValue, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue,
+    ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue,
+    FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, Hyphens, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
     OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
     TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
     ZIndexValue, empty_content_list, empty_counter_entries, empty_quotes_entries,
@@ -446,7 +446,9 @@ pub struct ComputedValues {
     /// empty list (`none`)。描画そのものは paint 層の責務。
     pub box_shadow: Arc<Vec<ComputedBoxShadowItem>>,
     /// `outline` の computed width/style/color。**non-inherited**、initial は
-    /// `medium` / `none` / `currentcolor`。outline は box model 寸法へ影響しない。
+    /// `0px` / `none` / `invert`。outline は box model 寸法へ影響しない。
+    /// specified width の `medium` は style が visible の場合だけ computed width に
+    /// 反映される。
     pub outline: ComputedOutline,
     /// `width` — preferred physical horizontal size (writing-mode neutral な
     /// physical property、vertical writing mode では block axis に対応)。
@@ -1131,13 +1133,13 @@ impl ComputedValues {
             border_radius: ComputedBorderRadius::all(ComputedLength::ZERO),
             // CSS Backgrounds and Borders 3 §6.1: box-shadow initial is none.
             box_shadow: empty_computed_box_shadow_list(),
-            // CSS UI 3 §4.1/§4.2: outline initial style is none and outline
-            // width initial is medium (3px). Unlike border width, the
-            // computed outline width is retained even when style is none.
+            // CSS UI 3 §4.1/§4.2/§4.3/§4.4: outline specified initial values
+            // are medium (3px), none, and invert. The computed width is 0px when
+            // the computed style is none.
             outline: ComputedOutline {
-                width: ComputedLength(BORDER_WIDTH_MEDIUM_PX),
-                style: BorderStyle::None,
-                color: BorderColor::CurrentColor,
+                width: ComputedLength::ZERO,
+                style: OutlineStyle::None,
+                color: OutlineColor::Invert,
             },
             // CSS Sizing 3 §3.1.1: width initial は `auto`。
             width: ComputedLengthPercentageOrAuto::Auto,
@@ -1417,9 +1419,9 @@ mod tests {
             ComputedBorderRadius::all(ComputedLength::ZERO)
         );
         assert!(cv.box_shadow.is_empty());
-        assert_eq!(cv.outline.width(), ComputedLength(3.0));
-        assert_eq!(cv.outline.style(), BorderStyle::None);
-        assert_eq!(cv.outline.color, BorderColor::CurrentColor);
+        assert_eq!(cv.outline.width(), ComputedLength::ZERO);
+        assert_eq!(cv.outline.style(), OutlineStyle::None);
+        assert_eq!(cv.outline.color, OutlineColor::Invert);
         // CSS Sizing 3 §3.1.1: width initial は `auto`。
         assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
         // CSS Sizing 3 §3.1.1: height initial は `auto`。
@@ -1522,8 +1524,8 @@ mod tests {
             }]),
             outline: ComputedOutline {
                 width: ComputedLength(4.0),
-                style: BorderStyle::Solid,
-                color: BorderColor::Resolved(CssColor::BLACK),
+                style: OutlineStyle::Solid,
+                color: OutlineColor::Resolved(CssColor::BLACK),
             },
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),

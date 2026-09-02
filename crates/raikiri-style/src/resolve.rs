@@ -187,7 +187,8 @@ use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, FlexBasisValue,
     GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    LineHeight, Outline, TabSize, TextShadowColor, TextShadowItem, VerticalAlign,
+    LineHeight, Outline, OutlineColor, OutlineStyle, TabSize, TextShadowColor, TextShadowItem,
+    VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -875,16 +876,16 @@ pub struct ComputedBoxShadowItem {
     pub color: TextShadowColor,
 }
 
-/// Computed `outline`。
+/// Computed `outline` (CSS Basic User Interface Module Level 3 §4)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedOutline {
-    /// 絶対化済み outline width。style が `none` でも computed value は保持する。
+    /// 絶対化済み outline width。style が `none` または `hidden` のときは 0。
     pub(crate) width: ComputedLength,
     /// outline style。
-    pub(crate) style: BorderStyle,
-    /// outline color。
-    pub color: BorderColor,
+    pub(crate) style: OutlineStyle,
+    /// outline color (`invert`, `currentcolor`, or a resolved `<color>`)。
+    pub color: OutlineColor,
 }
 
 impl ComputedOutline {
@@ -894,7 +895,7 @@ impl ComputedOutline {
     }
 
     /// outline style を返す。
-    pub fn style(&self) -> BorderStyle {
+    pub fn style(&self) -> OutlineStyle {
         self.style
     }
 }
@@ -936,8 +937,9 @@ pub fn resolve_box_shadow_item(
     }
 }
 
-/// `outline` の width を絶対化する。outline は box model に影響しないため、
-/// border のような style-dependent width gate は適用しない。
+/// `outline` の width を絶対化する (CSS Basic User Interface Module Level 3
+/// §4.2)。computed value は style が `none` (または `hidden`) のとき 0、
+/// visible style のときだけ specified width を絶対化する。
 pub fn resolve_outline(
     specified: Outline,
     font_size: ComputedLength,
@@ -945,7 +947,11 @@ pub fn resolve_outline(
     ctx: &ResolveContext,
 ) -> ComputedOutline {
     ComputedOutline {
-        width: resolve_length(specified.width, font_size, own_line_height, ctx),
+        width: if matches!(specified.style, OutlineStyle::None | OutlineStyle::Hidden) {
+            ComputedLength::ZERO
+        } else {
+            resolve_length(specified.width, font_size, own_line_height, ctx)
+        },
         style: specified.style,
         color: specified.color,
     }
@@ -2379,8 +2385,8 @@ pub fn lift_tab_size(computed: ComputedTabSize) -> TabSize {
 mod tests {
     use super::*;
     use crate::property::{
-        BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CssColor, Outline, Sides,
-        TextShadowColor,
+        BorderRadius, BorderStyle, BoxShadowItem, CssColor, Outline, OutlineColor, OutlineStyle,
+        Sides, TextShadowColor,
     };
     use crate::specified::SpecifiedValues;
 
@@ -3347,21 +3353,27 @@ mod tests {
     }
 
     #[test]
-    fn outline_resolution_preserves_width_for_none_and_solid_styles() {
+    fn outline_resolution_gates_width_for_none_and_preserves_visible_styles() {
         let mut outline = Outline {
             width: Length::Em(2.0),
-            style: BorderStyle::None,
-            color: BorderColor::Resolved(CssColor::BLACK),
+            style: OutlineStyle::None,
+            color: OutlineColor::Resolved(CssColor::BLACK),
         };
         let computed = resolve_outline(outline, ComputedLength(20.0), None, &CTX);
-        assert_eq!(computed.width(), ComputedLength(40.0));
-        assert_eq!(computed.style(), BorderStyle::None);
+        assert_eq!(computed.width(), ComputedLength::ZERO);
+        assert_eq!(computed.style(), OutlineStyle::None);
         assert_eq!(computed.color, outline.color);
 
-        outline.style = BorderStyle::Solid;
+        outline.style = OutlineStyle::Solid;
         let computed = resolve_outline(outline, ComputedLength(20.0), None, &CTX);
         assert_eq!(computed.width(), ComputedLength(40.0));
-        assert_eq!(computed.style(), BorderStyle::Solid);
+        assert_eq!(computed.style(), OutlineStyle::Solid);
+        assert_eq!(computed.color, outline.color);
+
+        outline.style = OutlineStyle::Auto;
+        let computed = resolve_outline(outline, ComputedLength(20.0), None, &CTX);
+        assert_eq!(computed.width(), ComputedLength(40.0));
+        assert_eq!(computed.style(), OutlineStyle::Auto);
         assert_eq!(computed.color, outline.color);
     }
 

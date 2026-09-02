@@ -36,7 +36,8 @@ pub use style_dom::{
 pub mod property;
 pub use property::{
     BorderRadius, BoxShadowItem, CssColor, DisplayValue, Length, LengthOrAuto, LengthOrNormal,
-    Outline, PropertyKey, PropertyValue, Sides, TextShadowColor, TextShadowItem,
+    Outline, OutlineColor, OutlineStyle, PropertyKey, PropertyValue, Sides, TextShadowColor,
+    TextShadowItem,
 };
 
 pub mod rule;
