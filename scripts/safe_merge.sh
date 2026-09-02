@@ -13,7 +13,8 @@
 # lines" does not reliably produce the 4 lines. This script does not replace
 # gate.md's checklist text; it makes the checklist a precondition the merge
 # command itself enforces: `git merge` never runs unless the message already
-# has all 4 lines, checked *before* any git command executes, not after.
+# has all 4 lines, checked *before* the `git merge` command executes, not
+# after.
 #
 # This script does NOT re-run the §8.1 checks themselves (that is
 # scripts/gate.sh's job, already covering §8.1 (a)(b)(c) plus the §8.1.4
@@ -105,7 +106,7 @@
 #
 # Exit status: 0, and `git merge --no-ff` runs (unless --check-only), only
 # if all 4 markers are present and pass their content check. Non-zero, and
-# no git command is ever invoked, otherwise.
+# no `git merge` command is ever invoked, otherwise.
 
 set -euo pipefail
 
@@ -318,7 +319,7 @@ if [[ "${#MISSING[@]}" -gt 0 ]]; then
   done
   echo
   echo "Add the missing line(s) to $EVIDENCE_SOURCE and re-run."
-  echo "No git command has been executed."
+  echo "No git merge command has been executed."
   exit 1
 fi
 
