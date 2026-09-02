@@ -45,10 +45,20 @@
 #   --evidence-file <f>   Optional. Validate the checklist against this
 #                         file's content INSTEAD OF the merge message —
 #                         for gate.md's alternate "issue comment" evidence
-#                         location (e.g. `bd show <id> --long` output saved
-#                         to a file). When omitted, the merge message itself
-#                         (-F/-m) is what gets validated, which is the common
-#                         case: one text serves as both the evidence and the
+#                         location (e.g. `bd comments <id> --json` output,
+#                         with the relevant comment's body extracted, saved
+#                         to a file). Use the --json form, not a pretty-
+#                         printed/terminal capture such as `bd show <id>
+#                         --long` redirected to a file: bd's terminal
+#                         renderer wraps long lines for display, and each
+#                         checklist item's required content must stay on
+#                         one physical line (see check_item below) --
+#                         a wrap that lands between e.g. a §8.3 job id and
+#                         its GATE PASS verdict would make a genuinely
+#                         passing item look invalid. When --evidence-file
+#                         is omitted, the merge message itself (-F/-m) is
+#                         what gets validated, which is the common case:
+#                         one text serves as both the evidence and the
 #                         merge commit's own message.
 #   --check-only          Validate and report, but do not run `git merge`.
 #                         Exit status still reflects pass/fail. Useful to
@@ -117,7 +127,7 @@ cd "$REPO_ROOT"
 source "$SCRIPT_DIR/lib/tmpdir.sh"
 
 usage() {
-  sed -n '2,98p' "${BASH_SOURCE[0]}"
+  sed -n '2,108p' "${BASH_SOURCE[0]}"
 }
 
 if [[ $# -eq 0 ]]; then
