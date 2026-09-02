@@ -6728,6 +6728,14 @@ enum MixColorSpace {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HueInterpolationMethod {
+    Shorter,
+    Longer,
+    Increasing,
+    Decreasing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ParsedColorSpace {
     Srgb,
     SrgbLinear,
@@ -7103,11 +7111,21 @@ fn parse_color_mix_function<'i>(
 ) -> Result<ParsedColor, ParseError<'i, ()>> {
     input.expect_ident_matching("in")?;
     let color_space = parse_mix_color_space(input)?;
+    let explicit_hue_method = input.try_parse(parse_hue_interpolation_method).ok();
+    if explicit_hue_method.is_some()
+        && !matches!(color_space, MixColorSpace::Lch | MixColorSpace::Oklch)
+    {
+        return Err(input.new_custom_error(()));
+    }
+    let hue_interpolation_method = explicit_hue_method.unwrap_or(HueInterpolationMethod::Shorter);
     input.expect_comma()?;
 
     let (color_one, percentage_one) = parse_color_mix_stop(input, color_mix_depth)?;
     input.expect_comma()?;
     let (color_two, percentage_two) = parse_color_mix_stop(input, color_mix_depth)?;
+    if input.try_parse(|i| i.expect_comma()).is_ok() {
+        return Err(input.new_custom_error(()));
+    }
     let (percentage_one, percentage_two) = match (percentage_one, percentage_two) {
         (None, None) => (0.5, 0.5),
         (Some(first), None) => (first, 1.0 - first),
@@ -7123,7 +7141,18 @@ fn parse_color_mix_function<'i>(
 
     let first = css_color_to_coordinates(color_one, color_space);
     let second = css_color_to_coordinates(color_two, color_space);
-    let mixed = mix_coordinates(first, second, weight_one, weight_two, color_space);
+    let mixed = if hue_interpolation_method == HueInterpolationMethod::Shorter {
+        mix_coordinates(first, second, weight_one, weight_two, color_space)
+    } else {
+        mix_coordinates_with_hue(
+            first,
+            second,
+            weight_one,
+            weight_two,
+            color_space,
+            hue_interpolation_method,
+        )
+    };
     let coordinates = [mixed.first, mixed.second, mixed.third];
     let parsed_space = color_space.into();
     let lightness_boundary = propagated_lightness_boundary(
@@ -7142,6 +7171,21 @@ fn parse_color_mix_function<'i>(
         lightness_boundary,
         polar_hue_missing,
     ))
+}
+
+fn parse_hue_interpolation_method<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<HueInterpolationMethod, ParseError<'i, ()>> {
+    let name = input.expect_ident()?.clone();
+    let method = match name.as_ref().to_ascii_lowercase().as_str() {
+        "shorter" => HueInterpolationMethod::Shorter,
+        "longer" => HueInterpolationMethod::Longer,
+        "increasing" => HueInterpolationMethod::Increasing,
+        "decreasing" => HueInterpolationMethod::Decreasing,
+        _ => return Err(input.new_custom_error(())),
+    };
+    input.expect_ident_matching("hue")?;
+    Ok(method)
 }
 
 fn parse_mix_color_space<'i>(
@@ -7568,6 +7612,24 @@ fn mix_coordinates(
     weight_two: f32,
     space: MixColorSpace,
 ) -> ColorCoordinates {
+    mix_coordinates_with_hue(
+        first,
+        second,
+        weight_one,
+        weight_two,
+        space,
+        HueInterpolationMethod::Shorter,
+    )
+}
+
+fn mix_coordinates_with_hue(
+    first: ColorCoordinates,
+    second: ColorCoordinates,
+    weight_one: f32,
+    weight_two: f32,
+    space: MixColorSpace,
+    hue_interpolation_method: HueInterpolationMethod,
+) -> ColorCoordinates {
     let alpha_one = first.alpha * weight_one;
     let alpha_two = second.alpha * weight_two;
     let alpha = alpha_one + alpha_two;
@@ -7601,17 +7663,12 @@ fn mix_coordinates(
             } else if weight_two == 0.0 {
                 first.third
             } else {
-                // Normalize to the shorter arc while preserving the sign of
-                // an exact half-turn. `rem_euclid` maps both +PI and -PI to
-                // -PI, but CSS interpolation must retain the authored
-                // direction at that tie.
-                let mut delta = second.third - first.third;
-                if delta > std::f32::consts::PI {
-                    delta -= std::f32::consts::TAU;
-                } else if delta < -std::f32::consts::PI {
-                    delta += std::f32::consts::TAU;
-                }
-                first.third + delta * weight_two
+                interpolate_hue(
+                    first.third,
+                    second.third,
+                    weight_two,
+                    hue_interpolation_method,
+                )
             };
             (component(first.second, second.second), hue)
         } else {
@@ -7630,6 +7687,53 @@ fn mix_coordinates(
         third: third_component,
         alpha,
         polar_hue_missing,
+    }
+}
+
+fn interpolate_hue(first: f32, second: f32, progress: f32, method: HueInterpolationMethod) -> f32 {
+    match method {
+        // CSS Color 4 §13.5: keep theta2 - theta1 in [-180, 180], retaining
+        // the authored direction when the difference is exactly a half-turn.
+        // Adjust the delta, as the legacy shorter path did, so wrapped results
+        // keep their existing internal representative.
+        HueInterpolationMethod::Shorter => {
+            let mut delta = second - first;
+            if delta > std::f32::consts::PI {
+                delta -= std::f32::consts::TAU;
+            } else if delta < -std::f32::consts::PI {
+                delta += std::f32::consts::TAU;
+            }
+            first + delta * progress
+        }
+        // CSS Color 4 §13.5: keep theta2 - theta1 in (-360, -180] or
+        // [180, 360), preferring a positive full turn when the angles match.
+        HueInterpolationMethod::Longer => {
+            let mut first = first;
+            let mut second = second;
+            let delta = second - first;
+            if 0.0 < delta && delta < std::f32::consts::PI {
+                first += std::f32::consts::TAU;
+            } else if -std::f32::consts::PI < delta && delta <= 0.0 {
+                second += std::f32::consts::TAU;
+            }
+            first + (second - first) * progress
+        }
+        // CSS Color 4 §13.5: theta2 - theta1 in [0, 360).
+        HueInterpolationMethod::Increasing => {
+            let mut second = second;
+            if second < first {
+                second += std::f32::consts::TAU;
+            }
+            first + (second - first) * progress
+        }
+        // CSS Color 4 §13.5: theta2 - theta1 in (-360, 0].
+        HueInterpolationMethod::Decreasing => {
+            let mut first = first;
+            if first < second {
+                first += std::f32::consts::TAU;
+            }
+            first + (second - first) * progress
+        }
     }
 }
 
@@ -12846,6 +12950,19 @@ mod tests {
     }
 
     #[test]
+    fn color_parse_color_mix_preserves_partial_percentage_alpha() {
+        assert_eq!(
+            parse_color_entire("color-mix(in srgb, red 20%, blue 20%)"),
+            Some(CssColor {
+                r: 128,
+                g: 0,
+                b: 128,
+                a: 102,
+            })
+        );
+    }
+
+    #[test]
     fn color_parse_color_mix_premultiplies_alpha() {
         assert_eq!(
             parse(
@@ -13309,6 +13426,107 @@ mod tests {
     }
 
     #[test]
+    fn color_mix_lch_shorter_hue_wrap_preserves_zero_representative() {
+        let source = "color-mix(in lch shorter hue, lch(50% 40 10deg), lch(50% 40 350deg))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Lch);
+        assert!(parsed.coordinates[2].abs() < 0.0001);
+    }
+
+    #[test]
+    fn color_mix_nested_shorter_hue_wrap_preserves_rectangular_conversion() {
+        let source = "color-mix(in lab, color-mix(in lch shorter hue, lch(50% 40 10deg), lch(50% 40 350deg)), lab(50% 0 0))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Lab);
+        assert!((parsed.coordinates[2] + 4.172325e-6).abs() < 0.0000001);
+    }
+
+    #[test]
+    fn color_parse_color_mix_accepts_all_polar_hue_interpolation_methods() {
+        let methods = [
+            ("shorter", 0.0),
+            ("longer", 180.0),
+            ("increasing", 180.0),
+            ("decreasing", 360.0),
+        ];
+        for space in ["lch", "oklch"] {
+            for (method, expected_hue) in methods {
+                let source = format!(
+                    "color-mix(in {space} {method} hue, {space}(50% 40 10deg), {space}(50% 40 350deg))"
+                );
+                assert_parsed_hue_close(&source, expected_hue);
+            }
+            let omitted =
+                format!("color-mix(in {space}, {space}(50% 40 10deg), {space}(50% 40 350deg))");
+            let explicit_shorter = format!(
+                "color-mix(in {space} shorter hue, {space}(50% 40 10deg), {space}(50% 40 350deg))"
+            );
+            assert_parsed_hue_close(&omitted, 0.0);
+            assert_parsed_hue_close(&explicit_shorter, 0.0);
+        }
+        assert_parsed_hue_close(
+            "color-mix(in lch longer hue, lch(50% 40 10deg), lch(50% 40 100deg))",
+            235.0,
+        );
+        assert_parsed_hue_close(
+            "color-mix(in lch longer hue, lch(50% 40 100deg), lch(50% 40 10deg))",
+            235.0,
+        );
+    }
+
+    #[test]
+    fn color_parse_color_mix_hue_methods_preserve_half_turn_direction() {
+        let methods = ["shorter", "longer", "increasing", "decreasing"];
+        let expected_forward = [90.0, 90.0, 90.0, 270.0];
+        let expected_reverse = [90.0, 90.0, 270.0, 90.0];
+        for space in ["lch", "oklch"] {
+            for (first, second, expected) in [
+                ("0deg", "180deg", expected_forward),
+                ("180deg", "0deg", expected_reverse),
+            ] {
+                for (method, expected_hue) in methods.iter().zip(expected) {
+                    let source = format!(
+                        "color-mix(in {space} {method} hue, {space}(50% 40 {first}), {space}(50% 40 {second}))"
+                    );
+                    assert_parsed_hue_close(&source, expected_hue);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn color_parse_color_mix_rejects_polar_hue_methods_for_rectangular_spaces() {
+        for space in ["srgb", "srgb-linear", "lab", "oklab"] {
+            for method in ["shorter", "longer", "increasing", "decreasing"] {
+                let source = format!("color-mix(in {space} {method} hue, red, blue)");
+                assert_eq!(parse_color_entire(&source), None, "{source}");
+            }
+        }
+    }
+
+    #[test]
+    fn color_parse_color_mix_rejects_wrong_stop_count() {
+        assert_eq!(parse_color_entire("color-mix(in srgb, red)"), None,);
+        assert_eq!(
+            parse_color_entire("color-mix(in srgb, red, blue, white)"),
+            None,
+        );
+        assert!(parse_color_entire("color-mix(in srgb, red, blue)").is_some());
+    }
+
+    #[test]
+    fn color_parse_color_mix_rejects_malformed_hue_interpolation_methods() {
+        for source in [
+            "color-mix(in lch hue, red, blue)",
+            "color-mix(in lch longer, red, blue)",
+            "color-mix(in lch sideways hue, red, blue)",
+            "color-mix(in lch longer hue increasing hue, red, blue)",
+        ] {
+            assert_eq!(parse_color_entire(source), None, "{source}");
+        }
+    }
+
+    #[test]
     fn color_parse_lab_family_maps_lightness_boundaries() {
         for source in ["lab(0% 125 125)", "lch(0% 150 45deg)"] {
             assert_eq!(
@@ -13372,7 +13590,6 @@ mod tests {
     fn color_parse_color_functions_reject_invalid_syntax() {
         assert_eq!(parse("color(display-p3 1 0 0)", "color"), None);
         assert_eq!(parse("lab(50%, 0, 0)", "color"), None);
-        assert_eq!(parse("color-mix(in srgb, red, blue, white)", "color"), None);
         assert_eq!(parse("color-mix(in unsupported, red, blue)", "color"), None);
     }
 
@@ -22425,6 +22642,15 @@ mod tests {
     fn orphans_widows_key_maps_to_distinct_property_keys() {
         assert_eq!(PropertyValue::Orphans(2).key(), PropertyKey::Orphans);
         assert_eq!(PropertyValue::Widows(2).key(), PropertyKey::Widows);
+    }
+
+    fn assert_parsed_hue_close(source: &str, expected_degrees: f32) {
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        let actual_degrees = parsed.coordinates[2].to_degrees();
+        assert!(
+            (actual_degrees - expected_degrees).abs() < 0.0001,
+            "{source}: {actual_degrees} != {expected_degrees}" // cov:ignore: assertion failure message literal only executes when the assertion fails
+        );
     }
 
     fn assert_coordinates_close(actual: [f32; 3], expected: [f32; 3]) {
