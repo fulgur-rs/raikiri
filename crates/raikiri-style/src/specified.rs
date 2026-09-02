@@ -34,12 +34,12 @@ use crate::property::{
     ContentComponent, CssColor, Direction, DisplayValue, FlexBasisValue, FlexDirectionValue,
     FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
     GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, Hyphens, Length, LengthOrAuto,
-    LengthOrNormal, LineHeight, Outline, OverflowValue, OverflowWrap, OverflowXY,
-    SelfAlignmentValue, Sides, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextShadowItem, TextTransform, VerticalAlign, Visibility, WhiteSpace,
-    WordBreak, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
-    empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list, initial_font_family,
-    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
+    LengthOrNormal, LineHeight, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
+    OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform, VerticalAlign,
+    Visibility, WhiteSpace, WordBreak, ZIndexValue, empty_box_shadow_list, empty_content_list,
+    empty_counter_entries, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    initial_font_family, initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
@@ -195,7 +195,8 @@ pub struct SpecifiedValues {
     /// `box-shadow` の **specified** value。phase 3 で各 shadow の length を
     /// 絶対化する。property は non-inherited。
     pub box_shadow: Arc<Vec<BoxShadowItem>>,
-    /// `outline` の **specified** value。phase 3 で width を絶対化する。
+    /// `outline` の **specified** value。phase 3 で width を絶対化し、
+    /// `outline-style: none` の場合は computed width を 0 にする。
     pub outline: Outline,
     /// `width` の **specified** value。phase 3 で絶対化される。
     pub width: LengthOrAuto,
@@ -426,8 +427,8 @@ impl SpecifiedValues {
             box_shadow: empty_box_shadow_list(),
             outline: Outline {
                 width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
-                style: BorderStyle::None,
-                color: BorderColor::CurrentColor,
+                style: OutlineStyle::None,
+                color: OutlineColor::Invert,
             },
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
@@ -665,8 +666,8 @@ impl SpecifiedValues {
             box_shadow: empty_box_shadow_list(),
             outline: Outline {
                 width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
-                style: BorderStyle::None,
-                color: BorderColor::CurrentColor,
+                style: OutlineStyle::None,
+                color: OutlineColor::Invert,
             },
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
@@ -1422,8 +1423,8 @@ mod tests {
             }]),
             outline: ComputedOutline {
                 width: ComputedLength(4.0),
-                style: BorderStyle::Solid,
-                color: BorderColor::Resolved(CssColor::BLACK),
+                style: OutlineStyle::Solid,
+                color: OutlineColor::Resolved(CssColor::BLACK),
             },
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),

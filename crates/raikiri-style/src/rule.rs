@@ -11,8 +11,8 @@ use selectors::parser::SelectorList;
 use crate::RaikiriSelectorImpl;
 use crate::property::{
     Border, DeferredValue, FlexShorthand, GapShorthand, GridLineShorthand, Length, LengthOrAuto,
-    OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey,
-    PropertyValue, Sides, TextDecorationShorthand, parse_value,
+    Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
+    PropertyKey, PropertyValue, Sides, TextDecorationShorthand, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -460,6 +460,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         PropertyValue::TextDecoration(shorthand) => {
             expand_text_decoration(shorthand, d.important, push)
         }
+        PropertyValue::Outline(outline) => expand_outline(outline, d.important, push),
         PropertyValue::Deferred(ref deferred) => {
             expand_deferred(d, deferred, d.important, push)
         }
@@ -551,7 +552,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::TextShadow(_)
         | PropertyValue::BorderRadius(_)
         | PropertyValue::BoxShadow(_)
-        | PropertyValue::Outline(_)
+        | PropertyValue::OutlineWidth(_)
+        | PropertyValue::OutlineStyle(_)
+        | PropertyValue::OutlineColor(_)
         // grid-template-columns/-rows/-areas + grid-auto-columns/-rows/-flow
         // + grid-row-start/-end + grid-column-start/-end — 展開先の longhand
         // を持たない individual property (CSS Grid Layout Module Level 1
@@ -642,6 +645,11 @@ fn expand_deferred(
             PropertyKey::TextDecorationLine,
             PropertyKey::TextDecorationStyle,
             PropertyKey::TextDecorationColor,
+        ],
+        PropertyKey::Outline => &[
+            PropertyKey::OutlineWidth,
+            PropertyKey::OutlineStyle,
+            PropertyKey::OutlineColor,
         ],
         PropertyKey::Flex => &[
             PropertyKey::FlexGrow,
@@ -950,6 +958,23 @@ fn expand_text_decoration(
     });
 }
 
+/// `outline` shorthand を width/style/color の longhand に展開する。
+#[inline(never)]
+fn expand_outline(outline: Outline, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::OutlineWidth(outline.width),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::OutlineStyle(outline.style),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::OutlineColor(outline.color),
+        important,
+    });
+}
+
 /// Per-declaration parser for cssparser::RuleBodyParser。
 struct DeclParser;
 
@@ -1004,7 +1029,8 @@ mod tests {
 
     use super::*;
     use crate::property::{
-        BorderColor, BorderStyle, CssColor, FontWeightValue, Length, LengthOrAuto, OverflowValue,
+        BorderColor, BorderStyle, CssColor, FontWeightValue, Length, LengthOrAuto, OutlineColor,
+        OutlineStyle, OverflowValue,
     };
     use cssparser::ParserInput;
 
@@ -1040,7 +1066,7 @@ mod tests {
         use crate::property::PropertyKey;
 
         let decls = parse_block(
-            "margin: 1px; padding: 2px; border: 3px solid red; \
+            "margin: 1px; padding: 2px; border: 3px solid red; outline: auto 2px red; \
              margin-top: 4px; padding-left: 5px; border-top-width: 6px; \
              text-decoration: underline overline; color: red; font-size: 10px",
         );
@@ -1057,6 +1083,7 @@ mod tests {
                     PropertyKey::Margin
                         | PropertyKey::Padding
                         | PropertyKey::Border
+                        | PropertyKey::Outline
                         | PropertyKey::TextDecoration
                 ),
                 "shorthand key {key:?} が cascade 段へ漏れている — \
@@ -1119,6 +1146,14 @@ mod tests {
                     PropertyKey::TextDecorationLine,
                     PropertyKey::TextDecorationStyle,
                     PropertyKey::TextDecorationColor,
+                ],
+            ),
+            (
+                PropertyKey::Outline,
+                &[
+                    PropertyKey::OutlineWidth,
+                    PropertyKey::OutlineStyle,
+                    PropertyKey::OutlineColor,
                 ],
             ),
             (
@@ -1590,6 +1625,39 @@ mod tests {
             decls.is_empty(),
             "border shorthand with leftover token must be dropped, got {decls:?}"
         );
+    }
+
+    // ── outline shorthand expansion (CSS Basic User Interface Module Level 3 §4.1) ──
+
+    #[test]
+    fn outline_shorthand_expands_into_three_longhand_declarations() {
+        // CSS Cascading 4 §3: a shorthand sets each longhand as if expanded in
+        // place. The outline-only `auto` style must stay an `OutlineStyle`.
+        let decls = parse_block("outline: auto 2px red;");
+        assert_eq!(decls.len(), 3, "shorthand must expand to 3 longhand decls");
+        assert_eq!(decls[0].value, PropertyValue::OutlineWidth(Length::Px(2.0)));
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::OutlineStyle(OutlineStyle::Auto)
+        );
+        assert_eq!(
+            decls[2].value,
+            PropertyValue::OutlineColor(OutlineColor::Resolved(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn outline_shorthand_important_flag_propagates_to_all_longhand() {
+        // CSS Cascading 4 §3: `!important` on a shorthand applies to all of
+        // its longhands.
+        let decls = parse_block("outline: auto !important;");
+        assert_eq!(decls.len(), 3);
+        assert!(decls.iter().all(|declaration| declaration.important));
     }
 
     // ── overflow shorthand expansion (CSS Overflow 3 §3.1) ──

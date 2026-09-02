@@ -650,8 +650,8 @@ impl<T> Sides<T> {
 /// CSS Backgrounds 3 §3.2 "Line Patterns: the border-style properties"
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-style>:
 /// Border の `<line-style> = none | hidden | dotted | dashed | solid | double |
-/// groove | ridge | inset | outset` と、outline 専用の `auto` を表す。initial
-/// value は `none`、not inherited (§3.2)。
+/// groove | ridge | inset | outset` を表す。initial value は `none`、not
+/// inherited (§3.2)。
 ///
 /// UA stylesheet 差はあるが本 crate は cleanroom scope (`walls.md` §1) のため
 /// spec-defined 10 alternative のみ受理する。ASCII case-insensitive で
@@ -706,9 +706,47 @@ pub enum BorderStyle {
     /// `outset` — §3.2 verbatim: "Looks as if the content on the inside of the
     /// border is raised out of the canvas."
     Outset,
-    /// `auto` — outline-style 専用の自動 outline。CSS Basic User Interface 3
-    /// §3 は `outline-style` に `auto` を許すが、border の `<line-style>` には
-    /// 含めないため、`parse_border_style_side` では受理しない。
+}
+
+/// `outline-style` の keyword payload。
+///
+/// CSS Basic User Interface Module Level 3 §4.3
+/// <https://www.w3.org/TR/css-ui-3/#outline-style> の outline style grammar
+/// (`auto | <border-style>`) を、border 用の [`BorderStyle`] から分離して表す。
+/// `auto` は outline にだけ意味があり、[`BorderStyle`] には含まれない。
+///
+/// 本 crate の既存 outline scope は `hidden` を受理しないため、parser は
+/// [`Self::Hidden`] を構築せず declaration を drop する。ただし enum には
+/// `<border-style>` の全 keyword を保持できる形を残し、computed/specified の値
+/// carrier が authored value を失わないようにする。
+///
+/// `Default` は derive しない。spec initial (`none`) は
+/// [`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`] が明示的に設定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutlineStyle {
+    /// `none` — initial value。
+    None,
+    /// `hidden` — parser scope では reject する outline value。
+    Hidden,
+    /// `dotted`。
+    Dotted,
+    /// `dashed`。
+    Dashed,
+    /// `solid`。
+    Solid,
+    /// `double`。
+    Double,
+    /// `groove`。
+    Groove,
+    /// `ridge`。
+    Ridge,
+    /// `inset`。
+    Inset,
+    /// `outset`。
+    Outset,
+    /// `auto` — UA-dependent automatic outline rendering.
     Auto,
 }
 
@@ -4291,20 +4329,42 @@ pub struct BoxShadowItem {
     pub color: TextShadowColor,
 }
 
+/// `outline-color` の keyword/color payload。
+///
+/// CSS Basic User Interface Module Level 3 §4.4
+/// <https://www.w3.org/TR/css-ui-3/#outline-color> の `invert | <color>` を
+/// 保持する。`<color>` に含まれる `currentcolor` も、resolved color と区別して
+/// cascade static side に残す。`invert` は outline 専用であり、border の
+/// [`BorderColor`] には追加しない。
+///
+/// `Default` は derive しない。spec initial (`invert`) は
+/// [`crate::specified::SpecifiedValues::initial`] /
+/// [`crate::computed::ComputedValues::initial`] が明示的に設定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutlineColor {
+    /// `invert` — CSS UI 3 §4.4 の spec initial value。
+    Invert,
+    /// `currentcolor` keyword。used-value 解決は paint scope の責務。
+    CurrentColor,
+    /// Resolved `<color>` value。
+    Resolved(CssColor),
+}
+
 /// `outline` shorthand の specified value。
 ///
-/// CSS Basic User Interface Module Level 3 §3
+/// CSS Basic User Interface Module Level 3 §4
 /// <https://www.w3.org/TR/css-ui-3/#outline-props> の width/style/color を
 /// any-order で保持する。outline は border と異なり box model の寸法を変えない。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Outline {
-    /// outline width。省略時は `medium`。
+    /// outline width。省略時は `medium` (CSS UI 3 §4.2)。
     pub width: Length,
-    /// outline style。省略時は `none`。
-    pub style: BorderStyle,
-    /// outline color。省略時は `currentcolor`。
-    pub color: BorderColor,
+    /// outline style。省略時は [`OutlineStyle::None`] (CSS UI 3 §4.3)。
+    pub style: OutlineStyle,
+    /// outline color。省略時は [`OutlineColor::Invert`] (CSS UI 3 §4.4)。
+    pub color: OutlineColor,
 }
 
 /// 現サポート property の resolved value (variant 一覧は下記、
@@ -5205,7 +5265,19 @@ pub enum PropertyValue {
     BoxShadow(Arc<Vec<BoxShadowItem>>),
     /// `outline` shorthand — non-inherited。width/style/color を保持するが、
     /// outline の layout 非干渉性そのものは下流 layout の責務である。
+    /// [`crate::rule::expand_shorthand_into`] が
+    /// [`Self::OutlineWidth`] / [`Self::OutlineStyle`] / [`Self::OutlineColor`]
+    /// に展開する。
     Outline(Outline),
+    /// `outline-width: <line-width>` — non-inherited、initial: `medium`。
+    OutlineWidth(Length),
+    /// `outline-style: auto | <border-style>` — non-inherited、initial: `none`。
+    /// `hidden` は既存 outline parser の scope 外として reject する。
+    OutlineStyle(OutlineStyle),
+    /// `outline-color: invert | <color>` — non-inherited、initial: `invert`
+    /// (CSS UI 3 §4.4)。[`OutlineColor`] keeps `invert`, `currentcolor`, and
+    /// resolved colors distinct through computed-value processing.
+    OutlineColor(OutlineColor),
     /// `grid-template-columns` — non-inherited、initial:
     /// [`GridTemplateTracks::None`] ([`GridTemplateTracks`] doc 参照)。
     GridTemplateColumns(GridTemplateTracks),
@@ -5609,10 +5681,13 @@ pub enum PropertyKey {
     /// selected by their case-sensitive name, not by this key.
     Custom,
     // border-radius / box-shadow / outline (CSS Backgrounds and Borders 3 §5
-    // / §6.1 and CSS UI 3 §3; semantics on matching PropertyValue variants).
+    // / §6.1 and CSS UI 3 §4; semantics on matching PropertyValue variants).
     BorderRadius,
     BoxShadow,
     Outline,
+    OutlineWidth,
+    OutlineStyle,
+    OutlineColor,
 }
 
 impl PropertyValue {
@@ -5733,6 +5808,9 @@ impl PropertyValue {
             PropertyValue::BorderRadius(_) => PropertyKey::BorderRadius,
             PropertyValue::BoxShadow(_) => PropertyKey::BoxShadow,
             PropertyValue::Outline(_) => PropertyKey::Outline,
+            PropertyValue::OutlineWidth(_) => PropertyKey::OutlineWidth,
+            PropertyValue::OutlineStyle(_) => PropertyKey::OutlineStyle,
+            PropertyValue::OutlineColor(_) => PropertyKey::OutlineColor,
         }
     }
 }
@@ -6067,6 +6145,10 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,
         "text-shadow" => PropertyKey::TextShadow,
+        "outline" => PropertyKey::Outline,
+        "outline-width" => PropertyKey::OutlineWidth,
+        "outline-style" => PropertyKey::OutlineStyle,
+        "outline-color" => PropertyKey::OutlineColor,
         "grid-template-columns" => PropertyKey::GridTemplateColumns,
         "grid-template-rows" => PropertyKey::GridTemplateRows,
         "grid-template-areas" => PropertyKey::GridTemplateAreas,
@@ -6522,9 +6604,14 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
                 PropertyValue::BoxShadow(Arc::new(v))
             }
         }),
-        // CSS UI 3 §3: outline is an any-order width/style/color shorthand and
+        // CSS UI 3 §4.1: outline is an any-order width/style/color shorthand and
         // does not participate in box-model sizing.
         "outline" => parse_outline(input).map(PropertyValue::Outline),
+        // CSS UI 3 §§4.2–4.4 outline longhands. `auto` is accepted only by the
+        // outline-style parser; border-style remains unchanged.
+        "outline-width" => parse_border_width_side(input).map(PropertyValue::OutlineWidth),
+        "outline-style" => parse_outline_style_side(input).map(PropertyValue::OutlineStyle),
+        "outline-color" => parse_outline_color(input).map(PropertyValue::OutlineColor),
         // CSS Grid Layout Module Level 1 §7.2
         // <https://www.w3.org/TR/css-grid-1/#track-sizing>.
         "grid-template-columns" => {
@@ -11869,8 +11956,8 @@ fn parse_box_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<BoxShadowItem>> {
 /// `outline` shorthand の width/style/color components を any-order で parse する。
 fn parse_outline(input: &mut Parser<'_, '_>) -> Option<Outline> {
     let mut width: Option<Length> = None;
-    let mut style: Option<BorderStyle> = None;
-    let mut color: Option<BorderColor> = None;
+    let mut style: Option<OutlineStyle> = None;
+    let mut color: Option<OutlineColor> = None;
 
     loop {
         if width.is_some() && style.is_some() && color.is_some() {
@@ -11889,8 +11976,8 @@ fn parse_outline(input: &mut Parser<'_, '_>) -> Option<Outline> {
             continue;
         }
         if color.is_none()
-            && let Ok(value) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
-                parse_border_color(i).ok_or_else(|| i.new_custom_error(()))
+            && let Ok(value) = input.try_parse(|i| -> Result<OutlineColor, ParseError<'_, ()>> {
+                parse_outline_color(i).ok_or_else(|| i.new_custom_error(()))
             })
         {
             color = Some(value);
@@ -11904,23 +11991,56 @@ fn parse_outline(input: &mut Parser<'_, '_>) -> Option<Outline> {
     }
     Some(Outline {
         width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)),
-        style: style.unwrap_or(BorderStyle::None),
-        color: color.unwrap_or(BorderColor::CurrentColor),
+        style: style.unwrap_or(OutlineStyle::None),
+        color: color.unwrap_or(OutlineColor::Invert),
     })
+}
+
+/// `outline-color` の value parser。CSS UI 3 §4.4 の `invert | <color>` を受理し、
+/// `currentcolor` は `<color>` の keyword として専用 variant に保持する。
+fn parse_outline_color(input: &mut Parser<'_, '_>) -> Option<OutlineColor> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("invert"))
+        .is_ok()
+    {
+        return Some(OutlineColor::Invert);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("currentcolor"))
+        .is_ok()
+    {
+        return Some(OutlineColor::CurrentColor);
+    }
+    parse_color(input).map(OutlineColor::Resolved)
+}
+
+/// Parse one `outline-style` keyword. The outline shorthand and longhand share
+/// this helper so `auto` cannot accidentally become valid for border styles.
+fn parse_outline_style_side(input: &mut Parser<'_, '_>) -> Option<OutlineStyle> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "none" => Some(OutlineStyle::None),
+        // Keep the existing `outline: hidden` rejection. The enum retains the
+        // keyword for representation completeness, but this parser scope does
+        // not accept it.
+        "hidden" => None,
+        "dotted" => Some(OutlineStyle::Dotted),
+        "dashed" => Some(OutlineStyle::Dashed),
+        "solid" => Some(OutlineStyle::Solid),
+        "double" => Some(OutlineStyle::Double),
+        "groove" => Some(OutlineStyle::Groove),
+        "ridge" => Some(OutlineStyle::Ridge),
+        "inset" => Some(OutlineStyle::Inset),
+        "outset" => Some(OutlineStyle::Outset),
+        "auto" => Some(OutlineStyle::Auto),
+        _ => None,
+    }
 }
 
 fn parse_outline_style_res<'i>(
     input: &mut Parser<'i, '_>,
-) -> Result<BorderStyle, ParseError<'i, ()>> {
-    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
-        return Ok(BorderStyle::Auto);
-    }
-    let style = parse_border_style_side(input).ok_or_else(|| input.new_custom_error(()))?;
-    if matches!(style, BorderStyle::Hidden) {
-        Err(input.new_custom_error(()))
-    } else {
-        Ok(style)
-    }
+) -> Result<OutlineStyle, ParseError<'i, ()>> {
+    parse_outline_style_side(input).ok_or_else(|| input.new_custom_error(()))
 }
 
 #[cfg(test)]
@@ -22452,7 +22572,7 @@ mod tests {
         assert_eq!(parse("3", "widows"), Some(PropertyValue::Widows(3)));
     }
 
-    // ── border-radius / box-shadow / outline (CSS Backgrounds 3 / CSS UI 3)
+    // ── border-radius / box-shadow / outline (CSS Backgrounds 3 / CSS UI 3 §4)
     // ──
 
     #[test]
@@ -22559,37 +22679,80 @@ mod tests {
             parse("solid 2px red", "outline"),
             Some(PropertyValue::Outline(Outline {
                 width: Length::Px(2.0),
-                style: BorderStyle::Solid,
-                color: BorderColor::Resolved(red()),
+                style: OutlineStyle::Solid,
+                color: OutlineColor::Resolved(red()),
             }))
         );
         assert_eq!(
             parse("red", "outline"),
             Some(PropertyValue::Outline(Outline {
                 width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
-                style: BorderStyle::None,
-                color: BorderColor::Resolved(red()),
+                style: OutlineStyle::None,
+                color: OutlineColor::Resolved(red()),
             }))
         );
         assert_eq!(
             parse("auto", "outline"),
             Some(PropertyValue::Outline(Outline {
                 width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
-                style: BorderStyle::Auto,
-                color: BorderColor::CurrentColor,
+                style: OutlineStyle::Auto,
+                color: OutlineColor::Invert,
             }))
         );
+        assert_eq!(
+            parse("auto 2px red", "outline"),
+            Some(PropertyValue::Outline(Outline {
+                width: Length::Px(2.0),
+                style: OutlineStyle::Auto,
+                color: OutlineColor::Resolved(red()),
+            }))
+        );
+        assert_eq!(
+            parse("auto", "outline-style"),
+            Some(PropertyValue::OutlineStyle(OutlineStyle::Auto))
+        );
+        assert_eq!(parse("hidden", "outline-style"), None);
         assert_eq!(parse("auto", "border-top-style"), None);
         assert_eq!(parse("hidden", "outline"), None);
         assert_eq!(
             PropertyValue::Outline(Outline {
                 width: Length::Px(1.0),
-                style: BorderStyle::None,
-                color: BorderColor::CurrentColor,
+                style: OutlineStyle::None,
+                color: OutlineColor::Invert,
             })
             .key(),
             PropertyKey::Outline
         );
+    }
+
+    #[test]
+    fn outline_color_accepts_invert_currentcolor_and_resolved_colors() {
+        assert_eq!(
+            parse("invert", "outline-color"),
+            Some(PropertyValue::OutlineColor(OutlineColor::Invert))
+        );
+        assert_eq!(
+            parse("InVeRt", "outline-color"),
+            Some(PropertyValue::OutlineColor(OutlineColor::Invert))
+        );
+        assert_eq!(
+            parse("currentcolor", "outline-color"),
+            Some(PropertyValue::OutlineColor(OutlineColor::CurrentColor))
+        );
+        assert_eq!(
+            parse("red", "outline-color"),
+            Some(PropertyValue::OutlineColor(OutlineColor::Resolved(red())))
+        );
+        assert_eq!(
+            parse("solid invert", "outline"),
+            Some(PropertyValue::Outline(Outline {
+                width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
+                style: OutlineStyle::Solid,
+                color: OutlineColor::Invert,
+            }))
+        );
+        // `invert` is outline-only; border-color parsing remains unchanged.
+        assert_eq!(parse("invert", "border-top-color"), None);
     }
 
     #[test]

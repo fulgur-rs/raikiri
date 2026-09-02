@@ -1446,18 +1446,21 @@ mod tests {
     fn page_declaration_block_never_emits_shorthand_keys() {
         // Call site 4 of `expand_shorthand_into` (see that function's doc in
         // `crate::rule`) — `parse_page_declaration_block` must expand
-        // `margin`/`padding`/`border` shorthand the same way the
+        // `margin`/`padding`/`border`/`outline` shorthand the same way the
         // qualified-rule parse exit does, so a consumer reading
         // `PageRule::declarations` directly never observes a raw shorthand
         // `PropertyValue` straight out of parsing (before `cascade_page`'s
         // own defense-in-depth re-expansion even runs).
         use crate::property::PropertyValue;
 
-        let rules = page_rules("@page { margin: 1cm 2cm 3cm 4cm }");
+        let rules = page_rules("@page { margin: 1cm 2cm 3cm 4cm; outline: auto 2px red }");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].declarations.len(), 4);
+        assert_eq!(rules[0].declarations.len(), 7);
         for decl in &rules[0].declarations {
-            assert!(!matches!(decl.value(), PropertyValue::Margin(_)));
+            assert!(!matches!(
+                decl.value(),
+                PropertyValue::Margin(_) | PropertyValue::Outline(_)
+            ));
         }
     }
 

@@ -4837,6 +4837,18 @@ fn project_deferred_value(
             crate::property::PropertyKey::MarginLeft => PropertyValue::MarginLeft(sides.left),
             _ => return None,
         },
+        PropertyValue::Outline(outline) => match key {
+            crate::property::PropertyKey::OutlineWidth => {
+                PropertyValue::OutlineWidth(outline.width)
+            }
+            crate::property::PropertyKey::OutlineStyle => {
+                PropertyValue::OutlineStyle(outline.style)
+            }
+            crate::property::PropertyKey::OutlineColor => {
+                PropertyValue::OutlineColor(outline.color)
+            }
+            _ => return None,
+        },
         PropertyValue::Border(sides) => match key {
             crate::property::PropertyKey::BorderTopWidth => {
                 PropertyValue::BorderTopWidth(sides.top.width)
@@ -6630,6 +6642,9 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BorderRadius(_)
         | PropertyValue::BoxShadow(_)
         | PropertyValue::Outline(_)
+        | PropertyValue::OutlineWidth(_)
+        | PropertyValue::OutlineStyle(_)
+        | PropertyValue::OutlineColor(_)
         // CSS Grid Layout Module Level 1 grid-template-columns/-rows/-areas
         // (§7.2/§7.3) + grid-auto-columns/-rows/-flow (§7.6/§7.7) +
         // grid-row-start/-end/grid-column-start/-end (+ their `grid-row`/
@@ -7213,6 +7228,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderRadius(v) => target.border_radius = v,
         PropertyValue::BoxShadow(shadows) => target.box_shadow = shadows,
         PropertyValue::Outline(v) => target.outline = v,
+        PropertyValue::OutlineWidth(v) => target.outline.width = v,
+        PropertyValue::OutlineStyle(v) => target.outline.style = v,
+        PropertyValue::OutlineColor(v) => target.outline.color = v,
         // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3。
         // non-inherited、specified 表現のまま格納 — 絶対化は phase 3 に
         // 委ねる (`LetterSpacing`/`FlexBasis` arm と同じ handling)。
@@ -7271,9 +7289,9 @@ mod tests {
     use crate::property::CssColor;
     use crate::property::DisplayValue;
     use crate::property::{
-        Border, BorderColor, BorderStyle, Length, LengthOrAuto, OverflowValue, OverflowXY,
-        PropertyKey, Sides, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
-        TextDecorationStyle, TextShadowColor,
+        Border, BorderColor, BorderStyle, Length, LengthOrAuto, OutlineColor, OutlineStyle,
+        OverflowValue, OverflowXY, PropertyKey, Sides, TextDecorationColor, TextDecorationLine,
+        TextDecorationShorthand, TextDecorationStyle, TextShadowColor,
     };
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
@@ -13753,16 +13771,50 @@ mod tests {
             ]
         );
         assert_eq!(cv.outline.width(), ComputedLength(32.0));
-        assert_eq!(cv.outline.style(), BorderStyle::Solid);
+        assert_eq!(cv.outline.style(), OutlineStyle::Solid);
         assert_eq!(
             cv.outline.color,
-            BorderColor::Resolved(CssColor {
+            OutlineColor::Resolved(CssColor {
                 r: 255,
                 g: 0,
                 b: 0,
                 a: 255,
             })
         );
+    }
+
+    /// CSS Basic User Interface Module Level 3 §4.3: `outline-style: auto` is
+    /// an outline-only keyword. It must survive cascade/computed propagation
+    /// without changing the border style type or parser behavior.
+    #[test]
+    fn outline_auto_cascades_as_distinct_style_from_border() {
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some("border-top-width: 2px; border-top-style: solid; outline: auto 2px red"),
+        );
+
+        assert_eq!(cv.outline.width(), ComputedLength(2.0));
+        assert_eq!(cv.outline.style(), OutlineStyle::Auto);
+        assert_eq!(cv.border.top.width, ComputedLength(2.0));
+        assert_eq!(cv.border.top.style, BorderStyle::Solid);
+    }
+
+    #[test]
+    fn outline_none_gates_computed_width_to_zero() {
+        let cv = cascade_doc("", "p", Some("outline: none 2em red"));
+        assert_eq!(cv.outline.width(), ComputedLength::ZERO);
+        assert_eq!(cv.outline.style(), OutlineStyle::None);
+        assert_eq!(cv.outline.color, OutlineColor::Resolved(RED));
+    }
+
+    #[test]
+    fn outline_color_invert_cascades_as_a_distinct_keyword() {
+        let cv = cascade_doc("", "p", Some("outline-color: invert"));
+        assert_eq!(cv.outline.color, OutlineColor::Invert);
+
+        let cv = cascade_doc("", "p", Some("outline-color: currentcolor"));
+        assert_eq!(cv.outline.color, OutlineColor::CurrentColor);
     }
 
     #[test]
@@ -15187,6 +15239,21 @@ mod tests {
         assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(10.0));
         assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(10.0));
         assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(20.0));
+    }
+
+    #[test]
+    fn var_in_outline_shorthand_projects_each_deferred_longhand() {
+        // `outline` expands before cascade; after the custom property is
+        // substituted, each deferred longhand must project its component from
+        // the reparsed `Outline` shorthand rather than being dropped.
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("--outline: auto 2px red; outline: var(--outline)"),
+        );
+        assert_eq!(cv.outline.width(), ComputedLength(2.0));
+        assert_eq!(cv.outline.style(), OutlineStyle::Auto);
+        assert_eq!(cv.outline.color, OutlineColor::Resolved(RED));
     }
 
     #[test]
@@ -16909,6 +16976,15 @@ mod tests {
                     PropertyKey::BorderLeftWidth,
                     PropertyKey::BorderLeftStyle,
                     PropertyKey::BorderLeftColor,
+                ],
+            ),
+            (
+                "outline",
+                "auto 2px red",
+                vec![
+                    PropertyKey::OutlineWidth,
+                    PropertyKey::OutlineStyle,
+                    PropertyKey::OutlineColor,
                 ],
             ),
             (
