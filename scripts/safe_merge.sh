@@ -116,8 +116,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # scripts/lib/repo_root.sh for the full rationale. A prior hand-rolled
 # version of this guard here used `git rev-parse --show-toplevel ... ||
 # true` and treated a resolution failure the same as "no mismatch", which
-# let an unresolvable tree silently pass instead of refusing to run; the
-# shared lib fails closed on that case instead.
+# let an unresolvable tree silently pass instead of refusing to run. The
+# shared lib's primary check (REPO_ROOT itself, from the caller's cwd) fixes
+# that for this script's actual working directory; its secondary check
+# (whether the invoked script *file* sits in a different tree) still has an
+# analogous fail-open gap of its own when that tree is unresolvable rather
+# than merely different — a pre-existing property of the shared lib, not
+# something this switch introduces or closes.
 # shellcheck source=lib/repo_root.sh
 source "$SCRIPT_DIR/lib/repo_root.sh"
 
@@ -241,23 +246,14 @@ MISSING=()
 
 # check_item LABEL LINE_REGEX HINT VALUE_REGEX
 #
-# LINE_REGEX picks out the dedicated checklist line (anchored so e.g.
-# "§8.1:" cannot accidentally match a "§8.1.1:" line — the exact folding
-# failure this script exists to catch). It must match exactly one line in
-# EVIDENCE_TEXT: matching more than one is treated as invalid rather than
-# picking one arbitrarily, because the previous approach of grep -E'ing all
-# matching lines into one newline-joined blob and then content-checking
-# that blob let an unrelated passing line rescue an actually-failing one
-# (grep -q on a multi-line blob succeeds if ANY line matches, i.e. a union
-# across lines rather than an AND on a single line).
-#
-# VALUE_REGEX is matched, case-insensitively, against the text after the
-# marker on that one line with leading whitespace trimmed, ANCHORED TO THE
-# START of that text. A free-form description may follow a valid match;
-# nothing may precede it. Anchoring at the start (rather than a substring
-# search over the whole line) is what makes e.g. "- §8.1: FAIL, not pass
-# yet" fail: the value starts with "FAIL", not one of §8.1's accepted
-# tokens, so the later occurrence of "pass" is never reached.
+# LINE_REGEX picks out the dedicated checklist line for one item (anchored
+# so e.g. "§8.1:" cannot accidentally match a "§8.1.1:" line). VALUE_REGEX
+# is matched, case-insensitively, against the text after the marker on
+# that line, leading whitespace trimmed, anchored to the start of that
+# text. See "What machine-checkable evidence means here" in the file
+# header above for why a match must land on exactly one line and be
+# anchored at the start rather than found as a substring anywhere in the
+# line.
 check_item() {
   local label="$1" line_re="$2" hint="$3" value_re="$4"
   local matches
@@ -277,7 +273,7 @@ check_item() {
   fi
   local line="$matches"
   local value
-  value="$(printf '%s\n' "$line" | sed -E "s/$line_re//")"
+  value="$(printf '%s\n' "$line" | sed -E "s#$line_re##")"
   if ! printf '%s\n' "$value" | grep -qiE "^[[:space:]]*($value_re)"; then
     echo "[INVALID] $label: line found but value does not start with required content ($hint):"
     echo "    $line"
@@ -297,16 +293,13 @@ check_item "§8.2" \
   '^[[:space:]]*- §8\.2: ?' \
   "expected convergence mode (i)/(ii) or skip immediately after the marker" \
   '(\(i\)|\(ii\)|skip\b)'
-# §8.3 requires a job id and a GATE PASS verdict together, immediately
-# after the marker — a recorded GATE FAIL means §8.3 (gate.md §Gate 通過
-# 条件 (合成) condition 3, "§8.3 codex 最終レビュー完了") is not yet
-# satisfied, so it must not be accepted as passing evidence any more than a
-# recorded "§8.1: FAIL" is. Requiring the two tokens adjacent to each other
-# at the start of the value (rather than each independently matched
-# anywhere in the line) closes the same union-style false positive as
-# above: a line like "task-abc-123 GATE FAIL (see task-abc-124 GATE PASS
-# in the retry log)" contains both an id pattern and the literal text
-# "gate pass" somewhere, but is not itself a passing verdict.
+# §8.3 requires a job id and a GATE PASS verdict adjacent to each other,
+# right after the marker (see the file header above for why "GATE FAIL"
+# doesn't count and why the two tokens must be adjacent rather than each
+# independently matched anywhere in the line) — e.g. "task-abc-123 GATE
+# FAIL (see task-abc-124 GATE PASS in the retry log)" contains both an id
+# pattern and the literal text "gate pass" somewhere, but is not itself a
+# passing verdict.
 check_item "§8.3" \
   '^[[:space:]]*- §8\.3: ?' \
   "expected a Codex job id (task-<id>-<id>) and a GATE PASS verdict adjacent to each other, immediately after the marker" \
