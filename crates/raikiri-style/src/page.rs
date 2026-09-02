@@ -93,10 +93,10 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::cascade::{
-    ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_custom_property_map,
-    resolve_deferred_value, resolve_relative_font_size,
+    ResolvedAgainstInherited, cascade_rank, resolve_against_inherited,
+    resolve_custom_property_environment, resolve_deferred_value, resolve_relative_font_size,
 };
-use crate::computed::ComputedValues;
+use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CustomProperty, FlexBasisValue,
     FlexShorthand, GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth,
@@ -1939,15 +1939,18 @@ pub fn cascade_page(
     // which the `LegacyInitialValues` path would otherwise take on every call
     // (`property.rs` の `empty_counter_entries` と同じ前例)。
     static INITIAL_PAGE_PARENT: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
-    let empty_custom_properties = HashMap::new();
-    let (inherited, inherited_custom_properties): (&ComputedValues, &HashMap<SmolStr, SmolStr>) =
-        match inheritance {
-            PageInheritance::FromRoot(root) => (root, &root.custom_properties),
-            PageInheritance::LegacyInitialValues => {
-                (&INITIAL_PAGE_PARENT, &empty_custom_properties)
-            }
-        };
-    let custom_properties = resolve_custom_property_map(inherited_custom_properties, &custom_local);
+    let empty_custom_property_environment = empty_custom_properties();
+    let (inherited, inherited_custom_properties): (
+        &ComputedValues,
+        &Arc<CustomPropertyEnvironment>,
+    ) = match inheritance {
+        PageInheritance::FromRoot(root) => (root, &root.custom_properties),
+        PageInheritance::LegacyInitialValues => {
+            (&INITIAL_PAGE_PARENT, &empty_custom_property_environment)
+        }
+    };
+    let custom_properties =
+        resolve_custom_property_environment(inherited_custom_properties, &custom_local);
     // `ctx` carries `inherited`'s used line-height as `root_line_height` —
     // needed by *both* step 3 below (`resolve_against_inherited`'s
     // `FontSize` arm, for `font-size: 1lh`/`1rlh`'s self-reference basis) and
@@ -1974,7 +1977,7 @@ pub fn cascade_page(
         .filter_map(|(k, (_, _, _, value))| {
             let value = match value {
                 PropertyValue::Deferred(deferred) => {
-                    resolve_deferred_value(&deferred, &custom_properties)
+                    resolve_deferred_value(&deferred, custom_properties.as_ref())
                 }
                 value => Some(value),
             }?;

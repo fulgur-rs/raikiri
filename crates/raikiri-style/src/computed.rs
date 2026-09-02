@@ -7,6 +7,7 @@
 //! [`ComputedValues`] 定義の field doc comment を参照。
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use smol_str::SmolStr;
@@ -50,12 +51,148 @@ use crate::resolve::{
 /// `cargo test -p raikiri-style` と `--doc` を別々に走らせること)。
 pub(crate) const INITIAL_FONT_SIZE_PX: f32 = 16.0;
 
-/// Shared empty custom-property map for computed values that have no local
-/// custom-property declarations. The map is crate-private bookkeeping for the
-/// `@page` cascade; it is not part of the public computed-style API.
-pub(crate) fn empty_custom_properties() -> Arc<HashMap<SmolStr, SmolStr>> {
-    static EMPTY: OnceLock<Arc<HashMap<SmolStr, SmolStr>>> = OnceLock::new();
-    EMPTY.get_or_init(|| Arc::new(HashMap::new())).clone()
+/// Persistent custom-property environment used by computed values.
+///
+/// CSS Variables 1 §2 makes custom properties inherited. Each environment
+/// therefore stores only the declarations resolved at one element and points
+/// at the parent's environment. Cloning an environment is an `Arc` bump;
+/// adding a declaration allocates only the local delta instead of copying the
+/// complete inherited map.
+#[derive(Clone)]
+pub(crate) struct CustomPropertyEnvironment {
+    parent: Option<Arc<CustomPropertyEnvironment>>,
+    /// `Some(value)` is a resolved declaration. `None` is a local
+    /// guaranteed-invalid tombstone: it must hide an inherited value while
+    /// allowing `var()` fallback at this element.
+    local: HashMap<SmolStr, Option<SmolStr>>,
+}
+
+impl CustomPropertyEnvironment {
+    /// Create an environment containing one element's local resolved values.
+    pub(crate) fn from_local(
+        parent: &Arc<CustomPropertyEnvironment>,
+        local: HashMap<SmolStr, Option<SmolStr>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            parent: Some(parent.clone()),
+            local,
+        })
+    }
+
+    /// Create a root environment from an already resolved flat map.
+    #[cfg(test)]
+    pub(crate) fn from_map(values: HashMap<SmolStr, SmolStr>) -> Arc<Self> {
+        let local = values
+            .into_iter()
+            .map(|(name, value)| (name, Some(value)))
+            .collect();
+        Self::from_local(&empty_custom_properties(), local)
+    }
+
+    /// Look up the effective value, walking shared ancestor environments.
+    pub(crate) fn get(&self, name: &str) -> Option<SmolStr> {
+        let mut current = Some(self);
+        while let Some(environment) = current {
+            if let Some(value) = environment.local.get(name) {
+                return value.clone();
+            }
+            current = environment.parent.as_deref();
+        }
+        None
+    }
+
+    /// Number of entries owned by this environment, for bounded regression
+    /// tests and diagnostics.
+    #[cfg(test)]
+    pub(crate) fn local_entry_count(&self) -> usize {
+        self.local.len()
+    }
+
+    /// Parent environment, if this is not the shared empty root.
+    #[cfg(test)]
+    pub(crate) fn parent_environment(&self) -> Option<&Arc<Self>> {
+        self.parent.as_ref()
+    }
+}
+
+impl Drop for CustomPropertyEnvironment {
+    fn drop(&mut self) {
+        // A linked environment normally drops its parent recursively when the
+        // parent Arc is unique. Detach and consume a unique chain iteratively
+        // so a hostile deep element tree cannot exhaust the native stack while
+        // its computed values are torn down.
+        let mut parent = self.parent.take();
+        while let Some(parent_arc) = parent {
+            match Arc::try_unwrap(parent_arc) {
+                Ok(mut parent_environment) => {
+                    parent = parent_environment.parent.take();
+                }
+                Err(_) => break,
+            }
+        }
+    }
+}
+
+impl fmt::Debug for CustomPropertyEnvironment {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CustomPropertyEnvironment")
+            .field("local", &self.local)
+            // Do not recursively format the parent chain: a deep document's
+            // debug representation must remain bounded by this environment.
+            .field("has_parent", &self.parent.is_some())
+            .finish()
+    }
+}
+
+impl PartialEq for CustomPropertyEnvironment {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.effective_bindings() == other.effective_bindings()
+    }
+}
+
+impl Eq for CustomPropertyEnvironment {}
+
+impl CustomPropertyEnvironment {
+    fn effective_bindings(&self) -> HashMap<SmolStr, SmolStr> {
+        let mut environments = Vec::new();
+        let mut current = Some(self);
+        while let Some(environment) = current {
+            environments.push(environment);
+            current = environment.parent.as_deref();
+        }
+
+        let mut values = HashMap::new();
+        for environment in environments.into_iter().rev() {
+            for (name, value) in &environment.local {
+                match value {
+                    Some(value) => {
+                        values.insert(name.clone(), value.clone());
+                    }
+                    None => {
+                        values.remove(name);
+                    }
+                }
+            }
+        }
+        values
+    }
+}
+
+/// Shared empty custom-property environment for computed values that have no
+/// local custom-property declarations. The environment is crate-private
+/// bookkeeping for the `@page` cascade; it is not part of the public
+/// computed-style API.
+pub(crate) fn empty_custom_properties() -> Arc<CustomPropertyEnvironment> {
+    static EMPTY: OnceLock<Arc<CustomPropertyEnvironment>> = OnceLock::new();
+    EMPTY
+        .get_or_init(|| {
+            Arc::new(CustomPropertyEnvironment {
+                parent: None,
+                local: HashMap::new(),
+            })
+        })
+        .clone()
 }
 
 /// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
@@ -1061,7 +1198,7 @@ pub struct ComputedValues {
     /// bag remains unchanged, while `cascade_page` can faithfully implement
     /// CSS Variables' inherited custom-property semantics without adding a
     /// public API or a second root-style argument.
-    pub(crate) custom_properties: Arc<HashMap<SmolStr, SmolStr>>,
+    pub(crate) custom_properties: Arc<CustomPropertyEnvironment>,
 }
 
 impl ComputedValues {
@@ -1334,6 +1471,53 @@ mod tests {
     use crate::resolve::{
         ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
     };
+
+    #[test]
+    fn custom_property_environment_equality_uses_effective_bindings() {
+        let empty = empty_custom_properties();
+        let inherited = CustomPropertyEnvironment::from_local(
+            &empty,
+            HashMap::from([(SmolStr::from("--x"), Some(SmolStr::from("red")))]),
+        );
+        let redeclared = CustomPropertyEnvironment::from_local(
+            &inherited,
+            HashMap::from([(SmolStr::from("--x"), Some(SmolStr::from("red")))]),
+        );
+        assert_eq!(inherited, redeclared);
+
+        // A tombstone removes an inherited binding, just as the old flat map
+        // did; an absent name and a tombstone are therefore equivalent.
+        let tombstone = CustomPropertyEnvironment::from_local(
+            &inherited,
+            HashMap::from([(SmolStr::from("--x"), None)]),
+        );
+        assert_eq!(tombstone, empty);
+        assert_ne!(tombstone, inherited);
+
+        let debug = format!("{inherited:?}");
+        assert!(debug.contains("has_parent: true"));
+    }
+
+    #[test]
+    fn custom_property_environment_drop_is_iterative_for_deep_chain() {
+        const DEPTH: usize = 5_000;
+        let handle = std::thread::Builder::new()
+            .name("custom-property-environment-drop".into())
+            .stack_size(64 * 1024)
+            .spawn(|| {
+                let mut environment = empty_custom_properties();
+                for index in 0..DEPTH {
+                    let local = HashMap::from([(
+                        SmolStr::from(format!("--x{index}")),
+                        Some(SmolStr::from("value")),
+                    )]);
+                    environment = CustomPropertyEnvironment::from_local(&environment, local);
+                }
+                drop(environment);
+            })
+            .unwrap();
+        handle.join().unwrap();
+    }
 
     #[test]
     fn initial_values_match_spec() {
@@ -1680,7 +1864,7 @@ mod tests {
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             orphans: 5,
             widows: 7,
-            custom_properties: Arc::new(HashMap::from([(
+            custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),
             )])),
