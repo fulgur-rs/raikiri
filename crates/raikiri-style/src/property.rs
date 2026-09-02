@@ -6655,7 +6655,8 @@ fn contains_function_in_source(input: &str, wanted: &str) -> bool {
 /// Lab/OKLab の lightness が black/white boundary にある場合は conversion 側で
 /// a/b や chroma にかかわらず boundary color へ固定する。それ以外の
 /// out-of-gamut は 8-bit sRGB への bounded approximation であり、CSS Color 4 の
-/// 完全な gamut mapping は未対応である。
+/// 完全な gamut mapping は未対応である。`color-mix()` の interpolation では、
+/// Lab-family の座標を sRGB へ先に clip せず、指定空間での計算後にだけ変換する。
 fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
     parse_color_float(input, 0).map(ParsedColor::to_css_color)
 }
@@ -6726,34 +6727,301 @@ enum MixColorSpace {
     Oklch,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParsedColorSpace {
+    Srgb,
+    SrgbLinear,
+    Lab,
+    Lch,
+    Oklab,
+    Oklch,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LightnessBoundary {
+    Lower,
+    Upper,
+}
+
+impl LightnessBoundary {
+    fn from_coordinates(space: ParsedColorSpace, lightness: f32) -> Option<Self> {
+        match space {
+            ParsedColorSpace::Lab | ParsedColorSpace::Lch if lightness <= 0.0 => Some(Self::Lower),
+            ParsedColorSpace::Lab | ParsedColorSpace::Lch if lightness >= 100.0 => {
+                Some(Self::Upper)
+            }
+            ParsedColorSpace::Oklab | ParsedColorSpace::Oklch if lightness <= 0.0 => {
+                Some(Self::Lower)
+            }
+            ParsedColorSpace::Oklab | ParsedColorSpace::Oklch if lightness >= 1.0 => {
+                Some(Self::Upper)
+            }
+            _ => None,
+        }
+    }
+
+    fn srgb_coordinates(self) -> [f32; 3] {
+        match self {
+            Self::Lower => [0.0; 3],
+            Self::Upper => [1.0; 3],
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ColorCoordinates {
     first: f32,
     second: f32,
     third: f32,
     alpha: f32,
+    polar_hue_missing: bool,
 }
 
 #[derive(Clone, Copy)]
 struct ParsedColor {
-    rgb: [f32; 3],
+    coordinates: [f32; 3],
     alpha: f32,
+    space: ParsedColorSpace,
+    lightness_boundary: Option<LightnessBoundary>,
+    polar_hue_missing: bool,
 }
 
 impl ParsedColor {
     fn from_css_color(color: CssColor) -> Self {
-        Self {
-            rgb: [
+        Self::from_coordinates(
+            ParsedColorSpace::Srgb,
+            [
                 f32::from(color.r) / 255.0,
                 f32::from(color.g) / 255.0,
                 f32::from(color.b) / 255.0,
             ],
-            alpha: f32::from(color.a) / 255.0,
+            f32::from(color.a) / 255.0,
+        )
+    }
+
+    fn from_coordinates(space: ParsedColorSpace, coordinates: [f32; 3], alpha: f32) -> Self {
+        Self {
+            coordinates,
+            alpha,
+            space,
+            lightness_boundary: None,
+            polar_hue_missing: false,
+        }
+    }
+
+    fn from_lab_coordinates(space: ParsedColorSpace, coordinates: [f32; 3], alpha: f32) -> Self {
+        Self {
+            coordinates,
+            alpha,
+            space,
+            lightness_boundary: LightnessBoundary::from_coordinates(space, coordinates[0]),
+            polar_hue_missing: false,
+        }
+    }
+
+    fn from_interpolation_coordinates_with_boundary(
+        space: ParsedColorSpace,
+        coordinates: [f32; 3],
+        alpha: f32,
+        lightness_boundary: Option<LightnessBoundary>,
+        polar_hue_missing: bool,
+    ) -> Self {
+        // A generated lightness value outside its nominal range is still raw
+        // interpolation data. Only caller-supplied endpoint provenance may
+        // request the CSS boundary mapping.
+        let parsed = Self {
+            coordinates,
+            alpha,
+            space,
+            lightness_boundary,
+            polar_hue_missing,
+        };
+        if lightness_boundary.is_some()
+            || matches!(
+                space,
+                ParsedColorSpace::Lab
+                    | ParsedColorSpace::Lch
+                    | ParsedColorSpace::Oklab
+                    | ParsedColorSpace::Oklch
+            )
+        {
+            return parsed;
+        }
+        // Preserve the legacy float-sRGB path for in-gamut values; retain
+        // interpolation coordinates only when final sRGB conversion is out
+        // of gamut, so nested mixes do not clip them early.
+        let srgb = parsed.to_srgb_for_interpolation();
+        if srgb.iter().all(|component| (0.0..=1.0).contains(component)) {
+            Self::from_coordinates(ParsedColorSpace::Srgb, srgb, alpha)
+        } else {
+            parsed
         }
     }
 
     fn to_css_color(self) -> CssColor {
-        rgb_f32_to_css_color(self.rgb, self.alpha)
+        rgb_f32_to_css_color(self.to_srgb(), self.alpha)
+    }
+
+    fn to_srgb(self) -> [f32; 3] {
+        // Boundary provenance requests CSS Color's fixed black/white mapping;
+        // retained interpolation coordinates otherwise use unbounded conversion.
+        if let Some(boundary) = self.lightness_boundary {
+            return boundary.srgb_coordinates();
+        }
+        match self.space {
+            ParsedColorSpace::Srgb => self.coordinates,
+            ParsedColorSpace::SrgbLinear => self.coordinates.map(srgb_encode),
+            ParsedColorSpace::Lab => lab_to_srgb_unbounded(self.coordinates),
+            ParsedColorSpace::Lch => lab_to_srgb_unbounded(polar_to_rectangular(self.coordinates)),
+            ParsedColorSpace::Oklab => oklab_to_srgb_unbounded(self.coordinates),
+            ParsedColorSpace::Oklch => {
+                oklab_to_srgb_unbounded(polar_to_rectangular(self.coordinates))
+            }
+        }
+    }
+
+    fn to_srgb_for_interpolation(self) -> [f32; 3] {
+        match self.space {
+            ParsedColorSpace::Srgb => self.coordinates,
+            ParsedColorSpace::SrgbLinear => self.coordinates.map(srgb_encode),
+            ParsedColorSpace::Lab => lab_to_srgb_unbounded(self.coordinates),
+            ParsedColorSpace::Lch => lab_to_srgb_unbounded(polar_to_rectangular(self.coordinates)),
+            ParsedColorSpace::Oklab => oklab_to_srgb_unbounded(self.coordinates),
+            ParsedColorSpace::Oklch => {
+                oklab_to_srgb_unbounded(polar_to_rectangular(self.coordinates))
+            }
+        }
+    }
+
+    fn to_srgb_linear(self) -> [f32; 3] {
+        match self.space {
+            ParsedColorSpace::Srgb => self.coordinates.map(srgb_decode),
+            ParsedColorSpace::SrgbLinear => self.coordinates,
+            ParsedColorSpace::Lab => lab_to_srgb_linear(self.coordinates),
+            ParsedColorSpace::Lch => lab_to_srgb_linear(polar_to_rectangular(self.coordinates)),
+            ParsedColorSpace::Oklab => oklab_to_srgb_linear(self.coordinates),
+            ParsedColorSpace::Oklch => oklab_to_srgb_linear(polar_to_rectangular(self.coordinates)),
+        }
+    }
+
+    fn to_lab(self) -> [f32; 3] {
+        match self.space {
+            ParsedColorSpace::Srgb => srgb_to_lab(self.coordinates),
+            ParsedColorSpace::SrgbLinear => linear_srgb_to_lab(self.coordinates),
+            ParsedColorSpace::Lab => self.coordinates,
+            ParsedColorSpace::Lch => polar_to_rectangular(self.coordinates),
+            ParsedColorSpace::Oklab => linear_srgb_to_lab(oklab_to_srgb_linear(self.coordinates)),
+            ParsedColorSpace::Oklch => {
+                linear_srgb_to_lab(oklab_to_srgb_linear(polar_to_rectangular(self.coordinates)))
+            }
+        }
+    }
+
+    fn to_oklab(self) -> [f32; 3] {
+        match self.space {
+            ParsedColorSpace::Srgb => srgb_to_oklab(self.coordinates),
+            ParsedColorSpace::SrgbLinear => linear_srgb_to_oklab(self.coordinates),
+            ParsedColorSpace::Lab => linear_srgb_to_oklab(lab_to_srgb_linear(self.coordinates)),
+            ParsedColorSpace::Lch => {
+                linear_srgb_to_oklab(lab_to_srgb_linear(polar_to_rectangular(self.coordinates)))
+            }
+            ParsedColorSpace::Oklab => self.coordinates,
+            ParsedColorSpace::Oklch => polar_to_rectangular(self.coordinates),
+        }
+    }
+
+    fn to_coordinates(self, space: MixColorSpace) -> ColorCoordinates {
+        let (coordinates, polar_hue_missing) = match (self.space, space) {
+            (ParsedColorSpace::Srgb, MixColorSpace::Srgb)
+            | (ParsedColorSpace::SrgbLinear, MixColorSpace::SrgbLinear)
+            | (ParsedColorSpace::Lab, MixColorSpace::Lab)
+            | (ParsedColorSpace::Oklab, MixColorSpace::Oklab) => (self.coordinates, false),
+            (ParsedColorSpace::Lch, MixColorSpace::Lch) => (
+                normalize_polar(self.coordinates, false, self.polar_hue_missing),
+                self.polar_hue_missing,
+            ),
+            (ParsedColorSpace::Oklch, MixColorSpace::Oklch) => (
+                normalize_polar(self.coordinates, true, self.polar_hue_missing),
+                self.polar_hue_missing,
+            ),
+            (_, MixColorSpace::Srgb) => (self.to_srgb_for_interpolation(), false),
+            (_, MixColorSpace::SrgbLinear) => (self.to_srgb_linear(), false),
+            (_, MixColorSpace::Lab) => (self.to_lab(), false),
+            (_, MixColorSpace::Lch) => {
+                let coordinates = rectangular_to_polar(self.to_lab(), false);
+                (coordinates, polar_hue_missing_for_space(false, coordinates))
+            }
+            (_, MixColorSpace::Oklab) => (self.to_oklab(), false),
+            (_, MixColorSpace::Oklch) => {
+                let coordinates = rectangular_to_polar(self.to_oklab(), true);
+                (coordinates, polar_hue_missing_for_space(true, coordinates))
+            }
+        };
+        let [first, second, third] = coordinates;
+        ColorCoordinates {
+            first,
+            second,
+            third,
+            alpha: self.alpha,
+            polar_hue_missing,
+        }
+    }
+}
+
+impl From<MixColorSpace> for ParsedColorSpace {
+    fn from(space: MixColorSpace) -> Self {
+        match space {
+            MixColorSpace::Srgb => Self::Srgb,
+            MixColorSpace::SrgbLinear => Self::SrgbLinear,
+            MixColorSpace::Lab => Self::Lab,
+            MixColorSpace::Lch => Self::Lch,
+            MixColorSpace::Oklab => Self::Oklab,
+            MixColorSpace::Oklch => Self::Oklch,
+        }
+    }
+}
+
+fn polar_to_rectangular([lightness, chroma, hue]: [f32; 3]) -> [f32; 3] {
+    [lightness, chroma * hue.cos(), chroma * hue.sin()]
+}
+
+fn polar_hue_missing_for_space(is_oklab: bool, coordinates: [f32; 3]) -> bool {
+    let chroma_threshold = if is_oklab { 0.000004 } else { 0.0015 };
+    coordinates[1] <= chroma_threshold
+}
+
+fn normalize_polar(
+    [lightness, chroma, hue]: [f32; 3],
+    is_oklab: bool,
+    polar_hue_missing: bool,
+) -> [f32; 3] {
+    let chroma_threshold = if is_oklab { 0.000004 } else { 0.0015 };
+    if chroma <= chroma_threshold {
+        [
+            lightness,
+            if polar_hue_missing { 0.0 } else { chroma },
+            if polar_hue_missing {
+                0.0
+            } else {
+                hue.rem_euclid(std::f32::consts::TAU)
+            },
+        ]
+    } else {
+        [lightness, chroma, hue.rem_euclid(std::f32::consts::TAU)]
+    }
+}
+
+fn rectangular_to_polar([lightness, a, b]: [f32; 3], is_oklab: bool) -> [f32; 3] {
+    let chroma = a.hypot(b);
+    let chroma_threshold = if is_oklab { 0.000004 } else { 0.0015 };
+    if chroma <= chroma_threshold {
+        [lightness, 0.0, 0.0]
+    } else {
+        [
+            lightness,
+            chroma,
+            b.atan2(a).rem_euclid(std::f32::consts::TAU),
+        ]
     }
 }
 
@@ -6767,12 +7035,19 @@ fn parse_color_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, P
     let third = parse_color_component(input, 1.0)?;
     let alpha = parse_optional_modern_alpha(input)?;
 
-    let color = match color_space.as_ref().to_ascii_lowercase().as_str() {
-        "srgb" => [first, second, third],
-        "srgb-linear" => [srgb_encode(first), srgb_encode(second), srgb_encode(third)],
+    let (space, coordinates) = match color_space.as_ref().to_ascii_lowercase().as_str() {
+        // CSS Color 4 §10.1 says out-of-gamut `color()` components are valid
+        // and retained for intermediate computations. Keep authored `srgb`
+        // coordinates raw; generated color-mix() values use the same path.
+        "srgb" => (ParsedColorSpace::Srgb, [first, second, third]),
+        // CSS Color 4 §10.1 also retains out-of-gamut linear-sRGB
+        // components. Keep them in their declared space so srgb-linear
+        // interpolation sees the raw coordinates; serialization converts and
+        // bounds them only at the final sRGB/u8 sink.
+        "srgb-linear" => (ParsedColorSpace::SrgbLinear, [first, second, third]),
         _ => return Err(input.new_custom_error(())),
     };
-    Ok(ParsedColor { rgb: color, alpha })
+    Ok(ParsedColor::from_coordinates(space, coordinates, alpha))
 }
 
 fn parse_lab_function<'i>(
@@ -6795,15 +7070,13 @@ fn parse_lab_function<'i>(
     };
     let alpha = parse_optional_modern_alpha(input)?;
 
-    let rgb = match function {
-        LabFunction::Lab => lab_to_srgb([lightness, second, third]),
-        LabFunction::Lch => lab_to_srgb([lightness, second * third.cos(), second * third.sin()]),
-        LabFunction::Oklab => oklab_to_srgb([lightness, second, third]),
-        LabFunction::Oklch => {
-            oklab_to_srgb([lightness, second * third.cos(), second * third.sin()])
-        }
+    let (space, coordinates) = match function {
+        LabFunction::Lab => (ParsedColorSpace::Lab, [lightness, second, third]),
+        LabFunction::Lch => (ParsedColorSpace::Lch, [lightness, second, third]),
+        LabFunction::Oklab => (ParsedColorSpace::Oklab, [lightness, second, third]),
+        LabFunction::Oklch => (ParsedColorSpace::Oklch, [lightness, second, third]),
     };
-    Ok(ParsedColor { rgb, alpha })
+    Ok(ParsedColor::from_lab_coordinates(space, coordinates, alpha))
 }
 
 fn parse_color_mix_function<'i>(
@@ -6837,11 +7110,24 @@ fn parse_color_mix_function<'i>(
     let first = css_color_to_coordinates(color_one, color_space);
     let second = css_color_to_coordinates(color_two, color_space);
     let mixed = mix_coordinates(first, second, weight_one, weight_two, color_space);
-    let rgb = coordinates_to_srgb(mixed, color_space);
-    Ok(ParsedColor {
-        rgb,
-        alpha: mixed.alpha * alpha_multiplier,
-    })
+    let coordinates = [mixed.first, mixed.second, mixed.third];
+    let parsed_space = color_space.into();
+    let lightness_boundary = propagated_lightness_boundary(
+        color_one,
+        color_two,
+        [weight_one, weight_two],
+        color_space,
+        mixed.first,
+        [first.first, second.first],
+    );
+    let polar_hue_missing = mixed.polar_hue_missing;
+    Ok(ParsedColor::from_interpolation_coordinates_with_boundary(
+        parsed_space,
+        coordinates,
+        mixed.alpha * alpha_multiplier,
+        lightness_boundary,
+        polar_hue_missing,
+    ))
 }
 
 fn parse_mix_color_space<'i>(
@@ -6878,6 +7164,209 @@ fn normalize_mix_percentages(first: f32, second: f32) -> (f32, f32, f32) {
     } else {
         (first / sum, second / sum, sum)
     }
+}
+
+fn propagated_lightness_boundary(
+    color_one: ParsedColor,
+    color_two: ParsedColor,
+    weights: [f32; 2],
+    space: MixColorSpace,
+    mixed_lightness: f32,
+    endpoint_lightness: [f32; 2],
+) -> Option<LightnessBoundary> {
+    let [weight_one, weight_two] = weights;
+    let [first_lightness, second_lightness] = endpoint_lightness;
+    // Do not infer provenance from a generated result's lightness. It can be
+    // outside the nominal range while still requiring raw interpolation.
+    if weight_one == 1.0 && weight_two == 0.0 {
+        return boundary_for_interpolation_space(
+            space,
+            color_one.space,
+            color_one.lightness_boundary,
+            mixed_lightness,
+        );
+    }
+    if weight_one == 0.0 && weight_two == 1.0 {
+        return boundary_for_interpolation_space(
+            space,
+            color_two.space,
+            color_two.lightness_boundary,
+            mixed_lightness,
+        );
+    }
+    let effective_one = color_one.alpha * weight_one;
+    let effective_two = color_two.alpha * weight_two;
+    match (effective_one == 0.0, effective_two == 0.0) {
+        (false, true) => boundary_for_interpolation_space(
+            space,
+            color_one.space,
+            color_one.lightness_boundary,
+            mixed_lightness,
+        ),
+        (true, false) => boundary_for_interpolation_space(
+            space,
+            color_two.space,
+            color_two.lightness_boundary,
+            mixed_lightness,
+        ),
+        (false, false) => {
+            let boundary = match (color_one.lightness_boundary, color_two.lightness_boundary) {
+                (Some(first), Some(second))
+                    if first == second
+                        && boundary_endpoint_is_structural(
+                            color_one,
+                            space,
+                            first,
+                            first_lightness,
+                        )
+                        && boundary_endpoint_is_structural(
+                            color_two,
+                            space,
+                            first,
+                            second_lightness,
+                        ) =>
+                {
+                    Some(first)
+                }
+                (Some(boundary), None)
+                    if boundary_endpoint_is_structural(
+                        color_one,
+                        space,
+                        boundary,
+                        first_lightness,
+                    ) && boundary_endpoint_is_structural(
+                        color_two,
+                        space,
+                        boundary,
+                        second_lightness,
+                    ) =>
+                {
+                    Some(boundary)
+                }
+                (None, Some(boundary))
+                    if boundary_endpoint_is_structural(
+                        color_one,
+                        space,
+                        boundary,
+                        first_lightness,
+                    ) && boundary_endpoint_is_structural(
+                        color_two,
+                        space,
+                        boundary,
+                        second_lightness,
+                    ) =>
+                {
+                    Some(boundary)
+                }
+                _ => None,
+            };
+            boundary
+                .filter(|boundary| lightness_boundary_matches(space, *boundary, mixed_lightness))
+        }
+        (true, true) => None,
+    }
+}
+
+fn boundary_endpoint_is_structural(
+    color: ParsedColor,
+    space: MixColorSpace,
+    boundary: LightnessBoundary,
+    converted_lightness: f32,
+) -> bool {
+    if color.lightness_boundary.is_some() {
+        return boundary_for_interpolation_space(
+            space,
+            color.space,
+            Some(boundary),
+            converted_lightness,
+        ) == Some(boundary);
+    }
+
+    let target_is_lab = matches!(space, MixColorSpace::Lab | MixColorSpace::Lch);
+    let target_is_oklab = matches!(space, MixColorSpace::Oklab | MixColorSpace::Oklch);
+    let source_is_lab = matches!(color.space, ParsedColorSpace::Lab | ParsedColorSpace::Lch);
+    let source_is_oklab = matches!(
+        color.space,
+        ParsedColorSpace::Oklab | ParsedColorSpace::Oklch
+    );
+    if source_is_lab && target_is_lab {
+        let expected = match boundary {
+            LightnessBoundary::Lower => 0.0,
+            LightnessBoundary::Upper => 100.0,
+        };
+        let chroma = if matches!(color.space, ParsedColorSpace::Lch) {
+            color.coordinates[1]
+        } else {
+            color.coordinates[1].hypot(color.coordinates[2])
+        };
+        return color.coordinates[0] == expected
+            && chroma <= 0.0015
+            && lightness_boundary_matches(space, boundary, converted_lightness);
+    }
+    if source_is_oklab && target_is_oklab {
+        let expected = match boundary {
+            LightnessBoundary::Lower => 0.0,
+            LightnessBoundary::Upper => 1.0,
+        };
+        let chroma = if matches!(color.space, ParsedColorSpace::Oklch) {
+            color.coordinates[1]
+        } else {
+            color.coordinates[1].hypot(color.coordinates[2])
+        };
+        return color.coordinates[0] == expected
+            && chroma <= 0.000004
+            && lightness_boundary_matches(space, boundary, converted_lightness);
+    }
+    if !matches!(
+        color.space,
+        ParsedColorSpace::Srgb | ParsedColorSpace::SrgbLinear
+    ) {
+        return false;
+    }
+    let expected = match boundary {
+        LightnessBoundary::Lower => 0.0,
+        LightnessBoundary::Upper => 1.0,
+    };
+    color
+        .coordinates
+        .iter()
+        .all(|component| *component == expected)
+        && lightness_boundary_matches(space, boundary, converted_lightness)
+}
+
+fn boundary_for_interpolation_space(
+    space: MixColorSpace,
+    source_space: ParsedColorSpace,
+    boundary: Option<LightnessBoundary>,
+    mixed_lightness: f32,
+) -> Option<LightnessBoundary> {
+    let source_is_lab = matches!(source_space, ParsedColorSpace::Lab | ParsedColorSpace::Lch);
+    let source_is_oklab = matches!(
+        source_space,
+        ParsedColorSpace::Oklab | ParsedColorSpace::Oklch
+    );
+    let target_is_lab = matches!(space, MixColorSpace::Lab | MixColorSpace::Lch);
+    let target_is_oklab = matches!(space, MixColorSpace::Oklab | MixColorSpace::Oklch);
+    if !(source_is_lab && target_is_lab || source_is_oklab && target_is_oklab) {
+        None
+    } else {
+        boundary.filter(|boundary| lightness_boundary_matches(space, *boundary, mixed_lightness))
+    }
+}
+
+fn lightness_boundary_matches(
+    space: MixColorSpace,
+    boundary: LightnessBoundary,
+    lightness: f32,
+) -> bool {
+    let expected = match (space, boundary) {
+        (MixColorSpace::Lab | MixColorSpace::Lch, LightnessBoundary::Lower) => 0.0,
+        (MixColorSpace::Lab | MixColorSpace::Lch, LightnessBoundary::Upper) => 100.0,
+        (MixColorSpace::Oklab | MixColorSpace::Oklch, LightnessBoundary::Lower) => 0.0,
+        (MixColorSpace::Oklab | MixColorSpace::Oklch, LightnessBoundary::Upper) => 1.0,
+        (MixColorSpace::Srgb | MixColorSpace::SrgbLinear, _) => return false,
+    };
+    (lightness - expected).abs() <= 4.0 * f32::EPSILON * expected.abs().max(1.0)
 }
 
 fn parse_color_component<'i>(
@@ -6918,18 +7407,29 @@ fn parse_hue<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> 
         return Err(input.new_custom_error(()));
     }
     match input.next()?.clone() {
-        Token::Number { value, .. } => Ok(value.to_radians()),
+        Token::Number { value, .. } => {
+            let hue = value.rem_euclid(360.0).to_radians();
+            if hue.is_finite() {
+                Ok(hue)
+            } else {
+                Err(input.new_custom_error(()))
+            }
+        }
         Token::Dimension {
             value, ref unit, ..
         } => {
-            let degrees = match unit.to_ascii_lowercase().as_str() {
-                "deg" => value,
-                "grad" => value * 0.9,
-                "rad" => value.to_degrees(),
-                "turn" => value * 360.0,
+            let hue = match unit.to_ascii_lowercase().as_str() {
+                "deg" => value.rem_euclid(360.0).to_radians(),
+                "grad" => (value.rem_euclid(400.0) * 0.9).to_radians(),
+                "rad" => value.rem_euclid(std::f32::consts::TAU),
+                "turn" => (value.rem_euclid(1.0) * 360.0).to_radians(),
                 _ => return Err(input.new_custom_error(())),
             };
-            Ok(degrees.to_radians())
+            if hue.is_finite() {
+                Ok(hue)
+            } else {
+                Err(input.new_custom_error(()))
+            }
         }
         token => Err(input.new_unexpected_token_error(token)),
     }
@@ -6961,34 +7461,39 @@ fn channel_to_u8(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
+// Keep transfer functions unclamped while colors are being converted for
+// interpolation. The final `rgb_f32_to_css_color` conversion performs the
+// destination sRGB gamut bound and 8-bit serialization.
 fn srgb_encode(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    if value <= 0.0031308 {
-        value * 12.92
+    let sign = if value.is_sign_negative() { -1.0 } else { 1.0 };
+    let magnitude = value.abs();
+    let encoded = if magnitude <= 0.0031308 {
+        magnitude * 12.92
     } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    }
+        1.055 * magnitude.powf(1.0 / 2.4) - 0.055
+    };
+    sign * encoded
 }
 
 fn srgb_decode(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    if value <= 0.04045 {
-        value / 12.92
+    let sign = if value.is_sign_negative() { -1.0 } else { 1.0 };
+    let magnitude = value.abs();
+    let decoded = if magnitude <= 0.04045 {
+        magnitude / 12.92
     } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
+        ((magnitude + 0.055) / 1.055).powf(2.4)
+    };
+    sign * decoded
 }
 
 // CSS Color conversion matrices are kept at their published precision; the
 // runtime representation remains f32 until the final 8-bit property value.
+fn lab_to_srgb_unbounded(coordinates: [f32; 3]) -> [f32; 3] {
+    lab_to_srgb_linear(coordinates).map(srgb_encode)
+}
+
 #[allow(clippy::excessive_precision)]
-fn lab_to_srgb([lightness, a, b]: [f32; 3]) -> [f32; 3] {
-    if lightness <= 0.0 {
-        return [0.0; 3];
-    }
-    if lightness >= 100.0 {
-        return [1.0; 3];
-    }
+fn lab_to_srgb_linear([lightness, a, b]: [f32; 3]) -> [f32; 3] {
     let fy = (lightness + 16.0) / 116.0;
     let fx = fy + a / 500.0;
     let fz = fy - b / 200.0;
@@ -7017,17 +7522,14 @@ fn lab_to_srgb([lightness, a, b]: [f32; 3]) -> [f32; 3] {
         -0.9692436 * xyz_d65[0] + 1.8759675 * xyz_d65[1] + 0.0415551 * xyz_d65[2],
         0.0556301 * xyz_d65[0] - 0.2039769 * xyz_d65[1] + 1.0569715 * xyz_d65[2],
     ]
-    .map(srgb_encode)
+}
+
+fn oklab_to_srgb_unbounded(coordinates: [f32; 3]) -> [f32; 3] {
+    oklab_to_srgb_linear(coordinates).map(srgb_encode)
 }
 
 #[allow(clippy::excessive_precision)]
-fn oklab_to_srgb([lightness, a, b]: [f32; 3]) -> [f32; 3] {
-    if lightness <= 0.0 {
-        return [0.0; 3];
-    }
-    if lightness >= 1.0 {
-        return [1.0; 3];
-    }
+fn oklab_to_srgb_linear([lightness, a, b]: [f32; 3]) -> [f32; 3] {
     let l = lightness + 0.3963377774 * a + 0.2158037573 * b;
     let m = lightness - 0.1055613458 * a - 0.0638541728 * b;
     let s = lightness - 0.0894841775 * a - 1.2914855480 * b;
@@ -7039,52 +7541,10 @@ fn oklab_to_srgb([lightness, a, b]: [f32; 3]) -> [f32; 3] {
         -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
         -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
     ]
-    .map(srgb_encode)
 }
 
 fn css_color_to_coordinates(color: ParsedColor, space: MixColorSpace) -> ColorCoordinates {
-    let rgb = color.rgb;
-    let alpha = color.alpha;
-    let [first, second, third] = match space {
-        MixColorSpace::Srgb => rgb,
-        MixColorSpace::SrgbLinear => rgb.map(srgb_decode),
-        MixColorSpace::Lab | MixColorSpace::Lch => srgb_to_lab(rgb),
-        MixColorSpace::Oklab | MixColorSpace::Oklch => srgb_to_oklab(rgb),
-    };
-    if matches!(space, MixColorSpace::Lch | MixColorSpace::Oklch) {
-        let chroma = (second * second + third * third).sqrt();
-        let chroma_threshold = if matches!(space, MixColorSpace::Lch) {
-            0.0015
-        } else {
-            0.000004
-        };
-        let (chroma, hue) = if chroma <= chroma_threshold {
-            // CSS Color 4 treats a hue below the space-specific powerless
-            // threshold as missing during interpolation. Keep the converted
-            // coordinate achromatic too, so `mix_coordinates` takes the
-            // missing-hue carry-forward branch rather than interpolating a
-            // hue that was only rounded to zero.
-            (0.0, 0.0)
-        } else {
-            (
-                chroma,
-                third.atan2(second).rem_euclid(std::f32::consts::TAU),
-            )
-        };
-        ColorCoordinates {
-            first,
-            second: chroma,
-            third: hue,
-            alpha,
-        }
-    } else {
-        ColorCoordinates {
-            first,
-            second,
-            third,
-            alpha,
-        }
-    }
+    color.to_coordinates(space)
 }
 
 fn mix_coordinates(
@@ -7101,29 +7561,43 @@ fn mix_coordinates(
         if alpha == 0.0 {
             0.0
         } else {
-            (one * alpha_one + two * alpha_two) / alpha
+            let weighted_one = if alpha_one == 0.0 {
+                0.0
+            } else {
+                one * alpha_one
+            };
+            let weighted_two = if alpha_two == 0.0 {
+                0.0
+            } else {
+                two * alpha_two
+            };
+            (weighted_one + weighted_two) / alpha
         }
     };
     let (second_component, third_component) =
         if matches!(space, MixColorSpace::Lch | MixColorSpace::Oklch) {
-            let first_hue = first.third;
-            let second_hue = second.third;
-            let hue = if first.second == 0.0 {
-                second_hue
-            } else if second.second == 0.0 {
-                first_hue
+            let hue = if first.polar_hue_missing != second.polar_hue_missing {
+                if first.polar_hue_missing {
+                    second.third
+                } else {
+                    first.third
+                }
+            } else if weight_one == 0.0 {
+                second.third
+            } else if weight_two == 0.0 {
+                first.third
             } else {
                 // Normalize to the shorter arc while preserving the sign of
                 // an exact half-turn. `rem_euclid` maps both +PI and -PI to
                 // -PI, but CSS interpolation must retain the authored
                 // direction at that tie.
-                let mut delta = second_hue - first_hue;
+                let mut delta = second.third - first.third;
                 if delta > std::f32::consts::PI {
                     delta -= std::f32::consts::TAU;
                 } else if delta < -std::f32::consts::PI {
                     delta += std::f32::consts::TAU;
                 }
-                first_hue + delta * weight_two
+                first.third + delta * weight_two
             };
             (component(first.second, second.second), hue)
         } else {
@@ -7132,35 +7606,25 @@ fn mix_coordinates(
                 component(first.third, second.third),
             )
         };
+    let first_component = component(first.first, second.first);
+    let polar_hue_missing = matches!(space, MixColorSpace::Lch | MixColorSpace::Oklch)
+        && first.polar_hue_missing
+        && second.polar_hue_missing;
     ColorCoordinates {
-        first: component(first.first, second.first),
+        first: first_component,
         second: second_component,
         third: third_component,
         alpha,
+        polar_hue_missing,
     }
 }
 
-fn coordinates_to_srgb(color: ColorCoordinates, space: MixColorSpace) -> [f32; 3] {
-    let components = if matches!(space, MixColorSpace::Lch | MixColorSpace::Oklch) {
-        [
-            color.first,
-            color.second * color.third.cos(),
-            color.second * color.third.sin(),
-        ]
-    } else {
-        [color.first, color.second, color.third]
-    };
-    match space {
-        MixColorSpace::Srgb => components,
-        MixColorSpace::SrgbLinear => components.map(srgb_encode),
-        MixColorSpace::Lab | MixColorSpace::Lch => lab_to_srgb(components),
-        MixColorSpace::Oklab | MixColorSpace::Oklch => oklab_to_srgb(components),
-    }
+fn srgb_to_lab(rgb: [f32; 3]) -> [f32; 3] {
+    linear_srgb_to_lab(rgb.map(srgb_decode))
 }
 
 #[allow(clippy::excessive_precision)]
-fn srgb_to_lab(rgb: [f32; 3]) -> [f32; 3] {
-    let rgb = rgb.map(srgb_decode);
+fn linear_srgb_to_lab(rgb: [f32; 3]) -> [f32; 3] {
     let xyz_d65 = [
         0.4123908 * rgb[0] + 0.3575843 * rgb[1] + 0.1804808 * rgb[2],
         0.2126390 * rgb[0] + 0.7151687 * rgb[1] + 0.0721923 * rgb[2],
@@ -7186,9 +7650,12 @@ fn srgb_to_lab(rgb: [f32; 3]) -> [f32; 3] {
     [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
 }
 
-#[allow(clippy::excessive_precision)]
 fn srgb_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
-    let rgb = rgb.map(srgb_decode);
+    linear_srgb_to_oklab(rgb.map(srgb_decode))
+}
+
+#[allow(clippy::excessive_precision)]
+fn linear_srgb_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
     let l = 0.41222147 * rgb[0] + 0.53633254 * rgb[1] + 0.05144599 * rgb[2];
     let m = 0.21190350 * rgb[0] + 0.68069955 * rgb[1] + 0.10739696 * rgb[2];
     let s = 0.08830246 * rgb[0] + 0.28171884 * rgb[1] + 0.62997870 * rgb[2];
@@ -7297,10 +7764,11 @@ fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, Par
     } else {
         1.0
     };
-    Ok(ParsedColor {
-        rgb: [r, g, b],
-        alpha: a,
-    })
+    Ok(ParsedColor::from_coordinates(
+        ParsedColorSpace::Srgb,
+        [r, g, b],
+        a,
+    ))
 }
 
 /// legacy rgb() の 2 番目 / 3 番目 channel を parse する。1 番目 channel で
@@ -11368,6 +11836,16 @@ mod tests {
             .ok()
     }
 
+    fn parse_parsed_color_entire(source: &str) -> Option<ParsedColor> {
+        let mut input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut input);
+        parser
+            .parse_entirely(|i| -> Result<ParsedColor, ParseError<'_, ()>> {
+                parse_color_float(i, 0).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+    }
+
     fn red() -> CssColor {
         CssColor {
             r: 255,
@@ -11512,6 +11990,620 @@ mod tests {
                 a: 255,
             }))
         );
+    }
+
+    #[test]
+    fn color_mix_retains_out_of_range_authored_srgb_endpoint() {
+        let source = "color-mix(in srgb-linear, color(srgb 2 0 0), black)";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::SrgbLinear);
+        assert!(parsed.coordinates[0] > 1.0);
+        assert_eq!(
+            parsed.to_css_color(),
+            CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn color_parse_srgb_linear_retains_out_of_range_components() {
+        let source = "color(srgb-linear 2 0 0)";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::SrgbLinear);
+        assert_eq!(parsed.coordinates, [2.0, 0.0, 0.0]);
+        assert_eq!(
+            parsed.to_css_color(),
+            CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn color_mix_nested_srgb_linear_retains_out_of_range_endpoint() {
+        let source = "color-mix(in srgb-linear, color(srgb-linear 2 0 0), color-mix(in srgb-linear, color(srgb-linear 2 0 0), black))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::SrgbLinear);
+        assert!(parsed.coordinates[0] > 1.0);
+        assert_eq!(
+            parsed.to_css_color(),
+            CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn color_mix_effective_boundary_does_not_cross_srgb_conversion() {
+        for (endpoint, expected) in [
+            (
+                "lab(0% 125 125)",
+                CssColor {
+                    r: 126,
+                    g: 0,
+                    b: 0,
+                    a: 128,
+                },
+            ),
+            (
+                "lab(100% 125 125)",
+                CssColor {
+                    r: 255,
+                    g: 77,
+                    b: 0,
+                    a: 128,
+                },
+            ),
+        ] {
+            let source = format!("color-mix(in srgb, lab(50% 50 0 / 0%), {endpoint})");
+            assert_eq!(
+                parse(&source, "color"),
+                Some(PropertyValue::Color(expected))
+            );
+            let source = format!("color-mix(in srgb, {endpoint}, lab(50% 50 0 / 0%))");
+            assert_eq!(
+                parse(&source, "color"),
+                Some(PropertyValue::Color(expected))
+            );
+        }
+    }
+
+    #[test]
+    fn color_mix_effective_boundary_maps_in_native_space() {
+        for (endpoint, expected) in [
+            (
+                "lab(0% 125 125)",
+                CssColor {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 128,
+                },
+            ),
+            (
+                "lab(100% 125 125)",
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 128,
+                },
+            ),
+        ] {
+            let source = format!("color-mix(in lab, lab(50% 50 0 / 0%), {endpoint})");
+            assert_eq!(
+                parse(&source, "color"),
+                Some(PropertyValue::Color(expected))
+            );
+            let source = format!("color-mix(in lab, {endpoint}, lab(50% 50 0 / 0%))");
+            assert_eq!(
+                parse(&source, "color"),
+                Some(PropertyValue::Color(expected))
+            );
+        }
+    }
+
+    #[test]
+    fn color_mix_exact_native_lab_family_boundaries_map_to_black_or_white() {
+        let cases = [
+            ("lab", "lab(0% 125 125)", "lab(100% 125 125)", "lab"),
+            ("lch", "lch(0% 150 45deg)", "lch(100% 150 45deg)", "lch"),
+            ("oklab", "oklab(0% 0.4 0.4)", "oklab(100% 0.4 0.4)", "oklab"),
+            (
+                "oklch",
+                "oklch(0% 0.4 45deg)",
+                "oklch(100% 0.4 45deg)",
+                "oklch",
+            ),
+        ];
+        for (_, lower, upper, native_space) in cases {
+            for (target, endpoint, white) in
+                [(native_space, lower, false), (native_space, upper, true)]
+            {
+                let source = format!("color-mix(in {target}, {endpoint} 100%, black 0%)");
+                let expected = if white {
+                    CssColor {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                        a: 255,
+                    }
+                } else {
+                    CssColor::BLACK
+                };
+                assert_eq!(
+                    parse(&source, "color"),
+                    Some(PropertyValue::Color(expected))
+                );
+                let source = format!("color-mix(in {target}, black 0%, {endpoint} 100%)");
+                assert_eq!(
+                    parse(&source, "color"),
+                    Some(PropertyValue::Color(expected))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn color_mix_exact_lab_boundaries_convert_without_srgb_mapping() {
+        let cases = [
+            (
+                "srgb",
+                "lab(0% 125 125)",
+                [0.49444056, -0.26553026, -0.33006898],
+                CssColor {
+                    r: 126,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+            (
+                "srgb",
+                "lab(100% 125 125)",
+                [1.875541, 0.30204597, -0.1974194],
+                CssColor {
+                    r: 255,
+                    g: 77,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+            (
+                "srgb-linear",
+                "lab(0% 125 125)",
+                [0.20893149, -0.057316516, -0.089019805],
+                CssColor {
+                    r: 126,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+            (
+                "srgb-linear",
+                "lab(100% 125 125)",
+                [4.264065, 0.074256085, -0.03230641],
+                CssColor {
+                    r: 255,
+                    g: 77,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+        ];
+        for (space, endpoint, expected_coordinates, expected_color) in cases {
+            let source = format!("color-mix(in {space}, {endpoint} 100%, black 0%)");
+            let parsed = parse_parsed_color_entire(&source).expect(&source);
+            assert!(parsed.lightness_boundary.is_none());
+            assert_coordinates_close(parsed.coordinates, expected_coordinates);
+            assert_eq!(parsed.to_css_color(), expected_color);
+        }
+    }
+
+    #[test]
+    fn color_mix_cross_lab_family_boundaries_follow_converted_lightness() {
+        let cases = [
+            (
+                "color-mix(in oklab, lab(0% 125 125) 100%, black 0%)",
+                CssColor::BLACK,
+            ),
+            (
+                "color-mix(in oklab, lab(100% 125 125) 100%, black 0%)",
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in lab, oklab(0% 0.4 0.4) 100%, black 0%)",
+                CssColor::BLACK,
+            ),
+            (
+                "color-mix(in lab, oklab(100% 0.4 0.4) 100%, black 0%)",
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in oklab, lab(0% 125 125), lab(50% 50 0 / 0%))",
+                CssColor::BLACK,
+            ),
+            (
+                "color-mix(in lab, oklab(0% 0.4 0.4), oklab(0.5 0.1 0.1 / 0%))",
+                CssColor::BLACK,
+            ),
+        ];
+        for (source, incorrectly_mapped) in cases {
+            let parsed = parse_parsed_color_entire(source).expect(source);
+            assert!(parsed.lightness_boundary.is_none());
+            assert_ne!(parsed.to_css_color(), incorrectly_mapped);
+        }
+    }
+
+    #[test]
+    fn color_mix_shared_native_lab_boundaries_keep_provenance() {
+        let cases = [
+            (
+                "lab",
+                "lab(0% 125 125)",
+                "lab(0% -125 -125)",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+            (
+                "lab",
+                "lab(100% 125 125)",
+                "lab(100% -125 -125)",
+                LightnessBoundary::Upper,
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+            ),
+            (
+                "lch",
+                "lch(0% 150 45deg)",
+                "lch(0% 150 225deg)",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+            (
+                "lch",
+                "lch(100% 150 45deg)",
+                "lch(100% 150 225deg)",
+                LightnessBoundary::Upper,
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+            ),
+            (
+                "oklab",
+                "oklab(0% 0.4 0.4)",
+                "oklab(0% -0.4 -0.4)",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+            (
+                "oklab",
+                "oklab(100% 0.4 0.4)",
+                "oklab(100% -0.4 -0.4)",
+                LightnessBoundary::Upper,
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+            ),
+            (
+                "oklch",
+                "oklch(0% 0.4 45deg)",
+                "oklch(0% 0.4 225deg)",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+            (
+                "oklch",
+                "oklch(100% 0.4 45deg)",
+                "oklch(100% 0.4 225deg)",
+                LightnessBoundary::Upper,
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+            ),
+        ];
+        for (space, first, second, boundary, expected) in cases {
+            let source = format!("color-mix(in {space}, {first}, {second})");
+            let parsed = parse_parsed_color_entire(&source).expect(&source);
+            assert!(parsed.lightness_boundary == Some(boundary));
+            assert_eq!(parsed.to_css_color(), expected, "{source}");
+        }
+    }
+
+    #[test]
+    fn color_mix_shared_upper_boundary_with_different_alpha_keeps_provenance() {
+        let cases = [
+            (
+                "lab",
+                "lab(100% 125 125 / 20%)",
+                "lab(100% -125 -125 / 40%)",
+            ),
+            (
+                "oklab",
+                "oklab(100% 0.4 0.4 / 20%)",
+                "oklab(100% -0.4 -0.4 / 40%)",
+            ),
+        ];
+        for (space, first, second) in cases {
+            let source = format!("color-mix(in {space}, {first}, {second})");
+            let parsed = parse_parsed_color_entire(&source).expect(&source);
+            assert!(parsed.lightness_boundary == Some(LightnessBoundary::Upper));
+            assert_eq!(
+                parsed.to_css_color(),
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 77,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn color_mix_srgb_does_not_propagate_shared_lab_boundary() {
+        let source = "color-mix(in srgb, lab(0% 125 125), lab(0% -125 -125))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Srgb);
+        assert_coordinates_close(parsed.coordinates, [-0.03416577, -0.018700615, 0.20680122]);
+        assert!(parsed.lightness_boundary.is_none());
+        assert_ne!(parsed.to_css_color(), CssColor::BLACK);
+        assert!(!lightness_boundary_matches(
+            MixColorSpace::Srgb,
+            LightnessBoundary::Lower,
+            0.0,
+        ));
+    }
+
+    #[test]
+    fn color_mix_one_authored_boundary_maps_at_native_result_boundary() {
+        let cases = [
+            (
+                "lab",
+                "lab(0% 125 125)",
+                "black",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+            (
+                "lab",
+                "lab(100% 125 125)",
+                "white",
+                LightnessBoundary::Upper,
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+            ),
+            (
+                "oklab",
+                "oklab(0% 0.4 0.4)",
+                "black",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+            (
+                "oklab",
+                "oklab(100% 0.4 0.4)",
+                "white",
+                LightnessBoundary::Upper,
+                CssColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+            ),
+        ];
+        for (space, first, second, boundary, expected) in cases {
+            let source = format!("color-mix(in {space}, {first}, {second})");
+            let parsed = parse_parsed_color_entire(&source).expect(&source);
+            assert!(parsed.lightness_boundary == Some(boundary));
+            assert_eq!(parsed.to_css_color(), expected);
+        }
+    }
+
+    #[test]
+    fn color_mix_one_authored_boundary_maps_when_second_endpoint_is_boundary() {
+        let source = "color-mix(in lab, black, lab(0% 125 125))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert!(parsed.lightness_boundary == Some(LightnessBoundary::Lower));
+        assert_eq!(parsed.to_css_color(), CssColor::BLACK);
+    }
+
+    #[test]
+    fn color_mix_nested_generated_neutral_boundaries_keep_provenance() {
+        let white = CssColor {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        };
+        let cases = [
+            (
+                "lab",
+                "color-mix(in lab, white, white)",
+                "lab(100% 125 125)",
+                LightnessBoundary::Upper,
+                white,
+            ),
+            (
+                "lab",
+                "color-mix(in lab, black, black)",
+                "lab(0% 125 125)",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+            (
+                "lch",
+                "color-mix(in lch, white, white)",
+                "lch(100% 150 225deg)",
+                LightnessBoundary::Upper,
+                white,
+            ),
+            (
+                "lch",
+                "color-mix(in lch, black, black)",
+                "lch(0% 150 225deg)",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+            (
+                "oklab",
+                "color-mix(in oklab, white, white)",
+                "oklab(100% 0.4 0.4)",
+                LightnessBoundary::Upper,
+                white,
+            ),
+            (
+                "oklab",
+                "color-mix(in oklab, black, black)",
+                "oklab(0% 0.4 0.4)",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+            (
+                "oklch",
+                "color-mix(in oklch, white, white)",
+                "oklch(100% 0.4 225deg)",
+                LightnessBoundary::Upper,
+                white,
+            ),
+            (
+                "oklch",
+                "color-mix(in oklch, black, black)",
+                "oklch(0% 0.4 225deg)",
+                LightnessBoundary::Lower,
+                CssColor::BLACK,
+            ),
+        ];
+        for (space, generated, authored, boundary, expected) in cases {
+            let source = format!("color-mix(in {space}, {generated}, {authored})");
+            let parsed = parse_parsed_color_entire(&source).expect(&source);
+            assert!(parsed.lightness_boundary == Some(boundary), "{source}");
+            assert_eq!(parsed.to_css_color(), expected, "{source}");
+        }
+    }
+
+    #[test]
+    fn color_mix_nested_cross_lab_family_neutral_does_not_map() {
+        for (space, generated, authored) in [
+            (
+                "oklab",
+                "color-mix(in lab, white, white)",
+                "oklab(100% 0.4 0.4)",
+            ),
+            (
+                "lab",
+                "color-mix(in oklab, white, white)",
+                "lab(100% 125 125)",
+            ),
+        ] {
+            let source = format!("color-mix(in {space}, {generated}, {authored})");
+            let parsed = parse_parsed_color_entire(&source).expect(&source);
+            assert!(parsed.lightness_boundary.is_none(), "{source}");
+        }
+    }
+
+    #[test]
+    fn color_mix_near_boundary_does_not_inherit_provenance() {
+        let source = "color-mix(in lab, lab(0% 125 125), lab(0.0000004 0 0))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert!(parsed.lightness_boundary.is_none());
+        assert!(parsed.coordinates[0] > 0.0);
+    }
+
+    #[test]
+    fn color_mix_nonzero_lab_boundary_keeps_raw_coordinates() {
+        let source = "color-mix(in lab, lab(0% 125 125), white)";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Lab);
+        assert_coordinates_close(parsed.coordinates, [50.0, 62.5, 62.5]);
+        assert!(parsed.lightness_boundary.is_none());
+    }
+
+    #[test]
+    fn color_mix_exact_lab_boundary_nested_result_retains_raw_coordinates() {
+        let source = "color-mix(in srgb, color-mix(in lab, lab(0% 125 125) 100%, black 0%), white)";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Srgb);
+        assert_coordinates_close(parsed.coordinates, [0.7472203, 0.3672349, 0.33496553]);
+        assert_eq!(
+            parsed.to_css_color(),
+            CssColor {
+                r: 191,
+                g: 94,
+                b: 85,
+                a: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn color_mix_nested_identical_lab_boundaries_are_raw_after_srgb_conversion() {
+        for (endpoint, expected) in [
+            (
+                "lab(0% 125 125)",
+                CssColor {
+                    r: 126,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+            (
+                "lab(100% 125 125)",
+                CssColor {
+                    r: 255,
+                    g: 77,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+        ] {
+            let source =
+                format!("color-mix(in srgb, color-mix(in lab, {endpoint}, {endpoint}), white 0%)");
+            assert_eq!(
+                parse(&source, "color"),
+                Some(PropertyValue::Color(expected))
+            );
+        }
     }
 
     #[test]
@@ -11850,6 +12942,30 @@ mod tests {
     }
 
     #[test]
+    fn color_parse_huge_powerless_hue_reduces_before_conversion() {
+        let cases = [
+            ("1e38", 1e38_f32.rem_euclid(360.0).to_radians()),
+            ("1e38deg", 1e38_f32.rem_euclid(360.0).to_radians()),
+            ("1e38grad", (1e38_f32.rem_euclid(400.0) * 0.9).to_radians()),
+            ("1e38rad", 1e38_f32.rem_euclid(std::f32::consts::TAU)),
+            ("1e38turn", (1e38_f32.rem_euclid(1.0) * 360.0).to_radians()),
+        ];
+        for (angle, expected_hue) in cases {
+            let source = format!("lch(50% 0 {angle})");
+            let parsed = parse_parsed_color_entire(&source).expect(&source);
+            assert!(parsed.coordinates[2].is_finite(), "{source}");
+            assert!((parsed.coordinates[2] - expected_hue).abs() < 0.000001);
+        }
+
+        let source = "color-mix(in lch, lch(50% 0 1e38turn), lch(50% 0 120deg))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert!(parsed.coordinates[2].is_finite());
+        assert!((parsed.coordinates[2] - 60.0_f32.to_radians()).abs() < 0.000001);
+        assert_eq!(parse("lch(50% 0 1e39)", "color"), None);
+        assert_eq!(parse("lch(50% 0 1e39turn)", "color"), None);
+    }
+
+    #[test]
     fn color_parse_hue_rejects_unknown_units_and_tokens() {
         assert_eq!(parse("lch(50% 20 1foo)", "color"), None);
         assert_eq!(parse("lch(50% 20 \"not-a-hue\")", "color"), None);
@@ -11878,6 +12994,10 @@ mod tests {
     fn color_parse_color_mix_nonzero_weights_with_zero_alpha_is_transparent() {
         assert_eq!(
             parse("color-mix(in srgb, transparent, transparent)", "color"),
+            Some(PropertyValue::Color(CssColor::TRANSPARENT))
+        );
+        assert_eq!(
+            parse("color-mix(in lch, transparent, transparent)", "color"),
             Some(PropertyValue::Color(CssColor::TRANSPARENT))
         );
     }
@@ -11914,6 +13034,52 @@ mod tests {
     }
 
     #[test]
+    fn color_mix_lch_keeps_hue_from_transparent_chromatic_endpoint() {
+        let source = "color-mix(in lch, lch(50% 150 0deg / 0%), lch(50% 150 120deg))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Lch);
+        assert_coordinates_close(parsed.coordinates, [50.0, 150.0, 60.0_f32.to_radians()]);
+    }
+
+    #[test]
+    fn color_mix_nested_zero_weight_authored_hue_carries_into_followup_mix() {
+        let source = "color-mix(in lch, color-mix(in lch, lch(50% 150 120deg) 0%, rgb(128, 128, 128) 100%) 50%, rgb(128, 128, 128) 50%)";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Lch);
+        assert!((parsed.coordinates[2] - 120.0_f32.to_radians()).abs() < 0.0001);
+        assert!(!parsed.polar_hue_missing);
+    }
+
+    #[test]
+    fn color_mix_zero_weight_keeps_hue_selection_for_equal_missingness() {
+        for polar_hue_missing in [false, true] {
+            for (weight_one, weight_two, expected_hue) in [(0.0, 1.0, 2.0), (1.0, 0.0, 1.0)] {
+                let mixed = mix_coordinates(
+                    ColorCoordinates {
+                        first: 50.0,
+                        second: 40.0,
+                        third: 1.0,
+                        alpha: 1.0,
+                        polar_hue_missing,
+                    },
+                    ColorCoordinates {
+                        first: 50.0,
+                        second: 40.0,
+                        third: 2.0,
+                        alpha: 1.0,
+                        polar_hue_missing,
+                    },
+                    weight_one,
+                    weight_two,
+                    MixColorSpace::Lch,
+                );
+                assert_eq!(mixed.third, expected_hue);
+                assert_eq!(mixed.polar_hue_missing, polar_hue_missing);
+            }
+        }
+    }
+
+    #[test]
     fn color_mix_lch_hue_uses_specified_weight_with_different_alpha() {
         let mixed = mix_coordinates(
             ColorCoordinates {
@@ -11921,12 +13087,14 @@ mod tests {
                 second: 40.0,
                 third: 0.0,
                 alpha: 1.0,
+                polar_hue_missing: false,
             },
             ColorCoordinates {
                 first: 50.0,
                 second: 40.0,
                 third: std::f32::consts::FRAC_PI_2,
                 alpha: 0.25,
+                polar_hue_missing: false,
             },
             0.25,
             0.75,
@@ -11952,27 +13120,55 @@ mod tests {
     }
 
     #[test]
+    fn color_mix_authored_powerless_hue_is_not_missing() {
+        let source = "color-mix(in lch, lch(50% 0 120deg), lch(50% 0 240deg))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Lch);
+        assert_coordinates_close(parsed.coordinates, [50.0, 0.0, 180.0_f32.to_radians()]);
+        assert!(!parsed.polar_hue_missing);
+    }
+
+    #[test]
+    fn color_mix_authored_tiny_powerless_chroma_is_preserved() {
+        let source = "color-mix(in lch, lch(50% 0.001 120deg), lch(50% 0.001 240deg))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Lch);
+        assert_coordinates_close(parsed.coordinates, [50.0, 0.001, 180.0_f32.to_radians()]);
+        assert!(!parsed.polar_hue_missing);
+    }
+
+    #[test]
+    fn color_mix_converted_powerless_hue_carries_authored_hue() {
+        let source = "color-mix(in lch, rgb(128, 128, 128), lch(50% 150 120deg))";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Lch);
+        assert!((parsed.coordinates[2] - 120.0_f32.to_radians()).abs() < 0.0001);
+        assert!(!parsed.polar_hue_missing);
+    }
+
+    #[test]
     fn color_mix_uses_space_specific_powerless_hue_thresholds() {
-        let near_neutral = ParsedColor {
-            rgb: [0.5, 0.5, 0.50001],
-            alpha: 1.0,
-        };
+        let near_neutral =
+            ParsedColor::from_coordinates(ParsedColorSpace::Srgb, [0.5, 0.5, 0.50001], 1.0);
         assert_eq!(
             css_color_to_coordinates(near_neutral, MixColorSpace::Lch).third,
             0.0
         );
-        assert_eq!(
-            css_color_to_coordinates(near_neutral, MixColorSpace::Lch).second,
-            0.0
-        );
-        assert_eq!(
-            css_color_to_coordinates(near_neutral, MixColorSpace::Oklch).third,
-            0.0
-        );
-        assert_eq!(
-            css_color_to_coordinates(near_neutral, MixColorSpace::Oklch).second,
-            0.0
-        );
+        let near_neutral_lch = css_color_to_coordinates(near_neutral, MixColorSpace::Lch);
+        assert_eq!(near_neutral_lch.second, 0.0);
+        assert_eq!(near_neutral_lch.third, 0.0);
+        assert!(near_neutral_lch.polar_hue_missing);
+        let near_neutral_oklch = css_color_to_coordinates(near_neutral, MixColorSpace::Oklch);
+        assert_eq!(near_neutral_oklch.second, 0.0);
+        assert_eq!(near_neutral_oklch.third, 0.0);
+        assert!(near_neutral_oklch.polar_hue_missing);
+
+        let converted_mix =
+            parse_parsed_color_entire("color-mix(in lch, rgb(128, 128, 128), rgb(128, 128, 128))")
+                .expect("converted mix");
+        let normalized_converted_mix = css_color_to_coordinates(converted_mix, MixColorSpace::Lch);
+        assert!(normalized_converted_mix.polar_hue_missing);
+        assert_eq!(normalized_converted_mix.third, 0.0);
     }
 
     #[test]
@@ -11983,12 +13179,14 @@ mod tests {
                 second: 40.0,
                 third: 0.0,
                 alpha: 1.0,
+                polar_hue_missing: false,
             },
             ColorCoordinates {
                 first: 50.0,
                 second: 40.0,
                 third: std::f32::consts::PI,
                 alpha: 1.0,
+                polar_hue_missing: false,
             },
             0.25,
             0.75,
@@ -12005,12 +13203,14 @@ mod tests {
                 second: 40.0,
                 third: std::f32::consts::PI * 1.5,
                 alpha: 1.0,
+                polar_hue_missing: false,
             },
             ColorCoordinates {
                 first: 50.0,
                 second: 40.0,
                 third: 0.0,
                 alpha: 1.0,
+                polar_hue_missing: false,
             },
             0.5,
             0.5,
@@ -21136,5 +22336,432 @@ mod tests {
     fn orphans_widows_key_maps_to_distinct_property_keys() {
         assert_eq!(PropertyValue::Orphans(2).key(), PropertyKey::Orphans);
         assert_eq!(PropertyValue::Widows(2).key(), PropertyKey::Widows);
+    }
+
+    fn assert_coordinates_close(actual: [f32; 3], expected: [f32; 3]) {
+        for (actual, expected) in actual.into_iter().zip(expected) {
+            assert!((actual - expected).abs() < 0.0001, "{actual} != {expected}");
+        }
+    }
+
+    #[test]
+    fn color_parse_lab_family_preserves_out_of_gamut_endpoint_coordinates() {
+        let cases = [
+            (
+                "lab(50% 100 100)",
+                ParsedColorSpace::Lab,
+                [50.0, 100.0, 100.0],
+            ),
+            (
+                "lch(50% 150 30deg)",
+                ParsedColorSpace::Lch,
+                [50.0, 150.0, 30.0_f32.to_radians()],
+            ),
+            (
+                "oklab(0.5 0.4 0.4)",
+                ParsedColorSpace::Oklab,
+                [0.5, 0.4, 0.4],
+            ),
+            (
+                "oklch(0.5 0.4 30deg)",
+                ParsedColorSpace::Oklch,
+                [0.5, 0.4, 30.0_f32.to_radians()],
+            ),
+        ];
+        for (source, expected_space, expected_coordinates) in cases {
+            let parsed = parse_parsed_color_entire(source).expect(source);
+            assert_eq!(parsed.space, expected_space, "{source}");
+            assert_eq!(parsed.coordinates, expected_coordinates, "{source}");
+            assert!(
+                parsed
+                    .to_srgb()
+                    .iter()
+                    .any(|component| *component < 0.0 || *component > 1.0),
+            );
+        }
+    }
+
+    #[test]
+    fn color_mix_ignores_huge_zero_weight_lab_endpoint() {
+        let source = "color-mix(in srgb, lab(50% 3e38 3e38) 0%, red 100%)";
+        assert_eq!(
+            parse(source, "color"),
+            Some(PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }))
+        );
+    }
+
+    #[test]
+    fn color_mix_ignores_huge_zero_weight_lab_endpoint_in_polar_space() {
+        let source = "color-mix(in lch, lab(50% 3e38 3e38) 0%, lch(50% 50 20deg) 100%)";
+        assert_eq!(parse(source, "color"), parse("lch(50% 50 20deg)", "color"));
+    }
+
+    #[test]
+    fn color_mix_zero_weight_extreme_polar_endpoint_does_not_poison_hue() {
+        let source = "color-mix(in lch, oklab(0.5 3e38 3e38) 0%, lch(50% 50 20deg) 100%)";
+        assert_eq!(parse(source, "color"), parse("lch(50% 50 20deg)", "color"));
+    }
+
+    #[test]
+    fn color_mix_large_rectangular_endpoint_has_finite_polar_coordinates() {
+        let cases = [
+            (
+                "color-mix(in lch, lab(50% 1e38 1e38) 1%, lch(50% 50 20deg) 99%)",
+                ParsedColorSpace::Lch,
+            ),
+            (
+                "color-mix(in oklch, oklab(50% 1e38 1e38) 1%, oklch(50% 0.2 20deg) 99%)",
+                ParsedColorSpace::Oklch,
+            ),
+        ];
+        for (source, expected_space) in cases {
+            let parsed = parse_parsed_color_entire(source).expect(source);
+            assert_eq!(parsed.space, expected_space);
+            assert!(
+                parsed
+                    .coordinates
+                    .iter()
+                    .all(|component| component.is_finite())
+            );
+            assert!(!parsed.coordinates[1].is_nan());
+        }
+    }
+
+    #[test]
+    fn color_mix_lab_family_keeps_unclipped_intermediate_coordinates() {
+        let cases = [
+            (
+                "color-mix(in lab, lab(50% 100 100) 75%, lab(50% 0 0) 25%)",
+                ParsedColorSpace::Lab,
+                [50.0, 75.0, 75.0],
+                CssColor {
+                    r: 234,
+                    g: 8,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in lch, lch(50% 150 30deg) 75%, lch(50% 0 0) 25%)",
+                ParsedColorSpace::Lch,
+                [50.0, 112.5, 22.5_f32.to_radians()],
+                CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 58,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in oklab, oklab(0.5 0.4 0.4) 75%, oklab(0.5 0 0) 25%)",
+                ParsedColorSpace::Oklab,
+                [0.5, 0.3, 0.3],
+                CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in oklch, oklch(0.5 0.4 30deg) 75%, oklch(0.5 0 0) 25%)",
+                ParsedColorSpace::Oklch,
+                [0.5, 0.3, 22.5_f32.to_radians()],
+                CssColor {
+                    r: 221,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+        ];
+        for (source, expected_space, expected_coordinates, expected_color) in cases {
+            let parsed = parse_parsed_color_entire(source).expect(source);
+            assert_eq!(parsed.space, expected_space, "{source}");
+            assert_coordinates_close(parsed.coordinates, expected_coordinates);
+            assert_eq!(parsed.to_css_color(), expected_color, "{source}");
+        }
+    }
+
+    #[test]
+    fn color_mix_preserves_out_of_gamut_lab_endpoint_in_each_interpolation_space() {
+        let cases = [
+            (
+                "srgb",
+                ParsedColorSpace::Srgb,
+                [1.0343289, -0.30642307, -0.15550733],
+            ),
+            (
+                "srgb-linear",
+                ParsedColorSpace::SrgbLinear,
+                [1.0798806, -0.07645964, -0.020894665],
+            ),
+            ("lab", ParsedColorSpace::Lab, [50.0, 100.0, 100.0]),
+            (
+                "lch",
+                ParsedColorSpace::Lch,
+                [50.0, 141.42136, 45.0_f32.to_radians()],
+            ),
+            (
+                "oklab",
+                ParsedColorSpace::Oklab,
+                [0.5973762, 0.28092682, 0.13886046],
+            ),
+            (
+                "oklch",
+                ParsedColorSpace::Oklch,
+                [0.5973762, 0.31337216, 0.45907247],
+            ),
+        ];
+        for (space, expected_space, expected_coordinates) in cases {
+            let source = format!("color-mix(in {space}, lab(50% 100 100) 100%, black 0%)");
+            let parsed = parse_parsed_color_entire(&source).expect(&source);
+            assert_eq!(parsed.space, expected_space, "{source}");
+            assert_coordinates_close(parsed.coordinates, expected_coordinates);
+            assert!(
+                parsed
+                    .to_srgb()
+                    .iter()
+                    .any(|component| *component < 0.0 || *component > 1.0),
+            );
+        }
+    }
+
+    #[test]
+    fn srgb_transfer_functions_restore_negative_sign() {
+        assert!((srgb_encode(-0.5) + srgb_encode(0.5)).abs() < 0.000001);
+        assert!((srgb_decode(-0.5) + srgb_decode(0.5)).abs() < 0.000001);
+    }
+
+    #[test]
+    fn color_mix_preserves_negative_out_of_gamut_lab_interpolation() {
+        let source = "color-mix(in srgb, lab(50% -100 -100) 50%, lab(50% 100 100) 50%)";
+        let parsed = parse_parsed_color_entire(source).expect(source);
+        assert_eq!(parsed.space, ParsedColorSpace::Srgb);
+        assert_coordinates_close(parsed.coordinates, [0.10649943, 0.1554926, 0.4975962]);
+        assert_eq!(
+            parsed.to_css_color(),
+            CssColor {
+                r: 27,
+                g: 40,
+                b: 127,
+                a: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn color_mix_retains_generated_lightness_above_boundary() {
+        for space in ["lab", "lch", "oklab", "oklch"] {
+            let source = format!("color-mix(in {space}, color(srgb 2 0 0), color(srgb 2 0 0))");
+            let parsed = parse_parsed_color_entire(&source).expect(&source);
+            let lightness_limit = if matches!(space, "lab" | "lch") {
+                100.0
+            } else {
+                1.0
+            };
+            assert!(parsed.coordinates[0] > lightness_limit);
+            assert!(parsed.lightness_boundary.is_none());
+            assert_eq!(
+                parsed.to_css_color(),
+                CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn color_mix_out_of_gamut_serialization_is_deterministic() {
+        let source = "color-mix(in oklch, oklch(0.5 0.4 30deg) 75%, oklch(0.5 0 0) 25%)";
+        let first = parse_color_entire(source);
+        let second = parse_color_entire(source);
+        assert_eq!(first, second);
+        assert_eq!(
+            first,
+            Some(CssColor {
+                r: 221,
+                g: 0,
+                b: 0,
+                a: 255,
+            })
+        );
+    }
+
+    #[test]
+    fn color_mix_converts_each_lab_family_without_clipping() {
+        let endpoints = [
+            "lab(50% 100 100)",
+            "lch(50% 150 30deg)",
+            "oklab(0.5 0.4 0.4)",
+            "oklch(0.5 0.4 30deg)",
+        ];
+        let spaces = [
+            MixColorSpace::Srgb,
+            MixColorSpace::SrgbLinear,
+            MixColorSpace::Lab,
+            MixColorSpace::Lch,
+            MixColorSpace::Oklab,
+            MixColorSpace::Oklch,
+        ];
+        for endpoint in endpoints {
+            let parsed = parse_parsed_color_entire(endpoint).expect(endpoint);
+            for space in spaces {
+                let coordinates = css_color_to_coordinates(parsed, space);
+                assert!(
+                    [coordinates.first, coordinates.second, coordinates.third]
+                        .iter()
+                        .all(|component| component.is_finite()),
+                );
+            }
+        }
+
+        let achromatic_lch =
+            ParsedColor::from_coordinates(ParsedColorSpace::Lch, [50.0, 0.0, 1.0], 1.0);
+        assert_eq!(
+            css_color_to_coordinates(achromatic_lch, MixColorSpace::Lch).second,
+            0.0
+        );
+        let achromatic_oklch =
+            ParsedColor::from_coordinates(ParsedColorSpace::Oklch, [0.5, 0.0, 1.0], 1.0);
+        assert_eq!(
+            css_color_to_coordinates(achromatic_oklch, MixColorSpace::Oklch).second,
+            0.0
+        );
+
+        let linear =
+            ParsedColor::from_coordinates(ParsedColorSpace::SrgbLinear, [1.2, -0.1, 0.5], 1.0);
+        assert_coordinates_close(linear.to_srgb_linear(), [1.2, -0.1, 0.5]);
+        assert!(
+            linear
+                .to_lab()
+                .iter()
+                .all(|component| component.is_finite())
+        );
+        assert!(
+            linear
+                .to_oklab()
+                .iter()
+                .all(|component| component.is_finite())
+        );
+    }
+
+    #[test]
+    fn color_mix_nested_out_of_gamut_intermediate_is_not_clipped() {
+        let cases = [
+            (
+                "color-mix(in lab, color-mix(in lab, lab(50% 100 100) 75%, lab(50% 0 0) 25%) 50%, lab(50% 0 0) 50%)",
+                CssColor {
+                    r: 185,
+                    g: 90,
+                    b: 57,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in lch, color-mix(in lch, lch(50% 150 30deg) 75%, lch(50% 0 0) 25%) 50%, lch(50% 0 0) 50%)",
+                CssColor {
+                    r: 203,
+                    g: 70,
+                    b: 104,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in oklab, color-mix(in oklab, oklab(0.5 0.4 0.4) 75%, oklab(0.5 0 0) 25%) 50%, oklab(0.5 0 0) 50%)",
+                CssColor {
+                    r: 187,
+                    g: 21,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in oklch, color-mix(in oklch, oklch(0.5 0.4 30deg) 75%, oklch(0.5 0 0) 25%) 50%, oklch(0.5 0 0) 50%)",
+                CssColor {
+                    r: 166,
+                    g: 52,
+                    b: 77,
+                    a: 255,
+                },
+            ),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(parse_color_entire(source), Some(expected), "{source}");
+        }
+    }
+
+    #[test]
+    fn color_mix_in_gamut_lab_coordinates_stay_native() {
+        let cases = [
+            (
+                "color-mix(in lab, lab(50% 20 30) 50%, lab(50% 0 0) 50%)",
+                ParsedColorSpace::Lab,
+                [50.0, 10.0, 15.0],
+            ),
+            (
+                "color-mix(in oklab, oklab(0.5 0.05 0.05) 50%, oklab(0.5 0 0) 50%)",
+                ParsedColorSpace::Oklab,
+                [0.5, 0.025, 0.025],
+            ),
+        ];
+        for (source, expected_space, expected_coordinates) in cases {
+            let parsed = parse_parsed_color_entire(source).expect(source);
+            assert_eq!(parsed.space, expected_space, "{source}");
+            assert_coordinates_close(parsed.coordinates, expected_coordinates);
+        }
+    }
+
+    #[test]
+    fn color_mix_in_gamut_lab_family_results_stay_compatible() {
+        let cases = [
+            (
+                "color-mix(in lab, lab(50% 20 30), lab(60% -20 -10))",
+                CssColor {
+                    r: 137,
+                    g: 131,
+                    b: 114,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in lch, lch(50% 30 30deg), lch(60% 20 200deg))",
+                CssColor {
+                    r: 124,
+                    g: 136,
+                    b: 91,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in oklab, oklab(0.5 0.05 0.05), oklab(0.6 -0.03 -0.02))",
+                CssColor {
+                    r: 122,
+                    g: 111,
+                    b: 104,
+                    a: 255,
+                },
+            ),
+            (
+                "color-mix(in oklch, oklch(0.5 0.08 30deg), oklch(0.6 0.06 200deg))",
+                CssColor {
+                    r: 112,
+                    g: 119,
+                    b: 70,
+                    a: 255,
+                },
+            ),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(parse_color_entire(source), Some(expected), "{source}");
+        }
     }
 }
