@@ -38,7 +38,9 @@ use selectors::parser::{
 };
 use smol_str::SmolStr;
 
-use crate::computed::{ComputedValues, RunningTemplate, empty_custom_properties};
+use crate::computed::{
+    ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
+};
 use crate::error::CascadeError;
 use crate::property::{
     CustomProperty, DeferredValue, FontWeightValue, Length, LengthOrAuto,
@@ -201,7 +203,7 @@ type InheritanceStackEntry = (
     StyleNodeId,
     ComputedValues,
     Option<ResolveContext>,
-    Arc<HashMap<SmolStr, SmolStr>>,
+    Arc<CustomPropertyEnvironment>,
 );
 
 /// [`collect_cascaded`] の出力 — 全 node 分の candidate を単一 flat `Vec` に
@@ -4687,12 +4689,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 
         let custom_properties = cascaded
             .custom_candidates(id)
-            .map(|candidates| {
-                Arc::new(resolve_custom_properties(
-                    &parent_custom_properties,
-                    candidates,
-                ))
-            })
+            .map(|candidates| resolve_custom_properties(&parent_custom_properties, candidates))
             .unwrap_or_else(|| parent_custom_properties.clone());
 
         // phase 1: 親からの inheritance walk 開始値 (inherited のみ親の computed
@@ -4798,13 +4795,9 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// and shorthand projection behavior.
 pub(crate) fn resolve_deferred_value(
     deferred: &DeferredValue,
-    custom_properties: &HashMap<SmolStr, SmolStr>,
+    custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
-    let substituted = substitute_vars(
-        &deferred.value,
-        &mut |name| custom_properties.get(name).cloned(),
-        0,
-    )?;
+    let substituted = substitute_vars(&deferred.value, &mut |name| custom_properties.get(name), 0)?;
     let simplified = simplify_math_functions(&substituted)?;
     let mut input = ParserInput::new(simplified.as_ref());
     let mut parser = Parser::new(&mut input);
@@ -5599,7 +5592,7 @@ fn apply_winners(
     candidates: &[CascadedDecl],
     winners: &mut Vec<Option<RankedDecl>>,
     specified: &mut SpecifiedValues,
-    custom_properties: &HashMap<SmolStr, SmolStr>,
+    custom_properties: &CustomPropertyEnvironment,
 ) {
     pick_winners(candidates, winners);
     for slot in winners.iter_mut() {
@@ -5652,9 +5645,9 @@ impl VariableResolutionBudget {
 }
 
 fn resolve_custom_properties(
-    inherited: &HashMap<SmolStr, SmolStr>,
+    inherited: &Arc<CustomPropertyEnvironment>,
     candidates: &[CustomCascadedDecl],
-) -> HashMap<SmolStr, SmolStr> {
+) -> Arc<CustomPropertyEnvironment> {
     let mut winners: HashMap<SmolStr, (CustomProperty, RankedDecl)> = HashMap::new();
     for (idx, (value, important, origin, specificity, source_order)) in
         candidates.iter().enumerate()
@@ -5677,22 +5670,30 @@ fn resolve_custom_properties(
         .into_iter()
         .map(|(name, (value, _))| (name, value.value))
         .collect();
-    resolve_custom_property_map(inherited, &local)
+    resolve_custom_property_environment(inherited, &local)
 }
 
-/// Resolve a page-local custom-property map against inherited values using the
-/// same cycle and fallback rules as the element cascade.
-pub(crate) fn resolve_custom_property_map(
-    inherited: &HashMap<SmolStr, SmolStr>,
+/// Resolve one element or page context's local custom properties against a
+/// shared inherited environment.
+///
+/// The returned environment owns only local entries. A `None` entry records a
+/// declared-but-invalid custom property, which is a guaranteed-invalid value
+/// and therefore shadows an inherited value while allowing `var()` fallback.
+pub(crate) fn resolve_custom_property_environment(
+    inherited: &Arc<CustomPropertyEnvironment>,
     local: &HashMap<SmolStr, SmolStr>,
-) -> HashMap<SmolStr, SmolStr> {
-    let mut resolved = inherited.clone();
-    for name in local.keys() {
-        // A declared-but-invalid custom property replaces, rather than
-        // inherits, the parent's value at this element.
-        resolved.remove(name);
+) -> Arc<CustomPropertyEnvironment> {
+    if local.is_empty() {
+        return inherited.clone();
     }
+    let entries = resolve_local_custom_properties(inherited.as_ref(), local);
+    CustomPropertyEnvironment::from_local(inherited, entries)
+}
 
+fn resolve_local_custom_properties(
+    inherited: &CustomPropertyEnvironment,
+    local: &HashMap<SmolStr, SmolStr>,
+) -> HashMap<SmolStr, Option<SmolStr>> {
     let names: Vec<SmolStr> = local.keys().cloned().collect();
     let mut resolver = CustomPropertyResolver {
         local,
@@ -5702,17 +5703,16 @@ pub(crate) fn resolve_custom_property_map(
         resolving: Vec::new(),
         budget: VariableResolutionBudget::new(MAX_VARIABLE_RESOLUTION_STEPS),
     };
+    let mut entries = HashMap::with_capacity(local.len());
     for name in names {
-        if let Some(value) = resolver.resolve(&name, 0) {
-            resolved.insert(name, value);
-        }
+        entries.insert(name.clone(), resolver.resolve(&name, 0));
     }
-    resolved
+    entries
 }
 
 struct CustomPropertyResolver<'a> {
     local: &'a HashMap<SmolStr, SmolStr>,
-    inherited: &'a HashMap<SmolStr, SmolStr>,
+    inherited: &'a CustomPropertyEnvironment,
     cycle_members: HashSet<SmolStr>,
     memo: HashMap<(SmolStr, usize), Option<SmolStr>>,
     resolving: Vec<SmolStr>,
@@ -5736,7 +5736,7 @@ impl CustomPropertyResolver<'_> {
             return None;
         }
         let Some(raw) = self.local.get(&name).cloned() else {
-            return self.inherited.get(&name).cloned();
+            return self.inherited.get(&name);
         };
         if self.resolving.iter().any(|current| current == &name) {
             return None;
@@ -17255,7 +17255,7 @@ mod tests {
     #[test]
     fn variable_scanner_handles_literals_bounds_and_fallbacks() {
         let mut local = HashMap::from([(SmolStr::from("--a"), SmolStr::from("red"))]);
-        let inherited = HashMap::new();
+        let inherited = CustomPropertyEnvironment::from_map(HashMap::new());
         {
             let mut resolver = CustomPropertyResolver {
                 local: &local,
@@ -17284,7 +17284,7 @@ mod tests {
             ),
             (SmolStr::from("--shared"), SmolStr::from("red")),
         ]);
-        let branching_inherited = HashMap::new();
+        let branching_inherited = CustomPropertyEnvironment::from_map(HashMap::new());
         let mut resolver = CustomPropertyResolver {
             local: &branching_local,
             inherited: &branching_inherited,
@@ -17438,6 +17438,56 @@ mod tests {
         let tree = build_rule_tree(&doc);
         let result = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(result.computed[child].color, BLUE);
+    }
+
+    /// A deep chain keeps one local custom-property delta per element instead
+    /// of cloning the complete inherited map into each computed value.
+    #[test]
+    fn deep_custom_property_chain_keeps_persistent_environment_deltas() {
+        use std::fmt::Write as _;
+
+        const DEPTH: usize = 256;
+        let mut doc = TestDoc::new();
+        let mut parent = 0;
+        let mut ids = Vec::with_capacity(DEPTH);
+        for index in 0..DEPTH {
+            let mut style = String::new();
+            write!(style, "--chain-{index}: {index}px").unwrap();
+            let id = doc.push_element(parent, "div", Some(&style));
+            ids.push(id);
+            parent = id;
+        }
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+
+        // Every environment owns exactly this element's declaration. The
+        // complete chain is shared through parent Arc pointers, so retained
+        // local entries are O(N), not O(N²).
+        let mut total_local_entries = 0;
+        for (index, id) in ids.iter().copied().enumerate() {
+            let environment = &result.computed[id].custom_properties;
+            assert_eq!(environment.local_entry_count(), 1);
+            total_local_entries += environment.local_entry_count();
+            if index > 0 {
+                let parent_environment = environment
+                    .parent_environment()
+                    .expect("non-root custom environment has a parent");
+                // cov:ignore: panic-message literal only executed on assertion
+                // failure, which does not happen while this test passes.
+                assert!(
+                    std::sync::Arc::ptr_eq(
+                        parent_environment,
+                        &result.computed[ids[index - 1]].custom_properties
+                    ),
+                    "custom environment must share the immediate ancestor's environment"
+                );
+            }
+        }
+        assert_eq!(total_local_entries, DEPTH);
+        let leaf_environment = &result.computed[*ids.last().unwrap()].custom_properties;
+        assert_eq!(leaf_environment.get("--chain-0"), Some("0px".into()));
+        assert_eq!(leaf_environment.get("--chain-255"), Some("255px".into()));
     }
 
     #[test]
