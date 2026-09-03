@@ -109,17 +109,41 @@
 # commit to attach it to); `-- --edit` reopens $GIT_EDITOR after
 # validation, letting the checklist be edited or deleted from the message
 # that actually lands. Only options that can neither suppress merge-commit
-# creation nor let the validated message be replaced post-validation are
-# admitted: `-S` / `--gpg-sign[=<keyid>]` / `--no-gpg-sign` (commit
-# signing) and `--strategy=<s>` / `--strategy-option=<o>` (merge strategy
-# selection). Each token in the extra args is checked independently, so
-# value-taking options must use their `--flag=value` form (e.g.
-# `--strategy=ort`, not `-s ort`) — accepting a bare `-s` would require
-# deciding whether the next token is its argument or a new flag, and that
-# ambiguity is refused here rather than guessed. Anything not on this list
-# — including but not limited to `--ff`, `--ff-only`, `--squash`,
-# `--no-commit`, `--edit`, `--no-edit`, `--abort`, `--continue`, `--quit`,
-# `--log`, `--cleanup` — is refused before `git merge` ever runs.
+# creation, nor let the validated message be replaced post-validation, nor
+# cause the merged branch's changes to not land in the tree, are admitted:
+# `-S` / `--gpg-sign[=<keyid>]` / `--no-gpg-sign` (commit signing) and
+# `--strategy=<s>` / `--strategy-option=<o>` (merge strategy selection).
+# Each token in the extra args is checked independently, so value-taking
+# options must use their `--flag=value` form (e.g. `--strategy=ort`, not
+# `-s ort`) — accepting a bare `-s` would require deciding whether the
+# next token is its argument or a new flag, and that ambiguity is refused
+# here rather than guessed. Anything not on this list — including but not
+# limited to `--ff`, `--ff-only`, `--squash`, `--no-commit`, `--edit`,
+# `--no-edit`, `--abort`, `--continue`, `--quit`, `--log`, `--cleanup` —
+# is refused before `git merge` ever runs.
+#
+# `--strategy=<s>` is a closed enumeration (`ort`, `recursive`, `resolve`,
+# `octopus`, `subtree`), not `--strategy=.+`: git's own `ours` strategy
+# (distinct from `-X ours`, a `--strategy-option` that only affects
+# genuinely conflicting hunks under a real 3-way merge) discards the
+# merged branch's tree changes entirely while still producing a 2-parent
+# merge commit carrying the validated, fully-passing checklist message —
+# satisfying every check above while the reviewed diff silently never
+# lands. `ours` is deliberately excluded from the enumeration for exactly
+# this reason.
+#
+# The admitted categories are deliberately minimal — only what callers
+# actually needed at the time this allow-list was written — not an
+# exhaustive enumeration of every `git merge` option that happens to satisfy
+# the criteria above. Other options may also satisfy them (e.g.
+# `--allow-unrelated-histories` neither suppresses commit creation, touches
+# the message, nor drops tree changes); they are refused here simply
+# because nothing has needed them yet. Adding an option later must be
+# argued against the criteria above (does it suppress merge-commit
+# creation, let the validated message be replaced/appended-to
+# post-validation, or cause the merged branch's changes to not land?), not
+# added on convenience — and routing around this script instead of
+# extending it is never the answer.
 #
 # This is a floor, not the full record: it verifies the checklist's 4 lines
 # exist and are non-vacuous, not that every sub-clause gate.md's §Gate 通過
@@ -157,7 +181,13 @@ cd "$REPO_ROOT"
 source "$SCRIPT_DIR/lib/tmpdir.sh"
 
 usage() {
-  sed -n '2,133p' "${BASH_SOURCE[0]}"
+  # Print the header comment block (lines 2..N, i.e. everything up to but
+  # not including the first non-comment line) rather than a hand-maintained
+  # line-number range: the header has already needed its end bumped by hand
+  # twice as it grew, and a stale range fails silently in both directions
+  # (too small truncates the very options docs; too large leaks shell code
+  # like `set -euo pipefail` into --help output).
+  awk 'NR==1 { next } /^#/ { print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
 if [[ $# -eq 0 ]]; then
@@ -228,15 +258,12 @@ done
 # `-- <extra args>` allow-list (see "About `-- <extra args>`" in the file
 # header for the CONFIRMED --ff / --edit bypasses this closes, and why
 # value-taking options require their `--flag=value` form here).
-ALLOWED_EXTRA_ARG_RE='^(-S|--gpg-sign|--gpg-sign=.+|--no-gpg-sign|--strategy=.+|--strategy-option=.+)$'
+ALLOWED_EXTRA_ARG_RE='^(-S|--gpg-sign|--gpg-sign=.+|--no-gpg-sign|--strategy=(ort|recursive|resolve|octopus|subtree)|--strategy-option=.+)$'
 for arg in "${EXTRA_ARGS[@]}"; do
   if ! [[ "$arg" =~ $ALLOWED_EXTRA_ARG_RE ]]; then
     echo "safe_merge.sh: extra arg not on the allow-list: $arg" >&2
-    echo "  Allowed: -S, --gpg-sign[=<keyid>], --no-gpg-sign, --strategy=<s>, --strategy-option=<o>." >&2
-    echo "  Options that could suppress merge-commit creation or let the" >&2
-    echo "  validated message be replaced after the fact (--ff, --ff-only," >&2
-    echo "  --squash, --no-commit, --edit, --no-edit, --abort, --continue," >&2
-    echo "  --quit, --log, --cleanup, etc.) are refused." >&2
+    echo "  Allowed: -S, --gpg-sign[=<keyid>], --no-gpg-sign, --strategy=(ort|recursive|resolve|octopus|subtree), --strategy-option=<o>." >&2
+    echo "  Anything that could suppress the merge commit or replace the validated message is refused (see --help)." >&2
     exit 2
   fi
 done
