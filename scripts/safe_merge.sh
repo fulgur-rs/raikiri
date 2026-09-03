@@ -132,6 +132,18 @@
 # lands. `ours` is deliberately excluded from the enumeration for exactly
 # this reason.
 #
+# `--strategy-option=<o>` is likewise a closed enumeration, not
+# `--strategy-option=.+`: the `ignore-space-change` / `ignore-all-space` /
+# `ignore-space-at-eol` / `ignore-cr-at-eol` family treats a whitespace-
+# only incoming change as a non-conflict and resolves it to the current
+# side, so a branch whose entire diff is whitespace-only lands as if it
+# were empty — the same "checklist passes, merge commit exists, reviewed
+# change silently never lands" failure mode as `--strategy=ours`, just
+# narrower in trigger. That family is excluded; `ours`/`theirs` remain
+# admitted here because, as a `-X` strategy option (unlike as a top-level
+# `--strategy`), they only resolve genuinely conflicting hunks under a
+# real 3-way merge, not the whole tree.
+#
 # The admitted categories are deliberately minimal — only what callers
 # actually needed at the time this allow-list was written — not an
 # exhaustive enumeration of every `git merge` option that happens to satisfy
@@ -258,11 +270,11 @@ done
 # `-- <extra args>` allow-list (see "About `-- <extra args>`" in the file
 # header for the CONFIRMED --ff / --edit bypasses this closes, and why
 # value-taking options require their `--flag=value` form here).
-ALLOWED_EXTRA_ARG_RE='^(-S|--gpg-sign|--gpg-sign=.+|--no-gpg-sign|--strategy=(ort|recursive|resolve|octopus|subtree)|--strategy-option=.+)$'
+ALLOWED_EXTRA_ARG_RE='^(-S|--gpg-sign|--gpg-sign=.+|--no-gpg-sign|--strategy=(ort|recursive|resolve|octopus|subtree)|--strategy-option=(ours|theirs|patience|histogram|diff-algorithm=(patience|histogram|minimal|myers)|renormalize|no-renormalize|find-renames|find-renames=[0-9]+|no-renames|subtree|subtree=.+|rename-threshold=[0-9]+))$'
 for arg in "${EXTRA_ARGS[@]}"; do
   if ! [[ "$arg" =~ $ALLOWED_EXTRA_ARG_RE ]]; then
     echo "safe_merge.sh: extra arg not on the allow-list: $arg" >&2
-    echo "  Allowed: -S, --gpg-sign[=<keyid>], --no-gpg-sign, --strategy=(ort|recursive|resolve|octopus|subtree), --strategy-option=<o>." >&2
+    echo "  Allowed: -S, --gpg-sign[=<keyid>], --no-gpg-sign, --strategy=(ort|recursive|resolve|octopus|subtree), --strategy-option=(see --help for the full enumeration)." >&2
     echo "  Anything that could suppress the merge commit or replace the validated message is refused (see --help)." >&2
     exit 2
   fi
