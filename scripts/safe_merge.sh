@@ -64,8 +64,12 @@
 #   --check-only          Validate and report, but do not run `git merge`.
 #                         Exit status still reflects pass/fail. Useful to
 #                         test a draft message before committing to it.
-#   -- <extra args>       Anything after a literal `--` is passed through to
-#                         the underlying `git merge --no-ff` call unchanged.
+#   -- <extra args>       Only specific `git merge` options are forwarded to
+#                         the underlying `git merge --no-ff` call; anything
+#                         else after a literal `--` is refused. This is an
+#                         allow-list, not a raw passthrough — see "About
+#                         `-- <extra args>`" below for what is admitted and
+#                         why.
 #
 # What "machine-checkable evidence" means here: the validated text must
 # contain, each as its own dedicated line, all 4 checklist markers below —
@@ -96,6 +100,26 @@
 #             (e.g. citing an earlier iteration) does not count
 #   - §8.1.1: covered, cov:ignore, or non-applicable/N/A, immediately
 #             after the marker
+#
+# About `-- <extra args>`: this is an allow-list, not a raw passthrough.
+# Two `git merge` options were CONFIRMED (Round 3 review) to defeat the
+# validation above when forwarded unchanged: `-- --ff` overrides the fixed
+# `--no-ff` below, producing a fast-forward with no merge commit at all
+# (the validated message is simply never used, since a fast-forward has no
+# commit to attach it to); `-- --edit` reopens $GIT_EDITOR after
+# validation, letting the checklist be edited or deleted from the message
+# that actually lands. Only options that can neither suppress merge-commit
+# creation nor let the validated message be replaced post-validation are
+# admitted: `-S` / `--gpg-sign[=<keyid>]` / `--no-gpg-sign` (commit
+# signing) and `--strategy=<s>` / `--strategy-option=<o>` (merge strategy
+# selection). Each token in the extra args is checked independently, so
+# value-taking options must use their `--flag=value` form (e.g.
+# `--strategy=ort`, not `-s ort`) — accepting a bare `-s` would require
+# deciding whether the next token is its argument or a new flag, and that
+# ambiguity is refused here rather than guessed. Anything not on this list
+# — including but not limited to `--ff`, `--ff-only`, `--squash`,
+# `--no-commit`, `--edit`, `--no-edit`, `--abort`, `--continue`, `--quit`,
+# `--log`, `--cleanup` — is refused before `git merge` ever runs.
 #
 # This is a floor, not the full record: it verifies the checklist's 4 lines
 # exist and are non-vacuous, not that every sub-clause gate.md's §Gate 通過
@@ -133,7 +157,7 @@ cd "$REPO_ROOT"
 source "$SCRIPT_DIR/lib/tmpdir.sh"
 
 usage() {
-  sed -n '2,108p' "${BASH_SOURCE[0]}"
+  sed -n '2,133p' "${BASH_SOURCE[0]}"
 }
 
 if [[ $# -eq 0 ]]; then
@@ -199,6 +223,22 @@ while [[ $# -gt 0 ]]; do
       exit 2
       ;;
   esac
+done
+
+# `-- <extra args>` allow-list (see "About `-- <extra args>`" in the file
+# header for the CONFIRMED --ff / --edit bypasses this closes, and why
+# value-taking options require their `--flag=value` form here).
+ALLOWED_EXTRA_ARG_RE='^(-S|--gpg-sign|--gpg-sign=.+|--no-gpg-sign|--strategy=.+|--strategy-option=.+)$'
+for arg in "${EXTRA_ARGS[@]}"; do
+  if ! [[ "$arg" =~ $ALLOWED_EXTRA_ARG_RE ]]; then
+    echo "safe_merge.sh: extra arg not on the allow-list: $arg" >&2
+    echo "  Allowed: -S, --gpg-sign[=<keyid>], --no-gpg-sign, --strategy=<s>, --strategy-option=<o>." >&2
+    echo "  Options that could suppress merge-commit creation or let the" >&2
+    echo "  validated message be replaced after the fact (--ff, --ff-only," >&2
+    echo "  --squash, --no-commit, --edit, --no-edit, --abort, --continue," >&2
+    echo "  --quit, --log, --cleanup, etc.) are refused." >&2
+    exit 2
+  fi
 done
 
 if [[ -z "$MSG_FILE" && -z "$MSG_TEXT" ]]; then
