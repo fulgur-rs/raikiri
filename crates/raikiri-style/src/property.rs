@@ -370,9 +370,10 @@ pub enum Length {
     /// unit falls back to 0.5em in the general case, and to 1em when it
     /// would be typeset upright (i.e. writing-mode is vertical-rl or
     /// vertical-lr and text-orientation is upright)." raikiri-style は
-    /// `writing-mode` / `text-orientation` を未実装 (horizontal-tb 前提のみ)
-    /// なので upright 分岐は到達不能 — resolve は常に `0.5 * font-size`。
-    /// `writing-mode` 実装時に本判断の見直しが要る。
+    /// `writing-mode` の縦書きレンダリングパイプライン (と `text-orientation`
+    /// 自体) を未実装なので、computed 値は常に `HorizontalTb` に正規化され
+    /// upright 分岐は到達不能 — resolve は常に `0.5 * font-size`。縦書き
+    /// レンダリング実装時に本判断の見直しが要る。
     Ch(f32),
     /// Font-relative length: `rch` — root element の `ch` に対する倍率。
     /// `1rch` → `Rch(1.0)`。
@@ -2824,6 +2825,96 @@ pub enum Direction {
     Rtl,
 }
 
+/// `writing-mode` property の value。
+///
+/// CSS Writing Modes 4 §3.2 "Block Flow Direction: the writing-mode property"
+/// <https://www.w3.org/TR/css-writing-modes-4/#propdef-writing-mode>。
+///
+/// propdef (spec verbatim): Value: `horizontal-tb | vertical-rl | vertical-lr
+/// | sideways-rl | sideways-lr`、Initial: `horizontal-tb`、Applies to: "All
+/// elements except table row groups, table column groups, table rows, table
+/// columns, ruby base container, ruby annotation container"、Inherited:
+/// **yes**、Percentages: n/a、Computed value: specified value、Animation
+/// type: not animatable。
+///
+/// CSS Writing Modes **Level 3** <https://www.w3.org/TR/css-writing-modes-3/#propdef-writing-mode>
+/// defines only 3 of these keywords (`horizontal-tb | vertical-rl |
+/// vertical-lr`) — its own changelog records "Deferred the sideways-lr and
+/// sideways-rl values of writing-mode to Level 4." `sideways-rl` /
+/// `sideways-lr` only exist in the Level 4 propdef this doc cites, which is
+/// also this crate's existing precedent for the sibling `direction` property
+/// ([`Direction`] doc cites the same Level 4 document).
+///
+/// # `@page` context — Appendix A 非掲載、しかし意図的に拡張配線
+///
+/// [`Direction`] doc が引用する `direction` とは対照的に、`writing-mode`
+/// 自体は CSS Paged Media 3 Appendix A page-property-list
+/// <https://www.w3.org/TR/css-page-3/#page-property-list> の CSS 2.1 由来
+/// table には **載っていない** (Appendix A の raw table を直接確認済)。ただし
+/// raikiri は Appendix A を「床」であって「天井」ではないものとして扱う —
+/// `overflow`/`overflow-x`/`overflow-y` / [`DisplayValue`] /
+/// [`PositionValue`] / `box-sizing` / `counter-reset` / `counter-increment` /
+/// `content` / `string-set` と同じ「Appendix A 非掲載だが意図的に `@page`
+/// context へ拡張配線している」property の並びに `writing-mode` も加わる —
+/// canonical な列挙と根拠 (CSS Paged Media 3 §6 の "positive minimum, not a
+/// ceiling" の性質) は
+/// [`crate::page::PageCascadeResult::declarations`] doc 参照。
+///
+/// 5 keyword の prose 定義 (spec verbatim、§3.2):
+///
+/// - [`HorizontalTb`](Self::HorizontalTb) — "Top-to-bottom block flow
+///   direction. Both the writing mode and the typographic mode are
+///   horizontal." spec initial value。
+/// - [`VerticalRl`](Self::VerticalRl) — "Right-to-left block flow direction.
+///   Both the writing mode and the typographic mode are vertical."
+/// - [`VerticalLr`](Self::VerticalLr) — "Left-to-right block flow direction.
+///   Both the writing mode and the typographic mode are vertical."
+/// - [`SidewaysRl`](Self::SidewaysRl) — "Right-to-left block flow direction.
+///   The writing mode is vertical, while the typographic mode is
+///   horizontal."
+/// - [`SidewaysLr`](Self::SidewaysLr) — "Left-to-right block flow direction.
+///   The writing mode is vertical, while the typographic mode is
+///   horizontal."
+///
+/// # Scope carving
+///
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(a) spec-invalid**: 上記 5 keyword 以外の ident は silent drop = `None`。
+/// - **Non-goal — vertical writing-mode rendering pipeline は未実装**:
+///   `vertical-rl` / `vertical-lr` / `sideways-rl` / `sideways-lr` は spec
+///   grammar どおり **構文としては受理する** (`None` を返さない、CSS 2.1 の
+///   「受理するが視覚効果は未実装」established pattern — 37n sibling
+///   [`WordBreak`] doc の deprecated `break-word` scope-cut と同じ精神)。ただし
+///   raikiri は縦書きレンダリングパイプラインを持たないため、この 4 keyword の
+///   **computed value はすべて [`HorizontalTb`](Self::HorizontalTb) と同じ表現に
+///   正規化する** — [`resolve_writing_mode`] が実装する。これは spec の
+///   "Computed value: specified value" (= computed 値は specified keyword を
+///   そのまま保持する) からの意図的な divergence であり、spec 解釈の誤りでは
+///   ない — 縦書き非対応という scope cut を正直に表現したもの。
+///
+/// [`DisplayValue`] / [`TextAlign`] / [`Direction`] と同じ convention で
+/// `Default` を derive しない — 初期化側
+/// [`crate::computed::ComputedValues::initial`] が
+/// [`WritingMode::HorizontalTb`] を直接指定する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WritingMode {
+    /// `horizontal-tb` — spec initial value。
+    HorizontalTb,
+    /// `vertical-rl` — 構文としては受理するが、computed value は
+    /// [`HorizontalTb`](Self::HorizontalTb) に正規化される
+    /// ([`WritingMode`] doc の Non-goal 節参照)。
+    VerticalRl,
+    /// `vertical-lr` — [`VerticalRl`](Self::VerticalRl) と同じ Non-goal 扱い。
+    VerticalLr,
+    /// `sideways-rl` — [`VerticalRl`](Self::VerticalRl) と同じ Non-goal 扱い。
+    SidewaysRl,
+    /// `sideways-lr` — [`VerticalRl`](Self::VerticalRl) と同じ Non-goal 扱い。
+    SidewaysLr,
+}
+
 /// `overflow-x` / `overflow-y` の共通 value type。
 ///
 /// CSS Overflow Module Level 3 §3.1 "Overflow: the overflow-x, overflow-y,
@@ -2972,6 +3063,39 @@ pub(crate) fn resolve_overflow(specified: OverflowXY) -> OverflowXY {
     OverflowXY {
         x: axis(specified.x, specified.y),
         y: axis(specified.y, specified.x),
+    }
+}
+
+/// [`WritingMode`]'s specified→computed collapse ([`WritingMode`] doc の
+/// Non-goal 節参照)。
+///
+/// raikiri は縦書きレンダリングパイプラインを実装しないため、5 keyword の
+/// うち [`WritingMode::HorizontalTb`] 以外の 4 つ (`vertical-rl` /
+/// `vertical-lr` / `sideways-rl` / `sideways-lr`) は **常に**
+/// [`WritingMode::HorizontalTb`] と同じ computed value に正規化する。
+/// [`resolve_text_align_match_parent`] / [`resolve_overflow`] とは異なり
+/// **他 field (親の computed 値・同 node の他 property) に一切依存しない** —
+/// 引数の keyword に関わらず戻り値は固定 (`self` すら実質不要だが、他の
+/// `resolve_*` 関数と同じ signature shape を保つため受け取る)。
+///
+/// # 呼び出し元
+///
+/// - Element 経路: [`crate::specified::SpecifiedValues::absolutize_with`]
+///   (`finalize` / `finalize_as_root` の両方がここへ funnel する — root か
+///   どうかで分岐する必要が無いのは、spec がこの property に root 固有の
+///   特別扱いを定めていないため、[`resolve_text_align_match_parent`] の
+///   "Computes to start when specified on the root element" 分岐と異なる点)。
+/// - Page 経路: [`crate::page`] の `absolutize_in_page_context`
+///   (page context 自身も同じ無条件正規化を受ける)。
+///
+/// `pub(crate)` は `specified` / `page` の 2 module から呼ぶため。
+pub(crate) fn resolve_writing_mode(specified: WritingMode) -> WritingMode {
+    match specified {
+        WritingMode::HorizontalTb
+        | WritingMode::VerticalRl
+        | WritingMode::VerticalLr
+        | WritingMode::SidewaysRl
+        | WritingMode::SidewaysLr => WritingMode::HorizontalTb,
     }
 }
 
@@ -5381,6 +5505,17 @@ pub enum PropertyValue {
     /// table)。違いは最小行数を fragmentation break のどちら側に適用するか
     /// だけ (break 後 — `orphans` は break 前)。
     Widows(i32),
+    /// `writing-mode: horizontal-tb | vertical-rl | vertical-lr | sideways-rl
+    /// | sideways-lr` — **inherited**、initial: [`WritingMode::HorizontalTb`]
+    /// (CSS Writing Modes 4 §3.2 [`WritingMode`] doc 参照)。5 keyword とも
+    /// 構文としては受理するが、computed value は常に
+    /// [`WritingMode::HorizontalTb`] に正規化する ([`WritingMode`] doc の
+    /// Non-goal 節、[`resolve_writing_mode`] doc 参照 — raikiri は縦書き
+    /// レンダリングパイプラインを実装しない)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    WritingMode(WritingMode),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -5688,6 +5823,11 @@ pub enum PropertyKey {
     OutlineWidth,
     OutlineStyle,
     OutlineColor,
+    // writing-mode (CSS Writing Modes 4 §3.2、semantics on the matching
+    // PropertyValue::WritingMode variant; sibling PropertyKey variants carry
+    // no per-variant docs per crate convention). 末尾配置の理由は
+    // PropertyValue::WritingMode の doc 参照。
+    WritingMode,
 }
 
 impl PropertyValue {
@@ -5811,6 +5951,7 @@ impl PropertyValue {
             PropertyValue::OutlineWidth(_) => PropertyKey::OutlineWidth,
             PropertyValue::OutlineStyle(_) => PropertyKey::OutlineStyle,
             PropertyValue::OutlineColor(_) => PropertyKey::OutlineColor,
+            PropertyValue::WritingMode(_) => PropertyKey::WritingMode,
         }
     }
 }
@@ -6167,6 +6308,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "place-self" => PropertyKey::PlaceSelf,
         "orphans" => PropertyKey::Orphans,
         "widows" => PropertyKey::Widows,
+        "writing-mode" => PropertyKey::WritingMode,
         _ => return None,
     })
 }
@@ -6664,6 +6806,14 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // inherited, computed value = specified integer.
         "orphans" => parse_positive_integer(input).map(PropertyValue::Orphans),
         "widows" => parse_positive_integer(input).map(PropertyValue::Widows),
+        // CSS Writing Modes 4 §3.2 writing-mode.
+        // value grammar `horizontal-tb | vertical-rl | vertical-lr |
+        // sideways-rl | sideways-lr`, initial `horizontal-tb`, inherited.
+        // All 5 keywords parse successfully — the computed-value collapse of
+        // the 4 non-horizontal keywords happens later, in
+        // `resolve_writing_mode` (`WritingMode` doc's Non-goal section), not
+        // here.
+        "writing-mode" => parse_writing_mode(input).map(PropertyValue::WritingMode),
         _ => None,
     }
 }
@@ -10565,6 +10715,34 @@ fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
     match ident.to_ascii_lowercase().as_str() {
         "ltr" => Some(Direction::Ltr),
         "rtl" => Some(Direction::Rtl),
+        _ => None,
+    }
+}
+
+/// `writing-mode: <ident>` を parse する
+/// (CSS Writing Modes 4 §3.2 <https://www.w3.org/TR/css-writing-modes-4/#propdef-writing-mode>)。
+///
+/// Spec value grammar (§3.2): `horizontal-tb | vertical-rl | vertical-lr |
+/// sideways-rl | sideways-lr`。ASCII case-insensitive で ident を比較する
+/// (37n sibling [`parse_direction`] と同 flavor)。5 keyword とも spec 通り
+/// 受理する — `vertical-rl` 以降 4 keyword の computed value normalization は
+/// 本関数の責務ではなく [`resolve_writing_mode`] が担う ([`WritingMode`] doc の
+/// Scope carving 節参照)。
+///
+/// # Scope carving ([`WritingMode`] doc-comment に詳述)
+///
+/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
+///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
+///   が canonical)。
+/// - **(a) spec-invalid**: 上記 5 keyword 以外の ident は silent drop = `None`。
+fn parse_writing_mode(input: &mut Parser<'_, '_>) -> Option<WritingMode> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "horizontal-tb" => Some(WritingMode::HorizontalTb),
+        "vertical-rl" => Some(WritingMode::VerticalRl),
+        "vertical-lr" => Some(WritingMode::VerticalLr),
+        "sideways-rl" => Some(WritingMode::SidewaysRl),
+        "sideways-lr" => Some(WritingMode::SidewaysLr),
         _ => None,
     }
 }
@@ -17037,6 +17215,110 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::Direction);
         let v = PropertyValue::Direction(Direction::Rtl);
         assert_eq!(v.key(), PropertyKey::Direction);
+    }
+
+    // ── writing-mode (CSS Writing Modes 4 §3.2) ──
+    //
+    // Value grammar (§3.2 spec verbatim): horizontal-tb | vertical-rl |
+    // vertical-lr | sideways-rl | sideways-lr
+    // Initial: horizontal-tb / Inherited: yes / Computed value: specified
+    // value — this crate deliberately diverges from the last clause for the
+    // 4 non-`horizontal-tb` keywords (`WritingMode` doc's Non-goal section,
+    // `resolve_writing_mode` tests below).
+
+    #[test]
+    fn writing_mode_parse_all_five_keywords() {
+        // All 5 keywords parse successfully (`Some`, not `None`) — this
+        // crate accepts the full spec grammar even though the 4
+        // non-`horizontal-tb` keywords later collapse at the computed layer
+        // (`resolve_writing_mode`, not this parser).
+        assert_eq!(
+            parse("horizontal-tb", "writing-mode"),
+            Some(PropertyValue::WritingMode(WritingMode::HorizontalTb))
+        );
+        assert_eq!(
+            parse("vertical-rl", "writing-mode"),
+            Some(PropertyValue::WritingMode(WritingMode::VerticalRl))
+        );
+        assert_eq!(
+            parse("vertical-lr", "writing-mode"),
+            Some(PropertyValue::WritingMode(WritingMode::VerticalLr))
+        );
+        assert_eq!(
+            parse("sideways-rl", "writing-mode"),
+            Some(PropertyValue::WritingMode(WritingMode::SidewaysRl))
+        );
+        assert_eq!(
+            parse("sideways-lr", "writing-mode"),
+            Some(PropertyValue::WritingMode(WritingMode::SidewaysLr))
+        );
+    }
+
+    #[test]
+    fn writing_mode_is_case_insensitive() {
+        assert_eq!(
+            parse("HORIZONTAL-TB", "writing-mode"),
+            Some(PropertyValue::WritingMode(WritingMode::HorizontalTb))
+        );
+        assert_eq!(
+            parse("Vertical-Rl", "writing-mode"),
+            Some(PropertyValue::WritingMode(WritingMode::VerticalRl))
+        );
+        assert_eq!(
+            parse("SIDEWAYS-LR", "writing-mode"),
+            Some(PropertyValue::WritingMode(WritingMode::SidewaysLr))
+        );
+    }
+
+    #[test]
+    fn writing_mode_rejects_unknown_keyword() {
+        assert_eq!(parse("auto", "writing-mode"), None);
+        // `ltr`/`rtl` are `direction`'s keywords, not `writing-mode`'s.
+        assert_eq!(parse("ltr", "writing-mode"), None);
+    }
+
+    #[test]
+    fn writing_mode_rejects_css_wide_keyword() {
+        // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。5
+        // keyword の一覧・理由は `PropertyValue` doc の「CSS-wide keyword」節が
+        // canonical。
+        assert_eq!(parse("inherit", "writing-mode"), None);
+        assert_eq!(parse("initial", "writing-mode"), None);
+        assert_eq!(parse("unset", "writing-mode"), None);
+        assert_eq!(parse("revert", "writing-mode"), None);
+        assert_eq!(parse("revert-layer", "writing-mode"), None);
+    }
+
+    #[test]
+    fn writing_mode_rejects_non_ident() {
+        assert_eq!(parse("16px", "writing-mode"), None);
+        assert_eq!(parse(r#""vertical-rl""#, "writing-mode"), None);
+    }
+
+    #[test]
+    fn writing_mode_key_maps_to_writing_mode_property_key() {
+        let v = PropertyValue::WritingMode(WritingMode::HorizontalTb);
+        assert_eq!(v.key(), PropertyKey::WritingMode);
+        let v = PropertyValue::WritingMode(WritingMode::VerticalRl);
+        assert_eq!(v.key(), PropertyKey::WritingMode);
+    }
+
+    /// [`resolve_writing_mode`]'s whole reason to exist — every one of the 5
+    /// spec keywords collapses to [`WritingMode::HorizontalTb`], not just the
+    /// 4 non-horizontal ones (identity for `HorizontalTb` itself is also
+    /// pinned so a future refactor can't "fix" this into a no-op passthrough
+    /// without a test noticing).
+    #[test]
+    fn resolve_writing_mode_collapses_all_five_keywords_to_horizontal_tb() {
+        for specified in [
+            WritingMode::HorizontalTb,
+            WritingMode::VerticalRl,
+            WritingMode::VerticalLr,
+            WritingMode::SidewaysRl,
+            WritingMode::SidewaysLr,
+        ] {
+            assert_eq!(resolve_writing_mode(specified), WritingMode::HorizontalTb);
+        }
     }
 
     // ── overflow-x / overflow-y / overflow (CSS Overflow 3 §3.1) ──

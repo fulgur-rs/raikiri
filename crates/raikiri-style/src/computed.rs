@@ -20,7 +20,7 @@ use crate::property::{
     GridTemplateAreasValue, Hyphens, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
     OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
     TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_quotes_entries,
+    WritingMode, ZIndexValue, empty_content_list, empty_counter_entries, empty_quotes_entries,
     empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -217,7 +217,7 @@ pub struct RunningTemplate {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / writing_mode / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -460,6 +460,31 @@ pub struct ComputedValues {
     /// page-property-list <https://www.w3.org/TR/css-page-3/#page-property-list>
     /// にも独立に載っており、`@page` context でも意味を持つ。
     pub direction: Direction,
+    /// `writing-mode`。**inherited**、initial: [`WritingMode::HorizontalTb`]
+    /// (CSS Writing Modes 4 §3.2 "Block Flow Direction: the writing-mode
+    /// property" <https://www.w3.org/TR/css-writing-modes-4/#propdef-writing-mode>)。
+    ///
+    /// sibling field: [`direction`](Self::direction) と同じ **inherited** 系 —
+    /// `inherit_from` の inherited block に配置し親から by-value copy
+    /// (`WritingMode` は `Copy`)。
+    ///
+    /// [`direction`](Self::direction) の field doc が引用する CSS Paged Media 3
+    /// Appendix A page-property-list <https://www.w3.org/TR/css-page-3/#page-property-list>
+    /// に、`writing-mode` 自体は **載っていない**。ただし
+    /// [`crate::page::PageCascadeResult::declarations`] doc の「Appendix A は
+    /// 床であって天井ではない」節が挙げる他の property 群 (`overflow-x`/
+    /// `overflow-y` / `DisplayValue` / `PositionValue` / `box-sizing` /
+    /// `counter-reset`/`counter-increment` / `content` / `string-set`) と
+    /// 同じ扱いで、raikiri は `writing-mode` も意図的に `@page` context へ
+    /// 拡張配線している ([`WritingMode`] doc の同節参照)。
+    ///
+    /// **`HorizontalTb` 以外の値がこの field に観測されることは無い** — spec 上の
+    /// computed value は specified keyword をそのまま保持する規定だが、raikiri
+    /// は縦書きレンダリングパイプラインを実装しないため、5 keyword すべてが
+    /// [`crate::property::resolve_writing_mode`] により
+    /// [`WritingMode::HorizontalTb`] に正規化されてからこの field へ
+    /// 書き込まれる ([`WritingMode`] doc の Non-goal 節が canonical rationale)。
+    pub writing_mode: WritingMode,
     /// `text-indent` — first-line indentation of a block container.
     /// **inherited**、initial: [`ComputedLengthPercentage::Px`]`(0.0)` (CSS
     /// Text 3 §8.1 "First Line Indentation: the text-indent property"
@@ -1241,6 +1266,10 @@ impl ComputedValues {
             text_align: TextAlign::Start,
             // CSS Writing Modes 4 §2.1: direction initial is `ltr`。
             direction: Direction::Ltr,
+            // CSS Writing Modes 4 §3.2: writing-mode initial is
+            // `horizontal-tb` (`WritingMode` doc's Non-goal section — the
+            // other 4 keywords never appear in this field regardless).
+            writing_mode: WritingMode::HorizontalTb,
             // CSS Text 3 §8.1: text-indent initial is `0`。
             text_indent: ComputedLengthPercentage::Px(0.0),
             // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
@@ -1683,6 +1712,18 @@ mod tests {
             // CSS Writing Modes 4 §2.1: `Rtl` — initial (`Ltr`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             direction: Direction::Rtl,
+            // CSS Writing Modes 4 §3.2: `VerticalRl` — initial
+            // (`HorizontalTb`) と異なる値。他の field と異なり、これは
+            // **本当は実 cascade から到達不能**な値である
+            // ([`WritingMode`] doc の Non-goal 節 — `resolve_writing_mode` が
+            // 常に `HorizontalTb` へ正規化するため)。ここで敢えて非 initial
+            // 値を置くのは、`inherit_from` が本 field を「素通しコピー」する
+            // 経路に regression が入っても本 helper の他 field と同じ形で
+            // 検出できるようにするため — 期待される挙動は
+            // `assert_eq!(child.writing_mode, parent.writing_mode)`
+            // **ではない** (下記 `inherit_from_copies_inherited_and_resets_non_inherited`
+            // の該当行 doc comment 参照)。
+            writing_mode: WritingMode::VerticalRl,
             // CSS Text 3 §8.1: initial (`0`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             text_indent: ComputedLengthPercentage::Px(9.0),
@@ -1874,7 +1915,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 71 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 72 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -1892,6 +1933,15 @@ mod tests {
         assert_eq!(child.text_align, parent.text_align);
         // CSS Writing Modes 4 §2.1: direction は inherited。
         assert_eq!(child.direction, parent.direction);
+        // CSS Writing Modes 4 §3.2: writing-mode は inherited だが、
+        // **`parent.writing_mode` と等しくなることは期待しない** —
+        // `non_initial_parent` はここに実 cascade 到達不能な `VerticalRl` を
+        // 敢えて置いており (同 helper の doc comment 参照)、
+        // `resolve_writing_mode` は inherit 経由でも常に `HorizontalTb` へ
+        // 正規化する ([`WritingMode`] doc の Non-goal 節参照)。この
+        // assert は「inherit_from が本 field を素通しコピーしていない」こと
+        // 自体が正しい挙動であることを pin する。
+        assert_eq!(child.writing_mode, WritingMode::HorizontalTb);
         // CSS Fonts 4 §2.4: font-style は inherited。
         assert_eq!(child.font_style, parent.font_style);
         // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。

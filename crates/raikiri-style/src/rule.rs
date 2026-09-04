@@ -577,7 +577,10 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // 展開先の longhand を持たない。
         | PropertyValue::Orphans(_)
         | PropertyValue::CustomProperty(_)
-        | PropertyValue::Widows(_) => expand_none(d, push),
+        | PropertyValue::Widows(_)
+        // writing-mode (CSS Writing Modes 4 §3.2) — 同じく展開先の longhand を
+        // 持たない。
+        | PropertyValue::WritingMode(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),

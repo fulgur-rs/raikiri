@@ -6508,6 +6508,15 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::OverflowX(_)
         | PropertyValue::OverflowY(_)
         | PropertyValue::Overflow(_)
+        // `writing-mode` joins this arm for the same reason `overflow-x`/
+        // `overflow-y`/`overflow` do — its `HorizontalTb` collapse
+        // (`resolve_writing_mode`, CSS Writing Modes 4 §3.2) depends only on
+        // its own specified value, never on the inheritance parent, so there
+        // is nothing for this function (phase 2) to resolve. It is applied
+        // in phase 3 instead (`crate::page::absolutize_in_page_context`,
+        // mirroring the element path's `SpecifiedValues::absolutize_with`).
+        // See `WritingMode` doc's Non-goal section.
+        | PropertyValue::WritingMode(_)
         // `text-decoration-line`/`-style`/`-color` (and the `text-decoration`
         // shorthand, structurally unreachable here per
         // `crate::rule::expand_shorthand_into`) carry no length and do not
@@ -7275,6 +7284,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // と同じ shape、length を運ばないため絶対化不要)。
         PropertyValue::Orphans(n) => target.orphans = n,
         PropertyValue::Widows(n) => target.widows = n,
+        // CSS Writing Modes 4 §3.2. inherited, simple assignment — the
+        // `HorizontalTb` collapse for the 4 non-horizontal keywords does
+        // *not* happen here (`resolve_writing_mode` runs later, in
+        // `SpecifiedValues::absolutize_with`, same "staging isn't resolved
+        // yet" split `TextAlign`'s `match-parent` uses). `target.writing_mode`
+        // is a `SpecifiedValues` field, not `ComputedValues` — see
+        // `WritingMode` doc's Non-goal section.
+        PropertyValue::WritingMode(v) => target.writing_mode = v,
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -13972,6 +13989,20 @@ mod tests {
 
     // ── orphans / widows wire-through (CSS Fragmentation Module Level 3
     //    §3.3) ──
+
+    // ── writing-mode wire-through (CSS Writing Modes 4 §3.2) ──
+
+    #[test]
+    fn writing_mode_wired_through_cascade_from_inline_style() {
+        use crate::property::WritingMode;
+        let cv = cascade_doc("", "p", Some("writing-mode: vertical-rl"));
+        // `apply_value`'s `WritingMode` arm assigns the raw specified
+        // keyword; the `HorizontalTb` collapse for non-horizontal keywords
+        // happens later in `absolutize_with` (see `apply_value`'s
+        // `PropertyValue::WritingMode` arm doc comment), so the computed
+        // value here is always `HorizontalTb` even for `vertical-rl`.
+        assert_eq!(cv.writing_mode, WritingMode::HorizontalTb);
+    }
 
     #[test]
     fn orphans_widows_wired_through_cascade_from_inline_style() {
