@@ -31,18 +31,20 @@ use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderColor, BorderRadius,
-    BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside, ClearValue,
+    BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside, ClearValue, ClipPath,
     ContentAlignmentValue, ContentComponent, CssColor, CssPosition, CssPositionOffset, Direction,
-    DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle,
-    FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks,
-    GridTrackSize, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight, ObjectFit, Outline,
-    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides,
-    TabSize, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
-    TextShadowItem, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
-    WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
-    empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list, initial_font_family,
-    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_match_parent, resolve_writing_mode,
+    DisplayValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
+    GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
+    LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform,
+    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
+    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
+    resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
@@ -430,6 +432,31 @@ pub struct SpecifiedValues {
     /// computed clamps" 節参照)。clamp は phase 3
     /// ([`Self::absolutize_with`]) が行う。
     pub opacity: f32,
+    /// `isolation` の **specified** value — 常に keyword、絶対化不要な素通し
+    /// field (`object_fit` と同じ shape)。
+    pub isolation: Isolation,
+    /// `mix-blend-mode` の **specified** value — `isolation` と同じ shape。
+    pub mix_blend_mode: MixBlendMode,
+    /// `mask-image` の **specified** value — 絶対化不要な素通し field
+    /// (`background_image` と同じ shape — 埋め込まれた `<gradient>` の
+    /// length/angle は本 crate が絶対化しない、[`MaskImage`] doc参照)。
+    pub mask_image: MaskImage,
+    /// `clip-path` の **specified** value — `mask_image` と同じ shape
+    /// (埋め込まれた `<url>` は絶対化しない、[`ClipPath`] doc参照)。
+    pub clip_path: ClipPath,
+    /// `transform` の **specified** value。CSS Transforms Level 1 §4 の
+    /// Computed value は "as specified, but with lengths made absolute" —
+    /// `mask_image`/`filter` の "as specified" (絶対化不要) とは異なり、
+    /// 埋め込まれた `Length` payload (`translate()`/`translateX()`/
+    /// `translateY()` の non-percentage 側) は本来 spec 上絶対化される
+    /// べきだが、本 crate はまだそれを実装していない ([`TransformFunction`]
+    /// doc参照)。`none` は空 list ([`empty_transform_list`]) で表現する。
+    pub transform: Arc<Vec<TransformFunction>>,
+    /// `filter` の **specified** value — `transform` と同じ shape
+    /// (埋め込まれた `Length`/`Angle`/`f32` は絶対化しない、
+    /// [`FilterFunction`] doc参照)。`none` は空 list
+    /// ([`empty_filter_list`]) で表現する。
+    pub filter: Arc<Vec<FilterFunction>>,
 }
 
 impl SpecifiedValues {
@@ -636,6 +663,22 @@ impl SpecifiedValues {
             },
             // CSS Color 4 §3.3: opacity initial は `1`。
             opacity: 1.0,
+            // CSS Compositing and Blending Level 1 §3.4.2: isolation
+            // initial は `auto`。
+            isolation: Isolation::Auto,
+            // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode
+            // initial は `normal`。
+            mix_blend_mode: MixBlendMode::Normal,
+            // CSS Masking Level 1 §7.1: mask-image initial は `none`。
+            mask_image: MaskImage::None,
+            // CSS Masking Level 1 §5.1: clip-path initial は `none`。
+            clip_path: ClipPath::None,
+            // CSS Transforms Level 1 §4: transform initial は `none`
+            // (空 list)。
+            transform: empty_transform_list(),
+            // CSS Filter Effects Level 1 §5: filter initial は `none`
+            // (空 list)。
+            filter: empty_filter_list(),
         }
     }
 
@@ -863,6 +906,20 @@ impl SpecifiedValues {
             },
             // non-inherited (CSS Color 4 §3.3 "Inherited: no").
             opacity: 1.0,
+            // non-inherited (CSS Compositing and Blending Level 1 §3.4.2
+            // "Inherited: no").
+            isolation: Isolation::Auto,
+            // non-inherited (CSS Compositing and Blending Level 1 §3.4.1
+            // "Inherited: no").
+            mix_blend_mode: MixBlendMode::Normal,
+            // non-inherited (CSS Masking Level 1 §7.1 "Inherited: no").
+            mask_image: MaskImage::None,
+            // non-inherited (CSS Masking Level 1 §5.1 "Inherited: no").
+            clip_path: ClipPath::None,
+            // non-inherited (CSS Transforms Level 1 §4 "Inherited: no").
+            transform: empty_transform_list(),
+            // non-inherited (CSS Filter Effects Level 1 §5 "Inherited: no").
+            filter: empty_filter_list(),
         }
     }
 
@@ -1480,6 +1537,45 @@ impl SpecifiedValues {
             // direct-construction case, only against the pipeline's own
             // out-of-range values.
             opacity: self.opacity.clamp(0.0, 1.0),
+            // CSS Compositing and Blending Level 1 §3.4.2: always a
+            // keyword, no phase-3 transform — 素通し (`object_fit` と同じ
+            // shape)。
+            isolation: self.isolation,
+            // CSS Compositing and Blending Level 1 §3.4.1: same shape as
+            // `isolation` above.
+            mix_blend_mode: self.mix_blend_mode,
+            // CSS Masking Level 1 §7.1: this crate never absolutizes a
+            // `mask-image` gradient's embedded lengths (`MaskImage` doc's
+            // scope note, same reasoning as `background_image` below) —
+            // 素通し。
+            mask_image: self.mask_image,
+            // CSS Masking Level 1 §5.1: same shape as `mask_image` above
+            // (`ClipPath` doc's scope note).
+            clip_path: self.clip_path,
+            // CSS Transforms Level 1 §4: Computed value is "as specified,
+            // but with lengths made absolute" — this field's `<length>`
+            // payload (`translate()`'s non-percentage half, `matrix()`'s
+            // implicit-`<number>` slots aside) is therefore spec-required
+            // to be absolutized here, unlike `filter` below (whose own
+            // Computed value is plain "as specified", no such
+            // requirement). This crate does not yet do so — simply
+            // unimplemented, not blocked on a missing input: the same
+            // partial-absolutize shape already exists for `<length-
+            // percentage>` fields elsewhere (`resolve_css_position`/
+            // `resolve_length_percentage`, used by `background-position`/
+            // `object-position`, absolutizes the length half against
+            // font-size/root-font-size while leaving the percentage half
+            // symbolic for a later box-size-relative resolution) and
+            // could be applied here the same way — see
+            // `TransformFunction` doc's "Absolutization gap" section.
+            transform: self.transform,
+            // CSS Filter Effects Level 1 §5: unlike `transform` above,
+            // this property's own Computed value is plain "as specified"
+            // — no absolutization is spec-required here at all
+            // (`FilterFunction` doc's "Range restriction is reject, not
+            // clamp" section already establishes this same "as specified"
+            // fact for a different purpose) — 素通し。
+            filter: self.filter,
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -1522,6 +1618,7 @@ pub(crate) const INITIAL_BORDER: Border = Border {
 mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
+    use crate::property::GeometryBox;
     use crate::property::TextShadowColor;
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
@@ -1604,6 +1701,60 @@ mod tests {
                 .opacity,
             0.0
         );
+    }
+
+    /// CSS Compositing and Blending Level 1 §3.4.1/§3.4.2: どちらも常に
+    /// keyword で、`finalize` は素通しするだけ (`opacity` のような
+    /// range-clamp transform は無い)。
+    #[test]
+    fn isolation_and_mix_blend_mode_pass_through_finalize_unchanged() {
+        let specified = SpecifiedValues {
+            isolation: Isolation::Isolate,
+            mix_blend_mode: MixBlendMode::Multiply,
+            ..SpecifiedValues::initial()
+        };
+        let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
+        assert_eq!(computed.isolation, Isolation::Isolate);
+        assert_eq!(computed.mix_blend_mode, MixBlendMode::Multiply);
+    }
+
+    /// CSS Masking Level 1 §7.1/§5.1: both always specified-layer data
+    /// (`MaskImage`/`ClipPath` doc's scope notes) — `finalize` moves the
+    /// value through unchanged, same shape as
+    /// `isolation_and_mix_blend_mode_pass_through_finalize_unchanged`
+    /// above.
+    #[test]
+    fn mask_image_and_clip_path_pass_through_finalize_unchanged() {
+        let specified = SpecifiedValues {
+            mask_image: MaskImage::Url("mask.svg".to_string()),
+            clip_path: ClipPath::GeometryBox(GeometryBox::PaddingBox),
+            ..SpecifiedValues::initial()
+        };
+        let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
+        assert_eq!(computed.mask_image, MaskImage::Url("mask.svg".to_string()));
+        assert_eq!(
+            computed.clip_path,
+            ClipPath::GeometryBox(GeometryBox::PaddingBox)
+        );
+    }
+
+    /// CSS Transforms Level 1 §4 / CSS Filter Effects Level 1 §5: both
+    /// always specified-layer data (`TransformFunction`/`FilterFunction`
+    /// doc's scope notes) — `finalize` moves the value through unchanged,
+    /// same shape as
+    /// `mask_image_and_clip_path_pass_through_finalize_unchanged` above.
+    #[test]
+    fn transform_and_filter_pass_through_finalize_unchanged() {
+        let transform = Arc::new(vec![TransformFunction::TranslateX(Length::Em(2.0))]);
+        let filter = Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]);
+        let specified = SpecifiedValues {
+            transform: transform.clone(),
+            filter: filter.clone(),
+            ..SpecifiedValues::initial()
+        };
+        let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
+        assert_eq!(computed.transform, transform);
+        assert_eq!(computed.filter, filter);
     }
 
     // -----------------------------------------------------------------
@@ -1796,6 +1947,21 @@ mod tests {
             // CSS Color 4 §3.3: non-inherited なので initial (`1`) と
             // 異なる値にしておく。
             opacity: 0.25,
+            // CSS Compositing and Blending Level 1 §3.4.2: non-inherited
+            // なので initial (`auto`) と異なる値にしておく。
+            isolation: Isolation::Isolate,
+            // CSS Compositing and Blending Level 1 §3.4.1: non-inherited
+            // なので initial (`normal`) と異なる値にしておく。
+            mix_blend_mode: MixBlendMode::Multiply,
+            // CSS Masking Level 1 §7.1/§5.1: 両方 non-inherited なので
+            // initial (`none`) と異なる値にしておく。
+            mask_image: MaskImage::Url("mask.svg".to_string()),
+            clip_path: ClipPath::GeometryBox(GeometryBox::PaddingBox),
+            // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5:
+            // 両方 non-inherited なので initial (`none` = 空 list) と
+            // 異なる値にしておく。
+            transform: Arc::new(vec![TransformFunction::TranslateX(Length::Em(2.0))]),
+            filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -1966,6 +2132,17 @@ mod tests {
         assert_eq!(child.object_position, initial.object_position);
         // CSS Color 4 §3.3: opacity は non-inherited。
         assert_eq!(child.opacity, initial.opacity);
+        // CSS Compositing and Blending Level 1 §3.4.1/§3.4.2: 両方
+        // non-inherited。
+        assert_eq!(child.isolation, initial.isolation);
+        assert_eq!(child.mix_blend_mode, initial.mix_blend_mode);
+        // CSS Masking Level 1 §7.1/§5.1: 両方 non-inherited。
+        assert_eq!(child.mask_image, initial.mask_image);
+        assert_eq!(child.clip_path, initial.clip_path);
+        // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5: 両方
+        // non-inherited。
+        assert_eq!(child.transform, initial.transform);
+        assert_eq!(child.filter, initial.filter);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は

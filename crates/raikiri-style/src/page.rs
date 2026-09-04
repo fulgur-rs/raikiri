@@ -3158,7 +3158,45 @@ fn absolutize_in_page_context(
         // `object-position` (§5.2) does carry `<length-percentage>` (reuses
         // `CssPosition`, `background-position`'s type) and gets its own
         // transform arm below, next to `BackgroundPosition`.
-        | PropertyValue::ObjectFit(_)) => v,
+        | PropertyValue::ObjectFit(_)
+        // `isolation` (CSS Compositing and Blending Level 1 §3.4.2) /
+        // `mix-blend-mode` (§3.4.1) — keyword-only payloads, same shape as
+        // `ObjectFit` above.
+        | PropertyValue::Isolation(_)
+        | PropertyValue::MixBlendMode(_)
+        // `mask-image` (CSS Masking Level 1 §7.1) — `None`/`Url(String)`
+        // carry no length payload; `Gradient(..)` does, but this crate
+        // never absolutizes it (same reasoning as `BackgroundImage` above,
+        // `MaskImage` doc's scope note).
+        | PropertyValue::MaskImage(_)
+        // `clip-path` (§5.1) — `None`/`Url(String)`/`GeometryBox(..)` all
+        // carry no length payload (`ClipPath` doc's scope note — no
+        // `<basic-shape>` support, so no embedded length at all).
+        | PropertyValue::ClipPath(_)
+        // `transform` (CSS Transforms Level 1 §4) — embeds `Length`/
+        // `Angle` (e.g. `translate()`'s `<length-percentage>`). This
+        // property's own Computed value is "as specified, but with
+        // lengths made absolute", so the non-percentage half of each
+        // `<length-percentage>` payload (and `<length>`-only slots) is
+        // spec-required to be absolutized — this crate simply has not
+        // implemented that yet (`resolve_css_position`'s existing
+        // length-absolutize/percentage-stays-symbolic split, used by
+        // `background-position`/`object-position`, is the applicable
+        // precedent once someone does). The percentage half genuinely
+        // cannot resolve without the element's own box size, an input no
+        // phase-3 pass threads through, so it stays symbolic regardless
+        // (`TransformFunction` doc's "Absolutization gap" section tracks
+        // this).
+        | PropertyValue::Transform(_)
+        // `filter` (§5) — unlike `transform` above, this property's own
+        // Computed value is plain "as specified": no absolutization is
+        // spec-required at all, so passing every embedded `Length`/
+        // `Angle` through untouched (including `drop-shadow()`'s, reused
+        // from `TextShadowItem`) is not a gap, just this property's
+        // actual computed-value definition (`FilterFunction` doc's "Range
+        // restriction is reject, not clamp" section establishes the same
+        // "as specified" fact for a different purpose).
+        | PropertyValue::Filter(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -3684,18 +3722,19 @@ mod tests {
     use crate::property::{
         AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
         BackgroundRepeatKeyword, BackgroundShorthand, BorderRadius, BoxShadowItem, BoxSizing,
-        BreakBetween, BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor,
-        CustomProperty, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue,
-        FontStyle, FontVariantCaps, FontWeightValue, GridAutoFlowValue, GridInflexibleBreadth,
-        GridLineShorthand, GridLineValue, GridRepeatCount, GridTemplateAreaEntry,
-        GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth,
-        GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Length,
-        LengthOrAuto, LengthOrNormal, LineHeight, ObjectFit, Outline, OutlineStyle, OverflowValue,
+        BreakBetween, BreakInside, ClearValue, ClipPath, ContentAlignmentValue, ContentComponent,
+        CssColor, CustomProperty, Direction, DisplayValue, FilterFunction, FlexDirectionValue,
+        FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, FontWeightValue, GeometryBox,
+        GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
+        GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue,
+        GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent,
+        GridTrackRepeat, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
+        LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle, OverflowValue,
         OverflowWrap, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
         PositionValue, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextDecorationColor,
         TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextShadowColor,
-        TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
-        ZIndexValue,
+        TextTransform, TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+        WordBreak, WritingMode, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;
@@ -6398,11 +6437,29 @@ mod tests {
     /// transform side because it carries `<length-percentage>` — reuses
     /// `CssPosition`/the `css_position` helper, same shape as
     /// `BackgroundPosition`).
+    /// 75 → 77 (`Isolation` / `MixBlendMode`, CSS Compositing and Blending
+    /// Level 1 §3.4.2/§3.4.1 — both keyword-only, carry no length payload,
+    /// same reasoning as `ObjectFit` above. Unlike `Opacity`, which sits
+    /// beside these two in the enum but gets its own dedicated transform
+    /// arm below (a real `[0,1]` clamp), neither `isolation` nor
+    /// `mix-blend-mode` has any phase-3 work at all).
+    /// 77 → 79 (`MaskImage` / `ClipPath`, CSS Masking Level 1 §7.1/§5.1 —
+    /// both carry `<url>`/keyword-shaped payloads this crate never
+    /// absolutizes (`MaskImage`/`ClipPath` doc's scope notes), same
+    /// identity-pass-through reasoning as `BackgroundImage` above).
+    /// 79 → 81 (`Transform` / `Filter`, CSS Transforms Level 1 §4 / CSS
+    /// Filter Effects Level 1 §5 — both currently pass through unchanged,
+    /// but not for the same reason: `filter`'s own Computed value is "as
+    /// specified" so this is simply correct, while `transform`'s is "as
+    /// specified, but with lengths made absolute" so this is a real,
+    /// currently-unimplemented gap — see the identity-pass-through arm's
+    /// own doc comment above and `TransformFunction`/`FilterFunction`
+    /// doc's scope notes for the full distinction).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 75;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 81;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6987,6 +7044,30 @@ mod tests {
         // `PHASE_3_PASS_THROUGH_VARIANTS`, same load-bearing-fixture
         // convention as that test's own `Solid`/`Hidden` choices).
         Opacity => PropertyValue::Opacity(2.0),
+        // CSS Compositing and Blending Level 1 §3.4.2 — non-initial
+        // (`isolate`, not `auto`) so a would-be pass-through regression
+        // (accidentally routing this arm through a transform) is visible.
+        Isolation => PropertyValue::Isolation(Isolation::Isolate),
+        // CSS Compositing and Blending Level 1 §3.4.1 — non-initial
+        // (`multiply`, not `normal`), same rationale as `Isolation` above.
+        MixBlendMode => PropertyValue::MixBlendMode(MixBlendMode::Multiply),
+        // CSS Masking Level 1 §7.1 — non-initial (`Url`, not `None`).
+        MaskImage => PropertyValue::MaskImage(MaskImage::Url("mask.svg".to_string())),
+        // CSS Masking Level 1 §5.1 — non-initial (`GeometryBox`, not
+        // `None`).
+        ClipPath => PropertyValue::ClipPath(ClipPath::GeometryBox(GeometryBox::PaddingBox)),
+        // CSS Transforms Level 1 §4 — non-initial (a `translate()` with
+        // an `Em`/`Percent` payload, not empty-list `none`) so this
+        // sample would exercise a would-be phase-3 absolutization of the
+        // `Em` half if one existed — none does yet (`TransformFunction`
+        // doc's "Absolutization gap" section).
+        Transform => PropertyValue::Transform(Arc::new(vec![TransformFunction::Translate(
+            Length::Em(2.0),
+            Length::Percent(50.0),
+        )])),
+        // CSS Filter Effects Level 1 §5 — non-initial (a `blur()` with an
+        // `Em` payload), same rationale as `Transform` above.
+        Filter => PropertyValue::Filter(Arc::new(vec![FilterFunction::Blur(Length::Em(1.0))])),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -7232,6 +7313,12 @@ mod tests {
         ObjectFit,
         ObjectPosition,
         Opacity,
+        Isolation,
+        MixBlendMode,
+        MaskImage,
+        ClipPath,
+        Transform,
+        Filter,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -7715,6 +7802,43 @@ mod tests {
             // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that
             // is accounted for.
             | PropertyValue::Opacity(_)
+            // `isolation` / `mix-blend-mode` (CSS Compositing and Blending
+            // Level 1 §3.4.2/§3.4.1) carry bare keyword payloads (no
+            // `Length` at all, unlike `Opacity`'s `f32`) — always `None`.
+            | PropertyValue::Isolation(_)
+            | PropertyValue::MixBlendMode(_)
+            // `mask-image` (CSS Masking Level 1 §7.1) — `Gradient(..)` can
+            // carry `<length-percentage>`/`<angle>` internally, but this
+            // detector reports `None` unconditionally regardless: this
+            // crate deliberately never routes `MaskImage` through phase 3
+            // at all (`absolutize_in_page_context`'s own pass-through arm,
+            // `MaskImage` doc's scope note) — same treatment as
+            // `BackgroundImage` above, for the same reason.
+            | PropertyValue::MaskImage(_)
+            // `clip-path` (§5.1) — no embedded length at all (no
+            // `<basic-shape>` support, `ClipPath` doc's scope note), so
+            // `None` here needs no `BackgroundImage`-style caveat.
+            | PropertyValue::ClipPath(_)
+            // `transform` (CSS Transforms Level 1 §4) / `filter` (§5) —
+            // both carry `Length`/`Angle`/`f32` payloads (e.g.
+            // `translate()`'s `<length-percentage>`, `blur()`'s
+            // `<length>`), but this detector reports `None`
+            // unconditionally for both. For `filter` that is simply
+            // correct (its Computed value is "as specified", no
+            // absolutization is spec-required at all). For `transform`
+            // it is *not* yet correct — its own Computed value is "as
+            // specified, but with lengths made absolute", so this
+            // property's length payload genuinely is unrouted residue
+            // this crate has not implemented absolutizing yet (unlike
+            // `MaskImage`/`BackgroundImage` above, whose "never
+            // absolutized, by design" framing is accurate); tracked by
+            // `TransformFunction` doc's "Absolutization gap" section, not
+            // by this detector, since raw-length-residue tracking here is
+            // scoped to catching phase-2/phase-3 wiring bugs in
+            // properties phase 3 already claims to transform, not to
+            // flagging properties phase 3 doesn't touch at all yet.
+            | PropertyValue::Transform(_)
+            | PropertyValue::Filter(_)
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)

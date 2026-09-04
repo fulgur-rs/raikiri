@@ -6800,6 +6800,28 @@ pub(crate) fn resolve_against_inherited(
         // (`crate::specified::SpecifiedValues::absolutize_with`), same
         // split `FlexGrow`/`ZIndex` use for their own phase-3-only work.
         | PropertyValue::Opacity(_)
+        // isolation (CSS Compositing and Blending Level 1 §3.4.2) /
+        // mix-blend-mode (§3.4.1) — both non-inherited, bare keyword
+        // payloads with no phase-2 dependency, same shape as `ObjectFit`
+        // above.
+        | PropertyValue::Isolation(_)
+        | PropertyValue::MixBlendMode(_)
+        // mask-image (CSS Masking Level 1 §7.1) / clip-path (§5.1) —
+        // non-inherited, `<url>`/`<gradient>`/`<geometry-box>` payloads
+        // that don't depend on the inheritance parent — nothing for phase
+        // 2 to resolve here, same as `BackgroundImage` above (neither
+        // crate absolutizes their embedded lengths at all — see
+        // `MaskImage`/`ClipPath` doc's scope notes).
+        | PropertyValue::MaskImage(_)
+        | PropertyValue::ClipPath(_)
+        // transform (CSS Transforms Level 1 §4) / filter (CSS Filter
+        // Effects Level 1 §5) — non-inherited, embedded `Length`/`Angle`/
+        // `f32` payloads that don't depend on the inheritance parent —
+        // nothing for phase 2 to resolve here, same as `MaskImage`/
+        // `ClipPath` above (neither absolutizes at all, see
+        // `TransformFunction`/`FilterFunction` doc's scope notes).
+        | PropertyValue::Transform(_)
+        | PropertyValue::Filter(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)) => v,
     })
@@ -7488,6 +7510,21 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `SpecifiedValues::absolutize_with` (phase 3), not at winner
         // application time.
         PropertyValue::Opacity(v) => target.opacity = v,
+        // CSS Compositing and Blending Level 1 §3.4.2. non-inherited,
+        // keyword-only — simple assignment.
+        PropertyValue::Isolation(v) => target.isolation = v,
+        // CSS Compositing and Blending Level 1 §3.4.1. non-inherited,
+        // keyword-only — simple assignment.
+        PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
+        // CSS Masking Level 1 §7.1/§5.1. non-inherited — simple assignment,
+        // no phase-3 transform (`MaskImage`/`ClipPath` doc's scope notes).
+        PropertyValue::MaskImage(v) => target.mask_image = v,
+        PropertyValue::ClipPath(v) => target.clip_path = v,
+        // CSS Transforms Level 1 §4 / CSS Filter Effects Level 1 §5.
+        // non-inherited — simple assignment, no phase-3 transform
+        // (`TransformFunction`/`FilterFunction` doc's scope notes).
+        PropertyValue::Transform(v) => target.transform = v,
+        PropertyValue::Filter(v) => target.filter = v,
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -14538,6 +14575,184 @@ mod tests {
         assert_eq!(over.opacity, 1.0);
         let under = cascade_doc("", "div", Some("opacity: -1e40"));
         assert_eq!(under.opacity, 0.0);
+    }
+
+    // ── isolation / mix-blend-mode wire-through (CSS Compositing and
+    // Blending Level 1 §3.4.1/§3.4.2) ──
+
+    #[test]
+    fn isolation_wired_through_cascade_from_inline_style() {
+        use crate::property::Isolation;
+        let cv = cascade_doc("", "div", Some("isolation: isolate"));
+        assert_eq!(cv.isolation, Isolation::Isolate);
+    }
+
+    #[test]
+    fn isolation_defaults_to_auto_without_declaration() {
+        use crate::property::Isolation;
+        let cv = cascade_doc("", "div", None);
+        assert_eq!(cv.isolation, Isolation::Auto);
+    }
+
+    #[test]
+    fn isolation_is_non_inherited() {
+        use crate::property::Isolation;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("isolation: isolate"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].isolation, Isolation::Isolate);
+        assert_eq!(r.computed[span].isolation, Isolation::Auto);
+    }
+
+    #[test]
+    fn mix_blend_mode_wired_through_cascade_from_inline_style() {
+        use crate::property::MixBlendMode;
+        let cv = cascade_doc("", "div", Some("mix-blend-mode: multiply"));
+        assert_eq!(cv.mix_blend_mode, MixBlendMode::Multiply);
+    }
+
+    #[test]
+    fn mix_blend_mode_defaults_to_normal_without_declaration() {
+        use crate::property::MixBlendMode;
+        let cv = cascade_doc("", "div", None);
+        assert_eq!(cv.mix_blend_mode, MixBlendMode::Normal);
+    }
+
+    #[test]
+    fn mix_blend_mode_is_non_inherited() {
+        use crate::property::MixBlendMode;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("mix-blend-mode: screen"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].mix_blend_mode, MixBlendMode::Screen);
+        assert_eq!(r.computed[span].mix_blend_mode, MixBlendMode::Normal);
+    }
+
+    // ── mask-image / clip-path wire-through (CSS Masking Level 1
+    // §7.1/§5.1) ──
+
+    #[test]
+    fn mask_image_wired_through_cascade_from_inline_style() {
+        use crate::property::MaskImage;
+        let cv = cascade_doc("", "div", Some("mask-image: url(mask.svg)"));
+        assert_eq!(cv.mask_image, MaskImage::Url("mask.svg".to_string()));
+    }
+
+    #[test]
+    fn mask_image_defaults_to_none_without_declaration() {
+        use crate::property::MaskImage;
+        let cv = cascade_doc("", "div", None);
+        assert_eq!(cv.mask_image, MaskImage::None);
+    }
+
+    #[test]
+    fn mask_image_is_non_inherited() {
+        use crate::property::MaskImage;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("mask-image: url(mask.svg)"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].mask_image,
+            MaskImage::Url("mask.svg".to_string())
+        );
+        assert_eq!(r.computed[span].mask_image, MaskImage::None);
+    }
+
+    #[test]
+    fn clip_path_wired_through_cascade_from_inline_style() {
+        use crate::property::{ClipPath, GeometryBox};
+        let cv = cascade_doc("", "div", Some("clip-path: padding-box"));
+        assert_eq!(cv.clip_path, ClipPath::GeometryBox(GeometryBox::PaddingBox));
+    }
+
+    #[test]
+    fn clip_path_defaults_to_none_without_declaration() {
+        use crate::property::ClipPath;
+        let cv = cascade_doc("", "div", None);
+        assert_eq!(cv.clip_path, ClipPath::None);
+    }
+
+    #[test]
+    fn clip_path_is_non_inherited() {
+        use crate::property::{ClipPath, GeometryBox};
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("clip-path: border-box"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].clip_path,
+            ClipPath::GeometryBox(GeometryBox::BorderBox)
+        );
+        assert_eq!(r.computed[span].clip_path, ClipPath::None);
+    }
+
+    // ── transform / filter wire-through (CSS Transforms Level 1 §4, CSS
+    // Filter Effects Level 1 §5) ──
+
+    #[test]
+    fn transform_wired_through_cascade_from_inline_style() {
+        use crate::property::{Angle, TransformFunction};
+        let cv = cascade_doc("", "div", Some("transform: rotate(45deg)"));
+        assert_eq!(*cv.transform, vec![TransformFunction::Rotate(Angle(45.0))]);
+    }
+
+    #[test]
+    fn transform_defaults_to_none_without_declaration() {
+        let cv = cascade_doc("", "div", None);
+        assert!(cv.transform.is_empty());
+    }
+
+    #[test]
+    fn transform_is_non_inherited() {
+        use crate::property::{Angle, TransformFunction};
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("transform: rotate(45deg)"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            *r.computed[p].transform,
+            vec![TransformFunction::Rotate(Angle(45.0))]
+        );
+        assert!(r.computed[span].transform.is_empty());
+    }
+
+    #[test]
+    fn filter_wired_through_cascade_from_inline_style() {
+        use crate::property::FilterFunction;
+        let cv = cascade_doc("", "div", Some("filter: blur(2px)"));
+        assert_eq!(
+            *cv.filter,
+            vec![FilterFunction::Blur(crate::property::Length::Px(2.0))]
+        );
+    }
+
+    #[test]
+    fn filter_defaults_to_none_without_declaration() {
+        let cv = cascade_doc("", "div", None);
+        assert!(cv.filter.is_empty());
+    }
+
+    #[test]
+    fn filter_is_non_inherited() {
+        use crate::property::FilterFunction;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("filter: blur(2px)"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            *r.computed[p].filter,
+            vec![FilterFunction::Blur(crate::property::Length::Px(2.0))]
+        );
+        assert!(r.computed[span].filter.is_empty());
     }
 
     // ── background-image wire-through (CSS Backgrounds and Borders 3 §2.3) ──

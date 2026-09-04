@@ -604,7 +604,20 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // (shorthand を持たない standalone property)。
         | PropertyValue::ObjectFit(_)
         | PropertyValue::ObjectPosition(_)
-        | PropertyValue::Opacity(_) => expand_none(d, push),
+        | PropertyValue::Opacity(_)
+        // isolation / mix-blend-mode (CSS Compositing and Blending Level 1
+        // §3.4.2/§3.4.1) — same shape as object-fit/opacity above.
+        | PropertyValue::Isolation(_)
+        | PropertyValue::MixBlendMode(_)
+        // mask-image / clip-path (CSS Masking Level 1 §7.1/§5.1) — same
+        // shape as isolation/mix-blend-mode above (`mask`/`mask-border`
+        // shorthands stay unimplemented, pre-existing silent drop).
+        | PropertyValue::MaskImage(_)
+        | PropertyValue::ClipPath(_)
+        // transform (CSS Transforms Level 1 §4) / filter (CSS Filter
+        // Effects Level 1 §5) — same shape as mask-image/clip-path above.
+        | PropertyValue::Transform(_)
+        | PropertyValue::Filter(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),
