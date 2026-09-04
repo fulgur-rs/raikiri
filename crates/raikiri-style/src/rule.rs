@@ -10,9 +10,10 @@ use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
 use crate::property::{
-    Border, DeferredValue, FlexShorthand, GapShorthand, GridLineShorthand, Length, LengthOrAuto,
-    Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
-    PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand, parse_value,
+    BackgroundShorthand, Border, DeferredValue, FlexShorthand, GapShorthand, GridLineShorthand,
+    Length, LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand,
+    PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand,
+    parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -588,8 +589,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // background-repeat / background-attachment / background-clip /
         // background-origin / background-size / background-position /
         // background-image (CSS Backgrounds and Borders 3 §2.3-§2.9) —
-        // 同じく展開先の longhand を持たない (`background` shorthand 自体は
-        // 別 task の scope)。
+        // 同じく展開先の longhand を持たない (`background` shorthand は
+        // 別 variant `PropertyValue::Background` で、下の
+        // `expand_background` arm が展開する)。
         | PropertyValue::BackgroundRepeat(_)
         | PropertyValue::BackgroundAttachment(_)
         | PropertyValue::BackgroundClip(_)
@@ -612,6 +614,14 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         }
         PropertyValue::PlaceItems(p) => expand_place_items(p, d.important, push),
         PropertyValue::PlaceSelf(p) => expand_place_self(p, d.important, push),
+        // `BackgroundShorthand` holds a `BackgroundImage` field, which is not
+        // `Copy` (it can carry a `Gradient`) — same reason `GridLineShorthand`
+        // needs `ref` binding here (`GridRow` arm's comment above), not the
+        // `Sides<..>`/`FlexShorthand`/`GapShorthand` by-value pattern the
+        // other shorthand arms use.
+        PropertyValue::Background(ref shorthand) => {
+            expand_background(shorthand, d.important, push)
+        }
     }
 }
 
@@ -685,6 +695,23 @@ fn expand_deferred(
         PropertyKey::GridColumn => &[PropertyKey::GridColumnStart, PropertyKey::GridColumnEnd],
         PropertyKey::PlaceItems => &[PropertyKey::AlignItems, PropertyKey::JustifyItems],
         PropertyKey::PlaceSelf => &[PropertyKey::AlignSelf, PropertyKey::JustifySelf],
+        // Order here is `BackgroundShorthand`'s own field order
+        // (color/image/repeat/attachment/position/size/clip/origin) — same
+        // "grouped by the shorthand's own natural order" shape as `Border`
+        // (grouped per-side, not per-`PropertyKey`-declaration-order) and
+        // `MarginInline`/`PaddingInline`/`PlaceContent` above. Safe because
+        // each key still lands in its own disjoint `SpecifiedValues` field,
+        // so the order this slice is walked in does not affect the result.
+        PropertyKey::Background => &[
+            PropertyKey::BackgroundColor,
+            PropertyKey::BackgroundImage,
+            PropertyKey::BackgroundRepeat,
+            PropertyKey::BackgroundAttachment,
+            PropertyKey::BackgroundPosition,
+            PropertyKey::BackgroundSize,
+            PropertyKey::BackgroundClip,
+            PropertyKey::BackgroundOrigin,
+        ],
         _ => return expand_none(d, push),
     };
 
@@ -1074,6 +1101,51 @@ fn expand_outline(outline: Outline, important: bool, mut push: impl FnMut(Declar
     });
     push(Declaration {
         value: PropertyValue::OutlineColor(outline.color),
+        important,
+    });
+}
+
+/// `background` shorthand を 8 longhand (color/image/repeat/attachment/
+/// position/size/clip/origin) に展開する cold helper
+/// ([`BackgroundShorthand`] doc 参照)。`image` は `Copy` ではないため
+/// `.clone()` する — `expand_grid_row`/`expand_grid_column` が `GridLineValue`
+/// の `Named`/`NamedLine` 成分に対して行うのと同じ理由。
+#[inline(never)]
+fn expand_background(
+    shorthand: &BackgroundShorthand,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::BackgroundColor(shorthand.color),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BackgroundImage(shorthand.image.clone()),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BackgroundRepeat(shorthand.repeat),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BackgroundAttachment(shorthand.attachment),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BackgroundPosition(shorthand.position),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BackgroundSize(shorthand.size),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BackgroundClip(shorthand.clip),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BackgroundOrigin(shorthand.origin),
         important,
     });
 }

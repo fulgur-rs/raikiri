@@ -5108,6 +5108,127 @@ pub enum BackgroundSize {
     Contain,
 }
 
+/// `background` shorthand の parse 結果を一時的に保持する carrier。
+///
+/// CSS Backgrounds and Borders 3 §2.10 "Backgrounds Shorthand: the
+/// background property"
+/// <https://www.w3.org/TR/css-backgrounds-3/#the-background>。spec 本文
+/// verbatim: "The background property is a shorthand property for setting
+/// most background properties at the same place in the style sheet. […]
+/// Given a valid declaration, for each layer the shorthand first sets the
+/// corresponding value of each of background-image, background-position,
+/// background-size, background-repeat, background-origin, background-clip
+/// and background-attachment to that property's initial value, then assigns
+/// any explicit values specified for this layer in the declaration. Finally
+/// background-color is set to the specified color, if any, else set to its
+/// initial value."
+///
+/// Grammar (single layer — this crate's scope carving, see below):
+///
+/// ```text
+/// <final-bg-layer> = <bg-image> || <bg-position> [ / <bg-size> ]? ||
+///                     <repeat-style> || <attachment> || <visual-box> ||
+///                     <visual-box> || <'background-color'>
+/// ```
+///
+/// `<bg-position> [ / <bg-size> ]?` is a single `||` alternative, not two
+/// independently-orderable ones — `<bg-size>` may only follow a position,
+/// separated by a literal `/` ([`parse_background_position_and_size`], same
+/// fixed-pair shape as `<grid-line> [ / <grid-line> ]?`,
+/// [`parse_grid_line_shorthand`]).
+///
+/// `<visual-box>` appears **twice** as independent `||` alternatives. Spec
+/// verbatim: "If one `<visual-box>` value is present then it sets both
+/// background-origin and background-clip to that value. If two values are
+/// present, then the first sets background-origin and the second
+/// background-clip." — i.e. up to 2 occurrences are accepted (in document
+/// order, interleaved freely with the other components), not 2
+/// independently-named slots.
+///
+/// # Single layer only (Non-goal: comma-separated multi-layer)
+///
+/// The full grammar is `<bg-layer>#? , <final-bg-layer>` — a comma-separated
+/// list of layers, where every layer but the last is a `<bg-layer>` (same as
+/// `<final-bg-layer>` minus the `<'background-color'>` alternative — spec
+/// verbatim: "A color is permitted in `<final-bg-layer>`, but not in
+/// `<bg-layer>`."). This crate accepts only a single layer, matching the
+/// existing single-layer scope carving already in place on
+/// [`BackgroundImage`] / [`BackgroundRepeat`] / [`BackgroundSize`] /
+/// [`CssPosition`] etc. Since there is only ever one layer, it is always the
+/// *final* one, so `<'background-color'>` is always a valid component —
+/// there is no separate "non-final" grammar to support.
+///
+/// A comma anywhere in the value is therefore **not** consumed by
+/// [`parse_background_shorthand`] — the parser stops at the first
+/// unrecognized token (the comma) after parsing everything before it, and
+/// the leftover comma (plus any further layers) makes the whole declaration
+/// invalid at the [`crate::rule::parse_declaration_block`] call site's
+/// `expect_exhausted` check, so it is dropped entirely. This is a deliberate
+/// divergence from the spec's per-layer compositing: this crate never
+/// renders a first-layer-only approximation of a multi-layer declaration
+/// (which would be wrong-but-plausible), it rejects the declaration outright
+/// (silently, per this crate's general "invalid declaration → drop" policy).
+///
+/// # Initial value fill (omitted components)
+///
+/// Spec §2.10 verbatim: "the shorthand first sets the corresponding value of
+/// each of background-image, background-position, background-size,
+/// background-repeat, background-origin, background-clip and
+/// background-attachment to that property's initial value, then assigns any
+/// explicit values specified for this layer" — and "background-color is set
+/// to the specified color, if any, else set to its initial value."
+/// [`parse_background_shorthand`] applies this fill for every component
+/// omitted from the declaration, using the same initial values as the 8
+/// standalone longhands ([`crate::specified::SpecifiedValues::initial`]'s
+/// `background_*` fields are the canonical source for each).
+///
+/// [`crate::rule::expand_shorthand_into`] expands
+/// [`PropertyValue::Background`] into the 8 longhand
+/// [`PropertyValue::BackgroundColor`] / [`PropertyValue::BackgroundImage`] /
+/// [`PropertyValue::BackgroundRepeat`] / [`PropertyValue::BackgroundAttachment`] /
+/// [`PropertyValue::BackgroundPosition`] / [`PropertyValue::BackgroundSize`] /
+/// [`PropertyValue::BackgroundClip`] / [`PropertyValue::BackgroundOrigin`]
+/// declarations — margin/padding/border/outline shorthand precedent, same
+/// "parse-time expansion, never reaches cascade" design (details on that
+/// function's doc).
+///
+/// `#[non_exhaustive]` is intentionally omitted, matching sibling
+/// shorthand-only carriers [`GridLineShorthand`] / [`TextDecorationShorthand`]:
+/// this type exists only as [`PropertyValue::Background`]'s payload, is
+/// never held by [`ComputedValues`] / [`SpecifiedValues`], and is not
+/// re-exported by the `raikiri` umbrella crate.
+///
+/// [`ComputedValues`]: crate::computed::ComputedValues
+/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
+#[derive(Clone, Debug, PartialEq)]
+pub struct BackgroundShorthand {
+    /// `background-color` 成分 — 省略時は [`CssColor::TRANSPARENT`] (spec
+    /// initial)。
+    pub color: CssColor,
+    /// `background-image` 成分 — 省略時は [`BackgroundImage::None`] (spec
+    /// initial)。
+    pub image: BackgroundImage,
+    /// `background-repeat` 成分 — 省略時は両軸 [`BackgroundRepeatKeyword::Repeat`]
+    /// (spec initial)。
+    pub repeat: BackgroundRepeat,
+    /// `background-attachment` 成分 — 省略時は [`BackgroundAttachment::Scroll`]
+    /// (spec initial)。
+    pub attachment: BackgroundAttachment,
+    /// `background-position` 成分 — 省略時は `0% 0%` (spec initial)。
+    pub position: CssPosition,
+    /// `background-size` 成分 — 省略時は両軸 `auto` (spec initial)。size は
+    /// position の直後、`/` 区切りでのみ出現しうる ([`Self`] doc の
+    /// position+size 節参照)。
+    pub size: BackgroundSize,
+    /// `background-clip` 成分 — 省略時は [`VisualBox::BorderBox`] (spec
+    /// initial)。`<visual-box>` の出現回数と origin/clip への割り当て規則は
+    /// [`Self`] doc 参照。
+    pub clip: VisualBox,
+    /// `background-origin` 成分 — 省略時は [`VisualBox::PaddingBox`] (spec
+    /// initial)。
+    pub origin: VisualBox,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -6278,6 +6399,20 @@ pub enum PropertyValue {
     /// (CSS Backgrounds 3 §2.3 [`BackgroundImage`] doc 参照)。末尾に追加
     /// (1:1 disjoint な新 field、[`PropertyKey`] doc の判断規則)。
     BackgroundImage(BackgroundImage),
+    /// `background` shorthand — non-inherited。8 成分 (color/image/repeat/
+    /// attachment/position/size/clip/origin) を保持する
+    /// ([`BackgroundShorthand`] doc 参照)。単一 layer のみ対応 (同 doc の
+    /// Non-goal 節)。[`crate::rule::expand_shorthand_into`] が
+    /// [`Self::BackgroundColor`] / [`Self::BackgroundImage`] /
+    /// [`Self::BackgroundRepeat`] / [`Self::BackgroundAttachment`] /
+    /// [`Self::BackgroundPosition`] / [`Self::BackgroundSize`] /
+    /// [`Self::BackgroundClip`] / [`Self::BackgroundOrigin`] の 8 longhand
+    /// に展開する。末尾に追加 (既存 8 longhand は既に別 field を持つため
+    /// 1:1 disjoint ではないが、shorthand は cascade 段に到達しない
+    /// ([`crate::rule::expand_shorthand_into`] doc) ので discriminant 順は
+    /// 意味を持たない — 既存 variant を shift させない配置を優先する、
+    /// [`PropertyKey`] doc の「宣言順は load-bearing」節参照)。
+    Background(BackgroundShorthand),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -6622,6 +6757,11 @@ pub enum PropertyKey {
     // variants carry no per-variant docs per crate convention). 末尾配置の
     // 理由は直前の background-repeat 等と同節参照 (1:1 disjoint な新 field)。
     BackgroundImage,
+    // `background` shorthand (CSS Backgrounds and Borders 3 §2.10、semantics
+    // on the matching PropertyValue::Background variant). 末尾配置の理由は
+    // PropertyValue::Background の doc 参照 — shorthand は cascade 段に
+    // 到達しないため discriminant 順は意味を持たない。
+    Background,
 }
 
 impl PropertyValue {
@@ -6757,6 +6897,7 @@ impl PropertyValue {
             PropertyValue::BackgroundSize(_) => PropertyKey::BackgroundSize,
             PropertyValue::BackgroundPosition(_) => PropertyKey::BackgroundPosition,
             PropertyValue::BackgroundImage(_) => PropertyKey::BackgroundImage,
+            PropertyValue::Background(_) => PropertyKey::Background,
         }
     }
 }
@@ -7140,6 +7281,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-size" => PropertyKey::BackgroundSize,
         "background-position" => PropertyKey::BackgroundPosition,
         "background-image" => PropertyKey::BackgroundImage,
+        "background" => PropertyKey::Background,
         _ => return None,
     })
 }
@@ -7696,6 +7838,11 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Backgrounds and Borders 3 §2.3
         // <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>.
         "background-image" => parse_background_image(input).map(PropertyValue::BackgroundImage),
+        // CSS Backgrounds and Borders 3 §2.10
+        // <https://www.w3.org/TR/css-backgrounds-3/#the-background>. Any-order
+        // `||` fan-out of the 8 longhands above, single layer only
+        // ([`BackgroundShorthand`] doc's Non-goal section).
+        "background" => parse_background_shorthand(input).map(PropertyValue::Background),
         _ => None,
     }
 }
@@ -14160,6 +14307,197 @@ fn parse_background_size(input: &mut Parser<'_, '_>) -> Option<BackgroundSize> {
         .try_parse(parse_background_size_axis_res)
         .unwrap_or(LengthOrAuto::Auto);
     Some(BackgroundSize::Explicit { width, height })
+}
+
+/// `<bg-position> [ / <bg-size> ]?` — the `background` shorthand's
+/// position+size unit ([`BackgroundShorthand`] doc's grammar section).
+/// Unlike the shorthand's other `||` components, position and size are
+/// **not** independently orderable — a size may only follow a position,
+/// separated by a literal `/` (same fixed-pair shape as
+/// [`parse_grid_line_shorthand`]'s `<grid-line> [ / <grid-line> ]?`).
+///
+/// [`parse_css_position`]'s 3 internal alternatives (`branch3`/`branch2`/
+/// `branch1`, see that function's doc) each consume exactly their own
+/// production and stop — they never overrun into tokens that belong to a
+/// later shorthand component. That is what lets this function's caller
+/// ([`parse_background_shorthand`]) safely hand any leftover tokens back to
+/// its own any-order loop instead of treating them as part of the position.
+fn parse_background_position_and_size(
+    input: &mut Parser<'_, '_>,
+) -> Option<(CssPosition, Option<BackgroundSize>)> {
+    let position = parse_css_position(input)?;
+    let size = input
+        .try_parse(|i| -> Result<BackgroundSize, ParseError<'_, ()>> {
+            i.expect_delim('/')?;
+            parse_background_size(i).ok_or_else(|| i.new_custom_error(()))
+        })
+        .ok();
+    Some((position, size))
+}
+
+/// `background` shorthand を parse する ([`BackgroundShorthand`] doc の
+/// grammar 節参照)。
+///
+/// # `||` (any-order) grammar semantics
+///
+/// [`parse_border_shorthand`] と同じ loop 構造: 各 unfilled slot を
+/// `try_parse` で順に試し、成功したら slot を埋めて loop 先頭に戻る。全 slot
+/// 満了、または未 match token に当たったら break — leftover は呼び出し元
+/// (`rule.rs` の declaration parser) の `expect_exhausted` が丸ごと drop する
+/// ([`BackgroundShorthand`] doc の「単一 layer のみ対応」節が、これを使って
+/// comma-separated 複数 layer を reject する仕組みを説明している)。
+///
+/// 6 slot のうち `visual_boxes` だけ最大 2 回一致しうる — `<visual-box>` が
+/// grammar 上 2 回独立した `||` alternative として現れるため
+/// ([`BackgroundShorthand`] doc 参照)。`position_and_size` は
+/// [`parse_background_position_and_size`] 経由で 1 slot として扱う (spec の
+/// `<bg-position> [ / <bg-size> ]?` を単一の `||` alternative として)。
+///
+/// 各 slot の token 集合は互いに素 (image は `none`/`url()`/gradient
+/// function、position は方向 keyword/length、repeat-style/attachment/
+/// visual-box はそれぞれ固有 keyword 集合、color は named color/hex/function)
+/// なので、slot を試す順序自体は結果を左右しない —
+/// [`parse_border_shorthand`] doc の同旨コメント参照。
+///
+/// # At least 1 component required
+///
+/// spec CSS Values 4 §2.2 `||` semantics: "one or more of them must occur,
+/// in any order." — 0 component (空 `background:` や未知 keyword のみ) は
+/// `None` = declaration drop ([`parse_border_shorthand`] と同じ契約)。
+///
+/// # Initial value fill (省略成分)
+///
+/// [`BackgroundShorthand`] doc の「Initial value fill」節参照。`visual_boxes`
+/// の 0/1/2 occurrence による origin/clip 割り当ては spec §2.10 verbatim
+/// ("If one `<visual-box>` value is present then it sets both
+/// background-origin and background-clip to that value. If two values are
+/// present, then the first sets background-origin and the second
+/// background-clip.") — 0 個の場合は 2 longhand それぞれの spec initial
+/// (origin: padding-box、clip: border-box) を使う点が 1 個の場合と異なる
+/// (1 個の場合は両方その値になるため、0 個の場合だけ非対称)。
+fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<BackgroundShorthand> {
+    let mut image: Option<BackgroundImage> = None;
+    let mut position_and_size: Option<(CssPosition, Option<BackgroundSize>)> = None;
+    let mut repeat: Option<BackgroundRepeat> = None;
+    let mut attachment: Option<BackgroundAttachment> = None;
+    let mut visual_boxes: Vec<VisualBox> = Vec::new();
+    let mut color: Option<CssColor> = None;
+
+    loop {
+        if image.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<BackgroundImage, ParseError<'_, ()>> {
+                parse_background_image(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            image = Some(v);
+            continue;
+        }
+        if position_and_size.is_none()
+            && let Ok(v) = input.try_parse(
+                |i| -> Result<(CssPosition, Option<BackgroundSize>), ParseError<'_, ()>> {
+                    parse_background_position_and_size(i).ok_or_else(|| i.new_custom_error(()))
+                },
+            )
+        {
+            position_and_size = Some(v);
+            continue;
+        }
+        if repeat.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<BackgroundRepeat, ParseError<'_, ()>> {
+                parse_background_repeat(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            repeat = Some(v);
+            continue;
+        }
+        if attachment.is_none()
+            && let Ok(v) =
+                input.try_parse(|i| -> Result<BackgroundAttachment, ParseError<'_, ()>> {
+                    parse_background_attachment(i).ok_or_else(|| i.new_custom_error(()))
+                })
+        {
+            attachment = Some(v);
+            continue;
+        }
+        if visual_boxes.len() < 2
+            && let Ok(v) = input.try_parse(|i| -> Result<VisualBox, ParseError<'_, ()>> {
+                parse_visual_box(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            visual_boxes.push(v);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<CssColor, ParseError<'_, ()>> {
+                parse_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            color = Some(v);
+            continue;
+        }
+
+        // どの unfilled slot にも match しなかった → 埋まっている slot に
+        // 対する 2 回目の指定 (`visual_boxes` は 3 回目)、comma (複数 layer)、
+        // または未知 token。break で loop 終了、caller の `expect_exhausted`
+        // が leftover を drop する ([`parse_border_shorthand`] と同じ契約)。
+        break;
+    }
+
+    if image.is_none()
+        && position_and_size.is_none()
+        && repeat.is_none()
+        && attachment.is_none()
+        && visual_boxes.is_empty()
+        && color.is_none()
+    {
+        return None;
+    }
+
+    let (origin, clip) = match visual_boxes.as_slice() {
+        [] => (VisualBox::PaddingBox, VisualBox::BorderBox),
+        [one] => (*one, *one),
+        [first, second] => (*first, *second),
+        // cov:ignore: the loop above only pushes while
+        // `visual_boxes.len() < 2`, so `visual_boxes` can never hold more
+        // than 2 elements by the time this match runs — there is no input
+        // that reaches this arm, and constructing one would require
+        // bypassing the loop guard entirely.
+        _ => unreachable!("visual_boxes never grows past 2 (loop guard above)"),
+    };
+
+    let (position, size) = match position_and_size {
+        Some((position, size)) => (
+            position,
+            size.unwrap_or(BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            }),
+        ),
+        None => (
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            },
+            BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            },
+        ),
+    };
+
+    Some(BackgroundShorthand {
+        color: color.unwrap_or(CssColor::TRANSPARENT),
+        image: image.unwrap_or(BackgroundImage::None),
+        repeat: repeat.unwrap_or(BackgroundRepeat {
+            x: BackgroundRepeatKeyword::Repeat,
+            y: BackgroundRepeatKeyword::Repeat,
+        }),
+        attachment: attachment.unwrap_or(BackgroundAttachment::Scroll),
+        position,
+        size,
+        clip,
+        origin,
+    })
 }
 
 /// `<length>{2,4}` の box-shadow length run を parse する。
@@ -27404,5 +27742,347 @@ mod tests {
     fn background_image_key_maps_to_background_image_property_key() {
         let v = PropertyValue::BackgroundImage(BackgroundImage::None);
         assert_eq!(v.key(), PropertyKey::BackgroundImage);
+    }
+
+    // ── `background` shorthand (CSS Backgrounds and Borders 3 §2.10) ──
+
+    fn expect_background(value: Option<PropertyValue>) -> BackgroundShorthand {
+        match value {
+            Some(PropertyValue::Background(shorthand)) => shorthand,
+            // cov:ignore: this branch only executes when a caller's
+            // `parse(..., "background")` unexpectedly fails to parse or
+            // parses to the wrong variant; every call site in this test
+            // module passes valid `background` shorthand input, so the
+            // panic never fires while the tests pass.
+            other => panic!("expected PropertyValue::Background, got {other:?}"),
+        }
+    }
+
+    /// Spec §2.10 verbatim first worked example: "In the first rule …, only
+    /// a value for background-color has been given and the other individual
+    /// properties are set to their initial values." — `body { background:
+    /// red }` is spec-equivalent to setting all 8 longhands, 7 of them to
+    /// their initial value.
+    #[test]
+    fn background_shorthand_color_only_fills_the_other_7_with_initial_values() {
+        let got = expect_background(parse("red", "background"));
+        assert_eq!(
+            got,
+            BackgroundShorthand {
+                color: CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255
+                },
+                image: BackgroundImage::None,
+                repeat: BackgroundRepeat {
+                    x: BackgroundRepeatKeyword::Repeat,
+                    y: BackgroundRepeatKeyword::Repeat,
+                },
+                attachment: BackgroundAttachment::Scroll,
+                position: CssPosition {
+                    horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                    vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+                },
+                size: BackgroundSize::Explicit {
+                    width: LengthOrAuto::Auto,
+                    height: LengthOrAuto::Auto,
+                },
+                // 0 `<visual-box>` occurrence: the 2 longhands fall back to
+                // their own (different) initial values, not to each other.
+                clip: VisualBox::BorderBox,
+                origin: VisualBox::PaddingBox,
+            }
+        );
+    }
+
+    /// Spec §2.10 verbatim second worked example: `p { background:
+    /// url("chess.png") 40% / 10em gray round fixed border-box; }` is
+    /// spec-equivalent to `background-color: gray; background-position: 40%
+    /// 50%; background-size: 10em auto; background-repeat: round;
+    /// background-clip: border-box; background-origin: border-box;
+    /// background-attachment: fixed; background-image: url(chess.png)`.
+    /// Single `<visual-box>` occurrence (`border-box`) sets **both**
+    /// origin and clip to it.
+    #[test]
+    fn background_shorthand_spec_example_url_position_size_color_repeat_attachment_box() {
+        let got = expect_background(parse(
+            "url(\"chess.png\") 40% / 10em gray round fixed border-box",
+            "background",
+        ));
+        assert_eq!(got.image, BackgroundImage::Url("chess.png".to_string()));
+        assert_eq!(
+            got.position,
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(40.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        );
+        assert_eq!(
+            got.size,
+            BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Em(10.0)),
+                height: LengthOrAuto::Auto,
+            }
+        );
+        assert_eq!(
+            got.color,
+            CssColor {
+                r: 128,
+                g: 128,
+                b: 128,
+                a: 255
+            }
+        );
+        assert_eq!(
+            got.repeat,
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Round,
+                y: BackgroundRepeatKeyword::Round,
+            }
+        );
+        assert_eq!(got.attachment, BackgroundAttachment::Fixed);
+        assert_eq!(got.clip, VisualBox::BorderBox);
+        assert_eq!(got.origin, VisualBox::BorderBox);
+    }
+
+    /// Spec §2.10 verbatim third worked example: `div { background:
+    /// padding-box url(paper.jpg) white center }` is spec-equivalent to
+    /// `background-color: white; background-image: url(paper.jpg);
+    /// background-repeat: repeat; background-attachment: scroll;
+    /// background-position: center; background-clip: padding-box;
+    /// background-origin: padding-box; background-size: auto auto`. Also
+    /// exercises `||` reordering: the `<visual-box>` component appears
+    /// *before* the image/color components in this example.
+    #[test]
+    fn background_shorthand_spec_example_box_before_image_and_color() {
+        let got = expect_background(parse(
+            "padding-box url(paper.jpg) white center",
+            "background",
+        ));
+        assert_eq!(got.clip, VisualBox::PaddingBox);
+        assert_eq!(got.origin, VisualBox::PaddingBox);
+        assert_eq!(got.image, BackgroundImage::Url("paper.jpg".to_string()));
+        assert_eq!(
+            got.color,
+            CssColor {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255
+            }
+        );
+        assert_eq!(
+            got.position,
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        );
+        assert_eq!(
+            got.repeat,
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            }
+        );
+        assert_eq!(got.attachment, BackgroundAttachment::Scroll);
+        assert_eq!(
+            got.size,
+            BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            }
+        );
+    }
+
+    /// Spec §2.10's 2nd worked example (`E { background: #CCC
+    /// url("metal.jpg") top left / 100% auto no-repeat}`), single-layer
+    /// portion only — this crate does not accept the spec's other example
+    /// (`background: url(a.png) top left no-repeat, …`, comma-separated
+    /// multi-layer, see `background_shorthand_rejects_comma_separated_multi_layer`
+    /// below). `top left` (keyword reordering, only reachable via
+    /// `parse_css_position`'s `&&` branch — CSS Position 3 §2's
+    /// non-reordering 2-value form rejects `top` in the horizontal slot)
+    /// immediately followed by `/ 100% auto` exercises the atomic
+    /// position+size `||` component with a non-trivial position.
+    #[test]
+    fn background_shorthand_reordered_position_before_slash_size() {
+        let got = expect_background(parse(
+            "#CCC url(\"metal.jpg\") top left / 100% auto no-repeat",
+            "background",
+        ));
+        assert_eq!(
+            got.color,
+            CssColor {
+                r: 204,
+                g: 204,
+                b: 204,
+                a: 255
+            }
+        );
+        assert_eq!(got.image, BackgroundImage::Url("metal.jpg".to_string()));
+        assert_eq!(
+            got.position,
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }
+        );
+        assert_eq!(
+            got.size,
+            BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Percent(100.0)),
+                height: LengthOrAuto::Auto,
+            }
+        );
+        assert_eq!(
+            got.repeat,
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::NoRepeat,
+                y: BackgroundRepeatKeyword::NoRepeat,
+            }
+        );
+    }
+
+    /// 2 distinct `<visual-box>` occurrences: first sets `background-origin`,
+    /// second sets `background-clip` (spec §2.10 verbatim, [`BackgroundShorthand`]
+    /// doc). Neither of the spec's own worked examples exercises 2
+    /// *different* values (its only 2-occurrence-adjacent example still
+    /// repeats the same keyword), so this is a crate-authored regression pin
+    /// for the origin-then-clip assignment order specifically.
+    #[test]
+    fn background_shorthand_two_distinct_visual_boxes_assign_origin_then_clip() {
+        let got = expect_background(parse("content-box border-box", "background"));
+        assert_eq!(got.origin, VisualBox::ContentBox);
+        assert_eq!(got.clip, VisualBox::BorderBox);
+    }
+
+    /// `<bg-position>`'s 3-4 value edge-offset form (`CssPosition` doc's
+    /// `parse_css_position` — branch3) immediately followed by another `||`
+    /// component. Unlike the longhand `background-position` parse path
+    /// (where leftover tokens always mean rejection via `expect_exhausted`),
+    /// the shorthand loop hands leftover tokens to the *next* component —
+    /// this pins that `bottom 10px right 20px` stops exactly at its own 4
+    /// tokens and does not swallow `no-repeat`.
+    #[test]
+    fn background_shorthand_edge_offset_position_stops_before_next_component() {
+        let got = expect_background(parse("bottom 10px right 20px no-repeat", "background"));
+        assert_eq!(
+            got.position,
+            CssPosition {
+                horizontal: CssPositionOffset::End(Length::Px(20.0)),
+                vertical: CssPositionOffset::End(Length::Px(10.0)),
+            }
+        );
+        assert_eq!(
+            got.repeat,
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::NoRepeat,
+                y: BackgroundRepeatKeyword::NoRepeat,
+            }
+        );
+    }
+
+    /// spec `||` grammar: "one or more of them must occur" — 0 component is
+    /// invalid.
+    #[test]
+    fn background_shorthand_rejects_empty_value() {
+        assert_eq!(parse("", "background"), None);
+    }
+
+    /// An unrecognized ident matches no component's grammar at all (not
+    /// `none`/`url()`/gradient, not a `<repeat-style>`/`<attachment>`/
+    /// `<visual-box>` keyword, not a `<position>` keyword, not a named
+    /// color) — same "0 component" rejection as the empty-value case above.
+    #[test]
+    fn background_shorthand_rejects_unknown_keyword() {
+        assert_eq!(parse("bogus", "background"), None);
+    }
+
+    /// spec §2.10's `<bg-layer>#? , <final-bg-layer>` grammar allows
+    /// comma-separated multi-layer values (see the spec's own 4th example,
+    /// `background: url(a.png) top left no-repeat, url(b.png) center /
+    /// 100% 100% no-repeat, url(c.png) white`). This crate's single-layer
+    /// scope carving ([`BackgroundShorthand`] doc's Non-goal section) does
+    /// not silently take the first layer — it rejects the whole declaration:
+    /// the parser stops at the first layer's end, and the leftover comma
+    /// (plus any further layers) fails the caller's `expect_exhausted`
+    /// check, dropping the declaration entirely.
+    #[test]
+    fn background_shorthand_rejects_comma_separated_multi_layer() {
+        assert_eq!(
+            parse_entire("url(a.png) top, url(b.png) bottom", "background"),
+            None
+        );
+    }
+
+    /// `||` semantics: each component at most once. A 2nd `<repeat-style>`
+    /// token has nowhere to go (the `repeat` slot is already filled by the
+    /// first `repeat`, and `repeat-x` matches no other slot) — leftover,
+    /// declaration dropped.
+    #[test]
+    fn background_shorthand_rejects_repeated_repeat_style_component() {
+        assert_eq!(parse_entire("repeat repeat-x", "background"), None);
+    }
+
+    /// `<visual-box>` may occur at most **twice** (spec §2.10 verbatim, "If
+    /// two values are present…" — never 3). A 3rd occurrence is leftover.
+    #[test]
+    fn background_shorthand_rejects_a_third_visual_box_occurrence() {
+        assert_eq!(
+            parse_entire("border-box padding-box content-box", "background"),
+            None
+        );
+    }
+
+    /// A `/` component followed by an unparseable `<bg-size>` does not
+    /// silently drop just the size — `parse_background_position_and_size`'s
+    /// inner `try_parse` rewinds the whole `/ <bg-size>` attempt (position
+    /// succeeds alone, size stays absent), leaving `/ bogus` as leftover
+    /// that matches no other `||` component, so the whole declaration is
+    /// dropped rather than falling back to the shorthand's `auto auto` size
+    /// fill.
+    #[test]
+    fn background_shorthand_rejects_slash_with_invalid_size() {
+        assert_eq!(parse_entire("center / bogus", "background"), None);
+    }
+
+    #[test]
+    fn background_shorthand_rejects_size_without_a_preceding_position() {
+        // The `<bg-position> [ / <bg-size> ]?` slot is atomic — `<bg-size>`
+        // is a "then"-clause of a leading `<bg-position>`, never a
+        // standalone `||` component on its own (`parse_background_shorthand`
+        // doc's grammar section). `/ 100% auto` has no position to attach
+        // to, so the leading `/` matches no slot at all and is dropped as
+        // leftover, same as `center / bogus` above but exercising the
+        // "no position present" edge rather than "position present, size
+        // invalid".
+        assert_eq!(parse_entire("/ 100% auto", "background"), None);
+    }
+
+    #[test]
+    fn background_shorthand_key_maps_to_background_property_key() {
+        let v = PropertyValue::Background(BackgroundShorthand {
+            color: CssColor::TRANSPARENT,
+            image: BackgroundImage::None,
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            },
+            attachment: BackgroundAttachment::Scroll,
+            position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            },
+            size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            },
+            clip: VisualBox::BorderBox,
+            origin: VisualBox::PaddingBox,
+        });
+        assert_eq!(v.key(), PropertyKey::Background);
     }
 }
