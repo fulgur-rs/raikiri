@@ -103,7 +103,7 @@ use crate::property::{
     GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto,
     LengthOrNormal, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey,
     PropertyValue, Sides, TextShadowItem, parse_length_allow_negative, parse_non_negative_length,
-    parse_value, resolve_overflow,
+    parse_value, resolve_overflow, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
@@ -1510,8 +1510,9 @@ impl PageCascadeResult {
     ///   **not** in CSS Paged Media 3 Appendix A's page-property-list
     ///   (checked directly against the raw Appendix A table) — same as
     ///   [`crate::property::DisplayValue`], [`crate::property::PositionValue`],
-    ///   `box-sizing`, `counter-reset`/`counter-increment`, `content`, and
-    ///   `string-set`, all of which this crate already wires into the page
+    ///   `box-sizing`, `counter-reset`/`counter-increment`, `content`,
+    ///   `string-set`, and [`crate::property::WritingMode`] (`writing-mode`),
+    ///   all of which this crate already wires into the page
     ///   cascade beyond Appendix A's CSS 2.1 floor (§6's wording is a
     ///   positive minimum, not a ceiling, and does not prohibit extending
     ///   further). So this wiring is intentional, not a scope question.
@@ -3024,6 +3025,15 @@ fn absolutize_in_page_context(
         // in practice (`expand_shorthand_into` expands it before this
         // function ever sees a winner), not a safety net if it were.
         PropertyValue::Overflow(pair) => PropertyValue::Overflow(resolve_overflow(pair)),
+        // ── writing-mode ─────────────────────────────────────────────────
+        // CSS Writing Modes 4 §3.2 — same-node-only normalization (no length,
+        // no cross-property/parent dependency), applied here rather than in
+        // `resolve_against_inherited` for the same reason `overflow-x`/
+        // `overflow-y`'s cross-axis coupling is: it does not depend on the
+        // inheritance parent, only phase 3 runs it. See `WritingMode` doc's
+        // Non-goal section and `resolve_writing_mode` doc for why every
+        // non-`horizontal-tb` keyword collapses here.
+        PropertyValue::WritingMode(v) => PropertyValue::WritingMode(resolve_writing_mode(v)),
         // ── letter-spacing / word-spacing ───────────────────────────────────
         // CSS Text 3 §7.2 / §7.1: `normal | <length>`, absolutized the same
         // way `crate::specified::SpecifiedValues::absolutize_with` does
@@ -3275,7 +3285,7 @@ mod tests {
         PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
         SelfAlignmentValue, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
         TextDecorationShorthand, TextDecorationStyle, TextShadowColor, TextTransform,
-        VerticalAlign, Visibility, WhiteSpace, WordBreak, ZIndexValue,
+        VerticalAlign, Visibility, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;
@@ -5246,6 +5256,44 @@ mod tests {
         }
     }
 
+    /// Direct exercise of the `WritingMode` arm of
+    /// `absolutize_in_page_context` — the page-path pin for
+    /// `resolve_writing_mode`'s unconditional collapse (element-path pin:
+    /// `specified::tests::finalize_collapses_all_non_horizontal_writing_modes`).
+    /// All 5 spec keywords collapse to `HorizontalTb`, including
+    /// `HorizontalTb` itself (identity, not a no-op passthrough that a
+    /// future refactor could silently break).
+    #[test]
+    fn absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        for specified in [
+            WritingMode::HorizontalTb,
+            WritingMode::VerticalRl,
+            WritingMode::VerticalLr,
+            WritingMode::SidewaysRl,
+            WritingMode::SidewaysLr,
+        ] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::WritingMode(specified)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OutlineStyle::None,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::WritingMode(WritingMode::HorizontalTb),
+                "writing-mode: {specified:?}",
+            );
+        }
+    }
+
     /// Direct exercise of the `TextShadow` arm of
     /// `absolutize_in_page_context` — both the `none` (empty-list) fast
     /// path, which reuses the input `Arc` without allocating, and the
@@ -5658,7 +5706,7 @@ mod tests {
     /// `phase_3_transformed_variants()` 側に既に数えられているため
     /// (二重計上を避ける、上記関数の doc 参照)。
     ///
-    /// # `overflow-x` / `overflow-y` / `overflow` は逆方向の例外
+    /// # keyword-only phase-3 transforms は逆方向の例外
     ///
     /// その rework までは「phase 3 が変換する variant」と「raw
     /// corpus サンプルが specified 層残滓を持つ variant」が偶然 1:1 対応して
@@ -5675,12 +5723,23 @@ mod tests {
     /// payload は length を運ばない keyword (`OverflowValue`) のみなので raw
     /// corpus サンプルは `specified_layer_residue` に一切引っかからない
     /// (同関数の `OverflowX`/`OverflowY`/`Overflow` arm が `None` を返す)。
-    /// この 1:1 対応が初めて崩れた 3 variant — `phase_3_transformed_variants()`
+    /// この 1:1 対応が初めて崩れた 3 variant。
+    ///
+    /// `writing-mode` は同じ形の 4 番目の variant — `resolve_writing_mode`
+    /// (CSS Writing Modes 4 §3.2) により phase 3 で実際に変換される
+    /// (`absolutize_in_page_context` の `WritingMode` arm) が、payload は
+    /// length を運ばない keyword (`WritingMode`) のみなので raw corpus
+    /// サンプル (`VerticalRl`) も `specified_layer_residue` に引っかからない
+    /// (同関数の `WritingMode` arm が `None` を返す、`WritingMode` doc の
+    /// Non-goal 節参照)。
+    ///
+    /// 定数名を `OVERFLOW_...` のままにしないのはこのため — 対応する variant が
+    /// overflow の 3 つだけではなくなった。`phase_3_transformed_variants()`
     /// 側の +3 を打ち消す。
-    const OVERFLOW_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 3;
+    const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 4;
 
     fn raw_corpus_residue_variants() -> usize {
-        phase_3_transformed_variants() + 3 - OVERFLOW_TRANSFORMED_WITHOUT_RAW_RESIDUE
+        phase_3_transformed_variants() + 3 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
     }
 
     /// `sample_for` / `ALL_PROPERTY_KEYS` を **1 つの token 列**から生成する。
@@ -6057,6 +6116,17 @@ mod tests {
         OutlineWidth => PropertyValue::OutlineWidth(Length::Em(0.25)),
         OutlineStyle => PropertyValue::OutlineStyle(OutlineStyle::Solid),
         OutlineColor => PropertyValue::OutlineColor(OutlineColor::Resolved(GREEN)),
+        // `VerticalRl` is deliberately the "worst case" here — it is one of
+        // the 4 keywords `resolve_writing_mode` actually rewrites (->
+        // `HorizontalTb`), same reasoning as `Overflow`'s `Visible` sample
+        // above. Unlike `Direction`, `writing-mode` *does* have a
+        // specified/computed distinction in this crate (`WritingMode` doc's
+        // Non-goal section) — picking `HorizontalTb` here would make it
+        // indistinguishable from a pass-through and silently defeat the
+        // phase-3 transform classification this corpus drives. Placed last
+        // to match `PropertyKey`'s own declaration order (`property.rs`),
+        // per this macro's `property_key_samples!` doc contract.
+        WritingMode => PropertyValue::WritingMode(WritingMode::VerticalRl),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -6286,6 +6356,7 @@ mod tests {
         PlaceSelf,
         Orphans,
         Widows,
+        WritingMode,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -6620,7 +6691,7 @@ mod tests {
             // (see `absolutize_in_page_context`'s `OverflowX`/`OverflowY`
             // arms), but has nothing to do with this detector, which is
             // specifically about *length* residue. See
-            // `OVERFLOW_TRANSFORMED_WITHOUT_RAW_RESIDUE` below for where that
+            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE` below for where that
             // distinction is accounted for.
             | PropertyValue::OverflowX(_)
             | PropertyValue::OverflowY(_)
@@ -6708,6 +6779,12 @@ mod tests {
             // `ZIndexValue` above.
             | PropertyValue::Orphans(_)
             | PropertyValue::Widows(_)
+            // `WritingMode` carries no length either. Its identity-collapse
+            // to `HorizontalTb` (`resolve_writing_mode`) is real phase-3
+            // work, same as `OverflowX`/`OverflowY`'s cross-axis coupling
+            // above — but that collapse has nothing to do with *length*
+            // residue, which is all this detector checks.
+            | PropertyValue::WritingMode(_)
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)

@@ -37,10 +37,11 @@ use crate::property::{
     LengthOrNormal, LineHeight, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
     OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign, TextDecorationColor,
     TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform, VerticalAlign,
-    Visibility, WhiteSpace, WordBreak, ZIndexValue, empty_box_shadow_list, empty_content_list,
-    empty_counter_entries, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
-    initial_font_family, initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_match_parent,
+    Visibility, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list,
+    empty_content_list, empty_counter_entries, empty_quotes_entries, empty_string_set_entries,
+    empty_text_shadow_list, initial_font_family, initial_grid_auto_track_list,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
+    resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
@@ -172,6 +173,14 @@ pub struct SpecifiedValues {
     pub text_align: TextAlign,
     /// [`ComputedValues::direction`] の staging。層は computed-equivalent。
     pub direction: Direction,
+    /// [`ComputedValues::writing_mode`] の staging。**層は computed-equivalent
+    /// ではない** — この field は 5 keyword とも specified 値をそのまま保持する
+    /// (spec fidelity)。`vertical-rl`/`vertical-lr`/`sideways-rl`/`sideways-lr`
+    /// → [`WritingMode::HorizontalTb`] の正規化は [`Self::absolutize_with`] が
+    /// [`resolve_writing_mode`] 経由で行う (`text_align: match-parent` が
+    /// [`Self`] でなく `finalize`/`absolutize_with` 側で解決されるのと同じ
+    /// 「staging はまだ解決しない」形、[`WritingMode`] doc の Non-goal 節参照)。
+    pub writing_mode: WritingMode,
     /// `text-indent` の **specified** value。phase 3
     /// ([`resolve_length_percentage`]) で絶対化される (percentage は素通し) —
     /// [`Self::padding`] と同じ絶対化 shape だが、こちらは **inherited**
@@ -406,6 +415,9 @@ impl SpecifiedValues {
             text_align: TextAlign::Start,
             // CSS Writing Modes 4 §2.1: direction initial は `ltr`。
             direction: Direction::Ltr,
+            // CSS Writing Modes 4 §3.2: writing-mode initial は
+            // `horizontal-tb`。
+            writing_mode: WritingMode::HorizontalTb,
             // CSS Text 3 §8.1: text-indent initial は `0`。
             text_indent: Length::Px(0.0),
             padding: Sides::all(Length::Px(0.0)),
@@ -589,6 +601,13 @@ impl SpecifiedValues {
             // "D5 と同型ではない" 節)。
             text_align: parent.text_align,
             direction: parent.direction,
+            // CSS Writing Modes 4 §3.2: writing-mode は inherited。親の
+            // `ComputedValues::writing_mode` は既に
+            // [`crate::property::resolve_writing_mode`] を通過済み
+            // (= 常に `HorizontalTb`) なので、ここでの素朴なコピーは
+            // `text_align`/`direction` と同じ「もう resolve 済みの値をそのまま
+            // 運ぶ」形になる。
+            writing_mode: parent.writing_mode,
             // CSS Text 3 §8.1: text-indent は inherited。computed
             // `<length-percentage>` → specified `Length` の lift (lossless、
             // `Px` / `Percent` どちらも不動点、`lift_length_percentage` doc
@@ -1022,6 +1041,14 @@ impl SpecifiedValues {
             // computed value = specified value、相対解決なし (`Direction` doc
             // 参照) — 自 node の winner 適用結果をそのまま素通し。
             direction: self.direction,
+            // `vertical-rl`/`vertical-lr`/`sideways-rl`/`sideways-lr` の 4
+            // keyword を `HorizontalTb` に正規化する — inherit 経由で来た値
+            // (既に `HorizontalTb` のはず) にも fresh な winner にも無条件に
+            // 適用する、same-node-only な変換 (`resolve_overflow` と同じ
+            // 「他 field/親に依存しない」形だが、対象は自 field 1 つだけ)。
+            // `WritingMode` doc の Non-goal 節と `resolve_writing_mode` doc が
+            // canonical rationale。
+            writing_mode: resolve_writing_mode(self.writing_mode),
             // `text-indent` — same absolutization shape as `padding` (`%` is
             // passed through, `em`/`rem`/`pt`/etc. resolve against the own
             // `font_size`/`own_line_height` basis established above), but
@@ -1400,6 +1427,13 @@ mod tests {
             }],
             text_align: TextAlign::Center,
             direction: Direction::Rtl,
+            // `VerticalRl` — non-initial, and safe to compare verbatim below
+            // (unlike `computed::tests::non_initial_parent`'s fixture): this
+            // helper feeds `SpecifiedValues::inherit_from`, which copies this
+            // field with no `resolve_writing_mode` call (that collapse lives
+            // in `SpecifiedValues::absolutize_with`, run later). See
+            // `WritingMode` doc's Non-goal section.
+            writing_mode: WritingMode::VerticalRl,
             text_indent: ComputedLengthPercentage::Px(9.0),
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
@@ -1534,6 +1568,12 @@ mod tests {
         assert_eq!(child.text_align, TextAlign::Center);
         // CSS Writing Modes 4 §2.1: direction は inherited。
         assert_eq!(child.direction, Direction::Rtl);
+        // CSS Writing Modes 4 §3.2: writing-mode は inherited。この staging
+        // 層 (`SpecifiedValues::inherit_from`) は `resolve_writing_mode` を
+        // 呼ばない素通しコピーなので、`computed::tests::non_initial_parent`
+        // の同種 assertion と異なりここでは verbatim 一致を期待してよい
+        // (`parent_fixture` の doc comment参照)。
+        assert_eq!(child.writing_mode, WritingMode::VerticalRl);
         // CSS Fonts 4 §2.4: font-style は inherited。
         assert_eq!(child.font_style, FontStyle::Italic);
         // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
@@ -1915,6 +1955,50 @@ mod tests {
         let cv = sv.clone().finalize(&ComputedValues::initial(), &CTX);
         assert_eq!(cv.direction, Direction::Rtl);
         assert_eq!(sv.finalize_as_root().direction, Direction::Rtl);
+    }
+
+    /// Unlike `direction`, `writing-mode`'s 4 non-`horizontal-tb` specified
+    /// keywords do **not** pass through `finalize`/`finalize_as_root`
+    /// unchanged — `resolve_writing_mode` collapses every one of them to
+    /// `WritingMode::HorizontalTb` (`WritingMode` doc's Non-goal section).
+    /// This is the element-path pin; the page-path equivalent is
+    /// `crate::page::tests::absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb`.
+    #[test]
+    fn finalize_collapses_all_non_horizontal_writing_modes() {
+        for specified in [
+            WritingMode::HorizontalTb,
+            WritingMode::VerticalRl,
+            WritingMode::VerticalLr,
+            WritingMode::SidewaysRl,
+            WritingMode::SidewaysLr,
+        ] {
+            let mut sv = SpecifiedValues::initial();
+            sv.writing_mode = specified;
+            let cv = sv.clone().finalize(&ComputedValues::initial(), &CTX);
+            assert_eq!(cv.writing_mode, WritingMode::HorizontalTb);
+            assert_eq!(
+                sv.finalize_as_root().writing_mode,
+                WritingMode::HorizontalTb
+            );
+        }
+    }
+
+    /// A child that inherits a non-`horizontal-tb` `writing-mode` from its
+    /// parent still computes to `HorizontalTb` — `resolve_writing_mode` runs
+    /// unconditionally in `absolutize_with`, whether the value reaching it
+    /// came from a fresh winner or from `SpecifiedValues::inherit_from`'s
+    /// plain copy of the parent's (already-collapsed, in any real cascade)
+    /// computed value. See `computed::tests::non_initial_parent`'s doc
+    /// comment for why this same invariant is exercised there with a
+    /// synthetic (real-cascade-unreachable) `ComputedValues` literal.
+    #[test]
+    fn inherit_from_then_finalize_still_collapses_writing_mode() {
+        let parent = ComputedValues {
+            writing_mode: WritingMode::VerticalRl,
+            ..ComputedValues::initial()
+        };
+        let child = ComputedValues::inherit_from(&parent);
+        assert_eq!(child.writing_mode, WritingMode::HorizontalTb);
     }
 
     /// root element では `rem` の基準が phase 2 と phase 3 で異なる
