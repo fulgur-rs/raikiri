@@ -8,8 +8,7 @@ use selectors::parser::{ParseRelative, Selector, SelectorList};
 
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
 use crate::page::{
-    PageBleedDeclaration, PageMarksDeclaration, PageRule, PageSelector, PageSizeDeclaration,
-    parse_page_declaration_block, parse_page_prelude,
+    PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -216,19 +215,21 @@ impl RuleTree {
                     });
                     style_order = style_order.wrapping_add(1);
                 }
-                ParsedRule::Page(
-                    selector,
-                    declarations,
-                    size_declarations,
-                    marks_declarations,
-                    bleed_declarations,
-                ) => {
+                ParsedRule::Page(selector, body) => {
+                    let PageBlockBody {
+                        declarations,
+                        size_declarations,
+                        marks_declarations,
+                        bleed_declarations,
+                        margin_box_rules,
+                    } = body;
                     self.page_rules.push(PageRule {
                         selector,
                         declarations,
                         size_declarations,
                         marks_declarations,
                         bleed_declarations,
+                        margin_box_rules,
                         source_order: page_order,
                         origin,
                     });
@@ -353,13 +354,7 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
 /// は default `parse_prelude` の `Err` に落ちて cssparser 側で silent drop。
 enum ParsedRule {
     Style(SelectorList<RaikiriSelectorImpl>, Vec<Declaration>),
-    Page(
-        PageSelector,
-        Vec<Declaration>,
-        Vec<PageSizeDeclaration>,
-        Vec<PageMarksDeclaration>,
-        Vec<PageBleedDeclaration>,
-    ),
+    Page(PageSelector, PageBlockBody),
 }
 
 /// StyleSheetParser 実装。qualified rule + `@page` を受理、他 at-rule は drop。
@@ -393,20 +388,13 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleRuleParser {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
         // @page body = declaration list + `size` / `marks` / `bleed`
-        // descriptor lists — parsed by a dedicated
-        // `crate::page::parse_page_declaration_block` (not the generic
-        // `parse_declaration_block` qualified rules use below, see that
-        // function's doc for why). 未サポート property / descriptor
-        // (margin-box at-rule 等) は既存の silent-drop で 0 declaration 化する。
-        let (declarations, size_declarations, marks_declarations, bleed_declarations) =
-            parse_page_declaration_block(input);
-        Ok(ParsedRule::Page(
-            prelude,
-            declarations,
-            size_declarations,
-            marks_declarations,
-            bleed_declarations,
-        ))
+        // descriptor lists + nested margin-box at-rules — parsed by a
+        // dedicated `crate::page::parse_page_declaration_block` (not the
+        // generic `parse_declaration_block` qualified rules use below, see
+        // that function's doc for why). 未サポート property / descriptor は
+        // 既存の silent-drop で 0 declaration 化する。
+        let body = parse_page_declaration_block(input);
+        Ok(ParsedRule::Page(prelude, body))
     }
 }
 
@@ -1092,22 +1080,27 @@ mod tests {
     // `crate::property::tests::unknown_property_returns_none`) はこの
     // `@page` 側の分岐までは検証しない。
     //
-    // margin-box 等の at-rule (`@top-left { … }` 等、L3 §5) は別の経路 —
+    // margin-box at-rule (`@top-left { … }` 等、L3 §5.1) は別の経路 —
     // そもそも declaration ではないため `parse_value` に届かず、
-    // `AtRuleParser::parse_prelude` の default `Err` を cssparser の
-    // error recovery が block ごと skip する (下の
-    // page_margin_box_at_rule_body_is_skipped_declaration_survives がその
-    // regression guard)。
+    // `PageDeclParser`'s `AtRuleParser::parse_prelude` が ident を
+    // sixteen-slot 表と照合する。一致すれば本文を通常 declaration list
+    // として parse し `PageRule::margin_box_rules` へ格納 (下の
+    // "margin-box at-rules" test group 参照)。一致しない nested at-rule 名は
+    // 引き続き `parse_prelude` の `Err` 経由で cssparser の error recovery が
+    // block ごと skip する (下の
+    // page_unknown_nested_at_rule_body_is_skipped_declaration_survives が
+    // その regression guard)。
     //
     // NB: `margin` は author scope の supported property になった
-    // (`parse_page_declaration_block` 出口で 4 longhand に展開)。@page context
-    // での margin-box at-rule 挙動 (L3 §5) は依然未実装のまま — 通常の
-    // longhand `margin-top` 等の parse は @page body 内でも成立するが
-    // page-context specific な意味付けは持たない。
+    // (`parse_page_declaration_block` 出口で 4 longhand に展開) — margin-box
+    // at-rule の本文でも同じ展開を通る (`parse_declaration_block` を再利用
+    // するため)。margin-box **slot の幾何学的配置** (L3 §5 の sixteen slot
+    // layout) は依然未実装のまま — 本 group が検証するのは構文解析と
+    // declaration 保持のみ。
 
     use crate::page::{
-        PageBleed, PageMarks, PageOrientation, PagePseudo, PageSelector, PageSelectorEntry,
-        PageSize, PageSizeKeyword,
+        PageBleed, PageMarginBoxSlot, PageMarks, PageOrientation, PagePseudo, PageSelector,
+        PageSelectorEntry, PageSize, PageSizeKeyword,
     };
     use crate::{Atom, Length, PageRule};
 
@@ -1330,17 +1323,267 @@ mod tests {
     }
 
     #[test]
-    fn page_margin_box_at_rule_body_is_skipped_declaration_survives() {
-        // regression guard: `crate::page::parse_page_declaration_block`
-        // (its `PageDeclParser`) は margin-box at-rules (`@top-left { … }`
-        // per L3 §5) を default `AtRuleParser::parse_prelude` が Err で
-        // 返して cssparser の error-recovery で block ごと silent skip
-        // する。その前後の通常宣言は生き残ることを pin する。`PageDeclParser`
-        // 自体は `size` descriptor 用に今 landing 済みだが、margin-box 用の
-        // 本物の `AtRuleParser` 実装は依然未着手 (別 scope)。
+    fn page_margin_box_at_rule_is_parsed_declaration_survives_alongside_it() {
+        // A margin-box at-rule (`@top-left { … }`, CSS Paged Media Level 3
+        // §5.1) is now recognized and its body stored on
+        // `PageRule::margin_box_rules`, separate from the surrounding
+        // `@page` block's own `declarations`. This pins both halves at
+        // once: the ordinary `color: red` declaration lands in
+        // `declarations` unaffected, and the nested `@top-left` block lands
+        // in `margin_box_rules` with its own `content:` declaration parsed.
+        use crate::property::PropertyValue;
+
         let rules = page_rules("@page :first { @top-left { content: 'x' } color: red }");
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].declarations.len(), 1);
+        assert_eq!(rules[0].margin_box_rules.len(), 1);
+        assert_eq!(
+            rules[0].margin_box_rules[0].slot,
+            PageMarginBoxSlot::TopLeft
+        );
+        assert_eq!(rules[0].margin_box_rules[0].declarations.len(), 1);
+        assert!(matches!(
+            rules[0].margin_box_rules[0].declarations[0].value(),
+            PropertyValue::Content(_)
+        ));
+    }
+
+    // ── margin-box at-rules ──
+    //
+    // Spec: CSS Paged Media Level 3, §5.1 "At-rules for page-margin boxes"
+    // <https://www.w3.org/TR/css-page-3/#margin-at-rules>. Sixteen at-rules,
+    // each naming one page-margin box, no prelude, body = ordinary
+    // declaration list (§5.2 "Populating page-margin boxes" calls out
+    // `content:` specifically; §5.1 additionally restricts the body to
+    // "page-margin properties" — a restriction this parser does not
+    // enforce, see `PageMarginBoxRule`'s doc "Not filtered against the
+    // applicable-property list" section).
+
+    #[test]
+    fn page_margin_box_all_sixteen_slots_recognized() {
+        // Every one of the sixteen margin-box idents (CSS Paged Media Level
+        // 3 §5.1) round-trips to its matching `PageMarginBoxSlot` variant.
+        let cases: &[(&str, PageMarginBoxSlot)] = &[
+            ("top-left-corner", PageMarginBoxSlot::TopLeftCorner),
+            ("top-left", PageMarginBoxSlot::TopLeft),
+            ("top-center", PageMarginBoxSlot::TopCenter),
+            ("top-right", PageMarginBoxSlot::TopRight),
+            ("top-right-corner", PageMarginBoxSlot::TopRightCorner),
+            ("right-top", PageMarginBoxSlot::RightTop),
+            ("right-middle", PageMarginBoxSlot::RightMiddle),
+            ("right-bottom", PageMarginBoxSlot::RightBottom),
+            ("bottom-right-corner", PageMarginBoxSlot::BottomRightCorner),
+            ("bottom-right", PageMarginBoxSlot::BottomRight),
+            ("bottom-center", PageMarginBoxSlot::BottomCenter),
+            ("bottom-left", PageMarginBoxSlot::BottomLeft),
+            ("bottom-left-corner", PageMarginBoxSlot::BottomLeftCorner),
+            ("left-bottom", PageMarginBoxSlot::LeftBottom),
+            ("left-middle", PageMarginBoxSlot::LeftMiddle),
+            ("left-top", PageMarginBoxSlot::LeftTop),
+        ];
+        for (ident, expected_slot) in cases {
+            let source = format!("@page {{ @{ident} {{ content: 'x' }} }}");
+            let rules = page_rules(&source);
+            assert_eq!(rules.len(), 1, "source: {source}");
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                rules[0].margin_box_rules.len(),
+                1,
+                "ident {ident} was not recognized as a margin-box at-rule"
+            );
+            assert_eq!(rules[0].margin_box_rules[0].slot, *expected_slot);
+        }
+    }
+
+    #[test]
+    fn page_margin_box_ident_is_case_insensitive() {
+        // Matches every other at-rule/keyword production in this module —
+        // `match_ignore_ascii_case!` in `PageDeclParser`'s `AtRuleParser`
+        // impl.
+        let rules = page_rules("@page { @TOP-LEFT { content: 'x' } }");
+        assert_eq!(rules[0].margin_box_rules.len(), 1);
+        assert_eq!(
+            rules[0].margin_box_rules[0].slot,
+            PageMarginBoxSlot::TopLeft
+        );
+
+        let rules = page_rules("@page { @Bottom-Right-Corner { content: 'x' } }");
+        assert_eq!(rules[0].margin_box_rules.len(), 1);
+        assert_eq!(
+            rules[0].margin_box_rules[0].slot,
+            PageMarginBoxSlot::BottomRightCorner
+        );
+    }
+
+    #[test]
+    fn page_unknown_nested_at_rule_body_is_skipped_declaration_survives() {
+        // regression guard: a nested at-rule name that is *not* one of the
+        // sixteen margin-box idents (here `@foo`, standing in for e.g. a
+        // stray `@media`) still falls through `PageDeclParser`'s
+        // `AtRuleParser::parse_prelude` to `Err`, and cssparser's
+        // error-recovery skips just that nested block. The sibling
+        // `color: blue` declaration survives, and no `PageMarginBoxRule` is
+        // produced.
+        let rules = page_rules("@page { @foo { color: red } color: blue }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].declarations.len(), 1);
+        assert!(rules[0].margin_box_rules.is_empty());
+    }
+
+    #[test]
+    fn page_margin_box_non_slot_hyphenated_ident_is_dropped() {
+        // `@top-middle` is not one of the sixteen spec idents (the top edge
+        // has left/center/right, not "middle" — that name is reserved for
+        // the *right*/*left* edges' vertical slots). Confirms the ident
+        // match is exact, not a prefix/substring match.
+        let rules = page_rules("@page { @top-middle { content: 'x' } color: red }");
+        assert_eq!(rules[0].declarations.len(), 1);
+        assert!(rules[0].margin_box_rules.is_empty());
+    }
+
+    #[test]
+    fn page_margin_box_non_empty_prelude_is_rejected() {
+        // Margin-box at-rules take no prelude (`@top-left { <declaration-list> }`,
+        // nothing between the ident and `{`). A stray token there —
+        // `@top-left foo { … }` — is spec-invalid and the whole nested
+        // block is dropped, same as an unrecognized ident. The sibling
+        // declaration survives.
+        let rules = page_rules("@page { @top-left foo { content: 'x' } color: red }");
+        assert_eq!(rules[0].declarations.len(), 1);
+        assert!(rules[0].margin_box_rules.is_empty());
+    }
+
+    #[test]
+    fn page_margin_box_statement_form_without_block_is_rejected() {
+        // `@top-left;` (no `{ … }` block, terminated by `;` instead) is
+        // spec-invalid — the margin-box grammar is `@top-left { <declaration-list> }`,
+        // always with a block. `PageDeclParser`'s `AtRuleParser` impl does
+        // not override `rule_without_block`, so cssparser's default (`Err`)
+        // applies and the whole statement is dropped, same as any other
+        // malformed nested at-rule. The sibling declaration survives.
+        let rules = page_rules("@page { @top-left; color: red }");
+        assert_eq!(rules[0].declarations.len(), 1);
+        assert!(rules[0].margin_box_rules.is_empty());
+    }
+
+    #[test]
+    fn page_margin_box_content_counter_page_and_pages() {
+        // `counter(page)` / `counter(pages)` — the automatic `page` counter
+        // CSS Paged Media Level 3 §6.1 "Page-based counters"
+        // (<https://www.w3.org/TR/css-page-3/#page-based-counters>) defines
+        // ("A counter named page is automatically created and incremented
+        // by 1 on every page of the document"); `pages` is its
+        // document-total counterpart, defined further in the same section —
+        // canonical use case a margin-box `content:` declaration exists for
+        // (page-number headers/footers) — parses inside a margin-box body
+        // via the same `ContentComponent` grammar
+        // `crate::property::parse_content` already implements for ordinary
+        // style rules.
+        use crate::property::{ContentComponent, CounterStyle, PropertyValue};
+        use smol_str::SmolStr;
+
+        let rules = page_rules(
+            "@page { @bottom-center { content: counter(page) \" / \" counter(pages) } }",
+        );
+        assert_eq!(rules[0].margin_box_rules.len(), 1);
+        let decl = &rules[0].margin_box_rules[0].declarations[0];
+        let items = match decl.value() {
+            PropertyValue::Content(items) => items,
+            // cov:ignore: defensive-only arm — `content: counter(page) " / "
+            // counter(pages)` always parses to `PropertyValue::Content`, so
+            // this panic is unreachable while the test passes.
+            other => panic!("expected PropertyValue::Content, got {other:?}"),
+        };
+        assert_eq!(
+            (**items).clone(),
+            vec![
+                ContentComponent::Counter {
+                    name: SmolStr::new("page"),
+                    style: CounterStyle::Decimal,
+                },
+                ContentComponent::Literal(SmolStr::new(" / ")),
+                ContentComponent::Counter {
+                    name: SmolStr::new("pages"),
+                    style: CounterStyle::Decimal,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn page_margin_box_body_is_not_filtered_at_parse_time() {
+        // CSS Paged Media Level 3 §5.1 states "The margin at-rules can only
+        // contain page-margin properties" — but this parser does not
+        // enforce that restriction (see `PageMarginBoxRule`'s doc "Not filtered
+        // against the applicable-property list" section), so a property
+        // with no obvious margin-box meaning (`color` here) still parses
+        // and is kept, same as `content:`. This also confirms the body
+        // reuses `crate::rule::parse_declaration_block`'s shorthand
+        // expansion (`margin:` here expands to 4 longhands, matching
+        // `page_declaration_block_never_emits_shorthand_keys`'s guarantee
+        // for the outer `@page` body), and that none of it leaks into the
+        // surrounding `@page` block's own `declarations`.
+        use crate::property::PropertyValue;
+
+        let rules =
+            page_rules("@page { @top-left { content: 'x'; color: red; margin: 1px 2px 3px 4px } }");
+        assert_eq!(rules[0].margin_box_rules.len(), 1);
+        assert!(rules[0].declarations.is_empty());
+        let decls = &rules[0].margin_box_rules[0].declarations;
+        assert_eq!(decls.len(), 6, "content + color + 4 margin longhands");
+        for decl in decls {
+            assert!(!matches!(decl.value(), PropertyValue::Margin(_)));
+        }
+    }
+
+    #[test]
+    fn page_margin_box_duplicate_slot_kept_as_separate_entries() {
+        // Two `@top-left` blocks in one `@page` rule are both kept, in
+        // source order — cascade winner selection across duplicate slots is
+        // future scope (`PageMarginBoxRule`'s doc, "Scope" section), mirroring
+        // `PageRule::size_declarations`'s own "kept in source order"
+        // treatment of duplicate `size:` declarations.
+        let rules = page_rules("@page { @top-left { content: 'a' } @top-left { content: 'b' } }");
+        assert_eq!(rules[0].margin_box_rules.len(), 2);
+        assert_eq!(
+            rules[0].margin_box_rules[0].slot,
+            PageMarginBoxSlot::TopLeft
+        );
+        assert_eq!(
+            rules[0].margin_box_rules[1].slot,
+            PageMarginBoxSlot::TopLeft
+        );
+    }
+
+    #[test]
+    fn page_margin_box_rules_preserve_source_order_interleaved_with_declarations() {
+        // Margin-box at-rules interleaved with ordinary declarations and
+        // `size`/`marks`/`bleed` descriptors all land in their own field,
+        // each in its own source order — none of the four lists disturbs
+        // another's ordering or count.
+        let rules = page_rules(
+            "@page { \
+                @top-left { content: counter(page) } \
+                color: red; \
+                size: A4; \
+                @bottom-right { content: 'end' } \
+                marks: crop; \
+             }",
+        );
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].declarations.len(), 1);
+        assert_eq!(rules[0].size_declarations.len(), 1);
+        assert_eq!(rules[0].marks_declarations.len(), 1);
+        assert_eq!(rules[0].margin_box_rules.len(), 2);
+        assert_eq!(
+            rules[0].margin_box_rules[0].slot,
+            PageMarginBoxSlot::TopLeft
+        );
+        assert_eq!(
+            rules[0].margin_box_rules[1].slot,
+            PageMarginBoxSlot::BottomRight
+        );
     }
 
     #[test]
@@ -1396,25 +1639,21 @@ mod tests {
         // in isolation).
         //
         // The fixture also throws in a margin-box at-rule (`@top-left { … }`,
-        // CSS Paged Media Level 3 §5) to confirm it keeps being silently
-        // skipped alongside the three descriptors. That is a secondary,
-        // weaker check here — this fixture has no other ordinary
-        // declaration, so `declarations.is_empty()` alone can't distinguish
-        // "the at-rule body was skipped" from "the whole rule failed to
-        // parse". The stronger regression guard for the margin-box-skip
-        // claim, which pins a sibling *declaration* surviving the skip, is
-        // `page_margin_box_at_rule_body_is_skipped_declaration_survives`
-        // above.
+        // CSS Paged Media Level 3 §5.1) to confirm it lands in its own
+        // `margin_box_rules` field alongside the three descriptors, rather
+        // than in `declarations` or disturbing their counts — the
+        // "margin-box at-rules" test group below covers that field's
+        // grammar/shape in depth; this is the "all four coexist in one
+        // block" cross-check.
         let rules =
             page_rules("@page { size: A4; marks: crop; bleed: 6pt; @top-left { content: 'x' } }");
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].selector, ps_single(None, vec![]));
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert!(
-            rules[0].declarations.is_empty(),
-            "the margin-box at-rule body must keep dropping, and no other \
-             declaration is present in this fixture"
+        assert!(rules[0].declarations.is_empty());
+        assert_eq!(rules[0].margin_box_rules.len(), 1);
+        assert_eq!(
+            rules[0].margin_box_rules[0].slot,
+            PageMarginBoxSlot::TopLeft
         );
         assert_eq!(rules[0].size_declarations.len(), 1);
         assert_eq!(
@@ -2003,6 +2242,25 @@ mod tests {
         assert_eq!(tree.page_rules.len(), 0);
         // @media / @supports 内の p { color: red } は body parse されず drop、
         // 末尾の p { color: red } のみ残る。
+        assert_eq!(tree.style_rules.len(), 1);
+    }
+
+    #[test]
+    fn top_level_margin_box_at_rule_still_silently_dropped() {
+        // The sixteen margin-box idents are recognized only by
+        // `crate::page::PageDeclParser`, the parser for tokens *inside* an
+        // `@page` block body. `StyleRuleParser` (top-level stylesheet
+        // parser, this module) does not gain that recognition — a
+        // stylesheet-level `@top-left { … }` (spec-invalid outside an
+        // `@page` block) still falls through `StyleRuleParser`'s
+        // `AtRuleParser::parse_prelude` default rejection and is dropped,
+        // same as any other unsupported top-level at-rule.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@top-left { content: 'x' } p { color: red }",
+            Origin::Author,
+        );
+        assert_eq!(tree.page_rules.len(), 0);
         assert_eq!(tree.style_rules.len(), 1);
     }
 
