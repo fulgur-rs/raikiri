@@ -29660,6 +29660,8 @@ mod tests {
             ("luminosity", MixBlendMode::Luminosity),
         ];
         for (source, expected) in cases {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             assert_eq!(
                 parse(source, "mix-blend-mode"),
                 Some(PropertyValue::MixBlendMode(expected)),
@@ -29794,6 +29796,8 @@ mod tests {
             ("view-box", GeometryBox::ViewBox),
         ];
         for (source, expected) in cases {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             assert_eq!(
                 parse(source, "clip-path"),
                 Some(PropertyValue::ClipPath(ClipPath::GeometryBox(expected))),
@@ -30165,12 +30169,16 @@ mod tests {
             ("sepia", FilterFunction::Sepia),
         ];
         for (name, ctor) in cases {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             assert_eq!(
                 expect_filter(parse(&format!("{name}(0.5)"), "filter")),
                 vec![ctor(0.5)],
                 "{name}"
             );
             // `<number-percentage>` — percentage alternative.
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             assert_eq!(
                 expect_filter(parse(&format!("{name}(50%)"), "filter")),
                 vec![ctor(0.5)],
@@ -30257,6 +30265,8 @@ mod tests {
             ("sepia", FilterFunction::Sepia),
         ];
         for (name, ctor) in cases {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
             assert_eq!(
                 expect_filter(parse(&format!("{name}(2)"), "filter")),
                 vec![ctor(2.0)],
