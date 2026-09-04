@@ -5282,6 +5282,189 @@ pub enum ObjectFit {
     ScaleDown,
 }
 
+/// `isolation` の specified value。
+///
+/// CSS Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
+/// property" <https://www.w3.org/TR/compositing-1/#isolation>。Grammar:
+/// `auto | isolate`。**non-inherited**。Computed value = specified keyword —
+/// no length payload (`ObjectFit` と同じ shape)。
+///
+/// spec 本文は `isolation` が実際に stacking context / group を作るかどうかの
+/// 適用条件 (要素の種類、SVG container 等) を細かく規定するが、本 crate は
+/// その適用アルゴリズムを実装しない — 本 variant が保持するのは
+/// cascade/computed value の keyword のみ (実際に compositing group を
+/// 構築する処理は raikiri-paint 側の責務、`ObjectFit` doc の「レイアウト
+/// 適用アルゴリズム自体は実装しない」節と同じ scope carving)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Isolation {
+    /// `auto` — spec initial value。要素自身は独立した stacking context /
+    /// group を強制しない。
+    Auto,
+    /// `isolate` — 要素を独立した stacking context にし、`mix-blend-mode` の
+    /// blending をその subtree 内に隔離する。
+    Isolate,
+}
+
+/// `mix-blend-mode` の specified value。
+///
+/// CSS Compositing and Blending Level 1 §3.4.1 "Mix Blend Mode: the
+/// mix-blend-mode property"
+/// <https://www.w3.org/TR/compositing-1/#mix-blend-mode>。Grammar:
+/// `<blend-mode> = normal | multiply | screen | overlay | darken | lighten |
+/// color-dodge | color-burn | hard-light | soft-light | difference |
+/// exclusion | hue | saturation | color | luminosity` (`<blend-mode>` 自体は
+/// CSS Compositing and Blending Level 1 §2 "Compositing and Blending"
+/// で定義され、本 crate が未実装の `background-blend-mode` property とも
+/// 共有される grammar)。**non-inherited**。Computed value = specified
+/// keyword — no length payload。
+///
+/// 実際の blending 演算 (各 mode の合成式、CSS Compositing and Blending
+/// Level 1 §3.2 "Blending") は raikiri-paint 側の compositing 実装が別途
+/// 必要 — 本 variant が保持するのは cascade/computed value の keyword のみ。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MixBlendMode {
+    /// `normal` — spec initial value。backdrop を素通しする通常合成。
+    Normal,
+    /// `multiply` — CSS Compositing and Blending Level 1 §3.2.1。
+    Multiply,
+    /// `screen` — 同 §3.2.2。
+    Screen,
+    /// `overlay` — 同 §3.2.3。
+    Overlay,
+    /// `darken` — 同 §3.2.4。
+    Darken,
+    /// `lighten` — 同 §3.2.5。
+    Lighten,
+    /// `color-dodge` — 同 §3.2.6。
+    ColorDodge,
+    /// `color-burn` — 同 §3.2.7。
+    ColorBurn,
+    /// `hard-light` — 同 §3.2.8。
+    HardLight,
+    /// `soft-light` — 同 §3.2.9。
+    SoftLight,
+    /// `difference` — 同 §3.2.10。
+    Difference,
+    /// `exclusion` — 同 §3.2.11。
+    Exclusion,
+    /// `hue` — non-separable blend mode、CSS Compositing and Blending
+    /// Level 1 §3.2.12。
+    Hue,
+    /// `saturation` — 同 §3.2.13。
+    Saturation,
+    /// `color` — 同 §3.2.14。
+    Color,
+    /// `luminosity` — 同 §3.2.15。
+    Luminosity,
+}
+
+/// `clip-path` の `<geometry-box>` component (CSS Masking Level 1 §5.1
+/// "Basic Shapes: the clip-path property"
+/// <https://www.w3.org/TR/css-masking-1/#the-clip-path>)。
+///
+/// Grammar: `<geometry-box> = <shape-box> | fill-box | stroke-box |
+/// view-box`、`<shape-box> = border-box | content-box | padding-box |
+/// margin-box | fill-box | stroke-box`。`fill-box`/`stroke-box` は両
+/// production に重複して現れるが、enum としては単純に 1 variant ずつに
+/// 畳む (union は 7 keyword)。
+///
+/// SVG 文脈 (`fill-box`/`stroke-box`/`view-box`) の解決は raikiri-paint 側の
+/// SVG レンダリング実装 (現状皆無、[`ClipPath`] doc 参照) の責務 — 本 variant
+/// は keyword を保持するのみ。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeometryBox {
+    /// `border-box`。
+    BorderBox,
+    /// `padding-box`。
+    PaddingBox,
+    /// `content-box`。
+    ContentBox,
+    /// `margin-box`。
+    MarginBox,
+    /// `fill-box` — SVG の bounding box。
+    FillBox,
+    /// `stroke-box` — SVG の stroke bounding box。
+    StrokeBox,
+    /// `view-box` — 最も近い SVG viewport。
+    ViewBox,
+}
+
+/// `clip-path` の specified value。
+///
+/// CSS Masking Level 1 §5.1 "Basic Shapes: the clip-path property"
+/// <https://www.w3.org/TR/css-masking-1/#the-clip-path>。Full grammar:
+/// `<clip-source> | [ <basic-shape> || <geometry-box> ] | none`、
+/// `<clip-source> = <url>`。**non-inherited**。
+///
+/// # Scope carving — `<basic-shape>` は未対応
+///
+/// `<basic-shape>` (`circle()` / `ellipse()` / `inset()` / `polygon()` /
+/// `path()`) は本 crate では意図的に未対応 — その完全な grammar (shape-radius
+/// の位置指定、fill-rule、SVG path data 文字列 etc.) は CSS Masking Level 1
+/// 自身ではなく CSS Shapes Module Level 1 が定義する別 spec の話であり、
+/// [`Gradient`] の Level 4 拡張 carve-out や [`BoxShadowItem`] の `inset`
+/// carve-out と同じ「単位として丸ごと defer し、半端に実装しない」判断
+/// ([`Gradient`] doc の scope carving 節参照)。本 variant が受理するのは
+/// `<clip-source>` (`<url>`) と `<geometry-box>` 単体のみ — 両者だけでも
+/// spec 上有効な `clip-path` 宣言 (例: `clip-path: padding-box`) であり、
+/// `<basic-shape>` を伴わない場合の grammar は CSS Masking Level 1 単独で
+/// 完全に定義されている。
+///
+/// # Computed value
+///
+/// 同 § "Computed value: as specified, but with `<url>` values made
+/// absolute" — `<url>` の絶対化 (base URL 解決) は本 crate が URL 解決の
+/// 実行環境 (base URL、fetch) を持たないため未対応、[`BackgroundImage::Url`]
+/// と同じ scope carving。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClipPath {
+    /// `none` — spec initial value。clipping を行わない。
+    None,
+    /// `<clip-source>` = `<url>` — SVG `<clipPath>` element 等への参照。
+    Url(String),
+    /// `<geometry-box>` 単体 (`<basic-shape>` 併記なし)。
+    GeometryBox(GeometryBox),
+}
+
+/// `mask-image` の specified value。
+///
+/// CSS Masking Level 1 §7.1 "Image Masking: the mask-image property"
+/// <https://www.w3.org/TR/css-masking-1/#the-mask-image>。Full grammar:
+/// `<mask-reference>#`、`<mask-reference> = none | <image> | <mask-source>`、
+/// `<mask-source> = <url>`、`<image> = <url> | <gradient>`。
+/// **non-inherited**。
+///
+/// # Scope carving — single layer のみ
+///
+/// `<mask-reference>#` の comma-separated multi-layer list は未対応 —
+/// [`BackgroundImage`] doc の「複数 background layer 用の comma-separated
+/// list は未対応、将来 `Arc<Vec<..>>` へ wrap するだけで拡張できる」scope
+/// carving と同じ判断・同じ拡張余地。
+///
+/// # `<mask-source>` と `<image>` の `url` alternative は同じ具象構文
+///
+/// `<mask-source>` (`<url>`) と `<image>`'s `<url>` alternative は
+/// concrete syntax 上区別不能 (`url(#foo)` はどちらのつもりで書かれたかを
+/// パーサーが判別する情報を持たない) — したがって本 enum の [`Self::Url`]
+/// variant は両方を兼ねる、[`BackgroundImage`] の `<bg-image> = <url> |
+/// <gradient>` と同じ parse 経路 ([`parse_mask_image`] doc参照)。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum MaskImage {
+    /// `none` — spec initial value。masking を行わない。
+    None,
+    /// `<url>` — `<mask-source>` (SVG `<mask>` element参照) と `<image>`'s
+    /// `<url>` alternative の両方を兼ねる (上記 doc 参照)。
+    Url(String),
+    /// `<gradient>` — 6 gradient function のいずれか ([`BackgroundImage::Gradient`]
+    /// と同じ payload 型、paint 側での実際の fill は未実装)。
+    Gradient(Gradient),
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -6496,6 +6679,23 @@ pub enum PropertyValue {
     /// variant 自体は範囲外の値 (例: `opacity: 2`) をそのまま運ぶ。末尾に
     /// 追加 (1:1 disjoint な新 field、[`PropertyKey`] doc の判断規則)。
     Opacity(f32),
+    /// `isolation` — **non-inherited**、initial: [`Isolation::Auto`] (CSS
+    /// Compositing and Blending Level 1 §3.4.2 [`Isolation`] doc 参照)。
+    /// 末尾に追加 (1:1 disjoint な新 field、[`PropertyKey`] doc の判断規則)。
+    Isolation(Isolation),
+    /// `mix-blend-mode` — **non-inherited**、initial:
+    /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1
+    /// §3.4.1 [`MixBlendMode`] doc 参照)。末尾に追加 (1:1 disjoint な新
+    /// field、[`PropertyKey`] doc の判断規則)。
+    MixBlendMode(MixBlendMode),
+    /// `mask-image` — **non-inherited**、initial: [`MaskImage::None`] (CSS
+    /// Masking Level 1 §7.1 [`MaskImage`] doc 参照)。末尾に追加 (1:1
+    /// disjoint な新 field、[`PropertyKey`] doc の判断規則)。
+    MaskImage(MaskImage),
+    /// `clip-path` — **non-inherited**、initial: [`ClipPath::None`] (CSS
+    /// Masking Level 1 §5.1 [`ClipPath`] doc 参照)。末尾に追加 (1:1
+    /// disjoint な新 field、[`PropertyKey`] doc の判断規則)。
+    ClipPath(ClipPath),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -6857,6 +7057,20 @@ pub enum PropertyKey {
     // per-variant docs per crate convention). 末尾配置の理由は
     // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
     Opacity,
+    // isolation / mix-blend-mode (CSS Compositing and Blending Level 1
+    // §3.4.1/§3.4.2、semantics on the matching PropertyValue::Isolation /
+    // PropertyValue::MixBlendMode variants; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
+    Isolation,
+    MixBlendMode,
+    // mask-image / clip-path (CSS Masking Level 1 §7.1/§5.1、semantics on
+    // the matching PropertyValue::MaskImage / PropertyValue::ClipPath
+    // variants; sibling PropertyKey variants carry no per-variant docs per
+    // crate convention). 末尾配置の理由は background-repeat 等と同節参照
+    // (1:1 disjoint な新 field)。
+    MaskImage,
+    ClipPath,
 }
 
 impl PropertyValue {
@@ -6996,6 +7210,10 @@ impl PropertyValue {
             PropertyValue::ObjectFit(_) => PropertyKey::ObjectFit,
             PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
             PropertyValue::Opacity(_) => PropertyKey::Opacity,
+            PropertyValue::Isolation(_) => PropertyKey::Isolation,
+            PropertyValue::MixBlendMode(_) => PropertyKey::MixBlendMode,
+            PropertyValue::MaskImage(_) => PropertyKey::MaskImage,
+            PropertyValue::ClipPath(_) => PropertyKey::ClipPath,
         }
     }
 }
@@ -7383,6 +7601,10 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "object-fit" => PropertyKey::ObjectFit,
         "object-position" => PropertyKey::ObjectPosition,
         "opacity" => PropertyKey::Opacity,
+        "isolation" => PropertyKey::Isolation,
+        "mix-blend-mode" => PropertyKey::MixBlendMode,
+        "mask-image" => PropertyKey::MaskImage,
+        "clip-path" => PropertyKey::ClipPath,
         _ => return None,
     })
 }
@@ -7961,6 +8183,22 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // `PropertyValue::Opacity` doc's "specified preserves, computed
         // clamps" note and `parse_opacity_value` doc.
         "opacity" => parse_opacity_value(input).map(PropertyValue::Opacity),
+        // CSS Compositing and Blending Level 1 §3.4.2
+        // <https://www.w3.org/TR/compositing-1/#isolation>. Grammar:
+        // `auto | isolate`.
+        "isolation" => parse_isolation(input).map(PropertyValue::Isolation),
+        // CSS Compositing and Blending Level 1 §3.4.1
+        // <https://www.w3.org/TR/compositing-1/#mix-blend-mode>. Grammar:
+        // `<blend-mode>` — see `MixBlendMode` doc for the 16-keyword list.
+        "mix-blend-mode" => parse_mix_blend_mode(input).map(PropertyValue::MixBlendMode),
+        // CSS Masking Level 1 §7.1 <https://www.w3.org/TR/css-masking-1/#the-mask-image>.
+        // Grammar (single-layer subset — see `MaskImage` doc's scope
+        // carving note): `none | <image> | <mask-source>`.
+        "mask-image" => parse_mask_image(input).map(PropertyValue::MaskImage),
+        // CSS Masking Level 1 §5.1 <https://www.w3.org/TR/css-masking-1/#the-clip-path>.
+        // Grammar (`<basic-shape>`-free subset — see `ClipPath` doc's
+        // scope carving note): `<clip-source> | <geometry-box> | none`.
+        "clip-path" => parse_clip_path(input).map(PropertyValue::ClipPath),
         _ => None,
     }
 }
@@ -13917,6 +14155,59 @@ fn parse_background_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage>
     parse_url_value(input).map(BackgroundImage::Url)
 }
 
+/// `mask-image: <mask-reference>` (single layer — [`MaskImage`] doc の
+/// scope carving 節参照) を parse する。
+///
+/// grammar shape (`none | <image> | <mask-source>`、`<image> = <url> |
+/// <gradient>`、`<mask-source> = <url>`) は [`parse_background_image`]'s
+/// `<bg-image> = <url> | <gradient>` と concrete syntax レベルで一致する
+/// ([`MaskImage`] doc の「`<mask-source>` と `<image>` の `url`
+/// alternative は同じ具象構文」節) — body をそのまま踏襲する。
+fn parse_mask_image(input: &mut Parser<'_, '_>) -> Option<MaskImage> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(MaskImage::None);
+    }
+    if let Ok(gradient) = input.try_parse(parse_gradient) {
+        return Some(MaskImage::Gradient(gradient));
+    }
+    parse_url_value(input).map(MaskImage::Url)
+}
+
+/// `<geometry-box>` を parse する ([`GeometryBox`] doc の grammar 参照: 7
+/// keyword)。
+fn parse_geometry_box(input: &mut Parser<'_, '_>) -> Option<GeometryBox> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "border-box" => Some(GeometryBox::BorderBox),
+        "padding-box" => Some(GeometryBox::PaddingBox),
+        "content-box" => Some(GeometryBox::ContentBox),
+        "margin-box" => Some(GeometryBox::MarginBox),
+        "fill-box" => Some(GeometryBox::FillBox),
+        "stroke-box" => Some(GeometryBox::StrokeBox),
+        "view-box" => Some(GeometryBox::ViewBox),
+        _ => None,
+    }
+}
+
+/// `clip-path: <clip-source> | <geometry-box> | none` ([`ClipPath`] doc の
+/// scope carving 節参照 — `<basic-shape>` は未対応) を parse する。
+///
+/// `none` を最初に試し、次に `<geometry-box>` (7 keyword) を試し、最後に
+/// `<clip-source>` (`<url>`) を試す — 3 alternative は互いに排他的な token
+/// shape (ident vs. ident vs. url-token/function) なので試行順は結果を
+/// 左右しない ([`parse_background_image`] doc の同種の注記と同じ理由)。
+fn parse_clip_path(input: &mut Parser<'_, '_>) -> Option<ClipPath> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(ClipPath::None);
+    }
+    if let Ok(geometry_box) = input.try_parse(|i| -> Result<GeometryBox, ParseError<'_, ()>> {
+        parse_geometry_box(i).ok_or_else(|| i.new_custom_error(()))
+    }) {
+        return Some(ClipPath::GeometryBox(geometry_box));
+    }
+    parse_url_value(input).map(ClipPath::Url)
+}
+
 /// `<gradient>` (CSS Images 4 §3 — [`Gradient`] doc参照) の 6 function 名を
 /// dispatch する。function token の名前を見てから対応する
 /// `parse_*_gradient_body` を `parse_nested_block` で呼ぶ — `color-mix()`
@@ -14572,6 +14863,42 @@ fn parse_object_fit(input: &mut Parser<'_, '_>) -> Option<ObjectFit> {
         "cover" => Some(ObjectFit::Cover),
         "none" => Some(ObjectFit::None),
         "scale-down" => Some(ObjectFit::ScaleDown),
+        _ => None,
+    }
+}
+
+/// `isolation: <isolation-mode>` を parse する ([`Isolation`] doc の grammar
+/// 参照: `auto | isolate`)。
+fn parse_isolation(input: &mut Parser<'_, '_>) -> Option<Isolation> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(Isolation::Auto),
+        "isolate" => Some(Isolation::Isolate),
+        _ => None,
+    }
+}
+
+/// `mix-blend-mode: <blend-mode>` を parse する ([`MixBlendMode`] doc の
+/// grammar 参照: 16 keyword)。
+fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlendMode> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(MixBlendMode::Normal),
+        "multiply" => Some(MixBlendMode::Multiply),
+        "screen" => Some(MixBlendMode::Screen),
+        "overlay" => Some(MixBlendMode::Overlay),
+        "darken" => Some(MixBlendMode::Darken),
+        "lighten" => Some(MixBlendMode::Lighten),
+        "color-dodge" => Some(MixBlendMode::ColorDodge),
+        "color-burn" => Some(MixBlendMode::ColorBurn),
+        "hard-light" => Some(MixBlendMode::HardLight),
+        "soft-light" => Some(MixBlendMode::SoftLight),
+        "difference" => Some(MixBlendMode::Difference),
+        "exclusion" => Some(MixBlendMode::Exclusion),
+        "hue" => Some(MixBlendMode::Hue),
+        "saturation" => Some(MixBlendMode::Saturation),
+        "color" => Some(MixBlendMode::Color),
+        "luminosity" => Some(MixBlendMode::Luminosity),
         _ => None,
     }
 }
@@ -28695,5 +29022,260 @@ mod tests {
     fn opacity_key_maps_to_opacity_property_key() {
         let v = PropertyValue::Opacity(0.5);
         assert_eq!(v.key(), PropertyKey::Opacity);
+    }
+
+    // ── isolation (CSS Compositing and Blending Level 1 §3.4.2) ─────────
+
+    #[test]
+    fn isolation_parse_keywords() {
+        assert_eq!(
+            parse("auto", "isolation"),
+            Some(PropertyValue::Isolation(Isolation::Auto))
+        );
+        assert_eq!(
+            parse("isolate", "isolation"),
+            Some(PropertyValue::Isolation(Isolation::Isolate))
+        );
+    }
+
+    #[test]
+    fn isolation_rejects_unknown_keyword() {
+        for source in ["none", "isolated"] {
+            assert_eq!(parse(source, "isolation"), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn isolation_rejects_trailing_garbage() {
+        // `parse_isolation` itself only consumes one ident token — a second
+        // keyword is leftover input the property parser doesn't reject on
+        // its own (this crate's convention: the declaration-level
+        // `expect_exhausted` check, exercised here via `parse_entire`,
+        // drops the whole declaration instead — same shape as
+        // `isolation_wired_through_cascade_from_inline_style`'s sibling
+        // `mix_blend_mode_rejects_trailing_garbage` test).
+        assert_eq!(parse_entire("auto isolate", "isolation"), None);
+    }
+
+    #[test]
+    fn isolation_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "isolation"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn isolation_key_maps_to_isolation_property_key() {
+        let v = PropertyValue::Isolation(Isolation::Isolate);
+        assert_eq!(v.key(), PropertyKey::Isolation);
+    }
+
+    // ── mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) ────
+
+    #[test]
+    fn mix_blend_mode_parse_all_16_keywords() {
+        let cases = [
+            ("normal", MixBlendMode::Normal),
+            ("multiply", MixBlendMode::Multiply),
+            ("screen", MixBlendMode::Screen),
+            ("overlay", MixBlendMode::Overlay),
+            ("darken", MixBlendMode::Darken),
+            ("lighten", MixBlendMode::Lighten),
+            ("color-dodge", MixBlendMode::ColorDodge),
+            ("color-burn", MixBlendMode::ColorBurn),
+            ("hard-light", MixBlendMode::HardLight),
+            ("soft-light", MixBlendMode::SoftLight),
+            ("difference", MixBlendMode::Difference),
+            ("exclusion", MixBlendMode::Exclusion),
+            ("hue", MixBlendMode::Hue),
+            ("saturation", MixBlendMode::Saturation),
+            ("color", MixBlendMode::Color),
+            ("luminosity", MixBlendMode::Luminosity),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(
+                parse(source, "mix-blend-mode"),
+                Some(PropertyValue::MixBlendMode(expected)),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn mix_blend_mode_rejects_unknown_keyword() {
+        for source in ["hsl", "blend"] {
+            assert_eq!(parse(source, "mix-blend-mode"), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn mix_blend_mode_rejects_trailing_garbage() {
+        // Same shape as `isolation_rejects_trailing_garbage` — a second
+        // keyword is leftover input for the declaration-level
+        // `expect_exhausted` check to drop, not something
+        // `parse_mix_blend_mode` itself rejects.
+        assert_eq!(parse_entire("normal multiply", "mix-blend-mode"), None);
+    }
+
+    #[test]
+    fn mix_blend_mode_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "mix-blend-mode"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn mix_blend_mode_key_maps_to_mix_blend_mode_property_key() {
+        let v = PropertyValue::MixBlendMode(MixBlendMode::Multiply);
+        assert_eq!(v.key(), PropertyKey::MixBlendMode);
+    }
+
+    // ── mask-image (CSS Masking Level 1 §7.1) ────────────────────────────
+
+    #[test]
+    fn mask_image_parse_none() {
+        assert_eq!(
+            parse("none", "mask-image"),
+            Some(PropertyValue::MaskImage(MaskImage::None))
+        );
+    }
+
+    #[test]
+    fn mask_image_parse_url_unquoted_form() {
+        assert_eq!(
+            parse("url(mask.svg#m)", "mask-image"),
+            Some(PropertyValue::MaskImage(MaskImage::Url(
+                "mask.svg#m".to_string()
+            )))
+        );
+    }
+
+    #[test]
+    fn mask_image_parse_url_quoted_form() {
+        assert_eq!(
+            parse("url(\"mask.svg#m\")", "mask-image"),
+            Some(PropertyValue::MaskImage(MaskImage::Url(
+                "mask.svg#m".to_string()
+            )))
+        );
+    }
+
+    #[test]
+    fn mask_image_parse_gradient_reuses_the_shared_gradient_parser() {
+        // grammar-shape reuse pin ([`parse_mask_image`] doc) — the gradient
+        // internals themselves are already exhaustively covered by
+        // `background-image`'s own gradient tests, so this only confirms
+        // the `<gradient>` alternative is reachable through `mask-image`.
+        assert!(matches!(
+            parse("linear-gradient(red, blue)", "mask-image"),
+            Some(PropertyValue::MaskImage(MaskImage::Gradient(
+                Gradient::Linear(_)
+            )))
+        ));
+    }
+
+    #[test]
+    fn mask_image_is_case_insensitive() {
+        assert_eq!(
+            parse("NONE", "mask-image"),
+            Some(PropertyValue::MaskImage(MaskImage::None))
+        );
+    }
+
+    #[test]
+    fn mask_image_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "mask-image"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn mask_image_key_maps_to_mask_image_property_key() {
+        let v = PropertyValue::MaskImage(MaskImage::None);
+        assert_eq!(v.key(), PropertyKey::MaskImage);
+    }
+
+    // ── clip-path (CSS Masking Level 1 §5.1) ─────────────────────────────
+
+    #[test]
+    fn clip_path_parse_none() {
+        assert_eq!(
+            parse("none", "clip-path"),
+            Some(PropertyValue::ClipPath(ClipPath::None))
+        );
+    }
+
+    #[test]
+    fn clip_path_parse_url() {
+        assert_eq!(
+            parse("url(#my-clip)", "clip-path"),
+            Some(PropertyValue::ClipPath(ClipPath::Url(
+                "#my-clip".to_string()
+            )))
+        );
+    }
+
+    #[test]
+    fn clip_path_parse_all_7_geometry_box_keywords() {
+        let cases = [
+            ("border-box", GeometryBox::BorderBox),
+            ("padding-box", GeometryBox::PaddingBox),
+            ("content-box", GeometryBox::ContentBox),
+            ("margin-box", GeometryBox::MarginBox),
+            ("fill-box", GeometryBox::FillBox),
+            ("stroke-box", GeometryBox::StrokeBox),
+            ("view-box", GeometryBox::ViewBox),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(
+                parse(source, "clip-path"),
+                Some(PropertyValue::ClipPath(ClipPath::GeometryBox(expected))),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn clip_path_rejects_basic_shape_functions() {
+        // `<basic-shape>` is deliberately out of scope ([`ClipPath`] doc's
+        // scope carving note) — a `circle()`/`ellipse()`/`inset()`/
+        // `polygon()`/`path()` declaration drops the whole declaration
+        // rather than partially parsing.
+        for source in [
+            "circle(50%)",
+            "ellipse(50% 50%)",
+            "inset(10px)",
+            "polygon(0 0, 100% 0, 100% 100%)",
+            "path('M0 0 L10 10')",
+        ] {
+            assert_eq!(parse(source, "clip-path"), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn clip_path_is_case_insensitive() {
+        assert_eq!(
+            parse("NONE", "clip-path"),
+            Some(PropertyValue::ClipPath(ClipPath::None))
+        );
+        assert_eq!(
+            parse("BORDER-BOX", "clip-path"),
+            Some(PropertyValue::ClipPath(ClipPath::GeometryBox(
+                GeometryBox::BorderBox
+            )))
+        );
+    }
+
+    #[test]
+    fn clip_path_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "clip-path"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn clip_path_key_maps_to_clip_path_property_key() {
+        let v = PropertyValue::ClipPath(ClipPath::None);
+        assert_eq!(v.key(), PropertyKey::ClipPath);
     }
 }

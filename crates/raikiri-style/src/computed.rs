@@ -16,13 +16,14 @@ use crate::Atom;
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside,
-    ClearValue, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, Hyphens, ObjectFit, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TextAlign,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign,
-    Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list,
-    empty_counter_entries, empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    ClearValue, ClipPath, ContentAlignmentValue, ContentComponent, CssColor, Direction,
+    DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, Isolation, MaskImage,
+    MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
+    SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
@@ -1342,6 +1343,32 @@ pub struct ComputedValues {
     /// paint output is out of this crate's scope — `raikiri-paint`
     /// consumes it as plain data.
     pub opacity: f32,
+    /// `isolation`. **non-inherited**, initial: [`Isolation::Auto`] (CSS
+    /// Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
+    /// property" <https://www.w3.org/TR/compositing-1/#isolation>). Always
+    /// a keyword — no phase-3 transform, identity pass-through from
+    /// [`crate::specified::SpecifiedValues::isolation`] (same shape as
+    /// [`Self::object_fit`]).
+    pub isolation: Isolation,
+    /// `mix-blend-mode`. **non-inherited**, initial:
+    /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1
+    /// §3.4.1 "Mix Blend Mode: the mix-blend-mode property"
+    /// <https://www.w3.org/TR/compositing-1/#mix-blend-mode>). Same shape
+    /// as [`Self::isolation`] above — actual blending compositing is
+    /// `raikiri-paint`'s responsibility, this field is plain data.
+    pub mix_blend_mode: MixBlendMode,
+    /// `mask-image`. **non-inherited**, initial: [`MaskImage::None`] (CSS
+    /// Masking Level 1 §7.1 "Image Masking: the mask-image property"
+    /// <https://www.w3.org/TR/css-masking-1/#the-mask-image>). Identity
+    /// pass-through from [`crate::specified::SpecifiedValues::mask_image`]
+    /// — this crate never absolutizes a `<gradient>` payload's embedded
+    /// lengths, same reasoning as [`Self::background_image`].
+    pub mask_image: MaskImage,
+    /// `clip-path`. **non-inherited**, initial: [`ClipPath::None`] (CSS
+    /// Masking Level 1 §5.1 "Basic Shapes: the clip-path property"
+    /// <https://www.w3.org/TR/css-masking-1/#the-clip-path>). Same shape
+    /// as [`Self::mask_image`] above.
+    pub clip_path: ClipPath,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
     /// This is deliberately crate-private: `ComputedValues`' public property
@@ -1582,6 +1609,16 @@ impl ComputedValues {
             },
             // CSS Color 4 §3.3: opacity initial は `1`。
             opacity: 1.0,
+            // CSS Compositing and Blending Level 1 §3.4.2: isolation
+            // initial は `auto`。
+            isolation: Isolation::Auto,
+            // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode
+            // initial は `normal`。
+            mix_blend_mode: MixBlendMode::Normal,
+            // CSS Masking Level 1 §7.1: mask-image initial は `none`。
+            mask_image: MaskImage::None,
+            // CSS Masking Level 1 §5.1: clip-path initial は `none`。
+            clip_path: ClipPath::None,
             custom_properties: empty_custom_properties(),
         }
     }
@@ -1596,7 +1633,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity)。
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path)。
     ///
     /// # 実装 (delegation)
     ///
@@ -1658,7 +1695,7 @@ impl ComputedValues {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::property::TextShadowColor;
+    use crate::property::{GeometryBox, TextShadowColor};
     use crate::resolve::{
         ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
     };
@@ -2096,6 +2133,16 @@ mod tests {
             // CSS Color 4 §3.3: non-inherited なので initial (`1`) と異なる
             // 値にしておく (non_initial_parent の趣旨どおり)。
             opacity: 0.75,
+            // CSS Compositing and Blending Level 1 §3.4.2/§3.4.1: 両方
+            // non-inherited なので initial (`auto`/`normal`) と異なる値に
+            // しておく (non_initial_parent の趣旨どおり)。
+            isolation: Isolation::Isolate,
+            mix_blend_mode: MixBlendMode::Multiply,
+            // CSS Masking Level 1 §7.1/§5.1: 両方 non-inherited なので
+            // initial (`none`) と異なる値にしておく (non_initial_parent の
+            // 趣旨どおり)。
+            mask_image: MaskImage::Url("mask.svg".to_string()),
+            clip_path: ClipPath::GeometryBox(GeometryBox::PaddingBox),
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),
@@ -2106,7 +2153,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 86 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 90 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -2260,6 +2307,13 @@ mod tests {
         assert_eq!(child.object_position, initial.object_position);
         // CSS Color 4 §3.3: opacity は non-inherited。
         assert_eq!(child.opacity, initial.opacity);
+        // CSS Compositing and Blending Level 1 §3.4.1/§3.4.2: 両方
+        // non-inherited。
+        assert_eq!(child.isolation, initial.isolation);
+        assert_eq!(child.mix_blend_mode, initial.mix_blend_mode);
+        // CSS Masking Level 1 §7.1/§5.1: 両方 non-inherited。
+        assert_eq!(child.mask_image, initial.mask_image);
+        assert_eq!(child.clip_path, initial.clip_path);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
