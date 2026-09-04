@@ -600,10 +600,11 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::BackgroundPosition(_)
         | PropertyValue::BackgroundImage(_)
         // object-fit / object-position (CSS Images Module Level 3 §5.1/§5.2)
-        // — 同じく展開先の longhand を持たない (shorthand を持たない
-        // standalone property)。
+        // / opacity (CSS Color 4 §3.3) — 同じく展開先の longhand を持たない
+        // (shorthand を持たない standalone property)。
         | PropertyValue::ObjectFit(_)
-        | PropertyValue::ObjectPosition(_) => expand_none(d, push),
+        | PropertyValue::ObjectPosition(_)
+        | PropertyValue::Opacity(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),

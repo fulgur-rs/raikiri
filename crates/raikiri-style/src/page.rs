@@ -3400,6 +3400,16 @@ fn absolutize_in_page_context(
         PropertyValue::ObjectPosition(v) => {
             PropertyValue::ObjectPosition(css_position(v, font_size, own_line_height, ctx))
         }
+        // ── opacity ───────────────────────────────────────────────────────
+        // CSS Color 4 §3.3: "Opacity values outside the range `[0, 1]` are
+        // not invalid, and are preserved in specified values, but are
+        // clamped to the range `[0, 1]` in computed values." This is the
+        // page-context sibling of
+        // `crate::specified::SpecifiedValues::absolutize_with`'s opacity
+        // clamp — a real phase-3 transform, but not a length
+        // absolutization, so it does not need `font_size`/`own_line_height`/
+        // `ctx` the way the arms above do.
+        PropertyValue::Opacity(o) => PropertyValue::Opacity(o.clamp(0.0, 1.0)),
         // ── overflow-x / overflow-y ──────────────────────────────────────────
         // CSS Overflow 3 §3.1 cross-axis coupling — this axis's own winner
         // (`v`) paired with the *other* axis's winner (`overflow_pair`,
@@ -6010,6 +6020,70 @@ mod tests {
         );
     }
 
+    /// Direct exercise of the `Opacity` arm of `absolutize_in_page_context`
+    /// — CSS Color 4 §3.3's computed-value clamp to `[0, 1]`, the
+    /// page-context sibling of `SpecifiedValues::absolutize_with`'s same
+    /// clamp (`specified::tests::opacity_out_of_range_specified_clamps_at_finalize`
+    /// pins the element-path half). The `font_size`/`own_line_height`/`ctx`
+    /// inputs are irrelevant here — unlike `TextShadow` above, this arm's
+    /// transform doesn't absolutize a length — so this test doesn't vary
+    /// them, only the `Opacity` payload.
+    #[test]
+    fn absolutize_in_page_context_covers_opacity_arm_clamp() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+        let outline = OutlineStyle::None;
+        let overflow = OverflowXY::both(OverflowValue::Visible);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::Opacity(2.0)),
+                fs,
+                None,
+                &ctx,
+                styles,
+                outline,
+                overflow,
+            ),
+            PropertyValue::Opacity(1.0),
+            "opacity: 2 clamps to 1.0",
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::Opacity(-0.5)),
+                fs,
+                None,
+                &ctx,
+                styles,
+                outline,
+                overflow,
+            ),
+            PropertyValue::Opacity(0.0),
+            "opacity: -0.5 clamps to 0.0",
+        );
+        // In-range value passes through unchanged.
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::Opacity(0.5)),
+                fs,
+                None,
+                &ctx,
+                styles,
+                outline,
+                overflow,
+            ),
+            PropertyValue::Opacity(0.5),
+            "opacity: 0.5 is already in range",
+        );
+    }
+
     #[test]
     fn cascade_page_computes_border_radius_box_shadow_and_outline() {
         let root = root_with_font_size(20.0);
@@ -6407,10 +6481,19 @@ mod tests {
     /// (同関数の `WritingMode` arm が `None` を返す、`WritingMode` doc の
     /// Non-goal 節参照)。
     ///
+    /// `opacity` (CSS Color 4 §3.3) は同じ形の 5 番目の variant だが、他の 4
+    /// つと異なり **keyword ではなく number** — `absolutize_in_page_context`
+    /// の `Opacity` arm は `[0, 1]` への range clamp という実 phase-3
+    /// transform を行う (`phase_3_transformed_variants()` に正しく含まれる)
+    /// が、payload (`f32`) は `Length` を運ばないので
+    /// `specified_layer_residue` はそもそも検査対象にしていない
+    /// (同関数の `Opacity` arm が `None` を返す) — length 残滓とは無関係な
+    /// 理由で同じバケットに落ちる。
+    ///
     /// 定数名を `OVERFLOW_...` のままにしないのはこのため — 対応する variant が
     /// overflow の 3 つだけではなくなった。`phase_3_transformed_variants()`
     /// 側の +3 を打ち消す。
-    const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 4;
+    const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
 
     fn raw_corpus_residue_variants() -> usize {
         phase_3_transformed_variants() + 3 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
@@ -6893,6 +6976,17 @@ mod tests {
             horizontal: CssPositionOffset::Start(Length::Em(2.0)),
             vertical: CssPositionOffset::End(Length::Rem(1.0)),
         }),
+        // CSS Color 4 §3.3 — worst case is an out-of-range value (`2.0`,
+        // not just non-initial), so this sample actually exercises the
+        // `Opacity` arm's `[0, 1]` clamp in
+        // `phase_3_variant_classification_matches_the_documented_counts`
+        // (that test counts corpus entries where `absolutize_in_page_context`
+        // is a no-op; `2.0` clamps to `1.0` and is therefore correctly
+        // *not* counted as pass-through — an in-range sample like `0.5`
+        // would clamp to itself and wrongly inflate
+        // `PHASE_3_PASS_THROUGH_VARIANTS`, same load-bearing-fixture
+        // convention as that test's own `Solid`/`Hidden` choices).
+        Opacity => PropertyValue::Opacity(2.0),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -7137,6 +7231,7 @@ mod tests {
         Background,
         ObjectFit,
         ObjectPosition,
+        Opacity,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -7611,6 +7706,15 @@ mod tests {
             // `<length-percentage>` (reuses `CssPosition`) and gets its own
             // arm below, next to `BackgroundPosition`.
             | PropertyValue::ObjectFit(_)
+            // `opacity` (CSS Color 4 §3.3) carries a bare `f32`, not a
+            // `Length` — this detector only checks for *length* residue, so
+            // it reports `None` unconditionally regardless of the value's
+            // range. The `[0,1]` clamp is real phase-3 work
+            // (`absolutize_in_page_context`'s `Opacity` arm), same as
+            // `OverflowX`/`WritingMode` above — see
+            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that
+            // is accounted for.
+            | PropertyValue::Opacity(_)
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)

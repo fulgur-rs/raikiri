@@ -6481,6 +6481,21 @@ pub enum PropertyValue {
     /// する ([`parse_position_branch3_strict`] doc参照)。
     /// `<length-percentage>` を含むため絶対化は phase 3 に委ねる。
     ObjectPosition(CssPosition),
+    /// `opacity` — **non-inherited**、initial: `1` (CSS Color 4 §3.3
+    /// "Transparency: the opacity property"
+    /// <https://www.w3.org/TR/css-color-4/#transparency>, "Value:
+    /// `<opacity-value>`", "Inherited: no")。grammar: `<opacity-value> =
+    /// <number> | <percentage>`。
+    ///
+    /// この payload は **specified value をそのまま保持し、clamp しない**
+    /// — 同 § 本文: "Opacity values outside the range \[0, 1\] are not
+    /// invalid, and are preserved in specified values, but are clamped to
+    /// the range \[0, 1\] in computed values."。clamp は phase 3
+    /// ([`crate::specified::SpecifiedValues::absolutize_with`] /
+    /// [`crate::page`] の `absolutize_in_page_context`) の仕事であり、この
+    /// variant 自体は範囲外の値 (例: `opacity: 2`) をそのまま運ぶ。末尾に
+    /// 追加 (1:1 disjoint な新 field、[`PropertyKey`] doc の判断規則)。
+    Opacity(f32),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -6837,6 +6852,11 @@ pub enum PropertyKey {
     // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
     ObjectFit,
     ObjectPosition,
+    // opacity (CSS Color 4 §3.3、semantics on the matching
+    // PropertyValue::Opacity variant; sibling PropertyKey variants carry no
+    // per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
+    Opacity,
 }
 
 impl PropertyValue {
@@ -6975,6 +6995,7 @@ impl PropertyValue {
             PropertyValue::Background(_) => PropertyKey::Background,
             PropertyValue::ObjectFit(_) => PropertyKey::ObjectFit,
             PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
+            PropertyValue::Opacity(_) => PropertyKey::Opacity,
         }
     }
 }
@@ -7361,6 +7382,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background" => PropertyKey::Background,
         "object-fit" => PropertyKey::ObjectFit,
         "object-position" => PropertyKey::ObjectPosition,
+        "opacity" => PropertyKey::Opacity,
         _ => return None,
     })
 }
@@ -7932,6 +7954,13 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // `background-position`'s `parse_css_position` accepts
         // (`parse_position_branch3_strict` doc's "Why" section).
         "object-position" => parse_position_strict(input).map(PropertyValue::ObjectPosition),
+        // CSS Color 4 §3.3
+        // <https://www.w3.org/TR/css-color-4/#transparency>. Value:
+        // `<opacity-value> = <number> | <percentage>`. The parsed number is
+        // stored verbatim, out-of-range included — see
+        // `PropertyValue::Opacity` doc's "specified preserves, computed
+        // clamps" note and `parse_opacity_value` doc.
+        "opacity" => parse_opacity_value(input).map(PropertyValue::Opacity),
         _ => None,
     }
 }
@@ -9332,6 +9361,67 @@ fn parse_alpha_value<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'
 
 fn clamp_channel(value: i32) -> f32 {
     value.clamp(0, 255) as f32 / 255.0
+}
+
+/// `<opacity-value> = <number> | <percentage>` (CSS Color 4 §3.3
+/// "Transparency: the opacity property"
+/// <https://www.w3.org/TR/css-color-4/#transparency>). `<percentage>` uses
+/// `expect_percentage`'s `unit_value` (already divided by 100) verbatim, no
+/// 0%..100% range check.
+///
+/// # Deliberately does not clamp
+///
+/// Same §, verbatim: "Opacity values outside the range \[0, 1\] are not
+/// invalid, and are preserved in specified values, but are clamped to the
+/// range \[0, 1\] in computed values." Clamping is a **computed-value-time**
+/// transform, so this parser — unlike [`parse_alpha_value`] (the `<alpha-value>`
+/// grammar `rgb()`/`rgba()` use for their alpha channel, which shares the
+/// exact same `<number> | <percentage>` grammar but clamps immediately at
+/// parse time) — must preserve an out-of-range parse as-is. The two helpers
+/// are kept separate rather than shared despite the identical grammar,
+/// because sharing would silently store an already-clamped value at the
+/// specified layer. The actual clamp lives in
+/// [`crate::specified::SpecifiedValues::absolutize_with`] (phase 3) and its
+/// page-context sibling.
+///
+/// # `!is_nan()` guard — NaN, but *not* `+Inf`/`-Inf`, must be rejected
+///
+/// `+Inf`/`-Inf` are spec-valid `<number>` values (CSS Color 4 §3.3 puts no
+/// range restriction on `<opacity-value>`'s `<number>` alternative) and are
+/// handled correctly by the phase-3 clamp above — `f32::clamp` maps
+/// `+Inf`/`-Inf` to `1.0`/`0.0` exactly as it maps any other out-of-range
+/// finite value, so a huge-magnitude literal like `opacity: -1e40` (which
+/// the tokenizer's f64->f32 conversion overflows to `-Infinity`, not NaN —
+/// distinct from the `0 * Infinity` collapse below) must reach the clamp
+/// unrejected and become `0.0` (fully transparent), not fall back to the
+/// initial `1.0` (fully opaque) by being dropped here. **NaN is different**
+/// — `f32::clamp` returns `self` unchanged when `self` is NaN (only a NaN
+/// *bound* panics), so an unguarded NaN would sail through the clamp and
+/// reach [`crate::computed::ComputedValues::opacity`] — this guard is what
+/// keeps that field NaN-free for values that go through this parser (see
+/// that field's doc for the "ordinary parse -> cascade pipeline" scoping of
+/// that guarantee). A huge-*exponent* literal (`opacity: 0e999`) produces
+/// exactly that hazard: the
+/// tokenizer's `0 * 10^999` collapses to `0.0 * f32::INFINITY` = `NaN` (an
+/// earlier iteration of this guard used `is_finite()`, which rejects
+/// `+Inf`/`-Inf` too and wrongly dropped `-1e40`-shaped declarations — this
+/// helper deliberately does **not** reuse
+/// [`parse_nonneg_finite_number`]'s `is_finite()` pattern for that reason;
+/// unlike `flex-grow`/`flex-shrink`, which reject `<number [0,∞]>` and so
+/// have no legitimate use for `-Inf` in the first place, `opacity`'s
+/// unbounded `<number>` grammar makes `+Inf`/`-Inf` legitimate inputs that
+/// must reach the clamp). `!is_nan()` is checked on both the `<number>`
+/// and `<percentage>` branches, since either token shape can hit the same
+/// `0 * Infinity` collapse — a rejected (NaN) declaration falls back to
+/// the initial value `1.0` via the ordinary "invalid declaration is
+/// dropped" path, same as any other malformed value.
+fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Option<f32> {
+    if let Ok(pct) = input.try_parse(|i| i.expect_percentage()) {
+        (!pct.is_nan()).then_some(pct)
+    } else {
+        let n = input.expect_number().ok()?;
+        (!n.is_nan()).then_some(n)
+    }
 }
 
 /// `font-family: <family-name>#` を parse する。
@@ -28528,5 +28618,82 @@ mod tests {
             vertical: CssPositionOffset::Start(Length::Percent(50.0)),
         });
         assert_eq!(v.key(), PropertyKey::ObjectPosition);
+    }
+
+    // ── opacity (CSS Color 4 §3.3) ──────────────────────────────────────
+
+    #[test]
+    fn opacity_parse_number() {
+        assert_eq!(parse("0.5", "opacity"), Some(PropertyValue::Opacity(0.5)));
+        assert_eq!(parse("1", "opacity"), Some(PropertyValue::Opacity(1.0)));
+        assert_eq!(parse("0", "opacity"), Some(PropertyValue::Opacity(0.0)));
+    }
+
+    #[test]
+    fn opacity_parse_percentage() {
+        assert_eq!(parse("50%", "opacity"), Some(PropertyValue::Opacity(0.5)));
+        assert_eq!(parse("100%", "opacity"), Some(PropertyValue::Opacity(1.0)));
+        assert_eq!(parse("0%", "opacity"), Some(PropertyValue::Opacity(0.0)));
+    }
+
+    #[test]
+    fn opacity_out_of_range_values_are_preserved_unclamped_at_parse_time() {
+        // CSS Color 4 §3.3: "Opacity values outside the range `[0, 1]` are not
+        // invalid, and are preserved in specified values, but are clamped to
+        // the range `[0, 1]` in computed values." — the parser (specified
+        // layer) must NOT clamp; that is `SpecifiedValues::absolutize_with`'s
+        // job (phase 3), pinned separately in `specified.rs`/`cascade.rs`.
+        assert_eq!(parse("2", "opacity"), Some(PropertyValue::Opacity(2.0)));
+        assert_eq!(parse("-0.5", "opacity"), Some(PropertyValue::Opacity(-0.5)));
+        assert_eq!(parse("150%", "opacity"), Some(PropertyValue::Opacity(1.5)));
+    }
+
+    #[test]
+    fn opacity_rejects_nan_but_not_infinity() {
+        // `0 * 10^999` collapses to `0.0 * f32::INFINITY` = NaN during the
+        // cssparser tokenizer's f64->f32 conversion (`parse_opacity_value`
+        // doc's "`!is_nan()` guard" section) — NaN must be rejected here at
+        // parse time (unguarded, it would sail through the phase-3 clamp
+        // unchanged and break `ComputedValues::opacity`'s `[0,1]`
+        // invariant).
+        assert_eq!(parse("0e999", "opacity"), None);
+        assert_eq!(parse("0e999%", "opacity"), None);
+
+        // `+Inf`/`-Inf` are a *different* hazard class — a spec-valid
+        // `<number>` overflow (not a NaN collapse) that the phase-3 clamp
+        // handles correctly (`f32::clamp` maps either to `1.0`/`0.0`), so
+        // the parser must NOT reject them here — doing so would drop the
+        // whole declaration and wrongly fall back to the initial `1.0`
+        // instead of clamping to `0.0` for a huge negative literal (this
+        // was a regression in an earlier iteration of this guard, which
+        // used `is_finite()` and rejected these too).
+        assert_eq!(
+            parse("1e40", "opacity"),
+            Some(PropertyValue::Opacity(f32::INFINITY))
+        );
+        assert_eq!(
+            parse("-1e40", "opacity"),
+            Some(PropertyValue::Opacity(f32::NEG_INFINITY))
+        );
+    }
+
+    #[test]
+    fn opacity_rejects_non_number_percentage_tokens() {
+        for source in ["auto", "none", "opaque"] {
+            assert_eq!(parse(source, "opacity"), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn opacity_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "opacity"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn opacity_key_maps_to_opacity_property_key() {
+        let v = PropertyValue::Opacity(0.5);
+        assert_eq!(v.key(), PropertyKey::Opacity);
     }
 }
