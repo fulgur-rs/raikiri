@@ -54,8 +54,9 @@ pub use counter_style::{
 pub mod page;
 pub use page::{
     PageBleed, PageBleedDeclaration, PageCascadeResult, PageContextQuery, PageInheritance,
-    PageMarks, PageMarksDeclaration, PageOrientation, PagePseudo, PageRule, PageSelector,
-    PageSelectorEntry, PageSize, PageSizeDeclaration, PageSizeKeyword, cascade_page,
+    PageMarginBoxRule, PageMarginBoxSlot, PageMarks, PageMarksDeclaration, PageOrientation,
+    PagePseudo, PageRule, PageSelector, PageSelectorEntry, PageSize, PageSizeDeclaration,
+    PageSizeKeyword, cascade_page,
 };
 
 pub mod ruletree;

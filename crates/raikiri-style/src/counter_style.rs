@@ -27,8 +27,8 @@
 //!   (audio-rendering concern, no bearing on the text-formatting use case
 //!   this module serves) and is silently dropped like any other unsupported
 //!   descriptor or at-rule, per this crate's general convention (e.g.
-//!   `@page`'s margin-box at-rules, [`crate::ruletree`]'s
-//!   `@media`/`@supports`).
+//!   [`crate::ruletree`]'s `@media`/`@supports`, or an unrecognized nested
+//!   at-rule inside `@page`).
 //! - The `generate a counter` algorithm (§2, quoted in full on
 //!   [`generate_counter`]) for six of `system`'s seven values: `cyclic`,
 //!   `numeric`, `alphabetic`, `symbolic`, `additive`, `fixed`. `extends` is

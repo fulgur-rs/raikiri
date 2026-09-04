@@ -7,13 +7,18 @@
 //! source-order cascade, then phase 2 = resolution against the page context's
 //! inheritance parent, then phase 3 = absolutization against the page context's
 //! own font-size + `border-*-width` style gating — see that function's doc).
-//! Per-page `PageBox` derivation and
-//! margin-box slot layout remain deferred future work that lives downstream;
-//! this module produces the declaration bag they consume.
+//! Nested margin-box at-rules (`@top-left { … }` etc.) are recognized and
+//! their declaration bodies stored per [`PageRule::margin_box_rules`] (see
+//! [`PageMarginBoxRule`]) — but, like the rest of this module, only up to the
+//! parse boundary. Per-page `PageBox` derivation and margin-box slot
+//! *layout* (the sixteen boxes' geometry, and cascade resolution across
+//! multiple rules naming the same slot) remain deferred future work that
+//! lives downstream; this module produces the declaration bags they
+//! consume.
 //!
 //! # Primary source
 //!
-//! Six anchors are cited, one per production the parser consumes:
+//! Seven anchors are cited, one per production the parser consumes:
 //!
 //! - `<page-selector-list>` / `<page-selector>` grammar and the "No whitespace
 //!   is allowed between the productions" compound rule — CSS Paged Media
@@ -39,6 +44,10 @@
 //! - `bleed` descriptor grammar (`auto | <length>`) — CSS Paged Media Module
 //!   Level 3, §7.3 "Bleed Area: the bleed property":
 //!   <https://www.w3.org/TR/css-page-3/#bleed>
+//! - Margin-box at-rule grammar (the sixteen `@top-left` etc. idents, each
+//!   introducing a plain declaration list) — CSS Paged Media Module Level 3,
+//!   §5.1 "At-rules for page-margin boxes":
+//!   <https://www.w3.org/TR/css-page-3/#margin-at-rules>
 //!
 //! # Grammar coverage
 //!
@@ -69,6 +78,21 @@
 //! `@page :first :left`) is rejected per the compound rule — the whole
 //! `@page` rule is dropped. This tightening was added after review surfaced
 //! a gap in the initial parser scaffolding.
+//!
+//! # Margin-box at-rules
+//!
+//! An `@page` block body may nest one of the sixteen margin-box at-rules
+//! (`@top-left { … }`, `@bottom-center { … }`, etc. — see [`PageMarginBoxSlot`]
+//! for the full list) per CSS Paged Media Level 3 §5.1. Each is recognized
+//! by ident, takes no prelude, and its body is parsed as an ordinary
+//! declaration list — `content:` (§5.2 "Populating page-margin boxes")
+//! generates the box's actual content; spec §5.1 also states "The margin
+//! at-rules can only contain page-margin properties", a restriction this
+//! parser does not enforce (no applicable-property filtering happens for
+//! the `@page` block body either — see [`PageMarginBoxRule`]'s doc). An
+//! unrecognized nested at-rule name is dropped (the whole nested block is
+//! skipped, declarations before and after it in the `@page` block still
+//! parse) — see [`PageMarginBoxRule`] for the stored shape.
 //!
 //! # Note on `:nth-page`
 //!
@@ -119,7 +143,7 @@ use crate::resolve::{
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_outline, resolve_tab_size, resolve_vertical_align, used_line_height_length,
 };
-use crate::rule::{Declaration, expand_shorthand_into};
+use crate::rule::{Declaration, expand_shorthand_into, parse_declaration_block};
 use crate::ruletree::{Origin, RuleTree};
 use crate::specified::INITIAL_BORDER;
 
@@ -540,6 +564,121 @@ impl PageBleedDeclaration {
     }
 }
 
+/// One of the sixteen page-margin boxes CSS Paged Media Level 3 §5.1
+/// "At-rules for page-margin boxes" names as a margin at-rule
+/// (<https://www.w3.org/TR/css-page-3/#margin-at-rules>): `@top-left-corner`,
+/// `@top-left`, `@top-center`, `@top-right`, `@top-right-corner`,
+/// `@right-top`, `@right-middle`, `@right-bottom`, `@bottom-right-corner`,
+/// `@bottom-right`, `@bottom-center`, `@bottom-left`, `@bottom-left-corner`,
+/// `@left-bottom`, `@left-middle`, `@left-top`.
+///
+/// Variant order matches the sixteen boxes' default painting order — CSS
+/// Paged Media Level 3 §3.1 "Page Backgrounds and Painting Order"
+/// (<https://www.w3.org/TR/css-page-3/#painting>), which lists this exact
+/// sequence as the CSS2.1 "tree order" of page-margin boxes and states
+/// "Start with `@top-left-corner`, then go clockwise": top edge
+/// left-to-right, right edge top-to-bottom, bottom edge right-to-left, left
+/// edge bottom-to-top.
+///
+/// Only *which* margin box a nested at-rule names is recorded here — the
+/// sixteen boxes' actual geometry (size and position within the page
+/// margin) is used-value / layout work downstream of this parser, not
+/// performed by this crate. See [`PageMarginBoxRule`] for the declaration
+/// payload this identifies.
+///
+/// ASCII case-insensitive on parse (`match_ignore_ascii_case!`), matching
+/// every other at-rule/keyword production in this module.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PageMarginBoxSlot {
+    /// `@top-left-corner`.
+    TopLeftCorner,
+    /// `@top-left`.
+    TopLeft,
+    /// `@top-center`.
+    TopCenter,
+    /// `@top-right`.
+    TopRight,
+    /// `@top-right-corner`.
+    TopRightCorner,
+    /// `@right-top`.
+    RightTop,
+    /// `@right-middle`.
+    RightMiddle,
+    /// `@right-bottom`.
+    RightBottom,
+    /// `@bottom-right-corner`.
+    BottomRightCorner,
+    /// `@bottom-right`.
+    BottomRight,
+    /// `@bottom-center`.
+    BottomCenter,
+    /// `@bottom-left`.
+    BottomLeft,
+    /// `@bottom-left-corner`.
+    BottomLeftCorner,
+    /// `@left-bottom`.
+    LeftBottom,
+    /// `@left-middle`.
+    LeftMiddle,
+    /// `@left-top`.
+    LeftTop,
+}
+
+/// One margin-box at-rule from an `@page` block body, in source order — e.g.
+/// `@top-left { content: counter(page) }` (CSS Paged Media Level 3 §5
+/// "Page-Margin Boxes", <https://www.w3.org/TR/css-page-3/#margin-boxes>).
+///
+/// # Scope: declaration storage only, no cascade / layout
+///
+/// This stores the declaration list a margin-box at-rule's body contains —
+/// most notably `content:` (spec §5.2 "Populating page-margin boxes",
+/// <https://www.w3.org/TR/css-page-3/#populating-margin-boxes>), whose value
+/// grammar ([`crate::property::ContentComponent`]) already covers `counter()` /
+/// `counters()` / quoted strings / `string()` etc.
+///
+/// # Not filtered against the applicable-property list
+///
+/// CSS Paged Media Level 3 §5.1 states "The margin at-rules can only
+/// contain page-margin properties" — the spec restricts which properties
+/// are meaningful in a margin at-rule's body (enumerated in the spec's
+/// Appendix A). This parser does not enforce that restriction: the body is
+/// parsed as an ordinary declaration list, via the same
+/// [`crate::rule::parse_declaration_block`] qualified style rules use (see
+/// the `AtRuleParser` impl for [`PageDeclParser`]), so `declarations` can
+/// carry any property [`crate::property::parse_value`] recognizes, whether
+/// or not it is spec-applicable to a margin context. This mirrors
+/// [`PageRule::declarations`], which likewise applies no `@page`-context
+/// applicable-property filter — deciding which declarations are
+/// context-applicable is downstream, used-value-adjacent work this crate
+/// has not wired for either context yet, not something this parse step
+/// does.
+///
+/// Two things are explicitly *not* done here, and are future scope:
+///
+/// - **Cascade resolution across rules.** Multiple margin-box at-rules
+///   naming the same [`PageMarginBoxSlot`] (duplicate `@top-left` blocks within
+///   one `@page` rule, or the same slot named by several `@page` rules that
+///   match one page) are kept as separate entries in
+///   [`PageRule::margin_box_rules`] — winner selection across them is not
+///   performed, mirroring [`PageRule::size_declarations`]'s "kept in source
+///   order, cascade wiring is future work" treatment.
+/// - **Geometry / layout.** The sixteen margin boxes' actual size and
+///   position within the page margin is used-value work that consumes this
+///   declaration bag; it is not computed by this type.
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub struct PageMarginBoxRule {
+    /// Which of the sixteen margin boxes this at-rule names.
+    pub slot: PageMarginBoxSlot,
+    /// Declarations from the margin at-rule's block body. `pub`, same
+    /// surface and shorthand-expansion guarantee as [`PageRule::declarations`]
+    /// (see that field's doc for the full "why this stays `pub`" analysis —
+    /// it applies unchanged here since both fields exit parsing through the
+    /// same shorthand-expansion boundary).
+    pub declarations: Vec<Declaration>,
+}
+
 /// Parsed `@page` rule — selector + declaration list + source order + origin.
 ///
 /// `source_order` numbers `@page` rules *independently* of style rules; the
@@ -549,13 +688,13 @@ impl PageBleedDeclaration {
 /// reconstructed by future cascade code if needed.
 ///
 /// Field order (selector → declarations → size_declarations →
-/// marks_declarations → bleed_declarations → source_order → origin) mirrors
-/// [`crate::StyleRule`]'s (selector → declarations → source_order → origin)
-/// as closely as the extra `@page`-only fields allow, so both rule kinds
-/// present a similar shape to the cascade code. Future fields (the
-/// margin-box at-rules per L3 §5, a cascade-origin cache, etc.) are expected
-/// to be added later; `#[non_exhaustive]` means that addition stays
-/// non-breaking.
+/// marks_declarations → bleed_declarations → margin_box_rules →
+/// source_order → origin) mirrors [`crate::StyleRule`]'s (selector →
+/// declarations → source_order → origin) as closely as the extra
+/// `@page`-only fields allow, so both rule kinds present a similar shape to
+/// the cascade code. Further future fields (a cascade-origin cache, etc.)
+/// are expected to be added later; `#[non_exhaustive]` means that addition
+/// stays non-breaking.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct PageRule {
@@ -567,12 +706,13 @@ pub struct PageRule {
     /// silently dropped (matching this crate's general unsupported-property
     /// policy).
     ///
-    /// Note: `@page`-specific descriptors other than `size` / `marks` /
-    /// `bleed` (the margin-box at-rules `@top-left` etc. per L3 §5) are
-    /// still dropped here; wiring them is future scope. `size` / `marks` /
-    /// `bleed` themselves are no longer dropped — see
+    /// Note: `size` / `marks` / `bleed` are `@page`-only descriptors, not
+    /// [`PropertyValue`] the general dispatch recognizes — see
     /// [`PageRule::size_declarations`] / [`PageRule::marks_declarations`] /
-    /// [`PageRule::bleed_declarations`].
+    /// [`PageRule::bleed_declarations`] for their own dedicated storage.
+    /// The margin-box at-rules (`@top-left` etc. per L3 §5) are not
+    /// declarations at all (nested at-rules) and so never reach this field
+    /// either — see [`PageRule::margin_box_rules`].
     ///
     /// # Why this field (and `RuleTree::page_rules`) is still `pub`
     ///
@@ -631,8 +771,9 @@ pub struct PageRule {
     /// rules, and translating the winner into an actual page-box
     /// width/height, are both future scope. `marks` / `bleed` are parsed the
     /// same way — see [`PageRule::marks_declarations`] /
-    /// [`PageRule::bleed_declarations`]. The margin-box at-rules remain
-    /// unparsed and are silently dropped, same as before.
+    /// [`PageRule::bleed_declarations`]. The margin-box at-rules are parsed
+    /// separately (they are nested at-rules, not declarations) — see
+    /// [`PageRule::margin_box_rules`].
     ///
     /// # `pub` surface — same shape as `declarations`
     ///
@@ -686,6 +827,21 @@ pub struct PageRule {
     /// `size_declarations`'s `pub` surface analysis
     /// ([`PageRule::declarations`]'s doc).
     pub bleed_declarations: Vec<PageBleedDeclaration>,
+    /// Margin-box at-rules (`@top-left { … }` etc.) nested in the block
+    /// body, in source order — see [`PageMarginBoxRule`] for the value shape
+    /// and its doc's "Scope" section for what is deliberately deferred
+    /// (cascade winner selection across rules naming the same
+    /// [`PageMarginBoxSlot`], and the sixteen boxes' geometry). Parsed by
+    /// [`parse_page_declaration_block`] via the [`PageDeclParser`]
+    /// `AtRuleParser` impl, since a margin-box at-rule is a nested at-rule
+    /// (CSS Paged Media Level 3 §5.1, <https://www.w3.org/TR/css-page-3/#margin-at-rules>),
+    /// not a [`Declaration`]. Empty when the block declares no margin-box
+    /// at-rule. Shares `bleed_declarations`'s `pub` surface analysis
+    /// ([`PageRule::declarations`]'s doc) — [`PageMarginBoxRule::declarations`]
+    /// exits parsing through the same shorthand-expansion boundary
+    /// [`PageRule::declarations`] does, so the same "cannot construct a
+    /// shorthand-carrying `Declaration`" guarantee holds.
+    pub margin_box_rules: Vec<PageMarginBoxRule>,
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
     pub source_order: u32,
@@ -866,10 +1022,11 @@ fn parse_and_push_pseudo<'i>(
 
 /// Per-declaration parse result for an `@page` block body — either an
 /// ordinary property [`Declaration`] (routed through the same
-/// [`crate::property::parse_value`] dispatch qualified rules use) or one of
+/// [`crate::property::parse_value`] dispatch qualified rules use), one of
 /// the three descriptors' dedicated values ([`PageSize`] / [`PageMarks`] /
 /// [`PageBleed`]), none of which are [`PropertyValue`] variants and so
-/// cannot come out of that dispatch.
+/// cannot come out of that dispatch, or a nested margin-box at-rule
+/// ([`PageMarginBoxRule`]), which is not a declaration at all.
 enum PageBodyItem {
     /// An ordinary property declaration.
     Property(Declaration),
@@ -879,6 +1036,8 @@ enum PageBodyItem {
     Marks(PageMarksDeclaration),
     /// A `bleed:` declaration.
     Bleed(PageBleedDeclaration),
+    /// A margin-box at-rule (`@top-left { … }` etc.).
+    MarginBox(PageMarginBoxRule),
 }
 
 /// Per-declaration parser for `@page` block bodies, driving
@@ -887,16 +1046,25 @@ enum PageBodyItem {
 /// [`parse_page_declaration_block`] for the entry point and the
 /// `size`/`marks`/`bleed`/ordinary-property dispatch this type implements.
 ///
-/// The `AtRuleParser` / `QualifiedRuleParser` impls below are no-ops (all
-/// default-trait-method behavior, same shape as [`crate::rule`]'s
-/// `DeclParser`): a nested at-rule inside an `@page` block (e.g. a
-/// margin-box at-rule like `@top-left { … }`, CSS Paged Media Level 3 §5)
-/// makes `AtRuleParser::parse_prelude`'s default `Err` fire, and cssparser's
-/// error recovery silently skips just that nested block — declarations
-/// before and after it still parse (pinned by
-/// `ruletree::tests::page_margin_box_at_rule_body_is_skipped_declaration_survives`).
-/// Wiring margin-box at-rules is future scope, unrelated to the three
-/// descriptors this type exists for.
+/// # `AtRuleParser` recognizes the sixteen margin-box at-rules
+///
+/// `QualifiedRuleParser` below is a no-op (all default-trait-method
+/// behavior, same shape as [`crate::rule`]'s `DeclParser`): a nested
+/// qualified/selector rule is not part of `@page` block grammar, so
+/// cssparser's error recovery silently skips it (declarations before and
+/// after it in the `@page` block still parse).
+///
+/// `AtRuleParser`, unlike `QualifiedRuleParser`, is *not* a no-op: it
+/// recognizes a margin-box at-rule (`@top-left { … }` etc., CSS Paged Media
+/// Level 3 §5.1 "At-rules for page-margin boxes",
+/// <https://www.w3.org/TR/css-page-3/#margin-at-rules>) by ident and parses its
+/// body as an ordinary declaration list — see the impl below, and
+/// [`PageMarginBoxRule`]'s doc for the stored shape and its "Scope" section for
+/// what is deliberately not done yet. Any other nested at-rule name still
+/// falls through to `AtRuleParser::parse_prelude`'s rejection and
+/// cssparser's error-recovery skip — declarations before and after it still
+/// parse (pinned by
+/// `ruletree::tests::page_unknown_nested_at_rule_body_is_skipped_declaration_survives`).
 struct PageDeclParser;
 
 impl<'i> DeclarationParser<'i> for PageDeclParser {
@@ -936,11 +1104,70 @@ impl<'i> DeclarationParser<'i> for PageDeclParser {
     }
 }
 
-// At-rule parser is a no-op — see `PageDeclParser`'s doc.
+// Recognizes the sixteen margin-box at-rule idents — see `PageDeclParser`'s
+// doc for the split with `QualifiedRuleParser` below.
 impl<'i> AtRuleParser<'i> for PageDeclParser {
-    type Prelude = ();
+    type Prelude = PageMarginBoxSlot;
     type AtRule = PageBodyItem;
     type Error = ();
+
+    /// Match the at-rule name against the sixteen margin-box idents (CSS
+    /// Paged Media Level 3 §5.1,
+    /// <https://www.w3.org/TR/css-page-3/#margin-at-rules>). Any other name is
+    /// rejected — cssparser's at-rule error recovery then skips just that
+    /// nested block (see `PageDeclParser`'s doc). Margin-box at-rules take
+    /// no prelude (the grammar is `@top-left { <declaration-list> }`, with
+    /// nothing between the ident and `{`), so a non-empty prelude — e.g.
+    /// `@top-left foo { … }` — is rejected the same way via
+    /// `expect_exhausted`.
+    fn parse_prelude<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
+        let slot = match_ignore_ascii_case! { &name,
+            "top-left-corner" => PageMarginBoxSlot::TopLeftCorner,
+            "top-left" => PageMarginBoxSlot::TopLeft,
+            "top-center" => PageMarginBoxSlot::TopCenter,
+            "top-right" => PageMarginBoxSlot::TopRight,
+            "top-right-corner" => PageMarginBoxSlot::TopRightCorner,
+            "right-top" => PageMarginBoxSlot::RightTop,
+            "right-middle" => PageMarginBoxSlot::RightMiddle,
+            "right-bottom" => PageMarginBoxSlot::RightBottom,
+            "bottom-right-corner" => PageMarginBoxSlot::BottomRightCorner,
+            "bottom-right" => PageMarginBoxSlot::BottomRight,
+            "bottom-center" => PageMarginBoxSlot::BottomCenter,
+            "bottom-left" => PageMarginBoxSlot::BottomLeft,
+            "bottom-left-corner" => PageMarginBoxSlot::BottomLeftCorner,
+            "left-bottom" => PageMarginBoxSlot::LeftBottom,
+            "left-middle" => PageMarginBoxSlot::LeftMiddle,
+            "left-top" => PageMarginBoxSlot::LeftTop,
+            _ => return Err(input.new_custom_error(())),
+        };
+        input.expect_exhausted()?;
+        Ok(slot)
+    }
+
+    /// Parse the margin-box at-rule's body as an ordinary declaration list.
+    /// The margin-box grammar has no descriptors of its own (unlike the
+    /// `@page` block body itself, which additionally recognizes `size` /
+    /// `marks` / `bleed` — see [`PageDeclParser::parse_value`]), so this
+    /// reuses [`parse_declaration_block`] directly rather than routing
+    /// through this type's `DeclarationParser` impl. See
+    /// [`PageMarginBoxRule::declarations`] for the shorthand-expansion guarantee
+    /// this inherits.
+    fn parse_block<'t>(
+        &mut self,
+        prelude: Self::Prelude,
+        _start: &ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::AtRule, ParseError<'i, Self::Error>> {
+        let declarations = parse_declaration_block(input);
+        Ok(PageBodyItem::MarginBox(PageMarginBoxRule {
+            slot: prelude,
+            declarations,
+        }))
+    }
 }
 
 // Qualified-rule parser (nested rule) is also a no-op — see `PageDeclParser`'s
@@ -981,27 +1208,58 @@ fn parse_important_and_exhaust<'i>(input: &mut Parser<'i, '_>) -> Result<bool, P
     Ok(important)
 }
 
+/// [`parse_page_declaration_block`]'s return shape, and (see
+/// [`crate::ruletree`]'s `ParsedRule::Page`) the sole payload a parsed
+/// `@page` block carries alongside its selector — the five lists (four of
+/// declarations, one of nested margin-box at-rules) a parsed `@page` block
+/// body produces, field-named the same as [`PageRule`]'s matching fields.
+///
+/// A named struct rather than a positional tuple deliberately: this same
+/// shape used to travel from this function, through
+/// `ruletree`'s `StyleRuleParser::parse_block`, through `ParsedRule::Page`,
+/// to `RuleTree::add_stylesheet`'s match arm, as a bare 5-tuple (plus
+/// `clippy::type_complexity` forcing a `type` alias for the *return type*
+/// alone, which didn't cover the other two positional sites) — three call
+/// sites where a field got silently transposed by reordering the
+/// destructuring pattern would type-check (every field is a `Vec` of a
+/// distinct type today, but `Vec<PageSizeDeclaration>` and
+/// `Vec<PageMarksDeclaration>`, say, look identical at a glance in a
+/// destructuring pattern) and only fail downstream, if at all. Named
+/// fields make that class of error a compile error instead.
+pub(crate) struct PageBlockBody {
+    pub(crate) declarations: Vec<Declaration>,
+    pub(crate) size_declarations: Vec<PageSizeDeclaration>,
+    pub(crate) marks_declarations: Vec<PageMarksDeclaration>,
+    pub(crate) bleed_declarations: Vec<PageBleedDeclaration>,
+    pub(crate) margin_box_rules: Vec<PageMarginBoxRule>,
+}
+
 /// Parse an `@page` block body (the `{ … }` contents), producing the
-/// ordinary property declarations and the `size:` / `marks:` / `bleed:`
-/// declarations (each in source order — see [`PageRule::size_declarations`]
-/// for why duplicates within one block are kept rather than reduced here).
+/// ordinary property declarations, the `size:` / `marks:` / `bleed:`
+/// declarations, and the nested margin-box at-rules (each list in source
+/// order — see [`PageRule::size_declarations`] for why duplicates within one
+/// block are kept rather than reduced here; [`PageMarginBoxRule`]'s doc gives
+/// the same rationale for duplicate margin-box slots).
 ///
-/// # Not a reuse of [`crate::rule::parse_declaration_block`]
+/// # Not a *direct* reuse of [`crate::rule::parse_declaration_block`] — except for margin boxes
 ///
-/// Unlike qualified style rules, `@page` blocks are parsed by a dedicated
-/// [`PageDeclParser`] rather than [`crate::rule`]'s (crate-private)
-/// `DeclParser` — none of the three descriptors is a [`PropertyValue`]
-/// variant [`crate::property::parse_value`] can produce, so each needs its
-/// own grammar ([`parse_page_size_value`] / [`parse_page_marks_value`] /
-/// [`parse_page_bleed_value`]) rather than being silently dropped by the
-/// general property parser (the pre-existing behavior for *every* `@page`
-/// descriptor before this function existed). The margin-box at-rules are a
-/// different case: they're not a declaration at all, so `parse_value` never
-/// sees them — cssparser's at-rule error recovery skips them instead (see
-/// [`PageDeclParser`]'s doc, pinned by
-/// `ruletree::tests::page_margin_box_at_rule_body_is_skipped_declaration_survives`).
+/// Unlike qualified style rules, the `@page` block body itself is parsed by
+/// a dedicated [`PageDeclParser`] rather than [`crate::rule`]'s
+/// (crate-private) `DeclParser` — none of the three descriptors is a
+/// [`PropertyValue`] variant [`crate::property::parse_value`] can produce,
+/// so each needs its own grammar ([`parse_page_size_value`] /
+/// [`parse_page_marks_value`] / [`parse_page_bleed_value`]) rather than
+/// being silently dropped by the general property parser (the pre-existing
+/// behavior for *every* `@page` descriptor before this function existed).
+/// The margin-box at-rules are a different case again: they're not a
+/// declaration at all, so `PageDeclParser::parse_value` never sees them —
+/// `PageDeclParser`'s `AtRuleParser` impl handles them instead (see that
+/// impl's doc), and *its* `parse_block` **does** reuse
+/// [`crate::rule::parse_declaration_block`] directly, because a margin-box
+/// at-rule's body has no descriptors of its own — it is exactly the
+/// ordinary-declaration-list grammar that function already implements.
 ///
-/// # Shorthand expansion — this is call site 4 of `expand_shorthand_into`
+/// # Shorthand expansion — this function's own arm is call site 4 of `expand_shorthand_into`
 ///
 /// The ordinary-property arm applies [`expand_shorthand_into`] before
 /// pushing into the returned `Vec<Declaration>`, exactly like
@@ -1010,20 +1268,17 @@ fn parse_important_and_exhaust<'i>(input: &mut Parser<'i, '_>) -> Result<bool, P
 /// carries the same "no shorthand `PropertyValue` leaves this function"
 /// obligation that boundary has. See
 /// [`crate::rule::expand_shorthand_into`]'s doc for the full 4-call-site
-/// account and why each one is load-bearing.
-pub(crate) fn parse_page_declaration_block(
-    input: &mut Parser<'_, '_>,
-) -> (
-    Vec<Declaration>,
-    Vec<PageSizeDeclaration>,
-    Vec<PageMarksDeclaration>,
-    Vec<PageBleedDeclaration>,
-) {
+/// account and why each one is load-bearing. The margin-box arm does *not*
+/// add a 5th call site: it delegates to
+/// [`crate::rule::parse_declaration_block`] (call site 1's function), which
+/// already carries that obligation internally — see the previous section.
+pub(crate) fn parse_page_declaration_block(input: &mut Parser<'_, '_>) -> PageBlockBody {
     let mut parser = PageDeclParser;
     let mut declarations = Vec::new();
     let mut size_declarations = Vec::new();
     let mut marks_declarations = Vec::new();
     let mut bleed_declarations = Vec::new();
+    let mut margin_box_rules = Vec::new();
     for item in RuleBodyParser::new(input, &mut parser).flatten() {
         match item {
             PageBodyItem::Property(decl) => {
@@ -1032,14 +1287,16 @@ pub(crate) fn parse_page_declaration_block(
             PageBodyItem::Size(decl) => size_declarations.push(decl),
             PageBodyItem::Marks(decl) => marks_declarations.push(decl),
             PageBodyItem::Bleed(decl) => bleed_declarations.push(decl),
+            PageBodyItem::MarginBox(rule) => margin_box_rules.push(rule),
         }
     }
-    (
+    PageBlockBody {
         declarations,
         size_declarations,
         marks_declarations,
         bleed_declarations,
-    )
+        margin_box_rules,
+    }
 }
 
 /// Parse the `size` descriptor's value grammar — CSS Paged Media Level 3
@@ -1333,10 +1590,14 @@ pub struct PageContextQuery {
 /// this cascade result — wiring a cascade winner across multiple matching
 /// `@page` rules for each descriptor is still future scope, tracked
 /// separately from ordinary property cascading. The margin-box at-rules (L3
-/// §5) have no parser at all yet — they're not a declaration `parse_value`
-/// could dispatch on in the first place, so cssparser's at-rule error
-/// recovery skips them instead (see [`PageDeclParser`]'s doc, pinned by
-/// `ruletree::tests::page_margin_box_at_rule_body_is_skipped_declaration_survives`).
+/// §5.1) are similarly absent: they *are* parsed and their declaration
+/// bodies stored (see [`PageRule::margin_box_rules`] /
+/// [`PageMarginBoxRule`]), but that storage is not a declaration `parse_value`
+/// dispatches on — it comes from [`PageDeclParser`]'s `AtRuleParser` impl,
+/// a separate path from the ordinary-property one this cascade result
+/// folds — and cascading margin-box declarations into a per-slot result is
+/// unstarted future work, same layering as `size` / `marks` / `bleed`
+/// above.
 ///
 /// The ordinary box properties are **not** in that category: `margin` /
 /// `padding` / `border-*` / `width` / `height` are parsed (the `margin`
@@ -3865,6 +4126,42 @@ mod tests {
             result.declarations().get(&PropertyKey::FontWeight),
             Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(700.0)))
         );
+    }
+
+    #[test]
+    fn cascade_page_margin_box_declarations_do_not_enter_the_page_context_cascade() {
+        // `PageCascadeResult`'s doc states the margin-box at-rules are
+        // "similarly absent" from a `cascade_page` result — this pins that
+        // claim directly. A `@top-left` block declaring `color: blue` must
+        // not affect (nor even appear alongside) the page context's own
+        // `color: red` — the two are separate declaration bags
+        // (`PageRule::declarations` vs `PageRule::margin_box_rules`), and
+        // only the former is cascaded by this function. This is the
+        // invariant a future margin-box cascade wiring must preserve: the
+        // page context's own cascade result must stay unaffected by what a
+        // nested margin-box at-rule declares.
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { color: red; @top-left { color: blue } }",
+            Origin::Author,
+        );
+        // Confirm the `@top-left { color: blue }` block was actually parsed
+        // and kept (not silently dropped) before asserting it stays out of
+        // the cascade result below — otherwise a regression that dropped
+        // margin-box at-rules entirely would make this test pass for the
+        // wrong reason.
+        assert_eq!(tree.page_rules[0].margin_box_rules.len(), 1);
+        assert_eq!(
+            tree.page_rules[0].margin_box_rules[0].slot,
+            PageMarginBoxSlot::TopLeft
+        );
+        assert_eq!(tree.page_rules[0].margin_box_rules[0].declarations.len(), 1);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+        assert_eq!(color_of(&result), Some(RED));
     }
 
     // ── page context inheritance: relative font-weight resolution ───────────
