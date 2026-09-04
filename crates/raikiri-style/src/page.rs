@@ -2881,7 +2881,11 @@ fn absolutize_in_page_context(
         | PropertyValue::BackgroundRepeat(_)
         | PropertyValue::BackgroundAttachment(_)
         | PropertyValue::BackgroundClip(_)
-        | PropertyValue::BackgroundOrigin(_)) => v,
+        | PropertyValue::BackgroundOrigin(_)
+        // `background-image` (CSS Backgrounds and Borders 3 §2.3) carries a
+        // bare `None | Url(String)`, not a length — same shape as its 4
+        // keyword-only siblings just above.
+        | PropertyValue::BackgroundImage(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -3370,19 +3374,19 @@ mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
-        AlignSelfValue, BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword,
-        BorderRadius, BoxShadowItem, BoxSizing, BreakBetween, BreakInside, ClearValue,
-        ContentAlignmentValue, ContentComponent, CssColor, CustomProperty, Direction, DisplayValue,
-        FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, FontWeightValue,
-        GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
-        GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue,
-        GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent,
-        GridTrackRepeat, GridTrackSize, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight,
-        Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
-        PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, SelfAlignmentValue, StartEnd,
-        TabSize, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
-        TextDecorationStyle, TextShadowColor, TextTransform, VerticalAlign, Visibility, VisualBox,
-        WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+        AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
+        BackgroundRepeatKeyword, BorderRadius, BoxShadowItem, BoxSizing, BreakBetween, BreakInside,
+        ClearValue, ContentAlignmentValue, ContentComponent, CssColor, CustomProperty, Direction,
+        DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
+        FontWeightValue, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand,
+        GridLineValue, GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas,
+        GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+        GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Length, LengthOrAuto,
+        LengthOrNormal, LineHeight, Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
+        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
+        SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
+        TextDecorationShorthand, TextDecorationStyle, TextShadowColor, TextTransform,
+        VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;
@@ -5931,11 +5935,14 @@ mod tests {
     /// `<length-percentage>` — `absolutize_in_page_context`'s dedicated
     /// `BackgroundSize`/`BackgroundPosition` arms, mirroring `Width`/
     /// `Height` above).
+    /// 73 → 74 (`BackgroundImage`, CSS Backgrounds and Borders 3 §2.3 —
+    /// `none | <url>` carries no length payload either, same reasoning as
+    /// its 4 keyword-only siblings above).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 73;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 74;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6448,6 +6455,13 @@ mod tests {
             horizontal: CssPositionOffset::Start(Length::Em(1.0)),
             vertical: CssPositionOffset::End(Length::Rem(2.0)),
         }),
+        // CSS Backgrounds and Borders 3 §2.3 — keyword-only-shaped payload
+        // (`None | Url(String)`, no length component); `Url` is the
+        // non-initial worst case (`None` is the spec initial value, same
+        // reasoning as `WritingMode`'s `VerticalRl` sample above).
+        BackgroundImage => PropertyValue::BackgroundImage(BackgroundImage::Url(
+            "marble.svg".to_string(),
+        )),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -6688,6 +6702,7 @@ mod tests {
         BackgroundOrigin,
         BackgroundSize,
         BackgroundPosition,
+        BackgroundImage,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -7139,6 +7154,10 @@ mod tests {
             | PropertyValue::BackgroundAttachment(_)
             | PropertyValue::BackgroundClip(_)
             | PropertyValue::BackgroundOrigin(_)
+            // `background-image` carries a bare `None | Url(String)` — no
+            // length payload either, same shape as its 4 keyword-only
+            // siblings just above.
+            | PropertyValue::BackgroundImage(_)
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)

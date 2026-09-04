@@ -4620,6 +4620,36 @@ pub struct CssPosition {
     pub vertical: CssPositionOffset,
 }
 
+/// `background-image` の specified value。
+///
+/// CSS Backgrounds and Borders 3 §2.3 "Image Sources: the background-image
+/// property" <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>。
+/// Grammar: `<bg-image>#`、`<bg-image> = <image> | none` — この property は
+/// 複数 background layer 用の comma-separated list (`#` multiplier) を許すが、
+/// この実装は単一 layer のみを受理する ([`BackgroundRepeat`] doc と同じ
+/// 「複数 layer compositing は follow-up」scope carving。将来 comma-list へ
+/// 拡張する際は本 enum を `Arc<Vec<BackgroundImage>>` へ wrap するだけでよい)。
+///
+/// `<image> = <url> | <gradient>` (CSS Images 3
+/// <https://www.w3.org/TR/css-images-3/#typedef-image>) のうち `<url>`
+/// alternative のみ実装 — [`parse_url_value`] を再利用する
+/// ([`ContentComponent::Image`] と同じ 2 形式、unquoted `url(...)` / quoted
+/// `url("...")`)。`<gradient>` (`linear-gradient()` 等、CSS Images 3
+/// §3.1-2) は gradient stop / color-interpolation infra が本 crate に無いため
+/// 未実装 — gradient function 名は `parse_background_image` のどの
+/// alternative にも一致せず、declaration ごと silent drop される
+/// (`ContentComponent::Image` doc の同節と同じ理由)。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BackgroundImage {
+    /// `none` — spec initial value。背景に image を描画しない。
+    None,
+    /// `<url>` — 単一 image layer の URL。raw `String` として保持
+    /// ([`ContentComponent::Image`] 等の sibling `url` field と同じ
+    /// convention、`url` crate 非依存)。
+    Url(String),
+}
+
 /// `<repeat-style>` の 1 軸分の keyword (CSS Backgrounds and Borders 3 §2.4
 /// <https://www.w3.org/TR/css-backgrounds-3/#typedef-repeat-style>)。
 #[non_exhaustive]
@@ -5899,6 +5929,10 @@ pub enum PropertyValue {
     /// [`CssPosition`] doc 参照)。`<length-percentage>` を含むため絶対化は
     /// phase 3 に委ねる。
     BackgroundPosition(CssPosition),
+    /// `background-image` — **non-inherited**、initial: [`BackgroundImage::None`]
+    /// (CSS Backgrounds 3 §2.3 [`BackgroundImage`] doc 参照)。末尾に追加
+    /// (1:1 disjoint な新 field、[`PropertyKey`] doc の判断規則)。
+    BackgroundImage(BackgroundImage),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -6238,6 +6272,11 @@ pub enum PropertyKey {
     BackgroundOrigin,
     BackgroundSize,
     BackgroundPosition,
+    // background-image (CSS Backgrounds and Borders 3 §2.3、semantics on the
+    // matching PropertyValue::BackgroundImage variant; sibling PropertyKey
+    // variants carry no per-variant docs per crate convention). 末尾配置の
+    // 理由は直前の background-repeat 等と同節参照 (1:1 disjoint な新 field)。
+    BackgroundImage,
 }
 
 impl PropertyValue {
@@ -6372,6 +6411,7 @@ impl PropertyValue {
             PropertyValue::BackgroundOrigin(_) => PropertyKey::BackgroundOrigin,
             PropertyValue::BackgroundSize(_) => PropertyKey::BackgroundSize,
             PropertyValue::BackgroundPosition(_) => PropertyKey::BackgroundPosition,
+            PropertyValue::BackgroundImage(_) => PropertyKey::BackgroundImage,
         }
     }
 }
@@ -6754,6 +6794,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-origin" => PropertyKey::BackgroundOrigin,
         "background-size" => PropertyKey::BackgroundSize,
         "background-position" => PropertyKey::BackgroundPosition,
+        "background-image" => PropertyKey::BackgroundImage,
         _ => return None,
     })
 }
@@ -7307,6 +7348,9 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "background-origin" => parse_visual_box(input).map(PropertyValue::BackgroundOrigin),
         "background-size" => parse_background_size(input).map(PropertyValue::BackgroundSize),
         "background-position" => parse_css_position(input).map(PropertyValue::BackgroundPosition),
+        // CSS Backgrounds and Borders 3 §2.3
+        // <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>.
+        "background-image" => parse_background_image(input).map(PropertyValue::BackgroundImage),
         _ => None,
     }
 }
@@ -12159,19 +12203,12 @@ fn parse_attr_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
 /// 一致しないため cssparser の `expect_url` が Err を返し、本 helper も
 /// `None` を返す — 呼び出し元の `parse_value` 規約 (`None` で declaration
 /// 全体を drop) と自然に合致する。
-// 呼び出し元となる property parser (`background-image` 等、`<image>` 内で
-// `<url>` を受理する property) はまだ実装されておらず、通常 build では
-// 呼び出し元を持たず `dead_code` lint に引っかかる。単体 test 経由の呼び出し
-// のみを現状持つことを明示するため `#[allow(dead_code)]` を付す — その
-// property parser が実装され次第この attribute は不要になるので削除する。
-//
-// `pub(crate)` ではなく plain `fn`: 現時点で外部 module からの呼び出し元は
-// 無く (background-image 等の consumer property parser は全て property.rs
-// 内に実装される見込み)、外部呼び出し元が実際に landing した時点で
+// `pub(crate)` ではなく plain `fn`: 呼び出し元 (`parse_background_image`) は
+// property.rs 内に実装されており、外部 module からの呼び出し元は無い —
+// 外部呼び出し元が実際に landing した時点で
 // `parse_non_negative_length`/`parse_length_allow_negative` (このファイル内、
 // 外部呼び出し元を doc に明記した precedent) と同様の `pub(crate)` + doc
 // justification へ拡張する。
-#[allow(dead_code)]
 fn parse_url_value(input: &mut Parser<'_, '_>) -> Option<String> {
     input.expect_url().ok().map(|s| s.as_ref().to_string())
 }
@@ -13003,6 +13040,23 @@ pub fn parse_css_position(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
         .or_else(|_| input.try_parse(parse_position_branch1_res))
         .ok()?;
     Some(normalize_css_position(position))
+}
+
+/// `background-image: <bg-image>` を parse する ([`BackgroundImage`] doc の
+/// grammar 参照: `<image> | none`、`<image>` は `<url>` alternative のみ)。
+///
+/// `none` keyword を先に試す — `<url>` 側 ([`parse_url_value`]) はどの ident
+/// にも一致しないため順序自体は無関係だが、他の keyword-vs-function
+/// alternative を持つ sibling parser ([`parse_position`] 等) と並びを揃える。
+/// `linear-gradient(...)` 等の `<gradient>` function token は
+/// [`parse_url_value`] のどの alternative にも一致せず `None` — 呼び出し元の
+/// `parse_value` 規約により declaration ごと silent drop される
+/// ([`BackgroundImage`] doc の「未実装」節参照)。
+fn parse_background_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(BackgroundImage::None);
+    }
+    parse_url_value(input).map(BackgroundImage::Url)
 }
 
 /// `<repeat-style>` の 1 keyword を parse する ([`BackgroundRepeatKeyword`]
@@ -24891,8 +24945,9 @@ mod tests {
     //
     // CSS Values 4 §4.4 <url> value type
     // (<https://www.w3.org/TR/css-values-4/#urls>) の共通 helper を property
-    // dispatcher (`parse_value`) を経由せず直接叩く — このタスク時点では
-    // `parse_url_value` を呼ぶ property parser がまだ存在しないため
+    // dispatcher (`parse_value`) を経由せず直接叩く — `background-image` の
+    // 呼び出し経路とは独立に helper 自体の grammar 境界 (unquoted/quoted
+    // form、`<url-modifier>` reject 等) を pin する
     // (`parse_length_value` helper 単体 test と同じ fixture pattern)。
 
     fn parse_url(source: &str) -> Option<String> {
@@ -25649,5 +25704,89 @@ mod tests {
             vertical: CssPositionOffset::Start(Length::Percent(0.0)),
         });
         assert_eq!(v.key(), PropertyKey::BackgroundPosition);
+    }
+
+    // ── background-image (CSS Backgrounds and Borders 3 §2.3) ──
+
+    #[test]
+    fn background_image_parse_none() {
+        assert_eq!(
+            parse("none", "background-image"),
+            Some(PropertyValue::BackgroundImage(BackgroundImage::None))
+        );
+    }
+
+    #[test]
+    fn background_image_parse_url_unquoted_form() {
+        assert_eq!(
+            parse("url(foo.png)", "background-image"),
+            Some(PropertyValue::BackgroundImage(BackgroundImage::Url(
+                "foo.png".to_string()
+            )))
+        );
+    }
+
+    #[test]
+    fn background_image_parse_url_quoted_form() {
+        assert_eq!(
+            parse("url(\"foo.png\")", "background-image"),
+            Some(PropertyValue::BackgroundImage(BackgroundImage::Url(
+                "foo.png".to_string()
+            )))
+        );
+    }
+
+    #[test]
+    fn background_image_is_case_insensitive() {
+        // `none` keyword は ASCII case-insensitive (他の keyword-only property
+        // と同じ扱い、`background-repeat` の `REPEAT-X`/`No-Repeat` test 参照)。
+        assert_eq!(
+            parse("NONE", "background-image"),
+            Some(PropertyValue::BackgroundImage(BackgroundImage::None))
+        );
+    }
+
+    #[test]
+    fn background_image_rejects_gradient_function() {
+        // `<gradient>` alternative (`linear-gradient()` 等) は未実装 —
+        // function 名が `parse_url_value` のどの alternative にも一致せず
+        // declaration ごと silent drop される ([`BackgroundImage`] doc 参照)。
+        assert_eq!(
+            parse("linear-gradient(red, blue)", "background-image"),
+            None
+        );
+        assert_eq!(
+            parse(
+                "radial-gradient(at bottom right, transparent, white)",
+                "background-image"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn background_image_rejects_bare_string_without_url_wrapper() {
+        // `<image>` は `<url> | <gradient>` のみで bare `<string>` を含まない
+        // — `parse_url_value` doc の同節参照 (`content_bare_string_is_still_literal_not_image`
+        // と同型の regression pin)。
+        assert_eq!(parse("\"foo.png\"", "background-image"), None);
+    }
+
+    #[test]
+    fn background_image_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "background-image"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn background_image_rejects_unknown_keyword() {
+        assert_eq!(parse("foo", "background-image"), None);
+    }
+
+    #[test]
+    fn background_image_key_maps_to_background_image_property_key() {
+        let v = PropertyValue::BackgroundImage(BackgroundImage::None);
+        assert_eq!(v.key(), PropertyKey::BackgroundImage);
     }
 }
