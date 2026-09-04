@@ -16928,6 +16928,33 @@ mod tests {
         assert_eq!(cv.background_origin, VisualBox::BorderBox);
     }
 
+    #[test]
+    fn background_shorthand_expands_to_8_longhands_through_real_cascade() {
+        // Unlike `var_in_background_shorthand_projects_each_deferred_longhand`
+        // above (which goes through the *deferred* `var()` substitution +
+        // `project_deferred_value` path), a literal, non-`var()` `background:`
+        // declaration is a real `PropertyValue::Background` straight out of
+        // `parse_value`, expanded by `crate::rule::expand_background` (via
+        // `expand_shorthand_into`) before it ever reaches `apply_value` —
+        // this is the only test that drives that expansion function through
+        // the real parse → cascade pipeline rather than calling `apply_value`
+        // directly.
+        use crate::property::{BackgroundAttachment, BackgroundImage, VisualBox};
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("background: red url(a.png) no-repeat fixed border-box"),
+        );
+        assert_eq!(cv.background_color, RED);
+        assert_eq!(
+            cv.background_image,
+            BackgroundImage::Url("a.png".to_string())
+        );
+        assert_eq!(cv.background_attachment, BackgroundAttachment::Fixed);
+        assert_eq!(cv.background_clip, VisualBox::BorderBox);
+        assert_eq!(cv.background_origin, VisualBox::BorderBox);
+    }
+
     // ── text-decoration longhand + shorthand cascade (CSS Text Decoration
     // Module Level 3 §2.1-§2.4) ──
 
@@ -17960,6 +17987,20 @@ mod tests {
                 "place-self",
                 "center stretch",
                 vec![PropertyKey::AlignSelf, PropertyKey::JustifySelf],
+            ),
+            (
+                "background",
+                "url(a.png) top / cover no-repeat fixed border-box red",
+                vec![
+                    PropertyKey::BackgroundColor,
+                    PropertyKey::BackgroundImage,
+                    PropertyKey::BackgroundRepeat,
+                    PropertyKey::BackgroundAttachment,
+                    PropertyKey::BackgroundPosition,
+                    PropertyKey::BackgroundSize,
+                    PropertyKey::BackgroundClip,
+                    PropertyKey::BackgroundOrigin,
+                ],
             ),
         ];
 

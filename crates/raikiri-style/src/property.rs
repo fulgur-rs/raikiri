@@ -14457,6 +14457,11 @@ fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<BackgroundSh
         [] => (VisualBox::PaddingBox, VisualBox::BorderBox),
         [one] => (*one, *one),
         [first, second] => (*first, *second),
+        // cov:ignore: the loop above only pushes while
+        // `visual_boxes.len() < 2`, so `visual_boxes` can never hold more
+        // than 2 elements by the time this match runs — there is no input
+        // that reaches this arm, and constructing one would require
+        // bypassing the loop guard entirely.
         _ => unreachable!("visual_boxes never grows past 2 (loop guard above)"),
     };
 
@@ -27744,6 +27749,11 @@ mod tests {
     fn expect_background(value: Option<PropertyValue>) -> BackgroundShorthand {
         match value {
             Some(PropertyValue::Background(shorthand)) => shorthand,
+            // cov:ignore: this branch only executes when a caller's
+            // `parse(..., "background")` unexpectedly fails to parse or
+            // parses to the wrong variant; every call site in this test
+            // module passes valid `background` shorthand input, so the
+            // panic never fires while the tests pass.
             other => panic!("expected PropertyValue::Background, got {other:?}"),
         }
     }

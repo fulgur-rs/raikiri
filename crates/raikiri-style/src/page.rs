@@ -7483,6 +7483,46 @@ mod tests {
         );
     }
 
+    /// Sibling of `background_size_cover_and_contain_are_not_specified_layer_residue`
+    /// above, for the `background` shorthand's own `size` field —
+    /// `page_corpus`'s `Background` sample always uses the `Explicit`
+    /// variant (`sample_for`), so this `BackgroundSize::Cover`/`Contain`
+    /// arm of the shorthand's fall-through isn't exercised via the corpus.
+    /// Here directly.
+    #[test]
+    fn background_shorthand_size_cover_and_contain_are_not_specified_layer_residue() {
+        fn shorthand_with_size(size: BackgroundSize) -> BackgroundShorthand {
+            BackgroundShorthand {
+                color: RED,
+                image: BackgroundImage::None,
+                repeat: BackgroundRepeat {
+                    x: BackgroundRepeatKeyword::Repeat,
+                    y: BackgroundRepeatKeyword::Repeat,
+                },
+                attachment: BackgroundAttachment::Scroll,
+                position: CssPosition {
+                    horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                    vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+                },
+                size,
+                clip: VisualBox::BorderBox,
+                origin: VisualBox::PaddingBox,
+            }
+        }
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::Background(shorthand_with_size(
+                BackgroundSize::Cover
+            ))),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::Background(shorthand_with_size(
+                BackgroundSize::Contain
+            ))),
+            None,
+        );
+    }
+
     /// `tab-size: <number>` は残滓ではない (CSS Text Module Level 3 §4.2:
     /// "Computed value: the specified number or absolute length" —
     /// `<number>` はそもそも computed 層でも number のまま、`normal` の
