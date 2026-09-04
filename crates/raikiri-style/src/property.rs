@@ -13501,7 +13501,9 @@ fn parse_angle<'i>(input: &mut Parser<'i, '_>) -> Result<Angle, ParseError<'i, (
 
 /// `<angle-percentage>` ([`AnglePercentage`] doc参照) — `conic-gradient()`
 /// の angular color stop position。
-fn parse_angle_percentage<'i>(input: &mut Parser<'i, '_>) -> Result<AnglePercentage, ParseError<'i, ()>> {
+fn parse_angle_percentage<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<AnglePercentage, ParseError<'i, ()>> {
     if let Ok(percent) = input.try_parse(parse_percent_number) {
         return Ok(AnglePercentage::Percent(percent));
     }
@@ -13665,7 +13667,9 @@ fn parse_linear_gradient_direction<'i>(
 
 /// `<side-or-corner> = [left | right] || [top | bottom]`
 /// ([`SideOrCorner`] doc参照) — [`parse_outline`]等と同じ any-order loop。
-fn parse_side_or_corner<'i>(input: &mut Parser<'i, '_>) -> Result<SideOrCorner, ParseError<'i, ()>> {
+fn parse_side_or_corner<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<SideOrCorner, ParseError<'i, ()>> {
     let mut horizontal: Option<HorizontalSide> = None;
     let mut vertical: Option<VerticalSide> = None;
     loop {
@@ -13692,7 +13696,9 @@ fn parse_side_or_corner<'i>(input: &mut Parser<'i, '_>) -> Result<SideOrCorner, 
     })
 }
 
-fn parse_horizontal_side<'i>(input: &mut Parser<'i, '_>) -> Result<HorizontalSide, ParseError<'i, ()>> {
+fn parse_horizontal_side<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<HorizontalSide, ParseError<'i, ()>> {
     let ident = input.expect_ident()?.clone();
     match ident.as_ref().to_ascii_lowercase().as_str() {
         "left" => Ok(HorizontalSide::Left),
@@ -13750,7 +13756,9 @@ fn parse_linear_gradient_body<'i>(
     })
 }
 
-fn parse_radial_shape_keyword<'i>(input: &mut Parser<'i, '_>) -> Result<RadialShape, ParseError<'i, ()>> {
+fn parse_radial_shape_keyword<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<RadialShape, ParseError<'i, ()>> {
     let ident = input.expect_ident()?.clone();
     match ident.as_ref().to_ascii_lowercase().as_str() {
         "circle" => Ok(RadialShape::Circle),
@@ -13786,7 +13794,9 @@ enum RadialSizeAuthored {
 /// 単一 `<length [0,∞]>` (circle form) へ自然に fall back する
 /// ([`parse_css_position`]の alternative 順序 doc と同じ「安全な rewind」
 /// 構造)。
-fn parse_radial_size<'i>(input: &mut Parser<'i, '_>) -> Result<RadialSizeAuthored, ParseError<'i, ()>> {
+fn parse_radial_size<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<RadialSizeAuthored, ParseError<'i, ()>> {
     if let Ok(extent) = input.try_parse(parse_radial_extent) {
         return Ok(RadialSizeAuthored::Extent(extent));
     }
@@ -13886,8 +13896,8 @@ fn parse_radial_gradient_body<'i>(
         input.expect_comma()?;
     }
     let stops = parse_gradient_color_stop_list(input)?;
-    let (resolved_shape, resolved_size) = resolve_radial_shape_and_size(shape, size)
-        .ok_or_else(|| input.new_custom_error(()))?;
+    let (resolved_shape, resolved_size) =
+        resolve_radial_shape_and_size(shape, size).ok_or_else(|| input.new_custom_error(()))?;
     Ok(RadialGradient {
         repeating,
         shape: resolved_shape,
@@ -26690,9 +26700,9 @@ mod tests {
 
     fn expect_conic_gradient(value: Option<PropertyValue>) -> ConicGradient {
         match value {
-            Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(Gradient::Conic(
-                g,
-            )))) => g,
+            Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(Gradient::Conic(g)))) => {
+                g
+            }
             // cov:ignore: same reasoning as `expect_linear_gradient`'s panic arm.
             other => panic!("expected a conic gradient BackgroundImage, got {other:?}"),
         }
@@ -26712,10 +26722,7 @@ mod tests {
                         vertical: Some(VerticalSide::Bottom),
                     }),
                     interpolation: oklab_shorter(),
-                    stops: Arc::new(vec![
-                        gradient_stop(RED, None),
-                        gradient_stop(BLUE, None),
-                    ]),
+                    stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None),]),
                 })
             )))
         );
@@ -26723,13 +26730,19 @@ mod tests {
 
     #[test]
     fn background_image_parses_repeating_linear_gradient_sets_repeating_flag() {
-        let g = expect_linear_gradient(parse("repeating-linear-gradient(red, blue)", "background-image"));
+        let g = expect_linear_gradient(parse(
+            "repeating-linear-gradient(red, blue)",
+            "background-image",
+        ));
         assert!(g.repeating);
     }
 
     #[test]
     fn background_image_parses_linear_gradient_angle_direction() {
-        let g = expect_linear_gradient(parse("linear-gradient(45deg, red, blue)", "background-image"));
+        let g = expect_linear_gradient(parse(
+            "linear-gradient(45deg, red, blue)",
+            "background-image",
+        ));
         assert_eq!(g.direction, LinearGradientDirection::Angle(Angle(45.0)));
     }
 
@@ -26743,7 +26756,10 @@ mod tests {
     #[test]
     fn background_image_rejects_linear_gradient_bare_nonzero_number_as_angle() {
         // Unlike `<zero>`, a bare non-zero number is not a valid `<angle>`.
-        assert_eq!(parse("linear-gradient(45, red, blue)", "background-image"), None);
+        assert_eq!(
+            parse("linear-gradient(45, red, blue)", "background-image"),
+            None
+        );
     }
 
     #[test]
@@ -26760,7 +26776,10 @@ mod tests {
         // conversion — same "convert, then saturate" policy `parse_length_value`
         // uses for percentages (`parse_angle` doc's "overflow saturation"
         // note).
-        let g = expect_linear_gradient(parse("linear-gradient(1e40turn, red, blue)", "background-image"));
+        let g = expect_linear_gradient(parse(
+            "linear-gradient(1e40turn, red, blue)",
+            "background-image",
+        ));
         assert_eq!(g.direction, LinearGradientDirection::Angle(Angle(f32::MAX)));
     }
 
@@ -26778,7 +26797,10 @@ mod tests {
         // Explicit `to bottom` — exercises `parse_vertical_side`'s `bottom`
         // arm directly, distinct from the same *value* reached via the
         // omitted-direction default (`..._with_default_direction_and_interpolation`).
-        let g = expect_linear_gradient(parse("linear-gradient(to bottom, red, blue)", "background-image"));
+        let g = expect_linear_gradient(parse(
+            "linear-gradient(to bottom, red, blue)",
+            "background-image",
+        ));
         assert_eq!(
             g.direction,
             LinearGradientDirection::Side(SideOrCorner {
@@ -26792,7 +26814,10 @@ mod tests {
     fn background_image_rejects_linear_gradient_bare_to_keyword() {
         // `to` with no side-or-corner keyword following it — `parse_side_or_corner`
         // rejects when neither axis matched.
-        assert_eq!(parse("linear-gradient(to, red, blue)", "background-image"), None);
+        assert_eq!(
+            parse("linear-gradient(to, red, blue)", "background-image"),
+            None
+        );
     }
 
     #[test]
@@ -26801,7 +26826,10 @@ mod tests {
         // of `parse_vertical_side`, exercising its rejection arm before the
         // whole declaration fails on the missing comma.
         assert_eq!(
-            parse("linear-gradient(to right center, red, blue)", "background-image"),
+            parse(
+                "linear-gradient(to right center, red, blue)",
+                "background-image"
+            ),
             None
         );
     }
@@ -26816,8 +26844,14 @@ mod tests {
     #[test]
     fn background_image_parses_linear_gradient_side_and_corner_any_order() {
         // `[left | right] || [top | bottom]` — keyword order doesn't matter.
-        let to_top_left = parse("linear-gradient(to top left, red, blue)", "background-image");
-        let to_left_top = parse("linear-gradient(to left top, red, blue)", "background-image");
+        let to_top_left = parse(
+            "linear-gradient(to top left, red, blue)",
+            "background-image",
+        );
+        let to_left_top = parse(
+            "linear-gradient(to left top, red, blue)",
+            "background-image",
+        );
         let expected = Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(
             Gradient::Linear(LinearGradient {
                 repeating: false,
@@ -26835,7 +26869,10 @@ mod tests {
 
     #[test]
     fn background_image_parses_linear_gradient_stop_positions() {
-        let g = expect_linear_gradient(parse("linear-gradient(red 10%, blue 90%)", "background-image"));
+        let g = expect_linear_gradient(parse(
+            "linear-gradient(red 10%, blue 90%)",
+            "background-image",
+        ));
         assert_eq!(
             *g.stops,
             vec![
@@ -26847,7 +26884,10 @@ mod tests {
 
     #[test]
     fn background_image_gradient_stop_accepts_currentcolor() {
-        let g = expect_linear_gradient(parse("linear-gradient(currentcolor, blue)", "background-image"));
+        let g = expect_linear_gradient(parse(
+            "linear-gradient(currentcolor, blue)",
+            "background-image",
+        ));
         assert_eq!(g.stops[0].color, GradientStopColor::CurrentColor);
     }
 
@@ -26933,7 +26973,10 @@ mod tests {
 
     #[test]
     fn background_image_parses_repeating_radial_gradient_sets_repeating_flag() {
-        let g = expect_radial_gradient(parse("repeating-radial-gradient(red, blue)", "background-image"));
+        let g = expect_radial_gradient(parse(
+            "repeating-radial-gradient(red, blue)",
+            "background-image",
+        ));
         assert!(g.repeating);
     }
 
@@ -26957,7 +27000,10 @@ mod tests {
 
     #[test]
     fn background_image_parses_radial_gradient_ellipse_with_two_lengths() {
-        let g = expect_radial_gradient(parse("radial-gradient(20px 30px, red, blue)", "background-image"));
+        let g = expect_radial_gradient(parse(
+            "radial-gradient(20px 30px, red, blue)",
+            "background-image",
+        ));
         assert_eq!(g.shape, RadialShape::Ellipse);
         assert_eq!(
             g.size,
@@ -26972,7 +27018,10 @@ mod tests {
         // distinct from `..._circle_with_explicit_length` above (which
         // spells `circle` explicitly and exercises a different
         // `resolve_radial_shape_and_size` arm).
-        let g = expect_radial_gradient(parse("radial-gradient(5px at center, red, blue)", "background-image"));
+        let g = expect_radial_gradient(parse(
+            "radial-gradient(5px at center, red, blue)",
+            "background-image",
+        ));
         assert_eq!(g.shape, RadialShape::Circle);
         assert_eq!(g.size, RadialSize::Circle(Length::Px(5.0)));
     }
@@ -26981,7 +27030,10 @@ mod tests {
     fn background_image_parses_radial_gradient_extent_keyword_infers_ellipse() {
         // Shape omitted + `<radial-extent>` keyword (not "a single <length>")
         // — defaults to ellipse (CSS Images 3 §3.2.1).
-        let g = expect_radial_gradient(parse("radial-gradient(closest-side, red, blue)", "background-image"));
+        let g = expect_radial_gradient(parse(
+            "radial-gradient(closest-side, red, blue)",
+            "background-image",
+        ));
         assert_eq!(g.shape, RadialShape::Ellipse);
         assert_eq!(g.size, RadialSize::Extent(RadialExtent::ClosestSide));
     }
@@ -27020,7 +27072,10 @@ mod tests {
         // Explicit shape keyword, no size at all — `farthest-corner` default
         // still applies (distinct from the fully-omitted default test above,
         // which never names a shape keyword).
-        let g = expect_radial_gradient(parse("radial-gradient(circle, red, blue)", "background-image"));
+        let g = expect_radial_gradient(parse(
+            "radial-gradient(circle, red, blue)",
+            "background-image",
+        ));
         assert_eq!(g.shape, RadialShape::Circle);
         assert_eq!(g.size, RadialSize::Extent(RadialExtent::FarthestCorner));
     }
@@ -27045,7 +27100,10 @@ mod tests {
         // `circle` + a 2-length-percentage (ellipse-only) size is an invalid
         // combination (CSS Images 3 §3.2.1's expanded grammar).
         assert_eq!(
-            parse("radial-gradient(circle 20px 30px, red, blue)", "background-image"),
+            parse(
+                "radial-gradient(circle 20px 30px, red, blue)",
+                "background-image"
+            ),
             None
         );
     }
@@ -27053,7 +27111,10 @@ mod tests {
     #[test]
     fn background_image_rejects_radial_gradient_negative_length() {
         assert_eq!(
-            parse("radial-gradient(circle -5px, red, blue)", "background-image"),
+            parse(
+                "radial-gradient(circle -5px, red, blue)",
+                "background-image"
+            ),
             None
         );
     }
@@ -27088,7 +27149,10 @@ mod tests {
 
     #[test]
     fn background_image_parses_repeating_conic_gradient_sets_repeating_flag() {
-        let g = expect_conic_gradient(parse("repeating-conic-gradient(gold, #f06 20deg)", "background-image"));
+        let g = expect_conic_gradient(parse(
+            "repeating-conic-gradient(gold, #f06 20deg)",
+            "background-image",
+        ));
         assert!(g.repeating);
     }
 
@@ -27110,13 +27174,19 @@ mod tests {
 
     #[test]
     fn background_image_parses_conic_gradient_stop_with_percentage_position() {
-        let g = expect_conic_gradient(parse("conic-gradient(#f06 0%, gold 100%)", "background-image"));
+        let g = expect_conic_gradient(parse(
+            "conic-gradient(#f06 0%, gold 100%)",
+            "background-image",
+        ));
         assert_eq!(g.stops[0].position, Some(AnglePercentage::Percent(0.0)));
     }
 
     #[test]
     fn background_image_parses_conic_gradient_stop_with_angle_position() {
-        let g = expect_conic_gradient(parse("conic-gradient(#f06 0deg, gold 1turn)", "background-image"));
+        let g = expect_conic_gradient(parse(
+            "conic-gradient(#f06 0deg, gold 1turn)",
+            "background-image",
+        ));
         assert_eq!(
             g.stops[1].position,
             Some(AnglePercentage::Angle(Angle(360.0)))
