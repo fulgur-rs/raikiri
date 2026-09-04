@@ -6738,10 +6738,16 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BackgroundOrigin(_)
         | PropertyValue::BackgroundSize(_)
         | PropertyValue::BackgroundPosition(_)
-        // background-image (CSS Backgrounds and Borders 3 §2.3) — carries a
-        // bare `None | Url(String)`, not a length (`<url>` is opaque to
-        // font-size/line-height resolution) — nothing for phase 2 to
-        // resolve, same shape as its 4 keyword-only siblings just above.
+        // background-image (CSS Backgrounds and Borders 3 §2.3) — `None` /
+        // `Url(String)` are opaque to font-size/line-height resolution, same
+        // as its 4 keyword-only siblings just above. `Gradient(..)` *does*
+        // carry `<length-percentage>`/`<angle>` payloads (CSS Images 4 §3),
+        // but this crate deliberately never resolves them against the
+        // inheritance parent (or at all, pre-paint) — resolving a gradient's
+        // lengths needs the gradient box's own dimensions, an input phase 2
+        // doesn't have, so the whole variant is left as specified-layer data
+        // all the way into `ComputedValues` (`BackgroundImage` doc's scope
+        // note). Nothing for phase 2 to do here either way.
         | PropertyValue::BackgroundImage(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)) => v,
@@ -14316,40 +14322,66 @@ mod tests {
     }
 
     #[test]
-    fn background_image_gradient_function_is_silently_dropped() {
-        use crate::property::BackgroundImage;
-        // `<gradient>` (`linear-gradient()` etc.) is unimplemented scope —
-        // the whole declaration drops, leaving the property at its initial
-        // value, same as any other unrecognized value (`BackgroundImage`
-        // doc's scope-carving section).
+    fn background_image_wired_through_cascade_from_inline_style_with_gradient() {
+        use crate::property::{BackgroundImage, Gradient};
+        // `<gradient>` (`linear-gradient()` etc.) wires through the cascade
+        // like any other `BackgroundImage` payload — no dedicated cascade.rs
+        // match arm exists for it (`apply_value`'s `BackgroundImage(v) =>
+        // target.background_image = v` arm takes any payload via wildcard),
+        // so this pins the wiring rather than exercising new cascade logic.
         let cv = cascade_doc(
             "",
             "div",
             Some("background-image: linear-gradient(red, blue)"),
         );
-        assert_eq!(cv.background_image, BackgroundImage::None);
+        assert!(matches!(
+            cv.background_image,
+            BackgroundImage::Gradient(Gradient::Linear(_))
+        ));
     }
 
     #[test]
-    fn background_image_gradient_function_does_not_overwrite_an_earlier_url() {
-        // Sibling of `background_image_gradient_function_is_silently_dropped`
-        // that discriminates "the whole gradient declaration is dropped"
-        // from "the whole gradient declaration is dropped *and coerced to
-        // an explicit `None` winner*" — the two are indistinguishable when
-        // no earlier declaration exists (the prior test's `None` result is
-        // also just the property's initial value). Mirrors
-        // `background_image_explicit_none_overrides_an_earlier_url`'s
-        // same-block later-declaration-wins setup, but with a *dropped*
-        // later declaration instead of a *valid* `none` one: if the
-        // gradient branch ever started producing a real (non-dropped)
-        // `None` winner instead of failing the whole declaration, this
-        // would catch it by observing the earlier `url(...)` survive
-        // instead of being overwritten.
+    fn background_image_invalid_gradient_does_not_overwrite_an_earlier_url() {
+        // Mirrors `background_image_explicit_none_overrides_an_earlier_url`'s
+        // same-block later-declaration-wins setup, but with a *syntactically
+        // invalid* later declaration (a single-stop `linear-gradient()` —
+        // the CSS Images 3 baseline grammar this crate implements requires
+        // 2+ stops, `BackgroundImage` doc's scope-carving section) instead
+        // of a valid one: the whole invalid declaration must drop, leaving
+        // the earlier `url(...)` winner untouched, not coerced to the
+        // property's initial value.
         use crate::property::BackgroundImage;
         let cv = cascade_doc(
             "",
             "div",
-            Some("background-image: url(a.png); background-image: linear-gradient(red, blue)"),
+            Some("background-image: url(a.png); background-image: linear-gradient(red)"),
+        );
+        assert_eq!(
+            cv.background_image,
+            BackgroundImage::Url("a.png".to_string())
+        );
+    }
+
+    #[test]
+    fn background_image_radial_gradient_position_before_shape_does_not_overwrite_an_earlier_url() {
+        // Same shape as `background_image_invalid_gradient_does_not_overwrite_an_earlier_url`,
+        // but with a different flavor of syntactically-invalid gradient:
+        // `at center circle` violates CSS Images 4 §3.2.1's `[ [
+        // <radial-shape> || <radial-size> ]? [ at <position> ]? ]`
+        // sequencing (`at <position>` may only follow the shape/size group,
+        // never precede it) — without this test, a regression that widens
+        // `parse_radial_gradient_body` back to a flat any-order loop over
+        // shape/size/position (rather than treating shape/size/position as
+        // one ordered group) would *accept* this declaration and overwrite
+        // the earlier `url(...)` winner with a spec-invalid gradient,
+        // silently corrupting the cascade result instead of failing loudly.
+        use crate::property::BackgroundImage;
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some(
+                "background-image: url(a.png); background-image: radial-gradient(at center circle, red, blue)",
+            ),
         );
         assert_eq!(
             cv.background_image,

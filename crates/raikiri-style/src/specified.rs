@@ -72,8 +72,17 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
+///
+/// \* `background_image` は `None`/`Url(String)` の 2 variant では文字通り
+/// この行の分類通りだが、`Gradient(..)` variant (CSS Images 4 §3) は
+/// `<length-percentage>`/`<angle>` を含む — それでも表の分類上は「既に
+/// computed-equivalent」に留める。`vertical_align` の行 (variant ごとに
+/// phase 2/3 で解決 **される**) とは違い、`Gradient` の length/angle は
+/// **どの phase でも絶対化されない** — 絶対化にはこの struct の scope 外の
+/// 入力 (gradient box 自身の寸法) が要るため。詳細は
+/// [`Self::background_image`] のフィールド doc。
 ///
 /// `font_weight` が後者 (2 行目) にいるのは load-bearing な事実である —
 /// `bolder` / `lighter` は [`crate::cascade::apply_value`] が**この struct へ書き込む
@@ -401,8 +410,13 @@ pub struct SpecifiedValues {
     /// `background-position` の **specified** value。phase 3 で各 offset の
     /// `<length-percentage>` を絶対化する。
     pub background_position: CssPosition,
-    /// [`ComputedValues::background_image`] の staging。層は
-    /// computed-equivalent (`BackgroundImage` は length を運ばない)。
+    /// [`ComputedValues::background_image`] の staging。`None`/`Url(String)`
+    /// は computed-equivalent。`Gradient(..)` variant (CSS Images 4 §3) は
+    /// `<length-percentage>`/`<angle>` を含むが、gradient box の寸法という
+    /// この struct の scope 外の入力が無いと絶対化できないため、phase 2/3
+    /// のどちらでも解決されない — フィールドの値は winner 適用結果の specified
+    /// 表現をそのまま [`ComputedValues`] まで運ぶ (「層の対応表」の
+    /// `background_image`\* 脚注参照)。
     pub background_image: BackgroundImage,
 }
 
@@ -1190,10 +1204,11 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
-            // CSS Backgrounds and Borders 3 §2.3 — computed value = specified
-            // value (`None` keyword or the `<url>` string), no length
-            // payload (`BackgroundRepeat` arm と同じ shape) — 自 node の
-            // winner 適用結果をそのまま素通し。
+            // CSS Backgrounds and Borders 3 §2.3 / CSS Images 4 §3 —
+            // computed value = specified value (`None`/`Url(String)`/
+            // `Gradient(..)`) — 自 node の winner 適用結果をそのまま素通し。
+            // `Gradient(..)`の length/angle は絶対化しない
+            // (`Self::background_image` doc の scope note参照)。
             background_image: self.background_image,
             // CSS Overflow 3 §3.1 cross-axis computed-value coupling
             // — same-node sibling dependency, resolved

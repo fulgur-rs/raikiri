@@ -1271,15 +1271,21 @@ pub struct ComputedValues {
     /// background-image property"
     /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>,
     /// "Value: `<bg-image>#`", "Inherited: no"). This crate parses only a
-    /// single layer (`<bg-image> = <image> | none`, `<image>` restricted to
-    /// the `<url>` alternative — see [`BackgroundImage`] doc's scope-carving
-    /// section); comma-separated multi-layer `#` support is a follow-up.
+    /// single layer (`<bg-image> = <image> | none`, `<image> = <url> |
+    /// <gradient>` — both alternatives implemented, see [`BackgroundImage`]
+    /// doc's scope-carving section for what's deferred within `<gradient>`
+    /// itself); comma-separated multi-layer `#` support is a follow-up.
     /// Per CSS Values and Units 4 §4.5.1, a `<url>`'s computed value is
     /// technically the *resolved absolute URL*, not the specified text
     /// verbatim — this crate holds the raw `String` unresolved and defers
     /// resolution to the runtime consumer, the same boundary
     /// [`crate::property::PropertyValue::Content`]'s `Image` component
     /// documents (raikiri-style doesn't depend on the `url` crate).
+    /// `Gradient(..)`'s `<length-percentage>`/`<angle>` payloads are held
+    /// unresolved too, for a different reason: absolutizing them needs the
+    /// gradient box's own dimensions, an input neither phase 3 pass
+    /// threads through (see [`crate::specified::SpecifiedValues::background_image`]
+    /// doc).
     pub background_image: BackgroundImage,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
