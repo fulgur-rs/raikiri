@@ -29,30 +29,32 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
-    AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, Border, BorderColor, BorderRadius, BorderStyle,
+    AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundRepeat,
+    BackgroundRepeatKeyword, BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle,
     BoxShadowItem, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
-    ContentComponent, CssColor, Direction, DisplayValue, FlexBasisValue, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
-    GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, Hyphens, Length, LengthOrAuto,
-    LengthOrNormal, LineHeight, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform, VerticalAlign,
-    Visibility, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list,
-    empty_content_list, empty_counter_entries, empty_quotes_entries, empty_string_set_entries,
-    empty_text_shadow_list, initial_font_family, initial_grid_auto_track_list,
-    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
-    resolve_writing_mode,
+    ContentComponent, CssColor, CssPosition, CssPositionOffset, Direction, DisplayValue,
+    FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize,
+    Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight, Outline, OutlineColor, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+    empty_box_shadow_list, empty_content_list, empty_counter_entries, empty_quotes_entries,
+    empty_string_set_entries, empty_text_shadow_list, initial_font_family,
+    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
+    resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
     empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_font_size,
     lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
-    lift_text_shadow_item, resolve_border, resolve_border_radius, resolve_box_shadow_item,
-    resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
-    resolve_grid_template_tracks, resolve_length_or_normal, resolve_length_percentage,
-    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_outline, resolve_tab_size, resolve_text_shadow_item,
-    resolve_vertical_align, used_line_height_length,
+    lift_text_shadow_item, resolve_background_size, resolve_border, resolve_border_radius,
+    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis, resolve_font_size,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length_or_normal,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
+    resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_vertical_align,
+    used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -69,8 +71,8 @@ use crate::resolve::{
 ///
 /// | 層 | field |
 /// |---|---|
-/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` |
+/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// `font_weight` が後者 (2 行目) にいるのは load-bearing な事実である —
@@ -381,6 +383,24 @@ pub struct SpecifiedValues {
     pub orphans: i32,
     /// [`ComputedValues::widows`] の staging。[`Self::orphans`] と同じ層。
     pub widows: i32,
+    /// [`ComputedValues::background_repeat`] の staging。層は
+    /// computed-equivalent (`BackgroundRepeat` は length を運ばない)。
+    pub background_repeat: BackgroundRepeat,
+    /// [`ComputedValues::background_attachment`] の staging。層は
+    /// computed-equivalent (`BackgroundAttachment` は length を運ばない)。
+    pub background_attachment: BackgroundAttachment,
+    /// [`ComputedValues::background_clip`] の staging。層は
+    /// computed-equivalent (`VisualBox` は length を運ばない)。
+    pub background_clip: VisualBox,
+    /// [`ComputedValues::background_origin`] の staging。層は
+    /// computed-equivalent (`VisualBox` は length を運ばない)。
+    pub background_origin: VisualBox,
+    /// `background-size` の **specified** value。phase 3 で各軸の
+    /// `<length-percentage>` を絶対化する (`width`/`height` と同じ shape)。
+    pub background_size: BackgroundSize,
+    /// `background-position` の **specified** value。phase 3 で各 offset の
+    /// `<length-percentage>` を絶対化する。
+    pub background_position: CssPosition,
 }
 
 impl SpecifiedValues {
@@ -545,6 +565,34 @@ impl SpecifiedValues {
             // initial は共に `2`。
             orphans: 2,
             widows: 2,
+            // CSS Backgrounds and Borders 3 §2.4: background-repeat initial
+            // は `repeat` (両軸)。
+            background_repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            },
+            // CSS Backgrounds and Borders 3 §2.5: background-attachment
+            // initial は `scroll`。
+            background_attachment: BackgroundAttachment::Scroll,
+            // CSS Backgrounds and Borders 3 §2.7: background-clip initial
+            // は `border-box` — sibling `background_origin` (initial
+            // `padding-box`) と異なる点に注意。
+            background_clip: VisualBox::BorderBox,
+            // background-origin initial は `padding-box`。
+            background_origin: VisualBox::PaddingBox,
+            // CSS Backgrounds and Borders 3 §2.9: background-size initial
+            // は `auto` (= 両軸 `auto`、`BackgroundSize` doc の
+            // "1 value のみ指定時" fill 規則とは無関係の spec 明示値)。
+            background_size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            },
+            // CSS Backgrounds and Borders 3 §2.6: background-position
+            // initial は `0% 0%`。
+            background_position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            },
         }
     }
 
@@ -743,6 +791,24 @@ impl SpecifiedValues {
             // "Inherited: no")。
             justify_items: SelfAlignmentValue::Normal,
             justify_self: AlignSelfValue::Auto,
+            // non-inherited (CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/
+            // §2.8/§2.9, all "Inherited: no") — child starts from spec
+            // initial, same as `background_color` above.
+            background_repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            },
+            background_attachment: BackgroundAttachment::Scroll,
+            background_clip: VisualBox::BorderBox,
+            background_origin: VisualBox::PaddingBox,
+            background_size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            },
+            background_position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            },
         }
     }
 
@@ -1096,6 +1162,27 @@ impl SpecifiedValues {
             width: resolve_length_percentage_or_auto(self.width, font_size, own_line_height, ctx),
             height: resolve_length_percentage_or_auto(self.height, font_size, own_line_height, ctx),
             box_sizing: self.box_sizing,
+            // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8 — computed value =
+            // specified keyword(s), no length payload (`TextDecorationLine`
+            // arm と同じ shape、下記参照)。
+            background_repeat: self.background_repeat,
+            background_attachment: self.background_attachment,
+            background_clip: self.background_clip,
+            background_origin: self.background_origin,
+            // CSS Backgrounds and Borders 3 §2.9/§2.6 — `<length-percentage>`
+            // を含むため `width`/`height` と同じ shape で絶対化する。
+            background_size: resolve_background_size(
+                self.background_size,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            background_position: resolve_css_position(
+                self.background_position,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             // CSS Overflow 3 §3.1 cross-axis computed-value coupling
             // — same-node sibling dependency, resolved
             // here (phase 3) once both `overflow-x`/`overflow-y` winners are
@@ -1549,6 +1636,24 @@ mod tests {
             justify_self: AlignSelfValue::Value(SelfAlignmentValue::End),
             orphans: 5,
             widows: 7,
+            // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: 全て
+            // non-inherited なので、initial と異なる値にしておく。
+            background_repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Round,
+                y: BackgroundRepeatKeyword::Space,
+            },
+            background_attachment: BackgroundAttachment::Fixed,
+            background_clip: VisualBox::ContentBox,
+            background_origin: VisualBox::ContentBox,
+            background_size: crate::resolve::ComputedBackgroundSize::Cover,
+            background_position: crate::resolve::ComputedCssPosition {
+                horizontal: crate::resolve::ComputedCssPositionOffset::End(
+                    ComputedLengthPercentage::Px(5.0),
+                ),
+                vertical: crate::resolve::ComputedCssPositionOffset::Start(
+                    ComputedLengthPercentage::Percent(25.0),
+                ),
+            },
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -1705,6 +1810,14 @@ mod tests {
         // justify-self は共に non-inherited。
         assert_eq!(child.justify_items, initial.justify_items);
         assert_eq!(child.justify_self, initial.justify_self);
+        // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: 全て
+        // non-inherited。
+        assert_eq!(child.background_repeat, initial.background_repeat);
+        assert_eq!(child.background_attachment, initial.background_attachment);
+        assert_eq!(child.background_clip, initial.background_clip);
+        assert_eq!(child.background_origin, initial.background_origin);
+        assert_eq!(child.background_size, initial.background_size);
+        assert_eq!(child.background_position, initial.background_position);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は
