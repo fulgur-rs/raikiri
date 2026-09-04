@@ -4560,8 +4560,7 @@ pub struct Outline {
 /// property 向けに一般化して再利用する共通 value type)。
 ///
 /// # Grammar (CSS Backgrounds 3 §2.6 `<bg-position>` — 汎用 `<position>`
-/// (CSS Values 4 §8.3) の superset。素の `<position>` は 3-4 value
-/// edge-offset 構文を許さない — この拡張は `<bg-position>` 固有)
+/// (CSS Values 4 §8.3) の superset)
 ///
 /// ```text
 /// <position> =
@@ -4574,9 +4573,27 @@ pub struct Outline {
 ///   [ center | [ top | bottom ] <length-percentage>? ]
 /// ```
 ///
-/// 3 alternative のうち最後 (`&&`、2 group が任意順で出現可能) が `top left` /
-/// `bottom 10px right 20px` のような keyword 並び替えと 3-4 value edge-offset
-/// 構文をカバーする。
+/// **上記コード片は `<bg-position>` (この crate が `background-position`
+/// 向けに実装している grammar、[`parse_css_position`] 参照) であって、
+/// `<position>` 自体ではない点に注意** — 最後の alternative の
+/// `<length-percentage>?` が両 group で独立に optional なのは
+/// `<bg-position>` 固有の拡張 (3-value edge-offset 構文、offset がどちらか
+/// 片方の軸にだけ authored される中間形) であり、CSS Values 4 §8.3 の
+/// `<position>` 自体にこの中間形は存在しない。plain `<position>` 側の
+/// 対応する alternative (`<position-four>`) は `[[left|right]
+/// <length-percentage>] && [[top|bottom] <length-percentage>]` — offset は
+/// `?` ではなく必須で、両軸とも authored されているか (4-value)、
+/// どちらも `<length-percentage>` を伴わない bare keyword pair
+/// (`<position-two>` の `&&` 形) かのどちらかしか許さない。`<position>`
+/// 型を要求する property (`object-position` 等) はこの制約を課す
+/// [`parse_position_strict`] を使う ([`parse_position_branch3_strict`]
+/// doc参照) — `background-position` 自身は 3-value 形式を許す
+/// `<bg-position>` のままで変わらない。
+///
+/// 3 alternative のうち最後 (`&&`、2 group が任意順で出現可能) が `top left`
+/// のような keyword 並び替えと、`bottom 10px right 20px` (4-value、
+/// `<position>` 自体にも存在) / `right 10px top` (3-value、`<bg-position>`
+/// 固有の拡張) の edge-offset 構文をカバーする。
 ///
 /// # なぜ 2 variant (`Start`/`End`) か — `<length-percentage>` 単体では表現不能
 ///
@@ -4609,8 +4626,8 @@ pub enum CssPositionOffset {
 }
 
 /// `<position>` value type (CSS Backgrounds and Borders 3 §2.6、[`CssPositionOffset`]
-/// doc 参照)。`background-position` (本 crate) と、将来の `object-position` /
-/// `transform-origin` 等の再利用を見込んで汎用的に定義する。
+/// doc 参照)。`background-position` / `object-position` (本crate) で使われる。
+/// 将来の `transform-origin` 等の再利用も見込んで汎用的に定義する。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CssPosition {
@@ -5227,6 +5244,42 @@ pub struct BackgroundShorthand {
     /// `background-origin` 成分 — 省略時は [`VisualBox::PaddingBox`] (spec
     /// initial)。
     pub origin: VisualBox,
+}
+
+/// `object-fit` の specified value。
+///
+/// CSS Images Module Level 3 §5.1 "Sizing the replaced element: the
+/// object-fit property"
+/// <https://www.w3.org/TR/css-images-3/#the-object-fit>。Grammar: `fill |
+/// contain | cover | none | scale-down`。Applies to: replaced elements
+/// only。**non-inherited**。Computed value = specified keyword — no length
+/// payload (`BackgroundAttachment` と同じ shape)。
+///
+/// `object-position` (CSS Images 3 §5.2、[`CssPosition`] 再利用) と対になる
+/// property だが、この 5 keyword の意味自体は replaced element の concrete
+/// object size をどう決めるかという layout-time algorithm (同 spec §5.3
+/// "Sizing the replaced element" の default-object-size / concrete-object-size
+/// 手順) であり、本 crate はそのレイアウト適用アルゴリズム自体を実装しない —
+/// 本 variant が保持するのは cascade/computed value の keyword のみ。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectFit {
+    /// `fill` — spec initial value。replaced content を content box に
+    /// 合わせて (aspect ratio を保持せず) 引き伸ばす。
+    Fill,
+    /// `contain` — aspect ratio を保持したまま、content box に収まる最大
+    /// サイズへ縮小/拡大する。
+    Contain,
+    /// `cover` — aspect ratio を保持したまま、content box を覆う最小
+    /// サイズへ縮小/拡大する (どちらかの軸で box をはみ出しうる)。
+    Cover,
+    /// `none` — content を resize しない。concrete object size は
+    /// intrinsic size (無ければ spec の default object size algorithm の
+    /// 結果) をそのまま使う。
+    None,
+    /// `scale-down` — `none` と `contain` それぞれの concrete object size
+    /// のうち小さい方。
+    ScaleDown,
 }
 
 /// 現サポート property の resolved value (variant 一覧は下記、
@@ -6413,6 +6466,21 @@ pub enum PropertyValue {
     /// 意味を持たない — 既存 variant を shift させない配置を優先する、
     /// [`PropertyKey`] doc の「宣言順は load-bearing」節参照)。
     Background(BackgroundShorthand),
+    /// `object-fit` — **non-inherited**、initial: [`ObjectFit::Fill`] (CSS
+    /// Images 3 §5.1 [`ObjectFit`] doc 参照)。末尾に追加 (1:1 disjoint な
+    /// 新 field、[`PropertyKey`] doc の判断規則)。
+    ObjectFit(ObjectFit),
+    /// `object-position` — **non-inherited**、initial: `50% 50%` (CSS Images
+    /// 3 §5.2 "Initial: 50% 50%"、[`CssPosition`] doc 参照)。
+    /// `background-position` と同じ [`CssPosition`] 型を再利用する
+    /// ([`CssPosition`] doc の「`background-position` / `object-position` で
+    /// 使われる」節) が、grammar は同一ではない — `<bg-position>` 固有の
+    /// 3-value edge-offset 構文を許さない strict な `<position>` (CSS
+    /// Values 4 §8.3) を要求するため、`background-position` が使う
+    /// [`parse_css_position`] ではなく [`parse_position_strict`] で parse
+    /// する ([`parse_position_branch3_strict`] doc参照)。
+    /// `<length-percentage>` を含むため絶対化は phase 3 に委ねる。
+    ObjectPosition(CssPosition),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -6762,6 +6830,13 @@ pub enum PropertyKey {
     // PropertyValue::Background の doc 参照 — shorthand は cascade 段に
     // 到達しないため discriminant 順は意味を持たない。
     Background,
+    // object-fit / object-position (CSS Images Module Level 3 §5.1/§5.2、
+    // semantics on the matching PropertyValue::ObjectFit /
+    // PropertyValue::ObjectPosition variants; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
+    ObjectFit,
+    ObjectPosition,
 }
 
 impl PropertyValue {
@@ -6898,6 +6973,8 @@ impl PropertyValue {
             PropertyValue::BackgroundPosition(_) => PropertyKey::BackgroundPosition,
             PropertyValue::BackgroundImage(_) => PropertyKey::BackgroundImage,
             PropertyValue::Background(_) => PropertyKey::Background,
+            PropertyValue::ObjectFit(_) => PropertyKey::ObjectFit,
+            PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
         }
     }
 }
@@ -7282,6 +7359,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-position" => PropertyKey::BackgroundPosition,
         "background-image" => PropertyKey::BackgroundImage,
         "background" => PropertyKey::Background,
+        "object-fit" => PropertyKey::ObjectFit,
+        "object-position" => PropertyKey::ObjectPosition,
         _ => return None,
     })
 }
@@ -7843,6 +7922,16 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // `||` fan-out of the 8 longhands above, single layer only
         // (`BackgroundShorthand` doc's Non-goal section).
         "background" => parse_background_shorthand(input).map(PropertyValue::Background),
+        // CSS Images Module Level 3 §5.1
+        // <https://www.w3.org/TR/css-images-3/#the-object-fit>.
+        "object-fit" => parse_object_fit(input).map(PropertyValue::ObjectFit),
+        // CSS Images Module Level 3 §5.2
+        // <https://www.w3.org/TR/css-images-3/#the-object-position>. Value:
+        // `<position>` (CSS Values 4 §8.3), not `<bg-position>` —
+        // `parse_position_strict` rejects the 3-value edge-offset form
+        // `background-position`'s `parse_css_position` accepts
+        // (`parse_position_branch3_strict` doc's "Why" section).
+        "object-position" => parse_position_strict(input).map(PropertyValue::ObjectPosition),
         _ => None,
     }
 }
@@ -13292,64 +13381,77 @@ fn css_position_center() -> CssPositionOffset {
 /// optional offset とともに読む。offset 省略時は edge そのもの (offset
 /// `0`) を返す。`left`/`right` どちらにもマッチしなければ `None`
 /// (token は消費しない)。
-fn parse_position_horizontal_edge(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+///
+/// 戻り値の 2nd 要素は「`<length-percentage>` token が実際に authored
+/// されていたか (offset 省略時の暗黙 `0` ではない)」— [`parse_position_branch3`]
+/// (`<bg-position>` 用、`background-position` が使う) はこれを無視するが、
+/// [`parse_position_branch3_strict`] (plain `<position>` 用、`object-position`
+/// が使う) はこれを使って 3-value 形式 (offset がどちらか片方の軸にだけ
+/// authored されている状態、`<position>` doc の Grammar 節参照) を検出・
+/// reject する。
+fn parse_position_horizontal_edge(input: &mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)> {
     if input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
-        let offset = input
-            .try_parse(parse_length_percentage_res)
-            .unwrap_or(Length::Percent(0.0));
-        return Some(CssPositionOffset::Start(offset));
+        return Some(match input.try_parse(parse_length_percentage_res) {
+            Ok(offset) => (CssPositionOffset::Start(offset), true),
+            Err(_) => (CssPositionOffset::Start(Length::Percent(0.0)), false),
+        });
     }
     if input
         .try_parse(|i| i.expect_ident_matching("right"))
         .is_ok()
     {
-        let offset = input
-            .try_parse(parse_length_percentage_res)
-            .unwrap_or(Length::Percent(0.0));
-        return Some(CssPositionOffset::End(offset));
+        return Some(match input.try_parse(parse_length_percentage_res) {
+            Ok(offset) => (CssPositionOffset::End(offset), true),
+            Err(_) => (CssPositionOffset::End(Length::Percent(0.0)), false),
+        });
     }
     None
 }
 
-/// [`parse_position_horizontal_edge`] の vertical 軸版 (`top`/`bottom`)。
-fn parse_position_vertical_edge(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+/// [`parse_position_horizontal_edge`] の vertical 軸版 (`top`/`bottom`) —
+/// 戻り値の 2nd 要素の意味は同関数の doc 参照。
+fn parse_position_vertical_edge(input: &mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)> {
     if input.try_parse(|i| i.expect_ident_matching("top")).is_ok() {
-        let offset = input
-            .try_parse(parse_length_percentage_res)
-            .unwrap_or(Length::Percent(0.0));
-        return Some(CssPositionOffset::Start(offset));
+        return Some(match input.try_parse(parse_length_percentage_res) {
+            Ok(offset) => (CssPositionOffset::Start(offset), true),
+            Err(_) => (CssPositionOffset::Start(Length::Percent(0.0)), false),
+        });
     }
     if input
         .try_parse(|i| i.expect_ident_matching("bottom"))
         .is_ok()
     {
-        let offset = input
-            .try_parse(parse_length_percentage_res)
-            .unwrap_or(Length::Percent(0.0));
-        return Some(CssPositionOffset::End(offset));
+        return Some(match input.try_parse(parse_length_percentage_res) {
+            Ok(offset) => (CssPositionOffset::End(offset), true),
+            Err(_) => (CssPositionOffset::End(Length::Percent(0.0)), false),
+        });
     }
     None
 }
 
 /// `center | [ left | right ] <length-percentage>?` — horizontal 軸の
-/// branch-3 group ([`parse_position_branch3`] doc)。
-fn parse_position_horizontal_group(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+/// branch-3 group ([`parse_position_branch3`] doc)。`center` は
+/// offset を持たないため 2nd 要素は常に `false`
+/// ([`parse_position_horizontal_edge`] doc参照)。
+fn parse_position_horizontal_group(
+    input: &mut Parser<'_, '_>,
+) -> Option<(CssPositionOffset, bool)> {
     if input
         .try_parse(|i| i.expect_ident_matching("center"))
         .is_ok()
     {
-        return Some(css_position_center());
+        return Some((css_position_center(), false));
     }
     parse_position_horizontal_edge(input)
 }
 
 /// [`parse_position_horizontal_group`] の vertical 軸版。
-fn parse_position_vertical_group(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+fn parse_position_vertical_group(input: &mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)> {
     if input
         .try_parse(|i| i.expect_ident_matching("center"))
         .is_ok()
     {
-        return Some(css_position_center());
+        return Some((css_position_center(), false));
     }
     parse_position_vertical_edge(input)
 }
@@ -13365,16 +13467,25 @@ fn parse_position_vertical_group(input: &mut Parser<'_, '_>) -> Option<CssPositi
 /// (`top`/`bottom`) → ambiguous `center` の順で試す。`center` は両 group に
 /// 属し得るため、どちらの軸に属するかは 2 個目の token (もう片方の
 /// group) を見て初めて決まる。
+///
+/// これは `<bg-position>` (CSS Backgrounds 3 §2.6) の 3rd alternative
+/// そのもの — 各 group の `<length-percentage>?` を独立に optional として
+/// 扱う (offset がどちらか片方の軸にだけ authored される 3-value 形式を
+/// 受理する)。plain `<position>` (CSS Values 4 §8.3) 向けにはこの中間形を
+/// reject する [`parse_position_branch3_strict`] を使うこと —
+/// `background-position` (`<bg-position>` を要求) はこちら、
+/// `object-position` (`<position>` を要求) はあちら、という使い分けが
+/// [`CssPosition`] の Grammar 節の canonical な説明。
 fn parse_position_branch3(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
-    if let Some(horizontal) = parse_position_horizontal_edge(input) {
-        let vertical = parse_position_vertical_group(input)?;
+    if let Some((horizontal, _)) = parse_position_horizontal_edge(input) {
+        let (vertical, _) = parse_position_vertical_group(input)?;
         return Some(CssPosition {
             horizontal,
             vertical,
         });
     }
-    if let Some(vertical) = parse_position_vertical_edge(input) {
-        let horizontal = parse_position_horizontal_group(input)?;
+    if let Some((vertical, _)) = parse_position_vertical_edge(input) {
+        let (horizontal, _) = parse_position_horizontal_group(input)?;
         return Some(CssPosition {
             horizontal,
             vertical,
@@ -13384,13 +13495,99 @@ fn parse_position_branch3(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
         .try_parse(|i| i.expect_ident_matching("center"))
         .is_ok()
     {
-        if let Some(vertical) = parse_position_vertical_edge(input) {
+        if let Some((vertical, _)) = parse_position_vertical_edge(input) {
             return Some(CssPosition {
                 horizontal: css_position_center(),
                 vertical,
             });
         }
-        if let Some(horizontal) = parse_position_horizontal_edge(input) {
+        if let Some((horizontal, _)) = parse_position_horizontal_edge(input) {
+            return Some(CssPosition {
+                horizontal,
+                vertical: css_position_center(),
+            });
+        }
+        if input
+            .try_parse(|i| i.expect_ident_matching("center"))
+            .is_ok()
+        {
+            return Some(CssPosition {
+                horizontal: css_position_center(),
+                vertical: css_position_center(),
+            });
+        }
+        return None;
+    }
+    None
+}
+
+/// [`parse_position_branch3`] の plain-`<position>` 版 —
+/// 唯一の違いは、horizontal/vertical 両 group の `<length-percentage>`
+/// offset **有無が一致しない場合 (3-value 形式) を reject** する点。
+///
+/// # Why
+///
+/// CSS Values 4 §8.3 の `<position>` 自体には「offset がどちらか片方の
+/// 軸にだけ authored される」中間形が存在しない — その 4th alternative
+/// (`<position-four>`、MDN "`<position>` CSS type" の formal syntax 参照)
+/// は `[[left|right] <length-percentage>] && [[top|bottom]
+/// <length-percentage>]` であり、offset は `?` ではなく両軸とも必須。
+/// offset を一切伴わない bare keyword pair は 2nd alternative
+/// (`<position-two>` の `&&` 形) が別途カバーする。つまり有効な組み合わせは
+/// 「両軸とも offset あり (4-value)」か「両軸とも offset なし」のみで、
+/// 「片方だけ offset」は常に invalid。
+///
+/// `<bg-position>` (CSS Backgrounds 3 §2.6、`background-position` 用) は
+/// この制約を持たない — 3-value 形式 ("For 3-value productions (which are
+/// not valid in `<position>`)" と同 spec が明記) を明示的に許すのが
+/// `<bg-position>` の `<position>` に対する拡張そのもの。`object-position`
+/// (CSS Images 3 §5.2、Value: `<position>`) はこの拡張を持たないため、
+/// [`parse_position_branch3`] をそのまま再利用すると `right 10px center`
+/// のような 3-value 入力を誤って受理してしまう — token を過不足なく
+/// 消費してしまう (leftover が残らない) ため、呼び出し元の
+/// `expect_exhausted` による leftover 検出でも捕捉できない。本関数は
+/// それを防ぐための、offset 有無の対称性チェックを追加した sibling。
+fn parse_position_branch3_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
+    if let Some((horizontal, h_offset)) = parse_position_horizontal_edge(input) {
+        let (vertical, v_offset) = parse_position_vertical_group(input)?;
+        if h_offset != v_offset {
+            return None;
+        }
+        return Some(CssPosition {
+            horizontal,
+            vertical,
+        });
+    }
+    if let Some((vertical, v_offset)) = parse_position_vertical_edge(input) {
+        let (horizontal, h_offset) = parse_position_horizontal_group(input)?;
+        if h_offset != v_offset {
+            return None;
+        }
+        return Some(CssPosition {
+            horizontal,
+            vertical,
+        });
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("center"))
+        .is_ok()
+    {
+        // `center` never carries an offset (`parse_position_horizontal_group`
+        // doc) — pairing it with an offset-bearing edge on the other axis is
+        // exactly the asymmetric 3-value shape this function rejects.
+        if let Some((vertical, v_offset)) = parse_position_vertical_edge(input) {
+            if v_offset {
+                return None;
+            }
+            return Some(CssPosition {
+                horizontal: css_position_center(),
+                vertical,
+            });
+        }
+        if let Some((horizontal, h_offset)) = parse_position_horizontal_edge(input) {
+            if h_offset {
+                return None;
+            }
             return Some(CssPosition {
                 horizontal,
                 vertical: css_position_center(),
@@ -13582,6 +13779,31 @@ fn parse_position_branch1_res<'i>(
 pub fn parse_css_position(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let position = input
         .try_parse(parse_position_branch3_res)
+        .or_else(|_| input.try_parse(parse_position_branch2_res))
+        .or_else(|_| input.try_parse(parse_position_branch1_res))
+        .ok()?;
+    Some(normalize_css_position(position))
+}
+
+fn parse_position_branch3_strict_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<CssPosition, ParseError<'i, ()>> {
+    parse_position_branch3_strict(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// plain `<position>` (CSS Values 4 §8.3) value type を parse する —
+/// [`parse_css_position`] (`<bg-position>`、`background-position` 用) の
+/// sibling。`object-position` (CSS Images 3 §5.2、Value: `<position>`) が
+/// 使う。
+///
+/// 差分は 3rd alternative だけ — [`parse_position_branch3`] の代わりに
+/// [`parse_position_branch3_strict`] を試す (3-value edge-offset 形式を
+/// reject する、同関数 doc の "Why" 節参照)。2nd/1st alternative
+/// ([`parse_position_branch2`]/[`parse_position_branch1`]) はどちらの
+/// grammar でも同一なので共有する。
+pub fn parse_position_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
+    let position = input
+        .try_parse(parse_position_branch3_strict_res)
         .or_else(|_| input.try_parse(parse_position_branch2_res))
         .or_else(|_| input.try_parse(parse_position_branch1_res))
         .ok()?;
@@ -14246,6 +14468,20 @@ fn parse_background_attachment(input: &mut Parser<'_, '_>) -> Option<BackgroundA
         "scroll" => Some(BackgroundAttachment::Scroll),
         "fixed" => Some(BackgroundAttachment::Fixed),
         "local" => Some(BackgroundAttachment::Local),
+        _ => None,
+    }
+}
+
+/// `object-fit: <fit>` を parse する ([`ObjectFit`] doc の grammar 参照:
+/// `fill | contain | cover | none | scale-down`)。
+fn parse_object_fit(input: &mut Parser<'_, '_>) -> Option<ObjectFit> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "fill" => Some(ObjectFit::Fill),
+        "contain" => Some(ObjectFit::Contain),
+        "cover" => Some(ObjectFit::Cover),
+        "none" => Some(ObjectFit::None),
+        "scale-down" => Some(ObjectFit::ScaleDown),
         _ => None,
     }
 }
@@ -28084,5 +28320,213 @@ mod tests {
             origin: VisualBox::PaddingBox,
         });
         assert_eq!(v.key(), PropertyKey::Background);
+    }
+
+    // ── object-fit (CSS Images Module Level 3 §5.1) ──
+
+    #[test]
+    fn object_fit_parse_all_five_keywords() {
+        assert_eq!(
+            parse("fill", "object-fit"),
+            Some(PropertyValue::ObjectFit(ObjectFit::Fill))
+        );
+        assert_eq!(
+            parse("contain", "object-fit"),
+            Some(PropertyValue::ObjectFit(ObjectFit::Contain))
+        );
+        assert_eq!(
+            parse("cover", "object-fit"),
+            Some(PropertyValue::ObjectFit(ObjectFit::Cover))
+        );
+        assert_eq!(
+            parse("none", "object-fit"),
+            Some(PropertyValue::ObjectFit(ObjectFit::None))
+        );
+        assert_eq!(
+            parse("scale-down", "object-fit"),
+            Some(PropertyValue::ObjectFit(ObjectFit::ScaleDown))
+        );
+    }
+
+    #[test]
+    fn object_fit_is_case_insensitive() {
+        assert_eq!(
+            parse("SCALE-DOWN", "object-fit"),
+            Some(PropertyValue::ObjectFit(ObjectFit::ScaleDown))
+        );
+    }
+
+    #[test]
+    fn object_fit_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "object-fit"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn object_fit_rejects_unknown_keyword() {
+        assert_eq!(parse("stretch", "object-fit"), None);
+        assert_eq!(parse("16px", "object-fit"), None);
+    }
+
+    #[test]
+    fn object_fit_key_maps_to_object_fit_property_key() {
+        let v = PropertyValue::ObjectFit(ObjectFit::Fill);
+        assert_eq!(v.key(), PropertyKey::ObjectFit);
+    }
+
+    // ── object-position (CSS Images Module Level 3 §5.2) ──
+    //
+    // `object-position` uses `parse_position_strict`, not
+    // `parse_css_position` (`CssPosition` doc's Grammar section) — its Value
+    // is plain `<position>` (CSS Values 4 §8.3), not `<bg-position>`
+    // (`<bg-position>` is `background-position`'s own extension, CSS
+    // Backgrounds 3 §2.6). The `background_position_*` tests above pin
+    // `<bg-position>` coverage (they exercise `parse_css_position`, which
+    // *does* accept the 3-value edge-offset form `<bg-position>` adds on top
+    // of `<position>`) — that is NOT full `<position>` coverage, since the
+    // 3-value form is exactly what plain `<position>` disallows. These tests
+    // confirm both: the `object-position` name wires into
+    // `parse_position_strict` and into its own distinct
+    // `PropertyValue`/`PropertyKey` (`object_position_parse_reuses_position_grammar`),
+    // and that the 3-value form specific to `<bg-position>` is rejected
+    // (`object_position_rejects_bg_position_only_3_value_edge_offset_forms`).
+
+    #[test]
+    fn object_position_parse_reuses_position_grammar() {
+        // 1st alternative, bare keyword pair.
+        assert_eq!(
+            parse("top", "object-position"),
+            Some(PropertyValue::ObjectPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }))
+        );
+        // 3rd alternative (`&&`, either order) — `top left` and `left top`
+        // both parse.
+        let expected = PropertyValue::ObjectPosition(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+        });
+        assert_eq!(parse("left top", "object-position"), Some(expected.clone()));
+        assert_eq!(parse("top left", "object-position"), Some(expected));
+        // 2nd alternative, bare `<length-percentage>` pair.
+        assert_eq!(
+            parse("10px 20%", "object-position"),
+            Some(PropertyValue::ObjectPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(20.0)),
+            }))
+        );
+        // 4-value edge-offset form — both axes carry an offset, so this is
+        // valid for plain `<position>` too (`<position-four>`,
+        // `parse_position_branch3_strict` doc's "Why" section), unlike the
+        // 3-value forms `object_position_rejects_bg_position_only_3_value_edge_offset_forms`
+        // pins as rejected.
+        assert_eq!(
+            parse("bottom 10px right 20px", "object-position"),
+            Some(PropertyValue::ObjectPosition(CssPosition {
+                horizontal: CssPositionOffset::End(Length::Px(20.0)),
+                vertical: CssPositionOffset::End(Length::Px(10.0)),
+            }))
+        );
+        // Same 4-value form, vertical group leading instead of trailing
+        // (`&&` allows either order) — exercises the "vertical-exclusive
+        // first" branch of `parse_position_branch3_strict`, distinct code
+        // path from the horizontal-exclusive-first branch the case above
+        // exercises.
+        assert_eq!(
+            parse("top 10px left 20px", "object-position"),
+            Some(PropertyValue::ObjectPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(20.0)),
+                vertical: CssPositionOffset::Start(Length::Px(10.0)),
+            }))
+        );
+        // Ambiguous `center` leading, paired with a bare (offset-less)
+        // vertical keyword — exercises `parse_position_branch3_strict`'s
+        // ambiguous-`center` branch success arm (`center` and the other
+        // axis both carry no offset, so it's symmetric and accepted).
+        assert_eq!(
+            parse("center bottom", "object-position"),
+            Some(PropertyValue::ObjectPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(100.0)),
+            }))
+        );
+        // Ambiguous `center` leading, paired with a bare (offset-less)
+        // horizontal keyword — `parse_position_vertical_edge` fails on
+        // `left` (not `top`/`bottom`), falling to the horizontal-edge-
+        // after-center check; symmetric (both sides offset-less) so
+        // accepted. Distinct code path from `center bottom` above (which
+        // never reaches the horizontal-edge-after-center check at all) and
+        // from `center right 10px`
+        // (`object_position_rejects_bg_position_only_3_value_edge_offset_forms`,
+        // which takes the same path but with an offset present).
+        assert_eq!(
+            parse("center left", "object-position"),
+            Some(PropertyValue::ObjectPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }))
+        );
+    }
+
+    /// `<bg-position>` (CSS Backgrounds 3 §2.6) extends plain `<position>`
+    /// (CSS Values 4 §8.3) with a 3-value edge-offset form — offset
+    /// authored on exactly one of the two edge-keyword groups, the other
+    /// axis a bare keyword/`center`. That spec explicitly calls this out:
+    /// "For 3-value productions (which are not valid in `<position>`)".
+    /// `object-position`'s Value is `<position>`, not `<bg-position>`
+    /// (CSS Images 3 §5.2), so this asymmetric form must be rejected —
+    /// `parse_position_branch3_strict` doc's "Why" section. All 5 inputs
+    /// here have offset on exactly one axis; contrast with
+    /// `object_position_parse_reuses_position_grammar`'s
+    /// `bottom 10px right 20px` (offset on both axes, still valid).
+    ///
+    /// Uses `parse_entire`, not the bare `parse` helper: once
+    /// `parse_position_branch3_strict` rejects the asymmetric 3rd
+    /// alternative, `parse_position_strict`'s fallback to the 2nd/1st
+    /// alternative (shared with `parse_css_position`, `CssPosition` doc's
+    /// Grammar section) greedily matches a *prefix* of these 3-token inputs
+    /// (e.g. `right 10px center` → 2nd alternative consumes `right 10px`,
+    /// leaving `center` over) — same "prefix match, caller enforces full
+    /// consumption" contract every multi-token value in this crate relies on
+    /// (`rule::DeclParser`'s `expect_exhausted`, mirrored here by
+    /// `parse_entirely`). The bare `parse` helper does not enforce that, so
+    /// it would see the prefix's `Some(..)` and miss the leftover.
+    #[test]
+    fn object_position_rejects_bg_position_only_3_value_edge_offset_forms() {
+        for source in [
+            "right 10px center",
+            "right 10px top",
+            "bottom 10px right",
+            "left 5% center",
+            "center bottom 10px",
+            // Ambiguous `center` leading, followed by an offset-bearing
+            // horizontal edge (`parse_position_vertical_edge` fails on
+            // `right`/`left`, falling to the horizontal-edge-after-center
+            // check) — same asymmetric shape, distinct code path from
+            // `center bottom 10px` above (which hits the vertical-edge-
+            // after-center check instead).
+            "center right 10px",
+        ] {
+            assert_eq!(parse_entire(source, "object-position"), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn object_position_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "object-position"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn object_position_key_maps_to_object_position_property_key() {
+        let v = PropertyValue::ObjectPosition(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+        });
+        assert_eq!(v.key(), PropertyKey::ObjectPosition);
     }
 }

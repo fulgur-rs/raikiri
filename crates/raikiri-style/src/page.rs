@@ -3152,7 +3152,13 @@ fn absolutize_in_page_context(
         // specified-layer data all the way into `ComputedValues`
         // (`BackgroundImage` doc's scope note), so an identity pass-through
         // is still correct for every payload of this variant.
-        | PropertyValue::BackgroundImage(_)) => v,
+        | PropertyValue::BackgroundImage(_)
+        // `object-fit` (CSS Images Module Level 3 §5.1) carries no length
+        // either — keyword-only payload, same shape as `WordBreak` above.
+        // `object-position` (§5.2) does carry `<length-percentage>` (reuses
+        // `CssPosition`, `background-position`'s type) and gets its own
+        // transform arm below, next to `BackgroundPosition`.
+        | PropertyValue::ObjectFit(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -3387,6 +3393,13 @@ fn absolutize_in_page_context(
             size: background_size(shorthand.size, font_size, own_line_height, ctx),
             ..shorthand
         }),
+        // ── object-position ──────────────────────────────────────────────
+        // CSS Images Module Level 3 §5.2: carries `<length-percentage>`
+        // components via the reused `CssPosition` type (same shape and same
+        // `css_position` helper as `BackgroundPosition` above).
+        PropertyValue::ObjectPosition(v) => {
+            PropertyValue::ObjectPosition(css_position(v, font_size, own_line_height, ctx))
+        }
         // ── overflow-x / overflow-y ──────────────────────────────────────────
         // CSS Overflow 3 §3.1 cross-axis coupling — this axis's own winner
         // (`v`) paired with the *other* axis's winner (`overflow_pair`,
@@ -3667,7 +3680,7 @@ mod tests {
         GridLineShorthand, GridLineValue, GridRepeatCount, GridTemplateAreaEntry,
         GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth,
         GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Length,
-        LengthOrAuto, LengthOrNormal, LineHeight, Outline, OutlineStyle, OverflowValue,
+        LengthOrAuto, LengthOrNormal, LineHeight, ObjectFit, Outline, OutlineStyle, OverflowValue,
         OverflowWrap, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
         PositionValue, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextDecorationColor,
         TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextShadowColor,
@@ -6305,11 +6318,17 @@ mod tests {
     /// 73 → 74 (`BackgroundImage`, CSS Backgrounds and Borders 3 §2.3 —
     /// `none | <url>` carries no length payload either, same reasoning as
     /// its 4 keyword-only siblings above).
+    /// 74 → 75 (`ObjectFit`, CSS Images Module Level 3 §5.1 — keyword-only,
+    /// carries no length payload, same reasoning as its background-*
+    /// keyword-only siblings above. `ObjectPosition` remains on the
+    /// transform side because it carries `<length-percentage>` — reuses
+    /// `CssPosition`/the `css_position` helper, same shape as
+    /// `BackgroundPosition`).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 74;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 75;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6861,6 +6880,19 @@ mod tests {
             clip: VisualBox::PaddingBox,
             origin: VisualBox::ContentBox,
         }),
+        // CSS Images Module Level 3 §5.1 — keyword-only, carries no length.
+        // `Contain` is the non-initial worst case (`fill` is the spec
+        // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
+        // sample above).
+        ObjectFit => PropertyValue::ObjectFit(ObjectFit::Contain),
+        // CSS Images Module Level 3 §5.2 — `Em`/`Rem` worst-case payload on
+        // both `Start` and `End` (distinct edges), same convention as
+        // `BackgroundPosition` above; type itself (`CssPosition`) is
+        // reused verbatim.
+        ObjectPosition => PropertyValue::ObjectPosition(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Em(2.0)),
+            vertical: CssPositionOffset::End(Length::Rem(1.0)),
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -7103,6 +7135,8 @@ mod tests {
         BackgroundPosition,
         BackgroundImage,
         Background,
+        ObjectFit,
+        ObjectPosition,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -7571,6 +7605,12 @@ mod tests {
             // touches by design doesn't qualify, so flagging it would be a
             // false positive against this detector's own contract.
             | PropertyValue::BackgroundImage(_)
+            // `object-fit` (CSS Images Module Level 3 §5.1) carries no
+            // length either — keyword-only payload, same shape as
+            // `BackgroundRepeat` above. `object-position` (§5.2) does carry
+            // `<length-percentage>` (reuses `CssPosition`) and gets its own
+            // arm below, next to `BackgroundPosition`.
+            | PropertyValue::ObjectFit(_)
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)
@@ -7654,6 +7694,17 @@ mod tests {
                     offset_residue(shorthand.position.horizontal)
                         .or_else(|| offset_residue(shorthand.position.vertical))
                 })
+            }
+            // `object-position` stores a `<length-percentage>` per
+            // edge/offset — same shape as `background-position` above (both
+            // reuse `CssPosition`).
+            PropertyValue::ObjectPosition(pos) => {
+                fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
+                    match o {
+                        CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                    }
+                }
+                offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
             }
         }
     }

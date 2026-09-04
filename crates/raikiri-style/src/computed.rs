@@ -18,11 +18,11 @@ use crate::property::{
     BackgroundRepeatKeyword, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside,
     ClearValue, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
     FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, Hyphens, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox,
-    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    GridLineValue, GridTemplateAreasValue, Hyphens, ObjectFit, OutlineColor, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TextAlign,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign,
+    Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list,
+    empty_counter_entries, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
@@ -1287,6 +1287,27 @@ pub struct ComputedValues {
     /// threads through (see [`crate::specified::SpecifiedValues::background_image`]
     /// doc).
     pub background_image: BackgroundImage,
+    /// `object-fit`. **non-inherited**, initial: [`ObjectFit::Fill`] (CSS
+    /// Images Module Level 3 §5.1 "Sizing the replaced element: the
+    /// object-fit property"
+    /// <https://www.w3.org/TR/css-images-3/#the-object-fit>, "Value: `fill |
+    /// contain | cover | none | scale-down`", "Inherited: no"). Computed
+    /// value = specified keyword.
+    pub object_fit: ObjectFit,
+    /// `object-position`. **non-inherited**, initial: `50% 50%` (CSS Images
+    /// Module Level 3 §5.2 "Positioning the replaced element: the
+    /// object-position property"
+    /// <https://www.w3.org/TR/css-images-3/#the-object-position>, "Value:
+    /// `<position>`", "Inherited: no"). Computed value = "as for
+    /// background-position" per that same propdef table — this crate reuses
+    /// [`crate::property::CssPosition`]/[`ComputedCssPosition`] verbatim
+    /// ([`crate::property::CssPosition`] doc's reuse note). Percentages
+    /// resolve against the replaced element's own content box at used-value
+    /// time (a layout-time input this crate's cascade/computed layer does
+    /// not have), so — same as [`Self::background_position`] — the
+    /// `<length-percentage>` payload is absolutized against font-size/
+    /// line-height only, not against a box size.
+    pub object_position: ComputedCssPosition,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
     /// This is deliberately crate-private: `ComputedValues`' public property
@@ -1514,6 +1535,17 @@ impl ComputedValues {
             // CSS Backgrounds and Borders 3 §2.3: background-image initial
             // は `none`。
             background_image: BackgroundImage::None,
+            // CSS Images Module Level 3 §5.1: object-fit initial は `fill`。
+            object_fit: ObjectFit::Fill,
+            // CSS Images Module Level 3 §5.2: object-position initial は
+            // `50% 50%` — `background_position` の `0% 0%` とは異なる点に
+            // 注意。
+            object_position: ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
+                    50.0,
+                )),
+                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
+            },
             custom_properties: empty_custom_properties(),
         }
     }
@@ -1528,7 +1560,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image)。
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position)。
     ///
     /// # 実装 (delegation)
     ///
@@ -2017,6 +2049,14 @@ mod tests {
             // CSS Backgrounds and Borders 3 §2.3: non-inherited, initial
             // (`None`) と異なる値にしておく (non_initial_parent の趣旨どおり)。
             background_image: BackgroundImage::Url("fixture.png".into()),
+            // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited なので、
+            // initial (`fill` / `50% 50%`) と異なる値にしておく
+            // (non_initial_parent の趣旨どおり)。
+            object_fit: ObjectFit::Cover,
+            object_position: ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
+                vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
+            },
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),
@@ -2027,7 +2067,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 83 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 85 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -2176,6 +2216,9 @@ mod tests {
         assert_eq!(child.background_size, initial.background_size);
         assert_eq!(child.background_position, initial.background_position);
         assert_eq!(child.background_image, initial.background_image);
+        // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited。
+        assert_eq!(child.object_fit, initial.object_fit);
+        assert_eq!(child.object_position, initial.object_position);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
