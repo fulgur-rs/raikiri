@@ -1308,6 +1308,40 @@ pub struct ComputedValues {
     /// `<length-percentage>` payload is absolutized against font-size/
     /// line-height only, not against a box size.
     pub object_position: ComputedCssPosition,
+    /// `opacity`. **non-inherited**, initial: `1` (CSS Color 4 §3.3
+    /// "Transparency: the opacity property"
+    /// <https://www.w3.org/TR/css-color-4/#transparency>, "Value:
+    /// `<opacity-value>`", "Inherited: no"). Grammar: `<opacity-value> =
+    /// <number> | <percentage>`.
+    ///
+    /// # Specified preserves, computed clamps
+    ///
+    /// Same §, verbatim: "Opacity values outside the range \[0, 1\] are not
+    /// invalid, and are preserved in specified values, but are clamped to
+    /// the range \[0, 1\] in computed values." A value produced by the
+    /// ordinary parse -> cascade pipeline through this field always lands
+    /// in `[0.0, 1.0]`: `parse_opacity_value` (this crate's `property`
+    /// module) rejects a NaN parse outright, and the `[0, 1]` clamp for
+    /// every other out-of-range value (including `+Inf`/`-Inf`) happens in
+    /// [`crate::specified::SpecifiedValues::absolutize_with`] (phase 3) and
+    /// its page-context sibling in [`crate::page`]; the corresponding
+    /// specified-layer field
+    /// ([`crate::specified::SpecifiedValues::opacity`]) is the one that
+    /// preserves an out-of-range parse (still NaN-free), per
+    /// [`crate::property::PropertyValue::Opacity`]'s doc.
+    ///
+    /// This is **not** a type-level invariant this public field enforces
+    /// against direct construction — [`Self`] has no private state guarding
+    /// it, so code in this crate (or, via a future non-`#[non_exhaustive]`
+    /// bump, outside it) that builds a `ComputedValues` by struct literal
+    /// and assigns this field directly (bypassing `finalize`/
+    /// `absolutize_in_page_context`) can still put a NaN or out-of-range
+    /// `f32` here; it only describes what the pipeline itself guarantees.
+    ///
+    /// The actual alpha-blend application of this value against a node's
+    /// paint output is out of this crate's scope — `raikiri-paint`
+    /// consumes it as plain data.
+    pub opacity: f32,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
     /// This is deliberately crate-private: `ComputedValues`' public property
@@ -1546,6 +1580,8 @@ impl ComputedValues {
                 )),
                 vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
             },
+            // CSS Color 4 §3.3: opacity initial は `1`。
+            opacity: 1.0,
             custom_properties: empty_custom_properties(),
         }
     }
@@ -1560,7 +1596,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position)。
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity)。
     ///
     /// # 実装 (delegation)
     ///
@@ -2057,6 +2093,9 @@ mod tests {
                 horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
                 vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
             },
+            // CSS Color 4 §3.3: non-inherited なので initial (`1`) と異なる
+            // 値にしておく (non_initial_parent の趣旨どおり)。
+            opacity: 0.75,
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),
@@ -2067,7 +2106,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 85 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 86 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -2219,6 +2258,8 @@ mod tests {
         // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited。
         assert_eq!(child.object_fit, initial.object_fit);
         assert_eq!(child.object_position, initial.object_position);
+        // CSS Color 4 §3.3: opacity は non-inherited。
+        assert_eq!(child.opacity, initial.opacity);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。

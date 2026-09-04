@@ -6792,6 +6792,14 @@ pub(crate) fn resolve_against_inherited(
         // `<length-percentage>` absolutization is phase 3's job, same as
         // `BackgroundPosition` above.
         | PropertyValue::ObjectPosition(_)
+        // opacity (CSS Color 4 §3.3) — non-inherited, carries a bare
+        // `<number>`/`<percentage>`-derived `f32`, not a length, and does
+        // not depend on the inheritance parent — nothing for phase 2 to
+        // resolve here. The `[0,1]` clamp (CSS Color 4 §3.3's "computed
+        // value: … clamped" rule) is phase 3's job
+        // (`crate::specified::SpecifiedValues::absolutize_with`), same
+        // split `FlexGrow`/`ZIndex` use for their own phase-3-only work.
+        | PropertyValue::Opacity(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)) => v,
     })
@@ -7474,6 +7482,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // (`SpecifiedValues::absolutize_with`) に委ねる (`BackgroundPosition`
         // arm と同じ shape)。
         PropertyValue::ObjectPosition(v) => target.object_position = v,
+        // CSS Color 4 §3.3. non-inherited — simple assignment, **not**
+        // clamped here (`PropertyValue::Opacity` doc's "specified preserves,
+        // computed clamps" note). The `[0,1]` clamp happens in
+        // `SpecifiedValues::absolutize_with` (phase 3), not at winner
+        // application time.
+        PropertyValue::Opacity(v) => target.opacity = v,
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -14438,6 +14452,92 @@ mod tests {
             cv.object_position,
             ComputedValues::initial().object_position
         );
+    }
+
+    // ── opacity wire-through (CSS Color 4 §3.3) ──
+
+    #[test]
+    fn opacity_wired_through_cascade_from_inline_style() {
+        let cv = cascade_doc("", "div", Some("opacity: 0.5"));
+        assert_eq!(cv.opacity, 0.5);
+    }
+
+    #[test]
+    fn opacity_defaults_to_1_without_declaration() {
+        let cv = cascade_doc("", "div", None);
+        assert_eq!(cv.opacity, 1.0);
+    }
+
+    #[test]
+    fn opacity_is_non_inherited() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("opacity: 0.3"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].opacity, 0.3);
+        // CSS Color 4 §3.3 "Inherited: no" — the child without its own
+        // winner resets to the spec initial (`1`), not the parent's value
+        // (`object_fit_is_non_inherited` sibling shape above).
+        assert_eq!(r.computed[span].opacity, 1.0);
+    }
+
+    #[test]
+    fn opacity_out_of_range_clamps_to_0_1_through_real_cascade() {
+        // CSS Color 4 §3.3: "clamped to the range `[0, 1]` in computed
+        // values" — the clamp is a phase-3 transform
+        // (`SpecifiedValues::absolutize_with`), pinned end-to-end here
+        // through the real parse -> cascade pipeline (unit-level pin at
+        // `SpecifiedValues::finalize` itself is
+        // `opacity_out_of_range_specified_clamps_at_finalize` in
+        // `specified.rs`).
+        let over = cascade_doc("", "div", Some("opacity: 2"));
+        assert_eq!(over.opacity, 1.0);
+        let under = cascade_doc("", "div", Some("opacity: -3"));
+        assert_eq!(under.opacity, 0.0);
+    }
+
+    #[test]
+    fn opacity_percentage_wired_through_cascade_and_clamps() {
+        // `150%` exercises the percentage branch of `<opacity-value>` (CSS
+        // Color 4 §3.3) through the same clamp, a distinct code path from
+        // the bare-`<number>` case above.
+        let cv = cascade_doc("", "div", Some("opacity: 150%"));
+        assert_eq!(cv.opacity, 1.0);
+        let half = cascade_doc("", "div", Some("opacity: 50%"));
+        assert_eq!(half.opacity, 0.5);
+    }
+
+    #[test]
+    fn opacity_nan_literal_drops_whole_declaration_and_falls_back_to_initial() {
+        // `0e999` collapses to NaN during tokenization
+        // (`parse_opacity_value` doc's "`!is_nan()` guard" section) —
+        // `parse_opacity_value` rejects it (`None`), so the whole
+        // declaration is invalid and dropped, same as any other malformed
+        // value (`property::tests::opacity_rejects_nan_but_not_infinity`
+        // pins the parse-layer half of this). This is the end-to-end pin,
+        // through the real parse -> cascade pipeline, that no NaN ever
+        // reaches `ComputedValues::opacity`.
+        let cv = cascade_doc("", "div", Some("opacity: 0e999"));
+        assert_eq!(cv.opacity, 1.0);
+        assert!(!cv.opacity.is_nan());
+    }
+
+    #[test]
+    fn opacity_infinite_literal_clamps_through_real_cascade_instead_of_being_dropped() {
+        // `1e40`/`-1e40` overflow to `+Inf`/`-Inf` during tokenization — a
+        // *different* hazard class from `0e999`'s NaN collapse above
+        // (`parse_opacity_value` doc's "`!is_nan()` guard" section). Unlike
+        // NaN, these are spec-valid `<number>` values that must reach the
+        // phase-3 clamp and become `1.0`/`0.0` — not be dropped and fall
+        // back to the initial `1.0` (which would silently turn a
+        // fully-transparent `-1e40` into fully opaque, a regression an
+        // earlier iteration of the parse-time guard introduced by using
+        // `is_finite()` instead of `!is_nan()`).
+        let over = cascade_doc("", "div", Some("opacity: 1e40"));
+        assert_eq!(over.opacity, 1.0);
+        let under = cascade_doc("", "div", Some("opacity: -1e40"));
+        assert_eq!(under.opacity, 0.0);
     }
 
     // ── background-image wire-through (CSS Backgrounds and Borders 3 §2.3) ──

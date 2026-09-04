@@ -425,6 +425,11 @@ pub struct SpecifiedValues {
     /// `<length-percentage>` を絶対化する (`background_position` と同じ shape
     /// — 型自体も [`CssPosition`] を再利用する)。
     pub object_position: CssPosition,
+    /// `opacity` の **specified** value — 範囲外の値も clamp せずそのまま
+    /// 保持する ([`ComputedValues::opacity`] doc の "specified preserves,
+    /// computed clamps" 節参照)。clamp は phase 3
+    /// ([`Self::absolutize_with`]) が行う。
+    pub opacity: f32,
 }
 
 impl SpecifiedValues {
@@ -629,6 +634,8 @@ impl SpecifiedValues {
                 horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
                 vertical: CssPositionOffset::Start(Length::Percent(50.0)),
             },
+            // CSS Color 4 §3.3: opacity initial は `1`。
+            opacity: 1.0,
         }
     }
 
@@ -854,6 +861,8 @@ impl SpecifiedValues {
                 horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
                 vertical: CssPositionOffset::Start(Length::Percent(50.0)),
             },
+            // non-inherited (CSS Color 4 §3.3 "Inherited: no").
+            opacity: 1.0,
         }
     }
 
@@ -1447,6 +1456,30 @@ impl SpecifiedValues {
             // 素通し。
             orphans: self.orphans,
             widows: self.widows,
+            // CSS Color 4 §3.3: "Opacity values outside the range `[0, 1]`
+            // are not invalid, and are preserved in specified values, but
+            // are clamped to the range `[0, 1]` in computed values." — the
+            // one place this crate performs that clamp (`ComputedValues::opacity`
+            // doc's "specified preserves, computed clamps" note). `f32::clamp`
+            // correctly maps the `+Inf`/`-Inf` a huge literal (`opacity:
+            // 1e40`/`opacity: -1e40`) can produce to `1.0`/`0.0` without
+            // panicking (only NaN bounds panic, and neither bound here is
+            // NaN). When `self` was built through the ordinary parse ->
+            // cascade pipeline, `self.opacity` also never carries NaN by
+            // the time it reaches here — `parse_opacity_value` rejects a
+            // NaN parse (the `0 * Infinity` collapse a huge-*exponent*
+            // literal like `opacity: 0e999` produces) with `!is_nan()`, a
+            // narrower guard than `is_finite()` specifically so
+            // `+Inf`/`-Inf` still reach this clamp (`parse_opacity_value`
+            // doc's "`!is_nan()` guard" section is canonical). But
+            // `self.opacity` is a public field on a `pub fn` — a caller
+            // that builds a `SpecifiedValues` directly and assigns `NaN`
+            // here bypasses that parse-time guard entirely, and
+            // `f32::clamp` passes a NaN `self` through unchanged (only a
+            // NaN *bound* panics); this arm does not protect against that
+            // direct-construction case, only against the pipeline's own
+            // out-of-range values.
+            opacity: self.opacity.clamp(0.0, 1.0),
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -1542,6 +1575,34 @@ mod tests {
         assert_eq!(
             ComputedValues::initial().border.top.width,
             ComputedLength::ZERO
+        );
+    }
+
+    /// CSS Color 4 §3.3: 範囲外の specified `opacity` は phase 3
+    /// ([`SpecifiedValues::finalize`]) で `[0, 1]` に clamp される —
+    /// `border` の style gating (直上の test) と同型の「specified 層では
+    /// 保持、computed 層で変換」pattern。end-to-end (実 cascade 経由) の
+    /// 同じ主張は `mod@crate::cascade` の `opacity_*` test が pin する。
+    #[test]
+    fn opacity_out_of_range_specified_clamps_at_finalize() {
+        let over = SpecifiedValues {
+            opacity: 2.0,
+            ..SpecifiedValues::initial()
+        };
+        assert_eq!(
+            over.finalize(&ComputedValues::initial(), &ResolveContext::initial())
+                .opacity,
+            1.0
+        );
+        let under = SpecifiedValues {
+            opacity: -0.5,
+            ..SpecifiedValues::initial()
+        };
+        assert_eq!(
+            under
+                .finalize(&ComputedValues::initial(), &ResolveContext::initial())
+                .opacity,
+            0.0
         );
     }
 
@@ -1732,6 +1793,9 @@ mod tests {
                     ComputedLengthPercentage::Percent(10.0),
                 ),
             },
+            // CSS Color 4 §3.3: non-inherited なので initial (`1`) と
+            // 異なる値にしておく。
+            opacity: 0.25,
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -1900,6 +1964,8 @@ mod tests {
         // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited。
         assert_eq!(child.object_fit, initial.object_fit);
         assert_eq!(child.object_position, initial.object_position);
+        // CSS Color 4 §3.3: opacity は non-inherited。
+        assert_eq!(child.opacity, initial.opacity);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は
