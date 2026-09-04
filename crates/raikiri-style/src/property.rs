@@ -5377,10 +5377,12 @@ pub enum MixBlendMode {
 /// <https://www.w3.org/TR/css-masking-1/#the-clip-path>)。
 ///
 /// Grammar: `<geometry-box> = <shape-box> | fill-box | stroke-box |
-/// view-box`、`<shape-box> = border-box | content-box | padding-box |
-/// margin-box | fill-box | stroke-box`。`fill-box`/`stroke-box` は両
-/// production に重複して現れるが、enum としては単純に 1 variant ずつに
-/// 畳む (union は 7 keyword)。
+/// view-box`、`<shape-box> = <box> | margin-box`、`<box> = border-box |
+/// padding-box | content-box`。`fill-box`/`stroke-box`/`view-box` は
+/// `<shape-box>` には含まれず、`<geometry-box>` 自身の直接 alternative —
+/// 両 production 間で重複する keyword は無い (union は border-box /
+/// padding-box / content-box / margin-box / fill-box / stroke-box /
+/// view-box の 7 keyword)。
 ///
 /// SVG 文脈 (`fill-box`/`stroke-box`/`view-box`) の解決は raikiri-paint 側の
 /// SVG レンダリング実装 (現状皆無、[`ClipPath`] doc 参照) の責務 — 本 variant
@@ -5489,11 +5491,37 @@ pub enum MaskImage {
 /// defer」判断)。
 ///
 /// 各 numeric payload の NaN 扱いは [`parse_transform_number`]/
-/// [`parse_transform_length_percentage`]/[`parse_transform_angle`] の doc
+/// [`parse_transform_length_percentage`]/[`parse_angle_reject_nan`] の doc
 /// を参照 — cssparser の exponent overflow (`0 * Infinity` collapse) 由来の
 /// NaN を reject し、magnitude overflow 由来の `+Inf`/`-Inf` は (spec が
 /// range を制限しない引数である限り) 保持する、[`PropertyValue::Opacity`]
 /// の `!is_nan()` guard と同じ判断。
+///
+/// # Absolutization gap (未実装)
+///
+/// `transform` property 自体の Computed value は "as specified, **but with
+/// lengths made absolute**"
+/// (<https://www.w3.org/TR/css-transforms-1/#transform-property>) —
+/// [`FilterFunction`] doc の "Range restriction" 節が述べる `filter` の
+/// 単純な "as specified" (絶対化不要) とは異なり、`transform` は
+/// `<length>` payload (この enum では [`Self::Translate`]/
+/// [`Self::TranslateX`]/[`Self::TranslateY`] が運ぶ `Length` の
+/// non-percentage 側) を spec 上絶対化する義務を負う。
+///
+/// 本 crate はこの絶対化をまだ実装していない — [`crate::specified::SpecifiedValues::transform`]
+/// も [`crate::page`] の `absolutize_in_page_context` も、この enum を
+/// specified 層のまま computed 層へ素通しする。box size が無いから
+/// 出来ない、という話ではない: `<length-percentage>` の length 側だけを
+/// font-size/root-font-size に対して絶対化し percentage 側は symbolic な
+/// まま残す、という同型の分割は既に
+/// [`crate::resolve::resolve_css_position`]/
+/// [`crate::resolve::resolve_length_percentage`] が
+/// `background-position`/`object-position` に対して行っている — 同じ
+/// 仕組みを `transform` にも適用すれば実装できる。単に着手していない
+/// だけである (`Matrix` の 6 `<number>` slot と `Rotate`/`Skew`/`SkewX`/
+/// `SkewY` の `<angle>` slot にはこの gap は無い — 前者は既に fully
+/// resolved な `<number>`、後者は spec 上正規化されない `<angle>` で
+/// あり、どちらも percentage/box-size の話に関わらない)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TransformFunction {
@@ -5501,14 +5529,14 @@ pub enum TransformFunction {
     /// 2D affine matrix `[[a, c, e], [b, d, f], [0, 0, 1]]`。
     Matrix([f32; 6]),
     /// `translate(<length-percentage>, <length-percentage>?)` — 2 番目省略時
-    /// `0` ([`parse_translate`] doc参照)。
+    /// `0` ([`parse_translate_args`] doc参照)。
     Translate(Length, Length),
     /// `translateX(<length-percentage>)`。
     TranslateX(Length),
     /// `translateY(<length-percentage>)`。
     TranslateY(Length),
     /// `scale(<number>, <number>?)` — 2 番目省略時は 1 番目を複製
-    /// ([`parse_scale`] doc参照)。
+    /// ([`parse_scale_args`] doc参照)。
     Scale(f32, f32),
     /// `scaleX(<number>)`。
     ScaleX(f32),
@@ -5517,7 +5545,7 @@ pub enum TransformFunction {
     /// `rotate([<angle> | <zero>])`。
     Rotate(Angle),
     /// `skew([<angle> | <zero>], [<angle> | <zero>]?)` — 2 番目省略時
-    /// `0deg` ([`parse_skew`] doc参照)。
+    /// `0deg` ([`parse_skew_args`] doc参照)。
     Skew(Angle, Angle),
     /// `skewX([<angle> | <zero>])`。
     SkewX(Angle),
@@ -5582,7 +5610,7 @@ pub enum FilterFunction {
     /// as for box-shadow but with the optional 3rd `<length>` value being
     /// the standard deviation instead of blur radius." spread/inset/複数
     /// shadow は不可 — [`TextShadowItem`] と grammar が完全一致するため
-    /// その型を再利用する ([`parse_drop_shadow`] doc参照)。
+    /// その型を再利用する ([`parse_drop_shadow_args`] doc参照)。
     DropShadow(TextShadowItem),
     /// `<url>` — SVG `<filter>` element 等への参照 (§5 の
     /// `[ <filter-function> | <url> ]+` grammar)。
@@ -14423,8 +14451,8 @@ fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> Option<Lengt
 /// `+Inf`/`-Inf` from ordinary magnitude overflow, not the `0 * Infinity`
 /// collapse a huge-*exponent* literal like `rotate(0e999deg)` produces).
 /// Guarded here at the call site rather than inside `parse_angle` itself,
-/// to avoid changing that shared helper's existing gradient callers'
-/// behavior as a side effect of this task.
+/// to avoid changing that shared helper's behavior for its other
+/// (gradient) callers.
 fn parse_angle_reject_nan(input: &mut Parser<'_, '_>) -> Option<Angle> {
     let angle = input.try_parse(parse_angle).ok()?;
     (!angle.0.is_nan()).then_some(angle)
@@ -14712,12 +14740,25 @@ fn parse_sepia_args<'i>(input: &mut Parser<'i, '_>) -> Result<FilterFunction, Pa
 /// radius" — grammar-identical to `text-shadow`'s own `<shadow>` syntax
 /// (no spread, no inset), so [`parse_text_shadow_item`] is reused verbatim
 /// ([`FilterFunction::DropShadow`] doc参照).
+///
+/// # NaN guard on offset-x/offset-y (call-site-local)
+///
+/// [`parse_text_shadow_item`]/`parse_text_shadow_lengths` themselves do not
+/// guard offset-x/offset-y against NaN (`parse_box_shadow_lengths` has the
+/// identical gap for `box-shadow`). The guard is applied here, at the call
+/// site, rather than inside `parse_text_shadow_lengths`, to avoid changing
+/// that shared helper's behavior for its other callers (`text-shadow`/
+/// `box-shadow`) — same call-site-local approach
+/// [`parse_transform_number`]/[`parse_transform_length_percentage`]/
+/// [`parse_angle_reject_nan`] use for their own shared helpers.
 fn parse_drop_shadow_args<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<FilterFunction, ParseError<'i, ()>> {
-    parse_text_shadow_item(input)
-        .map(FilterFunction::DropShadow)
-        .ok_or_else(|| input.new_custom_error(()))
+    let item = parse_text_shadow_item(input).ok_or_else(|| input.new_custom_error(()))?;
+    if length_payload(item.offset_x).is_nan() || length_payload(item.offset_y).is_nan() {
+        return Err(input.new_custom_error(()));
+    }
+    Ok(FilterFunction::DropShadow(item))
 }
 
 /// `<filter-function>` (CSS Filter Effects Level 1 §6、[`FilterFunction`]
@@ -29619,8 +29660,7 @@ mod tests {
         // its own (this crate's convention: the declaration-level
         // `expect_exhausted` check, exercised here via `parse_entire`,
         // drops the whole declaration instead — same shape as
-        // `isolation_wired_through_cascade_from_inline_style`'s sibling
-        // `mix_blend_mode_rejects_trailing_garbage` test).
+        // `mix_blend_mode_rejects_trailing_garbage` below).
         assert_eq!(parse_entire("auto isolate", "isolation"), None);
     }
 
@@ -29731,7 +29771,7 @@ mod tests {
 
     #[test]
     fn mask_image_parse_gradient_reuses_the_shared_gradient_parser() {
-        // grammar-shape reuse pin ([`parse_mask_image`] doc) — the gradient
+        // grammar-shape reuse pin (`parse_mask_image` doc) — the gradient
         // internals themselves are already exhaustively covered by
         // `background-image`'s own gradient tests, so this only confirms
         // the `<gradient>` alternative is reachable through `mask-image`.
@@ -29785,6 +29825,16 @@ mod tests {
     }
 
     #[test]
+    fn clip_path_parse_url_quoted_form() {
+        assert_eq!(
+            parse("url(\"#my-clip\")", "clip-path"),
+            Some(PropertyValue::ClipPath(ClipPath::Url(
+                "#my-clip".to_string()
+            )))
+        );
+    }
+
+    #[test]
     fn clip_path_parse_all_7_geometry_box_keywords() {
         let cases = [
             ("border-box", GeometryBox::BorderBox),
@@ -29808,7 +29858,7 @@ mod tests {
 
     #[test]
     fn clip_path_rejects_basic_shape_functions() {
-        // `<basic-shape>` is deliberately out of scope ([`ClipPath`] doc's
+        // `<basic-shape>` is deliberately out of scope (`ClipPath` doc's
         // scope carving note) — a `circle()`/`ellipse()`/`inset()`/
         // `polygon()`/`path()` declaration drops the whole declaration
         // rather than partially parsing.
@@ -30158,9 +30208,16 @@ mod tests {
         assert_eq!(parse("blur(50%)", "filter"), None);
     }
 
+    /// `filter_parse_amount_functions_with_argument`/
+    /// `filter_amount_functions_preserve_over_100_percent_unclamped` の
+    /// per-function name/constructor table 用 — clippy `type_complexity`
+    /// を避けるための alias (意味論的な新型ではない、`RadialShapeSizePositionGroup`
+    /// と同じ convention)。
+    type FilterAmountCtorCase = (&'static str, fn(f32) -> FilterFunction);
+
     #[test]
     fn filter_parse_amount_functions_with_argument() {
-        let cases: [(&str, fn(f32) -> FilterFunction); 6] = [
+        let cases: [FilterAmountCtorCase; 6] = [
             ("brightness", FilterFunction::Brightness),
             ("contrast", FilterFunction::Contrast),
             ("grayscale", FilterFunction::Grayscale),
@@ -30255,7 +30312,7 @@ mod tests {
         // `FilterFunction` doc's "Range restriction is reject, not clamp"
         // section) — so this crate preserves the raw value unclamped,
         // deferring the clamp to a future paint-side consumer.
-        let cases: [(&str, fn(f32) -> FilterFunction); 7] = [
+        let cases: [FilterAmountCtorCase; 7] = [
             ("brightness", FilterFunction::Brightness),
             ("contrast", FilterFunction::Contrast),
             ("grayscale", FilterFunction::Grayscale),
@@ -30368,9 +30425,26 @@ mod tests {
     }
 
     #[test]
+    fn filter_drop_shadow_rejects_nan_offset() {
+        // `0e999` collapses to NaN during tokenization — `parse_drop_shadow_args`'s
+        // own call-site-local NaN guard on offset-x/offset-y (its doc's "NaN
+        // guard on offset-x/offset-y" section), same shape as
+        // `transform_translate_rejects_nan_length`.
+        assert_eq!(parse("drop-shadow(0e999px 2px)", "filter"), None);
+    }
+
+    #[test]
     fn filter_parse_url() {
         assert_eq!(
             expect_filter(parse("url(#my-filter)", "filter")),
+            vec![FilterFunction::Url("#my-filter".to_string())]
+        );
+    }
+
+    #[test]
+    fn filter_parse_url_quoted_form() {
+        assert_eq!(
+            expect_filter(parse("url(\"#my-filter\")", "filter")),
             vec![FilterFunction::Url("#my-filter".to_string())]
         );
     }

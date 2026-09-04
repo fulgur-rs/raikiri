@@ -444,10 +444,13 @@ pub struct SpecifiedValues {
     /// `clip-path` の **specified** value — `mask_image` と同じ shape
     /// (埋め込まれた `<url>` は絶対化しない、[`ClipPath`] doc参照)。
     pub clip_path: ClipPath,
-    /// `transform` の **specified** value — 絶対化不要な素通し field
-    /// (`mask_image` と同じ shape — 埋め込まれた `Length`/`Angle` は本
-    /// crate が絶対化しない、[`TransformFunction`] doc参照)。`none` は
-    /// 空 list ([`empty_transform_list`]) で表現する。
+    /// `transform` の **specified** value。CSS Transforms Level 1 §4 の
+    /// Computed value は "as specified, but with lengths made absolute" —
+    /// `mask_image`/`filter` の "as specified" (絶対化不要) とは異なり、
+    /// 埋め込まれた `Length` payload (`translate()`/`translateX()`/
+    /// `translateY()` の non-percentage 側) は本来 spec 上絶対化される
+    /// べきだが、本 crate はまだそれを実装していない ([`TransformFunction`]
+    /// doc参照)。`none` は空 list ([`empty_transform_list`]) で表現する。
     pub transform: Arc<Vec<TransformFunction>>,
     /// `filter` の **specified** value — `transform` と同じ shape
     /// (埋め込まれた `Length`/`Angle`/`f32` は絶対化しない、
@@ -1549,13 +1552,29 @@ impl SpecifiedValues {
             // CSS Masking Level 1 §5.1: same shape as `mask_image` above
             // (`ClipPath` doc's scope note).
             clip_path: self.clip_path,
-            // CSS Transforms Level 1 §4: this crate never absolutizes a
-            // `translate()`'s embedded `<length-percentage>` (box-size
-            // resolution needed, `TransformFunction` doc's scope note) —
-            // 素通し。
+            // CSS Transforms Level 1 §4: Computed value is "as specified,
+            // but with lengths made absolute" — this field's `<length>`
+            // payload (`translate()`'s non-percentage half, `matrix()`'s
+            // implicit-`<number>` slots aside) is therefore spec-required
+            // to be absolutized here, unlike `filter` below (whose own
+            // Computed value is plain "as specified", no such
+            // requirement). This crate does not yet do so — simply
+            // unimplemented, not blocked on a missing input: the same
+            // partial-absolutize shape already exists for `<length-
+            // percentage>` fields elsewhere (`resolve_css_position`/
+            // `resolve_length_percentage`, used by `background-position`/
+            // `object-position`, absolutizes the length half against
+            // font-size/root-font-size while leaving the percentage half
+            // symbolic for a later box-size-relative resolution) and
+            // could be applied here the same way — see
+            // `TransformFunction` doc's "Absolutization gap" section.
             transform: self.transform,
-            // CSS Filter Effects Level 1 §5: same reasoning as `transform`
-            // above (`FilterFunction` doc's scope note).
+            // CSS Filter Effects Level 1 §5: unlike `transform` above,
+            // this property's own Computed value is plain "as specified"
+            // — no absolutization is spec-required here at all
+            // (`FilterFunction` doc's "Range restriction is reject, not
+            // clamp" section already establishes this same "as specified"
+            // fact for a different purpose) — 素通し。
             filter: self.filter,
             custom_properties: crate::computed::empty_custom_properties(),
         }

@@ -1373,18 +1373,21 @@ pub struct ComputedValues {
     /// `transform`. **non-inherited**, initial: `none` (empty list,
     /// [`empty_transform_list`]) (CSS Transforms Level 1 §4 "The transform
     /// property" <https://www.w3.org/TR/css-transforms-1/#transform-property>).
-    /// Identity pass-through from
-    /// [`crate::specified::SpecifiedValues::transform`] — this crate never
-    /// absolutizes the embedded `Length`/`Angle` payloads (`translate()`'s
-    /// percentage resolves against the element's own box size, an input
-    /// this crate's cascade/computed layer does not have), same reasoning
-    /// as [`Self::mask_image`].
+    /// Currently identity pass-through from
+    /// [`crate::specified::SpecifiedValues::transform`] — see
+    /// [`crate::property::TransformFunction`] doc's "Absolutization gap"
+    /// section for why that is not yet spec-correct (unlike
+    /// [`Self::filter`] below, whose identity pass-through *is*
+    /// spec-correct as-is).
     pub transform: Arc<Vec<TransformFunction>>,
     /// `filter`. **non-inherited**, initial: `none` (empty list,
     /// [`empty_filter_list`]) (CSS Filter Effects Level 1 §5 "The filter
     /// property" <https://www.w3.org/TR/filter-effects-1/#FilterProperty>,
-    /// whose own Computed value is "as specified"). Same shape as
-    /// [`Self::transform`] above.
+    /// whose own Computed value is "as specified" — unlike
+    /// [`Self::transform`] above, identity pass-through here is this
+    /// property's actual, spec-correct computed-value definition, not an
+    /// implementation gap). Same `Arc<Vec<..>>` payload shape as
+    /// [`Self::transform`] otherwise.
     pub filter: Arc<Vec<FilterFunction>>,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///

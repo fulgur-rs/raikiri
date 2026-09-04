@@ -3174,18 +3174,28 @@ fn absolutize_in_page_context(
         // `<basic-shape>` support, so no embedded length at all).
         | PropertyValue::ClipPath(_)
         // `transform` (CSS Transforms Level 1 §4) — embeds `Length`/
-        // `Angle` (e.g. `translate()`'s `<length-percentage>`), but this
-        // crate never absolutizes them: `translate()`'s percentage
-        // resolves against the element's own box size, an input no
-        // phase-3 pass threads through (`TransformFunction` doc's scope
-        // note, same reasoning as `BackgroundImage`'s gradient payload
-        // above).
+        // `Angle` (e.g. `translate()`'s `<length-percentage>`). This
+        // property's own Computed value is "as specified, but with
+        // lengths made absolute", so the non-percentage half of each
+        // `<length-percentage>` payload (and `<length>`-only slots) is
+        // spec-required to be absolutized — this crate simply has not
+        // implemented that yet (`resolve_css_position`'s existing
+        // length-absolutize/percentage-stays-symbolic split, used by
+        // `background-position`/`object-position`, is the applicable
+        // precedent once someone does). The percentage half genuinely
+        // cannot resolve without the element's own box size, an input no
+        // phase-3 pass threads through, so it stays symbolic regardless
+        // (`TransformFunction` doc's "Absolutization gap" section tracks
+        // this).
         | PropertyValue::Transform(_)
-        // `filter` (§5) — same reasoning as `transform` above
-        // (`FilterFunction` doc's scope note); `drop-shadow()`'s lengths
-        // are absolute (font-size-relative at most), not box-size-
-        // relative, but still go untouched since no paint consumer exists
-        // yet to need them absolutized.
+        // `filter` (§5) — unlike `transform` above, this property's own
+        // Computed value is plain "as specified": no absolutization is
+        // spec-required at all, so passing every embedded `Length`/
+        // `Angle` through untouched (including `drop-shadow()`'s, reused
+        // from `TextShadowItem`) is not a gap, just this property's
+        // actual computed-value definition (`FilterFunction` doc's "Range
+        // restriction is reject, not clamp" section establishes the same
+        // "as specified" fact for a different purpose).
         | PropertyValue::Filter(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
@@ -6438,10 +6448,13 @@ mod tests {
     /// absolutizes (`MaskImage`/`ClipPath` doc's scope notes), same
     /// identity-pass-through reasoning as `BackgroundImage` above).
     /// 79 → 81 (`Transform` / `Filter`, CSS Transforms Level 1 §4 / CSS
-    /// Filter Effects Level 1 §5 — both carry `Length`/`Angle`/`f32`
-    /// payloads this crate never absolutizes, same reasoning as
-    /// `MaskImage`/`ClipPath` above — no paint-side consumer exists yet to
-    /// need it).
+    /// Filter Effects Level 1 §5 — both currently pass through unchanged,
+    /// but not for the same reason: `filter`'s own Computed value is "as
+    /// specified" so this is simply correct, while `transform`'s is "as
+    /// specified, but with lengths made absolute" so this is a real,
+    /// currently-unimplemented gap — see the identity-pass-through arm's
+    /// own doc comment above and `TransformFunction`/`FilterFunction`
+    /// doc's scope notes for the full distinction).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
@@ -7045,8 +7058,9 @@ mod tests {
         ClipPath => PropertyValue::ClipPath(ClipPath::GeometryBox(GeometryBox::PaddingBox)),
         // CSS Transforms Level 1 §4 — non-initial (a `translate()` with
         // an `Em`/`Percent` payload, not empty-list `none`) so this
-        // sample would exercise a would-be phase-3 absolutization if one
-        // existed (`TransformFunction` doc's scope note — none does).
+        // sample would exercise a would-be phase-3 absolutization of the
+        // `Em` half if one existed — none does yet (`TransformFunction`
+        // doc's "Absolutization gap" section).
         Transform => PropertyValue::Transform(Arc::new(vec![TransformFunction::Translate(
             Length::Em(2.0),
             Length::Percent(50.0),
@@ -7809,10 +7823,20 @@ mod tests {
             // both carry `Length`/`Angle`/`f32` payloads (e.g.
             // `translate()`'s `<length-percentage>`, `blur()`'s
             // `<length>`), but this detector reports `None`
-            // unconditionally: same reasoning as `MaskImage`/
-            // `BackgroundImage` above — this crate deliberately never
-            // routes either property through phase 3 at all
-            // (`TransformFunction`/`FilterFunction` doc's scope notes).
+            // unconditionally for both. For `filter` that is simply
+            // correct (its Computed value is "as specified", no
+            // absolutization is spec-required at all). For `transform`
+            // it is *not* yet correct — its own Computed value is "as
+            // specified, but with lengths made absolute", so this
+            // property's length payload genuinely is unrouted residue
+            // this crate has not implemented absolutizing yet (unlike
+            // `MaskImage`/`BackgroundImage` above, whose "never
+            // absolutized, by design" framing is accurate); tracked by
+            // `TransformFunction` doc's "Absolutization gap" section, not
+            // by this detector, since raw-length-residue tracking here is
+            // scoped to catching phase-2/phase-3 wiring bugs in
+            // properties phase 3 already claims to transform, not to
+            // flagging properties phase 3 doesn't touch at all yet.
             | PropertyValue::Transform(_)
             | PropertyValue::Filter(_)
             // Custom properties and deferred values are pre-computed cascade
