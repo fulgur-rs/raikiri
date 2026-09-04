@@ -1809,7 +1809,7 @@ mod tests {
             // CSS Writing Modes 4 §3.2: `VerticalRl` — initial
             // (`HorizontalTb`) と異なる値。他の field と異なり、これは
             // **本当は実 cascade から到達不能**な値である
-            // ([`WritingMode`] doc の Non-goal 節 — `resolve_writing_mode` が
+            // (`WritingMode` doc の Non-goal 節 — `resolve_writing_mode` が
             // 常に `HorizontalTb` へ正規化するため)。ここで敢えて非 initial
             // 値を置くのは、`inherit_from` が本 field を「素通しコピー」する
             // 経路に regression が入っても本 helper の他 field と同じ形で
@@ -2050,7 +2050,7 @@ mod tests {
         // `non_initial_parent` はここに実 cascade 到達不能な `VerticalRl` を
         // 敢えて置いており (同 helper の doc comment 参照)、
         // `resolve_writing_mode` は inherit 経由でも常に `HorizontalTb` へ
-        // 正規化する ([`WritingMode`] doc の Non-goal 節参照)。この
+        // 正規化する (`WritingMode` doc の Non-goal 節参照)。この
         // assert は「inherit_from が本 field を素通しコピーしていない」こと
         // 自体が正しい挙動であることを pin する。
         assert_eq!(child.writing_mode, WritingMode::HorizontalTb);
