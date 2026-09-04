@@ -14,14 +14,14 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    AlignSelfValue, BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BorderColor,
-    BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
-    ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue,
-    FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
-    GridTemplateAreasValue, Hyphens, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
+    BackgroundRepeatKeyword, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside,
+    ClearValue, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
+    GridLineValue, GridTemplateAreasValue, Hyphens, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox,
+    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
     empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -1266,6 +1266,21 @@ pub struct ComputedValues {
     /// [`crate::property::CssPositionOffset`] doc for why edge-relative
     /// offsets (`right 10px` etc.) stay symbolic through this layer too.
     pub background_position: ComputedCssPosition,
+    /// `background-image`. **non-inherited**, initial: [`BackgroundImage::None`]
+    /// (CSS Backgrounds and Borders 3 §2.3 "Image Sources: the
+    /// background-image property"
+    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>,
+    /// "Value: `<bg-image>#`", "Inherited: no"). This crate parses only a
+    /// single layer (`<bg-image> = <image> | none`, `<image>` restricted to
+    /// the `<url>` alternative — see [`BackgroundImage`] doc's scope-carving
+    /// section); comma-separated multi-layer `#` support is a follow-up.
+    /// Per CSS Values and Units 4 §4.5.1, a `<url>`'s computed value is
+    /// technically the *resolved absolute URL*, not the specified text
+    /// verbatim — this crate holds the raw `String` unresolved and defers
+    /// resolution to the runtime consumer, the same boundary
+    /// [`crate::property::PropertyValue::Content`]'s `Image` component
+    /// documents (raikiri-style doesn't depend on the `url` crate).
+    pub background_image: BackgroundImage,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
     /// This is deliberately crate-private: `ComputedValues`' public property
@@ -1490,6 +1505,9 @@ impl ComputedValues {
                 )),
                 vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(0.0)),
             },
+            // CSS Backgrounds and Borders 3 §2.3: background-image initial
+            // は `none`。
+            background_image: BackgroundImage::None,
             custom_properties: empty_custom_properties(),
         }
     }
@@ -1504,7 +1522,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position)。
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image)。
     ///
     /// # 実装 (delegation)
     ///
@@ -1990,6 +2008,9 @@ mod tests {
                 horizontal: ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(5.0)),
                 vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(25.0)),
             },
+            // CSS Backgrounds and Borders 3 §2.3: non-inherited, initial
+            // (`None`) と異なる値にしておく (non_initial_parent の趣旨どおり)。
+            background_image: BackgroundImage::Url("fixture.png".into()),
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),
@@ -2000,7 +2021,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 72 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 83 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -2148,6 +2169,7 @@ mod tests {
         assert_eq!(child.background_origin, initial.background_origin);
         assert_eq!(child.background_size, initial.background_size);
         assert_eq!(child.background_position, initial.background_position);
+        assert_eq!(child.background_image, initial.background_image);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。

@@ -586,15 +586,17 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // 持たない。
         | PropertyValue::WritingMode(_)
         // background-repeat / background-attachment / background-clip /
-        // background-origin / background-size / background-position (CSS
-        // Backgrounds and Borders 3 §2.4-§2.9) — 同じく展開先の longhand を
-        // 持たない (`background` shorthand 自体は別 task の scope)。
+        // background-origin / background-size / background-position /
+        // background-image (CSS Backgrounds and Borders 3 §2.3-§2.9) —
+        // 同じく展開先の longhand を持たない (`background` shorthand 自体は
+        // 別 task の scope)。
         | PropertyValue::BackgroundRepeat(_)
         | PropertyValue::BackgroundAttachment(_)
         | PropertyValue::BackgroundClip(_)
         | PropertyValue::BackgroundOrigin(_)
         | PropertyValue::BackgroundSize(_)
-        | PropertyValue::BackgroundPosition(_) => expand_none(d, push),
+        | PropertyValue::BackgroundPosition(_)
+        | PropertyValue::BackgroundImage(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),

@@ -6738,6 +6738,11 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BackgroundOrigin(_)
         | PropertyValue::BackgroundSize(_)
         | PropertyValue::BackgroundPosition(_)
+        // background-image (CSS Backgrounds and Borders 3 §2.3) — carries a
+        // bare `None | Url(String)`, not a length (`<url>` is opaque to
+        // font-size/line-height resolution) — nothing for phase 2 to
+        // resolve, same shape as its 4 keyword-only siblings just above.
+        | PropertyValue::BackgroundImage(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)) => v,
     })
@@ -7390,6 +7395,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // (`Width`/`Padding` arm と同じ shape)。
         PropertyValue::BackgroundSize(v) => target.background_size = v,
         PropertyValue::BackgroundPosition(v) => target.background_position = v,
+        // CSS Backgrounds and Borders 3 §2.3. non-inherited, computed value
+        // = specified value — simple assignment, no length payload
+        // (`BackgroundRepeat` arm と同じ shape)。
+        PropertyValue::BackgroundImage(v) => target.background_image = v,
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -14248,6 +14257,106 @@ mod tests {
         );
     }
 
+    // ── background-image wire-through (CSS Backgrounds and Borders 3 §2.3) ──
+
+    #[test]
+    fn background_image_wired_through_cascade_from_inline_style() {
+        use crate::property::BackgroundImage;
+        let cv = cascade_doc("", "div", Some("background-image: url(marble.svg)"));
+        assert_eq!(
+            cv.background_image,
+            BackgroundImage::Url("marble.svg".to_string())
+        );
+    }
+
+    #[test]
+    fn background_image_defaults_to_none_without_declaration() {
+        // No `background-image` declaration at all — spec initial (`none`).
+        // Complements `background_image_explicit_none_overrides_an_earlier_url`
+        // below, which exercises the *parsed* `none` keyword end-to-end
+        // rather than just the no-winner default.
+        use crate::property::BackgroundImage;
+        let cv = cascade_doc("", "p", None);
+        assert_eq!(cv.background_image, BackgroundImage::None);
+    }
+
+    #[test]
+    fn background_image_explicit_none_overrides_an_earlier_url() {
+        // Same-block later-declaration-wins (CSS Cascading L4 §"Cascade
+        // Sort Order", same mechanism `cascade_doc("p { color: red; color:
+        // blue }")` pins for `color`) — this is the only test that reaches
+        // `parse_background_image`'s `none` keyword branch *and* observes
+        // it survive the cascade, rather than merely matching the initial
+        // value that a missing declaration would also produce.
+        use crate::property::BackgroundImage;
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("background-image: url(a.png); background-image: none"),
+        );
+        assert_eq!(cv.background_image, BackgroundImage::None);
+    }
+
+    #[test]
+    fn background_image_is_non_inherited() {
+        use crate::property::BackgroundImage;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("background-image: url(marble.svg)"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].background_image,
+            BackgroundImage::Url("marble.svg".to_string())
+        );
+        // CSS Backgrounds and Borders 3 §2.3 "Inherited: no" — the child
+        // without its own winner resets to the spec initial (`none`), not
+        // the parent's value.
+        assert_eq!(r.computed[span].background_image, BackgroundImage::None);
+    }
+
+    #[test]
+    fn background_image_gradient_function_is_silently_dropped() {
+        use crate::property::BackgroundImage;
+        // `<gradient>` (`linear-gradient()` etc.) is unimplemented scope —
+        // the whole declaration drops, leaving the property at its initial
+        // value, same as any other unrecognized value (`BackgroundImage`
+        // doc's scope-carving section).
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("background-image: linear-gradient(red, blue)"),
+        );
+        assert_eq!(cv.background_image, BackgroundImage::None);
+    }
+
+    #[test]
+    fn background_image_gradient_function_does_not_overwrite_an_earlier_url() {
+        // Sibling of `background_image_gradient_function_is_silently_dropped`
+        // that discriminates "the whole gradient declaration is dropped"
+        // from "the whole gradient declaration is dropped *and coerced to
+        // an explicit `None` winner*" — the two are indistinguishable when
+        // no earlier declaration exists (the prior test's `None` result is
+        // also just the property's initial value). Mirrors
+        // `background_image_explicit_none_overrides_an_earlier_url`'s
+        // same-block later-declaration-wins setup, but with a *dropped*
+        // later declaration instead of a *valid* `none` one: if the
+        // gradient branch ever started producing a real (non-dropped)
+        // `None` winner instead of failing the whole declaration, this
+        // would catch it by observing the earlier `url(...)` survive
+        // instead of being overwritten.
+        use crate::property::BackgroundImage;
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("background-image: url(a.png); background-image: linear-gradient(red, blue)"),
+        );
+        assert_eq!(
+            cv.background_image,
+            BackgroundImage::Url("a.png".to_string())
+        );
+    }
+
     #[test]
     fn orphans_widows_wired_through_cascade_from_inline_style() {
         let cv = cascade_doc("", "p", Some("orphans: 4; widows: 3"));
@@ -14847,9 +14956,9 @@ mod tests {
         // Backgrounds 3 §2.6). This arm is only reachable via the `@page`
         // path (`crate::page::cascade_page`) in practice — the element
         // path goes through `apply_value` directly — so this direct call
-        // is this arm's only coverage of the 6 new `Background*` variants
-        // (same shape as the `Color` assertion above, which covers
-        // `background_color`'s sibling arm the same way).
+        // is this arm's only coverage of the 7 `Background*` variants in
+        // that bucket (same shape as the `Color` assertion above, which
+        // covers `background_color`'s sibling arm the same way).
         let position = PropertyValue::BackgroundPosition(crate::property::CssPosition {
             horizontal: crate::property::CssPositionOffset::Start(Length::Px(5.0)),
             vertical: crate::property::CssPositionOffset::Start(Length::Px(5.0)),
