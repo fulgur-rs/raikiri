@@ -2882,9 +2882,15 @@ fn absolutize_in_page_context(
         | PropertyValue::BackgroundAttachment(_)
         | PropertyValue::BackgroundClip(_)
         | PropertyValue::BackgroundOrigin(_)
-        // `background-image` (CSS Backgrounds and Borders 3 §2.3) carries a
-        // bare `None | Url(String)`, not a length — same shape as its 4
-        // keyword-only siblings just above.
+        // `background-image` (CSS Backgrounds and Borders 3 §2.3) — `None`/
+        // `Url(String)` carry no length, same as its 4 keyword-only siblings
+        // just above. `Gradient(..)` (CSS Images 4 §3) does carry
+        // `<length-percentage>`/`<angle>` payloads, but this crate never
+        // absolutizes them (resolving a gradient's lengths needs the
+        // gradient box's own dimensions, unavailable here) — they stay
+        // specified-layer data all the way into `ComputedValues`
+        // (`BackgroundImage` doc's scope note), so an identity pass-through
+        // is still correct for every payload of this variant.
         | PropertyValue::BackgroundImage(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
@@ -6455,10 +6461,16 @@ mod tests {
             horizontal: CssPositionOffset::Start(Length::Em(1.0)),
             vertical: CssPositionOffset::End(Length::Rem(2.0)),
         }),
-        // CSS Backgrounds and Borders 3 §2.3 — keyword-only-shaped payload
-        // (`None | Url(String)`, no length component); `Url` is the
-        // non-initial worst case (`None` is the spec initial value, same
-        // reasoning as `WritingMode`'s `VerticalRl` sample above).
+        // CSS Backgrounds and Borders 3 §2.3 — `Url` is the non-initial
+        // worst case among the two payloads with no length component
+        // (`None` is the spec initial value, same reasoning as
+        // `WritingMode`'s `VerticalRl` sample above). The third payload,
+        // `Gradient(..)` (CSS Images 4 §3), *does* carry length/angle
+        // components, but isn't a more interesting sample for this
+        // detector — `specified_layer_residue`'s `BackgroundImage` arm
+        // reports `None` unconditionally regardless of payload (that arm's
+        // doc explains why), so `Gradient(..)` wouldn't exercise anything
+        // `Url` doesn't already.
         BackgroundImage => PropertyValue::BackgroundImage(BackgroundImage::Url(
             "marble.svg".to_string(),
         )),
@@ -7154,9 +7166,22 @@ mod tests {
             | PropertyValue::BackgroundAttachment(_)
             | PropertyValue::BackgroundClip(_)
             | PropertyValue::BackgroundOrigin(_)
-            // `background-image` carries a bare `None | Url(String)` — no
-            // length payload either, same shape as its 4 keyword-only
-            // siblings just above.
+            // `background-image` — `None`/`Url(String)` carry no length
+            // payload, same as its 4 keyword-only siblings just above.
+            // `Gradient(..)` (CSS Images 4 §3) *does* carry
+            // `<length-percentage>`/`<angle>` payloads, but this detector
+            // still reports `None` (no residue) for it: this crate
+            // deliberately never routes `BackgroundImage` through phase 3's
+            // absolutization at all (`absolutize_in_page_context`'s own
+            // `BackgroundImage(_) => v` arm above, and
+            // `SpecifiedValues::absolutize_with`'s equivalent field copy, are
+            // both identity pass-throughs — see `BackgroundImage` doc's
+            // scope note for why: resolving a gradient's lengths needs the
+            // gradient box's own dimensions, an input no phase-3 pass
+            // threads through). "Residue" here means *should have been
+            // absolutized by this point and wasn't*; a payload phase 3 never
+            // touches by design doesn't qualify, so flagging it would be a
+            // false positive against this detector's own contract.
             | PropertyValue::BackgroundImage(_)
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
