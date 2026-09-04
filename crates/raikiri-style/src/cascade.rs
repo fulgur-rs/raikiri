@@ -6814,6 +6814,14 @@ pub(crate) fn resolve_against_inherited(
         // `MaskImage`/`ClipPath` doc's scope notes).
         | PropertyValue::MaskImage(_)
         | PropertyValue::ClipPath(_)
+        // transform (CSS Transforms Level 1 §4) / filter (CSS Filter
+        // Effects Level 1 §5) — non-inherited, embedded `Length`/`Angle`/
+        // `f32` payloads that don't depend on the inheritance parent —
+        // nothing for phase 2 to resolve here, same as `MaskImage`/
+        // `ClipPath` above (neither absolutizes at all, see
+        // `TransformFunction`/`FilterFunction` doc's scope notes).
+        | PropertyValue::Transform(_)
+        | PropertyValue::Filter(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)) => v,
     })
@@ -7512,6 +7520,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // no phase-3 transform (`MaskImage`/`ClipPath` doc's scope notes).
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,
+        // CSS Transforms Level 1 §4 / CSS Filter Effects Level 1 §5.
+        // non-inherited — simple assignment, no phase-3 transform
+        // (`TransformFunction`/`FilterFunction` doc's scope notes).
+        PropertyValue::Transform(v) => target.transform = v,
+        PropertyValue::Filter(v) => target.filter = v,
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -14678,6 +14691,68 @@ mod tests {
             ClipPath::GeometryBox(GeometryBox::BorderBox)
         );
         assert_eq!(r.computed[span].clip_path, ClipPath::None);
+    }
+
+    // ── transform / filter wire-through (CSS Transforms Level 1 §4, CSS
+    // Filter Effects Level 1 §5) ──
+
+    #[test]
+    fn transform_wired_through_cascade_from_inline_style() {
+        use crate::property::{Angle, TransformFunction};
+        let cv = cascade_doc("", "div", Some("transform: rotate(45deg)"));
+        assert_eq!(*cv.transform, vec![TransformFunction::Rotate(Angle(45.0))]);
+    }
+
+    #[test]
+    fn transform_defaults_to_none_without_declaration() {
+        let cv = cascade_doc("", "div", None);
+        assert!(cv.transform.is_empty());
+    }
+
+    #[test]
+    fn transform_is_non_inherited() {
+        use crate::property::{Angle, TransformFunction};
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("transform: rotate(45deg)"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            *r.computed[p].transform,
+            vec![TransformFunction::Rotate(Angle(45.0))]
+        );
+        assert!(r.computed[span].transform.is_empty());
+    }
+
+    #[test]
+    fn filter_wired_through_cascade_from_inline_style() {
+        use crate::property::FilterFunction;
+        let cv = cascade_doc("", "div", Some("filter: blur(2px)"));
+        assert_eq!(
+            *cv.filter,
+            vec![FilterFunction::Blur(crate::property::Length::Px(2.0))]
+        );
+    }
+
+    #[test]
+    fn filter_defaults_to_none_without_declaration() {
+        let cv = cascade_doc("", "div", None);
+        assert!(cv.filter.is_empty());
+    }
+
+    #[test]
+    fn filter_is_non_inherited() {
+        use crate::property::FilterFunction;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("filter: blur(2px)"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            *r.computed[p].filter,
+            vec![FilterFunction::Blur(crate::property::Length::Px(2.0))]
+        );
+        assert!(r.computed[span].filter.is_empty());
     }
 
     // ── background-image wire-through (CSS Backgrounds and Borders 3 §2.3) ──

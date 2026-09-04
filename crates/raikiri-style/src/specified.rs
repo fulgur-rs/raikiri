@@ -33,15 +33,16 @@ use crate::property::{
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderColor, BorderRadius,
     BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside, ClearValue, ClipPath,
     ContentAlignmentValue, ContentComponent, CssColor, CssPosition, CssPositionOffset, Direction,
-    DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle,
-    FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks,
-    GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal, LineHeight, MaskImage,
-    MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform, VerticalAlign,
-    Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list,
-    empty_content_list, empty_counter_entries, empty_quotes_entries, empty_string_set_entries,
-    empty_text_shadow_list, initial_font_family, initial_grid_auto_track_list,
+    DisplayValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
+    GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
+    LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform,
+    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
+    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
     resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
     resolve_writing_mode,
 };
@@ -443,6 +444,16 @@ pub struct SpecifiedValues {
     /// `clip-path` の **specified** value — `mask_image` と同じ shape
     /// (埋め込まれた `<url>` は絶対化しない、[`ClipPath`] doc参照)。
     pub clip_path: ClipPath,
+    /// `transform` の **specified** value — 絶対化不要な素通し field
+    /// (`mask_image` と同じ shape — 埋め込まれた `Length`/`Angle` は本
+    /// crate が絶対化しない、[`TransformFunction`] doc参照)。`none` は
+    /// 空 list ([`empty_transform_list`]) で表現する。
+    pub transform: Arc<Vec<TransformFunction>>,
+    /// `filter` の **specified** value — `transform` と同じ shape
+    /// (埋め込まれた `Length`/`Angle`/`f32` は絶対化しない、
+    /// [`FilterFunction`] doc参照)。`none` は空 list
+    /// ([`empty_filter_list`]) で表現する。
+    pub filter: Arc<Vec<FilterFunction>>,
 }
 
 impl SpecifiedValues {
@@ -659,6 +670,12 @@ impl SpecifiedValues {
             mask_image: MaskImage::None,
             // CSS Masking Level 1 §5.1: clip-path initial は `none`。
             clip_path: ClipPath::None,
+            // CSS Transforms Level 1 §4: transform initial は `none`
+            // (空 list)。
+            transform: empty_transform_list(),
+            // CSS Filter Effects Level 1 §5: filter initial は `none`
+            // (空 list)。
+            filter: empty_filter_list(),
         }
     }
 
@@ -896,6 +913,10 @@ impl SpecifiedValues {
             mask_image: MaskImage::None,
             // non-inherited (CSS Masking Level 1 §5.1 "Inherited: no").
             clip_path: ClipPath::None,
+            // non-inherited (CSS Transforms Level 1 §4 "Inherited: no").
+            transform: empty_transform_list(),
+            // non-inherited (CSS Filter Effects Level 1 §5 "Inherited: no").
+            filter: empty_filter_list(),
         }
     }
 
@@ -1528,6 +1549,14 @@ impl SpecifiedValues {
             // CSS Masking Level 1 §5.1: same shape as `mask_image` above
             // (`ClipPath` doc's scope note).
             clip_path: self.clip_path,
+            // CSS Transforms Level 1 §4: this crate never absolutizes a
+            // `translate()`'s embedded `<length-percentage>` (box-size
+            // resolution needed, `TransformFunction` doc's scope note) —
+            // 素通し。
+            transform: self.transform,
+            // CSS Filter Effects Level 1 §5: same reasoning as `transform`
+            // above (`FilterFunction` doc's scope note).
+            filter: self.filter,
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -1688,6 +1717,25 @@ mod tests {
             computed.clip_path,
             ClipPath::GeometryBox(GeometryBox::PaddingBox)
         );
+    }
+
+    /// CSS Transforms Level 1 §4 / CSS Filter Effects Level 1 §5: both
+    /// always specified-layer data (`TransformFunction`/`FilterFunction`
+    /// doc's scope notes) — `finalize` moves the value through unchanged,
+    /// same shape as
+    /// `mask_image_and_clip_path_pass_through_finalize_unchanged` above.
+    #[test]
+    fn transform_and_filter_pass_through_finalize_unchanged() {
+        let transform = Arc::new(vec![TransformFunction::TranslateX(Length::Em(2.0))]);
+        let filter = Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]);
+        let specified = SpecifiedValues {
+            transform: transform.clone(),
+            filter: filter.clone(),
+            ..SpecifiedValues::initial()
+        };
+        let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
+        assert_eq!(computed.transform, transform);
+        assert_eq!(computed.filter, filter);
     }
 
     // -----------------------------------------------------------------
@@ -1890,6 +1938,11 @@ mod tests {
             // initial (`none`) と異なる値にしておく。
             mask_image: MaskImage::Url("mask.svg".to_string()),
             clip_path: ClipPath::GeometryBox(GeometryBox::PaddingBox),
+            // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5:
+            // 両方 non-inherited なので initial (`none` = 空 list) と
+            // 異なる値にしておく。
+            transform: Arc::new(vec![TransformFunction::TranslateX(Length::Em(2.0))]),
+            filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -2067,6 +2120,10 @@ mod tests {
         // CSS Masking Level 1 §7.1/§5.1: 両方 non-inherited。
         assert_eq!(child.mask_image, initial.mask_image);
         assert_eq!(child.clip_path, initial.clip_path);
+        // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5: 両方
+        // non-inherited。
+        assert_eq!(child.transform, initial.transform);
+        assert_eq!(child.filter, initial.filter);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は
