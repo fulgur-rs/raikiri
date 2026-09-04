@@ -4974,6 +4974,33 @@ fn project_deferred_value(
             }
             _ => return None,
         },
+        PropertyValue::Background(shorthand) => match key {
+            crate::property::PropertyKey::BackgroundColor => {
+                PropertyValue::BackgroundColor(shorthand.color)
+            }
+            crate::property::PropertyKey::BackgroundImage => {
+                PropertyValue::BackgroundImage(shorthand.image)
+            }
+            crate::property::PropertyKey::BackgroundRepeat => {
+                PropertyValue::BackgroundRepeat(shorthand.repeat)
+            }
+            crate::property::PropertyKey::BackgroundAttachment => {
+                PropertyValue::BackgroundAttachment(shorthand.attachment)
+            }
+            crate::property::PropertyKey::BackgroundPosition => {
+                PropertyValue::BackgroundPosition(shorthand.position)
+            }
+            crate::property::PropertyKey::BackgroundSize => {
+                PropertyValue::BackgroundSize(shorthand.size)
+            }
+            crate::property::PropertyKey::BackgroundClip => {
+                PropertyValue::BackgroundClip(shorthand.clip)
+            }
+            crate::property::PropertyKey::BackgroundOrigin => {
+                PropertyValue::BackgroundOrigin(shorthand.origin)
+            }
+            _ => return None,
+        },
         _ => return None,
     })
 }
@@ -6749,6 +6776,13 @@ pub(crate) fn resolve_against_inherited(
         // all the way into `ComputedValues` (`BackgroundImage` doc's scope
         // note). Nothing for phase 2 to do here either way.
         | PropertyValue::BackgroundImage(_)
+        // `background` shorthand — same "nothing for phase 2 to resolve"
+        // shape as `Padding`/`Margin`/`Border`/`Flex`/`Gap` above: its
+        // `<length-percentage>` components (`position`/`size`) need the
+        // *declaring node's own* font-size (phase 3), not the inheritance
+        // parent's, and it is structurally unreachable here regardless
+        // (`expand_shorthand_into` expands it before this function runs).
+        | PropertyValue::Background(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)) => v,
     })
@@ -7405,6 +7439,23 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // = specified value — simple assignment, no length payload
         // (`BackgroundRepeat` arm と同じ shape)。
         PropertyValue::BackgroundImage(v) => target.background_image = v,
+        // `background` shorthand fall-through (see `Padding`/`Flex` arm docs
+        // above for the "not a safety net" framing) — unreachable in
+        // practice, `expand_shorthand_into` expands it to the 8
+        // `BackgroundColor`/`BackgroundImage`/`BackgroundRepeat`/
+        // `BackgroundAttachment`/`BackgroundPosition`/`BackgroundSize`/
+        // `BackgroundClip`/`BackgroundOrigin` longhands before `apply_value`
+        // ever sees it.
+        PropertyValue::Background(shorthand) => {
+            target.background_color = shorthand.color;
+            target.background_image = shorthand.image;
+            target.background_repeat = shorthand.repeat;
+            target.background_attachment = shorthand.attachment;
+            target.background_position = shorthand.position;
+            target.background_size = shorthand.size;
+            target.background_clip = shorthand.clip;
+            target.background_origin = shorthand.origin;
+        }
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -16803,6 +16854,78 @@ mod tests {
             cv.justify_self,
             AlignSelfValue::Value(SelfAlignmentValue::Start)
         );
+    }
+
+    #[test]
+    fn apply_value_direct_background_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_margin_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::Background(shorthand)` arm
+        // is unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 8 `BackgroundColor`/`BackgroundImage`/
+        // `BackgroundRepeat`/`BackgroundAttachment`/`BackgroundPosition`/
+        // `BackgroundSize`/`BackgroundClip`/`BackgroundOrigin` longhands
+        // before `apply_value` ever sees it) — not a safety net, a canary.
+        use crate::property::{
+            BackgroundAttachment, BackgroundImage, BackgroundRepeat, BackgroundRepeatKeyword,
+            BackgroundShorthand, BackgroundSize, CssPosition, CssPositionOffset, VisualBox,
+        };
+        let mut cv = SpecifiedValues::initial();
+        let shorthand = BackgroundShorthand {
+            color: RED,
+            image: BackgroundImage::Url("tile.png".to_string()),
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Round,
+                y: BackgroundRepeatKeyword::Space,
+            },
+            attachment: BackgroundAttachment::Fixed,
+            position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::End(Length::Px(20.0)),
+            },
+            size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Px(100.0)),
+                height: LengthOrAuto::Auto,
+            },
+            clip: VisualBox::PaddingBox,
+            origin: VisualBox::ContentBox,
+        };
+        apply_value(PropertyValue::Background(shorthand.clone()), &mut cv);
+        assert_eq!(cv.background_color, RED);
+        assert_eq!(cv.background_image, shorthand.image);
+        assert_eq!(cv.background_repeat, shorthand.repeat);
+        assert_eq!(cv.background_attachment, shorthand.attachment);
+        assert_eq!(cv.background_position, shorthand.position);
+        assert_eq!(cv.background_size, shorthand.size);
+        assert_eq!(cv.background_clip, shorthand.clip);
+        assert_eq!(cv.background_origin, shorthand.origin);
+    }
+
+    #[test]
+    fn var_in_background_shorthand_projects_each_deferred_longhand() {
+        // `background` expands before cascade; after the custom property is
+        // substituted, each deferred longhand must project its component
+        // from the reparsed `BackgroundShorthand` rather than being dropped
+        // (`var_in_outline_shorthand_projects_each_deferred_longhand`
+        // sibling, same `project_deferred_value` mechanism).
+        use crate::property::{
+            BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, VisualBox,
+        };
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("--bg: red round fixed border-box; background: var(--bg)"),
+        );
+        assert_eq!(cv.background_color, RED);
+        assert_eq!(
+            cv.background_repeat,
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Round,
+                y: BackgroundRepeatKeyword::Round,
+            }
+        );
+        assert_eq!(cv.background_attachment, BackgroundAttachment::Fixed);
+        assert_eq!(cv.background_clip, VisualBox::BorderBox);
+        assert_eq!(cv.background_origin, VisualBox::BorderBox);
     }
 
     // ── text-decoration longhand + shorthand cascade (CSS Text Decoration

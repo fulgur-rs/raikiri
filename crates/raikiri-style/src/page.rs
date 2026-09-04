@@ -98,9 +98,9 @@ use crate::cascade::{
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
 use crate::property::{
-    BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CssPosition,
-    CssPositionOffset, CustomProperty, FlexBasisValue, FlexShorthand, GapShorthand,
-    GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    BackgroundShorthand, BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle,
+    BoxShadowItem, CssPosition, CssPositionOffset, CustomProperty, FlexBasisValue, FlexShorthand,
+    GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
     Sides, TextShadowItem, parse_length_allow_negative, parse_non_negative_length, parse_value,
@@ -3108,6 +3108,19 @@ fn absolutize_in_page_context(
         PropertyValue::BackgroundPosition(v) => {
             PropertyValue::BackgroundPosition(css_position(v, font_size, own_line_height, ctx))
         }
+        // `background` shorthand fall-through (see `Padding` above for the
+        // unreachability rationale) — unreachable in practice
+        // (`expand_shorthand_into` expands it before this function ever sees
+        // a winner). `position`/`size` are the only 2 of its 8 components
+        // that carry a `<length-percentage>` — same basis as the
+        // `BackgroundPosition`/`BackgroundSize` longhand arms just above
+        // (`Flex`/`Gap` below use the same "only the length-bearing fields
+        // get transformed" shape).
+        PropertyValue::Background(shorthand) => PropertyValue::Background(BackgroundShorthand {
+            position: css_position(shorthand.position, font_size, own_line_height, ctx),
+            size: background_size(shorthand.size, font_size, own_line_height, ctx),
+            ..shorthand
+        }),
         // ── overflow-x / overflow-y ──────────────────────────────────────────
         // CSS Overflow 3 §3.1 cross-axis coupling — this axis's own winner
         // (`v`) paired with the *other* axis's winner (`overflow_pair`,
@@ -3381,18 +3394,19 @@ mod tests {
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
         AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
-        BackgroundRepeatKeyword, BorderRadius, BoxShadowItem, BoxSizing, BreakBetween, BreakInside,
-        ClearValue, ContentAlignmentValue, ContentComponent, CssColor, CustomProperty, Direction,
-        DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
-        FontWeightValue, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand,
-        GridLineValue, GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas,
-        GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-        GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Length, LengthOrAuto,
-        LengthOrNormal, LineHeight, Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
-        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
-        SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
-        TextDecorationShorthand, TextDecorationStyle, TextShadowColor, TextTransform,
-        VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+        BackgroundRepeatKeyword, BackgroundShorthand, BorderRadius, BoxShadowItem, BoxSizing,
+        BreakBetween, BreakInside, ClearValue, ContentAlignmentValue, ContentComponent, CssColor,
+        CustomProperty, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+        FontStyle, FontVariantCaps, FontWeightValue, GridAutoFlowValue, GridInflexibleBreadth,
+        GridLineShorthand, GridLineValue, GridRepeatCount, GridTemplateAreaEntry,
+        GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth,
+        GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Length,
+        LengthOrAuto, LengthOrNormal, LineHeight, Outline, OutlineStyle, OverflowValue,
+        OverflowWrap, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
+        PositionValue, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextDecorationColor,
+        TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextShadowColor,
+        TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
+        ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;
@@ -6474,6 +6488,32 @@ mod tests {
         BackgroundImage => PropertyValue::BackgroundImage(BackgroundImage::Url(
             "marble.svg".to_string(),
         )),
+        // CSS Backgrounds and Borders 3 §2.10 — shorthand fall-through
+        // (`Flex`/`Gap`/`Border` above use the same "sample a shorthand with
+        // a length-bearing component" shape). Only `position`/`size` carry a
+        // length; the other 6 components reuse non-initial keyword/color
+        // payloads distinct from their standalone longhand samples above, to
+        // catch a field-swap regression in the shorthand's own fall-through
+        // arms.
+        Background => PropertyValue::Background(BackgroundShorthand {
+            color: GREEN,
+            image: BackgroundImage::Url("tile.png".to_string()),
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Space,
+                y: BackgroundRepeatKeyword::Round,
+            },
+            attachment: BackgroundAttachment::Local,
+            position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Em(1.5)),
+                vertical: CssPositionOffset::End(Length::Rem(0.5)),
+            },
+            size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Em(3.0)),
+                height: LengthOrAuto::Auto,
+            },
+            clip: VisualBox::PaddingBox,
+            origin: VisualBox::ContentBox,
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -6715,6 +6755,7 @@ mod tests {
         BackgroundSize,
         BackgroundPosition,
         BackgroundImage,
+        Background,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -7238,6 +7279,27 @@ mod tests {
                     }
                 }
                 offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
+            }
+            // `background` shorthand fall-through — `position`/`size` are
+            // the only 2 of its 8 components that carry a length (same
+            // shape as `Flex`/`Gap` above); the rest are keyword/color/image
+            // payloads with no length to check.
+            PropertyValue::Background(shorthand) => {
+                let size_residue = match shorthand.size {
+                    BackgroundSize::Cover | BackgroundSize::Contain => None,
+                    BackgroundSize::Explicit { width, height } => {
+                        length_or_auto(width).or_else(|| length_or_auto(height))
+                    }
+                };
+                size_residue.or_else(|| {
+                    fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
+                        match o {
+                            CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                        }
+                    }
+                    offset_residue(shorthand.position.horizontal)
+                        .or_else(|| offset_residue(shorthand.position.vertical))
+                })
             }
         }
     }
