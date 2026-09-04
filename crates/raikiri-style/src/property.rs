@@ -11884,9 +11884,59 @@ fn parse_attr_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     })
 }
 
+/// CSS `<url>` value type (CSS Values and Units 4 §4.4
+/// <https://www.w3.org/TR/css-values-4/#urls>) を一般 property value として
+/// 受理する共通 helper。
+///
+/// Grammar: `<url> = <url()> | <src()>`、
+/// `<url()> = url( <string> <url-modifier>* ) | <url-token>`。本 helper は
+/// `<url()>` の 2 形式のみを受理する — unquoted `url(foo.png)` (tokenizer が
+/// 生成する `<url-token>`) と、quoted `url("foo.png")` (tokenizer は quote を
+/// 見て `url` を function token として切り出し、nested block 内の
+/// `<string-token>` を読む)。`<url-modifier>*` (`crossorigin()` 等、§4.4.1) を
+/// 伴う `url()` は nested block が `<string>` 単体で exhaust しないため
+/// 全体が reject される — cssparser の block-exhaustion 制約
+/// (`Parser::parse_nested_block` は closure が block を完全消費しないと Err)
+/// によるもので、意図的な未対応。`<src()>` は別理由で未対応 —
+/// `expect_url()` は function token 名を `url` に限定するため、`src(...)` は
+/// そもそも function token としてすら認識されず reject される
+/// (block-exhaustion 制約とは無関係)。
+///
+/// 一般 property value としての `<url>` はこの 2 形式のみで、bare
+/// `<string>` (quote だけで `url()` wrapper を伴わない形) は含まない — spec
+/// 本文が `"Some CSS contexts (such as @import) also allow a <url> to be
+/// represented by a bare <string>, without the function wrapper"` と明記する
+/// 通り、bare string 受理は `@import` 等の特定 context に限定された legacy
+/// 挙動であり、一般 property の `<url>` value type には及ばない。
+/// (`[ <string> | <url> ]` を独立した alternative として明示的に持つ property
+/// は [`parse_target_url`] のように呼び出し側で `<string>` を別途扱う。)
+///
+/// CSS-wide keyword (`inherit` 等の bare ident) はこの grammar のどの形にも
+/// 一致しないため cssparser の `expect_url` が Err を返し、本 helper も
+/// `None` を返す — 呼び出し元の `parse_value` 規約 (`None` で declaration
+/// 全体を drop) と自然に合致する。
+// 呼び出し元となる property parser (`background-image` 等、`<image>` 内で
+// `<url>` を受理する property) はまだ実装されておらず、通常 build では
+// 呼び出し元を持たず `dead_code` lint に引っかかる。単体 test 経由の呼び出し
+// のみを現状持つことを明示するため `#[allow(dead_code)]` を付す — その
+// property parser が実装され次第この attribute は不要になるので削除する。
+//
+// `pub(crate)` ではなく plain `fn`: 現時点で外部 module からの呼び出し元は
+// 無く (background-image 等の consumer property parser は全て property.rs
+// 内に実装される見込み)、外部呼び出し元が実際に landing した時点で
+// `parse_non_negative_length`/`parse_length_allow_negative` (このファイル内、
+// 外部呼び出し元を doc に明記した precedent) と同様の `pub(crate)` + doc
+// justification へ拡張する。
+#[allow(dead_code)]
+fn parse_url_value(input: &mut Parser<'_, '_>) -> Option<String> {
+    input.expect_url().ok().map(|s| s.as_ref().to_string())
+}
+
 /// target-* の第 1 引数 `[ <string> | <url> ]` を raw String として抽出。
 /// `url("...")` / `url(...)` / bare `"..."` を統一的に受ける
-/// (cssparser の `expect_url_or_string` を使用)。
+/// (cssparser の `expect_url_or_string` を使用)。`<url>` 側の 2 形式は
+/// [`parse_url_value`] と共通だが、bare `<string>` alternative も grammar に
+/// 含む点が一般 `<url>` value type と異なるため、専用 helper として分離する。
 fn parse_target_url(input: &mut Parser<'_, '_>) -> Option<String> {
     input
         .expect_url_or_string()
@@ -24125,5 +24175,78 @@ mod tests {
         for (source, expected) in cases {
             assert_eq!(parse_color_entire(source), Some(expected), "{source}");
         }
+    }
+
+    // ── parse_url_value helper ────────────────────
+    //
+    // CSS Values 4 §4.4 <url> value type
+    // (<https://www.w3.org/TR/css-values-4/#urls>) の共通 helper を property
+    // dispatcher (`parse_value`) を経由せず直接叩く — このタスク時点では
+    // `parse_url_value` を呼ぶ property parser がまだ存在しないため
+    // (`parse_length_value` helper 単体 test と同じ fixture pattern)。
+
+    fn parse_url(source: &str) -> Option<String> {
+        let mut input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut input);
+        parse_url_value(&mut parser)
+    }
+
+    #[test]
+    fn url_value_accepts_unquoted_form() {
+        // unquoted `<url-token>` form — see `parse_url_value` doc.
+        assert_eq!(parse_url("url(foo.png)"), Some("foo.png".to_string()));
+    }
+
+    #[test]
+    fn url_value_accepts_quoted_form() {
+        // quoted `url( <string> )` function-token form — see
+        // `parse_url_value` doc.
+        assert_eq!(parse_url("url(\"foo.png\")"), Some("foo.png".to_string()));
+    }
+
+    #[test]
+    fn url_value_accepts_quoted_form_with_single_quotes() {
+        // CSS Syntax 3 `<string-token>` は `"` `'` どちらの quote 文字も
+        // 受理する — `url()` 内の `<string>` も同様。
+        assert_eq!(parse_url("url('foo.png')"), Some("foo.png".to_string()));
+    }
+
+    #[test]
+    fn url_value_rejects_css_wide_keywords() {
+        // CSS-wide keyword は `<url>` grammar のどの alternative にも
+        // 一致しない — see `parse_url_value` doc.
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse_url(keyword), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn url_value_rejects_bare_string_without_url_wrapper() {
+        // bare `<string>` (no `url()` wrapper) — @import-only legacy
+        // allowance, not part of the general `<url>` value type. See
+        // `parse_url_value` doc.
+        assert_eq!(parse_url("\"foo.png\""), None);
+    }
+
+    #[test]
+    fn url_value_rejects_non_url_ident() {
+        assert_eq!(parse_url("foo"), None);
+    }
+
+    #[test]
+    fn url_value_rejects_empty_input() {
+        assert_eq!(parse_url(""), None);
+    }
+
+    #[test]
+    fn url_value_rejects_number() {
+        assert_eq!(parse_url("42"), None);
+    }
+
+    #[test]
+    fn url_value_rejects_url_with_modifier() {
+        // `<url-modifier>` (`crossorigin()` 等) 付き `url()` — unsupported,
+        // see `parse_url_value` doc for the block-exhaustion mechanism.
+        assert_eq!(parse_url("url(\"foo.png\" crossorigin)"), None);
     }
 }
