@@ -3112,10 +3112,15 @@ fn absolutize_in_page_context(
         // unreachability rationale) — unreachable in practice
         // (`expand_shorthand_into` expands it before this function ever sees
         // a winner). `position`/`size` are the only 2 of its 8 components
-        // that carry a `<length-percentage>` — same basis as the
+        // this function absolutizes here — same basis as the
         // `BackgroundPosition`/`BackgroundSize` longhand arms just above
         // (`Flex`/`Gap` below use the same "only the length-bearing fields
-        // get transformed" shape).
+        // get transformed" shape). `image`'s `Gradient` payload does carry
+        // `<length-percentage>`/`<angle>` values too, but stays
+        // specified-layer, same as the standalone `BackgroundImage` arm
+        // above. Pinned directly by
+        // `tests::absolutize_in_page_context_shorthand_fall_throughs`'s
+        // `Background` case.
         PropertyValue::Background(shorthand) => PropertyValue::Background(BackgroundShorthand {
             position: css_position(shorthand.position, font_size, own_line_height, ctx),
             size: background_size(shorthand.size, font_size, own_line_height, ctx),
@@ -5224,6 +5229,51 @@ mod tests {
                 y: OverflowValue::Hidden,
             }),
         );
+        // `background` shorthand fall-through — resolves its own
+        // `position`/`size` fields (distinct em/rem values per axis, same
+        // field-swap-detecting shape as the `border` case above), leaving
+        // the other 6 fields untouched via the struct-update `..shorthand`.
+        let shorthand = BackgroundShorthand {
+            color: CssColor::TRANSPARENT,
+            image: BackgroundImage::None,
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            },
+            attachment: BackgroundAttachment::Scroll,
+            position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Em(1.0)),
+                vertical: CssPositionOffset::Start(Length::Rem(2.0)),
+            },
+            size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Em(3.0)),
+                height: LengthOrAuto::Length(Length::Rem(4.0)),
+            },
+            clip: VisualBox::BorderBox,
+            origin: VisualBox::PaddingBox,
+        };
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::Background(shorthand.clone())),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::Background(BackgroundShorthand {
+                position: CssPosition {
+                    horizontal: CssPositionOffset::Start(Length::Px(20.0)),
+                    vertical: CssPositionOffset::Start(Length::Px(32.0)),
+                },
+                size: BackgroundSize::Explicit {
+                    width: LengthOrAuto::Length(Length::Px(60.0)),
+                    height: LengthOrAuto::Length(Length::Px(64.0)),
+                },
+                ..shorthand
+            }),
+        );
     }
 
     /// Sibling of `absolutize_in_page_context_shorthand_fall_throughs` for
@@ -7281,9 +7331,16 @@ mod tests {
                 offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
             }
             // `background` shorthand fall-through — `position`/`size` are
-            // the only 2 of its 8 components that carry a length (same
-            // shape as `Flex`/`Gap` above); the rest are keyword/color/image
-            // payloads with no length to check.
+            // the only 2 of its 8 components this detector checks (same
+            // shape as `Flex`/`Gap` above). `image`'s `Gradient` payload
+            // does carry `<length-percentage>`/`<angle>` values too, but is
+            // excluded from this residue check for the same reason the
+            // standalone `PropertyValue::BackgroundImage(_)` arm above is:
+            // this crate deliberately never routes it through phase 3's
+            // absolutization (see that arm's comment for the full
+            // rationale) — a payload phase 3 never touches by design
+            // doesn't qualify as "residue", so flagging it here would be a
+            // false positive.
             PropertyValue::Background(shorthand) => {
                 let size_residue = match shorthand.size {
                     BackgroundSize::Cover | BackgroundSize::Contain => None,

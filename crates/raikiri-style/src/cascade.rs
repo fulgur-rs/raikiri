@@ -16955,6 +16955,44 @@ mod tests {
         assert_eq!(cv.background_origin, VisualBox::BorderBox);
     }
 
+    #[test]
+    fn background_shorthand_comma_separated_multi_layer_declaration_dropped_through_real_cascade() {
+        // `property::tests::background_shorthand_rejects_comma_separated_multi_layer`
+        // pins this via the `parse_entire` fixture (`Parser::parse_entirely`,
+        // semantically equivalent to the real `DeclParser`'s
+        // `expect_exhausted` check but not the real pipeline itself). This
+        // is the end-to-end sibling, through the real parse -> cascade path
+        // (`expand_shorthand_into` never runs since `parse_value` itself
+        // returns `None` for the whole declaration): a prior valid winner
+        // must survive untouched, not merely fall back to the initial value
+        // (which would also happen if the declaration were simply absent).
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("background: red; background: url(a.png) top, url(b.png) bottom"),
+        );
+        assert_eq!(cv.background_color, RED);
+    }
+
+    #[test]
+    fn background_shorthand_and_background_color_longhand_interleave_by_source_order() {
+        // Mirror of `var_in_margin_shorthand_preserves_later_longhand_cascade`'s
+        // sibling pin (`margin-top: 10px; margin: 0px` → all sides 0): the
+        // `expand_shorthand_into` doc's entire rationale is that source order,
+        // not variant order, decides the winner once a shorthand and a
+        // conflicting longhand both target the same field. `background` is
+        // the first shorthand whose fan-out targets 8 *pre-existing*
+        // longhands rather than a fresh `Sides<T>`-style bundle, so this
+        // pins that the same mechanism holds for it in both directions.
+        let shorthand_first =
+            cascade_doc("", "div", Some("background: red; background-color: blue"));
+        assert_eq!(shorthand_first.background_color, BLUE);
+
+        let longhand_first =
+            cascade_doc("", "div", Some("background-color: blue; background: red"));
+        assert_eq!(longhand_first.background_color, RED);
+    }
+
     // ── text-decoration longhand + shorthand cascade (CSS Text Decoration
     // Module Level 3 §2.1-§2.4) ──
 

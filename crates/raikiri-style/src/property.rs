@@ -27897,7 +27897,7 @@ mod tests {
         );
     }
 
-    /// Spec §2.10's 4th worked example (`E { background: #CCC
+    /// Spec §2.10's 2nd worked example (`E { background: #CCC
     /// url("metal.jpg") top left / 100% auto no-repeat}`), single-layer
     /// portion only — this crate does not accept the spec's other example
     /// (`background: url(a.png) top left no-repeat, …`, comma-separated
@@ -28047,6 +28047,19 @@ mod tests {
     #[test]
     fn background_shorthand_rejects_slash_with_invalid_size() {
         assert_eq!(parse_entire("center / bogus", "background"), None);
+    }
+
+    #[test]
+    fn background_shorthand_rejects_size_without_a_preceding_position() {
+        // The `<bg-position> [ / <bg-size> ]?` slot is atomic — `<bg-size>`
+        // is a "then"-clause of a leading `<bg-position>`, never a
+        // standalone `||` component on its own (`parse_background_shorthand`
+        // doc's grammar section). `/ 100% auto` has no position to attach
+        // to, so the leading `/` matches no slot at all and is dropped as
+        // leftover, same as `center / bogus` above but exercising the
+        // "no position present" edge rather than "position present, size
+        // invalid".
+        assert_eq!(parse_entire("/ 100% auto", "background"), None);
     }
 
     #[test]

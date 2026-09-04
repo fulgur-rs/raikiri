@@ -695,6 +695,13 @@ fn expand_deferred(
         PropertyKey::GridColumn => &[PropertyKey::GridColumnStart, PropertyKey::GridColumnEnd],
         PropertyKey::PlaceItems => &[PropertyKey::AlignItems, PropertyKey::JustifyItems],
         PropertyKey::PlaceSelf => &[PropertyKey::AlignSelf, PropertyKey::JustifySelf],
+        // Order here is `BackgroundShorthand`'s own field order
+        // (color/image/repeat/attachment/position/size/clip/origin) — same
+        // "grouped by the shorthand's own natural order" shape as `Border`
+        // (grouped per-side, not per-`PropertyKey`-declaration-order) and
+        // `MarginInline`/`PaddingInline`/`PlaceContent` above. Safe because
+        // each key still lands in its own disjoint `SpecifiedValues` field,
+        // so the order this slice is walked in does not affect the result.
         PropertyKey::Background => &[
             PropertyKey::BackgroundColor,
             PropertyKey::BackgroundImage,
