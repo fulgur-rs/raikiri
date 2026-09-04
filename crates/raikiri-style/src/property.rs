@@ -4648,9 +4648,14 @@ pub struct CssPosition {
 ///   `<color-stop-length> = <length-percentage>{1,2}` (1 stop に 2 position
 ///   を与え、同色の帯を作る記法) は未対応。
 ///   `<angular-color-stop>`/`<color-stop-angle>` (conic 版) も同様。
-/// - `<linear-color-hint>` (2 stop 間の transition hint、CSS Images 4
-///   §3.5.1) は未対応 — `<color-stop-list>` は hint 要素を挟まない
-///   `<linear-color-stop>#` として parse する。
+/// - `<linear-color-hint>` (2 stop 間の transition hint) は未対応 —
+///   `<color-stop-list>` は hint 要素を挟まない `<linear-color-stop>#`
+///   として parse する。**これは Level 4 の追加機能ではなく CSS Images 3
+///   §3.4.1 の baseline grammar (`<color-stop-list> = <linear-color-stop> ,
+///   [ <linear-color-hint>? , <linear-color-stop> ]#`) に既に含まれる** —
+///   Level 4 §3.5.1 は同じ production をそのまま引き継ぐ。つまり本 crate は
+///   「Level 3 baseline を完全実装し Level 4 の拡張のみ defer」ではなく、
+///   baseline 自体の一部 (hint) も defer している。
 /// - Color stop list は 2 個以上必須 (CSS Images 3 §3.4.1 の
 ///   `<linear-color-stop> , [ … ]#` baseline grammar — 3 個以上ではなく
 ///   「1 個目 + `#` group (1 個以上)」なので実質 2 個以上)。Level 4 が
@@ -4769,10 +4774,11 @@ pub struct LinearGradient {
     /// ([`LinearGradientDirection::Side`] with `vertical: Some(Bottom)`)。
     pub direction: LinearGradientDirection,
     /// `in <color-space> <hue-interpolation-method>?` 節。省略時 default は
-    /// `Oklab` (CSS Images 4 §3.1 "If no `<color-interpolation-method>` is
-    /// specified in the gradient function, the color space used for
-    /// gradient interpolation is the default interpolation color space,
-    /// Oklab")。
+    /// `Oklab` (CSS Images 4 §3.5.2 "Coloring the Gradient Line" — this
+    /// subsection defines interpolation for all 3 gradient shapes, not just
+    /// linear — "If no `<color-interpolation-method>` is specified in the
+    /// gradient function, the color space used for gradient interpolation
+    /// is the default interpolation color space, Oklab")。
     pub interpolation: GradientColorInterpolation,
     /// Color stop list。2 個以上 ([`BackgroundImage`] doc の scope carving
     /// 節参照)。`Arc` は他の comma-separated list payload
@@ -4951,13 +4957,18 @@ pub enum GradientStopColor {
 }
 
 /// `<linear-color-stop>` / `<radial-gradient-syntax>` の color-stop-list
-/// entry (CSS Images 4 §3.5.1 "Color Stop Lists")。
+/// entry (CSS Images 3 §3.4.1 "Color Stop Lists" — Level 4 §3.5.1 は同じ
+/// production を引き継ぐ)。
 ///
 /// この crate は CSS Images 3 の baseline grammar `<linear-color-stop> =
-/// <color> <length-percentage>?` のみを実装する — Level 4 の
+/// <color> <length-percentage>?` のみを実装する — Level 4 が追加した
 /// `<color-stop-length> = <length-percentage>{1,2}` (1 stop に 2 position、
-/// 同色の帯を作る記法) と `<linear-color-hint>` (stop 間の transition
-/// hint) は未対応 ([`BackgroundImage`] doc の scope carving 節参照)。
+/// 同色の帯を作る記法) は未対応。加えて、`<linear-color-hint>` (stop 間の
+/// transition hint) **も**未対応 — こちらは Level 4 の拡張ではなく Level 3
+/// §3.4.1 の baseline grammar (`<color-stop-list> = <linear-color-stop> , [
+/// <linear-color-hint>? , <linear-color-stop> ]#`) に既に含まれる production
+/// で、本 crate は baseline のこの部分も defer している
+/// ([`BackgroundImage`] doc の scope carving 節参照)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GradientColorStop {
@@ -7826,53 +7837,55 @@ enum LabFunction {
 }
 
 /// `<color-space>` (CSS Color 4 §13.2 "Color Space for Interpolation"
-/// <https://www.w3.org/TR/css-color-4/#color-interpolation-method>),
-/// restricted to the subset this crate's color engine actually implements —
-/// `hsl` / `hwb` / the `xyz` family / `display-p3` / `a98-rgb` /
-/// `prophoto-rgb` / `rec2020` have no corresponding `<color>` function
-/// parser here ([`parse_color`] doc's form list), so they aren't offered as
-/// interpolation spaces either.
+/// <https://www.w3.org/TR/css-color-4/#color-interpolation-method>)。
+/// 本 crate の color engine が実際に実装する subset に限定している —
+/// `hsl`/`hwb`/`xyz` 系/`display-p3`/`a98-rgb`/`prophoto-rgb`/`rec2020` は
+/// 対応する `<color>` function parser 自体が本 crate に無いため
+/// ([`parse_color`] doc の form 一覧参照)、interpolation space としても
+/// 受理しない。
 ///
-/// Shared by `color-mix()` (this type's original use, [`parse_mix_color_space`])
-/// and the CSS Images 4 gradient functions' `in <color-space>
-/// <hue-interpolation-method>?` clause ([`GradientColorInterpolation`],
-/// [`parse_gradient_color_interpolation`]) — both host syntaxes reference the
-/// same exported `<color-space>` production, so one enum backs both.
+/// `color-mix()` (本 type の元々の用途、[`parse_mix_color_space`]) と
+/// CSS Images 4 gradient function 群の `in <color-space>
+/// <hue-interpolation-method>?` 節 ([`GradientColorInterpolation`]、
+/// [`parse_gradient_color_interpolation`]) で共有する — 両 host syntax が
+/// 同じ exported `<color-space>` production を参照するため、1 つの enum で
+/// 両方を賄う。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MixColorSpace {
-    /// `srgb` — gamma-encoded sRGB, CSS's legacy default interpolation space.
+    /// `srgb` — gamma-encoded sRGB。CSS の legacy default interpolation
+    /// space。
     Srgb,
-    /// `srgb-linear` — linear-light sRGB.
+    /// `srgb-linear` — linear-light sRGB。
     SrgbLinear,
-    /// `lab` — CIE Lab (rectangular).
+    /// `lab` — CIE Lab (rectangular)。
     Lab,
-    /// `lch` — CIE LCH (polar; accepts a [`HueInterpolationMethod`]).
+    /// `lch` — CIE LCH (polar、[`HueInterpolationMethod`] を受理)。
     Lch,
-    /// `oklab` — Oklab (rectangular).
+    /// `oklab` — Oklab (rectangular)。
     Oklab,
-    /// `oklch` — Oklch (polar; accepts a [`HueInterpolationMethod`]).
+    /// `oklch` — Oklch (polar、[`HueInterpolationMethod`] を受理)。
     Oklch,
 }
 
 /// `<hue-interpolation-method>` (CSS Color 4 §13.2
 /// <https://www.w3.org/TR/css-color-4/#color-interpolation-method>) —
-/// `[ shorter | longer | increasing | decreasing ] hue`. Only meaningful
-/// for a polar [`MixColorSpace`] (`Lch`/`Oklch`); callers reject it
-/// otherwise ([`parse_color_mix_function`], [`parse_gradient_color_interpolation`]).
-/// Shared by `color-mix()` and gradient `<color-interpolation-method>`, same
-/// reasoning as [`MixColorSpace`].
+/// `[ shorter | longer | increasing | decreasing ] hue`。polar な
+/// [`MixColorSpace`] (`Lch`/`Oklch`) に対してのみ意味を持ち、それ以外では
+/// caller が reject する ([`parse_color_mix_function`]、
+/// [`parse_gradient_color_interpolation`])。`color-mix()` と gradient の
+/// `<color-interpolation-method>` で共有する理由は [`MixColorSpace`] と同じ。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HueInterpolationMethod {
-    /// `shorter hue` — interpolate along the shorter arc; this production's
-    /// own default when omitted.
+    /// `shorter hue` — 短い方の弧で補間する。省略時のこの production 自体の
+    /// default。
     Shorter,
-    /// `longer hue` — interpolate along the longer arc.
+    /// `longer hue` — 長い方の弧で補間する。
     Longer,
-    /// `increasing hue` — hue angles increase monotonically.
+    /// `increasing hue` — hue 角度が単調増加する方向で補間する。
     Increasing,
-    /// `decreasing hue` — hue angles decrease monotonically.
+    /// `decreasing hue` — hue 角度が単調減少する方向で補間する。
     Decreasing,
 }
 
@@ -8246,10 +8259,19 @@ fn parse_color_mix_stop<'i>(
     Ok((color, leading_percentage.or(trailing_percentage)))
 }
 
-fn parse_color_mix_function<'i>(
+/// `in <color-space> <hue-interpolation-method>?` (CSS Color 4 §13.2
+/// "Color Space for Interpolation" — [`MixColorSpace`] doc参照) の共通
+/// parse + validation。`<hue-interpolation-method>` は polar な
+/// `<color-space>` (`Lch`/`Oklch`) にのみ許され、省略時は
+/// [`HueInterpolationMethod::Shorter`]がdefault — この 2 点は
+/// `color-mix()` ([`parse_color_mix_function`]) と gradient の
+/// `<color-interpolation-method>` ([`parse_gradient_color_interpolation`])
+/// で全く同じ規則なので、呼び出し元固有の結果型 (`ParsedColor` /
+/// [`GradientColorInterpolation`]) を知らないこの共通 helper に集約する
+/// (両 caller は tuple から自分の型を組み立てるだけ)。
+fn parse_color_interpolation_method<'i>(
     input: &mut Parser<'i, '_>,
-    color_mix_depth: usize,
-) -> Result<ParsedColor, ParseError<'i, ()>> {
+) -> Result<(MixColorSpace, HueInterpolationMethod), ParseError<'i, ()>> {
     input.expect_ident_matching("in")?;
     let color_space = parse_mix_color_space(input)?;
     let explicit_hue_method = input.try_parse(parse_hue_interpolation_method).ok();
@@ -8258,7 +8280,17 @@ fn parse_color_mix_function<'i>(
     {
         return Err(input.new_custom_error(()));
     }
-    let hue_interpolation_method = explicit_hue_method.unwrap_or(HueInterpolationMethod::Shorter);
+    Ok((
+        color_space,
+        explicit_hue_method.unwrap_or(HueInterpolationMethod::Shorter),
+    ))
+}
+
+fn parse_color_mix_function<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let (color_space, hue_interpolation_method) = parse_color_interpolation_method(input)?;
     input.expect_comma()?;
 
     let (color_one, percentage_one) = parse_color_mix_stop(input, color_mix_depth)?;
@@ -13435,40 +13467,40 @@ fn parse_gradient<'i>(input: &mut Parser<'i, '_>) -> Result<Gradient, ParseError
         Token::Function(name) => name,
         token => return Err(input.new_unexpected_token_error(token)),
     };
-    let name = name.as_ref();
-    if name.eq_ignore_ascii_case("linear-gradient") {
-        input
+    match name.as_ref().to_ascii_lowercase().as_str() {
+        "linear-gradient" => input
             .parse_nested_block(|i| parse_linear_gradient_body(i, false))
-            .map(Gradient::Linear)
-    } else if name.eq_ignore_ascii_case("repeating-linear-gradient") {
-        input
+            .map(Gradient::Linear),
+        "repeating-linear-gradient" => input
             .parse_nested_block(|i| parse_linear_gradient_body(i, true))
-            .map(Gradient::Linear)
-    } else if name.eq_ignore_ascii_case("radial-gradient") {
-        input
+            .map(Gradient::Linear),
+        "radial-gradient" => input
             .parse_nested_block(|i| parse_radial_gradient_body(i, false))
-            .map(Gradient::Radial)
-    } else if name.eq_ignore_ascii_case("repeating-radial-gradient") {
-        input
+            .map(Gradient::Radial),
+        "repeating-radial-gradient" => input
             .parse_nested_block(|i| parse_radial_gradient_body(i, true))
-            .map(Gradient::Radial)
-    } else if name.eq_ignore_ascii_case("conic-gradient") {
-        input
+            .map(Gradient::Radial),
+        "conic-gradient" => input
             .parse_nested_block(|i| parse_conic_gradient_body(i, false))
-            .map(Gradient::Conic)
-    } else if name.eq_ignore_ascii_case("repeating-conic-gradient") {
-        input
+            .map(Gradient::Conic),
+        "repeating-conic-gradient" => input
             .parse_nested_block(|i| parse_conic_gradient_body(i, true))
-            .map(Gradient::Conic)
-    } else {
-        Err(input.new_custom_error(()))
+            .map(Gradient::Conic),
+        _ => Err(input.new_custom_error(())),
     }
 }
 
-/// `<angle> | <zero>` (CSS Values 4 §7.1、[`Angle`] doc参照)。legacy な bare
-/// `0` のみ unitless を許す — [`parse_length_value`]の"Unitless zero"節と
-/// 同じ CSS Values 3 §5 の規則を angle 側で適用したもの。単位変換
-/// (grad/rad/turn → deg) の overflow saturation も同関数の "Percentage
+/// `<angle> | <zero>` (CSS Values 4 §7.1、[`Angle`] doc参照)。bare `0` のみ
+/// unitless を許す — CSS Values 4 §7.1 が明記する通り、`<angle>` 自体は
+/// 一般には unitless zero を許さない ("For legacy reasons, some uses of
+/// `<angle>` allow a bare 0 to mean 0deg. This is not true in general")。
+/// この crate が呼び出し元 (`linear-gradient()` の `[ <angle> | <zero> | to
+/// <side-or-corner> ]`、`conic-gradient()` の `from [ <angle> | <zero> ]`、
+/// いずれも CSS Images 4 §3) の grammar に明示的な `<zero>` alternative を
+/// 持つ「legacy な用法」に該当するため、bare `0` を受理する
+/// (`<length-percentage>` の unitless-zero — [`parse_length_value`]の
+/// "Unitless zero" 節 — とは別の、angle 固有の根拠)。単位変換
+/// (grad/rad/turn → deg) の overflow saturation は同関数の "Percentage
 /// overflow" 節と同じ方針 (`is_infinite()` の場合のみ符号を保持して
 /// `f32::MAX` へ寄せる、`NaN` は無変換)。
 fn parse_angle<'i>(input: &mut Parser<'i, '_>) -> Result<Angle, ParseError<'i, ()>> {
@@ -13541,29 +13573,23 @@ fn parse_non_negative_length_percentage_res<'i>(
 }
 
 /// `in <color-space> <hue-interpolation-method>?` ([`GradientColorInterpolation`]
-/// doc参照) — `parse_color_mix_function`の同じ節と同一 shape・同一
-/// helper (`parse_mix_color_space`/`parse_hue_interpolation_method`) を
-/// 再利用する。
+/// doc参照) — parse + validation は `parse_color_mix_function`と共有する
+/// [`parse_color_interpolation_method`] に委譲し、ここでは結果 tuple を
+/// [`GradientColorInterpolation`] へ組み立てるだけ。
 fn parse_gradient_color_interpolation<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<GradientColorInterpolation, ParseError<'i, ()>> {
-    input.expect_ident_matching("in")?;
-    let color_space = parse_mix_color_space(input)?;
-    let explicit_hue_method = input.try_parse(parse_hue_interpolation_method).ok();
-    if explicit_hue_method.is_some()
-        && !matches!(color_space, MixColorSpace::Lch | MixColorSpace::Oklch)
-    {
-        return Err(input.new_custom_error(()));
-    }
+    let (color_space, hue_method) = parse_color_interpolation_method(input)?;
     Ok(GradientColorInterpolation {
         color_space,
-        hue_method: explicit_hue_method.unwrap_or(HueInterpolationMethod::Shorter),
+        hue_method,
     })
 }
 
 /// [`GradientColorInterpolation`] の spec-mandated default — `in ...` 節
-/// 省略時、CSS Images 4 §3.1 "the color space used for gradient
-/// interpolation is the default interpolation color space, Oklab"。
+/// 省略時、CSS Images 4 §3.5.2 "Coloring the Gradient Line" "the color
+/// space used for gradient interpolation is the default interpolation
+/// color space, Oklab"。
 fn default_gradient_color_interpolation() -> GradientColorInterpolation {
     GradientColorInterpolation {
         color_space: MixColorSpace::Oklab,
@@ -13788,6 +13814,14 @@ enum RadialSizeAuthored {
     Ellipse(Length, Length),
 }
 
+/// [`parse_radial_shape_size_position_group`] の戻り値 shape — clippy
+/// `type_complexity` を避けるための alias (意味論的な新型ではない)。
+type RadialShapeSizePositionGroup = (
+    Option<RadialShape>,
+    Option<RadialSizeAuthored>,
+    Option<CssPosition>,
+);
+
 /// `<radial-size>` (CSS Images 3 §3.2.1 baseline grammar、[`RadialSize`]
 /// doc参照)。2 つの `<length-percentage [0,∞]>` (ellipse form) を先に試す —
 /// 単一 token しか無い入力では 2 個目の parse が失敗して丸ごと rewind し、
@@ -13851,19 +13885,20 @@ fn resolve_radial_shape_and_size(
     }
 }
 
-/// `radial-gradient()`/`repeating-radial-gradient()` の nested block body
-/// ([`RadialGradient`] doc の grammar 参照)。`shape`/`size`/`at
-/// <position>`/`in <color-space>...` の 4 要素を any-order で読む
-/// ([`parse_linear_gradient_body`]と同じ「見つかった場合のみ comma
-/// 必須」構造)。
-fn parse_radial_gradient_body<'i>(
+/// `[ <radial-shape> || <radial-size> ]? [ at <position> ]?` — spec の
+/// juxtaposition (space 区切り) が示す通り、`shape`/`size` は互いに
+/// any-order (内側 `||`) だが、`at <position>` はこのグループ全体の
+/// **後**にしか現れない (順序固定)。`shape`/`size`/`position` のいずれも
+/// 無ければ `Err` を返す — [`parse_radial_gradient_body`]側の outer `||`
+/// loop が「このグループを 1 要素として `<color-interpolation-method>`
+/// と任意順に読む」ために、空マッチと「何も無かった」を区別する必要が
+/// あるため (`try_parse` が空マッチを毎回成功として返すと、outer loop の
+/// 2 巡目以降でこのグループを再試行できなくなる)。
+fn parse_radial_shape_size_position_group<'i>(
     input: &mut Parser<'i, '_>,
-    repeating: bool,
-) -> Result<RadialGradient, ParseError<'i, ()>> {
+) -> Result<RadialShapeSizePositionGroup, ParseError<'i, ()>> {
     let mut shape: Option<RadialShape> = None;
     let mut size: Option<RadialSizeAuthored> = None;
-    let mut position: Option<CssPosition> = None;
-    let mut interpolation: Option<GradientColorInterpolation> = None;
     loop {
         if shape.is_none()
             && let Ok(value) = input.try_parse(parse_radial_shape_keyword)
@@ -13877,10 +13912,36 @@ fn parse_radial_gradient_body<'i>(
             size = Some(value);
             continue;
         }
-        if position.is_none()
-            && let Ok(value) = input.try_parse(parse_at_position)
+        break;
+    }
+    let position = input.try_parse(parse_at_position).ok();
+    if shape.is_none() && size.is_none() && position.is_none() {
+        return Err(input.new_custom_error(()));
+    }
+    Ok((shape, size, position))
+}
+
+/// `radial-gradient()`/`repeating-radial-gradient()` の nested block body
+/// ([`RadialGradient`] doc の grammar 参照)。Grammar `[ [ [ <radial-shape>
+/// || <radial-size> ]? [ at <position> ]? ] || <color-interpolation-method>
+/// ]?` の外側 `||` (shape/size/position グループと
+/// `<color-interpolation-method>` の間) を any-order loop で読む —
+/// グループ内部の順序制約 ([`parse_radial_shape_size_position_group`]
+/// doc参照) は [`parse_linear_gradient_body`]の 2-slot 構造と異なりグループ
+/// 自体が 1 slot になっている点に注意 (`shape`/`size`/`position` を outer
+/// loop の独立した slot にすると `at center circle` のような spec-invalid
+/// な順序 — position が shape/size より前 — まで受理してしまう)。
+fn parse_radial_gradient_body<'i>(
+    input: &mut Parser<'i, '_>,
+    repeating: bool,
+) -> Result<RadialGradient, ParseError<'i, ()>> {
+    let mut group: Option<RadialShapeSizePositionGroup> = None;
+    let mut interpolation: Option<GradientColorInterpolation> = None;
+    loop {
+        if group.is_none()
+            && let Ok(value) = input.try_parse(parse_radial_shape_size_position_group)
         {
-            position = Some(value);
+            group = Some(value);
             continue;
         }
         if interpolation.is_none()
@@ -13891,11 +13952,12 @@ fn parse_radial_gradient_body<'i>(
         }
         break;
     }
-    let any = shape.is_some() || size.is_some() || position.is_some() || interpolation.is_some();
+    let any = group.is_some() || interpolation.is_some();
     if any {
         input.expect_comma()?;
     }
     let stops = parse_gradient_color_stop_list(input)?;
+    let (shape, size, position) = group.unwrap_or((None, None, None));
     let (resolved_shape, resolved_size) =
         resolve_radial_shape_and_size(shape, size).ok_or_else(|| input.new_custom_error(()))?;
     Ok(RadialGradient {
@@ -13913,28 +13975,39 @@ fn parse_conic_from_angle<'i>(input: &mut Parser<'i, '_>) -> Result<Angle, Parse
     parse_angle(input)
 }
 
+/// `[ from [ <angle> | <zero> ] ]? [ at <position> ]?` —
+/// [`parse_radial_shape_size_position_group`]の conic 版。spec の
+/// juxtaposition により `from <angle>` は `at <position>` より必ず先
+/// (こちらは shape/size 側と違い、先頭要素自体が単一 component なので
+/// 内側に `||` は無い)。空マッチと区別するための `Err` fallback も同型。
+fn parse_conic_from_position_group<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<(Option<Angle>, Option<CssPosition>), ParseError<'i, ()>> {
+    let angle = input.try_parse(parse_conic_from_angle).ok();
+    let position = input.try_parse(parse_at_position).ok();
+    if angle.is_none() && position.is_none() {
+        return Err(input.new_custom_error(()));
+    }
+    Ok((angle, position))
+}
+
 /// `conic-gradient()`/`repeating-conic-gradient()` の nested block body
-/// ([`ConicGradient`] doc の grammar 参照)。`from <angle>`/`at
-/// <position>`/`in <color-space>...` の 3 要素を any-order で読む
-/// ([`parse_radial_gradient_body`]と同じ構造)。
+/// ([`ConicGradient`] doc の grammar 参照)。外側 `||` (`from`/`at`
+/// グループと `<color-interpolation-method>` の間) を any-order loop で
+/// 読む — [`parse_radial_gradient_body`]と同じ「グループを 1 slot として
+/// 扱う」構造 (`at center from 45deg` のような spec-invalid な逆順を
+/// 拒否するのに必要、[`parse_conic_from_position_group`] doc参照)。
 fn parse_conic_gradient_body<'i>(
     input: &mut Parser<'i, '_>,
     repeating: bool,
 ) -> Result<ConicGradient, ParseError<'i, ()>> {
-    let mut angle: Option<Angle> = None;
-    let mut position: Option<CssPosition> = None;
+    let mut group: Option<(Option<Angle>, Option<CssPosition>)> = None;
     let mut interpolation: Option<GradientColorInterpolation> = None;
     loop {
-        if angle.is_none()
-            && let Ok(value) = input.try_parse(parse_conic_from_angle)
+        if group.is_none()
+            && let Ok(value) = input.try_parse(parse_conic_from_position_group)
         {
-            angle = Some(value);
-            continue;
-        }
-        if position.is_none()
-            && let Ok(value) = input.try_parse(parse_at_position)
-        {
-            position = Some(value);
+            group = Some(value);
             continue;
         }
         if interpolation.is_none()
@@ -13945,10 +14018,12 @@ fn parse_conic_gradient_body<'i>(
         }
         break;
     }
-    if angle.is_some() || position.is_some() || interpolation.is_some() {
+    let any = group.is_some() || interpolation.is_some();
+    if any {
         input.expect_comma()?;
     }
     let stops = parse_angular_color_stop_list(input)?;
+    let (angle, position) = group.unwrap_or((None, None));
     Ok(ConicGradient {
         repeating,
         angle: angle.unwrap_or(Angle(0.0)),
@@ -26837,7 +26912,7 @@ mod tests {
     #[test]
     fn background_image_rejects_conic_gradient_single_stop() {
         // `<angular-color-stop-list>` requires 2+ stops, same as
-        // [`GradientColorStop`]'s linear/radial sibling.
+        // `GradientColorStop`'s linear/radial sibling.
         assert_eq!(parse("conic-gradient(red)", "background-image"), None);
     }
 
@@ -26893,7 +26968,7 @@ mod tests {
 
     #[test]
     fn background_image_rejects_linear_gradient_single_stop() {
-        // CSS Images 3 baseline grammar requires 2+ stops ([`BackgroundImage`]
+        // CSS Images 3 baseline grammar requires 2+ stops (`BackgroundImage`
         // doc's scope-carving note — Level 4's single-stop relaxation is
         // deferred).
         assert_eq!(parse("linear-gradient(red)", "background-image"), None);
@@ -26941,10 +27016,83 @@ mod tests {
     #[test]
     fn background_image_rejects_unimplemented_interpolation_color_space() {
         // `hsl`/`hwb`/`xyz` family have no `<color>` function parser in this
-        // crate ([`MixColorSpace`] doc's scope-carving note), so they aren't
+        // crate (`MixColorSpace` doc's scope-carving note), so they aren't
         // offered as gradient interpolation spaces either.
         assert_eq!(
             parse("linear-gradient(in hsl, red, blue)", "background-image"),
+            None
+        );
+    }
+
+    #[test]
+    fn background_image_parses_linear_gradient_direction_and_interpolation_together_either_order() {
+        // CSS Images 4 §3.1.1's own worked example, plus the reverse
+        // ordering — the `||` combinator in `[ [ <angle> | <zero> | to
+        // <side-or-corner> ] || <color-interpolation-method> ]?` permits
+        // either order, exercising both branches of
+        // `parse_linear_gradient_body`'s any-order loop in one gradient
+        // rather than direction-only and interpolation-only separately.
+        let direction_first = expect_linear_gradient(parse(
+            "linear-gradient(in lab to right, #F01, #081)",
+            "background-image",
+        ));
+        let interpolation_first = expect_linear_gradient(parse(
+            "linear-gradient(to right in lab, #F01, #081)",
+            "background-image",
+        ));
+        let expected_direction = LinearGradientDirection::Side(SideOrCorner {
+            horizontal: Some(HorizontalSide::Right),
+            vertical: None,
+        });
+        let expected_interpolation = GradientColorInterpolation {
+            color_space: MixColorSpace::Lab,
+            hue_method: HueInterpolationMethod::Shorter,
+        };
+        assert_eq!(direction_first.direction, expected_direction);
+        assert_eq!(direction_first.interpolation, expected_interpolation);
+        assert_eq!(interpolation_first.direction, expected_direction);
+        assert_eq!(interpolation_first.interpolation, expected_interpolation);
+    }
+
+    #[test]
+    fn background_image_rejects_radial_gradient_bare_percentage_size() {
+        // CSS Images 3 §3.2.1: "Percentages are not allowed here" for the
+        // circle-radius `<length [0,∞]>` alternative — a bare `50%` (no
+        // second value) doesn't match the 2-value ellipse form either, so
+        // `parse_radial_size` has no alternative left to try.
+        assert_eq!(
+            parse("radial-gradient(50%, red, blue)", "background-image"),
+            None
+        );
+    }
+
+    #[test]
+    fn background_image_rejects_radial_gradient_position_before_shape() {
+        // CSS Images 4 §3.2.1's `[ <radial-shape> || <radial-size> ]? [ at
+        // <position> ]?` is a *sequence* of two groups — `at <position>`
+        // may only follow the shape/size group, never precede it.
+        // `parse_radial_shape_size_position_group` claims `at center` as a
+        // position-only match, leaving `circle` as an unconsumed leftover
+        // token that fails the subsequent `expect_comma()`.
+        assert_eq!(
+            parse(
+                "radial-gradient(at center circle, red, blue)",
+                "background-image"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn background_image_rejects_conic_gradient_position_before_from_angle() {
+        // Angular sibling of `..._rejects_radial_gradient_position_before_shape`
+        // — CSS Images 4 §3.3.1's `[ from [...] ]? [ at <position> ]?` is
+        // likewise a sequence, `from` before `at`.
+        assert_eq!(
+            parse(
+                "conic-gradient(at center from 45deg, red, blue)",
+                "background-image"
+            ),
             None
         );
     }
@@ -27115,6 +27263,30 @@ mod tests {
                 "radial-gradient(circle -5px, red, blue)",
                 "background-image"
             ),
+            None
+        );
+    }
+
+    #[test]
+    fn background_image_rejects_linear_gradient_double_position_stop() {
+        // Level 4's `<color-stop-length> = <length-percentage>{1,2}` (one
+        // stop, two positions) is deferred scope (`GradientColorStop` doc)
+        // — this pins that the second position is *rejected*, not silently
+        // discarded: after `parse_gradient_color_stop` consumes one
+        // `<length-percentage>`, the leftover `20%` token makes
+        // `parse_comma_separated`'s per-segment parse fail, dropping the
+        // whole declaration rather than producing a stop at `10%` alone.
+        assert_eq!(
+            parse("linear-gradient(red 10% 20%, blue)", "background-image"),
+            None
+        );
+    }
+
+    #[test]
+    fn background_image_rejects_conic_gradient_double_angle_stop() {
+        // Angular sibling of `..._rejects_linear_gradient_double_position_stop`.
+        assert_eq!(
+            parse("conic-gradient(red 0deg 90deg, blue)", "background-image"),
             None
         );
     }

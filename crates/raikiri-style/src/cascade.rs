@@ -14363,6 +14363,33 @@ mod tests {
     }
 
     #[test]
+    fn background_image_radial_gradient_position_before_shape_does_not_overwrite_an_earlier_url() {
+        // Same shape as `background_image_invalid_gradient_does_not_overwrite_an_earlier_url`,
+        // but with a different flavor of syntactically-invalid gradient:
+        // `at center circle` violates CSS Images 4 §3.2.1's `[ [
+        // <radial-shape> || <radial-size> ]? [ at <position> ]? ]`
+        // sequencing (`at <position>` may only follow the shape/size group,
+        // never precede it) — without this test, a regression that widens
+        // `parse_radial_gradient_body` back to a flat any-order loop over
+        // shape/size/position (rather than treating shape/size/position as
+        // one ordered group) would *accept* this declaration and overwrite
+        // the earlier `url(...)` winner with a spec-invalid gradient,
+        // silently corrupting the cascade result instead of failing loudly.
+        use crate::property::BackgroundImage;
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some(
+                "background-image: url(a.png); background-image: radial-gradient(at center circle, red, blue)",
+            ),
+        );
+        assert_eq!(
+            cv.background_image,
+            BackgroundImage::Url("a.png".to_string())
+        );
+    }
+
+    #[test]
     fn orphans_widows_wired_through_cascade_from_inline_style() {
         let cv = cascade_doc("", "p", Some("orphans: 4; widows: 3"));
         assert_eq!(cv.orphans, 4);

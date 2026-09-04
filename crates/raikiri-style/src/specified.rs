@@ -1208,7 +1208,7 @@ impl SpecifiedValues {
             // computed value = specified value (`None`/`Url(String)`/
             // `Gradient(..)`) — 自 node の winner 適用結果をそのまま素通し。
             // `Gradient(..)`の length/angle は絶対化しない
-            // ([`Self::background_image`] doc の scope note参照)。
+            // (`Self::background_image` doc の scope note参照)。
             background_image: self.background_image,
             // CSS Overflow 3 §3.1 cross-axis computed-value coupling
             // — same-node sibling dependency, resolved
