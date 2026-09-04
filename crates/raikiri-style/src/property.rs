@@ -646,6 +646,68 @@ impl<T> Sides<T> {
     }
 }
 
+/// CSS Logical Properties and Values Level 1 の flow-relative 2-value
+/// shorthand (`margin-inline` / `margin-block` / `padding-inline` /
+/// `padding-block`、いずれも grammar `<'*-top'>{1,2}`) が共有する
+/// start/end pair holder。[`Sides<T>`] (4-value box-model shorthand) の
+/// 2-value sibling — 同じ理由 (型パラメータで margin の `LengthOrAuto` と
+/// padding の `Length` の value type 差を吸収する) で generic 化する。
+///
+/// field 名は spec の `-start` / `-end` suffix (flow-relative、`top`/`right`/
+/// `bottom`/`left` のような物理名ではない) にそのまま合わせる。本 crate での
+/// 実際の物理 side への写像は固定 (raikiri は writing-mode: horizontal-tb +
+/// direction: ltr を仮定する) — 詳細は
+/// [`PropertyValue::MarginInline`] doc の Non-goal 節参照。
+///
+/// `Eq` derive は [`Sides<T>`] と同じく `T: Eq` conditional に伝わるのみ
+/// (`StartEnd<Length>` / `StartEnd<LengthOrAuto>` は共に inner が f32 を含む
+/// ため実質 Eq にはならない — 実 usage は `PartialEq`)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StartEnd<T> {
+    /// `*-start` component (`margin-inline-start` / `margin-block-start` /
+    /// `padding-inline-start` / `padding-block-start` に相当)。
+    pub start: T,
+    /// `*-end` component (`margin-inline-end` / `margin-block-end` /
+    /// `padding-inline-end` / `padding-block-end` に相当)。
+    pub end: T,
+}
+
+impl<T: Clone> StartEnd<T> {
+    /// start/end を同じ値で埋める constructor — `margin-inline: <value>` /
+    /// `margin-block: <value>` 等の 1-value shorthand expansion (CSS Logical
+    /// Properties and Values 1 §4.2/§4.4 の 2-value grammar
+    /// `<'margin-top'>{1,2}` / `<'padding-top'>{1,2}`... の "If only one
+    /// value is given, it applies to both the start and end edges" 相当) で
+    /// 使う共通 helper — [`Sides::all`] の 2-value 版。
+    pub fn both(v: T) -> Self {
+        Self {
+            start: v.clone(),
+            end: v,
+        }
+    }
+}
+
+impl<T> StartEnd<T> {
+    /// start/end を独立に写像する — [`Sides::map`] の 2-value 版。
+    /// `@page` cascade の phase 3 絶対化
+    /// (`page.rs` の `absolutize_in_page_context`、module-private のため
+    /// intra-doc link 不可) で使う (element cascade
+    /// 側は shorthand PropertyValue が
+    /// [`crate::specified::SpecifiedValues`] 上の
+    /// field を持たないため、この shorthand 型自体には触れない — 詳細は
+    /// [`PropertyValue::MarginInline`] doc の
+    /// "element cascade 段でこの variant は観測されない" 節)。
+    ///
+    /// `pub(crate)` — 現状 consumer は crate 内の絶対化のみ ([`Sides::map`]
+    /// と同じ可視性)。
+    pub(crate) fn map<U>(self, mut f: impl FnMut(T) -> U) -> StartEnd<U> {
+        StartEnd {
+            start: f(self.start),
+            end: f(self.end),
+        }
+    }
+}
+
 /// `border-style` の value — spec `<line-style>` production の 10 keyword。
 ///
 /// CSS Backgrounds 3 §3.2 "Line Patterns: the border-style properties"
@@ -4855,6 +4917,99 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] doc 参照)。
     /// margin と同じ parse-time expansion model への migrate を検討 (follow-up task)。
     Padding(Sides<Length>),
+    /// `padding-inline: <'padding-top'>{1,2}` shorthand — CSS Logical
+    /// Properties and Values 1 §4.4 "Flow-Relative Padding: the
+    /// padding-block-start, padding-block-end, padding-inline-start,
+    /// padding-inline-end properties and padding-block and padding-inline
+    /// shorthands" <https://www.w3.org/TR/css-logical-1/#propdef-padding-inline>。
+    /// 2-value expansion: 1st value = `padding-inline-start`、2nd value =
+    /// `padding-inline-end` (2nd 省略時は 1st を copy — [`StartEnd::both`])。
+    ///
+    /// # 物理写像 (Non-goal: writing-mode / direction 依存の flow-relative mapping)
+    ///
+    /// spec は `padding-inline-start`/`padding-inline-end` (および
+    /// `padding-block-start`/`padding-block-end`) がどの物理 side
+    /// (`padding-top`/`padding-right`/`padding-bottom`/`padding-left`) に
+    /// 対応するかを、**その element 自身の computed `writing-mode` /
+    /// `direction` / `text-orientation` に依存して決まる**と定める
+    /// (CSS Logical Properties and Values 1 §4 冒頭)。raikiri は次の 2 点で
+    /// この依存を切り、常に固定の物理 side へ写像する — 2 点の性質は
+    /// **非対称**であることに注意:
+    ///
+    /// - **block axis** ([`PaddingBlock`](Self::PaddingBlock) 経由の
+    ///   `padding-block-start`/`-end` → `padding-top`/`padding-bottom`):
+    ///   raikiri は縦書きレンダリングパイプラインを実装しないため computed
+    ///   writing-mode は常に [`WritingMode::HorizontalTb`] に潰れる
+    ///   ([`resolve_writing_mode`] doc の Non-goal 節)。`horizontal-tb` の下
+    ///   では block axis は常に vertical (block-start = top) であり、
+    ///   `direction` は block axis の写像に一切関与しない (spec 上も
+    ///   `horizontal-tb` + 任意の `direction` で block-start は常に top)。
+    ///   したがってこちらは **近似ではなく厳密** — raikiri の scope
+    ///   (computed writing-mode が常に `horizontal-tb`) の下では spec と
+    ///   完全に一致する。
+    /// - **inline axis** (本 variant 自身 / `padding-inline-start`/`-end` →
+    ///   `padding-left`/`padding-right`): 上記に加えて **`direction: ltr`
+    ///   を仮定**する。`direction` property 自体はこの crate に実装済み
+    ///   ([`PropertyValue::Direction`] doc) だが、この写像はそれを
+    ///   **参照しない** — 下記「なぜ 8 longhand が専用 variant を持たないか」
+    ///   節が説明するとおり、本 PR はこの写像を parse 時点で (cascade winner
+    ///   が確定する前に) 固定的に決める設計を選んだため。`direction` の
+    ///   computed 値自体は cascade winner 確定後であれば this crate 内で
+    ///   参照可能 ([`resolve_text_align_match_parent`] が
+    ///   `SpecifiedValues::finalize` から同種の post-cascade 解決を既に行う
+    ///   precedent) — direction-aware な解決はこの scope では意図的に
+    ///   defer しているのであって、このアーキテクチャで原理的に不可能な
+    ///   わけではない。**これは近似であり、
+    ///   `direction: rtl` の element では spec と食い違う** —
+    ///   `direction: rtl` では `padding-inline-start` は本来
+    ///   `padding-right` に対応するが、raikiri は常に `padding-left` に
+    ///   写像する。
+    ///
+    /// この非対称 (block axis は厳密、inline axis は近似) は [`OverflowValue`]
+    /// doc の Non-goal 節が説明する `overflow-inline`/`overflow-block`
+    /// (`overflow` shorthand の 2 component) の物理 x/y 写像より 1 段階
+    /// 複雑 — overflow の inline/block はそれぞれ 1 axis に付き 1 value
+    /// (`overflow-x`/`overflow-y` の pair) であり `start`/`end` の区別が
+    /// 無いため direction は最初から無関係だった。本 property は axis
+    /// ごとに `start`/`end` の 2 side を持つため、inline axis に限り
+    /// direction 依存の近似が追加で必要になる。
+    ///
+    /// # なぜ 8 longhand (`padding-inline-start`/`-end`/`padding-block-start`/
+    /// `-end` および margin 側の対応 4 つ) が専用 `PropertyValue` variant を
+    /// 持たないか
+    ///
+    /// 上記の固定写像は cascade 時点の任意の状態 (親から継承した
+    /// `direction` の computed 値、同 node の `direction` winner など) に
+    /// 一切依存しない — parse 時点で既に確定する。したがって
+    /// `padding-inline-start: <value>` は [`Self::PaddingLeft`]・
+    /// `padding-block-start: <value>` は [`Self::PaddingTop`] と**全く同じ**
+    /// `PropertyValue` を produce する (`parse_value` の該当 arm、
+    /// `property_key_for_name` の該当 arm)。別 variant を新設しないのは、
+    /// 既存の `word-wrap`/`overflow-wrap` legacy alias 化 (同 grammar の
+    /// 別名を同じ `PropertyValue`/[`PropertyKey`] へ畳む、`parse_value` の
+    /// `"overflow-wrap" | "word-wrap"` arm 参照) と同型の判断であり、
+    /// cascade winner selection 上も「同じ物理 property を取り合う」という
+    /// spec の実際の cascade 挙動 (CSS Logical Properties and Values 1 §4
+    /// 冒頭の "corresponding flow-relative and physical properties are
+    /// paired" — 対応する論理/物理 property は同じ物理 target を取り合う)
+    /// と一致する。
+    ///
+    /// # element cascade 段でこの variant 自身は観測されない
+    ///
+    /// [`Self::Padding`] / [`Self::Margin`] と同じ理由 —
+    /// [`crate::rule::expand_shorthand_into`] が parse 出口と element
+    /// cascade 入口の両方で [`Self::PaddingLeft`]/[`Self::PaddingRight`]
+    /// の 2 longhand に展開するため。到達した場合の
+    /// [`crate::cascade::apply_value`] の挙動は **safety net ではない**
+    /// (`Padding`/`Margin` arm と同じ framing)。
+    PaddingInline(StartEnd<Length>),
+    /// `padding-block: <'padding-top'>{1,2}` shorthand — [`Self::PaddingInline`]
+    /// と同じ grammar/expansion/物理写像 rationale ([`Self::PaddingInline`]
+    /// doc が canonical)、block axis 側 (`padding-block-start`/`-end` →
+    /// `padding-top`/`padding-bottom` — 厳密写像、近似ではない)。CSS Logical
+    /// Properties and Values 1 §4.4
+    /// <https://www.w3.org/TR/css-logical-1/#propdef-padding-block>。
+    PaddingBlock(StartEnd<Length>),
     /// `margin-top: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
     MarginTop(LengthOrAuto),
@@ -4888,6 +5043,26 @@ pub enum PropertyValue {
     /// [`crate::cascade::apply_value`] の `Margin` arm doc、および
     /// [`crate::rule::expand_shorthand_into`] doc 参照)。
     Margin(Sides<LengthOrAuto>),
+    /// `margin-inline: <'margin-top'>{1,2}` shorthand — CSS Logical
+    /// Properties and Values 1 §4.2 "Flow-Relative Margins: the
+    /// margin-block-start, margin-block-end, margin-inline-start,
+    /// margin-inline-end properties and margin-block and margin-inline
+    /// shorthands" <https://www.w3.org/TR/css-logical-1/#propdef-margin-inline>。
+    /// grammar/expansion/物理写像の rationale は [`Self::PaddingInline`] doc
+    /// が canonical — payload が `<length-percentage> | auto` である点のみ
+    /// [`Self::Margin`] と同じく padding と異なる (`auto` は
+    /// [`parse_margin_side`] がそのまま通す)。inline axis (本 variant 自身 /
+    /// `margin-inline-start`/`-end` → `margin-left`/`margin-right`) 側 —
+    /// [`Self::PaddingInline`] doc の「非対称」節が述べるとおり
+    /// `direction: ltr` を仮定する近似 (`direction: rtl` では spec と食い違う)。
+    MarginInline(StartEnd<LengthOrAuto>),
+    /// `margin-block: <'margin-top'>{1,2}` shorthand — [`Self::MarginInline`]
+    /// と同じ grammar/expansion/物理写像 rationale、block axis 側
+    /// (`margin-block-start`/`-end` → `margin-top`/`margin-bottom` — 厳密
+    /// 写像、近似ではない、[`Self::PaddingInline`] doc の「非対称」節参照)。
+    /// CSS Logical Properties and Values 1 §4.2
+    /// <https://www.w3.org/TR/css-logical-1/#propdef-margin-block>。
+    MarginBlock(StartEnd<LengthOrAuto>),
     /// `border-top-width: <line-width>` — non-inherited、initial: `medium`
     /// = `Length::Px(3.0)` (CSS Backgrounds 3 §3.3
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。
@@ -5602,6 +5777,15 @@ pub enum PropertyKey {
     /// 書き忘れ」は [`crate::rule::expand_shorthand_into`] の exhaustive match により
     /// compile-time に排除されている。
     Padding,
+    // padding-inline / padding-block logical 2-value shorthand (CSS Logical
+    // Properties and Values 1 §4.4, semantics on the matching
+    // PropertyValue::PaddingInline / PropertyValue::PaddingBlock variants).
+    // Placed after `Padding` for the same "shorthand key comes after the
+    // longhands it can compete with" convention (`PropertyKey` doc's
+    // "宣言順は load-bearing" section) — both expand into a subset of the
+    // same 4 padding longhands `Padding` does.
+    PaddingInline,
+    PaddingBlock,
     // margin longhand + shorthand (semantics on the
     // matching PropertyValue::Margin* variants; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
@@ -5610,6 +5794,12 @@ pub enum PropertyKey {
     MarginBottom,
     MarginLeft,
     Margin,
+    // margin-inline / margin-block logical 2-value shorthand — same
+    // placement rationale as `PaddingInline`/`PaddingBlock` above
+    // (semantics on the matching PropertyValue::MarginInline /
+    // PropertyValue::MarginBlock variants).
+    MarginInline,
+    MarginBlock,
     // border longhand + shorthand (semantics on the
     // matching PropertyValue::Border* variants; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
@@ -5864,11 +6054,15 @@ impl PropertyValue {
             PropertyValue::PaddingBottom(_) => PropertyKey::PaddingBottom,
             PropertyValue::PaddingLeft(_) => PropertyKey::PaddingLeft,
             PropertyValue::Padding(_) => PropertyKey::Padding,
+            PropertyValue::PaddingInline(_) => PropertyKey::PaddingInline,
+            PropertyValue::PaddingBlock(_) => PropertyKey::PaddingBlock,
             PropertyValue::MarginTop(_) => PropertyKey::MarginTop,
             PropertyValue::MarginRight(_) => PropertyKey::MarginRight,
             PropertyValue::MarginBottom(_) => PropertyKey::MarginBottom,
             PropertyValue::MarginLeft(_) => PropertyKey::MarginLeft,
             PropertyValue::Margin(_) => PropertyKey::Margin,
+            PropertyValue::MarginInline(_) => PropertyKey::MarginInline,
+            PropertyValue::MarginBlock(_) => PropertyKey::MarginBlock,
             PropertyValue::BorderTopWidth(_) => PropertyKey::BorderTopWidth,
             PropertyValue::BorderRightWidth(_) => PropertyKey::BorderRightWidth,
             PropertyValue::BorderBottomWidth(_) => PropertyKey::BorderBottomWidth,
@@ -6223,11 +6417,30 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "padding-bottom" => PropertyKey::PaddingBottom,
         "padding-left" => PropertyKey::PaddingLeft,
         "padding" => PropertyKey::Padding,
+        // CSS Logical Properties and Values 1 §4.4 padding-inline-start/-end /
+        // padding-block-start/-end — physically fixed-mapped onto the
+        // matching padding-{left,right,top,bottom} key (`PropertyValue::PaddingInline`
+        // doc's "なぜ 8 longhand が専用 variant を持たないか" section).
+        "padding-inline-start" => PropertyKey::PaddingLeft,
+        "padding-inline-end" => PropertyKey::PaddingRight,
+        "padding-block-start" => PropertyKey::PaddingTop,
+        "padding-block-end" => PropertyKey::PaddingBottom,
+        "padding-inline" => PropertyKey::PaddingInline,
+        "padding-block" => PropertyKey::PaddingBlock,
         "margin-top" => PropertyKey::MarginTop,
         "margin-right" => PropertyKey::MarginRight,
         "margin-bottom" => PropertyKey::MarginBottom,
         "margin-left" => PropertyKey::MarginLeft,
         "margin" => PropertyKey::Margin,
+        // CSS Logical Properties and Values 1 §4.2 margin-inline-start/-end /
+        // margin-block-start/-end — same physically fixed-mapped pattern as
+        // padding-inline-*/padding-block-* above.
+        "margin-inline-start" => PropertyKey::MarginLeft,
+        "margin-inline-end" => PropertyKey::MarginRight,
+        "margin-block-start" => PropertyKey::MarginTop,
+        "margin-block-end" => PropertyKey::MarginBottom,
+        "margin-inline" => PropertyKey::MarginInline,
+        "margin-block" => PropertyKey::MarginBlock,
         "border-top-width" => PropertyKey::BorderTopWidth,
         "border-right-width" => PropertyKey::BorderRightWidth,
         "border-bottom-width" => PropertyKey::BorderBottomWidth,
@@ -6442,6 +6655,27 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
         // 1-4 value expansion は parse_padding_shorthand が spec verbatim で適用。
         "padding" => parse_padding_shorthand(input).map(PropertyValue::Padding),
+        // CSS Logical Properties and Values 1 §4.4 padding-inline-start/-end /
+        // padding-block-start/-end — physically fixed-mapped onto the
+        // matching padding physical longhand (`PropertyValue::PaddingInline`
+        // doc's Non-goal section covers the writing-mode/direction
+        // rationale). Grammar/non-negative constraint is identical to the
+        // physical longhand, so this reuses `parse_padding_side` verbatim.
+        "padding-inline-start" => parse_padding_side(input).map(PropertyValue::PaddingLeft),
+        "padding-inline-end" => parse_padding_side(input).map(PropertyValue::PaddingRight),
+        "padding-block-start" => parse_padding_side(input).map(PropertyValue::PaddingTop),
+        "padding-block-end" => parse_padding_side(input).map(PropertyValue::PaddingBottom),
+        // CSS Logical Properties and Values 1 §4.4 padding-inline / padding-block
+        // shorthand: `<'padding-top'>{1,2}`
+        // <https://www.w3.org/TR/css-logical-1/#propdef-padding-inline>.
+        // 1-2 value expansion is identical for both (shared
+        // `parse_padding_logical_shorthand` helper) — the physical axis the
+        // resulting `StartEnd` maps onto is decided by which
+        // `PropertyValue` variant wraps it, not by the parser.
+        "padding-inline" => {
+            parse_padding_logical_shorthand(input).map(PropertyValue::PaddingInline)
+        }
+        "padding-block" => parse_padding_logical_shorthand(input).map(PropertyValue::PaddingBlock),
         // CSS Box 3 §3.1 margin-* physical longhand.
         // <length-percentage> | auto の grammar、negative 許容 (spec 準拠、layout
         // 側で負値の意味付け)。
@@ -6454,6 +6688,21 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // 内で 4 longhand に展開されるため通常観測しない (詳細は
         // `PropertyValue::Margin` doc + `crate::rule::expand_shorthand_into`)。
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
+        // CSS Logical Properties and Values 1 §4.2 margin-inline-start/-end /
+        // margin-block-start/-end — same physically fixed-mapped pattern as
+        // padding-inline-*/padding-block-* above, reusing `parse_margin_side`
+        // verbatim (grammar `<'margin-top'>` = `<length-percentage> | auto`
+        // is identical to the physical longhand).
+        "margin-inline-start" => parse_margin_side(input).map(PropertyValue::MarginLeft),
+        "margin-inline-end" => parse_margin_side(input).map(PropertyValue::MarginRight),
+        "margin-block-start" => parse_margin_side(input).map(PropertyValue::MarginTop),
+        "margin-block-end" => parse_margin_side(input).map(PropertyValue::MarginBottom),
+        // CSS Logical Properties and Values 1 §4.2 margin-inline / margin-block
+        // shorthand: `<'margin-top'>{1,2}`
+        // <https://www.w3.org/TR/css-logical-1/#propdef-margin-inline>. Same
+        // shared-helper shape as padding-inline/padding-block above.
+        "margin-inline" => parse_margin_logical_shorthand(input).map(PropertyValue::MarginInline),
+        "margin-block" => parse_margin_logical_shorthand(input).map(PropertyValue::MarginBlock),
         // CSS Backgrounds 3 §3.3 border-width physical longhand。grammar:
         // `<line-width>` = `<length [0,∞]> |
         // thin | medium | thick`。`<percentage>` は含まれない (padding とは違う点)。
@@ -8537,6 +8786,37 @@ fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<LengthOrAu
     })
 }
 
+/// `margin-inline: <'margin-top'>{1,2}` / `margin-block: <'margin-top'>{1,2}`
+/// shorthand を [`StartEnd<LengthOrAuto>`] に expand する — 1-2 value
+/// expansion。
+///
+/// grammar reference: CSS Logical Properties and Values 1 §4.2
+/// <https://www.w3.org/TR/css-logical-1/#propdef-margin-inline>: "The first
+/// value represents the start edge style, and the second value represents
+/// the end edge style. If only one value is given, it applies to both the
+/// start and end edges." — `margin-block` の propdef も同じ文言・同じ
+/// grammar (`<'margin-top'>{1,2}`) を共有するため、この 1 helper を
+/// `margin-inline`/`margin-block` 両方の parser arm で共用する
+/// ([`PropertyValue::MarginInline`] doc 参照 — 物理 axis (left/right か
+/// top/bottom か) を決めるのは呼び出し側が選ぶ `PropertyValue` variant で
+/// あり、この関数自体は axis を知らない)。
+///
+/// # Robustness
+///
+/// 3 個目以降の value は本 helper では consume せず leftover として残す →
+/// caller (`rule.rs::DeclParser`) の `expect_exhausted` が declaration
+/// ごと drop する ([`parse_margin_shorthand`] の "Trailing garbage
+/// handling" 節と同型)。
+fn parse_margin_logical_shorthand(input: &mut Parser<'_, '_>) -> Option<StartEnd<LengthOrAuto>> {
+    let start = parse_margin_side(input)?;
+    // 2nd value 不在 → 1 value case: start/end 両方に spread (spec "If only
+    // one value is given, it applies to both the start and end edges")。
+    let Some(end) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
+        return Some(StartEnd::both(start));
+    };
+    Some(StartEnd { start, end })
+}
+
 /// `width: auto | <length-percentage [0,∞]>` を parse する。
 ///
 /// grammar reference: CSS Sizing 3 §3.1.1
@@ -8792,6 +9072,36 @@ fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> 
 /// `Result` を要求するため wrapper 化。
 fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, ParseError<'i, ()>> {
     parse_padding_side(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `padding-inline: <'padding-top'>{1,2}` / `padding-block: <'padding-top'>{1,2}`
+/// shorthand を [`StartEnd<Length>`] に expand する — 1-2 value expansion。
+///
+/// grammar reference: CSS Logical Properties and Values 1 §4.4
+/// <https://www.w3.org/TR/css-logical-1/#propdef-padding-inline> — same
+/// "first value = start, second value = end, one value spreads to both"
+/// text as [`parse_margin_logical_shorthand`] documents in full for the
+/// margin sibling; `padding-block`'s propdef shares the same grammar, so
+/// this one helper backs both parser arms (axis choice is the caller's,
+/// via which `PropertyValue` variant wraps the result).
+///
+/// # Robustness
+///
+/// 1st value の non-negative constraint 違反は [`parse_padding_side`] の
+/// `?` propagation でそのまま `None` になる。2nd value 位置の違反は
+/// `try_parse` が rewind するため **1-value form の `Some` として扱われ**、
+/// 違反した token は unconsumed のまま残る → caller
+/// (`rule.rs::DeclParser`) の `expect_exhausted` がその leftover を検知して
+/// declaration ごと drop する ([`parse_padding_shorthand`] の "Robustness"
+/// 節と同型 — `padding_shorthand_rejects_any_negative_value` test の doc が
+/// 同じ shape を pin する)。
+fn parse_padding_logical_shorthand(input: &mut Parser<'_, '_>) -> Option<StartEnd<Length>> {
+    let start = parse_padding_side(input)?;
+    let end = input.try_parse(parse_padding_side_res).ok();
+    Some(match end {
+        None => StartEnd::both(start),
+        Some(end) => StartEnd { start, end },
+    })
 }
 
 /// `border-width` の `medium` keyword (= spec 上の initial value) に対応する
@@ -20072,6 +20382,298 @@ mod tests {
         assert_eq!(s.right, LengthOrAuto::Length(Length::Px(3.5)));
         assert_eq!(s.bottom, LengthOrAuto::Length(Length::Px(3.5)));
         assert_eq!(s.left, LengthOrAuto::Length(Length::Px(3.5)));
+    }
+
+    // ── CSS Logical Properties and Values 1 §4.2/§4.4 margin-inline-*/
+    //    margin-block-*/padding-inline-*/padding-block-* longhand +
+    //    margin-inline/margin-block/padding-inline/padding-block shorthand ──
+    //
+    // Physical fixed-mapping rationale (writing-mode always HorizontalTb
+    // since raikiri does not implement a vertical-writing rendering
+    // pipeline, inline axis additionally assumes `direction: ltr`) is
+    // `PropertyValue::PaddingInline` doc's canonical record — not repeated
+    // per test here.
+
+    #[test]
+    fn margin_inline_start_parses_to_margin_left() {
+        // §4.2 physical fixed-mapping: `margin-inline-start` produces the
+        // exact same `PropertyValue` as `margin-left` (no dedicated variant
+        // — `PropertyValue::PaddingInline` doc's "なぜ 8 longhand が専用
+        // variant を持たないか" section).
+        assert_eq!(
+            parse("5px", "margin-inline-start"),
+            Some(PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Px(
+                5.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn margin_inline_end_parses_to_margin_right() {
+        assert_eq!(
+            parse("auto", "margin-inline-end"),
+            Some(PropertyValue::MarginRight(LengthOrAuto::Auto))
+        );
+    }
+
+    #[test]
+    fn margin_block_start_parses_to_margin_top() {
+        assert_eq!(
+            parse("5px", "margin-block-start"),
+            Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+                5.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn margin_block_end_parses_to_margin_bottom() {
+        assert_eq!(
+            parse("auto", "margin-block-end"),
+            Some(PropertyValue::MarginBottom(LengthOrAuto::Auto))
+        );
+    }
+
+    #[test]
+    fn padding_inline_start_parses_to_padding_left() {
+        assert_eq!(
+            parse("5px", "padding-inline-start"),
+            Some(PropertyValue::PaddingLeft(Length::Px(5.0)))
+        );
+    }
+
+    #[test]
+    fn padding_inline_end_parses_to_padding_right() {
+        assert_eq!(
+            parse("5%", "padding-inline-end"),
+            Some(PropertyValue::PaddingRight(Length::Percent(5.0)))
+        );
+    }
+
+    #[test]
+    fn padding_block_start_parses_to_padding_top() {
+        assert_eq!(
+            parse("5px", "padding-block-start"),
+            Some(PropertyValue::PaddingTop(Length::Px(5.0)))
+        );
+    }
+
+    #[test]
+    fn padding_block_end_parses_to_padding_bottom() {
+        assert_eq!(
+            parse("5px", "padding-block-end"),
+            Some(PropertyValue::PaddingBottom(Length::Px(5.0)))
+        );
+    }
+
+    #[test]
+    fn padding_inline_block_start_end_reject_negative() {
+        // CSS Box 3 §4.1 "Negative values for padding properties are
+        // invalid." applies identically here (`parse_padding_side` reuse).
+        assert_eq!(parse("-5px", "padding-inline-start"), None);
+        assert_eq!(parse("-5px", "padding-inline-end"), None);
+        assert_eq!(parse("-5px", "padding-block-start"), None);
+        assert_eq!(parse("-5px", "padding-block-end"), None);
+    }
+
+    #[test]
+    fn margin_inline_shorthand_one_value_spreads_to_start_and_end() {
+        // CSS Logical Properties and Values 1 §4.2 "If only one value is
+        // given, it applies to both the start and end edges."
+        assert_eq!(
+            parse("12px", "margin-inline"),
+            Some(PropertyValue::MarginInline(StartEnd::both(
+                LengthOrAuto::Length(Length::Px(12.0))
+            )))
+        );
+    }
+
+    #[test]
+    fn margin_inline_shorthand_two_value() {
+        assert_eq!(
+            parse("5px auto", "margin-inline"),
+            Some(PropertyValue::MarginInline(StartEnd {
+                start: LengthOrAuto::Length(Length::Px(5.0)),
+                end: LengthOrAuto::Auto,
+            }))
+        );
+    }
+
+    #[test]
+    fn margin_block_shorthand_two_value() {
+        assert_eq!(
+            parse("auto 5px", "margin-block"),
+            Some(PropertyValue::MarginBlock(StartEnd {
+                start: LengthOrAuto::Auto,
+                end: LengthOrAuto::Length(Length::Px(5.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn padding_inline_shorthand_one_value_spreads_to_start_and_end() {
+        assert_eq!(
+            parse("12px", "padding-inline"),
+            Some(PropertyValue::PaddingInline(StartEnd::both(Length::Px(
+                12.0
+            ))))
+        );
+    }
+
+    #[test]
+    fn padding_inline_shorthand_two_value() {
+        assert_eq!(
+            parse("5px 10px", "padding-inline"),
+            Some(PropertyValue::PaddingInline(StartEnd {
+                start: Length::Px(5.0),
+                end: Length::Px(10.0),
+            }))
+        );
+    }
+
+    #[test]
+    fn padding_block_shorthand_two_value() {
+        assert_eq!(
+            parse("5px 10px", "padding-block"),
+            Some(PropertyValue::PaddingBlock(StartEnd {
+                start: Length::Px(5.0),
+                end: Length::Px(10.0),
+            }))
+        );
+    }
+
+    #[test]
+    fn padding_inline_shorthand_rejects_negative_component() {
+        // `padding-inline: 10px -5px` — same shape as
+        // `padding_shorthand_rejects_any_negative_value`: the 2nd component
+        // (`-5px`) fails §4.1's `[0,∞]` constraint, `try_parse` rewinds, and
+        // `parse_padding_logical_shorthand` returns the 1-value form
+        // (`Some(StartEnd::both(10px))`) with `-5px` left unconsumed — it is
+        // the caller's `expect_exhausted` (`crate::rule::parse_declaration_block`)
+        // that detects the leftover token and drops the whole declaration.
+        // At the bare `parse_value` level (this file's `parse` test helper,
+        // which never runs `expect_exhausted`), the 1-value form is the
+        // *correct* observed value, not a bug — pinned directly below so a
+        // reader doesn't mistake it for one.
+        assert_eq!(
+            parse("10px -5px", "padding-inline"),
+            Some(PropertyValue::PaddingInline(StartEnd::both(Length::Px(
+                10.0
+            ))))
+        );
+        let decls = crate::rule::parse_declaration_block(&mut Parser::new(&mut ParserInput::new(
+            "padding-inline: 10px -5px;",
+        )));
+        // cov:ignore: the failure-message branch of this `assert!` only
+        // executes when the assertion fails; it passes here, so llvm-cov
+        // reports the macro's condition-false region as an uncovered added
+        // line even though the assertion itself runs and does its job.
+        assert!(
+            decls.is_empty(),
+            "`padding-inline: 10px -5px` must drop via expect_exhausted leftover"
+        );
+        // 1st component negative — no rewind opportunity, `?` propagates
+        // `None` directly from `parse_padding_logical_shorthand` itself.
+        assert_eq!(parse("-5px 10px", "padding-inline"), None);
+    }
+
+    #[test]
+    fn margin_inline_shorthand_leaves_extra_values_for_caller_exhausted_check() {
+        // 3rd+ value: helper consumes only 2, leftover is unconsumed (caller
+        // `expect_exhausted` drops the whole declaration at the rule.rs
+        // layer — same shape as `margin_shorthand_leaves_extra_values_for_caller_exhausted_check`).
+        assert_eq!(
+            parse("5px 10px 15px", "margin-inline"),
+            Some(PropertyValue::MarginInline(StartEnd {
+                start: LengthOrAuto::Length(Length::Px(5.0)),
+                end: LengthOrAuto::Length(Length::Px(10.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn logical_margin_padding_keys_map_to_their_physical_counterparts() {
+        // cascade winner selection の discriminant integrity — 8 longhand は
+        // 専用 key を持たず物理 key へ写像 (`margin_longhand_keys_map_correctly`
+        // と同 pattern)。4 shorthand は自分専用の key を持つ。
+        assert_eq!(
+            PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Px(1.0))).key(),
+            PropertyKey::MarginLeft
+        );
+        assert_eq!(
+            PropertyValue::MarginInline(StartEnd::both(LengthOrAuto::Length(Length::Px(1.0))))
+                .key(),
+            PropertyKey::MarginInline
+        );
+        assert_eq!(
+            PropertyValue::MarginBlock(StartEnd::both(LengthOrAuto::Length(Length::Px(1.0)))).key(),
+            PropertyKey::MarginBlock
+        );
+        assert_eq!(
+            PropertyValue::PaddingInline(StartEnd::both(Length::Px(1.0))).key(),
+            PropertyKey::PaddingInline
+        );
+        assert_eq!(
+            PropertyValue::PaddingBlock(StartEnd::both(Length::Px(1.0))).key(),
+            PropertyKey::PaddingBlock
+        );
+    }
+
+    #[test]
+    fn logical_margin_padding_property_names_resolve_to_physical_property_keys() {
+        // `property_key_for_name` — the deferred (`var()`) path's key
+        // lookup (`parse_value`'s deferred-detection branch) must agree with
+        // `parse_value`'s own non-deferred arm for every logical longhand,
+        // or `resolve_deferred_value`'s `value.key() == key` fast path
+        // (`cascade::project_deferred_value` doc) silently breaks.
+        assert_eq!(
+            property_key_for_name("margin-inline-start"),
+            Some(PropertyKey::MarginLeft)
+        );
+        assert_eq!(
+            property_key_for_name("margin-inline-end"),
+            Some(PropertyKey::MarginRight)
+        );
+        assert_eq!(
+            property_key_for_name("margin-block-start"),
+            Some(PropertyKey::MarginTop)
+        );
+        assert_eq!(
+            property_key_for_name("margin-block-end"),
+            Some(PropertyKey::MarginBottom)
+        );
+        assert_eq!(
+            property_key_for_name("padding-inline-start"),
+            Some(PropertyKey::PaddingLeft)
+        );
+        assert_eq!(
+            property_key_for_name("padding-inline-end"),
+            Some(PropertyKey::PaddingRight)
+        );
+        assert_eq!(
+            property_key_for_name("padding-block-start"),
+            Some(PropertyKey::PaddingTop)
+        );
+        assert_eq!(
+            property_key_for_name("padding-block-end"),
+            Some(PropertyKey::PaddingBottom)
+        );
+        assert_eq!(
+            property_key_for_name("margin-inline"),
+            Some(PropertyKey::MarginInline)
+        );
+        assert_eq!(
+            property_key_for_name("margin-block"),
+            Some(PropertyKey::MarginBlock)
+        );
+        assert_eq!(
+            property_key_for_name("padding-inline"),
+            Some(PropertyKey::PaddingInline)
+        );
+        assert_eq!(
+            property_key_for_name("padding-block"),
+            Some(PropertyKey::PaddingBlock)
+        );
     }
 
     // ── border longhand + shorthand (CSS Backgrounds 3 §3) ──

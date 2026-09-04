@@ -2913,6 +2913,17 @@ fn absolutize_in_page_context(
         PropertyValue::Padding(sides) => {
             PropertyValue::Padding(sides.map(|l| lp(l, font_size, own_line_height, ctx)))
         }
+        // `padding-inline`/`padding-block` shorthand fall-through — same
+        // shape and same unreachability rationale as `Padding` above
+        // (`crate::property::PropertyValue::PaddingInline` doc covers the
+        // physical-mapping choice). Pinned directly by
+        // `tests::absolutize_in_page_context_logical_shorthand_fall_throughs`.
+        PropertyValue::PaddingInline(pair) => {
+            PropertyValue::PaddingInline(pair.map(|l| lp(l, font_size, own_line_height, ctx)))
+        }
+        PropertyValue::PaddingBlock(pair) => {
+            PropertyValue::PaddingBlock(pair.map(|l| lp(l, font_size, own_line_height, ctx)))
+        }
         // ── margin ────────────────────────────────────────────────────────
         PropertyValue::MarginTop(v) => {
             PropertyValue::MarginTop(margin_lpa(v, font_size, own_line_height, ctx))
@@ -2929,6 +2940,14 @@ fn absolutize_in_page_context(
         // Shorthand fall-through (see `Padding` above).
         PropertyValue::Margin(sides) => {
             PropertyValue::Margin(sides.map(|l| margin_lpa(l, font_size, own_line_height, ctx)))
+        }
+        // `margin-inline`/`margin-block` shorthand fall-through — same shape
+        // as `PaddingInline`/`PaddingBlock` above.
+        PropertyValue::MarginInline(pair) => {
+            PropertyValue::MarginInline(pair.map(|l| margin_lpa(l, font_size, own_line_height, ctx)))
+        }
+        PropertyValue::MarginBlock(pair) => {
+            PropertyValue::MarginBlock(pair.map(|l| margin_lpa(l, font_size, own_line_height, ctx)))
         }
         // ── border-*-width (absolutized **and** style-gated) ──────────────
         PropertyValue::BorderTopWidth(w) => PropertyValue::BorderTopWidth(border_width(
@@ -3283,7 +3302,7 @@ mod tests {
         GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Length, LengthOrAuto,
         LengthOrNormal, LineHeight, Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
         PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
-        SelfAlignmentValue, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
+        SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
         TextDecorationShorthand, TextDecorationStyle, TextShadowColor, TextTransform,
         VerticalAlign, Visibility, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
     };
@@ -5105,6 +5124,101 @@ mod tests {
         );
     }
 
+    /// Sibling of `absolutize_in_page_context_shorthand_fall_throughs` for
+    /// the 4 CSS Logical Properties and Values 1 §4.2/§4.4 2-value
+    /// shorthands (`margin-inline`/`margin-block`/`padding-inline`/
+    /// `padding-block`) — same "not a safety net, pinned directly because
+    /// unreachable via real cascade" rationale (`crate::property::PropertyValue::PaddingInline` doc, // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+    /// which is the canonical record, and the `absolutize_in_page_context`
+    /// arm comments right above each one).
+    ///
+    /// `start`/`end` deliberately use **distinct** values (rather than
+    /// `StartEnd::both`) so a hypothetical `start`/`end` field swap in
+    /// [`StartEnd::map`]'s call sites would fail this test instead of
+    /// passing unnoticed.
+    #[test]
+    fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::PaddingInline(StartEnd {
+                    start: Length::Em(2.0),
+                    end: Length::Em(3.0),
+                })),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::PaddingInline(StartEnd {
+                start: Length::Px(40.0),
+                end: Length::Px(60.0),
+            }),
+        );
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::PaddingBlock(StartEnd {
+                    start: Length::Em(1.0),
+                    end: Length::Em(4.0),
+                })),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::PaddingBlock(StartEnd {
+                start: Length::Px(20.0),
+                end: Length::Px(80.0),
+            }),
+        );
+        // `margin-inline`/`margin-block` additionally pin that `auto` survives
+        // the round-trip on whichever side carries it (`margin_lpa`'s `Auto`
+        // preservation, `absolutize_in_page_context`'s `margin_lpa` doc).
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::MarginInline(StartEnd {
+                    start: LengthOrAuto::Length(Length::Rem(2.0)),
+                    end: LengthOrAuto::Auto,
+                })),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::MarginInline(StartEnd {
+                start: LengthOrAuto::Length(Length::Px(32.0)),
+                end: LengthOrAuto::Auto,
+            }),
+        );
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::MarginBlock(StartEnd {
+                    start: LengthOrAuto::Auto,
+                    end: LengthOrAuto::Length(Length::Rem(3.0)),
+                })),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::MarginBlock(StartEnd {
+                start: LengthOrAuto::Auto,
+                end: LengthOrAuto::Length(Length::Px(48.0)),
+            }),
+        );
+    }
+
     /// Direct exercise of `absolutize_in_page_context`'s `flex-basis`/
     /// `row-gap`/`column-gap` handling (the local `fb`/`lpn` helpers
     /// above) across every one of their match arms — the `sample_for`
@@ -5803,11 +5917,24 @@ mod tests {
         PaddingBottom => PropertyValue::PaddingBottom(Length::Em(2.0)),
         PaddingLeft => PropertyValue::PaddingLeft(Length::Em(2.0)),
         Padding => PropertyValue::Padding(Sides::all(Length::Em(2.0))),
+        // `PaddingInline`/`PaddingBlock` — same worst-case unit (`Em`) as
+        // `Padding` above, placed right after it to match `PropertyKey`'s
+        // own declaration order (`property.rs`'s "shorthand key comes after
+        // the longhands it can compete with" placement, `PropertyKey` doc's
+        // "宣言順は load-bearing" section).
+        PaddingInline => PropertyValue::PaddingInline(StartEnd::both(Length::Em(2.0))),
+        PaddingBlock => PropertyValue::PaddingBlock(StartEnd::both(Length::Em(2.0))),
         MarginTop => PropertyValue::MarginTop(LengthOrAuto::Length(Length::Rem(2.0))),
         MarginRight => PropertyValue::MarginRight(LengthOrAuto::Length(Length::Rem(2.0))),
         MarginBottom => PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Rem(2.0))),
         MarginLeft => PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Rem(2.0))),
         Margin => PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Rem(2.0)))),
+        // `MarginInline`/`MarginBlock` — same placement rationale as
+        // `PaddingInline`/`PaddingBlock` above.
+        MarginInline =>
+            PropertyValue::MarginInline(StartEnd::both(LengthOrAuto::Length(Length::Rem(2.0)))),
+        MarginBlock =>
+            PropertyValue::MarginBlock(StartEnd::both(LengthOrAuto::Length(Length::Rem(2.0)))),
         BorderTopWidth => PropertyValue::BorderTopWidth(Length::Pt(12.0)),
         BorderRightWidth => PropertyValue::BorderRightWidth(Length::Pt(12.0)),
         BorderBottomWidth => PropertyValue::BorderBottomWidth(Length::Pt(12.0)),
@@ -6269,11 +6396,15 @@ mod tests {
         PaddingBottom,
         PaddingLeft,
         Padding,
+        PaddingInline,
+        PaddingBlock,
         MarginTop,
         MarginRight,
         MarginBottom,
         MarginLeft,
         Margin,
+        MarginInline,
+        MarginBlock,
         BorderTopWidth,
         BorderRightWidth,
         BorderBottomWidth,
@@ -6569,6 +6700,15 @@ mod tests {
         ) -> Option<&'static str> {
             [s.top, s.right, s.bottom, s.left].into_iter().find_map(f)
         }
+        /// [`sides`] の 2-value ([`StartEnd<T>`]) sibling — `margin-inline`/
+        /// `margin-block`/`padding-inline`/`padding-block` shorthand の
+        /// start/end 2 component いずれかが残滓なら全体を残滓とする。
+        fn start_end<T: Copy>(
+            p: StartEnd<T>,
+            f: impl Fn(T) -> Option<&'static str>,
+        ) -> Option<&'static str> {
+            f(p.start).or_else(|| f(p.end))
+        }
         /// `<track-breadth>` — `min-content`/`max-content`/`auto`/`<flex>`
         /// keyword は常に無 residue (`<number>` 相当、absolutize 不要)、
         /// `<length-percentage>` は [`length`] に delegate。
@@ -6642,6 +6782,12 @@ mod tests {
             | PropertyValue::Height(l) => length_or_auto(*l),
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
+            PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
+                start_end(*p, length)
+            }
+            PropertyValue::MarginInline(p) | PropertyValue::MarginBlock(p) => {
+                start_end(*p, length_or_auto)
+            }
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
             PropertyValue::LetterSpacing(l) | PropertyValue::WordSpacing(l) => {
                 length_or_normal(*l)

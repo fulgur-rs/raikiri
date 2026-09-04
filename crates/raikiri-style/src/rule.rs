@@ -12,7 +12,7 @@ use crate::RaikiriSelectorImpl;
 use crate::property::{
     Border, DeferredValue, FlexShorthand, GapShorthand, GridLineShorthand, Length, LengthOrAuto,
     Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
-    PropertyKey, PropertyValue, Sides, TextDecorationShorthand, parse_value,
+    PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -455,6 +455,10 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
     match d.value {
         PropertyValue::Margin(sides) => expand_margin(sides, d.important, push),
         PropertyValue::Padding(sides) => expand_padding(sides, d.important, push),
+        PropertyValue::MarginInline(pair) => expand_margin_inline(pair, d.important, push),
+        PropertyValue::MarginBlock(pair) => expand_margin_block(pair, d.important, push),
+        PropertyValue::PaddingInline(pair) => expand_padding_inline(pair, d.important, push),
+        PropertyValue::PaddingBlock(pair) => expand_padding_block(pair, d.important, push),
         PropertyValue::Border(sides) => expand_border(sides, d.important, push),
         PropertyValue::Overflow(pair) => expand_overflow(pair, d.important, push),
         PropertyValue::TextDecoration(shorthand) => {
@@ -629,6 +633,10 @@ fn expand_deferred(
             PropertyKey::MarginBottom,
             PropertyKey::MarginLeft,
         ],
+        PropertyKey::MarginInline => &[PropertyKey::MarginLeft, PropertyKey::MarginRight],
+        PropertyKey::MarginBlock => &[PropertyKey::MarginTop, PropertyKey::MarginBottom],
+        PropertyKey::PaddingInline => &[PropertyKey::PaddingLeft, PropertyKey::PaddingRight],
+        PropertyKey::PaddingBlock => &[PropertyKey::PaddingTop, PropertyKey::PaddingBottom],
         PropertyKey::Border => &[
             PropertyKey::BorderTopWidth,
             PropertyKey::BorderTopStyle,
@@ -716,6 +724,86 @@ fn expand_padding(sides: Sides<Length>, important: bool, mut push: impl FnMut(De
     });
     push(Declaration {
         value: PropertyValue::PaddingLeft(sides.left),
+        important,
+    });
+}
+
+/// `margin-inline` shorthand を `margin-left`/`margin-right` の 2 longhand に
+/// 展開する cold helper。margin/padding/overflow shorthand precedent と
+/// 同 pattern (2-value なので push は 2 回のみ)。
+///
+/// 物理写像 (inline axis → left/right、`direction: ltr` 仮定の近似) の
+/// rationale は [`crate::property::PropertyValue::MarginInline`] doc 参照。
+#[inline(never)]
+fn expand_margin_inline(
+    pair: StartEnd<LengthOrAuto>,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::MarginLeft(pair.start),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::MarginRight(pair.end),
+        important,
+    });
+}
+
+/// `margin-block` shorthand を `margin-top`/`margin-bottom` の 2 longhand に
+/// 展開する cold helper — [`expand_margin_inline`] の block-axis sibling
+/// (block axis は `direction` に依存しない厳密写像、
+/// [`crate::property::PropertyValue::PaddingInline`] doc の「非対称」節参照)。
+#[inline(never)]
+fn expand_margin_block(
+    pair: StartEnd<LengthOrAuto>,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::MarginTop(pair.start),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::MarginBottom(pair.end),
+        important,
+    });
+}
+
+/// `padding-inline` shorthand を `padding-left`/`padding-right` の 2
+/// longhand に展開する cold helper — [`expand_margin_inline`] の padding
+/// sibling。
+#[inline(never)]
+fn expand_padding_inline(
+    pair: StartEnd<Length>,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::PaddingLeft(pair.start),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::PaddingRight(pair.end),
+        important,
+    });
+}
+
+/// `padding-block` shorthand を `padding-top`/`padding-bottom` の 2
+/// longhand に展開する cold helper — [`expand_margin_block`] の padding
+/// sibling。
+#[inline(never)]
+fn expand_padding_block(
+    pair: StartEnd<Length>,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::PaddingTop(pair.start),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::PaddingBottom(pair.end),
         important,
     });
 }
@@ -1468,6 +1556,71 @@ mod tests {
         assert!(
             decls.is_empty(),
             "5-value shorthand must be dropped by expect_exhausted, got {decls:?}"
+        );
+    }
+
+    #[test]
+    fn margin_inline_shorthand_three_values_declaration_dropped() {
+        // End-to-end sibling of `margin_shorthand_five_values_declaration_dropped`
+        // for the 2-value logical shorthand: 3+ value `margin-inline` must
+        // be dropped by `expect_exhausted`, not silently truncated to the
+        // first 2 values (property.rs's
+        // `margin_inline_shorthand_leaves_extra_values_for_caller_exhausted_check`
+        // pins the bare `parse_value`-level behavior; this pins the
+        // end-to-end declaration-block outcome).
+        let decls = parse_block("margin-inline: 10px 20px 30px;");
+        // cov:ignore: the failure-message branch of this `assert!` only
+        // executes when the assertion fails; it passes here, so llvm-cov
+        // reports the macro's condition-false region as an uncovered added
+        // line even though the assertion itself runs and does its job.
+        assert!(
+            decls.is_empty(),
+            "3-value margin-inline shorthand must be dropped by expect_exhausted, got {decls:?}"
+        );
+    }
+
+    #[test]
+    fn margin_block_shorthand_three_values_declaration_dropped() {
+        // Sibling of `margin_inline_shorthand_three_values_declaration_dropped`
+        // for the block-axis 2-value shorthand.
+        let decls = parse_block("margin-block: 10px 20px 30px;");
+        // cov:ignore: the failure-message branch of this `assert!` only
+        // executes when the assertion fails; it passes here, so llvm-cov
+        // reports the macro's condition-false region as an uncovered added
+        // line even though the assertion itself runs and does its job.
+        assert!(
+            decls.is_empty(),
+            "3-value margin-block shorthand must be dropped by expect_exhausted, got {decls:?}"
+        );
+    }
+
+    #[test]
+    fn padding_inline_shorthand_three_values_declaration_dropped() {
+        // Sibling of `margin_inline_shorthand_three_values_declaration_dropped`
+        // for `padding-inline`.
+        let decls = parse_block("padding-inline: 10px 20px 30px;");
+        // cov:ignore: the failure-message branch of this `assert!` only
+        // executes when the assertion fails; it passes here, so llvm-cov
+        // reports the macro's condition-false region as an uncovered added
+        // line even though the assertion itself runs and does its job.
+        assert!(
+            decls.is_empty(),
+            "3-value padding-inline shorthand must be dropped by expect_exhausted, got {decls:?}"
+        );
+    }
+
+    #[test]
+    fn padding_block_shorthand_three_values_declaration_dropped() {
+        // Sibling of `margin_inline_shorthand_three_values_declaration_dropped`
+        // for `padding-block`, the last of the 4 logical 2-value shorthands.
+        let decls = parse_block("padding-block: 10px 20px 30px;");
+        // cov:ignore: the failure-message branch of this `assert!` only
+        // executes when the assertion fails; it passes here, so llvm-cov
+        // reports the macro's condition-false region as an uncovered added
+        // line even though the assertion itself runs and does its job.
+        assert!(
+            decls.is_empty(),
+            "3-value padding-block shorthand must be dropped by expect_exhausted, got {decls:?}"
         );
     }
 

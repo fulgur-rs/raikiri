@@ -4830,6 +4830,32 @@ fn project_deferred_value(
             crate::property::PropertyKey::MarginLeft => PropertyValue::MarginLeft(sides.left),
             _ => return None,
         },
+        // `margin-inline`/`padding-inline`/`margin-block`/`padding-block`
+        // logical 2-value shorthand — same projection shape as
+        // `Margin`/`Padding` above, fanning out to the 2 physical longhands
+        // `crate::rule::expand_deferred`'s key table pairs each shorthand
+        // key with (`crate::property::PropertyValue::MarginInline` doc's
+        // physical-mapping rationale covers *why* these specific longhands).
+        PropertyValue::MarginInline(pair) => match key {
+            crate::property::PropertyKey::MarginLeft => PropertyValue::MarginLeft(pair.start),
+            crate::property::PropertyKey::MarginRight => PropertyValue::MarginRight(pair.end),
+            _ => return None,
+        },
+        PropertyValue::MarginBlock(pair) => match key {
+            crate::property::PropertyKey::MarginTop => PropertyValue::MarginTop(pair.start),
+            crate::property::PropertyKey::MarginBottom => PropertyValue::MarginBottom(pair.end),
+            _ => return None,
+        },
+        PropertyValue::PaddingInline(pair) => match key {
+            crate::property::PropertyKey::PaddingLeft => PropertyValue::PaddingLeft(pair.start),
+            crate::property::PropertyKey::PaddingRight => PropertyValue::PaddingRight(pair.end),
+            _ => return None,
+        },
+        PropertyValue::PaddingBlock(pair) => match key {
+            crate::property::PropertyKey::PaddingTop => PropertyValue::PaddingTop(pair.start),
+            crate::property::PropertyKey::PaddingBottom => PropertyValue::PaddingBottom(pair.end),
+            _ => return None,
+        },
         PropertyValue::Outline(outline) => match key {
             crate::property::PropertyKey::OutlineWidth => {
                 PropertyValue::OutlineWidth(outline.width)
@@ -6478,11 +6504,19 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::PaddingBottom(_)
         | PropertyValue::PaddingLeft(_)
         | PropertyValue::Padding(_)
+        // `padding-inline`/`padding-block` shorthand — same "nothing for
+        // phase 2 to resolve" shape as `Padding`/`Margin` above (the
+        // `<length-percentage>` font-relative absolutization happens later,
+        // in phase 3).
+        | PropertyValue::PaddingInline(_)
+        | PropertyValue::PaddingBlock(_)
         | PropertyValue::MarginTop(_)
         | PropertyValue::MarginRight(_)
         | PropertyValue::MarginBottom(_)
         | PropertyValue::MarginLeft(_)
         | PropertyValue::Margin(_)
+        | PropertyValue::MarginInline(_)
+        | PropertyValue::MarginBlock(_)
         | PropertyValue::BorderTopWidth(_)
         | PropertyValue::BorderRightWidth(_)
         | PropertyValue::BorderBottomWidth(_)
@@ -6980,6 +7014,25 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 到達すれば 4 longhand winner を破壊し spec と食い違う。
         // Sides<Length>: Copy のため move で `target.padding` に代入。
         PropertyValue::Padding(sides) => target.padding = sides,
+        // `padding-inline`/`padding-block` shorthand fall-through — sibling
+        // `PropertyValue::Padding` arm と同じく **safety net ではない**。
+        // cascade 経路では unreachable (`crate::rule::expand_shorthand_into`
+        // が `padding-left`/`padding-right` (block なら `padding-top`/
+        // `padding-bottom`) の 2 longhand に展開する)。物理写像 (inline axis
+        // は `direction: ltr` 仮定の近似、block axis は厳密) の rationale は
+        // `crate::property::PropertyValue::PaddingInline` doc 参照。挙動は
+        // `apply_value_direct_padding_inline_shorthand_fall_through` /
+        // `apply_value_direct_padding_block_shorthand_fall_through` test が
+        // 直接叩いて pin (`Margin` arm 上の
+        // `apply_value_direct_margin_shorthand_fall_through` precedent)。
+        PropertyValue::PaddingInline(pair) => {
+            target.padding.left = pair.start;
+            target.padding.right = pair.end;
+        }
+        PropertyValue::PaddingBlock(pair) => {
+            target.padding.top = pair.start;
+            target.padding.bottom = pair.end;
+        }
         // 4 longhand margin sides (CSS Box 3 §3.1)。
         // shorthand `PropertyValue::Margin` は `crate::rule::expand_shorthand_into`
         // により parse 出口と element cascade 入口の両方で 4 longhand に展開されるため、
@@ -7011,6 +7064,23 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 「この guard が守らない範囲」節)。振る舞い自体は
         // `apply_value_direct_margin_shorthand_fall_through` test が直接叩いて pin。
         PropertyValue::Margin(sides) => target.margin = sides,
+        // `margin-inline`/`margin-block` shorthand fall-through — sibling
+        // `PropertyValue::Margin` arm と同じく **safety net ではない**。
+        // cascade 経路では unreachable (`crate::rule::expand_shorthand_into`
+        // が `margin-left`/`margin-right` (block なら `margin-top`/
+        // `margin-bottom`) の 2 longhand に展開する)。物理写像の rationale は
+        // `crate::property::PropertyValue::MarginInline` doc 参照。挙動は
+        // `apply_value_direct_margin_inline_shorthand_fall_through` /
+        // `apply_value_direct_margin_block_shorthand_fall_through` test が
+        // 直接叩いて pin。
+        PropertyValue::MarginInline(pair) => {
+            target.margin.left = pair.start;
+            target.margin.right = pair.end;
+        }
+        PropertyValue::MarginBlock(pair) => {
+            target.margin.top = pair.start;
+            target.margin.bottom = pair.end;
+        }
         // CSS Backgrounds 3 §3.3/§3.2/§3.1 border physical longhand。
         // 4 side × 3 sub-property の 12 arm。shorthand
         // `PropertyValue::Border` は `crate::rule::expand_shorthand_into` により
@@ -15317,6 +15387,280 @@ mod tests {
         assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(-5.0));
     }
 
+    // ── CSS Logical Properties and Values 1 §4.2/§4.4 margin-inline-*/
+    //    margin-block-*/padding-inline-*/padding-block-* longhand +
+    //    margin-inline/margin-block/padding-inline/padding-block shorthand
+    //    wire-through ──
+    //
+    // raikiri は縦書きレンダリングパイプライン未実装のため writing-mode を
+    // 常に HorizontalTb に潰し、かつ inline axis は `direction: ltr` を
+    // 仮定した固定物理写像
+    // (`PropertyValue::PaddingInline` doc 参照) — margin-inline-start/end →
+    // margin-left/margin-right、margin-block-start/end →
+    // margin-top/margin-bottom (padding も同型)。
+
+    #[test]
+    fn padding_inline_longhand_wired_through_cascade() {
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("padding-inline-start: 5px; padding-inline-end: 10px"),
+        );
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(5.0));
+        assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
+        // untouched block axis stays at initial (0).
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(0.0));
+        assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(0.0));
+    }
+
+    #[test]
+    fn padding_block_longhand_wired_through_cascade() {
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("padding-block-start: 5px; padding-block-end: 10px"),
+        );
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(5.0));
+        assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(0.0));
+        assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(0.0));
+    }
+
+    #[test]
+    fn margin_inline_longhand_wired_through_cascade() {
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some("margin-inline-start: 5px; margin-inline-end: auto"),
+        );
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(5.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(0.0));
+    }
+
+    #[test]
+    fn margin_block_longhand_wired_through_cascade() {
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some("margin-block-start: auto; margin-block-end: 5px"),
+        );
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(5.0));
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(0.0));
+    }
+
+    #[test]
+    fn padding_inline_shorthand_one_value_wired_through_cascade() {
+        // 1-value form spreads to both start/end (CSS Logical Properties and
+        // Values 1 §4.4 "If only one value is given, it applies to both the
+        // start and end edges").
+        let cv = cascade_doc("", "div", Some("padding-inline: 12px"));
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(12.0));
+        assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(12.0));
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(0.0));
+        assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(0.0));
+    }
+
+    #[test]
+    fn padding_inline_shorthand_two_value_wired_through_cascade() {
+        let cv = cascade_doc("", "div", Some("padding-inline: 5px 10px"));
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(5.0));
+        assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
+    }
+
+    #[test]
+    fn padding_block_shorthand_two_value_wired_through_cascade() {
+        let cv = cascade_doc("", "div", Some("padding-block: 5px 10px"));
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(5.0));
+        assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(0.0));
+        assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(0.0));
+    }
+
+    #[test]
+    fn margin_inline_shorthand_two_value_wired_through_cascade() {
+        let cv = cascade_doc("", "div", Some("margin-inline: 5px auto"));
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(5.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(0.0));
+    }
+
+    #[test]
+    fn margin_block_shorthand_two_value_wired_through_cascade() {
+        let cv = cascade_doc("", "div", Some("margin-block: auto 5px"));
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(5.0));
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(0.0));
+    }
+
+    #[test]
+    fn margin_inline_start_and_margin_left_compete_on_the_same_cascade_key() {
+        // Physical `margin-left` and logical `margin-inline-start` are
+        // fixed-mapped to the exact same `PropertyValue::MarginLeft` variant
+        // at parse time (`PropertyValue::PaddingInline` doc's "なぜ 8
+        // longhand が専用 variant を持たないか" section) — so, per CSS
+        // Logical Properties and Values 1 §4 ("corresponding flow-relative
+        // and physical properties are paired"), the two compete for the
+        // *same* cascade winner, with the later declaration winning (CSS
+        // Cascading L4 §6.1 "Order of Appearance"). Same shape as
+        // `margin_shorthand_then_longhand_later_longhand_wins`.
+        let later_logical_wins = cascade_doc(
+            "",
+            "div",
+            Some("margin-left: 1px; margin-inline-start: 2px"),
+        );
+        assert_eq!(
+            later_logical_wins.margin.left,
+            ComputedLengthPercentageOrAuto::Px(2.0)
+        );
+        let later_physical_wins = cascade_doc(
+            "",
+            "div",
+            Some("margin-inline-start: 2px; margin-left: 1px"),
+        );
+        assert_eq!(
+            later_physical_wins.margin.left,
+            ComputedLengthPercentageOrAuto::Px(1.0)
+        );
+    }
+
+    #[test]
+    fn var_in_margin_inline_shorthand_preserves_later_longhand_cascade() {
+        // Sibling of `var_in_margin_shorthand_preserves_later_longhand_cascade`
+        // — `margin-inline` only fans out to `margin-left`/`margin-right`
+        // (unlike `margin`'s 4-side fan-out), so the untouched block axis
+        // must stay at initial (0), not at the `var()`-substituted value.
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("--space: 10px; margin-inline: var(--space); margin-left: 20px"),
+        );
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(20.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(10.0));
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(0.0));
+    }
+
+    #[test]
+    fn var_in_margin_block_shorthand_preserves_later_longhand_cascade() {
+        // Sibling of `var_in_margin_inline_shorthand_preserves_later_longhand_cascade`
+        // for the block-axis 2-value shorthand — exercises
+        // `crate::rule::expand_deferred`'s `MarginBlock` arm (only the
+        // inline-axis sibling was previously covered by an end-to-end
+        // var() test).
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("--space: 10px; margin-block: var(--space); margin-top: 20px"),
+        );
+        assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(20.0));
+        assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(10.0));
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(0.0));
+    }
+
+    #[test]
+    fn var_in_padding_inline_shorthand_preserves_later_longhand_cascade() {
+        // Sibling of `var_in_margin_inline_shorthand_preserves_later_longhand_cascade`
+        // for `padding-inline` — exercises `crate::rule::expand_deferred`'s
+        // `PaddingInline` arm.
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("--space: 10px; padding-inline: var(--space); padding-left: 20px"),
+        );
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(20.0));
+        assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(0.0));
+        assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(0.0));
+    }
+
+    #[test]
+    fn var_in_padding_block_shorthand_preserves_later_longhand_cascade() {
+        // Sibling of `var_in_margin_inline_shorthand_preserves_later_longhand_cascade`
+        // for `padding-block` — exercises `crate::rule::expand_deferred`'s
+        // `PaddingBlock` arm, the last of the 4 logical 2-value shorthands.
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("--space: 10px; padding-block: var(--space); padding-top: 20px"),
+        );
+        assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(20.0));
+        assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(0.0));
+        assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(0.0));
+    }
+
+    #[test]
+    fn var_in_padding_inline_start_longhand_preserves_cascade() {
+        // `property_key_for_name`'s `"padding-inline-start" =>
+        // PropertyKey::PaddingLeft` arm is only exercised by the deferred
+        // (`var()`) path when `deferred.property` gets re-parsed by
+        // `resolve_deferred_value` — this pins that round-trip for a single
+        // logical longhand (the `margin-inline`/`padding-inline` shorthand
+        // var() round-trip is covered by
+        // `var_in_margin_inline_shorthand_preserves_later_longhand_cascade`
+        // above).
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("--space: 7px; padding-inline-start: var(--space)"),
+        );
+        assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(7.0));
+    }
+
+    #[test]
+    fn margin_inline_shorthand_important_beats_later_normal_physical_longhand() {
+        // CSS Cascading L4 §3 "Shorthand Properties"
+        // <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim:
+        // "Declaring a shorthand property to be !important is equivalent to
+        // declaring all of its sub-properties to be !important." —
+        // `crate::rule::expand_shorthand_into`'s `important` threading
+        // (`expand_margin_inline` etc. each take and propagate an
+        // `important: bool`) must hold for the 2-value logical shorthands
+        // too, not just the physical `margin`/`padding` shorthands this same
+        // guarantee already covers.
+        //
+        // Source order alone would make the later `margin-left: 20px` win
+        // (CSS Cascading L4 §6.1 "Order of Appearance"), but Origin and
+        // Importance rank higher than order (§6.1) — so this only comes out
+        // to 5px if the `!important` flag actually survived the `margin-inline`
+        // → `MarginLeft`/`MarginRight` fan-out.
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("margin-inline: 5px !important; margin-left: 20px"),
+        );
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(5.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(5.0));
+    }
+
+    #[test]
+    fn margin_inline_shorthand_three_values_declaration_dropped() {
+        // End-to-end sibling of `margin_shorthand_five_values_declaration_dropped`
+        // for the 2-value logical shorthand: `property::tests`'s
+        // `margin_inline_shorthand_leaves_extra_values_for_caller_exhausted_check`
+        // pins the bare `parse_value`-level behavior (2 values consumed,
+        // 3rd left unconsumed, `Some` still returned) and *claims* the
+        // caller's `expect_exhausted` drops the whole declaration — this
+        // test is the actual end-to-end confirmation of that claim, through
+        // `cascade_doc`'s real stylesheet-parse path (same shape as
+        // `padding_shorthand_rejects_any_negative_value`'s leftover-token
+        // drop, but via a real `<div style>` rather than a hand-built
+        // `Parser`).
+        let cv = cascade_doc("", "div", Some("margin-inline: 5px 10px 15px"));
+        // Declaration dropped entirely → margin stays at initial (0), not
+        // the would-be start/end pair (5px/10px) the 2-value prefix alone
+        // would produce.
+        assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(0.0));
+        assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(0.0));
+    }
+
     // ── height wire-through (CSS Sizing 3 §3.1.1) ──
 
     #[test]
@@ -15749,6 +16093,80 @@ mod tests {
         };
         apply_value(PropertyValue::Margin(sides), &mut cv);
         assert_eq!(cv.margin, sides);
+    }
+
+    /// Sibling of `apply_value_direct_margin_shorthand_fall_through` for the
+    /// CSS Logical Properties and Values 1 §4.2 `margin-inline` 2-value
+    /// shorthand — same "not a safety net" rationale (`crate::property::PropertyValue::MarginInline` doc, // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+    /// which is the canonical record). `start`/`end` deliberately differ so
+    /// a `start`/`end` field swap in the `apply_value` arm would fail this
+    /// test.
+    #[test]
+    fn apply_value_direct_margin_inline_shorthand_fall_through() {
+        use crate::property::StartEnd;
+        let mut cv = SpecifiedValues::initial();
+        let pair = StartEnd {
+            start: LengthOrAuto::Length(Length::Px(1.0)),
+            end: LengthOrAuto::Length(Length::Px(2.0)),
+        };
+        apply_value(PropertyValue::MarginInline(pair), &mut cv);
+        assert_eq!(cv.margin.left, pair.start);
+        assert_eq!(cv.margin.right, pair.end);
+        // untouched axis stays at initial (0).
+        assert_eq!(cv.margin.top, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.bottom, LengthOrAuto::Length(Length::Px(0.0)));
+    }
+
+    /// Sibling of `apply_value_direct_margin_inline_shorthand_fall_through`
+    /// for the block-axis `margin-block` shorthand.
+    #[test]
+    fn apply_value_direct_margin_block_shorthand_fall_through() {
+        use crate::property::StartEnd;
+        let mut cv = SpecifiedValues::initial();
+        let pair = StartEnd {
+            start: LengthOrAuto::Length(Length::Px(3.0)),
+            end: LengthOrAuto::Length(Length::Px(4.0)),
+        };
+        apply_value(PropertyValue::MarginBlock(pair), &mut cv);
+        assert_eq!(cv.margin.top, pair.start);
+        assert_eq!(cv.margin.bottom, pair.end);
+        assert_eq!(cv.margin.left, LengthOrAuto::Length(Length::Px(0.0)));
+        assert_eq!(cv.margin.right, LengthOrAuto::Length(Length::Px(0.0)));
+    }
+
+    /// Sibling of `apply_value_direct_margin_inline_shorthand_fall_through`
+    /// for the CSS Logical Properties and Values 1 §4.4 `padding-inline`
+    /// 2-value shorthand.
+    #[test]
+    fn apply_value_direct_padding_inline_shorthand_fall_through() {
+        use crate::property::StartEnd;
+        let mut cv = SpecifiedValues::initial();
+        let pair = StartEnd {
+            start: Length::Px(5.0),
+            end: Length::Px(6.0),
+        };
+        apply_value(PropertyValue::PaddingInline(pair), &mut cv);
+        assert_eq!(cv.padding.left, pair.start);
+        assert_eq!(cv.padding.right, pair.end);
+        assert_eq!(cv.padding.top, Length::Px(0.0));
+        assert_eq!(cv.padding.bottom, Length::Px(0.0));
+    }
+
+    /// Sibling of `apply_value_direct_padding_inline_shorthand_fall_through`
+    /// for the block-axis `padding-block` shorthand.
+    #[test]
+    fn apply_value_direct_padding_block_shorthand_fall_through() {
+        use crate::property::StartEnd;
+        let mut cv = SpecifiedValues::initial();
+        let pair = StartEnd {
+            start: Length::Px(7.0),
+            end: Length::Px(8.0),
+        };
+        apply_value(PropertyValue::PaddingBlock(pair), &mut cv);
+        assert_eq!(cv.padding.top, pair.start);
+        assert_eq!(cv.padding.bottom, pair.end);
+        assert_eq!(cv.padding.left, Length::Px(0.0));
+        assert_eq!(cv.padding.right, Length::Px(0.0));
     }
 
     #[test]
@@ -16980,6 +17398,26 @@ mod tests {
                     PropertyKey::PaddingBottom,
                     PropertyKey::PaddingLeft,
                 ],
+            ),
+            (
+                "margin-inline",
+                "1px 2px",
+                vec![PropertyKey::MarginLeft, PropertyKey::MarginRight],
+            ),
+            (
+                "margin-block",
+                "1px 2px",
+                vec![PropertyKey::MarginTop, PropertyKey::MarginBottom],
+            ),
+            (
+                "padding-inline",
+                "1px 2px",
+                vec![PropertyKey::PaddingLeft, PropertyKey::PaddingRight],
+            ),
+            (
+                "padding-block",
+                "1px 2px",
+                vec![PropertyKey::PaddingTop, PropertyKey::PaddingBottom],
             ),
             (
                 "margin",
