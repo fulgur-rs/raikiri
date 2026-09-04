@@ -35,7 +35,7 @@ use crate::property::{
     ContentAlignmentValue, ContentComponent, CssColor, CssPosition, CssPositionOffset, Direction,
     DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle,
     FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks,
-    GridTrackSize, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight, Outline,
+    GridTrackSize, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight, ObjectFit, Outline,
     OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides,
     TabSize, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
     TextShadowItem, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
@@ -71,8 +71,8 @@ use crate::resolve::{
 ///
 /// | 層 | field |
 /// |---|---|
-/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* |
+/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// \* `background_image` は `None`/`Url(String)` の 2 variant では文字通り
@@ -418,6 +418,13 @@ pub struct SpecifiedValues {
     /// 表現をそのまま [`ComputedValues`] まで運ぶ (「層の対応表」の
     /// `background_image`\* 脚注参照)。
     pub background_image: BackgroundImage,
+    /// [`ComputedValues::object_fit`] の staging。層は computed-equivalent
+    /// (`ObjectFit` は length を運ばない)。
+    pub object_fit: ObjectFit,
+    /// `object-position` の **specified** value。phase 3 で各 offset の
+    /// `<length-percentage>` を絶対化する (`background_position` と同じ shape
+    /// — 型自体も [`CssPosition`] を再利用する)。
+    pub object_position: CssPosition,
 }
 
 impl SpecifiedValues {
@@ -613,6 +620,15 @@ impl SpecifiedValues {
             // CSS Backgrounds and Borders 3 §2.3: background-image initial
             // は `none`。
             background_image: BackgroundImage::None,
+            // CSS Images Module Level 3 §5.1: object-fit initial は `fill`。
+            object_fit: ObjectFit::Fill,
+            // CSS Images Module Level 3 §5.2: object-position initial は
+            // `50% 50%` — `background-position` の `0% 0%` とは異なる点に
+            // 注意。
+            object_position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            },
         }
     }
 
@@ -830,6 +846,14 @@ impl SpecifiedValues {
                 vertical: CssPositionOffset::Start(Length::Percent(0.0)),
             },
             background_image: BackgroundImage::None,
+            // non-inherited (CSS Images Module Level 3 §5.1/§5.2, both
+            // "Inherited: no") — child starts from spec initial, same as
+            // `background_repeat` above.
+            object_fit: ObjectFit::Fill,
+            object_position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            },
         }
     }
 
@@ -1210,6 +1234,19 @@ impl SpecifiedValues {
             // `Gradient(..)`の length/angle は絶対化しない
             // (`Self::background_image` doc の scope note参照)。
             background_image: self.background_image,
+            // CSS Images Module Level 3 §5.1 — computed value = specified
+            // keyword, no length payload (`background_repeat` arm と同じ
+            // shape)。
+            object_fit: self.object_fit,
+            // CSS Images Module Level 3 §5.2 — `<length-percentage>` を含む
+            // ため `background_position` と同じ shape で絶対化する (同じ
+            // `resolve_css_position` を再利用)。
+            object_position: resolve_css_position(
+                self.object_position,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             // CSS Overflow 3 §3.1 cross-axis computed-value coupling
             // — same-node sibling dependency, resolved
             // here (phase 3) once both `overflow-x`/`overflow-y` winners are
@@ -1684,6 +1721,17 @@ mod tests {
             // CSS Backgrounds and Borders 3 §2.3: non-inherited, initial と
             // 異なる値にしておく (fixture の趣旨どおり)。
             background_image: BackgroundImage::Url("fixture.png".to_string()),
+            // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited なので、
+            // initial (`fill` / `50% 50%`) と異なる値にしておく。
+            object_fit: ObjectFit::Cover,
+            object_position: crate::resolve::ComputedCssPosition {
+                horizontal: crate::resolve::ComputedCssPositionOffset::Start(
+                    ComputedLengthPercentage::Px(3.0),
+                ),
+                vertical: crate::resolve::ComputedCssPositionOffset::End(
+                    ComputedLengthPercentage::Percent(10.0),
+                ),
+            },
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -1849,6 +1897,9 @@ mod tests {
         assert_eq!(child.background_size, initial.background_size);
         assert_eq!(child.background_position, initial.background_position);
         assert_eq!(child.background_image, initial.background_image);
+        // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited。
+        assert_eq!(child.object_fit, initial.object_fit);
+        assert_eq!(child.object_position, initial.object_position);
     }
 
     /// `line-height: 150%` を親が宣言していた場合、親の computed は

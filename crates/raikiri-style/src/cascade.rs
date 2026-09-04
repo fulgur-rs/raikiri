@@ -6783,6 +6783,15 @@ pub(crate) fn resolve_against_inherited(
         // parent's, and it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
         | PropertyValue::Background(_)
+        // object-fit (CSS Images Module Level 3 §5.1) — non-inherited,
+        // keyword-only, same "nothing for phase 2 to resolve" shape as
+        // `BackgroundRepeat` above.
+        | PropertyValue::ObjectFit(_)
+        // object-position (CSS Images Module Level 3 §5.2) — non-inherited,
+        // reuses `CssPosition` (`background-position`'s type); its
+        // `<length-percentage>` absolutization is phase 3's job, same as
+        // `BackgroundPosition` above.
+        | PropertyValue::ObjectPosition(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)) => v,
     })
@@ -7456,6 +7465,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.background_clip = shorthand.clip;
             target.background_origin = shorthand.origin;
         }
+        // CSS Images Module Level 3 §5.1. non-inherited, computed value =
+        // specified keyword — simple assignment, no length payload
+        // (`BackgroundRepeat` arm と同じ shape)。
+        PropertyValue::ObjectFit(v) => target.object_fit = v,
+        // CSS Images Module Level 3 §5.2. non-inherited、`<length-percentage>`
+        // を含むため specified 表現のまま格納 — 絶対化は phase 3
+        // (`SpecifiedValues::absolutize_with`) に委ねる (`BackgroundPosition`
+        // arm と同じ shape)。
+        PropertyValue::ObjectPosition(v) => target.object_position = v,
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -14311,6 +14329,114 @@ mod tests {
         assert_eq!(
             r.computed[span].background_position,
             ComputedValues::initial().background_position
+        );
+    }
+
+    // ── object-fit / object-position wire-through
+    // (CSS Images Module Level 3 §5.1/§5.2) ──
+
+    #[test]
+    fn object_fit_wired_through_cascade_from_inline_style() {
+        use crate::property::ObjectFit;
+        let cv = cascade_doc("", "img", Some("object-fit: contain"));
+        assert_eq!(cv.object_fit, ObjectFit::Contain);
+    }
+
+    #[test]
+    fn object_fit_defaults_to_fill_without_declaration() {
+        use crate::property::ObjectFit;
+        let cv = cascade_doc("", "img", None);
+        assert_eq!(cv.object_fit, ObjectFit::Fill);
+    }
+
+    #[test]
+    fn object_fit_is_non_inherited() {
+        use crate::property::ObjectFit;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("object-fit: cover"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].object_fit, ObjectFit::Cover);
+        // CSS Images Module Level 3 §5.1 "Inherited: no" — the child without
+        // its own winner resets to the spec initial, not the parent's value
+        // (`background_position_is_non_inherited` sibling shape above).
+        assert_eq!(r.computed[span].object_fit, ObjectFit::Fill);
+    }
+
+    #[test]
+    fn object_position_wired_through_cascade_and_absolutizes_em() {
+        use crate::resolve::{
+            ComputedCssPosition, ComputedCssPositionOffset, ComputedLengthPercentage,
+        };
+        // `2em` at the default 16px font-size absolutizes to 32px.
+        let cv = cascade_doc("", "img", Some("object-position: 2em 10%"));
+        assert_eq!(
+            cv.object_position,
+            ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(32.0)),
+                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(10.0)),
+            }
+        );
+    }
+
+    #[test]
+    fn object_position_defaults_to_50_percent_50_percent_without_declaration() {
+        // CSS Images Module Level 3 §5.2 "Initial: 50% 50%" — distinct from
+        // `background-position`'s `0% 0%` initial
+        // (`background_position_is_non_inherited` sibling above resets to
+        // `0% 0%`; this property resets to `50% 50%` instead).
+        use crate::resolve::{
+            ComputedCssPosition, ComputedCssPositionOffset, ComputedLengthPercentage,
+        };
+        let cv = cascade_doc("", "img", None);
+        assert_eq!(
+            cv.object_position,
+            ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
+                    50.0
+                )),
+                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
+            }
+        );
+    }
+
+    #[test]
+    fn object_position_is_non_inherited() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("object-position: right bottom"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_ne!(
+            r.computed[p].object_position,
+            ComputedValues::initial().object_position
+        );
+        // CSS Images Module Level 3 §5.2 "Inherited: no" — the child without
+        // its own winner resets to the spec initial (`50% 50%`), not the
+        // parent's value.
+        assert_eq!(
+            r.computed[span].object_position,
+            ComputedValues::initial().object_position
+        );
+    }
+
+    #[test]
+    fn object_position_3_value_edge_offset_form_dropped_through_real_cascade() {
+        // `right 10px center` is `<bg-position>`'s (CSS Backgrounds 3 §2.6)
+        // 3-value extension, not valid for `object-position`'s plain
+        // `<position>` (CSS Values 4 §8.3) —
+        // `object_position_rejects_bg_position_only_3_value_edge_offset_forms`
+        // (property.rs) pins this at the `parse_value` level; this is the
+        // end-to-end sibling through the real parse -> cascade pipeline
+        // (`rule::DeclParser`'s `expect_exhausted` drops the whole
+        // declaration once `parse_position_strict`'s fallback alternative
+        // leaves `center` as leftover, same mechanism as the
+        // `background_shorthand_*_dropped_through_real_cascade` tests).
+        let cv = cascade_doc("", "img", Some("object-position: right 10px center"));
+        assert_eq!(
+            cv.object_position,
+            ComputedValues::initial().object_position
         );
     }
 

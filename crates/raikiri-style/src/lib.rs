@@ -37,8 +37,8 @@ pub mod property;
 pub use property::{
     BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, BorderRadius,
     BoxShadowItem, CssColor, CssPosition, CssPositionOffset, DisplayValue, Length, LengthOrAuto,
-    LengthOrNormal, Outline, OutlineColor, OutlineStyle, PropertyKey, PropertyValue, Sides,
-    TextShadowColor, TextShadowItem, VisualBox,
+    LengthOrNormal, ObjectFit, Outline, OutlineColor, OutlineStyle, PropertyKey, PropertyValue,
+    Sides, TextShadowColor, TextShadowItem, VisualBox,
 };
 
 pub mod rule;
