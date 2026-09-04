@@ -7841,7 +7841,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // CSS Backgrounds and Borders 3 §2.10
         // <https://www.w3.org/TR/css-backgrounds-3/#the-background>. Any-order
         // `||` fan-out of the 8 longhands above, single layer only
-        // ([`BackgroundShorthand`] doc's Non-goal section).
+        // (`BackgroundShorthand` doc's Non-goal section).
         "background" => parse_background_shorthand(input).map(PropertyValue::Background),
         _ => None,
     }
@@ -9012,7 +9012,7 @@ fn mix_coordinates_with_hue(
 
 fn interpolate_hue(first: f32, second: f32, progress: f32, method: HueInterpolationMethod) -> f32 {
     match method {
-        // CSS Color 4 §13.5: keep theta2 - theta1 in [-180, 180], retaining
+        // CSS Color 4 §13.5: keep theta2 - theta1 in `[-180, 180]`, retaining
         // the authored direction when the difference is exactly a half-turn.
         // Adjust the delta, as the legacy shorter path did, so wrapped results
         // keep their existing internal representative.
@@ -14439,7 +14439,7 @@ fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<BackgroundSh
         // どの unfilled slot にも match しなかった → 埋まっている slot に
         // 対する 2 回目の指定 (`visual_boxes` は 3 回目)、comma (複数 layer)、
         // または未知 token。break で loop 終了、caller の `expect_exhausted`
-        // が leftover を drop する ([`parse_border_shorthand`] と同じ契約)。
+        // が leftover を drop する (`parse_border_shorthand` と同じ契約)。
         break;
     }
 

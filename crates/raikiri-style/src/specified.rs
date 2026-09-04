@@ -671,7 +671,7 @@ impl SpecifiedValues {
             direction: parent.direction,
             // CSS Writing Modes 4 §3.2: writing-mode は inherited。親の
             // `ComputedValues::writing_mode` は既に
-            // [`crate::property::resolve_writing_mode`] を通過済み
+            // `crate::property::resolve_writing_mode` を通過済み
             // (= 常に `HorizontalTb`) なので、ここでの素朴なコピーは
             // `text_align`/`direction` と同じ「もう resolve 済みの値をそのまま
             // 運ぶ」形になる。
